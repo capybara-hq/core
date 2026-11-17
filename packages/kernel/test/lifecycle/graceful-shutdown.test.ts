@@ -351,7 +351,7 @@ it("shutdown-while-authority-blocked drains activation before closing infra", as
   const seed = await createKernelApp(initial, { env: {}, logger: silent() });
   await closeKernelApp(seed);
   const next = structuredClone(initial);
-  next.devices.autoMode = "off";
+  next.devices.fullAccess = "off";
   const app = await buildKernelApp(next, {
     env: {},
     logger: silent(),
@@ -429,14 +429,14 @@ it.each(["staged", "commit-ack"])(
     );
     const initial = runConfig(
       { pg: pgc.url, redis: rd.url },
-      { extensions: [], roles: ["api"], devices: { autoMode: "allowed" } },
+      { extensions: [], roles: ["api"], devices: { fullAccess: "allowed" } },
     );
     const seed = await createKernelApp(initial, { env: {}, logger: silent() });
     await seed.get(KernelDb).deleteFrom("permission_config_publication").execute();
     await seed.get(PermissionConfigPublication).initialize();
     await closeKernelApp(seed);
     const next = structuredClone(initial);
-    next.devices.autoMode = "off";
+    next.devices.fullAccess = "off";
     const app = await buildKernelApp(next, {
       env: {},
       logger: silent(),

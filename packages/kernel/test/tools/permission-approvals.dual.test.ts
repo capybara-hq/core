@@ -566,7 +566,7 @@ it.each(["instance", "selective-publication", "general-publication"] as const)(
     });
     const config = b.app.get(KernelConfigService).get();
     const next = structuredClone(config);
-    if (writer === "general-publication") next.devices.autoMode = "off";
+    if (writer === "general-publication") next.devices.fullAccess = "off";
     if (writer === "selective-publication")
       next.sandbox.limits.egress = config.sandbox.limits.egress === "none" ? "allowlist" : "none";
     const writing =

@@ -37,6 +37,12 @@ export {
 } from "./config/load.js";
 export { createNacosSource, type NacosSourceOptions } from "./config/nacos-source.js";
 export {
+  legacyPermissionEnvRenames,
+  migratePermissionConfigText,
+  type PermissionConfigMigration,
+  type PermissionEnvRename,
+} from "./config/permission-migration.js";
+export {
   type FieldMeta,
   type KernelConfig,
   KernelConfigSchema,

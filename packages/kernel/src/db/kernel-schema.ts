@@ -1173,6 +1173,18 @@ export interface DevicesTable {
   demoted_from_provider: ColumnType<string | null, string | null | undefined, string | null>;
   /** 0131: a cloud device's narrowing switch (`sandbox`); null follows the platform and the org. */
   mode: ColumnType<"sandbox" | null, "sandbox" | null | undefined, "sandbox" | null>;
+  /** 0145: a cloud device's owner Full ceiling (B1 snapshot); null: not snapshotted yet. */
+  owner_full_access: ColumnType<boolean | null, boolean | null | undefined, boolean | null>;
+  /** 0145: a cloud device's outer network (B1 snapshot); null: not snapshotted yet. */
+  outer_network: ColumnType<
+    import("../sandbox/modes.js").DeviceNetwork | null,
+    string | null | undefined,
+    string | null
+  >;
+  /** 0145: the provenance of the B1 snapshot. */
+  permission_migration: ColumnType<unknown, string | null | undefined, string | null>;
+  /** 0145: the applied limits must be established before any operation is admitted. */
+  permission_reconcile_required: ColumnType<boolean, boolean | undefined, boolean>;
   created_at: Ts;
   updated_at: Ts;
   deleted_at: TsNullable;

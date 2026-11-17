@@ -307,10 +307,10 @@ describe("SettingsService", () => {
   });
 });
 
-describe("SettingsService devicesAutoMode", () => {
-  /** The settings service over a config whose `devices.autoMode` comes from `source`. */
+describe("SettingsService devicesFullAccess (B1)", () => {
+  /** The settings service over a config whose `devices.fullAccess` comes from `source`. */
   const serviceWith = (
-    autoMode: "allowed" | "off" | undefined,
+    fullAccess: "allowed" | "off" | undefined,
     source: "env" | "file" | "nacos" | undefined,
   ) => {
     const h = handlesFor(db);
@@ -320,7 +320,7 @@ describe("SettingsService devicesAutoMode", () => {
       adminLockFor(db),
       { warn: () => {} },
       {
-        get: () => ({ devices: { autoMode }, attribution: {} }) as never,
+        get: () => ({ devices: { fullAccess }, attribution: {} }) as never,
         fieldSource: () => source,
       },
       ceilingWritesFor(db),
@@ -337,35 +337,83 @@ describe("SettingsService devicesAutoMode", () => {
 
   it("view reports the startup source; a write to a startup-config value is read-only", async () => {
     await db.deleteFrom("deployment_settings").execute();
-    const admin = await adminFor("auto-mode-readonly");
+    const admin = await adminFor("full-access-readonly");
     for (const source of ["env", "file", "nacos"] as const) {
       const s = serviceWith("off", source);
-      expect((await s.view()).devicesAutoMode).toEqual({ mode: "off", source });
-      const err = await s
-        .update({ devicesAutoMode: { mode: "allowed" } }, admin.id)
-        .catch((e: unknown) => e);
-      expect(err).toMatchObject({ code: "deployment.setting_readonly" });
-      expect((err as ApiError).details).toEqual([{ path: "devicesAutoMode.mode", source }]);
+      expect(await s.view()).toMatchObject({
+        devicesFullAccess: { permission: "off", source },
+        devicesAutoMode: { mode: "off", source },
+      });
+      for (const patch of [
+        { devicesFullAccess: { permission: "allowed" as const } },
+        { devicesAutoMode: { mode: null } },
+      ]) {
+        const err = await s.update(patch, admin.id).catch((e: unknown) => e);
+        expect(err).toMatchObject({ code: "deployment.setting_readonly" });
+        expect((err as ApiError).details).toEqual([
+          { path: "devicesFullAccess.permission", source },
+        ]);
+      }
     }
   });
 
-  it("the stored choice applies with source db; a token may turn it off, never on", async () => {
+  it("the stored choice applies with source db; a token may turn it off, never allow it", async () => {
     await db.deleteFrom("deployment_settings").execute();
-    const admin = await adminFor("auto-mode-token");
+    const admin = await adminFor("full-access-token");
     const s = serviceWith(undefined, undefined);
-    expect((await s.view()).devicesAutoMode).toEqual({ mode: "allowed", source: "default" });
+    expect((await s.view()).devicesFullAccess).toEqual({
+      permission: "allowed",
+      source: "default",
+    });
+    expect(await s.update({ devicesFullAccess: { permission: "off" } }, admin.id)).toMatchObject({
+      devicesFullAccess: { permission: "off", source: "db" },
+    });
+    for (const patch of [
+      { devicesFullAccess: { permission: "allowed" as const } },
+      { devicesFullAccess: { permission: null } },
+      { devicesAutoMode: { mode: "allowed" as const } },
+    ]) {
+      const widened = await s
+        .update(patch, admin.id, "tok", undefined, { onlyNarrows: true })
+        .catch((e: unknown) => e);
+      expect(widened).toMatchObject({ code: "deployment.auto_mode_not_allowed" });
+    }
+    // a person in a session may allow it again; null clears back to the default
+    expect(
+      await s.update({ devicesFullAccess: { permission: "allowed" } }, admin.id),
+    ).toMatchObject({ devicesFullAccess: { permission: "allowed", source: "db" } });
+    expect(await s.update({ devicesFullAccess: { permission: null } }, admin.id)).toMatchObject({
+      devicesFullAccess: { permission: "allowed", source: "default" },
+    });
+    const row = await db
+      .selectFrom("deployment_settings")
+      .select(["key", "value"])
+      .where("key", "in", ["devicesFullAccess", "devicesAutoMode"])
+      .execute();
+    expect(row).toEqual([{ key: "devicesFullAccess", value: {} }]);
+  });
+
+  it("the old name devicesAutoMode is still accepted, stored under the new key, never both", async () => {
+    await db.deleteFrom("deployment_settings").execute();
+    const admin = await adminFor("full-access-legacy");
+    const s = serviceWith(undefined, undefined);
     expect(await s.update({ devicesAutoMode: { mode: "off" } }, admin.id)).toMatchObject({
+      devicesFullAccess: { permission: "off", source: "db" },
       devicesAutoMode: { mode: "off", source: "db" },
     });
-    const widened = await s
-      .update({ devicesAutoMode: { mode: "allowed" } }, admin.id, "tok", undefined, {
-        onlyNarrows: true,
-      })
+    expect(
+      await db
+        .selectFrom("deployment_settings")
+        .select(["key", "value"])
+        .where("key", "in", ["devicesFullAccess", "devicesAutoMode"])
+        .execute(),
+    ).toEqual([{ key: "devicesFullAccess", value: { permission: "off" } }]);
+    const both = await s
+      .update(
+        { devicesAutoMode: { mode: "off" }, devicesFullAccess: { permission: "off" } },
+        admin.id,
+      )
       .catch((e: unknown) => e);
-    expect(widened).toMatchObject({ code: "deployment.auto_mode_not_allowed" });
-    // a person in a session may turn it back on
-    expect(await s.update({ devicesAutoMode: { mode: "allowed" } }, admin.id)).toMatchObject({
-      devicesAutoMode: { mode: "allowed", source: "db" },
-    });
+    expect(both).toMatchObject({ code: "validation_failed" });
   });
 });

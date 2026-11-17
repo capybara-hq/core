@@ -32,10 +32,12 @@ import { isExecutionMethod } from "../sandbox/operation-authority-types.js";
 import { PermissionAuthorityModule } from "../sandbox/permission-authority.module.js";
 import { needsFullCeiling, PermissionCeilingWrites } from "../sandbox/permission-ceiling-writes.js";
 import {
-  type DevicesAutoMode,
   type DevicesAutoModeView,
-  readDevicesAutoMode,
-} from "../sandbox/platform-auto-mode.js";
+  type DevicesFullAccessView,
+  type FullAccessPermission,
+  legacyAutoModeView,
+  readDevicesFullAccess,
+} from "../sandbox/platform-full-access.js";
 import { assertThemeOnIn } from "../themes/theme-state.js";
 import { IanaTimeZone } from "../time-zone.js";
 import {
@@ -58,9 +60,10 @@ import { OrgLock, OrgLockModule } from "./org-lock.js";
  * - `sandboxToolPolicy`：沙箱工具的默认策略（M5 T8，默认 allow）。为 `ask` 时除只读的
  *   `Read` / `Glob` / `Grep` 外都需要审批（执行时实时读取）。
  * - `wakeOnBackgroundTask`：组织对 `runtime.wakeOnBackgroundTask` 的覆盖（缺省跟随部署），见 {@link effectiveWakeOnBackgroundTask}。
- * - `autoMode`: whether devices of the org may run in auto mode (auto mode spec §4.3); absent
- *   follows the platform's `devices.autoMode`, and an invalid stored value reads as `off`
- *   (narrower, never wider). Setting `allowed` while the platform is `off` is refused.
+ * - `fullAccess`: whether devices of the org may run with Full permission (permission runtime
+ *   cutover B1, replacing `autoMode`); absent follows the platform's `devices.fullAccess`, and an
+ *   invalid stored value reads as `off` (narrower, never wider). Setting `allowed` while the
+ *   platform is `off` is refused.
  * - `cloudNetwork`: the org's sandbox-mode network as a delta over the platform's allowlist (org
  *   egress ceiling spec §D1, {@link CloudNetworkSettingSchema}). An invalid stored value reads as
  *   `{ mode: "allowlist", base: "none" }`, the empty allowlist (narrower, never wider).
@@ -83,10 +86,13 @@ export {
   ORG_SANDBOX_ALLOW_HOSTS_MAX,
 } from "./cloud-network-setting.js";
 /**
- * The org's auto-mode switch (auto mode spec §4.3): `allowed` or `off`; absent follows the
- * platform's `devices.autoMode`. An invalid stored value reads as `off` (narrower, never wider).
+ * The org's Full permission switch (B1): `allowed` or `off`; absent follows the platform's
+ * `devices.fullAccess`. An invalid stored value reads as `off` (narrower, never wider).
  */
-export const AutoModeSetting = z.enum(["allowed", "off"]) satisfies z.ZodType<DevicesAutoMode>;
+export const FullAccessSetting = z.enum([
+  "allowed",
+  "off",
+]) satisfies z.ZodType<FullAccessPermission>;
 
 /**
  * The org's theme setting (themes spec §7): `id` a theme on in the org (a `platform_themes` id),
@@ -179,8 +185,8 @@ export const OrgSettingsSchema = z.object({
   locale: z.enum(["zh", "en"]).default("en").catch("en"),
   sandboxToolPolicy: z.enum(["allow", "ask"]).default("allow").catch("allow"),
   platformTool: z.enum(["on", "read-only", "off"]).default("on").catch("on"),
-  /** The org's auto-mode switch (auto mode spec §4.3); absent follows the platform. */
-  autoMode: AutoModeSetting.optional().catch("off"),
+  /** The org's Full permission switch (B1); absent follows the platform. */
+  fullAccess: FullAccessSetting.optional().catch("off"),
   /** The org's network for cloud devices (auto mode spec §4.3); absent = open (the default). */
   cloudNetwork: CloudNetworkSettingSchema.optional().catch(invalidCloudNetwork),
   /** Overrides `runtime.wakeOnBackgroundTask`; absent follows the deployment. */
@@ -216,10 +222,12 @@ export const OrgSettingsPatchSchema = z
     /** null clears (follow the deployment again). */
     wakeOnBackgroundTask: z.boolean().nullable().optional(),
     /**
-     * The org's auto-mode switch; null clears it (follow the platform). `allowed` while the
+     * The org's Full permission switch; null clears it (follow the platform). `allowed` while the
      * platform is `off` -> 400 `org.auto_mode_not_allowed`.
      */
-    autoMode: AutoModeSetting.nullable().optional(),
+    fullAccess: FullAccessSetting.nullable().optional(),
+    /** The old name of `fullAccess`, still accepted (never together with it). */
+    autoMode: FullAccessSetting.nullable().optional(),
     /**
      * The org's network for cloud devices, replaced whole (hosts left out follow the deployment);
      * null clears it (open). Through the Platform tool or an API token it may only narrow.
@@ -246,9 +254,30 @@ export const OrgSettingsPatchSchema = z
      */
     compaction: COMPACTION_SETTINGS_PATCH.nullable().optional(),
   })
-  .strict();
+  .strict()
+  .refine((p) => p.autoMode === undefined || p.fullAccess === undefined, {
+    message: "give fullAccess only: autoMode is its old name",
+    path: ["autoMode"],
+  });
 
 export type OrgSettingsPatch = z.infer<typeof OrgSettingsPatchSchema>;
+
+/** A patch with the old `autoMode` moved to `fullAccess` (the schema refuses both together). */
+export function normalizeOrgSettingsPatch(patch: OrgSettingsPatch): OrgSettingsPatch {
+  if (patch.autoMode === undefined) return patch;
+  const { autoMode, ...rest } = patch;
+  return { ...rest, fullAccess: autoMode };
+}
+
+/**
+ * The settings as the API answers them: the stored settings, plus the old public name `autoMode`
+ * mirroring `fullAccess` until the old public readers are removed.
+ */
+export type OrgSettingsView = OrgSettings & { autoMode?: FullAccessPermission };
+export const orgSettingsView = (settings: OrgSettings): OrgSettingsView => ({
+  ...settings,
+  ...(settings.fullAccess !== undefined && { autoMode: settings.fullAccess }),
+});
 
 /** Whether a finished background task wakes an idle conversation: the org's setting, else the deployment's. */
 export function effectiveWakeOnBackgroundTask(
@@ -290,7 +319,9 @@ export interface OrgEffectiveNetwork {
 
 /** The deployment defaults the settings page shows for "follow the platform" (`GET` returns them). */
 export interface OrgSettingsDeployment {
-  /** The platform's auto-mode switch and where it comes from. */
+  /** The platform's Full permission switch and where it comes from. */
+  fullAccess: DevicesFullAccessView;
+  /** The same switch under its old public name (`{ mode, source }`). */
   autoMode: DevicesAutoModeView;
   /**
    * The platform's network: its allowlist (what an org's delta applies to), whether orgs may go
@@ -335,10 +366,10 @@ export async function readOrgSettings(db: KernelSchemaDb, orgId: string): Promis
 const autoModeNotAllowed = (message: string): ApiError =>
   new ApiError("org.auto_mode_not_allowed", message);
 
-/** Whether a stored settings object holds an `autoMode` this version reads as `off`. */
-export function invalidStoredAutoMode(raw: unknown): boolean {
-  const v = asObject(raw).autoMode;
-  return v !== undefined && !AutoModeSetting.safeParse(v).success;
+/** Whether a stored settings object holds a `fullAccess` this version reads as `off`. */
+export function invalidStoredFullAccess(raw: unknown): boolean {
+  const v = asObject(raw).fullAccess;
+  return v !== undefined && !FullAccessSetting.safeParse(v).success;
 }
 
 /** Whether a stored settings object holds a `cloudNetwork` this version reads as an empty allowlist. */
@@ -380,8 +411,8 @@ export class OrgSettingsService {
     @Inject(TransactionHost) readonly txHost: TransactionHost,
     @Inject(OrgLock) private readonly orgLock: OrgLock,
     /**
-     * The deployment config: `sandbox.limits` and the platform's auto-mode switch
-     * (`devices.autoMode`; the org may follow it, never exceed it).
+     * The deployment config: `sandbox.limits` and the platform's Full switch
+     * (`devices.fullAccess`; the org may follow it, never exceed it).
      */
     @Inject(KernelConfigService)
     private readonly config: Pick<KernelConfigService, "get" | "fieldSource">,
@@ -389,11 +420,11 @@ export class OrgSettingsService {
     @Optional() @Inject(KERNEL_LOGGER) private readonly log?: KernelLogger,
   ) {}
 
-  /** Parses stored settings, warning when an invalid `autoMode` narrows to `off` or an invalid
+  /** Parses stored settings, warning when an invalid `fullAccess` narrows to `off` or an invalid
    * `cloudNetwork` to an empty allowlist. */
   private parseStored(orgId: string, raw: unknown): OrgSettings {
-    if (invalidStoredAutoMode(raw)) {
-      this.log?.warn("org settings: stored autoMode is invalid; it reads as off", { orgId });
+    if (invalidStoredFullAccess(raw)) {
+      this.log?.warn("org settings: stored fullAccess is invalid; it reads as off", { orgId });
     }
     if (invalidStoredCloudNetwork(raw)) {
       this.log?.warn(
@@ -409,13 +440,14 @@ export class OrgSettingsService {
   /** 部署默认值（设置页展示「跟随部署」时的实际取值）。 */
   async deployment(): Promise<OrgSettingsDeployment> {
     const lim = this.config.get().sandbox.limits;
-    const [autoMode, attribution, compaction] = await Promise.all([
-      readDevicesAutoMode(this.db.db, this.config, this.log),
+    const [fullAccess, attribution, compaction] = await Promise.all([
+      readDevicesFullAccess(this.db.db, this.config, this.log),
       readPlatformAttribution(this.db.db, this.config, this.log),
       readPlatformCompactionSettings(this.db.db),
     ]);
     return {
-      autoMode,
+      fullAccess,
+      autoMode: legacyAutoModeView(fullAccess),
       cloudNetwork: {
         allowHosts: [...lim.allowHosts],
         orgHosts: lim.orgHosts,
@@ -468,12 +500,13 @@ export class OrgSettingsService {
    * The refusals of {@link update} that need no read of the org (the Platform tool's precheck):
    * auto mode where the platform turned it off.
    */
-  async check(patch: OrgSettingsPatch): Promise<void> {
-    // turning auto mode on where the platform turned it off is wider than the platform allows
-    if (patch.autoMode === "allowed") {
-      const platform = await readDevicesAutoMode(this.db.db, this.config, this.log);
-      if (platform.mode === "off") {
-        throw autoModeNotAllowed("The platform does not allow auto mode");
+  async check(input: OrgSettingsPatch): Promise<void> {
+    const patch = normalizeOrgSettingsPatch(input);
+    // allowing Full where the platform turned it off is wider than the platform allows
+    if (patch.fullAccess === "allowed") {
+      const platform = await readDevicesFullAccess(this.db.db, this.config, this.log);
+      if (platform.permission === "off") {
+        throw autoModeNotAllowed("The platform does not allow Full permission");
       }
     }
   }
@@ -512,17 +545,18 @@ export class OrgSettingsService {
 
   async update(
     orgId: string,
-    patch: OrgSettingsPatch,
+    input: OrgSettingsPatch,
     actorAccountId: string,
     actorTokenId?: string,
     /** Merged into the audit detail (the Platform tool's `via: "agent"`). */
     auditDetail?: Record<string, unknown>,
     /**
-     * `onlyNarrows` (the Platform tool, API tokens): refuse an `autoMode` or `cloudNetwork`
+     * `onlyNarrows` (the Platform tool, API tokens): refuse a `fullAccess` or `cloudNetwork`
      * change that widens (see {@link assertOnlyNarrows}); only a person in a session widens.
      */
     opts?: { onlyNarrows?: boolean },
   ): Promise<OrgSettings> {
+    const patch = normalizeOrgSettingsPatch(input);
     await this.check(patch);
     return this.updateIn(orgId, patch, actorAccountId, actorTokenId, auditDetail, opts);
   }
@@ -530,19 +564,20 @@ export class OrgSettingsService {
   /**
    * Refuses a patch that widens the org's sandbox (auto mode spec §4.3: only a person widens it,
    * never the Platform tool or an API token):
-   * - `autoMode`: `allowed` where the organization runs `off` (an absent value follows the
+   * - `fullAccess`: `allowed` where the organization runs `off` (an absent value follows the
    *   platform); clearing it follows the platform too, never wider than the platform allows;
    * - `cloudNetwork`: compared as stored deltas ({@link cloudNetworkWidens}), never as effective
    *   values: under the kill switch or the platform ceiling the effective values hide a widening
    *   that takes effect when the platform relaxes (org egress ceiling spec §D3).
    */
-  async assertOnlyNarrows(before: OrgSettings, patch: OrgSettingsPatch): Promise<void> {
-    if (patch.autoMode !== undefined) {
-      const platform = await readDevicesAutoMode(this.db.db, this.config, this.log);
-      const next = patch.autoMode === null ? platform.mode : patch.autoMode;
-      if ((before.autoMode ?? platform.mode) !== "allowed" && next === "allowed") {
+  async assertOnlyNarrows(before: OrgSettings, input: OrgSettingsPatch): Promise<void> {
+    const patch = normalizeOrgSettingsPatch(input);
+    if (patch.fullAccess !== undefined) {
+      const platform = await readDevicesFullAccess(this.db.db, this.config, this.log);
+      const next = patch.fullAccess === null ? platform.permission : patch.fullAccess;
+      if ((before.fullAccess ?? platform.permission) !== "allowed" && next === "allowed") {
         throw autoModeNotAllowed(
-          "Turning auto mode on needs a person in the organization settings.",
+          "Allowing Full permission needs a person in the organization settings.",
         );
       }
     }
@@ -567,7 +602,7 @@ export class OrgSettingsService {
     opts: { onlyNarrows?: boolean } | undefined,
   ): Promise<OrgSettings> {
     await this.orgLock.lockAndAuthorize(orgId, actorAccountId, "org.update");
-    if (patch.autoMode !== undefined || patch.cloudNetwork !== undefined)
+    if (patch.fullAccess !== undefined || patch.cloudNetwork !== undefined)
       await this.ceilings.lock({ orgId }, "org");
     const row = await this.db
       .selectFrom("orgs")
@@ -584,7 +619,7 @@ export class OrgSettingsService {
     const changes = Object.fromEntries(
       Object.entries(patch)
         .filter(([, v]) => v !== undefined)
-        // null clears autoMode / cloudNetwork / wakeOnBackgroundTask: follow the deployment again
+        // null clears fullAccess / cloudNetwork / wakeOnBackgroundTask: follow the deployment again
         .map(([k, v]) => [k, v === null ? undefined : v]),
     ) as Partial<OrgSettings>;
     const arrangementPatch = patch.uiArrangement;
@@ -610,7 +645,7 @@ export class OrgSettingsService {
       after.uiArrangement = mergeArrangement(before.uiArrangement, arrangementPatch);
       if (Object.keys(after.uiArrangement).length === 0) delete after.uiArrangement;
     }
-    if (after.autoMode === undefined) delete after.autoMode;
+    if (after.fullAccess === undefined) delete after.fullAccess;
     if (after.cloudNetwork === undefined) delete after.cloudNetwork;
     if (after.wakeOnBackgroundTask === undefined) delete after.wakeOnBackgroundTask;
     if (after.timeZone === undefined) delete after.timeZone;
@@ -628,10 +663,11 @@ export class OrgSettingsService {
     if (patch.theme?.id != null && patch.theme.id !== before.theme?.id) {
       await assertThemeOnIn(this.db.db, orgId, patch.theme.id);
     }
-    // Merge with the stored value: keep the keys this version does not know (a cleared autoMode /
-    // cloudNetwork is not kept)
+    // Merge with the stored value: keep the keys this version does not know (a cleared fullAccess /
+    // cloudNetwork is not kept, nor the old name autoMode)
     const {
-      autoMode: _oldAutoMode,
+      autoMode: _legacyAutoMode,
+      fullAccess: _oldFullAccess,
       cloudNetwork: _oldNetwork,
       wakeOnBackgroundTask: _oldWake,
       timeZone: _oldZone,
@@ -654,12 +690,12 @@ export class OrgSettingsService {
       target: orgId,
       detail: { before, after, ...auditDetail },
     });
-    if (patch.autoMode !== undefined || patch.cloudNetwork !== undefined)
+    if (patch.fullAccess !== undefined || patch.cloudNetwork !== undefined)
       await this.ceilings.publishLocked(
         { orgId },
         "org",
         (scope, row) => {
-          if (needsFullCeiling(scope)) return after.autoMode === "off";
+          if (needsFullCeiling(scope)) return after.fullAccess === "off";
           if (
             !("network" in scope) ||
             !isExecutionMethod(row.method) ||
@@ -673,7 +709,7 @@ export class OrgSettingsService {
               !(this.effectiveNetwork(after).mode === "open" && row.granted_hosts.includes(host)),
           );
         },
-        before.autoMode !== after.autoMode,
+        before.fullAccess !== after.fullAccess,
       );
     return after;
   }

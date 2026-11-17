@@ -110,6 +110,7 @@ export class SandboxOperationAuthority {
     signal.throwIfAborted();
     await this.locks.acquire({ orgId: ctx.orgId, deviceId: ctx.deviceId }, { kind: "admit" });
     await this.publication.assertCurrent();
+    await this.facts.assertCloudReconciled(ctx.orgId, ctx.deviceId);
     const member = await this.db
       .selectFrom("memberships as m")
       .innerJoin("accounts as a", "a.id", "m.account_id")
@@ -354,6 +355,7 @@ export class SandboxOperationAuthority {
     };
     await this.locks.acquire(subject, { kind: "admit" });
     await this.publication.assertCurrent();
+    await this.facts.assertCloudReconciled(ctx.orgId, ctx.deviceId);
     const root = await this.profiles.readOwnedRoot(
       ctx.orgId,
       ctx.holderConversationId,

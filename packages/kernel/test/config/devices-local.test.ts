@@ -21,15 +21,15 @@ describe("devices.local config", () => {
     expect(c.devices.maxPersonal).toBe(10);
   });
 
-  it("devices.autoMode: unset by the config source (the deployment setting / default decides)", () => {
-    // no schema default: readDevicesAutoMode can tell "the source set it" from "it is the default"
-    expect(KernelConfigSchema.parse(base).devices.autoMode).toBeUndefined();
+  it("devices.fullAccess: unset by the config source (the deployment setting / default decides)", () => {
+    // no schema default: readDevicesFullAccess can tell "the source set it" from "it is the default"
+    expect(KernelConfigSchema.parse(base).devices.fullAccess).toBeUndefined();
     expect(
-      KernelConfigSchema.parse({ ...base, devices: { autoMode: "off" } }).devices.autoMode,
+      KernelConfigSchema.parse({ ...base, devices: { fullAccess: "off" } }).devices.fullAccess,
     ).toBe("off");
-    expect(KernelConfigSchema.safeParse({ ...base, devices: { autoMode: "maybe" } }).success).toBe(
-      false,
-    );
+    expect(
+      KernelConfigSchema.safeParse({ ...base, devices: { fullAccess: "maybe" } }).success,
+    ).toBe(false);
   });
 
   it("rejects a lease TTL below 6000 ms", () => {
@@ -62,7 +62,7 @@ describe("devices.local config", () => {
     );
     expect(c.devices.local.reconnectGraceSeconds).toBe(60);
     expect(c.devices.local.pollIntervalSeconds).toBe(5);
-    expect(c.devices.autoMode).toBe("off");
+    expect(c.devices.fullAccess).toBe("off");
   });
 });
 
@@ -74,12 +74,12 @@ describe("removed sandbox keys fail loudly", () => {
     CAPYBARA_MASTER_KEY: base.masterKey,
   };
 
-  it("sandbox.tiers in the loaded config fails, naming devices.autoMode and cloudNetwork", () => {
+  it("sandbox.tiers in the loaded config fails, naming devices.fullAccess and cloudNetwork", () => {
     const run = () =>
       resolveConfig({ ...base, sandbox: { tiers: { max: "open", allowUnsandboxed: false } } }, {});
     expect(run).toThrow(ConfigError);
     expect(run).toThrow(/sandbox\.tiers.*removed/);
-    expect(run).toThrow(/devices\.autoMode/);
+    expect(run).toThrow(/devices\.fullAccess/);
     expect(run).toThrow(/cloudNetwork/);
   });
 
@@ -92,17 +92,17 @@ describe("removed sandbox keys fail loudly", () => {
 
   it("the same keys from the environment fail too", () => {
     expect(() => resolveConfig({}, { ...env, CAPYBARA_SANDBOX__TIERS__MAX: "open" })).toThrow(
-      /sandbox\.tiers.*devices\.autoMode/s,
+      /sandbox\.tiers.*devices\.fullAccess/s,
     );
     expect(() =>
       resolveConfig({}, { ...env, CAPYBARA_SANDBOX__LIMITS__DEV_HOSTS: '["dev.example.com"]' }),
     ).toThrow(/sandbox\.limits\.devHosts/);
   });
 
-  it("sandbox.limits.egress: open fails, naming devices.autoMode and cloudNetwork", () => {
+  it("sandbox.limits.egress: open fails, naming devices.fullAccess and cloudNetwork", () => {
     const run = () => resolveConfig({}, { ...env, CAPYBARA_SANDBOX__LIMITS__EGRESS: "open" });
     expect(run).toThrow(/sandbox\.limits\.egress/);
-    expect(run).toThrow(/devices\.autoMode/);
+    expect(run).toThrow(/devices\.fullAccess/);
     expect(run).toThrow(/cloudNetwork/);
   });
 

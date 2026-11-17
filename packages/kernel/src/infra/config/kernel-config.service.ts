@@ -1,7 +1,7 @@
 import { Inject, Injectable } from "@nestjs/common";
 import { envOverrides } from "../../config/env.js";
 import { changedPaths, configFields, getPath, secretValues, setPath } from "../../config/fields.js";
-import { resolveConfig } from "../../config/load.js";
+import { resolveConfig, translateLegacyPermissionKeys } from "../../config/load.js";
 import { type KernelConfig, KernelConfigSchema } from "../../config/schema.js";
 import { configSourceKind } from "../../config/sources.js";
 import type { KernelLogger } from "../../log.js";
@@ -33,8 +33,8 @@ const HOT_APPLIERS: Record<string, (k: { log: KernelLogger }, value: unknown) =>
   // The command-review service reads the classifier's bounds at every classifier call.
   "sandbox.review.timeoutMs": () => {},
   "sandbox.review.messageTokens": () => {},
-  // The devices service reads the platform's auto-mode switch at every device use and settings read.
-  "devices.autoMode": () => {},
+  // The devices service reads the platform's Full switch at every device use and settings read.
+  "devices.fullAccess": () => {},
   // The devices service reads the personal limit at every create.
   "devices.maxPersonal": () => {},
   // The local device relay reads the reconnect grace at every disconnect and token response.
@@ -124,13 +124,14 @@ export class KernelConfigService {
    * Where the current value of a field without a schema default comes from: `env` when an
    * environment variable sets it, else the config source (`file` / `nacos`) when it is set at all;
    * undefined when nothing sets it (a layer below the startup config decides, e.g. the deployment
-   * settings for `devices.autoMode`). Such fields are read-only in the admin console.
+   * settings for `devices.fullAccess`). Such fields are read-only in the admin console.
    */
   fieldSource(path: string): "env" | "file" | "nacos" | undefined {
     if (getPath(this.current, path) === undefined) return undefined;
     let fromEnv = false;
     try {
-      fromEnv = getPath(envOverrides(this.env), path) !== undefined;
+      fromEnv =
+        getPath(translateLegacyPermissionKeys(envOverrides(this.env), "env"), path) !== undefined;
     } catch {
       // conflicting variables fail the start; a later change here only loses the label
     }
@@ -172,7 +173,7 @@ export class KernelConfigService {
       setPath(updated as unknown as Record<string, unknown>, p, getPath(next, p));
       applied.push(p);
     }
-    if (applied.includes("devices.autoMode")) {
+    if (applied.includes("devices.fullAccess")) {
       if (!publish) {
         log.error("permission config reload rejected: durable publication is required");
         return;

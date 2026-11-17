@@ -299,14 +299,15 @@ it("publishes config by CAS and rejects stale replicas and stale publication ord
     .selectAll()
     .executeTakeFirstOrThrow();
   expect(active).toHaveProperty("projection", {
-    autoMode: { kind: "deployment-setting" },
+    version: 2,
+    fullAccess: { kind: "deployment-setting" },
     egress: config.sandbox.limits.egress,
     orgHosts: config.sandbox.limits.orgHosts,
     allowHosts: [...new Set(config.sandbox.limits.allowHosts)].sort(),
   });
   expect(JSON.stringify(active)).not.toContain(config.masterKey);
   const next = structuredClone(config);
-  next.devices.autoMode = "off";
+  next.devices.fullAccess = "off";
   const i = invocation();
   await pending(i);
   const ready = barrier(),
@@ -340,7 +341,7 @@ it("publishes config by CAS and rejects stale replicas and stale publication ord
   await p2.publish(config, next);
   await expect(p2.assertCurrent()).rejects.toThrow("has not applied");
   const stale = structuredClone(config);
-  stale.devices.autoMode = "allowed";
+  stale.devices.fullAccess = "allowed";
   await expect(p2.publish(config, stale)).rejects.toThrow("changed on another replica");
   const row = await a()
     .db.selectFrom("permission_authority_epochs")
