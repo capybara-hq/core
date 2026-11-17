@@ -1,15 +1,21 @@
 import { randomUUID } from "node:crypto";
+import { once } from "node:events";
 import { type BindInstanceResultV3, DEFAULT_SANDBOX_ROOTS } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from "vitest";
+import { WebSocketServer } from "ws";
 import { KernelConfigSchema } from "../../src/config/schema.js";
 import { kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
+import { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
 import { TransactionHost } from "../../src/infra/database/transaction-host.js";
+import { LockService } from "../../src/infra/lock/lock.service.js";
+import { KERNEL_BUS, REDIS } from "../../src/infra/tokens.js";
 import {
   InstanceBindingError,
   LocalInstanceBindings,
 } from "../../src/local-devices/instance-bindings.js";
+import { LocalDeviceGateway } from "../../src/local-devices/local-device-gateway.js";
 import { MachinesService } from "../../src/local-devices/machines.js";
 import { LocalDeviceRelay } from "../../src/local-devices/relay.js";
 import { createLogger } from "../../src/log.js";
@@ -26,7 +32,7 @@ import { truncateTables } from "../helpers/db.js";
 import { MODEL_PLUGINS_CONFIG } from "../helpers/model-plugins.js";
 import { startKernel, type TestKernel } from "../helpers/runs.js";
 import { seedConversation } from "../helpers/tool-fixtures.js";
-import { stagedHello as fakeHello } from "./fake-machine-v3.js";
+import { FakeMachineV3, stagedHello as fakeHello } from "./fake-machine-v3.js";
 
 let pg: TestContainer, redis: TestContainer, k: TestKernel, raw: ReturnType<typeof createDb>;
 beforeAll(async () => {
@@ -836,4 +842,53 @@ it("a re-login between commit and bind retargets the binding, so a lost answer c
   relay.lose = false;
   await bindings.bind(f.deviceId, AbortSignal.timeout(5000));
   expect((await f.binding(g3))?.status).toBe("installed");
+});
+
+it("binds through the real relay and acceptStaged with a staged fake machine answering", async () => {
+  const f = await localDevice();
+  const g = await f.create();
+  // the real gateway's staged accept for this device; the machine table is a stub
+  const credential = randomUUID();
+  const gateway = new LocalDeviceGateway(
+    {
+      authenticate: async (c: string) =>
+        c === credential
+          ? { deviceId: f.deviceId, machineId: f.machineId, orgId: f.orgId, accountId: f.accountId }
+          : null,
+      recordHello: async () => {},
+      recordPolicy: async () => {},
+      recordHelloV3: async () => {},
+      recordPolicyV3: async () => {},
+      touch: async () => {},
+    },
+    k.app.get(LockService),
+    k.app.get(KERNEL_BUS),
+    k.app.get(REDIS),
+    k.app.get(KernelConfigService),
+    { warn: vi.fn(), info: vi.fn() },
+  );
+  const server = new WebSocketServer({ port: 0, host: "127.0.0.1" });
+  await once(server, "listening");
+  const address = server.address();
+  if (typeof address === "string" || !address) throw new Error("no address");
+  server.on("connection", (socket) => {
+    void gateway.acceptStaged(socket, credential);
+  });
+  // a machine whose hello is bound to nothing yet: bindInstance is answered with the evidence
+  const machine = new FakeMachineV3(`ws://127.0.0.1:${address.port}`, credential);
+  try {
+    await machine.ready;
+    const relay = k.app.get(LocalDeviceRelay);
+    await expect.poll(() => relay.connection(f.deviceId).catch(() => null)).not.toBeNull();
+    const answer = await k.app
+      .get(LocalInstanceBindings)
+      .bind(f.deviceId, AbortSignal.timeout(10_000));
+    expect(answer?.instanceGeneration).toBe(g);
+    expect(await f.binding(g)).toMatchObject({ status: "installed" });
+  } finally {
+    machine.close();
+    for (const c of server.clients) c.terminate();
+    await new Promise<void>((r) => server.close(() => r()));
+    await gateway.stop();
+  }
 });
