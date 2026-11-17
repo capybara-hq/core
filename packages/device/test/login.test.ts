@@ -167,6 +167,15 @@ describe("login", () => {
     }
   });
 
+  it("a new credential resets a lost or corrupt owner-report sequence (B2 I4)", async () => {
+    mkdirSync(stateDir(), { recursive: true });
+    writeFileSync(join(stateDir(), "owner-report.json"), "{ corrupt");
+    tokenAnswers = [granted];
+    expect(await run(["login", "--url", base])).toBe(0);
+    // the new machine row starts a new sequence: the old sidecar is gone
+    expect(existsSync(join(stateDir(), "owner-report.json"))).toBe(false);
+  });
+
   it("stores the deployment's maxFrameBytes", async () => {
     tokenAnswers = [{ status: 200, body: { ...granted.body, maxFrameBytes: 4_194_304 } }];
     expect(await run(["login", "--url", base])).toBe(0);

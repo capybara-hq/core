@@ -37,6 +37,8 @@ export interface CliEnv {
   sandboxAvailable?: () => { ok: true } | { ok: false; reason: string };
   /** Asks one question on the terminal and resolves the answer (default: node:readline). */
   ask?: (question: string) => Promise<string>;
+  /** Test seam for `ceiling set`: runs between its read and its locked write. */
+  beforeCeilingWrite?: () => void;
 }
 
 /** Asks one question on the process's terminal. */
@@ -186,6 +188,7 @@ export async function runCli(argv: string[], io: CliEnv = {}): Promise<number> {
         out,
         err,
         ...((io.stdinIsTTY ?? process.stdin.isTTY === true) && { ask: io.ask ?? askOnTerminal }),
+        ...(io.beforeCeilingWrite && { beforeWrite: io.beforeCeilingWrite }),
       });
     case "service":
       return serviceCommand(cmd.action, {

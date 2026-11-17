@@ -179,5 +179,11 @@ export async function modeCommand(
           "ceiling still applies."
       : "This machine's local policy is now sandbox mode (from the next command).",
   );
+  // the mode sets both owner ceiling fields at once (M2): say so, reach included
+  out(
+    next === "auto"
+      ? "Owner ceiling: Full access allowed, project reach: os-user (see capybara-device ceiling)."
+      : "Owner ceiling: Full access denied, project reach: workspace (see capybara-device ceiling).",
+  );
   return 0;
 }

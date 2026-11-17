@@ -21,7 +21,17 @@ export interface CeilingDeps {
   out: (line: string) => void;
   err: (line: string) => void;
   ask?: (question: string) => Promise<string>;
+  /** Test seam: runs after the unlocked read, before the locked write. */
+  beforeWrite?: () => void;
 }
+
+/** Printed by `show` while the deployment still speaks protocol 2 (M2). */
+export const CEILING_PROTOCOL2_NOTE =
+  "Note: the project reach takes effect only once this program and the deployment use the new " +
+  "device protocol; until then Full access allowed also lets restricted work reach as this OS user.";
+
+/** Thrown inside the locked update when the policy now on disk makes the target a widening. */
+class WideningNeedsConfirmation extends Error {}
 
 const describe = (c: OwnerCeilingPolicy): string[] => [
   `Full access: ${c.fullAccess ? "allowed" : "denied"}`,
@@ -84,15 +94,17 @@ export async function ceilingCommand(
       "The platform and organization Full access settings and this machine's runtime support " +
         "apply separately; the deployment's device page shows the effective permissions.",
     );
+    out(CEILING_PROTOCOL2_NOTE);
     return 0;
   }
   const next: OwnerCeilingPolicy = {
     fullAccess: cmd.fullAccess,
     restrictedProjectReach: cmd.projectReach,
   };
+  let confirmed = cmd.yes === true;
   if (widens(cur.ownerCeiling, next)) {
     out(CEILING_WIDENING_TEXT);
-    if (cmd.yes !== true) {
+    if (!confirmed) {
       if (deps.ask === undefined) {
         err(CEILING_NEEDS_YES);
         return 2;
@@ -102,12 +114,24 @@ export async function ceilingCommand(
         err("Nothing changed.");
         return 1;
       }
+      confirmed = true;
     }
   }
+  deps.beforeWrite?.();
   let written: OwnerCeilingPolicy;
   try {
-    written = store.update((p) => ({ ...p, ownerCeiling: { ...next } })).ownerCeiling;
+    // decided again on the policy under the lock: a narrowing that landed since the read above
+    // makes this a widening, which needs its own confirmation
+    written = store.update((p) => {
+      if (!confirmed && widens(p.ownerCeiling, next)) throw new WideningNeedsConfirmation();
+      return { ...p, ownerCeiling: { ...next } };
+    }).ownerCeiling;
   } catch (e) {
+    if (e instanceof WideningNeedsConfirmation) {
+      out(CEILING_WIDENING_TEXT);
+      err(`The owner ceiling changed meanwhile. ${CEILING_NEEDS_YES}`);
+      return 2;
+    }
     err(`Cannot change ${policyPath(stateDir)}: ${(e as Error).message}`);
     return 1;
   }

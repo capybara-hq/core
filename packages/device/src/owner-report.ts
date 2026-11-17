@@ -1,4 +1,4 @@
-import { closeSync, existsSync, fsyncSync, openSync, readFileSync } from "node:fs";
+import { closeSync, existsSync, fsyncSync, openSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import { type DeviceOwnerCeilingV3, parseOwnerCeilingReportV3 } from "@capybara-hq/plugin-sdk";
 import { readStrictOwnerCeilingSync } from "./exec/operation-types.js";
@@ -26,7 +26,9 @@ function readState(stateDir: string): OwnerReportState | undefined {
   try {
     raw = JSON.parse(readFileSync(file, "utf8"));
   } catch (e) {
-    throw new Error(`${file} is not valid JSON (${(e as Error).message}); log in again to repair`);
+    throw new Error(
+      `${file} is not valid JSON (${(e as Error).message}); run capybara-device login again to reset it`,
+    );
   }
   const o = raw as Record<string, unknown> | null;
   if (
@@ -40,9 +42,28 @@ function readState(stateDir: string): OwnerReportState | undefined {
     typeof o.lastPublishedRevision !== "string" ||
     o.lastPublishedRevision.length === 0
   ) {
-    throw new Error(`${file} is invalid; log in again to repair the owner report sequence`);
+    throw new Error(
+      `${file} is invalid; run capybara-device login again to reset the owner report sequence`,
+    );
   }
   return { sequence: o.sequence, lastPublishedRevision: o.lastPublishedRevision };
+}
+
+/**
+ * Resets the sequence for a new machine credential (`login`), under the policy lock and durably:
+ * the deployment keeps reports per machine credential, so the new one starts a new sequence. This
+ * is the repair of a lost or corrupt sidecar.
+ */
+export function resetOwnerReport(stateDir: string): void {
+  withPolicyLock(stateDir, () => {
+    rmSync(ownerReportPath(stateDir), { force: true });
+    const fd = openSync(stateDir, "r");
+    try {
+      fsyncSync(fd);
+    } finally {
+      closeSync(fd);
+    }
+  });
 }
 
 /** Writes the sidecar durably (atomic rename, then the file and its directory synced). */

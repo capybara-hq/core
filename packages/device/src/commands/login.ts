@@ -5,6 +5,7 @@ import { isAbsolute, resolve } from "node:path";
 import { ApiError, authorize, type FetchFn, programVersion, token } from "../api.js";
 import type { Command } from "../args.js";
 import { prepareDeviceDir } from "../exec/shared.js";
+import { resetOwnerReport } from "../owner-report.js";
 import { hasLoginService } from "../service/installed.js";
 import {
   DEFAULT_MAX_FRAME_BYTES,
@@ -183,6 +184,18 @@ export async function login(
           } catch (e) {
             err(`Cannot read the local policy in ${deps.stateDir}: ${(e as Error).message}`);
           }
+        }
+        // a new credential is a new machine at the deployment: its owner reports start a new
+        // sequence (also repairs a lost or corrupt sidecar)
+        // A failure (the policy lock held) never blocks the login: the deployment then sees an
+        // out-of-order report from this machine and refuses new work until a later login resets it
+        try {
+          resetOwnerReport(deps.stateDir);
+        } catch (e) {
+          err(
+            `Cannot reset the owner report sequence in ${deps.stateDir}: ${(e as Error).message}; ` +
+              "run capybara-device login again once no other capybara-device runs",
+          );
         }
         writeCredential(deps.stateDir, {
           url: baseUrl,

@@ -47,7 +47,10 @@ const report = () =>
     dir: join(root, "device"),
     home: join(root, "home"),
   });
-const cli = async (argv: string[], opts: { tty?: boolean; answer?: string } = {}) => {
+const cli = async (
+  argv: string[],
+  opts: { tty?: boolean; answer?: string; beforeWrite?: () => void } = {},
+) => {
   const out: string[] = [];
   const err: string[] = [];
   const code = await runCli(argv, {
@@ -58,6 +61,7 @@ const cli = async (argv: string[], opts: { tty?: boolean; answer?: string } = {}
     err: (l) => err.push(l),
     stdinIsTTY: opts.tty === true,
     ask: async () => opts.answer ?? "n",
+    ...(opts.beforeWrite && { beforeCeilingWrite: opts.beforeWrite }),
   });
   return { code, out: out.join("\n"), err: err.join("\n") };
 };
@@ -202,6 +206,40 @@ describe("owner report sequence sidecar", () => {
 });
 
 describe("capybara-device ceiling", () => {
+  it("M1: the widening check runs on the locked policy, not an earlier read", async () => {
+    writePolicy(state, {
+      ...DEFAULT_POLICY,
+      ownerCeiling: { fullAccess: true, restrictedProjectReach: "os-user" },
+    });
+    // the narrowing lands after `ceiling set` read the policy but before it writes
+    const r = await cli(
+      ["ceiling", "set", "--full-access", "allow", "--project-reach", "os-user"],
+      {
+        beforeWrite: () =>
+          writePolicy(state, {
+            ...DEFAULT_POLICY,
+            ownerCeiling: { fullAccess: false, restrictedProjectReach: "workspace" },
+          }),
+      },
+    );
+    expect(r.code).toBe(2);
+    expect(readPolicyFile(state).policy.ownerCeiling).toEqual({
+      fullAccess: false,
+      restrictedProjectReach: "workspace",
+    });
+  });
+
+  it("M2: show says the reach is not enforced on protocol 2; mode auto says it sets OS-user reach", async () => {
+    writePolicy(state, {
+      ...DEFAULT_POLICY,
+      ownerCeiling: { fullAccess: true, restrictedProjectReach: "workspace" },
+    });
+    const shown = await cli(["ceiling", "show"]);
+    expect(shown.out).toMatch(/project reach takes effect only/i);
+    const auto = await cli(["mode", "auto", "--yes"]);
+    expect(auto.out).toMatch(/project reach: os-user/i);
+  });
+
   it("shows the owner ceiling and the network baseline separately", async () => {
     writePolicy(state, {
       ...DEFAULT_POLICY,
