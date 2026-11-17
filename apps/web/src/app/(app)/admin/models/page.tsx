@@ -10,7 +10,7 @@ export default async function AdminModelsPage({
   searchParams,
 }: {
   searchParams?: Promise<{ tab?: string | string[]; provider?: string | string[] }>;
-} = {}) {
+}) {
   const sp = await searchParams;
   const first = (v: string | string[] | undefined) => (Array.isArray(v) ? v[0] : v);
   return (

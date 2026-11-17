@@ -8,7 +8,7 @@ import type { ConversationKind, KernelSchemaDb } from "../../db/kernel-schema.js
 import { audit } from "../../identity/audit.js";
 import type { KernelConfigService } from "../../infra/config/kernel-config.service.js";
 import type { ModelPurposesService } from "../../models/purposes.js";
-import { forkAgentUnknownText } from "../../skills/invoke.js";
+import { forkAgentUnknownText, type SkillInvoker } from "../../skills/invoke.js";
 import { SEND_MESSAGE } from "../../tools/builtin-names.js";
 import {
   AGENT_REFUSALS,
@@ -28,12 +28,14 @@ import {
 } from "./definition.js";
 import { subagentLimits } from "./limits.js";
 import { auditRefusal, checkOrgAgent, currentAgentDefinition } from "./org-agents.js";
+import { SUBAGENT_PREAMBLE } from "./preamble.js";
 import {
   findType,
   GENERAL_PURPOSE_DESCRIPTION,
   type RosterEntry,
   resolveRoster,
 } from "./roster.js";
+import { templateSkillMessages } from "./template-skills.js";
 
 export interface DispatchDeps {
   /** The context's handle: inside {@link commitDispatchIn} it is the dispatch's transaction. */
@@ -48,6 +50,8 @@ export interface DispatchDeps {
    */
   owe: (data: RunJobData, jobId: string, kind: ConversationKind, orgId: string) => Promise<boolean>;
   log: Pick<Logger, "error" | "warn">;
+  /** Renders a template's skills into the child's first messages ({@link templateSkillMessages}). */
+  invoker: Pick<SkillInvoker, "renderTask">;
   /**
    * Runs {@link commitDispatchIn} in a transaction of its own (`SubagentsService.commitDispatch`,
    * a `@Transactional` method).
@@ -162,8 +166,8 @@ export interface DispatchPlan {
  * Dispatches the sub-agent of one `Agent` call (spec §7.1, agent map spec §4.1), after the
  * pipeline's validation, policy, approval and `tool.preExecute` stages: resolves its type and
  * effective definition, then in one transaction (holding the parent run's row lock, so the
- * dispatches of one run serialize) inserts the child conversation, appends `subagent_started` and
- * the task message, inserts the child run (`queued`) and the `subagent_dispatches` row, appends
+ * dispatches of one run serialize) inserts the child conversation, appends `subagent_started`,
+ * the task message and the template's skill invocations ({@link templateSkillMessages}), inserts the child run (`queued`) and the `subagent_dispatches` row, appends
  * `subagent_dispatched` and the call's `tool_result` ({@link agentStartedText}: the sub-agent runs
  * in the background) to the parent and audits `subagent.dispatched` and `tool.called`. The child
  * run's job is owed in the same transaction (transactional outbox spec §6), so the committed
@@ -229,6 +233,16 @@ export async function dispatchSubagent(d: DispatchDeps, a: DispatchArgs): Promis
     }
     throw e;
   }
+  // read and rendered before the transaction (object storage): the template's skills as the
+  // child's invocation messages, after its task
+  const loaded = await templateSkillMessages(d, {
+    ctx,
+    child: eff.definition,
+    skills: eff.skills,
+  });
+  // the parent run was stopped: nothing is dispatched (as when the commit finds it not running)
+  if (loaded === null) return refused(AGENT_REFUSALS.notAvailableHere);
+  warnings.push(...loaded.warnings);
   const childId = randomUUID();
   const plan: DispatchPlan = {
     childConversationId: childId,
@@ -285,7 +299,7 @@ export async function dispatchSubagent(d: DispatchDeps, a: DispatchArgs): Promis
                   },
                 },
           definition: eff.definition,
-          preamble: eff.preamble,
+          preamble: SUBAGENT_PREAMBLE,
           maxSteps: eff.maxSteps,
           ...([...eff.warnings, ...warnings].length > 0 && {
             warnings: [...eff.warnings, ...warnings],
@@ -299,6 +313,7 @@ export async function dispatchSubagent(d: DispatchDeps, a: DispatchArgs): Promis
         undefined,
         fork?.skill,
       ),
+      ...loaded.messages,
     ]);
     return task as ConversationEvent;
   });

@@ -82,7 +82,8 @@ Kernel code owes follow-up work (a BullMQ job) by writing an `outbox` row in the
 ```sql
 -- every live, not builtin item whose scope this migration rewrote converges in every org
 INSERT INTO outbox (queue, job_name, job_id, data)
-SELECT 'cap-kernel-plugin-scope', 'scope-item', 'scope-item-' || id || '-' || scope_version,
+-- (one item job per owing transaction: `scopeItemJobId` is scope-item-<itemId>-x<transaction id>)
+SELECT 'cap-kernel-plugin-scope', 'scope-item', 'scope-item-' || id || '-x' || pg_current_xact_id(),
        jsonb_build_object('kind', 'item', 'itemId', id)
 FROM catalog_items
 WHERE deleted_at IS NULL AND builtin = false

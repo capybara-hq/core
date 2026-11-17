@@ -12,18 +12,18 @@ import { OrgsModule } from "../orgs/orgs.module.js";
 import { ProvidersModule } from "../runtime/providers.js";
 import { RunJobsModule } from "../runtime/run-jobs.js";
 import { UsageReportModule } from "../runtime/usage-report.js";
+import { AuditLogService } from "./audit-log.service.js";
 import { AdminHealthService } from "./health.service.js";
 import { OutboxDeadService } from "./outbox-dead.service.js";
 import { AdminOverviewService } from "./overview.service.js";
-import { PlatformAuditService } from "./platform-audit.service.js";
 import { SetupService } from "./setup.service.js";
 import { SetupLockModule } from "./setup-lock.js";
 import { AdminUsageService } from "./usage.service.js";
 
 /**
- * Deployment administration: the setup wizard, the platform-level audit log and the admin overview
- * with its health read, seven-day usage aggregate and dead outbox rows (its controllers are the api
- * role's, `ApiModule`).
+ * Deployment administration: the setup wizard, the audit log reader (the platform's and each
+ * org's) and the admin overview with its health read, seven-day usage aggregate and dead outbox
+ * rows (its controllers are the api role's, `ApiModule`).
  */
 @Module({
   imports: [
@@ -47,7 +47,7 @@ import { AdminUsageService } from "./usage.service.js";
   ],
   providers: [
     SetupService,
-    PlatformAuditService,
+    AuditLogService,
     AdminOverviewService,
     AdminHealthService,
     AdminUsageService,
@@ -55,7 +55,7 @@ import { AdminUsageService } from "./usage.service.js";
   ],
   exports: [
     SetupService,
-    PlatformAuditService,
+    AuditLogService,
     AdminOverviewService,
     AdminHealthService,
     AdminUsageService,

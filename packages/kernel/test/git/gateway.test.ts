@@ -44,7 +44,7 @@ import { testMembers } from "../helpers/members.js";
 import {
   createAgent,
   createConv,
-  createOrg,
+  createOrgWithProviders,
   PW,
   type Req,
   runConfig,
@@ -132,7 +132,7 @@ beforeAll(async () => {
   ownerId = (await accounts.createLocal({ login: "owner", password: PW, displayName: "Owner" })).id;
   aliceId = (await accounts.createLocal({ login: "alice", password: PW, displayName: "Alice" })).id;
   owner = await session(k, "owner");
-  orgId = await createOrg(owner, "Acme");
+  orgId = await createOrgWithProviders(k, owner, "Acme");
   await testMembers(db).add(orgId, aliceId, "member", ownerId);
   agentId = await createAgent(owner, orgId);
 

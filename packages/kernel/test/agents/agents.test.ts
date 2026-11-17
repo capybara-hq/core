@@ -16,7 +16,7 @@ import { truncateTables } from "../helpers/db.js";
 import { accountsFor, orgsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
 import { MODEL_PLUGINS_CONFIG } from "../helpers/model-plugins.js";
-import { startKernel, type TestKernel } from "../helpers/runs.js";
+import { enableExtensions, startKernel, type TestKernel } from "../helpers/runs.js";
 
 let pgc: TestContainer;
 let rd: TestContainer;
@@ -91,6 +91,7 @@ async function orgWith<R extends string>(
 ): Promise<{ orgId: string; owner: Account } & Record<R, Account>> {
   const owner = await account();
   const org = await orgs.create({ name: "Acme", slug: `acme-${n}` }, owner);
+  await enableExtensions(raw, org.id, "model-fake", "model-fake-b");
   const out: Record<string, Account> = {};
   for (const [key, role] of Object.entries(roles) as [R, OrgRole][]) {
     const a = await account();

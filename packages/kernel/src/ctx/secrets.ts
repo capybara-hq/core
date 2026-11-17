@@ -1,6 +1,6 @@
 import { createCipheriv, createDecipheriv, createHash, hkdfSync, randomBytes } from "node:crypto";
 import type { ExtensionContext } from "@capybara-hq/plugin-sdk";
-import type { Kysely } from "kysely";
+import { type Kysely, sql } from "kysely";
 import type { KernelDb } from "../infra/database/kernel-db.js";
 import type { TransactionHost } from "../infra/database/transaction-host.js";
 import { assertNamespace } from "./namespace.js";
@@ -186,41 +186,139 @@ export function createSecrets(db: AnyDb, keyring: Keyring, namespace: string): K
   };
 }
 
+/** What {@link rewrapToCurrentMasterKey} rewrapped. */
+export interface RewrapResult {
+  /** Org data keys (`org_data_keys`) now wrapped with the current master key. */
+  dataKeys: number;
+  /** Unexpired one-time initial passwords (`account_initial_passwords`) now sealed with it. */
+  initialPasswords: number;
+}
+
+/** Rows rewrapped per transaction by default. */
+export const REWRAP_BATCH_SIZE = 500;
+
+/** The AAD binding a sealed initial password to its account (a row moved to another one fails). */
+export const initialPasswordAad = (accountId: string) => `capybara:initial-password:${accountId}`;
+
+type RewrapHandles = { db: Pick<KernelDb, "db">; txHost: Pick<TransactionHost, "run"> };
+
+/** One table whose rows are sealed directly with a master key. */
+interface MasterKeyedTable {
+  table: "org_data_keys" | "account_initial_passwords";
+  /** The row key column; also names the row in errors (an id, never key material). */
+  idColumn: "org_id" | "account_id";
+  dataColumn: "wrapped_key" | "ciphertext";
+  aad(id: string): string;
+  /**
+   * The table has `expires_at`: expired rows are never read again, so they are left to their
+   * cleanup job instead of being rewrapped.
+   */
+  hasExpiresAt: boolean;
+}
+
+const MASTER_KEYED: MasterKeyedTable[] = [
+  {
+    table: "org_data_keys",
+    idColumn: "org_id",
+    dataColumn: "wrapped_key",
+    aad: dekAad,
+    hasExpiresAt: false,
+  },
+  {
+    table: "account_initial_passwords",
+    idColumn: "account_id",
+    dataColumn: "ciphertext",
+    aad: initialPasswordAad,
+    hasExpiresAt: true,
+  },
+];
+
+function staleRows(db: AnyDb, t: MasterKeyedTable, keyring: Keyring) {
+  let q = db
+    .withSchema("capybara")
+    .selectFrom(t.table)
+    .where("master_key_id", "!=", keyring.currentId);
+  if (t.hasExpiresAt) q = q.where("expires_at", ">", sql<Date>`now()`);
+  return q;
+}
+
+function assertKnown(t: MasterKeyedTable, keyring: Keyring, rows: { id: string; mk: string }[]) {
+  const unknown = rows.filter((r) => !keyring.has(r.mk));
+  if (unknown.length === 0) return;
+  const shown = unknown.slice(0, 20).map((r) => `${r.id}(master_key_id=${r.mk})`);
+  throw new Error(
+    `secrets: master key not in keyring for ${t.table}.${t.idColumn}: ${shown.join(", ")}`,
+  );
+}
+
 /**
- * 把非当前主密钥包装的数据密钥改用当前主密钥重新包装，返回处理条数。One transaction over the given
- * handles (`KernelDb` + its `TransactionHost`, as `DatabaseModule` provides them).
+ * Rewraps everything sealed with a master key other than the keyring's current one (org data keys
+ * and unexpired initial passwords) with the current key, `batchSize` rows per transaction, until
+ * none is left. Checks first that the keyring holds every master key in use and throws (naming row
+ * ids and key ids, never key material) before writing anything when it does not. Idempotent: a
+ * second run finds nothing; concurrent runs lock the same rows and skip the ones already done.
  */
-export async function rewrapDataKeys(
-  handles: { db: Pick<KernelDb, "db">; txHost: Pick<TransactionHost, "run"> },
+export async function rewrapToCurrentMasterKey(
+  handles: RewrapHandles,
   keyring: Keyring,
-): Promise<number> {
-  return handles.txHost.run(async () => {
-    const trx: AnyDb = handles.db.db;
-    const rows = await trx
-      .withSchema("capybara")
-      .selectFrom("org_data_keys")
-      .select(["org_id", "wrapped_key", "master_key_id"])
-      .where("master_key_id", "!=", keyring.currentId)
-      .orderBy("org_id")
-      .forUpdate()
+  opts: { batchSize?: number } = {},
+): Promise<RewrapResult> {
+  const batchSize = opts.batchSize ?? REWRAP_BATCH_SIZE;
+  if (!Number.isInteger(batchSize) || batchSize < 1) {
+    throw new RangeError("rewrap batch size must be a positive integer");
+  }
+  const db = (): AnyDb => handles.db.db;
+  for (const t of MASTER_KEYED) {
+    const rows = await staleRows(db(), t, keyring)
+      .select([`${t.idColumn} as id`, "master_key_id as mk"])
+      .orderBy(t.idColumn)
       .execute();
-    const unknown = rows.filter((r) => !keyring.has(r.master_key_id));
-    if (unknown.length > 0) {
-      const shown = unknown
-        .slice(0, 20)
-        .map((r) => `${r.org_id}(master_key_id=${r.master_key_id})`);
-      throw new Error(`secrets: master key not in keyring for org_id: ${shown.join(", ")}`);
+    assertKnown(t, keyring, rows);
+  }
+  const counts = new Map<MasterKeyedTable["table"], number>();
+  for (const t of MASTER_KEYED) {
+    let total = 0;
+    for (;;) {
+      const done = await handles.txHost.run(async () => {
+        const trx = db();
+        const rows: { id: string; mk: string; data: Uint8Array }[] = await staleRows(
+          trx,
+          t,
+          keyring,
+        )
+          .select([`${t.idColumn} as id`, "master_key_id as mk", `${t.dataColumn} as data`])
+          .orderBy(t.idColumn)
+          .limit(batchSize)
+          .forUpdate()
+          .execute();
+        // a row written meanwhile by a replica that runs an older config
+        assertKnown(t, keyring, rows);
+        for (const r of rows) {
+          let plain: Buffer;
+          try {
+            plain = keyring.unwrap(r.mk, Buffer.from(r.data), t.aad(r.id));
+          } catch (e) {
+            const why = e instanceof Error ? e.message : String(e);
+            throw new Error(`secrets: cannot unwrap ${t.table}.${t.idColumn}=${r.id}: ${why}`);
+          }
+          const w = keyring.wrap(plain, t.aad(r.id));
+          plain.fill(0);
+          await trx
+            .withSchema("capybara")
+            .updateTable(t.table)
+            .set({ [t.dataColumn]: w.data, master_key_id: w.masterKeyId })
+            .where(t.idColumn, "=", r.id)
+            .execute();
+        }
+        return rows.length;
+      });
+      total += done;
+      if (done === 0) break;
     }
-    for (const r of rows) {
-      const dek = keyring.unwrap(r.master_key_id, Buffer.from(r.wrapped_key), dekAad(r.org_id));
-      const w = keyring.wrap(dek, dekAad(r.org_id));
-      await trx
-        .withSchema("capybara")
-        .updateTable("org_data_keys")
-        .set({ wrapped_key: w.data, master_key_id: w.masterKeyId })
-        .where("org_id", "=", r.org_id)
-        .execute();
-    }
-    return rows.length;
-  });
+    counts.set(t.table, total);
+  }
+  return {
+    dataKeys: counts.get("org_data_keys") ?? 0,
+    initialPasswords: counts.get("account_initial_passwords") ?? 0,
+  };
 }

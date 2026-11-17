@@ -25,7 +25,7 @@ import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
   createAgent,
   createConv,
-  createOrg,
+  createOrgWithProviders,
   PW,
   type Req,
   runConfig,
@@ -90,7 +90,7 @@ beforeEach(async () => {
   const memberId = (await accounts.createLocal({ login: "mem", password: PW, displayName: "M" }))
     .id;
   admin = await session(k, "admin");
-  orgId = await createOrg(admin);
+  orgId = await createOrgWithProviders(k, admin);
   await testMembers(db).add(orgId, memberId, "member", adminId);
   member = await session(k, "mem");
 });
@@ -313,13 +313,13 @@ describe("上传技能包", () => {
       payload: { name: "big.zip", size: 50 * 1024 * 1024 + 1 },
     });
     expect(big.statusCode).toBe(400);
-    // 对话附件接口不接受 zip
-    const zipChat = await admin({
+    // the chat attachment endpoint refuses a type outside attachments.allowedTypes (zip is one now)
+    const exe = await admin({
       method: "POST",
       url: `/api/v1/orgs/${orgId}/attachments`,
-      payload: { name: "a.zip", contentType: "application/zip", size: 3 },
+      payload: { name: "a.exe", contentType: "application/x-msdownload", size: 3 },
     });
-    expect(zipChat.statusCode).toBe(415);
+    expect(exe.statusCode).toBe(415);
   });
 });
 
@@ -435,7 +435,7 @@ describe("删除与 agent 引用", () => {
     expect(dup.json().agent.definition.disabledSkills).toEqual([{ kind: "skill", skillId: s1 }]);
 
     // another org's skills are not this org's
-    const otherOrg = await createOrg(admin, "Other");
+    const otherOrg = await createOrgWithProviders(k, admin, "Other");
     const foreign = await admin({
       method: "POST",
       url: `/api/v1/orgs/${otherOrg}/agents`,

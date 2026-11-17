@@ -49,7 +49,6 @@ import { WorkerRole } from "../roles/worker-role.js";
 import { UsageReporter } from "../runtime/usage-report.js";
 import { PermissionConfigPublication } from "../sandbox/permission-config-publication.js";
 import { sandboxConfigWarnings } from "../sandbox/sandbox.service.js";
-import { warnLegacyToolKeys } from "../tools/legacy-data.js";
 import { KERNEL_APP_OPTIONS } from "./tokens.js";
 
 /**
@@ -229,12 +228,6 @@ export class KernelLifecycle
         command: `capybara start --activate-permission-config ${publication.activeHash}`,
       });
     this.checkpoint();
-    // Rows still holding a release-candidate tool key that migration 0063 could not map: one
-    // read-only count, a WARN when there are any (tool naming spec §8.2); never blocks the start
-    await warnLegacyToolKeys(this.kdb.db, this.log).catch((e: unknown) =>
-      this.log.warn("tools.legacy_key_count_failed", { error: errMsg(e) }),
-    );
-    this.checkpoint();
     // official 清单来源按配置同步（幂等；每个副本启动时都做）
     await this.marketplaces.syncOfficialFromConfig();
     // The bootstrap plugins (spec §7), once per manifest across replicas (the Redis lock
@@ -292,7 +285,7 @@ export class KernelLifecycle
     // start gate: their timers are armed at application bootstrap, but no tick runs before the
     // worker role opens the start gate here; the runOnStart jobs run then), the gateway role's
     // supervisor and webhook inbound
-    if (worker) await worker.start(() => this.checkpoint());
+    worker?.start();
     if (gateway) await gateway.start(() => this.checkpoint());
     // Routes stay mounted and are resolved live: 503 extension.unavailable after an extension is revoked, back after it reloads (C17)
     this.http.mountPlugins(this.host.routeTable());

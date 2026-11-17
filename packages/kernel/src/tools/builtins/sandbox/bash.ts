@@ -61,9 +61,9 @@ const SPEC: ToolSpec = {
     "filesystem. The working directory is the workspace directory; files persist between calls in the same " +
     "conversation, but background processes may not: when the sandbox is suspended after a period " +
     "without use they can be stopped and the temporary files directory cleared, so keep results in " +
-    "files under the workspace directory. Files the user attached to the conversation are copied to " +
-    "attachments/<conversation>/ in the workspace directory (the result names the paths), " +
-    "and skill files to the skills directory (read-only). Each call runs in a fresh shell (no state such as " +
+    "files under the workspace directory. Files the user attached to the conversation are not in " +
+    "the device until FetchAttachment copies one into the workspace's attachments directory; " +
+    "skill files are in the skills directory (read-only). Each call runs in a fresh shell (no state such as " +
     "cd or environment variables carries over). The result has stdout, stderr and the exit code; " +
     "long output is saved and can be paged with ReadToolOutput. A command that runs longer than " +
     "timeout milliseconds is stopped. Prefer Read, Write, Edit, Glob and " +

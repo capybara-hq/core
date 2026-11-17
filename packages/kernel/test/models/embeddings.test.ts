@@ -14,7 +14,7 @@ import { truncateTables } from "../helpers/db.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
-  createOrg,
+  createOrgWithProviders,
   enableExtensions,
   PW,
   type Req,
@@ -66,7 +66,7 @@ beforeAll(async () => {
   );
   await accountsFor(db).createLocal({ login: "owner", password: PW, displayName: "O" });
   owner = await session(k, "owner");
-  orgId = await createOrg(owner);
+  orgId = await createOrgWithProviders(k, owner);
 });
 
 afterAll(async () => {
@@ -83,7 +83,14 @@ beforeEach(async () => {
   );
   const cached = await redis.keys("cache:capk:model-disabled:*");
   if (cached.length > 0) await redis.del(...cached);
-  await enableExtensions(raw, orgId, "embed-consumer", "usage-b");
+  await enableExtensions(
+    raw,
+    orgId,
+    "embed-consumer",
+    "usage-b",
+    "model-fake",
+    "model-embed-probe",
+  );
   const s = embedProbe();
   s.calls = [];
   s.signals = [];

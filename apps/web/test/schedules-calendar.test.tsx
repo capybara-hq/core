@@ -147,7 +147,9 @@ const ok = (body: unknown) => () => json(200, body);
 
 const routes = (over: Record<string, () => unknown> = {}) => ({
   [`GET ${ORG}/agents`]: ok({ agents: [AGENT] }),
-  [`GET ${ORG}/settings`]: ok({ settings: {} }),
+  [`GET ${ORG}/settings`]: ok({
+    settings: { scheduledTasks: { enabled: true, minIntervalMinutes: 60 } },
+  }),
   [`GET ${BASE}`]: ok({ items: [listTask()] }),
   [`GET ${CAL}`]: ok(ANSWER),
   [`GET ${ORG}/members`]: ok({

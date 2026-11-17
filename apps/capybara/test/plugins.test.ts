@@ -114,7 +114,7 @@ async function query<T>(f: (db: ReturnType<typeof kernelDb>) => Promise<T>): Pro
   }
 }
 
-const LEGACY = /pre-0\.1\.0 package format/;
+const NO_MANIFEST = /plugin\.json not found in the package/;
 
 /**
  * Whether a Redis key exists, in the database of `url` (bare RESP inline commands: the CLI tests
@@ -185,7 +185,7 @@ describe("capybara plugins list / import", () => {
     const item = await query((db) =>
       db
         .selectFrom("catalog_items")
-        .select(["id", "scope_version"])
+        .select("id")
         .where("name", "=", "notes")
         .where("deleted_at", "is", null)
         .executeTakeFirstOrThrow(),
@@ -198,35 +198,30 @@ describe("capybara plugins list / import", () => {
     const r = await run(["plugins", "import", file, "--yes"]);
     expect(r.code, r.stderr).toBe(0);
     expect(r.stdout).toContain("Imported notes 1.3.0");
-    // owed in the outbox, as the admin console's confirm owes it: the job of the item's scope
-    // version (after the deploy) and its backstop (the confirm's commit); no worker runs in this
-    // test, so the rows wait for a relay, and nothing was added to BullMQ directly
-    const owed = await query((db) =>
-      db
-        .selectFrom("outbox")
-        .select(["job_name", "job_id", "data"])
-        .where("queue", "=", "cap-kernel-plugin-scope")
-        .orderBy("job_id")
-        .execute(),
-    );
+    // owed in the outbox by the confirm's commit (no extension to deploy), as the admin console's
+    // confirm owes it; no worker runs in this test, so the row waits for a relay, and nothing was
+    // added to BullMQ directly (earlier imports owed their own items' jobs: only this item's
+    // are checked)
+    const owed = (
+      await query((db) =>
+        db
+          .selectFrom("outbox")
+          .select(["job_name", "job_id", "data"])
+          .where("queue", "=", "cap-kernel-plugin-scope")
+          .orderBy("job_id")
+          .execute(),
+      )
+    ).filter((r) => (r.data as { itemId?: string }).itemId === item.id);
     expect(owed).toEqual([
       {
         job_name: "scope-item",
-        job_id: `scope-item-${item.id}-${item.scope_version}`,
+        job_id: expect.stringMatching(new RegExp(`^scope-item-${item.id}-x\\d+$`)),
         data: { kind: "item", itemId: item.id },
       },
-      {
-        job_name: "scope-item-backstop",
-        job_id: `scope-item-${item.id}-${item.scope_version}-backstop`,
-        data: { kind: "item", itemId: item.id, backstop: true },
-      },
     ]);
-    expect(
-      await redisExists(
-        rd.url,
-        `bull:cap-kernel-plugin-scope:scope-item-${item.id}-${item.scope_version}`,
-      ),
-    ).toBe(false);
+    expect(await redisExists(rd.url, `bull:cap-kernel-plugin-scope:${owed[0]?.job_id}`)).toBe(
+      false,
+    );
   }, 90_000);
 
   it("a template of another connector extension is imported with static checks only", async () => {
@@ -293,24 +288,24 @@ describe("capybara plugins list / import", () => {
     expect(r.stderr).toMatch(/capybara: plugins import failed: .*Object storage is not available/);
   }, 90_000);
 
-  it("a pre-0.1.0 tgz gets the legacy-format message from plugins import", async () => {
+  it("a pre-0.1.0 tgz is refused naming the manifest path from plugins import", async () => {
     for (const appYaml of [false, true]) {
       const file = join(work, `legacy-${appYaml}.tgz`);
       await writeFile(file, await legacyTgz({ appYaml }));
       const r = await run(["plugins", "import", file, "--yes"]);
       expect(r.code).toBe(1);
       expect(r.stderr).toMatch(/^capybara: plugins import failed: /);
-      expect(r.stderr).toMatch(LEGACY);
+      expect(r.stderr).toMatch(NO_MANIFEST);
       expect(r.stderr).not.toContain("    at ");
     }
   }, 90_000);
 
-  it("extensions install: a pre-0.1.0 tgz gets the legacy-format message", async () => {
+  it("extensions install: a pre-0.1.0 tgz is refused naming the manifest path", async () => {
     const file = join(work, "legacy-false.tgz");
     const r = await run(["extensions", "install", file, "--yes"]);
     expect(r.code).toBe(1);
     expect(r.stderr).toMatch(/^capybara: extensions install failed: /);
-    expect(r.stderr).toMatch(LEGACY);
+    expect(r.stderr).toMatch(NO_MANIFEST);
   }, 90_000);
 
   it("extensions install: a declarative plugin is refused with the no-extension message", async () => {

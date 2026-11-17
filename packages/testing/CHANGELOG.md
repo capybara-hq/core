@@ -1,5 +1,106 @@
 # @capybara-hq/testing
 
+## 0.1.0-rc.22
+
+### Patch Changes
+
+- 38dba68: Permission conformance: `SandboxPermissionEndpoint` splits `host` into `name` (the host a scope
+  allowlists, validated with `validateAllowHost`) and `address` (the numeric address raw clients and
+  the pointer race connect to), and `endpoints.access` declares whether allowlisted traffic goes
+  `direct` or through the operation's HTTP `proxy` (positives then use curl and Python through
+  `http_proxy`, ungranted names must be refused by the proxy, and the race targets the proxy).
+  Readiness waits now race the operation that should create the file, so a refused or early-ending
+  operation fails at once with its error. The suite documents that other processes' `/proc/<pid>`
+  cmdline is not covered (a known launcher limitation).
+- Updated dependencies [7c91383]
+  - @capybara-hq/plugin-sdk@0.1.0-rc.28
+  - @capybara-hq/plugin-tools@0.1.0-rc.16
+
+## 0.1.0-rc.21
+
+### Minor Changes
+
+- c122975: `model-provider@1` is removed before 0.1.0 (no plugin provides it): the SDK drops
+  `ModelProviderV1`, `ModelInfoV1`, `ModelRequestV1`, the `@1` constant
+  `MODEL_PROVIDER_EXTENSION_POINT`, the deprecated `ModelInfo.capabilities.effort` and
+  `ModelRequest.effort`; `EXTENSION_POINTS["model-provider"].majors` is `[2]`, so the kernel refuses
+  to load a plugin providing `@1`, and its `@1` adapter is gone. `MODEL_PROVIDER_EXTENSION_POINT_V2`
+  stays the constant to provide. The conformance suite in `@capybara-hq/testing` runs only `@2`
+  targets: `ConformanceTarget` no longer has `contract` (drop `contract: 2`; `plugin` is required).
+  The kernel's model list cache keys no longer carry the contract major.
+- 303e6fb: Add the restricted Linux launcher and syscall broker (`linux-sandbox.py`, Landlock plus a seccomp
+  notification broker) to `SANDBOX_RUNTIME_SOURCE` (version 2). Landlock rules, broker checks and the
+  native helper share the consumer's pinned root descriptors; roots are never reopened by pathname.
+  Its probe reports restricted unavailable on unvalidated architectures (only aarch64 is validated;
+  x86_64 has a reviewed table awaiting real-kernel evidence), Landlock ABI below 6 or a missing seccomp
+  listener. Restricted none/allowlist listens on loopback only; UNIX sockets are stream/seqpacket
+  with pathname connect/bind confined to the write roots in every network kind; a lost supervisor's
+  closed session is ended by the consumer's `reap`. Metadata reads outside the roots stay visible.
+  Shipping the bytes is not a provider claim.
+  
+  Add `runSandboxPermissionConformance` to `@capybara-hq/testing`: an actual-provider permission
+  suite (positive controls, sibling/symlink/protected-path and network denials, Full controls, both
+  overlap orders, component/root swaps, mutable syscall pointers, loopback-only binds, UNIX sockets
+  outside the roots under every network kind, cancellation and narrowed scopes).
+
+### Patch Changes
+
+- d3d179b: Add `enableModelProviders(req, orgId, only?)`: switches the loaded model providers on in an org
+  through its extension switch. A model provider is now on only in the orgs that enabled it, so a
+  plugin's kernel test calls it before saving or running an agent in a new org.
+- Updated dependencies [d522c01]
+- Updated dependencies [c0a1184]
+- Updated dependencies [8f1950d]
+- Updated dependencies [4e871ad]
+- Updated dependencies [e30fef0]
+- Updated dependencies [c122975]
+- Updated dependencies [dbfed21]
+- Updated dependencies [303e6fb]
+- Updated dependencies [874b346]
+- Updated dependencies [4992759]
+- Updated dependencies [9077604]
+- Updated dependencies [3ee2265]
+- Updated dependencies [0543a28]
+- Updated dependencies [09965db]
+- Updated dependencies [a7ce103]
+- Updated dependencies [001648a]
+- Updated dependencies [2882379]
+- Updated dependencies [4c9cc0c]
+- Updated dependencies [8f02aba]
+- Updated dependencies [e6ac5dc]
+- Updated dependencies [5f9a8a8]
+- Updated dependencies [794a77c]
+- Updated dependencies [0a76603]
+- Updated dependencies [3324504]
+- Updated dependencies [154bfef]
+- Updated dependencies [243734a]
+- Updated dependencies [c452bfe]
+  - @capybara-hq/plugin-sdk@0.1.0-rc.27
+  - @capybara-hq/kernel@0.1.0-rc.37
+  - @capybara-hq/plugin-tools@0.1.0-rc.16
+
+## 0.1.0-rc.20
+
+### Minor Changes
+
+- 5408b24: Export an immutable, hashed Python 3 native-file helper source bundle and a fixture-owned ordinary
+  native API conformance harness. The helper preserves read/write/stat/list/scan semantics using
+  supplied pinned root descriptors. Each conformance invocation receives a fresh operation.
+  
+  These exports establish portable native API compatibility only. They do not declare restricted
+  runtime support or provide a Linux launcher, network broker, or full permission conformance suite.
+
+### Patch Changes
+
+- Updated dependencies [c412cf3]
+- Updated dependencies [5408b24]
+- Updated dependencies [fb9afe0]
+- Updated dependencies [5408b24]
+- Updated dependencies [5408b24]
+  - @capybara-hq/kernel@0.1.0-rc.35
+  - @capybara-hq/plugin-sdk@0.1.0-rc.25
+  - @capybara-hq/plugin-tools@0.1.0-rc.15
+
 ## 0.1.0-rc.19
 
 ### Patch Changes

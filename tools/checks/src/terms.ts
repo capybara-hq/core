@@ -147,30 +147,18 @@ export const OLD_REFERENCES: { re: RegExp; what: string; allowedIn?: RuleExempti
   },
   {
     // The builtin tool keys were aligned with Claude Code (tool-naming spec §3.2): the old keys live
-    // only in the frozen map, the legacy-text rewriter, applied migrations, recordings and the tests
-    // of that compatibility. `agent` is an ordinary word and is never matched alone.
+    // only in the migrations that rewrote stored keys and their tests. `agent` is an ordinary word
+    // and is never matched alone.
     re: /\b(?:sandbox_(?:bash|read|write|edit|glob|grep|deliver)|skill_load|skill_write|ask_user|read_tool_output|tool_search)\b/,
     what: "an old builtin tool key (now Bash / Read / Write / Edit / Glob / Grep / Deliver / Skill / AskUserQuestion / ReadToolOutput / ToolSearch)",
     allowedIn: [
       {
-        path: /^packages\/kernel\/src\/tools\/legacy-keys\.ts$/,
-        reason: "the frozen map of the release-candidate builtin names",
+        path: /^packages\/kernel\/src\/migrations\/(?:0063_tool_keys_claude_code|0139_retire_legacy_forms|0144_retire_frozen_definition_keys)\.sql$/,
+        reason: "migrations 0063, 0139 and 0144 map the stored old keys to the new ones",
       },
       {
-        path: /^packages\/kernel\/src\/runtime\/context\/legacy-text\.ts$/,
-        reason: "rebuilds the old model-visible texts of recordings made before the rename",
-      },
-      {
-        path: /^packages\/kernel\/src\/migrations\/0063_tool_keys_claude_code\.sql$/,
-        reason: "migration 0063 maps the stored old keys to the new ones",
-      },
-      {
-        path: /^packages\/kernel\/src\/evals\/run-replay\.ts$/,
-        reason: "a comment naming the old key a recorded call may carry (read as the new one)",
-      },
-      {
-        path: /^packages\/kernel\/test\/evals\/fixtures\//,
-        reason: "recordings made before the rename, kept verbatim for the zero-drift tests",
+        path: /^packages\/kernel\/test\/migrations\/0144\.test\.ts$/,
+        reason: "the test of migration 0144 seeds old keys in frozen definitions",
       },
       {
         path: /^docs\/superpowers\/(?:specs|plans)\//,
@@ -186,12 +174,13 @@ export const OLD_REFERENCES: { re: RegExp; what: string; allowedIn?: RuleExempti
         reason: "changelogs are release history, generated from the reviewed changesets",
       },
       {
-        path: /^packages\/kernel\/test\/tools\/(?:legacy-keys|legacy-data|builtin-names|rename-compat|pipeline|policy|info)\.test\.ts$/,
-        reason: "tests of the old-key compatibility (stored data, in-flight calls, the frozen map)",
+        path: /^packages\/kernel\/test\/tools\/(?:builtin-names|connectors\.http)\.test\.ts$/,
+        reason:
+          "tests of the migrations that rewrote the old keys (connectors.http.test.ts) and that no builtin text names one",
       },
       {
-        path: /^packages\/kernel\/test\/evals\/(?:reconstruct|run-replay)\.test\.ts$/,
-        reason: "replay tests read recordings made with the old keys with zero drift",
+        path: /^packages\/kernel\/test\/evals\/reconstruct\.test\.ts$/,
+        reason: "asserts a rebuilt request's system texts name no old key",
       },
       {
         path: /^packages\/kernel\/test\/runtime\/claude-tools\.test\.ts$/,
@@ -200,10 +189,6 @@ export const OLD_REFERENCES: { re: RegExp; what: string; allowedIn?: RuleExempti
       {
         path: /^(?:apps\/web|packages\/plugin-sdk)\/test\/tool-key\.test\.ts$/,
         reason: "pins that an old key is not a valid or displayable extension tool key",
-      },
-      {
-        path: /^apps\/web\/test\/timeline-rc\.test\.ts$/,
-        reason: "renders a log written with the old keys (the kernel supplies their aliases)",
       },
     ],
   },
@@ -254,12 +239,8 @@ export const OLD_REFERENCES: { re: RegExp; what: string; allowedIn?: RuleExempti
     what: "an old package format name (now .capybara-plugin/plugin.json / marketplace.json)",
     allowedIn: [
       {
-        path: /^packages\/kernel\/src\/(?:catalog\/plugin-package|extensions\/sync|packages\/tgz)\.ts$/,
-        reason: "the legacy-format detector recognises the old formats to refuse them",
-      },
-      {
-        path: /^packages\/kernel\/test\/(?:catalog\/plugin-import|extensions\/(?:admin-approve\.http|installs|package))\.test\.ts$|^packages\/kernel\/test\/helpers\/plugin-packages\.ts$/,
-        reason: "the legacy-format tests build old-format packages and pin the repack message",
+        path: /^packages\/kernel\/test\/(?:catalog\/plugin-import|extensions\/(?:installs|package))\.test\.ts$|^packages\/kernel\/test\/helpers\/plugin-packages\.ts$/,
+        reason: "the tests build old-format packages and pin the missing-manifest message",
       },
       {
         path: /^packages\/kernel\/src\/migrations\/0044_catalog_one_kind\.sql$/,
@@ -338,11 +319,6 @@ export const REFERENCE_EXEMPT_LINES: { path: string; line: RegExp; reason: strin
     line: /^\s*- `terms-super-admin`/,
     reason: "the bullet describing the pattern lists the old super admin names it guards",
   },
-  {
-    path: "docs/deploy/upgrade.md",
-    line: /->/,
-    reason: "the upgrade notes map each old name to its new one",
-  },
 ];
 
 function read(root: string, rel: string): string | undefined {
@@ -413,7 +389,8 @@ function checkErrorCodes(root: string): Finding[] {
 function checkConfigKeys(root: string): Finding[] {
   const rule = "terms-config-key";
   const text = read(root, CONFIG_SCHEMA_FILE);
-  const body = text && objectBody(text, /^export const KernelConfigSchema = z\.object\(\{/);
+  const body =
+    text && objectBody(text, /^export const KernelConfigSchema = z\.(?:strictObject|object)\(\{/);
   if (!body) return [missing(root, CONFIG_SCHEMA_FILE, rule)];
   return body.flatMap((l) => {
     const m = /^ {2}"?([A-Za-z_$][\w$]*)"?\s*:/.exec(l.text);

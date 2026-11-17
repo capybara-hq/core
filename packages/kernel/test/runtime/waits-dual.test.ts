@@ -36,6 +36,8 @@ import {
   createAgent,
   createConv,
   createOrg,
+  createOrgWithProviders,
+  enableExtensions,
   eventsOf,
   gate,
   PW,
@@ -128,6 +130,7 @@ beforeEach(async () => {
 
 async function setup(req: Req): Promise<void> {
   orgId = await createOrg(req);
+  await enableExtensions(raw, orgId, "model-fake");
   const en = await req({
     method: "PUT",
     url: `/api/v1/orgs/${orgId}/extensions/mem-connector`,
@@ -302,7 +305,7 @@ describe("execution claim ownership across replicas", () => {
       displayName: "O",
     });
     const req = await session(k, "owner");
-    const orgId = await createOrg(req);
+    const orgId = await createOrgWithProviders(k, req);
     const enabled = await req({
       method: "PUT",
       url: `/api/v1/orgs/${orgId}/extensions/tools-count`,

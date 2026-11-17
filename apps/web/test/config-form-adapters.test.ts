@@ -272,7 +272,7 @@ describe("the two-level org config adapter", () => {
     expect(overrideValues(v, opened.value, { region: "eu" })).toEqual({ baseUrl: null });
   });
 
-  it("the platform form tags each field with what orgs may do (no tag from an older kernel is hidden)", () => {
+  it("the platform form tags each field with what orgs may do (a field without a tag is hidden)", () => {
     const v: DeploymentConfigView = {
       ...VIEW,
       fields: [

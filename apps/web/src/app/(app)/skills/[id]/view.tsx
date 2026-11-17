@@ -221,9 +221,7 @@ function Facts({ orgId, skill }: { orgId: string; skill: SkillDetail }) {
           { k: t("files"), v: String(skill.versions[0]?.files.length ?? 0) },
           { k: t("updated"), v: <DateTime value={skill.updatedAt} /> },
           // skills default-on spec §10: on for every agent unless one turns it off
-          ...(skill.agentsOff !== undefined
-            ? [{ k: t("agents"), v: t("agentsOff", { n: skill.agentsOff }) }]
-            : []),
+          { k: t("agents"), v: t("agentsOff", { n: skill.agentsOff }) },
         ]}
       />
       {ownSkill(skill) && <ShareSwitch orgId={orgId} skill={skill} />}
@@ -263,7 +261,7 @@ function ShareSwitch({ orgId, skill }: { orgId: string; skill: SkillDetail }) {
     <Stack gap={4}>
       <SwitchField
         label={t("shareable")}
-        checked={skill.shareable === true}
+        checked={skill.shareable}
         onChange={(next) => void toggle(next)}
         disabled={!canUpdateOrg(me) || share.isPending}
       />

@@ -63,14 +63,10 @@ export function useDraftFiles(orgId: string, initial: readonly DraftFile[] = [])
   const t = useTranslations("chat");
   const toast = useToast();
   const errorMessage = useErrorMessage();
-  // Until the limits are read (or when the read failed) the defaults apply; an older kernel
-  // without requestMediaBytes / available gets the defaults for those.
+  // Until the limits are read (or when the read failed) the defaults apply.
   const limitsQ = attachmentLimitsQuery(orgId);
   const read = useQuery({ ...limitsQ, retryOnMount: retryOnMountOf(limitsQ.queryKey) }).data;
-  const limits = useMemo<AttachmentLimits>(
-    () => (read ? { ...DEFAULT_LIMITS, ...read } : DEFAULT_LIMITS),
-    [read],
-  );
+  const limits = useMemo<AttachmentLimits>(() => read ?? DEFAULT_LIMITS, [read]);
   // An upload's answer is the attachment: nothing cached changes.
   const { mutateAsync: upload } = useAppMutation({
     fn: (v: { file: File; signal: AbortSignal; onProgress(p: number): void }) =>
@@ -241,7 +237,9 @@ export function useDraftFiles(orgId: string, initial: readonly DraftFile[] = [])
           other: formatBytes(limits.maxBytes),
         });
       case "attachment.type_not_allowed":
-        return t("fileTypeNotAllowed", { types: typeList(limits.types) });
+        return t("fileTypeNotAllowed", {
+          types: typeList(limits.types, (count) => t("fileTypeMore", { count })),
+        });
       default:
         return errorMessage(f.error);
     }

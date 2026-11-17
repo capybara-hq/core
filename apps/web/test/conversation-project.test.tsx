@@ -80,7 +80,8 @@ const newRoutes = (projects: unknown = projectsOf()) => ({
 const input = (m = en) => screen.getByRole("textbox", { name: m.chat.inputLabel, hidden: true });
 const devicePicker = (m = en) =>
   screen.getByRole("button", { name: new RegExp(`^${m.chat.pickDevice}: `) });
-const createdAt = () => json(201, { ...CONV("c9"), event: userMsg(1, "go") });
+const createdAt = () =>
+  json(201, { ...CONV("c9"), event: userMsg(1, "go"), events: [userMsg(1, "go")] });
 
 beforeEach(() => {
   params.conversationId = "c1";

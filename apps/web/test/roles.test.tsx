@@ -20,6 +20,7 @@ import ExtensionsPage from "../src/app/(app)/extensions/page";
 import PluginEnablePage from "../src/app/(app)/plugins/[itemId]/enable/page";
 import PluginItemPage from "../src/app/(app)/plugins/[itemId]/page";
 import PluginsPage from "../src/app/(app)/plugins/page";
+import OrgAuditPage from "../src/app/(app)/settings/audit/page";
 import MembersPage from "../src/app/(app)/settings/members/page";
 import ModelsSettingsPage from "../src/app/(app)/settings/models/page";
 import OrganizationPage from "../src/app/(app)/settings/organization/page";
@@ -121,7 +122,7 @@ async function runRoutePage(page: RoutePage, me: Me): Promise<{ reads: string[] 
     async (path) => {
       if (path === "/api/v1/me") return reply(200, me);
       if (path === "/api/v1/orgs/o1/readiness")
-        return reply(200, { modelProvider: "ready", agents: 1 });
+        return reply(200, { modelProvider: "ready", orgFixableProviders: [], agents: 1 });
       reads.push(path);
       return reply(404, { error: { code: "not_found", message: "x" } });
     },
@@ -168,7 +169,7 @@ const PAGES: [string, ComponentType | RoutePage, "member" | "admin", string][] =
     zh.roles.need.admin,
   ],
   ["/evals", route("/evals", () => EvalsPage()), "admin", zh.roles.need.admin],
-  ["/evals/new", route("/evals/new", () => NewEvalSetPage()), "admin", zh.roles.need.admin],
+  ["/evals/new", route("/evals/new", () => NewEvalSetPage({})), "admin", zh.roles.need.admin],
   [
     "/evals/s1",
     route("/evals/s1", () => EvalSetPage(params({ setId: "s1" }))),
@@ -195,12 +196,13 @@ const PAGES: [string, ComponentType | RoutePage, "member" | "admin", string][] =
   ],
   [
     "/settings/models",
-    route("/settings/models", () => ModelsSettingsPage()),
+    route("/settings/models", () => ModelsSettingsPage({})),
     "admin",
     zh.roles.need.admin,
   ],
-  ["/extensions", route("/extensions", () => ExtensionsPage()), "member", zh.roles.need.member],
+  ["/extensions", route("/extensions", () => ExtensionsPage({})), "member", zh.roles.need.member],
   ["/settings/tokens", route("/settings/tokens", () => TokensPage()), "admin", zh.roles.need.admin],
+  ["/settings/audit", route("/settings/audit", () => OrgAuditPage()), "admin", zh.roles.need.admin],
   [
     "/settings/organization",
     route("/settings/organization", () => OrganizationPage()),

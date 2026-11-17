@@ -36,7 +36,7 @@ export default defineExtension({
     { id: "slow", title: t("很慢", "Slow"), slot: "conversation.panel", kind: "view" },
     { id: "bad", title: t("非法", "Bad"), slot: "conversation.panel", kind: "view" },
     { id: "orgpage", title: t("组织页", "Org page"), slot: "org.page", kind: "view" },
-    // UI refresh B Task 12: a properties section, an inline card and a retired alias of `panel`
+    // UI refresh B Task 12: a properties section, and an inline card
     {
       id: "side",
       title: t("侧栏", "Side"),
@@ -45,13 +45,6 @@ export default defineExtension({
       icon: "chart",
     },
     { id: "card", title: t("卡片", "Card"), slot: "conversation.tool-result.card", kind: "view" },
-    {
-      id: "old-panel",
-      title: t("旧面板", "Old panel"),
-      slot: "conversation.panel",
-      kind: "view",
-      aliasOf: "panel",
-    },
     { id: "board", title: t("看板", "Board"), slot: "org.page", kind: "embed", path: "/ui/board" },
   ],
   permissions: {
@@ -60,7 +53,7 @@ export default defineExtension({
       { method: "POST", path: "/invalidate", access: "public" },
     ],
     ui: {
-      views: ["panel", "boom", "slow", "bad", "orgpage", "side", "card", "old-panel"],
+      views: ["panel", "boom", "slow", "bad", "orgpage", "side", "card"],
       embeds: ["board"],
     },
     tools: ["probe"],
@@ -126,7 +119,7 @@ export default defineExtension({
             type: "table",
             columns: [{ key: "c", label: "C" }],
             rows: [{ c: "1" }, { c: "2" }],
-            open: [{ contribution: "old-panel" }, { contribution: "card" }],
+            open: [{ contribution: "panel" }, { contribution: "card" }],
           },
         ],
       };

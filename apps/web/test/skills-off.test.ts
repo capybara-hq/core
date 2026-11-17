@@ -18,6 +18,8 @@ const skill = (id: string, name: string, over: Partial<SkillSummary> = {}): Skil
   name,
   description: "",
   currentVersion: 1,
+  origin: "org",
+  shareable: false,
   createdBy: "a1",
   createdAt: "",
   updatedAt: "",

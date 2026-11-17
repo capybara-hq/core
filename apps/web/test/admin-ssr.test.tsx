@@ -250,6 +250,7 @@ const ROUTES: Routes = {
         catalog_request: 0,
         permission_confirmation: 0,
         scope_sync_failed: 1,
+        extension_disabled: 0,
         ownership_transferred: 0,
         org_upload_pending: 0,
       },

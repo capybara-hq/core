@@ -117,6 +117,7 @@ export const APP_PAGES: readonly string[] = [
   "/schedules/[id]",
   "/schedules/new",
   "/settings/appearance",
+  "/settings/audit",
   "/settings/members",
   "/settings/models",
   "/settings/organization",

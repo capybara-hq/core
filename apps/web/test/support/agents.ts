@@ -43,6 +43,7 @@ export function agentFormDefaults(agentId = "ag1"): Routes {
       types: ["image/png"],
       maxBytes: 1,
       imageMaxBytes: 1,
+      extensions: [],
       maxPerMessage: 1,
       requestMediaBytes: 1,
       available: true,

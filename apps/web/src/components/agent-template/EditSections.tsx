@@ -448,7 +448,7 @@ export function ToolsEdit() {
       key: extensionToolKey(e.plugin, x.name),
       label: toolDisplayName(x),
       tooltip: toolTooltip(x),
-      switchedOff: x.switchedOff === true,
+      switchedOff: x.switchedOff,
     })),
   }));
   const listed = new Set<string>([

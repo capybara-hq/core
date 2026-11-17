@@ -1,6 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
-import type { ModelInfo, ModelRequest } from "@capybara-hq/plugin-sdk";
+import {
+  type ModelInfo,
+  type ModelRequest,
+  skillDigest,
+  skillSandboxDir,
+} from "@capybara-hq/plugin-sdk";
 import {
   fakeExtensionEntry,
   startTestPostgres,
@@ -17,7 +22,7 @@ import { createDb } from "../../src/db/pool.js";
 import { reconstructRequest, subagentCaseChanged } from "../../src/evals/reconstruct.js";
 import type { RunReplayResult } from "../../src/evals/run-replay.js";
 import type { EvalResultView, EvalRunView } from "../../src/evals/runs.service.js";
-import type { EvalCaseDetail, EvalSetView } from "../../src/evals/sets.service.js";
+import { caseTitle, type EvalCaseDetail, type EvalSetView } from "../../src/evals/sets.service.js";
 import {
   type CaseSnapshot,
   readSnapshot,
@@ -29,17 +34,18 @@ import { BEHAVIOR_RULES } from "../../src/runtime/context/build.js";
 import { ProviderRegistry } from "../../src/runtime/providers.js";
 import { SubagentMessages } from "../../src/runtime/subagents/messages.js";
 import { SUBAGENT_PREAMBLE } from "../../src/runtime/subagents/preamble.js";
+import { templateSkillLeadText } from "../../src/runtime/subagents/template-skills.js";
 import { StorageService } from "../../src/storage/storage.service.js";
 import { type ScriptRule, scriptRules } from "../fixtures/plugins/model-script/index.js";
 import { builtinsOff, onlyBuiltins } from "../helpers/disabled-tools.js";
-import { seedForkedSkill } from "../helpers/forked-skills.js";
+import { seedForkedSkill, writeForkedSkillFiles } from "../helpers/forked-skills.js";
 import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { captureProviderRequests } from "../helpers/provider-capture.js";
 import {
   createConv,
-  createOrg,
+  createOrgWithProviders,
   eventsOf,
   PW,
   postMessage,
@@ -186,7 +192,7 @@ beforeAll(async () => {
     .id;
   owner = await session(k, "owner");
   other = await session(k, "other");
-  orgId = await createOrg(owner);
+  orgId = await createOrgWithProviders(k, owner);
   await testMembers(db).add(orgId, otherId, "member", ownerId);
   const res = await owner({
     method: "POST",
@@ -405,9 +411,16 @@ describe("child cases", () => {
     expect(checked).toBe(4);
   });
 
-  it("an inline child told to load its template's skills: the line is in the logged preamble, and its steps replay with zero drift", async () => {
-    // an org skill (rows only: the catalog reads the manifest, never the body)
+  it("an inline child starts with its template's skills as logged invocation messages, and its steps replay with zero drift", async () => {
+    // an org skill, model-invocable, its SKILL.md and one script in object storage
     const skillId = randomUUID();
+    const { prefix, manifest } = await writeForkedSkillFiles(
+      { storage: k.app.get(StorageService), orgId },
+      "alpha-notes",
+      "Write notes in alpha order.",
+      undefined,
+      { "sort.sh": "sort" },
+    );
     await db
       .insertInto("skills")
       .values({
@@ -426,11 +439,11 @@ describe("child cases", () => {
         skill_id: skillId,
         version: 1,
         manifest: JSON.stringify({
-          name: "alpha-notes",
+          ...manifest,
           description: "Use for alpha notes.",
-          files: [{ path: "SKILL.md", size: 10, sha256: "0".repeat(64) }],
+          invocation: { model: true, user: true },
         }),
-        object_prefix: `skills/${skillId}/`,
+        object_prefix: prefix,
         created_by: ownerId,
       })
       .execute();
@@ -456,7 +469,7 @@ describe("child cases", () => {
     const agentId = (created.json() as { agent: { id: string } }).agent.id;
     scriptRules([
       {
-        when: { systemIncludes: "load these skills with Skill", assistantTurns: 0 },
+        when: { lastUserIncludes: '<skill_invocation name="alpha-notes"', assistantTurns: 0 },
         reply: { text: "noted" },
       },
       {
@@ -497,22 +510,49 @@ describe("child cases", () => {
     const [kidRun] = await runsOf(db, kid.id);
     const snap = await snapshotOf(kid.id, (kidRun as { id: string }).id);
     const started = ofType(toEvents(snap), "subagent_started")[0] as Ev<"subagent_started">;
-    const preamble = `${SUBAGENT_PREAMBLE}\n\nBefore you start, load these skills with Skill: alpha-notes.`;
+    // no "load these skills" line any more: the preamble is the plain one
+    const preamble = SUBAGENT_PREAMBLE;
     expect(started.payload.preamble).toBe(preamble);
     expect(started.payload.warnings).toBeUndefined();
     expect(snap.subagent?.preamble).toBe(preamble);
+    // the task, then the skill's invocation message (the version's record and its rendered text)
+    const messages = ofType(toEvents(snap), "user_message");
+    expect(messages).toHaveLength(2);
+    expect(messages[0]?.payload.dispatch).toBeDefined();
+    expect(messages[0]?.payload.skill).toBeUndefined();
+    const invoked = messages[1] as Ev<"user_message">;
+    expect(invoked.payload.dispatch).toBeUndefined();
+    expect(invoked.payload.skill).toEqual({
+      id: skillId,
+      version: 1,
+      source: prefix,
+      name: "alpha-notes",
+      arguments: "",
+      mode: "inline",
+      template: true,
+    });
+    const text = (invoked.payload.content[0] as { text: string }).text;
+    expect(text).toBe(
+      `${templateSkillLeadText("alpha-notes")}\n\n` +
+        `<skill_invocation name="alpha-notes" version="1">\nWrite notes in alpha order.\n</skill_invocation>\n\n` +
+        `Its files are not in the sandbox yet: call Skill with "alpha-notes" to copy them to ${skillSandboxDir("alpha-notes", skillDigest(manifest.files))}/ before running its scripts.`,
+    );
+    // the child's case is titled by its task, not by the skill message
+    expect(caseTitle(snap)).toBe("take notes");
     const calls = ofType(toEvents(snap), "model_call");
     expect(calls).toHaveLength(1);
     const info = await modelInfo();
     for (const c of calls) {
       const out = reconstructRequest(snap, c.seq, { model: info });
       expect(out.drift).toEqual([]);
-      // rules, preamble with the line, the template's instructions, then the catalog
+      // rules, the plain preamble, the template's instructions, then the catalog
       expect(
         out.request.system[0]?.text.startsWith(`${BEHAVIOR_RULES}\n\n${preamble}\n\nNote.\n\n`),
       ).toBe(true);
       expect(out.request.system[0]?.text).toContain("- alpha-notes: Use for alpha notes.");
       expect(sent).toContainEqual(out.request);
+      // the skill's instructions are in the first request, no Skill call was needed
+      expect(JSON.stringify(out.request.messages)).toContain("Write notes in alpha order.");
     }
   });
 
@@ -824,28 +864,6 @@ describe("candidates on child cases (batch 13 review I1, m1)", () => {
     expect(at({ disabledSkills: [{ kind: "skill", skillId: "sk-1" }] })).toEqual([
       "subagent_changed",
     ]);
-  });
-
-  it("a logged child definition that pinned skills is a sub-agent change for any candidate", async () => {
-    const child = await fourthChild();
-    const info = await modelInfo();
-    const call = ofType(toEvents(child.snap), "model_call").at(-1) as Ev<"model_call">;
-    const s = structuredClone(child.snap);
-    const ev = s.events.find((e) => e.type === "subagent_started") as { payload: unknown };
-    const started = ev.payload as EventPayload<"subagent_started">;
-    // a child dispatched before skills were on by default (skills default-on spec §9)
-    started.definition = {
-      ...started.definition,
-      skills: { orgSkills: [], pinned: ["sk-1"] },
-    } as typeof started.definition;
-    expect(reconstructRequest(s, call.seq, { model: info }).drift).toEqual([]);
-    const logged = s.subagent?.definition as ReturnType<typeof normalizeStoredDefinition>;
-    expect(
-      reconstructRequest(s, call.seq, { model: info, params: { effort: "high" } }).drift,
-    ).toEqual(["subagent_changed"]);
-    expect(
-      subagentCaseChanged(s, { changed: true, definition: logged, agentVersion: s.agentVersion }),
-    ).toBe(true);
   });
 
   it("the same version with other turned-off skills is a sub-agent change", async () => {

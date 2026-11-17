@@ -26,7 +26,7 @@ import { truncateTables } from "../helpers/db.js";
 import { onlyBuiltins } from "../helpers/disabled-tools.js";
 import { accountsFor, orgsFor } from "../helpers/identity.js";
 import { MODEL_PLUGINS_CONFIG } from "../helpers/model-plugins.js";
-import { startKernel, type TestKernel } from "../helpers/runs.js";
+import { enableModelProviders, startKernel, type TestKernel } from "../helpers/runs.js";
 
 /** The `agent` builtin tool: spec, description, results and refusals (sub-agents spec §4). */
 
@@ -420,6 +420,7 @@ describe("tool resolution", () => {
       displayName: "O",
     });
     orgId = (await orgsFor(db).create({ name: "Acme", slug: `acme-${n}` }, owner)).id;
+    await enableModelProviders(k, orgId);
   });
 
   const def = (over: Record<string, unknown> = {}): AgentDefinition =>

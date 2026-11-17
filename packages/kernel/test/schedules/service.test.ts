@@ -10,7 +10,10 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { ApiError } from "../../src/errors.js";
-import { OrgSettingsService } from "../../src/orgs/settings.service.js";
+import {
+  FORBIDDEN_TOOLS_UNREADABLE_GRANT_ERROR,
+  OrgSettingsService,
+} from "../../src/orgs/settings.service.js";
 import { nextTick } from "../../src/schedules/schedule-math.js";
 import {
   type CreateTaskInput,
@@ -28,7 +31,7 @@ import { testMembers } from "../helpers/members.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
   createConv,
-  createOrg,
+  createOrgWithProviders,
   enableExtensions,
   PW,
   type Req,
@@ -93,7 +96,7 @@ beforeEach(async () => {
   bobId = await mk("bob");
   guestId = await mk("guest");
   const owner = await session(k, "owner");
-  orgId = await createOrg(owner);
+  orgId = await createOrgWithProviders(k, owner);
   await testMembers(db).add(orgId, adminId, "admin", ownerId);
   await testMembers(db).add(orgId, aliceId, "member", ownerId);
   await testMembers(db).add(orgId, bobId, "member", ownerId);
@@ -371,6 +374,24 @@ describe("ScheduledTasksService", () => {
     expect((await svc.create(orgId, aliceId, group("grp"))).chat?.chatType).toBe("group");
     // a DM chat type does not accept a group's thread row
     expect(await codeOf(svc.create(orgId, aliceId, dm("grp")))).toBe("schedule.target_invalid");
+  });
+
+  it("refuses every new grant while the org's forbidden list is unreadable", async () => {
+    const t = await svc.create(orgId, aliceId, daily());
+    await sql`UPDATE capybara.orgs SET settings = jsonb_set(settings, '{scheduledTasks}', '{"forbiddenTools": 7}'::jsonb)
+      WHERE id = ${orgId}`.execute(raw);
+    try {
+      const refused = await svc
+        .addGrants(orgId, aliceId, t.id, [{ toolKey: "AskUserQuestion" }])
+        .catch((e: unknown) => e);
+      expect(refused).toMatchObject({
+        code: "schedule.grant_not_allowed",
+        message: FORBIDDEN_TOOLS_UNREADABLE_GRANT_ERROR,
+      });
+      expect(await svc.grants(orgId, me(aliceId), t.id)).toEqual([]);
+    } finally {
+      await setSchedules({ forbiddenTools: [] });
+    }
   });
 
   it("refuses a forbidden or role-escalated tool as a grant", async () => {

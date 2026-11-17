@@ -9,7 +9,6 @@ import {
 } from "../attribution/platform-attribution.js";
 import { EventLog } from "../conversations/event-log.js";
 import type { ConversationEvent } from "../conversations/events.js";
-import { latestWebLocale } from "../conversations/message-context.js";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
@@ -140,15 +139,14 @@ export class RunContextService {
       .executeTakeFirst();
     const settings = await readOrgSettings(t, input.orgId);
     // the person whose message started the run: the latest message at or before the trigger (a
-    // wake run has no message of its own). New messages record the zone and language used at send
-    // time (IM-provided, account, browser, web language, org: message-context.ts); a message
-    // without them (older logs) falls back to the author's own settings, then the org's (§3.4).
+    // wake run has no message of its own). Messages record the zone and language used at send time
+    // (IM-provided, account, browser, web language, org: message-context.ts); without a message,
+    // the org's (§3.4).
     const person = await t
       .selectFrom("conversation_events")
       .select([
         sql<string | null>`payload->>'timeZone'`.as("timeZone"),
         sql<string | null>`payload->>'locale'`.as("locale"),
-        sql<string | null>`payload->>'authorAccountId'`.as("author"),
       ])
       .where("conversation_id", "=", input.conversationId)
       .where("type", "=", "user_message")
@@ -156,24 +154,12 @@ export class RunContextService {
       .orderBy("seq", "desc")
       .limit(1)
       .executeTakeFirst();
-    const author = person?.author ?? null;
-    let zone: string | undefined =
-      person?.timeZone != null && isTimeZone(person.timeZone) ? person.timeZone : undefined;
-    if (zone === undefined && author !== null) {
-      const own = await t
-        .selectFrom("accounts")
-        .select("time_zone")
-        .where("id", "=", author)
-        .executeTakeFirst();
-      if (own?.time_zone != null && isTimeZone(own.time_zone)) zone = own.time_zone;
-    }
-    zone ??= settings.timeZone ?? "UTC";
-    let locale: "zh" | "en" | undefined =
-      person?.locale === "zh" || person?.locale === "en" ? person.locale : undefined;
-    if (locale === undefined && author !== null) {
-      locale = await latestWebLocale(t, input.orgId, author);
-    }
-    locale ??= settings.locale;
+    const zone =
+      person?.timeZone != null && isTimeZone(person.timeZone)
+        ? person.timeZone
+        : (settings.timeZone ?? "UTC");
+    const locale: "zh" | "en" =
+      person?.locale === "zh" || person?.locale === "en" ? person.locale : settings.locale;
     const description = snapshotDescription(input.agent.description);
     return {
       agent: { name: input.agent.name, ...(description !== undefined && { description }) },

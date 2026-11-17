@@ -1,5 +1,82 @@
 # @capybara-hq/web
 
+## 0.1.0-rc.42
+
+### Patch Changes
+
+- 6d39796: One place to set up a model: the setup checklist, the run row's fix entry and the models pages lead
+  to `/admin/models` (super admins: the platform's model services with their deployment config in a
+  Sheet, and the marketplace's model services not installed yet with 安装) or `/settings/models` (org
+  admins: the model services offered to the org with 启用 and 配置 inline). While the platform has a
+  provider the org can turn on or configure (readiness `org_fixable`), the setup step and the page
+  guide the org admins (a super admin too, when one of them) to Settings → Models instead of the admin
+  console; members wait for an org admin.
+- 2882379: An outbox job id reused with different data now fails the caller's transaction in every
+  environment, and the dead-letter list pages by `(dead_at, id)` with `next` while retry and discard
+  take the super admin lock.
+
+## 0.1.0-rc.41
+
+### Patch Changes
+
+- 3385a6d: Chat attachments accept mainstream office documents, archives and source files by extension
+  (`attachments.allowedExtensions`, about ninety defaults), because their content types disagree between
+  browsers and systems — an `html`, `py`, `ts` or legacy `doc` file could not be attached before. The
+  composer's picker offers the extensions and the refusal names them beside the media types.
+
+## 0.1.0-rc.40
+
+### Patch Changes
+
+- 6f7f0dc: The image zoom says so when the image cannot be loaded, with a retry (a session refresh, then the
+  attachment URL with its retry token); a new source clears the failure, and the retry disappears once
+  the one reload has been used.
+- Updated dependencies [6f7f0dc]
+  - @capybara-hq/design@0.2.0-rc.11
+
+## 0.1.0-rc.39
+
+No changes in this release.
+
+## 0.1.0-rc.38
+
+### Patch Changes
+
+- 31b5355: Clicking an image attachment zooms in the page with a download action instead of opening a tab.
+- 9d98a0e: Keep a running tool row's elapsed time on one line (§6.16.9): beside a long description, such as a
+  command review's reason, the label now yields with its ellipsis and 「6 秒」 is no longer squeezed
+  into one character per line. The live timer is a status like the waiting word beside it: `flex:
+  none`, `nowrap`.
+- Updated dependencies [31b5355]
+- Updated dependencies [9d98a0e]
+  - @capybara-hq/design@0.2.0-rc.10
+
+## 0.1.0-rc.37
+
+### Patch Changes
+
+- d9636b0: Setup checklist: when the platform offers a model provider the org can switch on or configure
+  (the preinstalled providers are opt-in per org), org admins and super admins go to the org's
+  extensions page (model tab) instead of being told to wait for a super admin; readiness gains
+  `orgCanAddModel`.
+
+## 0.1.0-rc.36
+
+### Patch Changes
+
+- ae01833: Keep IM binding confirmation and cancel disabled until their browser handlers are ready after sign-in.
+- 62d792f: Unify project-context warnings with expandable run details and mark unavailable projects in the composer. Provide device and new free-conversation links without changing the existing project binding.
+  
+  Keep tool approval status on one line when a long command description competes for space.
+  
+  Keep long project paths within phone widths and scroll to project details after their layout settles.
+- 50eaf97: Use Webpack in the development web server to avoid repeated Turbopack HMR reloads.
+  Preserve design cascade layers when expanding stylesheet imports for Webpack development.
+  Make the HTTP login notice conditional on sign-in problems because the browser origin does not
+  reveal the server's cookie settings.
+- Updated dependencies [62d792f]
+  - @capybara-hq/design@0.2.0-rc.9
+
 ## 0.1.0-rc.35
 
 No changes in this release.

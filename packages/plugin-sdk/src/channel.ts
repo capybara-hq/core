@@ -2,9 +2,12 @@ import type { ZodTypeAny } from "zod";
 import type { CardAction, Locale, OutboundMessage } from "./cards.js";
 
 /**
- * 消息的投递目标。群聊里的 `threadId` 是话题**根消息的 `messageId`**（内核用它把同一话题归到一个会话，
- * 回复也投到这个话题）：Slack 为插件所定义的根消息 `messageId`（如 `<频道>:<ts>`，ts 即回复的
- * `thread_ts`）；飞书为根消息的 `message_id`（`root_id`，`om_…`），**不是** `thread_id`（`omt_…`）。私聊不带。
+ * The delivery target of a message. In a group chat `threadId` is the **`messageId` of the thread's
+ * root message** (the kernel uses it to map one thread to one conversation,
+ * and replies are delivered to this thread): for Slack it is the root message `messageId` as the
+ * plugin defines it (e.g. `<channel>:<ts>`, where ts is the reply's
+ * `thread_ts`); for Lark it is the root message's `message_id` (`root_id`, `om_…`), **not**
+ * `thread_id` (`omt_…`). Absent in direct messages.
  */
 export interface ChannelTarget {
   chatId: string;
@@ -13,10 +16,14 @@ export interface ChannelTarget {
 }
 
 /**
- * 入站事件的发言人 / 点击者。`tenantId` 为发言人所属企业：Slack 为 team id（Enterprise Grid 下是 team，
- * 不是 enterprise），飞书为 `tenant_key`；与连接的租户（`verify` 返回的 `tenantId`，同一口径）不同的人
- * （外部联系人、共享频道里的其他企业）内核只允许绑定，不按匿名访客处理。`displayName`、`avatarUrl` 为平台上的
- * 显示名与头像（拿得到就带）：内核把显示名用在绑定确认页（没有时回落到 externalId）。
+ * The speaker / clicker of an inbound event. `tenantId` is the tenant (company) the speaker belongs
+ * to: for Slack the team id (under Enterprise Grid it is the team,
+ * not the Grid organization), for Lark `tenant_key`; a person whose tenant differs from the
+ * connection's tenant (the `tenantId` returned by `verify`, same convention)
+ * (an external contact, another company in a shared channel) can only be bound by the kernel, never
+ * treated as an anonymous guest. `displayName` and `avatarUrl` are the display name and avatar
+ * on the platform (include them when available): the kernel uses the display name on the binding
+ * confirmation page (falling back to externalId when absent).
  */
 export interface InboundSender {
   externalId: string;
@@ -41,14 +48,19 @@ export interface InboundSender {
 }
 
 /**
- * 渠道交给内核的入站事件。插件的约定：
- * - `message.messageId` 在本连接内唯一（内核按它去重）；
- * - M4 只处理文本：附件、图片、文件等忽略（消息只有附件时不发事件）；
- * - 用户编辑、撤回 / 删除消息不发事件（忽略）；
- * - `text` 里去掉 @ 机器人的部分（`mentionsBot` 另行说明是否 @ 了机器人）；
- * - `card_action`：`messageId` 为卡片所在消息的 id（同一张卡片的多次点击相同）；`eventId` 为平台给这次点击的
- *   唯一 id（拿得到就带，本连接内唯一：内核按它去重平台重投）；群聊里 `target.threadId` 拿得到就带，
- *   拿不到时内核取发出该卡片时记下的话题。
+ * An inbound event a channel hands to the kernel. The plugin's conventions:
+ * - `message.messageId` is unique within this connection (the kernel deduplicates by it);
+ * - M4 handles text only: attachments, images, files and the like are ignored (a message with
+ *   only attachments emits no event);
+ * - user edits and message recalls / deletions emit no event (ignored);
+ * - the part of `text` that @-mentions the bot is removed (`mentionsBot` states separately
+ *   whether the bot was @-mentioned);
+ * - `card_action`: `messageId` is the id of the message holding the card (the same for repeated
+ *   clicks on one card); `eventId` is the platform's
+ *   unique id for this click (include it when available; unique within this connection: the kernel
+ * deduplicates platform redeliveries by it); in a group chat include `target.threadId` when
+ * available,
+ *   otherwise the kernel uses the thread recorded when it sent the card.
  */
 export type InboundEvent =
   | {
@@ -63,24 +75,32 @@ export type InboundEvent =
       type: "card_action";
       target: ChannelTarget;
       messageId: string;
-      /** 平台给这次点击的唯一 id（如飞书回调的 event_id、Slack 的 trigger / action 时间戳组合）。 */
+      /**
+       * The platform's unique id for this click (e.g. the event_id of a Lark callback, or a
+       * combination of Slack's trigger / action timestamps).
+       */
       eventId?: string;
       sender: InboundSender;
       action: CardAction;
     }
-  /** 平台推送人员变动的提示，内核据此触发通讯录同步。 */
+  /** The platform pushes a personnel change hint; the kernel triggers a directory sync from it. */
   | { type: "directory_changed"; tenantId: string };
 
 export interface ChannelConnectArgs {
   connectionId: string;
-  /** 已按 connectionSchema 校验，含密钥。 */
+  /** Already validated against connectionSchema, secrets included. */
   config: unknown;
   /**
-   * 把入站事件交给内核。内核只做去重并把事件持久地排进队列（很快，不在这里处理消息），resolve 即表示内核已经
-   * 可靠地收下了这条事件：插件**在它 resolve 之后**才向平台确认（ack）；reject 时**不要**确认，让平台重投；
-   * 插件自己不必重试 `onEvent`。去重范围：`message` 按 `messageId`、带 `eventId` 的 `card_action` 按 `eventId`
-   * （各保留 24 小时）——重投只处理一次；不带 `eventId` 的 `card_action` 不去重（每次都处理，重复的审批 /
-   * 回答由内核回「已处理」）；`directory_changed` 不去重（同步任务本身按分钟合并）。
+   * Hands an inbound event to the kernel. The kernel only deduplicates and durably enqueues the
+   * event (fast; it does not process the message here); resolving means the kernel has
+   * reliably received the event: the plugin acknowledges (acks) to the platform **only after it
+   * resolves**; on reject **do not** acknowledge, so the platform redelivers;
+   * the plugin need not retry `onEvent` itself. Deduplication scope: `message` by `messageId`, a
+   * `card_action` with `eventId` by `eventId`
+   * (each kept for 24 hours), so a redelivery is processed once; a `card_action` without `eventId`
+   * is not deduplicated (processed every time; a repeated approval /
+   * answer gets an "already handled" reply from the kernel); `directory_changed` is not
+   * deduplicated (the sync task itself coalesces per minute).
    */
   onEvent(e: InboundEvent): Promise<void>;
   signal: AbortSignal;
@@ -90,8 +110,9 @@ export interface ChannelSendArgs {
   config: unknown;
   target: ChannelTarget;
   /**
-   * 消息内容。`text` 超过平台单条长度上限时由插件自行拆成多条按序发送，返回**最后一条**的消息 id
-   * （内核之后编辑的是这条）。
+   * The message content. When `text` exceeds the platform's per-message length limit the plugin
+   * splits it into several messages sent in order and returns the id of the **last one**
+   * (the kernel edits that one afterwards).
    */
   message: OutboundMessage;
   signal: AbortSignal;
@@ -102,9 +123,13 @@ export interface ChannelSendArgs {
    */
   locale: Locale;
   /**
-   * 幂等键（可选）：不超过 40 个 `[A-Za-z0-9_-]` 字符，同一条逻辑消息的每次重试（崩溃后其他副本续投、
-   * 可重试失败后重发）都相同——内核由「会话 + 事件 seq」或「卡片 + 状态」稳定哈希得到。平台支持幂等发送
-   * （如飞书的 `uuid`）时插件应原样透传或按平台要求映射，以免重复消息；不支持的平台忽略即可。
+   * Idempotency key (optional): at most 40 characters from `[A-Za-z0-9_-]`, identical for every
+   * retry of the same logical message (another replica continuing after a crash,
+   * a resend after a retryable failure); the kernel derives it as a stable hash of "conversation +
+   * event seq" or "card + state".
+   * When the platform supports idempotent sends (e.g. Lark's `uuid`) the plugin should pass it
+   * through unchanged or map it as the platform requires, to avoid duplicate messages; platforms
+   * without support can ignore it.
    */
   idempotencyKey?: string;
 }
@@ -179,27 +204,36 @@ export interface ChannelWebhook {
   }): Promise<ChannelWebhookResult>;
 }
 
-/** 渠道实现（bot 用渠道连接配置）。 */
+/** A channel implementation (the bot uses the channel connection config). */
 export interface Channel {
-  /** 渠道连接配置的 schema；密钥字段用 secret()。 */
+  /** Schema of the channel connection config; secret fields use secret(). */
   connectionSchema: ZodTypeAny;
   /**
-   * `minEditIntervalMs`：平台允许的同一条消息两次编辑的最小间隔；内核流式草稿的更新间隔取
-   * `max(1000, minEditIntervalMs)`。
+   * `minEditIntervalMs`: the minimum interval the platform allows between two edits of the same
+   * message; the kernel's streaming-draft update interval is
+   * `max(1000, minEditIntervalMs)`.
    */
   features: { cards: boolean; edit: boolean; threads: boolean; minEditIntervalMs?: number };
   verify(args: {
     config: unknown;
     signal: AbortSignal;
   }): Promise<{ botUserId: string; botName: string; tenantId: string }>;
-  /** 长连接循环：signal 中止时返回；断线自行重连。 */
+  /**
+   * Long-connection loop: returns when `signal` aborts; reconnects by itself after a disconnect.
+   */
   connect(args: ChannelConnectArgs): Promise<void>;
-  /** 失败时抛 {@link ChannelSendError} 说明能否重试；其他异常内核按可重试处理（次数有限）。 */
+  /**
+   * On failure throw {@link ChannelSendError} to say whether it can be retried; the kernel treats
+   * other exceptions as retryable (a limited number of times).
+   */
   send(args: ChannelSendArgs): Promise<{ messageId: string }>;
   /**
-   * features.edit 为 false 的渠道不会被调用。失败语义同 send。新文本超过平台单条上限、无法改成一条时
-   * 抛不可重试的 {@link ChannelSendError}（`reason: "too_large"`）：内核改为把完整文本作为新消息 `send`
-   * （由插件拆分）。
+   * Never called for channels whose features.edit is false. Failure semantics are the same as send.
+   * When the new text exceeds the platform's per-message limit and cannot be turned into one
+   * message,
+   * throw a non-retryable {@link ChannelSendError} (`reason: "too_large"`): the kernel then `send`s
+   * the full text as a new message
+   * (split by the plugin).
    */
   update(args: ChannelSendArgs & { messageId: string }): Promise<void>;
   /**
@@ -211,19 +245,27 @@ export interface Channel {
 }
 
 /**
- * 不可重试失败的原因（`ChannelSendError.reason`），内核据此处理：
- * - `auth`：凭据失效 / 权限被收回 → 记连接 `last_error`，停止该会话本轮的投递；
- * - `target_gone`：机器人被移出群、会话不存在 → 停止该会话本轮的投递，不计入毒事件；
- * - `rejected`（内容被平台拒绝）、`too_large`（拆分后仍超限，如卡片过大）→ 按同一事件失败计数，满 3 次跳过它。
- * 未给出原因的按 `rejected` 处理。
+ * Reasons for a non-retryable failure (`ChannelSendError.reason`), which the kernel handles
+ * accordingly:
+ * - `auth`: credentials invalid / permission revoked -> record the connection's `last_error` and
+ *   stop delivering for this conversation in this round;
+ * - `target_gone`: the bot was removed from the group or the conversation does not exist -> stop
+ *   delivering for this conversation in this round, not counted as a poison event;
+ * - `rejected` (content rejected by the platform), `too_large` (still over the limit after
+ *   splitting, e.g. a card that is too large) -> counted as failures of the same event; after 3 the
+ *   event is skipped.
+ * A failure without a reason is treated as `rejected`.
  */
 export type ChannelSendFailure = "auth" | "target_gone" | "rejected" | "too_large";
 
 /**
- * 渠道发送 / 更新消息失败的分类：`retryable` 为 true（限流、平台 5xx、网络）时内核退避后重试，
- * `retryAfterMs` 为平台给出的建议等待时长；为 false 时按 `reason`（见 {@link ChannelSendFailure}）处理。
- * 编辑流式草稿不可重试地失败（`auth` / `target_gone` 除外）时，内核改为把完整文本作为新消息发出。
- * 消息里不要带凭据。
+ * Classification of a channel send / update failure: when `retryable` is true (rate limit, platform
+ * 5xx, network) the kernel retries after backoff,
+ * `retryAfterMs` is the wait the platform suggests; when false it is handled by `reason` (see
+ * {@link ChannelSendFailure}).
+ * When editing a streaming draft fails non-retryably (except `auth` / `target_gone`), the kernel
+ * sends the full text as a new message instead.
+ * Do not put credentials in the message.
  */
 export class ChannelSendError extends Error {
   readonly retryable: boolean;
@@ -247,7 +289,9 @@ export class ChannelSendError extends Error {
   }
 }
 
-/** 鸭子类型判断（不用 instanceof），兼容插件自带另一份 plugin-sdk 副本的情况。 */
+/**
+ * Duck-typed check (no instanceof), compatible with a plugin bundling another copy of plugin-sdk.
+ */
 export function isChannelSendError(e: unknown): e is ChannelSendError {
   return (
     e instanceof Error &&

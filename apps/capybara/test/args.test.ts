@@ -111,6 +111,16 @@ describe("parseCli", () => {
     expect(() => parseCli(["admin", "grant", "a", "--yes"])).toThrow(UsageError);
   });
 
+  it("secrets rewrap takes no argument or option", () => {
+    expect(parseCli(["secrets", "rewrap"])).toEqual({ command: "secrets-rewrap" });
+    expect(() => parseCli(["secrets"])).toThrow(/missing secrets command/);
+    expect(() => parseCli(["secrets", "rotate"])).toThrow(/unknown secrets command "rotate"/);
+    expect(() => parseCli(["secrets", "rewrap", "x"])).toThrow(/unexpected argument "x"/);
+    expect(() => parseCli(["secrets", "rewrap", "--yes"])).toThrow(/--yes is only valid/);
+    expect(() => parseCli(["secrets", "rewrap", "--role", "api"])).toThrow(/only valid for start/);
+    expect(() => parseCli(["secrets", "rewrap", "--login", "a"])).toThrow(/only valid for admin/);
+  });
+
   it("extensions review / approve", () => {
     expect(parseCli(["extensions", "review"])).toEqual({ command: "extensions-review" });
     expect(parseCli(["extensions", "approve", "todo"])).toEqual({

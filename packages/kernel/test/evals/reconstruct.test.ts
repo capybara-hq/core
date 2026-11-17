@@ -1,5 +1,4 @@
 import { createHash, randomUUID } from "node:crypto";
-import { readFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -14,7 +13,7 @@ import {
   type TestS3,
 } from "@capybara-hq/testing";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
-import { type AgentDefinition, normalizeStoredDefinition } from "../../src/agents/definition.js";
+import type { AgentDefinition } from "../../src/agents/definition.js";
 import { AttachmentsService } from "../../src/conversations/attachments.service.js";
 import { EventLog } from "../../src/conversations/event-log.js";
 import type { ConversationEvent, EventPayload } from "../../src/conversations/events.js";
@@ -38,7 +37,7 @@ import { KernelConfigService } from "../../src/infra/config/kernel-config.servic
 import { TransactionHost } from "../../src/infra/database/transaction-host.js";
 import { MachinesService } from "../../src/local-devices/machines.js";
 import type { KernelLogger } from "../../src/log.js";
-import type { MediaInfo } from "../../src/runtime/context/build.js";
+import { type MediaInfo, TEXT_INLINE_MAX_CHARS } from "../../src/runtime/context/build.js";
 import { CLAUDE_CODE_TOOL_MAP } from "../../src/runtime/context/claude-tools.js";
 import { MORE_SKILLS_HEADER } from "../../src/runtime/context/skills.js";
 import { WRAP_UP_REMINDER } from "../../src/runtime/model-call.js";
@@ -59,7 +58,7 @@ import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { captureProviderRequests } from "../helpers/provider-capture.js";
 import {
   createConv,
-  createOrg,
+  createOrgWithProviders,
   eventsOf,
   MODEL_LOOPER,
   PW,
@@ -177,7 +176,7 @@ beforeAll(async () => {
   ownerId = (await accountsFor(db).createLocal({ login: "owner", password: PW, displayName: "O" }))
     .id;
   owner = await session(k, "owner");
-  orgId = await createOrg(owner);
+  orgId = await createOrgWithProviders(k, owner);
   await enableProbe(true);
 });
 
@@ -353,11 +352,11 @@ async function catalogItem(name: string): Promise<string> {
 }
 
 /** 建、传、finalize 一个附件，返回 id。 */
-async function attach(name: string, bytes: Buffer): Promise<string> {
+async function attach(name: string, bytes: Buffer, contentType = "image/png"): Promise<string> {
   const created = await owner({
     method: "POST",
     url: `/api/v1/orgs/${orgId}/attachments`,
-    payload: { name, contentType: "image/png", size: bytes.length },
+    payload: { name, contentType, size: bytes.length },
   });
   expect(created.statusCode, created.body).toBe(201);
   const c = created.json() as {
@@ -374,7 +373,7 @@ async function attach(name: string, bytes: Buffer): Promise<string> {
   } else {
     const form = new FormData();
     for (const [key, v] of Object.entries(c.upload.fields ?? {})) form.append(key, v);
-    form.append("file", new Blob([Buffer.from(bytes)], { type: "image/png" }));
+    form.append("file", new Blob([Buffer.from(bytes)], { type: contentType }));
     up = await fetch(c.upload.url, { method: "POST", headers: c.upload.headers, body: form });
   }
   expect(up.status).toBeLessThan(300);
@@ -453,13 +452,6 @@ async function snapshotOf(convId: string, runId?: string): Promise<CaseSnapshot>
 }
 
 const reset = () => capture.reset();
-
-/**
- * A definition's pins from before skills were on by default (skills default-on spec §4): no
- * longer in the type, still in old definitions.
- */
-const oldPins = (pinned: string[]) =>
-  ({ orgSkills: [], pinned }) as unknown as NonNullable<AgentDefinition["skills"]>;
 
 describe("reconstructRequest：基线零漂移", () => {
   it("多步工具、ToolSearch 加载、审批续跑、技能目录快照与变更、提醒、跨运行插话、工具不可用", async () => {
@@ -1347,15 +1339,6 @@ describe("reconstructRequest：基线零漂移", () => {
     expect(reconstructRequest(snap, head.seq, { model: info, ...headMedia }).request).toEqual(
       sent[0],
     );
-    // 较早的事件：没有记录预算 / 没有记录媒体结果 → legacy_event（不限预算，请求不变）
-    for (const field of ["mediaBudgetBytes", "media"]) {
-      const old = structuredClone(snap);
-      const ev = old.events.find((e) => e.seq === head.seq) as { payload: unknown };
-      delete (ev.payload as { request: Record<string, unknown> }).request[field];
-      const out = reconstructRequest(old, head.seq, { model: info, ...headMedia });
-      expect(out.drift, field).toEqual(["legacy_event"]);
-      expect(out.request, field).toEqual(sent[0]);
-    }
 
     // 附件对象被删：带过字节的请求还原时只能给占位，记 media_missing
     await k.app.get(StorageService).kernel(orgId).delete(`attachments/${keep}`);
@@ -1382,6 +1365,20 @@ describe("reconstructRequest：基线零漂移", () => {
     expect(again.request).toEqual(sent.at(-1));
   });
 
+  it("a text attachment over the inline cap is logged and rebuilt as a reference line, zero drift", async () => {
+    reset();
+    const agentId = await createAgent({ provider: "model-fake", model: "fake-v" });
+    const conv = await createConv(owner, orgId, agentId);
+    const big = Buffer.from("a".repeat(TEXT_INLINE_MAX_CHARS + 1), "utf8");
+    const id = await attach("big.txt", big, "text/plain");
+    await postWithFiles(conv, "echo:read this", [id]);
+    await waitForTerminal(db, conv, 1, 30_000);
+    const snap = await snapshotOf(conv);
+    const call = modelCalls(toEvents(snap))[0] as ModelCallEvent;
+    expect(call.payload.request.media).toEqual([{ attachmentId: id, outcome: "reference" }]);
+    await expectZeroDrift(conv, snap);
+  });
+
   it("不支持视觉的模型：图片换成占位，不取字节", async () => {
     reset();
     const agentId = await createAgent({ provider: "model-fake", model: "fake-1" });
@@ -1396,10 +1393,8 @@ describe("reconstructRequest：基线零漂移", () => {
     await expectZeroDrift(conv, snap);
   });
 
-  it("a skill version change mid-conversation, a claude-code skill with the tool map, and a compaction: nothing pinned, zero drift and equal to what the provider received", async () => {
+  it("a skill version change mid-conversation, a claude-code skill with the tool map, and a compaction: zero drift and equal to what the provider received", async () => {
     reset();
-    // pinning is gone (skills default-on spec §8): the old pinned cases live on in the
-    // pre-skills-default-on fixture
     const rules = await seedSkill("house-rules", "Always answer in haiku.");
     const brain = await seedSkill("brainstorming", "Brainstorm first.", undefined, {
       format: "claude-code",
@@ -1426,14 +1421,12 @@ describe("reconstructRequest：基线零漂移", () => {
       (e): e is Extract<ConversationEvent, { type: "skills_catalog" }> =>
         e.type === "skills_catalog",
     );
-    expect(snaps.map((e) => e.payload.pinned)).toEqual([undefined, undefined]);
     expect(
       snaps.map((e) => e.payload.skills.find((x) => x.name === "house-rules")?.version),
     ).toEqual([1, 2]);
     expect(snaps.every((e) => e.payload.toolMap === CLAUDE_CODE_TOOL_MAP)).toBe(true);
     expect(events.some((e) => e.type === "compaction_summary")).toBe(true);
     const first = sent[0] as ModelRequest;
-    expect(first.system[0]?.text).not.toContain("<pinned_skill");
     expect(first.system[0]?.text).toContain(CLAUDE_CODE_TOOL_MAP);
     const loaded = events.find((e) => e.type === "tool_result");
     expect(loaded?.type === "tool_result" && loaded.payload.isError).toBe(false);
@@ -1446,7 +1439,6 @@ describe("reconstructRequest：基线零漂移", () => {
       return at < 0 ? [] : [t.slice(at).split("\n\n")[0] as string];
     });
     expect(updatedLists.some((l) => l.includes("- house-rules:"))).toBe(true);
-    expect(texts.some((t) => t.includes("Pinned skill"))).toBe(false);
     await expectZeroDrift(conv, await snapshotOf(conv));
   });
 
@@ -1520,54 +1512,14 @@ describe("reconstructRequest：基线零漂移", () => {
     await expectZeroDrift(conv, await snapshotOf(conv));
   });
 
-  // The map texts written before the tool-naming change, before background Bash and before the
-  // versioned skill directories of environments, frozen: old snapshots keep them
+  // A map text an earlier snapshot recorded (any text other than today's): the snapshot keeps it
   const OLD_MAPS: [string, string][] = [
     [
-      "the tool-naming change",
-      [
-        "Some skills in this conversation were written for Claude Code and name its tools. Use these tools instead:",
-        "- Bash -> sandbox_bash",
-        "- Read -> sandbox_read; Write -> sandbox_write; Edit and MultiEdit -> sandbox_edit; Glob -> sandbox_glob; Grep -> sandbox_grep",
-        '- Skill -> skill_load (a name such as "superpowers:brainstorming" also works)',
-        "- TodoWrite -> plugin__todo__write when it is in your tools; otherwise keep the task list in your replies",
-        "- AskUserQuestion -> ask_user",
-        "- ToolSearch -> tool_search when it is in your tools",
-        "- Task and Agent (sub-agents) -> agent when it is in your tools (subagent_type names one of the types its description lists; model names haiku / sonnet / opus -> fast / standard / capable; SendMessage to a sub-agent -> agent with resume); otherwise not available: do the steps yourself, in order",
-        "- TaskOutput, TaskStop -> not available",
-        "- Any other tool a skill names (for example WebFetch, WebSearch, NotebookEdit, EnterWorktree) -> not available unless one of your tools does the same job",
-        // biome-ignore lint/suspicious/noTemplateCurlyInString: the literal Claude Code variable the model reads
-        "The sandbox tools exist only when this agent has a sandbox; without them a skill's scripts cannot run. A path such as ${CLAUDE_PLUGIN_ROOT}/skills/<name>/... means /skills/<name>/... after skill_load has copied that skill into the sandbox.",
-      ].join("\n"),
-    ],
-    [
-      "background Bash",
+      "a map change",
       [
         "Some skills in this conversation were written for Claude Code. Its tools Bash, Read, Write, Edit,",
-        "Glob, Grep, Skill, AskUserQuestion, ToolSearch and Agent have the same names here, when they are",
-        "in your tools. For the others:",
-        "- MultiEdit -> several Edit calls",
-        "- TodoWrite -> plugin__todo__write when it is in your tools; otherwise keep the task list in your replies",
-        "- Task -> Agent; SendMessage to a sub-agent -> Agent with resume; model names haiku / sonnet / opus -> fast / standard / capable",
-        "- TaskOutput, TaskStop -> not available",
-        "- Any other tool a skill names (for example WebFetch, WebSearch, NotebookEdit, EnterWorktree) -> not available unless one of your tools does the same job",
-        // biome-ignore lint/suspicious/noTemplateCurlyInString: the literal Claude Code variable the model reads
-        "The sandbox tools exist only when this agent has a sandbox; without them a skill's scripts cannot run. A path such as ${CLAUDE_PLUGIN_ROOT}/skills/<name>/... means /skills/<name>/... after Skill has copied that skill into the sandbox.",
-      ].join("\n"),
-    ],
-    [
-      "environments (skills in /skills/<name>@<version-id>/)",
-      [
-        "Some skills in this conversation were written for Claude Code. Its tools Bash, Read, Write, Edit,",
-        "Glob, Grep, Skill, AskUserQuestion, ToolSearch, Agent, SendMessage, WebFetch and WebSearch have the same names here, when they are",
-        "in your tools. For the others:",
-        "- MultiEdit -> several Edit calls",
-        "- TodoWrite -> plugin__todo__write when it is in your tools; otherwise keep the task list in your replies",
-        "- Task -> Agent; model names haiku / sonnet / opus -> fast / standard / capable",
-        "- TaskOutput -> TaskOutput, TaskStop -> TaskStop",
-        "- Any other tool a skill names (for example NotebookEdit, EnterWorktree) -> not available unless one of your tools does the same job",
-        // biome-ignore lint/suspicious/noTemplateCurlyInString: the literal Claude Code variable the model reads
-        "The sandbox tools exist only when this agent has a sandbox; without them a skill's scripts cannot run. A path such as ${CLAUDE_PLUGIN_ROOT}/skills/<name>/... means /skills/<name>/... after Skill has copied that skill into the sandbox.",
+        "Glob, Grep and Skill have the same names here, when they are in your tools.",
+        "- Any other tool a skill names -> not available unless one of your tools does the same job",
       ].join("\n"),
     ],
   ];
@@ -1672,7 +1624,7 @@ describe("reconstructRequest：基线零漂移", () => {
       summary?.type === "compaction_summary" && summary.payload.coversUpToSeq,
     ).toBeGreaterThanOrEqual(invokedSeqs[1] as number);
     const line =
-      "Skills the user invoked earlier in this conversation: brainstorm, fix-issue. Call Skill with a name to read its instructions again.";
+      "Skills invoked earlier in this conversation: brainstorm, fix-issue. Call Skill with a name to read its instructions again.";
     const withLine = sent.filter((r) =>
       r.messages.some((m) => m.role === "system" && m.content === line),
     );
@@ -1849,7 +1801,7 @@ describe("reconstructRequest：基线零漂移", () => {
     );
     // the line names the inline invocation only (a fork's instructions went to its sub-agent)
     const line =
-      "Skills the user invoked earlier in this conversation: fix-bug. Call Skill with a name to read its instructions again.";
+      "Skills invoked earlier in this conversation: fix-bug. Call Skill with a name to read its instructions again.";
     expect(
       parent.some((r) => r.messages.some((m) => m.role === "system" && m.content === line)),
     ).toBe(true);
@@ -2634,94 +2586,6 @@ describe("reconstructRequest：漂移原因", () => {
     expect(out.request.tools.map((t) => t.name)).not.toContain(victim.key);
   });
 
-  it("记录缺 tools / params / absorbedUpToSeq / maxOutputTokens → legacy_event", () => {
-    for (const field of ["tools", "params", "absorbedUpToSeq", "maxOutputTokens"]) {
-      const s = clone();
-      const call = s.events.find((e) => e.seq === seq) as { payload: unknown };
-      delete (call.payload as { request: Record<string, unknown> }).request[field];
-      const out = reconstructRequest(s, seq, { model: info });
-      expect(out.drift, field).toContain("legacy_event");
-    }
-  });
-
-  it("pinned_changed: a non-baseline call whose snapshot in effect pinned skills, whatever the candidate", () => {
-    const def = snap.definitions["1"];
-    if (!def) throw new Error("definition missing");
-    // a recorded snapshot with one pinned skill, ahead of every other event
-    const withPinned = (pinned: boolean) => {
-      const s = clone();
-      const first = s.events[0] as (typeof s.events)[number];
-      const skill = { id: "p1", name: "p", description: "P.", version: 1, source: "src/p1" };
-      s.events.unshift({
-        ...first,
-        seq: first.seq - 1,
-        type: "skills_catalog",
-        payload: { skills: [skill], ...(pinned && { pinned: [{ ...skill, body: "Pinned." }] }) },
-      });
-      return s;
-    };
-    // the baseline never reports it
-    expect(reconstructRequest(withPinned(true), seq, { model: info }).drift).not.toContain(
-      "pinned_changed",
-    );
-    // no candidate pins any more: params-only, instructions-only, another version alike
-    const paramsOnly = reconstructRequest(withPinned(true), seq, {
-      model: info,
-      params: { effort: "high" },
-    });
-    expect(paramsOnly.drift).toContain("pinned_changed");
-    const instructions = reconstructRequest(withPinned(true), seq, {
-      model: info,
-      definition: { ...def, instructions: "Be terse." },
-    });
-    expect(instructions.drift).toContain("pinned_changed");
-    // the request still renders the recorded pinned body (a step replay never reads storage)
-    expect(instructions.request.system[0]?.text).toContain("Pinned.");
-    // a snapshot without pins: nothing, even when the candidate's raw definition carries old pins
-    const unpinned = reconstructRequest(withPinned(false), seq, {
-      model: info,
-      definition: { ...def, skills: oldPins(["p1"]) },
-    });
-    expect(unpinned.drift).not.toContain("pinned_changed");
-  });
-
-  it("pinned_changed follows the snapshot in effect at the call: a later unpinned snapshot ends it", () => {
-    const def = snap.definitions["1"];
-    if (!def) throw new Error("definition missing");
-    const s = clone();
-    const first = s.events[0] as (typeof s.events)[number];
-    const skill = { id: "p1", name: "p", description: "P.", version: 1, source: "src/p1" };
-    // pinned at first, then a snapshot without pins (the "Pinned skills removed" notice) before
-    // the call
-    s.events.unshift(
-      {
-        ...first,
-        seq: first.seq - 1,
-        type: "skills_catalog",
-        payload: { skills: [skill], pinned: [{ ...skill, body: "Pinned." }] },
-      },
-      { ...first, seq: first.seq - 0.5, type: "skills_catalog", payload: { skills: [skill] } },
-    );
-    const out = reconstructRequest(s, seq, { model: info, params: { effort: "high" } });
-    expect(out.drift).not.toContain("pinned_changed");
-  });
-
-  it("definition_missing: no pinned_changed, even under a pinned snapshot", () => {
-    const s = clone();
-    const first = s.events[0] as (typeof s.events)[number];
-    const skill = { id: "p1", name: "p", description: "P.", version: 1, source: "src/p1" };
-    s.events.unshift({
-      ...first,
-      seq: first.seq - 1,
-      type: "skills_catalog",
-      payload: { skills: [skill], pinned: [{ ...skill, body: "Pinned." }] },
-    });
-    s.definitions = {};
-    const missing = reconstructRequest(s, seq, { model: info, params: { effort: "high" } });
-    expect(missing.drift).toContain("definition_missing");
-    expect(missing.drift).not.toContain("pinned_changed");
-  });
-
   it("a candidate model replacing the run's model switch -> model_switched (never for a baseline)", () => {
     const s = clone();
     const started = s.events.find((e) => e.type === "run_started" && e.runId === s.runId);
@@ -2818,106 +2682,29 @@ describe("takeSnapshot", () => {
   });
 });
 
-describe("reconstructRequest: a recording from before the tool rename", () => {
-  type Fixture = { model: ModelInfo; snapshot: CaseSnapshot; requests: ModelRequest[] };
-  const fixture = JSON.parse(
-    readFileSync(
-      fileURLToPath(new URL("./fixtures/pre-tool-rename/conversation.json", import.meta.url)),
-      "utf8",
-    ),
-  ) as Fixture;
+describe("subagentChanged", () => {
+  const logged: AgentDefinition = {
+    name: "Lead › general-purpose",
+    avatarUrl: null,
+    instructions: "Lead the work.",
+    model: { provider: "model-fake", model: "fake-1" },
+    fallback: null,
+    modelParams: {},
+    fallbackParams: {},
+    disabledSkills: [],
+    disabledTools: [],
+    toolPolicies: {},
+  };
+  const started: EventPayload<"subagent_started"> = {
+    parent: { conversationId: "c", runId: "r", callId: "k", step: 1 },
+    agentType: "general-purpose",
+    template: { source: "general" },
+    definition: logged,
+    preamble: "You are a sub-agent.",
+    maxSteps: 50,
+  };
 
-  it("covers every old builtin, a connector key, an extension key, a pinned skill, a notice, an invoked skill and a compaction", () => {
-    const events = fixture.snapshot.events;
-    const keys = new Set(
-      events.flatMap((e) =>
-        e.type === "tool_result" ? [(e.payload as { toolKey: string }).toolKey] : [],
-      ),
-    );
-    for (const k of [
-      "sandbox_bash",
-      "sandbox_read",
-      "sandbox_write",
-      "sandbox_edit",
-      "sandbox_glob",
-      "sandbox_grep",
-      "skill_load",
-      "tool_search",
-      "read_tool_output",
-      "docs__search",
-      "tools-probe__echo",
-    ]) {
-      expect(keys.has(k), k).toBe(true);
-    }
-    const types = new Set(events.map((e) => e.type));
-    for (const t of ["compaction_summary", "skills_catalog", "approval_decided"]) {
-      expect(types.has(t as ConversationEvent["type"]), t).toBe(true);
-    }
-    const catalogs = events.filter((e) => e.type === "skills_catalog");
-    expect(catalogs).toHaveLength(2);
-    const first = catalogs[0]?.payload as { pinned?: unknown[]; toolMap?: string };
-    expect(first.pinned).toHaveLength(1);
-    expect(first.toolMap).toBeDefined();
-    expect(
-      events.some((e) => e.type === "user_message" && (e.payload as { skill?: unknown }).skill),
-    ).toBe(true);
-  });
-
-  it("every model_call reconstructs with zero drift and equals what the provider received, with the legacy skill texts", () => {
-    const calls = modelCalls(toEvents(fixture.snapshot));
-    expect(calls).toHaveLength(fixture.requests.length);
-    const texts = new Set<string>();
-    for (const [i, c] of calls.entries()) {
-      const out = reconstructRequest(fixture.snapshot, c.seq, { model: fixture.model });
-      expect(out.drift, `model_call seq ${c.seq}`).toEqual([]);
-      expect(out.request, `model_call seq ${c.seq}`).toEqual(fixture.requests[i]);
-      for (const m of out.request.messages) {
-        if (m.role === "system" && typeof m.content === "string") texts.add(m.content);
-      }
-    }
-    const all = [...texts].join("\n");
-    // the legacy texts name the old tools and appear in the real recording
-    expect(all).toContain("Skills the user invoked earlier in this conversation: fix-bug.");
-    expect(all).toContain("Updated skills (");
-    expect(all).toMatch(/skill_load/);
-    expect(all).not.toMatch(/\bcall Skill\b/);
-  });
-});
-
-describe("reconstructRequest: a recording from before background sub-agents", () => {
-  type Recorded = { snapshot: CaseSnapshot; requests: ModelRequest[] };
-  type Fixture = { model: ModelInfo; parent: Recorded; child: Recorded };
-  const fixture = JSON.parse(
-    readFileSync(
-      fileURLToPath(
-        new URL("./fixtures/pre-background-subagents/conversation.json", import.meta.url),
-      ),
-      "utf8",
-    ),
-  ) as Fixture;
-
-  it("holds a foreground Agent call with resume and a parent the subagents wait resumed", () => {
-    const parent = fixture.parent.snapshot.events;
-    const calls = parent.flatMap((e) =>
-      e.type === "assistant_message"
-        ? (e.payload as { content: { type: string; name?: string; input?: unknown }[] }).content
-        : [],
-    );
-    const agentCalls = calls.filter((b) => b.type === "tool_call" && b.name === "Agent");
-    expect(agentCalls).toHaveLength(4);
-    expect(agentCalls.some((b) => (b.input as { resume?: string }).resume !== undefined)).toBe(
-      true,
-    );
-    // the replies came back as the Agent results (the wait), not as deliveries
-    expect(parent.filter((e) => e.type === "subagent_finished")).toHaveLength(4);
-    expect(parent.some((e) => e.type === "subagent_delivery")).toBe(false);
-    expect(fixture.child.snapshot.events.filter((e) => e.type === "run_started")).toHaveLength(2);
-  });
-
-  it("subagentChanged: Agent follows the logged child and the candidate's subagents block is ignored", () => {
-    const started = fixture.child.snapshot.events.find((e) => e.type === "subagent_started")
-      ?.payload as EventPayload<"subagent_started">;
-    const logged = normalizeStoredDefinition(started.definition);
+  it("follows the logged child's Agent and ignores the candidate's subagents block", () => {
     const noAgent = { ...logged, disabledTools: [{ kind: "builtin" as const, name: "Agent" }] };
     // the general child stays listed: only the roster around it changes
     const roster = { ...logged, subagents: { ...logged.subagents, templates: ["x"] } };
@@ -2930,17 +2717,5 @@ describe("reconstructRequest: a recording from before background sub-agents", ()
     expect(subagentChanged(asAgent, noAgent, logged, false)).toBe(false);
     // a child logged with Agent keeps it in the comparison: a candidate without it differs
     expect(subagentChanged(asAgent, logged, noAgent, false)).toBe(true);
-  });
-
-  it("foreground-era log replays with zero drift", () => {
-    for (const side of [fixture.parent, fixture.child]) {
-      const calls = modelCalls(toEvents(side.snapshot));
-      expect(calls).toHaveLength(side.requests.length);
-      for (const [i, c] of calls.entries()) {
-        const out = reconstructRequest(side.snapshot, c.seq, { model: fixture.model });
-        expect(out.drift, `model_call seq ${c.seq}`).toEqual([]);
-        expect(out.request, `model_call seq ${c.seq}`).toEqual(side.requests[i]);
-      }
-    }
   });
 });

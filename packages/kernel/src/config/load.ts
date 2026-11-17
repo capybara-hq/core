@@ -73,34 +73,6 @@ export function deepMerge(base: unknown, override: unknown): unknown {
 }
 
 /**
- * Removed sandbox keys still present in the loaded config (file, Nacos or environment), each with
- * the setting that replaces it (auto mode hardening spec K3). The schema would strip an unknown
- * key silently, and an ignored security key reads as a widening, so the config fails instead.
- */
-export function removedConfigProblems(merged: unknown): string[] {
-  const sandbox = isPlainObject(merged) ? merged.sandbox : undefined;
-  if (!isPlainObject(sandbox)) return [];
-  const limits = isPlainObject(sandbox.limits) ? sandbox.limits : {};
-  const out: string[] = [];
-  if (sandbox.tiers !== undefined) {
-    out.push(
-      "sandbox.tiers: removed; auto mode replaces the sandbox tiers. Set devices.fullAccess (allowed | off) for the platform; each organization chooses its fullAccess and its cloud network (cloudNetwork: open | allowlist) in its settings",
-    );
-  }
-  if (limits.devHosts !== undefined) {
-    out.push(
-      "sandbox.limits.devHosts: removed with the dev tier; put the hosts in sandbox.limits.allowHosts (the default allowlist) or in an organization's cloudNetwork hosts",
-    );
-  }
-  if (limits.egress === "open") {
-    out.push(
-      'sandbox.limits.egress: "open" was removed; the open public network is set by devices.fullAccess (Full permission reaches public hosts) and by an organization\'s cloudNetwork; use "allowlist" or "none" here',
-    );
-  }
-  return out;
-}
-
-/**
  * The permission keys B1 replaced, each with its replacement. Until the old public inputs are
  * removed, {@link translateLegacyPermissionKeys} reads the old key of a source as the new one.
  */
@@ -152,15 +124,16 @@ export function resolveConfig(raw: unknown, env: NodeJS.ProcessEnv): KernelConfi
     translateLegacyPermissionKeys(raw, "file"),
     translateLegacyPermissionKeys(envOverrides(env), "env"),
   );
-  const removed = removedConfigProblems(merged);
-  if (removed.length > 0) {
-    throw new ConfigError(`invalid configuration:\n${removed.map((l) => `  - ${l}`).join("\n")}`);
-  }
   const result = KernelConfigSchema.safeParse(merged);
   if (!result.success) {
-    const lines = result.error.issues.map(
-      (i) => `  - ${i.path.map(String).join(".") || "(root)"}: ${i.message}`,
-    );
+    // The schema is strict: an unknown key (a typo, or a removed setting) is an error that names
+    // its full path, never silently dropped.
+    const lines = result.error.issues.flatMap((i) => {
+      if (i.code === "unrecognized_keys") {
+        return i.keys.map((k) => `  - unknown config key ${[...i.path, k].map(String).join(".")}`);
+      }
+      return [`  - ${i.path.map(String).join(".") || "(root)"}: ${i.message}`];
+    });
     throw new ConfigError(`invalid configuration:\n${lines.join("\n")}`);
   }
   // Cross-section rule (the loopback exception lives under `tools`)

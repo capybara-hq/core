@@ -101,8 +101,9 @@ describe("POST /api/v1/auth/login", () => {
     expect(String(at?.attrs.samesite).toLowerCase()).toBe("lax");
     expect(at?.attrs["max-age"]).toBe("900");
     expect(rt?.attrs.path).toBe("/");
-    const legacy = cs.find((c) => c.name === "cap_rt" && c.attrs.path === "/api/v1/auth");
-    expect(legacy?.value).toBe("");
+    // the cap_rt of earlier builds (Path=/api/v1/auth) is cleared, never read
+    const old = cs.find((c) => c.name === "cap_rt" && c.attrs.path === "/api/v1/auth");
+    expect(old?.value).toBe("");
     expect(rt?.value).not.toBe("");
     expect(String(rt?.attrs.samesite).toLowerCase()).toBe("lax");
     expect(rt?.attrs["max-age"]).toBe(String(30 * 86400));
@@ -777,7 +778,7 @@ describe("M2 收尾：登录限流按登录名 + IP、改密码吊销 PAT、守�
     expect(row.created_by).toBe(alice.id);
   });
 
-  it("clearing cookies uses the right Paths (cap_at on /, cap_rt on / and the legacy /api/v1/auth)", async () => {
+  it("clearing cookies uses the right Paths (cap_at on /, cap_rt on / and the old /api/v1/auth)", async () => {
     const jar = cookieJar();
     await login(jar);
     const res = await asUser(k.http, jar)({ method: "POST", url: "/api/v1/auth/logout" });
@@ -790,41 +791,12 @@ describe("M2 收尾：登录限流按登录名 + IP、改密码吊销 PAT、守�
     expect(rts.every((c) => c.value === "")).toBe(true);
   });
 
-  it("refresh：cookie 头带两个 cap_rt（旧的在前、有效的在后）→ 200", async () => {
-    const jar = cookieJar();
-    await login(jar);
-    const good = jar.get("cap_rt") as string;
-    const res = await k.http.inject({
+  const rawRefresh = (cookie: string) =>
+    k.http.inject({
       method: "POST",
       url: "/api/v1/auth/refresh",
-      headers: {
-        cookie: `cap_rt=cap_rt_stale; cap_rt=${encodeURIComponent(good)}`,
-        "x-capybara-csrf": "1",
-      },
+      headers: { cookie, "x-capybara-csrf": "1" },
     });
-    expect(res.statusCode).toBe(200);
-    expect((res.json() as { account: Account }).account.id).toBe(alice.id);
-  });
-
-  const rawRefresh = (cookie: string, url = "/api/v1/auth/refresh") =>
-    k.http.inject({ method: "POST", url, headers: { cookie, "x-capybara-csrf": "1" } });
-
-  it("refresh：过了宽限期的旧 cap_rt 在前、当前的在后 → 200，会话不被吊销", async () => {
-    const jar = cookieJar();
-    await login(jar);
-    const stale = jar.get("cap_rt") as string;
-    await asUser(k.http, jar)({ method: "POST", url: "/api/v1/auth/refresh" });
-    const current = jar.get("cap_rt") as string;
-    await sql`UPDATE capybara.sessions SET rotated_at = now() - interval '5 minutes'`.execute(raw);
-    const res = await rawRefresh(`cap_rt=${stale}; cap_rt=${encodeURIComponent(current)}`);
-    expect(res.statusCode).toBe(200);
-    const live = await db
-      .selectFrom("sessions")
-      .select("revoked_at")
-      .where("account_id", "=", alice.id)
-      .execute();
-    expect(live.every((r) => r.revoked_at === null)).toBe(true);
-  });
 
   it("refresh：单独重放过了宽限期的旧 cap_rt → 401 并吊销会话", async () => {
     const jar = cookieJar();
@@ -841,38 +813,6 @@ describe("M2 收尾：登录限流按登录名 + IP、改密码吊销 PAT、守�
       .where("account_id", "=", alice.id)
       .executeTakeFirstOrThrow();
     expect(row.revoked_at).not.toBeNull();
-  });
-
-  it("logout：cookie 头带两个 cap_rt → 当前那个的会话被吊销", async () => {
-    const jar = cookieJar();
-    await login(jar);
-    const current = jar.get("cap_rt") as string;
-    const res = await rawRefresh(
-      `cap_rt=cap_rt_stale; cap_rt=${encodeURIComponent(current)}`,
-      "/api/v1/auth/logout",
-    );
-    expect(res.statusCode).toBe(204);
-    const row = await db
-      .selectFrom("sessions")
-      .select("revoked_at")
-      .where("account_id", "=", alice.id)
-      .executeTakeFirstOrThrow();
-    expect(row.revoked_at).not.toBeNull();
-  });
-
-  it("refresh：两个 cap_rt 都无效 → 401 auth.refresh_invalid 并清两个 Path", async () => {
-    const res = await k.http.inject({
-      method: "POST",
-      url: "/api/v1/auth/refresh",
-      headers: { cookie: "cap_rt=cap_rt_a; cap_rt=cap_rt_b", "x-capybara-csrf": "1" },
-    });
-    expect(errCode(res)).toBe("auth.refresh_invalid");
-    expect(
-      setCookies(res)
-        .filter((c) => c.name === "cap_rt")
-        .map((c) => c.attrs.path)
-        .sort(),
-    ).toEqual(["/", "/api/v1/auth"]);
   });
 
   it("PG 断开时访问 @Public 路由并携带 Cookie → 500（不是被当作匿名放行）", async () => {

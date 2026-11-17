@@ -22,7 +22,7 @@ import { testMembers } from "../helpers/members.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
   createAgent,
-  createOrg,
+  createOrgWithProviders,
   PW,
   type Req,
   runConfig,
@@ -77,7 +77,7 @@ beforeAll(async () => {
   ownerId = o.id;
   memberId = m.id;
   owner = await session(k, "owner");
-  orgId = await createOrg(owner);
+  orgId = await createOrgWithProviders(k, owner);
   agentId = await createAgent(owner, orgId);
   otherAgentId = await createAgent(owner, orgId);
   await testMembers(db).add(orgId, m.id, "member", o.id);

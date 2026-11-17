@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { KernelConfigSchema } from "../../src/config/schema.js";
 import type { KernelHttpApp } from "../../src/http/app.js";
+import { markProcessFaulted, resetProcessFault } from "../../src/infra/health/process-fault.js";
 import { createLogger } from "../../src/log.js";
 import {
   logContext,
@@ -112,6 +113,20 @@ describe("request ids and the access log", () => {
     await a.inject({ method: "GET", url: "/api/v1/invitations/secret-token" });
     const line = records().find((r) => r.msg === "request");
     expect(line?.url).toBe("/api/v1/invitations/:token");
+  });
+});
+
+describe("readiness after a swallowed fatal event", () => {
+  afterEach(() => resetProcessFault());
+
+  it("readyz answers 503 once the process is faulted while healthz stays 200", async () => {
+    const { a } = await app();
+    expect((await a.inject({ method: "GET", url: "/readyz" })).statusCode).toBe(200);
+    markProcessFaulted("unhandledRejection");
+    const after = await a.inject({ method: "GET", url: "/readyz" });
+    expect(after.statusCode).toBe(503);
+    expect(after.json()).toEqual({ ok: false, faulted: "unhandledRejection" });
+    expect((await a.inject({ method: "GET", url: "/healthz" })).statusCode).toBe(200);
   });
 });
 

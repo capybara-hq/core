@@ -28,7 +28,7 @@ import {
   consumedSeq,
   createAgent,
   createConv,
-  createOrg,
+  createOrgWithProviders,
   eventsOf,
   gate,
   PW,
@@ -165,7 +165,7 @@ afterEach(async () => {
 });
 
 async function setup(model?: { provider: string; model: string }) {
-  const orgId = await createOrg(req);
+  const orgId = await createOrgWithProviders(api, req);
   const agentId = await createAgent(req, orgId, model);
   const convId = await createConv(req, orgId, agentId);
   return { orgId, agentId, convId };
@@ -358,8 +358,8 @@ describe.each(LOOPS)("RunWorker（%s）", (_name, loopFactory) => {
 
   it("组织配额隔离：组织 A limit 1 的 3 个会话依次执行，组织 B 立即开始", async () => {
     await worker();
-    const orgA = await createOrg(req, "A");
-    const orgB = await createOrg(req, "B");
+    const orgA = await createOrgWithProviders(api, req, "A");
+    const orgB = await createOrgWithProviders(api, req, "B");
     await db
       .insertInto("deployment_settings")
       .values({ key: "runConcurrencyOverrides", value: JSON.stringify({ [orgA]: 1 }) })

@@ -46,11 +46,18 @@ describe("the thread's scroller is anchored at the bottom by CSS", () => {
     expect(rule).toMatch(/flex-direction:\s*column-reverse/);
   });
 
-  it("keeps a short thread at the top and the thread's width", () => {
-    const rule = decls(".cb-conv-scroll > .cb-conv-thread");
-    expect(rule).toMatch(/margin-bottom:\s*auto/);
-    expect(rule).toMatch(/width:\s*100%/);
+  it("keeps a short thread at the top, centered on the composer's column", () => {
+    const rule = decls('.cb-conv-scroll:not([data-center="true"]) > .cb-conv-thread');
+    expect(rule).toMatch(/margin:\s*0 0 auto/);
     expect(rule).toMatch(/flex:\s*none/);
+    expect(rule).toMatch(/margin-inline-start:[^;]*100cqw/);
+    expect(decls(".cb-conv-center")).toMatch(/container-type:\s*inline-size/);
+  });
+
+  it("reserves the scrollbar gutter on the end side only (WebKit misplaces both-edges)", () => {
+    expect(decls('.cb-conv-scroll:not([data-center="true"])')).toMatch(
+      /scrollbar-gutter:\s*stable;/,
+    );
   });
 
   it("reverses only the one wrapper: the items keep their top-to-bottom order", () => {

@@ -479,3 +479,82 @@ describe("org settings audit", () => {
     expect(row.settings).toMatchObject({ fullAccess: "off", futureKey: { enabled: true } });
   });
 });
+
+describe("org security settings read narrow", () => {
+  const storedSettings = async () =>
+    (
+      await db
+        .selectFrom("orgs")
+        .select("settings")
+        .where("id", "=", orgId)
+        .executeTakeFirstOrThrow()
+    ).settings as Record<string, unknown>;
+  const store = (settings: unknown) =>
+    db
+      .updateTable("orgs")
+      .set({ settings: JSON.stringify(settings) })
+      .where("id", "=", orgId)
+      .execute();
+
+  it("an unreadable sandboxToolPolicy reads as ask", async () => {
+    await store({ sandboxToolPolicy: "deny" });
+    expect((await settingsWith().get(orgId)).sandboxToolPolicy).toBe("ask");
+  });
+
+  it("a write that does not save forbiddenTools keeps an unreadable list unreadable", async () => {
+    await store({ scheduledTasks: { forbiddenTools: "Bash", maxRunsPerHour: 7 } });
+    const s = settingsWith();
+    await s.update(orgId, { locale: "zh" }, accountId);
+    await s.update(orgId, { scheduledTasks: { enabled: false } }, accountId);
+    expect((await storedSettings()).scheduledTasks).toMatchObject({
+      enabled: false,
+      maxRunsPerHour: 7,
+      forbiddenTools: "Bash",
+    });
+    // a group that is not an object: written with a null list, still unreadable
+    await store({ scheduledTasks: "junk" });
+    await s.update(orgId, { locale: "zh" }, accountId);
+    expect((await storedSettings()).scheduledTasks).toMatchObject({ forbiddenTools: null });
+    // saving the list fixes it, even when it saves what the list read as ([])
+    await s.update(orgId, { scheduledTasks: { forbiddenTools: [] } }, accountId);
+    expect((await storedSettings()).scheduledTasks).toMatchObject({ forbiddenTools: [] });
+  });
+
+  it("saving sandboxToolPolicy as what it read as repairs the stored value", async () => {
+    await store({ sandboxToolPolicy: "deny" });
+    await settingsWith().update(orgId, { sandboxToolPolicy: "ask" }, accountId);
+    expect((await storedSettings()).sandboxToolPolicy).toBe("ask");
+  });
+
+  it("the responses flag an unreadable list; the flag is never stored; a repair is audited", async () => {
+    await store({ scheduledTasks: { forbiddenTools: 7 } });
+    const s = settingsWith();
+    expect((await s.get(orgId)).scheduledTasks).toMatchObject({
+      forbiddenTools: [],
+      forbiddenToolsUnreadable: true,
+    });
+    // a write that keeps it unreadable says so too, and stores no flag
+    const kept = await s.update(orgId, { locale: "zh" }, accountId);
+    expect(kept.scheduledTasks.forbiddenToolsUnreadable).toBe(true);
+    expect((await storedSettings()).scheduledTasks).not.toHaveProperty("forbiddenToolsUnreadable");
+    const fixed = await s.update(orgId, { scheduledTasks: { forbiddenTools: [] } }, accountId);
+    expect(fixed.scheduledTasks).not.toHaveProperty("forbiddenToolsUnreadable");
+    expect((await s.get(orgId)).scheduledTasks).not.toHaveProperty("forbiddenToolsUnreadable");
+    const details = (
+      await db
+        .selectFrom("audit_events")
+        .select("detail")
+        .where("action", "=", "org.settings_updated")
+        .execute()
+    ).map((r) => (r.detail as { repaired?: boolean }).repaired);
+    // the locale write repaired nothing; the list save did
+    expect(details).toHaveLength(2);
+    expect(details.filter((r) => r !== undefined)).toEqual([true]);
+  });
+
+  it("a write still validates forbiddenTools", () => {
+    expect(
+      OrgSettingsPatchSchema.safeParse({ scheduledTasks: { forbiddenTools: "Bash" } }).success,
+    ).toBe(false);
+  });
+});

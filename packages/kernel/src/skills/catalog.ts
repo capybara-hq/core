@@ -369,9 +369,7 @@ export async function lockLatestCatalog(
  * 解析只读 skills / agents / 申请（不加锁），不会与别的路径形成死锁。
  *
  * The snapshot also carries each skill's `plugin` and the Claude Code tool-name map (`toolMap`,
- * iff an effective skill has source format `claude-code`). It never carries `pinned` any more
- * (skills default-on spec §8): a conversation whose latest snapshot has pins gets one without them,
- * and the request tells the model they were removed. Run start reads no object storage.
+ * iff an effective skill has source format `claude-code`). Run start reads no object storage.
  *
  * The catalog budget (`skills.catalogBudgetChars`, spec §7) is applied here and recorded in the
  * snapshot: entries past it carry `nameOnly: true` ({@link applyCatalogBudget}); the cut is logged

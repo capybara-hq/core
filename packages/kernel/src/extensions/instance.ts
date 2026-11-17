@@ -122,8 +122,6 @@ export class ExtensionInstance {
   readonly uiDropped: DroppedUiContribution[];
   /** `after` values that are not anchors of their slot (the contribution keeps the default position). */
   readonly uiUnknownAnchors: { id: string; after: string }[];
-  /** Ids of contributions that still name the deprecated `place`. */
-  readonly uiDeprecatedPlace: string[];
   private hash: string;
   private readonly live: LiveConfig;
   readonly entryUrl: string;
@@ -146,7 +144,6 @@ export class ExtensionInstance {
     this.ui = ui.resolved;
     this.uiDropped = ui.dropped;
     this.uiUnknownAnchors = ui.unknownAnchors;
-    this.uiDeprecatedPlace = ui.deprecatedPlace;
     this.hash = init.configHash;
     this.live = init.config;
     this.entryUrl = init.entryUrl;

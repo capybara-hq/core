@@ -1,4 +1,4 @@
-import type { UiKind, UiPlace } from "./ui.js";
+import type { UiKind } from "./ui.js";
 
 export type UiSlotScope = "conversation" | "agent" | "org" | "platform" | "file";
 export type UiSlotRole = "guest" | "member" | "admin" | "superAdmin";
@@ -264,16 +264,6 @@ export function parseSlotRef(ref: string): { id: string; version: number } | nul
   if (!m) return null;
   return { id: m[1] as string, version: m[2] === undefined ? 1 : Number(m[2]) };
 }
-
-/** @deprecated step A of the UI slots spec §4 */
-export const PLACE_SLOTS: Readonly<Record<UiPlace, UiSlotId>> = {
-  panel: "conversation.panel",
-  conversation: "conversation.panel",
-  section: "conversation.properties.section",
-  inline: "conversation.tool-result.card",
-  page: "org.page",
-  "file-preview": "file.preview",
-};
 
 export const UI_ARRANGEABLE_SLOTS: readonly UiSlotId[] = UI_SLOT_IDS.filter(
   (id) => id !== "file.preview",

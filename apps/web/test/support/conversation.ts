@@ -79,6 +79,8 @@ export const CONV = (id = "c1", extra: Record<string, unknown> = {}) => ({
     lastSeq: 0,
     createdAt: "2026-10-26T06:02:00.000Z",
     updatedAt: "2026-10-26T06:02:00.000Z",
+    deviceId: null,
+    activity: null,
     ...extra,
   },
 });

@@ -98,6 +98,10 @@ jobs:
       - name: SDK API changeset
         if: github.event_name == 'pull_request'
         run: pnpm check:sdk-api-changeset --base "$(git rev-parse HEAD^1)"
+      # Comment lines the PR adds are English (the full scan of the SDK is in pnpm check). Same base.
+      - name: English comments
+        if: github.event_name == 'pull_request'
+        run: pnpm check:english-comments --base "$(git rev-parse HEAD^1)"
       # Applied migrations are immutable: the diff may add migration files but not modify, delete or
       # rename existing ones (kernel and plugin migrations), and every file it adds must be numbered
       # above the highest number of its directory at the base (migration-number-behind-base: the

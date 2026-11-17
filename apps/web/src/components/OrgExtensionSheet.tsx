@@ -298,7 +298,7 @@ export function OrgExtensionSheet({
 /**
  * Why an unavailable extension cannot be used and what the viewer does next (Platform tool spec
  * §14.5 item 4): the super admin gets the admin console link, org admins and members a step for
- * their role; state only, never a config field. Without a reason (an older kernel) the old hint.
+ * their role; state only, never a config field.
  */
 function UnavailableNext({
   reason,

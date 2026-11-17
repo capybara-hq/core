@@ -9,22 +9,16 @@ import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
 import { LockService } from "../../src/infra/lock/lock.service.js";
-import { removeRetiredSchedulers } from "../../src/infra/queue/retired-schedulers.js";
 import { KernelModule } from "../../src/kernel.module.js";
 import { createLogger } from "../../src/log.js";
 import { logContext } from "../../src/log-context.js";
 import { WorkerModule } from "../../src/roles/worker.module.js";
 import { MaintenanceModule, MaintenanceProcessor } from "../../src/runtime/maintenance.js";
 import { MAINTENANCE_QUEUE_NAME } from "../../src/runtime/maintenance-queue.js";
-import { RETIRED_SCHEDULER_IDS } from "../../src/runtime/retired-schedulers.js";
 import { SANDBOX_SUSPEND_JOB } from "../../src/sandbox/jobs.js";
 import { SandboxOperationReconcileJob } from "../../src/sandbox/operation-reconcile.job.js";
 import { SandboxService } from "../../src/sandbox/sandbox.service.js";
-import {
-  DRIFT_SCHEDULER_ID,
-  OUTPUT_CLEANUP_JOB,
-  OUTPUT_CLEANUP_SCHEDULER_ID,
-} from "../../src/tools/job-ids.js";
+import { OUTPUT_CLEANUP_JOB } from "../../src/tools/job-ids.js";
 import { ToolJobs } from "../../src/tools/jobs.js";
 import { deleteExpiredOutputs } from "../../src/tools/outputs.js";
 import { truncateTables } from "../helpers/db.js";
@@ -34,7 +28,7 @@ import { configFrom, kernelDbFor } from "../helpers/tools.js";
 
 /**
  * The kernel maintenance queue (`cap-kernel-maintenance`) and the hourly cleanup of output
- * archives (a `@LockedCron` of `ToolJobs`; its old scheduler is retired).
+ * archives (a `@LockedCron` of `ToolJobs`).
  */
 
 let pgc: TestContainer;
@@ -105,23 +99,9 @@ describe("deleteExpiredOutputs", () => {
 });
 
 describe("output-cleanup", () => {
-  it("the old hourly scheduler is retired: a worker start removes it (and the drift scan's)", async () => {
+  it("the maintenance queue and the cleanup job have no `:` in their names", () => {
     expect(MAINTENANCE_QUEUE_NAME).not.toContain(":");
-    expect(OUTPUT_CLEANUP_SCHEDULER_ID).not.toContain(":");
-    expect(RETIRED_SCHEDULER_IDS).toEqual(
-      expect.arrayContaining([OUTPUT_CLEANUP_SCHEDULER_ID, DRIFT_SCHEDULER_ID]),
-    );
-    await probe.upsertJobScheduler(
-      OUTPUT_CLEANUP_SCHEDULER_ID,
-      { every: 3_600_000 },
-      { name: OUTPUT_CLEANUP_JOB, data: {} },
-    );
-    // two worker replicas starting together
-    await Promise.all([
-      removeRetiredSchedulers(probe, RETIRED_SCHEDULER_IDS),
-      removeRetiredSchedulers(probe, RETIRED_SCHEDULER_IDS),
-    ]);
-    expect(await probe.getJobSchedulers()).toHaveLength(0);
+    expect(OUTPUT_CLEANUP_JOB).not.toContain(":");
   });
 
   it("the @LockedCron job deletes expired archives and keeps the others", async () => {
@@ -230,7 +210,6 @@ describe("MaintenanceProcessor (the one consumer)", () => {
       },
       { error: () => {}, warn: (...a: unknown[]) => void warned.push(a) },
       { reconcile: async () => {}, revoke: async () => {} },
-      { removeJobScheduler: async () => true },
     );
     const job = (name: string, data: unknown) => ({ name, data, id: `${name}-1` }) as never;
     await processor.process(job("wait-timeout", { waitId: "w" }), "tok");

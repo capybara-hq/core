@@ -11,7 +11,7 @@ import { createDb } from "../../src/db/pool.js";
 import { builtinsOff } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
-import { PW, waitFor } from "../helpers/runs.js";
+import { enableExtensions, PW, waitFor } from "../helpers/runs.js";
 import { seedFakeImGuideItem } from "../helpers/setup-guides.js";
 
 // Setup checks across two replicas (spec 2026-11-09-setup-guides-v2-design.md §10.7): the
@@ -87,6 +87,7 @@ beforeAll(async () => {
   const org = await call("POST", "/api/v1/orgs", { name: "Acme" });
   expect(org.status).toBe(201);
   const orgId = (org.json.org as { id: string }).id;
+  await enableExtensions(raw, orgId, "model-fake");
   base = `/api/v1/orgs/${orgId}`;
   const en = await call("PUT", `${base}/extensions/fake-im`, {
     enabled: true,

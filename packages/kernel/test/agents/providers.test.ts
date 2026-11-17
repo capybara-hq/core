@@ -1,13 +1,10 @@
-import {
-  assertValidDeclarations,
-  type ExtensionPointRef,
-  type ModelInfoV1,
-  type ModelParameter,
-  type ModelProvider,
-  type ModelProviderV1,
-  type ModelRequest,
-  type ModelRequestV1,
-  type ModelStreamEvent,
+import type {
+  ExtensionPointRef,
+  ModelInfo,
+  ModelParameter,
+  ModelProvider,
+  ModelRequest,
+  ModelStreamEvent,
 } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
@@ -75,20 +72,20 @@ describe("ProviderRegistry", () => {
     ]);
   });
 
-  it("listModels 结果缓存在 Redis cache:capk:models:<provider>:v<契约主版本>，EX 600；第二次不再访问供应商", async () => {
+  it("listModels 结果缓存在 Redis cache:capk:models:<provider>:f<格式>:…，EX 600；第二次不再访问供应商", async () => {
     const before = fakeBCalls(k.app.get(ExtensionHost));
     await registry.list(ORG);
     await registry.list(ORG);
     expect(fakeBCalls(k.app.get(ExtensionHost)) - before).toBe(1);
-    const [keyB] = await redis.keys("cache:capk:models:model-fake-b:v2:*");
-    const [keyA] = await redis.keys("cache:capk:models:model-fake:v2:*");
+    const [keyB] = await redis.keys("cache:capk:models:model-fake-b:f2:*");
+    const [keyA] = await redis.keys("cache:capk:models:model-fake:f2:*");
     const ttl = await redis.ttl(keyB as string);
     expect(ttl).toBeGreaterThan(590);
     expect(ttl).toBeLessThanOrEqual(600);
     expect(await redis.ttl(keyA as string)).toBeGreaterThan(590);
   });
 
-  it("缓存键带插件版本与部署配置摘要（cache:capk:models:<provider>:v<主版本>:f<格式>:<版本>:<摘要>），不含配置明文", async () => {
+  it("缓存键带插件版本与部署配置摘要（cache:capk:models:<provider>:f<格式>:<版本>:<摘要>），不含配置明文", async () => {
     await registry.list(ORG);
     const entry = k.app
       .get(ExtensionHost)
@@ -97,7 +94,7 @@ describe("ProviderRegistry", () => {
     expect(entry?.version).toMatch(/^\d+\.\d+\.\d+/);
     expect(entry?.configHash).toMatch(/^[0-9a-f]{16}$/);
     expect(await redis.keys("cache:capk:models:model-fake-b:*")).toEqual([
-      `cache:capk:models:model-fake-b:v2:f2:${entry?.version}:${entry?.configHash}`,
+      `cache:capk:models:model-fake-b:f2:${entry?.version}:${entry?.configHash}`,
     ]);
   });
 
@@ -196,7 +193,7 @@ describe("ProviderRegistry", () => {
       expect(calls).toBe(1);
       expect((await reg.listWithStatus()).find((p) => p.provider === "hung")?.status).toBe("error");
       expect(calls).toBe(1);
-      expect(await redis.ttl("capk:models-failed:hung:v2:-:-")).toBeGreaterThan(0);
+      expect(await redis.ttl("capk:models-failed:hung:-:-")).toBeGreaterThan(0);
       const err = await reg.resolve(ORG, { provider: "hung", model: "x" }).catch((e: unknown) => e);
       expect(err).toBeInstanceOf(ProviderListError);
       expect(calls).toBe(2);
@@ -204,8 +201,8 @@ describe("ProviderRegistry", () => {
   });
 });
 
-describe("model-provider@1 / @2", () => {
-  const v1Info = (id: string, effort: boolean): ModelInfoV1 => ({
+describe("model-provider@2", () => {
+  const chatInfo = (id: string): Omit<ModelInfo, "parameters"> => ({
     id,
     displayName: id,
     contextWindow: 8_000,
@@ -213,10 +210,9 @@ describe("model-provider@1 / @2", () => {
     capabilities: {
       tools: false,
       vision: false,
-      reasoning: effort,
+      reasoning: false,
       caching: false,
       midConversationSystem: false,
-      effort,
     },
   });
   const done: ModelStreamEvent = {
@@ -224,19 +220,6 @@ describe("model-provider@1 / @2", () => {
     content: [{ type: "text", text: "ok" }],
     stopReason: "end_turn",
     usage: { inputTokens: 1, outputTokens: 1, cacheReadTokens: 0, cacheWriteTokens: 0 },
-  };
-  const v1 = (models: ModelInfoV1[]) => {
-    const seen: ModelRequestV1[] = [];
-    const impl: ModelProviderV1 = {
-      async listModels() {
-        return models;
-      },
-      async *stream(req) {
-        seen.push(req);
-        yield done;
-      },
-    };
-    return { impl, seen };
   };
   const v2Params: ModelParameter[] = [
     {
@@ -254,9 +237,7 @@ describe("model-provider@1 / @2", () => {
     const impl: ModelProvider = {
       async listModels() {
         calls++;
-        const { capabilities, ...rest } = v1Info("v2-model", false);
-        const { effort: _deprecated, ...caps } = capabilities;
-        return [{ ...rest, capabilities: caps, parameters }];
+        return [{ ...chatInfo("v2-model"), parameters }];
       },
       async *stream(req) {
         seen.push(req);
@@ -301,62 +282,10 @@ describe("model-provider@1 / @2", () => {
     ]);
   });
 
-  it("@1 适配：capabilities.effort 为真 → parameters 含五档 effort（不给默认值），否则为空", async () => {
-    const { impl } = v1([v1Info("e", true), v1Info("n", false)]);
-    const r = reg([{ plugin: "old", capability: "model-provider@1", impl }]);
-    const [entry] = await r.list(ORG);
-    const [e, n] = entry?.models ?? [];
-    expect(e?.parameters).toEqual([
-      {
-        key: "effort",
-        standard: "effort",
-        schema: { type: "string", enum: ["low", "medium", "high", "xhigh", "max"] },
-        label: { zh: "思考深度", en: "Effort" },
-      },
-    ]);
-    expect(n?.parameters).toEqual([]);
-    expect(() => assertValidDeclarations("old", e?.parameters ?? [])).not.toThrow();
-    const resolved = await r.resolve(ORG, { provider: "old", model: "e" });
-    expect(resolved.info.parameters).toEqual(e?.parameters);
-  });
-
-  it("@1 adapter: every @1 model is a chat model (kind and embedding dropped), no embed, no per-call options", async () => {
-    const seenOpts: unknown[] = [];
-    const listed: unknown[] = [];
-    const impl: ModelProviderV1 = {
-      async listModels(...args: unknown[]) {
-        listed.push(args);
-        return [
-          {
-            ...v1Info("emb", false),
-            kind: "embedding",
-            embedding: { dimensions: [8], defaultDimensions: 8, maxInputTokens: 10, maxBatch: 2 },
-          },
-        ];
-      },
-      async *stream(_req, opts) {
-        seenOpts.push(opts);
-        yield done;
-      },
-    };
-    const r = reg([{ plugin: "old", capability: "model-provider@1", impl }]);
-    const [entry] = await r.list(ORG);
-    expect(entry?.models.map((m) => [m.id, m.kind])).toEqual([["emb", "chat"]]);
-    expect(entry?.models[0]).not.toHaveProperty("embedding");
-    expect(listed).toEqual([[]]);
-    const { provider, info } = await r.resolve(ORG, { provider: "old", model: "emb" });
-    expect(info.kind).toBe("chat");
-    expect(provider.embed).toBeUndefined();
-    await drain(provider.stream(req({}), signal()));
-    expect(Object.keys(seenOpts[0] as object)).toEqual(["signal"]);
-  });
-
   it("@2 embedding model: listed with its kind when the provider implements embed; the bound embed carries the org", async () => {
     const seen: unknown[] = [];
-    const { capabilities, ...rest } = v1Info("emb", false);
-    const { effort: _deprecated, ...caps } = capabilities;
     const embedding = { dimensions: [4], defaultDimensions: 4, maxInputTokens: 10, maxBatch: 2 };
-    const base = { ...rest, capabilities: caps, parameters: [] };
+    const base = { ...chatInfo("emb"), parameters: [] };
     const impl: ModelProvider = {
       async listModels() {
         return [{ ...base, kind: "embedding", embedding }];
@@ -389,9 +318,7 @@ describe("model-provider@1 / @2", () => {
   });
 
   it("@2 embedding model with malformed embedding info is dropped, one warn each; a valid one stays", async () => {
-    const { capabilities, ...rest } = v1Info("emb", false);
-    const { effort: _deprecated, ...caps } = capabilities;
-    const base = { ...rest, capabilities: caps, parameters: [] };
+    const base = { ...chatInfo("emb"), parameters: [] };
     const good = { dimensions: [4, 8], defaultDimensions: 8, maxInputTokens: 10, maxBatch: 2 };
     const bad: Record<string, unknown> = {
       "no-dims": { ...good, dimensions: [] },
@@ -428,23 +355,6 @@ describe("model-provider@1 / @2", () => {
     expect(warns).toEqual(Object.keys(bad).map(() => "model dropped from the provider's list"));
   });
 
-  it("@1 适配：stream 把 params.effort 映射为 req.effort，其余参数丢弃", async () => {
-    const { impl, seen } = v1([v1Info("e", true)]);
-    const r = reg([{ plugin: "old", capability: "model-provider@1", impl }]);
-    const { provider } = await r.resolve(ORG, { provider: "old", model: "e" });
-    await drain(provider.stream(req({ effort: "low", "old.x": 1 }), signal()));
-    expect(seen).toHaveLength(1);
-    expect(seen[0]?.effort).toBe("low");
-    expect(seen[0]).not.toHaveProperty("params");
-    // 没有 params.effort 时保留请求自带的 effort（Task 20 之前内核仍直接设置 req.effort）
-    await drain(provider.stream({ ...req({}), effort: "max" }, signal()));
-    expect(seen[1]?.effort).toBe("max");
-    expect(seen[1]).not.toHaveProperty("params");
-    // @1 没有 toolChoice：不传给旧插件
-    await drain(provider.stream({ ...req({}), toolChoice: "none" }, signal()));
-    expect(seen[2]).not.toHaveProperty("toolChoice");
-  });
-
   it("@2：模型信息与请求原样透传", async () => {
     const p = v2();
     const r = reg([{ plugin: "p2", capability: "model-provider@2", impl: p.impl }]);
@@ -455,21 +365,18 @@ describe("model-provider@1 / @2", () => {
     expect(p.seen).toEqual([sent]);
   });
 
-  it("同一插件同时提供 @1 与 @2 时用 @2", async () => {
-    const old = v1([v1Info("legacy", true)]);
+  it("a provider of another major (model-provider@1) is ignored with a warn", async () => {
     const p = v2();
-    const r = reg([
-      { plugin: "p2", capability: "model-provider@1", impl: old.impl },
-      { plugin: "p2", capability: "model-provider@2", impl: p.impl },
-    ]);
-    const providers = await r.list(ORG);
-    expect(providers.map((x) => [x.provider, x.models.map((m) => m.id)])).toEqual([
-      ["p2", ["v2-model"]],
-    ]);
-    const { provider } = await r.resolve(ORG, { provider: "p2", model: "v2-model" });
-    await drain(provider.stream(req({}), signal()));
-    expect(p.seen).toHaveLength(1);
-    expect(old.seen).toHaveLength(0);
+    const warns: unknown[] = [];
+    const r = reg(
+      [
+        { plugin: "old", capability: "model-provider@1", impl: p.impl },
+        { plugin: "p2", capability: "model-provider@2", impl: p.impl },
+      ],
+      warns,
+    );
+    expect((await r.list(ORG)).map((x) => x.provider)).toEqual(["p2"]);
+    expect(warns).toEqual(["unsupported model-provider major version; ignored"]);
   });
 
   it("@2 model with invalid declarations: only that model is dropped (one warn); resolve -> agent.model_unavailable (not retryable)", async () => {
@@ -477,16 +384,9 @@ describe("model-provider@1 / @2", () => {
       { key: "style", schema: { type: "boolean" }, label: { zh: "风格", en: "Style" } },
     ]);
     const warns: unknown[] = [];
-    const r = reg(
-      [
-        { plugin: "p2", capability: "model-provider@2", impl: bad.impl },
-        { plugin: "old", capability: "model-provider@1", impl: v1([v1Info("b", false)]).impl },
-      ],
-      warns,
-    );
+    const r = reg([{ plugin: "p2", capability: "model-provider@2", impl: bad.impl }], warns);
     expect((await r.list(ORG)).map((x) => [x.provider, x.models.map((m) => m.id)])).toEqual([
       ["p2", []],
-      ["old", ["b"]],
     ]);
     expect(warns).toEqual(["model dropped from the provider's list"]);
     const err = await r
@@ -496,11 +396,11 @@ describe("model-provider@1 / @2", () => {
     expect(err).not.toBeInstanceOf(ProviderListError);
     expect((err as ApiError).code).toBe("agent.model_unavailable");
     // the validated list (without the dropped model) is cached
-    expect(await redis.exists("cache:capk:models:p2:v2:f2:-:-")).toBe(1);
+    expect(await redis.exists("cache:capk:models:p2:f2:-:-")).toBe(1);
   });
 
   it("an older kernel's entry under the pre-@Cacheable key is ignored: the list is cached under the new key", async () => {
-    // what an older kernel wrote (a raw `@1` shape, under its old key)
+    // what an older kernel wrote (a raw shape, under its old key)
     await redis.set("capk:models:p2:v2:-:-", JSON.stringify([{ id: "stale" }]), "EX", 600);
     const p = v2();
     const r = reg([{ plugin: "p2", capability: "model-provider@2", impl: p.impl }]);
@@ -508,9 +408,9 @@ describe("model-provider@1 / @2", () => {
     expect(entry?.models.map((m) => m.id)).toEqual(["v2-model"]);
     expect(p.calls()).toBe(1);
     // cached under the new key (`@Cacheable`), which the next list reads
-    const cached = JSON.parse((await redis.get("cache:capk:models:p2:v2:f2:-:-")) ?? "null");
+    const cached = JSON.parse((await redis.get("cache:capk:models:p2:f2:-:-")) ?? "null");
     expect(cached.map((m: { id: string }) => m.id)).toEqual(["v2-model"]);
-    expect(await redis.ttl("cache:capk:models:p2:v2:f2:-:-")).toBeGreaterThan(0);
+    expect(await redis.ttl("cache:capk:models:p2:f2:-:-")).toBeGreaterThan(0);
     await r.list(ORG);
     expect(p.calls()).toBe(1);
     // the old key is neither read nor rewritten
@@ -521,27 +421,13 @@ describe("model-provider@1 / @2", () => {
 
   it("a format-1 list (no kind, written before model kinds) is ignored: the model still resolves", async () => {
     // what the previous kernel cached: the validated list without a normalised `kind`
-    await redis.set("cache:capk:models:p2:v2:-:-", JSON.stringify([{ id: "v2-model" }]), "EX", 600);
+    await redis.set("cache:capk:models:p2:-:-", JSON.stringify([{ id: "v2-model" }]), "EX", 600);
     const p = v2();
     const r = reg([{ plugin: "p2", capability: "model-provider@2", impl: p.impl }]);
     const { info } = await r.resolve(ORG, { provider: "p2", model: "v2-model" });
     expect(info.kind).toBe("chat");
     expect(p.calls()).toBe(1);
   });
-  it("插件从 @1 升级到 @2：不读 @1 时写入的缓存（键带契约主版本）", async () => {
-    const old = reg([
-      { plugin: "p2", capability: "model-provider@1", impl: v1([v1Info("v2-model", true)]).impl },
-    ]);
-    const [before] = await old.list(ORG);
-    expect(before?.models[0]?.parameters.map((d) => d.key)).toEqual(["effort"]);
-    expect(await redis.exists("cache:capk:models:p2:v1:f2:-:-")).toBe(1);
-    const p = v2();
-    const upgraded = reg([{ plugin: "p2", capability: "model-provider@2", impl: p.impl }]);
-    const [after] = await upgraded.list(ORG);
-    expect(after?.models[0]?.parameters).toEqual(v2Params);
-    expect(p.calls()).toBe(1);
-  });
-
   it("插件版本或部署配置变化 → 缓存未命中，重新列模型（升级后不按旧声明校验）", async () => {
     const p = v2();
     const at = (version: string, configHash: string) =>

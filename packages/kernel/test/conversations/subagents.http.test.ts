@@ -18,7 +18,7 @@ import { testMembers } from "../helpers/members.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
   createConv,
-  createOrg,
+  createOrgWithProviders,
   eventsOf,
   PW,
   postMessage,
@@ -148,7 +148,7 @@ beforeEach(async () => {
   owner = o.req;
   ownerCookie = o.cookie;
   member = (await login("member")).req;
-  orgId = await createOrg(owner);
+  orgId = await createOrgWithProviders(k, owner);
   await testMembers(db).add(orgId, memberId, "member", ownerId);
   const res = await owner({
     method: "POST",
@@ -232,33 +232,36 @@ async function listSubagents(
 /**
  * Runs "SCENARIO one" to its end and returns the parent and its only child. The child's delivery
  * can wake the parent again: wait for a completed run that consumed it, not just the delivery.
- * The completed run also queues a title job whose call appends a `usage` event (`purpose: "title"`)
- * after `run_finished`; wait for it too, so the parent's usage no longer moves under the caller.
+ * Each completed run also queues a title job whose call appends a `usage` event (`purpose: "title"`)
+ * after `run_finished`; wait for the one after the consuming run, so the parent's usage no longer
+ * moves under the caller.
  */
 async function oneChild(): Promise<{ conv: string; child: string }> {
   const conv = await createConv(owner, orgId, agentId);
   await postMessage(owner, orgId, conv, "SCENARIO one");
   await waitForTerminal(db, conv, 1, 30_000);
   await finishedDeliveries(db, conv);
+  // The script has no rule for the title call, so no title is written and every completed run
+  // queues one more attempt: the first run's attempt can log its usage before the second run ends.
+  // Wait for the attempt that follows the run that consumed the delivery.
   await waitFor(
     async () => {
       const events = await eventsOf(db, conv);
       const delivery = events.find(
         (e) => e.type === "subagent_delivery" && e.payload.kind === "finished",
       );
+      const consumed =
+        delivery &&
+        events.find((e) => e.type === "run_finished" && e.payload.consumedUpToSeq >= delivery.seq);
       return (
-        delivery !== undefined &&
-        events.some((e) => e.type === "run_finished" && e.payload.consumedUpToSeq >= delivery.seq)
+        consumed !== undefined &&
+        events.some(
+          (e) => e.type === "usage" && e.payload.purpose === "title" && e.seq > consumed.seq,
+        )
       );
     },
     30_000,
-    "the parent completed after consuming the child's delivery",
-  );
-  await waitFor(
-    async () =>
-      (await eventsOf(db, conv)).some((e) => e.type === "usage" && e.payload.purpose === "title"),
-    30_000,
-    "the title call's usage",
+    "the title call's usage after the parent consumed the child's delivery",
   );
   const [c, ...more] = await childRunsOf(db, conv);
   expect(more).toEqual([]);

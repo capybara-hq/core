@@ -36,6 +36,7 @@ const TODO = {
       entries: [{ value: "tool@1", sensitive: false }],
     },
   ],
+  provides: ["tool@1"],
   orgConfigSchema: null,
 };
 

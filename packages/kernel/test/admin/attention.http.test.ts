@@ -161,9 +161,8 @@ describe("GET /api/v1/admin/overview/attention", () => {
       view("e", { status: "conflict" }),
       view("f", { status: "converging" }),
       view("g", { status: "pending_migration" }),
-      view("h", { status: "legacy_format" }),
-      view("i", { status: "enabled", configValid: false }),
-      view("j", { status: "enabled" }),
+      view("h", { status: "enabled", configValid: false }),
+      view("i", { status: "enabled" }),
       view("k", { status: "disabled", configValid: false }),
     ]);
     const a = await attention();
@@ -175,8 +174,7 @@ describe("GET /api/v1/admin/overview/attention", () => {
       ["e", "conflict", "conflict"],
       ["f", "converging", "converging"],
       ["g", "pending_migration", "converging"],
-      ["h", "legacy_format", "legacy_format"],
-      ["i", "enabled", "config"],
+      ["h", "enabled", "config"],
     ]);
     expect(JSON.stringify(a)).not.toContain("sk-SECRET");
   });

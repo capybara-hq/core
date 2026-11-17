@@ -1,23 +1,26 @@
 import { z } from "zod";
 
 /*
- * 连接器的认证方式（只有类型与非密钥字段，凭据值不在这里）：内核的连接器安装接口与企业目录里的连接器模板
- * （`ConnectorTemplateSpec.auth`）共用这一个 schema。各分支都是 strict：多出的字段（如 `token`）一律拒绝，
- * 所以合法的认证预设里不可能夹带凭据。OAuth 端点是否必须 https 由内核按部署配置再校验。
+ * A connector's authentication method (only the type and non-secret fields; credential values are
+ * not here): the kernel's connector install API and the connector templates in the catalog
+ * (`ConnectorTemplateSpec.auth`) share this one schema. Every branch is strict: extra fields (such
+ * as `token`) are always rejected,
+ * so a valid auth preset cannot smuggle in a credential. Whether OAuth endpoints must be https is
+ * checked again by the kernel per deployment config.
  */
 
-/** HTTP 头名（RFC 9110 token）。 */
+/** HTTP header name (RFC 9110 token). */
 const HeaderName = z
   .string()
   .min(1)
   .max(100)
   .regex(/^[A-Za-z0-9!#$%&'*+.^_`|~-]+$/, "Invalid header name");
 const Ownership = z.enum(["org", "personal"]);
-/** OAuth 端点（https 等由内核按部署配置再校验）。 */
+/** OAuth endpoint (https etc. is checked again by the kernel per deployment config). */
 const OAuthUrl = z.url().max(2000);
-/** 令牌端点的客户端认证方式（有客户端密钥时）。 */
+/** Client authentication method at the token endpoint (when there is a client secret). */
 const TokenAuthMethod = z.enum(["client_secret_basic", "client_secret_post"]);
-/** OAuth scope（RFC 6749 §3.3 scope-token）。 */
+/** OAuth scope (RFC 6749 §3.3 scope-token). */
 const Scopes = z
   .array(
     z
@@ -43,7 +46,10 @@ const TokenTypes = z
   )
   .max(5);
 
-/** 认证方式：只有类型与非密钥字段；凭据值走内核的 `credential` / 凭据接口。 */
+/**
+ * Authentication method: only the type and non-secret fields; credential values go through the
+ * kernel's `credential` / credentials API.
+ */
 export const ConnectorAuthSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("none") }).strict(),
   z.object({ type: z.literal("bearer"), ownership: Ownership }).strict(),
@@ -116,5 +122,5 @@ export const ConnectorAuthSchema = z.discriminatedUnion("type", [
     .strict(),
 ]);
 
-/** 认证预设（{@link ConnectorAuthSchema} 的输出）。 */
+/** Auth preset (the output of {@link ConnectorAuthSchema}). */
 export type ConnectorAuthPreset = z.infer<typeof ConnectorAuthSchema>;

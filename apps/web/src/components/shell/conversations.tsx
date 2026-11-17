@@ -367,7 +367,7 @@ export function useConversationGroups(
     title: c.title,
     startedAt: new Date(c.createdAt),
     href: `/chat/${encodeURIComponent(c.id)}`,
-    activity: c.activity ?? null,
+    activity: c.activity,
   });
   // The group titles' avatars come with the groups (the sidebar reads no agents list); an agent
   // without an avatar shows the initial of its name.

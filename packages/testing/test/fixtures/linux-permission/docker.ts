@@ -9,6 +9,7 @@ import {
   type SandboxPermissionSupport,
   SandboxPermissionUnsupportedError,
   SandboxScopeDeniedError,
+  validateAllowHost,
 } from "@capybara-hq/plugin-sdk";
 import type { NativeFixtureEntry } from "../../../src/sandbox-native-conformance.js";
 import type {
@@ -157,6 +158,17 @@ const ENDPOINTS = {
   ungranted4: ["127.0.0.1", 18081],
   ungranted6: ["::1", 18082],
 } as const;
+/** The allowlist names of the endpoints (scopes carry names; IP literals are never valid hosts). */
+export const ENDPOINT_NAMES = {
+  granted: "granted.permission.test",
+  ungranted4: "ungranted4.permission.test",
+  ungranted6: "ungranted6.permission.test",
+} as const;
+/**
+ * A root-run HTTP forward proxy standing in for a provider's egress proxy: it forwards requests
+ * for the granted name only and refuses every other name, without connecting.
+ */
+const PROXY = ["127.0.0.1", 18090] as const;
 
 /** Starts the controlled endpoints as root so the device user cannot forge receipts. */
 export function startEndpoints(device: DeviceContainer): void {
@@ -170,6 +182,11 @@ export function startEndpoints(device: DeviceContainer): void {
     `${RUNTIME_DIR}/listen.py`,
     RECEIPTS_DIR,
     JSON.stringify(ENDPOINTS),
+    JSON.stringify({
+      address: PROXY[0],
+      port: PROXY[1],
+      routes: { [`${ENDPOINT_NAMES.granted}:${ENDPOINTS.granted[1]}`]: ENDPOINTS.granted },
+    }),
   ]);
   child.unref();
   const ready = spawnSync("docker", ["exec", device.name, "python3", "-c", WAIT_READY], {
@@ -180,7 +197,7 @@ export function startEndpoints(device: DeviceContainer): void {
 
 const WAIT_READY = `
 import socket
-for port, host in ((18080, "127.0.0.1"), (18081, "127.0.0.1"), (18082, "::1")):
+for port, host in ((18080, "127.0.0.1"), (18081, "127.0.0.1"), (18082, "::1"), (18090, "127.0.0.1")):
     while True:
         try:
             socket.create_connection((host, port)).close()
@@ -207,19 +224,29 @@ export class Agent {
   private readonly pending = new Map<string, (response: AgentResponse) => void>();
   readonly ready: Promise<void>;
   readonly candidateArch: boolean;
+  /** How allowlisted names are reached: straight to the endpoint, or only through the proxy. */
+  readonly access: "direct" | "proxy";
 
   constructor(
     device: DeviceContainer,
-    options: { outer?: "landlock" | "listener"; runtime?: string; candidateArch?: boolean } = {},
+    options: {
+      outer?: "landlock" | "listener";
+      runtime?: string;
+      candidateArch?: boolean;
+      access?: "direct" | "proxy";
+    } = {},
   ) {
     this.candidateArch = options.candidateArch === true;
+    this.access = options.access ?? "direct";
     const program = ["/usr/bin/python3", "-I", `${options.runtime ?? RUNTIME_DIR}/agent.py`];
     const command = options.outer
       ? ["/usr/bin/python3", "-I", `${RUNTIME_DIR}/outer-deny.py`, options.outer, ...program]
       : program;
-    // Allowlist host -> endpoint the consumer grants. "refused.test" is a closed loopback port.
+    // Allowlist host -> endpoint the consumer grants: the endpoint itself, or the proxy that
+    // resolves the name. "refused.test" is a closed loopback port.
+    const [address, port] = this.access === "proxy" ? PROXY : ENDPOINTS.granted;
     const endpoints = {
-      [ENDPOINTS.granted[0]]: { address: ENDPOINTS.granted[0], port: ENDPOINTS.granted[1] },
+      [ENDPOINT_NAMES.granted]: { address, port },
       "refused.test": { address: "127.0.0.1", port: 18099 },
     };
     this.child = spawn("docker", [
@@ -315,6 +342,21 @@ export function operation(agent: Agent, grant: SandboxPermissionGrant): SandboxO
   const frozen = structuredClone(grant);
   Object.freeze(frozen);
   const restricted = frozen.filesystem.kind === "scoped";
+  // Like a conforming provider (parseSandboxOperationScope), refuse hosts no scope may carry.
+  if (frozen.network.kind === "allowlist") {
+    for (const host of frozen.network.hosts) {
+      const problems = validateAllowHost(host);
+      if (problems.length > 0) throw new Error(`invalid allowlist host ${host}: ${problems}`);
+    }
+  }
+  // A proxied allowlist operation is told its proxy (curl reads the lowercase name for http).
+  const proxyEnv: Record<string, string> =
+    restricted && frozen.network.kind === "allowlist" && agent.access === "proxy"
+      ? {
+          http_proxy: `http://${PROXY[0]}:${PROXY[1]}`,
+          HTTP_PROXY: `http://${PROXY[0]}:${PROXY[1]}`,
+        }
+      : {};
   let consumed = false;
   const consume = () => {
     if (consumed) throw new Error("An operation ID is consumed once");
@@ -351,7 +393,7 @@ export function operation(agent: Agent, grant: SandboxPermissionGrant): SandboxO
         grant: frozen,
         command: args.command,
         cwd: args.cwd,
-        env: args.env ?? {},
+        env: { ...args.env, ...proxyEnv },
         timeoutMs: args.timeoutMs,
         maxOutputBytes: args.maxOutputBytes,
       });
@@ -429,9 +471,10 @@ export async function support(agent: Agent): Promise<SandboxPermissionSupport> {
 }
 
 function endpoint(device: Agent, name: keyof typeof ENDPOINTS): SandboxPermissionEndpoint {
-  const [host, port] = ENDPOINTS[name];
+  const [address, port] = ENDPOINTS[name];
   return {
-    host,
+    name: ENDPOINT_NAMES[name],
+    address,
     port,
     async receipts() {
       const value = (
@@ -465,6 +508,7 @@ export async function dockerPermissionFixture(
     endpoints: {
       granted: endpoint(agent, "granted"),
       ungranted: [endpoint(agent, "ungranted4"), endpoint(agent, "ungranted6")],
+      access: agent.access,
     },
     support: () => support(agent),
     operation: async (grant) => operation(agent, grant),

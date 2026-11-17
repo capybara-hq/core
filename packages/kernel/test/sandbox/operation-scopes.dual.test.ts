@@ -92,7 +92,7 @@ function replica(pool: ReturnType<typeof createDb>) {
     grantedHosts: [],
     executionGrants: null,
   });
-  const outbox = new OutboxService(host, db, log, async () => {});
+  const outbox = new OutboxService(host, db, async () => {});
   const transitions = new PermissionTransitions(
     db,
     host,

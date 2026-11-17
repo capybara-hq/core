@@ -124,7 +124,7 @@ export function orgsFor(
   const h = handlesFor(db);
   return new OrgsService(
     h.db,
-    new OutboxService(h.txHost, h.db, quiet, async () => {}),
+    new OutboxService(h.txHost, h.db, async () => {}),
     h.txHost,
     settings,
     tokens,
@@ -324,7 +324,7 @@ export function ceilingWritesOver(
   h: Pick<DatabaseHandles, "db" | "txHost">,
 ): PermissionCeilingWrites {
   const lock = new PermissionAuthorityLock(h.db, h.txHost, new XactLock(h.db, h.txHost));
-  const outbox = new OutboxService(h.txHost, h.db, quiet, async () => {});
+  const outbox = new OutboxService(h.txHost, h.db, async () => {});
   const events = new EventLog(h.db, { publish: async () => {} }, quiet, outbox, h.txHost);
   return new PermissionCeilingWrites(
     new PermissionTransitions(h.db, h.txHost, lock, events, outbox),
@@ -332,7 +332,7 @@ export function ceilingWritesOver(
     h.txHost,
     lock,
     new PermissionAuthorityEpochStore(h.db, h.txHost, lock),
-    new OutboxService(h.txHost, h.db, quiet, async () => {}),
+    new OutboxService(h.txHost, h.db, async () => {}),
   );
 }
 

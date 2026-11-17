@@ -10,7 +10,7 @@ export default async function ExtensionsPage({
   searchParams,
 }: {
   searchParams?: Promise<{ tab?: string | string[] }>;
-} = {}) {
+}) {
   const raw = (await searchParams)?.tab;
   return <Extensions tab={parseExtensionTab(Array.isArray(raw) ? raw[0] : raw)} />;
 }

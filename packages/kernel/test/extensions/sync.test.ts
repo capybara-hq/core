@@ -8,7 +8,6 @@ import {
   readlink,
   rm,
   stat,
-  symlink,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -16,8 +15,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { ExtensionManifest } from "@capybara-hq/plugin-sdk";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { ExtensionPackageError, extractExtensionPackage } from "../../src/extensions/package.js";
-import { clearBrokenRoot, MARKER, syncPackage } from "../../src/extensions/sync.js";
+import { clearBrokenRoot, syncPackage } from "../../src/extensions/sync.js";
 import { legacyTgz, pluginTgz } from "../helpers/plugin-packages.js";
 
 const sha = (b: Uint8Array) => createHash("sha256").update(b).digest("hex");
@@ -44,52 +42,15 @@ afterAll(async () => {
 });
 
 describe("syncPackage", () => {
-  it("a package in the pre-0.1.0 format is refused with extension.legacy_format, nothing left on disk", async () => {
+  it("an old-format package is refused naming the missing plugin.json, nothing left on disk", async () => {
     const own = await mkdtemp(join(tmpdir(), "plugin-sync-old-"));
     const old = await legacyTgz({ name: "sync-old" });
     const err = await syncPackage(own, "sync-old", sha(old), { get: async () => old }).then(
       () => undefined,
       (e: unknown) => e,
     );
-    expect(err).toBeInstanceOf(ExtensionPackageError);
-    expect((err as ExtensionPackageError).code).toBe("extension.legacy_format");
-    expect((err as Error).message).toContain("uses the pre-0.1.0 package format");
+    expect((err as Error).message).toContain(".capybara-plugin/plugin.json");
     expect(await readdir(join(own, "sync-old"))).toEqual([]);
-    await rm(own, { recursive: true, force: true });
-  });
-
-  it("a complete directory synced before 0.1.0 (old format, valid marker) is refused too, not loaded", async () => {
-    const own = await mkdtemp(join(tmpdir(), "plugin-sync-old-"));
-    const old = await legacyTgz({ name: "sync-cached" });
-    const digestOld = sha(old);
-    const root = join(own, "sync-cached", digestOld.slice(0, 16));
-    await extractExtensionPackage(old, root, { maxBytes: old.byteLength });
-    const files: Record<string, string> = {};
-    for (const f of ["package.json", "dist/index.mjs"])
-      files[f] = sha(await readFile(join(root, f)));
-    for (const pkg of ["@capybara-hq/plugin-sdk", "zod"]) {
-      const target = join(own, "host-copies", pkg);
-      await mkdir(target, { recursive: true });
-      await writeFile(join(target, "package.json"), "{}");
-      await mkdir(join(root, "node_modules", pkg, ".."), { recursive: true });
-      await symlink(target, join(root, "node_modules", pkg), "dir");
-    }
-    await writeFile(
-      join(root, MARKER),
-      JSON.stringify({ sha256: digestOld, entry: "dist/index.mjs", files }),
-    );
-    let fetched = 0;
-    const err = await syncPackage(own, "sync-cached", digestOld, {
-      get: async () => {
-        fetched++;
-        return old;
-      },
-    }).then(
-      () => undefined,
-      (e: unknown) => e,
-    );
-    expect((err as ExtensionPackageError).code).toBe("extension.legacy_format");
-    expect(fetched).toBe(0);
     await rm(own, { recursive: true, force: true });
   });
 

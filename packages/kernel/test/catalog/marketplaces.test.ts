@@ -14,10 +14,7 @@ import {
 import { Redis } from "ioredis";
 import { sql } from "kysely";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import {
-  MARKETPLACES_REFRESH_JOB,
-  MARKETPLACES_REFRESH_SCHEDULER_ID,
-} from "../../src/catalog/job-ids.js";
+import { MARKETPLACES_REFRESH_JOB } from "../../src/catalog/job-ids.js";
 import {
   MARKETPLACE_ENTRIES_MAX,
   MarketplacesService,
@@ -32,7 +29,6 @@ import { KernelConfigService } from "../../src/infra/config/kernel-config.servic
 import { LockedIntervalScheduler } from "../../src/infra/schedule/locked-interval.js";
 import { KERNEL_MIGRATIONS_DIR } from "../../src/kernel.js";
 import { createLogger } from "../../src/log.js";
-import { RETIRED_SCHEDULER_IDS } from "../../src/runtime/retired-schedulers.js";
 import { KERNEL_VERSION } from "../../src/version.js";
 import { truncateTables } from "../helpers/db.js";
 import { accountsFor } from "../helpers/identity.js";
@@ -836,7 +832,7 @@ describe("从清单引入", () => {
     await nothingImported();
   });
 
-  it("an npm or archive entry whose tgz is the pre-0.1.0 format is 422 catalog.legacy_format", async () => {
+  it("an npm or archive entry whose tgz is an old-format tgz is the ordinary 422 catalog.invalid_manifest", async () => {
     await resetAll();
     const legacy = pkgs["cat-l"] as Uint8Array;
     cat.setManifest({
@@ -848,8 +844,10 @@ describe("从清单引入", () => {
     for (const name of ["cat-l", "cat-la"]) {
       const res = await importEntry(admin, id2, name);
       expect(res.statusCode, res.body).toBe(422);
-      expect(res.json().error.code).toBe("catalog.legacy_format");
-      expect(res.json().error.message).toMatch(/pre-0\.1\.0 package format/);
+      expect(res.json().error.code).toBe("catalog.invalid_manifest");
+      expect(res.json().error.message).toMatch(
+        /\.capybara-plugin\/plugin\.json not found in the package.*capybara-plugin pack/,
+      );
     }
     await nothingImported();
   });
@@ -1055,8 +1053,6 @@ describe("定期刷新（@LockedInterval catalogs-refresh）", () => {
     );
     try {
       expect(MARKETPLACES_REFRESH_JOB).toBe("catalogs-refresh");
-      expect(MARKETPLACES_REFRESH_SCHEDULER_ID).not.toContain(":");
-      expect(RETIRED_SCHEDULER_IDS).toContain(MARKETPLACES_REFRESH_SCHEDULER_ID);
       const intervals = worker.app.get(LockedIntervalScheduler);
       expect(intervals.names()).toContain(MARKETPLACES_REFRESH_JOB);
       expect(intervals.periodOf(MARKETPLACES_REFRESH_JOB)).toBe(30 * 60_000);

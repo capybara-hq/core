@@ -1,13 +1,12 @@
-import { getQueueToken, OnWorkerEvent, WorkerHost } from "@nestjs/bullmq";
+import { OnWorkerEvent, WorkerHost } from "@nestjs/bullmq";
 import { Inject, Injectable, Module, Optional } from "@nestjs/common";
-import type { Job, Queue, Worker } from "bullmq";
+import type { Job, Worker } from "bullmq";
 import { BackgroundModule } from "../background/background.module.js";
 import { BG_WAKE_JOB, type BgWakeJobData } from "../background/wake-rules.js";
 import { OWNED_PLUGIN_CLEANUP_JOB, type OwnedPluginCleanupData } from "../catalog/job-ids.js";
 import { OwnedPluginCleanup, OwnedPluginCleanupModule } from "../catalog/owned-plugin-cleanup.js";
 import { configuredProcessor } from "../infra/queue/configured-processor.js";
 import { QueueModule } from "../infra/queue/queue.module.js";
-import { removeRetiredSchedulers } from "../infra/queue/retired-schedulers.js";
 import { runJob } from "../infra/queue/run-job.js";
 import { KernelScheduleModule } from "../infra/schedule/schedule.module.js";
 import { ScheduledRuns } from "../infra/schedule/scheduled-runs.js";
@@ -48,7 +47,6 @@ import {
 } from "../tools/permission-approval-jobs.js";
 import { ToolsModule } from "../tools/tools.module.js";
 import { MAINTENANCE_QUEUE_NAME } from "./maintenance-queue.js";
-import { RETIRED_SCHEDULER_IDS } from "./retired-schedulers.js";
 import { RunDeletion, STOP_DELETED_ORG_JOB, type StopDeletedOrgData } from "./run-deletion.js";
 import { ENSURE_RUN_JOB, type EnsureRunJobData, RunQueue } from "./run-queue.js";
 import { RuntimeModule } from "./runtime.module.js";
@@ -106,22 +104,11 @@ export class MaintenanceProcessor extends WorkerHost<Worker> {
     @Inject(KERNEL_LOGGER) private readonly log: Pick<KernelLogger, "error" | "warn">,
     @Inject(SandboxOperationReconcileJob)
     private readonly operations: Pick<SandboxOperationReconcileJob, "reconcile" | "revoke">,
-    @Inject(getQueueToken(MAINTENANCE_QUEUE_NAME))
-    private readonly queue: Pick<Queue, "removeJobScheduler">,
     @Optional()
     @Inject(CloudPermissionSnapshots)
     private readonly snapshots?: Pick<CloudPermissionSnapshots, "reconcileDevice">,
   ) {
     super();
-  }
-
-  /**
-   * Removes the retired job schedulers (`RETIRED_SCHEDULER_IDS`, runtime/retired-schedulers.ts): every fixed-period
-   * maintenance job is a `@LockedCron` / `@LockedInterval` now. Idempotent; called once when a
-   * worker role starts.
-   */
-  removeRetiredSchedulers(): Promise<void> {
-    return removeRetiredSchedulers(this.queue, RETIRED_SCHEDULER_IDS);
   }
 
   process(job: Job, token?: string): Promise<void> {
@@ -219,8 +206,7 @@ export class MaintenanceProcessor extends WorkerHost<Worker> {
         if (await this.scheduled.runNow(job.name)) return;
         // never completed unrun: in a rolling deploy an old worker meets a job a newer replica
         // owed (its outbox row is gone once added); failing it leaves it to BullMQ's retries, so a
-        // newer replica can take it within the job's attempts (old workers still go first, see
-        // docs/deploy/upgrade.md)
+        // newer replica can take it within the job's attempts
         throw new Error(`unknown maintenance job "${job.name}"`);
     }
   }
@@ -239,8 +225,7 @@ export class MaintenanceProcessor extends WorkerHost<Worker> {
 /**
  * The maintenance queue's consumer: {@link MaintenanceProcessor}. Imported only by the worker role
  * (`WorkerModule`), so other roles get no processor and no BullMQ worker. It never starts by
- * itself: the worker role (`WorkerRole`) removes the retired job schedulers and starts it after the
- * extensions loaded.
+ * itself: the worker role (`WorkerRole`) starts it after the extensions loaded.
  */
 @Module({
   imports: [

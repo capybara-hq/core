@@ -4,6 +4,7 @@
 // (skills/usable.ts, agents/templates.ts), the component scope service and the plugin scope preview
 // all decide with the same predicates.
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
+import { LIVE_INSTALL_STATUSES } from "./install-status.js";
 import { type PluginScope, visibleTo, wantedOn } from "./scope.js";
 
 /** The kinds of platform components. */
@@ -262,8 +263,6 @@ export interface ScopeState {
   switches: Map<string, Map<string, boolean>>;
 }
 
-const LIVE_INSTALL = ["installing", "installed", "upgrading"] as const;
-
 const groupBy = <T>(rows: T[], key: (r: T) => string, value: (r: T) => string) => {
   const out = new Map<string, Set<string>>();
   for (const r of rows) {
@@ -318,7 +317,7 @@ export async function loadScopeState(
       .selectFrom("plugin_installs")
       .select(["item_id", "org_id"])
       .where("item_id", "in", itemIds)
-      .where("status", "in", [...LIVE_INSTALL])
+      .where("status", "in", [...LIVE_INSTALL_STATUSES])
       .execute();
     state.installed = groupBy(
       installs,

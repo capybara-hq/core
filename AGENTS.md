@@ -57,7 +57,7 @@ Kernel / extensions / external apps; dependencies only point downward.
 - Package names are always `@capybara-hq/<name>`.
 
 Every edge and the reason for it: [docs/architecture.md](docs/architecture.md). Only the plugin/SDK
-boundary is checked automatically (`pnpm check:deps`); the rest relies on review.
+boundary and the `device` edge are checked automatically (`pnpm check:deps`); the rest relies on review.
 
 ## Multi-replica discipline (production runs multiple replicas)
 
@@ -84,8 +84,9 @@ Each line is the rule you must not miss; the skill has the rest.
 
 - **Language:** English for docs, code comments, identifiers and commit messages. When you touch a
   file, write new comments in English and translate the comments and test titles you edit (no bulk
-  translation). Model-facing text is always English; UI text goes through i18n (zh and en); the zh UI
-  says 平台 / 超级管理员 / 智能体, never 企业 or the Latin word `agent` (`pnpm check:i18n`).
+  translation; `pnpm check:english-comments --base <ref>` checks the comment lines you add).
+  Model-facing text is always English; UI text goes through i18n (zh and en); the zh UI says 平台 /
+  超级管理员 / 智能体, never 企业 or the Latin word `agent` (`pnpm check:i18n`).
 - **Tests:** unit tests need no database or app; integration tests use one app per file;
   dual-replica tests live in the `container` project; no fixed sleeps, no per-test timeouts; a new
   unit or container test joins its checked-in list in the same change (integration is the default).
@@ -200,8 +201,8 @@ docker compose -f docker/compose.dev.yaml up -d   # local postgres + valkey
 
 - **Design before code for larger changes.** A new feature, a cross-package change, a new contract
   or a behavior change starts with a design doc in `docs/superpowers/specs/`, reviewed by a
-  maintainer; then a plan in `docs/superpowers/plans/`, also reviewed; then implementation. Small
-  fixes skip this.
+  maintainer, with a section `## AGENTS.md rules touched` (`check:agent-docs`); then a plan in
+  `docs/superpowers/plans/`, also reviewed; then implementation. Small fixes skip this.
 - **Executing a plan with subagents:** plan the execution before the first dispatch (waves of tasks
   with disjoint files in parallel, batched review and fixes per wave, trust-boundary / migration /
   multi-replica / cross-tenant tasks reviewed alone on the most capable model): the

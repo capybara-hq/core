@@ -3,7 +3,7 @@ import { listExtensionPointDefaults } from "../extensions";
 import { listInvitations } from "../members";
 import { getModelsCatalog, listOrgPurposes } from "../models";
 import { getOrgSettings } from "../org-settings";
-import { listServiceTokens } from "../orgs";
+import { listOrgAudit, listServiceTokens } from "../orgs";
 import { getOrgFilePreviewers } from "../previewers";
 import { defineQuery } from "./define";
 import { keys } from "./keys";
@@ -62,6 +62,17 @@ export const serviceTokensQuery = (orgId: string) =>
     key: keys.org(orgId).serviceTokens(),
     fn: () => listServiceTokens(orgId),
     freshness: "mine",
+  });
+
+/**
+ * A page of the org's audit log (org admins, `/settings/audit`): the newest (`after` omitted) or
+ * the one after a cursor. Other members and agents write it, so it is `live`.
+ */
+export const orgAuditQuery = (orgId: string, after?: string) =>
+  defineQuery({
+    key: keys.org(orgId).orgAudit(after),
+    fn: () => listOrgAudit(orgId, after),
+    freshness: "live",
   });
 
 /** The org's model catalog (`{ providers }`, org admins): every model with the org's switch. */

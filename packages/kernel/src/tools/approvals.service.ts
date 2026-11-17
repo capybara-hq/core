@@ -9,6 +9,7 @@ import {
 } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable, Optional } from "@nestjs/common";
 import { type Selectable, sql } from "kysely";
+import { normalizeStoredDefinition } from "../agents/definition.js";
 import { EventLog } from "../conversations/event-log.js";
 import {
   COMMAND_ASK_TEXT_MAX_CHARS,
@@ -64,7 +65,6 @@ import { ScheduledTaskStore } from "../schedules/store.js";
 import { unattendedTaskRunOf } from "../schedules/unattended.js";
 import { gitPushPolicyName, personalAuth } from "./connector-account-policies.js";
 import { pluginDisplayNames } from "./display-names.js";
-import { normalizeStoredDefinitionIn } from "./legacy-data.js";
 import type { ApprovalPolicySource } from "./pipeline.js";
 import { ToolRegistry } from "./registry.js";
 
@@ -2053,10 +2053,7 @@ export class ApprovalsService {
       .where("account_id", "=", decidedBy)
       .executeTakeFirst();
     if (!member) return;
-    const def =
-      task.definition === null
-        ? undefined
-        : await normalizeStoredDefinitionIn(t, a.orgId, task.definition);
+    const def = task.definition === null ? undefined : normalizeStoredDefinition(task.definition);
     const { tools } = await this.registry.forAgent(a.orgId, {
       disabledTools: def?.disabledTools ?? [],
       subagentTools: def?.subagentTools,

@@ -42,7 +42,7 @@ import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { captureProviderRequests } from "../helpers/provider-capture.js";
 import {
   createConv,
-  createOrg,
+  createOrgWithProviders,
   eventsOf,
   PW,
   postMessage,
@@ -208,7 +208,7 @@ beforeAll(async () => {
     })
   ).id;
   owner = await session(k, "owner");
-  orgId = await createOrg(owner);
+  orgId = await createOrgWithProviders(k, owner);
   const res = await owner({
     method: "POST",
     url: `/api/v1/orgs/${orgId}/agents`,
@@ -863,7 +863,7 @@ describe("SubagentHandback", () => {
       await accountsFor(db).createLocal({ login: "handback", password: PW, displayName: "O" })
     ).id;
     owner = await session(k, "handback");
-    orgId = await createOrg(owner, "Handback");
+    orgId = await createOrgWithProviders(k, owner, "Handback");
     leadId = await createAgent("Lead", ["Agent", "Read"]);
     soloId = await createAgent("Solo", ["Read"]);
   });

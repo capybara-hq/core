@@ -263,16 +263,14 @@ export function dropForeignOpens(view: UiView, panels: ReadonlySet<string>): UiV
 }
 
 /**
- * Lists contributions for a listing route: no alias, a view's render registered (an embed or a
+ * Lists contributions for a listing route: a view's render registered (an embed or a
  * component is listed without one: a component's server view is optional); base order (spec §5):
  * extension name, then manifest order (stable).
  */
 function listed(entries: LoadedUiContribution[]): UiContributionItem[] {
   return entries
     .filter(
-      (c) =>
-        c.contribution.aliasOf === undefined &&
-        (c.contribution.kind === "embed" || c.contribution.kind === "component" || c.render),
+      (c) => c.contribution.kind === "embed" || c.contribution.kind === "component" || c.render,
     )
     .map((c, i) => ({ c, i }))
     .sort((x, y) => (x.c.plugin === y.c.plugin ? x.i - y.i : x.c.plugin < y.c.plugin ? -1 : 1))
@@ -384,7 +382,7 @@ export class UiViews {
    * The contributions the role may use in the org, of one slot or of every org-reachable slot:
    * the extension enabled and loaded, a view's render registered (a component is listed with or
    * without a server view), the slot's `minRole` ({@link canUseSlot}, so never `platform.page`);
-   * no alias, no `file.preview` contribution (the file previewers list those). Base order (spec
+   * no `file.preview` contribution (the file previewers list those). Base order (spec
    * §5): extension name, then manifest order. A single slot lists at most its winner
    * ({@link resolveSingleSlot} over what this role may use: none until one is chosen, and the web
    * renders the built-in); display only, the routes that serve a contribution never read it. The
@@ -481,7 +479,7 @@ export class UiViews {
 
   /**
    * The `platform.page` contributions of the running extensions, for the admin console (super
-   * admins; no org enablement applies): no alias, a view's render registered (a component is
+   * admins; no org enablement applies): a view's render registered (a component is
    * listed with or without a server view). Base order like {@link contributions}.
    */
   async platformContributions(): Promise<UiContributionItem[]> {
@@ -582,7 +580,7 @@ export class UiViews {
     return res.toast !== undefined ? { toast: { zh: res.toast.zh, en: res.toast.en } } : {};
   }
 
-  /** Ids of the extension's live `panel` contributions (aliases of panels included). */
+  /** Ids of the extension's live `panel` contributions. */
   private panels(plugin: string): Set<string> {
     return new Set(
       this.d.host
@@ -593,8 +591,8 @@ export class UiViews {
   }
 
   /**
-   * The single access gate of the org UI routes (UI slots spec §7): finds the contribution (a
-   * retired alias answers with the one it names), then checks, in order, that its slot is reachable
+   * The single access gate of the org UI routes (UI slots spec §7): finds the contribution, then
+   * checks, in order, that its slot is reachable
    * from an org (not `platform`), the role meets the slot's `minRole`, the extension is enabled in
    * the org, its effective config is valid, and the slot's scope rule (conversation: readable;
    * agent: readable and in this org; org: the role alone; file: a conversation the caller reads,
@@ -608,15 +606,10 @@ export class UiViews {
     need: "render" | "action" | "embed",
   ): Promise<{ entry: LoadedUiContribution; args: ResolvedArgs }> {
     const loaded = this.d.host.uiContributions();
-    const named = loaded.find((c) => c.plugin === t.plugin && c.contribution.id === t.id);
-    // a retired alias answers with the contribution it names (same extension and kind)
-    const aliasOf = named?.contribution.aliasOf;
-    const id = aliasOf ?? t.id;
     const entry = loaded.find(
       (c) =>
         c.plugin === t.plugin &&
-        c.contribution.id === id &&
-        c.contribution.aliasOf === undefined &&
+        c.contribution.id === t.id &&
         (need === "embed"
           ? c.contribution.kind === "embed"
           : // a view, or a component's server view (served like a view of its slot)
@@ -696,7 +689,7 @@ export class UiViews {
     if (need === "action") await this.d.checkWritable?.(t.orgId, conversationId, t.accountId);
     if (t.card !== undefined) {
       // args.card is attested: an inline view, and a tool_result of this conversation recorded this
-      // very card (plugin, the requested id or its alias target, key); else it is not found
+      // very card (plugin, the requested id, key); else it is not found
       const recorded =
         entry.slot.id === "conversation.tool-result.card" && this.d.recordedCard !== undefined
           ? await this.d.recordedCard(conversationId, t.card.callId)
@@ -704,7 +697,7 @@ export class UiViews {
       if (
         recorded === null ||
         recorded.plugin !== t.plugin ||
-        (recorded.view !== t.id && recorded.view !== id) ||
+        recorded.view !== t.id ||
         recorded.key !== t.card.key
       ) {
         throw notFound();

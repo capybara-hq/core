@@ -195,7 +195,7 @@ function subsectionBlocks(): ReactNode {
           </Subsection>
           <Subsection title="权限" variant="divided">
             <Text variant="small" tone="muted">
-              提供 model-provider@1
+              提供 model-provider@2
             </Text>
           </Subsection>
         </Card>

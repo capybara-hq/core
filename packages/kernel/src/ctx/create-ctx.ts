@@ -930,8 +930,7 @@ export function createExtensionContext(
 /**
  * A `file-preview@1` provider must be valid when it is provided (setup fails otherwise): the shape
  * ({@link validateFilePreviewProvider}), and every `embed` names a ui contribution of this extension
- * with `kind: "embed"` that resolved to the slot `file.preview` (from `slot` or the deprecated
- * `place`). A previewer whose embed names an embed contribution dropped at load (unknown slot or
+ * with `kind: "embed"` that resolved to the slot `file.preview`. A previewer whose embed names an embed contribution dropped at load (unknown slot or
  * slot version, UI slots spec §3.2) is left out instead, with one warn per load: the returned
  * provider is what the kernel serves.
  */

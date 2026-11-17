@@ -7,6 +7,8 @@ import {
   startTestRedis,
   type TestContainer,
 } from "@capybara-hq/testing";
+import { getQueueToken } from "@nestjs/bullmq";
+import type { Queue } from "bullmq";
 import { Redis } from "ioredis";
 import { sql } from "kysely";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
@@ -16,8 +18,11 @@ import {
   TITLE_MAX_ATTEMPTS,
   TITLE_MAX_WIDTH,
   TITLE_PROMPT,
+  TITLE_QUEUE,
+  TitleQueue,
   titleAttemptDue,
   titleExcerpt,
+  titleJobId,
 } from "../../src/conversations/titles.js";
 import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
@@ -35,7 +40,7 @@ import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
   createAgent,
   createConv,
-  createOrg,
+  createOrgWithProviders,
   eventsOf,
   MODEL_LOOPER,
   PW,
@@ -100,7 +105,7 @@ beforeEach(async () => {
   });
   expect(res.statusCode).toBe(200);
   owner = { req, cookie: () => jar.header() as string };
-  orgId = await createOrg(owner.req);
+  orgId = await createOrgWithProviders(k, owner.req);
   agentId = await createAgent(owner.req, orgId);
 });
 
@@ -337,6 +342,32 @@ describe("runTitleJob (direct)", () => {
     // the call happened: its usage is still logged; no `changed` from the job (the rename sent one)
     expect(await titleUsage(id)).toHaveLength(1);
     expect(published.filter((p) => (p as { kind: string }).kind === "changed")).toEqual([]);
+  });
+
+  it("a run completing while the previous attempt is still queued or running enqueues no second call", async () => {
+    const { id } = await seeded();
+    const queue = k.app.get<Queue>(getQueueToken(TITLE_QUEUE));
+    // attempt 0 is claimed and its call is in flight: its job is still in the queue
+    await db.updateTable("conversations").set({ title_attempts: 1 }).where("id", "=", id).execute();
+    await queue.add(
+      "title",
+      { conversationId: id, attempt: 0 },
+      {
+        jobId: titleJobId(id, 0),
+        delay: 3_600_000,
+      },
+    );
+    try {
+      await k.app.get(TitleQueue).maybeEnqueue(id);
+      expect(await queue.getJob(titleJobId(id, 1))).toBeUndefined();
+    } finally {
+      await (await queue.getJob(titleJobId(id, 0)))?.remove();
+    }
+    // once that attempt is gone (it failed), the next completed run enqueues the next attempt
+    await k.app.get(TitleQueue).maybeEnqueue(id);
+    const next = await queue.getJob(titleJobId(id, 1));
+    expect(next).toBeDefined();
+    await next?.remove().catch(() => {});
   });
 
   it("an attempt already claimed does nothing", async () => {

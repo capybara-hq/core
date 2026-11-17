@@ -149,7 +149,9 @@ const common = {
   }),
   [`GET ${BASE}/grantable-tools?agentId=ag1`]: ok({ items: TOOLS }),
   [`GET ${BASE}/grantable-tools?agentId=ag2`]: ok({ items: TOOLS }),
-  [`GET ${ORG}/settings`]: ok({ settings: { toolSearch: "on" } }),
+  [`GET ${ORG}/settings`]: ok({
+    settings: { toolSearch: "on", scheduledTasks: { enabled: true, minIntervalMinutes: 60 } },
+  }),
   // my preferences: no zone of my own (the browser's applies)
   "GET /api/v1/me/preferences": ok({ timeZone: null }),
 };
@@ -809,6 +811,36 @@ describe("/settings/schedules (org admins)", () => {
         },
       });
       expect(await screen.findByText(s.saved)).toBeTruthy();
+    },
+  );
+
+  it.each(["zh", "en"] as const)(
+    "an unreadable forbidden list shows a notice whose save sends the list unchanged, not a pending change (%s)",
+    async (locale) => {
+      const s = (locale === "zh" ? zh : en).scheduleSettings;
+      const calls = stubApi({
+        ...routes,
+        [`GET ${SETTINGS}`]: ok({
+          settings: {
+            ...settings,
+            scheduledTasks: { ...settings.scheduledTasks, forbiddenToolsUnreadable: true },
+          },
+        }),
+        [`PATCH ${SETTINGS}`]: () => json(200, { settings }),
+      });
+      await renderRouteWithCache("/settings/schedules", lastStubRoutes(), { locale });
+      expect(screen.getByText(s.forbiddenUnreadable)).toBeTruthy();
+      const user = userEvent.setup();
+      // nothing edited: no pending change, the notice carries the repair
+      expect(
+        screen.queryByRole("region", { name: locale === "zh" ? "待提交改动" : "Pending changes" }),
+      ).toBeNull();
+      await user.click(screen.getByRole("button", { name: s.saveRepair }));
+      expect(bodyOf(calls.find((c) => c.method === "PATCH"))).toEqual({
+        scheduledTasks: { forbiddenTools: [] },
+      });
+      expect(await screen.findByText(s.saved)).toBeTruthy();
+      expect(screen.queryByText(s.forbiddenUnreadable)).toBeNull();
     },
   );
 

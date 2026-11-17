@@ -172,7 +172,6 @@ export async function openExtensionCli(
     remember: (sha256, bytes) => blobs.remember(sha256, bytes),
     readPackage: (sha256) => blobs.get(sha256),
     async packageSet(sha256) {
-      // a stored package in the pre-0.1.0 format -> extension.legacy_format
       const pkg = await readExtensionPackage(await blobs.get(sha256), {
         maxBytes: config.packages.maxBytes,
         hostSdkVersion: SDK_VERSION,

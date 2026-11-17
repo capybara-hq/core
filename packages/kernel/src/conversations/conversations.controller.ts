@@ -182,14 +182,6 @@ export const CreateBody = z
   })
   .strict();
 
-/**
- * `POST …/queue` (deprecated, behaves as `POST …/messages`): the message fields (no retry).
- */
-const QueueBody = MessageFields.omit({ retryOf: true })
-  .extend({ clientMessageId: z.string().min(1).max(200) })
-  .strict()
-  .refine(...textRule);
-
 /** `PATCH …/queue/:itemId`: only the text changes (the text rule is checked against the item). */
 const QueueEditBody = z.object({ text: z.string().max(100_000) }).strict();
 
@@ -215,7 +207,6 @@ class ConversationFileContentQueryDto extends createZodDto(
 ) {}
 class ConversationToolsQueryDto extends createZodDto(ToolsQuery, "ConversationToolsQuery") {}
 class ConversationMessageBodyDto extends createZodDto(MessageBody, "ConversationMessageBody") {}
-class ConversationQueueBodyDto extends createZodDto(QueueBody, "ConversationQueueBody") {}
 class ConversationQueueEditBodyDto extends createZodDto(
   QueueEditBody,
   "ConversationQueueEditBody",
@@ -655,36 +646,6 @@ export class ConversationsController {
   ): Promise<{ items: QueueItem[]; paused: boolean; pauseReason?: QueuePauseReason }> {
     const p = requireUser(principal);
     return this.queue.list(org.orgId, id, p.account.id);
-  }
-
-  /**
-   * Deprecated: behaves as `POST …/messages` (202 `{ event }`): an interjection while a run is
-   * active, a new run otherwise; nothing is queued any more. Kept for older clients for one release;
-   * the leftover-item routes below keep working until the queue table is dropped (contract step).
-   */
-  @Post(":id/queue")
-  @HttpCode(202)
-  @OrgAction("agents.use")
-  async enqueue(
-    @CurrentPrincipal() principal: Principal,
-    @CurrentOrg() org: OrgContext,
-    @Param("id") id: string,
-    @ZBody(ConversationQueueBodyDto) body: z.infer<typeof QueueBody>,
-  ): Promise<{ event: ConversationEvent }> {
-    const p = requireUser(principal);
-    return {
-      event: await this.conversations.postUserMessage(org.orgId, id, p.account.id, {
-        text: body.text,
-        clientMessageId: body.clientMessageId,
-        ...(body.attachments !== undefined && { attachments: body.attachments }),
-        ...(body.files !== undefined && { files: body.files }),
-        ...(body.model !== undefined && { model: body.model }),
-        ...(body.effort !== undefined && { effort: body.effort }),
-        ...(body.skill !== undefined && { skill: body.skill }),
-        ...(body.timeZone !== undefined && { timeZone: body.timeZone }),
-        ...(body.locale !== undefined && { locale: body.locale }),
-      }),
-    };
   }
 
   /** "Continue sending" after a pause (202). Declared before `:itemId` routes. */

@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { LIVE_INSTALL_STATUSES } from "../../src/catalog/install-status.js";
 import { createOrg, enableConnectorExtensions, waitFor } from "../helpers/runs.js";
 import {
   importSkill,
@@ -85,7 +86,7 @@ async function liveOrgs(itemId: string): Promise<string[]> {
     .selectFrom("plugin_installs")
     .select("org_id")
     .where("item_id", "=", itemId)
-    .where("status", "in", ["installing", "installed", "upgrading"])
+    .where("status", "in", [...LIVE_INSTALL_STATUSES])
     .execute();
   return rows.map((r) => r.org_id).sort();
 }
@@ -177,15 +178,10 @@ describe("plugin scope", () => {
     expect(b).toEqual({ orgId: orgB, orgName: "Scope B", agents: [], connectorsKept: 0 });
   });
 
-  it("PUT scope with a wrong hash is 409 plugin.scope_stale; the right one bumps the version, audits and syncs", async () => {
+  it("PUT scope with a wrong hash is 409 plugin.scope_stale; the right one audits and syncs", async () => {
     const itemId = await importSkill(env);
     await changeScope(itemId, "all");
     await waitFor(async () => (await liveOrgs(itemId)).length >= 2, 30_000, "installed by scope");
-    const before = await env.db
-      .selectFrom("catalog_items")
-      .select("scope_version")
-      .where("id", "=", itemId)
-      .executeTakeFirstOrThrow();
     const stale = await putScope(itemId, {
       scope: "named",
       orgs: [orgB],
@@ -202,12 +198,6 @@ describe("plugin scope", () => {
     const ok = await putScope(itemId, { scope: "named", orgs: [orgB], scopeHash: p.scopeHash });
     expect(ok.statusCode, ok.body).toBe(200);
     expect(ok.json()).toMatchObject({ scope: "named", scopeOrgs: [orgB] });
-    const after = await env.db
-      .selectFrom("catalog_items")
-      .select("scope_version")
-      .where("id", "=", itemId)
-      .executeTakeFirstOrThrow();
-    expect(after.scope_version).toBe(before.scope_version + 1);
     const audits = await env.db
       .selectFrom("audit_events")
       .select(["target", "detail"])
@@ -255,7 +245,7 @@ describe("plugin scope", () => {
     const state = async (id: string) => ({
       row: await env.db
         .selectFrom("catalog_items")
-        .select(["scope", "scope_version"])
+        .select(["scope"])
         .where("id", "=", id)
         .executeTakeFirstOrThrow(),
       orgs: (

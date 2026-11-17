@@ -22,6 +22,7 @@ import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
 import { createLogger } from "../../src/log.js";
+import { FORBIDDEN_TOOLS_UNREADABLE_ERROR } from "../../src/orgs/settings.service.js";
 import { assistantIdemKey, modelCallIdemKey } from "../../src/runtime/model-call.js";
 import { grantRefusalOf } from "../../src/schedules/grant-rules.js";
 import { type ScheduledTaskInsert, ScheduledTaskStore } from "../../src/schedules/store.js";
@@ -525,6 +526,21 @@ describe("unattended runs (spec §7)", () => {
       content: `Tool ${GATED.key} is denied by policy.`,
     });
     // a deny is not a missing grant: the owner cannot add it
+    expect(await missingGrants()).toEqual([]);
+  });
+
+  it("an unreadable forbidden tool list refuses every call (fails closed)", async () => {
+    await setScheduleSettings({ forbiddenTools: "not a list" });
+    await grant(GATED);
+    const { evs } = await runCalls([
+      { id: "c1", name: GATED.key, input: {} },
+      { id: "c2", name: ASK_USER.key, input: {} },
+    ]);
+    expect(calls).toEqual([]);
+    expect(resultsOf(evs).map((r) => [r.isError, r.content])).toEqual([
+      [true, FORBIDDEN_TOOLS_UNREADABLE_ERROR],
+      [true, FORBIDDEN_TOOLS_UNREADABLE_ERROR],
+    ]);
     expect(await missingGrants()).toEqual([]);
   });
 

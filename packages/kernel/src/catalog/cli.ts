@@ -15,30 +15,18 @@ import { assertSecretsReachable } from "../extensions/host.js";
 import { importExtensionModule, matchesSection } from "../extensions/instance.js";
 import type { PermissionSet } from "../extensions/permission-set.js";
 import { packageRootOf, syncPackage } from "../extensions/sync.js";
-import { KernelDb } from "../infra/database/kernel-db.js";
-import { TransactionHost } from "../infra/database/transaction-host.js";
-import { OutboxService } from "../infra/outbox/outbox.service.js";
 import type { KernelLogger } from "../log.js";
 import { packagePath } from "../packages/tgz.js";
 import { PrefixedStorage } from "../storage/storage.service.js";
 import { CatalogImportModule } from "./catalog.module.js";
 import { CatalogService } from "./catalog.service.js";
 import { PluginImport } from "./plugin-import.js";
-import type { PluginScope } from "./scope.js";
-import { oweScopeItem } from "./scope-jobs.js";
 
 /** {@link openCatalogCli}'s result: the extension CLI context plus the catalog services. */
 export interface CatalogCli extends ExtensionCli {
   catalog: CatalogService;
   /** Plugin import (prepare / confirm). The CLI acts without an account (actor `null`). */
   imports: PluginImport;
-  /**
-   * After an import's confirm (and its deploy): owes the item's plugin scope sync in the outbox, as
-   * the admin console's confirm does, when its scope turns it on by itself (`all` or `named`); a
-   * worker's relay delivers it. A failure only warns (the confirm's commit owed a backstop that
-   * converges the orgs a few minutes later); returns whether it was owed.
-   */
-  enqueueScopeSync(item: { id: string; scope: PluginScope }): Promise<boolean>;
 }
 
 /** What the CLI can do with the deployment's object store, and why not when it cannot. */
@@ -250,27 +238,10 @@ export async function openCatalogCli(
     // and so do the client files of a package with client code (stored with the package)
     cli.app.get(ClientBuilds).useCliStorage(storage);
     const catalog = cli.app.get(CatalogService);
-    const db = cli.app.get(KernelDb);
-    const txHost = cli.app.get(TransactionHost);
-    const outbox = cli.app.get(OutboxService);
     return {
       ...cli,
       catalog,
       imports,
-      async enqueueScopeSync(item) {
-        if (item.scope === "optional") return false;
-        try {
-          // owed in a transaction of its own after the deploy; a worker's relay delivers it
-          await txHost.run(() => oweScopeItem(outbox, db.db, item.id));
-          return true;
-        } catch (err) {
-          log.warn(
-            "cannot owe the plugin scope sync; the import's backstop converges the orgs in a few minutes",
-            { itemId: item.id, err },
-          );
-          return false;
-        }
-      },
       async close() {
         await cli.close();
         await removeSyncDir();

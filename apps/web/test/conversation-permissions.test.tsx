@@ -214,7 +214,10 @@ describe("permission query foundation", () => {
 
   it("first-send cache seeding leaves permissions unknown", () => {
     const client = testQueryClient();
-    seedNewConversation(client, "o1", CONV().conversation, { event: userMsg(1, "hi") });
+    seedNewConversation(client, "o1", CONV().conversation, {
+      event: userMsg(1, "hi"),
+      events: [userMsg(1, "hi")],
+    });
     expect(client.getQueryData(permissionsQuery("o1", "c1").queryKey)).toBeUndefined();
   });
 });

@@ -25,7 +25,7 @@ import { bootstrapFixture, lifePkg, packFake, pluginTgz } from "../helpers/plugi
 import {
   type BuiltKernel,
   buildKernel,
-  createOrg,
+  createOrgWithProviders,
   PW,
   type Req,
   runConfig,
@@ -175,7 +175,7 @@ beforeAll(async () => {
     superAdmin: true,
   });
   admin = await session(k, "root");
-  orgId = await createOrg(admin);
+  orgId = await createOrgWithProviders(k, admin);
 });
 afterAll(async () => {
   await k?.close();

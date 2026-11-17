@@ -1,6 +1,6 @@
 import { Inject, Injectable, type OnModuleInit } from "@nestjs/common";
 import { z } from "zod";
-import { OutboxDeadParams } from "../../admin/outbox-dead.schemas.js";
+import { OutboxDeadListQuery, OutboxDeadParams } from "../../admin/outbox-dead.schemas.js";
 import { OutboxDeadService } from "../../admin/outbox-dead.service.js";
 import { KernelDb } from "../../infra/database/kernel-db.js";
 import { defineOperation, type PrecheckResult } from "../operation.js";
@@ -50,13 +50,13 @@ export class OutboxOperations implements OnModuleInit {
       defineOperation({
         id: "admin.outbox-list-dead",
         description:
-          "List background work the kernel could not queue (super admin): outbox rows dead after their last delivery attempt, oldest first (at most 200), each with its id, queue, job name, job id, org (null for platform work), attempts, last error and when it died. Retry one with admin.outbox-retry or drop it with admin.outbox-discard.",
-        input: z.object({}).strict(),
-        example: {},
+          "List background work the kernel could not queue (super admin): outbox rows dead after their last delivery attempt, oldest first, a page of at most 200 (pass the returned next as after for the following page; next is null at the end), each with its id, queue, job name, job id, org (null for platform work), attempts, last error and when it died. Retry one with admin.outbox-retry or drop it with admin.outbox-discard.",
+        input: OutboxDeadListQuery.strict(),
+        example: { limit: 200 },
         authz: { superAdmin: true },
         mirrors: ["GET /api/v1/admin/outbox/dead"],
         confirm: "read",
-        run: () => this.dead.list(),
+        run: (input) => this.dead.list(input),
       }),
       defineOperation({
         id: "admin.outbox-retry",

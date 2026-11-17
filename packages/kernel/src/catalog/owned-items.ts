@@ -538,7 +538,6 @@ export class OwnedItems {
         pending_at: null,
         ...(!item.shareable && { shown_to_others: false }),
         ...(item.scope === "all" && { scope: "named" as const }),
-        scope_version: sql<number>`scope_version + 1`,
         updated_at: now,
       })
       .where("id", "=", item.id)
@@ -583,7 +582,7 @@ export class OwnedItems {
     for (const { c, orgs } of narrow) {
       await t
         .updateTable(TABLE_OF[c.kind] as "platform_skills")
-        .set({ scope: "named", scope_version: sql<number>`scope_version + 1`, updated_at: now })
+        .set({ scope: "named", updated_at: now })
         .where("id", "=", c.id)
         .execute();
       await t
@@ -748,7 +747,6 @@ export class OwnedItems {
         ...(!c.shareable && { shown_to_others: false }),
         ...(narrowTo !== null && {
           scope: "named" as const,
-          scope_version: sql<number>`scope_version + 1`,
         }),
         updated_at: now,
       })

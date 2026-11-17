@@ -77,7 +77,7 @@ export function ToolGroup({
         {running ? <Spinner size={16} /> : null}
         <ToolLabel row={single} />
         {running && single.startedAt !== undefined ? (
-          <span className="cb-faint" aria-hidden="true">
+          <span className="cb-faint" data-part="tool-time" aria-hidden="true">
             {` · ${formatDuration(clock - single.startedAt, locale, { live: true })}`}
           </span>
         ) : null}

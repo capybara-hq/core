@@ -23,7 +23,6 @@ import { ApiError } from "../../src/errors.js";
 import { ExtensionHost } from "../../src/extensions/host.js";
 import { createLogger } from "../../src/log.js";
 import { COMPACTION_SETTINGS } from "../../src/runtime/compaction-settings.service.js";
-import { COMPACTION_MARKER } from "../../src/runtime/context/compaction.js";
 import {
   permissionContextIdemKey,
   permissionContextText,
@@ -80,7 +79,6 @@ const stubInfo = (id: string, extra: Partial<ModelInfo> = {}): ModelInfo => ({
     reasoning: false,
     caching: false,
     midConversationSystem: true,
-    effort: false,
   },
   parameters: [],
   ...extra,
@@ -410,7 +408,12 @@ describe("permission context request boundary", () => {
       {
         type: "compaction_summary",
         runId: "old-run",
-        payload: { coversUpToSeq: covered.seq, text: `Summary: ${"o".repeat(12_000)}` },
+        payload: {
+          coversUpToSeq: covered.seq,
+          text: `Summary: ${"o".repeat(12_000)}`,
+          savedTokens: 0,
+          step: 0,
+        },
       },
     ]);
     for (let i = 0; i < 6; i++) {
@@ -421,7 +424,7 @@ describe("permission context request boundary", () => {
     let current = "a";
     const { inputs, port } = recordingPort(() => current);
     respond = (req) => {
-      if (req.system.some((x) => x.text.includes(COMPACTION_MARKER))) {
+      if (req.purpose === "compaction") {
         // the profile changes while the compaction call runs, between the two builds
         current = "b";
         return `Summary: ${"s".repeat(300)}`;
@@ -452,13 +455,11 @@ describe("permission context request boundary", () => {
     expect(summary?.seq ?? 0).toBeLessThan(contexts[1]?.seq ?? 0);
     expect(rows[2]?.payload.request.summarySeq).toBe(summary?.seq);
     expect(rows[2]?.payload.request.permissionContext?.contextSeq).toBe(contexts[1]?.seq);
-    const sent = calls.filter((c) => !c.system.some((x) => x.text.includes(COMPACTION_MARKER)));
+    const sent = calls.filter((c) => c.purpose !== "compaction");
     expect(sent).toHaveLength(3);
     expect(carries(sent[2], "b")).toBe(true);
     // the compaction request never carries a permission instruction
-    const compactions = calls.filter((c) =>
-      c.system.some((x) => x.text.includes(COMPACTION_MARKER)),
-    );
+    const compactions = calls.filter((c) => c.purpose === "compaction");
     expect(compactions.length).toBeGreaterThan(0);
     expect(compactions.some((c) => carries(c, "a") || carries(c, "b"))).toBe(false);
   });

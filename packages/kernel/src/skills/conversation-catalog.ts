@@ -30,8 +30,7 @@ const byName = (a: CatalogSkill, b: CatalogSkill) =>
  * between "read latest" and "append". Returns the seq written, or null when nothing was written;
  * the caller calls `eventLog.notify` after the commit.
  * `derive` gets the whole latest payload, so `toolMap` is carried forward (it is only recomputed at
- * run start). `pinned` of an old snapshot never is: new snapshots carry no pinned skills (skills
- * default-on spec §8).
+ * run start).
  */
 export async function appendConversationCatalog(
   deps: ConversationCatalogDeps,

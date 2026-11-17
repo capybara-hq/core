@@ -145,6 +145,15 @@ describe("checkWebUi", () => {
   it("本地定义的 notFound 不算豁免 -> web-ui-template", () =>
     one("not-found-local", "web-ui-template"));
 
+  it("a mention of an older kernel (older logs, 旧内核) in apps/web -> web-ui-older-kernel", () => {
+    const f = run("older-kernel");
+    expect(f.map((x) => [x.rule, x.file.split("/").at(-1), x.line])).toEqual([
+      ["web-ui-older-kernel", "legacy.ts", 1],
+      ["web-ui-older-kernel", "legacy.ts", 3],
+      ["web-ui-older-kernel", "legacy.ts", 5],
+    ]);
+  });
+
   describe("design-char-icon", () => {
     it("reports characters used as icons in design and web, with lines and icon names", () => {
       const f = run("char-icon");

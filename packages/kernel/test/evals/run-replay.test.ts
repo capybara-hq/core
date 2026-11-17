@@ -46,7 +46,7 @@ import { testMembers } from "../helpers/members.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
   createConv,
-  createOrg,
+  createOrgWithProviders,
   eventsOf,
   PW,
   postMessage,
@@ -170,7 +170,7 @@ beforeAll(async () => {
     .id;
   adminId = (await accounts.createLocal({ login: "admin", password: PW, displayName: "A" })).id;
   owner = await session(k, "owner");
-  orgId = await createOrg(owner);
+  orgId = await createOrgWithProviders(k, owner);
   await testMembers(db).add(orgId, adminId, "admin", ownerId);
   admin = await session(k, "admin");
   const en = await owner({
@@ -860,106 +860,7 @@ describe("整轮回放", () => {
     expect((await readFakeSandboxOps(root)).length).toBe(sandboxBefore);
   });
 
-  it("an rc recording replays against the current names: legacyKeyMatch, no tool-call difference, nothing executed", async () => {
-    const setId = await createSet();
-    // recorded by the release candidate: sandbox_edit with path / oldText / newText, an extension
-    // tool by its <plugin>__<tool> key; the model now calls Edit with file_path and so on
-    const c1 = await createConv(admin, orgId, agentId);
-    await seedRun(
-      c1,
-      "legacy-edit",
-      'tool:Edit:{"file_path":"/workspace/a.txt","old_string":"a","new_string":"b","replace_all":true}',
-      [
-        {
-          name: "sandbox_edit",
-          input: { path: "/workspace/a.txt", oldText: "a", newText: "b", replaceAll: true },
-          content: "Edited /workspace/a.txt: replaced 2 occurrences.",
-        },
-      ],
-    );
-    const c2 = await createConv(admin, orgId, agentId);
-    await seedRun(c2, "legacy-ext", "tool:plugin__tools-count__count:{}", [
-      { name: "tools-count__count", input: {}, content: "recorded count" },
-    ]);
-    const c3 = await createConv(admin, orgId, agentId);
-    await seedRun(c3, "new-edit", 'tool:Edit:{"file_path":"/workspace/z.txt","old_string":"a"}', [
-      { name: "Edit", input: { file_path: "/workspace/z.txt", old_string: "a" }, content: "ok" },
-    ]);
-    await addCase(setId, c1, "legacy-edit");
-    // an rc case snapshot holds the rc definition: its enabled list named the extension tool (the
-    // evidence the rc key maps by; tools default-on spec §2 keeps reading it from snapshots)
-    const stored = await db
-      .selectFrom("agent_versions")
-      .select(["version", "definition"])
-      .where("agent_id", "=", agentId)
-      .orderBy("version", "desc")
-      .executeTakeFirstOrThrow();
-    const setDefinition = (definition: unknown) =>
-      db
-        .updateTable("agent_versions")
-        .set({ definition: JSON.stringify(definition) })
-        .where("agent_id", "=", agentId)
-        .where("version", "=", stored.version)
-        .execute();
-    await setDefinition({
-      ...(stored.definition as Record<string, unknown>),
-      tools: [{ kind: "plugin", plugin: "tools-count", name: "count" }],
-    });
-    await addCase(setId, c2, "legacy-ext");
-    await setDefinition(stored.definition);
-    await addCase(setId, c3, "new-edit");
-    const sandboxBefore = (await readFakeSandboxOps(root)).length;
-    const run = await startRun(setId, {});
-    expect((await finished(run.id)).status).toBe("completed");
-    const rs = await results(run.id);
-    expect(rs).toHaveLength(3);
-    type Call = { name: string; input: unknown };
-    const byCandidate = (name: string) => {
-      const r = rs.find((x) => (x.candidate as RunReplayResult).toolCalls[0]?.name === name);
-      if (!r) throw new Error(`no result whose candidate called ${name}`);
-      return r;
-    };
-    for (const r of rs) {
-      expect(r.status, JSON.stringify(r.error)).toBe("done");
-      expect((r.candidate as RunReplayResult).unmatched).toBe(0);
-      expect(r.drift).not.toContain("tool_unmatched");
-      const diff = r.diff as { toolCallsMatch: boolean; toolCalls: { kind: string }[] };
-      expect(diff.toolCallsMatch).toBe(true);
-      expect(diff.toolCalls.map((t) => t.kind)).toEqual(["same"]);
-      const [result] = (await evalEvents(r)).filter((e) => e.type === "tool_result");
-      expect(result?.payload).toMatchObject({ isError: false });
-    }
-    const baselineCalls = (r: EvalResultView) => (r.baseline as { toolCalls: Call[] }).toolCalls;
-    // sandbox_edit {path, oldText, ...} read as Edit {file_path, old_string, ...}
-    const edits = rs.filter((r) => (r.candidate as RunReplayResult).toolCalls[0]?.name === "Edit");
-    expect(edits).toHaveLength(2);
-    const legacyEdit = edits.find((r) =>
-      JSON.stringify(baselineCalls(r)[0]?.input).includes('"replace_all":true'),
-    );
-    expect(legacyEdit && (legacyEdit.candidate as RunReplayResult).legacyKeyMatch).toBe(true);
-    expect(legacyEdit && baselineCalls(legacyEdit)).toEqual([
-      {
-        name: "Edit",
-        input: {
-          file_path: "/workspace/a.txt",
-          old_string: "a",
-          new_string: "b",
-          replace_all: true,
-        },
-      },
-    ]);
-    // the extension tool recorded as tools-count__count
-    const ext = byCandidate("plugin__tools-count__count");
-    expect((ext.candidate as RunReplayResult).legacyKeyMatch).toBe(true);
-    expect(baselineCalls(ext)[0]?.name).toBe("plugin__tools-count__count");
-    // a recording already in the current names is not a legacy match
-    const current = edits.find((r) => r !== legacyEdit);
-    expect(current).toBeDefined();
-    expect((current?.candidate as RunReplayResult | undefined)?.legacyKeyMatch).toBeUndefined();
-    expect((await readFakeSandboxOps(root)).length).toBe(sandboxBefore);
-  });
-
-  it("the run's skills snapshot is copied with pinned and toolMap unchanged (phase B)", async () => {
+  it("the run's skills snapshot is copied with toolMap unchanged (phase B)", async () => {
     const setId = await createSet();
     const conv = await createConv(admin, orgId, agentId);
     const catalog: EventPayload<"skills_catalog"> = {
@@ -973,20 +874,17 @@ describe("整轮回放", () => {
           plugin: "superpowers",
         },
       ],
-      pinned: [
-        { id: "s1", version: 2, name: "brainstorming", source: "skills/x/", body: "Pinned body." },
-      ],
       toolMap: "Some skills name Claude Code tools.",
     };
     await seedRun(
       conv,
-      "pinned-copy",
+      "map-copy",
       'tool:plugin__tools-count__count:{"n":1}',
       [{ name: "plugin__tools-count__count", input: { n: 1 }, content: "recorded count" }],
       undefined,
       catalog,
     );
-    await addCase(setId, conv, "pinned-copy");
+    await addCase(setId, conv, "map-copy");
     const run = await startRun(setId, {});
     expect((await finished(run.id)).status).toBe("completed");
     const [r] = await results(run.id);
@@ -2084,7 +1982,7 @@ describe("整轮回放", () => {
       {
         type: "compaction_summary",
         runId: "compact-run-1",
-        payload: { coversUpToSeq: 1, text: "summary", savedTokens: 900 },
+        payload: { coversUpToSeq: 1, text: "summary", savedTokens: 900, step: 0 },
       },
       chunkUsage(1),
       chunkUsage(2),

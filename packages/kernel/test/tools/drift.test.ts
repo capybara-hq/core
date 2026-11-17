@@ -16,7 +16,6 @@ import { MAINTENANCE_QUEUE_NAME } from "../../src/runtime/maintenance-queue.js";
 import {
   DRIFT_CONNECTOR_JOB,
   DRIFT_SCAN_JOB,
-  DRIFT_SCHEDULER_ID,
   driftScanJobId,
   listChangedJobId,
   ToolDrift,
@@ -809,8 +808,7 @@ describe("个人凭据型连接器", () => {
 });
 
 describe("定时任务与 list_changed", () => {
-  it("scheduler id / job id 不含冒号；list_changed 按分钟桶去重", async () => {
-    expect(DRIFT_SCHEDULER_ID).not.toContain(":");
+  it("job ids contain no colon; list_changed dedupes by the minute bucket", async () => {
     expect(DRIFT_SCAN_JOB).not.toContain(":");
     expect(DRIFT_CONNECTOR_JOB).not.toContain(":");
     const connectorId = "0b4f8d2e-1c3a-4e5f-9a7b-123456789abc";
@@ -857,12 +855,8 @@ describe("定时任务与 list_changed", () => {
     try {
       await k2.start();
       // the scan is a @LockedInterval every tools.driftIntervalHours (once per tick across
-      // replicas: the infra schedule tests); the old repeatable scheduler is retired
+      // replicas: the infra schedule tests)
       expect(k2.app.get(LockedIntervalScheduler).periodOf(DRIFT_SCAN_JOB)).toBe(24 * 3_600_000);
-      const schedulers = (await probe.getJobSchedulers()).filter(
-        (s) => s.key === DRIFT_SCHEDULER_ID,
-      );
-      expect(schedulers).toHaveLength(0);
 
       // 模拟同一周期的扫描执行了两次（两个副本各一次）
       await Promise.all([k.app.get(ToolDrift).scan(), k2.app.get(ToolDrift).scan()]);

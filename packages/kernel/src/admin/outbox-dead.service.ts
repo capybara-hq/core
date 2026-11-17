@@ -2,15 +2,18 @@ import { Inject, Injectable } from "@nestjs/common";
 import { sql } from "kysely";
 import { ApiError } from "../errors.js";
 import { audit } from "../identity/audit.js";
+import { SuperAdminLock } from "../identity/super-admin.js";
 import type { WriteActor } from "../identity/write-actor.js";
 import { afterCommit } from "../infra/database/after-commit.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { OUTBOX_FAST_PATH, type OutboxFastPath } from "../infra/outbox/outbox.service.js";
-
-/** The most dead rows `GET /api/v1/admin/outbox/dead` returns, oldest first. */
-export const OUTBOX_DEAD_LIST_MAX = 200;
+import {
+  decodeOutboxDeadCursor,
+  encodeOutboxDeadCursor,
+  OUTBOX_DEAD_LIST_MAX,
+} from "./outbox-dead.schemas.js";
 
 /** A dead outbox row as the super admin sees it (transactional outbox spec §3.4). */
 export interface OutboxDeadRow {
@@ -24,6 +27,12 @@ export interface OutboxDeadRow {
   lastError: string | null;
   deadAt: string;
   createdAt: string;
+}
+
+/** A page of dead rows; `next` is the `after` of the next page, null at the end. */
+export interface OutboxDeadPage {
+  items: OutboxDeadRow[];
+  next: string | null;
 }
 
 /** Dead rows in all: how many and since when (the overview's `outbox_dead` attention item). */
@@ -66,11 +75,20 @@ export class OutboxDeadService {
     @Inject(TransactionHost) readonly txHost: TransactionHost,
     @Inject(KernelDb) private readonly db: KernelDb,
     @Inject(OUTBOX_FAST_PATH) private readonly fastPath: OutboxFastPath,
+    @Inject(SuperAdminLock) private readonly adminLock: SuperAdminLock,
   ) {}
 
-  /** The dead rows, oldest first, at most {@link OUTBOX_DEAD_LIST_MAX}. */
-  async list(): Promise<{ items: OutboxDeadRow[] }> {
-    const rows = await this.db.db
+  /**
+   * `limit` dead rows (at most {@link OUTBOX_DEAD_LIST_MAX}) after the cursor `after`, oldest
+   * first by `(dead_at, id)`; one extra row tells `next`. A malformed cursor is a validation error.
+   */
+  async list(q: { after?: string | undefined; limit?: number } = {}): Promise<OutboxDeadPage> {
+    const limit = Math.min(q.limit ?? OUTBOX_DEAD_LIST_MAX, OUTBOX_DEAD_LIST_MAX);
+    const cursor = q.after === undefined ? null : decodeOutboxDeadCursor(q.after);
+    if (q.after !== undefined && cursor === null) {
+      throw new ApiError("validation_failed", "after must be a cursor from a previous page");
+    }
+    let query = this.db.db
       .selectFrom("outbox")
       .select([
         "id",
@@ -82,14 +100,28 @@ export class OutboxDeadService {
         "last_error",
         "dead_at",
         "created_at",
+        // PG's own text keeps the microseconds a JS Date would cut
+        sql<string>`dead_at::text`.as("dead_at_text"),
       ])
-      .where("dead_at", "is not", null)
+      .where("dead_at", "is not", null);
+    if (cursor !== null) {
+      query = query.where(
+        sql<boolean>`(dead_at, id) > (${cursor.deadAt}::timestamptz, ${cursor.id}::bigint)`,
+      );
+    }
+    const rows = await query
       .orderBy("dead_at")
       .orderBy("id")
-      .limit(OUTBOX_DEAD_LIST_MAX)
+      .limit(limit + 1)
       .execute();
+    const page = rows.slice(0, limit);
+    const last = page.at(-1);
     return {
-      items: rows.map((r) => ({
+      next:
+        rows.length > limit && last !== undefined
+          ? encodeOutboxDeadCursor({ deadAt: last.dead_at_text, id: String(last.id) })
+          : null,
+      items: page.map((r) => ({
         id: String(r.id),
         queue: r.queue,
         jobName: r.job_name,
@@ -149,6 +181,7 @@ export class OutboxDeadService {
     actor: WriteActor,
     detail: Record<string, unknown>,
   ): Promise<{ outcome: OutboxRetryOutcome }> {
+    await this.adminLock.lockAndAuthorize(actor.accountId);
     await this.lockRunRetryIn(id);
     const row = await this.lockDead(id);
     const owed = await this.db.db
@@ -214,6 +247,7 @@ export class OutboxDeadService {
     actor: WriteActor,
     detail: Record<string, unknown> = {},
   ): Promise<void> {
+    await this.adminLock.lockAndAuthorize(actor.accountId);
     const row = await this.lockDead(id);
     await this.db.db.deleteFrom("outbox").where("id", "=", id).execute();
     await this.audit("outbox.discarded", id, row, actor, detail);

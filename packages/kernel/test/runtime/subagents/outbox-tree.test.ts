@@ -12,7 +12,6 @@ import { ConversationQueue } from "../../../src/conversations/queue.service.js";
 import { type KernelSchemaDb, kernelDb } from "../../../src/db/kernel-schema.js";
 import { createDb } from "../../../src/db/pool.js";
 import { OUTBOX_DISPATCH_FAILS } from "../../../src/infra/outbox/outbox.dispatcher.js";
-import { OUTBOX_STRICT_CONFLICTS } from "../../../src/infra/outbox/outbox.service.js";
 import { RunAbort } from "../../../src/runtime/abort.js";
 import { RunFinish } from "../../../src/runtime/run-finish.js";
 import {
@@ -40,7 +39,7 @@ import { MODEL_FAKE } from "../../helpers/model-plugins.js";
 import { drainOutbox } from "../../helpers/outbox.js";
 import {
   createConv,
-  createOrg,
+  createOrgWithProviders,
   eventsOf,
   PW,
   type Req,
@@ -87,10 +86,7 @@ let failing = false;
 beforeAll(async () => {
   [pgc, rd] = await Promise.all([startTestPostgres(), startTestRedis()]);
   k = await startKernel(runConfig({ pg: pgc.url, redis: rd.url }, { extensions: [MODEL_FAKE] }), {
-    overrides: [
-      { provide: OUTBOX_DISPATCH_FAILS, useValue: () => failing },
-      { provide: OUTBOX_STRICT_CONFLICTS, useValue: true },
-    ],
+    overrides: [{ provide: OUTBOX_DISPATCH_FAILS, useValue: () => failing }],
   });
   raw = createDb(pgc.url, 5);
   db = kernelDb(raw);
@@ -119,7 +115,7 @@ beforeEach(async () => {
   ownerId = (await accountsFor(db).createLocal({ login: "owner", password: PW, displayName: "O" }))
     .id;
   owner = await session(k, "owner");
-  orgId = await createOrg(owner);
+  orgId = await createOrgWithProviders(k, owner);
   const res = await owner({
     method: "POST",
     url: `/api/v1/orgs/${orgId}/agents`,

@@ -3,7 +3,7 @@
   "schemaVersion": 1,
   "marketplace": {
     "url": "https://github.com/capybara-hq/plugins.git",
-    "commit": "85aaf6598bee6f27ed9da9836084e2295eb29e03"
+    "commit": "05d00a946d26e9e519a258583c2f2468f7b7fcb5"
   },
   "plugins": [
     {
@@ -18,8 +18,8 @@
       "name": "object-store-s3",
       "source": "npm",
       "npm": "@capybara-hq/plugin-object-store-s3",
-      "version": "0.1.0-rc.9",
-      "integrity": "sha512-yqW5gM5+4sdY/nJWDyu7ltDLdUm6b4q9+R/yrCLJhMRCI7HQbxeqDWky29EiDjjsJD5BaiQ6N3a5Ua75ANll7g==",
+      "version": "0.1.0-rc.10",
+      "integrity": "sha512-uzpvEixkXcngBr33iXSgsupTGG8wLkLTo9JeA134rCeknrUX1IhkfkJKw6L2mwpnefyuBwt9l/vb+eiSZrZXCw==",
       "required": true
     },
     {
@@ -98,8 +98,8 @@
       "name": "todo",
       "source": "npm",
       "npm": "@capybara-hq/plugin-todo",
-      "version": "0.1.0-rc.10",
-      "integrity": "sha512-9sRVd7MaUsUF5Uk0EDsRqIae492TDEGjOcH5IM+SxTY2NcQCiXVs4ck/N6kRuV65x5LzVcrGLBfyx/Zi+2229w==",
+      "version": "0.1.0-rc.11",
+      "integrity": "sha512-9vS5wRiX4Rk255T51WWfFDNB3SjVsJx2DNikaZr3yUVnzowHRH+SQ90OHdh7GK4RuFzVZxNaafPaGMgJZ++mLw==",
       "required": false
     },
     {

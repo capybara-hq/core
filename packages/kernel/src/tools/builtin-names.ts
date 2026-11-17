@@ -1,12 +1,10 @@
-import { parseToolKey } from "@capybara-hq/plugin-sdk";
 import type { ToolKind } from "./info.js";
 
 /**
  * The names (model-visible keys) of the kernel's builtin tools, following Claude Code (tool naming
  * spec §4.1). Plain constants: `BuiltinTools`, the tool factories, the registry, policy and the
  * runtime import them from here. The web keeps its own copy (`apps/web/src/lib/agents.ts`,
- * `lib/timeline.ts`), checked equal by `test/tools/builtin-names.test.ts`. The release-candidate
- * names are in `legacy-keys.ts`, never here.
+ * `lib/timeline.ts`), checked equal by `test/tools/builtin-names.test.ts`.
  */
 export const BUILTIN = {
   Bash: "Bash",
@@ -16,6 +14,7 @@ export const BUILTIN = {
   Glob: "Glob",
   Grep: "Grep",
   Deliver: "Deliver",
+  FetchAttachment: "FetchAttachment",
   Skill: "Skill",
   AskUserQuestion: "AskUserQuestion",
   ReadToolOutput: "ReadToolOutput",
@@ -52,6 +51,7 @@ export const SANDBOX_TOOL_NAMES: readonly BuiltinName[] = [
   BUILTIN.Glob,
   BUILTIN.Grep,
   BUILTIN.Deliver,
+  BUILTIN.FetchAttachment,
   BUILTIN.TaskOutput,
   BUILTIN.TaskStop,
   BUILTIN.TaskList,
@@ -119,18 +119,6 @@ export const BUILTIN_TOOL_NAMES: readonly BuiltinName[] = [
   BUILTIN.CurrentTime,
   ...SCHEDULE_TOOL_NAMES,
 ];
-
-const BUILTIN_NAME_SET: ReadonlySet<string> = new Set<string>(Object.values(BUILTIN));
-
-/**
- * Is `key` a builtin-shaped key (a bare name, no `mcp__` / `plugin__` prefix) that names no
- * builtin the kernel has now, e.g. the removed `SkillWrite`? Saving an agent or an org template
- * drops such a `toolPolicies` key instead of refusing the save: a stored definition may still
- * carry it, and the web sends the whole definition back.
- */
-export function isRemovedBuiltinKey(key: string): boolean {
-  return parseToolKey(key)?.kind === "builtin" && !BUILTIN_NAME_SET.has(key);
-}
 
 /** The builtin that loads a skill (added by the registry when the log has a skills catalog). */
 export const SKILL_LOAD = BUILTIN.Skill;
@@ -207,6 +195,7 @@ export const BUILTIN_TOOL_KINDS: Readonly<Record<string, ToolKind>> = {
   [BUILTIN.Glob]: "search",
   [BUILTIN.Grep]: "search",
   [BUILTIN.Deliver]: "tool",
+  [BUILTIN.FetchAttachment]: "tool",
   [BUILTIN.TaskOutput]: "read",
   [BUILTIN.TaskStop]: "command",
   [BUILTIN.TaskList]: "read",

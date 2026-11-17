@@ -1,7 +1,7 @@
 import { randomInt } from "node:crypto";
 import { Inject, Injectable } from "@nestjs/common";
 import { sql } from "kysely";
-import type { Keyring } from "../ctx/secrets.js";
+import { initialPasswordAad as aadOf, type Keyring } from "../ctx/secrets.js";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
@@ -31,9 +31,6 @@ export function generateInitialPassword(): string {
   for (let i = 0; i < LENGTH; i++) out += ALPHABET[randomInt(ALPHABET.length)];
   return out;
 }
-
-/** The AAD binding a sealed password to its account (a row moved to another account fails). */
-const aadOf = (accountId: string) => `capybara:initial-password:${accountId}`;
 
 /** Where a generated password is delivered: the approved tool call and the person who approved. */
 export interface InitialPasswordDelivery {

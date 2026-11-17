@@ -12,6 +12,14 @@ export interface ShutdownSignalOptions {
    * Default `process.exit`.
    */
   exit?: (code: number) => void;
+  /**
+   * Subscribes to this process's fault (a swallowed fatal event, `onProcessFault`); returns the
+   * unsubscribe. A fault runs the same graceful stop as a signal, then exits with 1 either way, so
+   * any restart policy replaces the process (readiness alone restarts nothing: Kubernetes only
+   * takes the pod out of its endpoints, a worker serves no traffic, compose does not restart an
+   * unhealthy container). `capybara start` passes it; default: none (tests, library use).
+   */
+  faults?: (onFault: (kind: string) => void) => () => void;
 }
 
 export interface ShutdownSignalHandle {
@@ -29,7 +37,8 @@ export interface ShutdownSignalHandle {
  * flushing the logs. A second signal while that runs exits with 1 at once, so an operator's second
  * Ctrl-C (or an orchestrator's repeated SIGTERM) never waits on a stuck shutdown. Nest's handlers
  * would begin the shutdown only after every module's `onModuleDestroy`, ignore a second signal,
- * flush nothing and end the process by re-raising the signal.
+ * flush nothing and end the process by re-raising the signal. With `faults`, a swallowed fatal
+ * event starts the same stop and exits with 1.
  */
 export function handleShutdownSignals(
   close: () => Promise<void>,
@@ -41,9 +50,29 @@ export function handleShutdownSignals(
   let exiting: Promise<void> | undefined;
   // Set by a second signal: the forced exit(1) stays the process's code
   let forced = false;
+  let unsubscribe = () => {};
   const dispose = () => {
     for (const s of SHUTDOWN_SIGNALS) signals.off(s, onSignal);
+    unsubscribe();
   };
+  /** Runs `close` once, then exits with `code` (1 when the stop failed). */
+  function stop(code: 0 | 1): void {
+    const end = (c: number) =>
+      log
+        .flush()
+        .catch(() => {})
+        .then(() => {
+          dispose();
+          if (!forced) exit(c);
+        });
+    exiting = close().then(
+      () => end(code),
+      (err: unknown) => {
+        log.error("shutdown failed", { err });
+        return end(1);
+      },
+    );
+  }
   function onSignal(signal: NodeJS.Signals): void {
     if (exiting) {
       log.warn("second signal received; exiting immediately", { signal });
@@ -53,22 +82,15 @@ export function handleShutdownSignals(
       return;
     }
     log.info("signal received; shutting down", { signal });
-    const end = (code: number) =>
-      log
-        .flush()
-        .catch(() => {})
-        .then(() => {
-          dispose();
-          if (!forced) exit(code);
-        });
-    exiting = close().then(
-      () => end(0),
-      (err: unknown) => {
-        log.error("shutdown failed", { err });
-        return end(1);
-      },
-    );
+    stop(0);
   }
   for (const s of SHUTDOWN_SIGNALS) signals.on(s, onSignal);
+  if (opts.faults) {
+    unsubscribe = opts.faults((kind) => {
+      if (exiting) return;
+      log.error("fatal event swallowed; shutting down so the process is replaced", { kind });
+      stop(1);
+    });
+  }
   return { exiting: () => exiting, dispose };
 }

@@ -206,6 +206,10 @@ Also in the migration **(designer's call)**:
   keeps its limit of 3 names.
 - **Inline templates** (`subagents.inline[].skills`, ids) mean the same: the skills that child is told
   to load first.
+- **Amended 2026-11-16** (design review finding template-skills-by-instruction): the preamble line is
+  gone; the dispatch writes each of those skills as an inline skill invocation message after the task
+  (the version's `skill` record and rendered `<skill_invocation>` text), so the child starts with the
+  instructions without a `Skill` step. Older logs keep the line in their logged preamble.
 - **Org agents dispatched as children** (§5.5): their own `disabledSkills` (the dispatched agent's
   owner's choice is part of what that agent is), not the parent's.
 - **Follow-ups** (`SendMessage` restarting a child): the child uses the union of the frozen and the

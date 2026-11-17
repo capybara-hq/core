@@ -13,7 +13,7 @@ import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
   createAgent,
   createConv,
-  createOrg,
+  createOrgWithProviders,
   PW,
   postMessage,
   runConfig,
@@ -69,7 +69,7 @@ it("停机中止在途的评委请求：按估算计费", async () => {
     .id;
   const ent = await session(kernel, "ent");
   const owner = await session(kernel, "owner");
-  const orgId = await createOrg(owner);
+  const orgId = await createOrgWithProviders(kernel, owner);
   await testMembers(db).add(orgId, adminId, "admin", ownerId);
   const admin = await session(kernel, "admin");
   const agentId = await createAgent(owner, orgId);

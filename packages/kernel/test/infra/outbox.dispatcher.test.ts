@@ -152,7 +152,7 @@ beforeAll(async () => {
   redis = new Redis(rd.url, { maxRetriesPerRequest: null });
   queues = KERNEL_QUEUES.map((name) => new Queue(name, { connection: redis }));
   dispatcher = dispatcherOver(queues, () => fails);
-  outbox = new OutboxService(host, kdb, silent(), outboxFastPath(dispatcher), true);
+  outbox = new OutboxService(host, kdb, outboxFastPath(dispatcher));
 });
 
 afterAll(async () => {

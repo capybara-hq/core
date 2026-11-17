@@ -5,7 +5,9 @@ import {
   BubbleAttachments,
   Disclosure,
   FileOutputs,
+  formatBytes,
   ImageOutput,
+  ImageZoom,
   isInlineImageType,
   Prose,
   RunDivider,
@@ -28,15 +30,11 @@ import { ApiClientError, ensureSession } from "../../lib/api";
 import { artifactDownloadUrl } from "../../lib/artifacts";
 import { attachmentDownloadUrl } from "../../lib/attachments";
 import type { ModelRef, ToolInfo } from "../../lib/conversations";
+import { type ModelConfigViewer, modelConfigViewer } from "../../lib/model-config";
 import { retryOnMountOf } from "../../lib/query/client";
 import { toolOutputSizeQuery } from "../../lib/query/conversation";
 import { membersQuery } from "../../lib/query/members";
-import {
-  canConfigureModels,
-  canViewTrajectory,
-  isModelSetupError,
-  runParts,
-} from "../../lib/run-row";
+import { canViewTrajectory, configureModelsHref, runParts } from "../../lib/run-row";
 import type { CompactionProgress } from "../../lib/stream";
 import { shortTime } from "../../lib/time";
 import {
@@ -190,7 +188,8 @@ type EntryContext = {
   /** Member display names (another member who stopped a run). */
   names: ReadonlyMap<string, string>;
   /** The run rows' links this reader may follow. */
-  links: { trajectory: boolean; configureModels: boolean };
+  /** `configureModels`: who reads, for the model-setup fix of a failed run (null: no run links). */
+  links: { trajectory: boolean; configureModels: ModelConfigViewer | null };
   /** Which callbacks are given (an absent one hides its control). */
   has: {
     retry: boolean;
@@ -302,7 +301,12 @@ export function Thread({
     runLinks !== undefined &&
     runLinks.trajectory !== false &&
     canViewTrajectory(me, runLinks.agentOwnerId);
-  const configureModels = runLinks !== undefined && canConfigureModels(me);
+  const { superAdmin, orgAdmin } = modelConfigViewer(me);
+  const hasRunLinks = runLinks !== undefined;
+  const configureModels = useMemo(
+    () => (hasRunLinks ? { superAdmin, orgAdmin } : null),
+    [hasRunLinks, superAdmin, orgAdmin],
+  );
   const hasRetry = onRetry !== undefined;
   const hasOpenFile = onOpenFile !== undefined;
   const hasMoreFiles = onMoreFiles !== undefined;
@@ -439,6 +443,8 @@ function EntryNode({ e, c }: { e: TimelineEntry; c: EntryContext }): ReactNode {
     selectedFile,
     removedFiles,
   } = c;
+  /** The image this entry's zoom shows (§5.6): a thumbnail click sets it, closing clears it. */
+  const [zoomId, setZoomId] = useState<string | null>(null);
   // Callbacks go through the ref at call time: a memoized entry never calls a stale one.
   const cb = c.cb;
   const onRetry = c.has.retry ? (d: FailedRun) => cb.current.onRetry?.(d) : undefined;
@@ -586,10 +592,11 @@ function EntryNode({ e, c }: { e: TimelineEntry; c: EntryContext }): ReactNode {
     const detail = e.hook?.reason ?? e.message;
     const canRetry =
       !e.retried && e.retry !== null && e.hook === null && e.key === lastFailed && onRetry;
-    const fix =
-      c.links.configureModels && isModelSetupError(e.code)
-        ? [{ label: t("run.configureModels"), href: "/admin/extensions" }]
-        : [];
+    const fixHref =
+      c.links.configureModels !== null
+        ? configureModelsHref(c.links.configureModels, e.code)
+        : null;
+    const fix = fixHref !== null ? [{ label: t("run.configureModels"), href: fixHref }] : [];
     return (
       <RunRow
         status="failed"
@@ -641,6 +648,8 @@ function EntryNode({ e, c }: { e: TimelineEntry; c: EntryContext }): ReactNode {
   const entry = (e: TimelineEntry): ReactNode => {
     switch (e.kind) {
       case "user": {
+        const srcOf = (id: string) =>
+          `${attachmentDownloadUrl(orgId, id)}${retried.has(id) ? "?retry=1" : ""}`;
         const atts: BubbleAttachment[] = [
           ...e.files.map(
             (f): BubbleAttachment => ({
@@ -648,11 +657,8 @@ function EntryNode({ e, c }: { e: TimelineEntry; c: EntryContext }): ReactNode {
               kind: f.kind === "image" ? "image" : "file",
               name: f.name,
               type: typeBadge(f.name, f.mediaType),
-              ...(f.kind === "image"
-                ? {
-                    src: `${attachmentDownloadUrl(orgId, f.attachmentId)}${retried.has(f.attachmentId) ? "?retry=1" : ""}`,
-                  }
-                : {}),
+              ...(f.size !== undefined ? { size: formatBytes(f.size) } : {}),
+              ...(f.kind === "image" ? { src: srcOf(f.attachmentId) } : {}),
             }),
           ),
           ...e.attachments.map(
@@ -663,6 +669,8 @@ function EntryNode({ e, c }: { e: TimelineEntry; c: EntryContext }): ReactNode {
             }),
           ),
         ];
+        // The attachment the zoom is showing, if any (undefined while the dialog is closed)
+        const zoomed = e.files.find((f) => f.attachmentId === zoomId);
         const details =
           e.instructions !== undefined || e.waitsFor !== undefined || e.pending ? (
             <>
@@ -686,26 +694,50 @@ function EntryNode({ e, c }: { e: TimelineEntry; c: EntryContext }): ReactNode {
             </>
           ) : undefined;
         return (
-          <UserBubble
-            text={e.text}
-            {...(e.pending ? { queued: true } : {})}
-            {...(e.sender ? { sender: e.sender.name ?? t("parentAgent") } : {})}
-            {...(e.skill ? { skill: e.skill.label } : {})}
-            {...(details !== undefined ? { details } : {})}
-            {...(atts.length > 0
-              ? {
-                  attachments: (
-                    <BubbleAttachments
-                      items={atts}
-                      onImageError={onImageError}
-                      onOpen={(id) => {
-                        if (!id.startsWith("@")) openDownload(attachmentDownloadUrl(orgId, id));
-                      }}
-                    />
-                  ),
-                }
-              : {})}
-          />
+          <>
+            <UserBubble
+              text={e.text}
+              {...(e.pending ? { queued: true } : {})}
+              {...(e.sender ? { sender: e.sender.name ?? t("parentAgent") } : {})}
+              {...(e.skill ? { skill: e.skill.label } : {})}
+              {...(details !== undefined ? { details } : {})}
+              {...(atts.length > 0
+                ? {
+                    attachments: (
+                      <BubbleAttachments
+                        items={atts}
+                        onImageError={onImageError}
+                        onOpen={(id) => {
+                          const file = e.files.find((f) => f.attachmentId === id);
+                          // An image zooms in the page; every other attachment downloads as before.
+                          if (file?.kind === "image") setZoomId(id);
+                          else if (!id.startsWith("@"))
+                            openDownload(attachmentDownloadUrl(orgId, id));
+                        }}
+                      />
+                    ),
+                  }
+                : {})}
+            />
+            {e.files.some((f) => f.kind === "image") ? (
+              <ImageZoom
+                open={zoomId !== null}
+                onOpenChange={(open) => {
+                  if (!open) setZoomId(null);
+                }}
+                src={zoomed !== undefined ? srcOf(zoomed.attachmentId) : ""}
+                name={zoomed?.name ?? ""}
+                {...(zoomed?.size !== undefined ? { size: formatBytes(zoomed.size) } : {})}
+                onDownload={() => {
+                  if (zoomed !== undefined)
+                    openDownload(attachmentDownloadUrl(orgId, zoomed.attachmentId));
+                }}
+                {...(zoomed !== undefined && !retried.has(zoomed.attachmentId)
+                  ? { onRetry: () => onImageError(zoomed.attachmentId) }
+                  : {})}
+              />
+            ) : null}
+          </>
         );
       }
       case "prose":
@@ -771,7 +803,20 @@ function EntryNode({ e, c }: { e: TimelineEntry; c: EntryContext }): ReactNode {
         );
       }
       case "task":
-        return renderTask?.(e) ?? null;
+        return e.skills === undefined ? (
+          (renderTask?.(e) ?? null)
+        ) : (
+          <>
+            {renderTask?.(e) ?? null}
+            {e.skills.map((s) => (
+              <Disclosure key={s.label} summary={t("templateSkill", { skill: s.label })}>
+                <Text variant="small" tone="muted" pre>
+                  {s.instructions}
+                </Text>
+              </Disclosure>
+            ))}
+          </>
+        );
       case "delivery":
         return <DeliveryRow e={e} onOpen={onOpenAgent} />;
       case "skill-report":

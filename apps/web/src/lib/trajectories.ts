@@ -31,8 +31,8 @@ export interface TrajectoryModelCall {
   /** 估算成本（币种见详情的 `currency`）；没有用量或没有价格时为 null。 */
   cost: number | null;
   request: {
-    params?: Record<string, string | number | boolean>;
-    tools?: { key: string; specHash: string }[];
+    params: Record<string, string | number | boolean>;
+    tools: { key: string; specHash: string }[];
     [key: string]: unknown;
   };
 }

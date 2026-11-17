@@ -38,7 +38,7 @@ import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { bootstrapFixture, legacyTgz, packFake, pluginTgz } from "../helpers/plugin-packages.js";
 import {
   buildKernel,
-  createOrg,
+  createOrgWithProviders,
   PW,
   type Req,
   runConfig,
@@ -277,15 +277,15 @@ describe("有对象存储：上传、npm 与包存储", () => {
     expect(big.json().error.code).toBe("extension.package_too_large");
   });
 
-  it("a pre-0.1.0 tgz (capybara section, or app.yaml) is 422 extension.legacy_format with the repack message; a plugin without an extension is 400 extension.no_extension; nothing is stored", async () => {
-    const LEGACY =
-      "uses the pre-0.1.0 package format (capybara section / app.yaml); repack it as a plugin with .capybara-plugin/plugin.json (pnpm pack-plugin)";
+  it("an old-format tgz (capybara section, or app.yaml) is 400 extension.package_invalid naming the manifest path; a plugin without an extension is 400 extension.no_extension; nothing is stored", async () => {
     const before = await db.selectFrom("extension_packages").select("sha256").execute();
     for (const bytes of [await legacyTgz(), await legacyTgz({ appYaml: true })]) {
       const res = await upload(admin, bytes);
-      expect(res.statusCode, res.body).toBe(422);
-      expect(res.json().error.code).toBe("extension.legacy_format");
-      expect(res.json().error.message).toBe(`Package @test/plugin-legacy-pkg ${LEGACY}`);
+      expect(res.statusCode, res.body).toBe(400);
+      expect(res.json().error.code).toBe("extension.package_invalid");
+      expect(res.json().error.message).toMatch(
+        /\.capybara-plugin\/plugin\.json not found in the package/,
+      );
     }
     const skillsOnly = await pluginTgz({
       manifest: { name: "skills-only" },
@@ -515,7 +515,7 @@ describe("启动时加载安装记录", () => {
     expect(k.app.get(ReplicaStatusStore).replicaId).toMatch(/^.+-\d+-[0-9a-f]{6}$/);
 
     await loginUsers(k);
-    const orgId = await createOrg(admin);
+    const orgId = await createOrgWithProviders(k, admin);
     const quiet = { disabledTools: builtinsOff() };
     expect(
       (await k.app.get(ToolRegistry).forAgent(orgId, { ...quiet, source: "web" })).tools,
@@ -883,7 +883,7 @@ describe("引导插件（取代内置插件）", () => {
     expect(k.app.get(StorageService).available).toBe(false);
 
     await loginUsers(k);
-    const orgId = await createOrg(admin);
+    const orgId = await createOrgWithProviders(k, admin);
     const list = await admin({ method: "GET", url: `/api/v1/orgs/${orgId}/extensions` });
     expect(list.statusCode).toBe(200);
     expect(

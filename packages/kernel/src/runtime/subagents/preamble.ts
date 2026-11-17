@@ -2,8 +2,9 @@
  * The sub-agent preamble (spec §6.3, agent map spec §4.4, model-visible): rendered in a child's
  * system text after `BEHAVIOR_RULES` and before its instructions. Frozen into each child's
  * `subagent_started` at dispatch, and request building reads it from there, so changing this text
- * never alters an old child's requests. A template child's preamble ends with a line naming the
- * template's skills to load first (`effectiveDefinition`, skills default-on spec §6.1).
+ * never alters an old child's requests. Older children's preambles may end with a line naming the
+ * template's skills to load first; a template's skills are now written as skill invocation
+ * messages after the task (`template-skills.ts`).
  */
 export const SUBAGENT_PREAMBLE =
   "You are a sub-agent. Another agent dispatched you with the task in the first user message. " +

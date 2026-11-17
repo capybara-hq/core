@@ -81,7 +81,7 @@ export interface OrgExtension {
   available?: boolean;
   /**
    * Only when unavailable: why it cannot run on the platform (kernel `OrgExtensionView.reason`),
-   * e.g. `needs_deployment_config`. Older kernels leave it out.
+   * e.g. `needs_deployment_config`.
    */
   reason?: ExtensionUnavailableReason;
   /**
@@ -95,20 +95,19 @@ export interface OrgExtension {
   switchable?: boolean;
   /**
    * The extension points it provides (`web-search@1`, names only), for every role: members get no
-   * permissions but this (older kernels leave it out; then the `provides` permission group).
+   * permissions but this.
    */
-  provides?: string[];
+  provides: string[];
   /**
    * The two-level deployment config in this org (spec A §5.3): the org `following` the platform, a
-   * `copy` of the overridable fields, or `none` (no overridable field). Admins only; older kernels
-   * leave it out.
+   * `copy` of the overridable fields, or `none` (no overridable field). Admins only.
    */
   overrideState?: "following" | "copy" | "none";
   /**
    * The org must configure the extension before it works here (the effective config is not valid,
    * or a required org-only field is missing), as the kernel decides.
    */
-  needsConfig?: boolean;
+  needsConfig: boolean;
 }
 
 /** One field of an org's two-level config (kernel `OrgOverrideField`). */
@@ -144,7 +143,7 @@ export interface OrgOverrideView {
  */
 export function capabilityGroups(e: OrgExtension): PermissionGroup[] {
   const rest = e.permissions.filter((g) => g.category !== "provides");
-  const points = e.provides ?? e.permissions.find((g) => g.category === "provides")?.items ?? [];
+  const points = e.provides;
   if (points.length === 0) return rest;
   return [
     {
@@ -221,8 +220,7 @@ export const syncDirectory = (orgId: string, plugin: string) =>
 
 /** Whether the extension provides an extension point (by the manifest's `provides` name, ignoring the major version). */
 export function provides(p: OrgExtension, extensionPoint: string): boolean {
-  const group = p.permissions.find((g) => g.category === "provides");
-  return group?.items.some((i) => i.split("@")[0] === extensionPoint) ?? false;
+  return p.provides.some((i) => i.split("@")[0] === extensionPoint);
 }
 
 /**
@@ -261,8 +259,8 @@ export interface ExtensionToolOffer {
   description: string;
   annotations: Record<string, boolean>;
   defaultPolicy: "allow" | "ask";
-  /** The org turned this tool off (older kernels leave it out): still listed, shown as off. */
-  switchedOff?: boolean;
+  /** The org turned this tool off: still listed, shown as off. */
+  switchedOff: boolean;
 }
 
 /** An extension enabled in the org with the tools it registered (kernel `ExtensionToolsOffer`). */

@@ -24,7 +24,7 @@ import { testMembers } from "../helpers/members.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
   createAgent,
-  createOrg,
+  createOrgWithProviders,
   PW,
   type Req,
   runConfig,
@@ -110,8 +110,8 @@ beforeAll(async () => {
   owner = await session(k, "owner");
   member = await session(k, "member");
   stranger = await session(k, "stranger");
-  orgId = await createOrg(owner);
-  otherOrgId = await createOrg(stranger, "Globex");
+  orgId = await createOrgWithProviders(k, owner);
+  otherOrgId = await createOrgWithProviders(k, stranger, "Globex");
   agentId = await createAgent(owner, orgId);
   await testMembers(db).add(orgId, m.id, "member", o.id);
   for (const [req, org] of [

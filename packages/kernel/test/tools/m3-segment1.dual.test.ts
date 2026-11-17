@@ -188,6 +188,7 @@ describe("M3 第一段双副本验收", () => {
     const org = await alt("POST", "/api/v1/orgs", { name: "Acme" });
     expect(org.status).toBe(201);
     const orgId = (org.json.org as { id: string }).id;
+    await enableExtensions(raw, orgId, "model-fake");
     await enableExtensions(raw, orgId, "fake-connector");
     const base = `/api/v1/orgs/${orgId}`;
 

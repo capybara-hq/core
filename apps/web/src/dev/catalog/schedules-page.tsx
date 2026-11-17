@@ -212,9 +212,15 @@ function seeded(variant: SchedulesPageVariant, zone: string): QueryClient {
   });
   const admin = variant === "admin";
   qc.setQueryData(meQuery().queryKey, meAs(admin ? "owner" : "member"));
-  qc.setQueryData(readinessQuery(ORG).queryKey, { modelProvider: "ready", agents: 3 });
+  qc.setQueryData(readinessQuery(ORG).queryKey, {
+    modelProvider: "ready",
+    orgFixableProviders: [],
+    agents: 3,
+  });
   qc.setQueryData(agentsQuery(ORG).queryKey, { agents: AGENTS });
-  qc.setQueryData(orgSettingsQuery(ORG).queryKey, { settings: {} });
+  qc.setQueryData(orgSettingsQuery(ORG).queryKey, {
+    settings: { scheduledTasks: { enabled: true, minIntervalMinutes: 60 } },
+  });
   const mine = TASKS.filter((t) => t.length < 5).map((t) => listTask(calTask(t, zone)));
   qc.setQueryData(schedulesQuery(ORG).queryKey, { items: mine });
   qc.setQueryData(schedulesQuery(ORG, "all").queryKey, {

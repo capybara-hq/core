@@ -26,7 +26,7 @@ import { taskOutputTool } from "../../src/tools/builtins/sandbox/task-output.js"
 import { taskStopTool } from "../../src/tools/builtins/sandbox/task-stop.js";
 import type { BuiltinCallContext, BuiltinResult } from "../../src/tools/registry.js";
 import { asUser, cookieJar } from "./http.js";
-import type { Req, TestKernel } from "./runs.js";
+import { enableModelProviders, type Req, type TestKernel } from "./runs.js";
 
 /**
  * Managed background task fixtures (permission runtime cutover phase 8.3): a provider that owns
@@ -292,6 +292,7 @@ export async function managedTaskFixture(opts: {
   ).toBe(200);
   const org = await req({ method: "POST", url: "/api/v1/orgs", payload: { name: randomUUID() } });
   const orgId = (org.json() as { org: { id: string } }).org.id;
+  await enableModelProviders(k, orgId);
   const agent = await req({
     method: "POST",
     url: `/api/v1/orgs/${orgId}/agents`,

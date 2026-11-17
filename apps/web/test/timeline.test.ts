@@ -14,6 +14,9 @@ import {
 } from "../src/lib/timeline";
 
 let t = 0;
+/** A model_call's request: it took in everything up to `seq` and offered no tools. */
+const req = (seq: number) => ({ absorbedUpToSeq: seq, tools: [] });
+
 function ev(seq: number, type: string, payload: unknown, runId: string | null = "r1") {
   t += 1000;
   return {
@@ -397,23 +400,74 @@ describe("buildTimeline", () => {
     ]);
   });
 
-  it("a compaction divider without the summary's savedTokens shows none (older logs), never a usage-derived one", () => {
+  it("a template sub-agent's skills the kernel wrote after the task join the task block, never a person's bubble", () => {
+    const skill = (name: string) => ({
+      id: `s-${name}`,
+      version: 1,
+      source: `skills/s-${name}/`,
+      name,
+      arguments: "",
+      mode: "inline",
+      template: true,
+    });
     const events = [
-      ev(1, "usage", {
-        step: 0,
-        provider: "p",
-        model: "m",
-        inputTokens: 900,
-        outputTokens: 100,
-        cacheReadTokens: 100,
-        cacheWriteTokens: 0,
-        purpose: "compaction",
-      }),
-      ev(2, "compaction_summary", { coversUpToSeq: 1, text: "summary" }),
+      ev(
+        1,
+        "user_message",
+        {
+          content: [{ type: "text", text: "take notes" }],
+          authorAccountId: "a1",
+          dispatch: { parentConversationId: "p", parentRunId: "r0", callId: "c" },
+        },
+        null,
+      ),
+      ev(
+        2,
+        "user_message",
+        {
+          content: [{ type: "text", text: "alpha instructions" }],
+          authorAccountId: "a1",
+          skill: skill("alpha-notes"),
+        },
+        null,
+      ),
+      ev(
+        3,
+        "user_message",
+        {
+          content: [{ type: "text", text: "beta instructions" }],
+          authorAccountId: "a1",
+          skill: skill("beta"),
+        },
+        null,
+      ),
+      // the kernel's notice for a template skill it could not read: no record, still the task's
+      ev(
+        4,
+        "user_message",
+        {
+          content: [{ type: "text", text: "gamma could not be read" }],
+          authorAccountId: "a1",
+          templateSkillNotice: { name: "gamma" },
+        },
+        null,
+      ),
     ];
-    expect(buildTimeline(events, [], new Map(), "en")).toEqual([
-      { kind: "divider", key: "e2", divider: "compacted", summary: "summary", savedTokens: null },
+    const out = buildTimeline(events, [], new Map(), "en");
+    expect(out).toEqual([
+      {
+        kind: "task",
+        key: "e1",
+        seq: 1,
+        text: "take notes",
+        skills: [
+          { label: "/alpha-notes", instructions: "alpha instructions" },
+          { label: "/beta", instructions: "beta instructions" },
+          { label: "/gamma", instructions: "gamma could not be read" },
+        ],
+      },
     ]);
+    expect(out.some((e) => e.kind === "user")).toBe(false);
   });
 
   it("a manual compact run's row names itself and its failure is a failed divider", () => {
@@ -643,9 +697,9 @@ describe("run rows (spec §6.16.23)", () => {
     const events = [
       user(1, "hi"),
       ev(2, "run_started", { agentVersion: 1, model: { provider: "p", model: "m" } }, "r1"),
-      ev(3, "model_call", { step: 0, provider: "p", model: "m2" }, "r1"),
+      ev(3, "model_call", { step: 0, provider: "p", model: "m2", request: req(3) }, "r1"),
       usage(4, "r1", 100, 20),
-      ev(5, "model_call", { step: 1, provider: "p", model: "m2" }, "r1"),
+      ev(5, "model_call", { step: 1, provider: "p", model: "m2", request: req(5) }, "r1"),
       usage(6, "r1", 200, 30),
       ev(
         7,
@@ -672,7 +726,7 @@ describe("run rows (spec §6.16.23)", () => {
     const events = [
       user(1, "hi"),
       ev(2, "run_started", { agentVersion: 1, model: { provider: "p", model: "m" } }, "r1"),
-      ev(3, "model_call", { step: 0, provider: "p", model: "m" }, "r1"),
+      ev(3, "model_call", { step: 0, provider: "p", model: "m", request: req(3) }, "r1"),
     ];
     expect(kinds(buildTimeline(events, [], new Map(), "en"))).toEqual(["user"]);
   });
@@ -1165,12 +1219,6 @@ describe("calls that wait for a person (design §6.16.9)", () => {
       kind: "question",
       keyArg: "数据库",
     });
-    // an older key of the question tool (history logged before the rename)
-    const legacy = new Map<string, ToolInfo>([
-      ["legacy_ask", { ...ASK, key: "legacy_ask", aliasOf: "AskUserQuestion" }],
-    ]);
-    const old = calls(1, [{ id: "q", name: "legacy_ask", input: { questions: QUESTIONS } }]);
-    expect(row([old], legacy)?.kind).toBe("question");
   });
 });
 

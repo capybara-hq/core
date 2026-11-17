@@ -22,7 +22,6 @@ import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import { ExtensionHost } from "../../src/extensions/host.js";
 import type { KernelHttp } from "../../src/http/app.js";
 import { KernelDb } from "../../src/infra/database/kernel-db.js";
-import { OUTBOX_STRICT_CONFLICTS } from "../../src/infra/outbox/outbox.service.js";
 import { createLogger } from "../../src/log.js";
 import { runJobId } from "../../src/runtime/run-queue.js";
 import { builtinsOff } from "./disabled-tools.js";
@@ -156,7 +155,7 @@ function assertOffline(config: KernelConfig, allowOfficialMarketplace: boolean |
 function strictOutbox(opts: KernelAppOptions): KernelAppOptions {
   return {
     ...opts,
-    overrides: [{ provide: OUTBOX_STRICT_CONFLICTS, useValue: true }, ...(opts.overrides ?? [])],
+    overrides: [...(opts.overrides ?? [])],
   };
 }
 
@@ -230,10 +229,26 @@ export async function session(k: Pick<TestKernel, "http">, login: string): Promi
   return req;
 }
 
+/** Creates an org as `req`'s user (its owner); returns its id. No extension is on there. */
 export async function createOrg(req: Req, name = "Acme"): Promise<string> {
   const res = await req({ method: "POST", url: "/api/v1/orgs", payload: { name } });
   expect(res.statusCode).toBe(201);
   return (res.json() as { org: { id: string } }).org.id;
+}
+
+/**
+ * {@link createOrg}, then every model provider `k` loaded switched on there
+ * ({@link enableModelProviders}): a model provider is on only in the orgs that enabled it, and a
+ * test that saves or runs an agent needs its provider.
+ */
+export async function createOrgWithProviders(
+  k: Pick<TestKernel, "app">,
+  req: Req,
+  name = "Acme",
+): Promise<string> {
+  const orgId = await createOrg(req, name);
+  await enableModelProviders(k, orgId);
+  return orgId;
 }
 
 /** Switches the named extensions on in `orgId` (a row of the org's own switch). */
@@ -248,6 +263,26 @@ export async function enableExtensions(
       VALUES (${plugin}, ${orgId}, true)
       ON CONFLICT (plugin, org_id) DO UPDATE SET enabled = true`.execute(db);
   }
+}
+
+/**
+ * Switches on in `orgId` every `model-provider` extension this kernel has loaded (a model provider
+ * is on only in the orgs that enabled it): for orgs a test creates without {@link createOrg}.
+ */
+export async function enableModelProviders(
+  k: Pick<TestKernel, "app">,
+  orgId: string,
+): Promise<void> {
+  await enableExtensions(
+    k.app.get(KernelDb).pool,
+    orgId,
+    ...new Set(
+      k.app
+        .get(ExtensionHost)
+        .list("model-provider")
+        .map((e) => e.plugin),
+    ),
+  );
 }
 
 /**

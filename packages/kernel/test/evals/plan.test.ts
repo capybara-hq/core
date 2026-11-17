@@ -31,7 +31,16 @@ const snapshot = (runId: string, events: { type: string; payload: unknown }[]): 
   toolSpecs: {},
 });
 
-const request = { fromSeq: 1, toSeq: 9, summarySeq: null, systemHash: "h", reminderSeqs: [] };
+const request = {
+  fromSeq: 1,
+  toSeq: 9,
+  summarySeq: null,
+  systemHash: "h",
+  reminderSeqs: [],
+  maxOutputTokens: 4096,
+  params: {},
+  tools: [],
+};
 
 const call = (step: number, seq: number) => ({
   type: "model_call",
@@ -103,7 +112,7 @@ describe("case plans", () => {
       },
       {
         type: "compaction_summary",
-        payload: { coversUpToSeq: 1, text: "summary", savedTokens: 900 },
+        payload: { coversUpToSeq: 1, text: "summary", savedTokens: 900, step: 0 },
       },
       { type: "run_finished", payload: { reason: "completed", consumedUpToSeq: 1 } },
     ]);

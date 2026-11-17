@@ -5,7 +5,7 @@ import { connectorTemplateState } from "../../src/catalog/component-state.js";
 import { PluginScopeSync } from "../../src/catalog/scope-sync.js";
 import { SkillsService } from "../../src/skills/skills.service.js";
 import { usableSkills } from "../../src/skills/usable.js";
-import { createOrg } from "../helpers/runs.js";
+import { createOrgWithProviders } from "../helpers/runs.js";
 import { SKILL_MD } from "../skills/zip.js";
 import {
   install,
@@ -30,7 +30,7 @@ let org2: string;
 
 beforeAll(async () => {
   env = await startOrgEnv();
-  org2 = await createOrg(env.root, "Beta");
+  org2 = await createOrgWithProviders(env.k, env.root, "Beta");
 });
 
 afterAll(async () => {

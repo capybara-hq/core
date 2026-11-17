@@ -868,7 +868,17 @@ describe("the conversation page (ConversationPage)", () => {
     await renderChat();
     await screen.findByRole("button", { name: en.chat.stop });
     const es = FakeEventSource.instances[0] as FakeEventSource;
-    act(() => es.emit("event", ev(3, "model_call", { step: 0, provider: "p", model: "m" })));
+    act(() =>
+      es.emit(
+        "event",
+        ev(3, "model_call", {
+          step: 0,
+          provider: "p",
+          model: "m",
+          request: { absorbedUpToSeq: 3, tools: [] },
+        }),
+      ),
+    );
     const user = userEvent.setup();
     await user.type(input(), "later{Enter}");
     await screen.findByText("later");
@@ -1442,7 +1452,11 @@ describe("a new conversation (/)", () => {
     resetNavigation("/");
     const calls = stubApi({
       "POST /api/v1/orgs/o1/conversations/first-message": () =>
-        json(201, { ...CONV("c9", { agentId: "ag2" }), event: userMsg(1, "start") }),
+        json(201, {
+          ...CONV("c9", { agentId: "ag2" }),
+          event: userMsg(1, "start"),
+          events: [userMsg(1, "start")],
+        }),
     });
     const { calls: server } = await renderRouteWithCache("/?agent=ag2", NEW_CHAT);
     // the first paint is the server's: agents, the most recent agent and the models
@@ -1543,7 +1557,7 @@ describe("the first message from / (conversation send spec §2.1)", () => {
     await vi.waitFor(() => expect(d.calls.some((c) => c.method === "POST")).toBe(true));
     const event = userMsg(1, "start", { clientMessageId: d.cmid() });
     const conversation = CONV("c9").conversation;
-    await act(async () => d.answer(json(201, { conversation, event })));
+    await act(async () => d.answer(json(201, { conversation, event, events: [event] })));
     // the groups' read never answers: the navigation does not wait for it
     await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith("/chat/c9"));
     const c = keys.org("o1").conversation("c9");
@@ -1626,7 +1640,9 @@ describe("the first message from / (conversation send spec §2.1)", () => {
     expect(en.chat.sendAfterCreate).toBe("You can send again once the conversation is created");
     expect(d.calls.filter((c) => c.method === "POST")).toHaveLength(1);
     const event = userMsg(1, "start", { clientMessageId: d.cmid() });
-    await act(async () => d.answer(json(201, { conversation: CONV("c9").conversation, event })));
+    await act(async () =>
+      d.answer(json(201, { conversation: CONV("c9").conversation, event, events: [event] })),
+    );
     await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith("/chat/c9"));
     expect(screen.queryByText(en.chat.sendAfterCreate)).toBeNull();
   });
@@ -1656,7 +1672,7 @@ describe("the new conversation once the org can run", () => {
     resetNavigation("/");
     expectNoFirstPaintFetch();
     const { container, calls } = await renderRouteWithCache("/", NEW_CHAT, {
-      readiness: { modelProvider: "none", agents: 0 },
+      readiness: { modelProvider: "none", orgFixableProviders: [], agents: 0 },
     });
     expect(container.querySelector('[data-template="ConversationPage"]')).toBeNull();
     expect(calls.some((c) => c.url.endsWith("/agents"))).toBe(false);
@@ -1909,7 +1925,7 @@ describe("run rows (spec §6.16.23)", () => {
     ).toBe("/trajectories/c1");
     expect(
       within(region).getByRole("link", { name: en.chat.run.configureModels }).getAttribute("href"),
-    ).toBe("/admin/extensions");
+    ).toBe("/settings/models");
     // no duplicate: the failure is the row, never a divider too
     expect(document.querySelector("[data-entry='divider']")).toBeNull();
   });
@@ -1923,24 +1939,52 @@ describe("run rows (spec §6.16.23)", () => {
     ],
     ["a member who does not own it: no links", as("member"), false, false],
     ["a guest: no links", as("guest", { id: "a1" }), false, false],
-    ["an org admin: the trajectory", as("admin"), true, false],
+    // failed credentials: the org's admins fix the org's copy on /settings/models
+    ["an org admin: the trajectory and the fix entry", as("admin"), true, "/settings/models"],
     [
       "a super admin who is a plain member: the fix entry only",
       as("member", { superAdmin: true }),
       false,
-      true,
+      "/admin/models",
     ],
   ])("%s", async (_name, me, trajectory, fix) => {
     api({ [`GET ${BASE}/events`]: () => json(200, { events: authFailure }) });
+    await expectRunLinks(me, trajectory, fix);
+  });
+
+  it("a model not on in the org: the fix entry leads its admins to /settings/models", async () => {
+    api({
+      [`GET ${BASE}/events`]: () =>
+        json(200, {
+          events: [
+            userMsg(1, "hello"),
+            runStarted(2),
+            ev(3, "run_failed", {
+              error: { code: "run.model_unavailable", message: "model not available" },
+            }),
+          ],
+        }),
+    });
+    await expectRunLinks(as("admin"), true, "/settings/models");
+  });
+
+  async function expectRunLinks(
+    me: ReturnType<typeof as>,
+    trajectory: boolean,
+    fix: string | boolean,
+  ) {
     await renderChatRoute({ locale: "en", me });
     const region = within(row()).getByRole("region", { name: "Run details" });
     expect(within(region).queryByRole("link", { name: en.chat.run.trajectory }) !== null).toBe(
       trajectory,
     );
-    expect(within(region).queryByRole("link", { name: en.chat.run.configureModels }) !== null).toBe(
-      fix,
-    );
-  });
+    // the fix entry leads to the models page this reader can act on, never one they cannot
+    expect(
+      within(region)
+        .queryByRole("link", { name: en.chat.run.configureModels })
+        ?.getAttribute("href") ?? false,
+    ).toBe(fix);
+  }
 
   it("a sub-agent conversation links no trajectory (the kernel checks the parent's agent)", async () => {
     api({

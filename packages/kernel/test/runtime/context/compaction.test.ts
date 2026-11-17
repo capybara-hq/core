@@ -2,7 +2,6 @@ import { describe, expect, it } from "vitest";
 import {
   acceptSummary,
   buildCompactionRequest,
-  COMPACTION_MARKER,
   COMPACTION_MAX_OUTPUT_TOKENS,
   chunkTranscript,
   compactionBackoff,
@@ -287,12 +286,12 @@ describe("compactionPlan: inside the latest user turn (spec §4.2, revision 2026
 });
 
 describe("buildCompactionRequest", () => {
-  it("carries the marker in an English system instruction and the transcript as user text", () => {
+  it("carries the compaction purpose and an English system instruction and the transcript as user text", () => {
     const req = buildCompactionRequest("User: hi\n\nAssistant: hello", "fake-1");
     expect(req.model).toBe("fake-1");
     expect(req.tools).toEqual([]);
-    expect(COMPACTION_MARKER).toBe("CAPYBARA_COMPACTION");
-    expect(req.system[0]?.text).toContain(COMPACTION_MARKER);
+    expect(req.purpose).toBe("compaction");
+    expect(req.system[0]?.text).not.toContain("CAPYBARA_COMPACTION");
     expect(req.system[0]?.text).toMatch(/summar/i);
     expect(req.messages).toHaveLength(1);
     expect(req.messages[0]?.role).toBe("user");

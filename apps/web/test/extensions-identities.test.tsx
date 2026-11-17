@@ -41,6 +41,7 @@ const FAKE_IM = {
   plugin: "fake-im",
   version: "0.1.0",
   enabled: false,
+  needsConfig: true,
   configurable: true,
   config: null,
   secrets: [{ path: "token", set: true }],
@@ -67,6 +68,7 @@ const FAKE_IM = {
       entries: [{ value: "post_announcement", sensitive: true, reason: "tools" }],
     },
   ],
+  provides: ["channel@1", "directory@1"],
   orgConfigSchema: {
     type: "object",
     properties: {
@@ -77,7 +79,7 @@ const FAKE_IM = {
   },
 };
 /** fake-im with its required org config saved: switchable. */
-const FAKE_IM_SET = { ...FAKE_IM, config: { url: "http://dir.test" } };
+const FAKE_IM_SET = { ...FAKE_IM, needsConfig: false, config: { url: "http://dir.test" } };
 const CORE = {
   plugin: "core-dir",
   version: "1.0.0",
@@ -93,6 +95,7 @@ const CORE = {
       entries: [{ value: "directory-core@1", sensitive: false }],
     },
   ],
+  provides: ["directory-core@1"],
   orgConfigSchema: null,
 };
 
@@ -123,6 +126,7 @@ const JINA = {
       ],
     },
   ],
+  provides: ["web-search@1", "web-fetch@1"],
 };
 /** Spans two tabs: a model provider and a sandbox, plus agent tools. */
 const DUO = {
@@ -146,6 +150,7 @@ const DUO = {
       entries: [{ value: "run", sensitive: true, reason: "tools" }],
     },
   ],
+  provides: ["model-provider@2", "sandbox@1"],
 };
 
 const isDisabled = (el: HTMLElement) =>
@@ -356,7 +361,7 @@ describe("/extensions (ListPage + DataTable by capability, details in a Sheet)",
         orgConfigSchema: _o,
         permissions: _p,
         ...rest
-      }: typeof FAKE_IM) => rest;
+      }: typeof FAKE_IM) => ({ ...rest, needsConfig: false });
       const calls = api({
         [`GET ${BASE}/extensions`]: () =>
           json(200, {
@@ -461,8 +466,10 @@ describe("/extensions (ListPage + DataTable by capability, details in a Sheet)",
                 configurable: false,
                 secrets: [],
                 permissions: [],
+                provides: [],
                 orgConfigSchema: null,
                 required: true,
+                needsConfig: false,
               },
             ],
           }),

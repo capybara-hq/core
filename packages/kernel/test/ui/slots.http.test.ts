@@ -8,7 +8,7 @@ import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
 import {
   createConv,
-  createOrg,
+  createOrgWithProviders,
   enableExtensions,
   PW,
   type Req,
@@ -79,7 +79,7 @@ beforeAll(async () => {
   k = await startKernel(
     {
       ...base,
-      extensions: [...base.extensions, fixture("ui-slots"), fixture("ui-legacy-place")],
+      extensions: [...base.extensions, fixture("ui-slots"), fixture("ui-todo-shape")],
     },
     { env: {} },
   );
@@ -98,16 +98,16 @@ beforeAll(async () => {
   root = await session(k, "root");
   await accounts.createLocal({ login: "loner", password: PW, displayName: "loner" });
   loner = await session(k, "loner");
-  orgId = await createOrg(owner);
-  otherOrgId = await createOrg(owner, "Other");
+  orgId = await createOrgWithProviders(k, owner);
+  otherOrgId = await createOrgWithProviders(k, owner, "Other");
   const members = testMembers(db);
   await members.add(orgId, ids.admin as string, "admin", ids.owner as string);
   await members.add(orgId, ids.member as string, "member", ids.owner as string);
   await members.add(orgId, ids.guest as string, "guest", ids.owner as string);
   await members.add(orgId, ids.root as string, "member", ids.owner as string);
   await members.add(otherOrgId, ids.admin as string, "member", ids.owner as string);
-  await enableExtensions(raw, orgId, "ui-slots", "ui-legacy-place");
-  await enableExtensions(raw, otherOrgId, "ui-slots", "ui-legacy-place");
+  await enableExtensions(raw, orgId, "ui-slots", "ui-todo-shape");
+  await enableExtensions(raw, otherOrgId, "ui-slots", "ui-todo-shape");
   sharedAgent = await createAgent(owner, orgId, "org");
   privateAgent = await createAgent(member, orgId, "private");
   foreignAgent = await createAgent(owner, otherOrgId, "org");
@@ -146,20 +146,20 @@ const renderArgs = (r: { json(): unknown }, id: string): Record<string, unknown>
 describe("org UI routes by slot", () => {
   it("contributions carry slot and the resolved anchor", async () => {
     const items = await list(owner);
-    expect(items.find((i) => i.plugin === "ui-legacy-place" && i.id === "tasks-section")).toEqual(
+    expect(items.find((i) => i.plugin === "ui-todo-shape" && i.id === "tasks-section")).toEqual(
       expect.objectContaining({ slot: "conversation.properties.section", after: "context" }),
     );
     for (const i of items) expect(i).not.toHaveProperty("place");
-    // base order: extension name, then manifest order; aliases and dropped entries are not listed
+    // base order: extension name, then manifest order; dropped entries are not listed
     expect(items.map((i) => `${i.plugin}/${i.id}`)).toEqual([
-      "ui-legacy-place/tasks-panel",
-      "ui-legacy-place/tasks-section",
-      "ui-legacy-place/tasks-card",
       "ui-slots/notes",
       "ui-slots/org-admin",
       "ui-slots/page",
       "ui-slots/page-embed",
       "ui-slots/notes-embed",
+      "ui-todo-shape/tasks-panel",
+      "ui-todo-shape/tasks-section",
+      "ui-todo-shape/tasks-card",
     ]);
   });
 
@@ -267,22 +267,14 @@ describe("org UI routes by slot", () => {
   });
 
   it("conversation views receive slot and scope and refuse agentId", async () => {
-    const r = await view(owner, "ui-legacy-place/tasks-panel", `?conversationId=${convId}`);
+    const r = await view(owner, "ui-todo-shape/tasks-panel", `?conversationId=${convId}`);
     expect(r.statusCode, r.body).toBe(200);
     const bad = await view(
       owner,
-      "ui-legacy-place/tasks-panel",
+      "ui-todo-shape/tasks-panel",
       `?conversationId=${convId}&agentId=${sharedAgent}`,
     );
     expect(bad.statusCode, bad.body).toBe(400);
-  });
-
-  it("the rc.2 alias still answers", async () => {
-    const r = await view(owner, "ui-legacy-place/tasks", `?conversationId=${convId}`);
-    expect(r.statusCode, r.body).toBe(200);
-    expect((r.json() as { view: { blocks: { text: string }[] } }).view.blocks[0]?.text).toBe(
-      "tasks-panel",
-    );
   });
 });
 

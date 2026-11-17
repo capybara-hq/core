@@ -318,6 +318,7 @@ beforeAll(async () => {
   const org = await at(1, "POST", "/api/v1/orgs", { name: "Acme" });
   expect(org.status).toBe(201);
   base = `/api/v1/orgs/${(org.json.org as { id: string }).id}`;
+  await enableExtensions(raw, (org.json.org as { id: string }).id, "model-fake");
   await enableExtensions(raw, (org.json.org as { id: string }).id, "fake-connector");
 });
 
