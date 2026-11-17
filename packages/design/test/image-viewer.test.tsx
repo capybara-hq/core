@@ -296,6 +296,33 @@ describe("ImageViewer", () => {
     expect(percent()).toBe("50%");
   });
 
+  it("keeps the zoom keys after switching images, before the new image loads", async () => {
+    const user = userEvent.setup();
+    function Controlled() {
+      const [index, setIndex] = useState(0);
+      return (
+        <DesignProvider locale="en">
+          <ImageViewer
+            open
+            onOpenChange={() => {}}
+            images={IMAGES}
+            index={index}
+            onIndexChange={setIndex}
+            onDownload={() => {}}
+            onOpenInNewTab={() => {}}
+          />
+        </DesignProvider>
+      );
+    }
+    render(<Controlled />);
+    fireEvent.load(screen.getByRole("img", { name: "a.png" }));
+    screen.getByRole("dialog").focus();
+    await user.keyboard("{ArrowRight}");
+    const before = percent();
+    await user.keyboard("+");
+    expect(percent()).not.toBe(before);
+  });
+
   it("shows the name and size, and calls download and new tab with the index", async () => {
     const user = userEvent.setup();
     const onDownload = vi.fn();

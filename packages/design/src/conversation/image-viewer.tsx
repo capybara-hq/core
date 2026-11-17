@@ -328,12 +328,17 @@ function ViewerBody({
     else if (e.key === "1") actual();
   };
 
-  keysRef.current = onKeys;
+  // A stable handler that reads the latest onKeys. Clear the ref only if it still holds this body's
+  // own handler: when the image changes, the new body has already installed its own.
+  const latestKeys = useRef(onKeys);
+  latestKeys.current = onKeys;
+  const ownKeys = useCallback((e: KeyboardEvent<HTMLElement>) => latestKeys.current(e), []);
+  keysRef.current = ownKeys;
   useEffect(
     () => () => {
-      keysRef.current = null;
+      if (keysRef.current === ownKeys) keysRef.current = null;
     },
-    [keysRef],
+    [keysRef, ownKeys],
   );
   const safe = isSafeAttachmentHref(image.src);
   const canPan = exceeds();
