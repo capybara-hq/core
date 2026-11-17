@@ -494,6 +494,16 @@ export async function runSandboxPermissionConformance(
         assert.notEqual(result.exitCode, 0, `ungranted ${endpoint.name}: ${command}`);
       }
     }
+    if (proxied) {
+      // allowlisted traffic goes through the proxy: a raw connect to the granted address bypasses
+      // it and must be refused as well
+      const raw = await exec(restricted(allowlisted), connect(granted));
+      assert.notEqual(
+        raw.exitCode,
+        0,
+        `a proxied provider must refuse a raw connect: ${granted.name}`,
+      );
+    }
     for (const command of [connect(granted), byName(granted)]) {
       const none = await exec(restricted(), command);
       assert.notEqual(
