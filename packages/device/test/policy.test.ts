@@ -15,9 +15,11 @@ import {
 } from "../src/policy.js";
 import {
   DEFAULT_POLICY,
+  ownerCeilingOfMode,
   type Policy,
   policyPath,
   readPolicy,
+  type SandboxMode,
   writeCredential,
   writePolicy,
 } from "../src/state.js";
@@ -30,7 +32,14 @@ const limits = (
   mode,
   network: { kind, hosts },
 });
-const policy = (over: Partial<Policy> = {}): Policy => ({ ...DEFAULT_POLICY, ...over });
+const policy = (over: Partial<Policy> & { mode?: SandboxMode } = {}): Policy => {
+  const { mode, ...rest } = over;
+  return {
+    ...DEFAULT_POLICY,
+    ...rest,
+    ...(mode !== undefined && { ownerCeiling: ownerCeilingOfMode(mode) }),
+  };
+};
 
 describe("effectiveMode", () => {
   it("cuts the device's choice to the kernel's ceiling", () => {
@@ -198,7 +207,7 @@ describe("policy command", () => {
   it("show prints the defaults when there is no file", async () => {
     const r = await run(["show"]);
     expect(r.code).toBe(0);
-    expect(r.out).toContain('"mode": "auto"');
+    expect(r.out).toContain('"fullAccess": true');
     expect(r.out).toContain("Mode: auto.");
   });
 

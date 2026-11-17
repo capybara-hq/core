@@ -1,7 +1,10 @@
 /** Development staging only. Task 8 replaces v2 and removes this module and its staged names together. */
 import {
   type DeviceHello,
+  type DeviceLocalPolicySummary,
   type DeviceOp,
+  type DevicePolicyArgs,
+  type DevicePolicyStatus,
   DeviceProtocolError,
   type DeviceRes,
   type KernelCancel,
@@ -40,6 +43,33 @@ export interface DeviceOwnerCeilingV3 {
   readonly revision: string;
   readonly fullAccess: boolean;
   readonly restrictedAllowedDomains: readonly string[];
+}
+/**
+ * The only owner-ceiling change the kernel may ask of a machine (B2): narrowing. Widening is decided
+ * on the machine by its owner (`capybara-device ceiling set`), never over the wire.
+ */
+export interface DeviceOwnerCeilingNarrowingV3 {
+  readonly fullAccess?: false;
+  readonly restrictedProjectReach?: "workspace";
+}
+/** A staged `policy` op: the protocol 2 change plus an optional owner-ceiling narrowing. */
+export interface DevicePolicyArgsV3 extends DevicePolicyArgs {
+  ownerCeiling?: DeviceOwnerCeilingNarrowingV3;
+}
+/** A staged `policy` answer: the policy as written and the owner report issued for it. */
+export interface DevicePolicyResultV3 {
+  policy: DeviceLocalPolicySummary;
+  ownerCeiling: DeviceOwnerCeilingV3;
+}
+/** A staged `policyStatus` answer: an `applied` outcome carries the current owner report. */
+export interface DevicePolicyStatusV3 extends DevicePolicyStatus {
+  ownerCeiling?: DeviceOwnerCeilingV3;
+}
+/** The device pushed a policy change: the owner report for the newly observed revision. */
+export interface DevicePolicyChangedV3 {
+  type: "policy";
+  policy?: DeviceLocalPolicySummary;
+  ownerCeiling: DeviceOwnerCeilingV3;
 }
 export interface DeviceHelloV3 extends DeviceHello {
   protocol: 3;
@@ -112,7 +142,7 @@ export type DeviceFrameV3 =
   | KernelRequestV3
   | KernelCancel
   | DeviceResponseV3
-  | { type: "policy"; policy?: unknown };
+  | DevicePolicyChangedV3;
 const object = (value: unknown): Record<string, unknown> => {
   if (!value || typeof value !== "object" || Array.isArray(value))
     throw new DeviceProtocolError("Expected an object");
@@ -156,6 +186,20 @@ function support(value: unknown): SandboxPermissionSupport {
   }
   if (o.unavailableReason !== undefined) string(o.unavailableReason, 4096);
   return o as unknown as SandboxPermissionSupport;
+}
+/** Strictly parses one authenticated owner-ceiling report (B2); throws {@link DeviceProtocolError}. */
+export function parseOwnerCeilingReportV3(value: unknown): DeviceOwnerCeilingV3 {
+  return freeze(structuredClone(owner(value)));
+}
+function narrowing(value: unknown): DeviceOwnerCeilingNarrowingV3 {
+  const o = object(value);
+  keys(o, ["fullAccess", "restrictedProjectReach"]);
+  if (
+    (o.fullAccess !== undefined && o.fullAccess !== false) ||
+    (o.restrictedProjectReach !== undefined && o.restrictedProjectReach !== "workspace")
+  )
+    throw new DeviceProtocolError("The deployment may only narrow the owner ceiling");
+  return o as DeviceOwnerCeilingNarrowingV3;
 }
 function owner(value: unknown): DeviceOwnerCeilingV3 {
   const o = object(value);
@@ -217,6 +261,7 @@ function request(o: Record<string, unknown>): KernelRequestV3 {
     a = object(o.args),
     deadlineMs = integer(o.deadlineMs, 1);
   if (legacy.includes(op)) {
+    if (op === "policy" && a.ownerCeiling !== undefined) narrowing(a.ownerCeiling);
     const parsed = parseDeviceFrame(JSON.stringify(o), "kernel");
     if (parsed.type !== "req") throw new DeviceProtocolError("Expected request");
     return freeze({ ...parsed, op: op as DeviceOperationV3, args: object(parsed.args) });
@@ -366,6 +411,13 @@ export function parseDeviceFrameV3(
       ...(runtimeIdentity && { runtimeIdentity }),
     });
   }
+  if (o.type === "policy") {
+    if (from !== "device") throw new DeviceProtocolError("Policy must come from device");
+    keys(o, ["type", "policy", "ownerCeiling"]);
+    const base = parseDeviceFrame(JSON.stringify({ type: "policy", policy: o.policy }), from);
+    if (base.type !== "policy") throw new DeviceProtocolError("Expected policy");
+    return freeze({ ...base, ownerCeiling: owner(o.ownerCeiling) });
+  }
   if (o.type === "res" && o.ok === false) {
     if (from !== "device") throw new DeviceProtocolError("Response must come from device");
     keys(o, ["type", "id", "ok", "error"]);
@@ -388,7 +440,7 @@ export function parseDeviceFrameV3(
     });
   }
   const base = parseDeviceFrame(raw, from);
-  if (base.type === "hello" || base.type === "req")
+  if (base.type === "hello" || base.type === "req" || base.type === "policy")
     throw new DeviceProtocolError("Expected staged frame");
   return freeze(base);
 }
@@ -492,6 +544,24 @@ export function parseOperationResultV3(
     )
       throw new DeviceProtocolError("Invalid stopped execution status");
     return freeze(o);
+  }
+  if (op === "policy") {
+    const o = object(result);
+    keys(o, ["policy", "ownerCeiling"]);
+    return freeze({
+      ...parseOpResult("policy", { policy: o.policy }),
+      ownerCeiling: owner(o.ownerCeiling),
+    } satisfies DevicePolicyResultV3);
+  }
+  if (op === "policyStatus") {
+    const o = object(result);
+    keys(o, ["outcome", "policy", "message", "ownerCeiling"]);
+    const { ownerCeiling, ...rest } = o;
+    const status: DevicePolicyStatusV3 = parseOpResult("policyStatus", rest);
+    if (status.outcome === "applied" && ownerCeiling === undefined)
+      throw new DeviceProtocolError("An applied policy status carries the owner report");
+    if (ownerCeiling !== undefined) status.ownerCeiling = owner(ownerCeiling);
+    return freeze(status);
   }
   if (op === "revokeOperation") {
     if (result !== null) throw new DeviceProtocolError("Revoke result must be null");

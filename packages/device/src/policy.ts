@@ -6,7 +6,7 @@ import {
   type SandboxRoots,
   validateAllowHost,
 } from "@capybara-hq/plugin-sdk";
-import type { Policy, SandboxMode } from "./state.js";
+import { type Policy, policyMode, type SandboxMode } from "./state.js";
 
 /**
  * Paths no sandboxed command may read (spec §13.6, extended by ruling R19): SSH keys, cloud CLI
@@ -78,10 +78,10 @@ export type ModeLimits = Pick<SandboxLimits, "mode" | "network">;
  * an organization that forbids auto runs in the sandbox (and its summary says so).
  */
 export function effectiveMode(
-  policy: Pick<Policy, "mode">,
+  policy: Pick<Policy, "ownerCeiling">,
   limits: Pick<SandboxLimits, "mode">,
 ): SandboxMode {
-  return policy.mode === "sandbox" || limits.mode === "sandbox" ? "sandbox" : "auto";
+  return policyMode(policy) === "sandbox" || limits.mode === "sandbox" ? "sandbox" : "auto";
 }
 
 /** The granted hosts that apply to one command, within the kernel's network limits. */
@@ -113,7 +113,7 @@ export function grantedHosts(
  * own network, so this returns no list there (the OS sandbox is not running).
  */
 export function effectiveEgress(
-  policy: Pick<Policy, "allowedDomains" | "mode">,
+  policy: Pick<Policy, "allowedDomains" | "ownerCeiling">,
   limits: ModeLimits,
   grants?: Pick<DeviceExecGrants, "hosts">,
 ): string[] {

@@ -1,5 +1,6 @@
 import { homedir } from "node:os";
 import { parseCommandLine, USAGE, UsageError } from "./args.js";
+import { ceilingCommand } from "./commands/ceiling.js";
 import { drain, drainAndWait } from "./commands/drain.js";
 import { login } from "./commands/login.js";
 import { logout } from "./commands/logout.js";
@@ -176,6 +177,14 @@ export async function runCli(argv: string[], io: CliEnv = {}): Promise<number> {
         out,
         err,
         ...(io.sandboxAvailable && { sandboxAvailable: io.sandboxAvailable }),
+        ...((io.stdinIsTTY ?? process.stdin.isTTY === true) && { ask: io.ask ?? askOnTerminal }),
+      });
+    case "ceiling":
+      return ceilingCommand(cmd, {
+        stateDir: dir,
+        home,
+        out,
+        err,
         ...((io.stdinIsTTY ?? process.stdin.isTTY === true) && { ask: io.ask ?? askOnTerminal }),
       });
     case "service":

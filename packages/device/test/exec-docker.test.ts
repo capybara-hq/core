@@ -24,7 +24,7 @@ import {
 } from "../src/exec/docker.js";
 import { prepareDeviceDir } from "../src/exec/shared.js";
 import { DeviceOpError } from "../src/exec/types.js";
-import { DEFAULT_POLICY } from "../src/state.js";
+import { DEFAULT_POLICY, ownerCeilingOfMode } from "../src/state.js";
 
 const hasDocker = spawnSync("docker", ["info"], { stdio: "ignore" }).status === 0;
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
@@ -424,7 +424,7 @@ describe.skipIf(!hasDocker)("DockerExecutor", () => {
     const sandboxed = new DockerExecutor({
       dir,
       deviceId: envId,
-      policy: () => ({ ...DEFAULT_POLICY, mode: "sandbox" }),
+      policy: () => ({ ...DEFAULT_POLICY, ownerCeiling: ownerCeilingOfMode("sandbox") }),
     });
     expect((await sandboxed.exec(execArgs(probe), live)).stdout).toBe("nonet\n");
     await sandboxed.exec(execArgs("true", { limits: { ...LIMITS, mode: "auto" } }), live);
@@ -458,7 +458,7 @@ describe.skipIf(!hasDocker)("DockerExecutor", () => {
     const sandboxed = new DockerExecutor({
       dir,
       deviceId: envId,
-      policy: () => ({ ...DEFAULT_POLICY, mode: "sandbox" }),
+      policy: () => ({ ...DEFAULT_POLICY, ownerCeiling: ownerCeilingOfMode("sandbox") }),
     });
     await expect(sandboxed.readFile("/etc/passwd", 10)).rejects.toMatchObject({ kind: "policy" });
     await expect(

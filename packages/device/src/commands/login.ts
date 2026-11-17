@@ -10,6 +10,8 @@ import {
   DEFAULT_MAX_FRAME_BYTES,
   DEFAULT_POLICY,
   defaultWorkDir,
+  ownerCeilingOfMode,
+  policyMode,
   policyPath,
   readCredential,
   readPolicy,
@@ -73,7 +75,7 @@ function persistSandboxPolicy(stateDir: string): boolean {
   if (existsSync(file)) return false;
   return withPolicyLock(stateDir, () => {
     if (existsSync(file)) return false;
-    writePolicy(stateDir, { ...DEFAULT_POLICY, mode: "sandbox" });
+    writePolicy(stateDir, { ...DEFAULT_POLICY, ownerCeiling: ownerCeilingOfMode("sandbox") });
     return true;
   });
 }
@@ -170,14 +172,14 @@ export async function login(
             if (noSandbox === undefined) {
               mode = persistSandboxPolicy(deps.stateDir)
                 ? "sandbox"
-                : readPolicy(deps.stateDir).mode;
+                : policyMode(readPolicy(deps.stateDir));
             }
           } catch (e) {
             err(`Cannot set the local policy in ${deps.stateDir}: ${(e as Error).message}`);
           }
         } else {
           try {
-            mode = readPolicy(deps.stateDir).mode;
+            mode = policyMode(readPolicy(deps.stateDir));
           } catch (e) {
             err(`Cannot read the local policy in ${deps.stateDir}: ${(e as Error).message}`);
           }

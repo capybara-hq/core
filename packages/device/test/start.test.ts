@@ -9,7 +9,7 @@ import { legacyPolicyNotice, start } from "../src/commands/start.js";
 import { stop } from "../src/commands/stop.js";
 import { type ProcessLookup, pidPath, readRunning, removePid, writePid } from "../src/pid.js";
 import type { PolicyStore } from "../src/policy-store.js";
-import { DEFAULT_POLICY, writeCredential, writePolicy } from "../src/state.js";
+import { DEFAULT_POLICY, ownerCeilingOfMode, writeCredential, writePolicy } from "../src/state.js";
 import { FakeExecutor } from "./fake-kernel.js";
 
 /** `ps` for a test: every pid is a capybara-device that started long ago. */
@@ -54,15 +54,15 @@ describe("start: legacy policy notice", () => {
     return out;
   };
 
-  it("says once that policy.json now uses mode, and which mode it runs in", async () => {
+  it("says once that policy.json was converted to version 2, and which mode it runs in", async () => {
     writeCredential(dir, cred);
     writeFileSync(join(dir, "policy.json"), JSON.stringify({ isolation: "none", tier: "open" }));
     const out = await run();
     const notice = legacyPolicyNotice("auto");
     expect(out.filter((l) => l === notice)).toHaveLength(1);
     expect(notice).toBe(
-      "policy.json now uses `mode`; this machine runs in auto mode; switch with " +
-        "`capybara-device mode`.",
+      "policy.json now uses the version 2 owner ceiling; this machine runs in auto mode; see " +
+        "`capybara-device ceiling show`.",
     );
     // An older file that did not ask for no sandbox migrates to sandbox.
     writeFileSync(join(dir, "policy.json"), JSON.stringify({ tier: "dev" }));
@@ -105,12 +105,12 @@ describe("start without the OS sandbox", () => {
 
   it("serves auto mode silently, and logs the reason for a sandbox policy", async () => {
     writeCredential(dir, cred);
-    writePolicy(dir, { ...DEFAULT_POLICY, mode: "auto" });
+    writePolicy(dir, { ...DEFAULT_POLICY, ownerCeiling: ownerCeilingOfMode("auto") });
     const auto = await run(fake(false));
     // The device starts and serves: no error, and the client is connected.
     expect(auto.code).toBe(0);
     expect(auto.errs).not.toContain("OS sandbox is unavailable");
-    writePolicy(dir, { ...DEFAULT_POLICY, mode: "sandbox" });
+    writePolicy(dir, { ...DEFAULT_POLICY, ownerCeiling: ownerCeilingOfMode("sandbox") });
     const sandbox = await run(fake(false));
     expect(sandbox.code).toBe(0);
     expect(sandbox.errs).toContain("OS sandbox is unavailable");
@@ -119,7 +119,7 @@ describe("start without the OS sandbox", () => {
 
   it("says nothing when the sandbox is available", async () => {
     writeCredential(dir, cred);
-    writePolicy(dir, { ...DEFAULT_POLICY, mode: "sandbox" });
+    writePolicy(dir, { ...DEFAULT_POLICY, ownerCeiling: ownerCeilingOfMode("sandbox") });
     const ok = await run(fake(true));
     expect(ok.code).toBe(0);
     expect(ok.errs).not.toContain("OS sandbox is unavailable");

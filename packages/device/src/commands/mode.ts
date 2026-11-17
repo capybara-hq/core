@@ -1,7 +1,13 @@
 import type { Command } from "../args.js";
 import { SANDBOX_INSTALL_HINT, sandboxUnavailableSwitchRefusal } from "../exec/sandbox-messages.js";
 import { PolicyStore } from "../policy-store.js";
-import { policyPath, readCredential, type SandboxMode } from "../state.js";
+import {
+  ownerCeilingOfMode,
+  policyMode,
+  policyPath,
+  readCredential,
+  type SandboxMode,
+} from "../state.js";
 
 /**
  * Shown once before auto mode is turned on, and once at login in an organization that allows it
@@ -126,7 +132,7 @@ export async function modeCommand(
   }
   const mode: SandboxMode | undefined = cmd.mode;
   if (mode === undefined) {
-    const now = store.current().mode;
+    const now = policyMode(store.current());
     out(`Mode: ${now}.`);
     out(
       now === "auto"
@@ -162,7 +168,7 @@ export async function modeCommand(
     }
   }
   try {
-    next = store.update((p) => ({ ...p, mode })).mode;
+    next = policyMode(store.update((p) => ({ ...p, ownerCeiling: ownerCeilingOfMode(mode) })));
   } catch (e) {
     err(`Cannot change ${policyPath(stateDir)}: ${(e as Error).message}`);
     return 1;

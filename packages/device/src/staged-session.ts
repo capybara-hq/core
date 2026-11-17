@@ -9,7 +9,7 @@ import type WebSocket from "ws";
 import type { InstanceBinder } from "./exec/instance-binding.js";
 import type { MacOperationBackend } from "./exec/mac-operation-backend.js";
 import { DrainPendingError } from "./exec/operation-supervisor.js";
-import { serveOperationV3 } from "./server-ops.js";
+import { type StagedOwnerPolicy, serveOperationV3 } from "./server-ops.js";
 import type { Credential } from "./state.js";
 
 /**
@@ -129,6 +129,8 @@ export function serveStagedSession(
    * unbound) and `bindInstance` is served; without one, the fixed backend serves a bound hello.
    */
   binder?: InstanceBinder,
+  /** Serves `policy` / `policyStatus` with owner reports (B2); without it they are unsupported. */
+  owner?: StagedOwnerPolicy,
 ): { ready: () => KernelReadyV3 | undefined } {
   const hello: DeviceHelloV3 = {
     ...report,
@@ -206,7 +208,8 @@ export function serveStagedSession(
       if (frame.type !== "req") throw new Error("Expected request or cancellation");
       // per-request problems get a typed answer; the socket and its other requests carry on
       const target =
-        frame.op === "bindInstance"
+        // lifecycle and owner policy controls are served while unbound too
+        frame.op === "bindInstance" || frame.op === "policy" || frame.op === "policyStatus"
           ? { backend, handle }
           : binder
             ? binder.current()
@@ -234,7 +237,7 @@ export function serveStagedSession(
         () => ctl.abort(new Error("Request deadline elapsed; retry the request")),
         frame.deadlineMs,
       );
-      const done = serveOperationV3(target.backend, target.handle, frame, ctl.signal, binder)
+      const done = serveOperationV3(target.backend, target.handle, frame, ctl.signal, binder, owner)
         .then((res) => {
           if (ctl.signal.aborted) return;
           deliver(res);

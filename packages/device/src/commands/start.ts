@@ -8,7 +8,7 @@ import { PolicyStore } from "../policy-store.js";
 import { hasLoginService } from "../service/installed.js";
 import { rotateServiceLog } from "../service/launchd.js";
 import { startedByServiceManager } from "../service/manager.js";
-import { type Credential, readCredential } from "../state.js";
+import { type Credential, convertPolicyFile, policyMode, readCredential } from "../state.js";
 import { PROGRAM_VERSION } from "../version.js";
 
 export interface StartDeps {
@@ -31,11 +31,11 @@ export interface StartDeps {
   connect?: typeof connect;
 }
 
-/** Printed once when policy.json was written before auto mode (spec §4.4). */
+/** Printed once when start converted an old-format policy.json to version 2. */
 export function legacyPolicyNotice(mode: "auto" | "sandbox"): string {
   return (
-    "policy.json now uses `mode`; this machine runs in " +
-    `${mode} mode; switch with \`capybara-device mode\`.`
+    "policy.json now uses the version 2 owner ceiling; this machine runs in " +
+    `${mode} mode; see \`capybara-device ceiling show\`.`
   );
 }
 
@@ -103,13 +103,15 @@ export async function start(deps: StartDeps): Promise<number> {
     let policy: PolicyStore;
     try {
       // An invalid policy.json stops the start; later, a broken edit keeps the last good policy.
+      // The one-time explicit conversion to the version 2 format (locked, atomic, exact).
+      const converted = convertPolicyFile(stateDir) === "converted";
       policy = new PolicyStore(stateDir, { err });
-      if (policy.legacy) out(legacyPolicyNotice(policy.current().mode));
+      if (converted) out(legacyPolicyNotice(policyMode(policy.current())));
       executor = await deps.createExecutor(cred, policy);
       // Without the OS sandbox the device keeps serving: auto mode works, and sandbox mode
       // refuses every command with this reason. A policy set to sandbox says so at start.
       const sandbox = executor as { available?: boolean; unavailableReason?: string };
-      if (sandbox.available === false && policy.current().mode === "sandbox") {
+      if (sandbox.available === false && policyMode(policy.current()) === "sandbox") {
         err(sandboxUnavailableMessage(sandbox.unavailableReason ?? ""));
       }
     } catch (e) {

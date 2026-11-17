@@ -841,10 +841,7 @@ export type DeviceFeature = "networkReport" | "policyOp" | "policyOpId" | "mode"
 export type DeviceFrame = DeviceHello | DeviceRes | DevicePolicyChanged | KernelReq | KernelCancel;
 
 // @public
-export type DeviceFrameV3 = DeviceHelloV3 | KernelReadyV3 | KernelRequestV3 | KernelCancel | DeviceResponseV3 | {
-    type: "policy";
-    policy?: unknown;
-};
+export type DeviceFrameV3 = DeviceHelloV3 | KernelReadyV3 | KernelRequestV3 | KernelCancel | DeviceResponseV3 | DevicePolicyChangedV3;
 
 // @public
 export interface DeviceHello {
@@ -930,6 +927,12 @@ export interface DeviceOpResults {
 }
 
 // @public
+export interface DeviceOwnerCeilingNarrowingV3 {
+    readonly fullAccess?: false;
+    readonly restrictedProjectReach?: "workspace";
+}
+
+// @public
 export interface DeviceOwnerCeilingV3 {
     readonly fullAccess: boolean;
     readonly restrictedAllowedDomains: readonly string[];
@@ -954,7 +957,19 @@ export interface DevicePolicyArgs {
 }
 
 // @public
+export interface DevicePolicyArgsV3 extends DevicePolicyArgs {
+    ownerCeiling?: DeviceOwnerCeilingNarrowingV3;
+}
+
+// @public
 export interface DevicePolicyChanged {
+    policy?: DeviceLocalPolicySummary;
+    type: "policy";
+}
+
+// @public
+export interface DevicePolicyChangedV3 {
+    ownerCeiling: DeviceOwnerCeilingV3;
     policy?: DeviceLocalPolicySummary;
     type: "policy";
 }
@@ -974,6 +989,12 @@ export interface DevicePolicyResult {
 }
 
 // @public
+export interface DevicePolicyResultV3 {
+    ownerCeiling: DeviceOwnerCeilingV3;
+    policy: DeviceLocalPolicySummary;
+}
+
+// @public
 export interface DevicePolicyStatus {
     message?: string;
     outcome: DevicePolicyOpOutcome | "unknown";
@@ -983,6 +1004,11 @@ export interface DevicePolicyStatus {
 // @public
 export interface DevicePolicyStatusArgs {
     opId: string;
+}
+
+// @public
+export interface DevicePolicyStatusV3 extends DevicePolicyStatus {
+    ownerCeiling?: DeviceOwnerCeilingV3;
 }
 
 // @public
@@ -2518,6 +2544,9 @@ export function parseOperationResultV3(op: DeviceOperationV3, result: unknown, r
 
 // @public
 export function parseOpResult<Op extends DeviceOp>(op: Op, result: unknown): DeviceOpResults[Op];
+
+// @public
+export function parseOwnerCeilingReportV3(value: unknown): DeviceOwnerCeilingV3;
 
 // @public
 export function parsePluginManifest(json: unknown): PluginManifest | {

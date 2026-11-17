@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { DEVICE_PROTOCOL_VERSION } from "../src/device-protocol.js";
-import { parseDeviceFrameV3, parseOperationResultV3 } from "../src/device-protocol-v3.js";
+import { DEVICE_PROTOCOL_VERSION, DeviceProtocolError } from "../src/device-protocol.js";
+import {
+  parseDeviceFrameV3,
+  parseOperationResultV3,
+  parseOwnerCeilingReportV3,
+} from "../src/device-protocol-v3.js";
 
 const scope = {
   operationId: "op",
@@ -362,5 +366,82 @@ describe("bindInstance (B4 post-commit binding)", () => {
     expect(() => parseOperationResultV3("bindInstance", withoutIdentity, request)).toThrow(
       "Expected an object",
     );
+  });
+});
+
+describe("owner reports (B2)", () => {
+  const report = {
+    version: 2,
+    revision: "r1",
+    sequence: 3,
+    fullAccess: false,
+    restrictedProjectReach: "os-user",
+    restrictedAllowedDomains: ["*.example.com"],
+  };
+  it("parses one strict report and refuses extra fields, bad reach or sequence", () => {
+    expect(parseOwnerCeilingReportV3(report)).toEqual(report);
+    for (const bad of [
+      { ...report, mode: "auto" },
+      { ...report, restrictedProjectReach: "home" },
+      { ...report, sequence: -1 },
+      { ...report, sequence: 1.5 },
+      { ...report, version: 1 },
+      { ...report, fullAccess: "true" },
+    ])
+      expect(() => parseOwnerCeilingReportV3(bad)).toThrow(DeviceProtocolError);
+  });
+  it("carries the report in policy frames, policy answers and applied statuses", () => {
+    const frame = parseDeviceFrameV3(
+      JSON.stringify({
+        type: "policy",
+        policy: { mode: "sandbox", allowedDomains: [] },
+        ownerCeiling: report,
+      }),
+      "device",
+    );
+    expect(frame).toMatchObject({ type: "policy", ownerCeiling: report });
+    expect(() =>
+      parseDeviceFrameV3(JSON.stringify({ type: "policy", policy: undefined }), "device"),
+    ).toThrow(DeviceProtocolError);
+    expect(
+      parseOperationResultV3("policy", {
+        policy: { mode: "sandbox", allowedDomains: [] },
+        ownerCeiling: report,
+      }),
+    ).toMatchObject({ ownerCeiling: report });
+    expect(() =>
+      parseOperationResultV3("policy", { policy: { mode: "sandbox", allowedDomains: [] } }),
+    ).toThrow(DeviceProtocolError);
+    expect(() => parseOperationResultV3("policyStatus", { outcome: "applied" })).toThrow(
+      DeviceProtocolError,
+    );
+    expect(
+      parseOperationResultV3("policyStatus", { outcome: "applied", ownerCeiling: report }),
+    ).toMatchObject({ outcome: "applied", ownerCeiling: report });
+    expect(parseOperationResultV3("policyStatus", { outcome: "unknown" })).toEqual({
+      outcome: "unknown",
+    });
+  });
+  it("lets the deployment only narrow the owner ceiling in a policy op", () => {
+    const req = (ownerCeiling: unknown) =>
+      JSON.stringify({
+        type: "req",
+        id: "1",
+        op: "policy",
+        deadlineMs: 1000,
+        args: {
+          opId: "op",
+          source: { accountId: "a", accountName: "A", via: "web" },
+          ownerCeiling,
+        },
+      });
+    expect(parseDeviceFrameV3(req({ fullAccess: false }), "kernel")).toMatchObject({
+      op: "policy",
+    });
+    expect(
+      parseDeviceFrameV3(req({ restrictedProjectReach: "workspace" }), "kernel"),
+    ).toMatchObject({ op: "policy" });
+    for (const bad of [{ fullAccess: true }, { restrictedProjectReach: "os-user" }, { x: 1 }])
+      expect(() => parseDeviceFrameV3(req(bad), "kernel")).toThrow(DeviceProtocolError);
   });
 });

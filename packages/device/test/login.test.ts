@@ -28,7 +28,7 @@ import {
 import { pidPath, writePid } from "../src/pid.js";
 import { PolicyStore } from "../src/policy-store.js";
 import { policySummary } from "../src/server-ops.js";
-import { policyLockPath, policyPath, readPolicy } from "../src/state.js";
+import { policyLockPath, policyMode, policyPath, readPolicy } from "../src/state.js";
 
 interface Seen {
   path: string;
@@ -190,7 +190,7 @@ describe("login", () => {
     tokenAnswers = [{ status: 200, body: { ...granted.body, autoMode: "off" } }];
     expect(await run(["login", "--url", base])).toBe(0);
     // The policy is written, not just announced: the hello reports sandbox and passes the gate.
-    expect(readPolicy(stateDir()).mode).toBe("sandbox");
+    expect(policyMode(readPolicy(stateDir()))).toBe("sandbox");
     expect(helloMode()).toBe("sandbox");
     expect(out).toContain(SANDBOX_MODE_LOGIN_LINE);
     expect(out).not.toContain(AUTO_MODE_LOGIN_LINE);
@@ -208,7 +208,7 @@ describe("login", () => {
     tokenAnswers = [{ status: 200, body: { ...granted.body, autoMode: "off" } }];
     expect(await run(["login", "--url", base])).toBe(0);
     // An existing policy is the owner's choice: login never rewrites it, and the line matches it.
-    expect(readPolicy(stateDir()).mode).toBe("auto");
+    expect(policyMode(readPolicy(stateDir()))).toBe("auto");
     expect(helloMode()).toBe("auto");
     expect(out).toContain(AUTO_POLICY_REFUSED_LOGIN_LINE);
     expect(out).not.toContain(SANDBOX_MODE_LOGIN_LINE);
@@ -221,7 +221,7 @@ describe("login", () => {
     });
     tokenAnswers = [{ status: 200, body: { ...granted.body, autoMode: "off" } }];
     expect(await run(["login", "--url", base])).toBe(0);
-    expect(readPolicy(stateDir()).mode).toBe("sandbox");
+    expect(policyMode(readPolicy(stateDir()))).toBe("sandbox");
     expect(out).toContain(SANDBOX_MODE_LOGIN_LINE);
     expect(out).not.toContain(AUTO_POLICY_REFUSED_LOGIN_LINE);
   });
@@ -239,7 +239,7 @@ describe("login", () => {
     expect(out).not.toContain(AUTO_MODE_LOGIN_LINE);
     expect(out).not.toContain(AUTO_MODE_RISK_TEXT);
     // The line follows the persisted policy, which login never rewrites.
-    expect(readPolicy(stateDir()).mode).toBe("sandbox");
+    expect(policyMode(readPolicy(stateDir()))).toBe("sandbox");
     expect(helloMode()).toBe("sandbox");
   });
 
@@ -256,7 +256,7 @@ describe("login", () => {
     expect(out).toContain(AUTO_MODE_RISK_TEXT);
     expect(out).not.toContain(SANDBOX_POLICY_LOGIN_LINE);
     expect(out).not.toContain(SANDBOX_MODE_LOGIN_LINE);
-    expect(readPolicy(stateDir()).mode).toBe("auto");
+    expect(policyMode(readPolicy(stateDir()))).toBe("auto");
     expect(helloMode()).toBe("auto");
   });
 
@@ -318,7 +318,7 @@ describe("login", () => {
     // An auto-forbidden org: Docker needs no OS sandbox, so sandbox mode is written.
     tokenAnswers = [{ status: 200, body: { ...granted.body, autoMode: "off" } }];
     expect(await run(["login", "--url", base, "--mode", "docker"])).toBe(0);
-    expect(readPolicy(stateDir()).mode).toBe("sandbox");
+    expect(policyMode(readPolicy(stateDir()))).toBe("sandbox");
     expect(out).toContain(DOCKER_SANDBOX_MODE_LOGIN_LINE);
     expect(out).not.toContain(SANDBOX_MODE_LOGIN_LINE);
   });

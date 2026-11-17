@@ -24,7 +24,7 @@ import { effectiveMode, grantedHosts } from "./policy.js";
 import type { PolicyOpRecord } from "./policy-ops.js";
 import type { PolicyStore } from "./policy-store.js";
 import { publicSuffixWildcard } from "./public-suffix.js";
-import { DEFAULT_POLICY, type Policy } from "./state.js";
+import { DEFAULT_POLICY, ownerCeilingOfMode, type Policy, policyMode } from "./state.js";
 
 /** What this program has seen across requests (one per program run, kept over reconnects). */
 export interface SeenState {
@@ -86,7 +86,7 @@ export interface SummaryFacts {
  */
 export function policySummary(p: Policy, _facts: SummaryFacts): DeviceLocalPolicySummary {
   return {
-    mode: p.mode,
+    mode: policyMode(p),
     allowedDomains: [...p.allowedDomains],
   };
 }
@@ -169,6 +169,8 @@ function applyPolicyOp(
   if (add.length > 0) parts.push(`add ${add.join(", ")}`);
   if (remove.length > 0) parts.push(`remove ${remove.join(", ")}`);
   if (rawMode !== undefined) parts.push(`mode ${clean(String(rawMode), 40)}`);
+  const ceilingArg: unknown = (args as { ownerCeiling?: unknown }).ownerCeiling;
+  if (ceilingArg !== undefined) parts.push(`ownerCeiling ${clean(JSON.stringify(ceilingArg), 80)}`);
   const by =
     `by ${clean(source.accountName, 100)} (${clean(source.accountId, 100)}) ` +
     `via ${clean(source.via, 10)}`;
@@ -179,6 +181,28 @@ function applyPolicyOp(
     // Turning auto mode on is decided on the machine only (spec §4.1).
     throw new PolicyRefused(MODE_ON_DEVICE_MESSAGE, refused);
   }
+  // Staged (v3) owner-ceiling narrowing: only `fullAccess: false` and `workspace` reach are ever
+  // applied; the deployment can never widen the owner's ceiling (B2).
+  const rawCeiling: unknown = (args as { ownerCeiling?: unknown }).ownerCeiling;
+  let narrowFull = false;
+  let narrowReach = false;
+  if (rawCeiling !== undefined) {
+    const o = rawCeiling as Record<string, unknown> | null;
+    if (
+      typeof o !== "object" ||
+      o === null ||
+      Array.isArray(o) ||
+      Object.keys(o).some((k) => k !== "fullAccess" && k !== "restrictedProjectReach") ||
+      (o.fullAccess !== undefined && o.fullAccess !== false) ||
+      (o.restrictedProjectReach !== undefined && o.restrictedProjectReach !== "workspace")
+    )
+      throw new PolicyRefused(
+        "The owner ceiling is widened on the machine only (capybara-device ceiling set)",
+        refused,
+      );
+    narrowFull = o.fullAccess === false;
+    narrowReach = o.restrictedProjectReach === "workspace";
+  }
   const both = add.find((h) => remove.includes(h));
   if (both !== undefined) {
     throw new DeviceOpError("policy", `${both} is both added and removed`);
@@ -188,7 +212,15 @@ function applyPolicyOp(
     const present = new Set(kept.map((d) => d.toLowerCase()));
     return {
       ...p,
-      mode: rawMode === "sandbox" ? "sandbox" : p.mode,
+      ownerCeiling:
+        rawMode === "sandbox"
+          ? ownerCeilingOfMode("sandbox")
+          : {
+              fullAccess: p.ownerCeiling.fullAccess && !narrowFull,
+              restrictedProjectReach: narrowReach
+                ? "workspace"
+                : p.ownerCeiling.restrictedProjectReach,
+            },
       allowedDomains: [...kept, ...add.filter((h) => !present.has(h))],
     };
   };
@@ -528,6 +560,66 @@ export async function runOp(
   return (await serveOp(executor, req, signal, ctx)).res;
 }
 
+/** What a staged program needs to serve `policy` / `policyStatus` with owner reports (B2). */
+export interface StagedOwnerPolicy {
+  store: PolicyStore;
+  /** The strict owner report now (`issueOwnerReport`), issued after the write. */
+  report: () => import("@capybara-hq/plugin-sdk").DeviceOwnerCeilingV3;
+  /** Reconciles live owners against the fresh strict ceiling (`reconcileOwnerCeiling`). */
+  reconcile: (signal: AbortSignal) => Promise<void>;
+}
+
+/**
+ * A staged `policy` / `policyStatus` op: the protocol 2 logic (op log, idempotence, narrowing
+ * only), then, after a successful write, live owners are reconciled at once and the answer carries
+ * the owner report issued for the written revision. An applied status carries the current report.
+ */
+async function serveOwnerPolicyV3(
+  owner: StagedOwnerPolicy,
+  req: KernelReq,
+  signal: AbortSignal,
+): Promise<import("@capybara-hq/plugin-sdk").DeviceResponseV3> {
+  const sdk = await import("@capybara-hq/plugin-sdk");
+  const facts: SummaryFacts = { mode: "os" };
+  try {
+    if (req.op === "policyStatus") {
+      const status = policyStatus(owner.store, req.args, facts);
+      return {
+        type: "res",
+        id: req.id,
+        ok: true,
+        result: sdk.parseOperationResultV3("policyStatus", {
+          ...status,
+          ...(status.outcome === "applied" && { ownerCeiling: owner.report() }),
+        }),
+      };
+    }
+    const { res } = servePolicyOp(req, owner.store, facts);
+    if (!res.ok) return { type: "res", id: req.id, ok: false, error: res.error };
+    // successful local policy writes reconcile live owners immediately (cutover 8.4)
+    await owner.reconcile(signal);
+    return {
+      type: "res",
+      id: req.id,
+      ok: true,
+      result: sdk.parseOperationResultV3("policy", {
+        ...(res.result as object),
+        ownerCeiling: owner.report(),
+      }),
+    };
+  } catch (e) {
+    return {
+      type: "res",
+      id: req.id,
+      ok: false,
+      error: {
+        kind: e instanceof DeviceOpError && e.kind === "policy" ? "policy" : "error",
+        message: e instanceof Error ? e.message : String(e),
+      },
+    };
+  }
+}
+
 /** Dormant protocol-v3 operation adapter. Active serveOp/hello remain protocol 2 until Task 8. */
 export async function serveOperationV3(
   backend: import("./exec/mac-operation-backend.js").MacOperationBackend,
@@ -535,6 +627,7 @@ export async function serveOperationV3(
   request: import("@capybara-hq/plugin-sdk").KernelRequestV3,
   signal: AbortSignal,
   binder?: Pick<import("./exec/instance-binding.js").InstanceBinder, "bind">,
+  owner?: StagedOwnerPolicy,
 ): Promise<import("@capybara-hq/plugin-sdk").DeviceResponseV3> {
   const sdk = await import("@capybara-hq/plugin-sdk");
   try {
@@ -543,6 +636,11 @@ export async function serveOperationV3(
     const a = parsed.args;
     signal.throwIfAborted();
     let result: unknown;
+    if (parsed.op === "policy" || parsed.op === "policyStatus") {
+      if (!owner)
+        throw new sdk.SandboxPermissionUnsupportedError("This program cannot change its policy");
+      return await serveOwnerPolicyV3(owner, parsed as unknown as KernelReq, signal);
+    }
     if (parsed.op === "bindInstance") {
       // the private post-commit lifecycle binding (B4); never an implicit side effect of an operation
       if (!binder)

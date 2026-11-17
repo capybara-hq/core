@@ -11,7 +11,7 @@ import {
   validateAllowHost,
 } from "@capybara-hq/plugin-sdk";
 import { covers, deniedSecretPaths, effectiveEgress } from "../policy.js";
-import { policyPath, readPolicyFile } from "../state.js";
+import { policyPath, readPolicyFile, SANDBOX_OWNER_CEILING } from "../state.js";
 import { osRoots } from "./shared.js";
 
 export interface DeviceOwnerCeiling {
@@ -50,10 +50,27 @@ export async function readStrictOwnerCeiling(input: {
   dir: string;
   home?: string;
 }): Promise<DeviceOwnerCeiling> {
+  return readStrictOwnerCeilingSync(input);
+}
+/**
+ * {@link readStrictOwnerCeiling}, synchronously (the owner report issues it under the policy lock).
+ * Only a version-2 policy file is authority: an old format is refused until it is converted.
+ */
+export function readStrictOwnerCeilingSync(input: {
+  stateDir: string;
+  deviceId: string;
+  dir: string;
+  home?: string;
+}): DeviceOwnerCeiling {
   const file = policyPath(input.stateDir);
   const before = statSync(file);
   if (!before.isFile()) throw new SandboxScopeDeniedError("Owner policy must be a regular file");
-  const policy = readPolicyFile(input.stateDir).policy;
+  const read = readPolicyFile(input.stateDir);
+  if (read.legacy)
+    throw new SandboxScopeDeniedError(
+      "Owner policy is in the old format; restart capybara-device or run capybara-device ceiling set to convert it",
+    );
+  const policy = read.policy;
   const after = statSync(file);
   const version = (s: typeof before) => `${s.ino}:${s.size}:${s.mtimeMs}`;
   if (version(before) !== version(after))
@@ -65,9 +82,9 @@ export async function readStrictOwnerCeiling(input: {
   const roots = Object.freeze(osRoots(resolve(input.dir)));
   return Object.freeze({
     revision: digest({ generation: version(after), policy, roots, deviceId: input.deviceId }),
-    fullAccess: policy.mode === "auto",
+    fullAccess: policy.ownerCeiling.fullAccess,
     roots,
-    restrictedProjectReach: policy.mode === "auto" ? "os-user" : "workspace",
+    restrictedProjectReach: policy.ownerCeiling.restrictedProjectReach,
     restrictedAllowedDomains: Object.freeze([...policy.allowedDomains]),
     restrictedDeniedReadRoots: Object.freeze([
       ...deniedSecretPaths(input.home ?? homedir()),
@@ -166,7 +183,10 @@ export function intersectOperation(
   const hosts = new Set<string>();
   if (authority && !native && scope.network.kind === "allowlist") {
     const baseline = effectiveEgress(
-      { mode: "sandbox", allowedDomains: [...ceiling.restrictedAllowedDomains] },
+      {
+        ownerCeiling: SANDBOX_OWNER_CEILING,
+        allowedDomains: [...ceiling.restrictedAllowedDomains],
+      },
       { mode: "sandbox", network: authority.orgNetwork },
       authority.grants,
     );

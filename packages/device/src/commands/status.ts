@@ -1,4 +1,4 @@
-import { readCredential, readPolicy, type SandboxMode } from "../state.js";
+import { policyMode, readCredential, readPolicy, type SandboxMode } from "../state.js";
 
 /** `status`: exit 0 when logged in, 1 when not (or the credential file is unusable). */
 export function status(
@@ -21,7 +21,7 @@ export function status(
   // An unreadable policy file is reported by `start` and `policy show`; status still answers.
   let sandboxMode: SandboxMode | undefined;
   try {
-    sandboxMode = readPolicy(stateDir).mode;
+    sandboxMode = policyMode(readPolicy(stateDir));
   } catch {
     sandboxMode = undefined;
   }
