@@ -123,11 +123,11 @@ session and authenticated gateway ready/capacity negotiation, lease-fenced TTL m
 read budgets (69632-byte frame -> 3072 raw bytes). Report codec has version/revision/sequence and
 independent reachability; runtime identity production/persistence is still future work.
 
-Minimal additive migration `0150_starting_execution_grants.sql` moved earlier with explicit
+Minimal additive migration `0152_starting_execution_grants.sql` moved earlier with explicit
 authorization: persisted original grants provenance and `backgroundStart` method coverage under
 the authority fence, admission hash binding, selectors and retry evidence. Missing legacy provenance
 fails closed/unknown. No old migration was changed. **Background-running ACK lifetime is not yet
-implemented**; subsequent migrations start at 0151 or the then-current free number.
+implemented**; subsequent migrations start at 0153 or the then-current free number.
 
 Evidence: 256 passed across nine actual SDK/device files; 136 across seven kernel/provider files;
 final transport 17 and authority 43 passed. Counts overlap and must not be summed. One command

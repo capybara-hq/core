@@ -65,7 +65,7 @@ export interface BackgroundTaskRow {
   readOffset: number;
   /** When a stop claimed the task ({@link BackgroundTaskStore.claimStop}); null otherwise. */
   stoppingAt: Date | null;
-  /** `legacy` for SID-launched rows; a managed launch's durable state otherwise (0151). */
+  /** `legacy` for SID-launched rows; a managed launch's durable state otherwise (0153). */
   launchState: BackgroundLaunchState;
   /** A managed task's stable start operation (null for legacy rows). */
   operationId: string | null;
@@ -81,7 +81,7 @@ export interface BackgroundTaskRow {
   instanceGeneration: string | null;
   /** When a managed task's cancellation was asked for (a stop or a revocation). */
   cancelRequestedAt: Date | null;
-  /** Who asked for it by a stop (0152); null for a revocation's cancellation or none. */
+  /** Who asked for it by a stop (0154); null for a revocation's cancellation or none. */
   cancelRequestedBy: CancelRequester | null;
 }
 
@@ -216,7 +216,7 @@ export class BackgroundTaskStore {
   async reserve(row: BackgroundTaskReservation, maxTasks: number): Promise<boolean> {
     await this.launchLock.lock(row.sandboxConversationId);
     if ((await this.countRunning(row.sandboxConversationId)) >= maxTasks) return false;
-    // not admitted for dispatch yet (0156): the launch's freeze check marks it `dispatched`
+    // not admitted for dispatch yet (0157): the launch's freeze check marks it `dispatched`
     await this.insert({ ...row, sid: null, sandboxCreatedAt: null }, "reserved");
     return true;
   }
@@ -427,7 +427,7 @@ export class BackgroundTaskStore {
   }
 
   /**
-   * Inserts a legacy row. `legacyDispatch` (0156) defaults to `unknown`: a row is "never
+   * Inserts a legacy row. `legacyDispatch` (0157) defaults to `unknown`: a row is "never
    * dispatched" only when its reservation says so.
    */
   async insert(
