@@ -255,7 +255,8 @@ the kernel's degradation ladder reports the model error as it does for any other
 ### 5.6 The user's bubble
 
 - **Files**: unchanged — the type badge, name and size chip (`design/src/conversation/bubble.tsx`,
-  `BubbleAttachments`); clicking opens the file as today (a new tab through `openDownload`). No
+  `BubbleAttachments`); clicking a listed non-image attachment opens it in the right
+  panel, otherwise it downloads; the chip has a download button. No
   mark distinguishes a file attachment from a media one (maintainer, 2026-11-17).
 - **Images**: the 56 px thumbnail stays; clicking opens the image viewer (maintainer, 2026-11-17:
   a full-screen dimmed overlay with zoom and pan, not a dialog): the `ImageViewer` in
