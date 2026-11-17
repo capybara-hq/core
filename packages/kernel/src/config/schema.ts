@@ -626,7 +626,7 @@ export const KernelConfigSchema = z.strictObject({
         .meta(
           meta({
             description:
-              "Testing only: let extensions' ctx.net.fetch reach plain http URLs on loopback addresses (fake servers in test stacks). Never set it in production",
+              "Testing only: lift every loopback and unspecified-address refusal for extensions' ctx.net.fetch (127.0.0.0/8, ::1, 0.0.0.0/8, ::), including plain http to them (fake servers in test stacks). Link-local and cloud metadata addresses stay refused. Never set it in production",
           }),
         ),
       httpsProxy: z
@@ -640,7 +640,7 @@ export const KernelConfigSchema = z.strictObject({
           meta({
             secret: true,
             description:
-              "HTTP(S) egress proxy for marketplace, archive and git downloads, npm registry downloads (packages, provenance, bootstrap plugins) OAuth requests (discovery, registration, token endpoints) and extensions' ctx.net.fetch requests (person-supplied URLs such as connector endpoints), e.g. http://user:password@proxy.internal:3128. https downloads tunnel through it with CONNECT and the kernel no longer resolves their hosts: the proxy does, so blocking private and internal addresses becomes the proxy's job, including for organizations' ctx.net requests (IP-literal URLs are still checked against marketplaces.allowPrivateHosts, or for ctx.net against the organization's allowed internal endpoints). Loopback hosts never use it, nor does an http:// npm registry; list an internal https registry in net.noProxy. HTTPS_PROXY / NODE_USE_ENV_PROXY are not read. Credentials in the URL are sent as Basic Proxy-Authorization and never logged",
+              "HTTP(S) egress proxy for marketplace, archive and git downloads, npm registry downloads (packages, provenance, bootstrap plugins) OAuth requests (discovery, registration, token endpoints) and extensions' ctx.net.fetch requests (person-supplied URLs such as connector endpoints), e.g. http://user:password@proxy.internal:3128. https downloads tunnel through it with CONNECT and the kernel no longer resolves their hosts: the proxy does, so blocking private and internal addresses becomes the proxy's job, including for organizations' ctx.net requests (IP-literal URLs are still checked against marketplaces.allowPrivateHosts, or for ctx.net against the organization's allowed internal endpoints). Loopback hosts never use it, nor does an http:// npm registry; list an internal https registry in net.noProxy, and likewise every internal https host an organization's allowed internal endpoints name (with a proxy set the proxy resolves it, so the organization's allowances do not apply unless the host is in net.noProxy). HTTPS_PROXY / NODE_USE_ENV_PROXY are not read. Credentials in the URL are sent as Basic Proxy-Authorization and never logged",
           }),
         ),
       noProxy: z
@@ -659,7 +659,7 @@ export const KernelConfigSchema = z.strictObject({
         .meta(
           meta({
             description:
-              "Hostnames or IP addresses that bypass net.httpsProxy (an entry also matches its subdomains; a leading dot is allowed). These hosts are resolved locally and must resolve to public addresses unless listed in marketplaces.allowPrivateHosts",
+              "Hostnames or IP addresses that bypass net.httpsProxy (an entry also matches its subdomains; a leading dot is allowed). These hosts are resolved locally and must resolve to public addresses unless listed in marketplaces.allowPrivateHosts (marketplace downloads) or in an organization's allowed internal endpoints (ctx.net.fetch). List an organization's allowed internal https hosts here when net.httpsProxy is set, otherwise the proxy resolves them and the allowances do not apply",
           }),
         ),
     })

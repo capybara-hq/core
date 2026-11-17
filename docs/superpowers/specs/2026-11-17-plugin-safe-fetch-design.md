@@ -80,7 +80,12 @@ The maintainer picked A on 2026-11-17.
     http, which internal MCP and model servers often use).
   Validation reuses `privateHostEntryProblem` / the CIDR rules of `net/public-address.ts`
   (IP / CIDR entries allowed within its minimum prefix). Link-local (cloud metadata) stays refused
-  whatever the list says.
+  whatever the list says. Loopback (127.0.0.0/8, `::1`, 0.0.0.0/8, `::`) and the metadata
+  endpoints `fd00:ec2::254` and `100.100.100.200` are refused for `ctx.net` just the same, whatever
+  the list says; only the tests-only `net.allowInsecureLoopback` lifts the loopback refusal.
+- **Adding an allowance is a widening** of what the org's plugins can reach: it is refused for API
+  tokens and for the Platform tool (`org.network_allowance_widen_not_allowed`), so a person adds it
+  in the UI. Listing and removing stay open to both (removing only narrows).
 - Storage (builder's call recorded here): a table `org_network_allowances (org_id FK ON DELETE
   CASCADE, entry, created_by, created_at, unique (org_id, entry))`, written only by a super admin
   (`@SuperAdmin` route under `/api/v1/admin/orgs/:orgId/network-allowances`, audited

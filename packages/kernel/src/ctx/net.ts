@@ -9,23 +9,6 @@ import { type LookupFn, NetDeniedError, type NetPolicy } from "../net/public-add
 import { safeFetch } from "../net/safe-fetch.js";
 import type { OrgNetworkAllowances } from "../orgs/network-allowances.service.js";
 
-/**
- * `ctx.net` (plugin safe fetch spec): the kernel's guarded client (`safeFetch`) for URLs a person
- * supplied. Per call:
- * - the policy is built fresh: `net.allowInsecureLoopback` (tests), the org's allowances read from
- *   PG when `opts.orgId` is given (no cache: a removal applies to the next request on every
- *   replica; another org's allowances never apply), public addresses only without an org, and the
- *   deployment's egress proxy (`net.httpsProxy` / `net.noProxy`: a proxied https request is
- *   resolved by the proxy, which then owns SSRF protection; IP-literal targets are still checked);
- * - loopback, link-local and cloud metadata addresses are refused whatever the allowances
- *   (loopback allowed only under `net.allowInsecureLoopback`);
- * - redirects are never followed: `redirect: "manual"` returns the 3xx response, otherwise a 3xx
- *   rejects with `net.redirect`;
- * - no body size cap (bodies stream); `init.signal` is combined with `ctx.signal`;
- * - a refusal rejects with the SDK's `NetDeniedError` and is logged at `warn` with the plugin, org,
- *   host and code (never the URL's path, query or headers).
- */
-
 /** The kernel services `ctx.net` reads per call (built once by the extension host). */
 export type ExtensionNetServices = {
   config: Pick<KernelConfigService, "get">;
@@ -46,6 +29,22 @@ export const ORG_PRIVATE_HINT =
 export const NO_ORG_PRIVATE_HINT =
   "a request made outside an organization reaches public addresses only";
 
+/**
+ * `ctx.net` (plugin safe fetch spec): the kernel's guarded client (`safeFetch`) for URLs a person
+ * supplied. Per call:
+ * - the policy is built fresh: `net.allowInsecureLoopback` (tests), the org's allowances read from
+ *   PG when `opts.orgId` is given (no cache: a removal applies to the next request on every
+ *   replica; another org's allowances never apply), public addresses only without an org, and the
+ *   deployment's egress proxy (`net.httpsProxy` / `net.noProxy`: a proxied https request is
+ *   resolved by the proxy, which then owns SSRF protection; IP-literal targets are still checked);
+ * - loopback, link-local and cloud metadata addresses are refused whatever the allowances
+ *   (loopback allowed only under `net.allowInsecureLoopback`);
+ * - redirects are never followed: `redirect: "manual"` returns the 3xx response, otherwise a 3xx
+ *   rejects with `net.redirect`;
+ * - no body size cap (bodies stream); `init.signal` is combined with `ctx.signal`;
+ * - a refusal rejects with the SDK's `NetDeniedError` and is logged at `warn` with the plugin, org,
+ *   host and code (never the URL's path, query or headers).
+ */
 export function createExtensionNet(
   deps: ExtensionNetServices & {
     log: Pick<Logger, "warn">;
