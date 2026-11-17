@@ -362,7 +362,7 @@ describe("permission context request boundary", () => {
     expect(a?.payload.request).not.toHaveProperty("permissionContext");
   });
 
-  it("records per construction: a retry and the fallback each see the context recorded during the delay", async () => {
+  it("records per construction: a retry and the fallback each see the context recorded after the previous request was sent", async () => {
     await say("hello");
     let current = "a";
     const { inputs, port } = recordingPort(() => current);
@@ -520,6 +520,26 @@ describe("permission context request boundary", () => {
     expect(calls).toEqual([]);
     expect(await ofType("model_call")).toEqual([]);
     expect(await ofType("assistant_message")).toEqual([]);
+  });
+
+  it("without a port, a revoked execution inside an attempt returns the identical object with no further attempt or fallback", async () => {
+    await say("hello");
+    const revoked = new ExecutionRevoked();
+    const d: ModelStepDeps = {
+      ...deps,
+      stepLog: {
+        ...deps.stepLog,
+        appendWithSpecs: async () => {
+          throw revoked;
+        },
+      } as ModelStepDeps["stepLog"],
+    };
+    const agent = agentWith({ fallback: { provider: "stub", model: "backup" } });
+    const err = await rejection(step(d, { agent }));
+    expect(err).toBe(revoked);
+    // the model_call write was refused before any send; nothing was retried or sent elsewhere
+    expect(calls).toEqual([]);
+    expect(await ofType("model_call")).toEqual([]);
   });
 
   it("an ordinary abort during the callback is the existing aborted step, nothing sent", async () => {

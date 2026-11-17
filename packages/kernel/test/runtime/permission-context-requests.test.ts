@@ -10,12 +10,11 @@ import { createDb } from "../../src/db/pool.js";
 import { COMPACTION_MARKER } from "../../src/runtime/context/compaction.js";
 import { devicePathsText } from "../../src/runtime/context/device-paths.js";
 import { permissionContextText } from "../../src/runtime/context/permission-profile.js";
-import type { ModelStepDeps } from "../../src/runtime/model-call.js";
 import { PermissionContextRecorder } from "../../src/runtime/permission-context.service.js";
 import { PERMISSION_CONTEXT_RUN_ERRORS } from "../../src/runtime/permission-context-errors.js";
 import { ProviderRegistry } from "../../src/runtime/providers.js";
 import { ExecutionRevoked } from "../../src/runtime/run-execution.js";
-import { RunSteps } from "../../src/runtime/run-steps.js";
+import { livePermissionContext, RunSteps } from "../../src/runtime/run-steps.js";
 import { PermissionConfigPublication } from "../../src/sandbox/permission-config-publication.js";
 import {
   PERMISSION_CONTEXT_ACTIVATION,
@@ -160,14 +159,11 @@ describe("the paired activation gate", () => {
     expect(permissionContextActive(true)).toBe(true);
     // this kernel provides the gate: the live recorder is the step deps' request boundary
     expect(k.app.get(RunSteps).deps.permissionContext).toBeDefined();
-    // the production construction (no provider for the token) wires no boundary at all
-    const construct = RunSteps as unknown as new (...a: unknown[]) => RunSteps;
-    const steps = (activation: boolean | undefined) =>
-      new construct(...new Array(13).fill({}), k.app.get(PermissionContextRecorder), activation);
-    const dormant = steps(undefined);
-    expect((dormant.deps as ModelStepDeps).permissionContext).toBeUndefined();
-    const active = steps(true);
-    expect((active.deps as ModelStepDeps).permissionContext).toBeDefined();
+    // the production value (no provider for the token) wires no boundary at all
+    const recorder = k.app.get(PermissionContextRecorder);
+    expect(livePermissionContext(recorder, undefined)).toEqual({});
+    expect(livePermissionContext(recorder, false)).toEqual({});
+    expect(livePermissionContext(recorder, true).permissionContext).toBeDefined();
   });
 });
 

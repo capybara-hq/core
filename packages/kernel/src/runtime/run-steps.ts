@@ -100,15 +100,27 @@ export class RunSteps {
         fetch: (orgId, conversationId, ids, caps) =>
           attachments.fetchMedia(orgId, conversationId, ids, caps),
       },
-      // the request boundary of the recorded permission context (spec B2): every agent-history
-      // request construction records the root's current context first; dormant until the paired
-      // activation (Task 8 phase 8.6) turns the gate on
-      ...(permissionContextActive(activation) && {
-        permissionContext: {
-          beforeRequest: ({ orgId, conversationId, runId, accountId, signal }) =>
-            permissionContext.record({ orgId, conversationId, runId, accountId }, signal),
-        },
-      }),
+      // the request boundary of the recorded permission context (spec B2); dormant until the
+      // paired activation (Task 8 phase 8.6) turns the gate on
+      ...livePermissionContext(permissionContext, activation),
     };
   }
+}
+
+/**
+ * The live request boundary of a run's steps (spec B2): every agent-history request construction
+ * records the root's current permission context first. Present only when the one activation gate
+ * is on ({@link PERMISSION_CONTEXT_ACTIVATION}); otherwise no key at all.
+ */
+export function livePermissionContext(
+  recorder: Pick<PermissionContextRecorder, "record">,
+  activation: boolean | undefined,
+): Pick<LoopDeps, "permissionContext"> {
+  if (!permissionContextActive(activation)) return {};
+  return {
+    permissionContext: {
+      beforeRequest: ({ orgId, conversationId, runId, accountId, signal }) =>
+        recorder.record({ orgId, conversationId, runId, accountId }, signal),
+    },
+  };
 }

@@ -41,6 +41,13 @@ import { PermissionFacts } from "./permission-facts.js";
 /** The tool error text of a managed operation whose held device context went stale (spec B3). */
 export const MANAGED_DEVICE_CONTEXT_STALE_TEXT =
   "Device context changed before this operation. Retry the tool call.";
+/**
+ * The tool error text of a managed operation on a device whose held instance has no installed
+ * runtime binding (a pending local binding, a cloud device without installed evidence): retrying
+ * the same call cannot help.
+ */
+export const MANAGED_DEVICE_CONTEXT_UNAVAILABLE_TEXT =
+  "This device has no installed runtime binding that can describe its permissions, so the operation did not start. Ask the device owner to finish setting up the device runtime before using it.";
 /** The tool error text of a managed operation whose device context could not be recorded. */
 export const MANAGED_DEVICE_CONTEXT_FAILED_TEXT =
   "Device context could not be recorded, so the operation did not start. Retry the tool call.";
@@ -65,6 +72,18 @@ export class ManagedDeviceContextFailed extends Error {
   override readonly name = "ManagedDeviceContextFailed";
   constructor(readonly kind: PermissionContextFailureKind | "refused") {
     super(MANAGED_DEVICE_CONTEXT_FAILED_TEXT);
+  }
+}
+
+/**
+ * The held instance carries no device context evidence (no installed binding of its generation):
+ * the managed path is unavailable on this device until its runtime is installed. Thrown before any
+ * preparation or user callback.
+ */
+export class ManagedDeviceContextUnavailable extends Error {
+  override readonly name = "ManagedDeviceContextUnavailable";
+  constructor() {
+    super(MANAGED_DEVICE_CONTEXT_UNAVAILABLE_TEXT);
   }
 }
 

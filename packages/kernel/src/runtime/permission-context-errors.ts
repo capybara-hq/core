@@ -1,7 +1,6 @@
 import { SandboxScopeDeniedError } from "@capybara-hq/plugin-sdk";
 import { ApiError } from "../errors.js";
 import { PermissionContextSubjectChanged } from "../sandbox/permission-context-types.js";
-import { RecordedPermissionContextError } from "./context/permission-profile.js";
 
 /** The named no-send failures of a permission context read or append (spec B2 table). */
 export const PERMISSION_CONTEXT_RUN_ERRORS = {
@@ -67,7 +66,7 @@ export function permissionContextFailureKind(error: unknown): PermissionContextF
   )
     return "actor";
   if (isStorageError(error)) return "unavailable";
-  if (error instanceof RecordedPermissionContextError) return "invalid";
+  // RecordedPermissionContextError and any unexpected failure
   return "invalid";
 }
 

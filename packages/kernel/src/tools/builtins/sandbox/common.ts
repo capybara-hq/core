@@ -35,9 +35,11 @@ import type { LegacyRetirementStore } from "../../../sandbox/legacy-retirement.j
 import {
   MANAGED_DEVICE_CONTEXT_FAILED_TEXT,
   MANAGED_DEVICE_CONTEXT_STALE_TEXT,
+  MANAGED_DEVICE_CONTEXT_UNAVAILABLE_TEXT,
   ManagedDeviceContextFailed,
   type ManagedDeviceContextPort,
   ManagedDeviceContextStale,
+  ManagedDeviceContextUnavailable,
 } from "../../../sandbox/managed-device-context.js";
 import type { SandboxMode } from "../../../sandbox/modes.js";
 import type { HeldDeviceContextEvidence } from "../../../sandbox/permission-context-types.js";
@@ -635,6 +637,8 @@ const AUTO_MODE_TOOL_TEXT = `${AUTO_MODE_NOT_ALLOWED_TEXT} Ask the user to switc
 export function mapSandboxError(e: unknown, log: Pick<Logger, "warn"> | undefined): unknown {
   if (e instanceof ManagedDeviceContextStale)
     return new ToolError(MANAGED_DEVICE_CONTEXT_STALE_TEXT, { kind: "unavailable" });
+  if (e instanceof ManagedDeviceContextUnavailable)
+    return new ToolError(MANAGED_DEVICE_CONTEXT_UNAVAILABLE_TEXT, { kind: "unavailable" });
   if (e instanceof ManagedDeviceContextFailed)
     return new ToolError(MANAGED_DEVICE_CONTEXT_FAILED_TEXT, { kind: "unavailable" });
   if (e instanceof SandboxProviderUnreachableError) {
@@ -748,8 +752,11 @@ async function inSandboxWith<T>(
   },
 ): Promise<{ value: T; notices: string[] }> {
   try {
-    // an activated managed route never runs without its writer: refused before entering, so no
-    // preparation or user callback can run unrecorded (and no legacy device_paths is written)
+    // once activated, only the managed route runs: a legacy route refuses before entering, so v1
+    // permission context never sits next to old-mode device_paths; a managed route never runs
+    // without its writer, so no preparation or user callback can run unrecorded
+    if (!operations && deps.managedDeviceContextRequired)
+      throw new ManagedDeviceContextFailed("refused");
     const managed = operations ? managedWriter(deps) : undefined;
     const deviceId = await deps.devices.forTool(ctx.orgId, sandboxConversationOf(ctx));
     // the mode once per call: the path checks follow it and the device_paths event records it;
@@ -784,7 +791,8 @@ async function inSandboxWith<T>(
               beforeUser: async (staging, info, sig) => {
                 // the held instance's device paths, recorded before any preparation or user callback
                 if (managed) {
-                  if (!info.contextEvidence) throw new ManagedDeviceContextStale();
+                  // no installed binding to describe the held instance: unavailable, not stale
+                  if (!info.contextEvidence) throw new ManagedDeviceContextUnavailable();
                   await recordManagedDevicePaths(
                     { managedDeviceContext: managed },
                     ctx,

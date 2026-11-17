@@ -80,6 +80,7 @@ import { KernelDb } from "../infra/database/kernel-db.js";
 import { KERNEL_LOGGER, REDIS } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
 import { effectiveSandboxLimits } from "../orgs/settings.service.js";
+import { isStorageError } from "../runtime/permission-context-errors.js";
 import { canonicalJson } from "../tools/canonical-json.js";
 import {
   type SandboxLease,
@@ -89,6 +90,7 @@ import {
   sandboxBusy,
 } from "./leases.js";
 import { isCloudProvider, LegacyRetirementStore } from "./legacy-retirement.js";
+import { ManagedDeviceContextFailed } from "./managed-device-context.js";
 import {
   type AppliedLimits,
   appliedOf,
@@ -1590,6 +1592,21 @@ export class SandboxService {
    * writer validates every field again under the authority locks.
    */
   private async heldContextEvidence(
+    ctx: SandboxUseContext,
+    p: SandboxProviderEntry,
+    e: Entered,
+  ): Promise<HeldDeviceContextEvidence | undefined> {
+    try {
+      return await this.readHeldContextEvidence(ctx, p, e);
+    } catch (error) {
+      // a storage failure reading the evidence fails the managed call as unrecorded, before any
+      // callback, never as a provider error
+      if (isStorageError(error)) throw new ManagedDeviceContextFailed("unavailable");
+      throw error;
+    }
+  }
+
+  private async readHeldContextEvidence(
     ctx: SandboxUseContext,
     p: SandboxProviderEntry,
     e: Entered,

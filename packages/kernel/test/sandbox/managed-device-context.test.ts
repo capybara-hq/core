@@ -24,15 +24,18 @@ import {
 import {
   MANAGED_DEVICE_CONTEXT_FAILED_TEXT,
   MANAGED_DEVICE_CONTEXT_STALE_TEXT,
+  MANAGED_DEVICE_CONTEXT_UNAVAILABLE_TEXT,
   ManagedDeviceContextRecorder,
 } from "../../src/sandbox/managed-device-context.js";
+import { SandboxOperationAuthority } from "../../src/sandbox/operation-authority.js";
 import { PermissionAuthorityLock } from "../../src/sandbox/permission-authority-lock.js";
 import { PermissionConfigPublication } from "../../src/sandbox/permission-config-publication.js";
 import { PermissionRuntimeReports } from "../../src/sandbox/permission-runtime-reports.js";
 import { SandboxProviders } from "../../src/sandbox/providers.js";
 import { SandboxService } from "../../src/sandbox/sandbox.service.js";
-import { BuiltinTools } from "../../src/tools/builtins/builtin-tools.js";
+import { managedSandboxDeps } from "../../src/tools/builtins/builtin-tools.js";
 import {
+  inSandbox,
   inSandboxOperations,
   type SandboxSession,
   type SandboxToolDeps,
@@ -449,19 +452,55 @@ describe("managed device context writer in the real common.ts route", () => {
   });
 
   it("the one activation gate decides whether builtin tools pass and require the managed writer", () => {
-    // this kernel provides no gate (production): the managed route keeps the legacy writer
-    const dormant = k.app.get(BuiltinTools).sandboxDeps;
-    expect(dormant.managedDeviceContext).toBeUndefined();
-    expect(dormant.managedDeviceContextRequired).toBeUndefined();
-    // the same construction with the gate on passes the injected writer and requires it
     const recorder = k.app.get(ManagedDeviceContextRecorder);
-    const construct = BuiltinTools as unknown as new (...a: unknown[]) => BuiltinTools;
-    const dummy = {};
-    const args = new Array(24).fill(dummy);
-    const active = new construct(...args, recorder, undefined, true).sandboxDeps;
-    expect(active.managedDeviceContext).toBe(recorder);
-    expect(active.managedDeviceContextRequired).toBe(true);
-    const off = new construct(...args, recorder, undefined, undefined).sandboxDeps;
-    expect(off.managedDeviceContext).toBeUndefined();
+    // production (no provider for the token): the managed route keeps the legacy writer
+    expect(managedSandboxDeps(recorder, undefined)).toEqual({});
+    expect(managedSandboxDeps(recorder, false)).toEqual({});
+    // the gate on passes the injected writer and requires it
+    expect(managedSandboxDeps(recorder, true)).toEqual({
+      managedDeviceContext: recorder,
+      managedDeviceContextRequired: true,
+    });
+  });
+
+  it("with the gate on, a legacy sandbox route refuses before entering instead of writing old-mode paths", async () => {
+    const f = await seed();
+    const enter = vi.spyOn(k.app.get(SandboxService), "withSandbox");
+    const err = await failure(
+      k.app.get(RunExecution).withClaim(
+        f.claim,
+        () => true,
+        () =>
+          inSandbox(depsOf(), ctxOf(f), async () => {
+            order.push("callback");
+          }),
+      ),
+    );
+    expect((err as ToolError).message).toBe(MANAGED_DEVICE_CONTEXT_FAILED_TEXT);
+    expect(enter).not.toHaveBeenCalled();
+    expect(order).toEqual([]);
+    expect(await managedPaths(f)).toEqual([]);
+  });
+
+  it("a held instance without an installed binding is unavailable, with non-retry copy, before any callback", async () => {
+    const f = await seed();
+    await f.db.deleteFrom("device_instance_bindings").where("device_id", "=", f.deviceId).execute();
+    const err = await failure(call(f));
+    expect(err).toBeInstanceOf(ToolError);
+    expect((err as ToolError).message).toBe(MANAGED_DEVICE_CONTEXT_UNAVAILABLE_TEXT);
+    expect((err as ToolError).message).not.toMatch(/retry/i);
+    expect(order).toEqual([]);
+    expect(await managedPaths(f)).toEqual([]);
+  });
+
+  it("a storage failure while reading the held evidence is the managed failure, not a provider error", async () => {
+    const f = await seed();
+    vi.spyOn(k.app.get(SandboxOperationAuthority), "workingRootFor").mockRejectedValue(
+      Object.assign(new Error("connection lost"), { code: "08006" }),
+    );
+    const err = await failure(call(f));
+    expect((err as ToolError).message).toBe(MANAGED_DEVICE_CONTEXT_FAILED_TEXT);
+    expect(order).toEqual([]);
+    expect(await managedPaths(f)).toEqual([]);
   });
 });

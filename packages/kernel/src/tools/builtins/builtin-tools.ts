@@ -22,7 +22,10 @@ import type { HookRunner } from "../../runtime/hook-calls.js";
 import { conversationTimeZone, RUN_CONTEXT_CLOCK } from "../../runtime/run-context.service.js";
 import { StepLog } from "../../runtime/step-log.js";
 import { LegacyRetirementStore } from "../../sandbox/legacy-retirement.js";
-import { ManagedDeviceContextRecorder } from "../../sandbox/managed-device-context.js";
+import {
+  type ManagedDeviceContextPort,
+  ManagedDeviceContextRecorder,
+} from "../../sandbox/managed-device-context.js";
 import {
   PERMISSION_CONTEXT_ACTIVATION,
   permissionContextActive,
@@ -55,8 +58,6 @@ import { extractAnswer, WebPages, webTools } from "./web/index.js";
 @Injectable()
 export class BuiltinTools {
   private readonly tools: readonly BuiltinTool[];
-  /** What the builtin sandbox tools run with (the managed writer only once activated). */
-  readonly sandboxDeps: SandboxToolDeps;
 
   constructor(
     @Inject(KernelDb) db: KernelDb,
@@ -95,7 +96,6 @@ export class BuiltinTools {
     /** The paired activation gate (one switch with the runtime's request boundary). */
     @Optional() @Inject(PERMISSION_CONTEXT_ACTIVATION) activation?: boolean,
   ) {
-    const managedActive = permissionContextActive(activation);
     const sandboxDeps: SandboxToolDeps = {
       sandbox,
       devices,
@@ -113,13 +113,9 @@ export class BuiltinTools {
       config,
       log,
       // dormant: the managed route keeps the legacy writer until the paired activation turns the
-      // gate on; then the managed writer is required on every managed operation
-      ...(managedActive && {
-        managedDeviceContext,
-        managedDeviceContextRequired: true,
-      }),
+      // gate on; then the managed writer is required on every sandbox call
+      ...managedSandboxDeps(managedDeviceContext, activation),
     };
-    this.sandboxDeps = sandboxDeps;
     this.tools = [
       askUserTool({ config }),
       readToolOutputTool({ outputs, config }),
@@ -189,4 +185,17 @@ export class BuiltinTools {
   list(): readonly BuiltinTool[] {
     return this.tools;
   }
+}
+
+/**
+ * The managed device context fields of the builtin sandbox tools' deps (spec B3): the injected
+ * writer, required, only when the one activation gate is on; otherwise no keys at all, and the
+ * legacy writer stays.
+ */
+export function managedSandboxDeps(
+  recorder: ManagedDeviceContextPort,
+  activation: boolean | undefined,
+): Pick<SandboxToolDeps, "managedDeviceContext" | "managedDeviceContextRequired"> {
+  if (!permissionContextActive(activation)) return {};
+  return { managedDeviceContext: recorder, managedDeviceContextRequired: true };
 }
