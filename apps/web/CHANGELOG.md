@@ -1,5 +1,15 @@
 # @capybara-hq/web
 
+## 0.1.0-rc.40
+
+### Patch Changes
+
+- 6f7f0dc: The image zoom says so when the image cannot be loaded, with a retry (a session refresh, then the
+  attachment URL with its retry token); a new source clears the failure, and the retry disappears once
+  the one reload has been used.
+- Updated dependencies [6f7f0dc]
+  - @capybara-hq/design@0.2.0-rc.11
+
 ## 0.1.0-rc.39
 
 No changes in this release.
