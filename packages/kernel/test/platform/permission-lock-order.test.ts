@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { type Kysely, sql } from "kysely";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { OrgNetworkAdmin } from "../../src/admin/org-network.service.js";
 import { KernelConfigSchema } from "../../src/config/schema.js";
 import { ConversationsService } from "../../src/conversations/conversations.service.js";
 import { kernelDb } from "../../src/db/kernel-schema.js";
@@ -15,6 +16,7 @@ import { TransactionHost } from "../../src/infra/database/transaction-host.js";
 import { createLogger } from "../../src/log.js";
 import { OrgSettingsService } from "../../src/orgs/settings.service.js";
 import { RunExecution, withExclusiveAdmission } from "../../src/runtime/run-execution.js";
+import { CloudPermissionSnapshots } from "../../src/sandbox/cloud-permission-snapshot.js";
 import {
   type AuthoritySubject,
   PermissionAuthorityLock,
@@ -276,6 +278,92 @@ describe("ceiling writers reached from a tool step lock in the ordered prelude",
   });
 });
 
+// The cloud snapshot job locks the device row before the device permission lock, as the device
+// writers do (`lockOwn`, then the lock): the other way round it deadlocked with a device deletion.
+describe("the cloud permission snapshot and a device writer", () => {
+  it.each(["snapshot", "reconcile"] as const)(
+    "%s waits for the device row a deletion holds before its permission lock",
+    async (job) => {
+      const f = await seed();
+      await f.db
+        .updateTable("devices")
+        .set({ permission_reconcile_required: true })
+        .where("id", "=", f.deviceId)
+        .execute();
+      const devices = k.app.get(DevicesService);
+      const real = seam(devices).lockOwn?.bind(devices);
+      if (!real) throw new Error("no device row lock to pause");
+      const held = deferred();
+      const go = deferred();
+      // the deletion (an HTTP request) holds the device row, paused before its permission lock
+      vi.spyOn(seam(devices), "lockOwn").mockImplementationOnce(async (...args: unknown[]) => {
+        const row = await real(...args);
+        held.resolve();
+        await go.promise;
+        return row;
+      });
+      const removal = devices.remove(f.orgId, f.accountId, f.deviceId);
+      await held.promise;
+      let settled = false;
+      const snapshots = k.app.get(CloudPermissionSnapshots);
+      const other = (
+        job === "snapshot"
+          ? snapshots.snapshot(f.orgId, f.deviceId)
+          : snapshots.reconcile(f.orgId, f.deviceId)
+      ).finally(() => {
+        settled = true;
+      });
+      await expect.poll(async () => settled || (await waitingLocks()) > 0).toBe(true);
+      go.resolve();
+      const [a, b] = await Promise.allSettled([removal, other]);
+      expect(a.status === "rejected" ? String(a.reason) : "fulfilled").toBe("fulfilled");
+      expect(b.status === "rejected" ? String(b.reason) : b.value).toEqual({ state: "skipped" });
+    },
+  );
+});
+
+// An admin network allowance add locks the target org's row before the super admin lock: a fenced
+// super admin write in that org holds the org row (the fence) when it takes the super admin lock.
+describe("org network allowance add and a fenced super admin write in the org", () => {
+  it("the add waits for the org row before the super admin lock", async () => {
+    const f = await seed();
+    const target = randomUUID();
+    await f.db.insertInto("accounts").values({ id: target, display_name: "T" }).execute();
+    const accounts = k.app.get(AccountsService);
+    const real = seam(accounts).lockForUpdate?.bind(accounts);
+    if (!real) throw new Error("no prelude to pause");
+    const held = deferred();
+    const go = deferred();
+    // the fenced write holds its org row (the fence), paused before the super admin lock
+    vi.spyOn(seam(accounts), "lockForUpdate").mockImplementationOnce(async (...args: unknown[]) => {
+      held.resolve();
+      await go.promise;
+      return real(...args);
+    });
+    const fenced = k.app.get(RunExecution).withClaim(
+      f.claim,
+      () => true,
+      () =>
+        withExclusiveAdmission(() =>
+          accounts.updateAccount(target, { displayName: "Renamed" }, f.accountId),
+        ),
+    );
+    await held.promise;
+    let settled = false;
+    const add = k.app
+      .get(OrgNetworkAdmin)
+      .add(f.orgId, "10.0.0.5", { accountId: f.accountId }, false)
+      .finally(() => {
+        settled = true;
+      });
+    await expect.poll(async () => settled || (await waitingLocks()) > 0).toBe(true);
+    go.resolve();
+    const [a, b] = await Promise.allSettled([fenced, add]);
+    expect(a.status === "rejected" ? String(a.reason) : "fulfilled").toBe("fulfilled");
+    expect(b.status === "rejected" ? String(b.reason) : "fulfilled").toBe("fulfilled");
+  });
+});
+
 describe("re-checks under the prelude's locks", () => {
   it("an account status that changed after the prelude read it is a conflict, nothing written", async () => {
     const f = await seed();
@@ -364,6 +452,84 @@ describe("conversation deletion re-checks its prelude's subject", () => {
       .where("id", "=", f.rootId)
       .executeTakeFirstOrThrow();
     expect(row.deleted_at).toBeNull();
+  });
+});
+
+describe("more fenced ceiling writes commit", () => {
+  it("org-settings.update narrowing only the cloud network: the org write lock in the prelude", async () => {
+    const f = await seed();
+    await againstReader(f, treeSubject(f), () =>
+      k.app
+        .get(OrgSettingsService)
+        .update(
+          f.orgId,
+          { cloudNetwork: { mode: "allowlist", excludedHosts: ["blocked.example.com"] } },
+          f.accountId,
+          undefined,
+          undefined,
+          { onlyNarrows: true },
+        ),
+    );
+    expect((await k.app.get(OrgSettingsService).get(f.orgId)).cloudNetwork).toMatchObject({
+      mode: "allowlist",
+    });
+  });
+
+  it("admin.update-settings without a Full change takes no permission lock", async () => {
+    const f = await seed();
+    const ceilings = vi.spyOn(k.app.get(PermissionCeilingWrites), "lock");
+    try {
+      await k.app.get(RunExecution).withClaim(
+        f.claim,
+        () => true,
+        () =>
+          withExclusiveAdmission(() =>
+            k.app
+              .get(SettingsService)
+              .update({ orgMarketplaceBrowse: true }, f.accountId, undefined, undefined, {
+                onlyNarrows: true,
+              }),
+          ),
+      );
+      expect(ceilings).not.toHaveBeenCalled();
+      expect((await k.app.get(SettingsService).view()).orgMarketplaceBrowse).toBe(true);
+    } finally {
+      await f.db
+        .deleteFrom("deployment_settings")
+        .where("key", "=", "orgMarketplaceBrowse")
+        .execute();
+    }
+  });
+
+  it("devices.delete of a local device: the machine's revoke names the held device lock again", async () => {
+    const f = await seed();
+    await f.db
+      .updateTable("devices")
+      .set({ source: "local", provider: "@local" })
+      .where("id", "=", f.deviceId)
+      .execute();
+    await f.db
+      .insertInto("device_machines")
+      .values({
+        org_id: f.orgId,
+        device_id: f.deviceId,
+        account_id: f.accountId,
+        credential_hash: randomUUID(),
+        name: "Laptop",
+        os: "darwin",
+        arch: "arm64",
+        program_version: "0.1.0",
+      })
+      .execute();
+    await againstReader(f, treeSubject(f, true), () =>
+      k.app.get(DevicesService).remove(f.orgId, f.accountId, f.deviceId),
+    );
+    const machine = await f.db
+      .selectFrom("device_machines")
+      .select("revoked_at")
+      .where("device_id", "=", f.deviceId)
+      .executeTakeFirstOrThrow();
+    expect(machine.revoked_at).not.toBeNull();
   });
 });
 

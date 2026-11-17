@@ -344,13 +344,19 @@ export class CloudPermissionSnapshots {
     return { mode: fullAccess ? "auto" : "sandbox", network: outer };
   }
 
-  /** The device row under the device authority write lock, or undefined (not a live cloud one). */
+  /**
+   * The device row under the device authority write lock, or undefined (not a live cloud one). The
+   * row is locked first (`FOR NO KEY UPDATE`: only non-key columns change), then the permission
+   * lock, the order the device writers take (`DevicesService.lockOwn`, the device project writes),
+   * then the row is read again under both.
+   */
   private async lockedDevice(orgId: string, deviceId: string) {
     const exists = await this.db
       .selectFrom("devices")
       .select("org_id")
       .where("id", "=", deviceId)
       .where("org_id", "=", orgId)
+      .forNoKeyUpdate()
       .executeTakeFirst();
     if (exists === undefined) return undefined;
     await this.locks.acquire({ orgId, deviceId }, { kind: "write", level: "device" });
@@ -365,7 +371,7 @@ export class CloudPermissionSnapshots {
       ])
       .where("id", "=", deviceId)
       .where("org_id", "=", orgId)
-      .forUpdate()
+      .forNoKeyUpdate()
       .executeTakeFirst();
     if (device === undefined || device.deleted_at !== null || device.source !== "cloud")
       return undefined;
