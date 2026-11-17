@@ -35,6 +35,11 @@ export interface MacOperationBackendOptions {
   stateDir: string;
   roots: DeviceOwnerCeiling["roots"];
   pythonPath: string;
+  /**
+   * The runtime hash this generation's binding attested. Restricted launches run only the sealed
+   * runtime with this hash; without it they are refused.
+   */
+  runtimeHash?: string;
   readOwnerCeiling: () => Promise<DeviceOwnerCeiling>;
 }
 export type MacOperationBackend = Required<
@@ -224,6 +229,7 @@ export async function createMacOperationBackend(
       grant,
       stateDir: options.stateDir,
       pythonPath: options.pythonPath,
+      ...(options.runtimeHash ? { runtimeHash: options.runtimeHash } : {}),
       ...(authority ? { authority } : {}),
       beforeLaunch: async () => {
         signal.throwIfAborted();
