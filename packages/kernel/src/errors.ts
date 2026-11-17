@@ -39,6 +39,7 @@ export const ERROR_CODES = {
   "org.auto_mode_not_allowed": 400,
   /** An org network allowance entry that is malformed, names a link-local address, or is over the cap. */
   "org.network_allowance_invalid": 400,
+  "org.network_allowance_not_found": 404,
   /** A deployment setting set in the startup config (file, Nacos or env): read-only in the admin console. */
   "deployment.setting_readonly": 409,
   /** Turning the platform's auto mode on through an API token or the Platform tool (only off). */

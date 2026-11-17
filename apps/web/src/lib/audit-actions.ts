@@ -139,6 +139,8 @@ export const AUDIT_ACTION_KEYS: Readonly<Record<string, string>> = {
   "org.service_token.created": "orgServiceTokenCreated",
   "org.service_token.revoked": "orgServiceTokenRevoked",
   "org.settings_updated": "orgSettingsUpdated",
+  "org.network_allowance_added": "orgNetworkAllowanceAdded",
+  "org.network_allowance_removed": "orgNetworkAllowanceRemoved",
   "org.updated": "orgUpdated",
   "plugin.org_install_failed": "pluginOrgInstallFailed",
   "plugin.org_installed": "pluginOrgInstalled",
