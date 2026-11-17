@@ -253,21 +253,23 @@ export class LocalDeviceRelay {
   }
 
   /**
+   * Whether the protocol gate is open ({@link stagedDeviceProtocolActive}; a test seam opens it
+   * for one relay instance, the deployment never does).
+   */
+  stagedProtocolActive: () => boolean = stagedDeviceProtocolActive;
+
+  /**
    * The negotiated transport of the device's connection when the platform's own controls (policy
-   * ops) must speak protocol 3 to it, else null (protocol 2). Once the single protocol gate is
+   * ops) must speak protocol 3 to it, else null (protocol 2). With the gate closed every
+   * connection is protocol 2: nothing is looked up (no lease or transport read per op). With it
    * open every connection is staged, so this is {@link connection} (a missing or unready one
-   * throws its typed error). While the gate is closed only the dormant staged seam publishes a
-   * transport: a connection with one is staged, any other (or none) is protocol 2.
+   * throws its typed error).
    */
   async stagedTransport(
     deviceId: string,
   ): Promise<{ connectionId: string; maxFrameBytes: number } | null> {
-    if (stagedDeviceProtocolActive()) return this.connection(deviceId);
-    try {
-      return await this.connection(deviceId);
-    } catch {
-      return null;
-    }
+    if (!this.stagedProtocolActive()) return null;
+    return this.connection(deviceId);
   }
 
   /**

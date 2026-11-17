@@ -127,6 +127,11 @@ export interface PendingPolicyOp {
   remove: string[];
   /** Present when the op turned the sandbox back on (the only mode the platform may set). */
   mode?: "sandbox";
+  /**
+   * The owner-ceiling narrowing the op asked a staged (v3) machine for: only `false` / `workspace`
+   * (the platform never widens). It explains the machine's own owner report of the change.
+   */
+  ownerCeiling?: { fullAccess?: false; restrictedProjectReach?: "workspace" };
   source: PolicyOpSource;
   actorTokenId?: string;
   status: "sent" | "unknown";
@@ -168,6 +173,7 @@ export function pendingPolicyOpsOf(v: unknown): PendingPolicyOp[] {
       add: hosts(o.add),
       remove: hosts(o.remove),
       ...(o.mode === "sandbox" && { mode: "sandbox" as const }),
+      ...ownerNarrowingOf(o.ownerCeiling),
       source: {
         accountId: src.accountId,
         via: src.via,
@@ -193,6 +199,43 @@ export function opVisibleIn(op: PendingPolicyOp, policy: DeviceLocalPolicySummar
   if (!op.add.every((h) => policy.allowedDomains.includes(h))) return false;
   if (op.remove.some((h) => policy.allowedDomains.includes(h))) return false;
   return op.mode === undefined || policy.mode === op.mode;
+}
+
+/** A stored op's owner narrowing: kept only while it narrows (anything wider is dropped). */
+function ownerNarrowingOf(v: unknown): Pick<PendingPolicyOp, "ownerCeiling"> {
+  if (typeof v !== "object" || v === null) return {};
+  const o = v as Record<string, unknown>;
+  const narrowing = {
+    ...(o.fullAccess === false && { fullAccess: false as const }),
+    ...(o.restrictedProjectReach === "workspace" && {
+      restrictedProjectReach: "workspace" as const,
+    }),
+  };
+  return Object.keys(narrowing).length > 0 ? { ownerCeiling: narrowing } : {};
+}
+
+/**
+ * Whether a v3 owner report's change from `before` to `after` is what the platform's `op` asked
+ * for (the machine's own report of it, arriving before the op's answer): something changed, and
+ * every changed fact is a narrowing the op carried, to the value it asked for. A widening is never
+ * an op's.
+ */
+export function opExplainsOwnerChange(
+  op: PendingPolicyOp,
+  before: { fullAccess: boolean; restrictedProjectReach: "workspace" | "os-user" },
+  after: { fullAccess: boolean; restrictedProjectReach: "workspace" | "os-user" },
+): boolean {
+  const fullChanged = before.fullAccess !== after.fullAccess;
+  const reachChanged = before.restrictedProjectReach !== after.restrictedProjectReach;
+  if (!fullChanged && !reachChanged) return false;
+  if (fullChanged && (op.ownerCeiling?.fullAccess !== false || after.fullAccess)) return false;
+  if (
+    reachChanged &&
+    (op.ownerCeiling?.restrictedProjectReach !== "workspace" ||
+      after.restrictedProjectReach !== "workspace")
+  )
+    return false;
+  return true;
 }
 
 /**

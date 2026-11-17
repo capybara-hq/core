@@ -638,6 +638,7 @@ export class DevicePolicyService {
       add: change.add ?? [],
       remove: change.remove ?? [],
       ...(change.mode !== undefined && { mode: change.mode }),
+      ...(change.ownerCeiling !== undefined && { ownerCeiling: change.ownerCeiling }),
       source: {
         accountId: source.accountId,
         via: source.via,
