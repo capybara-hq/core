@@ -722,7 +722,7 @@ export class ConnectorsService {
           if (!secret) throw new CredentialMissing(id, auth.ownership);
           return this.credentials.injectionFor(id, auth, secret);
         },
-        { orgId, slug },
+        { slug },
       );
     }
 
@@ -1122,7 +1122,6 @@ export class ConnectorsService {
     let issues: ToolIssue[] = [];
     if (inject) {
       const listed = await this.drift.listTools(orgId, input.connector, endpoint, inject, {
-        orgId,
         preview: true,
       });
       const snap = snapshot(slug, listed.specs, listed.resources);
@@ -1801,7 +1800,7 @@ export class ConnectorsService {
       app.connector,
       app.endpoint,
       () => this.credentials.injection(orgId, connectorId, auth, actorAccountId),
-      { orgId, connectorId },
+      { connectorId },
       (last) => this.credentials.onUnauthorized(orgId, connectorId, auth, actorAccountId, last),
     );
     const { rows, issues } = snapshot(app.slug, specs, resources);

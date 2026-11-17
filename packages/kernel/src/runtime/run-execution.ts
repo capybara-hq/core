@@ -32,7 +32,11 @@ export function withExclusiveAdmission<T>(fn: () => Promise<T>): Promise<T> {
   return exclusiveScope.run(true, fn);
 }
 
-/** Whether the caller runs inside {@link withExclusiveAdmission} (a tool step, a dispatch). */
+/**
+ * Whether the caller runs inside {@link withExclusiveAdmission} (a tool step, a dispatch). A test
+ * seam: the kernel never reads it (the fence reads the scope directly); tests use it to prove which
+ * loop steps run under exclusive admission (`langgraph-loop.test.ts`).
+ */
 export function inExclusiveAdmission(): boolean {
   return exclusiveScope.getStore() === true;
 }
