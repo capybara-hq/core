@@ -9,6 +9,7 @@ import type { ApiError } from "../../src/errors.js";
 import {
   allowanceEntryProblem,
   normalizeAllowanceEntry,
+  ORG_NETWORK_ALLOWANCES_MAX,
   OrgNetworkAllowances,
 } from "../../src/orgs/network-allowances.service.js";
 import { truncateTables } from "../helpers/db.js";
@@ -109,6 +110,42 @@ describe("allowanceEntryProblem", () => {
     ["*", /wildcard/],
     ["mcp.internal/x", /hostname/],
     ["mcp.internal:8080", /origin/],
+    // loopback and unspecified, however written
+    ["localhost", /localhost/],
+    ["LOCALHOST.", /localhost/],
+    ["api.localhost", /localhost/],
+    ["*.localhost", /wildcard|localhost/],
+    ["127.0.0.1", /loopback/],
+    ["0.0.0.0", /loopback/],
+    ["0.0.0.0/8", /loopback/],
+    ["127.0.0.0/8", /loopback/],
+    ["127.1.0.0/16", /loopback/],
+    ["::", /loopback/],
+    ["::1", /loopback/],
+    ["[::1]", /loopback/],
+    ["2130706433", /numeric/],
+    ["0x7f.1", /numeric/],
+    ["http://localhost:8080", /localhost/],
+    ["http://127.0.0.1:8080", /loopback/],
+    ["http://2130706433:8080", /loopback/],
+    ["http://0x7f.1:8080", /loopback/],
+    ["http://[::1]:8080", /loopback/],
+    ["http://0.0.0.0:8080", /loopback/],
+    // IPv6 forms that embed IPv4
+    ["::ffff:127.0.0.1", /embed/],
+    ["::ffff:10.0.0.1", /embed/],
+    ["http://[::ffff:7f00:1]:8080", /embed/],
+    ["::ffff:0:0/96", /embed/],
+    ["::ffff:0:0/104", /embed/],
+    ["64:ff9b::/96", /embed/],
+    ["64:ff9b::a00:1", /embed/],
+    ["2002::/16", /embed/],
+    ["2002:a00::/24", /embed/],
+    // wildcards over a public suffix or a bare label
+    ["*.com", /public suffix/],
+    ["*.co.uk", /public suffix/],
+    ["*.internal", /public suffix/],
+    ["*.1", /wildcard/],
   ])("refuses %s", (entry, reason) => {
     expect(allowanceEntryProblem(entry)).toMatch(reason);
   });
@@ -119,6 +156,10 @@ describe("allowanceEntryProblem", () => {
     expect(normalizeAllowanceEntry("[FD00::1]")).toBe("fd00::1");
     expect(normalizeAllowanceEntry("HTTP://MCP.internal:8080/")).toBe("http://mcp.internal:8080");
     expect(normalizeAllowanceEntry("https://mcp.internal:443")).toBe("https://mcp.internal");
+    expect(normalizeAllowanceEntry("http://mcp.internal.:8080")).toBe("http://mcp.internal:8080");
+    expect(normalizeAllowanceEntry("http://[FD00:0::1]:8080")).toBe("http://[fd00::1]:8080");
+    expect(normalizeAllowanceEntry("FD00:0:0::/16")).toBe("fd00::/16");
+    expect(normalizeAllowanceEntry("fd00:0::1")).toBe("fd00::1");
   });
 });
 
@@ -175,6 +216,31 @@ describe("OrgNetworkAllowances", () => {
     expect(err.message).toMatch(/link-local/);
     expect(await allowances.list(orgId)).toEqual([]);
     expect(await auditRows()).toEqual([]);
+  });
+
+  it("echoes at most 200 characters of a refused entry", async () => {
+    const long = `http://${"a".repeat(250)}.internal/x`;
+    const err = await errorOf(allowances.add(orgId, long, actorId));
+    expect(err.code).toBe("org.network_allowance_invalid");
+    expect(err.message.length).toBeLessThan(260);
+    expect((err.details as { entry: string }[])[0]?.entry).toHaveLength(201);
+  });
+
+  it("treats IPv6 spellings of one CIDR as one entry", async () => {
+    const first = await allowances.add(orgId, "fd00::/16", actorId);
+    expect(await allowances.add(orgId, "FD00:0:0::/16", actorId)).toEqual(first);
+    expect(await allowances.list(orgId)).toHaveLength(1);
+  });
+
+  it("refuses an entry over the per-org cap", async () => {
+    await sql`insert into capybara.org_network_allowances (id, org_id, entry)
+      select gen_random_uuid(), ${orgId}, 'h' || i || '.corp.example'
+      from generate_series(1, ${ORG_NETWORK_ALLOWANCES_MAX}) as i`.execute(raw);
+    const err = await errorOf(allowances.add(orgId, "one-more.corp.example", actorId));
+    expect(err.code).toBe("org.network_allowance_invalid");
+    expect(err.message).toMatch(/at most 200/);
+    // an entry already listed is still answered
+    expect((await allowances.add(orgId, "h1.corp.example", actorId)).entry).toBe("h1.corp.example");
   });
 
   it("refuses an unknown or deleted org", async () => {
