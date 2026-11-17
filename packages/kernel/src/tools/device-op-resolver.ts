@@ -101,8 +101,10 @@ function statusResult(op: PendingPolicyOp, s: PolicyOpStatus): PolicyOpResult {
         outcome: "applied",
         ...(s.policy !== undefined && { policy: s.policy }),
         // a staged (v3) applied status carries the owner report (B2)
-        ...("ownerCeiling" in s &&
-          s.ownerCeiling !== undefined && { ownerCeiling: s.ownerCeiling }),
+        ...(s.ownerCeiling !== undefined && {
+          ownerCeiling: s.ownerCeiling,
+          connectionId: s.connectionId ?? null,
+        }),
       };
     case "refused":
       return { outcome: "refused", message: (s.message ?? REFUSED_MESSAGE).slice(0, MAX_MESSAGE) };

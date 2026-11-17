@@ -170,17 +170,29 @@ export function ownerReportRevokes(
       next.restrictedProjectReach === "workspace" && scope.readRoots.some((r) => !inMachine(r))
     );
   if (scope.profile === "full-access") return !next.fullAccess;
-  if (
-    next.restrictedProjectReach === "workspace" &&
-    scope.filesystem.kind === "scoped" &&
-    [...scope.filesystem.readRoots, ...scope.filesystem.writeRoots].some((r) => !inMachine(r))
-  )
+  if (next.restrictedProjectReach === "workspace" && outsideMachineRoots(scope, machineRoots))
     return true;
   if (!isExecutionMethod(method) || scope.network.kind !== "allowlist") return false;
   return scope.network.hosts.some(
     (host) =>
       !next.restrictedAllowedDomains.some((pattern) => coversHost(pattern, host)) &&
       !grantedHosts.includes(host),
+  );
+}
+
+/**
+ * A restricted operation scope reaching outside the machine's own roots (a selected project beyond
+ * the workspace): what narrowing the reach to the workspace takes away (B2). The owner writer and
+ * the platform/org Full-off writers share it.
+ */
+export function outsideMachineRoots(
+  scope: SandboxOperationScope | SandboxBrowseScope,
+  machineRoots: readonly string[] | undefined,
+): boolean {
+  if (machineRoots === undefined || !("profile" in scope) || scope.filesystem.kind !== "scoped")
+    return false;
+  return [...scope.filesystem.readRoots, ...scope.filesystem.writeRoots].some(
+    (r) => !machineRoots.some((m) => within(r, m)),
   );
 }
 

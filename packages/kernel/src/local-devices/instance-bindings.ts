@@ -110,7 +110,9 @@ export class LocalInstanceBindings {
       ),
       committed.request,
     ) as BindInstanceResultV3;
-    await runOutsideTransaction(() => this.install(deviceId, machineId, committed, answer));
+    await runOutsideTransaction(() =>
+      this.install(deviceId, machineId, committed, answer, connection.connectionId),
+    );
     return answer;
   }
 
@@ -137,6 +139,8 @@ export class LocalInstanceBindings {
     machineId: string,
     committed: CommittedBinding,
     answer: BindInstanceResultV3,
+    /** The authenticated connection the answer came on (recorded with its owner report). */
+    connectionId: string | null = null,
   ): Promise<void> {
     const subject = { orgId: committed.orgId, deviceId };
     await this.ceilings.lock(subject, "device");
@@ -186,7 +190,7 @@ export class LocalInstanceBindings {
     // B2: the answer's authenticated owner report enters the common owner writer; a stale or
     // conflicting one blocks new authority there without failing the installation
     await this.owners.recordLocked(machineId, answer.ownerCeiling, {
-      connectionId: null,
+      connectionId,
       via: "bind",
     });
     const previous = request.expectedPreviousGeneration

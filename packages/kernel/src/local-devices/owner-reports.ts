@@ -79,8 +79,15 @@ export class OwnerReports {
     const stored = storedOwnerReportOf(row.owner_report);
     const decision = decideOwnerReport(stored, report);
     const now = new Date().toISOString();
+    if (decision === "stale" && meta.via !== "hello") {
+      // a policy frame, answer, status or bind answer committed after a newer report (carriers
+      // commit in lock order, not issue order) carries no newer authority: ignored, never blocks
+      if (meta.rootsChanged) await this.ceilings.publishLocked(subject, "device", true, true);
+      return "stale";
+    }
     if (decision === "stale" || decision === "conflict") {
-      // never replaces the authority: blocks new admissions until a valid current report
+      // a hello (it opens the current connection) regressing the sequence, or the same sequence
+      // with other bytes: never replaces the authority, blocks new admissions until a valid report
       await this.write(machineId, {
         ...(stored as StoredOwnerReport),
         blocked: { reason: decision, sequence: report.sequence, at: now },
@@ -94,7 +101,17 @@ export class OwnerReports {
       if (meta.rootsChanged) await this.ceilings.publishLocked(subject, "device", true, true);
       return "same";
     }
-    const before = ownerFactsOf(row);
+    // the facts the authority last held: a block only fails admission closed, it is not a change
+    // of Full or reach (unblocking with the same facts resets nothing and audits nothing)
+    const before =
+      stored === null
+        ? ownerFactsOf(row)
+        : ownerFactsOfReport({
+            report: stored.report,
+            connectionId: stored.connectionId,
+            observedAt: stored.observedAt,
+            via: stored.via,
+          });
     const next: StoredOwnerReport = {
       report,
       connectionId: meta.connectionId,

@@ -242,6 +242,81 @@ describe("stale, missing and out-of-order reports", () => {
   });
 });
 
+describe("reordered carriers (fix round 1)", () => {
+  it("I2: a lower sequence from a policy frame, answer or bind is ignored, never blocks", async () => {
+    const f = await fixture();
+    expect(await f.record(report(5, true, "os-user"))).toBe("recorded");
+    for (const via of ["policy", "policy-result", "bind"] as const)
+      expect(
+        await k.app
+          .get(OwnerReports)
+          .record(f.machineId, report(4, false, "workspace"), { connectionId: "c1", via }),
+      ).toBe("stale");
+    expect(await f.view()).toMatchObject({ state: "report", fullAccess: true, sequence: 5 });
+    expect((await f.browse()).readRoots).toEqual(["/"]);
+    // a late policy answer with an older sequence still settles its op as applied
+    await f.db
+      .updateTable("device_machines")
+      .set({
+        pending_policy_ops: JSON.stringify([
+          {
+            id: "op-late",
+            add: [],
+            remove: [],
+            source: { accountId: f.accountId, via: "web", approvalId: null },
+            status: "sent",
+            sentAt: Date.now(),
+            resolveAt: Date.now() + 60_000,
+            until: Date.now() + 3_600_000,
+          },
+        ]),
+      })
+      .where("id", "=", f.machineId)
+      .execute();
+    const out = await k.app.get(TransactionHost).run(() =>
+      k.app.get(DevicePolicyService).settleIn(
+        { machineId: f.machineId, opId: "op-late" },
+        {
+          outcome: "applied",
+          policy: { mode: "auto", allowedDomains: [] },
+          ownerCeiling: report(3, true, "os-user"),
+        },
+      ),
+    );
+    expect(out).toMatchObject({ applied: true });
+    expect(await f.view()).toMatchObject({ state: "report", sequence: 5 });
+  });
+
+  it("I1: unblocking with a higher report and the same Full keeps Full consent and audits nothing", async () => {
+    const f = await fixture();
+    await f.record(report(5, true, "os-user"));
+    await f.consentFull();
+    expect(await f.record(report(4, true, "os-user"))).toBe("stale");
+    expect(await f.view()).toMatchObject({ state: "blocked" });
+    expect(await f.record(report(6, true, "os-user"))).toBe("recorded");
+    expect((await f.profileView()).profile).toBe("full-access");
+    const audits = await f.db
+      .selectFrom("audit_events")
+      .select("action")
+      .where("action", "=", "device.owner_ceiling_changed")
+      .execute();
+    expect(audits).toEqual([]);
+  });
+
+  it("M4: every carrier records the authenticated connection", async () => {
+    const f = await fixture();
+    await k.app
+      .get(OwnerReports)
+      .record(f.machineId, report(1, true, "os-user"), { connectionId: "conn-9", via: "bind" });
+    const row = await f.db
+      .selectFrom("device_machines")
+      .select("owner_report")
+      .where("id", "=", f.machineId)
+      .executeTakeFirstOrThrow();
+    expect(row.owner_report).toMatchObject({ connectionId: "conn-9", via: "bind" });
+  });
+});
+
 describe("Full consent and revocation follow only actual Full changes", () => {
   it("restricted-only changes keep Full consent; removing Full resets it; widening needs fresh consent", async () => {
     const f = await fixture();
@@ -352,8 +427,8 @@ describe("web writes only narrow", () => {
           },
         ),
       );
-    // an out-of-order report: not accepted as applied
-    expect(await settle(report(2, false, "os-user"))).toMatchObject({ applied: false });
+    // a conflicting report (same sequence, other bytes) is not accepted as applied
+    expect(await settle(report(4, false, "os-user"))).toMatchObject({ applied: false });
     expect(await f.view()).toMatchObject({ state: "blocked" });
     expect(await settle(report(5, false, "os-user"))).toMatchObject({ applied: true });
     expect(await f.view()).toMatchObject({ state: "report", fullAccess: false, sequence: 5 });
@@ -409,6 +484,43 @@ describe("cloud owner ceiling PATCH", () => {
     await expect(
       c.patch({ ownerCeiling: { fullAccess: true }, confirmWidening: true }),
     ).rejects.toMatchObject({ code: "device.full_access_not_allowed" });
+  });
+
+  it("I3: a device B1 has not snapshotted is refused, never widened or pre-empted", async () => {
+    const c = await cloud();
+    await c.f.db
+      .updateTable("devices")
+      .set({ owner_full_access: null, outer_network: null, mode: "sandbox" })
+      .where("id", "=", c.id)
+      .execute();
+    for (const p of [
+      { ownerCeiling: { fullAccess: true }, confirmWidening: true as const },
+      { ownerCeiling: { fullAccess: false } },
+    ])
+      await expect(c.patch(p)).rejects.toMatchObject({
+        code: "device.permission_reconcile_required",
+      });
+    expect(
+      await c.f.db
+        .selectFrom("devices")
+        .select(["owner_full_access", "outer_network", "mode"])
+        .where("id", "=", c.id)
+        .executeTakeFirstOrThrow(),
+    ).toEqual({ owner_full_access: null, outer_network: null, mode: "sandbox" });
+  });
+
+  it("M3: widening is refused when the provider cannot run Full", async () => {
+    const c = await cloud();
+    // a provider without permission-scoped operations cannot enforce Full
+    await c.f.db
+      .updateTable("devices")
+      .set({ provider: "@no-permission-provider" })
+      .where("id", "=", c.id)
+      .execute();
+    await expect(
+      c.patch({ ownerCeiling: { fullAccess: true }, confirmWidening: true }),
+    ).rejects.toMatchObject({ code: "device.full_access_not_allowed" });
+    expect((await c.row()).owner_full_access).toBe(false);
   });
 
   it("a local device's owner ceiling is not set by the PATCH", async () => {

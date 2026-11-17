@@ -1,11 +1,12 @@
 import type { SandboxBrowseScope, SandboxOperationScope } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
 import type { Selectable } from "kysely";
-import type { SandboxOperationIntentsTable } from "../db/kernel-schema.js";
+import type { KernelSchemaDb, SandboxOperationIntentsTable } from "../db/kernel-schema.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { OutboxService } from "../infra/outbox/outbox.service.js";
+import { machineRootList, outsideMachineRoots } from "../local-devices/owner-report.js";
 import { PermissionAuthorityEpochStore } from "./permission-authority-epochs.js";
 import { type AuthoritySubject, PermissionAuthorityLock } from "./permission-authority-lock.js";
 import { PermissionTransitions } from "./permission-transitions.js";
@@ -180,6 +181,33 @@ export class PermissionCeilingWrites {
     );
   }
 }
+/**
+ * The active local machines' reported roots by device (one org, or all): what the Full-off writers
+ * compare running restricted scopes against (B2 reach narrowing). Cloud devices have none.
+ */
+export async function localMachineRoots(
+  db: KernelSchemaDb,
+  orgId?: string,
+): Promise<Map<string, string[]>> {
+  let q = db
+    .selectFrom("device_machines")
+    .select(["device_id", "roots"])
+    .where("revoked_at", "is", null);
+  if (orgId !== undefined) q = q.where("org_id", "=", orgId);
+  const rows = await q.execute();
+  return new Map(rows.map((r) => [r.device_id, machineRootList(r.roots)]));
+}
+
+/**
+ * What a platform or org Full ceiling turning off takes away (B2, same split as the owner writer):
+ * Full execution, broad browsing, and running restricted work outside the machine's roots, since
+ * the effective restricted reach narrows to the workspace.
+ */
+export const needsWiderDeviceCeiling = (
+  scope: SandboxOperationScope | SandboxBrowseScope,
+  machineRoots: readonly string[] | undefined,
+): boolean => needsFullCeiling(scope) || outsideMachineRoots(scope, machineRoots);
+
 /** Full execution: a Full-profile operation (B2: decided by Full permission alone). */
 export const requiresFullExecution = (scope: SandboxOperationScope | SandboxBrowseScope): boolean =>
   "profile" in scope && scope.profile === "full-access";

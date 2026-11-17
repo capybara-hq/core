@@ -30,7 +30,11 @@ import {
 } from "../sandbox/modes.js";
 import { isExecutionMethod } from "../sandbox/operation-authority-types.js";
 import { PermissionAuthorityModule } from "../sandbox/permission-authority.module.js";
-import { needsFullCeiling, PermissionCeilingWrites } from "../sandbox/permission-ceiling-writes.js";
+import {
+  localMachineRoots,
+  needsWiderDeviceCeiling,
+  PermissionCeilingWrites,
+} from "../sandbox/permission-ceiling-writes.js";
 import {
   type DevicesAutoModeView,
   type DevicesFullAccessView,
@@ -712,12 +716,14 @@ export class OrgSettingsService {
       target: orgId,
       detail: { before, after, ...auditDetail },
     });
-    if (patch.fullAccess !== undefined || patch.cloudNetwork !== undefined)
+    if (patch.fullAccess !== undefined || patch.cloudNetwork !== undefined) {
+      const machineRoots = await localMachineRoots(this.db.db, orgId);
       await this.ceilings.publishLocked(
         { orgId },
         "org",
         (scope, row) => {
-          if (needsFullCeiling(scope)) return after.fullAccess === "off";
+          if (needsWiderDeviceCeiling(scope, machineRoots.get(row.device_id)))
+            return after.fullAccess === "off";
           if (
             !("network" in scope) ||
             !isExecutionMethod(row.method) ||
@@ -733,6 +739,7 @@ export class OrgSettingsService {
         },
         before.fullAccess !== after.fullAccess,
       );
+    }
     return after;
   }
 }

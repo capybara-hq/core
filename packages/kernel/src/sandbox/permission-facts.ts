@@ -153,8 +153,9 @@ export class PermissionFacts {
   }
 
   /**
-   * Refuses new authority on a local device whose last owner report arrived stale or conflicting
-   * (B2): only a valid current report from its machine clears it. Never infers wider facts.
+   * Refuses new authority on a local device whose machine regressed its owner report sequence on
+   * a new connection or sent conflicting reports (B2): only a valid current report or a new
+   * login clears it. Late deliveries of older reports are ignored, never blocking.
    */
   async assertOwnerReportUsable(orgId: string, deviceId: string): Promise<void> {
     const row = await this.db
@@ -167,7 +168,7 @@ export class PermissionFacts {
     if (row && ownerFactsOf(row).state === "blocked")
       throw new ApiError(
         "device.owner_report_stale",
-        "This device's machine sent an out-of-order owner report; restart capybara-device on it, or log in again if this repeats",
+        "This device's machine reported an owner ceiling older than the one it reported before (its owner report sequence was lost or reset); run capybara-device login again on that machine to reset it",
       );
   }
 

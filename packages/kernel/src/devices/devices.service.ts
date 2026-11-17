@@ -34,12 +34,19 @@ import {
   readDeploymentDevicePolicy,
   type SandboxMode,
 } from "../sandbox/modes.js";
+import { permissionAvailabilityFor } from "../sandbox/permission-availability.js";
 import {
   needsFullCeiling,
   PermissionCeilingWrites,
   requiresFullExecution,
 } from "../sandbox/permission-ceiling-writes.js";
-import { isInternalProvider, LOCAL_PROVIDER, SandboxProviders } from "../sandbox/providers.js";
+import { readRuntimeReport } from "../sandbox/permission-runtime-reports.js";
+import {
+  isInternalProvider,
+  LOCAL_PROVIDER,
+  providerForDevice,
+  SandboxProviders,
+} from "../sandbox/providers.js";
 import { deviceNotFound, SandboxService } from "../sandbox/sandbox.service.js";
 import {
   DeviceAccess,
@@ -621,11 +628,20 @@ export class DevicesService {
       );
     const row = await this.db
       .selectFrom("devices")
-      .select(["owner_full_access", "mode"])
+      .select(["owner_full_access", "mode", "provider", "outer_network"])
       .where("id", "=", id)
       .executeTakeFirstOrThrow();
+    // the explicit ceiling exists only once B1 snapshotted the device's old effective authority
+    // and its outer network (under the exclusive lifecycle lease, which a request cannot take
+    // inside its transaction): writing it first would pre-empt the snapshot and could leave the
+    // outer network open, so the PATCH is refused until then (the old sandbox switch narrows)
+    if (row.owner_full_access === null || row.outer_network === null)
+      throw new ApiError(
+        "device.permission_reconcile_required",
+        "This device's permissions have not been migrated yet; switch it to sandbox mode to narrow it, and set its Full access ceiling once the migration has run",
+      );
     const current = cloudChosenMode(row) !== "sandbox";
-    if (want === current && row.owner_full_access !== null) return;
+    if (want === current) return;
     if (want && !current) {
       if (patch.confirmWidening !== true)
         throw new ApiError(
@@ -637,6 +653,19 @@ export class DevicesService {
         throw new ApiError(
           "device.full_access_not_allowed",
           "The platform or the organization does not allow Full access, so this device's ceiling cannot be widened",
+        );
+      // M3: nor beyond what the provider can enforce (a report or a provider without Full)
+      const provider = providerForDevice(this.providers, row.provider);
+      let availability = permissionAvailabilityFor(provider?.impl);
+      if (availability.state === "unprobed" && provider)
+        availability = await readRuntimeReport(this.db.db, id, provider.plugin, provider.version);
+      if (
+        availability.state === "unsupported" ||
+        (availability.state === "supported" && !availability.report.fullAccess)
+      )
+        throw new ApiError(
+          "device.full_access_not_allowed",
+          "This device's sandbox provider cannot run Full access, so its ceiling cannot be widened",
         );
     }
     await this.db
@@ -670,6 +699,30 @@ export class DevicesService {
         },
       });
     }
+  }
+
+  /**
+   * How far restricted work may root outside the device's workspace now (B2): a local machine's
+   * owner reach within a platform and org that allow the wider device ceiling; a cloud device
+   * keeps its previous rule (its effective mode). Never the owner's Full permission alone.
+   */
+  async projectReach(orgId: string, deviceId: string): Promise<"workspace" | "os-user"> {
+    const row = await this.db
+      .selectFrom("devices as e")
+      .leftJoin("device_machines as m", (j) =>
+        j.onRef("m.device_id", "=", "e.id").on("m.revoked_at", "is", null),
+      )
+      .select(["e.source", "m.owner_report", "m.local_policy"])
+      .where("e.id", "=", deviceId)
+      .where("e.org_id", "=", orgId)
+      .where("e.deleted_at", "is", null)
+      .executeTakeFirst();
+    if (row === undefined) return "workspace";
+    const policy = await this.sandbox.devicePolicy({ orgId, deviceId });
+    if (row.source !== "local") return policy.mode === "auto" ? "os-user" : "workspace";
+    return policy.allowedMode === "auto" && ownerFactsOf(row).restrictedProjectReach === "os-user"
+      ? "os-user"
+      : "workspace";
   }
 
   /**

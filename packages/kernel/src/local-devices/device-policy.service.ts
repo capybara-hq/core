@@ -85,6 +85,8 @@ export type PolicyOpResult =
       policy?: DeviceLocalPolicySummary;
       /** A staged (v3) answer's owner report: recorded before the outcome is accepted (B2). */
       ownerCeiling?: unknown;
+      /** The authenticated connection the answer arrived on (recorded with the report). */
+      connectionId?: string | null;
     }
   | { outcome: "refused"; message: string }
   | { outcome: "not_received" }
@@ -92,7 +94,9 @@ export type PolicyOpResult =
   | { outcome: "unknown" };
 
 /** What a machine says of an op id ({@link DevicePolicyService.outcomeOf}). */
-export type PolicyOpStatus = DevicePolicyStatus | { outcome: "offline" };
+export type PolicyOpStatus =
+  | (DevicePolicyStatus & { ownerCeiling?: unknown; connectionId?: string | null })
+  | { outcome: "offline" };
 
 const OFFLINE_MESSAGE =
   "The device's machine is offline, so its policy was not changed. Start capybara-device on it.";
@@ -133,7 +137,8 @@ export class DevicePolicyService {
   constructor(
     @Inject(KernelDb) private readonly db: KernelDb,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
-    @Inject(LocalDeviceRelay) private readonly relay: Pick<LocalDeviceRelay, "call" | "holderLive">,
+    @Inject(LocalDeviceRelay)
+    private readonly relay: Pick<LocalDeviceRelay, "call" | "holderLive" | "connection">,
     @Inject(MachinesService) private readonly machines: Pick<MachinesService, "activeFor">,
     @Inject(OutboxService) private readonly outbox: Pick<OutboxService, "add">,
     @Inject(KernelConfigService) private readonly config: Pick<KernelConfigService, "get">,
@@ -262,12 +267,23 @@ export class DevicePolicyService {
     notFound?: true;
   }> {
     try {
-      const { policy } = await this.relay.call(intent.deviceId, "policy", intent.args, {
+      const connectionId = await this.connectionIdOf(intent.deviceId);
+      const answer = (await this.relay.call(intent.deviceId, "policy", intent.args, {
         deadlineMs: POLICY_DEADLINE_MS,
         // the relay gives up by itself (deadline plus the reconnect grace)
         signal: new AbortController().signal,
-      });
-      return { result: { outcome: "applied", policy }, outcome: { applied: true, policy } };
+      })) as { policy: DeviceLocalPolicySummary; ownerCeiling?: unknown };
+      const { policy } = answer;
+      return {
+        result: {
+          outcome: "applied",
+          policy,
+          // a staged (v3) answer's owner report, recorded with the connection it came on
+          ...(answer.ownerCeiling !== undefined && { ownerCeiling: answer.ownerCeiling }),
+          connectionId,
+        },
+        outcome: { applied: true, policy },
+      };
     } catch (e) {
       if (e instanceof ApiError) {
         // device.offline (the wait ran out: the machine may still apply it), device.forbidden
@@ -307,6 +323,15 @@ export class DevicePolicyService {
     }
   }
 
+  /** The authenticated connection a call goes to now, or null when unknown (M4). */
+  private async connectionIdOf(deviceId: string): Promise<string | null> {
+    try {
+      return (await this.relay.connection(deviceId)).connectionId;
+    } catch {
+      return null;
+    }
+  }
+
   /**
    * What the machine says became of the op `opId` (a read-only `policyStatus`), or `offline` when
    * no replica holds its connection or it does not answer. Never sends the change.
@@ -314,12 +339,14 @@ export class DevicePolicyService {
   async outcomeOf(deviceId: string, opId: string): Promise<PolicyOpStatus> {
     if (!(await this.relay.holderLive(deviceId))) return { outcome: "offline" };
     try {
-      return await this.relay.call(
+      const connectionId = await this.connectionIdOf(deviceId);
+      const status = await this.relay.call(
         deviceId,
         "policyStatus",
         { opId },
         { deadlineMs: STATUS_DEADLINE_MS, signal: new AbortController().signal },
       );
+      return { ...status, connectionId };
     } catch (e) {
       this.log.warn("could not ask a machine what became of a policy op", {
         deviceId,
@@ -378,11 +405,12 @@ export class DevicePolicyService {
     let v3Report = false;
     if (result.outcome === "applied" && result.ownerCeiling !== undefined) {
       const recorded = await this.owners.recordLocked(ref.machineId, result.ownerCeiling, {
-        connectionId: null,
+        connectionId: result.connectionId ?? null,
         via: "policy-result",
       });
-      if (recorded === "stale" || recorded === "conflict" || recorded === "revoked")
-        result = { outcome: "unknown" };
+      // a lower sequence is a late delivery (ignored by the writer), the op still applied; only
+      // a conflicting report or a revoked machine leaves it unknown
+      if (recorded === "conflict" || recorded === "revoked") result = { outcome: "unknown" };
       else v3Report = true;
     }
     if (result.outcome === "unknown") {

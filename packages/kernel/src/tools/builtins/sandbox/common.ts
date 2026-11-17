@@ -57,7 +57,7 @@ export interface SandboxToolDeps {
    * in test stubs: free mode) gives what decides the working root, read as the review reads it.
    */
   devices: Pick<ConversationDevices, "forTool"> &
-    Partial<Pick<ConversationDevices, "usableNow" | "modeLevel" | "workingFacts">>;
+    Partial<Pick<ConversationDevices, "usableNow" | "modeLevel" | "workingFacts" | "projectReach">>;
   /** Background `Bash` tasks; absent in test stubs, where `run_in_background` is refused. */
   background?: Pick<
     BackgroundTaskStore,
@@ -724,8 +724,9 @@ async function inSandboxWith<T>(
     // the working facts (workspace, home, project snapshot) are read as the review reads them
     // a call the review covered runs in the working root it was reviewed against: never read again
     const reviewed = ctx.reviewedWorkingRoot;
-    const [level, working] = await Promise.all([
+    const [level, reach, working] = await Promise.all([
       deps.devices.modeLevel?.(ctx.orgId, deviceId) ?? null,
+      deps.devices.projectReach?.(ctx.orgId, deviceId),
       reviewed !== undefined
         ? null
         : (deps.devices.workingFacts?.(
@@ -787,7 +788,7 @@ async function inSandboxWith<T>(
           mode,
           h,
           roots: info.roots,
-          workingRoot: reviewed ?? sessionWorkingRoot(working, mode, info.roots.workspace),
+          workingRoot: reviewed ?? sessionWorkingRoot(working, mode, info.roots.workspace, reach),
           p,
           signal,
         };
@@ -841,9 +842,10 @@ export function sessionWorkingRoot(
   working: WorkingFacts | null,
   mode: SandboxMode,
   workspace: string,
+  reach?: "workspace" | "os-user",
 ): string {
   if (working === null) return workspace;
-  const root = workingRootOf(working.project, { mode, ...working });
+  const root = workingRootOf(working.project, { mode, reach, ...working });
   return root === working.workspace ? workspace : root;
 }
 

@@ -12,7 +12,12 @@ import type { KernelLogger } from "../log.js";
 import { CloudNetworkSettingSchema, invalidCloudNetwork } from "../orgs/cloud-network-setting.js";
 import { coversHost, orgEffectiveHosts } from "./modes.js";
 import { isExecutionMethod } from "./operation-authority-types.js";
-import { needsFullCeiling, PermissionCeilingWrites } from "./permission-ceiling-writes.js";
+import {
+  localMachineRoots,
+  needsFullCeiling,
+  needsWiderDeviceCeiling,
+  PermissionCeilingWrites,
+} from "./permission-ceiling-writes.js";
 import {
   convertStoredPermissionKeys,
   readStoredDevicesFullAccess,
@@ -312,6 +317,7 @@ export class PermissionConfigPublication {
       }),
     );
     const devices = await this.db.selectFrom("devices").select(["id", "source"]).execute();
+    const machineRoots = await localMachineRoots(this.db.db);
     const sources = new Map(devices.map((device) => [device.id, device.source]));
     if (before.egress !== next.egress)
       await this.ceilings.invalidateDeviceConsentUnderPlatform(
@@ -321,6 +327,10 @@ export class PermissionConfigPublication {
       {},
       "platform",
       (scope, row) => {
+        // Full off also narrows restricted reach to the workspace (B2): running restricted work
+        // outside a machine's roots goes with Full work, as the owner writer decides
+        if (nextMode === "off" && needsWiderDeviceCeiling(scope, machineRoots.get(row.device_id)))
+          return true;
         if (needsFullCeiling(scope))
           return (
             nextMode === "off" ||

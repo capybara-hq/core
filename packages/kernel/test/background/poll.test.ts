@@ -1187,6 +1187,84 @@ describe("exact background revocation through the outbox and the worker", () => 
     expect(f.provider.calls.stop).toHaveLength(2);
   });
 
+  it("I5: org Full off revokes running restricted work on a selected project outside the workspace", async () => {
+    const f = await managedTaskFixture({
+      kernels: [k],
+      raw,
+      login: ownerLogin(),
+      password: OWNER_PW,
+      accountId: ownerAccount().id,
+      launch: false,
+    });
+    const machine = await f.db
+      .selectFrom("device_machines")
+      .select("id")
+      .where("device_id", "=", f.deviceId)
+      .executeTakeFirstOrThrow();
+    // the owner allows no Full but OS-user project reach (B2 report)
+    await k.app
+      .get(MachinesService)
+      .recordPolicyV3(
+        machine.id,
+        ownerFrame(1, { fullAccess: false, domains: [], reach: "os-user" }),
+        "connection-1",
+      );
+    // the instance already runs at the limits that ceiling gives (no recreation on launch)
+    // (the managed test provider is not `@local`, so the sandbox service treats it like a cloud one)
+    const limits = await k.app
+      .get(SandboxService)
+      .deviceLimits({ orgId: f.orgId, deviceId: f.deviceId }, { source: "cloud" });
+    await f.db
+      .updateTable("device_instances")
+      .set({ instance_limits: JSON.stringify({ mode: limits.mode, network: limits.network }) })
+      .where("device_id", "=", f.deviceId)
+      .execute();
+    const outside = "/home/owner/ext";
+    await f.db
+      .insertInto("device_projects")
+      .values({ device_id: f.deviceId, name: "ext", path: outside, created_by: ownerAccount().id })
+      .execute();
+    // the conversation is bound to that project (as creating it with the project binds it; the
+    // shared fixture creates the conversation before the device exists)
+    await sql`UPDATE capybara.conversations SET project_name = 'ext', project_path = ${outside}
+      WHERE id = ${f.conversationId}`.execute(f.db);
+    // the bound run start records the project's root: it becomes the working root
+    await k.app.get(EventLog).append(f.conversationId, [
+      {
+        type: "project_root",
+        idemKey: `test_project_root:${f.conversationId}`,
+        payload: { project: "ext", root: outside, skills: [] },
+      },
+    ]);
+    const task = await f.launchAnother();
+    const intentOf = async (taskId: string) => {
+      const t = await f.db
+        .selectFrom("background_tasks")
+        .select("operation_id")
+        .where("id", "=", taskId)
+        .executeTakeFirstOrThrow();
+      return f.db
+        .selectFrom("sandbox_operation_intents")
+        .selectAll()
+        .where("operation_id", "=", t.operation_id as string)
+        .executeTakeFirstOrThrow();
+    };
+    expect((await intentOf(task)).scope).toMatchObject({
+      profile: "approve-for-me",
+      filesystem: { kind: "scoped", readRoots: [outside], writeRoots: [outside] },
+    });
+    await f.db.updateTable("runs").set({ status: "completed" }).where("id", "=", f.runId).execute();
+    await k.app.get(OrgSettingsService).update(f.orgId, { fullAccess: "off" }, ownerAccount().id);
+    expect((await intentOf(task)).state).toBe("revoked");
+    await drainOutbox(k.app, { jobName: "sandbox-operation-revoke" });
+    await waitFor(
+      async () => (await intentOf(task)).revoke_acknowledged,
+      30_000,
+      "the worker's exact revoke of the outside-project task",
+    );
+    expect(f.provider.calls.stop).toHaveLength(1);
+  });
+
   it("the real org writer turning Full off revokes only the task admitted under Full; the worker stops it exactly", async () => {
     const f = await managedTaskFixture({
       kernels: [k],

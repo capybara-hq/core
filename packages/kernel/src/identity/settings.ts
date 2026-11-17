@@ -21,7 +21,11 @@ import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
-import { needsFullCeiling, PermissionCeilingWrites } from "../sandbox/permission-ceiling-writes.js";
+import {
+  localMachineRoots,
+  needsWiderDeviceCeiling,
+  PermissionCeilingWrites,
+} from "../sandbox/permission-ceiling-writes.js";
 import {
   applyDevicesFullAccessPatch,
   DEVICES_AUTO_MODE_PATCH,
@@ -816,13 +820,18 @@ export class SettingsService {
           LEGACY_DEVICES_AUTO_MODE_SETTING,
           r.next.permission === undefined ? {} : { mode: r.next.permission },
         ]);
-      if (fullAccessChange.before.permission !== fullAccessChange.after)
+      if (fullAccessChange.before.permission !== fullAccessChange.after) {
+        const machineRoots =
+          fullAccessChange.after === "off" ? await localMachineRoots(this.db.db) : null;
         await this.ceilings.publishLocked(
           {},
           "platform",
-          fullAccessChange.after === "off" ? needsFullCeiling : false,
+          machineRoots === null
+            ? false
+            : (scope, row) => needsWiderDeviceCeiling(scope, machineRoots.get(row.device_id)),
           true,
         );
+      }
     }
     // the platform's attribution defaults: a field set in the startup config is read-only
     if (patch.attribution !== undefined) {
