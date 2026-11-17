@@ -283,6 +283,17 @@ describe("the CSPs the document policy leaves alone", () => {
     vi.unstubAllGlobals();
   });
 
+  it("the embed CSP allows workers from the embed's own origin and blob: only", () => {
+    const directives = Object.fromEntries(
+      EMBED_CSP.split("; ").map((d) => [d.split(" ")[0], d.split(" ").slice(1)]),
+    );
+    expect(directives["worker-src"]).toEqual(["'self'", "blob:"]);
+    expect(directives["frame-src"]).toEqual(["'none'"]);
+    expect(directives["script-src"]).toEqual(["'self'", "'unsafe-inline'"]);
+    expect(EMBED_CSP).not.toContain("wasm-unsafe-eval");
+    expect(directives.sandbox).toEqual(["allow-scripts", "allow-forms"]);
+  });
+
   it("the /plugin-ui and object-store CSPs are untouched", async () => {
     // the proxy never sees /plugin-ui, so the route's own embed CSP is the only one
     expect(proxied("/plugin-ui/fake-embed/panel")).toBe(false);

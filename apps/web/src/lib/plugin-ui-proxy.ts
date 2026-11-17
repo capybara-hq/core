@@ -41,7 +41,11 @@ const BAD_SEGMENT = /[\u0000-\u001f\u007f/\\]/;
  *   3. `/api` 的响应没有 CORS 头，不透明源读不到；
  *   4. 嵌入令牌当 Bearer 调 `/api` 一律 401（内核鉴权守卫只认 API 令牌）；
  *   本代理也不会把 `cap_pat_` / `cap_svc_` 令牌转给插件；
- * - 不允许插件页再嵌 iframe、起 worker、加载插件对象，`base-uri 'none'` 防止改写相对地址。
+ * - 不允许插件页再嵌 iframe、加载插件对象，`base-uri 'none'` 防止改写相对地址。
+ * - Workers are allowed from the embed's own routes and `blob:` URLs. A worker of a sandboxed embed
+ *   inherits its opaque origin and CSP, so it reaches nothing the page cannot and only moves work
+ *   off the main thread (decision 2026-11-17, plugin-file-preview spec). An opaque-origin page can
+ *   in practice construct workers only from `blob:` / `data:` URLs, which is why `blob:` is listed.
  */
 export const EMBED_CSP = [
   "default-src 'self'",
@@ -53,7 +57,7 @@ export const EMBED_CSP = [
   "media-src 'self'",
   "object-src 'none'",
   "frame-src 'none'",
-  "worker-src 'none'",
+  "worker-src 'self' blob:",
   "base-uri 'none'",
   "form-action 'self'",
   "frame-ancestors 'self'",
