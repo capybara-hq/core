@@ -145,6 +145,61 @@ const CONNECTION_FENCED = new Set(["backgroundReadOutput"]);
  */
 const REFUSED_WHILE_DRAINING = new Set(["create", "bindInstance"]);
 
+/** Controls served while no generation is bound: lifecycle, machine and owner policy. */
+const CONTROLS = new Set(["bindInstance", "policy", "policyStatus", "create", "stop"]);
+
+/**
+ * The machine lifecycle of a staged program (`start` supplies it): `create` reports the roots of
+ * a new instance, `stop` (revoked or deleted on the deployment) exact-stops what the program owns
+ * before it is answered; `stopped` is called once that answer was handed to the socket, and ends
+ * the program.
+ */
+export interface StagedMachineControl {
+  create(signal: AbortSignal): Promise<{ roots: import("@capybara-hq/plugin-sdk").SandboxRoots }>;
+  stop(reason: "revoked" | "deleted", signal: AbortSignal): Promise<void>;
+  stopped(reason: "revoked" | "deleted"): void;
+}
+
+async function serveMachineControl(
+  machine: StagedMachineControl | undefined,
+  req: { id: string; op: string; args: Readonly<Record<string, unknown>> },
+  signal: AbortSignal,
+): Promise<DeviceResponseV3> {
+  const sdk = await import("@capybara-hq/plugin-sdk");
+  try {
+    if (!machine)
+      throw new sdk.SandboxPermissionUnsupportedError(
+        "This program cannot serve the machine lifecycle; update capybara-device",
+      );
+    if (req.op === "create")
+      return {
+        type: "res",
+        id: req.id,
+        ok: true,
+        result: sdk.parseOperationResultV3("create", await machine.create(signal)),
+      };
+    const reason = (req.args as { reason?: unknown }).reason;
+    if (reason !== "revoked" && reason !== "deleted")
+      throw new sdk.DeviceProtocolError("A machine stop names its reason: revoked or deleted");
+    await machine.stop(reason, signal);
+    return { type: "res", id: req.id, ok: true, result: null };
+  } catch (error) {
+    return {
+      type: "res",
+      id: req.id,
+      ok: false,
+      error: {
+        kind: sdk.isFileSystemGoneError(error)
+          ? "fs_gone"
+          : sdk.isSandboxPermissionUnsupportedError(error)
+            ? "unsupported"
+            : "error",
+        message: error instanceof Error ? error.message : String(error),
+      },
+    };
+  }
+}
+
 export type StagedDrainReport =
   | { drained: true }
   | {
@@ -224,6 +279,8 @@ export function serveStagedSession(
   binder?: InstanceBinder,
   /** Serves `policy` / `policyStatus` with owner reports (B2); without it they are unsupported. */
   owner?: StagedOwnerPolicy,
+  /** Serves the machine lifecycle `create` and `stop`; without it they are unsupported. */
+  machine?: StagedMachineControl,
 ): { ready: () => KernelReadyV3 | undefined } {
   if (!state || state.discarded)
     throw new Error("Serve the session with the current credential's session state");
@@ -314,7 +371,7 @@ export function serveStagedSession(
       // per-request problems get a typed answer; the socket and its other requests carry on
       const target =
         // lifecycle and owner policy controls are served while unbound too
-        frame.op === "bindInstance" || frame.op === "policy" || frame.op === "policyStatus"
+        CONTROLS.has(frame.op)
           ? { backend, handle }
           : binder
             ? binder.current()
@@ -342,10 +399,18 @@ export function serveStagedSession(
         () => ctl.abort(new Error("Request deadline elapsed; retry the request")),
         frame.deadlineMs,
       );
-      const done = serveOperationV3(target.backend, target.handle, frame, ctl.signal, binder, owner)
+      const lifecycle = frame.op === "create" || frame.op === "stop";
+      const done = (
+        lifecycle
+          ? serveMachineControl(machine, frame, ctl.signal)
+          : serveOperationV3(target.backend, target.handle, frame, ctl.signal, binder, owner)
+      )
         .then((res) => {
-          if (ctl.signal.aborted) return;
+          // a machine stop is answered even when its deadline passed: the program ends anyway
+          if (ctl.signal.aborted && frame.op !== "stop") return;
           deliver(res);
+          if (frame.op === "stop" && res.ok)
+            machine?.stopped((frame.args as { reason: "revoked" | "deleted" }).reason);
         })
         .catch(fail)
         .finally(() => {

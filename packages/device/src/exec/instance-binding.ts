@@ -10,6 +10,7 @@ import {
   type SandboxHandle,
   SandboxPermissionUnsupportedError,
   SandboxScopeDeniedError,
+  type SandboxStopResult,
 } from "@capybara-hq/plugin-sdk";
 import type { MacOperationBackend } from "./mac-operation-backend.js";
 import type { VerifiedRuntime } from "./runtime-manifest.js";
@@ -42,9 +43,16 @@ export interface InstanceBinderOptions {
   /** {@link credentialIdentity} of the machine credential this process runs with. */
   credentialIdentity: string;
   stateDir: string;
-  /** Builds (and recovers the journal of) the operation backend for one exact generation. */
-  createBackend(instanceGeneration: string): Promise<MacOperationBackend>;
-  /** Verifies the installed bytes and environment (`verifyInstalledRuntime`); throws when not. */
+  /**
+   * Builds (and recovers the journal of) the operation backend for one exact generation, after
+   * {@link verify} succeeded in this process: restricted launches run only the sealed runtime with
+   * the binding's attested `runtimeIdentity.runtimeHash`.
+   */
+  createBackend(instanceGeneration: string, binding: StoredBinding): Promise<MacOperationBackend>;
+  /**
+   * Verifies the installed bytes and environment (`verifyInstalledRuntime`, staging the sealed
+   * runtime closure in the private state directory); throws when not.
+   */
   verify(): Promise<VerifiedRuntime>;
   /** The strict current owner report (B2 supplies its sequence sidecar). */
   ownerReport(): Promise<DeviceOwnerCeilingV3>;
@@ -162,6 +170,18 @@ export class InstanceBinder {
     });
   }
 
+  /**
+   * A new instance is being created for this device (`create`): the bound generation is about to
+   * become an older one, so its background tasks are exact-stopped by their refs (W3-M). Foreground
+   * work and uncertain work of earlier processes are left to the retirement rules of {@link bind}.
+   */
+  async dropOlderGenerations(signal: AbortSignal): Promise<SandboxStopResult[]> {
+    return this.serial(async () => {
+      signal.throwIfAborted();
+      return (await this.bound?.backend.lifecycle.stopOwned(dropOptions(signal))) ?? [];
+    });
+  }
+
   async bind(request: BindInstanceRequestV3, signal: AbortSignal): Promise<BindInstanceResultV3> {
     return this.serial(async () => {
       signal.throwIfAborted();
@@ -249,6 +269,10 @@ export class InstanceBinder {
       );
     if (old) {
       old.backend.lifecycle.beginDrain();
+      if (old.binding.instanceGeneration !== next.instanceGeneration)
+        // the older generation's background tasks are dropped (exact-stopped by their refs);
+        // running foreground work and uncertain work still block below
+        await old.backend.lifecycle.stopOwned(dropOptions(new AbortController().signal));
       let pending = unsettled(old.backend);
       if (pending > 0) throw refuse(pending);
       if (previous !== next) await writeStored(this.options.stateDir, next);
@@ -261,7 +285,7 @@ export class InstanceBinder {
       this.bound = undefined;
       return this.enable(next);
     }
-    const candidate = await this.options.createBackend(next.instanceGeneration);
+    const candidate = await this.options.createBackend(next.instanceGeneration, next);
     const pending = unsettled(candidate);
     if (pending > 0) {
       candidate.lifecycle.dispose();
@@ -279,7 +303,7 @@ export class InstanceBinder {
 
   private async enable(binding: StoredBinding): Promise<BoundInstance> {
     if (this.bound) throw new Error("A supervisor already owns this device's journal");
-    const backend = await this.options.createBackend(binding.instanceGeneration);
+    const backend = await this.options.createBackend(binding.instanceGeneration, binding);
     this.bound = { binding, backend, handle: { id: this.options.deviceId } };
     return this.bound;
   }
@@ -295,6 +319,14 @@ export class InstanceBinder {
     return run;
   }
 }
+
+/** How long a dropped background task gets to end after its stop signal. */
+export const DROP_GRACE_MS = 2000;
+const dropOptions = (signal: AbortSignal) => ({
+  backgroundOnly: true,
+  graceMs: DROP_GRACE_MS,
+  signal,
+});
 
 const sameIdentity = (a: DeviceRuntimeIdentityV3, b: VerifiedRuntime) =>
   a.runtimeHash === b.runtimeHash &&

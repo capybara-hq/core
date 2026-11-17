@@ -64,6 +64,15 @@ export type MacOperationBackend = Required<
     /** Unsettled work of generations other than `generation` (default: this backend's). */
     retirementObligations(generation?: string): number;
     /**
+     * Exact-stops what this backend owns live, each by its recorded ref (machine stop: all of it;
+     * a replacement instance: its background tasks only). Resolves once each attempt settled.
+     */
+    stopOwned(opts: {
+      backgroundOnly: boolean;
+      graceMs: number;
+      signal: AbortSignal;
+    }): Promise<import("@capybara-hq/plugin-sdk").SandboxStopResult[]>;
+    /**
      * Supersedes this backend (B4): its supervisor gives the journal up and every later call is
      * refused. Throws while it still owns work.
      */
@@ -75,6 +84,8 @@ export interface MacBackendDependencies {
   platform?: NodeJS.Platform;
   startWorker?: (request: MacWorkerRequest, signal: AbortSignal) => Promise<MacWorkerHandle>;
   restrictedSupported?: boolean;
+  /** Why restricted support is off (the failed self-check), reported instead of the default. */
+  unavailableReason?: string;
   now?: () => number;
   watch?: (tick: () => Promise<void>) => () => void;
 }
@@ -125,14 +136,15 @@ export async function createMacOperationBackend(
     ...(!restricted
       ? {
           unavailableReason:
-            platform === "darwin"
+            dependencies.unavailableReason ??
+            (platform === "darwin"
               ? PENDING
-              : "Restricted Linux/local-Docker validation remains pending",
+              : "Restricted Linux/local-Docker validation remains pending"),
         }
       : {}),
     fullAccess: platform === "darwin",
     background: platform === "darwin",
-    pending: PENDING,
+    pending: (!restricted && dependencies.unavailableReason) || PENDING,
     ...(dependencies.startWorker ? { startWorker: dependencies.startWorker } : {}),
     checkArtifactTarget: (outputPath) => {
       const canonical = (path: string) => path.replace(/^\/(tmp|var|etc)(?=\/|$)/, "/private/$1");
@@ -479,6 +491,7 @@ export async function createLocalOperationBackend(
       beginDrain: () => supervisor.beginDrain(),
       ownership: () => supervisor.ownership(),
       settle: (signal) => supervisor.settle(signal),
+      stopOwned: (opts) => supervisor.stopOwned(opts),
       retirementObligations: (generation) =>
         supervisor.retirementObligations(generation ?? options.instanceGeneration),
       dispose: () => {
