@@ -14,6 +14,7 @@ import { MAINTENANCE_QUEUE_NAME } from "../runtime/maintenance-queue.js";
 import { RunJobsModule } from "../runtime/run-jobs.js";
 import { StepLogModule } from "../runtime/step-log.js";
 import { SubagentsModule } from "../runtime/subagents/subagents.service.js";
+import { ManagedDeviceContextModule } from "../sandbox/managed-device-context.module.js";
 import { OperationAuthorityModule } from "../sandbox/operation-authority.module.js";
 import { PermissionAuthorityModule } from "../sandbox/permission-authority.module.js";
 import { PermissionCallGrantsModule } from "../sandbox/permission-call-grants.module.js";
@@ -65,6 +66,8 @@ import { ToolRegistry } from "./registry.js";
     SubagentsModule,
     // the builtin sandbox and skill tools run in the conversation's device
     SandboxModule,
+    // the managed sandbox route's device context writer (passed only once activated)
+    ManagedDeviceContextModule,
     DevicesModule,
     // 「这台设备一直允许」 changes the device's local policy (network asks)
     LocalDevicesModule,

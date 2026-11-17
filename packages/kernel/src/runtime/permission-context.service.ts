@@ -27,61 +27,25 @@ import {
   RecordedPermissionContextError,
 } from "./context/permission-profile.js";
 import { RunError } from "./model-call.js";
+import {
+  PERMISSION_CONTEXT_RUN_ERRORS,
+  type PermissionContextFailureKind,
+  PublicationStale,
+  permissionContextFailureKind,
+} from "./permission-context-errors.js";
 import { currentExecutionClaim, type ExecutionClaim, ExecutionRevoked } from "./run-execution.js";
 
-/** The named no-send failures of a permission context read or append (spec B2 table). */
-export const PERMISSION_CONTEXT_RUN_ERRORS = {
-  stale: {
-    code: "run.permission_context_stale",
-    message:
-      "Permission configuration changed. Wait for configuration activation, then retry this run.",
-  },
-  changed: {
-    code: "run.permission_context_changed",
-    message:
-      "The device binding changed while preparing this request. Retry the run after the binding settles.",
-  },
-  unavailable: {
-    code: "run.permission_context_unavailable",
-    message:
-      "Permission context could not be read or recorded. Retry this run when storage is available.",
-  },
-  invalid: {
-    code: "run.permission_context_invalid",
-    message:
-      "Permission context is invalid. Ask an administrator to inspect the run before retrying.",
-  },
-  actor: {
-    code: "run.permission_context_actor_unavailable",
-    message:
-      "This run's actor is no longer authorized. Start a new run with an authorized account.",
-  },
-} as const;
-type PermissionContextFailure = keyof typeof PERMISSION_CONTEXT_RUN_ERRORS;
-const runError = (kind: PermissionContextFailure) =>
+export { PERMISSION_CONTEXT_RUN_ERRORS };
+
+const runError = (kind: PermissionContextFailureKind) =>
   new RunError(
     PERMISSION_CONTEXT_RUN_ERRORS[kind].code,
     PERMISSION_CONTEXT_RUN_ERRORS[kind].message,
   );
 
-/** The replica has not applied the current permission configuration (checked under the locks). */
-class PublicationStale extends Error {
-  override readonly name = "PublicationStale";
-}
 /** A live recorder reached a conversation it must never write (an eval replay, a wrong claim). */
 class RecorderRefused extends Error {
   override readonly name = "RecorderRefused";
-}
-
-/** SQLSTATE classes of a database that is unreachable, overloaded or aborting, not of bad data. */
-const STORAGE_SQLSTATE = /^(08|40|53|57|58|XX)[0-9A-Z]{3}$/;
-const STORAGE_NODE = new Set(["ECONNREFUSED", "ECONNRESET", "ETIMEDOUT", "EPIPE", "ENOTFOUND"]);
-function isStorageError(error: unknown): boolean {
-  if (!(error instanceof Error)) return false;
-  const code = (error as { code?: unknown }).code;
-  if (typeof code === "string" && (STORAGE_SQLSTATE.test(code) || STORAGE_NODE.has(code)))
-    return true;
-  return /Connection terminated|timeout exceeded when trying to connect/i.test(error.message);
 }
 
 /**
@@ -96,17 +60,7 @@ export function permissionContextFailure(error: unknown, signal?: AbortSignal): 
   if (error instanceof ExecutionRevoked || error instanceof RunError) return error;
   if (signal?.aborted && (error === signal.reason || (error as Error)?.name === "AbortError"))
     return error;
-  if (error instanceof PublicationStale || error instanceof SandboxScopeDeniedError)
-    return runError("stale");
-  if (error instanceof PermissionContextSubjectChanged) return runError("changed");
-  if (
-    error instanceof ApiError &&
-    ["conversation.not_found", "forbidden", "org.not_found"].includes(error.code)
-  )
-    return runError("actor");
-  if (isStorageError(error)) return runError("unavailable");
-  if (error instanceof RecordedPermissionContextError) return runError("invalid");
-  return runError("invalid");
+  return runError(permissionContextFailureKind(error));
 }
 
 /**
@@ -212,11 +166,24 @@ export class PermissionContextRecorder {
     const root = await this.profiles.readRoot(input.orgId, input.conversationId);
     if (root.id !== claim.rootId)
       throw new RecorderRefused("The execution claim belongs to another conversation tree");
+    // the whole tree, not only the calling conversation: a replay's children never record either
+    if (root.id !== input.conversationId) await this.refuseReplayRoot(input.orgId, root.id);
     return {
       orgId: input.orgId,
       rootConversationId: root.id,
       ...(root.device_id ? { deviceId: root.device_id } : {}),
     };
+  }
+
+  private async refuseReplayRoot(orgId: string, rootId: string): Promise<void> {
+    const row = await this.db
+      .selectFrom("conversations")
+      .select(["kind", "eval_run_id"])
+      .where("id", "=", rootId)
+      .where("org_id", "=", orgId)
+      .executeTakeFirst();
+    if (row && (row.kind === "eval" || row.eval_run_id !== null))
+      throw new RecorderRefused("A replay conversation never records live permission context");
   }
 
   /**
@@ -250,7 +217,7 @@ export class PermissionContextRecorder {
     if (!org || org.deleted_at !== null) throw new ExecutionRevoked();
     const rootRow = await this.db
       .selectFrom("conversations")
-      .select("deleted_at")
+      .select(["deleted_at", "kind", "eval_run_id"])
       .where("id", "=", subject.rootConversationId)
       .where("org_id", "=", input.orgId)
       .forNoKeyUpdate()
@@ -264,7 +231,12 @@ export class PermissionContextRecorder {
       .executeTakeFirst();
     if (!rootRow || rootRow.deleted_at !== null || !conv || conv.deleted_at !== null)
       throw new ExecutionRevoked();
-    if (conv.kind === "eval" || conv.eval_run_id !== null)
+    if (
+      conv.kind === "eval" ||
+      conv.eval_run_id !== null ||
+      rootRow.kind === "eval" ||
+      rootRow.eval_run_id !== null
+    )
       throw new RecorderRefused("A replay conversation never records live permission context");
     const run = await this.db
       .selectFrom("runs")

@@ -56,27 +56,34 @@ see `.agents/skills/writing-web-ui`). Design basis: overall design §6 principle
   `recordedCalls` marks every recorded call from the step where one was logged onward (`devicePaths`), and
   `RecordedToolPipeline` appends it before a matched call's result when the eval conversation's latest differs.
 - **Recorded permission context** (permission context replay spec
-  `docs/superpowers/specs/2026-11-16-permission-context-replay-design.md`; dormant: no live producer
-  writes it until the paired activation): `permission_context { payload: PermissionContextV1 }` and the
-  marked `device_paths` branch (`permissionContextVersion: 1`) render at their position, the latest
-  covered ones again after a summary, and `model_call.request.permissionContext` (`{ version, contextSeq,
-  hash }`) records the rendered contributions; absent on old logs, which rebuild byte for byte.
+  `docs/superpowers/specs/2026-11-16-permission-context-replay-design.md`): `permission_context { payload:
+  PermissionContextV1 }` and the marked `device_paths` branch (`permissionContextVersion: 1`) render at their
+  position, the latest covered ones again after a summary, and `model_call.request.permissionContext` (`{ version,
+  contextSeq, hash }`) records the rendered contributions; absent on old logs, which rebuild byte for byte.
   `permissionContextHistory` refuses a present marker or version its strict schema rejects
   (`RecordedPermissionContextError`) in live build and replay alike; in a case snapshot that is
   `eval.snapshot_invalid` (422), never a provider error. `permission_profile_changed` (after
   `subagent_changed`): a request's recorded metadata cannot be reproduced from its own bounded range
   (`min(toSeq, callSeq - 1)`); a normal profile change is recorded input, zero drift.
-  Full-run replay (`evals/recorded-permission-context.ts`, spec B4): earlier runs' contexts are seeds;
-  the target run's are fed by a recorded-only feeder at the generated request boundary
-  (`ModelStepDeps.permissionContext`, sparse `(step, attempt)` table, monotone, idem
-  `replay_permission_context:<generatedRunId>:<originalSeq>`), none for a recording without markers;
-  `replayLoopDeps` (`evals/worker.ts`) strips any live recorder. **Until Gate 9.4 wires the request
-  boundary nothing calls the feeder**: a full-run replay today only seeds earlier runs' contexts and
-  copies managed paths; the target run's own `permission_context` events are **not** injected into
-  generated requests. The result reports
-  `permission_profile_changed` from the original-coordinate diagnostics. `RecordedToolPipeline` copies a
-  managed `device_paths` whole and a matched result's `review` verbatim (absent stays absent); a replay
-  never previews, reviews, admits, provisions, resumes, probes or touches a device.
+  **Request boundary** (`runtime/model-call.ts`, spec B2): every agent-history request construction of the
+  attempt ladder (a retry, a fallback, the rebuild after a forced compaction, wrap-up) first awaits
+  `ModelStepDeps.permissionContext.beforeRequest` and then rereads the complete log once; without the port there is
+  no call and no reread (old requests build byte for byte). A revoked execution keeps its identical
+  `ExecutionRevoked` (checked before the abort); every other callback or refresh failure is a named no-send
+  `run.permission_context_*` run error, never a provider error or fallback. Compaction, title, review and
+  extraction calls get no permission context. **Live producers are dormant**: `RunSteps` wires the recorder
+  (`PermissionContextRecorder`) and `BuiltinTools` the managed device writer (`ManagedDeviceContextRecorder`) only
+  when the one gate `PERMISSION_CONTEXT_ACTIVATION` is on (production default `PERMISSION_CONTEXT_ACTIVE = false`,
+  flipped by the paired Task 8 phase 8.6 activation; tests provide the seam).
+  Full-run replay (`evals/recorded-permission-context.ts`, spec B4): earlier runs' contexts are seeds; the target
+  run's are fed by the recorded-only feeder at the generated request boundary (sparse `(step, attempt)` table,
+  monotone, idem `replay_permission_context:<generatedRunId>:<originalSeq>`), so generated requests carry the
+  recorded content and their metadata locates the generated seq; none for a recording without markers.
+  `replayLoopDeps` (`evals/worker.ts`) strips any live recorder, and the live recorder refuses an eval conversation
+  or a tree whose root is one. The result reports `permission_profile_changed` from the original-coordinate
+  diagnostics. `RecordedToolPipeline` copies a managed `device_paths` whole and a matched result's `review`
+  verbatim (absent stays absent); a replay never previews, reviews, admits, provisions, resumes, probes or touches
+  a device.
 - **A question skipped by a message** (reply-while-question spec §12): the skipped result is a logged `tool_result`,
   the message a logged `user_message` taken in at the recorded `absorbedUpToSeq`; `question_answered` (outcome
   `skipped`, `skippedBySeq`) is not model-visible. No `DriftReason`; full-run replay returns the recorded skipped

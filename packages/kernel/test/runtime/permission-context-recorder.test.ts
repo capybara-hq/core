@@ -13,7 +13,10 @@ import {
 } from "../../src/infra/database/transaction-host.js";
 import { LocalInstanceBindings } from "../../src/local-devices/instance-bindings.js";
 import { createLogger } from "../../src/log.js";
-import { permissionContextIdemKey } from "../../src/runtime/context/permission-profile.js";
+import {
+  permissionContextIdemKey,
+  permissionContextText,
+} from "../../src/runtime/context/permission-profile.js";
 import { RunError } from "../../src/runtime/model-call.js";
 import {
   PERMISSION_CONTEXT_RUN_ERRORS,
@@ -262,6 +265,51 @@ describe("recorded permission context recorder", () => {
     expect(events[3]?.payload.authorityRevision).not.toBe(events[2]?.payload.authorityRevision);
   });
 
+  it("a profile change records a new context without touching an admitted task's starting grant or claiming it stopped", async () => {
+    const f = await seedContext(k, raw);
+    await record(f);
+    const taskId = randomUUID();
+    await f.db
+      .insertInto("background_tasks")
+      .values({
+        id: taskId,
+        org_id: f.orgId,
+        conversation_id: f.rootId,
+        sandbox_conversation_id: f.rootId,
+        run_id: f.runId,
+        call_id: randomUUID(),
+        trigger_account_id: f.accountId,
+        description: "tests",
+        command: "pnpm test",
+        output_path: "/tmp/out",
+        deadline_at: new Date(Date.now() + 3_600_000),
+        device_id: f.deviceId,
+        profile_revision: 0,
+        working_root: "/work",
+        network_authority: JSON.stringify({ hosts: [], source: { kind: "base" } }),
+      } as never)
+      .execute();
+    const task = () =>
+      f.db.selectFrom("background_tasks").selectAll().where("id", "=", taskId).executeTakeFirst();
+    const before = await task();
+    await k.app.get(PermissionProfilesService).set(f.orgId, f.rootId, f.accountId, {
+      profile: "approve-for-me",
+      expectedRevision: 0,
+    });
+    await record(f);
+    const events = await contexts(raw, f.rootId);
+    expect(events.map((e) => e.payload.effectiveProfile)).toEqual([
+      "request-approval",
+      "approve-for-me",
+    ]);
+    // the started task keeps its starting grant, revision and state; nothing says it stopped
+    expect(await task()).toEqual(before);
+    expect(before?.status).toBe("running");
+    const text = permissionContextText(events[1]?.payload as never);
+    expect(text).toContain("Work already started keeps its starting permissions.");
+    expect(text).not.toMatch(/\bstopped\b/);
+  });
+
   it("rolls back an append whose transaction fails and notifies nothing", async () => {
     const f = await seedContext(k, raw);
     const log = k.app.get(EventLog);
@@ -320,6 +368,38 @@ describe("recorded permission context recorder", () => {
       .execute();
     expect(await runErrorCode(record(f))).toBe(PERMISSION_CONTEXT_RUN_ERRORS.invalid.code);
     expect(await contexts(raw, f.rootId)).toEqual([]);
+    // a child whose own row looks ordinary but whose root is a replay conversation refuses too
+    // (the guard covers the whole tree, independent of whether replays dispatch children)
+    const tree = await seedContext(k, raw);
+    const child = randomUUID();
+    await tree.db
+      .insertInto("conversations")
+      .values({
+        id: child,
+        org_id: tree.orgId,
+        agent_id: tree.agentId,
+        account_id: tree.accountId,
+        kind: "subagent",
+        parent_conversation_id: tree.rootId,
+      } as never)
+      .execute();
+    await tree.db
+      .updateTable("conversations")
+      .set({ kind: "eval" })
+      .where("id", "=", tree.rootId)
+      .execute();
+    const childRun = await startRun(k, raw, child, tree.accountId);
+    expect(
+      await runErrorCode(
+        recordUnder(k, childRun.claim, {
+          orgId: tree.orgId,
+          conversationId: child,
+          runId: childRun.runId,
+          accountId: tree.accountId,
+        }),
+      ),
+    ).toBe(PERMISSION_CONTEXT_RUN_ERRORS.invalid.code);
+    expect(await contexts(raw, child)).toEqual([]);
   });
 
   it("a replaced claim, an ended or deleted run and an abort append nothing and keep their identity", async () => {

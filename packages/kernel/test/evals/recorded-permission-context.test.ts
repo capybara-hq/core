@@ -196,6 +196,7 @@ function feeder(s: CaseSnapshot, log: FakeLog): PermissionContextPort {
 }
 const at = (step: number, attempt = 1, signal = new AbortController().signal) => ({
   orgId: ROOT,
+  accountId: "account",
   ...GEN,
   step,
   attempt,

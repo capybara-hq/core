@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -13,6 +13,7 @@ import type {
   PermissionContextV1,
   ReviewRecord,
 } from "../../src/conversations/events.js";
+import { PermissionProfileStore } from "../../src/conversations/permission-profile-store.js";
 import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { casePlans } from "../../src/evals/plan.js";
@@ -25,12 +26,16 @@ import type { TrajectoryDetail, TrajectoryListItem } from "../../src/evals/traje
 import { EVAL_REPLAY_HOOKS } from "../../src/evals/worker.js";
 import { permissionContextHistory } from "../../src/runtime/context/permission-profile.js";
 import type { PermissionContextPort } from "../../src/runtime/model-call.js";
+import { PermissionContextRecorder } from "../../src/runtime/permission-context.service.js";
 import { RunSteps } from "../../src/runtime/run-steps.js";
 import { SandboxOperationAuthority } from "../../src/sandbox/operation-authority.js";
 import { SandboxOperationIntents } from "../../src/sandbox/operation-intents.js";
+import { PermissionCallGrants } from "../../src/sandbox/permission-call-grants.js";
 import { PermissionFacts } from "../../src/sandbox/permission-facts.js";
+import { PermissionRuntimeReports } from "../../src/sandbox/permission-runtime-reports.js";
 import { CommandReviewService } from "../../src/sandbox/review/review.service.js";
 import { SandboxService } from "../../src/sandbox/sandbox.service.js";
+import { ApprovalsService } from "../../src/tools/approvals.service.js";
 import { INPUT_SKIPPED_TEXT } from "../../src/tools/pipeline.js";
 import { readFakeSandboxOps } from "../fixtures/plugins/sandbox-fake/index.js";
 import { toolsCountState } from "../fixtures/plugins/tools-count/index.js";
@@ -1326,8 +1331,24 @@ describe("整轮回放", () => {
           "status",
           "currentInstance",
           "availableFor",
+          "pathLease",
+          "destroyDevice",
+          "resetFileSystem",
         ],
       ],
+      // the DB-current profile, grants, runtime reports and approvals a live request would read
+      [k.app.get(PermissionProfileStore), ["readRoot", "readOwnedRoot", "own"]],
+      [
+        k.app.get(PermissionCallGrants),
+        ["issueLocked", "findForAdmission", "forExecution", "assertCurrent"],
+      ],
+      [k.app.get(PermissionRuntimeReports), ["record"]],
+      [
+        k.app.get(ApprovalsService),
+        ["request", "requestNetwork", "requestGit", "requestCommand", "decide"],
+      ],
+      // the live recorder itself, whether or not a step deps object still carries it
+      [k.app.get(PermissionContextRecorder), ["record"]],
     ];
     const spies = targets.flatMap(([target, methods]) =>
       methods.map((m) =>
@@ -1337,8 +1358,8 @@ describe("整轮回放", () => {
         }),
       ),
     );
-    // the live permission recorder (dormant until Gate 9.4) on the run's step deps: a replay must
-    // strip it, so even once wired it can never run for an eval conversation
+    // the live permission recorder on the run's step deps (the activated wiring): a replay must
+    // strip it, so it can never run for an eval conversation
     const deps = k.app.get(RunSteps).deps as { permissionContext?: PermissionContextPort };
     deps.permissionContext = {
       beforeRequest: async () => {
@@ -1355,15 +1376,22 @@ describe("整轮回放", () => {
     };
   }
 
-  it("a marked recording replays from recorded permission evidence only: seeds once, review and managed paths verbatim, target-run context not yet fed, no live effect (Gate 9.5)", async () => {
+  it("a marked recording replays from recorded permission evidence only: seeds once, feeds the target run's context to its generated request, review and managed paths verbatim, no live effect (Gate 9.4/9.5)", async () => {
     const setId = await createSet();
     const conv = await createConv(admin, orgId, agentId);
     await seedPermissionRun(conv, "perm-marked");
     await addCase(setId, conv, "perm-marked");
-    // today's state changes after the snapshot: a replay never reads it
+    // today's state changes after the snapshot (profile, consent, project binding): a replay
+    // never reads it
     await db
       .updateTable("conversations")
-      .set({ permission_profile: "full-access", permission_revision: 99 })
+      .set({
+        permission_profile: "full-access",
+        permission_revision: 99,
+        permission_consent: JSON.stringify({ deviceId: randomUUID(), scopeRevision: "today" }),
+        project_name: "today" as never,
+        project_path: "/today" as never,
+      })
       .where("id", "=", conv)
       .execute();
     const live = throwOnLiveEffects();
@@ -1387,13 +1415,34 @@ describe("整轮回放", () => {
       expect(
         evs.filter((e) => e.type === "permission_context" && e.seq < (earlier?.seq ?? 0) + 1),
       ).toEqual([expect.objectContaining({ seq: earlier?.seq, payload: earlier?.payload })]);
-      // dormant until Gate 9.4 wires the request boundary: the target run's own context A is NOT
-      // fed into the eval conversation yet (9.4 must flip this assertion)
+      // the request boundary feeds the target run's own recorded context A once, before the
+      // generated first request, under its persistent replay identity
       const a = orig.find((e) => e.type === "permission_context" && e.runId === "perm-marked");
       expect(a).toBeDefined();
+      const fed = evs.filter((e) => e.type === "permission_context" && e.seq > (earlier?.seq ?? 0));
+      expect(fed.map((e) => e.payload)).toEqual([a?.payload]);
+      const generatedRunId = evs.find(
+        (e) => e.type === "run_started" && e.runId !== "perm-marked-earlier",
+      )?.runId as string;
+      expect(generatedRunId).not.toBe("perm-marked");
+      const idem = await db
+        .selectFrom("conversation_events")
+        .select("idem_key")
+        .where("conversation_id", "=", cand.conversationId)
+        .where("seq", "=", (fed[0]?.seq ?? -1) as never)
+        .executeTakeFirstOrThrow();
+      expect(idem.idem_key).toBe(`replay_permission_context:${generatedRunId}:${a?.seq}`);
+      // the generated request's metadata locates the generated seq, and its request carries A
+      const generated = evs.filter(
+        (e): e is Extract<ConversationEvent, { type: "model_call" }> =>
+          e.type === "model_call" && e.runId === generatedRunId,
+      );
+      expect(generated.length).toBeGreaterThan(0);
+      expect(generated[0]?.payload.request.permissionContext?.contextSeq).toBe(fed[0]?.seq);
+      expect(fed[0]?.seq ?? 0).toBeLessThan(generated[0]?.seq ?? 0);
       expect(
-        evs.filter((e) => e.type === "permission_context" && e.seq > (earlier?.seq ?? 0)),
-      ).toEqual([]);
+        generated.every((g) => g.payload.request.permissionContext?.contextSeq === fed[0]?.seq),
+      ).toBe(true);
       // the matched result carries the recorded review verbatim (a denial stays a denial)
       const result = evs.find((e) => e.type === "tool_result");
       expect(result?.payload).toMatchObject({
