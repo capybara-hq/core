@@ -366,7 +366,8 @@
       "permission_reconcile_required": "This device's permission limits have not been confirmed yet. Reset the device's files on the devices page, then try again.",
       "owner_report_stale": "This computer sent an outdated permission report, so new work is paused. Run capybara-device login again on the computer.",
       "owner_ceiling_confirmation_required": "Giving this device Full access needs your confirmation. Confirm the change and try again.",
-      "full_access_not_allowed": "Full access is not allowed for this device by your platform, your organization or its provider."
+      "full_access_not_allowed": "Full access is not allowed for this device by your platform, your organization or its provider.",
+      "restart_required": "Background work started by an earlier version may still be running on this computer. Restart this computer to finish the upgrade, then try again."
     },
     "device_sign_in": {
       "authorization_pending": "The connection is not confirmed yet. Confirm it on the web page and wait a moment.",

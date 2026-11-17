@@ -3,6 +3,7 @@ import { connect as tcpConnect } from "node:net";
 import type { KernelReq } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
+import { sql } from "kysely";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
@@ -21,6 +22,8 @@ import { LocalDeviceProvider } from "../../src/local-devices/local-device-provid
 import { MachinesService } from "../../src/local-devices/machines.js";
 import { NetworkGrants } from "../../src/local-devices/network-grants.js";
 import { LocalDeviceRelay } from "../../src/local-devices/relay.js";
+import { LegacyRetirementStore } from "../../src/sandbox/legacy-retirement.js";
+import { SandboxService } from "../../src/sandbox/sandbox.service.js";
 import { legacyDbFor } from "../helpers/conversations.js";
 import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
@@ -34,6 +37,7 @@ import {
   type TestKernel,
   waitFor,
 } from "../helpers/runs.js";
+import { seedConversation } from "../helpers/tool-fixtures.js";
 import { FakeMachine, HELLO, refusal } from "./fake-machine.js";
 
 /**
@@ -164,6 +168,207 @@ function rawUpgrade(
 const held = (deviceId: string) =>
   waitFor(() => redis.get(deviceLeaseKey(deviceId)), 10_000, "lease held");
 const codeOf = (body: string) => (JSON.parse(body) as { error: { code: string } }).error.code;
+
+/** Each boot-evidence test starts without a freeze or obligations, with no machine connected. */
+async function resetRetirement(): Promise<void> {
+  for (const m of bootOpen.splice(0)) {
+    m.close();
+    await m.closed;
+  }
+  await sql`DELETE FROM capybara.legacy_launch_freeze`.execute(raw);
+  await sql`TRUNCATE capybara.device_retirement_members, capybara.device_retirement_obligations`.execute(
+    raw,
+  );
+}
+const bootOpen: FakeMachine[] = [];
+
+/** Open, or quarantined by the gate or the worker's retirement tick meanwhile: never resolved. */
+const unresolved = expect.stringMatching(/^(open|quarantined)$/);
+const B1 = "0f2a9c1e-7b1d-4b8e-9d5e-000000000001";
+const B2 = "0f2a9c1e-7b1d-4b8e-9d5e-000000000002";
+const B3 = "0f2a9c1e-7b1d-4b8e-9d5e-000000000003";
+
+/** A member's local device with a machine. */
+async function bootDevice() {
+  const login = `m-${randomUUID().slice(0, 8)}`;
+  const accountId = (await accountsFor(db).createLocal({ login, password: PW, displayName: login }))
+    .id;
+  await testMembers(db).add(orgId, accountId, "member", ownerId);
+  return txHost.run(async () => {
+    const { id: deviceId } = await devices.createLocal(orgId, accountId, "Box");
+    const issued = await machines.issue({
+      orgId,
+      deviceId,
+      accountId,
+      name: "box",
+      os: "linux",
+      arch: "x64",
+      programVersion: "0.1.0",
+    });
+    return { deviceId, accountId, ...issued };
+  });
+}
+
+const machineBoot = async (machineId: string) =>
+  (
+    await sql<{ boot_id: string | null }>`SELECT boot_id FROM capybara.device_machines
+      WHERE id = ${machineId}`.execute(raw)
+  ).rows[0]?.boot_id ?? null;
+
+/** Connects `credential` over the real gateway with a hello reporting `bootId`; waits for its record. */
+async function hello(credential: string, machineId: string, bootId?: string): Promise<void> {
+  const seen = async () =>
+    (
+      await sql<{ at: Date | null }>`SELECT last_seen_at AS at FROM capybara.device_machines
+        WHERE id = ${machineId}`.execute(raw)
+    ).rows[0]?.at?.getTime() ?? 0;
+  const before = await seen();
+  const m = new FakeMachine(url, credential, undefined, { hello: false });
+  bootOpen.push(m);
+  await m.opened;
+  m.send({ ...HELLO, ...(bootId !== undefined && { bootId }) });
+  // the hello's record moves last_seen_at (in the same transaction as the boot record)
+  await waitFor(async () => ((await seen()) > before ? true : null), 10_000, "hello recorded");
+}
+
+/** A legacy row of the device's that may still run, recorded as an obligation under the freeze. */
+async function obligation(deviceId: string) {
+  const c = await seedConversation(raw);
+  const id = `bt_${randomUUID()
+    .replace(/[^a-z2-7]/g, "")
+    .slice(0, 6)
+    .padEnd(6, "a")}`;
+  await sql`INSERT INTO capybara.background_tasks (id, org_id, conversation_id,
+      sandbox_conversation_id, device_id, run_id, call_id, trigger_account_id, description, command,
+      sid, output_path, status, deadline_at, sandbox_created_at)
+    VALUES (${id}, ${orgId}, ${c.conversationId}, ${c.conversationId}, ${deviceId}, 'run-1',
+      ${`call-${id}`}, ${c.accountId}, 'd', 'sleep 600', '4242', ${`.capybara/tasks/${id}.out`},
+      'running', now() + interval '1 hour', now() - interval '1 hour')`.execute(raw);
+  await k.app.get(LegacyRetirementStore).freeze("test");
+  await k.app.get(LegacyRetirementStore).scanUntilStable();
+  return (
+    await sql<{
+      state: string;
+      resolution: string | null;
+      boot_id: string | null;
+      boot_machine_id: string | null;
+    }>`SELECT state, resolution, boot_id, boot_machine_id
+      FROM capybara.device_retirement_obligations WHERE device_id = ${deviceId}`.execute(raw)
+  ).rows;
+}
+const states = async (deviceId: string) =>
+  (
+    await sql<{ state: string; resolution: string | null }>`SELECT state, resolution
+      FROM capybara.device_retirement_obligations WHERE device_id = ${deviceId}`.execute(raw)
+  ).rows;
+const use = (deviceId: string, accountId: string) =>
+  k.app.get(SandboxService).withSandbox(
+    {
+      orgId,
+      deviceId,
+      holderConversationId: "c-boot",
+      actor: { accountId, conversationId: "c-boot" },
+    },
+    async () => "used",
+    AbortSignal.timeout(20_000),
+  );
+
+/**
+ * Boot-ID evidence for local legacy retirement (permission runtime cutover 8.5, user decision):
+ * a local obligation records the boot identity its machine last reported, and resolves only when
+ * an authenticated hello of that same machine reports a later boot (the computer restarted, so no
+ * process of the earlier boot can exist). The same boot, an unknown recorded boot, a stale or
+ * replayed boot, another machine credential and a revoked or unauthenticated connection never
+ * resolve it.
+ */
+describe("boot identity evidence for local legacy retirement", () => {
+  it("a later boot of the same machine settles its local obligations; the same boot does not", async () => {
+    await resetRetirement();
+    const d = await bootDevice();
+    await hello(d.credential, d.machineId, B1);
+    expect(await obligation(d.deviceId)).toEqual([
+      { state: unresolved, resolution: null, boot_id: B1, boot_machine_id: d.machineId },
+    ]);
+    // the person is asked to restart the computer
+    await expect(use(d.deviceId, d.accountId)).rejects.toMatchObject({
+      code: "device.restart_required",
+    });
+    expect(await k.app.get(SandboxService).retireLegacy(d.deviceId)).toBe("unavailable");
+
+    // a reconnect from the same boot is no evidence
+    await hello(d.credential, d.machineId, B1);
+    expect(await states(d.deviceId)).toEqual([{ state: "quarantined", resolution: null }]);
+
+    // the computer restarted: its next authenticated hello reports a later boot
+    await hello(d.credential, d.machineId, B2);
+    expect(await states(d.deviceId)).toEqual([{ state: "resolved", resolution: "host-rebooted" }]);
+    expect(await k.app.get(SandboxService).retireLegacy(d.deviceId)).toBe("clear");
+    expect(await k.app.get(LegacyRetirementStore).hasUnresolved(d.deviceId)).toBe(false);
+
+    // a stale or replayed earlier boot changes nothing
+    await hello(d.credential, d.machineId, B1);
+    expect(await machineBoot(d.machineId)).toBe(B2);
+  });
+
+  it("an obligation recorded without a boot identity never resolves by itself", async () => {
+    await resetRetirement();
+    const d = await bootDevice();
+    await hello(d.credential, d.machineId);
+    expect(await obligation(d.deviceId)).toEqual([
+      { state: unresolved, resolution: null, boot_id: null, boot_machine_id: d.machineId },
+    ]);
+    await hello(d.credential, d.machineId, B1);
+    await hello(d.credential, d.machineId, B2);
+    expect(await states(d.deviceId)).toEqual([{ state: unresolved, resolution: null }]);
+    // nothing a restart could prove: the generic unavailable answer, not a restart request
+    await expect(use(d.deviceId, d.accountId)).rejects.toMatchObject({
+      code: "device.unavailable",
+    });
+    expect(await states(d.deviceId)).toEqual([{ state: "quarantined", resolution: null }]);
+  });
+
+  it("an unauthenticated connection, a revoked machine's late hello and another machine credential are no evidence", async () => {
+    await resetRetirement();
+    const d = await bootDevice();
+    await hello(d.credential, d.machineId, B1);
+    await obligation(d.deviceId);
+
+    // no credential the deployment issued: refused before any hello
+    expect(
+      await refusal(url, {
+        Authorization: "Bearer cap_dev_bogus",
+        "X-Capybara-Device-Protocol": "2",
+      }),
+    ).toMatchObject({ status: 401 });
+
+    // a re-login revokes the first machine; its old credential cannot connect any more and a late
+    // hello of its older connection is not recorded
+    const second = await txHost.run(() =>
+      machines.issue({
+        orgId,
+        deviceId: d.deviceId,
+        accountId: d.accountId,
+        name: "box",
+        os: "linux",
+        arch: "x64",
+        programVersion: "0.1.0",
+      }),
+    );
+    expect(
+      await refusal(url, {
+        Authorization: `Bearer ${d.credential}`,
+        "X-Capybara-Device-Protocol": "2",
+      }),
+    ).toMatchObject({ status: 401 });
+    await machines.recordHello(d.machineId, { ...HELLO, bootId: B2 });
+    expect(await machineBoot(d.machineId)).toBe(B1);
+
+    // the new machine credential reports another boot: not the machine the obligation names
+    await hello(second.credential, second.machineId, B3);
+    expect(await states(d.deviceId)).toEqual([{ state: unresolved, resolution: null }]);
+    expect(await k.app.get(LegacyRetirementStore).hasUnresolved(d.deviceId)).toBe(true);
+  });
+});
 
 describe("the hello's policy summary and the reported mode", () => {
   const SUMMARY = {

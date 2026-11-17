@@ -23,6 +23,7 @@ import { OutboxService } from "../infra/outbox/outbox.service.js";
 import { KERNEL_BUS, KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
 import { MAINTENANCE_QUEUE_NAME } from "../runtime/maintenance-queue.js";
+import { LegacyRetirementStore } from "../sandbox/legacy-retirement.js";
 import { PermissionCeilingWrites } from "../sandbox/permission-ceiling-writes.js";
 import {
   type PermissionRuntimeIdentity,
@@ -112,6 +113,9 @@ export class MachinesService {
     @Inject(PermissionCeilingWrites) private readonly ceilings: PermissionCeilingWrites,
     @Inject(PermissionRuntimeReports) private readonly reports: PermissionRuntimeReports,
     @Inject(OwnerReports) private readonly owners: OwnerReports,
+    /** The host's boot identity: restart evidence for local legacy obligations (8.5). */
+    @Inject(LegacyRetirementStore)
+    private readonly retirement: Pick<LegacyRetirementStore, "recordBoot">,
   ) {}
 
   /**
@@ -346,6 +350,9 @@ export class MachinesService {
     if (hello.recentOps !== undefined) {
       await this.backfillOps(machineId, self, hello.recentOps, localPolicyOf(hello.policy));
     }
+    // only an authenticated, claimed connection's hello reaches here (the machine row locked):
+    // its boot identity is the evidence a restart ended the old processes
+    if (hello.bootId !== undefined) await this.retirement.recordBoot(machineId, hello.bootId);
   }
 
   /**

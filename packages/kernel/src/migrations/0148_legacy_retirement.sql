@@ -35,7 +35,11 @@ CREATE TABLE IF NOT EXISTS device_retirement_obligations (
   instance_generation text NOT NULL
     CHECK (instance_generation = 'unknown' OR instance_generation ~ '^[0-9]{1,16}$'),
   state text NOT NULL DEFAULT 'open' CHECK (state IN ('open', 'quarantined', 'resolved')),
-  resolution text CHECK (resolution IS NULL OR resolution IN ('provider-destroyed')),
+  resolution text CHECK (resolution IS NULL OR resolution IN ('provider-destroyed', 'host-rebooted')),
+  -- a local incarnation: the machine and its OS boot identity current when the obligation was
+  -- recorded; NULL boot_id (none reported) never resolves by itself
+  boot_machine_id uuid,
+  boot_id text,
   reason text,
   attempts integer NOT NULL DEFAULT 0 CHECK (attempts >= 0),
   last_attempt_at timestamptz,
@@ -82,3 +86,17 @@ CREATE INDEX IF NOT EXISTS sandbox_operation_intents_owed_background_revoke_idx
   ON sandbox_operation_intents (device_id)
   WHERE method = 'backgroundStart' AND state = 'revoked' AND NOT revoke_acknowledged
     AND execution_ref IS NOT NULL;
+
+-- The OS boot identities a machine reported in its authenticated hellos, in the order first seen.
+-- A later boot of the same machine proves the host restarted since an earlier one, so no process of
+-- the earlier boot can exist (a local legacy obligation resolves). A boot reported again after a
+-- later one (a stale or replayed report) is ignored. Kept with the machine row.
+CREATE TABLE IF NOT EXISTS device_machine_boots (
+  machine_id uuid NOT NULL REFERENCES device_machines(id) ON DELETE CASCADE,
+  boot_id text NOT NULL CHECK (boot_id ~ '^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$'),
+  seq bigserial NOT NULL,
+  first_seen_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (machine_id, boot_id)
+);
+-- the machine's current boot: the latest first seen
+ALTER TABLE device_machines ADD COLUMN IF NOT EXISTS boot_id text;

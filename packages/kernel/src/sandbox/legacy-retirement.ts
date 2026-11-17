@@ -1,3 +1,4 @@
+import { isDeviceBootId } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
 import { sql } from "kysely";
 import { KernelDb } from "../infra/database/kernel-db.js";
@@ -50,7 +51,20 @@ export interface RetirementObligation {
   state: "open" | "quarantined" | "resolved";
   reason: string | null;
   attempts: number;
+  /** A local incarnation's boot identity when recorded; null: none (never resolves by itself). */
+  bootId: string | null;
 }
+
+/** {@link LegacyRetirementStore.recordBoot}'s answer. */
+export type BootReport =
+  /** First seen for the machine: its current boot now (a restart when one was seen before). */
+  | "new"
+  /** The machine's current boot again (a reconnect). */
+  | "current"
+  /** A boot seen before a later one (stale or replayed): ignored. */
+  | "stale"
+  /** Malformed, or the machine is unknown or revoked: ignored. */
+  | "ignored";
 
 /** {@link LegacyRetirementStore.admitLegacyDispatch}'s answer. */
 export type LegacyDispatchAdmission =
@@ -77,6 +91,8 @@ export interface LegacyRetirementReport {
     instanceGeneration: string;
     state: "open" | "quarantined";
     reason: string | null;
+    /** A local incarnation with a recorded boot: a restart of that computer resolves it. */
+    bootKnown: boolean;
   }[];
 }
 
@@ -103,6 +119,7 @@ const toObligation = (r: {
   state: "open" | "quarantined" | "resolved";
   reason: string | null;
   attempts: number;
+  boot_id: string | null;
 }): RetirementObligation => ({
   id: r.id,
   deviceId: r.device_id,
@@ -112,6 +129,7 @@ const toObligation = (r: {
   state: r.state,
   reason: r.reason,
   attempts: r.attempts,
+  bootId: r.boot_id,
 });
 
 @Injectable()
@@ -326,6 +344,9 @@ export class LegacyRetirementStore {
     kind: RetirementMember["kind"],
     refId: string,
   ): Promise<boolean> {
+    // a local incarnation keeps the boot its machine reported last: only a later boot of that
+    // machine proves its processes gone (none reported: never by itself)
+    const boot = isCloudProvider(provider) ? null : await this.currentBoot(deviceId);
     await this.db
       .insertInto("device_retirement_obligations")
       .values({
@@ -333,15 +354,18 @@ export class LegacyRetirementStore {
         org_id: orgId,
         provider,
         instance_generation: generation,
+        boot_machine_id: boot?.machineId ?? null,
+        boot_id: boot?.bootId ?? null,
       })
       .onConflict((oc) => oc.columns(["device_id", "provider", "instance_generation"]).doNothing())
       .execute();
     const obligation = await this.db
       .selectFrom("device_retirement_obligations")
-      .select("id")
+      .select(["id", "state", "resolution"])
       .where("device_id", "=", deviceId)
       .where("provider", "=", provider)
       .where("instance_generation", "=", generation)
+      .forUpdate()
       .executeTakeFirstOrThrow();
     const r = await this.db
       .insertInto("device_retirement_members")
@@ -349,7 +373,115 @@ export class LegacyRetirementStore {
       .onConflict((oc) => oc.columns(["kind", "ref_id", "obligation_id"]).doNothing())
       .returning("ref_id")
       .executeTakeFirst();
+    // a restart covers only what ran before it: a member found later (a row of an old replica) on
+    // the same local incarnation reopens the obligation against the current boot
+    if (
+      r !== undefined &&
+      obligation.state === "resolved" &&
+      obligation.resolution === "host-rebooted"
+    )
+      await this.db
+        .updateTable("device_retirement_obligations")
+        .set({
+          state: "open",
+          resolution: null,
+          resolved_at: null,
+          boot_machine_id: boot?.machineId ?? null,
+          boot_id: boot?.bootId ?? null,
+        })
+        .where("id", "=", obligation.id)
+        .execute();
     return r !== undefined;
+  }
+
+  /** The device's active machine and the boot it reported last (null: no machine). */
+  private async currentBoot(
+    deviceId: string,
+  ): Promise<{ machineId: string; bootId: string | null } | null> {
+    const m = await this.db
+      .selectFrom("device_machines")
+      .select(["id", "boot_id"])
+      .where("device_id", "=", deviceId)
+      .where("revoked_at", "is", null)
+      .orderBy("created_at", "desc")
+      .orderBy("id", "desc")
+      .limit(1)
+      .executeTakeFirst();
+    return m ? { machineId: m.id, bootId: m.boot_id } : null;
+  }
+
+  /**
+   * Records the OS boot identity an authenticated hello of `machineId` reported. The caller is the
+   * gateway's hello record, after the connection authenticated with the machine's credential and
+   * claimed the device, inside its transaction with the machine row locked. A boot first seen for
+   * the machine becomes its current one; the current one again is a reconnect; one seen before a
+   * later one (stale, replayed) changes nothing. A new or current boot then settles the device's
+   * local obligations recorded under an earlier boot of that machine ({@link settleRebooted}).
+   */
+  async recordBoot(machineId: string, bootId: unknown): Promise<BootReport> {
+    if (!isDeviceBootId(bootId)) return "ignored";
+    const machine = await this.db
+      .selectFrom("device_machines")
+      .select(["device_id", "boot_id"])
+      .where("id", "=", machineId)
+      .where("revoked_at", "is", null)
+      .executeTakeFirst();
+    if (!machine) return "ignored";
+    const inserted = await this.db
+      .insertInto("device_machine_boots")
+      .values({ machine_id: machineId, boot_id: bootId })
+      .onConflict((oc) => oc.columns(["machine_id", "boot_id"]).doNothing())
+      .returning("seq")
+      .executeTakeFirst();
+    let report: BootReport;
+    if (inserted !== undefined) {
+      await this.db
+        .updateTable("device_machines")
+        .set({ boot_id: bootId })
+        .where("id", "=", machineId)
+        .execute();
+      report = "new";
+    } else if (machine.boot_id === bootId) report = "current";
+    else return "stale";
+    await this.settleRebooted(machine.device_id);
+    return report;
+  }
+
+  /**
+   * Resolves (`host-rebooted`) every unresolved local obligation of the device whose recorded boot
+   * its machine has since replaced with a later one: that host restarted, so no process of the
+   * earlier boot can exist. An obligation without a recorded boot never resolves here. Returns how
+   * many resolved.
+   */
+  async settleRebooted(deviceId: string): Promise<number> {
+    const r = await this.db
+      .updateTable("device_retirement_obligations as o")
+      .set({
+        state: "resolved",
+        resolution: "host-rebooted",
+        resolved_at: sql<Date>`now()`,
+        last_error: null,
+      })
+      .where("o.device_id", "=", deviceId)
+      .where("o.state", "<>", "resolved")
+      .where("o.provider", "like", "@%")
+      .where("o.boot_id", "is not", null)
+      .where(({ exists, selectFrom }) =>
+        exists(
+          selectFrom("device_machines as m")
+            .innerJoin("device_machine_boots as cur", (j) =>
+              j.onRef("cur.machine_id", "=", "m.id").onRef("cur.boot_id", "=", "m.boot_id"),
+            )
+            .innerJoin("device_machine_boots as old", (j) =>
+              j.onRef("old.machine_id", "=", "m.id").onRef("old.boot_id", "=", "o.boot_id"),
+            )
+            .select("m.id")
+            .whereRef("m.id", "=", "o.boot_machine_id")
+            .whereRef("cur.seq", ">", "old.seq"),
+        ),
+      )
+      .executeTakeFirst();
+    return Number(r.numUpdatedRows);
   }
 
   /** The device's unresolved obligations (open and quarantined), oldest first. */
@@ -365,6 +497,7 @@ export class LegacyRetirementStore {
         "state",
         "reason",
         "attempts",
+        "boot_id",
       ])
       .where("device_id", "=", deviceId)
       .where("state", "<>", "resolved")
@@ -529,7 +662,7 @@ export class LegacyRetirementStore {
       .executeTakeFirstOrThrow();
     const unresolved = await this.db
       .selectFrom("device_retirement_obligations")
-      .select(["device_id", "provider", "instance_generation", "state", "reason"])
+      .select(["device_id", "provider", "instance_generation", "state", "reason", "boot_id"])
       .where("state", "<>", "resolved")
       .orderBy("created_at", "asc")
       .execute();
@@ -549,6 +682,7 @@ export class LegacyRetirementStore {
         instanceGeneration: r.instance_generation,
         state: r.state as "open" | "quarantined",
         reason: r.reason,
+        bootKnown: r.boot_id !== null,
       })),
     };
   }

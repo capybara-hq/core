@@ -787,6 +787,9 @@ export const DEFAULT_SANDBOX_ROOTS: Readonly<SandboxRoots>;
 export function defineExtension(m: ExtensionManifest): ExtensionManifest;
 
 // @public
+export const DEVICE_BOOT_ID_RE: RegExp;
+
+// @public
 export const DEVICE_PROTOCOL_VERSION = 2;
 
 // @public
@@ -846,6 +849,7 @@ export type DeviceFrameV3 = DeviceHelloV3 | KernelReadyV3 | KernelRequestV3 | Ke
 // @public
 export interface DeviceHello {
     arch: string;
+    bootId?: string;
     features?: DeviceFeature[];
     home?: string;
     mode: "os" | "docker";
@@ -1865,6 +1869,9 @@ export function isBackgroundLaunch(command: string): boolean;
 
 // @public
 export function isChannelSendError(e: unknown): e is ChannelSendError;
+
+// @public
+export function isDeviceBootId(v: unknown): v is string;
 
 // @public
 export function isDeviceProjectName(v: unknown): v is string;

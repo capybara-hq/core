@@ -1254,6 +1254,8 @@ export interface DeviceInstancesTable {
  */
 export interface DeviceMachinesTable {
   id: Generated<string>;
+  /** 0148: the machine's current OS boot identity (the latest first seen); null: none reported. */
+  boot_id: ColumnType<string | null, string | null | undefined, string | null>;
   org_id: string;
   device_id: string;
   account_id: string;
@@ -1684,10 +1686,13 @@ export interface KernelDatabase {
       "open" | "quarantined" | "resolved"
     >;
     resolution: ColumnType<
-      "provider-destroyed" | null,
-      "provider-destroyed" | null | undefined,
-      "provider-destroyed" | null
+      "provider-destroyed" | "host-rebooted" | null,
+      "provider-destroyed" | "host-rebooted" | null | undefined,
+      "provider-destroyed" | "host-rebooted" | null
     >;
+    /** A local incarnation: the machine and its boot identity when recorded (null: none). */
+    boot_machine_id: ColumnType<string | null, string | null | undefined, string | null>;
+    boot_id: ColumnType<string | null, string | null | undefined, string | null>;
     reason: ColumnType<string | null, string | null | undefined, string | null>;
     attempts: ColumnType<number, number | undefined, number>;
     last_attempt_at: TsNullable;
@@ -1702,6 +1707,14 @@ export interface KernelDatabase {
     ref_id: string;
     settled: ColumnType<boolean, boolean | undefined, boolean>;
     created_at: Generated<Date>;
+  };
+  /** Migration 0148: the OS boot identities a machine reported, in the order first seen. */
+  device_machine_boots: {
+    machine_id: string;
+    boot_id: string;
+    /** bigserial: read as a decimal string. */
+    seq: ColumnType<string, string | number | undefined, never>;
+    first_seen_at: Generated<Date>;
   };
   /** Migration 0148: provider-confirmed destruction of a cloud instance incarnation. */
   device_instance_destructions: {

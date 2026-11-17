@@ -454,12 +454,22 @@ const otherProvider = (provider: string): ApiError =>
 export const retirementPending = (): ApiError =>
   new ApiError(
     "device.unavailable",
-    "This device is unavailable: background work started by an earlier version may still run on its previous instance, and that instance has not been confirmed destroyed. A cloud device becomes usable once its provider confirms the old instance destroyed; a local machine stays unavailable until an administrator replaces it.",
+    "This device is unavailable: background work started by an earlier version may still run on its previous instance, and that instance has not been confirmed destroyed. A cloud device becomes usable once its provider confirms the old instance destroyed; a local computer that never reported its boot identity cannot prove it and stays unavailable.",
+  );
+/**
+ * A local machine's old instance may still run legacy work, and a later boot of that machine is
+ * the evidence that ends it (503, 8.5): the person restarts the computer.
+ */
+export const restartRequired = (): ApiError =>
+  new ApiError(
+    "device.restart_required",
+    "Background work started by an earlier version may still be running on this computer. Restart this computer to finish the upgrade, then try again.",
   );
 const isRetirementPending = (err: unknown): boolean =>
   err instanceof ApiError &&
-  err.code === "device.unavailable" &&
-  err.message.startsWith("This device is unavailable: background work");
+  (err.code === "device.restart_required" ||
+    (err.code === "device.unavailable" &&
+      err.message.startsWith("This device is unavailable: background work")));
 
 const abortReason = (signal: AbortSignal): unknown =>
   signal.reason ?? new DOMException("This operation was aborted", "AbortError");
@@ -595,6 +605,7 @@ export class SandboxService {
       LegacyRetirementStore,
       | "unresolved"
       | "hasUnresolved"
+      | "settleRebooted"
       | "quarantine"
       | "noteFailure"
       | "resolveDestroyed"
@@ -2038,11 +2049,15 @@ export class SandboxService {
     row: Row | undefined,
     fence: Fence | null,
   ): Promise<Row | undefined> {
+    // a later boot of the machine an authenticated hello already reported settles local ones
+    await this.retirement.settleRebooted(id);
     const open = await this.retirement.unresolved(id);
     let now = row;
     // every obligation is tried (one that stays never hides another that can resolve); the
-    // device is refused at the end while any stays
+    // device is refused at the end while any stays: a restart is asked for only when a restart
+    // of that computer is what resolves every one left
     let pending = false;
+    let restartResolves = true;
     for (const o of open) {
       const gen = o.instanceGeneration;
       const current =
@@ -2055,8 +2070,11 @@ export class SandboxService {
         if (!isCloudProvider(o.provider)) {
           await this.retirement.quarantine(
             o.id,
-            "local instance: no trusted evidence that the processes of its legacy work ended",
+            o.bootId === null
+              ? "local instance: no boot identity was reported, so no restart can prove its legacy work ended"
+              : "local instance: waiting for a restart of the computer (a later boot identity)",
           );
+          if (o.bootId === null) restartResolves = false;
           pending = true;
           continue;
         }
@@ -2064,6 +2082,7 @@ export class SandboxService {
         if (!impl) {
           await this.retirement.noteFailure(o.id, `provider ${o.provider} is not loaded`);
           pending = true;
+          restartResolves = false;
           continue;
         }
         try {
@@ -2076,6 +2095,7 @@ export class SandboxService {
             err,
           });
           pending = true;
+          restartResolves = false;
           continue;
         }
         if (!(await held.renew())) throw new SandboxLockLostError(id);
@@ -2110,17 +2130,21 @@ export class SandboxService {
         await this.retirement.resolveDestroyed(o.id);
         continue;
       }
+      const local = !isCloudProvider(o.provider);
       await this.retirement.quarantine(
         o.id,
-        !isCloudProvider(o.provider)
-          ? "local instance: no trusted evidence that the processes of its legacy work ended"
+        local
+          ? o.bootId === null
+            ? "local instance: no boot identity was reported, so no restart can prove its legacy work ended"
+            : "local instance: waiting for a restart of the computer (a later boot identity)"
           : gen === "unknown"
             ? "the instance a possibly dispatched legacy launch ran in is unknown"
             : "the old instance was replaced without a recorded confirmed destruction",
       );
+      if (!local || o.bootId === null) restartResolves = false;
       pending = true;
     }
-    if (pending) throw retirementPending();
+    if (pending) throw restartResolves ? restartRequired() : retirementPending();
     return now;
   }
 
