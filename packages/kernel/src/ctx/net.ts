@@ -9,16 +9,26 @@ import { type LookupFn, NetDeniedError, type NetPolicy } from "../net/public-add
 import { safeFetch } from "../net/safe-fetch.js";
 import type { OrgNetworkAllowances } from "../orgs/network-allowances.service.js";
 
+/** Tests only: `safeFetch`'s DNS and dispatcher seams for `ctx.net`. */
+export type ExtensionNetSeams = {
+  lookup?: LookupFn;
+  dispatcherFor?: (ips: string[]) => Agent;
+  proxyDispatcherFor?: (proxyUrl: string) => Agent;
+};
+
+/**
+ * Optional provider (a test seam, `KernelAppOptions.overrides`; the kernel never provides it):
+ * `ctx.net`'s DNS and dispatcher seams for every extension the host loads, so a kernel test can
+ * reach a fake server through a hostname that resolves to a private address.
+ */
+export const EXTENSION_NET_SEAMS = Symbol("EXTENSION_NET_SEAMS");
+
 /** The kernel services `ctx.net` reads per call (built once by the extension host). */
 export type ExtensionNetServices = {
   config: Pick<KernelConfigService, "get">;
   allowances: Pick<OrgNetworkAllowances, "policyFor">;
   /** Tests only: `safeFetch`'s DNS and dispatcher seams. */
-  seams?: {
-    lookup?: LookupFn;
-    dispatcherFor?: (ips: string[]) => Agent;
-    proxyDispatcherFor?: (proxyUrl: string) => Agent;
-  };
+  seams?: ExtensionNetSeams;
 };
 
 /** What a refused private address tells the reader of an org-bound request. */

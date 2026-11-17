@@ -16,7 +16,7 @@ import {
   type UiContribution,
   type UiSlotSpec,
 } from "@capybara-hq/plugin-sdk";
-import { Inject, Injectable } from "@nestjs/common";
+import { Inject, Injectable, Optional } from "@nestjs/common";
 import type { Redis } from "ioredis";
 import type { core, z } from "zod";
 import type { KernelAppOptions } from "../app.js";
@@ -30,6 +30,7 @@ import {
   queryEnabledPlugins,
   type Route,
 } from "../ctx/create-ctx.js";
+import { EXTENSION_NET_SEAMS, type ExtensionNetSeams } from "../ctx/net.js";
 import type { Keyring } from "../ctx/secrets.js";
 import { kernelDb } from "../db/kernel-schema.js";
 import { migrate } from "../db/migrator.js";
@@ -684,6 +685,8 @@ export class ExtensionHost {
     @Inject(ModelEmbeddings) models: Pick<ModelEmbeddings, "embed" | "describe">,
     /** `ctx.net`: the internal endpoints each org's extension requests may reach (read per call). */
     @Inject(OrgNetworkAllowances) allowances: OrgNetworkAllowances,
+    /** Tests only: `ctx.net`'s DNS and dispatcher seams (`EXTENSION_NET_SEAMS`). */
+    @Optional() @Inject(EXTENSION_NET_SEAMS) netSeams?: ExtensionNetSeams,
   ) {
     const c = config.get();
     this.hooks = new HookRegistry({
@@ -708,7 +711,7 @@ export class ExtensionHost {
       models,
       // ctx.models.embed fires model.request through the same registry (spec B §5.4)
       hooks: this.hooks,
-      net: { config, allowances },
+      net: { config, allowances, ...(netSeams !== undefined && { seams: netSeams }) },
       locks,
       runWorkers: c.roles.includes("worker"),
       log,

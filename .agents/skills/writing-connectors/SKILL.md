@@ -22,7 +22,7 @@ For general extension authoring (manifest, config, multi-replica prohibitions) s
 
 The official connector extensions are [`connector-mcp`](https://github.com/capybara-hq/plugins/tree/main/plugins/connector-mcp) (MCP over Streamable HTTP, with elicitation, prompts, resources, list_changed) and [`connector-openapi`](https://github.com/capybara-hq/plugins/tree/main/plugins/connector-openapi) (OpenAPI 3.0 / 3.1, one tool per operation, implements `inspect` and `connectorData` routing) in capybara-hq/plugins. The contract is in `packages/plugin-sdk/src/connector.ts`; a change there is an SDK change and must keep both working.
 
-A connector extension requests endpoint URLs through `ctx.net.fetch` with the session's `orgId` (never the global `fetch`): https only, private addresses only for the endpoints a super admin allowed that org, loopback and link-local always refused. It has no `allowInsecureLoopback` of its own: the kernel's `net.allowInsecureLoopback` (tests only; lifts every loopback refusal) is the one switch, set by `testKernelConfig` / `runConfig`, and the core fakes (`fake-connector`, `fake-openapi`) use `ctx.net` the same way. With `net.httpsProxy` set, list an org's allowed internal https hosts in `net.noProxy`. Connectors are deployment-level and need no per-org enablement.
+A connector extension requests endpoint URLs through `ctx.net.fetch` with the session's `orgId` (never the global `fetch`). `ctx.net` decides at request time: https by default; plain http only for an origin `http://host:port` a super admin allowed for the org, or loopback under `net.allowInsecureLoopback`; private addresses only for the endpoints a super admin allowed that org; loopback (outside that test switch) and link-local always refused. It has no `allowInsecureLoopback` of its own: the kernel's `net.allowInsecureLoopback` (tests only; lifts every loopback refusal) is the one switch, set by `testKernelConfig` / `runConfig`, and the core fakes (`fake-connector`, `fake-openapi`) use `ctx.net` the same way. With `net.httpsProxy` set, list an org's allowed internal https hosts in `net.noProxy`. Connectors are deployment-level and need no per-org enablement.
 
 **stdio MCP is not supported**: connectors only connect to remote services (MCP uses Streamable HTTP). The kernel runs as multiple replicas and does not spawn local processes server-side for an org, so do not write a connector that spawns child processes; wrap a local MCP server as an HTTP endpoint first, then connect it.
 
@@ -35,10 +35,11 @@ interface Connector {
   kind: string;                 // stored in connectors.connector, e.g. "mcp", "openapi"
   endpointSchema: ZodTypeAny;   // validates the connector endpoint (called by the kernel on install / preview)
   open(args: ConnectorOpenArgs): Promise<ConnectorSession>;
-  inspect?(args: { endpoint; signal }): Promise<{ authHints: AuthHint[]; operations?: ConnectorOperation[] }>;
+  inspect?(args: { endpoint; orgId; signal }): Promise<{ authHints: AuthHint[]; operations?: ConnectorOperation[] }>;
 }
 interface ConnectorOpenArgs {
   endpoint: unknown;                        // already validated against endpointSchema
+  orgId: string;                            // the org the session serves (pass to ctx.net.fetch)
   auth(): Promise<AuthInjection>;           // { headers, query? }
   onUnauthorized(): Promise<void>;
   signal: AbortSignal;
@@ -59,7 +60,7 @@ Null-check every optional callback and method: an older kernel does not provide 
 ## `endpointSchema`
 
 - The kernel validates `endpoint` with it on install / preview / create (failure -> 400 `validation_failed`); `open` receives the validated value (the connector still calls `schema.parse` once to get the type).
-- URLs accept https only; http is refused here too; whether a reachable address is allowed is decided at request time by `ctx.net` (the org's allowances, `net.allowInsecureLoopback` in tests), not by the schema. Write validation messages in English and state the rule.
+- URLs accept http and https; the credential checks below are unchanged. Whether a URL is reachable is decided at request time by `ctx.net`, not by the schema: http works only for an org-allowed `http://host:port` origin, or loopback under `net.allowInsecureLoopback` (tests); private addresses only for the org's allowances. Write validation messages in English and state the rule.
 - Endpoint config is visible to org members and **must not contain credentials**: fixed headers must not include credential headers such as `Authorization` / `Cookie` (credentials go through the connector auth settings and are stored encrypted); on install the kernel runs one more check by header name / query name / URL userinfo and rejects with 400 (`x-api-key`, `*-token`, `*-secret`, queries such as `key` / `token` / `access_token`). String fields whose top-level name is `url` or `*Url` are all checked as URLs for credentials; someone without `connectors.manage` who reads a connector sees only the URL without its query and the header names.
 - Large fields (such as OpenAPI's `specText`, <= 2 MB): connector list / detail do not echo the full text of `text` / `*Text` fields, only `<field>Bytes` and `<field>Sha256`; the request body limit of the install and preview routes is raised to 6 MiB, other routes stay at 1 MiB.
 

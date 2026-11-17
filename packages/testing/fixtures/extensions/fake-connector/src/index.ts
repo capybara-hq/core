@@ -84,13 +84,14 @@ const DeploymentConfig = z.object({
 /** The `_meta` key of a remote tool that names the remote tool serving it (its route). */
 export const FAKE_ROUTE_META = "fake/route";
 
-const isLoopbackHttp = (u: URL): boolean =>
-  u.protocol === "http:" && ["127.0.0.1", "localhost", "[::1]"].includes(u.hostname);
-
+/**
+ * http or https; whether the target is reachable is `ctx.net`'s call at request time (http only for
+ * an org-allowed `http://host:port` origin, or loopback under `net.allowInsecureLoopback`).
+ */
 const urlAllowed = (raw: string): boolean => {
   try {
     const u = new URL(raw);
-    return u.protocol === "https:" || isLoopbackHttp(u);
+    return u.protocol === "https:" || u.protocol === "http:";
   } catch {
     return true; // z.url() reports the format error
   }
@@ -104,7 +105,7 @@ export function fakeEndpointSchema() {
   return z
     .object({
       url: z.url().refine(urlAllowed, {
-        message: "URL must use https (plain http only for loopback hosts)",
+        message: "URL must use http or https",
       }),
       /** Free-form text the connector ignores (large-endpoint tests). */
       notesText: z.string().optional(),

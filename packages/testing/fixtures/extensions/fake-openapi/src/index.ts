@@ -29,8 +29,9 @@ import { z } from "zod";
  * ```
  *
  * - `endpointSchema`: `{ specUrl, baseUrl?, operations? }` (the wizard's OpenAPI endpoint without
- *   `specText`), https or loopback http (the kernel's `ctx.net` decides what is
- *   reachable: test kernels set `net.allowInsecureLoopback`);
+ *   `specText`), http or https (the kernel's `ctx.net` decides at request time what is
+ *   reachable: http only for an org-allowed `http://host:port` origin, or loopback under
+ *   `net.allowInsecureLoopback`, which test kernels set);
  * - `inspect`: the document's security schemes as auth hints (`{ scheme, ...value }`) and its
  *   operations (`id` = name);
  * - a session lists one tool per operation (all, or the endpoint's `operations`), named by the
@@ -41,13 +42,11 @@ import { z } from "zod";
  *   kind `unavailable`.
  */
 
-const isLoopbackHttp = (u: URL): boolean =>
-  u.protocol === "http:" && ["127.0.0.1", "localhost", "[::1]"].includes(u.hostname);
-
+/** http or https; whether the target is reachable is `ctx.net`'s call at request time. */
 const urlOk = (raw: string): boolean => {
   try {
     const u = new URL(raw);
-    return u.protocol === "https:" || isLoopbackHttp(u);
+    return u.protocol === "https:" || u.protocol === "http:";
   } catch {
     return true; // z.url() reports the format error
   }
@@ -56,7 +55,7 @@ const urlOk = (raw: string): boolean => {
 /** The endpoint: the document URL, an optional API base URL and the selected operations. */
 export function fakeOpenApiEndpointSchema() {
   const url = z.url().refine(urlOk, {
-    message: "URL must use https (plain http only for loopback hosts)",
+    message: "URL must use http or https",
   });
   return z
     .object({
