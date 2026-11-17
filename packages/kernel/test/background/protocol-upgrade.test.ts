@@ -3,7 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { SandboxProvider } from "@capybara-hq/plugin-sdk";
+import type { SandboxExecutionRef, SandboxHandle, SandboxProvider } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
 import { sql } from "kysely";
@@ -863,6 +863,191 @@ describe("revoked managed starts on an incarnation that no longer runs (8.4 hand
     expect(calls).toEqual([`cloud destroy ${old.id}`]);
     expect((await tasks.get(task))?.killPending).toBe(false);
     expect(await retirement.report()).toMatchObject({ frozen: true, open: 0, retired: true });
+  });
+});
+
+describe("a suspended cloud instance with a revoked managed start (B-22)", () => {
+  /** What each exact stop answers, by operation id; absent: `stopped`. */
+  let stopAnswers: Map<string, "stopped" | "cancel-pending" | "lost" | "throw">;
+  /** Instances the stub's `stop` saw suspended: an exact stop there only persists the cancel. */
+  const suspended = async (id: string) =>
+    (await instance(id)).status === "suspended" && !calls.some((c) => c.includes(" resume "));
+
+  /** The cloud provider with exact background supervision: `stop` is recorded. */
+  const withBackground = (deviceId: string) => {
+    const base = cloud;
+    const w = Object.create(base) as SandboxProvider;
+    w.background = {
+      stop: async (h: SandboxHandle, ref: SandboxExecutionRef) => {
+        calls.push(`cloud stop ${ref.operationId} ${h.id}`);
+        if (await suspended(deviceId)) return { outcome: "cancel-pending" };
+        const answer = stopAnswers.get(ref.operationId) ?? "stopped";
+        if (answer === "throw") throw new Error("the device did not answer the stop");
+        return { outcome: answer } as { outcome: "stopped" };
+      },
+    } as unknown as NonNullable<SandboxProvider["background"]>;
+    w.suspend = (h, s) => {
+      calls.push(`cloud suspend ${h.id}`);
+      return base.suspend(h, s);
+    };
+    cloud = w;
+  };
+
+  /** A managed background start on the device's instance (`revoked`: its cancel is owed). */
+  async function managedStart(
+    deviceId: string,
+    instanceId: string,
+    generation: string,
+    state: "revoked" | "completed",
+  ) {
+    const operationId = randomUUID();
+    const ref = {
+      executionId: randomUUID(),
+      operationId,
+      instanceId,
+      instanceGeneration: generation,
+    };
+    await sql`INSERT INTO capybara.sandbox_operation_intents (operation_id, org_id, account_id,
+        device_id, ordinal, method, input_hash, admission_hash, input, scope, epochs, provider,
+        provider_version, instance_generation, deadline, retain_until, state, execution_id,
+        execution_ref, outcome_unknown)
+      VALUES (${operationId}, ${seed.orgId}, ${seed.accountId}, ${deviceId}, 0, 'backgroundStart',
+        'h', 'a', '{}'::jsonb, '{}'::jsonb, '{}'::jsonb, 'sandbox-fake', '1', ${generation},
+        now() + interval '1 hour', now() + interval '1 day', ${state}, ${ref.executionId},
+        ${JSON.stringify(ref)}::jsonb, false)`.execute(raw);
+    return operationId;
+  }
+  const intent = async (op: string) =>
+    (
+      await sql<{ state: string; revoke_acknowledged: boolean }>`SELECT state, revoke_acknowledged
+        FROM capybara.sandbox_operation_intents WHERE operation_id = ${op}`.execute(raw)
+    ).rows[0];
+  const job = (s: SandboxService) =>
+    new RetireLegacyTasksJob(
+      retirement,
+      s,
+      {
+        acknowledgeRevocation: async (id: string) => {
+          await sql`UPDATE capybara.sandbox_operation_intents SET revoke_acknowledged = true
+            WHERE operation_id = ${id} AND state = 'revoked'`.execute(raw);
+        },
+      } as Pick<SandboxOperationIntents, "acknowledgeRevocation"> as SandboxOperationIntents,
+      tasks,
+      {} as never,
+      {} as never,
+      { info() {}, warn() {} } as never,
+    );
+
+  /** A used device, then suspended, with a revoked start and a running sibling on its instance. */
+  async function suspendedWithRevoked() {
+    const dev = await seedDevice(raw, seed.orgId, seed.accountId);
+    withBackground(dev);
+    const s = service();
+    const first = await use(s, dev);
+    const g = String((await instance(dev)).created_at.getTime());
+    const revoked = await managedStart(dev, first.id, g, "revoked");
+    const sibling = await managedStart(dev, first.id, g, "completed");
+    expect(await s.suspendIdle(new Date(Date.now() + DAY))).toBe(1);
+    calls = [];
+    return { s, dev, first, g, revoked, sibling };
+  }
+
+  beforeEach(() => {
+    stopAnswers = new Map();
+  });
+
+  it("the use resumes, cancels exactly the revoked ref with confirmation and keeps the instance: the sibling survives", async () => {
+    const { s, dev, first, g, revoked, sibling } = await suspendedWithRevoked();
+    const again = await use(s, dev);
+    // the same instance: never destroyed or recreated; only the revoked ref is stopped (first
+    // persisted while suspended, then confirmed once resumed), never the sibling
+    expect(again.id).toBe(first.id);
+    expect(calls).toEqual([
+      `cloud stop ${revoked} ${first.id}`,
+      `cloud resume ${first.id}`,
+      `cloud stop ${revoked} ${first.id}`,
+      `cloud killAll ${first.id}`,
+    ]);
+    expect(calls.some((c) => c.includes(sibling))).toBe(false);
+    expect(await obligations(dev)).toMatchObject([
+      { instance_generation: g, state: "resolved", resolution: "exact-cancelled" },
+    ]);
+    expect(await intent(sibling)).toEqual({ state: "completed", revoke_acknowledged: false });
+    expect((await instance(dev)).status).toBe("running");
+    // the worker settles the cancelled member: its revocation is acknowledged
+    expect((await job(s).runOnce()).settled).toBe(1);
+    expect(await intent(revoked)).toEqual({ state: "revoked", revoke_acknowledged: true });
+  });
+
+  it("a cancel that is not confirmed keeps the obligation and falls back to the whole-instance destroy", async () => {
+    const { s, dev, first, revoked } = await suspendedWithRevoked();
+    stopAnswers.set(revoked, "cancel-pending");
+    const fresh = await use(s, dev);
+    expect(fresh.id).not.toBe(first.id);
+    expect(calls).toEqual([
+      `cloud stop ${revoked} ${first.id}`,
+      `cloud resume ${first.id}`,
+      `cloud stop ${revoked} ${first.id}`,
+      `cloud destroy ${first.id}`,
+      `cloud create ${fresh.id}`,
+    ]);
+    expect(await obligations(dev)).toMatchObject([
+      { state: "resolved", resolution: "provider-destroyed" },
+    ]);
+  });
+
+  it("a failed cancel and a failed destroy keep the obligation: the device is unavailable, the instance suspended again", async () => {
+    const { s, dev, first, revoked } = await suspendedWithRevoked();
+    stopAnswers.set(revoked, "throw");
+    destroyFails = true;
+    await expect(use(s, dev)).rejects.toMatchObject(unavailable);
+    expect(calls).toEqual([
+      `cloud stop ${revoked} ${first.id}`,
+      `cloud resume ${first.id}`,
+      `cloud stop ${revoked} ${first.id}`,
+      `cloud destroy ${first.id}`,
+      `cloud suspend ${first.id}`,
+    ]);
+    expect(await obligations(dev)).toMatchObject([{ state: "open", attempts: 2 }]);
+    expect((await instance(dev)).status).toBe("suspended");
+  });
+
+  it("the worker cancels on its own and suspends the instance again; a later revoked start reopens the obligation", async () => {
+    const { s, dev, first, g, revoked } = await suspendedWithRevoked();
+    expect(await s.retireLegacy(dev)).toBe("clear");
+    expect(calls).toEqual([
+      `cloud stop ${revoked} ${first.id}`,
+      `cloud resume ${first.id}`,
+      `cloud stop ${revoked} ${first.id}`,
+      `cloud suspend ${first.id}`,
+    ]);
+    expect((await instance(dev)).status).toBe("suspended");
+    expect(await obligations(dev)).toMatchObject([{ state: "resolved" }]);
+    expect((await job(s).runOnce()).settled).toBe(1);
+    // the instance lives on: a cancel owed later on the same incarnation is not covered (the
+    // settled member is not stopped again)
+    const later = await managedStart(dev, first.id, g, "revoked");
+    await retirement.scanUntilStable(5, dev);
+    expect(await obligations(dev)).toMatchObject([{ state: "open", resolution: null }]);
+    calls = [];
+    expect(await s.retireLegacy(dev)).toBe("clear");
+    expect(calls.filter((c) => c.startsWith("cloud stop"))).toEqual([
+      `cloud stop ${later} ${first.id}`,
+      `cloud stop ${later} ${first.id}`,
+    ]);
+  });
+
+  it("a legacy task on the same incarnation keeps the whole-instance destroy", async () => {
+    const { s, dev, first } = await suspendedWithRevoked();
+    await legacyRow(dev, {
+      status: "lost",
+      createdAt: (await instance(dev)).created_at,
+      killPending: true,
+    });
+    await retirement.freeze("test");
+    calls = [];
+    const fresh = await use(s, dev);
+    expect(calls).toEqual([`cloud destroy ${first.id}`, `cloud create ${fresh.id}`]);
   });
 });
 

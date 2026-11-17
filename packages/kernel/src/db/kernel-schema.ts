@@ -1710,10 +1710,11 @@ export interface KernelDatabase {
     >;
     /** When the obligation was abandoned with its deleted device (never evidence). */
     abandoned_at: TsNullable;
+    /** `exact-cancelled`: every member was a revoked start cancelled by its exact ref (B-22). */
     resolution: ColumnType<
-      "provider-destroyed" | "host-rebooted" | null,
-      "provider-destroyed" | "host-rebooted" | null | undefined,
-      "provider-destroyed" | "host-rebooted" | null
+      "provider-destroyed" | "host-rebooted" | "exact-cancelled" | null,
+      "provider-destroyed" | "host-rebooted" | "exact-cancelled" | null | undefined,
+      "provider-destroyed" | "host-rebooted" | "exact-cancelled" | null
     >;
     /** A local incarnation: the machine and its boot identity when recorded (null: none). */
     boot_machine_id: ColumnType<string | null, string | null | undefined, string | null>;

@@ -153,6 +153,26 @@ function currentCloudIdentity(
   });
 }
 
+/**
+ * What a cloud instance can enforce of its provider's report (B-12, spec §124): Full access needs
+ * the instance itself to hold the outer boundary. An instance applied in the OS sandbox mode
+ * holds its outer network only through the restricted child filters that Full access leaves, so
+ * Full reads as unsupported there whatever the provider reports; restricted support stands.
+ */
+export function cloudEnforceable(
+  report: SandboxPermissionSupport,
+  instanceLimits: unknown,
+): SandboxPermissionSupport {
+  if (!report.fullAccess || readInstanceLimits(instanceLimits).applied?.mode === "auto")
+    return report;
+  return {
+    ...report,
+    fullAccess: false,
+    unavailableReason:
+      "This cloud instance enforces its outer network only inside the OS sandbox, so it cannot run Full access",
+  };
+}
+
 /** No probe, provisioning or provider IO. A changed identity makes the previous report unprobed. */
 export async function readRuntimeReport(
   db: KernelSchemaDb,
@@ -236,17 +256,21 @@ export async function readCurrentReport(
     row.identity_hash !== permissionScopeHash(instance.permission_runtime_identity)
   )
     return unprobed;
-  if (!row.report.restricted && !row.report.fullAccess)
+  const report =
+    device?.source === "cloud"
+      ? cloudEnforceable(row.report, instance.instance_limits)
+      : row.report;
+  if (!report.restricted && !report.fullAccess)
     return {
       availability: {
         state: "unsupported",
-        reason: row.report.unavailableReason ?? "This runtime cannot enforce permission operations",
+        reason: report.unavailableReason ?? "This runtime cannot enforce permission operations",
       },
       identityHash: row.identity_hash,
       instanceGeneration: row.instance_generation,
     };
   return {
-    availability: { state: "supported", report: row.report },
+    availability: { state: "supported", report },
     identityHash: row.identity_hash,
     instanceGeneration: row.instance_generation,
   };
