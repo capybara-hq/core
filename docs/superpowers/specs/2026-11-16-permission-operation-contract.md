@@ -184,6 +184,19 @@ Full access and is not an accepted compatibility compromise. Restricted helper m
 only to restricted operations; owner/org restrictions and the cloud container/VM boundary still apply
 to Full access.
 
+Restricted operations never write the shared mandatory-deny policy
+(`packages/plugin-sdk/src/sandbox-write-denies.ts`; one source for the Linux broker, the native
+helper, the device agent and the macOS runtime's patterns): shell startup, git-global, direnv,
+npm, editor and agent configuration files; inside any `.git` (including submodule and worktree
+gitdirs) everything except git's ordinary internals; a `HEAD` file outside `.git` (a bare
+repository lookalike); and moves out of protected names. Known limitations: a restricted command
+cannot `git init`, add a submodule or worktree, or create a bare repository; continuing a git
+operation it started runs the todo list it wrote; files tools execute by convention without
+configuration, such as `package.json` scripts run by `npm test`, are not covered, so the owner
+reviews such changes before running them unsandboxed. macOS glob patterns cannot express the
+gitdir allowlist, the `HEAD` rule or moving a nested repository's `.git` away; they deny the
+dangerous gitdir internals at any depth, and the runtime keeps a write root's own `.git` in place.
+
 Provider errors add duck-typed `SandboxPermissionUnsupportedError` and `SandboxScopeDeniedError`
 with fixed kernel-facing codes. Neither is `SandboxGoneError`: a denial must not recreate the
 instance or retry unrestricted. Existing abort, gone, output byte/UTF-8 and timeout semantics stay.

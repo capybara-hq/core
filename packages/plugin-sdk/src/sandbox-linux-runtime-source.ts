@@ -19,10 +19,7 @@
  * truncate and metadata change is performed by the broker on its own no-follow resolution from
  * the pinned descriptors, refusing the mandatory write denies (`sandbox-write-denies.ts`).
  */
-import {
-  SANDBOX_MANDATORY_WRITE_DENIES,
-  SANDBOX_PROTECTED_PATH_NAMES,
-} from "./sandbox-write-denies.js";
+import { SANDBOX_WRITE_POLICY_PYTHON } from "./sandbox-write-denies.js";
 
 export const LINUX_SANDBOX_SOURCE: string = String.raw`import ctypes
 import sys
@@ -189,23 +186,15 @@ WRITE_OPEN_FLAGS = 0o20001103
 O_TMPFILE_BIT = 0o20000000
 AT_REMOVEDIR, AT_SYMLINK_FOLLOW = 0x200, 0x400
 RENAME_NOREPLACE, RENAME_EXCHANGE = 1, 2
-# Shared with every consumer (sandbox-write-denies.ts): component sequences never written.
-MANDATORY_WRITE_DENIES = [[name.lower() for name in entry] for entry in ${JSON.stringify(SANDBOX_MANDATORY_WRITE_DENIES)}]
-PROTECTED_PATH_NAMES = set(${JSON.stringify(SANDBOX_PROTECTED_PATH_NAMES)})
 FILE_OPS = ("open", "openat", "creat", "mkdir", "mkdirat", "mknod", "mknodat", "rmdir", "unlink",
             "unlinkat", "symlink", "symlinkat", "link", "linkat", "rename", "renameat",
             "renameat2", "truncate")
 STD_STREAMS = {"/dev/stdin": 0, "/dev/stdout": 1, "/dev/stderr": 2}
 
 
-def write_denied(path):
-    """A mandatory write deny: one of the sequences appears consecutively in the path."""
-    parts = [part.lower() for part in path.split("/") if part]
-    for entry in MANDATORY_WRITE_DENIES:
-        for index in range(len(parts) - len(entry) + 1):
-            if parts[index:index + len(entry)] == entry:
-                return True
-    return False
+# The write policy shared with every consumer (sandbox-write-denies.ts): write_denied(path) and
+# move_denied(source, destination, is_dir).
+${SANDBOX_WRITE_POLICY_PYTHON}
 def RET_ERRNO(code):
     return 0x00050000 | code
 
@@ -929,7 +918,7 @@ class Broker:
         if write_denied(resolved):
             raise Denied()
         # a non-directory named .git is a gitdir pointer to configuration written elsewhere
-        if creates_entry and name.lower() == ".git":
+        if creates_entry and _fold_parts(name) == [".git"]:
             raise Denied()
 
     def send_fd(self, ident, fd, cloexec):
@@ -974,6 +963,29 @@ class Broker:
             os.close(obj)
         return where  # a file: resolved like any other path
 
+    def open_entry(self, ident, parent, final, flags, mode):
+        """Opens the resolved entry. A FIFO is opened without blocking this broker thread on a
+        peer that may never come: it is retried while the notifying call is still waiting."""
+        flags |= os.O_NOFOLLOW | os.O_CLOEXEC
+        try:
+            info = os.stat(final, dir_fd=parent, follow_symlinks=False)
+        except FileNotFoundError:
+            info = None
+        if info is None or not stat.S_ISFIFO(info.st_mode) or flags & os.O_NONBLOCK:
+            return os.open(final, flags, mode, dir_fd=parent)
+        while True:
+            try:
+                fd = os.open(final, flags | os.O_NONBLOCK, mode, dir_fd=parent)
+            except OSError as error:
+                if error.errno != errno.ENXIO:
+                    raise
+                if not self.valid(ident):
+                    raise OSError(errno.EINTR, "The call was abandoned")
+                time.sleep(0.05)
+                continue
+            os.set_blocking(fd, True)
+            return fd
+
     def file_op(self, ident, pid, mem, name, args):
         if name in ("open", "openat", "creat"):
             if name == "open":
@@ -1001,8 +1013,7 @@ class Broker:
                 parent, final, resolved = self.followed(path)
             try:
                 self.refuse(resolved, final, not flags & O_TMPFILE_BIT)
-                fd = os.open(final, flags | os.O_NOFOLLOW | os.O_CLOEXEC,
-                             mode & 0o7777 & ~umask, dir_fd=parent)
+                fd = self.open_entry(ident, parent, final, flags, mode & 0o7777 & ~umask)
             finally:
                 os.close(parent)
             try:
@@ -1079,6 +1090,8 @@ class Broker:
                     self.path_arg(pid, ident, mem, ndir, naddr))
                 try:
                     self.refuse(dresolved, dname, True)
+                    if move_denied(sresolved, dresolved, False):
+                        raise Denied()
                     os.link(sname, dname, src_dir_fd=sparent, dst_dir_fd=dparent,
                             follow_symlinks=False)
                 finally:
@@ -1102,22 +1115,18 @@ class Broker:
                 dparent, dname, dresolved = self.entry(
                     self.path_arg(pid, ident, mem, ndir, naddr))
                 try:
-                    moves = [(sparent, sname, dresolved, dname)]
-                    if flags & RENAME_EXCHANGE:
-                        moves.append((dparent, dname, sresolved, sname))
                     self.refuse(sresolved, sname)
                     self.refuse(dresolved, dname)
-                    for parent, entry, to, to_name in moves:
+                    moves = [(sparent, sname, sresolved, dresolved)]
+                    if flags & RENAME_EXCHANGE:
+                        moves.append((dparent, dname, dresolved, sresolved))
+                    for parent, entry, origin, to in moves:
                         try:
                             info = os.stat(entry, dir_fd=parent, follow_symlinks=False)
                         except FileNotFoundError:
                             continue
-                        if stat.S_ISDIR(info.st_mode):
-                            # A moved directory could carry denied entries into place.
-                            if any(part.lower() in PROTECTED_PATH_NAMES
-                                   for part in to.split("/")):
-                                raise Denied()
-                        elif to_name.lower() == ".git":
+                        # nothing leaves a protected name, nor is a directory moved under one
+                        if move_denied(origin, to, stat.S_ISDIR(info.st_mode)):
                             raise Denied()
                     if libc.renameat2(sparent, os.fsencode(sname), dparent, os.fsencode(dname),
                                       ctypes.c_uint(flags)) < 0:
@@ -1351,6 +1360,10 @@ class Broker:
         elif value != "sent":
             self.respond(ident, value, code)
 
+    # Each notification is served on its own thread. That is sound because no handler keeps
+    # shared mutable state across its steps (socket ownership is locked): every check is made on
+    # the broker's own resolution, and every effect is one syscall on descriptors that handler
+    # holds, so concurrent notifications interleave only as the kernel would interleave the calls.
     def loop(self, stop):
         poller = select.poll()
         poller.register(self.listener, select.POLLIN)

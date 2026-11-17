@@ -5,6 +5,7 @@ import { type FileHandle, open, realpath, stat } from "node:fs/promises";
 import { basename, dirname } from "node:path";
 import {
   type ExecResult,
+  SANDBOX_GIT_DENIED_INTERNALS,
   SANDBOX_MANDATORY_WRITE_DENIES,
   type SandboxBrowseScope,
   type SandboxExecOptions,
@@ -93,18 +94,30 @@ export function createCancellationAttempt(
   };
 }
 /**
- * Sandbox-runtime write-deny globs for one write root (or, with "", anywhere): every
- * {@link SANDBOX_MANDATORY_WRITE_DENIES} entry at the root and at any depth, and beneath it.
+ * Sandbox-runtime write-deny globs for one write root (or, with "", anywhere), from the shared
+ * SDK policy: every {@link SANDBOX_MANDATORY_WRITE_DENIES} entry at the root, at any depth and
+ * beneath; every {@link SANDBOX_GIT_DENIED_INTERNALS} entry at any depth below a `.git`
+ * (submodule and worktree gitdirs included). The runtime also refuses moving an ancestor of a
+ * denied path it can name, which keeps a write root's own `.git` in place. Patterns cannot
+ * express the gitdir allowlist, the bare-repository `HEAD` rule or moving a deeper repository's
+ * `.git` away (macOS residuals recorded in the SDK policy); any `.git` glob would deny everything
+ * beneath it and break ordinary git work.
  */
 export function mandatoryDenyPatterns(root: string): string[] {
-  return SANDBOX_MANDATORY_WRITE_DENIES.flatMap((entry) => {
-    const name = entry.join("/");
-    return [
-      ...(root ? [`${root}/${name}`, `${root}/${name}/**`] : []),
-      `${root}/**/${name}`,
-      `${root}/**/${name}/**`,
-    ];
-  });
+  const anywhere = (name: string) => [
+    ...(root ? [`${root}/${name}`, `${root}/${name}/**`] : []),
+    `${root}/**/${name}`,
+    `${root}/**/${name}/**`,
+  ];
+  return [
+    ...SANDBOX_MANDATORY_WRITE_DENIES.flatMap((entry) => anywhere(entry.join("/"))),
+    ...SANDBOX_GIT_DENIED_INTERNALS.flatMap((name) => [
+      ...anywhere(`.git/${name}`),
+      `${root}/**/.git/**/${name}`,
+      `${root}/**/.git/**/${name}/**`,
+      ...(root ? [`${root}/.git/**/${name}`, `${root}/.git/**/${name}/**`] : []),
+    ]),
+  ];
 }
 /** The JVM proxy agent the sandbox runtime points sandboxed JVMs at, inside its package. */
 export const JAVA_PROXY_AGENT_JAR = "vendor/java-proxy-agent/srt-proxy-agent.jar";

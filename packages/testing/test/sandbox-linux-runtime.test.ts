@@ -548,14 +548,8 @@ attempt("clone3", lambda: raw(435, 0, 0))
 
       it("without the mandatory denies a git hook lands", async (context) => {
         requireSupport(context);
-        const docstring =
-          '    """A mandatory write deny: one of the sequences appears consecutively in the path."""\n';
-        const runtime = stageMutant(
-          device,
-          "no-write-denies",
-          docstring,
-          `${docstring}    return False\n`,
-        );
+        const head = "def write_denied(path):\n";
+        const runtime = stageMutant(device, "no-write-denies", head, `${head}    return False\n`);
         const mutant = new Agent(device, { runtime, candidateArch: true });
         await mutant.ready;
         try {

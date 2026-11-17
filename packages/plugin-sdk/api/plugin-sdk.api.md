@@ -1941,6 +1941,9 @@ export function isSafePackagePath(p: string): boolean;
 export function isSandboxGoneError(e: unknown): e is SandboxGoneError;
 
 // @public
+export function isSandboxMoveDenied(source: string, destination: string, sourceIsDirectory: boolean): boolean;
+
+// @public
 export function isSandboxOperationOutcomeUnknownError(e: unknown): e is SandboxOperationOutcomeUnknownError;
 
 // @public
@@ -2948,6 +2951,15 @@ export type RouteCaller = {
 
 // @public
 export const SANDBOX_EXTENSION_POINT = "sandbox@2";
+
+// @public
+export const SANDBOX_GIT_ALLOWED_DIRECTORIES: readonly string[];
+
+// @public
+export const SANDBOX_GIT_ALLOWED_FILES: readonly string[];
+
+// @public
+export const SANDBOX_GIT_DENIED_INTERNALS: readonly string[];
 
 // @public
 export const SANDBOX_MANDATORY_WRITE_DENIES: readonly (readonly string[])[];

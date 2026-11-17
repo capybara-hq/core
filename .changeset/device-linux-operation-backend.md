@@ -6,8 +6,8 @@ Linux and local-Docker operation backends for permission profiles (dormant: reac
 the staged protocol 3 path). On Linux hosts the device runs restricted commands through the SDK's
 Landlock and seccomp-broker launcher on pinned root descriptors, with every filesystem write
 brokered and the mandatory write denies refused, and network none or an allowlist served by a
-token-protected proxy owned by the operation (CONNECT to ports 80 and 443 only, no loopback or
-private targets). Native file work uses the SDK helper on pinned descriptors and refuses
+token-protected proxy owned by the operation (CONNECT to ports 80 and 443 and plain requests to
+port 80 only, globally routable addresses only). Native file work uses the SDK helper on pinned descriptors and refuses
 owner-denied paths (compared by real path too), link targets and the mandatory write denies; Full
 access runs as the OS user without restricted filters. The agent runs from inline source and
 executes the SDK runtime only from sealed memfds whose digests it checked. Background work,
