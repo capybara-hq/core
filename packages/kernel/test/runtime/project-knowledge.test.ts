@@ -429,6 +429,8 @@ describe("project knowledge at run start", () => {
         keeps: (...args: Parameters<DeviceProjectsService["keeps"]>) => projects.keeps(...args),
       },
       {
+        // gate off: the raw route only
+        withOperations: () => Promise.reject(new Error("no operation while the gate is off")),
         withSandbox: (async (_opts: unknown, fn: (...a: unknown[]) => unknown) =>
           fn(
             {},
@@ -666,6 +668,10 @@ describe("project knowledge at run start", () => {
       },
       {
         withSandbox: async () => {
+          asked++;
+          throw new Error("the device must not be asked");
+        },
+        withOperations: async () => {
           asked++;
           throw new Error("the device must not be asked");
         },

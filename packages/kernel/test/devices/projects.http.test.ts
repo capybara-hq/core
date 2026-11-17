@@ -713,6 +713,8 @@ describe("device projects", () => {
       k.app.get(KernelDb),
       txHost,
       {
+        // gate off: the raw route only
+        withBrowse: () => Promise.reject(new Error("no owner browse while the gate is off")),
         withSandbox: (_ctx, fn, signal) =>
           fn(
             { id },

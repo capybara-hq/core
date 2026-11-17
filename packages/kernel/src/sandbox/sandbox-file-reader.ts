@@ -1,10 +1,11 @@
 import { SandboxScopeDeniedError, ToolError } from "@capybara-hq/plugin-sdk";
-import { Inject, Injectable } from "@nestjs/common";
+import { Inject, Injectable, Optional } from "@nestjs/common";
 import { ConversationDevices } from "../devices/conversation-devices.js";
 import { ApiError } from "../errors.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
+import { currentExecutionClaim } from "../runtime/run-execution.js";
 import { rootConversationOf } from "../runtime/subagents/child.js";
 import {
   checkPath,
@@ -13,6 +14,10 @@ import {
   mapSandboxError,
 } from "../tools/builtins/sandbox/common.js";
 import type { OperationInvocation } from "./operation-intents.js";
+import {
+  PERMISSION_CONTEXT_ACTIVATION,
+  permissionContextActive,
+} from "./permission-context-types.js";
 import { SandboxService } from "./sandbox.service.js";
 
 /** What {@link SandboxFileReader.read} reads. */
@@ -27,13 +32,25 @@ export interface SandboxFileReadInput {
   /** The largest file accepted, in bytes. */
   maxBytes: number;
   signal: AbortSignal;
+  /**
+   * The tool call the read serves (the `Platform` call): once the activation gate is on, the read
+   * is a managed operation of that call under the run's current execution claim.
+   */
+  callId?: string;
 }
+
+/** How long one gate-on read may wait for admission (as a builtin tool call's operations). */
+const READ_OPERATION_DEADLINE_MS = 30_000;
 
 /**
  * Reads one file from a conversation's sandbox for the kernel (skill authoring spec: a package
  * the agent built is registered from its sandbox). The same stat -> readFile sequence as the
  * `Deliver` tool, with the same path checks, in the device of the conversation's tree (holder =
  * the root conversation); no attachment sync and no `device_paths` record.
+ *
+ * Once the activation gate is on, {@link read} never takes the raw use: it is a managed operation
+ * of the serving tool call (`input.callId`) under the run's current execution claim, and without
+ * them nothing is entered (permission activation W3-L).
  *
  * Throws `ApiError` 422 `sandbox.file_invalid_path` / `sandbox.file_not_found` /
  * `sandbox.file_is_directory` / `sandbox.file_too_large`; provider and device failures go through
@@ -48,10 +65,26 @@ export class SandboxFileReader {
     private readonly sandbox: Pick<SandboxService, "withSandbox"> &
       Partial<Pick<SandboxService, "withOperations">>,
     @Inject(KERNEL_LOGGER) private readonly log: Pick<KernelLogger, "warn">,
+    /** The paired activation gate: once on, every read is a managed operation. */
+    @Optional() @Inject(PERMISSION_CONTEXT_ACTIVATION) private readonly activation?: boolean,
   ) {}
 
   async read(input: SandboxFileReadInput): Promise<Uint8Array> {
-    return this.readWith(input);
+    if (!permissionContextActive(this.activation)) return this.readWith(input);
+    // the run this read serves: its current execution claim and the tool call, else nothing runs
+    const claim = currentExecutionClaim();
+    if (!claim || input.callId === undefined || claim.conversationId !== input.conversationId) {
+      invalidPathAsApiError(() => checkPathShape(input.path));
+      throw mapSandboxError(
+        new SandboxScopeDeniedError("The read has no current server execution claim"),
+        this.log,
+      );
+    }
+    return this.readWith(input, {
+      claim,
+      callId: input.callId,
+      deadlineMs: Date.now() + READ_OPERATION_DEADLINE_MS,
+    });
   }
   /** Dormant caller adapter; the invoking tool supplies its actual current server execution identity. */
   async readOperation(

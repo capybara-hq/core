@@ -9,7 +9,7 @@ import {
   skillDigest,
   skillSandboxDir,
 } from "@capybara-hq/plugin-sdk";
-import { Inject, Injectable } from "@nestjs/common";
+import { Inject, Injectable, Optional } from "@nestjs/common";
 import { AgentLookup } from "../agents/agent-lookup.js";
 import { type AgentDefinition, builtinDisabled } from "../agents/definition.js";
 import { EventLog } from "../conversations/event-log.js";
@@ -28,6 +28,10 @@ import {
   projectSkillOf,
 } from "../runtime/context/project-root.js";
 import { isGeneralAlias, resolveSkillForkType } from "../runtime/subagents/roster.js";
+import {
+  PERMISSION_CONTEXT_ACTIVATION,
+  permissionContextActive,
+} from "../sandbox/permission-context-types.js";
 import { SandboxService } from "../sandbox/sandbox.service.js";
 import { SandboxProviderUnreachableError } from "../sandbox/unreachable.js";
 import { StorageService } from "../storage/storage.service.js";
@@ -283,6 +287,8 @@ export class SkillInvoker {
       ConversationDevices,
       "forTool" | "modeLevel" | "workingFacts" | "projectReach"
     >,
+    /** The paired activation gate: once on, no raw device use reads a project skill. */
+    @Optional() @Inject(PERMISSION_CONTEXT_ACTIVATION) private readonly activation?: boolean,
   ) {}
 
   /**
@@ -515,12 +521,24 @@ export class SkillInvoker {
     };
   }
 
-  /** {@link readProjectSkill} in a silent use of the conversation's device, as its owner. */
+  /**
+   * {@link readProjectSkill} in a silent use of the conversation's device, as its owner. Once the
+   * activation gate is on this is refused before any device call: a person's invocation has no
+   * run, so no operation can admit the read, and the owner browse never reads file contents
+   * (operation contract §Native operations); the raw use is never taken. The owner-authenticated
+   * project read this needs is not in `SandboxService` yet (permission activation W3-L).
+   */
   private async readProjectFile(
     a: { orgId: string; accountId: string; conversationId: string; name: string },
     root: string,
     bare: string,
   ) {
+    if (permissionContextActive(this.activation)) {
+      throw new ApiError(
+        "device.projects_unavailable",
+        `The project skill ${a.name} cannot be read from the device for a person's invocation yet; send the request without the command and ask the agent to use the skill`,
+      );
+    }
     try {
       const deviceId = await this.devices.forTool(a.orgId, a.conversationId);
       // a person invokes in a root conversation: it is its own sandbox conversation
