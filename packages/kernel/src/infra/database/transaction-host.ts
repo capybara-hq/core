@@ -112,6 +112,28 @@ export function withTransactionFencePrelude<T>(
   }, fn);
 }
 
+/**
+ * A writer whose permission authority locks (with the locks it takes before them: its org row, a
+ * membership, its device row, the super admin lock) are its `prelude`, and whose writes are `fn`,
+ * which opens at most one transaction. With no transaction open, {@link withTransactionFencePrelude}:
+ * inside a run's fence (a Platform operation in a tool step) the prelude runs after the fence's org
+ * row and before its conversation rows; with no fence (an HTTP request) it runs first in the
+ * transaction `fn` opens, the order the writer always had. Joining a caller's transaction the
+ * prelude runs inline at once: the caller owns that transaction's order, and a fenced caller's new
+ * permission lock is refused (`PermissionAuthorityLock`). `fn` re-checks under the locks what the
+ * prelude read without them, and may name the same, already held, locks again.
+ */
+export async function withOrderedLocks<T>(
+  prelude: () => Promise<void>,
+  fn: () => Promise<T>,
+): Promise<T> {
+  if (liveStore()) {
+    await prelude();
+    return fn();
+  }
+  return withTransactionFencePrelude(prelude, fn);
+}
+
 export type Propagation = "required" | "requires_new" | "mandatory";
 
 export interface TransactionOptions {

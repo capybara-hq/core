@@ -18,6 +18,22 @@ export const authorityEntries = (s: AuthoritySubject): [AuthorityLevel, string][
   ...(s.rootConversationId ? [["root", s.rootConversationId] as [AuthorityLevel, string]] : []),
 ];
 const keyOf = (kind: AuthorityLevel, id: string) => `permission-authority-${kind}-${id}`;
+/**
+ * An internal error (a kernel bug, never a user refusal): a permission authority lock was asked for
+ * inside a transaction a run fence already admitted, outside its ordered prelude, which would take
+ * it after the fence's conversation rows and invert the global lock order (org row → permission
+ * authority locks → root conversation → conversation).
+ */
+export class PermissionLockOrderError extends Error {
+  override readonly name = "PermissionLockOrderError";
+  constructor(readonly keys: readonly string[]) {
+    super(
+      `Permission authority locks inside a fenced transaction are taken only in its ordered prelude ` +
+        `(missing: ${keys.join(", ")}); take them with withOrderedLocks / withTransactionFencePrelude ` +
+        "before the transaction opens",
+    );
+  }
+}
 /** Shared readers and exclusive changed-level writers, held until the caller commits. */
 @Injectable()
 export class PermissionAuthorityLock {
@@ -70,19 +86,14 @@ export class PermissionAuthorityLock {
       throw new Error("Acquire the complete authority subject once in fixed order");
     // the global lock order puts these locks after the org row and before the conversation rows:
     // a transaction a run fence already admitted holds its conversation rows, so a new authority
-    // read lock there would invert the order; the permission readers (context, managed writer,
-    // admission, review) take it in the ordered prelude instead (`withTransactionFencePrelude`),
-    // which runs inside the fence before those rows. Ceiling writers reached from a tool step
-    // (Platform operations on devices, org or platform settings) still lock after the fence's
-    // rows: a known inversion, left to a follow-up that moves them into a prelude
-    if (
-      intent.kind === "admit" &&
-      store.admission !== undefined &&
-      wanted.some((item) => !claims.has(item.key))
-    )
-      throw new Error(
-        "Permission authority locks inside a fenced transaction are taken only in its ordered prelude",
-      );
+    // lock there (shared or exclusive) would invert the order. Readers (context, managed writer,
+    // admission, review) and ceiling writers (deletion, device, org, platform and account writes
+    // a Platform operation reaches from a tool step) take theirs in the ordered prelude instead
+    // (`withTransactionFencePrelude`, `withOrderedLocks`), which runs inside the fence before
+    // those rows; the body may then name the same, already held, subject again
+    const missing = wanted.filter((item) => !claims.has(item.key));
+    if (store.admission !== undefined && missing.length)
+      throw new PermissionLockOrderError(missing.map((item) => item.key));
     for (const item of wanted) {
       if (claims.has(item.key)) continue;
       if (item.mode === "exclusive") await this.locks.lock(item.key);
