@@ -267,3 +267,31 @@ describe("绕过形态", () => {
     ]);
   });
 });
+
+describe("embed UI directories are browser code", () => {
+  const CODE = "let x = 0;\nexport const t = () => setTimeout(() => {}, 1);\nexport { x };\n";
+  function plugin(files: string[]): string {
+    const d = mkdtempSync(join(tmpdir(), "capybara-ps-"));
+    tmp.push(d);
+    writeFileSync(
+      join(d, "package.json"),
+      JSON.stringify({ name: "embed", version: "0.0.0", private: true, type: "module" }),
+    );
+    for (const f of files) {
+      mkdirSync(join(d, f, ".."), { recursive: true });
+      writeFileSync(join(d, f), CODE);
+    }
+    return d;
+  }
+  const rel = async (d: string) =>
+    [...new Set((await checkPluginState([d])).map((x) => x.file.slice(d.length + 1)))].sort();
+
+  it("skips ui-src/ and ui/ at the plugin root", async () => {
+    expect(await rel(plugin(["ui-src/app/main.ts", "ui/app.js"]))).toEqual([]);
+  });
+
+  it("still checks a deeper src/ui and the server entry", async () => {
+    const d = plugin(["ui-src/app/main.ts", "ui/app.js", "src/ui/helper.ts", "src/index.ts"]);
+    expect(await rel(d)).toEqual(["src/index.ts", "src/ui/helper.ts"]);
+  });
+});
