@@ -13,6 +13,33 @@
  * Full access never uses this launcher: it has no restricted filters.
  */
 export const LINUX_SANDBOX_SOURCE: string = String.raw`import ctypes
+import sys
+
+
+def protect_self():
+    """Makes this process (launcher, supervisor and broker thread) non-dumpable, first thing.
+
+    execve resets dumpability, and without Yama a same-uid process (another session's Full work)
+    could otherwise ptrace the launcher or open its /proc/<pid>/mem, environ and fd. Non-dumpable,
+    those need CAP_SYS_PTRACE; fork inherits it, so the pre-exec child is covered until its own
+    execve. A tracer attached before this point would keep its access, so one is refused here.
+    """
+    if not sys.platform.startswith("linux"):
+        return None
+    if ctypes.CDLL(None, use_errno=True).prctl(4, 0, 0, 0, 0) != 0:  # PR_SET_DUMPABLE 0
+        return "The launcher could not make itself non-dumpable"
+    try:
+        with open("/proc/self/status") as handle:
+            for line in handle:
+                if line.startswith("TracerPid:") and int(line.split()[1]) != 0:
+                    return "The launcher was traced before it became non-dumpable"
+    except (OSError, ValueError):
+        return "The launcher could not confirm that it is not traced"
+    return None
+
+
+SELF_PROTECTION = protect_self()
+
 import errno
 import importlib.util
 import ipaddress
@@ -51,6 +78,13 @@ import time
 # - UNIX sockets in every network kind: stream/seqpacket only (datagram and raw are refused);
 #   pathname connect/bind only to sockets inside the write roots, resolved through the pinned
 #   descriptors; abstract and unnamed addresses are refused. socketpair() is unaffected.
+# - The launcher makes itself non-dumpable before anything else (protect_self), so a same-uid
+#   process outside the operation cannot ptrace it or read its mem, environ or fd. The window
+#   between the interpreter's exec and that first statement remains (a tracer attached in it makes
+#   the launcher refuse; a /proc/<pid>/mem descriptor opened in it keeps working); closing it
+#   needs a separate uid. The restricted command and the native helper are dumpable again after
+#   their own execve: the broker must read the command's memory, and neither holds more than the
+#   device user can already reach.
 # - The launcher creates one closed session (setsid is denied inside it) and reports it in a
 #   "session" event; if the supervisor is lost, the consumer runs "reap" with that event to end
 #   every owned process. Brokered calls fail (ENOSYS) once the broker is gone.
@@ -1305,6 +1339,8 @@ def probe_static(table, candidate=False):
         return "Restricted Linux execution requires Linux"
     if table is None:
         return "No syscall inventory exists for %s" % machine
+    if SELF_PROTECTION:
+        return SELF_PROTECTION
     if machine not in VALIDATED_ARCHES and not candidate:
         return "The syscall inventory is not validated on %s" % machine
     abi = landlock_abi()
@@ -1346,6 +1382,10 @@ def probe_primitives(candidate):
     if pid == 0:
         try:
             parent_sock.close()
+            # Dumpable like a real restricted child after its execve, so the broker's memory read
+            # is exercised as in a launch (fork inherited non-dumpable; the probe holds no secret).
+            if libc.prctl(4, 1, 0, 0, 0) != 0:  # PR_SET_DUMPABLE 1
+                os._exit(3)
             if libc.prctl(38, 1, 0, 0, 0) != 0:
                 os._exit(3)
             attr = struct.pack("QQQ", FS_ALL, NET_CONNECT_TCP, SCOPE_ALL)

@@ -96,6 +96,10 @@ static("riscv-candidate", "Linux", "riscv64", 8, candidate=True)
 static("abi5", "Linux", "aarch64", 5)
 static("no-children", "Linux", "aarch64", 8, children=False)
 static("aarch64", "Linux", "aarch64", 6)
+cases["undumpable-on-host"] = module.SELF_PROTECTION
+module.SELF_PROTECTION = "The launcher was traced before it became non-dumpable"
+static("traced", "Linux", "x86_64", 8, candidate=True)
+module.SELF_PROTECTION = None
 platform("Linux", "aarch64")
 def broken(candidate):
     raise RuntimeError("primitive exploded")
@@ -118,6 +122,10 @@ print(json.dumps(cases))
       abi5: "Landlock ABI 5 is below the required 6",
       "no-children": "The kernel does not expose child lists for exact supervision",
       aarch64: null,
+      // Loading the launcher made this (untraced) process non-dumpable without failing.
+      "undumpable-on-host": null,
+      // A launcher that cannot protect itself never reports restricted support.
+      traced: "The launcher was traced before it became non-dumpable",
       crash: {
         restricted: null,
         arch: "aarch64",
