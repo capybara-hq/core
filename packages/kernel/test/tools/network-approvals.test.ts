@@ -38,7 +38,7 @@ import {
   type TestKernel,
   waitFor,
 } from "../helpers/runs.js";
-import { FakeMachine, HELLO } from "../local-devices/fake-machine.js";
+import { FakeMachine } from "../local-devices/fake-machine-v3.js";
 import type { Answer } from "../local-devices/test-holder.js";
 
 /**
@@ -201,7 +201,7 @@ async function connect(answer: (req: KernelReq) => Answer) {
   const machine = new FakeMachine(wsUrl, s.credential, answer, { hello: false });
   open.push(machine);
   await machine.opened;
-  machine.send({ ...HELLO, features: ["networkReport", "policyOp", "policyOpId"], policy: POLICY });
+  machine.hello({ features: ["networkReport", "policyOp", "policyOpId"], policy: POLICY });
   await waitFor(
     async () => (await redis.get(deviceLeaseKey(s.deviceId))) !== null,
     10_000,

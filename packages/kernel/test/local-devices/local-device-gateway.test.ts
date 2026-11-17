@@ -38,7 +38,7 @@ import {
   waitFor,
 } from "../helpers/runs.js";
 import { seedConversation } from "../helpers/tool-fixtures.js";
-import { FakeMachine, HELLO, refusal } from "./fake-machine.js";
+import { DEVICE_PROTOCOL_HEADER_VALUE, FakeMachine, HELLO, refusal } from "./fake-machine-v3.js";
 
 /**
  * The gateway holds the WebSocket connections of connected machines (environments spec §13.4):
@@ -227,7 +227,7 @@ async function hello(credential: string, machineId: string, bootId?: string): Pr
   const m = new FakeMachine(url, credential, undefined, { hello: false });
   bootOpen.push(m);
   await m.opened;
-  m.send({ ...HELLO, ...(bootId !== undefined && { bootId }) });
+  m.hello({ ...(bootId !== undefined && { bootId }) });
   // the hello's record moves last_seen_at (in the same transaction as the boot record)
   await waitFor(async () => ((await seen()) > before ? true : null), 10_000, "hello recorded");
 }
@@ -356,7 +356,7 @@ describe("boot identity evidence for local legacy retirement", () => {
     expect(
       await refusal(url, {
         Authorization: "Bearer cap_dev_bogus",
-        "X-Capybara-Device-Protocol": "2",
+        "X-Capybara-Device-Protocol": DEVICE_PROTOCOL_HEADER_VALUE,
       }),
     ).toMatchObject({ status: 401 });
 
@@ -366,7 +366,7 @@ describe("boot identity evidence for local legacy retirement", () => {
     expect(
       await refusal(url, {
         Authorization: `Bearer ${d.credential}`,
-        "X-Capybara-Device-Protocol": "2",
+        "X-Capybara-Device-Protocol": DEVICE_PROTOCOL_HEADER_VALUE,
       }),
     ).toMatchObject({ status: 401 });
     await machines.recordHello(d.machineId, { ...HELLO, bootId: B2 });
@@ -414,7 +414,7 @@ describe("the hello's policy summary and the reported mode", () => {
     const m = await connected();
     const machine = new FakeMachine(url, m.credential, undefined, { hello: false });
     await machine.opened;
-    machine.send({ ...HELLO, ...hello });
+    machine.hello({ ...hello });
     await held(m.deviceId);
     await waitFor(
       async () =>
@@ -546,11 +546,11 @@ describe("GET /device/connect", () => {
   it("unknown credential is 401 before upgrade", async () => {
     const r = await refusal(url, {
       Authorization: `Bearer cap_dev_${"A".repeat(43)}`,
-      "X-Capybara-Device-Protocol": "2",
+      "X-Capybara-Device-Protocol": DEVICE_PROTOCOL_HEADER_VALUE,
     });
     expect(r?.status).toBe(401);
     expect(codeOf(r?.body ?? "")).toBe("device.credential_invalid");
-    const none = await refusal(url, { "X-Capybara-Device-Protocol": "2" });
+    const none = await refusal(url, { "X-Capybara-Device-Protocol": DEVICE_PROTOCOL_HEADER_VALUE });
     expect(none?.status).toBe(401);
   });
 
@@ -662,7 +662,7 @@ describe("GET /device/connect", () => {
     expect((await machine.closed).code).toBe(4003);
     const again = await refusal(url, {
       Authorization: `Bearer ${m.credential}`,
-      "X-Capybara-Device-Protocol": "2",
+      "X-Capybara-Device-Protocol": DEVICE_PROTOCOL_HEADER_VALUE,
     });
     expect(again?.status).toBe(401);
   });

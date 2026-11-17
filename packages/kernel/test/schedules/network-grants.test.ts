@@ -48,7 +48,7 @@ import {
   waitFor,
 } from "../helpers/runs.js";
 import { webCaller } from "../helpers/step-context.js";
-import { FakeMachine, HELLO } from "../local-devices/fake-machine.js";
+import { FakeMachine, HELLO } from "../local-devices/fake-machine-v3.js";
 
 /**
  * Scheduled task network grants (network ask-to-allow spec §8.1, §8.3; plan P2.4, P-D7): the
@@ -244,11 +244,7 @@ async function setup(policy: Partial<DeviceLocalPolicySummary> = {}): Promise<Se
   const machine = new FakeMachine(wsUrl, device.credential, answer(dev) as any, { hello: false });
   open.push(machine);
   await machine.opened;
-  machine.send({
-    ...HELLO,
-    features: ["networkReport", "policyOp", "policyOpId"],
-    policy: dev.policy,
-  } as typeof HELLO);
+  machine.hello({ features: ["networkReport", "policyOp", "policyOpId"], policy: dev.policy });
   await waitFor(
     async () => (await redis.get(deviceLeaseKey(device.deviceId))) !== null,
     10_000,
