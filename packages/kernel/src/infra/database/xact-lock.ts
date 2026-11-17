@@ -1,7 +1,7 @@
 import { Inject, Injectable } from "@nestjs/common";
 import { sql } from "kysely";
 import { KernelDb } from "./kernel-db.js";
-import { TransactionHost } from "./transaction-host.js";
+import { assertNotSharedAdmission, TransactionHost } from "./transaction-host.js";
 import { Transactional } from "./transactional.decorator.js";
 
 /**
@@ -22,6 +22,7 @@ export class XactLock {
   /** Takes the lock named `key` until the caller's transaction ends (waits while another holds it). */
   @Transactional({ propagation: "mandatory" })
   async lock(key: string): Promise<void> {
+    assertNotSharedAdmission(`the advisory lock ${key}`);
     await sql`SELECT pg_advisory_xact_lock(hashtext(${key}))`.execute(this.db.db);
   }
 

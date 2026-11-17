@@ -1,7 +1,11 @@
 import { Inject, Injectable, Module } from "@nestjs/common";
 import { ApiError } from "../errors.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
-import { inFencedTransaction, TransactionHost } from "../infra/database/transaction-host.js";
+import {
+  assertNotSharedAdmission,
+  inFencedTransaction,
+  TransactionHost,
+} from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { XactLock } from "../infra/database/xact-lock.js";
 import { can, type OrgAction, type OrgRole } from "./roles.js";
@@ -26,7 +30,9 @@ export interface LockedOrg {
  *
  * The global lock order: the org admission lock ({@link lockForRemoval}; the run fence's shared
  * admission, `RunExecution`) → this org row lock (also the run fence's exclusive admission) → the
- * root conversation → the conversation.
+ * root conversation → the conversation. A writer that locks several conversation or run rows of
+ * one tree locks the tree's root conversation first. A transaction the run fence admitted shared
+ * takes none of these org-level locks (each method throws in one, `assertNotSharedAdmission`).
  */
 @Injectable()
 export class OrgLock {
@@ -53,9 +59,34 @@ export class OrgLock {
     await this.xactLock.admitOrgExclusive(orgId);
   }
 
+  /**
+   * The role check of {@link lockAndAuthorize} without any lock, for the callers of
+   * {@link lockForRemoval}: an unauthorized call is refused (`org.not_found` / `forbidden`) before
+   * it waits for the org's run writes and holds them off. Advisory only; the caller still runs
+   * {@link lockAndAuthorize} after the locks, which decides.
+   */
+  async precheck(orgId: string, actorAccountId: string, action: OrgAction): Promise<void> {
+    const row = await this.db
+      .selectFrom("orgs")
+      .leftJoin("memberships", (j) =>
+        j
+          .onRef("memberships.org_id", "=", "orgs.id")
+          .on("memberships.account_id", "=", actorAccountId),
+      )
+      .select("memberships.role")
+      .where("orgs.id", "=", orgId)
+      .where("orgs.deleted_at", "is", null)
+      .executeTakeFirst();
+    if (!row) throw new ApiError("org.not_found", "Organization not found");
+    if (!row.role || !can(row.role, action)) {
+      throw new ApiError("forbidden", "Insufficient organization role");
+    }
+  }
+
   /** Locks the org row; undefined when the org does not exist or is soft-deleted. */
   @Transactional({ propagation: "mandatory" })
   async tryLock(orgId: string): Promise<LockedOrg | undefined> {
+    assertNotSharedAdmission("the org lock");
     return this.db
       .selectFrom("orgs")
       .select(["slug", "name"])
@@ -68,6 +99,7 @@ export class OrgLock {
   /** Like {@link tryLock}; a missing or soft-deleted org → `org.not_found`. */
   @Transactional({ propagation: "mandatory" })
   async lock(orgId: string): Promise<LockedOrg> {
+    assertNotSharedAdmission("the org lock");
     const org = await this.tryLock(orgId);
     if (!org) throw new ApiError("org.not_found", "Organization not found");
     return org;
@@ -85,6 +117,7 @@ export class OrgLock {
     actorAccountId: string,
     action: OrgAction,
   ): Promise<{ org: LockedOrg; role: OrgRole }> {
+    assertNotSharedAdmission("the org lock");
     const org = await this.lock(orgId);
     const m = await this.db
       .selectFrom("memberships")
@@ -104,6 +137,7 @@ export class OrgLock {
    */
   @Transactional({ propagation: "mandatory" })
   async lockFor(orgId: string, actor: string | null, action: OrgAction): Promise<void> {
+    assertNotSharedAdmission("the org lock");
     if (actor === null) await this.lock(orgId);
     else await this.lockAndAuthorize(orgId, actor, action);
   }

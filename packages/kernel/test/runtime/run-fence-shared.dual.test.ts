@@ -6,7 +6,8 @@ import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { TransactionHost } from "../../src/infra/database/transaction-host.js";
-import { ORG_ADMISSION_SPACE } from "../../src/infra/database/xact-lock.js";
+import { ORG_ADMISSION_SPACE, XactLock } from "../../src/infra/database/xact-lock.js";
+import { OrgLock } from "../../src/orgs/org-lock.js";
 import type { KyselyCheckpointSaver } from "../../src/runtime/checkpointer.js";
 import type { LoopDeps } from "../../src/runtime/langgraph-loop.js";
 import type { LoopContext, LoopOutcome } from "../../src/runtime/loop.js";
@@ -63,6 +64,8 @@ interface ScriptEnv {
   deps: LoopDeps;
   checkpoints: KyselyCheckpointSaver;
   host: TransactionHost;
+  /** The replica's own providers (a `mandatory` provider joins only its own pool's transaction). */
+  get: TestKernel["app"]["get"];
   replica: string;
 }
 
@@ -79,7 +82,8 @@ async function backendPid(host: TransactionHost): Promise<number> {
   return (r.rows[0] as { pid: number }).pid;
 }
 
-function loopFor(name: string, host: () => TransactionHost): AgentLoopFactory {
+function loopFor(name: string, kernel: () => TestKernel): AgentLoopFactory {
+  const host = () => kernel().app.get(TransactionHost);
   return (deps, checkpoints) => ({
     run: async (ctx: LoopContext): Promise<LoopOutcome> => {
       const evs = await deps.eventLog.readAfter(ctx.conversationId, 0, 1000);
@@ -90,7 +94,14 @@ function loopFor(name: string, host: () => TransactionHost): AgentLoopFactory {
       const script = scripts.get(ctx.conversationId);
       scripts.delete(ctx.conversationId);
       const kind = script
-        ? await script({ ctx, deps, checkpoints, host: host(), replica: name })
+        ? await script({
+            ctx,
+            deps,
+            checkpoints,
+            host: host(),
+            get: (token: never) => kernel().app.get(token),
+            replica: name,
+          })
         : "completed";
       return kind === "aborted" ? { kind: "aborted" } : { kind: "completed", consumedUpToSeq };
     },
@@ -256,7 +267,7 @@ beforeAll(async () => {
       overrides: [
         {
           provide: AGENT_LOOP_FACTORY,
-          useValue: loopFor(name, () => (entry.k as TestKernel).app.get(TransactionHost)),
+          useValue: loopFor(name, () => entry.k as TestKernel),
         },
       ],
     });
@@ -619,5 +630,72 @@ describe("conversation deletion during a run's hot-path write", () => {
     expect(res.statusCode, res.body).toBe(204);
     expect(await h.after).toBe("execution revoked");
     await waitStatus(conv, runId, "aborted");
+  });
+});
+
+describe("the admission guards", () => {
+  it("an unauthorized deletion or removal is refused without waiting for admitted writes", async () => {
+    const { orgId, convs } = await orgWithConvs("Precheck", 1);
+    const h = holdIn(convs[0] as string, { admission: "shared" });
+    await postMessage(req, orgId, convs[0] as string, "hi");
+    await within(h.pid, 15_000, "run held");
+    const admin = await member(orgId, "admin");
+    const plain = await member(orgId);
+    const plainReq = await session(kernelA(), plain.login);
+    const adminReq = await session(kernelA(), admin.login);
+    // org deletion needs an owner; a member removal an admin: 403 at once, the run still held
+    const del = await within(
+      adminReq({ method: "DELETE", url: `/api/v1/orgs/${orgId}` }),
+      10_000,
+      "refused deletion",
+    );
+    expect(del.statusCode, del.body).toBe(403);
+    const rm = await within(
+      plainReq({ method: "DELETE", url: `/api/v1/orgs/${orgId}/members/${admin.id}` }),
+      10_000,
+      "refused removal",
+    );
+    expect(rm.statusCode, rm.body).toBe(403);
+    h.release();
+    expect(await h.after).toBe("ok");
+  });
+
+  it("a shared transaction takes no org-level lock; offboarding never runs in a fenced one", async () => {
+    const { orgId, convs } = await orgWithConvs("Guards", 1);
+    const conv = convs[0] as string;
+    const outcomes: string[] = [];
+    const attempt = async (p: () => Promise<unknown>) => {
+      try {
+        await p();
+        outcomes.push("ok");
+      } catch (e) {
+        outcomes.push(e instanceof Error ? e.message : String(e));
+      }
+    };
+    const done = gate();
+    scripts.set(conv, async (env) => {
+      const orgLock = env.get(OrgLock);
+      await env.host.run(() => attempt(() => orgLock.lock(orgId)), { admission: "shared" });
+      await env.host.run(() => attempt(() => env.get(XactLock).lock("guard-test")), {
+        admission: "shared",
+      });
+      // the same lock in an exclusive (tool-step) transaction is fine
+      await withExclusiveAdmission(() => env.host.run(() => attempt(() => orgLock.lock(orgId))));
+      // org deletion's / offboarding's lock refuses any fenced transaction
+      await env.host.run(() => attempt(() => orgLock.lockForRemoval(orgId)));
+      // shared admission needs READ COMMITTED
+      await attempt(() =>
+        env.host.run(async () => {}, { admission: "shared", isolationLevel: "repeatable read" }),
+      );
+      done.open();
+      return "completed";
+    });
+    await postMessage(req, orgId, conv, "hi");
+    await within(done.promise, 15_000, "guard script");
+    expect(outcomes[0]).toMatch(/the org lock inside a transaction the run fence admitted shared/);
+    expect(outcomes[1]).toMatch(/advisory lock guard-test inside a transaction the run fence/);
+    expect(outcomes[2]).toBe("ok");
+    expect(outcomes[3]).toMatch(/never run inside a run's fenced transaction/);
+    expect(outcomes[4]).toMatch(/needs READ COMMITTED/);
   });
 });

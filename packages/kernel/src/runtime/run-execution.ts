@@ -20,12 +20,21 @@ const exclusiveScope = new AsyncLocalStorage<true>();
 
 /**
  * Runs `fn` (a tool step, a sub-agent dispatch) with every fenced transaction it opens admitted
- * exclusively, even one that asks for shared admission (an event append made by a tool): tool
- * code takes org-level locks (`OrgLock`, agents, memberships, devices) after the conversation
- * rows, which only the exclusive admission (the org row first) keeps in the global lock order.
+ * exclusively, even one that asks for shared admission (an event append made by a tool). Tool code
+ * takes org-level locks (`OrgLock`, agents, memberships, devices) after the conversation rows,
+ * which only the exclusive admission (the org row first) keeps in the global lock order; a
+ * transaction asking for shared admission takes none (an org-level lock in one throws,
+ * `assertNotSharedAdmission`), so this scope is not what keeps the order: it keeps tool steps
+ * serialized per org as the design states, and is defence in depth for a write a tool makes
+ * through a path marked shared.
  */
 export function withExclusiveAdmission<T>(fn: () => Promise<T>): Promise<T> {
   return exclusiveScope.run(true, fn);
+}
+
+/** Whether the caller runs inside {@link withExclusiveAdmission} (a tool step, a dispatch). */
+export function inExclusiveAdmission(): boolean {
+  return exclusiveScope.getStore() === true;
 }
 
 /** Internal interruption: a revoked execution must never write its own terminal failure. */
@@ -41,19 +50,24 @@ export class ExecutionRevoked extends Error {
  * The fence admits every writable transaction of a claimed run in one of two modes, then locks the
  * root and the current conversation rows `FOR NO KEY UPDATE` and compares `runs.execution_id`:
  * - **exclusive** (the default, and every transaction inside a tool step,
- *   {@link withExclusiveAdmission}): the org row `FOR NO KEY UPDATE`, `OrgLock`'s mode. These
+ *   {@link withExclusiveAdmission}: conformance with the design and defence in depth): the org row
+ *   `FOR NO KEY UPDATE`, `OrgLock`'s mode. These
  *   transactions serialize per org with each other and with org admin writes, so whatever they
  *   lock after the conversation rows (`OrgLock`, agents, memberships, the default device) stays in
  *   the order org row → conversations that offboarding and the decisions take.
  * - **shared** (a transaction opened with `admission: "shared"`: the run loop's event appends,
  *   checkpoint writes and suspend): the org admission lock shared
  *   (`XactLock.admitOrgShared`), and the org row read without a lock. These transactions lock
- *   nothing org-level after the conversation rows, so the runs of one org append in parallel.
+ *   nothing org-level after the conversation rows (enforced: `OrgLock`, the membership locks and
+ *   `XactLock.lock` throw in one, `assertNotSharedAdmission`; only READ COMMITTED), so the runs of
+ *   one org append in parallel.
  *   Org deletion and offboarding take the admission lock exclusively first
  *   (`OrgLock.lockForRemoval`): they wait for the admitted writes, keep new ones out (a later one
  *   then sees the org deleted), and are not starved by a stream of them (the lock queues fairly).
  *
- * Global order: org admission lock → org row → root conversation → conversation. A claim never
+ * Global order: org admission lock → org row → root conversation → conversation; a writer that
+ * locks several conversation or run rows of one tree locks the tree's root first (the fence
+ * does, so every fenced write of a tree serializes on its root). A claim never
  * opens a nested fenced `requires_new` transaction (shared or not) and waits for it while its
  * outer fenced transaction is open: the inner one waits for the outer's root row (and, behind a
  * queued deletion, for the admission lock) on another connection, which PostgreSQL cannot see as
@@ -108,6 +122,7 @@ export class RunExecution {
         .where("conversation_id", "=", claim.conversationId)
         .executeTakeFirst();
       if (run?.execution_id !== claim.executionId || !live()) throw new ExecutionRevoked();
+      return admitShared ? "shared" : "exclusive";
     }, fn);
   }
 

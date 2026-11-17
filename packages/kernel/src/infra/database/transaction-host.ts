@@ -17,8 +17,11 @@ interface TransactionStore {
   hooks: AfterCommitHook[];
   /** Set once the transaction settled: continuations that outlive it must not use it. */
   done: boolean;
-  /** A fence admitted it (`withTransactionFence`): it holds the caller's admission locks. */
-  fenced: boolean;
+  /**
+   * How a fence admitted it (`withTransactionFence`), once the fence ran; undefined when no fence
+   * admitted it (no fence in context, or read only).
+   */
+  admission?: AdmissionMode;
 }
 
 /** One store for the process: `afterCommit` (a free function) reads it without a host instance. */
@@ -30,13 +33,18 @@ export interface FenceAdmission {
   shared: boolean;
 }
 
-/** A caller's execution authority, checked inside every new transaction before domain writes. */
-const fences = new AsyncLocalStorage<(admission: FenceAdmission) => Promise<void>>();
+/** The mode a fence admitted a transaction in (a fence returning nothing admits exclusively). */
+export type AdmissionMode = "shared" | "exclusive";
 
-export function withTransactionFence<T>(
-  fence: (admission: FenceAdmission) => Promise<void>,
-  fn: () => Promise<T>,
-): Promise<T> {
+/** A fence: checks the caller's authority, takes its admission locks and says in which mode. */
+export type TransactionFence = (
+  admission: FenceAdmission,
+) => Promise<AdmissionMode | undefined | void>;
+
+/** A caller's execution authority, checked inside every new transaction before domain writes. */
+const fences = new AsyncLocalStorage<TransactionFence>();
+
+export function withTransactionFence<T>(fence: TransactionFence, fn: () => Promise<T>): Promise<T> {
   return fences.run(fence, fn);
 }
 
@@ -96,7 +104,22 @@ function liveStore(): TransactionStore | undefined {
 
 /** Whether the live transaction in context was admitted by a fence (a claimed run's write). */
 export function inFencedTransaction(): boolean {
-  return liveStore()?.fenced === true;
+  return liveStore()?.admission !== undefined;
+}
+
+/**
+ * Throws when the live transaction in context was admitted shared by the run fence
+ * (`RunExecution`): such a transaction holds conversation rows without the org row, so taking an
+ * org-level lock (`what`: the org row, a membership, an advisory lock) would invert the global lock
+ * order org admission → org row → conversations. Called by every org-level lock.
+ */
+export function assertNotSharedAdmission(what: string): void {
+  if (liveStore()?.admission === "shared") {
+    throw new Error(
+      `${what} inside a transaction the run fence admitted shared: hot-path writes take no ` +
+        'org-level lock (open it without admission: "shared")',
+    );
+  }
 }
 
 /** The transaction store in the current async context (used by `afterCommit`). */
@@ -148,6 +171,15 @@ export class TransactionHost {
       return fn();
     }
     if (propagation === "required" && this.current()) return fn();
+    if (
+      opts.admission === "shared" &&
+      opts.isolationLevel !== undefined &&
+      opts.isolationLevel !== "read committed"
+    ) {
+      // shared admission reads the org row unlocked after the advisory lock: only a fresh
+      // statement snapshot (READ COMMITTED) sees a deletion that committed while it waited
+      throw new Error('admission: "shared" needs READ COMMITTED isolation');
+    }
     const hooks: AfterCommitHook[] = [];
     let store: TransactionStore | undefined;
     let result: T;
@@ -158,12 +190,14 @@ export class TransactionHost {
       if (opts.accessMode !== undefined) builder = builder.setAccessMode(opts.accessMode);
       result = await builder.execute((trx) => {
         const fence = opts.accessMode === "read only" ? undefined : fences.getStore();
-        const own: TransactionStore = { pool: this.pool, trx, hooks, done: false, fenced: !!fence };
+        const own: TransactionStore = { pool: this.pool, trx, hooks, done: false };
         store = own;
         return storage.run(own, async () => {
           // PostgreSQL forbids row locks in a read-only snapshot and enforces that it cannot
           // mutate. Every later mutation or external dispatch still enters a writable fence.
-          await fence?.({ shared: opts.admission === "shared" });
+          if (fence) {
+            own.admission = (await fence({ shared: opts.admission === "shared" })) || "exclusive";
+          }
           return fn();
         });
       });

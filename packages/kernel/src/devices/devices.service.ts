@@ -11,7 +11,7 @@ import { ExtensionDisplayNames } from "../extensions/display-name.js";
 import { audit } from "../identity/audit.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
-import { TransactionHost } from "../infra/database/transaction-host.js";
+import { assertNotSharedAdmission, TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { LockService } from "../infra/lock/lock.service.js";
 import { OutboxService } from "../infra/outbox/outbox.service.js";
@@ -1258,6 +1258,7 @@ export class DevicesService {
     accountId: string,
     mode: "update" | "share" = "update",
   ): Promise<void> {
+    assertNotSharedAdmission("locking a membership");
     const org = await this.db
       .selectFrom("orgs")
       .select("id")

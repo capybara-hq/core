@@ -269,6 +269,8 @@ export class OrgsService {
     // the org admission lock exclusively first (it waits for the run writes the fence admitted
     // shared, which see the org deleted after this commits), then the org row, which admits the
     // other fenced run writes (`RunExecution`)
+    // an unauthorized call is refused before it holds off the org's run writes
+    await this.orgLock.precheck(orgId, actor.id, "org.delete");
     await this.orgLock.lockForRemoval(orgId);
     await this.orgLock.lockAndAuthorize(orgId, actor.id, "org.delete");
     await this.db
