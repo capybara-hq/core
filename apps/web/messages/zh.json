@@ -186,7 +186,12 @@
       "hook_denied": "请求被扩展「{plugin}」的策略拦截。",
       "hook_denied_unknown": "请求被扩展策略拦截。",
       "context_too_large": "会话内容超出了模型的上下文窗口。请先压缩会话，再重试。",
-      "not_found": "这次运行不存在或不属于这个会话。"
+      "not_found": "这次运行不存在或不属于这个会话。",
+      "permission_context_stale": "权限配置已变更。请等配置生效后再重试这次运行。",
+      "permission_context_changed": "准备这次请求时设备绑定发生了变化。请等绑定稳定后再重试运行。",
+      "permission_context_unavailable": "无法读取或记录权限上下文。请在存储恢复后重试这次运行。",
+      "permission_context_invalid": "权限上下文无效。请先让管理员检查这次运行，再重试。",
+      "permission_context_actor_unavailable": "这次运行的发起账号已无权限。请用有权限的账号开始新的运行。"
     },
     "component": {
       "not_found": "这个组件不存在或已被移除。",

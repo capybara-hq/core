@@ -10,7 +10,15 @@ import {
 } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
 import { sql } from "kysely";
-import { PermissionProfileStore } from "../conversations/permission-profile-store.js";
+import {
+  type PermissionContextV1,
+  PermissionContextV1Schema,
+  permissionCodePointCompare,
+} from "../conversations/events.js";
+import {
+  PermissionProfileStore,
+  type PermissionRoot,
+} from "../conversations/permission-profile-store.js";
 import { ApiError } from "../errors.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import {
@@ -22,10 +30,14 @@ import { NetworkGrants } from "../local-devices/network-grants.js";
 import { coversHost } from "./modes.js";
 import { isExecutionMethod, parseStartingExecutionGrants } from "./operation-authority-types.js";
 import { PermissionAuthorityEpochStore } from "./permission-authority-epochs.js";
-import { PermissionAuthorityLock } from "./permission-authority-lock.js";
+import { assertAuthorityHeld, PermissionAuthorityLock } from "./permission-authority-lock.js";
 import { PermissionCallGrants } from "./permission-call-grants.js";
 import type { PermissionCallRef, PermissionReviewSnapshot } from "./permission-call-types.js";
 import { PermissionConfigPublication } from "./permission-config-publication.js";
+import {
+  type PermissionContextSubject,
+  PermissionContextSubjectChanged,
+} from "./permission-context-types.js";
 import { PermissionFacts, permissionScopeHash } from "./permission-facts.js";
 import { normalizePermissionExpansion } from "./review/permission-candidate.js";
 import type { SandboxUseContext } from "./use-context.js";
@@ -54,6 +66,8 @@ export interface PermissionScopeFacts {
   fullAccessCeiling: boolean;
   fullConsent?: boolean;
 }
+const UNPROVED_ENVIRONMENT =
+  "The device's installed environment is not verified yet; it is checked when the device starts";
 /** Only server-resolved facts enter this constructor; callers never submit roots or profile. */
 export function intersectPermissionScope(f: PermissionScopeFacts): SandboxOperationScope {
   if (f.profile === "full-access" && (!f.fullConsent || !f.fullAccessCeiling))
@@ -373,56 +387,19 @@ export class SandboxOperationAuthority {
       root.project_name ?? undefined,
     );
     let unattended = root.scheduled_task_id !== null;
-    if (ctx.actor.runId) {
-      const run = await this.db
-        .selectFrom("runs")
-        .select(["conversation_id", "trigger_account_id", "scheduled_task_run_id", "status"])
-        .where("id", "=", ctx.actor.runId)
-        .executeTakeFirst();
-      if (
-        !run ||
-        run.conversation_id !== ctx.holderConversationId ||
-        run.trigger_account_id !== ctx.actor.accountId ||
-        !["running", "queued", "waiting"].includes(run.status)
-      )
-        throw new ApiError("forbidden", "The operation run is no longer authorized");
-      unattended ||= run.scheduled_task_run_id !== null;
-    }
-    const { policy, owner } = await this.facts.readDevice(ctx.orgId, ctx.deviceId);
-    const device = await this.db
-      .selectFrom("devices")
-      .select("source")
-      .where("id", "=", ctx.deviceId)
-      .executeTakeFirstOrThrow();
-    const working = await this.facts.readWorkingFacts({
+    if (ctx.actor.runId)
+      unattended ||= await this.runScheduledLocked(
+        ctx.holderConversationId,
+        ctx.actor.accountId,
+        ctx.actor.runId,
+      );
+    const { policy, device, workingRoot, grant, allowedHosts } = await this.baseScopeLocked({
       orgId: ctx.orgId,
-      rootConversationId: view.rootConversationId,
-      holderConversationId: ctx.holderConversationId,
       deviceId: ctx.deviceId,
+      root,
+      holderConversationId: ctx.holderConversationId,
+      runId: ctx.actor.runId,
     });
-    if (
-      root.project_name &&
-      root.project_path &&
-      !(await this.facts.projectMatches(ctx.deviceId, root.project_name, root.project_path))
-    )
-      throw new ApiError("conflict", "The conversation project binding changed");
-    const workingRoot = root.project_path ?? working.workspace;
-    const grant = ctx.actor.runId
-      ? await this.grants.forExec({
-          orgId: ctx.orgId,
-          deviceId: ctx.deviceId,
-          runId: ctx.actor.runId,
-        })
-      : undefined;
-    const baseHosts = owner ? owner.allowedDomains : policy.localAllowedDomains;
-    const requested = [...baseHosts, ...(grant?.hosts ?? [])];
-    const allowedHosts = requested.filter(
-      (host) =>
-        (policy.localAllowedDomains.some((pattern) => coversHost(pattern, host)) ||
-          grant?.hosts.includes(host)) &&
-        (policy.network.kind === "open-public" ||
-          policy.network.hosts.some((pattern) => coversHost(pattern, host))),
-    );
     captureGrant?.(
       grant
         ? {
@@ -462,5 +439,284 @@ export class SandboxOperationAuthority {
           ? { ...policy, network: { kind: "allowlist", hosts: policy.localAllowedDomains } }
           : policy,
     };
+  }
+
+  /**
+   * The actual run of an operation or context read: still this conversation's, triggered by this
+   * actor and not ended; true when it serves a scheduled task run (an unattended child or wake
+   * included). Shared by admission and the recorded permission context.
+   */
+  private async runScheduledLocked(
+    conversationId: string,
+    accountId: string,
+    runId: string,
+  ): Promise<boolean> {
+    const run = await this.db
+      .selectFrom("runs")
+      .select(["conversation_id", "trigger_account_id", "scheduled_task_run_id", "status"])
+      .where("id", "=", runId)
+      .executeTakeFirst();
+    if (
+      !run ||
+      run.conversation_id !== conversationId ||
+      run.trigger_account_id !== accountId ||
+      !["running", "queued", "waiting"].includes(run.status)
+    )
+      throw new ApiError("forbidden", "The operation run is no longer authorized");
+    return run.scheduled_task_run_id !== null;
+  }
+
+  /**
+   * The call-independent base authority of a device for one root (B1): the device's policy and
+   * owner facts, its working root (the validated project binding, else the recorded or reported
+   * workspace) and the restricted base hosts after the owner and organization ceilings, including
+   * the run's network grants and an unattended run's explicit task grants. No call expansion, no
+   * operation, no provider call. Admission and the recorded permission context both read it here.
+   */
+  private async baseScopeLocked(input: {
+    orgId: string;
+    deviceId: string;
+    root: PermissionRoot;
+    holderConversationId: string;
+    runId: string | undefined;
+  }) {
+    const { orgId, deviceId, root } = input;
+    const { policy, owner } = await this.facts.readDevice(orgId, deviceId);
+    const device = await this.db
+      .selectFrom("devices")
+      .select("source")
+      .where("id", "=", deviceId)
+      .executeTakeFirstOrThrow();
+    const working = await this.facts.readWorkingFacts({
+      orgId,
+      rootConversationId: root.id,
+      holderConversationId: input.holderConversationId,
+      deviceId,
+    });
+    if (
+      root.project_name &&
+      root.project_path &&
+      !(await this.facts.projectMatches(deviceId, root.project_name, root.project_path))
+    )
+      throw new ApiError("conflict", "The conversation project binding changed");
+    const workingRoot = root.project_path ?? working.workspace;
+    const grant = input.runId
+      ? await this.grants.forExec({ orgId, deviceId, runId: input.runId })
+      : undefined;
+    const baseHosts = owner ? owner.allowedDomains : policy.localAllowedDomains;
+    const requested = [...baseHosts, ...(grant?.hosts ?? [])];
+    const allowedHosts = requested.filter(
+      (host) =>
+        (policy.localAllowedDomains.some((pattern) => coversHost(pattern, host)) ||
+          grant?.hosts.includes(host)) &&
+        (policy.network.kind === "open-public" ||
+          policy.network.hosts.some((pattern) => coversHost(pattern, host))),
+    );
+    return { policy, device, workingRoot, grant, allowedHosts };
+  }
+
+  /**
+   * The recorded permission context of a run's next request (B1): the same base facts admission
+   * reads, projected without any call, operation, grant expansion or provider effect. The caller
+   * already holds the complete authority subject (platform, org, device when selected, root) in
+   * this transaction; a subject those locks do not cover throws
+   * {@link PermissionContextSubjectChanged}. A missing or inaccessible actor, root or run throws
+   * (no request is sent); a device this actor cannot use is the logged access refusal; device
+   * states admission refuses are unsupported or unprobed contexts without a scope.
+   */
+  @Transactional({ propagation: "mandatory" })
+  async readContextLocked(
+    input: PermissionContextSubject,
+    signal: AbortSignal,
+  ): Promise<PermissionContextV1> {
+    signal.throwIfAborted();
+    const root = await this.profiles.readOwnedRoot(
+      input.orgId,
+      input.conversationId,
+      input.accountId,
+    );
+    const held = (kind: "platform" | "org" | "device" | "root", id: string) => {
+      try {
+        assertAuthorityHeld(kind, id);
+        return true;
+      } catch {
+        return false;
+      }
+    };
+    if (
+      !held("platform", "platform") ||
+      !held("org", input.orgId) ||
+      !held("root", root.id) ||
+      (root.device_id !== null && !held("device", root.device_id))
+    )
+      throw new PermissionContextSubjectChanged();
+    const member = await this.db
+      .selectFrom("memberships as m")
+      .innerJoin("accounts as a", "a.id", "m.account_id")
+      .innerJoin("orgs as o", "o.id", "m.org_id")
+      .select("m.account_id")
+      .where("m.org_id", "=", input.orgId)
+      .where("m.account_id", "=", input.accountId)
+      .where("a.status", "=", "active")
+      .where("o.deleted_at", "is", null)
+      .executeTakeFirst();
+    if (!member) throw new ApiError("forbidden", "This run's actor is no longer authorized");
+    await this.publication.assertCurrent();
+    const scheduled =
+      (await this.runScheduledLocked(input.conversationId, input.accountId, input.runId)) ||
+      root.scheduled_task_id !== null;
+    const header = {
+      version: 1 as const,
+      rootConversationId: root.id,
+      execution: scheduled ? ("scheduled" as const) : ("interactive" as const),
+      inherited: input.conversationId !== root.id,
+    };
+    const parse = (payload: PermissionContextV1) => {
+      signal.throwIfAborted();
+      return PermissionContextV1Schema.parse(payload);
+    };
+    const { view, access } = await this.facts.viewWithAccess(input.orgId, input.accountId, root);
+    if (root.device_id === null || access === "no-device")
+      return parse({
+        ...header,
+        profileRevision: root.permission_revision,
+        selectedProfile: root.permission_profile,
+        effectiveProfile: null,
+        deviceId: null,
+        scopeRevision: null,
+        authorityRevision: null,
+        availability: {
+          state: "unavailable",
+          cause: "no-device",
+          reason: "Choose a device to run device operations",
+        },
+        scope: null,
+      });
+    if (access === "actor-device-access")
+      return parse({
+        ...header,
+        profileRevision: null,
+        selectedProfile: null,
+        effectiveProfile: null,
+        deviceId: null,
+        scopeRevision: null,
+        authorityRevision: null,
+        availability: {
+          state: "unavailable",
+          cause: "actor-device-access",
+          reason: "This run's actor cannot use the selected device",
+        },
+        scope: null,
+      });
+    const deviceId = root.device_id;
+    const scopeRevision =
+      access === "provider-unavailable"
+        ? (await this.facts.scope(input.orgId, deviceId, root.project_path, root.project_name))
+            .scopeRevision
+        : view.scopeRevision;
+    if (!scopeRevision) throw new Error("Device permission scope revision is missing");
+    const vector = await this.epochs.readLocked({
+      orgId: input.orgId,
+      deviceId,
+      rootConversationId: root.id,
+    });
+    const effectiveProfile: PermissionProfile = scheduled ? "request-approval" : view.profile;
+    const known = {
+      ...header,
+      profileRevision: root.permission_revision,
+      selectedProfile: root.permission_profile,
+      effectiveProfile,
+      deviceId,
+      scopeRevision,
+      authorityRevision: permissionScopeHash({ scopeRevision, vector }),
+    };
+    const without = (state: "unsupported" | "unprobed", reason: string) =>
+      parse({ ...known, availability: { state, reason }, scope: null });
+    const availability = view.availability;
+    if (access === "provider-unavailable")
+      return without(
+        "unsupported",
+        availability.state === "supported"
+          ? "This device's provider is not available"
+          : availability.reason,
+      );
+    if (availability.state !== "supported") return without(availability.state, availability.reason);
+    // states admission refuses before any operation: the device is not verified for new work
+    try {
+      await this.facts.assertCloudReconciled(input.orgId, deviceId);
+      await this.facts.assertOwnerReportUsable(input.orgId, deviceId);
+    } catch (error) {
+      if (!(error instanceof ApiError)) throw error;
+      return without("unprobed", error.message);
+    }
+    let base: Awaited<ReturnType<SandboxOperationAuthority["baseScopeLocked"]>>;
+    try {
+      await this.facts.preview(
+        input.orgId,
+        input.accountId,
+        deviceId,
+        root.project_name ?? undefined,
+      );
+      base = await this.baseScopeLocked({
+        orgId: input.orgId,
+        deviceId,
+        root,
+        holderConversationId: input.conversationId,
+        runId: input.runId,
+      });
+    } catch (error) {
+      if (!(error instanceof ApiError)) throw error;
+      return without("unsupported", error.message);
+    }
+    const applied = await this.facts.readAppliedEnvironmentLocked({
+      orgId: input.orgId,
+      deviceId,
+    });
+    const location = base.device.source === "local" ? "local" : "cloud";
+    // unknown applied facts precede a positive capability report; a working root that is not the
+    // installed workspace (no project) is never reported as installed scope
+    if (
+      applied === null ||
+      applied.location !== location ||
+      (root.project_path === null && base.workingRoot !== applied.roots.workspace)
+    )
+      return without("unprobed", UNPROVED_ENVIRONMENT);
+    const full = effectiveProfile === "full-access";
+    if (full) {
+      if (!availability.report.fullAccess)
+        return without("unsupported", "This device's runtime cannot run Full access");
+      if (
+        !view.fullAccessCeiling ||
+        view.consentScope?.deviceId !== deviceId ||
+        view.consentScope.scopeRevision !== scopeRevision
+      )
+        throw new Error("Full access lost its ceiling or consent inside one authority read");
+    } else if (availability.report.restricted === null)
+      return without(
+        "unsupported",
+        "This device's runtime cannot enforce the restricted permission profiles",
+      );
+    const hosts = [...new Set(base.allowedHosts)].sort(permissionCodePointCompare);
+    return parse({
+      ...known,
+      availability: { state: "supported" },
+      scope: {
+        location,
+        workingRoot: base.workingRoot,
+        filesystem: full
+          ? { kind: "device" }
+          : {
+              kind: "scoped",
+              readDirectories: [base.workingRoot],
+              writeDirectories: [base.workingRoot],
+            },
+        network: full
+          ? { kind: "environment" }
+          : hosts.length
+            ? { kind: "allowlist", hosts }
+            : { kind: "none" },
+        outerNetwork: applied.outerNetwork,
+      },
+    });
   }
 }

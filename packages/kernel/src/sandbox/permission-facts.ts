@@ -31,8 +31,10 @@ import {
   effectiveDevicePolicy,
   readDeploymentDevicePolicy,
 } from "./modes.js";
+import { assertAuthorityHeld } from "./permission-authority-lock.js";
 import { permissionAvailabilityFor } from "./permission-availability.js";
-import { readRuntimeReport } from "./permission-runtime-reports.js";
+import type { AppliedEnvironment } from "./permission-context-types.js";
+import { readRuntimeReport, sameRuntimeIdentity } from "./permission-runtime-reports.js";
 import { providerForDevice, SandboxProviders } from "./providers.js";
 import { homeOf } from "./review/rules.js";
 
@@ -467,12 +469,23 @@ export class PermissionFacts {
     return this.scope(orgId, deviceId, binding?.path ?? null, project ?? null);
   }
   async view(orgId: string, accountId: string, row: PermissionRoot) {
+    return (await this.viewWithAccess(orgId, accountId, row)).view;
+  }
+  /**
+   * {@link view} plus how the actor reached the root's device: none selected, usable, refused for
+   * this actor (`device.not_found`: not its device), or its provider is not the current one. The
+   * recorded permission context needs the distinction; the view itself stays unchanged.
+   */
+  async viewWithAccess(orgId: string, accountId: string, row: PermissionRoot) {
     let preview: Awaited<ReturnType<PermissionFacts["scope"]>> | null = null;
     let unavailableReason = "Choose a device to run device operations";
+    let access: "no-device" | "device" | "actor-device-access" | "provider-unavailable" =
+      "no-device";
     if (row.device_id) {
       try {
         await this.devices.usable(orgId, accountId, row.device_id);
         preview = await this.scope(orgId, row.device_id, row.project_path, row.project_name);
+        access = "device";
       } catch (error) {
         if (
           !(error instanceof ApiError) ||
@@ -480,6 +493,7 @@ export class PermissionFacts {
         )
           throw error;
         unavailableReason = error.message;
+        access = error.code === "device.not_found" ? "actor-device-access" : "provider-unavailable";
       }
     }
     const consent = row.permission_consent as { deviceId: string; scopeRevision: string } | null;
@@ -492,19 +506,113 @@ export class PermissionFacts {
         ? "approve-for-me"
         : row.permission_profile;
     return {
-      profile,
-      revision: row.permission_revision,
-      rootConversationId: row.id,
-      deviceId: row.device_id,
-      consentScope: profile === "full-access" ? consent : null,
-      scopeRevision: preview?.scopeRevision ?? null,
-      availability: preview?.availability ?? {
-        state: "unsupported" as const,
-        reason: unavailableReason,
+      access,
+      view: {
+        profile,
+        revision: row.permission_revision,
+        rootConversationId: row.id,
+        deviceId: row.device_id,
+        consentScope: profile === "full-access" ? consent : null,
+        scopeRevision: preview?.scopeRevision ?? null,
+        availability: preview?.availability ?? {
+          state: "unsupported" as const,
+          reason: unavailableReason,
+        },
+        fullAccessCeiling: preview?.fullAccessCeiling ?? false,
+        broadProjectReach: preview?.broadProjectReach ?? false,
+        startingWorkNotice: notice,
       },
-      fullAccessCeiling: preview?.fullAccessCeiling ?? false,
-      broadProjectReach: preview?.broadProjectReach ?? false,
-      startingWorkNotice: notice,
+    };
+  }
+
+  /**
+   * The installed environment of the device's current instance (B1 adapter over the Task 8 B4
+   * installed binding and its current runtime attestation), read under the caller's device
+   * authority lock. Null whenever it cannot be proved: no live instance (none, creating,
+   * destroyed), no installed binding of exactly this generation, a binding of another provider or
+   * machine, a runtime identity differing from the bound one, roots differing from the committed
+   * ones. A cloud device has no installed provider binding yet, so its outer boundary is not
+   * proved either (its context stays unprobed until that evidence exists). Never desired policy,
+   * never a provider call, probe, resume or provisioning.
+   */
+  async readAppliedEnvironmentLocked(input: {
+    orgId: string;
+    deviceId: string;
+  }): Promise<AppliedEnvironment | null> {
+    assertAuthorityHeld("device", input.deviceId);
+    const device = await this.db
+      .selectFrom("devices")
+      .select(["source", "provider"])
+      .where("id", "=", input.deviceId)
+      .where("org_id", "=", input.orgId)
+      .where("deleted_at", "is", null)
+      .executeTakeFirst();
+    if (!device) return null;
+    const instance = await this.db
+      .selectFrom("device_instances")
+      .select([
+        "provider",
+        "status",
+        "handle",
+        "created_at",
+        "permission_roots",
+        "permission_runtime_identity",
+      ])
+      .where("device_id", "=", input.deviceId)
+      .where("org_id", "=", input.orgId)
+      .executeTakeFirst();
+    if (
+      !instance?.provider ||
+      !instance.handle ||
+      !instance.permission_roots ||
+      !instance.permission_runtime_identity ||
+      (instance.status !== "running" && instance.status !== "suspended") ||
+      (device.provider !== null && device.provider !== instance.provider)
+    )
+      return null;
+    if (device.source !== "local") return null;
+    const instanceGeneration = String(instance.created_at.getTime());
+    const [binding, machine] = await Promise.all([
+      this.db
+        .selectFrom("device_instance_bindings")
+        .select(["binding_id", "provider", "status", "machine_id", "runtime_identity"])
+        .where("device_id", "=", input.deviceId)
+        .where("instance_generation", "=", instanceGeneration)
+        .executeTakeFirst(),
+      this.db
+        .selectFrom("device_machines")
+        .select("id")
+        .where("device_id", "=", input.deviceId)
+        .where("org_id", "=", input.orgId)
+        .where("revoked_at", "is", null)
+        .executeTakeFirst(),
+    ]);
+    if (
+      binding?.status !== "installed" ||
+      binding.provider !== instance.provider ||
+      !binding.runtime_identity ||
+      !machine ||
+      binding.machine_id !== machine.id ||
+      !sameRuntimeIdentity(binding.runtime_identity, instance.permission_runtime_identity)
+    )
+      return null;
+    const roots = rootsOf(instance.handle);
+    const committed = instance.permission_roots;
+    if (
+      committed.workspace !== roots.workspace ||
+      committed.skills !== roots.skills ||
+      committed.tmp !== roots.tmp
+    )
+      return null;
+    return {
+      location: "local",
+      instanceId: instance.handle.id,
+      instanceGeneration,
+      bindingId: binding.binding_id,
+      roots: { workspace: roots.workspace, skills: roots.skills, tmp: roots.tmp },
+      // a local device's outer boundary is its host environment; restricted rules are the
+      // operation's own network field, never an outer network-off
+      outerNetwork: { kind: "host-environment" },
     };
   }
 }
