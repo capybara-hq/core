@@ -1,5 +1,26 @@
 # @capybara-hq/capybara
 
+## 0.1.0-rc.45
+
+### Patch Changes
+
+- c14f7ff: Files a person sends with a message join the conversation's files: `GET …/conversations/:id/files`
+  lists them with the delivered files, newest first, marked `origin: "uploaded"` (each delivered file
+  is `origin: "delivered"`), and the content, previewer, preview and embed-token routes accept their
+  ids. Only ready chat uploads bound to that conversation in that org count, read under the
+  conversation's access as before. An attachment whose stored object no longer matches the size and
+  etag finalize recorded is `removed` and refused by the content, previewer, preview and embed-token
+  routes. Sending a message with files publishes `changed: files`. On the web, a sent file opens in
+  the right panel once listed (it downloads until then; images still zoom in the thread), its chip
+  has a download button, and uploaded files are marked 上传 / Uploaded in the file switchers.
+- 517d638: Embeds may start Web Workers (`worker-src blob:`).
+- d5d0e76: Image preview is a full-screen viewer instead of a dialog: the image starts fit to the window and
+  zooms 10% to 800% by wheel, pinch and toolbar, pans by dragging, and a double click toggles fit and
+  100%. The top bar offers open in new tab, download and close; the images of one message switch with
+  the arrow keys. A sent image and the right panel's image preview both open it.
+- Updated dependencies [c14f7ff]
+  - @capybara-hq/kernel@0.1.0-rc.39
+
 ## 0.1.0-rc.44
 
 ### Patch Changes
