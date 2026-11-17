@@ -10,6 +10,17 @@
 
 **Spec:** `docs/superpowers/specs/2026-11-17-run-fence-shared-admission-design.md`
 
+> **Task 1 is superseded** by the revised spec (review found `FOR KEY SHARE` on the org row
+> unsound; see the spec's "Rejected" section). What shipped instead: the run loop's hot-path writes
+> outside a tool step (event appends, `StepLog` writes, checkpoints, the suspend) open with
+> `@Transactional({ admission: "shared" })` and are admitted with a shared org advisory lock
+> (`XactLock.admitOrgShared`), the org row read unlocked, the root and current conversation rows
+> `FOR NO KEY UPDATE`; every other fenced transaction, every tool step (`withExclusiveAdmission`),
+> the claim and the terminal write stay exclusive (org row `FOR NO KEY UPDATE`). Org deletion and
+> offboarding take the exclusive advisory lock first (`OrgLock.lockForRemoval`), then `OrgLock`;
+> nothing locks the org row `FOR UPDATE`, and a shared transaction takes no org-level lock
+> (`assertNotSharedAdmission`). The steps below are kept as the record of the first attempt.
+
 ## Global Constraints
 
 - Lock order org → root → conversation everywhere.

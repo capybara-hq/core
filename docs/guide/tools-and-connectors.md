@@ -17,6 +17,11 @@ done
 export CAPYBARA_NET__ALLOW_INSECURE_LOOPBACK=true
 ```
 
+The official connector plugins move to `ctx.net` in their next release. Until then the pinned
+`connector-mcp` still requests with the global `fetch` and keeps its own `allowInsecureLoopback`
+deployment config (set `extensionConfig.connector-mcp.allowInsecureLoopback: true` for a local
+server on 127.0.0.1); the kernel switch above applies to connectors that use `ctx.net`.
+
 **Web wizard** (org admins): after logging in, open "Connectors" → "Install" (`/connectors/install`): pick the endpoint type (MCP service / OpenAPI document) → fill in the endpoint (for OpenAPI, give a document URL or upload JSON / YAML, up to 2 MB; `baseUrl` can override the document's servers) → pick the auth (for OpenAPI it is prefilled from the `securitySchemes` the document declares, and the operations are listed for you to tick) → preview the tools and default policies → install. On the installed connector's detail page you can enable or disable each tool, adjust its default policy, and review drift (see below). Select the connector's tools in the agent form; the agent won't use them otherwise.
 
 **API** (with the admin's session cookie or a token; write requests carry `X-Capybara-Csrf: 1`):
