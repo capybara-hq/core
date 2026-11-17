@@ -32,7 +32,12 @@ import {
   type PendingPolicyOp,
   pendingPolicyOpsOf,
 } from "./policy-summary.js";
-import { LIST_TTL_MARGIN_MS, LocalDeviceRelay, ON_MACHINE_PREFIX } from "./relay.js";
+import {
+  LIST_TTL_MARGIN_MS,
+  LocalDeviceRelay,
+  ON_MACHINE_PREFIX,
+  wasDeviceRequestNotSent,
+} from "./relay.js";
 
 /** How long the machine may take to apply a policy change. */
 export const POLICY_DEADLINE_MS = 30_000;
@@ -71,7 +76,13 @@ export interface PolicyIntent {
   deviceId: string;
   machineId: string;
   opId: string;
-  args: DevicePolicyArgs;
+  args: DevicePolicyArgsV3;
+  /**
+   * The staged (protocol 3) connection the op goes to, when the device's machine is connected
+   * over one: the op is sent as a v3 `policy` request fenced to it (not sent at all once it
+   * changed), and its answer's owner report is recorded with its id. Absent: protocol 2.
+   */
+  connection?: { connectionId: string; maxFrameBytes: number };
 }
 
 /**
@@ -138,7 +149,10 @@ export class DevicePolicyService {
     @Inject(KernelDb) private readonly db: KernelDb,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
     @Inject(LocalDeviceRelay)
-    private readonly relay: Pick<LocalDeviceRelay, "call" | "holderLive" | "connection">,
+    private readonly relay: Pick<
+      LocalDeviceRelay,
+      "call" | "callV3" | "holderLive" | "connection" | "stagedTransport"
+    >,
     @Inject(MachinesService) private readonly machines: Pick<MachinesService, "activeFor">,
     @Inject(OutboxService) private readonly outbox: Pick<OutboxService, "add">,
     @Inject(KernelConfigService) private readonly config: Pick<KernelConfigService, "get">,
@@ -209,14 +223,28 @@ export class DevicePolicyService {
     if (machine === null) return { outcome: offline() };
     // only a program that logs op outcomes under their ids can tell what became of a lost answer
     if (!machine.features.includes("policyOpId")) return { outcome: unsupported() };
-    // B2: an owner-ceiling narrowing needs a program that reports authenticated owner facts;
-    // protocol 2 cannot express it (its `mode: sandbox` narrows both at once)
-    if (input.change.ownerCeiling !== undefined) {
-      const row = await this.db
-        .selectFrom("device_machines")
-        .select(["owner_report", "local_policy"])
-        .where("id", "=", machine.id)
-        .executeTakeFirst();
+    // not connected: nothing is sent (a queued op would wait for a reconnect nobody watches)
+    if (!(await this.relay.holderLive(input.deviceId))) return { outcome: offline() };
+    // the codec follows the connection the protocol gate accepted: a staged one takes v3 ops
+    let connection: { connectionId: string; maxFrameBytes: number } | undefined;
+    try {
+      connection = (await this.relay.stagedTransport(input.deviceId)) ?? undefined;
+    } catch (e) {
+      // the gate is open and the connection went away or is not ready: nothing is sent
+      if (e instanceof ApiError && e.code === "device.not_found") throw e;
+      return { outcome: offline() };
+    }
+    const change = connection ? stagedChange(input.change) : input.change;
+    // B2: an owner-ceiling narrowing needs a program that reports authenticated owner facts over
+    // a staged connection; protocol 2 cannot express it (its `mode: sandbox` narrows both at once)
+    if (change.ownerCeiling !== undefined) {
+      const row = connection
+        ? await this.db
+            .selectFrom("device_machines")
+            .select(["owner_report", "local_policy"])
+            .where("id", "=", machine.id)
+            .executeTakeFirst()
+        : undefined;
       if (!row || ownerFactsOf(row).state !== "report")
         return {
           outcome: {
@@ -226,14 +254,19 @@ export class DevicePolicyService {
           },
         };
     }
-    // not connected: nothing is sent (a queued op would wait for a reconnect nobody watches)
-    if (!(await this.relay.holderLive(input.deviceId))) return { outcome: offline() };
     const opId = randomUUID();
-    const args: DevicePolicyArgs = { ...input.change, opId, source: input.source };
-    const recorded = await this.recordIntent({ ...input, machineId: machine.id, opId });
+    const args: DevicePolicyArgsV3 = { ...change, opId, source: input.source };
+    const recorded = await this.recordIntent({ ...input, change, machineId: machine.id, opId });
     if (!recorded) return { outcome: offline() };
     return {
-      intent: { orgId: input.orgId, deviceId: input.deviceId, machineId: machine.id, opId, args },
+      intent: {
+        orgId: input.orgId,
+        deviceId: input.deviceId,
+        machineId: machine.id,
+        opId,
+        args,
+        ...(connection && { connection }),
+      },
     };
   }
 
@@ -267,12 +300,27 @@ export class DevicePolicyService {
     notFound?: true;
   }> {
     try {
-      const connectionId = await this.connectionIdOf(intent.deviceId);
-      const answer = (await this.relay.call(intent.deviceId, "policy", intent.args, {
+      const { connection } = intent;
+      const connectionId = connection
+        ? connection.connectionId
+        : await this.connectionIdOf(intent.deviceId);
+      const opts = {
         deadlineMs: POLICY_DEADLINE_MS,
         // the relay gives up by itself (deadline plus the reconnect grace)
         signal: new AbortController().signal,
-      })) as { policy: DeviceLocalPolicySummary; ownerCeiling?: unknown };
+      };
+      // a staged connection takes a v3 `policy` request fenced to it; its answer carries the
+      // owner report issued for the change
+      const answer = (
+        connection
+          ? await this.relay.callV3(
+              intent.deviceId,
+              "policy",
+              intent.args as unknown as Record<string, unknown>,
+              { ...opts, connection },
+            )
+          : await this.relay.call(intent.deviceId, "policy", intent.args, opts)
+      ) as { policy: DeviceLocalPolicySummary; ownerCeiling?: unknown };
       const { policy } = answer;
       return {
         result: {
@@ -285,6 +333,12 @@ export class DevicePolicyService {
         outcome: { applied: true, policy },
       };
     } catch (e) {
+      // the gateway (or the relay before queuing) says it never reached the machine: definite
+      if (wasDeviceRequestNotSent(e))
+        return {
+          result: { outcome: "not_received" },
+          outcome: { applied: false, reason: "offline", message: NOT_RECEIVED_MESSAGE },
+        };
       if (e instanceof ApiError) {
         // device.offline (the wait ran out: the machine may still apply it), device.forbidden
         // (the machine was disconnected meanwhile), device.not_found (the device was deleted)
@@ -339,13 +393,20 @@ export class DevicePolicyService {
   async outcomeOf(deviceId: string, opId: string): Promise<PolicyOpStatus> {
     if (!(await this.relay.holderLive(deviceId))) return { outcome: "offline" };
     try {
+      const opts = { deadlineMs: STATUS_DEADLINE_MS, signal: new AbortController().signal };
+      const connection = await this.relay.stagedTransport(deviceId);
+      if (connection) {
+        // a staged connection answers in v3: an applied outcome carries the owner report
+        const status = (await this.relay.callV3(
+          deviceId,
+          "policyStatus",
+          { opId },
+          { ...opts, connection },
+        )) as DevicePolicyStatus & { ownerCeiling?: unknown };
+        return { ...status, connectionId: connection.connectionId };
+      }
       const connectionId = await this.connectionIdOf(deviceId);
-      const status = await this.relay.call(
-        deviceId,
-        "policyStatus",
-        { opId },
-        { deadlineMs: STATUS_DEADLINE_MS, signal: new AbortController().signal },
-      );
+      const status = await this.relay.call(deviceId, "policyStatus", { opId }, opts);
       return { ...status, connectionId };
     } catch (e) {
       this.log.warn("could not ask a machine what became of a policy op", {
@@ -412,6 +473,13 @@ export class DevicePolicyService {
       const recorded = await this.owners.recordLocked(ref.machineId, result.ownerCeiling, {
         connectionId: result.connectionId ?? null,
         via: "policy-result",
+        // the op explains the owner change: audited once, as the op's source made it
+        explainedBy: {
+          accountId: op.source.accountId,
+          via: op.source.via,
+          opId: op.id,
+          ...(op.actorTokenId !== undefined && { actorTokenId: op.actorTokenId }),
+        },
       });
       // a lower sequence is a late delivery (ignored by the writer), the op still applied; only
       // a conflicting report or a revoked machine leaves it unknown
@@ -468,7 +536,9 @@ export class DevicePolicyService {
           ...(op.status === "unknown" && { late: true }),
         });
       }
-      if (modeNow !== undefined) {
+      // a v3 answer's Full change is the owner report's, audited once by its writer
+      // (`device.owner_ceiling_changed`): the summary's derived mode is not audited again
+      if (modeNow !== undefined && !v3Report) {
         await auditOp("device.mode_changed", {
           from: modeBefore,
           to: modeNow,
@@ -608,6 +678,25 @@ export class DevicePolicyService {
     });
     return true;
   }
+}
+
+/**
+ * A change as a staged (v3) machine takes it: protocol 2's one narrowing (`mode: "sandbox"`, Full
+ * access off and the project reach to the workspace at once) becomes the owner-ceiling narrowing
+ * it stands for; the protocol 3 machine keeps its owner ceiling, not a daily mode. Never wider:
+ * only `false` / `workspace` can come out of it (the frame parser refuses anything else).
+ */
+function stagedChange(change: PolicyChange): PolicyChange {
+  if (change.mode !== "sandbox") return change;
+  const { mode: _narrowed, ...rest } = change;
+  return {
+    ...rest,
+    ownerCeiling: {
+      ...change.ownerCeiling,
+      fullAccess: false,
+      restrictedProjectReach: "workspace",
+    },
+  };
 }
 
 const offline = (): PolicyChangeOutcome => ({

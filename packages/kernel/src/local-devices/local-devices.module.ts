@@ -1,6 +1,10 @@
 import { Inject, Module, type OnModuleInit } from "@nestjs/common";
 import { PermissionCallGrantsModule } from "../sandbox/permission-call-grants.module.js";
-import { LOCAL_PROVIDER, SandboxProviders } from "../sandbox/providers.js";
+import {
+  LOCAL_PROVIDER,
+  type SandboxProviderEntry,
+  SandboxProviders,
+} from "../sandbox/providers.js";
 import { SandboxProviderRegistryModule } from "../sandbox/providers.module.js";
 import { SandboxModule } from "../sandbox/sandbox.module.js";
 import { DevicePolicyService } from "./device-policy.service.js";
@@ -10,8 +14,10 @@ import { MachinesService } from "./machines.js";
 import { NetworkGrants } from "./network-grants.js";
 import { NetworkGrantsModule } from "./network-grants.module.js";
 import { OwnerReports } from "./owner-reports.js";
-import { LocalDeviceRelay } from "./relay.js";
+import { LocalDeviceRelay, stagedDeviceProtocolActive } from "./relay.js";
 import { DeviceTargets } from "./targets.js";
+
+export { stagedDeviceProtocolActive } from "./relay.js";
 
 /**
  * Connected machines (environments spec §6, §13): the caller side of the device relay and the
@@ -51,9 +57,37 @@ export class LocalDevicesModule implements OnModuleInit {
   constructor(
     @Inject(SandboxProviders) private readonly providers: SandboxProviders,
     @Inject(LocalDeviceProvider) private readonly provider: LocalDeviceProvider,
+    @Inject(LocalDeviceRelay) private readonly relay: LocalDeviceRelay,
+    @Inject(LocalInstanceBindings) private readonly bindings: LocalInstanceBindings,
   ) {}
 
   onModuleInit(): void {
-    this.providers.register({ plugin: LOCAL_PROVIDER, impl: this.provider });
+    this.providers.register(
+      localProviderEntry(stagedDeviceProtocolActive(), {
+        provider: this.provider,
+        relay: this.relay,
+        bindings: this.bindings,
+      }),
+    );
   }
+}
+
+/**
+ * The `@local` registration: protocol 2's provider as it is, or the staged (protocol 3) provider
+ * ({@link LocalDeviceProvider.staged}: v3 operations, no broad kill) with its instance binder,
+ * which binds every committed generation before shared use (B-8).
+ */
+export function localProviderEntry(
+  staged: boolean,
+  deps: { provider: LocalDeviceProvider; relay: LocalDeviceRelay; bindings: LocalInstanceBindings },
+): SandboxProviderEntry {
+  if (!staged) return { plugin: LOCAL_PROVIDER, impl: deps.provider };
+  return {
+    plugin: LOCAL_PROVIDER,
+    impl: deps.provider.staged({
+      call: deps.relay.callV3.bind(deps.relay),
+      permissionSupport: (deviceId) => deps.bindings.permissionSupport(deviceId),
+    }),
+    binder: deps.bindings,
+  };
 }

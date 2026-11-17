@@ -114,6 +114,8 @@ async function fixture(clientCap = 69632, serverCap = 100000) {
           : null,
       recordHello: async () => {},
       recordPolicy: async () => {},
+      recordHelloV3: async () => {},
+      recordPolicyV3: async () => {},
       touch: async () => {},
     },
     locks,
