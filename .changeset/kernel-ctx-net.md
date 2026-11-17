@@ -7,4 +7,6 @@
 `net.httpsProxy` / `net.noProxy`, `net.allowInsecureLoopback` for tests). Loopback is refused
 whatever the allowances, link-local and the cloud metadata endpoints `100.100.100.200` and
 `fd00:ec2::254` always (also for marketplace downloads). Redirects: `redirect: "manual"` returns
-the 3xx, otherwise `net.redirect`. Refusals reject with the SDK `NetDeniedError`.
+the 3xx, otherwise `net.redirect`. Refusals reject with the SDK `NetDeniedError`. A plain-http
+URL to a host the org allows only as a hostname entry is refused with a hint naming the
+`http://host:port` origin entry that would allow it.

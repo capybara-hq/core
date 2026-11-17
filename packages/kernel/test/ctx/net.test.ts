@@ -334,6 +334,7 @@ describe("ctx.net.fetch: org allowances", () => {
     // a host entry is https only
     const http = await refused(net.fetch(`http://10.1.2.3:${httpPort}/`, {}, { orgId: orgA }));
     expect(http.code).toBe("net.insecure_url");
+    expect(http.message).toContain(`allow the origin http://10.1.2.3:${httpPort}`);
   });
 
   it("a host allowance applies to its org only; no org means public addresses only", async () => {
@@ -360,6 +361,14 @@ describe("ctx.net.fetch: org allowances", () => {
       net.fetch(`http://svc.corp.example:${httpPort}/`, {}, { orgId: orgA }),
     );
     expect(http.code).toBe("net.insecure_url");
+    expect(http.message).toContain(
+      `svc.corp.example is allowed for the organization over https only; to allow plain http, ask a super admin to allow the origin http://svc.corp.example:${httpPort}.`,
+    );
+    // no hint for a host the org does not allow at all
+    const plain = await refused(
+      net.fetch(`http://public.example:${httpPort}/`, {}, { orgId: orgA }),
+    );
+    expect(plain.message).toBe("The URL must use https (public.example).");
   });
 
   it("removing an allowance refuses the next request", async () => {

@@ -10,3 +10,4 @@ kernels set the kernel's `net.allowInsecureLoopback` instead (`testKernelConfig`
 runner do). The `net.*` config descriptions state that the switch lifts every loopback refusal and
 that an org's allowed internal https hosts must be listed in `net.noProxy` when `net.httpsProxy` is
 set.
+Their endpoint schemas accept http and https; `ctx.net` decides reachability at request time.

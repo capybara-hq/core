@@ -41,12 +41,19 @@ export function isNetDeniedError(e: unknown): e is NetDeniedError {
   return o.name === "NetDeniedError" && typeof o.code === "string" && typeof o.host === "string";
 }
 
-/** `ctx.net`: the kernel's guarded HTTP client, no permission needed. */
+/**
+ * `ctx.net`: the kernel's guarded HTTP client, no permission needed. It needs a kernel that ships
+ * it: a plugin that calls it raises its manifest's minimum `sdk` to the SDK release that added it.
+ */
 export interface ExtensionNet {
   /**
-   * The global `fetch` signature with the kernel's network rules applied: https only; private,
-   * loopback and link-local addresses refused (link-local always), the address checked when the
-   * connection is made (no DNS-rebinding window); the deployment's egress proxy honoured. Redirects
+   * The global `fetch` signature with the kernel's network rules applied: https only, except plain
+   * http to an origin `http://host:port` a super admin allowed for `opts.orgId`, and to loopback
+   * under the kernel's tests-only `net.allowInsecureLoopback`; private, loopback and link-local
+   * addresses refused (link-local always), the address checked when the connection is made (no
+   * DNS-rebinding window); the deployment's egress proxy honoured. An http URL to a host the org
+   * allows only as a hostname entry (https only) is refused with a message that names the
+   * `http://host:port` origin entry which would allow it. Redirects
    * are never followed: with `redirect: "manual"` a 3xx response is returned as is, otherwise a 3xx
    * rejects with `net.redirect`. Bodies stream; no size cap. `init.signal` is combined with
    * `ctx.signal`.

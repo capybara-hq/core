@@ -9,3 +9,5 @@ redirects never followed. A refusal is a `NetDeniedError` (`code`, `host`, and `
 refused redirect); detect it with `isNetDeniedError`, never `instanceof`.
 `ConnectorOpenArgs.orgId` and `orgId` in the `Connector.inspect` args (both required) are the org
 the session or preview serves.
+Plugin authors: `ctx.net` needs a kernel that ships it; a plugin that calls it raises its
+manifest's minimum `sdk` to this release.

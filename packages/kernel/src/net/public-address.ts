@@ -311,6 +311,16 @@ function allowedBy(cidrs: BlockList, ip: string): boolean {
 }
 
 /**
+ * Whether a host entry of `policy.allowPrivateHosts` (a hostname, a `*.domain` wildcard, an IP or a
+ * CIDR) names `host`, ignoring trusted origins: such entries exempt https requests only, so a
+ * refused plain-http request to that host can point at an `http://host:port` origin entry.
+ */
+export function hostEntryExempts(host: string, policy: NetPolicy): boolean {
+  const { all, cidrs } = exemptions(host, { ...policy, allowInsecureLoopback: false }, undefined);
+  return all || (isIP(host) !== 0 && allowedBy(cidrs, host));
+}
+
+/**
  * Resolves `host` (an IP literal is taken as is) and returns every address, in resolution order,
  * after checking that each is public or exempt by `policy`. `origin` is the request URL's origin:
  * only when it equals a `policy.trustedOrigins` entry does that trust apply (without it, trusted

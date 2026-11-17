@@ -3,6 +3,7 @@ import { isIP } from "node:net";
 import { Agent, fetch as undiciFetch } from "undici";
 import { bypassesProxy, proxyAgent } from "./proxy.js";
 import {
+  hostEntryExempts,
   isLoopbackHost,
   type LookupFn,
   NetDeniedError,
@@ -119,7 +120,15 @@ export async function safeFetch(
     ((policy.allowInsecureLoopback && isLoopbackHost(host)) ||
       policy.trustedOrigins.some((o) => originOf(o) === target.origin));
   if (target.protocol !== "https:" && !insecureOk) {
-    throw new NetDeniedError("net.insecure_url", host, `The URL must use https (${host}).`);
+    // an extension request to a host the org allows only as a host entry (https only): name the
+    // origin entry that would allow plain http
+    const hint =
+      policy.extension !== undefined &&
+      target.protocol === "http:" &&
+      hostEntryExempts(host, policy)
+        ? ` ${host} is allowed for the organization over https only; to allow plain http, ask a super admin to allow the origin ${target.origin}.`
+        : "";
+    throw new NetDeniedError("net.insecure_url", host, `The URL must use https (${host}).${hint}`);
   }
   const proxy = policy.proxy;
   const proxied =
