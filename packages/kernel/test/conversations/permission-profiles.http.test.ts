@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
+import { DEFAULT_SANDBOX_ROOTS } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
 import { sql } from "kysely";
@@ -24,6 +25,7 @@ import { SandboxService } from "../../src/sandbox/sandbox.service.js";
 import { truncateTables } from "../helpers/db.js";
 import { asUser, cookieJar } from "../helpers/http.js";
 import { accountsFor, apiTokensFor } from "../helpers/identity.js";
+import { seedInstalledEvidence } from "../helpers/installed-evidence.js";
 import { testMembers } from "../helpers/members.js";
 import { MODEL_PLUGINS_CONFIG } from "../helpers/model-plugins.js";
 import { enableModelProviders, startKernel, type TestKernel } from "../helpers/runs.js";
@@ -485,12 +487,27 @@ describe("Conversation permission profiles", () => {
       .values({
         device_id: deviceId,
         org_id: orgId,
-        provider: "@local",
+        provider: "@permission-test",
         status: "suspended",
         generation: 42,
-        handle: JSON.stringify({ id: "restarted" }),
+        handle: JSON.stringify({
+          id: "restarted",
+          roots: { ...DEFAULT_SANDBOX_ROOTS, workspace: "/work" },
+        }),
       })
       .execute();
+    // the restarted instance's installed evidence, which admission proves (B-16): a report needs
+    // a provider version to bind to
+    const providers = k.app.get(SandboxProviders);
+    const entry = providers.forName("@permission-test");
+    if (!entry) throw new Error("Permission test provider was not registered");
+    providers.register({ ...entry, version: "test-1" });
+    await seedInstalledEvidence(k, raw, {
+      orgId,
+      deviceId,
+      provider: "@permission-test",
+      version: "test-1",
+    });
     expect((await req({ method: "GET", url: previewUrl })).json().scopeRevision).toBe(
       preview.json().scopeRevision,
     );

@@ -4,6 +4,7 @@ import {
   type SandboxBackground,
   type SandboxExecutionRef,
   type SandboxExecutionStatus,
+  type SandboxPermissionSupport,
   type SandboxProvider,
   SandboxScopeDeniedError,
 } from "@capybara-hq/plugin-sdk";
@@ -26,6 +27,7 @@ import { taskOutputTool } from "../../src/tools/builtins/sandbox/task-output.js"
 import { taskStopTool } from "../../src/tools/builtins/sandbox/task-stop.js";
 import type { BuiltinCallContext, BuiltinResult } from "../../src/tools/registry.js";
 import { asUser, cookieJar } from "./http.js";
+import { seedInstalledEvidence } from "./installed-evidence.js";
 import { enableModelProviders, type Req, type TestKernel } from "./runs.js";
 
 /**
@@ -369,6 +371,14 @@ export async function managedTaskFixture(opts: {
       }),
     })
     .execute();
+  // admission proves the installed environment (B-16): the provider's report and its binding
+  await seedInstalledEvidence(k, opts.raw, {
+    orgId,
+    deviceId,
+    provider: MANAGED_PROVIDER,
+    version: "test-1",
+    report: await (provider.impl.permissionSupport as () => Promise<SandboxPermissionSupport>)(),
+  });
   const runId = randomUUID();
   const callId = randomUUID();
   await db

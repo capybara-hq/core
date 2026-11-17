@@ -4,6 +4,7 @@ import {
   type SandboxBackground,
   type SandboxExecutionRef,
   type SandboxOperationScope,
+  type SandboxPermissionSupport,
   type SandboxProvider,
   SandboxScopeDeniedError,
   ToolError,
@@ -45,6 +46,7 @@ import type { BuiltinCallContext } from "../../src/tools/registry.js";
 import { truncateTables } from "../helpers/db.js";
 import { asUser, cookieJar } from "../helpers/http.js";
 import { accountsFor } from "../helpers/identity.js";
+import { seedInstalledEvidence } from "../helpers/installed-evidence.js";
 import { MODEL_PLUGINS_CONFIG } from "../helpers/model-plugins.js";
 import { enableModelProviders, startKernel, type TestKernel } from "../helpers/runs.js";
 
@@ -336,6 +338,14 @@ async function fixture(opts: { project?: string } = {}) {
       }),
     })
     .execute();
+  // admission proves the installed environment (B-16): the provider's report and its binding
+  await seedInstalledEvidence(k, raw, {
+    orgId,
+    deviceId,
+    provider: PROVIDER,
+    version: "test-1",
+    report: await (provider.impl.permissionSupport as () => Promise<SandboxPermissionSupport>)(),
+  });
   const runId = randomUUID();
   const callId = randomUUID();
   await db

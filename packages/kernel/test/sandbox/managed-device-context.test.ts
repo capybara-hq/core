@@ -10,8 +10,12 @@ import { kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { ConversationDevices } from "../../src/devices/conversation-devices.js";
 import { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
-import { TransactionHost } from "../../src/infra/database/transaction-host.js";
+import {
+  runOutsideTransaction,
+  TransactionHost,
+} from "../../src/infra/database/transaction-host.js";
 import { createLogger } from "../../src/log.js";
+import { MembersService } from "../../src/orgs/members.service.js";
 import {
   managedDevicePathsIdemKey,
   managedDevicePathsText,
@@ -283,6 +287,14 @@ async function call(
   return value;
 }
 
+const deferred = () => {
+  let resolve!: () => void;
+  const promise = new Promise<void>((r) => {
+    resolve = r;
+  });
+  return { promise, resolve };
+};
+
 const failure = async (p: Promise<unknown>): Promise<unknown> => {
   try {
     await p;
@@ -395,6 +407,147 @@ describe("managed device context writer in the real common.ts route", () => {
       expect(order).toEqual([]);
       expect(await managedPaths(f)).toEqual([]);
     }
+  });
+
+  /** Runs `between` after the held evidence was taken and before the writer records it. */
+  const betweenEvidenceAndWriter = (between: (f: Fixture) => Promise<void>, f: Fixture) => {
+    const recorder = k.app.get(ManagedDeviceContextRecorder);
+    const real = recorder.record.bind(recorder);
+    return vi.spyOn(recorder, "record").mockImplementation(async (input, held, sig) => {
+      expect(held).toMatchObject({ deviceId: f.deviceId, bindingId: f.bindingId });
+      await between(f);
+      return real(input, held, sig);
+    });
+  };
+
+  it("a binding replaced between the held evidence and the writer fails before any callback", async () => {
+    const f = await seed();
+    betweenEvidenceAndWriter(async () => {
+      await f.db
+        .updateTable("device_instance_bindings")
+        .set({ binding_id: randomUUID() })
+        .where("device_id", "=", f.deviceId)
+        .execute();
+    }, f);
+    const err = await failure(call(f));
+    expect(err).toBeInstanceOf(ToolError);
+    expect((err as ToolError).message).toBe(MANAGED_DEVICE_CONTEXT_STALE_TEXT);
+    expect(order).toEqual([]);
+    expect(await managedPaths(f)).toEqual([]);
+  });
+
+  it.each([
+    ["removed from the org", "membership"],
+    ["disabled", "account"],
+  ] as const)(
+    "an actor %s after discovery is refused no-send by the writer itself",
+    async (_n, what) => {
+      const f = await seed();
+      betweenEvidenceAndWriter(async () => {
+        if (what === "membership")
+          await f.db
+            .deleteFrom("memberships")
+            .where("org_id", "=", f.orgId)
+            .where("account_id", "=", f.accountId)
+            .execute();
+        else
+          await f.db
+            .updateTable("accounts")
+            .set({ status: "disabled" })
+            .where("id", "=", f.accountId)
+            .execute();
+      }, f);
+      const err = await failure(call(f));
+      expect(err).toBeInstanceOf(ToolError);
+      expect((err as ToolError).message).toBe(MANAGED_DEVICE_CONTEXT_FAILED_TEXT);
+      expect(order).toEqual([]);
+      expect(await managedPaths(f)).toEqual([]);
+    },
+  );
+
+  it("a claim revoked after the held evidence is refused by the writer's own fence", async () => {
+    const f = await seed();
+    betweenEvidenceAndWriter(async () => {
+      await f.db
+        .updateTable("runs")
+        .set({ execution_id: randomUUID() })
+        .where("id", "=", f.runId)
+        .execute();
+    }, f);
+    const err = await failure(call(f));
+    expect(err).toBeInstanceOf(ExecutionRevoked);
+    expect(order).toEqual([]);
+    expect(await managedPaths(f)).toEqual([]);
+  });
+
+  it("a managed call and offboarding in one org cannot deadlock: the org row precedes the permission locks", async () => {
+    const f = await seed();
+    const member = randomUUID();
+    await f.db.insertInto("accounts").values({ id: member, display_name: "M" }).execute();
+    await f.db
+      .insertInto("memberships")
+      .values({ org_id: f.orgId, account_id: member, role: "member" })
+      .execute();
+    const held = deferred();
+    const release = deferred();
+    const recorder = k.app.get(ManagedDeviceContextRecorder);
+    const realRecord = recorder.record.bind(recorder);
+    let inWriter = false;
+    vi.spyOn(recorder, "record").mockImplementation(async (input, h, sig) => {
+      inWriter = true;
+      return realRecord(input, h, sig);
+    });
+    const locks = k.app.get(PermissionAuthorityLock);
+    const realAcquire = locks.acquire.bind(locks);
+    vi.spyOn(locks, "acquire").mockImplementation(async (subject, intent) => {
+      await realAcquire(subject, intent);
+      if (inWriter && intent.kind === "admit") {
+        // the writer's transaction holds the permission authority locks; pause it there
+        inWriter = false;
+        held.resolve();
+        await release.promise;
+      }
+    });
+    const managed = call(f);
+    await held.promise;
+    // offboarding: org admission, the org row, then the org permission lock exclusively
+    const removal = k.app.get(MembersService).remove(f.orgId, member, f.accountId);
+    await expect
+      .poll(async () =>
+        Number(
+          (
+            await sql<{ n: string }>`select count(*) n from pg_locks l
+              join pg_stat_activity a on a.pid = l.pid
+              where not l.granted and a.datname = current_database()`.execute(raw)
+          ).rows[0]?.n,
+        ),
+      )
+      .toBeGreaterThan(0);
+    release.resolve();
+    const [a, b] = await Promise.allSettled([managed, removal]);
+    expect(a.status === "rejected" ? String(a.reason) : "fulfilled").toBe("fulfilled");
+    expect(b.status === "rejected" ? String(b.reason) : "fulfilled").toBe("fulfilled");
+    expect(await managedPaths(f)).toHaveLength(1);
+  });
+
+  it("refuses a claimed call without the run's inherited fence (its org row would follow the authority locks)", async () => {
+    const f = await seed();
+    const err = await failure(
+      k.app.get(RunExecution).withClaim(
+        f.claim,
+        () => true,
+        () =>
+          // the claim stays in context, the fence does not
+          runOutsideTransaction(() =>
+            inSandboxOperations(depsOf(), ctxOf(f), async () => {
+              order.push("callback");
+            }),
+          ),
+      ),
+    );
+    expect((err as ToolError).message).toBe(MANAGED_DEVICE_CONTEXT_FAILED_TEXT);
+    expect(order).toEqual([]);
+    expect(await managedPaths(f)).toEqual([]);
   });
 
   it("a missing writer on the activated route fails before entering, preparation or the callback", async () => {

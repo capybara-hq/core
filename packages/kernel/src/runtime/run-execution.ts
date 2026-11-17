@@ -74,7 +74,8 @@ export class ExecutionRevoked extends Error {
  *   (`OrgLock.lockForRemoval`): they wait for the admitted writes, keep new ones out (a later one
  *   then sees the org deleted), and are not starved by a stream of them (the lock queues fairly).
  *
- * Global order: org admission lock → org row → root conversation → conversation; a writer that
+ * Global order: org admission lock → org row → permission authority locks (an ordered prelude,
+ * `withTransactionFencePrelude`, runs here) → root conversation → conversation; a writer that
  * locks several conversation or run rows of one tree locks the tree's root first (the fence
  * does, so every fenced write of a tree serializes on its root). A claim never
  * opens a nested fenced `requires_new` transaction (shared or not) and waits for it while its
@@ -120,9 +121,10 @@ export class RunExecution {
 
   withClaim<T>(claim: ExecutionClaim, live: () => boolean, fn: () => Promise<T>): Promise<T> {
     return invocationClaim.run(Object.freeze({ ...claim }), () =>
-      withTransactionFence(async ({ shared }) => {
+      withTransactionFence(async ({ shared, prelude }) => {
         const admitShared = shared && !exclusiveScope.getStore();
-        if (!live() || !(await this.lockLiveConversation(claim, admitShared))) {
+        if (prelude && admitShared) throw new Error("An ordered prelude needs exclusive admission");
+        if (!live() || !(await this.lockLiveConversation(claim, admitShared, prelude))) {
           throw new ExecutionRevoked();
         }
         const run = await this.db
@@ -144,7 +146,11 @@ export class RunExecution {
    * depth 1) under `FOR UPDATE`, so two siblings holding the root only shared would deadlock
    * upgrading it.
    */
-  private async lockLiveConversation(claim: ExecutionClaim, shared = false): Promise<boolean> {
+  private async lockLiveConversation(
+    claim: ExecutionClaim,
+    shared = false,
+    prelude?: () => Promise<void>,
+  ): Promise<boolean> {
     // shared: after the admission lock, a plain read sees a committed deletion (a new statement
     // under READ COMMITTED), and the deletion cannot commit before this transaction ends
     if (shared) await this.xactLock.admitOrgShared(claim.orgId);
@@ -155,6 +161,8 @@ export class RunExecution {
       .$call((q) => (shared ? q : q.forNoKeyUpdate()))
       .executeTakeFirst();
     if (!org || !isLive(org.deleted_at)) return false;
+    // the permission authority locks: after the org row, before the conversation rows
+    await prelude?.();
     const root = await this.db
       .selectFrom("conversations")
       .select("deleted_at")

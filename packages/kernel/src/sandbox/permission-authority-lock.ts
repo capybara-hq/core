@@ -68,6 +68,21 @@ export class PermissionAuthorityLock {
     }
     if (claims.size && wanted.some((item) => !claims.has(item.key)))
       throw new Error("Acquire the complete authority subject once in fixed order");
+    // the global lock order puts these locks after the org row and before the conversation rows:
+    // a transaction a run fence already admitted holds its conversation rows, so a new authority
+    // read lock there would invert the order; the permission readers (context, managed writer,
+    // admission, review) take it in the ordered prelude instead (`withTransactionFencePrelude`),
+    // which runs inside the fence before those rows. Ceiling writers reached from a tool step
+    // (Platform operations on devices, org or platform settings) still lock after the fence's
+    // rows: a known inversion, left to a follow-up that moves them into a prelude
+    if (
+      intent.kind === "admit" &&
+      store.admission !== undefined &&
+      wanted.some((item) => !claims.has(item.key))
+    )
+      throw new Error(
+        "Permission authority locks inside a fenced transaction are taken only in its ordered prelude",
+      );
     for (const item of wanted) {
       if (claims.has(item.key)) continue;
       if (item.mode === "exclusive") await this.locks.lock(item.key);
