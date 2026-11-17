@@ -703,3 +703,22 @@ it("a draining session refuses bindInstance and still serves status, read, tail 
   });
   expect(await drain).toEqual({ drained: true });
 });
+
+it("a socket still open when its credential's state is discarded admits nothing more (review I1)", async () => {
+  const states = new StagedSessionStates();
+  const cred = {
+    url: "https://capybara.test",
+    orgId: "o",
+    deviceId: "d",
+    credential: "secret-1",
+    reconnectGraceSeconds: 10,
+  };
+  const f = await fixture(true, true, { state: states.for(cred) });
+  const status = vi.spyOn(f.backend.background, "status");
+  states.for({ ...cred, credential: "secret-2" });
+  const closed = once(f.client, "close");
+  f.request("backgroundStatus", { ref: f.ref });
+  expect((await closed)[0]).toBe(4401);
+  expect(status).not.toHaveBeenCalled();
+  expect(f.responses).toEqual([]);
+});

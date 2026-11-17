@@ -34,6 +34,8 @@ export interface StagedSessionState {
   draining: boolean;
   /** Set when a credential change replaced this state: it holds nothing and serves no socket. */
   discarded: boolean;
+  /** Closes each socket this state serves; a discard closes them all. */
+  readonly sockets: Set<() => void>;
   /** Answers waiting for the next ready socket, with their expiry. */
   readonly pending: Map<string, { res: DeviceResponseV3; expires: number }>;
   /** Delivers on the current ready socket; undefined while none is ready. */
@@ -65,6 +67,7 @@ export function createStagedSessionState(opts: {
     current: undefined,
     draining: false,
     discarded: false,
+    sockets: new Set(),
   };
 }
 
@@ -103,6 +106,8 @@ function discardStagedSessionState(state: StagedSessionState): void {
   state.discarded = true;
   state.pending.clear();
   state.current = undefined;
+  for (const close of [...state.sockets]) close();
+  state.sockets.clear();
 }
 
 /**
@@ -131,7 +136,8 @@ const CONNECTION_FENCED = new Set(["backgroundReadOutput"]);
 
 /**
  * Admissions a draining session refuses here: instance creation, which no supervisor owns, and a
- * new instance binding, since a drained session never takes on a new generation (8.4 B4 M9).
+ * new instance binding, since a drained session never takes on a new generation (8.4 B4 M9); a
+ * retried bindInstance is refused too, and a drained session is never reused.
  * Execution, background starts and native, preparation and browsing operations all reach the
  * supervisor, whose admission refuses only fresh operations while draining: a retry of an admitted
  * id (an answer lost on a socket blip) still recovers. Exact status, read, tail, stop, revoke and
@@ -261,14 +267,23 @@ export function serveStagedSession(
       fail(error);
     }
   };
-  const hold = (res: DeviceResponseV3) => holdAnswer(state, res);
+  // fitted to this socket's own limit, so a held answer is bounded in bytes as well as in count
+  const hold = (res: DeviceResponseV3) =>
+    holdAnswer(state, fit(res, hello.transport.maxFrameBytes));
   const deliver = (res: DeviceResponseV3) => {
     if (state.current) state.current(res);
     else hold(res);
   };
   const refuse = (id: string, kind: "unsupported" | "error", message: string) =>
     deliverHere({ type: "res", id, ok: false, error: { kind, message } });
+  const credentialChanged = () => socket.close(4401, "Credential changed; reconnect");
+  state.sockets.add(credentialChanged);
   socket.on("message", (data, binary) => {
+    // a socket opened before its credential's state was discarded admits nothing more
+    if (state.discarded) {
+      credentialChanged();
+      return;
+    }
     try {
       if (binary) throw new Error("Use JSON text frames");
       const frame = parseDeviceFrameV3(
@@ -343,6 +358,7 @@ export function serveStagedSession(
     }
   });
   socket.on("close", () => {
+    state.sockets.delete(credentialChanged);
     ready = undefined;
     if (state.current === deliverHere) state.current = undefined;
     for (const { op, ctl } of state.running.values())
