@@ -1,5 +1,13 @@
 # @capybara-hq/capybara
 
+## 0.1.0-rc.47
+
+### Patch Changes
+
+- 2e95df3: New deployments get the official file previewer: `@capybara-hq/plugin-file-preview` rc.0 is a builtin bootstrap plugin (code, zip, xlsx, docx, pdf, svg and html previews in the conversation's right panel). The marketplace pin and the sandbox-docker build contexts move to capybara-hq/plugins 7b9ad17, which only adds that plugin.
+- Updated dependencies [2e95df3]
+  - @capybara-hq/kernel@0.1.0-rc.41
+
 ## 0.1.0-rc.46
 
 ### Patch Changes
