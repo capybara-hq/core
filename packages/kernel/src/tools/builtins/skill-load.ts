@@ -36,8 +36,8 @@ import {
   checkToolPath,
   clip,
   display,
-  inSandbox,
   inSandboxPreparation,
+  inToolSandbox,
   mapSandboxError,
   type PreparationSession,
   type SandboxSession,
@@ -681,7 +681,7 @@ async function loadProjectSkill(
       ),
     );
   }
-  const r = await inSandbox(deps, ctx, async (s) => {
+  const r = await inToolSandbox(deps, ctx, async (s) => {
     try {
       return await readProjectSkill(s, project.root, bare, ctx.signal);
     } catch (e) {

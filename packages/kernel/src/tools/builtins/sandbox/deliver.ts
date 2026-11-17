@@ -13,7 +13,7 @@ import {
   checkPathShape,
   clip,
   display,
-  inSandbox,
+  inToolSandbox,
   type SandboxToolDeps,
   sandboxBaseTimeoutMs,
   unavailableWhenNoSandbox,
@@ -144,7 +144,7 @@ export function sandboxDeliverTool(deps: SandboxToolDeps): BuiltinTool {
       const max = deps.config.get().sandbox.deliverMaxBytes;
       checkPathShape((input as DeliverInput).file_path, "file_path");
       let path = "";
-      const { value: data, notices } = await inSandbox(
+      const { value: data, notices } = await inToolSandbox(
         deps,
         ctx,
         async ({ h, roots, p, signal }) => {

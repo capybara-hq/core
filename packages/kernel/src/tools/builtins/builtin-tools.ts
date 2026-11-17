@@ -96,6 +96,9 @@ export class BuiltinTools {
     /** The paired activation gate (one switch with the runtime's request boundary). */
     @Optional() @Inject(PERMISSION_CONTEXT_ACTIVATION) activation?: boolean,
   ) {
+    // dormant: the builtins keep the legacy route until the paired activation turns the gate on;
+    // then every builtin entering a device (the skill tool too) takes the managed route
+    const managed = managedSandboxDeps(managedDeviceContext, activation);
     const sandboxDeps: SandboxToolDeps = {
       sandbox,
       devices,
@@ -112,9 +115,7 @@ export class BuiltinTools {
       eventLog,
       config,
       log,
-      // dormant: the managed route keeps the legacy writer until the paired activation turns the
-      // gate on; then the managed writer is required on every sandbox call
-      ...managedSandboxDeps(managedDeviceContext, activation),
+      ...managed,
     };
     this.tools = [
       askUserTool({ config }),
@@ -136,6 +137,7 @@ export class BuiltinTools {
         attachments,
         eventLog,
         log,
+        ...managed,
         get db() {
           return db.db;
         },
