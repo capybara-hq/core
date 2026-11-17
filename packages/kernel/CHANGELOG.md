@@ -1,5 +1,49 @@
 # @capybara-hq/kernel
 
+## 0.1.0-rc.38
+
+### Minor Changes
+
+- 23f7d29: `ctx.net.fetch` for extensions: the kernel's guarded client (`safeFetch`) with a per-call policy
+  (the org's allowed internal endpoints when `orgId` is given, public addresses only otherwise,
+  `net.httpsProxy` / `net.noProxy`, `net.allowInsecureLoopback` for tests). Loopback is refused
+  whatever the allowances, link-local and the cloud metadata endpoints `100.100.100.200` and
+  `fd00:ec2::254` always (also for marketplace downloads). Redirects: `redirect: "manual"` returns
+  the 3xx, otherwise `net.redirect`. Refusals reject with the SDK `NetDeniedError`. A plain-http
+  URL to a host the org allows only as a hostname entry is refused with a hint naming the
+  `http://host:port` origin entry that would allow it.
+- b55e386: Org network allowance routes: the super admin lists, adds and removes an org's internal endpoints
+  at `/api/v1/admin/orgs/:orgId/network-allowances` (404 `org.network_allowance_not_found` for an id
+  the org does not list; an add through a personal access token or the Platform tool is refused with
+  `org.network_allowance_widen_not_allowed`: only a person widens), org admins read their org's list
+  at `GET /api/v1/orgs/:orgId/network-allowances`; Platform operations `admin.org-network-allowances`, `admin.org-network-allowance-add`,
+  `admin.org-network-allowance-remove` and `orgs.network-allowances`. The audit logs label the two
+  allowance actions.
+- ac345b2: Org network allowances: a per-org list of internal endpoints (hostname, `*.domain`, IP, CIDR or an
+  origin `http(s)://host:port`) stored in `org_network_allowances` (migration 0145), audited
+  `org.network_allowance_added` / `org.network_allowance_removed`, with the error code
+  `org.network_allowance_invalid`. Link-local, loopback, unspecified and IPv4-embedding IPv6
+  addresses are always refused, `localhost` names too, and so are wildcards over a public suffix.
+  New config `net.allowInsecureLoopback` (testing only).
+
+### Patch Changes
+
+- c7534e0: The core connector fixtures (`fake-connector`, `fake-openapi`) request through `ctx.net.fetch`
+  with the call's `orgId` and no longer take an `allowInsecureLoopback` deployment config: test
+  kernels set the kernel's `net.allowInsecureLoopback` instead (`testKernelConfig` and the replica
+  runner do). The `net.*` config descriptions state that the switch lifts every loopback refusal and
+  that an org's allowed internal https hosts must be listed in `net.noProxy` when `net.httpsProxy` is
+  set.
+  Their endpoint schemas accept http and https; `ctx.net` decides reachability at request time.
+- 9d7f620: The runs of one org append in parallel: the run loop's own writes (event appends, model output and
+  usage, checkpoints, the suspend) are admitted under a shared transaction-scoped advisory lock per
+  org instead of the org row lock. Every other fenced write, and every write inside a tool step,
+  still takes the org row first, so tool steps stay serialized per org. Org deletion and offboarding
+  take the advisory lock exclusively first, so they wait for the admitted writes and are not starved
+  by them.
+- Updated dependencies [9c0d52e]
+  - @capybara-hq/plugin-sdk@0.1.0-rc.29
+
 ## 0.1.0-rc.37
 
 ### Patch Changes

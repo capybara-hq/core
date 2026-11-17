@@ -1,5 +1,30 @@
 # @capybara-hq/capybara
 
+## 0.1.0-rc.44
+
+### Patch Changes
+
+- c7534e0: The core connector fixtures (`fake-connector`, `fake-openapi`) request through `ctx.net.fetch`
+  with the call's `orgId` and no longer take an `allowInsecureLoopback` deployment config: test
+  kernels set the kernel's `net.allowInsecureLoopback` instead (`testKernelConfig` and the replica
+  runner do). The `net.*` config descriptions state that the switch lifts every loopback refusal and
+  that an org's allowed internal https hosts must be listed in `net.noProxy` when `net.httpsProxy` is
+  set.
+  Their endpoint schemas accept http and https; `ctx.net` decides reachability at request time.
+- 9f3303d: Upgrade Next.js to 16.4.6 (security)
+- 9d7f620: The runs of one org append in parallel: the run loop's own writes (event appends, model output and
+  usage, checkpoints, the suspend) are admitted under a shared transaction-scoped advisory lock per
+  org instead of the org row lock. Every other fenced write, and every write inside a tool step,
+  still takes the org row first, so tool steps stay serialized per org. Org deletion and offboarding
+  take the advisory lock exclusively first, so they wait for the admitted writes and are not starved
+  by them.
+- Updated dependencies [c7534e0]
+- Updated dependencies [23f7d29]
+- Updated dependencies [b55e386]
+- Updated dependencies [ac345b2]
+- Updated dependencies [9d7f620]
+  - @capybara-hq/kernel@0.1.0-rc.38
+
 ## 0.1.0-rc.43
 
 No changes in this release.
