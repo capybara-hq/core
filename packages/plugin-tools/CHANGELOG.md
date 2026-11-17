@@ -1,5 +1,42 @@
 # @capybara-hq/plugin-tools
 
+## 0.1.0-rc.16
+
+### Patch Changes
+
+- 4c9cc0c: Remove the deprecated UI `place` key, `PLACE_SLOTS`, `UiPlace`, `slotRefOf` and `aliasOf` from the
+  plugin SDK: a UI contribution names its `slot`, which is now required. `resolveUiSlots` no longer
+  returns `deprecatedPlace`, and `capybara-plugin check` drops the `ui-place-deprecated` rule.
+- Updated dependencies [d522c01]
+- Updated dependencies [c0a1184]
+- Updated dependencies [8f1950d]
+- Updated dependencies [4e871ad]
+- Updated dependencies [e30fef0]
+- Updated dependencies [c122975]
+- Updated dependencies [dbfed21]
+- Updated dependencies [303e6fb]
+- Updated dependencies [874b346]
+- Updated dependencies [4992759]
+- Updated dependencies [9077604]
+- Updated dependencies [3ee2265]
+- Updated dependencies [0543a28]
+- Updated dependencies [09965db]
+- Updated dependencies [a7ce103]
+- Updated dependencies [001648a]
+- Updated dependencies [2882379]
+- Updated dependencies [4c9cc0c]
+- Updated dependencies [8f02aba]
+- Updated dependencies [e6ac5dc]
+- Updated dependencies [5f9a8a8]
+- Updated dependencies [794a77c]
+- Updated dependencies [0a76603]
+- Updated dependencies [3324504]
+- Updated dependencies [154bfef]
+- Updated dependencies [243734a]
+- Updated dependencies [c452bfe]
+  - @capybara-hq/plugin-sdk@0.1.0-rc.27
+  - @capybara-hq/kernel@0.1.0-rc.37
+
 ## 0.1.0-rc.15
 
 ### Patch Changes

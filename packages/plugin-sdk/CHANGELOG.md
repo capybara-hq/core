@@ -1,5 +1,45 @@
 # @capybara-hq/plugin-sdk
 
+## 0.1.0-rc.27
+
+### Minor Changes
+
+- c122975: `model-provider@1` is removed before 0.1.0 (no plugin provides it): the SDK drops
+  `ModelProviderV1`, `ModelInfoV1`, `ModelRequestV1`, the `@1` constant
+  `MODEL_PROVIDER_EXTENSION_POINT`, the deprecated `ModelInfo.capabilities.effort` and
+  `ModelRequest.effort`; `EXTENSION_POINTS["model-provider"].majors` is `[2]`, so the kernel refuses
+  to load a plugin providing `@1`, and its `@1` adapter is gone. `MODEL_PROVIDER_EXTENSION_POINT_V2`
+  stays the constant to provide. The conformance suite in `@capybara-hq/testing` runs only `@2`
+  targets: `ConformanceTarget` no longer has `contract` (drop `contract: 2`; `plugin` is required).
+  The kernel's model list cache keys no longer carry the contract major.
+- 303e6fb: Add the restricted Linux launcher and syscall broker (`linux-sandbox.py`, Landlock plus a seccomp
+  notification broker) to `SANDBOX_RUNTIME_SOURCE` (version 2). Landlock rules, broker checks and the
+  native helper share the consumer's pinned root descriptors; roots are never reopened by pathname.
+  Its probe reports restricted unavailable on unvalidated architectures (only aarch64 is validated;
+  x86_64 has a reviewed table awaiting real-kernel evidence), Landlock ABI below 6 or a missing seccomp
+  listener. Restricted none/allowlist listens on loopback only; UNIX sockets are stream/seqpacket
+  with pathname connect/bind confined to the write roots in every network kind; a lost supervisor's
+  closed session is ended by the consumer's `reap`. Metadata reads outside the roots stay visible.
+  Shipping the bytes is not a provider claim.
+  
+  Add `runSandboxPermissionConformance` to `@capybara-hq/testing`: an actual-provider permission
+  suite (positive controls, sibling/symlink/protected-path and network denials, Full controls, both
+  overlap orders, component/root swaps, mutable syscall pointers, loopback-only binds, UNIX sockets
+  outside the roots under every network kind, cancellation and narrowed scopes).
+- 4c9cc0c: Remove the deprecated UI `place` key, `PLACE_SLOTS`, `UiPlace`, `slotRefOf` and `aliasOf` from the
+  plugin SDK: a UI contribution names its `slot`, which is now required. `resolveUiSlots` no longer
+  returns `deprecatedPlace`, and `capybara-plugin check` drops the `ui-place-deprecated` rule.
+
+### Patch Changes
+
+- d522c01: `ModelRequest` gains an optional `purpose` (`"compaction"` on a conversation summary call). The
+  compaction request is identified by it instead of a `CAPYBARA_COMPACTION` marker in the system
+  prompt, so real providers no longer receive the marker; model-fake keys its summary reply on it.
+- 874b346: The Linux restricted launcher now reports restricted support on x86_64 as well as aarch64. The
+  real-kernel conformance suite passed on an x86_64 GitHub runner (Linux 7.0, Landlock enabled,
+  Docker's builtin seccomp profile) with every mechanism test required to run.
+- 794a77c: The SDK's doc comments are English (they were partly Chinese). Meaning and rules are unchanged; only the text of the doc comments shipped in the published declarations changes.
+
 ## 0.1.0-rc.26
 
 ### Minor Changes
