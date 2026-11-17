@@ -64,7 +64,16 @@ export class OwnerReports {
   async recordLocked(
     machineId: string,
     raw: unknown,
-    meta: { connectionId: string | null; via: OwnerReportVia; rootsChanged?: boolean },
+    meta: {
+      connectionId: string | null;
+      via: OwnerReportVia;
+      rootsChanged?: boolean;
+      /**
+       * The platform op whose answer carries this report: the change is audited as its source
+       * made it (the person, via the web or an approval), once, instead of as the machine's own.
+       */
+      explainedBy?: { accountId: string; via: string; opId: string; actorTokenId?: string };
+    },
   ): Promise<OwnerReportOutcome> {
     const report: DeviceOwnerCeilingV3 = parseOwnerCeilingReportV3(raw);
     const row = await this.db
@@ -136,9 +145,11 @@ export class OwnerReports {
           ownerReportRevokes(after, scope, intent.method, intent.granted_hosts, roots),
         fullChanged || meta.rootsChanged === true,
       );
+    const by = meta.explainedBy;
     if (before.state !== "missing" && (fullChanged || reachChanged))
       await audit(this.db.db, {
-        actorAccountId: row.account_id,
+        actorAccountId: by?.accountId ?? row.account_id,
+        ...(by?.actorTokenId !== undefined && { actorTokenId: by.actorTokenId }),
         orgId: row.org_id,
         action: "device.owner_ceiling_changed",
         target: row.device_id,
@@ -152,8 +163,9 @@ export class OwnerReports {
             restrictedProjectReach: after.restrictedProjectReach,
           },
           sequence: report.sequence,
-          by: row.account_id,
-          via: "device",
+          by: by?.accountId ?? row.account_id,
+          via: by?.via ?? "device",
+          ...(by !== undefined && { opId: by.opId }),
           machineId,
         },
       });

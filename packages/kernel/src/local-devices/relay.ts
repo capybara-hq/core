@@ -1,10 +1,12 @@
 import { randomUUID } from "node:crypto";
 import {
+  DEVICE_PROTOCOL_VERSION,
   type DeviceOp,
   type DeviceOperationV3,
   type DeviceOpResults,
   DeviceProtocolError,
   type DeviceResponseV3,
+  type DeviceStopArgs,
   type ExtensionContext,
   FileSystemGoneError,
   type KernelReq,
@@ -16,6 +18,7 @@ import {
   SandboxOperationOutcomeUnknownError,
   SandboxPermissionUnsupportedError,
   SandboxScopeDeniedError,
+  STAGED_DEVICE_PROTOCOL_VERSION,
   ToolError,
 } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
@@ -107,6 +110,19 @@ export const isDeviceRequestNotSent = (e: unknown): e is DeviceRequestNotSentErr
  */
 const connectionFenced = (op: string): boolean => op === "backgroundReadOutput";
 
+/**
+ * The kernel-internal field of a queued `stop` naming the machine it is for (stripped by the holder
+ * before the frame goes out; a frame for another machine is dropped).
+ */
+export const STOP_MACHINE = "machineId" as const;
+
+/**
+ * Whether the deployment speaks the staged device protocol: the single gate is the SDK's protocol
+ * constant (flipped to 3 at the paired activation). Until then the active wire stays protocol 2.
+ */
+export const stagedDeviceProtocolActive = (): boolean =>
+  (DEVICE_PROTOCOL_VERSION as number) === STAGED_DEVICE_PROTOCOL_VERSION;
+
 /** The longest one lease check of a waiting caller may take before it counts as "unknown". */
 export const LEASE_CHECK_TIMEOUT_MS = 2000;
 
@@ -153,25 +169,39 @@ const ABORTED = Symbol("aborted");
 const GRACE_EXPIRED = Symbol("grace expired");
 
 type Outcome =
-  /** `connectionId`: the connection a staged result arrived on (tagged by the gateway). */
-  | { res: DeviceResponseV3; connectionId?: string }
+  /**
+   * `connectionId`: the connection a staged result arrived on (tagged by the gateway). `notSent`:
+   * the gateway's own marker that the request never reached the machine.
+   */
+  | { res: DeviceResponseV3; connectionId?: string; notSent?: true }
   | { error: typeof ABORTED | typeof GRACE_EXPIRED | Error };
 
 /**
- * Whether a staged result is the holder's refusal of a request queued for another connection
- * (`local-device-gateway.ts` drain): its exact text, stored under a connection other than the
- * request's. The machine itself never answers with it, and its own answers are not refusals.
+ * The kernel-internal fields the gateway adds to what it stores for a staged result, next to the
+ * device's frame: the connection it arrived on, that connection's capacity and, only on the
+ * gateway's own refusal of a request queued for another connection, {@link GATEWAY_NOT_SENT}. The
+ * device's frame is parsed strictly (unknown keys refused), so a device can never set them.
  */
-const notSent = (
-  r: { res: DeviceResponseV3; connectionId?: string },
-  op: string,
-  requestConnectionId: string,
-): boolean =>
-  !r.res.ok &&
-  r.res.error.kind === "error" &&
-  r.res.error.message === connectionChangedMessage(op) &&
-  r.connectionId !== undefined &&
-  r.connectionId !== requestConnectionId;
+export const GATEWAY_NOT_SENT = "notSent" as const;
+
+/**
+ * A staged request refused because it was not sent, outside the operations held under an operation
+ * identity (a policy control, a status read): a protocol error that also says nothing ran, so a
+ * caller can record it as never received instead of unknown ({@link wasDeviceRequestNotSent}).
+ */
+export class DeviceRequestNotSentProtocolError extends DeviceProtocolError {
+  readonly notSent = true as const;
+}
+
+/** Any staged request the kernel knows was never sent to the machine (held or not). */
+export const wasDeviceRequestNotSent = (e: unknown): boolean =>
+  e instanceof Error && (e as { notSent?: unknown }).notSent === true;
+
+/** The not-sent refusal of `op`: typed for held operations, a not-sent protocol error otherwise. */
+const notSentError = (op: string): Error =>
+  heldOperation(op)
+    ? new DeviceRequestNotSentError(connectionChangedMessage(op))
+    : new DeviceRequestNotSentProtocolError(connectionChangedMessage(op));
 
 export interface DeviceCallOptions {
   /** How long the machine may take for the operation (sent to it as `deadlineMs`). */
@@ -223,6 +253,24 @@ export class LocalDeviceRelay {
   }
 
   /**
+   * The negotiated transport of the device's connection when the platform's own controls (policy
+   * ops) must speak protocol 3 to it, else null (protocol 2). Once the single protocol gate is
+   * open every connection is staged, so this is {@link connection} (a missing or unready one
+   * throws its typed error). While the gate is closed only the dormant staged seam publishes a
+   * transport: a connection with one is staged, any other (or none) is protocol 2.
+   */
+  async stagedTransport(
+    deviceId: string,
+  ): Promise<{ connectionId: string; maxFrameBytes: number } | null> {
+    if (stagedDeviceProtocolActive()) return this.connection(deviceId);
+    try {
+      return await this.connection(deviceId);
+    } catch {
+      return null;
+    }
+  }
+
+  /**
    * The negotiated transport of the machine's current connection, for a staged call. Liveness is
    * checked first (ruling R27): no holder throws `device.not_found` for a deleted device,
    * `device.forbidden` for a revoked machine and `device.offline` otherwise.
@@ -236,14 +284,25 @@ export class LocalDeviceRelay {
   }
 
   /**
-   * Queues `op` for the machine without waiting for an answer (ruling R14: `stop`). The caller
-   * checks {@link holderLive} first; the frame waits on the list for the grace like any request.
+   * Queues `stop` for the machine without waiting for an answer (ruling R14). The caller checks
+   * {@link holderLive} first; the frame waits on the list for the grace like any request. It is
+   * fenced to the machine `machineId` ({@link STOP_MACHINE}): a holder hands it only to that
+   * machine's connection (on a staged connection as a protocol 3 `stop`, across a socket blip
+   * too), never to a newer machine of the device. Only `stop` is ever queued this way: a broad
+   * kill (`killAll` / `killTagged`) has no frame on protocol 3.
    */
-  async send(deviceId: string, op: DeviceOp, args: unknown, deadlineMs: number): Promise<void> {
+  async send(
+    deviceId: string,
+    op: "stop",
+    args: DeviceStopArgs,
+    deadlineMs: number,
+    machineId: string,
+  ): Promise<void> {
     const id = randomUUID();
     const d = Math.max(1, Math.ceil(deadlineMs));
     const req: KernelReq = { type: "req", id, op, args, deadlineMs: d };
-    await this.push(deviceId, JSON.stringify(req), this.graceMs() + d + LIST_TTL_MARGIN_MS);
+    const tagged = { ...req, [STOP_MACHINE]: machineId };
+    await this.push(deviceId, JSON.stringify(tagged), this.graceMs() + d + LIST_TTL_MARGIN_MS);
     await this.bus.publish(deviceReqTopic(deviceId), { id });
   }
 
@@ -298,10 +357,8 @@ export class LocalDeviceRelay {
       (connection?.connectionId !== opts.connection.connectionId ||
         connection?.maxFrameBytes !== opts.connection.maxFrameBytes)
     )
-      // nothing was queued: a held operation was definitely not sent
-      throw heldOperation(op)
-        ? new DeviceRequestNotSentError(connectionChangedMessage(op))
-        : new DeviceProtocolError(connectionChangedMessage(op));
+      // nothing was queued: the request was definitely not sent
+      throw notSentError(op);
     const fenced = staged && connectionFenced(op);
     signal.throwIfAborted();
 
@@ -405,8 +462,8 @@ export class LocalDeviceRelay {
       if ("res" in r) {
         // the result's connection tag was checked in parseRes: a later reconnect changes nothing
         await this.quietly("delete the result", deviceId, () => this.redis.del(deviceResKey(id)));
-        if (connection && heldOperation(op) && notSent(r, op, connection.connectionId))
-          throw new DeviceRequestNotSentError(connectionChangedMessage(op));
+        // only the gateway's marker says a request never reached the machine: never its text
+        if (connection && r.notSent) throw notSentError(op);
         return staged && r.res.ok
           ? parseOperationResultV3(
               op as DeviceOperationV3,
@@ -546,11 +603,14 @@ export class LocalDeviceRelay {
       let wire = raw;
       let cap: number | undefined;
       let arrivedOn: string | undefined;
+      let notSent = false;
       if (connection) {
-        const { connectionId, maxFrameBytes, ...frame } = JSON.parse(raw) as Record<
-          string,
-          unknown
-        >;
+        const {
+          connectionId,
+          maxFrameBytes,
+          [GATEWAY_NOT_SENT]: marker,
+          ...frame
+        } = JSON.parse(raw) as Record<string, unknown>;
         if (
           typeof connectionId !== "string" ||
           connectionId === "" ||
@@ -566,6 +626,7 @@ export class LocalDeviceRelay {
           throw new DeviceProtocolError(connectionChangedMessage(op));
         cap = maxFrameBytes;
         arrivedOn = connectionId;
+        notSent = marker === true;
         wire = JSON.stringify(frame);
       }
       const f = connection
@@ -574,7 +635,11 @@ export class LocalDeviceRelay {
       if (f.type !== "res" || f.id !== id) {
         return { error: new DeviceProtocolError("the connected machine sent an unexpected frame") };
       }
-      return arrivedOn === undefined ? { res: f } : { res: f, connectionId: arrivedOn };
+      if (arrivedOn === undefined) return { res: f };
+      // a refusal only: a successful result never carries the marker
+      return notSent && !f.ok
+        ? { res: f, connectionId: arrivedOn, notSent: true }
+        : { res: f, connectionId: arrivedOn };
     } catch (e) {
       return {
         error:

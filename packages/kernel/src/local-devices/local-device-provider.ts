@@ -60,6 +60,21 @@ const NAME_PREFIX = "cap-device-";
 export const AUTO_MODE_NOT_ALLOWED_TEXT =
   "This device's machine runs in auto mode, which your organization does not allow. Run `capybara-device mode sandbox` on that machine to switch it to sandbox mode.";
 
+/** What the staged provider sends through: the relay's protocol 3 call and the attested support. */
+export interface StagedDeviceTransport {
+  call(
+    deviceId: string,
+    op: DeviceOperationV3,
+    args: Record<string, unknown>,
+    opts: {
+      deadlineMs: number;
+      signal: AbortSignal;
+      connection?: { connectionId: string; maxFrameBytes: number };
+    },
+  ): Promise<unknown>;
+  permissionSupport(deviceId: string, signal: AbortSignal): Promise<SandboxPermissionSupport>;
+}
+
 /**
  * The handle of an instance on a machine: the device id (ruling R1: the relay is keyed by
  * device), the roots the machine reported at `create`, and the org's effective limits at
@@ -110,20 +125,47 @@ export class LocalDeviceProvider implements SandboxProvider {
     @Optional() @Inject(PermissionCallGrants) private readonly callGrants?: PermissionCallGrants,
   ) {}
 
-  /** Dormant v3 adapter. It is not installed on the active v2 registered provider. */
-  stagedOperations(transport: {
-    call(
-      deviceId: string,
-      op: DeviceOperationV3,
-      args: Record<string, unknown>,
-      opts: {
-        deadlineMs: number;
-        signal: AbortSignal;
-        connection?: { connectionId: string; maxFrameBytes: number };
+  /**
+   * The `@local` provider as the staged (protocol 3) registration hands it out
+   * (`LocalDevicesModule`): the protocol 2 lifecycle methods it shares, the v3 operation adapter
+   * ({@link stagedOperations}), `create` as a protocol 3 request, and no broad kill. A v3 machine
+   * has no `killAll` / `killTagged` (permission runtime cutover B-1): the kernel revokes the exact
+   * operations of a crashed holder (`OperationIntents.revokeHolders`, owed before every kill the
+   * lifecycle runs) and those revocations reach the machine as `revokeOperation`, so the kills
+   * here are no-ops that queue nothing. Dormant until the protocol gate selects it.
+   */
+  staged(transport: StagedDeviceTransport): SandboxProvider {
+    const ops = this.stagedOperations(transport);
+    const overrides: Partial<SandboxProvider> = {
+      ...ops,
+      create: async (args) => {
+        const id = args.fileSystem.id;
+        const r = parseOperationResultV3(
+          "create",
+          await transport.call(
+            id,
+            "create",
+            { limits: args.limits },
+            { deadlineMs: OP_DEADLINE_MS, signal: args.signal },
+          ),
+        ) as { roots: SandboxRoots };
+        return { id, roots: r.roots, limits: args.limits } satisfies LocalDeviceHandle;
       },
-    ): Promise<unknown>;
-    permissionSupport(deviceId: string, signal: AbortSignal): Promise<SandboxPermissionSupport>;
-  }): Required<
+      killAll: async (_h, signal) => {
+        signal.throwIfAborted();
+      },
+      killTagged: async (_h, _tags, signal) => {
+        signal.throwIfAborted();
+      },
+    };
+    // the shared lifecycle methods keep this provider as their receiver (relay, targets, config)
+    return Object.assign(Object.create(this) as SandboxProvider, overrides);
+  }
+
+  /** Dormant v3 adapter. It is not installed on the active v2 registered provider. */
+  stagedOperations(
+    transport: StagedDeviceTransport,
+  ): Required<
     Pick<
       SandboxProvider,
       "operation" | "prepare" | "browse" | "permissionSupport" | "revokeOperation" | "background"

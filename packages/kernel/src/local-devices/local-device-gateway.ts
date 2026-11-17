@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import {
   DEVICE_PROTOCOL_VERSION,
   type DeviceFrameV3,
+  type DeviceHelloV3,
   type DeviceRes,
   type DeviceResponseV3,
   type ExtensionContext,
@@ -31,7 +32,12 @@ import {
   deviceTransportKey,
 } from "./keys.js";
 import { type MachineIdentity, MachinesService } from "./machines.js";
-import { connectionChangedMessage, LIST_TTL_MARGIN_MS } from "./relay.js";
+import {
+  connectionChangedMessage,
+  GATEWAY_NOT_SENT,
+  LIST_TTL_MARGIN_MS,
+  STOP_MACHINE,
+} from "./relay.js";
 
 /** WebSocket close codes the gateway uses (the program reads 4002 and 4003). */
 export const DEVICE_CLOSE = {
@@ -260,7 +266,15 @@ class DeviceConnection {
       this.recorded = (async () => {
         if (!(await this.claim())) return;
         try {
-          await this.gw.machines.recordHello(this.identity.machineId, frame, rawPolicy);
+          // a staged hello carries the authenticated owner report and runtime facts: recorded
+          // with the connection it opened (the id the machine gets in `ready`)
+          if (this.staged)
+            await this.gw.machines.recordHelloV3(
+              this.identity.machineId,
+              frame as DeviceHelloV3,
+              this.connectionId,
+            );
+          else await this.gw.machines.recordHello(this.identity.machineId, frame, rawPolicy);
         } catch (e) {
           this.gw.log.warn("could not record a device hello", {
             deviceId: this.deviceId,
@@ -277,11 +291,20 @@ class DeviceConnection {
       this.recorded = this.recorded.then(async () => {
         if (this.state === "closed") return;
         try {
-          await this.gw.machines.recordPolicy(
-            this.identity.machineId,
-            frame.policy as import("@capybara-hq/plugin-sdk").DeviceLocalPolicySummary | undefined,
-            rawPolicy,
-          );
+          if (this.staged)
+            await this.gw.machines.recordPolicyV3(
+              this.identity.machineId,
+              frame,
+              this.connectionId,
+            );
+          else
+            await this.gw.machines.recordPolicy(
+              this.identity.machineId,
+              frame.policy as
+                | import("@capybara-hq/plugin-sdk").DeviceLocalPolicySummary
+                | undefined,
+              rawPolicy,
+            );
         } catch (e) {
           this.gw.log.warn("could not record a device policy change", {
             deviceId: this.deviceId,
@@ -305,19 +328,31 @@ class DeviceConnection {
    * Stores one result and announces it (the relay's wire, relay.ts), only for a request taken for
    * this device (ruling R20); anything else is dropped.
    */
-  private async store(res: DeviceRes | DeviceResponseV3): Promise<void> {
+  private async store(
+    res: DeviceRes | DeviceResponseV3,
+    /** The gateway's own refusal of a request it never sent (never a device's frame). */
+    notSent = false,
+  ): Promise<void> {
     try {
+      // the kernel-internal fields go next to the device's frame, which the relay strips before
+      // its strict parse. The device's frame was rebuilt by the strict parser; the marker is
+      // dropped from it all the same, so only this gateway's own refusal can carry it
+      const { [GATEWAY_NOT_SENT]: _never, ...frame } = res as typeof res & { notSent?: unknown };
+      const tagged = this.staged
+        ? {
+            ...frame,
+            connectionId: this.connectionId,
+            maxFrameBytes: this.effectiveCap,
+            ...(notSent && { [GATEWAY_NOT_SENT]: true }),
+          }
+        : res;
       const stored = await this.gw.redis.eval(
         ACCEPT,
         2,
         deviceTakenKey(res.id),
         deviceResKey(res.id),
         this.deviceId,
-        JSON.stringify(
-          this.staged
-            ? { ...res, connectionId: this.connectionId, maxFrameBytes: this.effectiveCap }
-            : res,
-        ),
+        JSON.stringify(tagged),
       );
       if (Number(stored) !== 1) {
         this.gw.log.warn("dropping a device result for a request not taken for its device", {
@@ -325,12 +360,7 @@ class DeviceConnection {
         });
         return;
       }
-      await this.gw.bus.publish(
-        deviceResTopic(res.id),
-        this.staged
-          ? { ...res, connectionId: this.connectionId, maxFrameBytes: this.effectiveCap }
-          : res,
-      );
+      await this.gw.bus.publish(deviceResTopic(res.id), tagged);
     } catch (e) {
       this.gw.log.warn("could not store a device result", {
         deviceId: this.deviceId,
@@ -472,34 +502,54 @@ class DeviceConnection {
       let frame: KernelReq | KernelRequestV3 | KernelCancel;
       let wire = raw;
       try {
+        const {
+          connectionId,
+          maxFrameBytes,
+          [STOP_MACHINE]: stopFor,
+          ...request
+        } = JSON.parse(raw) as Record<string, unknown>;
+        // a `stop` is fenced to the machine it was queued for (relay.send): a newer machine of
+        // the device never gets an older one's stop
+        if (stopFor !== undefined && stopFor !== this.identity.machineId) {
+          this.gw.log.warn("dropping a stop queued for another machine of the device", {
+            deviceId: this.deviceId,
+          });
+          continue;
+        }
         if (this.staged) {
-          const { connectionId, maxFrameBytes, ...request } = JSON.parse(raw) as Record<
-            string,
-            unknown
-          >;
           // a cancel carries no capacity-sized payload and must reach the machine after a
-          // reconnect too (an operation keeps running across a socket blip, as in protocol 2)
+          // reconnect too (an operation keeps running across a socket blip, as in protocol 2);
+          // so does a machine's `stop`, fenced to the machine above instead of the socket
+          const unfenced =
+            request.type === "cancel" || (request.op === "stop" && stopFor !== undefined);
           if (
-            request.type !== "cancel" &&
+            !unfenced &&
             (connectionId !== this.connectionId || maxFrameBytes !== this.effectiveCap)
           ) {
             if (request.type === "req" && typeof request.id === "string")
-              await this.store({
-                type: "res",
-                id: request.id,
-                ok: false,
-                error: {
-                  kind: "error",
-                  message: connectionChangedMessage(String(request.op)),
+              await this.store(
+                {
+                  type: "res",
+                  id: request.id,
+                  ok: false,
+                  error: {
+                    kind: "error",
+                    message: connectionChangedMessage(String(request.op)),
+                  },
                 },
-              });
+                true,
+              );
             continue;
           }
           wire = JSON.stringify(request);
           frame = parseDeviceFrameV3(wire, "kernel", this.effectiveCap) as
             | KernelRequestV3
             | KernelCancel;
-        } else frame = parseDeviceFrame(raw, "kernel") as KernelReq | KernelCancel;
+        } else {
+          // protocol 2's wire stays byte for byte what the relay queued, minus the stop's fence
+          if (stopFor !== undefined) wire = JSON.stringify(request);
+          frame = parseDeviceFrame(wire, "kernel") as KernelReq | KernelCancel;
+        }
       } catch (e) {
         this.gw.log.warn("dropping an invalid device request", {
           deviceId: this.deviceId,
@@ -677,7 +727,7 @@ export class LocalDeviceGateway {
     @Inject(MachinesService)
     readonly machines: Pick<
       MachinesService,
-      "authenticate" | "recordHello" | "recordPolicy" | "touch"
+      "authenticate" | "recordHello" | "recordPolicy" | "recordHelloV3" | "recordPolicyV3" | "touch"
     >,
     @Inject(LockService) readonly locks: Pick<LockService, "hold">,
     @Inject(KERNEL_BUS) readonly bus: ExtensionContext["bus"],

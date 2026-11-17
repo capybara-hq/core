@@ -3,6 +3,7 @@ import {
   type BindInstanceResultV3,
   DeviceProtocolError,
   parseOperationResultV3,
+  type SandboxPermissionSupport,
 } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
 import { sql } from "kysely";
@@ -13,6 +14,7 @@ import { LegacyRetirementStore } from "../sandbox/legacy-retirement.js";
 import { PermissionCeilingWrites } from "../sandbox/permission-ceiling-writes.js";
 import {
   PermissionRuntimeReports,
+  readCurrentReport,
   runtimeIdentity,
 } from "../sandbox/permission-runtime-reports.js";
 import { LOCAL_PROVIDER, type SandboxInstanceBinder } from "../sandbox/providers.js";
@@ -101,6 +103,39 @@ export class LocalInstanceBindings implements SandboxInstanceBinder {
   /** The current generation's committed binding status, or null when none was committed. */
   async status(deviceId: string): Promise<"installed" | "awaiting-device" | null> {
     return (await this.committed(deviceId))?.status ?? null;
+  }
+
+  /**
+   * The permission support the device attested for its current instance generation (the staged
+   * provider's `permissionSupport`): only the report recorded with an installed binding of that
+   * generation, for the active machine's program version. Anything else (unbound, awaiting, a
+   * changed identity) reads as no support with its reason: nothing is probed, and a missing
+   * report never admits an operation.
+   */
+  async permissionSupport(deviceId: string): Promise<SandboxPermissionSupport> {
+    const machine = await this.db
+      .selectFrom("device_machines")
+      .select("program_version")
+      .where("device_id", "=", deviceId)
+      .where("revoked_at", "is", null)
+      .executeTakeFirst();
+    const { availability } = await readCurrentReport(
+      this.db.db,
+      deviceId,
+      LOCAL_PROVIDER,
+      machine?.program_version ?? undefined,
+    );
+    if (availability.state === "supported") return availability.report;
+    return {
+      version: 1,
+      restricted: null,
+      fullAccess: false,
+      background: false,
+      unavailableReason:
+        availability.state === "unsupported"
+          ? availability.reason
+          : "The device has not attested an installed runtime for this instance yet; reconnect capybara-device and retry",
+    };
   }
 
   /**
