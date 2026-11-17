@@ -9,6 +9,7 @@ import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { normalizeHost, parseCidr, privateHostEntryProblem } from "../net/public-address.js";
+import { OrgLock, OrgLockModule } from "./org-lock.js";
 
 /**
  * Org network allowances (plugin safe fetch spec): the internal endpoints a super admin lets one
@@ -246,6 +247,7 @@ export class OrgNetworkAllowances {
   constructor(
     @Inject(KernelDb) private readonly db: KernelDb,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
+    @Inject(OrgLock) private readonly orgLock: OrgLock,
   ) {}
 
   /** The org's entries, oldest first. */
@@ -281,15 +283,9 @@ export class OrgNetworkAllowances {
       ]);
     }
     const normalized = normalizeAllowanceEntry(entry);
-    // locks the org row: concurrent adds count against the cap one at a time
-    const org = await this.db
-      .selectFrom("orgs")
-      .select("id")
-      .where("id", "=", orgId)
-      .where("deleted_at", "is", null)
-      .forUpdate()
-      .executeTakeFirst();
-    if (!org) throw new ApiError("org.not_found", "Organization not found");
+    // the org row lock (FOR NO KEY UPDATE; a missing or deleted org -> org.not_found): concurrent
+    // adds count against the cap one at a time
+    await this.orgLock.lock(orgId);
 
     const existing = await this.db
       .selectFrom("org_network_allowances")
@@ -403,5 +399,9 @@ function toAllowance(row: {
  * the extension host (`ctx.net`) can read the allowances without importing the orgs domain, which
  * itself imports the extensions domain.
  */
-@Module({ providers: [OrgNetworkAllowances], exports: [OrgNetworkAllowances] })
+@Module({
+  imports: [OrgLockModule],
+  providers: [OrgNetworkAllowances],
+  exports: [OrgNetworkAllowances],
+})
 export class OrgNetworkAllowancesModule {}

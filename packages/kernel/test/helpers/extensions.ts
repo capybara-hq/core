@@ -141,7 +141,7 @@ export function testHost(
     { get: effectiveConfig },
     // no ctx.models broker in a hand-built host: ctx.models calls reject
     undefined as never,
-    new OrgNetworkAllowances(h.db, h.txHost),
+    new OrgNetworkAllowances(h.db, h.txHost, orgLockFor(deps.db)),
   );
 }
 

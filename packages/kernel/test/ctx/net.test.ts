@@ -20,7 +20,7 @@ import { proxyAgent } from "../../src/net/proxy.js";
 import type { LookupFn } from "../../src/net/public-address.js";
 import { OrgNetworkAllowances } from "../../src/orgs/network-allowances.service.js";
 import { truncateTables } from "../helpers/db.js";
-import { accountsFor, handlesFor, orgsFor } from "../helpers/identity.js";
+import { accountsFor, handlesFor, orgLockFor, orgsFor } from "../helpers/identity.js";
 import { selfSigned } from "../net/self-signed.js";
 
 // ctx.net.fetch (plugin safe fetch spec): safeFetch with per-org allowances read from PG per call.
@@ -177,7 +177,7 @@ beforeAll(async () => {
   raw = createDb(pg.url, 5);
   db = kernelDb(raw);
   const h = handlesFor(db);
-  allowances = new OrgNetworkAllowances(h.db, h.txHost);
+  allowances = new OrgNetworkAllowances(h.db, h.txHost, orgLockFor(db));
 });
 
 afterAll(async () => {
