@@ -23,6 +23,8 @@ export interface CommittedBinding {
   orgId: string;
   request: BindInstanceRequestV3;
   status: "awaiting-device" | "installed";
+  /** The machine the binding was committed for (null: none was active). */
+  machineId: string | null;
 }
 
 /** The binding cannot be completed; the instance stays unprobed and admits nothing. */
@@ -63,7 +65,7 @@ export class LocalInstanceBindings {
     if (!instance || instance.provider !== LOCAL_PROVIDER || !instance.handle) return null;
     const binding = await this.db
       .selectFrom("device_instance_bindings")
-      .select(["instance_generation", "binding_id", "previous_generation", "status"])
+      .select(["instance_generation", "binding_id", "previous_generation", "status", "machine_id"])
       .where("device_id", "=", deviceId)
       .where("instance_generation", "=", String(instance.created_at.getTime()))
       .executeTakeFirst();
@@ -72,6 +74,7 @@ export class LocalInstanceBindings {
     return {
       orgId: row.org_id,
       status: row.status,
+      machineId: row.machine_id,
       request: {
         instanceId: instance.handle.id,
         instanceGeneration: row.instance_generation,
@@ -89,10 +92,19 @@ export class LocalInstanceBindings {
     // the device round trip may take the whole operation deadline: never inside a transaction
     if (this.txHost.current())
       throw new InstanceBindingError("bindInstance must not run inside a transaction");
-    const committed = await this.committed(deviceId);
-    if (!committed) throw new InstanceBindingError("No committed local instance to bind");
-    if (committed.status === "installed") return null;
+    const found = await this.committed(deviceId);
+    if (!found) throw new InstanceBindingError("No committed local instance to bind");
+    if (found.status === "installed") return null;
     const machineId = await this.activeMachine(deviceId);
+    let committed = found;
+    // a re-login since the commit: the binding follows the machine it is sent to, before the
+    // send, so a lost answer leaves the chain naming what that machine's device may have stored
+    if (committed.machineId !== machineId) {
+      await runOutsideTransaction(() => this.retarget(deviceId, committed, machineId));
+      const again = await this.committed(deviceId);
+      if (!again) throw new InstanceBindingError("No committed local instance to bind");
+      committed = again;
+    }
     const connection = await this.relay.connection(deviceId);
     const answer = parseOperationResultV3(
       "bindInstance",
@@ -110,6 +122,35 @@ export class LocalInstanceBindings {
     ) as BindInstanceResultV3;
     await runOutsideTransaction(() => this.install(deviceId, machineId, committed, answer));
     return answer;
+  }
+
+  /**
+   * Moves a still awaiting binding to the active machine: its previous becomes the last binding
+   * committed for that machine. Under the device writer, against the exact generation and id.
+   */
+  @Transactional()
+  async retarget(deviceId: string, committed: CommittedBinding, machineId: string): Promise<void> {
+    await this.ceilings.lock({ orgId: committed.orgId, deviceId }, "device");
+    const { instanceGeneration, bindingId } = committed.request;
+    const previous = await this.db
+      .selectFrom("device_instance_bindings")
+      .select("instance_generation")
+      .where("device_id", "=", deviceId)
+      .where("machine_id", "=", machineId)
+      .where(sql<boolean>`instance_generation::bigint < ${instanceGeneration}::bigint`)
+      .orderBy(sql`instance_generation::bigint`, "desc")
+      .limit(1)
+      .executeTakeFirst();
+    const moved = await this.db
+      .updateTable("device_instance_bindings")
+      .set({ machine_id: machineId, previous_generation: previous?.instance_generation ?? null })
+      .where("device_id", "=", deviceId)
+      .where("instance_generation", "=", instanceGeneration)
+      .where("binding_id", "=", bindingId)
+      .where("status", "=", "awaiting-device")
+      .executeTakeFirst();
+    if (!moved.numUpdatedRows)
+      throw new InstanceBindingError("The binding changed before it could follow the new machine");
   }
 
   private async activeMachine(deviceId: string): Promise<string> {
@@ -181,15 +222,17 @@ export class LocalInstanceBindings {
     if (!machine.program_version)
       throw new InstanceBindingError("The machine has not reported its program version");
     if (binding.status === "installed") return;
-    const previous = request.expectedPreviousGeneration
-      ? await this.db
-          .selectFrom("device_instance_bindings")
-          .select("runtime_identity")
-          .where("device_id", "=", deviceId)
-          .where("instance_generation", "=", request.expectedPreviousGeneration)
-          .where("status", "=", "installed")
-          .executeTakeFirst()
-      : undefined;
+    // the environment this device last proved, whichever generation that was: the chain's
+    // previous may be a binding whose answer never arrived (never installed)
+    const previous = await this.db
+      .selectFrom("device_instance_bindings")
+      .select("runtime_identity")
+      .where("device_id", "=", deviceId)
+      .where("status", "=", "installed")
+      .where(sql<boolean>`instance_generation::bigint < ${request.instanceGeneration}::bigint`)
+      .orderBy(sql`instance_generation::bigint`, "desc")
+      .limit(1)
+      .executeTakeFirst();
     if (
       previous?.runtime_identity &&
       previous.runtime_identity.imageFingerprint !== identity.imageFingerprint

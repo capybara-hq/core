@@ -727,3 +727,92 @@ it("old bindings are pruned except the chain, the latest per machine and owed re
     .execute();
   expect(kept.map((r) => r.instance_generation)).toEqual([gens[1], gens[3], g5]);
 });
+
+// ---- fix round 2: consent across an unconfirmed generation (N1), machine change before bind (R2)
+
+it("an environment change across an unconfirmed generation resets Full consent", async () => {
+  const f = await localDevice();
+  const bindings = k.app.get(LocalInstanceBindings);
+  await f.create();
+  deviceAnswers();
+  await bindings.bind(f.deviceId, AbortSignal.timeout(5000));
+  const base = await f.fullRevision();
+  // G2 committed, its answer lost: it stays awaiting
+  const g2 = await f.create();
+  vi.restoreAllMocks();
+  const relay = k.app.get(LocalDeviceRelay);
+  vi.spyOn(relay, "connection").mockResolvedValue({ connectionId: "c1", maxFrameBytes: 69632 });
+  vi.spyOn(relay, "callV3").mockRejectedValue(new Error("device.offline: answer lost"));
+  await expect(bindings.bind(f.deviceId, AbortSignal.timeout(5000))).rejects.toThrow("lost");
+  expect((await f.binding(g2))?.status).toBe("awaiting-device");
+  // the machine's interpreter changed; G3 names G2 as previous and binds with a new fingerprint
+  const g3 = await f.create();
+  expect((await f.binding(g3))?.previous_generation).toBe(g2);
+  vi.restoreAllMocks();
+  deviceAnswers((g) => identityFor(g, { imageFingerprint: "9".repeat(64) }));
+  await bindings.bind(f.deviceId, AbortSignal.timeout(5000));
+  expect((await f.fullRevision()).full_revision).toBe(base.full_revision + 1);
+});
+
+it("the same environment across an unconfirmed generation keeps Full consent", async () => {
+  const f = await localDevice();
+  const bindings = k.app.get(LocalInstanceBindings);
+  await f.create();
+  deviceAnswers();
+  await bindings.bind(f.deviceId, AbortSignal.timeout(5000));
+  const base = await f.fullRevision();
+  await f.create();
+  vi.restoreAllMocks();
+  const relay = k.app.get(LocalDeviceRelay);
+  vi.spyOn(relay, "connection").mockResolvedValue({ connectionId: "c1", maxFrameBytes: 69632 });
+  vi.spyOn(relay, "callV3").mockRejectedValue(new Error("device.offline: answer lost"));
+  await expect(bindings.bind(f.deviceId, AbortSignal.timeout(5000))).rejects.toThrow("lost");
+  await f.create();
+  vi.restoreAllMocks();
+  deviceAnswers();
+  await bindings.bind(f.deviceId, AbortSignal.timeout(5000));
+  expect((await f.fullRevision()).full_revision).toBe(base.full_revision);
+});
+
+it("a re-login between commit and bind retargets the binding, so a lost answer cannot deadlock (cross-side)", async () => {
+  const f = await localDevice();
+  const bindings = k.app.get(LocalInstanceBindings);
+  const old = await realDevice(f.deviceId, "credential-1");
+  await f.create();
+  relayTo(old);
+  await bindings.bind(f.deviceId, AbortSignal.timeout(5000));
+  // G2 committed for machine 1, then the owner logs in again as machine 2 before the bind
+  const g2 = await f.create();
+  await f.db
+    .updateTable("device_machines")
+    .set({ revoked_at: new Date() })
+    .where("id", "=", f.machineId)
+    .execute();
+  const m2 = await f.db
+    .insertInto("device_machines")
+    .values({
+      org_id: f.orgId,
+      device_id: f.deviceId,
+      account_id: f.accountId,
+      credential_hash: randomUUID(),
+      name: "Laptop",
+      os: "linux",
+      arch: "x64",
+      program_version: "0.1.0",
+      roots: JSON.stringify(ROOTS),
+    })
+    .returning("id")
+    .executeTakeFirstOrThrow();
+  const relogged = await realDevice(f.deviceId, "credential-2", old.dir);
+  vi.restoreAllMocks();
+  const relay = relayTo(relogged);
+  relay.lose = true;
+  await expect(bindings.bind(f.deviceId, AbortSignal.timeout(5000))).rejects.toThrow("lost");
+  // the device now holds G2 under credential 2; the row follows the machine it was sent to
+  expect((await f.binding(g2))?.machine_id).toBe(m2.id);
+  const g3 = await f.create();
+  expect((await f.binding(g3))?.previous_generation).toBe(g2);
+  relay.lose = false;
+  await bindings.bind(f.deviceId, AbortSignal.timeout(5000));
+  expect((await f.binding(g3))?.status).toBe("installed");
+});
