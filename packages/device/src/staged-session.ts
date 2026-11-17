@@ -43,25 +43,13 @@ export function createStagedSessionState(opts: { graceMs: number }): StagedSessi
 const CONNECTION_FENCED = new Set(["backgroundReadOutput"]);
 
 /**
- * Admissions a draining session refuses here: unsupervised native, preparation and browsing
- * operations and instance creation. Execution and background starts reach the supervisor, which
- * refuses only fresh admissions (a retry of an admitted id stays recoverable); exact status, read,
- * tail, stop, revoke and policy reconciliation are always served.
+ * Admissions a draining session refuses here: only instance creation, which no supervisor owns.
+ * Execution, background starts and native, preparation and browsing operations all reach the
+ * supervisor, whose admission refuses only fresh operations while draining: a retry of an admitted
+ * id (an answer lost on a socket blip) still recovers. Exact status, read, tail, stop, revoke and
+ * policy reconciliation are always served.
  */
-const REFUSED_WHILE_DRAINING = new Set([
-  "readFile",
-  "writeFile",
-  "stat",
-  "list",
-  "scan",
-  "prepareReadFile",
-  "prepareWriteFile",
-  "prepareStat",
-  "browseStat",
-  "browseList",
-  "browseScan",
-  "create",
-]);
+const REFUSED_WHILE_DRAINING = new Set(["create"]);
 
 export type StagedDrainReport =
   | { drained: true }
@@ -89,18 +77,27 @@ export async function drainStagedSession(
     if (signal.aborted) resolve();
     else signal.addEventListener("abort", () => resolve(), { once: true });
   });
-  while (state.running.size > 0 && !signal.aborted)
-    await Promise.race([
-      Promise.allSettled([...state.running.values()].map((r) => r.done)),
-      aborted,
-    ]);
-  if (!signal.aborted) {
+  const idle = () => {
+    const o = backend.lifecycle.ownership();
+    return (
+      state.running.size === 0 && o.workers + o.cancellations + o.collectors + o.persistence === 0
+    );
+  };
+  // Status and output reads keep arriving while draining: wait for both the request table and
+  // the owned work, again, until both are empty at once. Only the signal ends it as pending.
+  while (!signal.aborted) {
+    while (state.running.size > 0 && !signal.aborted)
+      await Promise.race([
+        Promise.allSettled([...state.running.values()].map((r) => r.done)),
+        aborted,
+      ]);
+    if (signal.aborted) break;
     try {
       await backend.lifecycle.settle(signal);
-      if (state.running.size === 0) return { drained: true };
     } catch {
-      // reported below with what is still owned
+      break; // aborted: reported below with what is still owned
     }
+    if (idle()) return { drained: true };
   }
   return {
     drained: false,
