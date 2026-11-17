@@ -40,7 +40,7 @@ import { SandboxService } from "../../src/sandbox/sandbox.service.js";
 import { truncateTables } from "../helpers/db.js";
 import { asUser, cookieJar } from "../helpers/http.js";
 import { accountsFor } from "../helpers/identity.js";
-import { seedInstalledEvidence } from "../helpers/installed-evidence.js";
+import { seedCloudEvidence, seedInstalledEvidence } from "../helpers/installed-evidence.js";
 import { testMembers } from "../helpers/members.js";
 import { MODEL_PLUGINS_CONFIG } from "../helpers/model-plugins.js";
 import { enableModelProviders, startKernel, type TestKernel } from "../helpers/runs.js";
@@ -1150,6 +1150,13 @@ it("sandbox egress changes preserve local Full while revoking cloud Full at its 
     .set({ source: "cloud" })
     .where("id", "=", cloud.deviceId)
     .execute();
+  // the cloud instance's kernel-recorded evidence (B-15) in place of the local binding
+  await seedCloudEvidence(k, {
+    orgId: cloud.orgId,
+    deviceId: cloud.deviceId,
+    provider: "@permission-test",
+    version: "test-1",
+  });
   const facts = k.app.get(PermissionFacts),
     intents = k.app.get(SandboxOperationIntents);
   const { KernelConfigService } = await import("../../src/infra/config/kernel-config.service.js");

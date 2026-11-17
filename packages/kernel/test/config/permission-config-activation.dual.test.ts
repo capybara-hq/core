@@ -19,6 +19,7 @@ import {
 } from "../../src/sandbox/permission-config-publication.js";
 import { PermissionFacts } from "../../src/sandbox/permission-facts.js";
 import { SandboxProviders } from "../../src/sandbox/providers.js";
+import { seedCloudInstance } from "../helpers/installed-evidence.js";
 import { startKernel, type TestKernel } from "../helpers/runs.js";
 
 let pgc: TestContainer, rd: TestContainer, a: TestKernel, b: TestKernel, db: KernelDb;
@@ -223,6 +224,14 @@ async function consent() {
         },
       } as unknown as SandboxProvider,
     });
+  // a provisioned instance (created under the open default) with its cloud evidence (B-15)
+  await seedCloudInstance(a, {
+    orgId,
+    deviceId,
+    provider: "@activation-dual",
+    version: "test",
+    applied: { mode: "auto", network: { kind: "open-public", hosts: [] } },
+  });
   const preview = await a.app.get(PermissionFacts).preview(orgId, accountId, deviceId);
   await db
     .updateTable("conversations")

@@ -1,4 +1,7 @@
 import { randomUUID } from "node:crypto";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { DEFAULT_SANDBOX_ROOTS, type SandboxProvider, ToolError } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { sql } from "kysely";
@@ -34,7 +37,12 @@ import {
 import { SandboxOperationAuthority } from "../../src/sandbox/operation-authority.js";
 import { PermissionAuthorityLock } from "../../src/sandbox/permission-authority-lock.js";
 import { PermissionConfigPublication } from "../../src/sandbox/permission-config-publication.js";
-import { PermissionRuntimeReports } from "../../src/sandbox/permission-runtime-reports.js";
+import { PermissionFacts } from "../../src/sandbox/permission-facts.js";
+import { PermissionInstanceWrites } from "../../src/sandbox/permission-instance-writes.js";
+import {
+  PermissionRuntimeReports,
+  readRuntimeReport,
+} from "../../src/sandbox/permission-runtime-reports.js";
 import { SandboxProviders } from "../../src/sandbox/providers.js";
 import { SandboxService } from "../../src/sandbox/sandbox.service.js";
 import { managedSandboxDeps } from "../../src/tools/builtins/builtin-tools.js";
@@ -45,6 +53,11 @@ import {
   type SandboxToolDeps,
 } from "../../src/tools/builtins/sandbox/common.js";
 import type { BuiltinCallContext } from "../../src/tools/registry.js";
+import {
+  createFakeSandbox,
+  fakeOperationFacade,
+  readFakeSandboxOps,
+} from "../fixtures/plugins/sandbox-fake/index.js";
 import { truncateTables } from "../helpers/db.js";
 import { MODEL_PLUGINS_CONFIG } from "../helpers/model-plugins.js";
 import { startKernel, type TestKernel } from "../helpers/runs.js";
@@ -655,5 +668,217 @@ describe("managed device context writer in the real common.ts route", () => {
     expect((err as ToolError).message).toBe(MANAGED_DEVICE_CONTEXT_FAILED_TEXT);
     expect(order).toEqual([]);
     expect(await managedPaths(f)).toEqual([]);
+  });
+});
+
+/**
+ * B-15 (Q1 option A): a cloud instance records the provider's permission support with a
+ * kernel-built identity (provider plugin and version, handle, instance generation, recorded
+ * applied limits) after create or resume under the lifecycle lease, so the managed route admits a
+ * cloud device. A cloud device without an instance stays provisionable: its first managed call
+ * provisions it and only then is admitted.
+ */
+describe("cloud installed evidence in the real lifecycle", () => {
+  const CLOUD = "@cloud-evidence-test";
+  let root: string;
+  /** Every provider permission support read, in order (readers must never add one). */
+  const probes: string[] = [];
+  const register = (version: string) => {
+    const base = fakeOperationFacade(root, createFakeSandbox(root));
+    k.app.get(SandboxProviders).register({
+      plugin: CLOUD,
+      version,
+      impl: {
+        ...base,
+        async permissionSupport() {
+          probes.push(version);
+          return REPORTS.both;
+        },
+        // the trusted preparation runs only once admission admitted its scope
+        async prepare(h, scope, signal) {
+          order.push("prepare");
+          return (base.prepare as NonNullable<SandboxProvider["prepare"]>)(h, scope, signal);
+        },
+      },
+    });
+  };
+  beforeAll(async () => {
+    root = await mkdtemp(join(tmpdir(), "cloud-evidence-"));
+  });
+  afterAll(async () => {
+    await rm(root, { recursive: true, force: true });
+  });
+  beforeEach(() => {
+    probes.length = 0;
+    register("v1");
+  });
+
+  /** One org, its owner and a root conversation bound to a cloud device without an instance. */
+  async function seedCloud() {
+    // biome-ignore lint/suspicious/noExplicitAny: the test pool carries no schema types
+    const s = await seedConversation(raw as any);
+    const db = kernelDb(raw);
+    await db
+      .insertInto("memberships")
+      .values({ org_id: s.orgId, account_id: s.accountId, role: "owner" })
+      .execute();
+    const deviceId = randomUUID();
+    await db
+      .insertInto("devices")
+      .values({
+        id: deviceId,
+        org_id: s.orgId,
+        owner_kind: "personal",
+        owner_account_id: s.accountId,
+        source: "cloud",
+        provider: CLOUD,
+        name: "Cloud",
+      })
+      .execute();
+    await db
+      .updateTable("conversations")
+      .set({ device_id: deviceId, permission_profile: "request-approval" })
+      .where("id", "=", s.conversationId)
+      .execute();
+    const run = await startRun(k, raw, s.conversationId, s.accountId);
+    // no instance and no binding yet: the first managed call provisions it
+    return { ...s, db, deviceId, generation: "", bindingId: randomUUID(), ...run };
+  }
+  const use = (f: Fixture) => ({
+    orgId: f.orgId,
+    deviceId: f.deviceId,
+    holderConversationId: f.conversationId,
+    actor: { accountId: f.accountId, conversationId: f.conversationId, runId: f.runId },
+  });
+  const admission = (f: Fixture) =>
+    k.app
+      .get(SandboxOperationAuthority)
+      .resolve(use(f), "exec", new AbortController().signal)
+      .then(
+        () => "admitted",
+        (e: unknown) => (e instanceof Error ? e.message : String(e)),
+      );
+  const availability = async (f: Fixture, version: string) =>
+    (await readRuntimeReport(f.db, f.deviceId, CLOUD, version)).state;
+
+  it("a cloud device without an instance is provisioned by its first managed call, which records its evidence with the handle commit and is admitted", async () => {
+    const f = await seedCloud();
+    // before provisioning: honest about the missing instance, and still provisionable
+    expect(await availability(f, "v1")).toBe("unprobed");
+    expect(await admission(f)).toBe("Checked when this device starts");
+    const writes = k.app.get(PermissionInstanceWrites);
+    const commit = writes.commitHandle.bind(writes);
+    let committing = false;
+    vi.spyOn(writes, "commitHandle").mockImplementation(async (...args) => {
+      committing = true;
+      try {
+        return await commit(...args);
+      } finally {
+        committing = false;
+      }
+    });
+    const reports = k.app.get(PermissionRuntimeReports);
+    const recordCloud = reports.recordCloud.bind(reports);
+    const recordedDuringCommit: boolean[] = [];
+    vi.spyOn(reports, "recordCloud").mockImplementation(async (...args) => {
+      recordedDuringCommit.push(committing);
+      return recordCloud(...args);
+    });
+    await call(f);
+    expect(recordedDuringCommit).toEqual([true]);
+    expect(probes).toEqual(["v1"]);
+    expect(order).toEqual(["prepare", "callback"]);
+    expect((await managedPaths(f)).map((p) => p.payload)).toEqual([
+      {
+        permissionContextVersion: 1,
+        deviceId: f.deviceId,
+        roots: DEFAULT_SANDBOX_ROOTS,
+        workingRoot: DEFAULT_SANDBOX_ROOTS.workspace,
+      },
+    ]);
+    const instance = await f.db
+      .selectFrom("device_instances")
+      .select(["created_at", "permission_runtime_identity"])
+      .where("device_id", "=", f.deviceId)
+      .executeTakeFirstOrThrow();
+    const report = await f.db
+      .selectFrom("device_permission_reports")
+      .selectAll()
+      .where("device_id", "=", f.deviceId)
+      .executeTakeFirstOrThrow();
+    expect(report).toMatchObject({
+      provider: CLOUD,
+      provider_version: "v1",
+      instance_generation: String(instance.created_at.getTime()),
+      report: REPORTS.both,
+    });
+    expect(instance.permission_runtime_identity?.instanceGeneration).toBe(
+      String(instance.created_at.getTime()),
+    );
+    expect(await availability(f, "v1")).toBe("supported");
+    expect(await admission(f)).toBe("admitted");
+  });
+
+  it("a changed provider version makes the evidence unprobed until the next use records it again", async () => {
+    const f = await seedCloud();
+    await call(f);
+    register("v2");
+    expect(await availability(f, "v2")).toBe("unprobed");
+    expect(await admission(f)).toBe("Checked when this device starts");
+    expect(probes).toEqual(["v1"]);
+    await call(f);
+    expect(probes).toEqual(["v1", "v2"]);
+    expect(await availability(f, "v2")).toBe("supported");
+    expect(await admission(f)).toBe("admitted");
+  });
+
+  it("changed applied limits make the evidence unprobed", async () => {
+    const f = await seedCloud();
+    await call(f);
+    await f.db
+      .updateTable("device_instances")
+      .set({
+        instance_limits: JSON.stringify({
+          mode: "sandbox",
+          network: { kind: "allowlist", hosts: ["changed.example"] },
+        }),
+      })
+      .where("device_id", "=", f.deviceId)
+      .execute();
+    expect(await availability(f, "v1")).toBe("unprobed");
+    expect(await admission(f)).not.toBe("admitted");
+  });
+
+  it("a suspended instance stays readable without a resume; its resume records the evidence again", async () => {
+    const f = await seedCloud();
+    await call(f);
+    const row = await f.db
+      .selectFrom("device_instances")
+      .select("handle")
+      .where("device_id", "=", f.deviceId)
+      .executeTakeFirstOrThrow();
+    const provider = k.app.get(SandboxProviders).forName(CLOUD);
+    if (!provider || !row.handle) throw new Error("expected a provisioned cloud instance");
+    await provider.impl.suspend(row.handle, new AbortController().signal);
+    await f.db
+      .updateTable("device_instances")
+      .set({ status: "suspended", suspended_at: new Date() })
+      .where("device_id", "=", f.deviceId)
+      .execute();
+    const opsBefore = (await readFakeSandboxOps(root)).length;
+    expect(await availability(f, "v1")).toBe("supported");
+    expect(
+      (await k.app.get(PermissionFacts).scope(f.orgId, f.deviceId, null, null)).availability.state,
+    ).toBe("supported");
+    expect(await admission(f)).toBe("admitted");
+    // readers never probe, resume or provision
+    expect(probes).toEqual(["v1"]);
+    expect((await readFakeSandboxOps(root)).length).toBe(opsBefore);
+    await call(f);
+    expect((await readFakeSandboxOps(root)).slice(opsBefore).map((op) => op[0])).toContain(
+      "resume",
+    );
+    expect(probes).toEqual(["v1", "v1"]);
+    expect(await availability(f, "v1")).toBe("supported");
   });
 });
