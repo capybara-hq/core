@@ -2,7 +2,6 @@ import { type ChildProcess, fork, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { constants } from "node:fs";
 import { type FileHandle, open, realpath, stat } from "node:fs/promises";
-import { createRequire } from "node:module";
 import { basename, dirname } from "node:path";
 import {
   type ExecResult,
@@ -21,7 +20,7 @@ import {
   runNativeHelper,
 } from "./native-helper-client.js";
 import type { LocalExecAuthority, LocalOperationGrant } from "./operation-types.js";
-import { stagePrivateSource, stageRuntimeSource } from "./runtime-source.js";
+import { sealedRuntimeEntry, stagePrivateSource, stageRuntimeSource } from "./runtime-source.js";
 import { ENV_NAME_RE, OutputCap, shellQuote } from "./shared.js";
 export interface TrustedLaunchIdentity {
   pid: number;
@@ -252,6 +251,9 @@ export async function startMacOperationWorker(
   if (signal.aborted) abort();
   const completion = (async () => {
     try {
+      // Restricted workers import only the sealed private copy of the verified runtime closure;
+      // a closure changed since verification is refused here, before anything is spawned.
+      const runtimeEntry = request.grant.full ? "" : await sealedRuntimeEntry();
       const helper =
         request.kind === "native" ? await stageRuntimeSource(request.stateDir) : undefined;
       const roots: PinnedNativeRoot[] = [];
@@ -380,9 +382,7 @@ export async function startMacOperationWorker(
         runtime.send({
           type: "init",
           full: request.grant.full,
-          runtime: request.grant.full
-            ? ""
-            : createRequire(import.meta.url).resolve("@anthropic-ai/sandbox-runtime"),
+          runtime: runtimeEntry,
           config,
         });
         const initializedInfo = await initialized;

@@ -2,10 +2,20 @@ import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promi
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { SandboxOperationScope } from "@capybara-hq/plugin-sdk";
-import { expect, it } from "vitest";
+import { afterAll, beforeAll, expect, it } from "vitest";
 import { createMacOperationBackend } from "../src/exec/mac-operation-backend.js";
 import { type DeviceOwnerCeiling, intersectOperation } from "../src/exec/operation-types.js";
 import { startMacOperationWorker } from "../src/exec/operation-worker.js";
+import { sealWorkspaceRuntime } from "./runtime-seal.js";
+
+// restricted workers launch only from a verified, sealed runtime closure (B-7)
+let unseal: (() => Promise<void>) | undefined;
+beforeAll(async () => {
+  unseal = await sealWorkspaceRuntime();
+});
+afterAll(async () => {
+  await unseal?.();
+});
 
 it.runIf(process.platform === "darwin")(
   "canonical Full and restricted native calls use the real descriptor backend without execution grants",

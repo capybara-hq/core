@@ -1,10 +1,20 @@
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, expect, it } from "vitest";
 import { createMacOperationBackend } from "../src/exec/mac-operation-backend.js";
 import type { DeviceOwnerCeiling } from "../src/exec/operation-types.js";
 import type { MacWorkerHandle } from "../src/exec/operation-worker.js";
+import { sealWorkspaceRuntime } from "./runtime-seal.js";
+
+// restricted workers launch only from a verified, sealed runtime closure (B-7)
+let unseal: (() => Promise<void>) | undefined;
+beforeAll(async () => {
+  unseal = await sealWorkspaceRuntime();
+});
+afterAll(async () => {
+  await unseal?.();
+});
 
 const dirs: string[] = [];
 afterEach(async () => {
