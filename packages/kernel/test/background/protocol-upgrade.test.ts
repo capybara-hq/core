@@ -7,7 +7,7 @@ import type { SandboxProvider } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
 import { sql } from "kysely";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { BackgroundLaunchLock } from "../../src/background/launch-lock.js";
 import { RetireLegacyTasksJob } from "../../src/background/retire-legacy-tasks.job.js";
 import { BackgroundTaskStore } from "../../src/background/store.js";
@@ -863,5 +863,75 @@ describe("revoked managed starts on an incarnation that no longer runs (8.4 hand
     expect(calls).toEqual([`cloud destroy ${old.id}`]);
     expect((await tasks.get(task))?.killPending).toBe(false);
     expect(await retirement.report()).toMatchObject({ frozen: true, open: 0, retired: true });
+  });
+});
+
+describe("the cutover operator surface (B-26)", () => {
+  it("the freeze reports its enumeration and records when it completed; a rerun keeps the first publication", async () => {
+    const dev = await seedDevice(raw, seed.orgId, seed.accountId);
+    await legacyRow(dev, { sid: null });
+    expect(await retirement.freezeState()).toEqual({ frozenAt: null, enumeratedAt: null });
+    const first = await retirement.freeze("operator");
+    expect(first).toMatchObject({ frozenAt: expect.any(Date), added: 1, stable: true });
+    const state = await retirement.freezeState();
+    expect(state.frozenAt).toEqual(first.frozenAt);
+    expect(state.enumeratedAt).toBeInstanceOf(Date);
+    const again = await retirement.freeze("someone else");
+    expect(again).toMatchObject({ frozenAt: first.frozenAt, added: 0, stable: true });
+  });
+
+  it("an enumeration that never settles fails the freeze: published, never marked enumerated", async () => {
+    const dev = await seedDevice(raw, seed.orgId, seed.accountId);
+    await legacyRow(dev, { sid: null });
+    // an old, unfenced replica that keeps writing legacy rows during every pass
+    const spy = vi.spyOn(retirement, "scan").mockResolvedValue({ added: 1 });
+    try {
+      await expect(retirement.freeze("operator")).rejects.toThrow(/did not settle/);
+    } finally {
+      spy.mockRestore();
+    }
+    expect(await retirement.freezeState()).toMatchObject({
+      frozenAt: expect.any(Date),
+      enumeratedAt: null,
+    });
+    await expect(retirement.assertCutoverBarrier()).rejects.toThrow(/enumerat/);
+    // the rerun completes it once the writer is gone
+    await retirement.freeze("operator");
+    await expect(retirement.assertCutoverBarrier()).resolves.toBeUndefined();
+  });
+
+  it("the barrier refuses before the freeze, and after a freeze published without its enumeration", async () => {
+    await expect(retirement.assertCutoverBarrier()).rejects.toThrow(/freeze/);
+    await sql`INSERT INTO capybara.legacy_launch_freeze (id, frozen_by) VALUES ('platform', 'crash')`.execute(
+      raw,
+    );
+    await expect(retirement.assertCutoverBarrier()).rejects.toThrow(/enumerat/);
+  });
+
+  it("the report shows the freeze, fenced reservations and rows only an unfenced replica writes", async () => {
+    const dev = await seedDevice(raw, seed.orgId, seed.accountId);
+    // reserved by fenced code and never admitted: the freeze refuses its dispatch
+    await legacyRow(dev, { sid: null, dispatch: "reserved" });
+    // admitted by fenced code: carries the marker
+    await legacyRow(dev, { sid: null, dispatch: "dispatched" });
+    // no marker, written after migration 0157: only a replica without the 8.5 code writes these
+    await legacyRow(dev, { sid: null });
+    const before = await retirement.report();
+    expect(before).toMatchObject({
+      frozen: false,
+      frozenAt: null,
+      freezeEnumeratedAt: null,
+      fencedReservations: 1,
+      unfencedWriters: { sinceMigration: 1, afterFreeze: 0, latestAt: expect.any(Date) },
+    });
+    await retirement.freeze("operator");
+    await legacyRow(dev, { status: "lost", killPending: true });
+    const after = await retirement.report();
+    expect(after).toMatchObject({
+      frozen: true,
+      frozenAt: expect.any(Date),
+      freezeEnumeratedAt: expect.any(Date),
+      unfencedWriters: { sinceMigration: 2, afterFreeze: 1 },
+    });
   });
 });

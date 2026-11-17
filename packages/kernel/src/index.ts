@@ -236,6 +236,13 @@ export {
   openKernelCliOverPool,
 } from "./infra/cli/kernel-cli.module.js";
 export { rewrapMasterKeys } from "./infra/cli/master-key-rewrap.js";
+export {
+  type CutoverReplica,
+  type PermissionCutoverReport,
+  permissionCutoverFreeze,
+  permissionCutoverReport,
+  permissionCutoverSnapshot,
+} from "./infra/cli/permission-cutover.js";
 export { onProcessFault } from "./infra/health/process-fault.js";
 export {
   GUARD_CIRCUIT_LIMIT,
@@ -295,10 +302,23 @@ export type { AgentLoop, LoopContext, LoopOutcome } from "./runtime/loop.js";
 export { MAINTENANCE_QUEUE_NAME } from "./runtime/maintenance-queue.js";
 export { type OrphanCandidate, queuedRunsWithoutJob } from "./runtime/run-orphan-check.job.js";
 export { runJobId } from "./runtime/run-queue.js";
+export type {
+  CloudSnapshotProgress,
+  CloudSnapshotResult,
+  CloudSnapshotRun,
+} from "./sandbox/cloud-permission-snapshot.js";
 export {
   SANDBOX_DESTROY_JOB,
   SANDBOX_SUSPEND_JOB,
 } from "./sandbox/jobs.js";
+export {
+  CutoverBarrierError,
+  type LegacyFreezeResult,
+  LegacyFreezeUnsettledError,
+  type LegacyRetirementReport,
+} from "./sandbox/legacy-retirement.js";
+export { PermissionAuthorityModule } from "./sandbox/permission-authority.module.js";
+export { PermissionConfigPublication } from "./sandbox/permission-config-publication.js";
 export {
   SANDBOX_LOCK_TTL_MS,
   SandboxService,

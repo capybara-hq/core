@@ -1,10 +1,13 @@
+import { isSandboxScopeDeniedError } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
+import { sql } from "kysely";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { readOrgSettings } from "../orgs/settings.service.js";
 import { SandboxLeases } from "./leases.js";
+import { LegacyRetirementStore } from "./legacy-retirement.js";
 import {
   type AppliedLimits,
   cloudChosenMode,
@@ -45,6 +48,67 @@ export interface CloudSnapshotOutcome {
 /** How long the writer waits for the device's exclusive lifecycle lease (running commands). */
 const LEASE_WAIT_MS = 120_000;
 
+/** Devices the driver reads per page. */
+const DRIVER_PAGE = 100;
+
+/** One device a {@link CloudPermissionSnapshots.snapshotAll} run snapshotted. */
+export interface CloudSnapshotResult extends CloudSnapshotOutcome {
+  deviceId: string;
+  orgId: string;
+}
+
+/** What a {@link CloudPermissionSnapshots.snapshotAll} run did. */
+export interface CloudSnapshotRun {
+  /** The devices this run snapshotted (empty on a rerun: nothing published). */
+  results: CloudSnapshotResult[];
+  /** Devices it could not snapshot (lease wait, a failed transaction); left for the next run. */
+  failed: { deviceId: string; orgId: string; error: string }[];
+  /** Live cloud devices still without a snapshot after the run. */
+  pending: number;
+  /** Live cloud devices that keep the reconciliation marker (admission blocked until reset). */
+  reconcileRequired: string[];
+}
+
+/** Where the cloud snapshot stands (read by `capybara permissions cutover report`, too). */
+export interface CloudSnapshotProgress {
+  /** Live cloud devices. */
+  cloudDevices: number;
+  /** Live cloud devices without a snapshot yet. */
+  pending: number;
+  /** Live cloud devices carrying `permission_reconcile_required`. */
+  reconcileRequired: string[];
+}
+
+/** The live (not deleted) cloud devices of orgs that still exist. */
+type DeviceReader = Pick<KernelDb, "selectFrom">;
+const liveCloud = (db: DeviceReader) =>
+  db
+    .selectFrom("devices as d")
+    .innerJoin("orgs as g", "g.id", "d.org_id")
+    .where("d.source", "=", "cloud")
+    .where("d.deleted_at", "is", null)
+    .where("g.deleted_at", "is", null);
+
+/** Reads the cloud snapshot's progress; no lock, no lease (a report). */
+export async function readCloudSnapshotProgress(db: DeviceReader): Promise<CloudSnapshotProgress> {
+  const counts = await liveCloud(db)
+    .select((eb) => [
+      eb.fn.countAll<string>().as("n"),
+      eb.fn.count<string>(sql`CASE WHEN d.owner_full_access IS NULL THEN 1 END`).as("pending"),
+    ])
+    .executeTakeFirstOrThrow();
+  const marked = await liveCloud(db)
+    .select("d.id")
+    .where("d.permission_reconcile_required", "=", true)
+    .orderBy("d.id")
+    .execute();
+  return {
+    cloudDevices: Number(counts.n),
+    pending: Number(counts.pending),
+    reconcileRequired: marked.map((r) => r.id),
+  };
+}
+
 /**
  * The B1 cloud per-device authority writer: replaces the old daily mode of a cloud device by an
  * explicit owner Full ceiling and outer network, computed from the device's OLD effective
@@ -72,7 +136,72 @@ export class CloudPermissionSnapshots {
     private readonly publication: Pick<PermissionConfigPublication, "assertCurrent">,
     @Inject(PermissionCeilingWrites)
     private readonly ceilings: Pick<PermissionCeilingWrites, "publishLocked">,
+    @Inject(LegacyRetirementStore)
+    private readonly retirement: Pick<LegacyRetirementStore, "assertCutoverBarrier">,
   ) {}
+
+  /**
+   * The production driver (B-10, `capybara permissions cutover snapshot`): snapshots every live
+   * cloud device that has none yet, one device at a time, each under its exclusive lifecycle
+   * lease and in its own transaction ({@link snapshot}).
+   *
+   * - **Barrier.** Refuses unless legacy admission is closed (the freeze published and enumerated,
+   *   {@link LegacyRetirementStore.assertCutoverBarrier}) and this replica's permission
+   *   configuration is the published one; each device re-checks the latter under the platform
+   *   lock, and a failure there stops the run.
+   * - **Idempotent.** Only devices without a snapshot are visited, and {@link snapshot} keeps an
+   *   existing one under the row lock, so a rerun takes no lease and publishes nothing.
+   * - **Resumable.** A device's snapshot, its narrowing publication (epoch, Full consent reset,
+   *   exact revocation) and its marker commit together or not at all; a crash or a failed device
+   *   leaves it without a snapshot for the next run, never half written or published twice.
+   * - Devices whose applied limits are not established keep `permission_reconcile_required`
+   *   (listed in the answer) until a file reset reconciles them.
+   */
+  async snapshotAll(
+    opts: { signal?: AbortSignal; leaseWaitMs?: number } = {},
+  ): Promise<CloudSnapshotRun> {
+    await this.retirement.assertCutoverBarrier();
+    await this.publication.assertCurrent();
+    const results: CloudSnapshotResult[] = [];
+    const failed: CloudSnapshotRun["failed"] = [];
+    let after = "";
+    for (;;) {
+      opts.signal?.throwIfAborted();
+      const page = await liveCloud(this.db)
+        .select(["d.id", "d.org_id"])
+        .where("d.owner_full_access", "is", null)
+        .where(sql<boolean>`d.id COLLATE "C" > ${after}`)
+        .orderBy(sql`d.id COLLATE "C"`)
+        .limit(DRIVER_PAGE)
+        .execute();
+      for (const d of page) {
+        opts.signal?.throwIfAborted();
+        const wait = AbortSignal.timeout(opts.leaseWaitMs ?? LEASE_WAIT_MS);
+        const signal = opts.signal ? AbortSignal.any([opts.signal, wait]) : wait;
+        try {
+          const outcome = await this.snapshot(d.org_id, d.id, signal);
+          results.push({ deviceId: d.id, orgId: d.org_id, ...outcome });
+        } catch (e) {
+          // a replica that is not (or no longer) current stops the whole run; the caller's abort too
+          if (isSandboxScopeDeniedError(e) || opts.signal?.aborted) throw e;
+          failed.push({
+            deviceId: d.id,
+            orgId: d.org_id,
+            error: e instanceof Error ? e.message : String(e),
+          });
+        }
+      }
+      if (page.length < DRIVER_PAGE) break;
+      after = (page.at(-1) as { id: string }).id;
+    }
+    const progress = await readCloudSnapshotProgress(this.db);
+    return {
+      results,
+      failed,
+      pending: progress.pending,
+      reconcileRequired: progress.reconcileRequired,
+    };
+  }
 
   /** Snapshots one device under its exclusive lifecycle lease. */
   async snapshot(

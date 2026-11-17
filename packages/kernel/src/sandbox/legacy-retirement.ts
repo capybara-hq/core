@@ -77,9 +77,90 @@ export type LegacyDispatchAdmission =
   /** The reservation is no longer a launchable legacy row (finished meanwhile). */
   | "gone";
 
+/** {@link LegacyRetirementStore.freeze}'s answer: the freeze is published and enumerated. */
+export interface LegacyFreezeResult {
+  /** When the freeze was first published (a rerun keeps it). */
+  frozenAt: Date;
+  /** New obligation members this run's enumeration recorded. */
+  added: number;
+  stable: true;
+}
+
+/** Where the freeze stands: published (`frozenAt`) and its enumeration completed (`enumeratedAt`). */
+export interface LegacyFreezeState {
+  frozenAt: Date | null;
+  /** When the freeze's own enumeration last completed with a stable pass; null: never. */
+  enumeratedAt: Date | null;
+}
+
+/**
+ * The cutover barrier is not in place: legacy admission is still open (no freeze), or the freeze
+ * is published but its enumeration never completed. Nothing that depends on closed admission
+ * (the cloud snapshot) may run.
+ */
+export class CutoverBarrierError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "CutoverBarrierError";
+  }
+}
+
+/**
+ * The freeze is published, but its enumeration kept finding new rows for every pass: a replica
+ * without the freeze code is probably still writing legacy rows. The freeze stays published (it
+ * is never undone) and is not marked enumerated; stop that replica and run the freeze again.
+ */
+export class LegacyFreezeUnsettledError extends Error {
+  constructor(passes: number, added: number) {
+    super(
+      `The legacy-launch freeze is published, but its enumeration did not settle after ${passes} ` +
+        `passes (${added} new members): a replica without the freeze code may still be writing ` +
+        "legacy rows. Stop every old replica, then run the freeze again",
+    );
+    this.name = "LegacyFreezeUnsettledError";
+  }
+}
+
+/** The passes of the freeze's own enumeration before it is called unsettled. */
+const FREEZE_SCAN_PASSES = 5;
+
+/** The migration that added the legacy dispatch marker: rows after it without one are unfenced. */
+const MARKER_MIGRATION = "0157_legacy_retirement.sql";
+
+/**
+ * The legacy rows whose processes may still exist: the partial index's predicate (0157) stated as
+ * is, then the rows that may have dispatched or still owe a kill.
+ */
+const MAY_STILL_RUN = sql<boolean>`(t.status = 'running' OR t.kill_pending OR t.sid IS NULL)`;
+const MAY_HAVE_DISPATCHED = sql<boolean>`(
+  (t.status = 'running' AND (t.sid IS NOT NULL OR t.legacy_dispatch <> 'reserved'))
+  OR t.kill_pending
+  OR (t.sid IS NULL AND t.legacy_dispatch <> 'reserved')
+)`;
+
 /** What the release gate reads: unresolved obligations are reported, never called retired. */
 export interface LegacyRetirementReport {
   frozen: boolean;
+  /** When the freeze was published; null before. */
+  frozenAt: Date | null;
+  /**
+   * When the freeze's own enumeration last completed stable; null while it never did (the cloud
+   * snapshot refuses until then: run the freeze again).
+   */
+  freezeEnumeratedAt: Date | null;
+  /**
+   * Running legacy launches reserved by fenced code and never admitted for dispatch: the freeze
+   * refuses their dispatch (the pending producers it fences).
+   */
+  fencedReservations: number;
+  /**
+   * Evidence of replicas without the 8.5 code (they are not fenced by the freeze): legacy rows
+   * without the dispatch marker (`legacy_dispatch = 'unknown'`) started after migration 0157 was
+   * applied (only such a replica writes them), how many of those started after the freeze, and
+   * the latest one's start. Nonzero `afterFreeze` (or a recent `latestAt`): an old replica still
+   * runs; stop it. Rows of an old replica that never starts a legacy task are not detectable here.
+   */
+  unfencedWriters: { sinceMigration: number; afterFreeze: number; latestAt: Date | null };
   open: number;
   quarantined: number;
   resolved: number;
@@ -219,12 +300,47 @@ export class LegacyRetirementStore {
    * legacy row and revoked start until stable; idempotent. Returns when it was first published.
    * Never undone.
    */
-  async freeze(by: string): Promise<Date> {
-    const at = await this.publishFreeze(by);
+  async freeze(by: string): Promise<LegacyFreezeResult> {
+    const frozenAt = await this.publishFreeze(by);
     // enumerated before the freeze returns: no use may run between it and the first scan (the
     // gate also scans each device it serves, so a worker that never runs bypasses nothing)
-    await this.scanUntilStable();
-    return at;
+    const scan = await this.scanUntilStable(FREEZE_SCAN_PASSES);
+    if (!scan.stable) throw new LegacyFreezeUnsettledError(FREEZE_SCAN_PASSES, scan.added);
+    await this.db
+      .updateTable("legacy_launch_freeze")
+      .set({ enumerated_at: sql<Date>`now()` })
+      .where("id", "=", FREEZE_ID)
+      .execute();
+    return { frozenAt, added: scan.added, stable: true };
+  }
+
+  /** Whether the freeze is published and whether its enumeration completed. */
+  async freezeState(): Promise<LegacyFreezeState> {
+    const row = await this.db
+      .selectFrom("legacy_launch_freeze")
+      .select(["frozen_at", "enumerated_at"])
+      .where("id", "=", FREEZE_ID)
+      .executeTakeFirst();
+    return { frozenAt: row?.frozen_at ?? null, enumeratedAt: row?.enumerated_at ?? null };
+  }
+
+  /**
+   * The cutover barrier (B-10): legacy admission is closed (the freeze is published) and the
+   * freeze's own enumeration completed. Throws {@link CutoverBarrierError} otherwise. The freeze is
+   * never undone, so a check before work that depends on it holds for the rest of that work.
+   */
+  async assertCutoverBarrier(): Promise<void> {
+    const state = await this.freezeState();
+    if (state.frozenAt === null)
+      throw new CutoverBarrierError(
+        "Legacy admission is still open: publish the legacy-launch freeze first " +
+          "(capybara permissions cutover freeze)",
+      );
+    if (state.enumeratedAt === null)
+      throw new CutoverBarrierError(
+        "The legacy-launch freeze is published but its enumeration never completed: " +
+          "run capybara permissions cutover freeze again",
+      );
   }
 
   @Transactional({ propagation: "requires_new" })
@@ -436,14 +552,8 @@ export class LegacyRetirementStore {
       ])
       .where("t.launch_state", "=", "legacy")
       .where("t.device_id", "is not", null)
-      .where(sql<boolean>`(t.status = 'running' OR t.kill_pending OR t.sid IS NULL)`)
-      .where(
-        sql<boolean>`(
-          (t.status = 'running' AND (t.sid IS NOT NULL OR t.legacy_dispatch <> 'reserved'))
-          OR t.kill_pending
-          OR (t.sid IS NULL AND t.legacy_dispatch <> 'reserved')
-        )`,
-      )
+      .where(MAY_STILL_RUN)
+      .where(MAY_HAVE_DISPATCHED)
       .where(({ not, exists, selectFrom }) =>
         not(
           exists(
@@ -894,9 +1004,51 @@ export class LegacyRetirementStore {
       .execute();
   }
 
+  /**
+   * Legacy rows without the dispatch marker started after the marker's migration was applied:
+   * only a replica without the 8.5 code writes them (see {@link LegacyRetirementReport}).
+   */
+  private async unfencedWriters(
+    frozenAt: Date | null,
+  ): Promise<LegacyRetirementReport["unfencedWriters"]> {
+    // the migrator's own bookkeeping (schema `capybara`, `migrate()`): when 0157 was applied
+    const applied = await sql<{ applied_at: Date }>`SELECT applied_at FROM capybara._migrations
+      WHERE name = ${MARKER_MIGRATION}`.execute(this.db.db);
+    const since = applied.rows[0]?.applied_at;
+    if (since === undefined) return { sinceMigration: 0, afterFreeze: 0, latestAt: null };
+    const row = await this.db
+      .selectFrom("background_tasks")
+      .select((eb) => [
+        eb.fn.countAll<string>().as("n"),
+        eb.fn
+          .count<string>(sql`CASE WHEN started_at > ${frozenAt ?? null}::timestamptz THEN 1 END`)
+          .as("after"),
+        eb.fn.max("started_at").as("latest"),
+      ])
+      .where("launch_state", "=", "legacy")
+      .where("legacy_dispatch", "=", "unknown")
+      .where("started_at", ">", since)
+      .executeTakeFirstOrThrow();
+    return {
+      sinceMigration: Number(row.n),
+      afterFreeze: Number(row.after),
+      latestAt: (row.latest as Date | null) ?? null,
+    };
+  }
+
   /** The release gate's honest view (a quarantined device is unavailable, not retired). */
   async report(): Promise<LegacyRetirementReport> {
-    const frozen = await this.frozen();
+    const freeze = await this.freezeState();
+    const frozen = freeze.frozenAt !== null;
+    const fenced = await this.db
+      .selectFrom("background_tasks")
+      .select((eb) => eb.fn.countAll<string>().as("n"))
+      .where("launch_state", "=", "legacy")
+      .where("status", "=", "running")
+      .where("sid", "is", null)
+      .where("legacy_dispatch", "=", "reserved")
+      .executeTakeFirstOrThrow();
+    const unfenced = await this.unfencedWriters(freeze.frozenAt);
     const counts = await this.db
       .selectFrom("device_retirement_obligations")
       .select(["state", (eb) => eb.fn.countAll<string>().as("n")])
@@ -927,14 +1079,8 @@ export class LegacyRetirementStore {
       .where("d.source", "=", "local")
       .where("d.deleted_at", "is", null)
       .where("t.launch_state", "=", "legacy")
-      .where(sql<boolean>`(t.status = 'running' OR t.kill_pending OR t.sid IS NULL)`)
-      .where(
-        sql<boolean>`(
-          (t.status = 'running' AND (t.sid IS NOT NULL OR t.legacy_dispatch <> 'reserved'))
-          OR t.kill_pending
-          OR (t.sid IS NULL AND t.legacy_dispatch <> 'reserved')
-        )`,
-      )
+      .where(MAY_STILL_RUN)
+      .where(MAY_HAVE_DISPATCHED)
       .where((eb) => eb.or([eb("m.id", "is", null), eb("m.boot_id", "is", null)]))
       .orderBy("t.device_id")
       .execute();
@@ -969,14 +1115,8 @@ export class LegacyRetirementStore {
       .where("d.source", "=", "cloud")
       .where("d.deleted_at", "is", null)
       .where("t.launch_state", "=", "legacy")
-      .where(sql<boolean>`(t.status = 'running' OR t.kill_pending OR t.sid IS NULL)`)
-      .where(
-        sql<boolean>`(
-          (t.status = 'running' AND (t.sid IS NOT NULL OR t.legacy_dispatch <> 'reserved'))
-          OR t.kill_pending
-          OR (t.sid IS NULL AND t.legacy_dispatch <> 'reserved')
-        )`,
-      )
+      .where(MAY_STILL_RUN)
+      .where(MAY_HAVE_DISPATCHED)
       .orderBy("t.device_id")
       .execute();
     const cloudUnknown = new Map<
@@ -1019,6 +1159,10 @@ export class LegacyRetirementStore {
     const retired = frozen && open === 0 && quarantined === 0 && unsettledMembers === 0;
     return {
       frozen,
+      frozenAt: freeze.frozenAt,
+      freezeEnumeratedAt: freeze.enumeratedAt,
+      fencedReservations: Number(fenced.n),
+      unfencedWriters: unfenced,
       open,
       quarantined,
       resolved: n("resolved"),

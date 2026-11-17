@@ -6,9 +6,8 @@ import { QueueModule } from "../infra/queue/queue.module.js";
 import { ModelsModule } from "../models/models.module.js";
 import { MAINTENANCE_QUEUE_NAME } from "../runtime/maintenance-queue.js";
 import { StepLogModule } from "../runtime/step-log.js";
-import { CloudPermissionSnapshots } from "./cloud-permission-snapshot.js";
+import { CloudPermissionSnapshotsModule } from "./cloud-permission-snapshot.module.js";
 import { SandboxJobs } from "./jobs.js";
-import { SandboxLeases } from "./leases.js";
 import { LegacyRetirementModule } from "./legacy-retirement.module.js";
 import { OperationAuthorityModule } from "./operation-authority.module.js";
 import { OperationIntentsModule } from "./operation-intents.module.js";
@@ -34,6 +33,7 @@ import { SandboxService } from "./sandbox.service.js";
     OperationAuthorityModule,
     BackgroundStoreModule,
     LegacyRetirementModule,
+    CloudPermissionSnapshotsModule,
     // the command review's classifier: the `review` purpose, its hooks, usage and audit writes
     ModelsModule,
     ExtensionsModule,
@@ -41,13 +41,7 @@ import { SandboxService } from "./sandbox.service.js";
     StepLogModule,
     QueueModule.registerQueue(MAINTENANCE_QUEUE_NAME),
   ],
-  providers: [
-    SandboxLeases,
-    SandboxService,
-    SandboxJobs,
-    CommandReviewService,
-    CloudPermissionSnapshots,
-  ],
+  providers: [SandboxService, SandboxJobs, CommandReviewService],
   exports: [
     SandboxProviderRegistryModule,
     LegacyRetirementModule,
@@ -57,7 +51,7 @@ import { SandboxService } from "./sandbox.service.js";
     OperationAuthorityModule,
     SandboxJobs,
     CommandReviewService,
-    CloudPermissionSnapshots,
+    CloudPermissionSnapshotsModule,
   ],
 })
 export class SandboxModule {}
