@@ -37,6 +37,7 @@ import { SandboxService } from "../../src/sandbox/sandbox.service.js";
 import { runInBackgroundManaged } from "../../src/tools/builtins/sandbox/bash.js";
 import { truncateTables } from "../helpers/db.js";
 import { accountsFor } from "../helpers/identity.js";
+import { seedInstalledEvidence } from "../helpers/installed-evidence.js";
 import {
   MANAGED_GENERATION,
   MANAGED_PROVIDER,
@@ -379,6 +380,15 @@ async function fixture() {
     .set({ roots: JSON.stringify(device.roots) })
     .where("device_id", "=", f.deviceId)
     .execute();
+  // admission proves the installed environment (B-16) for the instance as it now is: its
+  // committed roots, the runtime report of its generation and its installed binding
+  await seedInstalledEvidence(a, raw, {
+    orgId: f.orgId,
+    deviceId: f.deviceId,
+    provider: MANAGED_PROVIDER,
+    version: "test-1",
+    report: SUPPORT,
+  });
   const gw = await gatewayFor(device, {
     deviceId: f.deviceId,
     orgId: f.orgId,
