@@ -258,6 +258,29 @@ export async function syncItemNow(env: OrgEnv, itemId: string): Promise<void> {
     );
 }
 
+/**
+ * Settles an item's scope sync: waits until every owed scope job ran ({@link scopeQueueIdle}: the
+ * import's or a confirm's sync, chunk jobs, deferred retries, an org creation's job), converges
+ * the item in every live org in this call ({@link syncItemNow}), and repeats until the queue is
+ * still idle after that and `done` holds. A test then previews against a state no scope job
+ * changes behind it. No sleeps: each round waits on the queue.
+ */
+export async function settleScope(
+  env: OrgEnv,
+  itemId: string,
+  done: () => Promise<boolean> = async () => true,
+): Promise<void> {
+  await waitFor(
+    async () => {
+      if (!(await scopeQueueIdle(env))) return false;
+      await syncItemNow(env, itemId);
+      return (await scopeQueueIdle(env)) && (await done());
+    },
+    30_000,
+    "the item's scope sync settled",
+  );
+}
+
 /** Clears the catalog, installs, requests, org skills / connectors / extension enabling and audits (accounts and orgs stay). */
 export async function resetOrgCatalog(env: OrgEnv): Promise<void> {
   // A scope change of the previous test (a share switch, an update) owed a scope sync with its

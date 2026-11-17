@@ -27,6 +27,7 @@ import {
   resetOrgCatalog,
   scopeQueueIdle,
   setScope,
+  settleScope,
   startOrgEnv,
   syncItemNow,
 } from "./org-env.js";
@@ -237,6 +238,8 @@ async function sharedWithB(itemId: string, skill: string): Promise<void> {
     .get(TransactionHost)
     .run(() => env.k.app.get(CatalogScopeService).enqueueSync(itemId));
   await waitFor(async () => (await usable(orgB)).includes(skill), 30_000, `${skill} usable in B`);
+  // nothing owed still runs (the confirm's sync under the old scope) behind a later preview
+  await settleScope(env, itemId);
 }
 
 describe("org uploads with an extension", () => {
