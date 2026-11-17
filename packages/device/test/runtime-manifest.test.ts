@@ -240,6 +240,8 @@ describe("installed closure", () => {
     );
     expect(pkgJson).toEqual([pkgJson?.[0], real.byteLength, sha(real)]);
     expect(helpers.map((e) => e[0])).toEqual([
+      "inline/linux-device-agent.py",
+      "inline/linux-sandbox.py",
       "inline/mac-worker.mjs",
       "inline/native-files.py",
       "inline/native-helper-prelude.py",

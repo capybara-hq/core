@@ -54,6 +54,15 @@ export * from "./plugin-package.js";
 export * from "./sandbox.js";
 export * from "./sandbox-operation.js";
 export { SANDBOX_RUNTIME_SOURCE } from "./sandbox-runtime-source.js";
+export {
+  isSandboxMoveDenied,
+  isSandboxWriteDenied,
+  SANDBOX_GIT_ALLOWED_DIRECTORIES,
+  SANDBOX_GIT_ALLOWED_FILES,
+  SANDBOX_GIT_DENIED_INTERNALS,
+  SANDBOX_MANDATORY_WRITE_DENIES,
+  SANDBOX_PROTECTED_PATH_NAMES,
+} from "./sandbox-write-denies.js";
 export * from "./secret.js";
 export * from "./setup-check.js";
 export * from "./setup-guide.js";

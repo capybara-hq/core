@@ -22,7 +22,8 @@ import {
   SANDBOX_IMAGE,
   SANDBOX_IMAGE_TAG,
 } from "../src/exec/docker.js";
-import { prepareDeviceDir } from "../src/exec/shared.js";
+import { createDockerOperationBackend } from "../src/exec/docker-operations.js";
+import { osRoots, prepareDeviceDir } from "../src/exec/shared.js";
 import { DeviceOpError } from "../src/exec/types.js";
 import { DEFAULT_POLICY, ownerCeilingOfMode } from "../src/state.js";
 
@@ -119,6 +120,132 @@ describe.skipIf(!hasDocker)("DockerExecutor", () => {
       { encoding: "utf8" },
     );
     expect(marker).toMatch(/Read-only/i);
+  });
+
+  it("hosts permission operations in its container from a root-owned staged runtime", async () => {
+    const state = join(base, "state");
+    mkdirSync(state, { mode: 0o700 });
+    const hostRoots = osRoots(dir);
+    const backend = await createDockerOperationBackend(
+      {
+        deviceId: envId,
+        instanceGeneration: "g",
+        stateDir: state,
+        pythonPath: "/usr/bin/python3",
+        runtimeHash: "h",
+        hostRoots,
+        readOwnerCeiling: async () => ({
+          revision: "one",
+          fullAccess: true,
+          roots: hostRoots,
+          restrictedProjectReach: "workspace",
+          restrictedAllowedDomains: [],
+          restrictedDeniedReadRoots: [],
+          preparation: {
+            skillsRoot: hostRoots.skills,
+            attachmentsBase: join(hostRoots.workspace, "attachments"),
+          },
+          fullNetwork: "environment",
+        }),
+        container: ex,
+      },
+      { acquireRuntime: async () => ({ release: () => {} }) },
+    );
+    const support = await backend.permissionSupport({ id: envId }, live);
+    expect(support).toMatchObject({ fullAccess: true, background: true });
+
+    const scope = (full: boolean, n: number) => ({
+      operationId: `op-${n}`,
+      admitBeforeMs: Date.now() + 60_000,
+      deviceId: envId,
+      rootConversationId: "r",
+      profileRevision: 0,
+      ceilingRevision: "c",
+      profile: full ? ("full-access" as const) : ("approve-for-me" as const),
+      actor: { accountId: "a", conversationId: "r" },
+      tag: `t${n}`,
+      filesystem: full
+        ? { kind: "device" as const }
+        : { kind: "scoped" as const, readRoots: [], writeRoots: ["/workspace/proj"] },
+      network: full ? { kind: "environment" as const } : { kind: "none" as const },
+    });
+    const authority = (operationId: string) => ({
+      operationId,
+      orgNetwork: { kind: "open-public" as const, hosts: [] },
+    });
+    const run = async (full: boolean, n: number, command: string) => {
+      const s = scope(full, n);
+      const op = await backend
+        .forExecution(authority(s.operationId))
+        .operation({ id: envId }, s, live);
+      return op.exec({
+        command,
+        ...(full ? {} : { cwd: "/workspace/proj" }),
+        timeoutMs: 20_000,
+        maxOutputBytes: 4096,
+        signal: live,
+      });
+    };
+    // Full: the container user's own authority
+    const full = await run(
+      true,
+      1,
+      "mkdir -p /workspace/proj && echo full > /tmp/full.txt && cat /etc/hostname >/dev/null",
+    );
+    expect(full.exitCode).toBe(0);
+    expect(readFileSync(join(dir, "tmp", "full.txt"), "utf8")).toBe("full\n");
+    // a Full background artifact lands in the host directory behind the mount
+    const fs = scope(true, 4);
+    const fullBg = backend.forExecution(authority(fs.operationId)).background;
+    const fullRef = await fullBg.start({ id: envId }, fs, {
+      command: "echo full-background",
+      cwd: "/workspace",
+      timeoutMs: 20_000,
+      maxOutputBytes: 4096,
+      taskId: "task-full",
+      outputPath: "/workspace/proj/full.log",
+      retainUntilMs: Date.now() + 60_000,
+      signal: live,
+    });
+    for (;;) {
+      const status = await fullBg.status({ id: envId }, fullRef, live);
+      if (status.state !== "running") break;
+      await sleep(50);
+    }
+    expect(readFileSync(join(dir, "workspace", "proj", "full.log"), "utf8")).toBe(
+      "full-background\n",
+    );
+    // Docker Desktop's file sharing drops Landlock's inode rules on the bind mounts: the
+    // self-check reports restricted unavailable there instead of denying every command
+    if (support.restricted === null)
+      expect(support.unavailableReason).toMatch(/Landlock rules do not hold|is unavailable/);
+    else {
+      // restricted: only its granted root, through the launcher
+      const r = await run(false, 2, "echo r > inside.txt; echo pwn > /tmp/outside.txt; true");
+      expect(r.exitCode).toBe(0);
+      expect(readFileSync(join(dir, "workspace", "proj", "inside.txt"), "utf8")).toBe("r\n");
+      expect(existsSync(join(dir, "tmp", "outside.txt"))).toBe(false);
+      // a background artifact lands in the host directory behind the mount
+      const s = scope(false, 3);
+      const bg = backend.forExecution(authority(s.operationId)).background;
+      const ref = await bg.start({ id: envId }, s, {
+        command: "echo background",
+        cwd: "/workspace/proj",
+        timeoutMs: 20_000,
+        maxOutputBytes: 4096,
+        taskId: "task",
+        outputPath: "/workspace/proj/out.log",
+        retainUntilMs: Date.now() + 60_000,
+        signal: live,
+      });
+      await until(() => existsSync(join(dir, "workspace", "proj", "out.log")));
+      for (;;) {
+        const status = await bg.status({ id: envId }, ref, live);
+        if (status.state !== "running") break;
+        await sleep(50);
+      }
+      expect(readFileSync(join(dir, "workspace", "proj", "out.log"), "utf8")).toBe("background\n");
+    }
   });
 
   it("reuses the container and recreates it when the mounts differ", async () => {

@@ -437,6 +437,20 @@ The kernel owns it; the extension implements only primitives. **Do not do schedu
   (rule `bootstrap-compose-ref` of `pnpm check:bootstrap`). The images themselves (container hardening, the egress proxy that blocks DNS rebinding by checking every resolved IP)
   are the plugin's; see its skill.
 - Logs and errors carry no secrets and no other orgs' ids.
+- **Restricted write policy** (`packages/plugin-sdk/src/sandbox-write-denies.ts`, one source for the
+  Linux broker, `native-files.py` with `denyWrites`, the device agent and the macOS runtime's ordered
+  regex rules through the pnpm patch of `@anthropic-ai/sandbox-runtime`): mandatory denies (shell,
+  git-global, `.envrc`, `.npmrc`, editor, agent and hook-manager files), the gitdir allowlist, no
+  forged repository inside it, no bare-repository `HEAD`, nothing moved out of `.git`. Known
+  limitations: a restricted command cannot `git init` or create submodules, worktrees or bare
+  repositories; it **can forge a rebase or cherry-pick in progress** (`rebase-merge/`,
+  `rebase-apply/`, `sequencer/` are writable for git's own use), and the owner's `git rebase
+  --continue` (or `cherry-pick --continue`) then runs the `exec` lines of the todo list it wrote;
+  `package.json` scripts and similar convention-run files are not covered; `git worktree prune`
+  and the config-section removal of `git branch -D` fail under restricted; on macOS a multi-commit
+  cherry-pick or revert reports it cannot remove `.git/sequencer` (the worker removes it when empty). On macOS a directory
+  renamed into git's subtrees keeps contents Seatbelt never saw; owners are advised to set
+  `git config --global safe.bareRepository explicit` (documented, never changed automatically).
 
 ## Local file-read ceiling
 

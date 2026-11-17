@@ -17,7 +17,11 @@ import {
 } from "@capybara-hq/plugin-sdk";
 import { implicitWritePaths } from "../policy.js";
 import type { NativeHelperRequest, NativeHelperResult } from "./native-helper-client.js";
-import { MacOperationSupervisor, type SupervisorOwnership } from "./operation-supervisor.js";
+import {
+  MacOperationSupervisor,
+  type SupervisorOptions,
+  type SupervisorOwnership,
+} from "./operation-supervisor.js";
 import {
   checkRoots,
   type DeviceOwnerCeiling,
@@ -76,6 +80,37 @@ export interface MacBackendDependencies {
 }
 const PENDING =
   "Restricted macOS per-instance validation and coordinated policy/background activation are pending";
+/**
+ * What one platform contributes to the shared local operation backend: its proven restricted
+ * support, whether Full access and background work run here, and the platform-specific checks.
+ * Trusted construction input only.
+ */
+export interface LocalBackendHost {
+  /** Restricted operations may run (the platform runtime proved its support). */
+  restricted: boolean;
+  /** Why restricted operations are unavailable, when they are. */
+  unavailableReason?: string;
+  /** Full access and background work run on this platform. */
+  fullAccess: boolean;
+  background: boolean;
+  /** The message a refused restricted operation carries. */
+  pending: string;
+  startWorker?: (request: MacWorkerRequest, signal: AbortSignal) => Promise<MacWorkerHandle>;
+  /** Refuses a restricted grant this platform cannot enforce exactly (typed scope denial). */
+  checkRestrictedGrant?: (grant: LocalOperationGrant, kind: "exec" | "native") => void;
+  /** Refuses a restricted background artifact target this platform protects. */
+  checkArtifactTarget?: (outputPath: string) => void;
+  /**
+   * Where the trusted supervisor writes a background artifact, when the operation's paths are not
+   * this process's own (a container's bind mounts); refuses a target it cannot map.
+   */
+  artifactTarget?: (target: { outputPath: string; artifactRoot: string }) => {
+    outputPath: string;
+    artifactRoot: string;
+  };
+  /** Called once per recorded launch identity a previous device process left running. */
+  reapOrphan?: SupervisorOptions["reapOrphan"];
+}
 export async function createMacOperationBackend(
   options: MacOperationBackendOptions,
   dependencies: MacBackendDependencies = {},
@@ -85,6 +120,40 @@ export async function createMacOperationBackend(
     platform === "darwin" &&
     dependencies.restrictedSupported === true &&
     dependencies.startWorker !== undefined;
+  return createLocalOperationBackend(options, dependencies, {
+    restricted,
+    ...(!restricted
+      ? {
+          unavailableReason:
+            platform === "darwin"
+              ? PENDING
+              : "Restricted Linux/local-Docker validation remains pending",
+        }
+      : {}),
+    fullAccess: platform === "darwin",
+    background: platform === "darwin",
+    pending: PENDING,
+    ...(dependencies.startWorker ? { startWorker: dependencies.startWorker } : {}),
+    checkArtifactTarget: (outputPath) => {
+      const canonical = (path: string) => path.replace(/^\/(tmp|var|etc)(?=\/|$)/, "/private/$1");
+      if (implicitWritePaths().some((root) => within(canonical(outputPath), canonical(root))))
+        throw new SandboxScopeDeniedError(
+          "Background artifact target is protected by the restricted write policy",
+        );
+    },
+  });
+}
+/**
+ * The local operation backend shared by every platform: owner-ceiling intersection, path bounds,
+ * the durable supervisor (journal, retained output, exact cancellation) and the owner lifecycle.
+ * The platform supplies its worker and its support facts through `host`.
+ */
+export async function createLocalOperationBackend(
+  options: MacOperationBackendOptions,
+  dependencies: Pick<MacBackendDependencies, "now" | "watch">,
+  host: LocalBackendHost,
+): Promise<MacOperationBackend> {
+  const restricted = host.restricted;
   let disposed = false;
   const checkHandle = (h: SandboxHandle) => {
     if (disposed)
@@ -118,7 +187,8 @@ export async function createMacOperationBackend(
     instanceGeneration: options.instanceGeneration,
     pythonPath: options.pythonPath,
     ...(dependencies.now ? { now: dependencies.now } : {}),
-    ...(dependencies.startWorker ? { start: dependencies.startWorker } : {}),
+    ...(host.startWorker ? { start: host.startWorker } : {}),
+    ...(host.reapOrphan ? { reapOrphan: host.reapOrphan } : {}),
     onLiveChanged: (live) => {
       if (live && !stopWatch) {
         if (dependencies.watch) stopWatch = dependencies.watch(tick);
@@ -198,7 +268,8 @@ export async function createMacOperationBackend(
       "profile" in scope
         ? intersectOperation(scope, ceiling, authority, native !== undefined)
         : auxiliaryGrant(scope, ceiling);
-    if (!grant.full && !restricted) throw new SandboxPermissionUnsupportedError(PENDING);
+    if (!grant.full && !restricted) throw new SandboxPermissionUnsupportedError(host.pending);
+    if (!grant.full) host.checkRestrictedGrant?.(grant, native ? "native" : "exec");
     if (native) boundedPath(native.path, grant, native.method === "writeFile");
     if (args) {
       if (
@@ -213,16 +284,7 @@ export async function createMacOperationBackend(
     }
     if (background) {
       boundedPath(background.outputPath, grant, true);
-      const canonical = (path: string) => path.replace(/^\/(tmp|var|etc)(?=\/|$)/, "/private/$1");
-      if (
-        !grant.full &&
-        implicitWritePaths().some((root) =>
-          within(canonical(background.outputPath), canonical(root)),
-        )
-      )
-        throw new SandboxScopeDeniedError(
-          "Background artifact target is protected by the restricted write policy",
-        );
+      if (!grant.full) host.checkArtifactTarget?.(background.outputPath);
     }
     const common = {
       scope,
@@ -253,16 +315,17 @@ export async function createMacOperationBackend(
           kind: "exec",
           scope: scope as SandboxOperationScope,
           ...(background
-            ? {
-                managedOutput: {
+            ? (() => {
+                const target = {
                   outputPath: background.outputPath,
                   artifactRoot: grant.full
                     ? "/"
                     : ([...grant.writeRoots]
                         .filter((root) => within(background.outputPath, root))
                         .sort((a, b) => b.length - a.length)[0] as string),
-                },
-              }
+                };
+                return { managedOutput: host.artifactTarget?.(target) ?? target };
+              })()
             : {}),
           args: {
             ...(args as Omit<Parameters<SandboxOperation["exec"]>[0], "signal">),
@@ -385,16 +448,9 @@ export async function createMacOperationBackend(
         restricted: restricted
           ? { filesystem: true, network: true, native: true, concurrentScopes: true }
           : null,
-        fullAccess: platform === "darwin" && c.fullAccess,
-        background: platform === "darwin",
-        ...(!restricted
-          ? {
-              unavailableReason:
-                platform === "darwin"
-                  ? PENDING
-                  : "Restricted Linux/local-Docker validation remains pending",
-            }
-          : {}),
+        fullAccess: host.fullAccess && c.fullAccess,
+        background: host.background,
+        ...(!restricted ? { unavailableReason: host.unavailableReason ?? host.pending } : {}),
       };
     },
     operation: operation(),

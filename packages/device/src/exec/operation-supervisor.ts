@@ -81,6 +81,12 @@ export interface SupervisorOptions {
   pythonPath?: string;
   outputBarrier?: (name: string) => Promise<void>;
   beforePersist?: () => void;
+  /**
+   * Linux: called once, at construction, for every recorded launch identity that was running
+   * under another device process (the supervisor was lost). It ends that exact recorded session;
+   * the entry stays unknown and is never resumed.
+   */
+  reapOrphan?: (identity: TrustedLaunchIdentity) => void;
 }
 interface Journal {
   version: 1;
@@ -281,6 +287,12 @@ export class MacOperationSupervisor {
     }
     for (const e of raw.entries) {
       this.recoverControl(e);
+      if (
+        (e.state === "running" || e.state === "consumed") &&
+        e.identity?.session &&
+        options.reapOrphan
+      )
+        options.reapOrphan(e.identity);
       if (e.state === "running" || e.state === "consumed") e.state = "unknown";
       if (
         e.output &&
