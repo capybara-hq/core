@@ -21,7 +21,7 @@ import { truncateTables } from "../helpers/db.js";
 import { MODEL_PLUGINS_CONFIG } from "../helpers/model-plugins.js";
 import { permissionFixture } from "../helpers/permission-policy.js";
 import { startKernel, type TestKernel } from "../helpers/runs.js";
-import { stagedHello } from "./fake-machine.js";
+import { stagedHello } from "./fake-machine-v3.js";
 
 /**
  * Permission runtime cutover B2: authenticated owner reports and independent project reach, through

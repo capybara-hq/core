@@ -54,7 +54,7 @@ import {
   waitForTerminal,
 } from "../helpers/runs.js";
 import { webCaller } from "../helpers/step-context.js";
-import { FakeMachine, HELLO } from "../local-devices/fake-machine.js";
+import { FakeMachine, HELLO } from "../local-devices/fake-machine-v3.js";
 
 /**
  * The network ask in the tool pipeline (network ask-to-allow spec §6.2, §6.6–§6.9, §8.3, P1.7):
@@ -188,7 +188,7 @@ async function connect(deviceId: string, credential: string, machineId: string, 
   const machine = new FakeMachine(wsUrl, credential, answer(dev) as any, { hello: false });
   open.push(machine);
   await machine.opened;
-  machine.send({ ...HELLO, features: dev.features, policy: dev.policy } as typeof HELLO);
+  machine.hello({ features: dev.features, policy: dev.policy });
   await waitFor(
     async () => (await redis.get(deviceLeaseKey(deviceId))) !== null,
     10_000,

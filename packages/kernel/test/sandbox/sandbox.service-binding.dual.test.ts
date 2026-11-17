@@ -24,7 +24,7 @@ import { truncateTables } from "../helpers/db.js";
 import { startKernel, type TestKernel } from "../helpers/runs.js";
 import { seedDevice } from "../helpers/sandbox.js";
 import { seedConversation } from "../helpers/tool-fixtures.js";
-import { stagedHello } from "../local-devices/fake-machine.js";
+import { stagedHello } from "../local-devices/fake-machine-v3.js";
 
 /**
  * Two kernel replicas (two independent kernels in one process: own PG pools, Redis connections and
