@@ -10,9 +10,21 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { checkPluginState, type Finding } from "../src/check/plugin-state.js";
 import { bypassFixture } from "./bypass-fixture.js";
+
+const bundleBuilds = vi.hoisted(() => ({ count: 0 }));
+vi.mock("../src/pack/pack.js", async (orig) => {
+  const mod = await orig<typeof import("../src/pack/pack.js")>();
+  return {
+    ...mod,
+    serverBundleInputs: (...args: Parameters<typeof mod.serverBundleInputs>) => {
+      bundleBuilds.count++;
+      return mod.serverBundleInputs(...args);
+    },
+  };
+});
 
 const fixture = (name: string) => fileURLToPath(new URL(`../fixtures/${name}`, import.meta.url));
 
@@ -265,5 +277,65 @@ describe("绕过形态", () => {
       "plugin-timer",
       "plugin-timer",
     ]);
+  });
+});
+
+describe("embed UI directories are browser code", () => {
+  const CODE = "let x = 0;\nexport const t = () => setTimeout(() => {}, 1);\nexport { x };\n";
+  function plugin(files: string[]): string {
+    const d = mkdtempSync(join(tmpdir(), "capybara-ps-"));
+    tmp.push(d);
+    writeFileSync(
+      join(d, "package.json"),
+      JSON.stringify({ name: "embed", version: "0.0.0", private: true, type: "module" }),
+    );
+    mkdirSync(join(d, "src"), { recursive: true });
+    writeFileSync(join(d, "src/index.ts"), "export default {};\n");
+    for (const f of files) {
+      mkdirSync(join(d, f, ".."), { recursive: true });
+      writeFileSync(join(d, f), CODE);
+    }
+    return d;
+  }
+  const rel = async (d: string) =>
+    [...new Set((await checkPluginState([d])).map((x) => x.file.slice(d.length + 1)))].sort();
+
+  it("skips ui-src/ and ui/ at the plugin root", async () => {
+    expect(await rel(plugin(["ui-src/app/main.ts", "ui/app.js"]))).toEqual([]);
+  });
+
+  it("builds the server bundle only for a plugin with a ui/ or ui-src/ directory", async () => {
+    bundleBuilds.count = 0;
+    await rel(plugin([]));
+    expect(bundleBuilds.count).toBe(0);
+    await rel(plugin(["ui/app.js"]));
+    expect(bundleBuilds.count).toBe(1);
+  });
+
+  it("still checks a deeper src/ui and the server entry", async () => {
+    const d = plugin(["ui-src/app/main.ts", "ui/app.js", "src/ui/helper.ts", "src/index.ts"]);
+    expect(await rel(d)).toEqual(["src/index.ts", "src/ui/helper.ts"]);
+  });
+
+  it("checks a file under ui/ or ui-src/ that the server bundle reaches", async () => {
+    for (const dirName of ["ui", "ui-src"]) {
+      const d = plugin([`${dirName}/state.ts`, `${dirName}/unreached.ts`]);
+      mkdirSync(join(d, "src"), { recursive: true });
+      writeFileSync(
+        join(d, "src/index.ts"),
+        `import "../${dirName}/state.js";\nexport default {};\n`,
+      );
+      expect(await rel(d)).toEqual([`${dirName}/state.ts`]);
+    }
+  });
+
+  it("checks every file when the server build fails", async () => {
+    const d = plugin(["ui/app.js"]);
+    mkdirSync(join(d, "src"), { recursive: true });
+    writeFileSync(
+      join(d, "src/index.ts"),
+      'import x from "not-an-installed-package";\nexport default { x };\n',
+    );
+    expect(await rel(d)).toEqual(["ui/app.js"]);
   });
 });

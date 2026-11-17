@@ -256,6 +256,29 @@ describe("document CSP", () => {
   });
 });
 
+describe("the embed CSP", () => {
+  it("allows workers from blob: only, and nothing else drifts", () => {
+    const directives = EMBED_CSP.split("; ");
+    expect(directives).toEqual([
+      "default-src 'self'",
+      "script-src 'self' 'unsafe-inline'",
+      "style-src 'self' 'unsafe-inline'",
+      "img-src 'self' data: blob:",
+      "font-src 'self' data:",
+      "connect-src 'self'",
+      "media-src 'self'",
+      "object-src 'none'",
+      "frame-src 'none'",
+      "worker-src blob:",
+      "base-uri 'none'",
+      "form-action 'self'",
+      "frame-ancestors 'self'",
+      "sandbox allow-scripts allow-forms",
+    ]);
+    expect(EMBED_CSP).not.toContain("wasm-unsafe-eval");
+  });
+});
+
 describe("the CSPs the document policy leaves alone", () => {
   let upstream: Server;
   let upstreamHeaders: Record<string, string> = {};

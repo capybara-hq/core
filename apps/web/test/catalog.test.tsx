@@ -85,6 +85,7 @@ describe("/dev/ui 目录页", () => {
         "overlays/menu",
         "overlays/command",
         "overlays/toast",
+        "overlays/image-viewer",
         "stress",
       ]),
     );

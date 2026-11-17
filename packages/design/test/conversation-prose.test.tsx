@@ -301,6 +301,35 @@ describe("UserBubble (§6.16.6)", () => {
     expect(open).toHaveBeenCalledWith("1");
   });
 
+  it("a file chip has its own download button; an image and a resource mention have none", async () => {
+    const open = vi.fn();
+    const download = vi.fn();
+    wrap(
+      <BubbleAttachments
+        items={[
+          { id: "i1", kind: "image", name: "截图.png" },
+          { id: "a1", kind: "file", name: "说明.pdf", type: "PDF", size: "3.8 MB" },
+          { id: "@app:x", kind: "file", name: "@doc · App", downloadable: false },
+        ]}
+        onOpen={open}
+        onDownload={download}
+      />,
+    );
+    const buttons = screen.getAllByRole("button", { name: "下载" });
+    expect(buttons).toHaveLength(1);
+    await userEvent.click(buttons[0] as HTMLElement);
+    expect(download).toHaveBeenCalledWith("a1");
+    expect(open).not.toHaveBeenCalled();
+    await userEvent.click(screen.getByRole("button", { name: /说明\.pdf/ }));
+    expect(open).toHaveBeenCalledWith("a1");
+    expect(download).toHaveBeenCalledTimes(1);
+  });
+
+  it("without onDownload a file chip has no download button", () => {
+    wrap(<BubbleAttachments items={[{ id: "a1", kind: "file", name: "说明.pdf" }]} />);
+    expect(screen.queryByRole("button", { name: "下载" })).toBeNull();
+  });
+
   it("never loads an unsafe thumbnail source", () => {
     const { container } = wrap(
       <BubbleAttachments items={[{ id: "1", kind: "image", name: "x", src: "javascript:1" }]} />,

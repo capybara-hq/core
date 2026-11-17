@@ -48,8 +48,11 @@ export type FilePreviewHeader = {
   name: string;
   /** "v<n> · <updated>". */
   version?: string;
-  /** The conversation's files: the name becomes a switcher. */
-  files?: { id: string; name: string }[];
+  /**
+   * The conversation's files: the name becomes a switcher. `uploaded`: a file a person sent with a
+   * message, marked "Uploaded" (zh: the 上传 label). english-comments-ok: quotes the zh UI label
+   */
+  files?: { id: string; name: string; uploaded?: boolean }[];
   /** The id of the shown file in `files`. */
   current?: string;
   onSwitch?(id: string): void;
@@ -93,6 +96,7 @@ export function FilePreviewFrame({
       }
       items={(h.files ?? []).map((f) => ({
         label: f.name,
+        ...(f.uploaded ? { description: t("files.uploaded") } : {}),
         checked: f.id === h.current,
         onSelect: () => h.onSwitch?.(f.id),
       }))}
@@ -206,11 +210,37 @@ export function MarkdownPreview({ text }: { text: string }): JSX.Element {
   );
 }
 
-/** A bitmap scaled to fit on the `panel` ground. `src` is a `?inline=1` URL; never SVG. */
-export function ImagePreview({ src, name }: { src: string; name: string }): JSX.Element {
-  return (
+/**
+ * A bitmap scaled to fit on the `panel` ground. `src` is a `?inline=1` URL; never SVG. With
+ * `onOpen` the image is a button (zoom cursor) that opens the image viewer.
+ */
+export function ImagePreview({
+  src,
+  name,
+  onOpen,
+}: {
+  src: string;
+  name: string;
+  onOpen?(): void;
+}): JSX.Element {
+  const t = useDesignT();
+  const img = isSafeImageSrc(src) ? (
+    <img src={src} alt={name} referrerPolicy="no-referrer" />
+  ) : null;
+  return onOpen ? (
+    <button
+      type="button"
+      className="cb-preview-image"
+      data-part="preview-image"
+      data-openable="true"
+      aria-label={fillCopy(t("files.openImage"), { name })}
+      onClick={onOpen}
+    >
+      {img}
+    </button>
+  ) : (
     <div className="cb-preview-image" data-part="preview-image">
-      {isSafeImageSrc(src) ? <img src={src} alt={name} referrerPolicy="no-referrer" /> : null}
+      {img}
     </div>
   );
 }

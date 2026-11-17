@@ -218,6 +218,7 @@ export function FilesSection({ files, onOpen }: { files: FileOutput[]; onOpen(id
         badge: typeBadge(f.name, f.contentType),
         size: formatBytes(f.size),
         ...(f.from ? { from: f.from.name } : {}),
+        ...(f.origin === "uploaded" ? { uploaded: true } : {}),
       }))}
       onOpen={onOpen}
       onAll={() => {

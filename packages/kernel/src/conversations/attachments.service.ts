@@ -96,6 +96,29 @@ export interface OpenedAttachment {
   body: ReadableStream<Uint8Array>;
 }
 
+/** A ready `chat` attachment bound to a conversation ({@link AttachmentsService.boundRows}). */
+export interface BoundAttachment {
+  id: string;
+  name: string;
+  contentType: string;
+  size: number;
+  objectKey: string;
+  /** The etag recorded at finalize (null: none recorded). */
+  etag: string | null;
+  createdAt: Date;
+}
+
+/**
+ * Whether a stored object is still the attachment finalize checked: the same size, and the same
+ * etag when one was recorded. Anything else is treated as no longer available.
+ */
+export function attachmentContentMatches(
+  recorded: { size: number; etag: string | null },
+  head: { size: number; etag?: string | undefined },
+): boolean {
+  return head.size === recorded.size && (recorded.etag === null || recorded.etag === head.etag);
+}
+
 /** `POST /attachments` 的返回：浏览器按 `upload` 直传存储，然后调 finalize。 */
 export interface CreatedAttachment {
   id: string;
@@ -388,7 +411,15 @@ export class AttachmentsService {
     this.storage.assertAvailable();
     const row = await this.db
       .selectFrom("attachments")
-      .select(["account_id", "conversation_id", "name", "content_type", "object_key", "etag"])
+      .select([
+        "account_id",
+        "conversation_id",
+        "name",
+        "content_type",
+        "object_key",
+        "size",
+        "etag",
+      ])
       .where("id", "=", id)
       .where("org_id", "=", orgId)
       .where("status", "=", "ready")
@@ -402,7 +433,7 @@ export class AttachmentsService {
     if (!allowed) throw notFound();
     const store = this.storage.kernel(orgId);
     const head = await store.head(row.object_key);
-    if (!head || !this.sameContent(row.etag, head.etag, { orgId, attachmentId: id })) {
+    if (!this.storedMatches({ id, size: Number(row.size), etag: row.etag }, head, { orgId })) {
       throw notFound();
     }
     const inline = isImageContentType(row.content_type) || row.content_type === "application/pdf";
@@ -421,16 +452,51 @@ export class AttachmentsService {
     orgId: string,
     conversationId: string,
   ): Promise<{ id: string; name: string }[]> {
-    return this.db
+    return (await this.boundRows(orgId, conversationId)).map((r) => ({ id: r.id, name: r.name }));
+  }
+
+  /**
+   * The ready `chat` attachments bound to the conversation in this org (never another purpose, a
+   * pending or an unbound upload), oldest first by upload time, then id; with `id`, only that one.
+   * Nothing here checks who reads them: callers check the conversation's access first.
+   */
+  async boundRows(orgId: string, conversationId: string, id?: string): Promise<BoundAttachment[]> {
+    let q = this.db
       .selectFrom("attachments")
-      .select(["id", "name"])
+      .select(["id", "name", "content_type", "size", "object_key", "etag", "created_at"])
       .where("org_id", "=", orgId)
       .where("conversation_id", "=", conversationId)
       .where("purpose", "=", "chat")
-      .where("status", "=", "ready")
-      .orderBy("created_at")
-      .orderBy("id")
-      .execute();
+      .where("status", "=", "ready");
+    if (id !== undefined) q = q.where("id", "=", id);
+    const rows = await q.orderBy("created_at").orderBy("id").execute();
+    return rows.map((r) => ({
+      id: r.id,
+      name: r.name,
+      contentType: r.content_type,
+      size: Number(r.size),
+      objectKey: r.object_key,
+      etag: r.etag,
+      createdAt: r.created_at,
+    }));
+  }
+
+  /**
+   * {@link attachmentContentMatches} for a bound attachment's stored object (`null`: gone), with
+   * the warning logged when the content was replaced after finalize.
+   */
+  storedMatches(
+    a: Pick<BoundAttachment, "id" | "size" | "etag">,
+    head: { size: number; etag?: string | undefined } | null,
+    where: { orgId: string; conversationId?: string },
+  ): boolean {
+    if (!head) return false;
+    if (attachmentContentMatches(a, head)) return true;
+    this.log.warn("attachment content changed after finalize; treating it as unavailable", {
+      ...where,
+      attachmentId: a.id,
+    });
+    return false;
   }
 
   /**
@@ -442,27 +508,15 @@ export class AttachmentsService {
     conversationId: string,
     attachmentId: string,
   ): Promise<OpenedAttachment | null> {
-    const row = await this.db
-      .selectFrom("attachments")
-      .select(["name", "content_type", "object_key", "size", "etag"])
-      .where("id", "=", attachmentId)
-      .where("org_id", "=", orgId)
-      .where("conversation_id", "=", conversationId)
-      .where("purpose", "=", "chat")
-      .where("status", "=", "ready")
-      .executeTakeFirst();
+    const [row] = await this.boundRows(orgId, conversationId, attachmentId);
     if (!row) return null;
-    const got = await this.storage.kernel(orgId).get(row.object_key);
+    const got = await this.storage.kernel(orgId).get(row.objectKey);
     if (!got) return null;
-    const size = Number(row.size);
-    if (
-      got.head.size !== size ||
-      !this.sameContent(row.etag, got.head.etag, { orgId, conversationId, attachmentId })
-    ) {
+    if (!this.storedMatches(row, got.head, { orgId, conversationId })) {
       await got.body.cancel().catch(() => {});
       return null;
     }
-    return { name: row.name, contentType: row.content_type, size, body: got.body };
+    return { name: row.name, contentType: row.contentType, size: row.size, body: got.body };
   }
 
   /**

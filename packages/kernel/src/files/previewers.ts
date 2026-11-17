@@ -9,6 +9,7 @@ import {
 } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable, Optional } from "@nestjs/common";
 import { sql } from "kysely";
+import { attachmentContentMatches } from "../conversations/attachments.service.js";
 import { ConversationFiles } from "../conversations/files.js";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
@@ -360,6 +361,11 @@ export class PreviewerRegistry {
                   }
                   const got = await store.get(file.objectKey, { signal: s });
                   if (!got) throw new Error("the file is no longer available");
+                  // an attachment replaced since it was checked is not the file any more
+                  if (file.recorded && !attachmentContentMatches(file.recorded, got.head)) {
+                    await got.body.cancel().catch(() => {});
+                    throw new Error("the file is no longer available");
+                  }
                   if (!open || s.aborted) {
                     await got.body.cancel().catch(() => {});
                     throw expired();

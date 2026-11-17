@@ -4,8 +4,10 @@ import {
   CsvPreview,
   FileCard,
   FilePreviewFrame,
+  formatBytes,
   formatRelative,
   ImagePreview,
+  ImageViewer,
   LoadFailed,
   MarkdownPreview,
   NoPreview,
@@ -18,6 +20,7 @@ import { useLocale, useTranslations } from "next-intl";
 import { type ReactNode, useState } from "react";
 import { ApiClientError } from "../../lib/api";
 import { artifactDownloadUrl } from "../../lib/artifacts";
+import { attachmentDownloadUrl } from "../../lib/attachments";
 import { builtinPreview, type FileOutput } from "../../lib/files";
 import type { FilePreviewerItem } from "../../lib/previewers";
 import { filePreviewersQuery, filePreviewQuery, fileTextQuery } from "../../lib/query/conversation";
@@ -63,7 +66,12 @@ export function FilePanel({
   const openDownload = useOpenDownload();
   const [picked, setPicked] = useState<string | null>(null);
   const builtin = file.status === "removed" ? null : builtinPreview(file);
-  const download = () => openDownload(artifactDownloadUrl(orgId, conversationId, file.id));
+  // An uploaded file is an attachment: its own route downloads it and serves bitmaps inline.
+  const fileUrl = (inline: boolean) =>
+    file.origin === "uploaded"
+      ? attachmentDownloadUrl(orgId, file.id)
+      : artifactDownloadUrl(orgId, conversationId, file.id, inline ? { inline: true } : {});
+  const download = () => openDownload(fileUrl(false));
 
   // No extension previewers readable: the built-in one (or the file card) shows.
   const previewers = useQuery({
@@ -124,7 +132,11 @@ export function FilePanel({
     badge: typeBadge(file.name, file.contentType),
     name: file.name,
     version: `v${file.version} · ${formatRelative(file.versions[0]?.createdAt ?? file.createdAt, locale, now)}`,
-    files: files.map((f) => ({ id: f.id, name: f.name })),
+    files: files.map((f) => ({
+      id: f.id,
+      name: f.name,
+      ...(f.origin === "uploaded" ? { uploaded: true } : {}),
+    })),
     current: file.id,
     onSwitch,
     previewers: options.map((o) => ({ id: o.id, title: o.title })),
@@ -198,9 +210,7 @@ export function FilePanel({
           title: current.title,
           maxBytes: p.maxBytes,
           read: async () => {
-            const res = await fetch(artifactDownloadUrl(orgId, conversationId, file.id), {
-              credentials: "same-origin",
-            });
+            const res = await fetch(fileUrl(false), { credentials: "same-origin" });
             if (!res.ok) throw new ApiClientError(res.status, "http_error", "download failed");
             return {
               name: file.name,
@@ -222,9 +232,13 @@ export function FilePanel({
     content = <UiViewRenderer view={data.view} onAction={async () => {}} />;
   } else if (builtin === "image") {
     content = (
-      <ImagePreview
-        src={artifactDownloadUrl(orgId, conversationId, file.id, { inline: true })}
+      <PanelImage
+        key={file.id}
+        src={fileUrl(true)}
         name={file.name}
+        size={formatBytes(file.size)}
+        onDownload={download}
+        onOpenInNewTab={() => openDownload(fileUrl(true))}
       />
     );
   } else if (builtin === "markdown") {
@@ -238,5 +252,36 @@ export function FilePanel({
     <FilePreviewFrame header={header} state="ready">
       {content}
     </FilePreviewFrame>
+  );
+}
+
+/** The built-in image previewer: a click opens the image viewer for this file. */
+function PanelImage({
+  src,
+  name,
+  size,
+  onDownload,
+  onOpenInNewTab,
+}: {
+  src: string;
+  name: string;
+  size: string;
+  onDownload(): void;
+  onOpenInNewTab(): void;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <ImagePreview src={src} name={name} onOpen={() => setOpen(true)} />
+      <ImageViewer
+        open={open}
+        onOpenChange={setOpen}
+        images={[{ src, name, size }]}
+        index={0}
+        onIndexChange={() => {}}
+        onDownload={onDownload}
+        onOpenInNewTab={onOpenInNewTab}
+      />
+    </>
   );
 }

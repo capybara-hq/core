@@ -628,6 +628,41 @@ describe("时间线：消息附件", () => {
     expect(document.activeElement).toBe(thumb);
   });
 
+  it("the viewer reaches every image of the message with the arrow keys", async () => {
+    stubApi({
+      [`GET ${BASE}/events`]: () =>
+        json(200, {
+          events: [
+            userMsg(1, [
+              { type: "text", text: "hi" },
+              {
+                type: "image",
+                mediaType: "image/png",
+                source: { kind: "ref", attachmentId: ID1 },
+                name: "one.png",
+              },
+              {
+                type: "image",
+                mediaType: "image/png",
+                source: { kind: "ref", attachmentId: ID2 },
+                name: "two.png",
+              },
+            ]),
+          ],
+        }),
+    });
+    const user = userEvent.setup();
+    await renderChat("en");
+    await user.click(within(screen.getByRole("log")).getByRole("button", { name: "two.png" }));
+    const viewer = screen.getByRole("dialog");
+    expect(within(viewer).getByText("2 / 2")).toBeTruthy();
+    await user.keyboard("{ArrowLeft}");
+    expect(within(viewer).getByText("1 / 2")).toBeTruthy();
+    expect(within(viewer).getByRole("img", { name: "one.png" }).getAttribute("src")).toBe(
+      `${ATT}/${ID1}/download`,
+    );
+  });
+
   it("同时带 @ 资源与上传文件：资源正文不展开，两类附件分别显示", async () => {
     stubApi({
       [`GET ${BASE}/events`]: () =>

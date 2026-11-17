@@ -88,6 +88,7 @@ afterAll(async () => {
 let owner: Req;
 let other: Req;
 let orgId: string;
+let ownerId: string;
 let conv: string;
 
 const errCode = (r: { json(): unknown }) => (r.json() as { error?: { code?: string } }).error?.code;
@@ -95,8 +96,7 @@ const errCode = (r: { json(): unknown }) => (r.json() as { error?: { code?: stri
 beforeEach(async () => {
   await truncateTables(raw, "capybara.accounts, capybara.orgs");
   const accounts = accountsFor(db);
-  const ownerId = (await accounts.createLocal({ login: "owner", password: PW, displayName: "O" }))
-    .id;
+  ownerId = (await accounts.createLocal({ login: "owner", password: PW, displayName: "O" })).id;
   const otherId = (await accounts.createLocal({ login: "other", password: PW, displayName: "X" }))
     .id;
   owner = await session(k, "owner");
@@ -314,6 +314,98 @@ describe("file-preview@1", () => {
     expect((await preview(docx, "docx", other)).statusCode).toBe(404);
     // a file of another conversation is not found here
     expect((await previewers(randomUUID())).status).toBe(404);
+  });
+
+  it("an attachment sent in the conversation is previewed like a delivered file", async () => {
+    await enable();
+    const id = randomUUID();
+    const objectKey = `attachments/${id}`;
+    const bytes = Buffer.from("PK docx bytes");
+    await k.app
+      .get(StorageService)
+      .kernel(orgId)
+      .put(objectKey, bytes, {
+        contentType: DOCX,
+        size: bytes.byteLength,
+        signal: AbortSignal.timeout(10_000),
+      });
+    await db
+      .insertInto("attachments")
+      .values({
+        id,
+        org_id: orgId,
+        conversation_id: conv,
+        account_id: ownerId,
+        name: "Sent.docx",
+        content_type: DOCX,
+        size: bytes.byteLength,
+        object_key: objectKey,
+        status: "ready",
+      })
+      .execute();
+    expect((await previewers(id)).body.previewers.map((p) => p.id)).toEqual(["docx", "docx-page"]);
+    const r = await preview(id, "docx");
+    expect(r.statusCode, r.body).toBe(200);
+    expect(r.json()).toEqual({
+      view: { blocks: [{ type: "text", markdown: "13 PK docx bytes" }] },
+    });
+    const token = await owner({
+      method: "POST",
+      url: `/api/v1/orgs/${orgId}/ui/embeds/preview-fake/docx-embed/token`,
+      payload: { conversationId: conv, fileId: id },
+    });
+    expect(token.statusCode, token.body).toBe(200);
+    // whoever cannot read the conversation cannot preview its attachments either
+    expect((await previewers(id, other)).status).toBe(404);
+    expect((await preview(id, "docx", other)).statusCode).toBe(404);
+  });
+
+  it("an attachment whose object changed after finalize is refused by every preview path", async () => {
+    await enable();
+    const id = randomUUID();
+    const objectKey = `attachments/${id}`;
+    const store = k.app.get(StorageService).kernel(orgId);
+    const put = (bytes: Buffer) =>
+      store.put(objectKey, bytes, {
+        contentType: DOCX,
+        size: bytes.byteLength,
+        signal: AbortSignal.timeout(10_000),
+      });
+    await put(Buffer.from("PK original"));
+    const etag = (await store.head(objectKey))?.etag ?? null;
+    expect(etag).not.toBeNull();
+    await db
+      .insertInto("attachments")
+      .values({
+        id,
+        org_id: orgId,
+        conversation_id: conv,
+        account_id: ownerId,
+        name: "Sent.docx",
+        content_type: DOCX,
+        size: 11,
+        object_key: objectKey,
+        status: "ready",
+        etag,
+      })
+      .execute();
+    expect((await previewers(id)).status).toBe(200);
+    // replaced with other bytes of the same size after finalize
+    await put(Buffer.from("PK replaced"));
+    const listed = await previewers(id);
+    expect(listed.status).toBe(410);
+    expect(errCode(listed.r)).toBe("conversation.artifact_removed");
+    const r = await preview(id, "docx");
+    expect(r.statusCode).toBe(410);
+    expect(errCode(r)).toBe("conversation.artifact_removed");
+    expect(probe().last).toBeUndefined();
+    const token = await owner({
+      method: "POST",
+      url: `/api/v1/orgs/${orgId}/ui/embeds/preview-fake/docx-embed/token`,
+      payload: { conversationId: conv, fileId: id },
+    });
+    expect(token.statusCode).toBe(410);
+    expect(errCode(token)).toBe("conversation.artifact_removed");
   });
 
   it("an embed previewer's token is for that one file and conversation", async () => {
