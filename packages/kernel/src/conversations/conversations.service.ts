@@ -13,6 +13,7 @@ import {
 } from "../devices/conversation-devices.js";
 import { DeviceProjectsService } from "../devices/device-projects.service.js";
 import { ApiError } from "../errors.js";
+import { afterCommit } from "../infra/database/after-commit.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
@@ -1603,7 +1604,11 @@ export class ConversationsService {
     return this.content.resolveAttachments(orgId, accountId, refs);
   }
 
-  /** Binds uploaded files inside the message's (or queue item's) transaction; none → no blocks. */
+  /**
+   * Binds uploaded files inside the message's (or queue item's) transaction; none → no blocks.
+   * The bound files join the conversation's files, so open pages read the list again after the
+   * commit (`changed: files`, a hint).
+   */
   @Transactional({ propagation: "mandatory" })
   async bindIn(
     orgId: string,
@@ -1612,7 +1617,9 @@ export class ConversationsService {
     files: readonly string[],
   ): Promise<LogContentBlock[]> {
     if (files.length === 0) return [];
-    return this.attachments.bindForMessage(orgId, conversationId, accountId, files);
+    const blocks = await this.attachments.bindForMessage(orgId, conversationId, accountId, files);
+    afterCommit(() => this.eventLog.publishChanged(conversationId, "files"));
+    return blocks;
   }
 
   private userMessage(

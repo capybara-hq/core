@@ -294,8 +294,18 @@ export function FilesSection({
   onOpen,
   onAll,
 }: {
-  /** `from`: the sub-agent that delivered the file ("来自 <sub-agent>"). */
-  files: { id: string; name: string; badge: string; size: string; from?: string }[];
+  /**
+   * `from`: the sub-agent that delivered the file ("来自 <sub-agent>"); `uploaded`: a person sent
+   * it with a message ("上传").
+   */
+  files: {
+    id: string;
+    name: string;
+    badge: string;
+    size: string;
+    from?: string;
+    uploaded?: boolean;
+  }[];
   total?: number;
   max?: number;
   onOpen(id: string): void;
@@ -321,6 +331,10 @@ export function FilesSection({
               <span className="cb-property-from" data-part="file-from">
                 {fillCopy(t("props.fileFrom"), { name: f.from })}
               </span>
+            ) : f.uploaded ? (
+              <span className="cb-property-from" data-part="file-uploaded">
+                {t("files.uploaded")}
+              </span>
             ) : null}
             <span className="cb-muted">{f.size}</span>
           </button>
@@ -339,7 +353,8 @@ export function FilesSection({
 export type RightPanelSwitcher = {
   groups: {
     label?: string;
-    items: { id: string; label: string; icon?: IconName; badge?: string }[];
+    /** `tag`: a word after the label (an uploaded file's "上传"). */
+    items: { id: string; label: string; icon?: IconName; badge?: string; tag?: string }[];
   }[];
   current: string;
   onSwitch(id: string): void;
@@ -408,6 +423,7 @@ export function RightPanel({
         id: it.id,
         label: it.label,
         ...(it.badge ? { icon: <TypeBadge label={it.badge} /> } : it.icon ? { icon: it.icon } : {}),
+        ...(it.tag ? { tag: it.tag } : {}),
         checked: it.id === switcher.current,
         checkMark: false,
         onSelect: () => switcher.onSwitch(it.id),

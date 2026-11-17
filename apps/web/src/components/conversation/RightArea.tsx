@@ -412,7 +412,11 @@ export function useRightAreaSlot(p: {
               ? [
                   {
                     label: t("files"),
-                    items: files.map((f) => ({ id: `file:${f.id}`, label: f.name })),
+                    items: files.map((f) => ({
+                      id: `file:${f.id}`,
+                      label: f.name,
+                      ...(f.origin === "uploaded" ? { tag: t("fileUploaded") } : {}),
+                    })),
                   },
                 ]
               : []),
@@ -570,7 +574,8 @@ export function useRightAreaSlot(p: {
     const m = new Map<string, string>();
     // the parent's own files win a path a sub-agent delivered too
     for (const f of [...files].sort((a, b) => Number(!a.from) - Number(!b.from))) {
-      if (f.status === "removed") continue;
+      // a path in prose names what the agent delivered, never what a person sent
+      if (f.status === "removed" || f.origin === "uploaded") continue;
       m.set(f.sourcePath, f.id);
       m.set(f.name, f.id);
     }

@@ -1,12 +1,12 @@
 import { ApiClientError, apiFetch } from "./api";
 
 /**
- * A conversation's file outputs (kernel `conversations/files.ts`, UI refresh B): what the agent
- * delivered, newest first by first delivery, grouped by source path into versions. Text content
- * comes back as plain text (never served as HTML), at most 1 MiB.
+ * A conversation's files (kernel `conversations/files.ts`, UI refresh B): what the agent delivered,
+ * grouped by source path into versions, and what people sent with messages (attachments), newest
+ * first. Text content comes back as plain text (never served as HTML), at most 1 MiB.
  */
 export interface FileOutput {
-  /** The latest version's artifact id. */
+  /** The latest version's artifact id; an uploaded file's attachment id. */
   id: string;
   name: string;
   contentType: string;
@@ -19,6 +19,12 @@ export interface FileOutput {
   /** `removed`: the stored object is gone (decision 8). */
   status: "available" | "removed";
   previewable: "image" | "text" | null;
+  /**
+   * `delivered`: the agent delivered it (downloads through the conversation's artifact route);
+   * `uploaded`: a person sent it with a message (an attachment: one version, downloads and shows
+   * inline through the attachment route).
+   */
+  origin: "delivered" | "uploaded";
   /**
    * Set by the page, never by the kernel: a sub-agent's delivery listed in its parent, read from
    * (and previewed through) the child conversation.

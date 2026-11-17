@@ -1524,6 +1524,7 @@
     "agentMapFailed": "智能体图加载失败。",
     "stopFailed": "停止失败：{reason}",
     "fullOutput": "完整输出",
+    "fileUploaded": "上传",
     "builtinPreviewer": "内置预览",
     "setup": {
       "title": "开始之前",

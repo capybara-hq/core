@@ -48,8 +48,11 @@ export type FilePreviewHeader = {
   name: string;
   /** "v<n> · <updated>". */
   version?: string;
-  /** The conversation's files: the name becomes a switcher. */
-  files?: { id: string; name: string }[];
+  /**
+   * The conversation's files: the name becomes a switcher. `uploaded`: a file a person sent with a
+   * message, marked "上传" / "Uploaded".
+   */
+  files?: { id: string; name: string; uploaded?: boolean }[];
   /** The id of the shown file in `files`. */
   current?: string;
   onSwitch?(id: string): void;
@@ -93,6 +96,7 @@ export function FilePreviewFrame({
       }
       items={(h.files ?? []).map((f) => ({
         label: f.name,
+        ...(f.uploaded ? { description: t("files.uploaded") } : {}),
         checked: f.id === h.current,
         onSelect: () => h.onSwitch?.(f.id),
       }))}

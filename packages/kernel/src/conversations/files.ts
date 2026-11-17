@@ -9,9 +9,11 @@ import { isInlineArtifactType, isTextArtifactType } from "./artifacts.js";
 import type { EventPayload } from "./events.js";
 
 /**
- * A conversation's file outputs (UI refresh B, spec §5.8 / §5.9): the files the agent delivered
- * (`artifact_created`), grouped by `sourcePath` into versions, newest first. Read from the log on
- * every request (no cache); `status` comes from the object store.
+ * A conversation's files (UI refresh B, spec §5.8 / §5.9): the files the agent delivered
+ * (`artifact_created`), grouped by `sourcePath` into versions, and the files users sent in it
+ * (ready `chat` attachments bound to the conversation), newest first. Read on every request (no
+ * cache); `status` comes from the object store. Both kinds are read under the conversation's
+ * access: whoever may read the conversation may read the attachments sent in it, nobody else.
  */
 
 /** Versions listed per file (newest first). */
@@ -37,6 +39,12 @@ export interface FileOutput {
   /** `removed`: the latest version's object is gone from storage (decision 8). */
   status: "available" | "removed";
   previewable: "image" | "text" | null;
+  /**
+   * `delivered`: the agent delivered it (`artifact_created`); `uploaded`: a user sent it with a
+   * message (an attachment: `id` is the attachment id, one version, `sourcePath` is its name and
+   * `callId` is empty).
+   */
+  origin: "delivered" | "uploaded";
 }
 
 /** Text content of one file version, at most the requested bytes. */
@@ -57,6 +65,30 @@ const artifactNotFound = () =>
   new ApiError("conversation.artifact_not_found", "Artifact not found");
 
 type Delivery = EventPayload<"artifact_created"> & { createdAt: Date };
+
+/** A ready chat attachment bound to the conversation. */
+interface Upload {
+  id: string;
+  name: string;
+  contentType: string;
+  size: number;
+  objectKey: string;
+  /** The etag recorded at finalize (null: not recorded); a different object is not the upload. */
+  etag: string | null;
+  createdAt: Date;
+}
+
+/** One entry of the merged list: a delivered file (its versions) or an uploaded one. */
+type Entry =
+  | { origin: "delivered"; at: Date; id: string; group: Delivery[] }
+  | { origin: "uploaded"; at: Date; id: string; upload: Upload };
+
+/** Whether `a` lists before `b`: newer first, then the larger id (a total, stable order). */
+const before = (a: Entry, b: Entry): boolean =>
+  a.at.getTime() !== b.at.getTime() ? a.at.getTime() > b.at.getTime() : a.id > b.id;
+
+const previewKind = (contentType: string): FileOutput["previewable"] =>
+  isInlineArtifactType(contentType) ? "image" : isTextArtifactType(contentType) ? "text" : null;
 
 /** Drops an incomplete UTF-8 sequence at the end of a cut buffer. */
 function trimUtf8(b: Buffer): Buffer {
@@ -139,10 +171,84 @@ export class ConversationFiles {
   }
 
   /**
-   * Files newest first by their **first** delivery, so a new version keeps the file's place and a
-   * cursor stays stable while files are re-delivered (review M2). `after` is a file id from the
-   * previous page (any version's id finds its file); a cursor that names no file gives an empty
-   * page. Storage HEADs run at most {@link HEAD_CONCURRENCY} at a time.
+   * The conversation's ready `chat` attachments in this org (never a skill package, an avatar, a
+   * pending or unbound upload), newest first; with `id`, only that one.
+   */
+  private async uploads(orgId: string, conversationId: string, id?: string): Promise<Upload[]> {
+    let q = this.db
+      .selectFrom("attachments")
+      .select(["id", "name", "content_type", "size", "object_key", "etag", "created_at"])
+      .where("org_id", "=", orgId)
+      .where("conversation_id", "=", conversationId)
+      .where("purpose", "=", "chat")
+      .where("status", "=", "ready");
+    if (id !== undefined) q = q.where("id", "=", id);
+    const rows = await q.orderBy("created_at", "desc").orderBy("id", "desc").execute();
+    return rows.map((r) => ({
+      id: r.id,
+      name: r.name,
+      contentType: r.content_type,
+      size: Number(r.size),
+      objectKey: r.object_key,
+      etag: r.etag,
+      createdAt: r.created_at,
+    }));
+  }
+
+  /**
+   * One file of the conversation by id: a delivered version first, then an attachment sent in it;
+   * neither → `conversation.artifact_not_found`. Call after {@link checkAccess}.
+   */
+  private async resolve(
+    orgId: string,
+    conversationId: string,
+    fileId: string,
+  ): Promise<{
+    id: string;
+    name: string;
+    contentType: string;
+    size: number;
+    objectKey: string;
+    etag: string | null;
+  }> {
+    if (!UUID_RE.test(fileId)) throw artifactNotFound();
+    const row = await this.db
+      .selectFrom("conversation_events")
+      .select("payload")
+      .where("conversation_id", "=", conversationId)
+      .where("type", "=", "artifact_created")
+      .where(sql<string>`payload->>'artifactId'`, "=", fileId)
+      .limit(1)
+      .executeTakeFirst();
+    if (row) {
+      const a = row.payload as EventPayload<"artifact_created">;
+      return {
+        id: a.artifactId,
+        name: a.name,
+        contentType: a.contentType,
+        size: a.size,
+        objectKey: a.objectKey,
+        etag: null,
+      };
+    }
+    const [u] = await this.uploads(orgId, conversationId, fileId);
+    if (!u) throw artifactNotFound();
+    return {
+      id: u.id,
+      name: u.name,
+      contentType: u.contentType,
+      size: u.size,
+      objectKey: u.objectKey,
+      etag: u.etag,
+    };
+  }
+
+  /**
+   * Files newest first: a delivered file by its **first** delivery, so a new version keeps the
+   * file's place and a cursor stays stable while files are re-delivered (review M2); an uploaded
+   * file by its upload time; equal times by id. `after` is a file id from the previous page (any
+   * version's id finds its file); a cursor that names no file gives an empty page. Storage HEADs run
+   * at most {@link HEAD_CONCURRENCY} at a time.
    */
   async list(
     orgId: string,
@@ -158,17 +264,63 @@ export class ConversationFiles {
       g.push(d);
       groups.set(d.sourcePath, g);
     }
-    const ordered = [...groups.values()].reverse();
+    const delivered: Entry[] = [...groups.values()].reverse().map((g) => {
+      const first = g[0] as Delivery;
+      return { origin: "delivered", at: first.createdAt, id: first.artifactId, group: g };
+    });
+    const uploaded: Entry[] = (await this.uploads(orgId, conversationId)).map((u) => ({
+      origin: "uploaded",
+      at: u.createdAt,
+      id: u.id,
+      upload: u,
+    }));
+    // merge the two newest-first lists (each keeps its own order)
+    const ordered: Entry[] = [];
+    let i = 0;
+    let j = 0;
+    while (i < delivered.length || j < uploaded.length) {
+      const d = delivered[i];
+      const u = uploaded[j];
+      if (d && (!u || before(d, u))) {
+        ordered.push(d);
+        i++;
+      } else {
+        ordered.push(u as Entry);
+        j++;
+      }
+    }
     let start = 0;
     if (opts.after !== undefined) {
       const after = opts.after;
-      const at = ordered.findIndex((g) => g.some((d) => d.artifactId === after));
+      const at = ordered.findIndex((e) =>
+        e.origin === "delivered" ? e.group.some((d) => d.artifactId === after) : e.id === after,
+      );
       if (at < 0) return { files: [], next: null };
       start = at + 1;
     }
     const page = ordered.slice(start, start + opts.limit);
     const store = this.storage.kernel(orgId);
-    const files = await mapLimit(page, HEAD_CONCURRENCY, async (g): Promise<FileOutput> => {
+    const files = await mapLimit(page, HEAD_CONCURRENCY, async (e): Promise<FileOutput> => {
+      if (e.origin === "uploaded") {
+        const u = e.upload;
+        const head = await store.head(u.objectKey);
+        const same = head !== null && (u.etag === null || u.etag === (head.etag ?? null));
+        return {
+          id: u.id,
+          name: u.name,
+          contentType: u.contentType,
+          size: u.size,
+          sourcePath: u.name,
+          version: 1,
+          versions: [{ id: u.id, size: u.size, createdAt: u.createdAt }],
+          callId: "",
+          createdAt: u.createdAt,
+          status: same ? "available" : "removed",
+          previewable: previewKind(u.contentType),
+          origin: "uploaded",
+        };
+      }
+      const g = e.group;
       const latest = g.at(-1) as Delivery;
       const head = await store.head(latest.objectKey);
       return {
@@ -185,11 +337,8 @@ export class ConversationFiles {
         callId: latest.callId,
         createdAt: latest.createdAt,
         status: head ? "available" : "removed",
-        previewable: isInlineArtifactType(latest.contentType)
-          ? "image"
-          : isTextArtifactType(latest.contentType)
-            ? "text"
-            : null,
+        previewable: previewKind(latest.contentType),
+        origin: "delivered",
       };
     });
     const next = start + opts.limit < ordered.length ? (files.at(-1)?.id ?? null) : null;
@@ -197,9 +346,9 @@ export class ConversationFiles {
   }
 
   /**
-   * One file version of the conversation (any version's id) with its object key, after checking
-   * the viewer can read the conversation. For the kernel only (previewers, embed grants): the key
-   * never leaves the kernel.
+   * One file version of the conversation (any version's id, or an attachment sent in it) with its
+   * object key, after checking the viewer can read the conversation. For the kernel only
+   * (previewers, embed grants): the key never leaves the kernel.
    */
   async file(
     orgId: string,
@@ -208,28 +357,13 @@ export class ConversationFiles {
     fileId: string,
   ): Promise<{ id: string; name: string; contentType: string; size: number; objectKey: string }> {
     await this.checkAccess(orgId, conversationId, viewer);
-    if (!UUID_RE.test(fileId)) throw artifactNotFound();
-    const row = await this.db
-      .selectFrom("conversation_events")
-      .select("payload")
-      .where("conversation_id", "=", conversationId)
-      .where("type", "=", "artifact_created")
-      .where(sql<string>`payload->>'artifactId'`, "=", fileId)
-      .limit(1)
-      .executeTakeFirst();
-    if (!row) throw artifactNotFound();
-    const a = row.payload as EventPayload<"artifact_created">;
-    return {
-      id: a.artifactId,
-      name: a.name,
-      contentType: a.contentType,
-      size: a.size,
-      objectKey: a.objectKey,
-    };
+    const { etag: _etag, ...f } = await this.resolve(orgId, conversationId, fileId);
+    return f;
   }
 
   /**
-   * The first `limit` bytes of a text file version (any version's id). Not text, or NUL bytes in
+   * The first `limit` bytes of a text file version (any version's id, or an attachment sent in the
+   * conversation). Not text, or NUL bytes in
    * what was read → `conversation.artifact_not_previewable`; the object is gone →
    * `conversation.artifact_removed`. A cut never splits a UTF-8 character.
    */
@@ -241,17 +375,7 @@ export class ConversationFiles {
     limit: number,
   ): Promise<FileContent> {
     await this.checkAccess(orgId, conversationId, viewer);
-    if (!UUID_RE.test(fileId)) throw artifactNotFound();
-    const row = await this.db
-      .selectFrom("conversation_events")
-      .select("payload")
-      .where("conversation_id", "=", conversationId)
-      .where("type", "=", "artifact_created")
-      .where(sql<string>`payload->>'artifactId'`, "=", fileId)
-      .limit(1)
-      .executeTakeFirst();
-    if (!row) throw artifactNotFound();
-    const a = row.payload as EventPayload<"artifact_created">;
+    const a = await this.resolve(orgId, conversationId, fileId);
     if (!isTextArtifactType(a.contentType)) {
       throw new ApiError("conversation.artifact_not_previewable", "Only text files have content");
     }
@@ -259,8 +383,11 @@ export class ConversationFiles {
     const got = await this.storage
       .kernel(orgId)
       .get(a.objectKey, { range: { start: 0, end: max - 1 } });
-    if (!got)
+    // an attachment whose object changed after finalize is not the upload any more
+    if (!got || (a.etag !== null && a.etag !== (got.head.etag ?? null))) {
+      await got?.body.cancel().catch(() => {});
       throw new ApiError("conversation.artifact_removed", "The file is no longer available");
+    }
     let body = await readPrefix(got.body, max);
     if (body.includes(0)) {
       throw new ApiError(

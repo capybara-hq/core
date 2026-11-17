@@ -666,6 +666,7 @@ function EntryNode({ e, c }: { e: TimelineEntry; c: EntryContext }): ReactNode {
               id: `@${a.appId}:${a.uri}`,
               kind: "file",
               name: `@${a.name} · ${a.appName}`,
+              downloadable: false,
             }),
           ),
         ];
@@ -709,10 +710,16 @@ function EntryNode({ e, c }: { e: TimelineEntry; c: EntryContext }): ReactNode {
                         onImageError={onImageError}
                         onOpen={(id) => {
                           const file = e.files.find((f) => f.attachmentId === id);
-                          // An image zooms in the page; every other attachment downloads as before.
+                          // An image zooms in the page; another upload opens in the right panel
+                          // (downloads where there is none); a resource mention does nothing.
                           if (file?.kind === "image") setZoomId(id);
-                          else if (!id.startsWith("@"))
-                            openDownload(attachmentDownloadUrl(orgId, id));
+                          else if (!id.startsWith("@")) {
+                            if (onOpenFile) onOpenFile(id);
+                            else openDownload(attachmentDownloadUrl(orgId, id));
+                          }
+                        }}
+                        onDownload={(id) => {
+                          if (!id.startsWith("@")) openDownload(attachmentDownloadUrl(orgId, id));
                         }}
                       />
                     ),

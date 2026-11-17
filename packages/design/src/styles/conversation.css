@@ -442,6 +442,16 @@ button.cb-tool-line:focus-visible {
   line-height: var(--cb-type-small-line);
   cursor: pointer;
 }
+/* A file chip with its download icon button after it */
+.cb-bubble-file-row {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--cb-space-1);
+  max-width: 100%;
+}
+.cb-bubble-file-row .cb-bubble-file {
+  min-width: 0;
+}
 .cb-bubble-thumb:focus-visible,
 .cb-bubble-file:focus-visible {
   outline: 1px solid var(--cb-accent);

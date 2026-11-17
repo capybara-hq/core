@@ -14,7 +14,11 @@ import {
 } from "@capybara-hq/testing";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { EventLog } from "../../src/conversations/event-log.js";
-import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
+import {
+  type AttachmentPurpose,
+  type KernelSchemaDb,
+  kernelDb,
+} from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { StorageService } from "../../src/storage/storage.service.js";
 import { truncateTables } from "../helpers/db.js";
@@ -25,6 +29,7 @@ import { testMembers } from "../helpers/members.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
   createConv,
+  createOrg,
   createOrgWithProviders,
   PW,
   postMessage,
@@ -88,12 +93,12 @@ let owner: Req;
 let ownerCookie: () => string;
 let other: Req;
 let orgId: string;
+let ownerId: string;
 
 beforeEach(async () => {
   await truncateTables(raw, "capybara.sandboxes, capybara.accounts, capybara.orgs");
   const accounts = accountsFor(db);
-  const ownerId = (await accounts.createLocal({ login: "owner", password: PW, displayName: "O" }))
-    .id;
+  ownerId = (await accounts.createLocal({ login: "owner", password: PW, displayName: "O" })).id;
   const otherId = (await accounts.createLocal({ login: "other", password: PW, displayName: "X" }))
     .id;
   const jar = cookieJar();
@@ -180,6 +185,7 @@ interface FileOutput {
   createdAt: string;
   status: "available" | "removed";
   previewable: "image" | "text" | null;
+  origin: "delivered" | "uploaded";
 }
 const filesUrl = (conv: string) => `/api/v1/orgs/${orgId}/conversations/${conv}/files`;
 const listFiles = async (conv: string, query = "") => {
@@ -355,6 +361,206 @@ describe("file outputs", () => {
       const r = await other({ method: "GET", url });
       expect(r.statusCode, url).toBe(404);
       expect((r.json() as { error: { code: string } }).error.code).toBe("conversation.not_found");
+    }
+  });
+});
+
+/** Uploads a chat attachment through the presigned flow and finalizes it; returns its id. */
+async function upload(name: string, contentType: string, bytes: Buffer): Promise<string> {
+  const created = await owner({
+    method: "POST",
+    url: `/api/v1/orgs/${orgId}/attachments`,
+    payload: { name, contentType, size: bytes.byteLength },
+  });
+  expect(created.statusCode, created.body).toBe(201);
+  const c = created.json() as {
+    id: string;
+    upload: {
+      method: "PUT" | "POST";
+      url: string;
+      headers: Record<string, string>;
+      fields?: Record<string, string>;
+    };
+  };
+  let up: Response;
+  if (c.upload.method === "PUT") {
+    up = await fetch(c.upload.url, { method: "PUT", headers: c.upload.headers, body: bytes });
+  } else {
+    const form = new FormData();
+    for (const [key, v] of Object.entries(c.upload.fields ?? {})) form.append(key, v);
+    form.append("file", new Blob([new Uint8Array(bytes)], { type: contentType }));
+    up = await fetch(c.upload.url, { method: "POST", headers: c.upload.headers, body: form });
+  }
+  expect(up.status, await up.clone().text()).toBeLessThan(300);
+  const fin = await owner({
+    method: "POST",
+    url: `/api/v1/orgs/${orgId}/attachments/${c.id}/finalize`,
+  });
+  expect(fin.statusCode, fin.body).toBe(200);
+  return c.id;
+}
+
+/** Stores an object and writes an attachment row directly (for rows the routes never produce). */
+async function attachRow(
+  conv: string | null,
+  name: string,
+  bytes: Buffer,
+  contentType: string,
+  o: { org?: string; purpose?: AttachmentPurpose; status?: "pending" | "ready" } = {},
+): Promise<string> {
+  const id = randomUUID();
+  const org = o.org ?? orgId;
+  const objectKey = `attachments/${id}`;
+  await k.app
+    .get(StorageService)
+    .kernel(org)
+    .put(objectKey, bytes, {
+      contentType,
+      size: bytes.byteLength,
+      signal: AbortSignal.timeout(10_000),
+    });
+  await db
+    .insertInto("attachments")
+    .values({
+      id,
+      org_id: org,
+      conversation_id: conv,
+      account_id: ownerId,
+      name,
+      content_type: contentType,
+      size: bytes.byteLength,
+      object_key: objectKey,
+      status: o.status ?? "ready",
+      purpose: o.purpose ?? "chat",
+    })
+    .execute();
+  return id;
+}
+
+const errCode = (r: { json(): unknown }) => (r.json() as { error?: { code?: string } }).error?.code;
+
+describe("uploaded attachments (file preview: attachments join the conversation's files)", () => {
+  it("a sent attachment is listed with the delivered files, newest first, and its text is served", async () => {
+    const conv = await sandboxConversation();
+    const delivered = await deliver(conv, "report.md", Buffer.from("# r"), "text/markdown");
+    const att = await upload("notes.txt", "text/plain", Buffer.from("hello attachment"));
+    const sse = await openSse(
+      `http://127.0.0.1:${k.port}/api/v1/orgs/${orgId}/conversations/${conv}/stream`,
+      { cookie: ownerCookie() },
+    );
+    try {
+      const sent = await owner({
+        method: "POST",
+        url: `/api/v1/orgs/${orgId}/conversations/${conv}/messages`,
+        payload: { text: "hi", files: [att] },
+      });
+      expect(sent.statusCode, sent.body).toBe(202);
+      // the page reads the files again: the sent attachment is one of them now
+      await sse.until(
+        (m) => m.some((x) => x.event === "changed" && x.data === '{"what":"files"}'),
+        10_000,
+        "changed: files",
+      );
+    } finally {
+      sse.close();
+    }
+    await waitForTerminal(db, conv, 1, 30_000);
+
+    const { files, next } = await listFiles(conv);
+    expect(next).toBeNull();
+    expect(files.map((f) => [f.id, f.origin])).toEqual([
+      [att, "uploaded"],
+      [delivered.artifactId, "delivered"],
+    ]);
+    const up = files[0] as FileOutput;
+    expect(up).toMatchObject({
+      name: "notes.txt",
+      contentType: "text/plain",
+      size: 16,
+      sourcePath: "notes.txt",
+      version: 1,
+      callId: "",
+      status: "available",
+      previewable: "text",
+    });
+    expect(up.versions).toEqual([{ id: att, size: 16, createdAt: up.createdAt }]);
+
+    const content = await owner({ method: "GET", url: `${filesUrl(conv)}/${att}/content` });
+    expect(content.statusCode, content.body).toBe(200);
+    expect(content.headers["content-type"]).toBe("text/plain; charset=utf-8");
+    expect(content.headers["x-content-original-type"]).toBe("text/plain");
+    expect(content.body).toBe("hello attachment");
+
+    // the extension previewers of an attachment are listed (none are loaded here)
+    const pv = await owner({ method: "GET", url: `${filesUrl(conv)}/${att}/previewers` });
+    expect(pv.statusCode, pv.body).toBe(200);
+    expect(pv.json()).toEqual({ previewers: [] });
+  });
+
+  it("paging with limit=1 walks both kinds once each, newest first", async () => {
+    const conv = await sandboxConversation();
+    const a = (await deliver(conv, "a.txt", Buffer.from("a"), "text/plain")).artifactId;
+    const b = await attachRow(conv, "b.png", Buffer.from([0x89, 0x50]), "image/png");
+    const c = (await deliver(conv, "c.bin", Buffer.from([1]), "application/octet-stream"))
+      .artifactId;
+    const d = await attachRow(conv, "d.bin", Buffer.from([2]), "application/octet-stream");
+    const seen: [string, string, string | null][] = [];
+    let after: string | null = null;
+    for (let i = 0; i < 10; i++) {
+      const page = await listFiles(conv, `?limit=1${after ? `&after=${after}` : ""}`);
+      for (const f of page.files) seen.push([f.id, f.origin, f.previewable]);
+      after = page.next;
+      if (!after) break;
+    }
+    expect(seen).toEqual([
+      [d, "uploaded", null],
+      [c, "delivered", null],
+      [b, "uploaded", "image"],
+      [a, "delivered", "text"],
+    ]);
+    // an attachment whose object is gone is marked removed and its content is 410
+    const gone = await attachRow(conv, "e.txt", Buffer.from("e"), "text/plain");
+    await k.app.get(StorageService).kernel(orgId).delete(`attachments/${gone}`);
+    expect((await listFiles(conv)).files.find((f) => f.id === gone)?.status).toBe("removed");
+    const r = await owner({ method: "GET", url: `${filesUrl(conv)}/${gone}/content` });
+    expect(r.statusCode).toBe(410);
+  });
+
+  it("only this conversation's ready chat uploads in this org: everything else is not found", async () => {
+    const conv = await sandboxConversation();
+    const elsewhere = await sandboxConversation();
+    const otherOrg = await createOrg(owner, "Other");
+    const txt = Buffer.from("secret text");
+    const ids = {
+      otherOrg: await attachRow(conv, "o.txt", txt, "text/plain", { org: otherOrg }),
+      otherConversation: await attachRow(elsewhere, "c.txt", txt, "text/plain"),
+      unbound: await attachRow(null, "u.txt", txt, "text/plain"),
+      skillPackage: await attachRow(conv, "s.txt", txt, "text/plain", {
+        purpose: "skill-package",
+      }),
+      pending: await attachRow(conv, "p.txt", txt, "text/plain", { status: "pending" }),
+    };
+    expect((await listFiles(conv)).files).toEqual([]);
+    for (const [what, id] of Object.entries(ids)) {
+      for (const url of [`${filesUrl(conv)}/${id}/content`, `${filesUrl(conv)}/${id}/previewers`]) {
+        const r = await owner({ method: "GET", url });
+        expect(r.statusCode, `${what} ${url}`).toBe(404);
+        expect(errCode(r), what).toBe("conversation.artifact_not_found");
+      }
+    }
+  });
+
+  it("a member who cannot read the conversation gets its usual refusal for an attachment", async () => {
+    const conv = await sandboxConversation();
+    const att = await attachRow(conv, "n.txt", Buffer.from("secret"), "text/plain");
+    for (const url of [
+      filesUrl(conv),
+      `${filesUrl(conv)}/${att}/content`,
+      `${filesUrl(conv)}/${att}/previewers`,
+    ]) {
+      const r = await other({ method: "GET", url });
+      expect(r.statusCode, url).toBe(404);
+      expect(errCode(r), url).toBe("conversation.not_found");
     }
   });
 });
