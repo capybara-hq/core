@@ -183,7 +183,7 @@ describe("super admin routes", () => {
 
   it("refuses an add through a personal access token; list and remove stay open", async () => {
     const a = await add(orgId, "pat.example");
-    const { token } = await apiTokensFor(db).createPersonal(rootId, { name: "cli" });
+    const { token, record } = await apiTokensFor(db).createPersonal(rootId, { name: "cli" });
     const headers = { authorization: `Bearer ${token}` };
     const post = await k.http.inject({
       method: "POST",
@@ -204,6 +204,14 @@ describe("super admin routes", () => {
       headers,
     });
     expect(del.statusCode).toBe(204);
+    // the token is recorded on the removal
+    const removed = await db
+      .selectFrom("audit_events")
+      .select(["actor_account_id", "actor_token_id"])
+      .where("action", "=", "org.network_allowance_removed")
+      .where("target", "=", a.id)
+      .executeTakeFirstOrThrow();
+    expect(removed).toEqual({ actor_account_id: rootId, actor_token_id: record.id });
   });
 
   it("is closed to anyone but a super admin", async () => {
@@ -314,7 +322,15 @@ describe("Platform operations", () => {
     const rows = await auditRows(otherOrgId);
     expect(rows.at(-1)).toMatchObject({
       action: "org.network_allowance_removed",
+      actor_account_id: rootId,
       target: added.id,
+      detail: {
+        entry: "https://git.beta.example:8443",
+        via: "agent",
+        operation: "admin.org-network-allowance-remove",
+        agentConversationId: expect.any(String),
+        agentRunId: expect.any(String),
+      },
     });
   });
 

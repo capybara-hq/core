@@ -144,7 +144,8 @@ async function refused(p: Promise<unknown>): Promise<SdkNetDeniedError> {
   return e as SdkNetDeniedError;
 }
 
-const allow = (orgId: string, entry: string) => allowances.add(orgId, entry, actorId);
+const allow = (orgId: string, entry: string) =>
+  allowances.add(orgId, entry, { accountId: actorId });
 
 beforeAll(async () => {
   tlsServer = createHttpsServer({ cert, key }, serve);
@@ -366,7 +367,7 @@ describe("ctx.net.fetch: org allowances", () => {
     const net = makeNet();
     const url = `https://api.corp.example:${tlsPort}/v1`;
     expect((await net.fetch(url, {}, { orgId: orgA })).status).toBe(200);
-    expect(await allowances.remove(orgA, entry.id, actorId)).toBe(true);
+    expect(await allowances.remove(orgA, entry.id, { accountId: actorId })).toBe(true);
     expect((await refused(net.fetch(url, {}, { orgId: orgA }))).code).toBe("net.private_address");
   });
 

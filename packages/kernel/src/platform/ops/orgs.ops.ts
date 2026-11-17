@@ -292,7 +292,13 @@ export class OrgsOperations implements OnModuleInit {
         },
         run: async (input, ctx) => ({
           allowance: networkAllowanceView(
-            await this.networkAdmin.add(input.orgId, input.entry, ctx.actorAccountId, true),
+            await this.networkAdmin.add(
+              input.orgId,
+              input.entry,
+              { accountId: ctx.actorAccountId },
+              true,
+              viaAgent("admin.org-network-allowance-add", ctx),
+            ),
           ),
         }),
       }),
@@ -332,7 +338,12 @@ export class OrgsOperations implements OnModuleInit {
           };
         },
         run: async (input, ctx) => {
-          await this.networkAdmin.remove(input.orgId, input.id, ctx.actorAccountId);
+          await this.networkAdmin.remove(
+            input.orgId,
+            input.id,
+            { accountId: ctx.actorAccountId },
+            viaAgent("admin.org-network-allowance-remove", ctx),
+          );
           return { id: input.id, removed: true };
         },
       }),

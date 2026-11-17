@@ -4,6 +4,7 @@ import { Inject, Injectable, Module } from "@nestjs/common";
 import { publicSuffixWildcard } from "../devices/public-suffix.js";
 import { ApiError } from "../errors.js";
 import { audit } from "../identity/audit.js";
+import type { WriteActor } from "../identity/write-actor.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
@@ -262,10 +263,16 @@ export class OrgNetworkAllowances {
   /**
    * Adds an entry (super admin only; the route enforces it). Refuses an invalid entry with
    * `org.network_allowance_invalid` and the reason; an entry already listed is returned as is,
-   * without a second audit event.
+   * without a second audit event. `actor.tokenId` (a personal access token) and `auditDetail` (e.g.
+   * `viaAgent`) go into the audit event; the caller's detail cannot override `entry`.
    */
   @Transactional()
-  async add(orgId: string, entry: string, actorId: string): Promise<OrgNetworkAllowance> {
+  async add(
+    orgId: string,
+    entry: string,
+    actor: WriteActor,
+    auditDetail: Record<string, unknown> = {},
+  ): Promise<OrgNetworkAllowance> {
     const problem = allowanceEntryProblem(entry);
     if (problem !== null) {
       const shown = echoed(entry);
@@ -306,22 +313,24 @@ export class OrgNetworkAllowances {
 
     const row = await this.db
       .insertInto("org_network_allowances")
-      .values({ id: randomUUID(), org_id: orgId, entry: normalized, created_by: actorId })
+      .values({ id: randomUUID(), org_id: orgId, entry: normalized, created_by: actor.accountId })
       .returning(["id", "entry", "created_at", "created_by"])
       .executeTakeFirstOrThrow();
-    await audit(this.db.db, {
-      actorAccountId: actorId,
-      orgId,
-      action: "org.network_allowance_added",
-      target: row.id,
-      detail: { entry: normalized },
-    });
+    await this.audit("org.network_allowance_added", orgId, row.id, normalized, actor, auditDetail);
     return toAllowance(row);
   }
 
-  /** Removes the org's entry `id`; false (and no audit event) when the org has no such entry. */
+  /**
+   * Removes the org's entry `id`; false (and no audit event) when the org has no such entry. The
+   * actor and `auditDetail` are recorded as {@link add}'s.
+   */
   @Transactional()
-  async remove(orgId: string, id: string, actorId: string): Promise<boolean> {
+  async remove(
+    orgId: string,
+    id: string,
+    actor: WriteActor,
+    auditDetail: Record<string, unknown> = {},
+  ): Promise<boolean> {
     if (!UUID.test(id)) return false;
     const row = await this.db
       .deleteFrom("org_network_allowances")
@@ -330,14 +339,27 @@ export class OrgNetworkAllowances {
       .returning(["entry"])
       .executeTakeFirst();
     if (!row) return false;
-    await audit(this.db.db, {
-      actorAccountId: actorId,
-      orgId,
-      action: "org.network_allowance_removed",
-      target: id,
-      detail: { entry: row.entry },
-    });
+    await this.audit("org.network_allowance_removed", orgId, id, row.entry, actor, auditDetail);
     return true;
+  }
+
+  /** An allowance audit event in the org; the caller's detail first, so `entry` wins. */
+  private audit(
+    action: "org.network_allowance_added" | "org.network_allowance_removed",
+    orgId: string,
+    target: string,
+    entry: string,
+    actor: WriteActor,
+    detail: Record<string, unknown>,
+  ): Promise<void> {
+    return audit(this.db.db, {
+      actorAccountId: actor.accountId,
+      ...(actor.tokenId !== undefined && { actorTokenId: actor.tokenId }),
+      orgId,
+      action,
+      target,
+      detail: { ...detail, entry },
+    });
   }
 
   /**

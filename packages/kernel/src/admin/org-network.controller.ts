@@ -1,12 +1,7 @@
 import { Controller, Delete, Get, HttpCode, Inject, Post } from "@nestjs/common";
 import type { z } from "zod";
-import {
-  CurrentPrincipal,
-  type Principal,
-  patTokenId,
-  requireUser,
-  SuperAdmin,
-} from "../identity/principal.js";
+import { CurrentPrincipal, type Principal, SuperAdmin } from "../identity/principal.js";
+import { writeActorOf } from "../identity/write-actor.js";
 import { createZodDto } from "../infra/validation/create-zod-dto.js";
 import { ZBody, ZParam } from "../infra/validation/zod-params.js";
 import { type NetworkAllowanceView, networkAllowanceView } from "../orgs/orgs.schemas.js";
@@ -52,13 +47,8 @@ export class AdminOrgNetworkController {
     @ZParam(AdminOrgNetworkParamsDto) { orgId }: z.infer<typeof AdminOrgParams>,
     @ZBody(NetworkAllowanceBodyDto) body: z.infer<typeof NetworkAllowanceBody>,
   ): Promise<{ allowance: NetworkAllowanceView }> {
-    const actor = requireUser(principal);
-    const allowance = await this.admin.add(
-      orgId,
-      body.entry,
-      actor.account.id,
-      patTokenId(actor) !== undefined,
-    );
+    const actor = writeActorOf(principal);
+    const allowance = await this.admin.add(orgId, body.entry, actor, actor.tokenId !== undefined);
     return { allowance: networkAllowanceView(allowance) };
   }
 
@@ -70,7 +60,6 @@ export class AdminOrgNetworkController {
     @ZParam(NetworkAllowanceItemParamsDto)
     { orgId, id }: z.infer<typeof AdminOrgParams> & z.infer<typeof NetworkAllowanceParams>,
   ): Promise<void> {
-    const actor = requireUser(principal);
-    await this.admin.remove(orgId, id, actor.account.id);
+    await this.admin.remove(orgId, id, writeActorOf(principal));
   }
 }

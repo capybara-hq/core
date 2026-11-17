@@ -1,6 +1,7 @@
 import { Inject, Injectable } from "@nestjs/common";
 import { ApiError } from "../errors.js";
 import { SuperAdminLock } from "../identity/super-admin.js";
+import type { WriteActor } from "../identity/write-actor.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import {
@@ -49,29 +50,37 @@ export class OrgNetworkAdmin {
 
   /**
    * Adds an entry (audited `org.network_allowance_added`); an entry already listed is returned.
-   * `onlyNarrows` (an API token, the Platform tool) refuses it: only a person widens.
+   * `onlyNarrows` (an API token, the Platform tool) refuses it: only a person widens. The actor's
+   * token id and `auditDetail` go into the audit event.
    */
   @Transactional()
   async add(
     orgId: string,
     entry: string,
-    actorAccountId: string,
+    actor: WriteActor,
     onlyNarrows: boolean,
+    auditDetail: Record<string, unknown> = {},
   ): Promise<OrgNetworkAllowance> {
     assertWidenAllowed(onlyNarrows);
-    await this.adminLock.lockAndAuthorize(actorAccountId);
-    return this.allowances.add(orgId, entry, actorAccountId);
+    await this.adminLock.lockAndAuthorize(actor.accountId);
+    return this.allowances.add(orgId, entry, actor, auditDetail);
   }
 
   /**
    * Removes the org's entry `id` (audited `org.network_allowance_removed`); a missing or deleted
-   * org is `org.not_found`, an id the org does not list `org.network_allowance_not_found`.
+   * org is `org.not_found`, an id the org does not list `org.network_allowance_not_found`. The
+   * actor's token id and `auditDetail` go into the audit event.
    */
   @Transactional()
-  async remove(orgId: string, id: string, actorAccountId: string): Promise<void> {
-    await this.adminLock.lockAndAuthorize(actorAccountId);
+  async remove(
+    orgId: string,
+    id: string,
+    actor: WriteActor,
+    auditDetail: Record<string, unknown> = {},
+  ): Promise<void> {
+    await this.adminLock.lockAndAuthorize(actor.accountId);
     await this.assertOrg(orgId);
-    if (!(await this.allowances.remove(orgId, id, actorAccountId))) {
+    if (!(await this.allowances.remove(orgId, id, actor, auditDetail))) {
       throw new ApiError(
         "org.network_allowance_not_found",
         "The organization has no such internal endpoint allowance",
