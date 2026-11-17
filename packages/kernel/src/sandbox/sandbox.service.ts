@@ -626,7 +626,8 @@ export class SandboxService {
     /** Background tasks lost while their process may live on (killed after a resume). */
     @Inject(BackgroundTaskStore)
     private readonly background: Pick<BackgroundTaskStore, "pendingKills" | "clearKill">,
-    @Inject(PermissionFacts) private readonly facts: Pick<PermissionFacts, "devicePolicy">,
+    @Inject(PermissionFacts)
+    private readonly facts: Pick<PermissionFacts, "devicePolicy" | "assertCloudReconciled">,
     @Inject(SandboxOperationIntents) private readonly operationIntents: SandboxOperationIntents,
     @Inject(SandboxOperationAuthority) private readonly authority: SandboxOperationAuthority,
     @Inject(PermissionInstanceWrites) private readonly instanceWrites: PermissionInstanceWrites,
@@ -911,6 +912,20 @@ export class SandboxService {
     fn: (p: TaggedProvider, h: SandboxHandle, signal: AbortSignal) => Promise<T>,
     signal: AbortSignal = new AbortController().signal,
   ): Promise<IfRunningResult<T>> {
+    return this.ifRunningAs(deviceId, instance, fn, signal, false);
+  }
+
+  /**
+   * {@link ifRunning}; `use` (staged owner browse) also refuses a device carrying the B1
+   * reconcile marker under the shared lease, before any provider call (B-11).
+   */
+  private async ifRunningAs<T>(
+    deviceId: string,
+    instance: { createdAt: Date; exactRef?: boolean },
+    fn: (p: TaggedProvider, h: SandboxHandle, signal: AbortSignal) => Promise<T>,
+    signal: AbortSignal,
+    use: boolean,
+  ): Promise<IfRunningResult<T>> {
     const p = await this.require(deviceId);
     const env = deviceId;
     const deadline = Date.now() + this.config.get().sandbox.lockWaitSeconds * 1000;
@@ -944,6 +959,7 @@ export class SandboxService {
             this.usable(r, p, null) && isInstance(r, want),
           signal,
           !instance.exactRef,
+          use ? "reconciled" : "none",
         );
         if (e) {
           try {
@@ -1085,7 +1101,7 @@ export class SandboxService {
         "Start the device before using staged owner browsing",
       );
     const entry = await this.require(ctx.deviceId, ctx.orgId);
-    const result = await this.ifRunning(
+    const result = await this.ifRunningAs(
       ctx.deviceId,
       { createdAt: row.created_at },
       async (provider, h, sig) => {
@@ -1142,6 +1158,7 @@ export class SandboxService {
         );
       },
       signal,
+      true,
     );
     if (result.kind !== "ran")
       throw new SandboxPermissionUnsupportedError("The device instance is not running");
@@ -1673,8 +1690,13 @@ export class SandboxService {
         const ready = (r: Row | undefined): r is Row & { handle: SandboxHandle } =>
           this.usable(r, p, gone) && !this.mustApply(r, p, want);
         // a device with an unresolved retirement obligation is only entered through the
-        // exclusive lease, whose gate retires the old incarnation or refuses (8.5)
-        if (!(await this.retirement.hasUnresolved(env)) && ready(row)) {
+        // exclusive lease, whose gate retires the old incarnation or refuses (8.5); on the
+        // staged path, so is an instance whose committed binding is not installed yet (B-8)
+        if (
+          !(await this.retirement.hasUnresolved(env)) &&
+          ready(row) &&
+          (!p.binder || (await p.binder.installed(env)))
+        ) {
           const lease = await this.leases.tryShared(env, this.cap, token);
           if (lease) {
             if (intent) await this.clearIntent(env, token);
@@ -1690,7 +1712,7 @@ export class SandboxService {
               }
             }
             // an obligation recorded while the shared lease was taken: null, back to the gate
-            const e = await this.asShared(ctx, p, lease, ready, signal, true);
+            const e = await this.asShared(ctx, p, lease, ready, signal, true, "use");
             if (e) return e;
           }
         } else {
@@ -1764,11 +1786,24 @@ export class SandboxService {
      * lease and before anything is killed or bumped; false only for exact-ref managed drains.
      */
     gated: boolean,
+    /**
+     * Checked under the lease (which the B1 snapshot writer's exclusive lease excludes) before
+     * anything is killed or bumped: `reconciled` and `use` refuse a device carrying the
+     * reconcile marker (B-11); `use` (entering a holder) also returns null on the staged path
+     * while the instance's binding is not installed, so the caller binds it exclusively (B-8).
+     * `none` for background polls, stops and drains.
+     */
+    check: "use" | "reconciled" | "none" = "none",
   ): Promise<Entered | null> {
     const env = ctx.deviceId;
     try {
       const row = await this.readRow(ctx);
       if (!accept(row) || (gated && (await this.retirement.hasUnresolved(env)))) {
+        await lease.release();
+        return null;
+      }
+      if (check !== "none") await this.facts.assertCloudReconciled(ctx.orgId, env);
+      if (check === "use" && p.binder && !(await p.binder.installed(env))) {
         await lease.release();
         return null;
       }
@@ -1815,7 +1850,15 @@ export class SandboxService {
     const env = ctx.deviceId;
     const sig = AbortSignal.any([signal, lease.signal]);
     try {
+      // under the lease the B1 snapshot writer needs: a device carrying the reconcile marker gets
+      // no create, resume, rebuild, limits change, retirement destroy or kill (B-11)
+      await this.facts.assertCloudReconciled(ctx.orgId, env);
       const s = await this.ensure(ctx, p, lease, sig, gone);
+      // staged path (B-8): create → commit → legacy gate (ensure) → bind → installed → downgrade.
+      // The binder sends the committed binding id again on every retry, refuses while a legacy
+      // obligation is open and runs outside any transaction; a failure releases the lease.
+      const binder = p.binder;
+      if (binder) await runOutsideTransaction(() => binder.bind(env, sig));
       const dead = await this.claim(env);
       if (s.resumed) await this.killLeftovers(env, s.handle, p, sig, dead);
       else if (!s.info.fresh) await this.killTagged(env, s.handle, p, dead, signal, lease);

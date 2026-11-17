@@ -12,11 +12,30 @@ export const LOCAL_PROVIDER = "@local";
  */
 export const isInternalProvider = (name: string): boolean => name.startsWith("@");
 
+/**
+ * Post-commit binding of a committed instance generation (permission runtime cutover B4/B-8).
+ * Present only on the staged v3 registration of a kernel-internal provider; protocol 2 has none.
+ */
+export interface SandboxInstanceBinder {
+  /** Whether the device's current instance generation has an installed binding. */
+  installed(deviceId: string): Promise<boolean>;
+  /**
+   * Sends the committed binding (the same binding id on every retry) and installs the verified
+   * answer; refuses while a legacy retirement obligation is open. Never inside a transaction.
+   */
+  bind(deviceId: string, signal: AbortSignal): Promise<unknown>;
+}
+
 /** A sandbox provider: its name (plugin name, or an internal `@…` name) and implementation. */
 export interface SandboxProviderEntry {
   plugin: string;
   version?: string;
   impl: SandboxProvider;
+  /**
+   * The staged path's instance binder: the exclusive lifecycle holder binds the generation before
+   * it downgrades, and shared use waits for an installed binding. Absent on protocol 2.
+   */
+  binder?: SandboxInstanceBinder;
 }
 
 /**
