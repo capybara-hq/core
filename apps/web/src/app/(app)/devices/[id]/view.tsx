@@ -62,7 +62,8 @@ import NotFound from "../../not-found";
  * the narrowing the kernel allows on 设置; no daily mode), the cloud facts (提供方, 资源 and 网络,
  * each said once), the files and suspension notes, the recent changes, and for a local device its
  * allowlist and machine block (系统 and 断开这台机器).
- * 重命名, 重建文件 (only when its files are lost, behind a confirmation; a job, so the page then
+ * 重命名, 重建文件 (only when its files are lost, a change waits for a file reset or its sandbox
+ * limits must be established again, said up front in a callout; behind a confirmation; a job, so the page then
  * polls until the files are back) and 删除 (typing its name; the files are deleted with it, a
  * destructive item of the ⋯ menu; deleting 个人设备 says a new empty one is created the next time
  * one is needed). A local device never offers 重建文件 (the kernel refuses it): its files-lost note
@@ -86,7 +87,9 @@ function DevicePage({ orgId, id }: { orgId: string; id: string }) {
     ...deviceQuery(orgId, id),
     refetchInterval: (q) => {
       const d = q.state.data?.device;
-      return resetting && d !== undefined && (d.filesLost || d.mode.pendingFilesReset)
+      return resetting &&
+        d !== undefined &&
+        (d.filesLost || d.mode.pendingFilesReset || d.reconcileRequired)
         ? RESET_POLL_MS
         : false;
     },
@@ -185,7 +188,9 @@ function Detail({
           titleHidden: true,
           actions: [
             { label: t("detail.rename"), variant: "default", onSelect: () => setOpen("rename") },
-            ...((e.filesLost || e.mode.pendingFilesReset) && e.available && !local
+            ...((e.filesLost || e.mode.pendingFilesReset || e.reconcileRequired) &&
+            e.available &&
+            !local
               ? [
                   {
                     label: t("detail.resetFiles"),
@@ -225,6 +230,9 @@ function Detail({
           <Callout tone="warn">
             {t(local ? "detail.localFilesLostNote" : "detail.filesLostNote")}
           </Callout>
+        )}
+        {e.reconcileRequired && !e.filesLost && (
+          <Callout tone="warn">{t("detail.reconcileNote")}</Callout>
         )}
         {e.demotedFrom !== null && (
           <Callout tone="info">
