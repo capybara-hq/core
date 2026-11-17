@@ -23,6 +23,7 @@ import {
   bootstrapFileName,
   type Connector,
   type ConnectorSession,
+  type ExtensionNet,
   type ModelProvider,
   type ObjectStore,
   SDK_VERSION,
@@ -54,6 +55,9 @@ import {
   type TestKernel,
   type TestS3,
 } from "../src/index.js";
+
+/** A `ctx.net` stand-in for fakes created without a kernel: a plain fetch to loopback servers. */
+const directNet: ExtensionNet = { fetch: (url, init) => fetch(url, init) };
 
 /**
  * The fake extensions of `fixtures/extensions` (see src/fixtures.ts): each packs with the plugin
@@ -205,6 +209,7 @@ const baseConfig = (pgUrl: string, redisUrl: string, over: Record<string, unknow
     http: { port: 0 },
     extensionPermissions: { autoApprove: true },
     marketplaces: { official: { enabled: false } },
+    net: { allowInsecureLoopback: true },
     log: { level: "error" },
     ...over,
   });
@@ -331,16 +336,18 @@ describe("loaded by path in a kernel", () => {
       auth: o.auth ?? (async () => ({ headers: {} })),
       onUnauthorized: o.onUnauthorized ?? (async () => {}),
       signal: new AbortController().signal,
+      orgId: "org-test",
       ...(o.onToolsChanged !== undefined && { onToolsChanged: o.onToolsChanged }),
       ...(o.onElicit !== undefined && { onElicit: o.onElicit }),
     });
 
-    it("validates the endpoint: loopback http and https, no credential headers", () => {
+    it("validates the endpoint: http and https (ctx.net decides reachability), no credential headers", () => {
       const c = connector();
       expect(c.kind).toBe("fake");
       expect(c.endpointSchema.safeParse({ url: "http://127.0.0.1:1/mcp" }).success).toBe(true);
       expect(c.endpointSchema.safeParse({ url: "https://mcp.example.com/mcp" }).success).toBe(true);
-      expect(c.endpointSchema.safeParse({ url: "http://mcp.example.com/mcp" }).success).toBe(false);
+      expect(c.endpointSchema.safeParse({ url: "http://mcp.example.com/mcp" }).success).toBe(true);
+      expect(c.endpointSchema.safeParse({ url: "ftp://mcp.example.com/mcp" }).success).toBe(false);
       expect(
         c.endpointSchema.safeParse({
           url: "https://x.example.com",
@@ -490,10 +497,14 @@ describe("loaded by path in a kernel", () => {
       const open = await startFakeMcpServer({ tools: [{ name: "search", description: "Search" }] });
       try {
         const signal = new AbortController().signal;
-        expect(await connector().inspect?.({ endpoint: { url: locked.url }, signal })).toEqual({
+        expect(
+          await connector().inspect?.({ endpoint: { url: locked.url }, signal, orgId: "org-test" }),
+        ).toEqual({
           authHints: [{ scheme: "bearer", type: "bearer" }],
         });
-        expect(await connector().inspect?.({ endpoint: { url: open.url }, signal })).toEqual({
+        expect(
+          await connector().inspect?.({ endpoint: { url: open.url }, signal, orgId: "org-test" }),
+        ).toEqual({
           authHints: [],
           operations: [{ id: "search", method: "POST", path: "/tools/search", summary: "Search" }],
         });
@@ -505,11 +516,12 @@ describe("loaded by path in a kernel", () => {
     it("inspect: the deployment config picks the hint behind 401 (api_key)", async () => {
       const locked = await startFakeMcpServer({ tools: [], requireBearer: "t" });
       try {
-        const c = createFakeConnector(true, "api_key");
+        const c = createFakeConnector(directNet, "api_key");
         expect(
           await c.inspect?.({
             endpoint: { url: locked.url },
             signal: new AbortController().signal,
+            orgId: "org-test",
           }),
         ).toEqual({
           authHints: [{ scheme: "apiKey", type: "api_key", in: "header", name: "X-API-Key" }],
@@ -520,8 +532,8 @@ describe("loaded by path in a kernel", () => {
     });
 
     it("the deployment config names the kind (default fake)", () => {
-      expect(createFakeConnector(true).kind).toBe("fake");
-      expect(createFakeConnector(true, "bearer", "mcp").kind).toBe("mcp");
+      expect(createFakeConnector(directNet).kind).toBe("fake");
+      expect(createFakeConnector(directNet, "bearer", "mcp").kind).toBe("mcp");
     });
 
     it("a route change without a rename changes connectorData; calls keep the given spec's route", async () => {
@@ -1061,7 +1073,7 @@ describe("fake-openapi (connector kind openapi)", () => {
     await new Promise<void>((r) => server.close(() => r()));
   });
   const signal = new AbortController().signal;
-  const c = createFakeOpenApiConnector(true);
+  const c = createFakeOpenApiConnector(directNet);
   const endpoint = (over: Record<string, unknown> = {}) => ({
     specUrl: `${base}/doc.json`,
     ...over,
@@ -1072,20 +1084,24 @@ describe("fake-openapi (connector kind openapi)", () => {
       auth: async () => ({ headers: { "X-API-Key": KEY } }),
       onUnauthorized: async () => {},
       signal,
+      orgId: "org-test",
     });
 
-  it("is kind openapi; the endpoint is a spec URL (https or loopback http) and optional operations", () => {
+  it("is kind openapi; the endpoint is a spec URL (http or https) and optional operations", () => {
     expect(c.kind).toBe("openapi");
     expect(c.endpointSchema.safeParse(endpoint()).success).toBe(true);
     expect(c.endpointSchema.safeParse(endpoint({ operations: ["listPets"] })).success).toBe(true);
     expect(c.endpointSchema.safeParse({ specUrl: "http://api.example.com/x.json" }).success).toBe(
+      true,
+    );
+    expect(c.endpointSchema.safeParse({ specUrl: "ftp://api.example.com/x.json" }).success).toBe(
       false,
     );
     expect(c.endpointSchema.safeParse({ url: `${base}/doc.json` }).success).toBe(false);
   });
 
   it("inspect answers like connector-openapi's preview: auth hints and operations", async () => {
-    expect(await c.inspect?.({ endpoint: endpoint(), signal })).toEqual({
+    expect(await c.inspect?.({ endpoint: endpoint(), signal, orgId: "org-test" })).toEqual({
       authHints: [{ scheme: "apiKey", type: "api_key", in: "header", name: "X-API-Key" }],
       operations: [
         { id: "listPets", method: "GET", path: "/pets", summary: "List pets" },

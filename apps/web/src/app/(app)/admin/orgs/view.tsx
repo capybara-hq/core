@@ -20,6 +20,7 @@ import { useState } from "react";
 import { ErrorFrame } from "../../../../components/ErrorFrame";
 import { FormError } from "../../../../components/form-error";
 import { NoAccess } from "../../../../components/NoAccess";
+import { OrgNetworkSheet } from "../../../../components/OrgNetworkAllowances";
 import { usePagePath } from "../../../../components/shell/path";
 import {
   type AdminOrg,
@@ -73,6 +74,7 @@ function AdminOrgs() {
   const orgs = usePageQuery(adminOrgsQuery());
   const settings = usePageQuery(deploymentSettingsQuery());
   const [editing, setEditing] = useState<AdminOrg | null>(null);
+  const [network, setNetwork] = useState<AdminOrg | null>(null);
   const header = { path: [...scope, { label: "orgs" }], title: t("title") };
   if (orgs.kind === "notFound" || settings.kind === "notFound") return <NotFound />;
   if (orgs.kind === "error") return <ErrorFrame reset={orgs.retry} />;
@@ -173,9 +175,13 @@ function AdminOrgs() {
           rowKey={(o) => o.id}
           state="ready"
           empty={{ title: t("empty") }}
-          rowMenu={(o) => [{ label: t("edit"), onSelect: () => setEditing(o) }]}
+          rowMenu={(o) => [
+            { label: t("edit"), onSelect: () => setEditing(o) },
+            { label: t("internalEndpoints"), onSelect: () => setNetwork(o) },
+          ]}
         />
       </Stack>
+      {network !== null && <OrgNetworkSheet org={network} onClose={() => setNetwork(null)} />}
       {editing !== null && (
         <LimitsDialog
           org={editing}

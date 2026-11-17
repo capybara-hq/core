@@ -148,7 +148,7 @@ beforeAll(async () => {
         extensions: [MODEL_FAKE, CONNECTOR],
         extensionPermissions: { autoApprove: true },
         // 假服务在 127.0.0.1 上跑 http：测试打开本机 http（默认关闭）
-        extensionConfig: { "fake-connector": { allowInsecureLoopback: true } },
+        extensionConfig: { "fake-connector": {} },
         roles: ["api", "worker"],
         tools: { timeoutMs: 2_000 },
       },

@@ -537,6 +537,7 @@ export interface Connector {
     inspect?(args: {
         endpoint: unknown;
         signal: AbortSignal;
+        orgId: string;
     }): Promise<ConnectorInspection>;
     kind: string;
     open(args: ConnectorOpenArgs): Promise<ConnectorSession>;
@@ -636,6 +637,7 @@ export interface ConnectorOpenArgs {
     onElicit?: (request: ElicitationRequest) => Promise<ElicitationResponse>;
     onToolsChanged?: () => void;
     onUnauthorized: () => Promise<void>;
+    orgId: string;
     signal: AbortSignal;
 }
 
@@ -1396,6 +1398,7 @@ export interface ExtensionContext {
     };
     log: Logger;
     models: ExtensionModels;
+    net: ExtensionNet;
     provide(extensionPoint: ExtensionPointRef, impl: unknown): void;
     queue: {
         define<T>(name: string, handler: (data: T) => Promise<void>, opts?: {
@@ -1489,6 +1492,13 @@ export interface ExtensionModelTarget {
     id: string;
     kind: ModelKind;
     provider: string;
+}
+
+// @public
+export interface ExtensionNet {
+    fetch(url: string, init?: RequestInit, opts?: {
+        orgId?: string;
+    }): Promise<Response>;
 }
 
 // @public
@@ -1908,6 +1918,9 @@ export function isFileSystemGoneError(e: unknown): e is FileSystemGoneError;
 
 // @public
 export function isModelError(e: unknown): e is ModelError;
+
+// @public
+export function isNetDeniedError(e: unknown): e is NetDeniedError;
 
 // @public
 export function isPermissionProfile(value: unknown): value is PermissionProfile;
@@ -2346,6 +2359,19 @@ export interface ModelUsage {
     cacheWriteTokens: number;
     inputTokens: number;
     outputTokens: number;
+}
+
+// @public
+export type NetDeniedCode = "net.insecure_url" | "net.private_address" | "net.dns_failed" | "net.redirect" | "net.proxy_refused";
+
+// @public
+export class NetDeniedError extends Error {
+    constructor(code: NetDeniedCode, host: string, message: string,
+    status?: number | undefined);
+    readonly code: NetDeniedCode;
+    readonly host: string;
+    readonly name: "NetDeniedError";
+    readonly status?: number | undefined;
 }
 
 // @public

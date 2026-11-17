@@ -13,8 +13,10 @@ import {
 } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
 import { sql } from "kysely";
+import { Agent, buildConnector } from "undici";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { KernelConfigSchema } from "../../src/config/schema.js";
+import { EXTENSION_NET_SEAMS } from "../../src/ctx/net.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
@@ -23,6 +25,7 @@ import type { ApiTokenService } from "../../src/identity/api-tokens.js";
 import { KERNEL_MIGRATIONS_DIR, KERNEL_SCHEMA } from "../../src/kernel.js";
 import { createLogger } from "../../src/log.js";
 import type { MembersService } from "../../src/orgs/members.service.js";
+import { OrgNetworkAllowances } from "../../src/orgs/network-allowances.service.js";
 import { memState } from "../fixtures/plugins/mem-connector/index.js";
 import { truncateTables } from "../helpers/db.js";
 import { asUser, cookieJar } from "../helpers/http.js";
@@ -64,6 +67,14 @@ let owner: Account;
 let mcp: FakeMcpServer;
 
 const PW = "correct horse battery";
+/**
+ * A name the fake DNS of ctx.net (the `EXTENSION_NET_SEAMS` seam) resolves to a private address;
+ * connections the kernel pins to that address go to the loopback fake MCP server.
+ */
+const INTERNAL = "mcp.internal";
+const INTERNAL_IP = "10.0.0.5";
+/** The addresses the kernel pinned ctx.net connections to. */
+const pinned: string[][] = [];
 const TOKEN = "tok_secret_value_0123456789";
 
 beforeAll(async () => {
@@ -79,18 +90,41 @@ beforeAll(async () => {
       },
     ],
   });
+  const connect = buildConnector({});
   k = await startKernel(
     KernelConfigSchema.parse({
       db: { url: pgc.url, poolMax: 5 },
       redis: { url: rd.url },
       masterKey: Buffer.alloc(32, 7).toString("base64"),
       marketplaces: { official: { enabled: false } },
+      net: { allowInsecureLoopback: true },
       http: { port: 0 },
       extensions: [MEM_CONNECTOR, MODEL_FAKE, FAKE_CONNECTOR],
-      extensionConfig: { "fake-connector": { allowInsecureLoopback: true } },
+      extensionConfig: { "fake-connector": {} },
       extensionPermissions: { autoApprove: true },
     }),
-    { env: {}, logger: createLogger("error", { write: () => {} }) },
+    {
+      env: {},
+      logger: createLogger("error", { write: () => {} }),
+      overrides: [
+        {
+          provide: EXTENSION_NET_SEAMS,
+          useValue: {
+            lookup: async (host) => {
+              if (host !== INTERNAL) throw new Error(`no such host ${host}`);
+              return [{ address: INTERNAL_IP, family: 4 }];
+            },
+            dispatcherFor: (ips) => {
+              pinned.push(ips);
+              return new Agent({
+                connect: (opts, cb) =>
+                  connect(ips[0] === INTERNAL_IP ? { ...opts, hostname: "127.0.0.1" } : opts, cb),
+              });
+            },
+          },
+        },
+      ],
+    },
   );
   raw = createDb(pgc.url, 5);
   db = kernelDb(raw);
@@ -849,6 +883,50 @@ describe("连接器 HTTP", () => {
     const other = await createOrg(req, "Other");
     const cross = await req({ method: "GET", url: `/api/v1/orgs/${other}/connectors/${app.id}` });
     expect(cross.statusCode).toBe(404);
+  });
+});
+
+describe("an http connector endpoint behind an org's origin allowance (ctx.net)", () => {
+  it("is reached for the org that allows the origin and refused for another org", async () => {
+    const req = await session("owner");
+    const allowed = await createOrg(req, "Allowed");
+    const other = await createOrg(req, "Other");
+    const port = new URL(mcp.url).port;
+    await k.app
+      .get(OrgNetworkAllowances)
+      .add(allowed, `http://${INTERNAL}:${port}`, { accountId: owner.id });
+
+    const install = (orgId: string) =>
+      req({
+        method: "POST",
+        url: `/api/v1/orgs/${orgId}/connectors`,
+        payload: {
+          name: "Internal docs",
+          slug: "internal",
+          connector: "fake",
+          endpoint: { url: `http://${INTERNAL}:${port}/mcp` },
+          auth: { type: "none" },
+        },
+      });
+
+    pinned.length = 0;
+    const requestsBefore = mcp.requests.length;
+    const ok = await install(allowed);
+    expect(ok.statusCode, ok.body).toBe(201);
+    const created = ok.json() as { connector: { status: string; tools: { name: string }[] } };
+    expect(created.connector.status).toBe("active");
+    expect(created.connector.tools.map((t) => t.name)).toEqual(["search"]);
+    expect(pinned).toContainEqual([INTERNAL_IP]);
+    expect(mcp.requests.length).toBeGreaterThan(requestsBefore);
+
+    const pinnedBefore = pinned.length;
+    const requestsAfterInstall = mcp.requests.length;
+    const refused = await install(other);
+    expect(refused.json()).toMatchObject({ error: { code: "connector.connect_failed" } });
+    expect(refused.body).toContain("NetDeniedError");
+    // refused before any connection: nothing pinned, nothing reached the server
+    expect(pinned.length).toBe(pinnedBefore);
+    expect(mcp.requests.length).toBe(requestsAfterInstall);
   });
 });
 

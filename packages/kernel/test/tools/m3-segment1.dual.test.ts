@@ -125,7 +125,7 @@ describe("M3 第一段双副本验收", () => {
       extensions: [MODEL_FAKE, CONNECTOR, TOOLS_UI],
       pgUrl: pgc.url,
       redisUrl: rdc.url,
-      extensionConfig: { "fake-connector": { allowInsecureLoopback: true } },
+      extensionConfig: { "fake-connector": {} },
       config: {
         auth: { cookieSecure: false },
         // 短锁期与 stalled 检测间隔：被杀副本持有的运行任务约 1.5 秒后由存活副本接手

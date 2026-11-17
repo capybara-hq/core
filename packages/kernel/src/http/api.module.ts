@@ -6,6 +6,7 @@ import { AdminAgentsController } from "../admin/admin-agents.controller.js";
 import { AdminConnectorsController } from "../admin/admin-connectors.controller.js";
 import { AdminAuditController, OrgAuditController } from "../admin/audit.controller.js";
 import { AdminExtensionsController } from "../admin/extensions.controller.js";
+import { AdminOrgNetworkController } from "../admin/org-network.controller.js";
 import { OutboxDeadController } from "../admin/outbox-dead.controller.js";
 import { AdminOverviewController } from "../admin/overview.controller.js";
 import { SetupController } from "../admin/setup.controller.js";
@@ -136,6 +137,7 @@ const CONTROLLERS: Type[] = [
   OrgAuditController,
   AdminOverviewController,
   OutboxDeadController,
+  AdminOrgNetworkController,
   AdminExtensionsController,
   AdminCatalogController,
   AdminComponentsController,

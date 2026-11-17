@@ -178,7 +178,9 @@ export class Waits implements OnApplicationShutdown {
    * {@link suspend}'s transaction: the conditional `running → waiting` and the wait's timeout job
    * owed with it ({@link oweTimeout}). False when the run was no longer running (nothing written).
    */
-  @Transactional({ propagation: "requires_new" })
+  // a run loop hot-path write: shared admission under the run fence (`RunExecution`); it updates
+  // only the run row and owes its timeout
+  @Transactional({ propagation: "requires_new", admission: "shared" })
   private async suspendIn(runId: string, waitingFor: WaitingFor): Promise<boolean> {
     const row = await this.db
       .updateTable("runs")

@@ -20,6 +20,7 @@ const MEMBER: Me = {
 };
 const SETTINGS = "/api/v1/orgs/o1/settings";
 const CONTRIBUTIONS = "/api/v1/orgs/o1/ui/contributions";
+const NETWORK = "/api/v1/orgs/o1/network-allowances";
 
 const actionRow = (locale: "zh" | "en") =>
   screen.queryByRole("region", { name: locale === "zh" ? "待提交改动" : "Pending changes" });
@@ -39,6 +40,7 @@ describe("组织设置（SettingsPage）", () => {
       const calls = stubApi({
         [`GET ${SETTINGS}`]: () => json(200, { settings: { toolSearch: "on" } }),
         [`GET ${CONTRIBUTIONS}`]: () => json(200, { items: [] }),
+        [`GET ${NETWORK}`]: () => json(200, { allowances: [] }),
         [`PATCH ${SETTINGS}`]: (c) => json(200, { settings: bodyOf(c) }),
       });
       const { container } = await renderRouteWithCache("/settings/organization", lastStubRoutes(), {
@@ -73,6 +75,7 @@ describe("组织设置（SettingsPage）", () => {
       const calls = stubApi({
         [`GET ${SETTINGS}`]: () => json(200, { settings: { toolSearch: "on" } }),
         [`GET ${CONTRIBUTIONS}`]: () => json(200, { items: [] }),
+        [`GET ${NETWORK}`]: () => json(200, { allowances: [] }),
         [`PATCH ${SETTINGS}`]: (c) => json(200, { settings: bodyOf(c) }),
       });
       await renderRouteWithCache("/settings/organization", lastStubRoutes(), { locale });
@@ -97,6 +100,7 @@ describe("组织设置（SettingsPage）", () => {
     stubApi({
       [`GET ${SETTINGS}`]: () => json(200, { settings: { toolSearch: "on" } }),
       [`GET ${CONTRIBUTIONS}`]: () => json(200, { items: [] }),
+      [`GET ${NETWORK}`]: () => json(200, { allowances: [] }),
     });
     const nav = en.connections.nav;
     const admin = await renderRouteWithCache("/settings/organization", lastStubRoutes());
@@ -120,6 +124,7 @@ describe("组织设置（SettingsPage）", () => {
     stubApi({
       [`GET ${SETTINGS}`]: () => json(200, { settings: { toolSearch: "on" } }),
       [`GET ${CONTRIBUTIONS}`]: () => json(200, { items: [] }),
+      [`GET ${NETWORK}`]: () => json(200, { allowances: [] }),
     });
     await renderRouteWithCache("/settings/organization", lastStubRoutes(), { me: MEMBER });
     await screen.findByText(en.orgSettings.readonly);
@@ -134,6 +139,7 @@ describe("组织设置（SettingsPage）", () => {
     stubApi({
       [`GET ${SETTINGS}`]: () => json(200, { settings: { toolSearch: "on" } }),
       [`GET ${CONTRIBUTIONS}`]: () => json(200, { items: [] }),
+      [`GET ${NETWORK}`]: () => json(200, { allowances: [] }),
     });
     await renderRouteWithCache("/settings/organization", lastStubRoutes(), { me: MEMBER });
     const link = await screen.findByRole("link", { name: en.connections.nav.members });
@@ -142,6 +148,7 @@ describe("组织设置（SettingsPage）", () => {
     stubApi({
       [`GET ${SETTINGS}`]: () => json(200, { settings: { toolSearch: "on" } }),
       [`GET ${CONTRIBUTIONS}`]: () => json(200, { items: [] }),
+      [`GET ${NETWORK}`]: () => json(200, { allowances: [] }),
     });
     await renderRouteWithCache("/settings/organization", lastStubRoutes(), {
       me: { ...ME, memberships: [{ orgId: "o1", slug: "acme", name: "Acme", role: "guest" }] },

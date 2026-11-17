@@ -3,6 +3,7 @@ import { APP_INTERCEPTOR } from "@nestjs/core";
 import { ADMIN_USAGE_TIMINGS, type AdminUsageTimings } from "./admin/usage.service.js";
 import { SCOPE_ORG_CHUNK_SIZE } from "./catalog/scope-jobs.js";
 import { CHANNEL_WEBHOOK_TIMINGS, type ChannelWebhookTimings } from "./channels/webhook.js";
+import { EXTENSION_NET_SEAMS, type ExtensionNetSeams } from "./ctx/net.js";
 import type { EvalReplayHooks } from "./evals/run-replay.js";
 import { EVAL_REPLAY_HOOKS } from "./evals/worker.js";
 import { BOOTSTRAP_LOCK_TTL } from "./extensions/bootstrap.js";
@@ -62,6 +63,8 @@ import { EMBED_TOKEN_CLOCK } from "./ui/embed-token.js";
  *   read (a test shortens it for one run);
  * - `PLUGIN_PUBLIC_WRITE_LIMIT`: a lower limit for unsafe methods on `public` extension routes;
  * - `SCOPE_ORG_CHUNK_SIZE`: fewer orgs per plugin scope sync chunk job (several chunks in a test);
+ * - `EXTENSION_NET_SEAMS`: `ctx.net`'s DNS and dispatcher (a hostname resolving to a private address
+ *   served by a loopback fake);
  * - `APP_INTERCEPTOR`: one more global interceptor (a probe of the matched routes);
  * - `PERMISSION_CONTEXT_ACTIVATION`: turns the dormant recorded permission context producers on
  *   (the request boundary and the managed device context writer) before their paired activation
@@ -93,6 +96,7 @@ interface KernelSeams {
   [PROJECT_KNOWLEDGE_TIMEOUT]: () => number;
   [PLUGIN_PUBLIC_WRITE_LIMIT]: number;
   [DEVICE_POLICY_AFTER_CALL]: (opId: string) => void;
+  [EXTENSION_NET_SEAMS]: ExtensionNetSeams;
   [APP_INTERCEPTOR]: NestInterceptor;
   [PERMISSION_CONTEXT_ACTIVATION]: boolean;
 }
@@ -133,6 +137,7 @@ const SEAM_TOKENS = [
   PROJECT_KNOWLEDGE_TIMEOUT,
   PLUGIN_PUBLIC_WRITE_LIMIT,
   DEVICE_POLICY_AFTER_CALL,
+  EXTENSION_NET_SEAMS,
   APP_INTERCEPTOR,
   PERMISSION_CONTEXT_ACTIVATION,
 ] as const satisfies readonly (keyof KernelSeams)[];

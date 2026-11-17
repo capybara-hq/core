@@ -35,6 +35,7 @@
   "migrations/0123.test.ts",
   "orgs/directory-sync.dual.test.ts",
   "runtime/permission-context.dual.test.ts",
+  "runtime/run-fence-shared.dual.test.ts",
   "runtime/subagents/messages.dual.test.ts",
   "runtime/subagents/nested.test.ts",
   "runtime/subagents/subagents.dual.test.ts",

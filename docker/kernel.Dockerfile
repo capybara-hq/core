@@ -52,6 +52,10 @@ COPY . .
 RUN --mount=type=cache,id=capybara-pnpm-store,target=/pnpm/store,sharing=locked \
     pnpm config set store-dir /pnpm/store \
     && pnpm install --frozen-lockfile --offline \
+    # The kernel first: kernel, testing and plugin-tools form a workspace dependency cycle, so pnpm
+    # builds testing and plugin-tools in parallel and each one's `tsc -b` would rebuild the kernel
+    # into the same dist/ (a half-written index.d.ts fails the other build).
+    && pnpm --filter @capybara-hq/kernel build \
     && pnpm -r --filter "@capybara-hq/capybara..." build \
     # pnpm 10 deploys only with injectWorkspacePackages unless --legacy is given; turning injection
     # on for the whole workspace would change local dev installs, so the image uses --legacy. It

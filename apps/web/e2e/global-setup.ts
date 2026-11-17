@@ -625,14 +625,15 @@ export default async function globalSetup(): Promise<Cleanup> {
           forcePathStyle: true,
         },
         "sandbox-fake": { root: join(dir, "sandboxes") },
-        "fake-connector": { allowInsecureLoopback: true, kind: "mcp" },
-        "fake-openapi": { allowInsecureLoopback: true },
+        "fake-connector": { kind: "mcp" },
         "fake-im": {
           platformUrl: "http://127.0.0.1:9",
           clientId: "e2e-login",
           clientSecret: "e2e-login-secret",
         },
       },
+      // Extensions' ctx.net.fetch may reach the fake servers on loopback http
+      net: { allowInsecureLoopback: true },
       // The official marketplace points at the fake one; extension packages and plugins download
       // from the fake npm registry (all local http)
       packages: { npmRegistry: catalogFixtures.registryUrl },

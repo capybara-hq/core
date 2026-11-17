@@ -11,6 +11,7 @@ import {
   runFinalWrapUp,
   runModelStep,
 } from "./model-call.js";
+import { withExclusiveAdmission } from "./run-execution.js";
 import { budgetRunOf, subagentBudgetUsedUp } from "./subagents/limits.js";
 import type { SubagentStep } from "./subagents/progress.js";
 import { isForkInvocation, type SkillForks } from "./subagents/skill-fork.js";
@@ -230,7 +231,9 @@ export class LangGraphLoop implements AgentLoop {
       const fork =
         firstStep && ctx.parent === undefined ? absorbed.find(isForkInvocation) : undefined;
       if (fork !== undefined && deps.skillForks) {
-        const r = await deps.skillForks.advance({ ctx, fork });
+        const skillForks = deps.skillForks;
+        // a dispatch, like a tool step: its writes are admitted exclusively (`RunExecution`)
+        const r = await withExclusiveAdmission(() => skillForks.advance({ ctx, fork }));
         if (r.kind === "suspend") throw new LoopSuspended(r.waitingFor);
         if (r.kind === "aborted") {
           return { consumedUpToSeq: consumed, lastStopReason: "aborted", outcome: "aborted" };
@@ -258,23 +261,27 @@ export class LangGraphLoop implements AgentLoop {
     // 本步的全部工具调用都写下结果后才回到 prepare（不在「已记录调用、未记录结果」之间构建请求）。
     // 某个调用需要等人处理时抛 LoopSuspended（该调用之后的调用留到续跑时处理）。
     const tools = async (s: State): Promise<Partial<State>> => {
-      const r = await deps.toolPipeline.runStep({
-        orgId: ctx.orgId,
-        conversationId: ctx.conversationId,
-        runId: ctx.runId,
-        step: s.step,
-        agentId: ctx.agentId,
-        agentVersion: ctx.agentVersion,
-        agent: ctx.agent,
-        accountId: ctx.triggerAccountId,
-        source: ctx.source,
-        ownerAccountId: ctx.ownerAccountId,
-        role: ctx.role,
-        signal: ctx.signal,
-        ...(ctx.limits.deadline !== undefined && { deadline: ctx.limits.deadline }),
-        ...(ctx.conversationKind !== undefined && { conversationKind: ctx.conversationKind }),
-        ...(ctx.parent !== undefined && { parent: ctx.parent }),
-      });
+      // the tool step's writes are admitted exclusively, whatever they ask for (`RunExecution`):
+      // tools take org-level locks after the conversation rows
+      const r = await withExclusiveAdmission(() =>
+        deps.toolPipeline.runStep({
+          orgId: ctx.orgId,
+          conversationId: ctx.conversationId,
+          runId: ctx.runId,
+          step: s.step,
+          agentId: ctx.agentId,
+          agentVersion: ctx.agentVersion,
+          agent: ctx.agent,
+          accountId: ctx.triggerAccountId,
+          source: ctx.source,
+          ownerAccountId: ctx.ownerAccountId,
+          role: ctx.role,
+          signal: ctx.signal,
+          ...(ctx.limits.deadline !== undefined && { deadline: ctx.limits.deadline }),
+          ...(ctx.conversationKind !== undefined && { conversationKind: ctx.conversationKind }),
+          ...(ctx.parent !== undefined && { parent: ctx.parent }),
+        }),
+      );
       if (r.kind === "suspended") throw new LoopSuspended(r.waitingFor);
       if (ctx.parent !== undefined) {
         // fire and forget: an ephemeral message never delays the child's next step (a slow count

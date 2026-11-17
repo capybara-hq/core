@@ -136,6 +136,8 @@ export const AUDIT_ACTION_KEYS: Readonly<Record<string, string>> = {
   "org.member.removed": "orgMemberRemoved",
   "org.member.role_changed": "orgMemberRoleChanged",
   "org.model_disabled_set": "orgModelDisabledSet",
+  "org.network_allowance_added": "orgNetworkAllowanceAdded",
+  "org.network_allowance_removed": "orgNetworkAllowanceRemoved",
   "org.ownership_transferred": "orgOwnershipTransferred",
   "org.plugin_config.updated": "orgPluginConfigUpdated",
   "org.service_token.created": "orgServiceTokenCreated",

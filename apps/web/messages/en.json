@@ -131,7 +131,10 @@
       "owner_required": "Only an org owner can do this.",
       "creation_disabled": "Creating organizations is turned off on this deployment.",
       "slug_taken": "This slug is already used by another organization.",
-      "auto_mode_not_allowed": "The platform does not allow auto mode."
+      "auto_mode_not_allowed": "The platform does not allow auto mode.",
+      "network_allowance_invalid": "The internal endpoint is not valid: use a hostname, a *.domain wildcard, an IP address or CIDR, or an origin such as http://host:8080. Link-local, loopback (including localhost) and unspecified addresses are never allowed, nor wildcards over a public suffix.",
+      "network_allowance_not_found": "The organization has no such internal endpoint (it may have been removed already).",
+      "network_allowance_widen_not_allowed": "Only a super admin in the admin console on the web can allow an internal endpoint, not an API token or the Platform tool."
     },
     "setup": {
       "already_completed": "Setup has already been completed.",
@@ -2693,6 +2696,24 @@
       "label": "Default time zone"
     }
   },
+  "orgNetwork": {
+    "title": "Internal endpoints",
+    "sectionHelp": "Internal hosts a super admin has allowed this organization's extension requests to reach. Only a super admin can change the list.",
+    "sheetTitle": "Internal endpoints of {name}",
+    "help": "Extension requests may not reach private or internal addresses. List the internal hosts this organization's extensions are allowed to call. Loopback and cloud metadata addresses are always refused.",
+    "field": "Internal endpoint",
+    "fieldHelp": "A hostname (mcp.internal), a wildcard (*.corp.example), an origin (http://mcp.internal:8080) or an address range (10.1.0.0/16).",
+    "add": "Allow",
+    "added": "Added {time}",
+    "added_toast": "Internal endpoint allowed",
+    "removed": "Internal endpoint removed",
+    "remove": "Remove",
+    "removeLabel": "Remove {entry}",
+    "listLabel": "Internal endpoints",
+    "empty": "No internal endpoints are allowed.",
+    "loadFailed": "The internal endpoints could not be read.",
+    "retry": "Retry"
+  },
   "compaction": {
     "title": "Conversation compaction",
     "description": "Long conversations are summarized before they fill the model's context window, so a long-running conversation keeps going with the recent turns in full.",
@@ -4229,6 +4250,8 @@
         "orgMemberRemoved": "Removed a member",
         "orgMemberRoleChanged": "Changed a member's role",
         "orgModelDisabledSet": "Switched a model on or off for the organization",
+        "orgNetworkAllowanceAdded": "Allowed an internal endpoint for the organization",
+        "orgNetworkAllowanceRemoved": "Removed an internal endpoint of the organization",
         "orgOwnershipTransferred": "Transferred the organization's ownership",
         "orgPluginConfigUpdated": "Changed a plugin's settings",
         "orgServiceTokenCreated": "Created a service token",
@@ -4366,7 +4389,8 @@
         "emptyDefault": "Empty fields use the deployment default.",
         "placeholder": "Deployment default {value}",
         "unlimited": "No limit"
-      }
+      },
+      "internalEndpoints": "Internal endpoints"
     },
     "settings": {
       "title": "Deployment settings",

@@ -282,9 +282,12 @@ export class ToolDrift {
    * 其余失败一律 502 `connector.connect_failed`，消息只带上游错误的类名（不带消息，消息里可能回显凭据）。
    */
   async listTools(
+    /** The org the session serves (`ConnectorOpenArgs.orgId`). */
+    orgId: string,
     connector: string,
     endpoint: unknown,
     auth: () => Promise<AuthInjection>,
+    /** Extra log fields (the org id is added from `orgId`). */
     logCtx: Record<string, unknown>,
     /** 收到 401：OAuth 连接器在刷新锁内刷新（参数为最后一次注入的鉴权）。 */
     onUnauthorized: (last: AuthInjection | undefined) => Promise<void> = async () => {},
@@ -308,6 +311,7 @@ export class ToolDrift {
         auth: tracked,
         onUnauthorized: () => onUnauthorized(injected.at(-1)),
         signal,
+        orgId,
       });
       const specs = await session.listTools();
       return {
@@ -317,14 +321,14 @@ export class ToolDrift {
     } catch (e) {
       if (e instanceof CredentialMissing) throw e;
       // 日志经 logger 打码（凭据值已在构造注入时登记）
-      this.log.warn("connector listTools failed", { ...logCtx, connector, err: e });
+      this.log.warn("connector listTools failed", { ...logCtx, orgId, connector, err: e });
       throw new ApiError(
         "connector.connect_failed",
         connectFailedMessage(e, redactorFor(injected)),
       );
     } finally {
       await session?.close().catch((e: unknown) => {
-        this.log.warn("connector session close failed", { ...logCtx, connector, err: e });
+        this.log.warn("connector session close failed", { ...logCtx, orgId, connector, err: e });
       });
     }
   }
@@ -544,10 +548,11 @@ export class ToolDrift {
     for (const accountId of accounts) {
       try {
         listed = await this.listTools(
+          orgId,
           app.connector,
           app.endpoint,
           () => this.credentials.injection(orgId, connectorId, auth, accountId),
-          { orgId, connectorId, trigger },
+          { connectorId, trigger },
           (last) => this.credentials.onUnauthorized(orgId, connectorId, auth, accountId, last),
         );
         break;

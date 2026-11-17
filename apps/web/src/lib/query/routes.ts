@@ -112,6 +112,7 @@ import {
   modelsCatalogQuery,
   orgAuditQuery,
   orgFilePreviewersQuery,
+  orgNetworkAllowancesQuery,
   orgPurposesQuery,
   orgSettingsQuery,
   pluginInstallsQuery,
@@ -1119,7 +1120,9 @@ export const ROUTES: readonly RouteEntry[] = [
         ? []
         : [
             q(orgSettingsQuery(orgId)),
-            ...(atLeast(me, "admin") ? [q(contributionsQuery(orgId))] : []),
+            ...(atLeast(me, "admin")
+              ? [q(contributionsQuery(orgId)), q(orgNetworkAllowancesQuery(orgId))]
+              : []),
           ],
   },
   {

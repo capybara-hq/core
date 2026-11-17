@@ -188,6 +188,10 @@ export class MembersService {
     actorAccountId: string,
     actorTokenId: string | undefined,
   ): Promise<OffboardResult> {
+    // an unauthorized call is refused before it holds off the org's run writes
+    await this.orgLock.precheck(orgId, actorAccountId, "org.members.manage");
+    // offboarding: the org admission lock first (`Offboarding.offboard`)
+    await this.orgLock.lockForRemoval(orgId);
     const { role: actorRole } = await this.orgLock.lockAndAuthorize(
       orgId,
       actorAccountId,
@@ -223,6 +227,7 @@ export class MembersService {
     accountId: string,
     actorTokenId: string | undefined,
   ): Promise<OffboardResult> {
+    await this.orgLock.lockForRemoval(orgId);
     await this.orgLock.lock(orgId);
     const before = await this.requireMember(orgId, accountId);
     const actor = {

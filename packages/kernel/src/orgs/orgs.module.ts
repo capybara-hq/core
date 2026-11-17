@@ -13,6 +13,7 @@ import { ToolsModule } from "../tools/tools.module.js";
 import { DirectorySync } from "./directory-sync.js";
 import { InvitationsService } from "./invitations.service.js";
 import { MembersService } from "./members.service.js";
+import { OrgNetworkAllowancesModule } from "./network-allowances.service.js";
 import { Offboarding } from "./offboarding.js";
 import { OrgLockModule } from "./org-lock.js";
 import { OrgsService } from "./orgs.service.js";
@@ -20,7 +21,8 @@ import { OrgSettingsModule } from "./settings.service.js";
 
 /**
  * Organizations: orgs, org settings, members, invitations, offboarding (its owed work goes through
- * the outbox) and directory sync (the hourly scan cron, one-off syncs on the maintenance queue).
+ * the outbox), directory sync (the hourly scan cron, one-off syncs on the maintenance queue) and the
+ * org network allowances (internal endpoints a super admin lets the org's extension requests reach).
  */
 @Module({
   imports: [
@@ -44,6 +46,7 @@ import { OrgSettingsModule } from "./settings.service.js";
     CatalogModule,
     // the producer side of directory-sync jobs (the maintenance processor consumes them)
     QueueModule.registerQueue(MAINTENANCE_QUEUE_NAME),
+    OrgNetworkAllowancesModule,
   ],
   providers: [OrgsService, MembersService, InvitationsService, Offboarding, DirectorySync],
   exports: [
@@ -54,6 +57,7 @@ import { OrgSettingsModule } from "./settings.service.js";
     InvitationsService,
     Offboarding,
     DirectorySync,
+    OrgNetworkAllowancesModule,
   ],
 })
 export class OrgsModule {}
