@@ -193,11 +193,16 @@ repository lookalike); and moves out of protected names. Known limitations: a re
 cannot `git init`, add a submodule or worktree, or create a bare repository; it can forge a
 rebase or cherry-pick in progress (git's `rebase-merge/`, `rebase-apply/` and `sequencer/` state is
 writable for git's own use), and continuing it (`git rebase --continue`) runs the `exec` lines of
-the todo list it wrote, as the owner; files tools execute by convention without
+the todo list it wrote, as the owner; on macOS and Linux alike it can leave, inside git's own
+internals, a directory shaped like a repository without a configuration of its own (a kept `HEAD`
+with git's ordinary entries), which only matters to an owner who runs git from inside `.git`; files tools execute by convention without
 configuration, such as `package.json` scripts run by `npm test`, are not covered, so the owner
 reviews such changes before running them unsandboxed. macOS expresses the same policy as ordered Seatbelt
 regex rules (a pnpm patch of the sandbox runtime); Seatbelt sees paths, not contents, so a directory
-renamed into git's subtrees keeps what it held. Owners are advised to set
+renamed into git's subtrees keeps what it held; directories that hold a `HEAD` git keeps (`logs`,
+`refs/remotes/<r>`, `sequencer`, submodule and worktree gitdirs) cannot be moved or removed by a
+restricted command, and every write root is matched in each spelling Seatbelt may see (as given,
+real on-disk path, `/private` form). Owners are advised to set
 `git config --global safe.bareRepository explicit` as defence in depth.
 
 Provider errors add duck-typed `SandboxPermissionUnsupportedError` and `SandboxScopeDeniedError`

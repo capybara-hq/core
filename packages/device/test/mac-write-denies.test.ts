@@ -110,3 +110,84 @@ it.runIf(process.platform === "darwin")(
     expect(existsSync(join(project, "vendor/lib/.git/HEAD"))).toBe(true);
   },
 );
+
+/** One restricted macOS operation with `writeRoot` as its only write root (spelled as given). */
+async function restrictedRun(writeRoot: string, command: string): Promise<ExecResult> {
+  const state = await mkdtemp(join(root, "state-"));
+  const worker = await startMacOperationWorker(
+    {
+      kind: "exec",
+      scope: { operationId: "deny", tag: "deny" } as never,
+      grant: {
+        full: false,
+        readRoots: [writeRoot],
+        writeRoots: [writeRoot],
+        hosts: [],
+        deniedReadRoots: [state],
+        revision: "r",
+      },
+      args: { command, cwd: writeRoot, timeoutMs: 60_000, maxOutputBytes: 1 << 16 },
+      stateDir: state,
+      pythonPath: "/usr/bin/python3",
+      runtimeHash: workspace.runtimeHash,
+      beforeLaunch: async () => {},
+      onLaunch: async () => {},
+    },
+    new AbortController().signal,
+  );
+  return (await worker.completion) as ExecResult;
+}
+
+// A directory that holds (or may hold) a HEAD git keeps cannot leave .git: moved out, it would be
+// a bare-repository lookalike once objects/, refs/ and a config are added beside that HEAD.
+it.runIf(process.platform === "darwin")(
+  "no directory holding a kept HEAD moves out of .git, and cherry-pick still works",
+  async () => {
+    const project = join(root, "moves");
+    git(root, "init", "-q", "-b", "main", project);
+    git(project, "commit", "-q", "--allow-empty", "-m", "init");
+    await mkdir(join(project, ".git/modules/sub"), { recursive: true });
+    await mkdir(join(project, ".git/worktrees/w"), { recursive: true });
+    const result = await restrictedRun(
+      project,
+      [
+        "mkdir -p src",
+        "printf 'ref: refs/heads/main' > .git/logs/HEAD; mv .git/logs src/y",
+        "mkdir -p .git/refs/remotes/x; printf 'ref: refs/heads/main' > .git/refs/remotes/x/HEAD; mv .git/refs/remotes/x src/x",
+        "mv .git/refs/remotes src/r; mv .git/refs src/refs; mv .git/sequencer src/s 2>/dev/null",
+        "mv .git/modules/sub src/m; mv .git/worktrees/w src/w",
+        'g() { git -c user.name=t -c user.email=t@t "$@"; }',
+        "printf a > a && g add a && g commit -qm a && g checkout -qb topic",
+        "printf b > b && g add b && g commit -qm b && g checkout -q main && g cherry-pick topic >/dev/null",
+        "g log --oneline | wc -l | tr -d ' ' > commits; true",
+      ].join("; "),
+    );
+    expect(readFileSync(join(project, "commits"), "utf8").trim(), result.stderr).toBe("3");
+    for (const path of ["src/y", "src/x", "src/r", "src/refs", "src/m", "src/w"])
+      expect(existsSync(join(project, path)), path).toBe(false);
+    expect(existsSync(join(project, ".git/logs"))).toBe(true);
+    expect(existsSync(join(project, ".git/refs/remotes/x/HEAD"))).toBe(true);
+  },
+);
+
+// Seatbelt matches resolved paths: a root spelled through /tmp (a link to /private/tmp) still gets
+// every regex rule. (A root spelled through another symbolic link is not writable at all for the
+// runtime's own allow rule: it fails closed; its spellings are covered in mac-write-policy.test.ts.)
+it.runIf(process.platform === "darwin")(
+  "the policy holds for a root spelled through /tmp",
+  async () => {
+    const viaTmp = await mkdtemp("/tmp/cap-mac-root-");
+    try {
+      git(root, "init", "-q", "-b", "main", viaTmp);
+      const result = await restrictedRun(
+        viaTmp,
+        "printf x > .git/unknown; printf x > .BASHRC; printf x > HEAD; printf ok > plain; true",
+      );
+      expect(existsSync(join(viaTmp, "plain")), result.stderr).toBe(true);
+      for (const path of [".git/unknown", ".BASHRC", "HEAD"])
+        expect(existsSync(join(viaTmp, path)), path).toBe(false);
+    } finally {
+      await rm(viaTmp, { recursive: true, force: true });
+    }
+  },
+);

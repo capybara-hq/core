@@ -17,5 +17,6 @@ time) is reaped, also by the next device process. Restricted support is the laun
 an unsupported kernel, ABI, architecture or Python below 3.9 fails closed. A local-Docker device
 runs the same agent in its container. The macOS worker now enforces the same write policy through ordered Seatbelt regex rules (the
 pnpm patch of `@anthropic-ai/sandbox-runtime` accepts `writeRegexRules`): case-insensitive denies,
-the gitdir allowlist, no bare-repository `HEAD`, no forged repository and no `.git` moved away.
+the gitdir allowlist, no bare-repository `HEAD`, no forged repository, no `.git` and no directory
+holding a kept `HEAD` moved away, each write root matched in every spelling Seatbelt may see.
 The README recommends `git config --global safe.bareRepository explicit` as defence in depth.

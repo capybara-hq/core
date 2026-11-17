@@ -15,7 +15,7 @@ import {
   SandboxScopeDeniedError,
 } from "@capybara-hq/plugin-sdk";
 import { implicitWritePaths } from "../policy.js";
-import { macWriteRegexRules } from "./mac-write-policy.js";
+import { macWriteRegexRules, macWriteRootSpellings } from "./mac-write-policy.js";
 import {
   type NativeHelperRequest,
   type NativeHelperResult,
@@ -429,7 +429,7 @@ export async function startMacOperationWorker(
             // ordered regex rules the patched runtime appends last (mac-write-policy.ts)
             writeRegexRules: establishmentRoots.length
               ? macWriteRegexRules("")
-              : writeRoots.flatMap((r) => macWriteRegexRules(r)),
+              : writeRoots.flatMap((r) => macWriteRootSpellings(r).flatMap(macWriteRegexRules)),
           },
           network: {
             allowedDomains: [...request.grant.hosts],
