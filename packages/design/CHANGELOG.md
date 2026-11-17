@@ -1,5 +1,12 @@
 # @capybara-hq/design
 
+## 0.2.0-rc.12
+
+### Patch Changes
+
+- d1f558b: Keep the conversation thread aligned with the composer in Safari when the thread scrolls with a
+  classic scrollbar.
+
 ## 0.2.0-rc.11
 
 ### Patch Changes
