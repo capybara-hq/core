@@ -33,6 +33,8 @@ const mode = (over: Record<string, unknown> = {}) => ({
   network: { kind: "open-public", hosts: [], source: "org" },
   local: null,
   sandboxNetwork: { kind: "open-public", hosts: [] },
+  fullNetwork: { kind: "open-public", hosts: [] },
+  outerNetwork: null,
   pendingNextUse: false,
   pendingFilesReset: false,
   recent: [],
