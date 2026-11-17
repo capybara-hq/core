@@ -12,7 +12,10 @@ the pinned descriptors; openat2 is refused. New exports (`isSandboxWriteDenied`,
 launcher, `native-files.py` (roots with `denyWrites: true`) and consumers share: shell startup,
 git-global, `.envrc`, `.npmrc`, editor and agent files; inside any `.git` (submodule and worktree
 gitdirs included) only git's ordinary internals; no `HEAD` file outside `.git` (bare-repository
-lookalikes); nothing moved out of a protected name; names compared after NFKC and case folding.
+lookalikes) and no repository forged inside git's own subtrees; hook-manager files (husky,
+pre-commit, lefthook, overcommit, simple-git-hooks, `.githooks`) denied; nothing moved out of a
+protected name; names compared after NFKC and full case folding, identical in TypeScript
+(`sandboxFoldName`'s table) and Python.
 A brokered FIFO open no longer pins a broker thread. The launcher also accepts `nativeFd`, a verified descriptor of the native helper (exec mode).
-New digests: `linux-sandbox.py` 49a078c36ea3c2ad31bfdb2381d872f87ed352e4d11a53a19e4dcfb13c0fe3cb,
-`native-files.py` 5fa8d4d1a99a5492136f8fe944df9ca0887f30c0f6b1c861b51cd57cf8f2fd77.
+New digests: `linux-sandbox.py` da2dbf0a2bc5b6a687b4a7335a92d7765139a9918203b11596f3ac9fafd07b81,
+`native-files.py` c62aaccafb077c920884181977aa15716d6d3d94905e1abbc55e729060a07512.

@@ -190,12 +190,15 @@ helper, the device agent and the macOS runtime's patterns): shell startup, git-g
 npm, editor and agent configuration files; inside any `.git` (including submodule and worktree
 gitdirs) everything except git's ordinary internals; a `HEAD` file outside `.git` (a bare
 repository lookalike); and moves out of protected names. Known limitations: a restricted command
-cannot `git init`, add a submodule or worktree, or create a bare repository; continuing a git
-operation it started runs the todo list it wrote; files tools execute by convention without
+cannot `git init`, add a submodule or worktree, or create a bare repository; it can forge a
+rebase or cherry-pick in progress (git's `rebase-merge/`, `rebase-apply/` and `sequencer/` state is
+writable for git's own use), and continuing it (`git rebase --continue`) runs the `exec` lines of
+the todo list it wrote, as the owner; files tools execute by convention without
 configuration, such as `package.json` scripts run by `npm test`, are not covered, so the owner
-reviews such changes before running them unsandboxed. macOS glob patterns cannot express the
-gitdir allowlist, the `HEAD` rule or moving a nested repository's `.git` away; they deny the
-dangerous gitdir internals at any depth, and the runtime keeps a write root's own `.git` in place.
+reviews such changes before running them unsandboxed. macOS expresses the same policy as ordered Seatbelt
+regex rules (a pnpm patch of the sandbox runtime); Seatbelt sees paths, not contents, so a directory
+renamed into git's subtrees keeps what it held. Owners are advised to set
+`git config --global safe.bareRepository explicit` as defence in depth.
 
 Provider errors add duck-typed `SandboxPermissionUnsupportedError` and `SandboxScopeDeniedError`
 with fixed kernel-facing codes. Neither is `SandboxGoneError`: a denial must not recreate the
