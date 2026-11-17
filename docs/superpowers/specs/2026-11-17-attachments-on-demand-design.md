@@ -90,6 +90,33 @@ content type string (`type/subtype`, lower case), still deployment config:
   (`apps/web/src/lib/attachments.ts:182` `typeList`, message `fileTypeNotAllowed`) lists at most
   six labels and then "等 N 种 / and N more", so the line stays readable once the list grows.
 
+#### 5.1.1 Revised 2026-11-17 (maintainer): mainstream office and source files, by extension
+
+A person attaches what their work is made of: office documents (the legacy binary formats included),
+archives, and source code. A content-type list cannot carry that: browsers and operating systems
+disagree on source files (a `.py` arrives as `text/x-python`, `application/x-python` or
+`application/octet-stream`; a `.ts` can arrive as `video/mp2t`), and the model side does not depend
+on the type at all — everything that is not an image, a PDF or a small text file is a reference.
+
+- **New config `attachments.allowedExtensions`** (lower case, no dot, `^[a-z0-9]{1,12}$`). An upload is
+  accepted when its declared content type is in `attachments.allowedTypes` **or** the extension of its
+  file name is in `attachments.allowedExtensions`; anything else stays `attachment.type_not_allowed`.
+  The same rule is the web's precheck, so the refusal happens before the upload.
+- **Default extensions** (designer's call; a deployment trims or extends):
+  office `doc docx xls xlsx ppt pptx odt ods odp rtf`; archives `zip tar gz tgz bz2 xz 7z`; documents
+  and text `txt md markdown rst tex adoc csv tsv html htm xhtml xml xsd xsl svg css scss sass less`;
+  data and config `json jsonl yaml yml toml ini cfg conf env properties sql`; source `py pyi ipynb
+  js mjs cjs jsx ts mts cts tsx vue svelte java kt kts scala groovy gradle go rs c h cc cpp cxx hpp
+  cs fs vb rb php pl swift lua r jl dart ex exs erl hs clj cljs sh bash zsh fish ps1 bat cmd
+  diff patch log graphql gql proto tf tfvars mk`.
+  Executables (`exe`, `dll`, `so`, `dylib`, `msi`) are deliberately absent.
+- **The model side does not change**: image / PDF / small text keep their rules; every other accepted
+  type is a `file` block and a reference (§5.2), whatever its content type says.
+- `GET /attachments/limits` returns the extension list beside the types; the composer's `accept`
+  attribute carries types and `.ext` entries, so the picker offers them.
+- The refusal copy keeps naming the media types (six, then the count) and adds that common office and
+  source files are allowed, instead of listing eighty extensions.
+
 ### 5.2 What the model sees
 
 `resolveMedia` (`runtime/context/build.ts:437`) decides by type **and by the model of the step**:
