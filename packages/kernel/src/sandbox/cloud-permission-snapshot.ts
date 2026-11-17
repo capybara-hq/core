@@ -10,6 +10,8 @@ import { SandboxLeases } from "./leases.js";
 import { LegacyRetirementStore } from "./legacy-retirement.js";
 import {
   type AppliedLimits,
+  appliedOf,
+  type CloudOwnerSnapshot,
   cloudChosenMode,
   cloudSnapshotOf,
   coversHost,
@@ -25,6 +27,7 @@ import { PermissionAuthorityLock } from "./permission-authority-lock.js";
 import { needsFullCeiling, PermissionCeilingWrites } from "./permission-ceiling-writes.js";
 import { PermissionConfigPublication } from "./permission-config-publication.js";
 import { PermissionFacts } from "./permission-facts.js";
+import { providerForDevice, SandboxProviders } from "./providers.js";
 
 /**
  * What a snapshot or reconciliation found: `unprobed` (no instance or file system yet: the next
@@ -43,6 +46,12 @@ export interface CloudSnapshotOutcome {
   state: CloudSnapshotState;
   /** The lifecycle action that establishes the exact limits when they are required. */
   action?: "reset-files";
+  /**
+   * `reconcile-required` on a live instance: the limits that would establish the device's
+   * authority, never wider than the instance is known to run in any dimension (B-12). A provider
+   * `update` that applies exactly these clears the marker (`SandboxService.reconcileLimits`).
+   */
+  target?: AppliedLimits;
 }
 
 /** How long the writer waits for the device's exclusive lifecycle lease (running commands). */
@@ -119,8 +128,11 @@ export async function readCloudSnapshotProgress(db: DeviceReader): Promise<Cloud
  * once: a snapshot is never recomputed (a later false stays explicit after a widening). A device
  * whose applied limits are not exactly the desired ones keeps a durable marker that blocks
  * admission ({@link PermissionFacts.assertCloudReconciled}) until {@link reconcile} finds them
- * established; the only action that establishes them without a provider-specific update is a
- * file reset, after which the next create applies them exactly.
+ * established: after a file reset (the next create applies them exactly), or once a provider
+ * `update` under the lifecycle lease applied the reconcile target (B-12,
+ * `SandboxService.reconcileLimits`). Reconciling keeps any stricter boundary the instance is
+ * known to run by intersection: the owner ceiling and outer network are narrowed to it (a real
+ * narrowing, published like the snapshot's), never the instance widened to the authority.
  */
 @Injectable()
 export class CloudPermissionSnapshots {
@@ -138,6 +150,9 @@ export class CloudPermissionSnapshots {
     private readonly ceilings: Pick<PermissionCeilingWrites, "publishLocked">,
     @Inject(LegacyRetirementStore)
     private readonly retirement: Pick<LegacyRetirementStore, "assertCutoverBarrier">,
+    /** Whether a device's provider fixes limits at its file system (B-12 intersection). */
+    @Inject(SandboxProviders)
+    private readonly providers: Pick<SandboxProviders, "cloud" | "forName">,
   ) {}
 
   /**
@@ -221,6 +236,16 @@ export class CloudPermissionSnapshots {
     return this.underLease(deviceId, signal, () => this.reconcileLocked(orgId, deviceId));
   }
 
+  /**
+   * {@link reconcile} for a caller that already holds the device's exclusive lifecycle lease
+   * (`SandboxService.reconcileLimits`): the same transaction, no lease taken here.
+   */
+  async reconcileHeld(orgId: string, deviceId: string): Promise<CloudSnapshotOutcome> {
+    return this.txHost.run(() => this.reconcileLocked(orgId, deviceId), {
+      propagation: "requires_new",
+    });
+  }
+
   /** {@link reconcile} by device id alone (after a file reset); nothing for an unknown device. */
   async reconcileDevice(deviceId: string): Promise<CloudSnapshotOutcome> {
     const row = await this.db
@@ -294,27 +319,49 @@ export class CloudPermissionSnapshots {
     const fullNarrowed = old.mode === "auto" && !snap.fullAccess;
     const networkNarrowed =
       JSON.stringify(normalizeNetwork(old.network)) !== JSON.stringify(snap.outerNetwork);
-    if (fullNarrowed || networkNarrowed) {
-      const outer = snap.outerNetwork;
-      await this.ceilings.publishLocked(
-        { orgId, deviceId },
-        "device",
-        (scope, row) => {
-          if (needsFullCeiling(scope)) return !snap.fullAccess;
-          if (outer.kind !== "allowlist" || !("network" in scope) || !isExecutionMethod(row.method))
-            return false;
-          // an execution outside any allowlist (environment networking) is wider than the outer
-          // allowlist; `none` is narrower; an allowlist must be covered host by host
-          if (scope.network.kind === "environment") return true;
-          if (scope.network.kind !== "allowlist") return false;
-          return scope.network.hosts.some((h) => !outer.hosts.some((p) => coversHost(p, h)));
-        },
-        fullNarrowed,
-      );
-    }
+    if (fullNarrowed || networkNarrowed)
+      await this.publishNarrowing(orgId, deviceId, snap, fullNarrowed);
     return state === "reconcile-required" ? { state, action: "reset-files" } : { state };
   }
 
+  /**
+   * A narrowed owner ceiling or outer network changes the device's authority: it goes through the
+   * device ceiling writer (epoch, Full consent, exact revocation) in the caller's transaction,
+   * under the device write lock already held.
+   */
+  private async publishNarrowing(
+    orgId: string,
+    deviceId: string,
+    snap: CloudOwnerSnapshot,
+    fullNarrowed: boolean,
+  ): Promise<void> {
+    const outer = snap.outerNetwork;
+    await this.ceilings.publishLocked(
+      { orgId, deviceId },
+      "device",
+      (scope, row) => {
+        if (needsFullCeiling(scope)) return !snap.fullAccess;
+        if (outer.kind !== "allowlist" || !("network" in scope) || !isExecutionMethod(row.method))
+          return false;
+        // an execution outside any allowlist (environment networking) is wider than the outer
+        // allowlist; `none` is narrower; an allowlist must be covered host by host
+        if (scope.network.kind === "environment") return true;
+        if (scope.network.kind !== "allowlist") return false;
+        return scope.network.hosts.some((h) => !outer.hosts.some((p) => coversHost(p, h)));
+      },
+      fullNarrowed,
+    );
+  }
+
+  /**
+   * Re-checks a marked device under its write lock. With an instance whose applied limits are
+   * known (in force, even with a newer value pending a reset), the device's authority is first
+   * narrowed to them by intersection (B-12): Full only where the instance runs auto, the outer
+   * network cut to the applied network; a real narrowing is published. Then the marker clears
+   * when the applied limits are exactly the (narrowed) effective ones with nothing pending;
+   * otherwise it stays, with the target that would establish them: the effective limits, which
+   * are now never wider than the instance in any dimension, so applying them only narrows.
+   */
   @Transactional({ propagation: "mandatory" })
   private async reconcileLocked(orgId: string, deviceId: string): Promise<CloudSnapshotOutcome> {
     const device = await this.lockedDevice(orgId, deviceId);
@@ -322,14 +369,43 @@ export class CloudPermissionSnapshots {
     if (!device.permission_reconcile_required) return { state: "existing" };
     const instance = await this.lockedInstance(deviceId);
     let state: CloudSnapshotState = "unprobed";
+    let target: AppliedLimits | undefined;
     if (instance !== null) {
+      const rec = readInstanceLimits(instance.instance_limits);
+      // only a record in force narrows: a live instance's, or the file system's of a provider
+      // that fixes limits there; a destroyed instance's record is stale (the next create applies
+      // the desired limits)
+      const inForce =
+        (instance.handle !== null &&
+          (instance.status === "running" || instance.status === "suspended")) ||
+        providerForDevice(this.providers, device.provider)?.impl.limitsApplyAt === "fileSystem";
+      if (inForce && rec.applied !== null && device.owner_full_access !== null) {
+        const outer = device.outer_network ?? { kind: "open-public", hosts: [] };
+        const narrowed = cloudSnapshotOf(
+          { mode: device.owner_full_access ? "auto" : "sandbox", network: outer },
+          rec.applied,
+        );
+        const fullNarrowed = device.owner_full_access && !narrowed.fullAccess;
+        const networkNarrowed =
+          JSON.stringify(normalizeNetwork(outer)) !== JSON.stringify(narrowed.outerNetwork);
+        if (fullNarrowed || networkNarrowed) {
+          await this.db
+            .updateTable("devices")
+            .set({
+              owner_full_access: narrowed.fullAccess,
+              outer_network: JSON.stringify(narrowed.outerNetwork),
+            })
+            .where("id", "=", deviceId)
+            .execute();
+          await this.publishNarrowing(orgId, deviceId, narrowed, fullNarrowed);
+        }
+      }
       // what the instance must run with now: the snapshot as the current effective policy
       const policy = await this.facts.devicePolicy({ orgId, deviceId });
-      const known = this.appliedOf(instance);
-      state =
-        known !== null && sameAppliedExactly(known, { mode: policy.mode, network: policy.network })
-          ? "bound"
-          : "reconcile-required";
+      const effective = appliedOf({ mode: policy.mode, network: policy.network });
+      const known = rec.unapplied !== null ? null : rec.applied;
+      state = sameAppliedExactly(known, effective) ? "bound" : "reconcile-required";
+      target = effective;
     }
     if (state !== "reconcile-required")
       await this.db
@@ -337,7 +413,9 @@ export class CloudPermissionSnapshots {
         .set({ permission_reconcile_required: false })
         .where("id", "=", deviceId)
         .execute();
-    return state === "reconcile-required" ? { state, action: "reset-files" } : { state };
+    return state === "reconcile-required"
+      ? { state, action: "reset-files", ...(target !== undefined && { target }) }
+      : { state };
   }
 
   private desired(fullAccess: boolean, outer: DeviceNetwork): AppliedLimits {
@@ -364,8 +442,10 @@ export class CloudPermissionSnapshots {
       .selectFrom("devices")
       .select([
         "source",
+        "provider",
         "mode",
         "owner_full_access",
+        "outer_network",
         "permission_reconcile_required",
         "deleted_at",
       ])
@@ -396,11 +476,5 @@ export class CloudPermissionSnapshots {
       row.status === "creating" ||
       (row.handle !== null && (row.status === "running" || row.status === "suspended"));
     return live || row.fs_status !== "none" ? row : null;
-  }
-
-  /** The exactly known applied limits; null when unknown or a newer value awaits a reset. */
-  private appliedOf(row: { instance_limits: unknown }): AppliedLimits | null {
-    const rec = readInstanceLimits(row.instance_limits);
-    return rec.unapplied !== null ? null : rec.applied;
   }
 }
