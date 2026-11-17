@@ -34,6 +34,7 @@ import { OrgSettingsService } from "../../src/orgs/settings.service.js";
 import { Waits } from "../../src/runtime/waits.js";
 import { PermissionFacts } from "../../src/sandbox/permission-facts.js";
 import { SandboxService } from "../../src/sandbox/sandbox.service.js";
+import { ApprovalsService } from "../../src/tools/approvals.service.js";
 import { sandboxBaseTimeoutMs } from "../../src/tools/builtins/sandbox/common.js";
 import type { ScriptRule } from "../fixtures/plugins/model-script/index.js";
 import { removeFakeSandbox } from "../fixtures/plugins/sandbox-fake/index.js";
@@ -961,6 +962,22 @@ describe("exact background revocation through the outbox and the worker", () => 
   const OWNER_PW = "correct horse battery";
   // a host the deployment's restricted allowlist covers, so the owner baseline may include it
   const HOST = "github.com";
+  /** An authenticated staged `policy` frame carrying the machine's owner report (B2). */
+  const ownerFrame = (
+    sequence: number,
+    o: { fullAccess: boolean; domains: string[]; reach?: "workspace" | "os-user" },
+  ) => ({
+    type: "policy",
+    policy: { mode: o.fullAccess ? "auto" : "sandbox", allowedDomains: o.domains },
+    ownerCeiling: {
+      version: 2,
+      revision: `owner-${sequence}`,
+      sequence,
+      fullAccess: o.fullAccess,
+      restrictedProjectReach: o.reach ?? "os-user",
+      restrictedAllowedDomains: o.domains,
+    },
+  });
   let current: { account: Account; login: string } | undefined;
   const owner = () => {
     if (!current) throw new Error("no owner yet");
@@ -987,40 +1004,44 @@ describe("exact background revocation through the outbox and the worker", () => 
       accountId: ownerAccount().id,
       launch: false,
     });
-    // the owner's restricted baseline allows the host when the first task is admitted
-    await f.db
-      .updateTable("device_machines")
-      .set({ local_policy: JSON.stringify({ mode: "auto", allowedDomains: [HOST] }) })
+    const machine = await f.db
+      .selectFrom("device_machines")
+      .select("id")
       .where("device_id", "=", f.deviceId)
-      .execute();
+      .executeTakeFirstOrThrow();
+    // the owner's restricted baseline allows the host when the first task is admitted: written
+    // by the machine's authenticated policy frame (B2 owner report), not by SQL
+    await k.app
+      .get(MachinesService)
+      .recordPolicyV3(
+        machine.id,
+        ownerFrame(1, { fullAccess: true, domains: [HOST] }),
+        "connection-1",
+      );
     const baselineTask = await f.launchAnother();
-    // the person approved the host for this run: an explicit grant independent of the baseline
-    await f.db
-      .insertInto("approvals")
-      .values({
-        id: randomUUID(),
-        org_id: f.orgId,
-        conversation_id: f.conversationId,
-        run_id: f.runId,
-        call_id: randomUUID(),
-        tool_key: "Bash",
-        input: JSON.stringify({}),
-        requested_for: ownerAccount().id,
-        approver_role: null,
-        status: "approved",
-        scope: "once",
-        decided_by: ownerAccount().id,
-        expires_at: new Date(Date.now() + 3_600_000),
-        spec_hash: "",
-        connector_id: null,
-        kind: "network",
-        detail: JSON.stringify({
-          deviceId: f.deviceId,
-          hosts: [{ host: HOST }],
-          grantedHosts: [HOST],
-        }),
-      })
-      .execute();
+    // the person approves the host for this run through the real network ask and decision: an
+    // explicit grant independent of the baseline
+    const approvals = k.app.get(ApprovalsService);
+    const ask = await approvals.requestNetwork({
+      orgId: f.orgId,
+      conversationId: f.conversationId,
+      runId: f.runId,
+      step: 1,
+      callId: `c-${randomUUID().slice(0, 8)}`,
+      requestedFor: ownerAccount().id,
+      detail: {
+        deviceId: f.deviceId,
+        hosts: [{ host: HOST, port: 443 }],
+        command: `curl https://${HOST}/`,
+        description: "Fetch",
+        result: { content: "blocked", isError: true },
+      },
+      scopes: ["once"],
+    });
+    await approvals.decide(f.orgId, ask.id, ownerAccount().id, {
+      decision: "approve",
+      scope: "once",
+    });
     const grantedTask = await f.launchAnother();
     const intentOf = async (taskId: string) => {
       const task = await f.db
@@ -1049,13 +1070,11 @@ describe("exact background revocation through the outbox and the worker", () => 
     expect(b.granted_hosts).toEqual([HOST]);
     // the launching run completes; the started authority does not depend on it
     await f.db.updateTable("runs").set({ status: "completed" }).where("id", "=", f.runId).execute();
-    const machine = await f.db
-      .selectFrom("device_machines")
-      .select("id")
-      .where("device_id", "=", f.deviceId)
-      .executeTakeFirstOrThrow();
-    // the owner removes the host from the baseline on the machine (a restricted-only change)
-    await k.app.get(MachinesService).recordPolicy(machine.id, { mode: "auto", allowedDomains: [] });
+    // the owner removes the host from the baseline on the machine (a restricted-only change),
+    // reported by the next authenticated policy frame
+    await k.app
+      .get(MachinesService)
+      .recordPolicyV3(machine.id, ownerFrame(2, { fullAccess: true, domains: [] }), "connection-1");
     expect((await intentOf(baselineTask)).state).toBe("revoked");
     expect((await intentOf(grantedTask)).state).toBe("background-running");
     await drainOutbox(k.app, { jobName: "sandbox-operation-revoke" });
@@ -1069,6 +1088,103 @@ describe("exact background revocation through the outbox and the worker", () => 
     expect(f.provider.calls.stop).toHaveLength(1);
     expect(await taskOf(grantedTask)).toEqual({ status: "running", launch_state: "acknowledged" });
     expect((await intentOf(grantedTask)).state).toBe("background-running");
+  });
+
+  it("the B2 owner writer: a restricted-only change keeps Full work and consent; Full narrowing revokes only Full work", async () => {
+    const f = await managedTaskFixture({
+      kernels: [k],
+      raw,
+      login: ownerLogin(),
+      password: OWNER_PW,
+      accountId: ownerAccount().id,
+      launch: false,
+    });
+    const machine = await f.db
+      .selectFrom("device_machines")
+      .select("id")
+      .where("device_id", "=", f.deviceId)
+      .executeTakeFirstOrThrow();
+    const machines = k.app.get(MachinesService);
+    await machines.recordPolicyV3(
+      machine.id,
+      ownerFrame(1, { fullAccess: true, domains: [HOST] }),
+      "connection-1",
+    );
+    const profiles = k.app.get(PermissionProfilesService);
+    const facts = k.app.get(PermissionFacts);
+    const preview = await facts.scope(f.orgId, f.deviceId, null, null);
+    if (!preview.scopeRevision) throw new Error("the fixture device has no Full scope");
+    const { revision } = await profiles.set(f.orgId, f.conversationId, ownerAccount().id, {
+      profile: "full-access",
+      consentScopeRevision: preview.scopeRevision,
+      expectedRevision: 0,
+    });
+    const fullTask = await f.launchAnother();
+    await profiles.set(f.orgId, f.conversationId, ownerAccount().id, {
+      profile: "approve-for-me",
+      expectedRevision: revision,
+    });
+    const restrictedTask = await f.launchAnother();
+    const intentOf = async (taskId: string) => {
+      const task = await f.db
+        .selectFrom("background_tasks")
+        .select("operation_id")
+        .where("id", "=", taskId)
+        .executeTakeFirstOrThrow();
+      return f.db
+        .selectFrom("sandbox_operation_intents")
+        .selectAll()
+        .where("operation_id", "=", task.operation_id as string)
+        .executeTakeFirstOrThrow();
+    };
+    const taskOf = (id: string) =>
+      f.db
+        .selectFrom("background_tasks")
+        .select(["status", "launch_state"])
+        .where("id", "=", id)
+        .executeTakeFirstOrThrow();
+    expect((await intentOf(fullTask)).scope).toMatchObject({ profile: "full-access" });
+    expect((await intentOf(restrictedTask)).scope).toMatchObject({
+      profile: "approve-for-me",
+      network: { kind: "allowlist", hosts: [HOST] },
+    });
+    await f.db.updateTable("runs").set({ status: "completed" }).where("id", "=", f.runId).execute();
+    const consentAt = (await facts.scope(f.orgId, f.deviceId, null, null)).scopeRevision;
+    // restricted-only owner change (baseline host and reach): only restricted work it narrows
+    await machines.recordPolicyV3(
+      machine.id,
+      ownerFrame(2, { fullAccess: true, domains: [], reach: "workspace" }),
+      "connection-1",
+    );
+    expect((await intentOf(restrictedTask)).state).toBe("revoked");
+    expect((await intentOf(fullTask)).state).toBe("background-running");
+    // the Full consent scope is untouched by a restricted-only change
+    expect((await facts.scope(f.orgId, f.deviceId, null, null)).scopeRevision).toBe(consentAt);
+    await drainOutbox(k.app, { jobName: "sandbox-operation-revoke" });
+    await waitFor(
+      async () => (await intentOf(restrictedTask)).revoke_acknowledged,
+      30_000,
+      "the worker's exact revoke of the restricted task",
+    );
+    expect(await taskOf(restrictedTask)).toEqual({ status: "stopped", launch_state: "terminal" });
+    expect(await taskOf(fullTask)).toEqual({ status: "running", launch_state: "acknowledged" });
+    expect(f.provider.calls.stop).toHaveLength(1);
+    // the owner removes Full: only the Full task is revoked and stopped exactly
+    await machines.recordPolicyV3(
+      machine.id,
+      ownerFrame(3, { fullAccess: false, domains: [], reach: "workspace" }),
+      "connection-1",
+    );
+    expect((await intentOf(fullTask)).state).toBe("revoked");
+    expect((await facts.scope(f.orgId, f.deviceId, null, null)).scopeRevision).not.toBe(consentAt);
+    await drainOutbox(k.app, { jobName: "sandbox-operation-revoke" });
+    await waitFor(
+      async () => (await intentOf(fullTask)).revoke_acknowledged,
+      30_000,
+      "the worker's exact revoke of the Full task",
+    );
+    expect(await taskOf(fullTask)).toEqual({ status: "stopped", launch_state: "terminal" });
+    expect(f.provider.calls.stop).toHaveLength(2);
   });
 
   it("the real org writer turning Full off revokes only the task admitted under Full; the worker stops it exactly", async () => {
