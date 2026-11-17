@@ -179,7 +179,9 @@ Each W5 task is reviewed alone. Exports become obsolete only once a grep finds n
 5. `capybara permissions cutover snapshot`. Cloud devices go through the lifecycle lease. Unreconciled devices keep
    `permission_reconcile_required`.
 6. Deploy R2: the paired core and device v3 release. The kernel rejects v2 devices, which must update. Gate the release
-   on `retired`, with the operator acknowledging any `abandoned > 0`.
+   on `retired`, with the operator acknowledging any `abandoned > 0`. Stop and drain every previous-release
+   replica (workers included) before the first R2 worker runs, as in step 1: only workers that reopen `exact-cancelled`
+   obligations may settle retirement members.
 7. Dogfood acceptance on the maintainer's Mac (handoff): three profiles, a background `pnpm test`, then a replay eval.
 
 ## 5. Plugins repo and release order

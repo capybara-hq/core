@@ -1010,8 +1010,8 @@ export class LegacyRetirementStore {
 
   /**
    * Reopens `exact-cancelled` obligations holding a member nobody stopped: a legacy row, or a
-   * revoked start whose revocation is still unacknowledged (every member the cancel covered was
-   * acknowledged with the resolution). A replica without the reopen in {@link addMember} (a
+   * revoked start whose intent is not there acknowledged, a missing intent included (every
+   * member the cancel covered was acknowledged with the resolution). A replica without the reopen in {@link addMember} (a
    * rolling upgrade) adds such members to a resolved obligation; the next scan of a new one
    * reopens it. Returns how many it reopened.
    */
@@ -1032,6 +1032,8 @@ export class LegacyRetirementStore {
    * correlated on `o.id`.
    */
   private lateMember() {
+    // fail closed: a revoked start is covered only when its intent exists acknowledged (a missing
+    // intent row proves nothing was stopped)
     return this.db
       .selectFrom("device_retirement_members as lm")
       .select("lm.ref_id")
@@ -1039,13 +1041,14 @@ export class LegacyRetirementStore {
       .where((eb) =>
         eb.or([
           eb("lm.kind", "=", "legacy-task"),
-          eb.exists(
-            eb
-              .selectFrom("sandbox_operation_intents as li")
-              .select("li.operation_id")
-              .whereRef("li.operation_id", "=", "lm.ref_id")
-              .where("li.state", "=", "revoked")
-              .where("li.revoke_acknowledged", "=", false),
+          eb.not(
+            eb.exists(
+              eb
+                .selectFrom("sandbox_operation_intents as li")
+                .select("li.operation_id")
+                .whereRef("li.operation_id", "=", "lm.ref_id")
+                .where("li.revoke_acknowledged", "=", true),
+            ),
           ),
         ]),
       );
@@ -1126,18 +1129,15 @@ export class LegacyRetirementStore {
       .where("m.settled", "=", false)
       // a member an exact cancel never covered is not settled (acknowledged unstopped): the next
       // scan reopens its obligation
-      .where(({ eb, not, exists, selectFrom }) =>
+      .where(({ eb, exists, selectFrom }) =>
         eb.or([
           eb("o.resolution", "is", null),
           eb("o.resolution", "!=", "exact-cancelled"),
-          not(
-            exists(
-              selectFrom("sandbox_operation_intents as ui")
-                .select("ui.operation_id")
-                .whereRef("ui.operation_id", "=", "m.ref_id")
-                .where("ui.state", "=", "revoked")
-                .where("ui.revoke_acknowledged", "=", false),
-            ),
+          exists(
+            selectFrom("sandbox_operation_intents as ui")
+              .select("ui.operation_id")
+              .whereRef("ui.operation_id", "=", "m.ref_id")
+              .where("ui.revoke_acknowledged", "=", true),
           ),
         ]),
       )

@@ -252,7 +252,9 @@ Every provider must follow these; the kernel's behaviour below assumes them. How
        until a file reset reconciles them. Exit 1 while any device failed or is pending. Ctrl-C stops between devices
        (the device in flight commits or rolls back whole); `--lease-wait-ms` bounds each device's lease wait.
     6. Right before R2, run `snapshot` again until `pending` is 0: cloud devices created after step 5 start with
-       `owner_full_access` NULL. Then R2, gated on `retired` (below).
+       `owner_full_access` NULL. Then R2, gated on `retired` (below). Deploying R2, again stop and drain every
+       replica of the previous release before the first R2 worker runs (its retirement worker must be the only one
+       settling `exact-cancelled` obligations, as in step 1).
   - **Release gate.** It passes on `retired`. With `abandoned > 0` it also needs the operator to acknowledge: "N old incarnations
     were abandoned with their devices; legacy processes may still run on those computers; no device can reuse them".
 

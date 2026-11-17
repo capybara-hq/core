@@ -3200,106 +3200,121 @@ export class SandboxService {
     // the retirement gate (8.5), before any use, resume, rebuild, provider switch or bind: an
     // old incarnation that may run legacy work is destroyed (cloud, confirmed) or refuses
     signal.throwIfAborted();
-    const gate = { resumed: false };
+    const gate = { resumed: false, running: false };
     const row = (await this.retireIncarnations(id, held, read, fence, undefined, gate)) ?? read;
-    if (row.fs_status === "lost") throw deviceFilesLost(p.plugin === LOCAL_PROVIDER);
-    if (
-      row.provider !== null &&
-      row.provider !== p.plugin &&
-      (row.fs_status !== "none" || row.handle !== null)
-    ) {
-      throw otherProvider(row.provider);
-    }
-    if (
-      row.provider !== null &&
-      row.provider !== p.plugin &&
-      row.fs_status === "none" &&
-      row.status === "creating"
-    ) {
-      // a create by the previous provider ended before its file system was recorded: that
-      // provider may have made it by name, and nothing else would ever destroy it
-      await this.dropUnrecordedFiles(id, row.provider, signal);
-    }
-    // read under the lease, after the fence moved: a value read before the wait may be stale
-    // (another replica may have changed the mode meanwhile)
-    const want = await this.wantedLimits(ctx, p, row);
-    const handle = row.handle;
-    const createdAt = row.created_at.getTime();
-    const fsResets = row.fs_resets;
-    if (handle && isInstance(row, gone) && row.status === "running") {
-      const created = await this.create(ctx, p, held, row, fence, signal, want);
-      return { ...created, fsResets, info: { fresh: true, restarted: true }, fence };
-    }
-    // the staged path's activation (B-8): an instance committed before the binder existed has no
-    // binding for its generation and never can get one; past the retirement gate above, a new
-    // generation is created (and committed with its binding) in its place
-    if (
-      handle &&
-      p.binder &&
-      (row.status === "running" || row.status === "suspended") &&
-      (await p.binder.status(id)) === null
-    ) {
-      this.log.info("instance without a committed binding; creating a bound generation", {
-        deviceId: id,
-      });
-      const created = await this.create(ctx, p, held, row, fence, signal, want);
-      return { ...created, fsResets, info: { fresh: true, restarted: true }, fence };
-    }
-    if (handle && row.status === "running") {
-      if (want !== null && this.mustApply(row, p, want)) {
-        const created = await this.applyLimits(ctx, p, held, row, handle, fence, signal, want);
-        if (created) return { ...created, fsResets, info: { fresh: true, restarted: true }, fence };
+    try {
+      if (row.fs_status === "lost") throw deviceFilesLost(p.plugin === LOCAL_PROVIDER);
+      if (
+        row.provider !== null &&
+        row.provider !== p.plugin &&
+        (row.fs_status !== "none" || row.handle !== null)
+      ) {
+        throw otherProvider(row.provider);
       }
-      return { handle, createdAt, fsResets, info: { fresh: false, restarted: false }, fence };
-    }
-    if (handle && row.status === "suspended") {
-      // the retirement gate may have resumed it already, to cancel revoked starts exactly (B-22)
-      const r = gate.resumed ? "resumed" : await p.impl.resume(handle, signal);
-      if (r === "resumed") {
-        // the new limits first: the row says running only once the instance runs with them
-        if (want !== null && this.mustApply(row, p, want)) {
-          let created: Instance | null;
-          try {
-            created = await this.applyLimits(ctx, p, held, row, handle, fence, signal, want);
-          } catch (err) {
-            // the row still says suspended; the next use resumes and kills what is left
-            await this.bestEffort(id, "kill the commands left after a failed limits change", (s) =>
-              p.impl.killAll(handle, s),
-            );
-            throw err;
-          }
-          if (created) {
-            return { ...created, fsResets, info: { fresh: true, restarted: true }, fence };
-          }
-        }
-        await this.fenced(held, id, fence, {
-          status: "running",
-          running_since: sql<Date>`now()`,
-          suspended_at: null,
-          sweep_failed_at: null,
+      if (
+        row.provider !== null &&
+        row.provider !== p.plugin &&
+        row.fs_status === "none" &&
+        row.status === "creating"
+      ) {
+        // a create by the previous provider ended before its file system was recorded: that
+        // provider may have made it by name, and nothing else would ever destroy it
+        await this.dropUnrecordedFiles(id, row.provider, signal);
+      }
+      // read under the lease, after the fence moved: a value read before the wait may be stale
+      // (another replica may have changed the mode meanwhile)
+      const want = await this.wantedLimits(ctx, p, row);
+      const handle = row.handle;
+      const createdAt = row.created_at.getTime();
+      const fsResets = row.fs_resets;
+      if (handle && isInstance(row, gone) && row.status === "running") {
+        const created = await this.create(ctx, p, held, row, fence, signal, want);
+        return { ...created, fsResets, info: { fresh: true, restarted: true }, fence };
+      }
+      // the staged path's activation (B-8): an instance committed before the binder existed has no
+      // binding for its generation and never can get one; past the retirement gate above, a new
+      // generation is created (and committed with its binding) in its place
+      if (
+        handle &&
+        p.binder &&
+        (row.status === "running" || row.status === "suspended") &&
+        (await p.binder.status(id)) === null
+      ) {
+        this.log.info("instance without a committed binding; creating a bound generation", {
+          deviceId: id,
         });
-        return {
-          handle,
-          createdAt,
-          fsResets,
-          info: { fresh: false, restarted: false },
-          fence,
-          resumed: true,
-        };
+        const created = await this.create(ctx, p, held, row, fence, signal, want);
+        return { ...created, fsResets, info: { fresh: true, restarted: true }, fence };
       }
-      this.log.info("sandbox instance is gone at the provider; recreating", {
-        deviceId: id,
-      });
+      if (handle && row.status === "running") {
+        if (want !== null && this.mustApply(row, p, want)) {
+          const created = await this.applyLimits(ctx, p, held, row, handle, fence, signal, want);
+          if (created)
+            return { ...created, fsResets, info: { fresh: true, restarted: true }, fence };
+        }
+        return { handle, createdAt, fsResets, info: { fresh: false, restarted: false }, fence };
+      }
+      if (handle && row.status === "suspended") {
+        // the retirement gate may have resumed it already, to cancel revoked starts exactly (B-22)
+        const r = gate.resumed ? "resumed" : await p.impl.resume(handle, signal);
+        if (r === "resumed") {
+          // the new limits first: the row says running only once the instance runs with them
+          if (want !== null && this.mustApply(row, p, want)) {
+            let created: Instance | null;
+            try {
+              created = await this.applyLimits(ctx, p, held, row, handle, fence, signal, want);
+            } catch (err) {
+              // the row still says suspended; the next use resumes and kills what is left
+              await this.bestEffort(
+                id,
+                "kill the commands left after a failed limits change",
+                (s) => p.impl.killAll(handle, s),
+              );
+              throw err;
+            }
+            if (created) {
+              return { ...created, fsResets, info: { fresh: true, restarted: true }, fence };
+            }
+          }
+          await this.fenced(held, id, fence, {
+            status: "running",
+            running_since: sql<Date>`now()`,
+            suspended_at: null,
+            sweep_failed_at: null,
+          });
+          gate.running = true;
+          return {
+            handle,
+            createdAt,
+            fsResets,
+            info: { fresh: false, restarted: false },
+            fence,
+            resumed: true,
+          };
+        }
+        this.log.info("sandbox instance is gone at the provider; recreating", {
+          deviceId: id,
+        });
+      }
+      const created = await this.create(ctx, p, held, row, fence, signal, want);
+      // had_instance only ever becomes true: any earlier instance (even if a rebuild failed since)
+      // makes this one a restart on the kept files
+      return {
+        ...created,
+        fsResets,
+        info: { fresh: true, restarted: row.had_instance && row.fs_status === "ready" },
+        fence,
+      };
+    } catch (err) {
+      // the gate resumed the instance for an exact cancel (B-22) and this use failed before its
+      // row said running: suspended again (best effort), as the row still says
+      const resumedHandle = row.handle;
+      if (gate.resumed && !gate.running && resumedHandle)
+        await this.bestEffort(id, "suspend the instance again after a failed use", (s) =>
+          p.impl.suspend(resumedHandle, s),
+        );
+      throw err;
     }
-    const created = await this.create(ctx, p, held, row, fence, signal, want);
-    // had_instance only ever becomes true: any earlier instance (even if a rebuild failed since)
-    // makes this one a restart on the kept files
-    return {
-      ...created,
-      fsResets,
-      info: { fresh: true, restarted: row.had_instance && row.fs_status === "ready" },
-      fence,
-    };
   }
 
   /**
