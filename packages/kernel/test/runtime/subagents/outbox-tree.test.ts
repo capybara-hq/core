@@ -425,10 +425,18 @@ describe("sub-agent work owed in its transactions", () => {
     await db.updateTable("runs").set({ status: "completed" }).where("id", "=", runId).execute();
     failing = true;
     // the delete's transaction alone: the process died before its direct tree stop
+    type Subject = { orgId: string; rootConversationId: string; deviceId?: string };
     const conversations = k.app.get(ConversationsService) as unknown as {
-      markDeleted(orgId: string, conversationId: string, accountId: string): Promise<void>;
+      deletionSubject(orgId: string, conversationId: string): Promise<Subject>;
+      markDeleted(
+        orgId: string,
+        conversationId: string,
+        accountId: string,
+        locked: Subject,
+      ): Promise<void>;
     };
-    await conversations.markDeleted(orgId, conv, ownerId);
+    const subject = await conversations.deletionSubject(orgId, conv);
+    await conversations.markDeleted(orgId, conv, ownerId, subject);
     const rows = await owed(STOP_TREE_JOB);
     expect(rows).toEqual([
       {
