@@ -58,6 +58,13 @@ function show(images = IMAGES, index = 0, h: Handlers = {}) {
   };
 }
 
+/** A double click as a browser sends it: the press first, then the dblclick. */
+const dblclick = (el: HTMLElement) => {
+  fireEvent.pointerDown(el, { pointerId: 1 });
+  fireEvent.pointerUp(el, { pointerId: 1 });
+  fireEvent.doubleClick(el);
+};
+
 const percent = () => document.querySelector("[data-part='image-viewer-percent']")?.textContent;
 
 describe("ImageViewer", () => {
@@ -114,9 +121,9 @@ describe("ImageViewer", () => {
     const { loaded } = show();
     loaded();
     const img = screen.getByRole("img", { name: "a.png" });
-    fireEvent.doubleClick(img);
+    dblclick(img);
     expect(percent()).toBe("100%");
-    fireEvent.doubleClick(img);
+    dblclick(img);
     expect(percent()).toBe("50%");
   });
 
@@ -132,11 +139,95 @@ describe("ImageViewer", () => {
     fireEvent.pointerUp(stage, { pointerId: 1 });
     expect(pan()).toContain("translate(0px, 0px)");
     // 100%: 2000 × 1000 in a 1000 × 800 viewport, so it pans (both axes exceed the box)
-    fireEvent.doubleClick(img);
+    dblclick(img);
     fireEvent.pointerDown(stage, { pointerId: 1, clientX: 100, clientY: 100 });
     fireEvent.pointerMove(stage, { pointerId: 1, clientX: 140, clientY: 120 });
     fireEvent.pointerUp(stage, { pointerId: 1 });
     expect(pan()).toContain("translate(40px, 20px)");
+  });
+
+  describe("with pointer capture (real browsers retarget click and dblclick to the stage)", () => {
+    beforeEach(() => {
+      (HTMLElement.prototype as unknown as { setPointerCapture: () => void }).setPointerCapture =
+        () => {};
+    });
+    afterEach(() => {
+      (HTMLElement.prototype as unknown as { setPointerCapture?: unknown }).setPointerCapture =
+        undefined;
+    });
+
+    it("a click that began on the image does not close, though it lands on the stage", () => {
+      const onOpenChange = vi.fn();
+      const { loaded } = show(IMAGES, 0, { onOpenChange });
+      loaded();
+      const img = screen.getByRole("img", { name: "a.png" });
+      const stage = img.closest("[data-part='image-viewer-stage']") as HTMLElement;
+      fireEvent.pointerDown(img, { pointerId: 1, clientX: 5, clientY: 5 });
+      fireEvent.pointerUp(stage, { pointerId: 1 });
+      fireEvent.click(stage);
+      expect(onOpenChange).not.toHaveBeenCalled();
+      // a press on the bare backdrop still closes
+      fireEvent.pointerDown(stage, { pointerId: 1, clientX: 5, clientY: 5 });
+      fireEvent.pointerUp(stage, { pointerId: 1 });
+      fireEvent.click(stage);
+      expect(onOpenChange).toHaveBeenCalledWith(false);
+    });
+
+    it("a double click that began on the image toggles fit and 100%", () => {
+      const { loaded } = show();
+      loaded();
+      const img = screen.getByRole("img", { name: "a.png" });
+      const stage = img.closest("[data-part='image-viewer-stage']") as HTMLElement;
+      fireEvent.pointerDown(img, { pointerId: 1 });
+      fireEvent.pointerUp(stage, { pointerId: 1 });
+      fireEvent.doubleClick(stage);
+      expect(percent()).toBe("100%");
+      fireEvent.pointerDown(img, { pointerId: 1 });
+      fireEvent.pointerUp(stage, { pointerId: 1 });
+      fireEvent.doubleClick(stage);
+      expect(percent()).toBe("50%");
+    });
+  });
+
+  it("two pointers pinch: spreading them zooms in", () => {
+    const { loaded } = show();
+    loaded();
+    const stage = document.querySelector("[data-part='image-viewer-stage']") as HTMLElement;
+    fireEvent.pointerDown(stage, { pointerId: 1, clientX: 400, clientY: 400 });
+    fireEvent.pointerDown(stage, { pointerId: 2, clientX: 500, clientY: 400 });
+    fireEvent.pointerMove(stage, { pointerId: 2, clientX: 700, clientY: 400 });
+    expect(Number.parseInt(percent() ?? "0", 10)).toBeGreaterThan(50);
+  });
+
+  it("pointercancel clears the pointer state: later moves do not pan", () => {
+    const { loaded } = show();
+    loaded();
+    const img = screen.getByRole("img", { name: "a.png" });
+    const stage = img.closest("[data-part='image-viewer-stage']") as HTMLElement;
+    dblclick(img);
+    fireEvent.pointerDown(stage, { pointerId: 1, clientX: 100, clientY: 100 });
+    fireEvent.pointerCancel(stage, { pointerId: 1 });
+    fireEvent.pointerMove(stage, { pointerId: 1, clientX: 160, clientY: 100 });
+    expect(img.style.transform).toContain("translate(0px, 0px)");
+  });
+
+  it("the zoom percent is a polite live region", () => {
+    const { loaded } = show();
+    loaded();
+    expect(
+      document.querySelector("[data-part='image-viewer-percent']")?.getAttribute("aria-live"),
+    ).toBe("polite");
+  });
+
+  it("the + - 0 1 keys work from the dialog content", async () => {
+    const user = userEvent.setup();
+    const { loaded } = show();
+    loaded();
+    screen.getByRole("dialog").focus();
+    await user.keyboard("1");
+    expect(percent()).toBe("100%");
+    await user.keyboard("0");
+    expect(percent()).toBe("50%");
   });
 
   it("closes on Escape, the close button and a click on the backdrop, not on the image", async () => {

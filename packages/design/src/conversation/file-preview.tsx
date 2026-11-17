@@ -223,6 +223,7 @@ export function ImagePreview({
   name: string;
   onOpen?(): void;
 }): JSX.Element {
+  const t = useDesignT();
   const img = isSafeImageSrc(src) ? (
     <img src={src} alt={name} referrerPolicy="no-referrer" />
   ) : null;
@@ -232,6 +233,7 @@ export function ImagePreview({
       className="cb-preview-image"
       data-part="preview-image"
       data-openable="true"
+      aria-label={fillCopy(t("files.openImage"), { name })}
       onClick={onOpen}
     >
       {img}

@@ -77,7 +77,10 @@ export function ImageViewer({
   const go = (to: number) => {
     if (to >= 0 && to < total && to !== index) onIndexChange(to);
   };
+  /** The body's zoom shortcuts; they ride on the content so they work wherever focus is inside. */
+  const keysRef = useRef<((e: KeyboardEvent<HTMLElement>) => void) | null>(null);
   const onKeyDown = (e: KeyboardEvent<HTMLElement>) => {
+    keysRef.current?.(e);
     if (total < 2 || e.altKey || e.ctrlKey || e.metaKey) return;
     if (e.key === "ArrowRight") {
       e.preventDefault();
@@ -105,6 +108,7 @@ export function ImageViewer({
               image={image}
               index={index}
               total={total}
+              keysRef={keysRef}
               onPrev={() => go(index - 1)}
               onNext={() => go(index + 1)}
               onClose={() => onOpenChange(false)}
@@ -122,6 +126,7 @@ export function ImageViewer({
 }
 
 function ViewerBody({
+  keysRef,
   image,
   index,
   total,
@@ -132,6 +137,7 @@ function ViewerBody({
   onOpenInNewTab,
   onRetry,
 }: {
+  keysRef: { current: ((e: KeyboardEvent<HTMLElement>) => void) | null };
   image: ImageViewerImage;
   index: number;
   total: number;
@@ -179,6 +185,15 @@ function ViewerBody({
     },
     [natural, box],
   );
+
+  // A resize narrows the room to pan in: keep the pan inside it.
+  useEffect(() => {
+    setView((v) => {
+      if (v.fit) return v;
+      const p = limit(v.x, v.y, v.scale);
+      return p.x === v.x && p.y === v.y ? v : { ...v, ...p };
+    });
+  }, [limit]);
 
   // What the native listeners and the pointer handlers read, so they never go stale.
   const live = useRef({ view, scale, minScale, limit, fitScale });
@@ -228,12 +243,17 @@ function ViewerBody({
   const drag = useRef<{ x: number; y: number; px: number; py: number } | null>(null);
   const pinch = useRef<number | null>(null);
   const moved = useRef(false);
+  // Whether the press began on the image: with pointer capture the click and dblclick that follow
+  // are retargeted to the stage, so the press, not the click target, says what was hit.
+  const downOnItem = useRef(false);
   const exceeds = () => {
     const { scale: s } = live.current;
     return !!natural && !!box && (natural.w * s > box.w || natural.h * s > box.h);
   };
   const onPointerDown = (e: ReactPointerEvent<HTMLDivElement>) => {
     if (e.button > 0) return;
+    if (pointers.current.size === 0)
+      downOnItem.current = !!(e.target as Element).closest?.("[data-viewer-item]");
     pointers.current.set(e.pointerId, { x: e.clientX, y: e.clientY });
     e.currentTarget.setPointerCapture?.(e.pointerId);
     if (pointers.current.size === 1) {
@@ -286,10 +306,11 @@ function ViewerBody({
       moved.current = false;
       return;
     }
-    if ((e.target as Element).closest("[data-viewer-item]")) return;
+    if (downOnItem.current || (e.target as Element).closest("[data-viewer-item]")) return;
     onClose();
   };
   const onDoubleClick = (e: React.MouseEvent<HTMLElement>) => {
+    if (!downOnItem.current) return;
     const { view: v, scale: s } = live.current;
     if (v.fit && Math.abs(s - 1) < 0.005) return;
     if (v.fit) {
@@ -299,7 +320,7 @@ function ViewerBody({
   };
 
   // + - 0 (fit) 1 (100 %) from the keyboard, beside the arrows the shell handles.
-  const onKeys = (e: KeyboardEvent<HTMLDivElement>) => {
+  const onKeys = (e: KeyboardEvent<HTMLElement>) => {
     if (e.altKey || e.ctrlKey || e.metaKey) return;
     if (e.key === "+" || e.key === "=") zoomBy(BUTTON_STEP);
     else if (e.key === "-") zoomBy(1 / BUTTON_STEP);
@@ -307,11 +328,17 @@ function ViewerBody({
     else if (e.key === "1") actual();
   };
 
+  keysRef.current = onKeys;
+  useEffect(
+    () => () => {
+      keysRef.current = null;
+    },
+    [keysRef],
+  );
   const safe = isSafeAttachmentHref(image.src);
   const canPan = exceeds();
   return (
-    // biome-ignore lint/a11y/noStaticElementInteractions: the shortcuts live on the dialog's content
-    <div className="cb-viewer-root" onKeyDown={onKeys}>
+    <div className="cb-viewer-root">
       {/* biome-ignore lint/a11y/noStaticElementInteractions: pointer gestures on the image area; the keyboard has Esc, the arrows and + - 0 1 */}
       {/* biome-ignore lint/a11y/useKeyWithClickEvents: a click on the backdrop closes; Esc is its keyboard form */}
       <div
@@ -324,6 +351,7 @@ function ViewerBody({
         onPointerUp={onPointerUp}
         onPointerCancel={onPointerUp}
         onClick={onStageClick}
+        onDoubleClick={onDoubleClick}
       >
         <div className="cb-viewer-box" ref={boxRef}>
           {failed ? (
@@ -352,7 +380,6 @@ function ViewerBody({
                 setNatural({ w: e.currentTarget.naturalWidth, h: e.currentTarget.naturalHeight })
               }
               onError={() => setFailed(true)}
-              onDoubleClick={onDoubleClick}
             />
           ) : null}
         </div>
@@ -418,7 +445,7 @@ function ViewerBody({
             density="dense"
             onClick={() => zoomBy(1 / BUTTON_STEP)}
           />
-          <span className="cb-viewer-percent" data-part="image-viewer-percent">
+          <span className="cb-viewer-percent" data-part="image-viewer-percent" aria-live="polite">
             {Math.round(scale * 100)}%
           </span>
           <IconButton
