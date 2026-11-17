@@ -32,6 +32,7 @@ import type { LockService } from "../../src/infra/lock/lock.service.js";
 import { OutboxService } from "../../src/infra/outbox/outbox.service.js";
 import { ownerPolicyRevokes } from "../../src/local-devices/policy-summary.js";
 import { createLogger } from "../../src/log.js";
+import { OrgSettingsService } from "../../src/orgs/settings.service.js";
 import type { ExecutionClaim } from "../../src/runtime/run-execution.js";
 import { operationIdFor, SandboxOperationIntents } from "../../src/sandbox/operation-intents.js";
 import { SandboxOperationReconcileJob } from "../../src/sandbox/operation-reconcile.job.js";
@@ -1437,5 +1438,59 @@ describe("exact revocation of running background authority (8.4 B3)", () => {
         row.scope as SandboxOperationScope,
         input,
       );
+  });
+
+  it("the real org writer turning Full off revokes only the Full task after its run completed; the worker stops it exactly", async () => {
+    const f = await fixture();
+    const full = randomUUID();
+    const restricted = randomUUID();
+    await f.runCall(full, { command: "npm run dev" });
+    await f.runCall(restricted, { command: "npm run worker" });
+    const [op1, op2] = [f.opFor(full), f.opFor(restricted)];
+    const scopeOf = async (id: string) =>
+      (
+        (
+          await f.db
+            .selectFrom("sandbox_operation_intents")
+            .select("scope")
+            .where("operation_id", "=", id)
+            .executeTakeFirstOrThrow()
+        ).scope as unknown as { profile: string }
+      ).profile;
+    expect(await scopeOf(op1)).toBe("approve-for-me");
+    // the first task started under Full (its starting scope, as a Full admission records it)
+    await sql`UPDATE capybara.sandbox_operation_intents
+      SET scope = jsonb_set(scope, '{profile}', '"full-access"') WHERE operation_id = ${op1}`.execute(
+      raw,
+    );
+    // the sibling started restricted (no host from any baseline in its network)
+    await restrictTo(f.db, [op2]);
+    await f.db
+      .updateTable("sandbox_operation_intents")
+      .set({ granted_hosts: JSON.stringify(["api.example.com"]) })
+      .where("operation_id", "=", op2)
+      .execute();
+    await f.db.updateTable("runs").set({ status: "completed" }).where("id", "=", f.runId).execute();
+    await k.app.get(OrgSettingsService).update(f.orgId, { autoMode: "off" }, owner.id);
+    const state = async (id: string) =>
+      (
+        await f.db
+          .selectFrom("sandbox_operation_intents")
+          .select("state")
+          .where("operation_id", "=", id)
+          .executeTakeFirstOrThrow()
+      ).state;
+    expect(await state(op1)).toBe("revoked");
+    expect(await state(op2)).toBe("background-running");
+    expect(f.jobs().map((j) => j.jobId)).toContain(`sandbox-operation-revoke-${op1}`);
+    expect(f.jobs().map((j) => j.jobId)).not.toContain(`sandbox-operation-revoke-${op2}`);
+    await reconcileJob().revoke(op1);
+    expect(f.provider.stops).toEqual([f.provider.launched.get(op1)]);
+    const task2 = await f.db
+      .selectFrom("background_tasks")
+      .select(["status", "launch_state"])
+      .where("operation_id", "=", op2)
+      .executeTakeFirstOrThrow();
+    expect(task2).toEqual({ status: "running", launch_state: "acknowledged" });
   });
 });
