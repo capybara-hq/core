@@ -214,9 +214,27 @@ function ViewerBody({
     const r = boxRef.current?.getBoundingClientRect();
     return r ? { x: r.left + r.width / 2, y: r.top + r.height / 2 } : { x: 0, y: 0 };
   }, []);
-  const fit = () => setView({ fit: true, scale: 1, x: 0, y: 0 });
-  const actual = () => zoomTo(1, 0, 0);
-  const zoomBy = (factor: number) => zoomTo(live.current.scale * factor, 0, 0);
+  // Only toolbar and keyboard zoom changes are announced; every wheel or pinch step would flood a
+  // screen reader.
+  const announceNext = useRef(false);
+  const [announced, setAnnounced] = useState("");
+  const fit = () => {
+    announceNext.current = true;
+    setView({ fit: true, scale: 1, x: 0, y: 0 });
+  };
+  const actual = () => {
+    announceNext.current = true;
+    zoomTo(1, 0, 0);
+  };
+  const zoomBy = (factor: number) => {
+    announceNext.current = true;
+    zoomTo(live.current.scale * factor, 0, 0);
+  };
+  useEffect(() => {
+    if (!announceNext.current) return;
+    announceNext.current = false;
+    setAnnounced(`${Math.round(scale * 100)}%`);
+  }, [scale]);
 
   // The wheel needs a non-passive listener to keep the page from scrolling under the lightbox.
   useEffect(() => {
@@ -450,8 +468,11 @@ function ViewerBody({
             density="dense"
             onClick={() => zoomBy(1 / BUTTON_STEP)}
           />
-          <span className="cb-viewer-percent" data-part="image-viewer-percent" aria-live="polite">
+          <span className="cb-viewer-percent" data-part="image-viewer-percent">
             {Math.round(scale * 100)}%
+          </span>
+          <span className="cb-sr-only" data-part="image-viewer-status" role="status">
+            {announced}
           </span>
           <IconButton
             label={t("viewer.zoomIn")}

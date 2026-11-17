@@ -211,12 +211,24 @@ describe("ImageViewer", () => {
     expect(img.style.transform).toContain("translate(0px, 0px)");
   });
 
-  it("the zoom percent is a polite live region", () => {
+  it("announces toolbar and keyboard zoom changes, not wheel steps", async () => {
+    const user = userEvent.setup();
     const { loaded } = show();
     loaded();
+    const status = () =>
+      document.querySelector("[data-part='image-viewer-status']")?.textContent ?? "";
     expect(
-      document.querySelector("[data-part='image-viewer-percent']")?.getAttribute("aria-live"),
-    ).toBe("polite");
+      document.querySelector("[data-part='image-viewer-percent']")?.hasAttribute("aria-live"),
+    ).toBe(false);
+    expect(status()).toBe("");
+    fireEvent.wheel(screen.getByRole("img", { name: "a.png" }), { deltaY: -100 });
+    expect(percent()).not.toBe("50%");
+    expect(status()).toBe("");
+    screen.getByRole("dialog").focus();
+    await user.keyboard("1");
+    expect(status()).toBe("100%");
+    await user.keyboard("0");
+    expect(status()).toBe("50%");
   });
 
   it("the + - 0 1 keys work from the dialog content", async () => {
