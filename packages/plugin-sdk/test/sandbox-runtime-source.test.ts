@@ -97,6 +97,10 @@ static("abi5", "Linux", "aarch64", 5)
 static("no-children", "Linux", "aarch64", 8, children=False)
 static("aarch64", "Linux", "aarch64", 6)
 cases["undumpable-on-host"] = module.SELF_PROTECTION
+# On Linux the loaded launcher really is non-dumpable (PR_GET_DUMPABLE); elsewhere nothing runs.
+import ctypes
+cases["dumpable"] = (ctypes.CDLL(None).prctl(3, 0, 0, 0, 0)
+                     if sys.platform.startswith("linux") else 0)
 module.SELF_PROTECTION = "The launcher was traced before it became non-dumpable"
 static("traced", "Linux", "x86_64", 8, candidate=True)
 module.SELF_PROTECTION = None
@@ -124,6 +128,7 @@ print(json.dumps(cases))
       aarch64: null,
       // Loading the launcher made this (untraced) process non-dumpable without failing.
       "undumpable-on-host": null,
+      dumpable: 0,
       // A launcher that cannot protect itself never reports restricted support.
       traced: "The launcher was traced before it became non-dumpable",
       crash: {

@@ -303,7 +303,14 @@ if child == 0:
 control = probe(child)
 os.kill(child, signal.SIGKILL)
 os.waitpid(child, 0)
-print(json.dumps({"control": control, "target": probe(int(sys.argv[1]))}))
+target = int(sys.argv[1])
+def identity(pid):
+    with open("/proc/%d/status" % pid) as handle:
+        uid = [int(line.split()[1]) for line in handle if line.startswith("Uid:")][0]
+    with open("/proc/%d/cmdline" % pid, "rb") as handle:
+        return {"uid": uid, "cmdline": handle.read().replace(b"\\0", b" ").decode().strip()}
+print(json.dumps({"uid": os.getuid(), "who": identity(target), "control": control,
+                  "target": probe(target)}))
 `;
 
 /**
@@ -798,7 +805,15 @@ export async function runSandboxPermissionConformance(
       }
       assert.equal((await held).exitCode, 0, "the supervised command runs normally");
       assert.equal(text(await fixture.inspect.readFile(at(root, "held.txt"))), "ran");
-      const { control, target } = JSON.parse(probed) as Record<string, Record<string, string>>;
+      const { uid, who, control, target } = JSON.parse(probed) as {
+        uid: number;
+        who: { uid: number; cmdline: string };
+        control: Record<string, string>;
+        target: Record<string, string>;
+      };
+      // Not vacuous: the target is a live process of the outsider's own uid.
+      assert.equal(who?.uid, uid, `the supervisor must run as the outsider's uid: ${probed}`);
+      assert.notEqual(who?.cmdline ?? "", "", `the supervisor must still be running: ${probed}`);
       assert.equal(control?.mem, "ALLOWED", `the probe must read a same-uid control: ${probed}`);
       assert.equal(
         control?.environ,
