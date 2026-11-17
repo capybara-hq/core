@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -6,9 +6,11 @@ import {
   DEFAULT_SANDBOX_ROOTS,
   type SandboxExecutionRef,
   type SandboxProvider,
+  SandboxScopeDeniedError,
   ToolError,
 } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
+import { sql } from "kysely";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { BackgroundTaskFinisher } from "../../../src/background/finish.js";
 import { BackgroundTaskStopper } from "../../../src/background/stop.js";
@@ -27,7 +29,10 @@ import {
 } from "../../../src/sandbox/managed-device-context.js";
 import { SandboxProviders } from "../../../src/sandbox/providers.js";
 import { SandboxService } from "../../../src/sandbox/sandbox.service.js";
-import type { SandboxToolDeps } from "../../../src/tools/builtins/sandbox/common.js";
+import {
+  type SandboxToolDeps,
+  SCOPE_DENIED_TOOL_TEXT,
+} from "../../../src/tools/builtins/sandbox/common.js";
 import { sandboxTools } from "../../../src/tools/builtins/sandbox/index.js";
 import { type SkillLoadDeps, skillLoadTool } from "../../../src/tools/builtins/skill-load.js";
 import type { BuiltinCallContext, BuiltinTool } from "../../../src/tools/registry.js";
@@ -61,6 +66,8 @@ const reached: { method: string; marked: number }[] = [];
 /** The conversation whose marked paths `reached` counts, and its device. */
 let watched = "";
 let watchedDevice = "";
+/** Set: the provider refuses a background start with its own words. */
+let startRefuses = false;
 
 const markedCount = async (conversationId: string): Promise<number> => {
   const rows = await kernelDb(raw)
@@ -133,6 +140,8 @@ beforeAll(async () => {
     background: {
       async start(h, scope) {
         await reach("backgroundStart");
+        if (startRefuses)
+          throw new SandboxScopeDeniedError("provider secret: /etc/provider/config denied");
         const row = await kernelDb(raw)
           .selectFrom("device_instances")
           .select("created_at")
@@ -170,6 +179,8 @@ afterAll(async () => {
 beforeEach(async () => {
   vi.restoreAllMocks();
   reached.length = 0;
+  stored.clear();
+  startRefuses = false;
   await truncateTables(raw, "capybara.accounts, capybara.orgs");
 });
 
@@ -207,7 +218,108 @@ async function seed() {
 }
 type Fixture = Awaited<ReturnType<typeof seed>>;
 
+/**
+ * Another root conversation of the same owner on the same device, with its own running run: a
+ * call there records its own marked paths, so a setup call in `f` cannot have recorded them.
+ * `reached` counts this conversation's marked paths from now on.
+ */
+async function sibling(f: Fixture): Promise<Fixture> {
+  const conversationId = randomUUID();
+  await sql`INSERT INTO capybara.conversations
+    (id, org_id, agent_id, account_id, device_id, permission_profile)
+    VALUES (${conversationId}, ${f.orgId}, ${f.agentId}, ${f.accountId}, ${f.deviceId},
+      'request-approval')`.execute(raw);
+  const run = await startRun(k, raw, conversationId, f.accountId);
+  watched = conversationId;
+  reached.length = 0;
+  return { ...f, conversationId, ...run };
+}
+
+/** Records the run start's project snapshot of `root` (optionally unavailable) in `f`'s log. */
+async function projectRoot(
+  f: Fixture,
+  root: string,
+  unavailable?: { reason: "gone"; message: string },
+): Promise<void> {
+  await k.app.get(EventLog).append(f.conversationId, [
+    {
+      type: "project_root",
+      idemKey: `test_project_root:${f.conversationId}`,
+      payload: {
+        project: "app",
+        root,
+        // an unavailable project carries no skills
+        skills: unavailable
+          ? []
+          : [{ name: "demo", description: "A demo.", digest: "a".repeat(64) }],
+        ...(unavailable && { unavailable }),
+      },
+    },
+  ]);
+}
+
+/** An org skill `name` with a script, in the store stub and the conversation's catalog snapshot. */
+async function catalogSkill(f: Fixture, name: string): Promise<void> {
+  const prefix = `skills/${randomUUID()}/`;
+  const files: Record<string, string> = {
+    "SKILL.md": `---\nname: ${name}\ndescription: A plugin skill.\n---\nPlug body.\n`,
+    "run.sh": "echo plug",
+  };
+  const manifestFiles = Object.entries(files).map(([path, text]) => {
+    const data = new TextEncoder().encode(text);
+    stored.set(`${prefix}${path}`, data);
+    return { path, size: data.byteLength, sha256: createHash("sha256").update(data).digest("hex") };
+  });
+  const id = randomUUID();
+  await f.db
+    .insertInto("skills")
+    .values({
+      id,
+      org_id: f.orgId,
+      scope: "org",
+      agent_id: null,
+      name,
+      description: "A plugin skill.",
+      current_version: 1,
+      created_by: f.accountId,
+    })
+    .execute();
+  await f.db
+    .insertInto("skill_versions")
+    .values({
+      skill_id: id,
+      version: 1,
+      manifest: JSON.stringify({ name, description: "A plugin skill.", files: manifestFiles }),
+      object_prefix: prefix,
+      created_by: f.accountId,
+    })
+    .execute();
+  await k.app.get(EventLog).append(f.conversationId, [
+    {
+      type: "skills_catalog",
+      idemKey: `test_skills_catalog:${f.conversationId}`,
+      payload: {
+        skills: [{ id, name, description: "A plugin skill.", version: 1, source: prefix }],
+      },
+    },
+  ]);
+}
+
+/** Binds the conversation to project `path` on its device (admission's working root). */
+async function bindProject(f: Fixture, path: string): Promise<void> {
+  await f.db
+    .insertInto("device_projects")
+    .values({ device_id: f.deviceId, name: "app", path, created_by: f.accountId })
+    .execute();
+  // fixture setup writes the otherwise immutable project binding
+  await sql`UPDATE capybara.conversations SET project_name = 'app', project_path = ${path}
+    WHERE id = ${f.conversationId}`.execute(raw);
+}
+
 const ATTACHMENT = "11111111-2222-4333-8444-555555555555";
+
+/** Files of the kernel object store stub (skill versions), by key. */
+const stored = new Map<string, Uint8Array>();
 
 /** The builtin deps as `BuiltinTools` builds them; `gate` passes the managed writer, required. */
 function depsOf(gate: boolean): SandboxToolDeps {
@@ -231,7 +343,14 @@ function depsOf(gate: boolean): SandboxToolDeps {
     },
     storage: {
       available: true,
-      kernel: () => ({ put: async () => {}, delete: async () => {} }),
+      kernel: () => ({
+        put: async () => {},
+        delete: async () => {},
+        get: async (key: string) => {
+          const data = stored.get(key);
+          return data === undefined ? null : { body: new Response(data).body, size: data.length };
+        },
+      }),
     } as never,
     eventLog: k.app.get(EventLog),
     config: k.app.get(KernelConfigService),
@@ -278,7 +397,7 @@ async function runTool(
   // the project skill path reads no database
   const tools: BuiltinTool[] = [
     ...sandboxTools(deps),
-    skillLoadTool({ ...deps, db: undefined } as unknown as SkillLoadDeps),
+    skillLoadTool({ ...deps, db: kernelDb(raw) } as unknown as SkillLoadDeps),
   ];
   const tool = tools.find((t) => t.spec.name === name);
   if (!tool) throw new Error(`no builtin ${name}`);
@@ -293,7 +412,8 @@ async function runTool(
     runId: f.runId,
     signal: new AbortController().signal,
     executionClaim: f.claim,
-    tools: [{ name: "Bash" }] as never,
+    // the step's sandbox tools (Skill copies files only when the agent can run them)
+    tools: [{ key: "Bash", source: { kind: "builtin", name: "Bash" } }] as never,
     ...opts.over,
   };
   return k.app.get(RunExecution).withClaim(
@@ -355,58 +475,64 @@ describe("builtin tools on the managed route with the activation gate on", () =>
     ]);
   });
 
-  it("Read reads through managed operations after the marked paths", async () => {
+  it("Read reads through managed operations after its own marked paths", async () => {
     const f = await seed();
     await runTool(f, "Write", { file_path: "/workspace/r.txt", content: "line one" });
-    reached.length = 0;
+    const g = await sibling(f);
     const legacy = vi.spyOn(k.app.get(SandboxService), "withSandbox");
-    const r = await runTool(f, "Read", { file_path: "/workspace/r.txt" });
+    const r = await runTool(g, "Read", { file_path: "/workspace/r.txt" });
     expect(textOf(r)).toContain("line one");
     expectManaged(legacy, ["stat", "readFile"]);
+    expect(await markedPaths(g)).toHaveLength(1);
   });
 
-  it("Edit stats and reads through managed operations after the marked paths", async () => {
+  it("Edit stats and reads through managed operations after its own marked paths", async () => {
     const f = await seed();
     await runTool(f, "Write", { file_path: "/workspace/e.txt", content: "old text" });
-    reached.length = 0;
+    const g = await sibling(f);
     const legacy = vi.spyOn(k.app.get(SandboxService), "withSandbox");
-    // the read-before-write guard may answer; the device was entered on the managed route
-    await runTool(f, "Edit", {
+    // never read in this conversation: the read-before-write guard answers, after the reads
+    const r = await runTool(g, "Edit", {
       file_path: "/workspace/e.txt",
       old_string: "old",
       new_string: "new",
     });
+    expect(textOf(r)).toMatch(/Read/);
     expectManaged(legacy, ["stat", "readFile"]);
+    expect(await markedPaths(g)).toHaveLength(1);
   });
 
-  it("Glob searches through managed operations after the marked paths", async () => {
+  it("Glob searches through managed operations after its own marked paths", async () => {
     const f = await seed();
     await runTool(f, "Write", { file_path: "/workspace/g.txt", content: "x" });
-    reached.length = 0;
+    const g = await sibling(f);
     const legacy = vi.spyOn(k.app.get(SandboxService), "withSandbox");
-    const r = await runTool(f, "Glob", { pattern: "*.txt" });
+    const r = await runTool(g, "Glob", { pattern: "*.txt" });
     expect(textOf(r)).toContain("/workspace/g.txt");
     expectManaged(legacy, ["stat", "exec"]);
+    expect(await markedPaths(g)).toHaveLength(1);
   });
 
-  it("Grep searches through managed operations after the marked paths", async () => {
+  it("Grep searches through managed operations after its own marked paths", async () => {
     const f = await seed();
     await runTool(f, "Write", { file_path: "/workspace/h.txt", content: "needle" });
-    reached.length = 0;
+    const g = await sibling(f);
     const legacy = vi.spyOn(k.app.get(SandboxService), "withSandbox");
-    const r = await runTool(f, "Grep", { pattern: "needle" });
+    const r = await runTool(g, "Grep", { pattern: "needle" });
     expect(textOf(r)).toContain("/workspace/h.txt");
     expectManaged(legacy, ["stat", "exec"]);
+    expect(await markedPaths(g)).toHaveLength(1);
   });
 
-  it("Deliver reads the file through managed operations after the marked paths", async () => {
+  it("Deliver reads the file through managed operations after its own marked paths", async () => {
     const f = await seed();
     await runTool(f, "Write", { file_path: "/workspace/d.txt", content: "deliver me" });
-    reached.length = 0;
+    const g = await sibling(f);
     const legacy = vi.spyOn(k.app.get(SandboxService), "withSandbox");
-    const r = await runTool(f, "Deliver", { file_path: "/workspace/d.txt" });
+    const r = await runTool(g, "Deliver", { file_path: "/workspace/d.txt" });
     expect(textOf(r)).toContain("Delivered d.txt");
     expectManaged(legacy, ["stat", "readFile"]);
+    expect(await markedPaths(g)).toHaveLength(1);
   });
 
   it("foreground Bash runs its command through a managed exec after the marked paths", async () => {
@@ -436,68 +562,172 @@ describe("builtin tools on the managed route with the activation gate on", () =>
     expect(task.launch_state).toBe("acknowledged");
   });
 
-  it("FetchAttachment enters on the managed route: the marked paths before the trusted preparation", async () => {
+  it("a background start the provider refuses tells the model kernel text, never the provider's words", async () => {
+    const f = await seed();
+    startRefuses = true;
+    const err = await failure(
+      runTool(f, "Bash", { command: "sleep 30", description: "Wait", run_in_background: true }),
+    );
+    expect(err).toBeInstanceOf(ToolError);
+    expect((err as ToolError).message).toMatch(/^The background task was not started: /);
+    expect((err as ToolError).message).not.toContain("provider secret");
+  });
+
+  it("FetchAttachment enters on the managed route; the kernel's preparation refuses its directory with the scope text", async () => {
     const f = await seed();
     const legacy = vi.spyOn(k.app.get(SandboxService), "withSandbox");
     // the kernel's preparation base for attachments (`attachments/<root id>`) is not yet the
-    // tool's directory (`attachments/<12 hex>`): the copy itself is refused there (W3-H2)
-    await runTool(f, "FetchAttachment", { file: "notes.txt" }).catch(() => undefined);
+    // tool's directory (`attachments/<12 hex>`; W3-H2 aligns it): the copy is refused there
+    const err = await failure(runTool(f, "FetchAttachment", { file: "notes.txt" }));
+    expect(err).toBeInstanceOf(ToolError);
+    expect((err as ToolError).message).toBe(SCOPE_DENIED_TOOL_TEXT);
     expect(legacy).not.toHaveBeenCalled();
     expect(await markedPaths(f)).toHaveLength(1);
+    expect(reached).toEqual([]);
   });
   it.todo("FetchAttachment copies once the kernel's attachments base is the tool's directory");
 
-  it("Skill reads a project skill through managed operations after the marked paths", async () => {
+  it("Skill reads a project skill through managed operations after its own marked paths", async () => {
     const f = await seed();
     await runTool(f, "Write", {
       file_path: "/workspace/.agents/skills/demo/SKILL.md",
       content: "---\nname: demo\ndescription: A demo.\n---\nDo the demo.\n",
     });
-    await k.app.get(EventLog).append(f.conversationId, [
-      {
-        type: "project_root",
-        idemKey: `test_project_root:${f.conversationId}`,
-        payload: {
-          project: "app",
-          root: "/workspace",
-          skills: [{ name: "demo", description: "A demo.", digest: "a".repeat(64) }],
-        },
-      },
-    ]);
-    reached.length = 0;
+    const g = await sibling(f);
+    await projectRoot(g, "/workspace");
     const legacy = vi.spyOn(k.app.get(SandboxService), "withSandbox");
-    const r = await runTool(f, "Skill", { skill: "project:demo" });
+    const r = await runTool(g, "Skill", { skill: "project:demo" });
     expect(textOf(r)).toContain("Do the demo.");
     expectManaged(legacy, ["readFile"]);
+    expect(await markedPaths(g)).toHaveLength(1);
   });
 
-  it("a call reviewed against another working root than the held evidence's fails as stale before its callback", async () => {
+  it("Skill copies a plugin skill through the trusted preparation after the marked paths", async () => {
     const f = await seed();
+    await catalogSkill(f, "plug");
     const legacy = vi.spyOn(k.app.get(SandboxService), "withSandbox");
-    const err = await failure(
-      runTool(
-        f,
-        "Bash",
-        { command: "echo never", description: "Never" },
-        { over: { reviewedWorkingRoot: "/workspace/elsewhere" } },
-      ),
-    );
-    expect(err).toBeInstanceOf(ToolError);
-    expect((err as ToolError).message).toBe(MANAGED_DEVICE_CONTEXT_STALE_TEXT);
-    expect(legacy).not.toHaveBeenCalled();
-    expect(reached.filter((r) => r.method !== "prepare")).toEqual([]);
-    expect(await markedPaths(f)).toEqual([]);
+    const r = await runTool(f, "Skill", { skill: "plug" });
+    expect(textOf(r)).toContain("Plug body.");
+    expect(textOf(r)).toMatch(/copied to \/skills\/plug@/);
+    expectManaged(legacy, ["prepare"]);
   });
 
-  it("a call reviewed against the held evidence's own working root runs", async () => {
+  it("a call reviewed against the held evidence's own working root runs (any spelling of it)", async () => {
     const f = await seed();
     const r = await runTool(
       f,
       "Bash",
       { command: "echo same-root", description: "Same" },
-      { over: { reviewedWorkingRoot: ROOTS.workspace } },
+      { over: { reviewedAgainstRoot: `${ROOTS.workspace}/./` } },
     );
     expect(textOf(r)).toContain("same-root");
+  });
+});
+
+/**
+ * B-18: every reviewed call carries the root it was judged against, the workspace included. When
+ * the held device context names another root (the review fell back to the workspace while
+ * admission uses the bound project's root, or the binding changed after the review), the call is
+ * stale before anything is recorded or run, on every managed entry.
+ */
+describe("a call reviewed against another root than the held evidence's", () => {
+  const OUTSIDE = "/srv/app";
+
+  /** The root the command review judges the conversation's calls against now. */
+  const reviewedRoot = async (f: Fixture): Promise<string | undefined> =>
+    (await k.app.get(ConversationDevices).reviewFacts(f.orgId, f.conversationId))?.workingRoot;
+
+  async function expectStale(
+    f: Fixture,
+    name: string,
+    input: Record<string, unknown>,
+    against: string,
+  ): Promise<void> {
+    const legacy = vi.spyOn(k.app.get(SandboxService), "withSandbox");
+    const err = await failure(runTool(f, name, input, { over: { reviewedAgainstRoot: against } }));
+    expect(err).toBeInstanceOf(ToolError);
+    expect((err as ToolError).message).toBe(MANAGED_DEVICE_CONTEXT_STALE_TEXT);
+    expect(legacy).not.toHaveBeenCalled();
+    expect(reached).toEqual([]);
+    expect(await markedPaths(f)).toEqual([]);
+    legacy.mockRestore();
+  }
+  const BASH = { command: "rm -rf ./build", description: "Clean" };
+
+  it("a workspace review of a project bound after the review (no snapshot yet)", async () => {
+    const f = await seed();
+    const against = await reviewedRoot(f);
+    expect(against).toBe(ROOTS.workspace);
+    await bindProject(f, OUTSIDE);
+    await expectStale(f, "Bash", BASH, against as string);
+  });
+
+  it("a workspace review because the project snapshot is unavailable", async () => {
+    const f = await seed();
+    await bindProject(f, OUTSIDE);
+    await projectRoot(f, OUTSIDE, { reason: "gone", message: "The project's root is gone." });
+    const against = await reviewedRoot(f);
+    expect(against).toBe(ROOTS.workspace);
+    await expectStale(f, "Bash", BASH, against as string);
+  });
+
+  it("a workspace review of a project outside the workspace without the wider reach", async () => {
+    const f = await seed();
+    // the device narrowed to sandbox mode: a cloud device then has only the workspace reach
+    await f.db
+      .updateTable("devices")
+      .set({ mode: "sandbox" })
+      .where("id", "=", f.deviceId)
+      .execute();
+    await bindProject(f, OUTSIDE);
+    await projectRoot(f, OUTSIDE);
+    const against = await reviewedRoot(f);
+    expect(against).toBe(ROOTS.workspace);
+    await expectStale(f, "Write", { file_path: "out.txt", content: "x" }, against as string);
+  });
+
+  it("a workspace review of a project above the owner's home", async () => {
+    const f = await seed();
+    await bindProject(f, "/home");
+    await projectRoot(f, "/home");
+    const against = await reviewedRoot(f);
+    expect(against).toBe(ROOTS.workspace);
+    await expectStale(
+      f,
+      "Edit",
+      { file_path: "a.txt", old_string: "a", new_string: "b" },
+      against as string,
+    );
+  });
+
+  it("an approved ask's root, carried after a mode change dropped its working root", async () => {
+    const f = await seed();
+    await bindProject(f, OUTSIDE);
+    // the person approved the call against the workspace; the tool gets only that root
+    await expectStale(f, "Bash", BASH, ROOTS.workspace);
+  });
+
+  it("the background start", async () => {
+    const f = await seed();
+    await bindProject(f, OUTSIDE);
+    await expectStale(f, "Bash", { ...BASH, run_in_background: true }, ROOTS.workspace);
+    const tasks = await f.db
+      .selectFrom("background_tasks")
+      .select("id")
+      .where("conversation_id", "=", f.conversationId)
+      .execute();
+    expect(tasks).toEqual([]);
+  });
+
+  it("the trusted preparation of a plugin skill copy", async () => {
+    const f = await seed();
+    await catalogSkill(f, "plug");
+    await expectStale(f, "Skill", { skill: "plug" }, "/workspace/other");
+  });
+
+  it("the trusted preparation of an attachment copy", async () => {
+    const f = await seed();
+    await expectStale(f, "FetchAttachment", { file: "notes.txt" }, "/workspace/other");
   });
 });
 

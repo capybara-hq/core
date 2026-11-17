@@ -692,7 +692,8 @@ describe("a staged request refused as not sent (B-5)", () => {
     expect(f.device.workers).toEqual([]);
     expect(first).toBeInstanceOf(Error);
     expect((first as Error).message).toMatch(/was not started/);
-    expect((first as Error).message).toMatch(/connection changed before backgroundStart was sent/);
+    // the kernel's own text: nothing was sent, a retry is safe
+    expect((first as Error).message).toMatch(/reconnected before the start was sent/);
     expect(await intentOf(f, f.operationId)).toMatchObject({
       state: "completed",
       outcome_unknown: false,
