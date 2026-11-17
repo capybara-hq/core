@@ -1693,6 +1693,8 @@ export interface KernelDatabase {
     id: "platform";
     frozen_at: Generated<Date>;
     frozen_by: string;
+    /** Migration 0158: when the freeze's enumeration last completed stable; null before. */
+    enumerated_at: TsNullable;
   };
   /** Migration 0157: the physical no-reuse obligation of one old instance incarnation. */
   device_retirement_obligations: {
