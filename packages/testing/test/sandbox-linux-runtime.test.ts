@@ -9,6 +9,7 @@ import {
   type DeviceContainer,
   dockerPermissionFixture,
   dockerUnavailable,
+  ENDPOINT_NAMES,
   execResult,
   IMAGE,
   RUNTIME_DIR,
@@ -388,7 +389,7 @@ attempt("clone3", lambda: raw(435, 0, 0))
         const reached = receipts("ungranted4") - before;
         // The unrestricted control proves the race really alternates between both endpoints.
         expect(reached).toBeGreaterThan(0);
-        const allowlisted = restricted({ kind: "allowlist", hosts: ["127.0.0.1"] });
+        const allowlisted = restricted({ kind: "allowlist", hosts: [ENDPOINT_NAMES.granted] });
         const raced = await run(allowlisted, "./flip connect 3000");
         expect(decode(raced.stdout)).toMatch(/connect ok=\d+ fail=\d+/);
         expect(receipts("ungranted4")).toBe(before + reached);
@@ -478,6 +479,18 @@ attempt("clone3", lambda: raw(435, 0, 0))
         requireSupport(context);
         const fixture = await dockerPermissionFixture(device, agent, async () => {});
         await runSandboxPermissionConformance(fixture);
+      });
+
+      it("passes the full permission conformance with allowlist traffic through a proxy", async (context) => {
+        requireSupport(context);
+        const proxied = new Agent(device, { candidateArch: true, access: "proxy" });
+        await proxied.ready;
+        try {
+          const fixture = await dockerPermissionFixture(device, proxied, async () => {});
+          await runSandboxPermissionConformance(fixture);
+        } finally {
+          proxied.close();
+        }
       });
     });
 
@@ -597,7 +610,7 @@ attempt("clone3", lambda: raw(435, 0, 0))
           );
           const before = receipts("ungranted4");
           await run(
-            restricted({ kind: "allowlist", hosts: ["127.0.0.1"] }),
+            restricted({ kind: "allowlist", hosts: [ENDPOINT_NAMES.granted] }),
             "./flip connect 5000",
             {},
             mutant,
