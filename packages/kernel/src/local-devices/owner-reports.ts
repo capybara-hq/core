@@ -15,6 +15,7 @@ import {
   type StoredOwnerReport,
   storedOwnerReportOf,
 } from "./owner-report.js";
+import { opExplainsOwnerChange, pendingPolicyOpsOf } from "./policy-summary.js";
 
 /** What became of an arrived owner report. */
 export type OwnerReportOutcome = "recorded" | "same" | "stale" | "conflict" | "revoked";
@@ -64,12 +65,29 @@ export class OwnerReports {
   async recordLocked(
     machineId: string,
     raw: unknown,
-    meta: { connectionId: string | null; via: OwnerReportVia; rootsChanged?: boolean },
+    meta: {
+      connectionId: string | null;
+      via: OwnerReportVia;
+      rootsChanged?: boolean;
+      /**
+       * The platform op whose answer carries this report: the change is audited as its source
+       * made it (the person, via the web or an approval), once, instead of as the machine's own.
+       */
+      explainedBy?: { accountId: string; via: string; opId: string; actorTokenId?: string };
+    },
   ): Promise<OwnerReportOutcome> {
     const report: DeviceOwnerCeilingV3 = parseOwnerCeilingReportV3(raw);
     const row = await this.db
       .selectFrom("device_machines")
-      .select(["org_id", "device_id", "account_id", "owner_report", "local_policy", "roots"])
+      .select([
+        "org_id",
+        "device_id",
+        "account_id",
+        "owner_report",
+        "local_policy",
+        "roots",
+        "pending_policy_ops",
+      ])
       .where("id", "=", machineId)
       .where("revoked_at", "is", null)
       .forUpdate()
@@ -136,9 +154,28 @@ export class OwnerReports {
           ownerReportRevokes(after, scope, intent.method, intent.granted_hosts, roots),
         fullChanged || meta.rootsChanged === true,
       );
+    // the op whose change this is: its answer names it, else (the machine's own report of it, a
+    // policy frame or a reconnect hello, landing first) a live pending op of the platform's that
+    // asked for exactly this narrowing; the answer then finds the same report and audits nothing
+    const nowMs = Date.now();
+    const pending =
+      meta.explainedBy === undefined
+        ? pendingPolicyOpsOf(row.pending_policy_ops).find(
+            (op) => op.until > nowMs && opExplainsOwnerChange(op, before, after),
+          )
+        : undefined;
+    const by =
+      meta.explainedBy ??
+      (pending && {
+        accountId: pending.source.accountId,
+        via: pending.source.via,
+        opId: pending.id,
+        ...(pending.actorTokenId !== undefined && { actorTokenId: pending.actorTokenId }),
+      });
     if (before.state !== "missing" && (fullChanged || reachChanged))
       await audit(this.db.db, {
-        actorAccountId: row.account_id,
+        actorAccountId: by?.accountId ?? row.account_id,
+        ...(by?.actorTokenId !== undefined && { actorTokenId: by.actorTokenId }),
         orgId: row.org_id,
         action: "device.owner_ceiling_changed",
         target: row.device_id,
@@ -152,8 +189,9 @@ export class OwnerReports {
             restrictedProjectReach: after.restrictedProjectReach,
           },
           sequence: report.sequence,
-          by: row.account_id,
-          via: "device",
+          by: by?.accountId ?? row.account_id,
+          via: by?.via ?? "device",
+          ...(by !== undefined && { opId: by.opId }),
           machineId,
         },
       });

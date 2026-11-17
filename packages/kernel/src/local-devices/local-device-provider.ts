@@ -18,6 +18,7 @@ import {
   type SandboxBrowse,
   type SandboxOperation,
   type SandboxPermissionSupport,
+  SandboxPermissionUnsupportedError,
   type SandboxPreparation,
 } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable, Optional } from "@nestjs/common";
@@ -59,6 +60,33 @@ const NAME_PREFIX = "cap-device-";
  */
 export const AUTO_MODE_NOT_ALLOWED_TEXT =
   "This device's machine runs in auto mode, which your organization does not allow. Run `capybara-device mode sandbox` on that machine to switch it to sandbox mode.";
+
+/**
+ * A raw protocol 2 method on the staged provider: refused before anything is queued (a v3
+ * machine runs work only under an admitted operation scope; there is no raw fallback).
+ */
+const refuseRaw =
+  (method: string) =>
+  async (..._args: unknown[]): Promise<never> => {
+    throw new SandboxPermissionUnsupportedError(
+      `${method} without an operation scope is not available on a protocol 3 device; run it through an admitted operation scope`,
+    );
+  };
+
+/** What the staged provider sends through: the relay's protocol 3 call and the attested support. */
+export interface StagedDeviceTransport {
+  call(
+    deviceId: string,
+    op: DeviceOperationV3,
+    args: Record<string, unknown>,
+    opts: {
+      deadlineMs: number;
+      signal: AbortSignal;
+      connection?: { connectionId: string; maxFrameBytes: number };
+    },
+  ): Promise<unknown>;
+  permissionSupport(deviceId: string, signal: AbortSignal): Promise<SandboxPermissionSupport>;
+}
 
 /**
  * The handle of an instance on a machine: the device id (ruling R1: the relay is keyed by
@@ -110,20 +138,66 @@ export class LocalDeviceProvider implements SandboxProvider {
     @Optional() @Inject(PermissionCallGrants) private readonly callGrants?: PermissionCallGrants,
   ) {}
 
-  /** Dormant v3 adapter. It is not installed on the active v2 registered provider. */
-  stagedOperations(transport: {
-    call(
-      deviceId: string,
-      op: DeviceOperationV3,
-      args: Record<string, unknown>,
-      opts: {
-        deadlineMs: number;
-        signal: AbortSignal;
-        connection?: { connectionId: string; maxFrameBytes: number };
+  /**
+   * The `@local` provider as the staged (protocol 3) registration hands it out
+   * (`LocalDevicesModule`): the protocol 2 lifecycle methods that send no frame (file system,
+   * resume, suspend, destroy), the v3 operation adapter ({@link stagedOperations}), `create` as a
+   * protocol 3 request, no raw protocol 2 call and no broad kill. Dormant until the protocol gate
+   * selects it.
+   *
+   * The raw methods (`exec`, `readFile`, `writeFile`, `stat`, `list`, `scan`) refuse before
+   * anything is queued: a v3 machine runs work only under an admitted operation scope, and
+   * missing operation support never falls back to them.
+   *
+   * A v3 machine has no `killAll` / `killTagged` (permission runtime cutover B-1), so both are
+   * no-ops that queue nothing. What reaches the machine instead is only what the kernel revokes
+   * exactly (`revokeOperation` per intent): `SandboxService` calls `OperationIntents.revokeHolders`
+   * with the crashed holders' tokens before `killTagged` and before `killLeftovers`' `killAll`, and
+   * that revokes those holders' admitted, dispatching and started-or-unknown intents only. Not
+   * covered today: the `killAll` after a failed limits change on a resumed instance and the one
+   * in `quarantine` (unreachable for `@local`) revoke nothing first; `killLeftovers` revokes only
+   * the dead tokens, not the started-or-unknown intents of live holders of the instance; and
+   * tokens `claimDeadHolders` already deleted are lost when `revokeHolders` then throws. Revoking
+   * every started-or-unknown intent of the generation on a v3 resume is W5-P3a's kernel change.
+   */
+  staged(transport: StagedDeviceTransport): SandboxProvider {
+    const ops = this.stagedOperations(transport);
+    const overrides: Partial<SandboxProvider> = {
+      ...ops,
+      create: async (args) => {
+        const id = args.fileSystem.id;
+        const r = parseOperationResultV3(
+          "create",
+          await transport.call(
+            id,
+            "create",
+            { limits: args.limits },
+            { deadlineMs: OP_DEADLINE_MS, signal: args.signal },
+          ),
+        ) as { roots: SandboxRoots };
+        return { id, roots: r.roots, limits: args.limits } satisfies LocalDeviceHandle;
       },
-    ): Promise<unknown>;
-    permissionSupport(deviceId: string, signal: AbortSignal): Promise<SandboxPermissionSupport>;
-  }): Required<
+      exec: refuseRaw("exec"),
+      readFile: refuseRaw("readFile"),
+      writeFile: refuseRaw("writeFile"),
+      stat: refuseRaw("stat"),
+      list: refuseRaw("list"),
+      scan: refuseRaw("scan"),
+      killAll: async (_h, signal) => {
+        signal.throwIfAborted();
+      },
+      killTagged: async (_h, _tags, signal) => {
+        signal.throwIfAborted();
+      },
+    };
+    // the shared lifecycle methods keep this provider as their receiver (relay, targets, config)
+    return Object.assign(Object.create(this) as SandboxProvider, overrides);
+  }
+
+  /** Dormant v3 adapter. It is not installed on the active v2 registered provider. */
+  stagedOperations(
+    transport: StagedDeviceTransport,
+  ): Required<
     Pick<
       SandboxProvider,
       "operation" | "prepare" | "browse" | "permissionSupport" | "revokeOperation" | "background"

@@ -307,7 +307,13 @@ export class MachinesService {
           .execute();
       }
     }
-    const policy = await this.reportedPolicy(machineId, self, hello.policy, rawPolicy);
+    const policy = await this.reportedPolicy(
+      machineId,
+      self,
+      hello.policy,
+      rawPolicy,
+      owner !== undefined,
+    );
     // jsonb returns keys in its own order: compare roots canonically, or every reconnect would
     // look like a changed reach and reset Full consent (B4 consent stability)
     const rootsChanged = canonicalRoots(self.roots) !== canonicalRoots(hello.roots);
@@ -559,6 +565,7 @@ export class MachinesService {
       { ...subject, device_id: subject.device_id },
       parsed.policy,
       parsed.policy,
+      true,
     );
     await this.db
       .updateTable("device_machines")
@@ -594,6 +601,12 @@ export class MachinesService {
     },
     reported: DeviceLocalPolicySummary | undefined,
     rawPolicy: unknown,
+    /**
+     * A staged (v3) report: the authenticated owner report carries the Full change and is audited
+     * once, `device.owner_ceiling_changed` ({@link OwnerReports}); the summary's derived mode is
+     * not audited a second time as `device.mode_changed`.
+     */
+    ownerReported = false,
   ): Promise<DeviceLocalPolicySummary | { isolation: "sandbox" | "none" } | null> {
     const summary = localPolicyOf(reported);
     const prev = localPolicyOf(self.local_policy);
@@ -623,7 +636,7 @@ export class MachinesService {
           },
         });
       }
-      if (diff.mode !== undefined) {
+      if (diff.mode !== undefined && !ownerReported) {
         await audit(this.db.db, {
           ...base,
           action: "device.mode_changed",
@@ -809,7 +822,8 @@ export class MachinesService {
   ): Promise<void> {
     try {
       if (reason !== null && (await this.relay.holderLive(deviceId))) {
-        await this.relay.send(deviceId, "stop", { reason }, STOP_DEADLINE_MS);
+        // fenced to this machine: on a staged connection it goes out as a protocol 3 `stop`
+        await this.relay.send(deviceId, "stop", { reason }, STOP_DEADLINE_MS, machineId);
       }
     } catch (err) {
       this.log.warn("could not tell a revoked machine to stop", { deviceId, machineId, err });
