@@ -14,7 +14,7 @@ import { createLogger } from "../../src/log.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { PW, sleep, waitFor } from "../helpers/runs.js";
-import { FakeMachine } from "./fake-machine.js";
+import { FakeMachine } from "./fake-machine-v3.js";
 
 /**
  * Device connections across replicas (environments spec §13.4): the socket lives on a gateway

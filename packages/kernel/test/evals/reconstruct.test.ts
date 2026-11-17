@@ -74,7 +74,7 @@ import {
   waitForTerminal,
 } from "../helpers/runs.js";
 import { onlySkills } from "../helpers/skills.js";
-import { FakeMachine, HELLO } from "../local-devices/fake-machine.js";
+import { FakeMachine, HELLO } from "../local-devices/fake-machine-v3.js";
 
 /**
  * M6 T2：由日志快照还原模型请求（零漂移基线）。真实内核 + model-fake / model-looper + SeaweedFS，
@@ -1924,8 +1924,7 @@ describe("reconstructRequest：基线零漂移", () => {
     );
     try {
       await machine.opened;
-      machine.send({
-        ...HELLO,
+      machine.hello({
         features: ["networkReport", "policyOp", "policyOpId"],
         policy: {
           effectiveTier: "strict",
