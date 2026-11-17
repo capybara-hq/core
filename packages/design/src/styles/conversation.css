@@ -474,36 +474,130 @@ button.cb-tool-line:focus-visible {
   font-weight: 600;
 }
 
-/* ── Image zoom ── */
+/* ── Image viewer ── */
 
 /*
- * Clicking a thumbnail shows the image over the page (spec §5.6). The frame is the dialog itself
- * (one box is enough): the image alone, capped at 86vw × 86vh less the head, the caption and the
- * foot the dialog keeps around it, with no motion of its own.
+ * The lightbox (spec §6.16.20): the content is the whole window on the `lightbox` ground; the image
+ * sits in a box inset for the bars and may be panned past it. The bars are `raised` strips with a
+ * hairline, so their text keeps the theme's contrast over the dark dim in both themes.
  */
-.cb-image-zoom {
+.cb-viewer {
+  position: fixed;
+  inset: 0;
+  z-index: var(--cb-z-dialog);
+  background: var(--cb-lightbox);
+  animation: cb-fade var(--cb-motion-overlay) ease-out;
+  outline: none;
+}
+.cb-viewer-root {
+  position: absolute;
+  inset: 0;
+}
+.cb-viewer-stage {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  touch-action: none;
+  user-select: none;
+}
+.cb-viewer-stage[data-pannable="true"] .cb-viewer-img {
+  cursor: grab;
+}
+.cb-viewer-stage[data-pannable="true"]:active .cb-viewer-img {
+  cursor: grabbing;
+}
+.cb-viewer-box {
+  position: absolute;
+  inset: calc(var(--cb-space-8) + var(--cb-space-4)) var(--cb-space-4);
   display: flex;
+  align-items: center;
   justify-content: center;
 }
-.cb-image-zoom img {
+.cb-viewer-img {
   display: block;
-  max-width: min(86vw, 100%);
-  max-height: calc(86vh - 10rem);
-  object-fit: contain;
+  flex: none;
+  max-width: 100%;
+  max-height: 100%;
+  transform-origin: center;
+  -webkit-user-drag: none;
 }
-.cb-image-zoom-caption {
+.cb-viewer-img[data-sized="true"] {
+  max-width: none;
+  max-height: none;
+}
+.cb-viewer-failed {
+  padding: var(--cb-space-3) var(--cb-space-4);
+  border: 1px solid var(--cb-line);
+  border-radius: var(--cb-radius-md);
+  background: var(--cb-raised);
+}
+.cb-viewer-top,
+.cb-viewer-bottom {
+  position: absolute;
+  left: 0;
+  right: 0;
   display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--cb-space-3);
+  padding: var(--cb-space-3) var(--cb-space-4);
+  pointer-events: none;
+}
+.cb-viewer-top {
+  top: 0;
+}
+.cb-viewer-bottom {
+  bottom: 0;
   justify-content: center;
+}
+.cb-viewer-bar {
+  display: flex;
+  align-items: center;
   gap: var(--cb-space-2);
-  margin-top: var(--cb-space-2);
+  min-width: 0;
+  padding: var(--cb-space-1) var(--cb-space-2);
+  border: 1px solid var(--cb-line);
+  border-radius: var(--cb-radius-md);
+  background: var(--cb-raised);
+  color: var(--cb-ink);
   font-size: var(--cb-type-small-size);
   line-height: var(--cb-type-small-line);
+  pointer-events: auto;
 }
-.cb-image-zoom-name {
+.cb-viewer-name {
   min-width: 0;
+  margin: 0;
   overflow: hidden;
+  font-size: inherit;
+  font-weight: 500;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.cb-viewer-percent {
+  min-width: 4ch;
+  text-align: center;
+  font-family: var(--cb-font-mono);
+  font-variant-numeric: tabular-nums;
+}
+.cb-viewer-one {
+  font-family: var(--cb-font-mono);
+  font-size: var(--cb-type-micro-size);
+}
+.cb-viewer-side {
+  position: absolute;
+  top: 50%;
+  translate: 0 -50%;
+  display: flex;
+  padding: var(--cb-space-1);
+  border: 1px solid var(--cb-line);
+  border-radius: var(--cb-radius-md);
+  background: var(--cb-raised);
+}
+.cb-viewer-side[data-side="prev"] {
+  left: var(--cb-space-4);
+}
+.cb-viewer-side[data-side="next"] {
+  right: var(--cb-space-4);
 }
 
 /* ── Run divider ── */
@@ -1603,6 +1697,12 @@ button.cb-file-card:focus-visible {
   overflow: hidden;
   border-radius: var(--cb-radius-md);
   background: var(--cb-panel);
+}
+.cb-preview-image[data-openable="true"] {
+  width: auto;
+  padding: 0;
+  border: 0;
+  cursor: zoom-in;
 }
 .cb-preview-image img {
   display: block;

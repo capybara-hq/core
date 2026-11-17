@@ -210,11 +210,35 @@ export function MarkdownPreview({ text }: { text: string }): JSX.Element {
   );
 }
 
-/** A bitmap scaled to fit on the `panel` ground. `src` is a `?inline=1` URL; never SVG. */
-export function ImagePreview({ src, name }: { src: string; name: string }): JSX.Element {
-  return (
+/**
+ * A bitmap scaled to fit on the `panel` ground. `src` is a `?inline=1` URL; never SVG. With
+ * `onOpen` the image is a button (zoom cursor) that opens the image viewer.
+ */
+export function ImagePreview({
+  src,
+  name,
+  onOpen,
+}: {
+  src: string;
+  name: string;
+  onOpen?(): void;
+}): JSX.Element {
+  const img = isSafeImageSrc(src) ? (
+    <img src={src} alt={name} referrerPolicy="no-referrer" />
+  ) : null;
+  return onOpen ? (
+    <button
+      type="button"
+      className="cb-preview-image"
+      data-part="preview-image"
+      data-openable="true"
+      onClick={onOpen}
+    >
+      {img}
+    </button>
+  ) : (
     <div className="cb-preview-image" data-part="preview-image">
-      {isSafeImageSrc(src) ? <img src={src} alt={name} referrerPolicy="no-referrer" /> : null}
+      {img}
     </div>
   );
 }

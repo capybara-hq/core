@@ -64,6 +64,7 @@ A **theme** (a plugin's contribution, spec `docs/superpowers/specs/2026-11-08-th
 | `fail` | `#FF5C52` | `#C8302A` | Failure, error, danger |
 | `warn` | `#F2C14B` | `#8F6500` | Needs a person: pending approval, unsaved, needs authorization |
 | `scrim` | `rgba(0,0,0,.60)` | `rgba(10,10,10,.25)` | Behind dialogs, sheets and the sidebar drawer |
+| `lightbox` | `rgba(0,0,0,.88)` | `rgba(10,10,10,.80)` | Behind the image viewer (§6.16.20): a heavier dim than `scrim`, the image is the page |
 | `diff-add` | `rgba(63,212,131,.08)` | `rgba(22,128,63,.10)` | Added lines in a diff (ground only; the text stays `ink`) |
 | `diff-del` | `rgba(255,92,82,.08)` | `rgba(207,34,46,.08)` | Removed lines in a diff (ground only) |
 
@@ -2062,6 +2063,7 @@ States: `default`, `hover`, `focus`, `long-name`, `removed`
 
 - **Several files**: a two-column grid, gap `space.2`; past 4, the first 3 and a fourth card "还有 N 个文件" / "N more files" (`muted`, chevron) that opens the Files section.
 - **Image**: shown inline, `layout.inline-image` wide at its own aspect ratio, `panel` ground, radius `md` (bitmaps through the `?inline=1` rule; SVG never renders inline). Hover shows enlarge (`zoom-in`) and download (`download`) dense icon buttons (`raised` ground, 1px `line` border) `space.2` from the top right. Below it a caption tool line: the name in `ink`, then " · <width>×<height> · <size>" in `faint`.
+- **Image viewer** (`ImageViewer`, `image-viewer`; what a bubble's image thumbnail and the right panel's image open): a full-screen overlay (portal over the page, the dialog primitive's focus trap, Esc and focus return) on the `lightbox` ground. The image starts fit to the viewport (inset `space.8` + `space.4` top and bottom, `space.4` at the sides for the bars), never upscaled; it zooms 10 % to 800 % by wheel (around the pointer), pinch and the bottom toolbar (`zoom-out`, the percent in mono, `zoom-in`, `1:1`, `maximize-2` for fit), pans by dragging once it exceeds the viewport, and a double click toggles fit and 100 %. The top bar (a `raised` strip, `line` border, radius `md`) holds the name, the size and "n / total" (several images only) at the left, and 在新标签打开 (`external-link`), 下载 and 关闭 at the right; with several images side buttons and ← / → switch (reset to fit; disabled at the ends). Esc, 关闭 and a click on the backdrop (not on the image or a drag's end) close it. A failed image shows `LoadFailed` (with Retry when the caller can reload) in a `raised` card; only `isSafeAttachmentHref` sources load. Reduced motion draws it without the fade. It replaces the `Dialog`-based `ImageZoom`.
 - **Text** (md, txt, csv …): a floating card without padding: a head (padding `pad.default`, `small`, a `line-soft` bottom line: type badge, name, size `muted`, "打开" / "Open" link button with a chevron) and the first lines as plain text (`small` `muted`, wrapped, 6 lines high, padding `space.2` `space.3`, fading out at the bottom). Never rendered as HTML.
 
 <!-- states: file-outputs -->

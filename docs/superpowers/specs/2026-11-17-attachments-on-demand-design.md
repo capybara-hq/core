@@ -257,13 +257,14 @@ the kernel's degradation ladder reports the model error as it does for any other
 - **Files**: unchanged — the type badge, name and size chip (`design/src/conversation/bubble.tsx`,
   `BubbleAttachments`); clicking opens the file as today (a new tab through `openDownload`). No
   mark distinguishes a file attachment from a media one (maintainer, 2026-11-17).
-- **Images**: the 56 px thumbnail stays; clicking opens an in-page zoom instead of a new tab: an
-  overlay over the page showing the image (up to 86vw × 86vh), the file name and a download action;
-  Esc, a click outside and the close button close it; focus returns to the thumbnail; reduced motion
-  leaves it still. Built on the design system's `Dialog` primitive
-  (`design/src/overlays/dialog.tsx:33`) — a `ImageZoom` component in `design/src/conversation/`,
-  used by the user bubble (the web's `BubbleAttachments` click handler stops calling `openDownload`
-  for images; `apps/web/src/components/conversation/Thread.tsx:704`).
+- **Images**: the 56 px thumbnail stays; clicking opens the image viewer (maintainer, 2026-11-17:
+  a full-screen dimmed overlay with zoom and pan, not a dialog): the `ImageViewer` in
+  `design/src/conversation/` (design spec §6.16.20). The image starts fit to the window and zooms by
+  wheel, pinch and toolbar; the top bar has the file name, size, `n / total`, open in new tab,
+  download and close; every image of the message is reachable with ← / → and the side buttons; Esc,
+  a click on the backdrop and the close button close it; focus returns to the thumbnail; reduced
+  motion leaves it still. The web's `Thread.tsx` passes the message's images; the right panel's
+  built-in image preview opens the same viewer on click. `ImageZoom` is gone.
 
 ## 6. Limits and configuration
 

@@ -4,8 +4,10 @@ import {
   CsvPreview,
   FileCard,
   FilePreviewFrame,
+  formatBytes,
   formatRelative,
   ImagePreview,
+  ImageViewer,
   LoadFailed,
   MarkdownPreview,
   NoPreview,
@@ -229,7 +231,16 @@ export function FilePanel({
   } else if (current.p?.kind === "view" && data.view) {
     content = <UiViewRenderer view={data.view} onAction={async () => {}} />;
   } else if (builtin === "image") {
-    content = <ImagePreview src={fileUrl(true)} name={file.name} />;
+    content = (
+      <PanelImage
+        key={file.id}
+        src={fileUrl(true)}
+        name={file.name}
+        size={formatBytes(file.size)}
+        onDownload={download}
+        onOpenInNewTab={() => openDownload(fileUrl(true))}
+      />
+    );
   } else if (builtin === "markdown") {
     content = <MarkdownPreview text={data.text ?? ""} />;
   } else if (builtin === "csv" || builtin === "tsv") {
@@ -241,5 +252,36 @@ export function FilePanel({
     <FilePreviewFrame header={header} state="ready">
       {content}
     </FilePreviewFrame>
+  );
+}
+
+/** The built-in image previewer: a click opens the image viewer for this file. */
+function PanelImage({
+  src,
+  name,
+  size,
+  onDownload,
+  onOpenInNewTab,
+}: {
+  src: string;
+  name: string;
+  size: string;
+  onDownload(): void;
+  onOpenInNewTab(): void;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <ImagePreview src={src} name={name} onOpen={() => setOpen(true)} />
+      <ImageViewer
+        open={open}
+        onOpenChange={setOpen}
+        images={[{ src, name, size }]}
+        index={0}
+        onIndexChange={() => {}}
+        onDownload={onDownload}
+        onOpenInNewTab={onOpenInNewTab}
+      />
+    </>
   );
 }

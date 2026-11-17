@@ -7,7 +7,7 @@ import {
   FileOutputs,
   formatBytes,
   ImageOutput,
-  ImageZoom,
+  ImageViewer,
   isInlineImageType,
   Prose,
   RunDivider,
@@ -453,7 +453,7 @@ function EntryNode({ e, c }: { e: TimelineEntry; c: EntryContext }): ReactNode {
     removedFiles,
     listedFiles,
   } = c;
-  /** The image this entry's zoom shows (§5.6): a thumbnail click sets it, closing clears it. */
+  /** The image this entry's viewer shows (§5.6): a thumbnail click sets it, closing clears it. */
   const [zoomId, setZoomId] = useState<string | null>(null);
   // Callbacks go through the ref at call time: a memoized entry never calls a stale one.
   const cb = c.cb;
@@ -680,8 +680,10 @@ function EntryNode({ e, c }: { e: TimelineEntry; c: EntryContext }): ReactNode {
             }),
           ),
         ];
-        // The attachment the zoom is showing, if any (undefined while the dialog is closed)
-        const zoomed = e.files.find((f) => f.attachmentId === zoomId);
+        // The message's images, all navigable in the viewer; the one it shows is `zoomId`.
+        const pictures = e.files.filter((f) => f.kind === "image");
+        const zoomIndex = pictures.findIndex((f) => f.attachmentId === zoomId);
+        const shown = pictures[zoomIndex];
         const details =
           e.instructions !== undefined || e.waitsFor !== undefined || e.pending ? (
             <>
@@ -738,21 +740,34 @@ function EntryNode({ e, c }: { e: TimelineEntry; c: EntryContext }): ReactNode {
                   }
                 : {})}
             />
-            {e.files.some((f) => f.kind === "image") ? (
-              <ImageZoom
-                open={zoomId !== null}
+            {pictures.length > 0 ? (
+              <ImageViewer
+                open={zoomIndex >= 0}
                 onOpenChange={(open) => {
                   if (!open) setZoomId(null);
                 }}
-                src={zoomed !== undefined ? srcOf(zoomed.attachmentId) : ""}
-                name={zoomed?.name ?? ""}
-                {...(zoomed?.size !== undefined ? { size: formatBytes(zoomed.size) } : {})}
-                onDownload={() => {
-                  if (zoomed !== undefined)
-                    openDownload(attachmentDownloadUrl(orgId, zoomed.attachmentId));
+                images={pictures.map((f) => ({
+                  src: srcOf(f.attachmentId),
+                  name: f.name,
+                  ...(f.size !== undefined ? { size: formatBytes(f.size) } : {}),
+                }))}
+                index={Math.max(zoomIndex, 0)}
+                onIndexChange={(i) => {
+                  const next = pictures[i];
+                  if (next) setZoomId(next.attachmentId);
                 }}
-                {...(zoomed !== undefined && !retried.has(zoomed.attachmentId)
-                  ? { onRetry: () => onImageError(zoomed.attachmentId) }
+                onDownload={(i) => {
+                  const p = pictures[i];
+                  if (p) openDownload(attachmentDownloadUrl(orgId, p.attachmentId));
+                }}
+                // The kernel serves an attachment's image inline at its download URL.
+                onOpenInNewTab={(i) => {
+                  const p = pictures[i];
+                  if (p) openDownload(attachmentDownloadUrl(orgId, p.attachmentId));
+                }}
+                // One retry per image (a session refresh, then its retry token): none left, no button
+                {...(shown !== undefined && !retried.has(shown.attachmentId)
+                  ? { onRetry: () => onImageError(shown.attachmentId) }
                   : {})}
               />
             ) : null}

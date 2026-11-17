@@ -242,6 +242,34 @@ describe("the file panel", () => {
     expect(img.getAttribute("src")).toBe(`${ORG}/attachments/a2/download`);
   });
 
+  it("a click on the panel's image opens the viewer; new tab opens the inline URL", async () => {
+    const opened: { location: { href: string }; opener: unknown; close(): void }[] = [];
+    vi.stubGlobal(
+      "open",
+      vi.fn(() => {
+        const tab = { location: { href: "" }, opener: {} as unknown, close: () => {} };
+        opened.push(tab);
+        return tab;
+      }),
+    );
+    api();
+    openAt("#file=f3");
+    const panel = await screen.findByRole("complementary", { name: "chart.png" });
+    const user = userEvent.setup();
+    await within(panel).findByRole("img", { name: "chart.png" });
+    await user.click(panel.querySelector("button[data-part='preview-image']") as HTMLElement);
+    const viewer = await screen.findByRole("dialog");
+    expect(within(viewer).getByRole("img", { name: "chart.png" }).getAttribute("src")).toBe(
+      `${BASE}/artifacts/f3/download?inline=1`,
+    );
+    await user.click(within(viewer).getByRole("button", { name: "Open in new tab" }));
+    await vi.waitFor(() =>
+      expect(opened[0]?.location.href).toMatch(/\/artifacts\/f3\/download\?inline=1$/),
+    );
+    await user.keyboard("{Escape}");
+    await vi.waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  });
+
   it("a sent file opens in the panel once listed; one the list lacks yet downloads instead", async () => {
     const opened: { location: { href: string }; opener: unknown; close(): void }[] = [];
     vi.stubGlobal(

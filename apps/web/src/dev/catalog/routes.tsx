@@ -25,6 +25,7 @@ export const OVERLAY_ROUTES = [
   "overlays/menu",
   "overlays/command",
   "overlays/toast",
+  "overlays/image-viewer",
 ] as const;
 
 /**
