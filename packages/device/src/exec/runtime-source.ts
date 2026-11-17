@@ -116,11 +116,20 @@ interface RuntimeSeal {
   runtimeHash: string;
   closure: string;
   entry: string;
+  /** The staged directory of the runtime package the entry belongs to. */
+  root: string;
   staged: Map<string, string>;
   files: InstalledFileRecord[];
   dirs: InstalledDirRecord[];
 }
 let seal: RuntimeSeal | undefined;
+/** The most recently sealed copies (newest last), kept by pruning whatever the seal is now. */
+const recent: string[] = [];
+const KEEP_RECENT = 2;
+/** Copies a launch acquired and has not released yet (a worker still loading from them). */
+const inUse = new Map<string, number>();
+/** A leftover temporary copy older than this belongs to no live verification. */
+const STALE_TMP_MS = 24 * 60 * 60 * 1000;
 
 const packageName = (id: string) => id.slice(0, id.lastIndexOf("@"));
 const sha256 = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest("hex");
@@ -153,17 +162,15 @@ export class ClosureStager {
   private constructor(
     private readonly base: string,
     private readonly tmp: string,
-    private readonly previous: string | undefined,
   ) {}
 
   /** Clears this process's seal first: a verification that does not finish leaves none. */
   static async begin(stateDir: string): Promise<ClosureStager> {
-    const previous = seal?.closure;
     seal = undefined;
     const { dir } = await privateRuntimeDir(stateDir);
     const tmp = join(dir, `closure-tmp-${randomUUID()}`);
     await mkdir(tmp, { mode: 0o700 });
-    return new ClosureStager(dir, tmp, previous);
+    return new ClosureStager(dir, tmp);
   }
 
   private modulesDir(id: string): string {
@@ -212,8 +219,9 @@ export class ClosureStager {
 
   /**
    * Moves the copy to its content-addressed place, checks that every file is still the one this
-   * verification wrote, seals it with the installed identities, and prunes older copies (all but
-   * the previous seal's, which a worker launched just before may still be loading).
+   * verification wrote, seals it with the installed identities, and prunes older copies. Kept: the
+   * {@link KEEP_RECENT} most recently sealed ones, every copy a launch still holds, and temporary
+   * copies of verifications that may still be running (younger than {@link STALE_TMP_MS}).
    */
   async commit(input: {
     runtimeHash: string;
@@ -234,13 +242,23 @@ export class ClosureStager {
     );
     if (!staged.get(relative(closure, entry))?.startsWith("file:"))
       throw new Error("The staged runtime has no entry module");
-    for (const old of await readdir(this.base))
-      if (old.startsWith("closure-") && old !== name && join(this.base, old) !== this.previous)
-        await rm(join(this.base, old), { recursive: true, force: true });
+    recent.push(closure);
+    recent.splice(0, Math.max(0, recent.length - KEEP_RECENT));
+    for (const old of await readdir(this.base)) {
+      const path = join(this.base, old);
+      if (!old.startsWith("closure-") || recent.includes(path) || (inUse.get(path) ?? 0) > 0)
+        continue;
+      if (old.startsWith("closure-tmp-")) {
+        const info = await lstat(path).catch(() => undefined);
+        if (!info || Date.now() - info.mtimeMs < STALE_TMP_MS) continue;
+      }
+      await rm(path, { recursive: true, force: true });
+    }
     seal = {
       runtimeHash: input.runtimeHash,
       closure,
       entry,
+      root: join(closure, relative(this.tmp, this.packageDir(input.entry.id))),
       staged,
       files: input.files,
       dirs: input.dirs,
@@ -294,22 +312,58 @@ async function stagedDrift(s: RuntimeSeal): Promise<string | undefined> {
   return undefined;
 }
 
+/** A launch's hold on the sealed copy; released once the worker has loaded the runtime. */
+export interface SealedRuntime {
+  /** The module the worker imports the sandbox runtime from. */
+  entry: string;
+  /** The staged regular file at `rel` inside the runtime package, if the copy has one. */
+  stagedFile(rel: string): string | undefined;
+  release(): void;
+}
+
 /**
- * The module a restricted worker imports the sandbox runtime from: the sealed private copy of
- * this process's last successful verification. Refused (typed unsupported, nothing launched)
- * when nothing was verified, when the installed closure no longer holds the verified bytes, or
- * when the staged copy changed.
+ * The sealed private copy a restricted worker imports the sandbox runtime from, for the binding
+ * whose attested runtime is `expectedRuntimeHash`. Refused (typed unsupported, nothing launched)
+ * when nothing was verified, when the seal is another runtime's (a later verification of a
+ * changed install), when the installed closure no longer holds the verified bytes, or when the
+ * staged copy changed.
+ *
+ * Remaining window: after this check the worker process imports the copy by path. The copy is in
+ * the owner's private 0700 state directory with read-only files, so only code already running as
+ * the device's own user can change it in between; that user can change the device program itself
+ * too, so this is outside what verification defends. Any later launch sees such a change.
  */
-export async function sealedRuntimeEntry(): Promise<string> {
+export async function acquireSealedRuntime(
+  expectedRuntimeHash: string | undefined,
+): Promise<SealedRuntime> {
   const s = seal;
   if (!s)
     throw new SandboxPermissionUnsupportedError(
       "The sandbox runtime has not been verified in this process; rebind the instance or restart capybara-device so it verifies the runtime",
+    );
+  if (!expectedRuntimeHash || s.runtimeHash !== expectedRuntimeHash)
+    throw new SandboxPermissionUnsupportedError(
+      "The verified sandbox runtime is not the one this instance binding attested; rebind the instance so its runtime identity is attested again",
     );
   const problem = (await installedDrift(s)) ?? (await stagedDrift(s));
   if (problem)
     throw new SandboxPermissionUnsupportedError(
       `The sandbox runtime changed after it was verified (${problem}); restart capybara-device (or rebind the instance) so it verifies the runtime again, and reinstall capybara-device if verification fails`,
     );
-  return s.entry;
+  inUse.set(s.closure, (inUse.get(s.closure) ?? 0) + 1);
+  let released = false;
+  return {
+    entry: s.entry,
+    stagedFile: (rel) => {
+      const path = join(s.root, rel);
+      return s.staged.get(relative(s.closure, path))?.startsWith("file:") ? path : undefined;
+    },
+    release: () => {
+      if (released) return;
+      released = true;
+      const left = (inUse.get(s.closure) ?? 1) - 1;
+      if (left > 0) inUse.set(s.closure, left);
+      else inUse.delete(s.closure);
+    },
+  };
 }
