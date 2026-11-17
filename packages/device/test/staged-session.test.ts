@@ -11,15 +11,24 @@ import {
 import { afterEach, expect, it, vi } from "vitest";
 import WebSocket, { WebSocketServer } from "ws";
 import { createStagedSessionState, drainStagedSession, serveStagedSession } from "../src/client.js";
+import type { InstanceBinder } from "../src/exec/instance-binding.js";
 import { createMacOperationBackend } from "../src/exec/mac-operation-backend.js";
 import type { MacWorkerRequest } from "../src/exec/operation-worker.js";
+import { StagedSessionStates } from "../src/staged-session.js";
 
 const cleanups: (() => Promise<unknown>)[] = [];
 afterEach(async () => {
   for (const fn of cleanups.splice(0).reverse()) await fn();
 });
 const signal = () => AbortSignal.timeout(10000);
-async function fixture(negotiate = true, bound = true) {
+async function fixture(
+  negotiate = true,
+  bound = true,
+  opts: {
+    state?: ReturnType<typeof createStagedSessionState>;
+    binder?: (b: { backend: unknown; handle: { id: string } }) => InstanceBinder;
+  } = {},
+) {
   const root = await realpath(await mkdtemp(join(tmpdir(), "cap-output-session-")));
   cleanups.push(() => rm(root, { recursive: true, force: true }));
   const roots = {
@@ -181,7 +190,8 @@ async function fixture(negotiate = true, bound = true) {
       },
     }),
   };
-  const state = createStagedSessionState({ graceMs: 10000 });
+  let state = opts.state ?? createStagedSessionState({ graceMs: 10000 });
+  const binder = opts.binder?.({ backend, handle });
   let session = serveStagedSession(
     client,
     hello,
@@ -189,6 +199,7 @@ async function fixture(negotiate = true, bound = true) {
     backend,
     handle,
     state,
+    binder,
   );
   if (negotiate) await expect.poll(() => session.ready()).toBeDefined();
   const request = (op: string, args: unknown, deadlineMs = 10000, key = String(++id)) => {
@@ -201,7 +212,9 @@ async function fixture(negotiate = true, bound = true) {
     handle,
     ref,
     roots,
-    state,
+    get state() {
+      return state;
+    },
     get client() {
       return client;
     },
@@ -218,8 +231,9 @@ async function fixture(negotiate = true, bound = true) {
       client.close();
       await closed;
     },
-    /** Opens a new socket served with the same session state and waits for ready. */
-    reconnect: async () => {
+    /** Opens a new socket served with the same (or the given) session state and waits for ready. */
+    reconnect: async (next = state) => {
+      state = next;
       ({ client, socket } = await open());
       session = serveStagedSession(
         client,
@@ -228,6 +242,7 @@ async function fixture(negotiate = true, bound = true) {
         backend,
         handle,
         state,
+        binder,
       );
       await expect.poll(() => session.ready()).toBeDefined();
     },
@@ -532,5 +547,159 @@ it("a request still in flight when the owned work settles keeps the drain open, 
   expect(report).toBeUndefined();
   release();
   expect(await answer).toMatchObject({ ok: true });
+  expect(await drain).toEqual({ drained: true });
+});
+
+/** Status requests that each wait for their own release, so they finish while no socket is open. */
+function gatedStatus(f: Awaited<ReturnType<typeof fixture>>) {
+  const gates = new Map<string, () => void>();
+  const entered = new Set<string>();
+  vi.spyOn(f.backend.background, "status").mockImplementation(async () => {
+    const key = `s${entered.size + 1}`;
+    entered.add(key);
+    await new Promise<void>((r) => gates.set(key, r));
+    return { state: "running" };
+  });
+  return {
+    start: async (...keys: string[]) => {
+      for (const key of keys) f.request("backgroundStatus", { ref: f.ref }, 10000, key);
+      await expect.poll(() => keys.every((k) => gates.has(k))).toBe(true);
+    },
+    release: async (key: string) => {
+      gates.get(key)?.();
+      await expect.poll(() => f.state.running.has(key)).toBe(false);
+    },
+  };
+}
+
+it("a device that never reconnects holds at most the held-answer limit (rereview N1)", async () => {
+  const f = await fixture(true, true, {
+    state: createStagedSessionState({ graceMs: 10000, maxPending: 2 }),
+  });
+  const g = gatedStatus(f);
+  await g.start("s1", "s2", "s3");
+  await f.disconnect();
+  for (const key of ["s1", "s2", "s3"]) await g.release(key);
+  // the oldest held answer is dropped first
+  expect([...f.state.pending.keys()]).toEqual(["s2", "s3"]);
+  await f.reconnect();
+  await expect
+    .poll(() => f.responses.map((r) => [r.connection, r.res.id]))
+    .toEqual([
+      [2, "s2"],
+      [2, "s3"],
+    ]);
+});
+
+it("expired held answers are swept when the next one is held (rereview N1)", async () => {
+  let now = 0;
+  const f = await fixture(true, true, {
+    state: createStagedSessionState({ graceMs: 1000, now: () => now }),
+  });
+  const g = gatedStatus(f);
+  await g.start("s1", "s2");
+  await f.disconnect();
+  await g.release("s1");
+  expect([...f.state.pending.keys()]).toEqual(["s1"]);
+  now = 5000;
+  await g.release("s2");
+  expect([...f.state.pending.keys()]).toEqual(["s2"]);
+});
+
+it("the reconnect grace is required: no silent default of 0 (B-4)", async () => {
+  expect(() => createStagedSessionState({} as never)).toThrow(/grace/);
+  expect(() => createStagedSessionState({ graceMs: -1 })).toThrow(/grace/);
+  expect(createStagedSessionState({ graceMs: 0 }).graceMs).toBe(0);
+  const hello = {} as DeviceHelloV3;
+  const backend = {} as Parameters<typeof serveStagedSession>[3];
+  expect(() =>
+    serveStagedSession(
+      {} as WebSocket,
+      hello,
+      { maxFrameBytes: 1 },
+      backend,
+      { id: "d" },
+      undefined as never,
+    ),
+  ).toThrow(/session state/);
+});
+
+it("session states are kept per credential; a change discards held answers (rereview N2)", async () => {
+  const states = new StagedSessionStates();
+  const cred = {
+    url: "https://capybara.test",
+    orgId: "o",
+    deviceId: "d",
+    credential: "secret-1",
+    reconnectGraceSeconds: 10,
+  };
+  const first = states.for(cred);
+  // the grace comes from the credential, and the same credential keeps its state
+  expect(first.graceMs).toBe(10000);
+  expect(states.for({ ...cred })).toBe(first);
+  expect(first.identity).not.toContain("secret-1");
+  const f = await fixture(true, true, { state: first });
+  const g = gatedStatus(f);
+  await g.start("s1", "s2");
+  await f.disconnect();
+  await g.release("s1");
+  expect([...first.pending.keys()]).toEqual(["s1"]);
+  const second = states.for({ ...cred, credential: "secret-2" });
+  expect(second).not.toBe(first);
+  expect(first.discarded).toBe(true);
+  expect(first.pending.size).toBe(0);
+  // an answer of the old credential finishing later is not held either
+  await g.release("s2");
+  expect(first.pending.size).toBe(0);
+  // the old state never serves a socket again; returning to the old credential starts afresh
+  expect(() =>
+    serveStagedSession(
+      f.client,
+      {} as DeviceHelloV3,
+      { maxFrameBytes: 1 },
+      f.backend,
+      f.handle,
+      first,
+    ),
+  ).toThrow(/session state/);
+  await f.reconnect(second);
+  const fresh = await f.request("backgroundReadOutput", { ref: f.ref, offset: 0, maxBytes: 0 })
+    .response;
+  expect(fresh).toMatchObject({ ok: true });
+  expect(f.responses.filter((r) => r.connection === 2).map((r) => r.res.id)).toEqual([fresh.id]);
+  const back = states.for(cred);
+  expect(back).not.toBe(first);
+  expect(back.pending.size).toBe(0);
+});
+
+it("a draining session refuses bindInstance and still serves status, read, tail and stop (B4 M9)", async () => {
+  const bind = vi.fn();
+  const f = await fixture(true, true, {
+    binder: (b) => ({ current: () => b, bind }) as unknown as InstanceBinder,
+  });
+  const drain = drainStagedSession(f.state, f.backend, new AbortController().signal);
+  const refused = await f.request("bindInstance", {
+    instanceId: "d",
+    instanceGeneration: "1700000000001",
+    bindingId: "6f1e0a52-8f5b-4d5e-9a1c-1f0e2d3c4b51",
+    expectedPreviousGeneration: null,
+  }).response;
+  expect(refused).toMatchObject({ ok: false, error: { kind: "unsupported" } });
+  expect(!refused.ok && refused.error.message).toMatch(/draining/);
+  expect(bind).not.toHaveBeenCalled();
+  expect(await f.request("backgroundStatus", { ref: f.ref }).response).toMatchObject({
+    ok: true,
+    result: { state: "running" },
+  });
+  expect(
+    await f.request("backgroundReadOutput", { ref: f.ref, offset: 0, maxBytes: 0 }).response,
+  ).toMatchObject({ ok: true });
+  expect(await f.request("backgroundTail", { ref: f.ref, maxBytes: 1 }).response).toMatchObject({
+    ok: true,
+  });
+  expect(await f.request("backgroundStop", { ref: f.ref, graceMs: 0 }).response).toMatchObject({
+    ok: true,
+    result: { outcome: "stopped" },
+  });
   expect(await drain).toEqual({ drained: true });
 });
