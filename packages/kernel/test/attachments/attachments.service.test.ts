@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { KernelConfigSchema } from "../../src/config/schema.js";
+import { DEFAULT_ATTACHMENT_EXTENSIONS, KernelConfigSchema } from "../../src/config/schema.js";
 import {
   ATTACHMENT_DOWNLOAD_CACHE_SECONDS,
   ATTACHMENT_DOWNLOAD_TTL_SECONDS,
@@ -7,7 +7,11 @@ import {
   sniffMatches,
 } from "../../src/conversations/attachments.service.js";
 import { ATTACHMENT_CLEANUP_SCHEDULER_ID } from "../../src/conversations/job-ids.js";
-import { isImageContentType, isMediaContentType } from "../../src/conversations/media-types.js";
+import {
+  acceptedContent,
+  isImageContentType,
+  isMediaContentType,
+} from "../../src/conversations/media-types.js";
 import { RETIRED_SCHEDULER_IDS } from "../../src/runtime/retired-schedulers.js";
 import { PrefixedStorage } from "../../src/storage/storage.service.js";
 import { attachmentsFor } from "../helpers/conversations.js";
@@ -69,6 +73,7 @@ describe("AttachmentsService", () => {
         "application/zip",
         "application/json",
       ],
+      extensions: [...DEFAULT_ATTACHMENT_EXTENSIONS],
       maxBytes: 20_971_520,
       imageMaxBytes: 5_242_880,
       maxPerMessage: 10,
@@ -84,12 +89,34 @@ describe("AttachmentsService", () => {
       }).limits(),
     ).toEqual({
       types: ["image/png"],
+      extensions: [...DEFAULT_ATTACHMENT_EXTENSIONS],
       maxBytes: 1000,
       imageMaxBytes: 1000,
       maxPerMessage: 3,
       requestMediaBytes: 4000,
       available: false,
     });
+  });
+
+  it("accepts a source file by extension whatever its declared content type says", () => {
+    const cfg = { allowedTypes: ["image/png"], allowedExtensions: ["py", "html", "docx"] };
+    expect(acceptedContent(cfg, "main.py", "application/octet-stream")).toBe(true);
+    expect(acceptedContent(cfg, "page.html", "text/html")).toBe(true);
+    expect(
+      acceptedContent(
+        cfg,
+        "续约.docx",
+        "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+      ),
+    ).toBe(true);
+    // a type on the list needs no extension
+    expect(acceptedContent(cfg, "shot", "image/png")).toBe(true);
+    // the extension is case-insensitive; a bare or unknown name is not accepted by accident
+    expect(acceptedContent(cfg, "MAIN.PY", "text/plain")).toBe(true);
+    expect(acceptedContent(cfg, "a.exe", "application/x-msdownload")).toBe(false);
+    expect(acceptedContent(cfg, "noextension", "application/octet-stream")).toBe(false);
+    expect(acceptedContent(cfg, "trailing.", "application/octet-stream")).toBe(false);
+    expect(acceptedContent(cfg, "a.notanextension", "application/octet-stream")).toBe(false);
   });
 
   it("配置要求 maxBytes ≤ requestMediaBytes（单个附件总能放进一次请求）", () => {
@@ -161,6 +188,7 @@ describe("AttachmentsService", () => {
         "application/zip",
         "application/json",
       ],
+      allowedExtensions: [...DEFAULT_ATTACHMENT_EXTENSIONS],
       maxPerMessage: 10,
       unboundTtlHours: 24,
       requestMediaBytes: 20_971_520,

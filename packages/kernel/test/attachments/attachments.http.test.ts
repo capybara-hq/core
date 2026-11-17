@@ -10,6 +10,7 @@ import {
 } from "@capybara-hq/testing";
 import { sql } from "kysely";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { DEFAULT_ATTACHMENT_EXTENSIONS } from "../../src/config/schema.js";
 import { AttachmentsService } from "../../src/conversations/attachments.service.js";
 import { TITLE_PROMPT } from "../../src/conversations/titles.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
@@ -376,6 +377,7 @@ describe("校验", () => {
         "application/zip",
         "application/json",
       ],
+      extensions: [...DEFAULT_ATTACHMENT_EXTENSIONS],
       maxBytes: 20_971_520,
       imageMaxBytes: 5_242_880,
       maxPerMessage: 10,
