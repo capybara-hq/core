@@ -29,7 +29,7 @@ import {
   PermissionAdmissionStale,
   SandboxOperationIntents,
 } from "./operation-intents.js";
-import { PermissionInstanceWrites } from "./permission-instance-writes.js";
+import { type CloudSupportReport, PermissionInstanceWrites } from "./permission-instance-writes.js";
 
 export type { HeldProvider } from "./held-operations.js";
 
@@ -102,6 +102,11 @@ import {
 } from "./modes.js";
 import type { HeldDeviceContextEvidence } from "./permission-context-types.js";
 import { PermissionFacts } from "./permission-facts.js";
+import {
+  cloudReportOwed,
+  cloudSupportOf,
+  readCurrentReport,
+} from "./permission-runtime-reports.js";
 import {
   isInternalProvider,
   LOCAL_PROVIDER,
@@ -1632,14 +1637,27 @@ export class SandboxService {
     e: Entered,
   ): Promise<HeldDeviceContextEvidence | undefined> {
     const instanceGeneration = String(e.createdAt);
-    const binding = await this.db
-      .selectFrom("device_instance_bindings")
-      .select("binding_id")
-      .where("device_id", "=", ctx.deviceId)
-      .where("instance_generation", "=", instanceGeneration)
-      .where("provider", "=", p.plugin)
-      .where("status", "=", "installed")
-      .executeTakeFirst();
+    // a cloud instance is named by its current kernel-recorded evidence (B-15), as
+    // `PermissionFacts.readAppliedEnvironmentLocked` names it under the authority locks
+    const cloud = (await this.deviceSource(ctx)) === "cloud";
+    const evidence = cloud
+      ? await readCurrentReport(this.db.db, ctx.deviceId, p.plugin, p.version)
+      : null;
+    if (
+      cloud &&
+      (evidence?.identityHash == null || evidence.instanceGeneration !== instanceGeneration)
+    )
+      return undefined;
+    const binding = cloud
+      ? { binding_id: evidence?.identityHash as string }
+      : await this.db
+          .selectFrom("device_instance_bindings")
+          .select("binding_id")
+          .where("device_id", "=", ctx.deviceId)
+          .where("instance_generation", "=", instanceGeneration)
+          .where("provider", "=", p.plugin)
+          .where("status", "=", "installed")
+          .executeTakeFirst();
     if (!binding) return undefined;
     let workingRoot: string;
     try {
@@ -1716,7 +1734,17 @@ export class SandboxService {
             }
             // an obligation recorded while the shared lease was taken: null, back to the gate
             const e = await this.asShared(ctx, p, lease, ready, signal, true, "use");
-            if (e) return e;
+            if (e) {
+              // B-15: cloud evidence gone stale while the instance ran (a provider upgrade)
+              await this.refreshCloudSupport(
+                ctx,
+                p,
+                e,
+                AbortSignal.any([signal, e.lease.signal]),
+                false,
+              );
+              return e;
+            }
           }
         } else {
           const lease = await this.leases.tryExclusive(env, { token, intent: true });
@@ -1729,6 +1757,86 @@ export class SandboxService {
     } catch (err) {
       if (intent) await this.clearIntent(env, token);
       throw err;
+    }
+  }
+
+  /**
+   * Whether this device's instances record cloud evidence (B-15): a cloud device whose provider
+   * (with a known version) reads its own permission support. A local device attests through its
+   * installed binding instead.
+   */
+  private async recordsCloudSupport(
+    ctx: { orgId: string; deviceId: string },
+    p: SandboxProviderEntry,
+  ): Promise<boolean> {
+    return (
+      p.plugin !== LOCAL_PROVIDER &&
+      !p.binder &&
+      p.version !== undefined &&
+      typeof p.impl.permissionSupport === "function" &&
+      (await this.deviceSource(ctx)) === "cloud"
+    );
+  }
+
+  /**
+   * The provider's permission support of the held instance `handle`, read under the caller's
+   * lifecycle lease; undefined (logged) when it cannot be read or is not a version 1 report. Never
+   * throws: missing evidence keeps the device unprobed, it never fails the lifecycle step.
+   */
+  private async cloudSupport(
+    deviceId: string,
+    p: SandboxProviderEntry,
+    handle: SandboxHandle,
+    signal: AbortSignal,
+  ): Promise<CloudSupportReport | undefined> {
+    const read = p.impl.permissionSupport?.bind(p.impl);
+    if (!read || p.version === undefined) return undefined;
+    try {
+      const report = cloudSupportOf(await read(handle, signal));
+      if (report) return { provider: p.plugin, version: p.version, report };
+      this.log.warn("cloud provider returned an invalid permission support report", {
+        deviceId,
+        provider: p.plugin,
+      });
+    } catch (err) {
+      if (!signal.aborted)
+        this.log.warn("cannot read the cloud provider's permission support; device unprobed", {
+          deviceId,
+          provider: p.plugin,
+          err,
+        });
+    }
+    return undefined;
+  }
+
+  /**
+   * Under a lifecycle lease on the running instance `e`: records its cloud evidence again when
+   * `force` (a resume) or when the recorded one is stale (another provider version, handle,
+   * generation or applied limits; `cloudReportOwed`). A read that fails, a lost lease or a
+   * storage error leaves the evidence as it was (unprobed); never throws.
+   */
+  private async refreshCloudSupport(
+    ctx: { orgId: string; deviceId: string },
+    p: SandboxProviderEntry,
+    e: { handle: SandboxHandle; createdAt: number },
+    signal: AbortSignal,
+    force: boolean,
+  ): Promise<void> {
+    try {
+      if (!(await this.recordsCloudSupport(ctx, p))) return;
+      if (!force && !(await cloudReportOwed(this.db.db, ctx.deviceId, p.plugin, p.version))) return;
+      const support = await this.cloudSupport(ctx.deviceId, p, e.handle, signal);
+      if (!support) return;
+      await runOutsideTransaction(() =>
+        this.instanceWrites.recordCloudSupport(ctx.orgId, ctx.deviceId, e, support, signal),
+      );
+    } catch (err) {
+      if (!signal.aborted)
+        this.log.warn("cannot record the cloud instance's permission evidence", {
+          deviceId: ctx.deviceId,
+          provider: p.plugin,
+          err,
+        });
     }
   }
 
@@ -1868,6 +1976,9 @@ export class SandboxService {
       if (s.resumed || s.info.fresh) {
         await this.killPendingTasks(env, s.handle, s.createdAt, p, lease.token, ctx.actor, sig);
       }
+      // B-15: a resumed cloud instance reads its permission support again; any other instance
+      // whose recorded evidence is stale (a limits change, a provider version change) too
+      await this.refreshCloudSupport(ctx, p, s, sig, s.resumed === true);
       // staged path (B-8): create → commit → legacy gate (ensure) → cleanup → bind → installed →
       // downgrade. The cleanup a resume or create owes runs first: a retry after a failed bind
       // finds the instance running and would not owe it again. The binder sends the committed
@@ -2891,6 +3002,12 @@ export class SandboxService {
     }
     let createdAt: Date;
     try {
+      // B-15: a cloud instance's permission support, read from it under the lease and recorded
+      // with the handle commit (an unread report never fails the create: the instance stays
+      // unprobed until a later use records it)
+      const support = (await this.recordsCloudSupport(ctx, p))
+        ? await this.cloudSupport(id, p, handle, signal)
+        : undefined;
       createdAt = await runOutsideTransaction(() =>
         this.instanceWrites.commitHandle(
           ctx.orgId,
@@ -2907,12 +3024,13 @@ export class SandboxService {
             ...(!atFileSystem && { instance_limits: record }),
           },
           held.signal,
+          support,
         ),
       );
       fence.gen++;
     } catch (e) {
-      // Lease lost before the handle was recorded: destroy the new instance (best effort) so it
-      // does not leak. A provider that reuses instances by name (Ruling M10) may then hit the one
+      // Lease lost (or the device read failed) before the handle was recorded: destroy the new
+      // instance (best effort) so it does not leak. A provider that reuses instances by name (Ruling M10) may then hit the one
       // the new holder just resumed or created; that heals: its next provider call throws
       // SandboxGoneError (or resume returns gone) and withSandbox rebuilds in place. The file
       // system is never touched here.

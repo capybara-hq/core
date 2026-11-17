@@ -1,10 +1,12 @@
 import { createHash } from "node:crypto";
-import type { SandboxPermissionSupport } from "@capybara-hq/plugin-sdk";
+import type { SandboxHandle, SandboxPermissionSupport } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
+import { canonicalJson } from "../tools/canonical-json.js";
+import { type AppliedLimits, readInstanceLimits } from "./modes.js";
 import { PermissionAuthorityLock } from "./permission-authority-lock.js";
 import {
   type PermissionAvailability,
@@ -53,6 +55,104 @@ export function runtimeIdentity(value: unknown): PermissionRuntimeIdentity {
     throw new Error("Invalid runtime generation");
   return { ...v } as unknown as PermissionRuntimeIdentity;
 }
+const sha256 = (value: unknown) => createHash("sha256").update(canonicalJson(value)).digest("hex");
+
+/**
+ * The kernel-built runtime identity of a cloud instance (B-15, Q1 option A). A cloud provider is
+ * an in-process extension (full trust), so its own permission support report, bound to these
+ * kernel facts, is the strongest evidence available without an SDK change: the provider plugin
+ * and version (`runtimeHash`), the committed instance handle (`helperHash`), the recorded applied
+ * limits with no provider-attested image digest (`imageFingerprint`) and the instance generation.
+ * Any of them changing makes a recorded report unprobed.
+ */
+export function cloudRuntimeIdentity(input: {
+  provider: string;
+  version: string;
+  handle: SandboxHandle;
+  instanceGeneration: string;
+  applied: AppliedLimits;
+}): PermissionRuntimeIdentity {
+  return {
+    runtimeHash: sha256({
+      kind: "cloud-provider",
+      provider: input.provider,
+      version: input.version,
+    }),
+    helperHash: sha256({ kind: "cloud-instance", handle: input.handle }),
+    imageFingerprint: sha256({
+      kind: "cloud-environment",
+      applied: {
+        mode: input.applied.mode,
+        network: {
+          kind: input.applied.network.kind,
+          hosts: [...new Set(input.applied.network.hosts)].sort(),
+        },
+      },
+      imageDigest: null,
+    }),
+    instanceGeneration: input.instanceGeneration,
+  };
+}
+
+/**
+ * A cloud provider's permission support copied field by field, or null when it is not a version 1
+ * report (an in-process extension is trusted, but its answer is stored and read back later, so
+ * nothing beyond the contract's fields is kept).
+ */
+export function cloudSupportOf(value: unknown): SandboxPermissionSupport | null {
+  if (!value || typeof value !== "object") return null;
+  const o = value as Record<string, unknown>;
+  if (o.version !== 1 || typeof o.fullAccess !== "boolean" || typeof o.background !== "boolean")
+    return null;
+  const r = o.restricted as Record<string, unknown> | null | undefined;
+  if (r !== null && (typeof r !== "object" || r === undefined)) return null;
+  if (r && !["filesystem", "network", "native", "concurrentScopes"].every((k) => r[k] === true))
+    return null;
+  return {
+    version: 1,
+    restricted: r
+      ? { filesystem: true, network: true, native: true, concurrentScopes: true }
+      : null,
+    fullAccess: o.fullAccess,
+    background: o.background,
+    ...(typeof o.unavailableReason === "string" && {
+      unavailableReason: o.unavailableReason.slice(0, 1000),
+    }),
+  };
+}
+
+/**
+ * The cloud identity the instance row proves now, or null when it proves none: no live instance
+ * of this provider, no handle or no recorded applied limits.
+ */
+function currentCloudIdentity(
+  instance: {
+    provider: string | null;
+    status: string;
+    handle: SandboxHandle | null;
+    created_at: Date;
+    instance_limits: unknown;
+  },
+  provider: string,
+  version: string,
+): PermissionRuntimeIdentity | null {
+  const applied = readInstanceLimits(instance.instance_limits).applied;
+  if (
+    instance.provider !== provider ||
+    !instance.handle ||
+    applied === null ||
+    (instance.status !== "running" && instance.status !== "suspended")
+  )
+    return null;
+  return cloudRuntimeIdentity({
+    provider,
+    version,
+    handle: instance.handle,
+    instanceGeneration: String(instance.created_at.getTime()),
+    applied,
+  });
+}
+
 /** No probe, provisioning or provider IO. A changed identity makes the previous report unprobed. */
 export async function readRuntimeReport(
   db: KernelSchemaDb,
@@ -60,14 +160,53 @@ export async function readRuntimeReport(
   provider: string,
   version: string | undefined,
 ): Promise<PermissionAvailability> {
-  if (!version) return unprobedPermissionAvailability();
-  const instance = await db
-    .selectFrom("device_instances")
-    .select(["provider", "created_at", "permission_runtime_identity"])
-    .where("device_id", "=", deviceId)
-    .executeTakeFirst();
+  return (await readCurrentReport(db, deviceId, provider, version)).availability;
+}
+
+/**
+ * {@link readRuntimeReport} plus the identity hash of the current report (null unless it is
+ * current): a cloud device's installed evidence names its report by it.
+ */
+export async function readCurrentReport(
+  db: KernelSchemaDb,
+  deviceId: string,
+  provider: string,
+  version: string | undefined,
+): Promise<{
+  availability: PermissionAvailability;
+  identityHash: string | null;
+  instanceGeneration: string | null;
+}> {
+  const unprobed = {
+    availability: unprobedPermissionAvailability(),
+    identityHash: null,
+    instanceGeneration: null,
+  };
+  if (!version) return unprobed;
+  const [device, instance] = await Promise.all([
+    db.selectFrom("devices").select("source").where("id", "=", deviceId).executeTakeFirst(),
+    db
+      .selectFrom("device_instances")
+      .select([
+        "provider",
+        "status",
+        "handle",
+        "created_at",
+        "instance_limits",
+        "permission_runtime_identity",
+      ])
+      .where("device_id", "=", deviceId)
+      .executeTakeFirst(),
+  ]);
   if (!instance || instance.provider !== provider || !instance.permission_runtime_identity)
-    return unprobedPermissionAvailability();
+    return unprobed;
+  // A cloud instance attests only through the kernel-built identity its current row proves (B-15):
+  // a changed provider version, handle, generation or applied limits is unprobed.
+  if (device?.source === "cloud") {
+    const current = currentCloudIdentity(instance, provider, version);
+    if (!current || !sameRuntimeIdentity(current, instance.permission_runtime_identity))
+      return unprobed;
+  }
   // A local instance attests only through its installed post-commit binding (B4): an unbound or
   // still awaiting generation, or a report differing from the bound identity, is unprobed.
   if (provider === LOCAL_PROVIDER) {
@@ -82,7 +221,7 @@ export async function readRuntimeReport(
       !binding.runtime_identity ||
       !sameRuntimeIdentity(binding.runtime_identity, instance.permission_runtime_identity)
     )
-      return unprobedPermissionAvailability();
+      return unprobed;
   }
   const row = await db
     .selectFrom("device_permission_reports")
@@ -96,13 +235,46 @@ export async function readRuntimeReport(
     row.instance_generation !== String(instance.created_at.getTime()) ||
     row.identity_hash !== permissionScopeHash(instance.permission_runtime_identity)
   )
-    return unprobedPermissionAvailability();
+    return unprobed;
   if (!row.report.restricted && !row.report.fullAccess)
     return {
-      state: "unsupported",
-      reason: row.report.unavailableReason ?? "This runtime cannot enforce permission operations",
+      availability: {
+        state: "unsupported",
+        reason: row.report.unavailableReason ?? "This runtime cannot enforce permission operations",
+      },
+      identityHash: row.identity_hash,
+      instanceGeneration: row.instance_generation,
     };
-  return { state: "supported", report: row.report };
+  return {
+    availability: { state: "supported", report: row.report },
+    identityHash: row.identity_hash,
+    instanceGeneration: row.instance_generation,
+  };
+}
+
+/**
+ * Whether a cloud device's current instance owes a new runtime report (B-15): it can prove a
+ * kernel-built identity (a live instance of this provider version with a handle and recorded
+ * applied limits) but no current report is recorded for it. Database reads only.
+ */
+export async function cloudReportOwed(
+  db: KernelSchemaDb,
+  deviceId: string,
+  provider: string,
+  version: string | undefined,
+): Promise<boolean> {
+  if (!version) return false;
+  const [device, instance] = await Promise.all([
+    db.selectFrom("devices").select("source").where("id", "=", deviceId).executeTakeFirst(),
+    db
+      .selectFrom("device_instances")
+      .select(["provider", "status", "handle", "created_at", "instance_limits"])
+      .where("device_id", "=", deviceId)
+      .executeTakeFirst(),
+  ]);
+  if (device?.source !== "cloud" || !instance) return false;
+  if (!currentCloudIdentity(instance, provider, version)) return false;
+  return (await readCurrentReport(db, deviceId, provider, version)).identityHash === null;
 }
 @Injectable()
 export class PermissionRuntimeReports {
@@ -164,5 +336,37 @@ export class PermissionRuntimeReports {
         }),
       )
       .execute();
+  }
+
+  /**
+   * Records a cloud instance's permission support with its kernel-built identity
+   * ({@link cloudRuntimeIdentity}, B-15), read from the committed row under the caller's device
+   * authority writer lock: the lifecycle holder calls it after create (in the handle commit's
+   * transaction) or after resume and limits changes, with the support it read from that exact
+   * instance under its lease. A local device, an instance of another provider, one without a
+   * handle or without recorded applied limits records nothing new (and clears a stale identity).
+   */
+  @Transactional({ propagation: "mandatory" })
+  async recordCloud(
+    deviceId: string,
+    provider: string,
+    version: string,
+    report: SandboxPermissionSupport,
+  ): Promise<void> {
+    this.locks.assertHeld("device", deviceId, true);
+    const device = await this.db
+      .selectFrom("devices")
+      .select("source")
+      .where("id", "=", deviceId)
+      .executeTakeFirst();
+    if (device?.source !== "cloud") return;
+    const instance = await this.db
+      .selectFrom("device_instances")
+      .select(["provider", "status", "handle", "created_at", "instance_limits"])
+      .where("device_id", "=", deviceId)
+      .executeTakeFirst();
+    if (!instance || instance.provider !== provider) return;
+    const identity = currentCloudIdentity(instance, provider, version);
+    await this.record(deviceId, provider, version, identity ?? undefined, report);
   }
 }
