@@ -228,8 +228,9 @@ export class LocalInstanceBindings {
     if (!machine.program_version)
       throw new InstanceBindingError("The machine has not reported its program version");
     if (binding.status === "installed") return;
-    // B2: the answer's authenticated owner report enters the common owner writer; a stale or
-    // conflicting one blocks new authority there without failing the installation
+    // B2: the answer's authenticated owner report enters the common owner writer; a lower
+    // sequence is ignored there and a conflicting one blocks new authority, neither failing the
+    // installation
     await this.owners.recordLocked(machineId, answer.ownerCeiling, {
       connectionId,
       via: "bind",

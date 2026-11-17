@@ -1265,6 +1265,83 @@ describe("exact background revocation through the outbox and the worker", () => 
     expect(f.provider.calls.stop).toHaveLength(1);
   });
 
+  it("R1: with Full on, an org removing a host revokes the outside-project task using it, not its sibling", async () => {
+    const f = await managedTaskFixture({
+      kernels: [k],
+      raw,
+      login: ownerLogin(),
+      password: OWNER_PW,
+      accountId: ownerAccount().id,
+      launch: false,
+    });
+    const machine = await f.db
+      .selectFrom("device_machines")
+      .select("id")
+      .where("device_id", "=", f.deviceId)
+      .executeTakeFirstOrThrow();
+    const machines = k.app.get(MachinesService);
+    // Full allowed with OS-user reach (as a protocol 2 auto machine translates), no baseline host
+    await machines.recordPolicyV3(
+      machine.id,
+      ownerFrame(1, { fullAccess: true, domains: [], reach: "os-user" }),
+      "connection-1",
+    );
+    const outside = "/home/owner/ext";
+    await f.db
+      .insertInto("device_projects")
+      .values({ device_id: f.deviceId, name: "ext", path: outside, created_by: ownerAccount().id })
+      .execute();
+    await sql`UPDATE capybara.conversations SET project_name = 'ext', project_path = ${outside}
+      WHERE id = ${f.conversationId}`.execute(f.db);
+    await k.app.get(EventLog).append(f.conversationId, [
+      {
+        type: "project_root",
+        idemKey: `test_project_root:${f.conversationId}`,
+        payload: { project: "ext", root: outside, skills: [] },
+      },
+    ]);
+    const sibling = await f.launchAnother();
+    // the owner adds the host to the baseline (a restricted-only widening: nothing is revoked)
+    await machines.recordPolicyV3(
+      machine.id,
+      ownerFrame(2, { fullAccess: true, domains: [HOST], reach: "os-user" }),
+      "connection-1",
+    );
+    const task = await f.launchAnother();
+    const intentOf = async (taskId: string) => {
+      const t = await f.db
+        .selectFrom("background_tasks")
+        .select("operation_id")
+        .where("id", "=", taskId)
+        .executeTakeFirstOrThrow();
+      return f.db
+        .selectFrom("sandbox_operation_intents")
+        .selectAll()
+        .where("operation_id", "=", t.operation_id as string)
+        .executeTakeFirstOrThrow();
+    };
+    expect((await intentOf(task)).scope).toMatchObject({
+      profile: "approve-for-me",
+      filesystem: { kind: "scoped", readRoots: [outside] },
+      network: { kind: "allowlist", hosts: [HOST] },
+    });
+    expect((await intentOf(sibling)).scope).toMatchObject({
+      filesystem: { kind: "scoped", readRoots: [outside] },
+      network: { kind: "none" },
+    });
+    await f.db.updateTable("runs").set({ status: "completed" }).where("id", "=", f.runId).execute();
+    // Full stays on; the org removes the host from its network
+    await k.app
+      .get(OrgSettingsService)
+      .update(
+        f.orgId,
+        { cloudNetwork: { mode: "allowlist", excludedHosts: [HOST] } },
+        ownerAccount().id,
+      );
+    expect((await intentOf(task)).state).toBe("revoked");
+    expect((await intentOf(sibling)).state).toBe("background-running");
+  });
+
   it("the real org writer turning Full off revokes only the task admitted under Full; the worker stops it exactly", async () => {
     const f = await managedTaskFixture({
       kernels: [k],

@@ -187,8 +187,10 @@ export async function login(
         }
         // a new credential is a new machine at the deployment: its owner reports start a new
         // sequence (also repairs a lost or corrupt sidecar)
-        // A failure (the policy lock held) never blocks the login: the deployment then sees an
-        // out-of-order report from this machine and refuses new work until a later login resets it
+        // A failure (the policy lock held) never fails the login: the old sequence then continues
+        // under the new credential, which the deployment accepts as a new machine's first report
+        // (it keeps reports per machine credential); a corrupt sidecar still issues no report
+        // until a later login resets it
         try {
           resetOwnerReport(deps.stateDir);
         } catch (e) {

@@ -32,6 +32,7 @@ import { isExecutionMethod } from "../sandbox/operation-authority-types.js";
 import { PermissionAuthorityModule } from "../sandbox/permission-authority.module.js";
 import {
   localMachineRoots,
+  needsFullCeiling,
   needsWiderDeviceCeiling,
   PermissionCeilingWrites,
 } from "../sandbox/permission-ceiling-writes.js";
@@ -722,8 +723,14 @@ export class OrgSettingsService {
         { orgId },
         "org",
         (scope, row) => {
-          if (needsWiderDeviceCeiling(scope, machineRoots.get(row.device_id)))
-            return after.fullAccess === "off";
+          // Full off takes Full work and restricted work outside the machine's roots; anything
+          // else (Full on) still goes through the host check below
+          if (
+            after.fullAccess === "off" &&
+            needsWiderDeviceCeiling(scope, machineRoots.get(row.device_id))
+          )
+            return true;
+          if (needsFullCeiling(scope)) return after.fullAccess === "off";
           if (
             !("network" in scope) ||
             !isExecutionMethod(row.method) ||
