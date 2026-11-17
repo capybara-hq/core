@@ -1,6 +1,7 @@
 import { type DynamicModule, Module } from "@nestjs/common";
 import { BackgroundModule } from "../background/background.module.js";
 import { BackgroundTaskPollJob } from "../background/poll.job.js";
+import { RetireLegacyTasksJob } from "../background/retire-legacy-tasks.job.js";
 import { CatalogModule } from "../catalog/catalog.module.js";
 import { CatalogJobs } from "../catalog/jobs.js";
 import { PluginScopeWorkersModule } from "../catalog/scope-sync-workers.js";
@@ -93,6 +94,9 @@ export class WorkerModule {
         SandboxSweepJobs,
         LegacySandboxCleanupJob,
         BackgroundTaskPollJob,
+        // legacy retirement (permission runtime cutover 8.5): bounded, retryable; the sandbox
+        // service's inline gate holds without it
+        RetireLegacyTasksJob,
         ToolJobs,
         InitialPasswordCleanupJob,
         ClientReportsCron,

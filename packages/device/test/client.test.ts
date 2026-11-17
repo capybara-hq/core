@@ -93,6 +93,17 @@ describe("client", () => {
     expect(again.home).toBeUndefined();
   });
 
+  it("reports the host's boot identity in the hello, and none when it is unreadable", async () => {
+    start({ bootId: "0f2a9c1e-7b1d-4b8e-9d5e-1c2b3a4d5e6f" });
+    const hello = await kernel.waitFor("hello", () => kernel.of("hello")[0]);
+    expect(hello.bootId).toBe("0f2a9c1e-7b1d-4b8e-9d5e-1c2b3a4d5e6f");
+    conn?.stop();
+    await conn?.done;
+    start({ bootId: null });
+    const again = await kernel.waitFor("second hello", () => kernel.of("hello")[1]);
+    expect(again.bootId).toBeUndefined();
+  });
+
   it("answers the file operations and create", async () => {
     start();
     await kernel.waitFor("hello", () => kernel.of("hello")[0]);

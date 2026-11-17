@@ -9,6 +9,7 @@ import { StepLogModule } from "../runtime/step-log.js";
 import { CloudPermissionSnapshots } from "./cloud-permission-snapshot.js";
 import { SandboxJobs } from "./jobs.js";
 import { SandboxLeases } from "./leases.js";
+import { LegacyRetirementModule } from "./legacy-retirement.module.js";
 import { OperationAuthorityModule } from "./operation-authority.module.js";
 import { OperationIntentsModule } from "./operation-intents.module.js";
 import { PermissionAuthorityModule } from "./permission-authority.module.js";
@@ -32,6 +33,7 @@ import { SandboxService } from "./sandbox.service.js";
     OperationIntentsModule,
     OperationAuthorityModule,
     BackgroundStoreModule,
+    LegacyRetirementModule,
     // the command review's classifier: the `review` purpose, its hooks, usage and audit writes
     ModelsModule,
     ExtensionsModule,
@@ -48,6 +50,7 @@ import { SandboxService } from "./sandbox.service.js";
   ],
   exports: [
     SandboxProviderRegistryModule,
+    LegacyRetirementModule,
     PermissionAuthorityModule,
     SandboxService,
     OperationIntentsModule,

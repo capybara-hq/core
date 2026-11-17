@@ -182,9 +182,15 @@ describe("currentInstance", () => {
     expect(await s.currentInstance(env())).toBeNull();
     await use(s);
     const r = await row();
-    expect(await s.currentInstance(env())).toEqual({ createdAt: r?.created_at });
+    expect(await s.currentInstance(env())).toEqual({
+      createdAt: r?.created_at,
+      provider: "sandbox-fake",
+    });
     expect(await s.suspendIdle(new Date(Date.now() + DAY))).toBe(1);
-    expect(await s.currentInstance(env())).toEqual({ createdAt: r?.created_at });
+    expect(await s.currentInstance(env())).toEqual({
+      createdAt: r?.created_at,
+      provider: "sandbox-fake",
+    });
     await s.destroyInactive(new Date(Date.now() + 30 * DAY));
     expect(await s.currentInstance(env())).toBeNull();
   });

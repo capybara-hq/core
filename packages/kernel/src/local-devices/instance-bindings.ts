@@ -9,6 +9,7 @@ import { sql } from "kysely";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { runOutsideTransaction, TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
+import { LegacyRetirementStore } from "../sandbox/legacy-retirement.js";
 import { PermissionCeilingWrites } from "../sandbox/permission-ceiling-writes.js";
 import {
   PermissionRuntimeReports,
@@ -54,6 +55,9 @@ export class LocalInstanceBindings {
     @Inject(PermissionCeilingWrites) private readonly ceilings: PermissionCeilingWrites,
     @Inject(PermissionRuntimeReports) private readonly reports: PermissionRuntimeReports,
     @Inject(OwnerReports) private readonly owners: Pick<OwnerReports, "recordLocked">,
+    /** The durable legacy gate checked before any bind is sent (8.5). */
+    @Inject(LegacyRetirementStore)
+    private readonly retirement: Pick<LegacyRetirementStore, "hasUnresolved">,
   ) {}
 
   /** The binding committed for the device's current local instance, or null (no allocation). */
@@ -97,6 +101,12 @@ export class LocalInstanceBindings {
     const found = await this.committed(deviceId);
     if (!found) throw new InstanceBindingError("No committed local instance to bind");
     if (found.status === "installed") return null;
+    // the kernel's durable legacy gate (8.5): an old incarnation of this device that may still
+    // run legacy work blocks every new binding; a new generation never clears it
+    if (await this.retirement.hasUnresolved(deviceId))
+      throw new InstanceBindingError(
+        "The device has an unresolved legacy retirement obligation; no instance can be bound",
+      );
     const machineId = await this.activeMachine(deviceId);
     let committed = found;
     // a re-login since the commit: the binding follows the machine it is sent to, before the

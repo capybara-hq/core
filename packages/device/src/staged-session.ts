@@ -6,6 +6,7 @@ import {
   type SandboxHandle,
 } from "@capybara-hq/plugin-sdk";
 import type WebSocket from "ws";
+import { currentBootId } from "./boot-id.js";
 import type { InstanceBinder } from "./exec/instance-binding.js";
 import type { MacOperationBackend } from "./exec/mac-operation-backend.js";
 import { DrainPendingError } from "./exec/operation-supervisor.js";
@@ -132,8 +133,11 @@ export function serveStagedSession(
   /** Serves `policy` / `policyStatus` with owner reports (B2); without it they are unsupported. */
   owner?: StagedOwnerPolicy,
 ): { ready: () => KernelReadyV3 | undefined } {
+  const bootId = report.bootId ?? currentBootId();
   const hello: DeviceHelloV3 = {
     ...report,
+    // the host's OS boot identity: the deployment's evidence that the host restarted (8.5)
+    ...(bootId !== undefined && { bootId }),
     transport: { maxFrameBytes: credential.maxFrameBytes },
   };
   let ready: KernelReadyV3 | undefined;

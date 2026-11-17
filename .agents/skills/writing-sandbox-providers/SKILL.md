@@ -138,6 +138,55 @@ Every provider must follow these; the kernel's behaviour below assumes them. How
   instance, under the exclusive lease next to its `killAll`. The poll and `TaskOutput` / `TaskStop` use `SandboxService.ifRunning`: a shared
   lease only on a `running` row of the task's instance, never creating or resuming one. sandbox-fake puts node shims for `setsid`,
   `timeout`, `pkill -s` and `pgrep -s` first on its PATH (macOS has none) and kills an instance's processes on `suspend` and `destroy`.
+- **Legacy retirement** (permission runtime cutover 8.5, migration 0148, `sandbox/legacy-retirement.ts`):
+  - **Freeze.** `LegacyRetirementStore.freeze` writes the freeze row under the exclusive platform authority lock, then enumerates
+    before it returns. Every SID launch checks the freeze under the shared lock right before its dispatch, recording the exact
+    incarnation (provider and generation) it dispatches into.
+  - **Obligations.** One per device, provider and exact instance generation, for every legacy row whose processes may live on and
+    for each revoked managed start on an incarnation that no longer runs. A historical reservation without a recorded incarnation
+    is `unknown`, never the current instance.
+  - **Gate.** `SandboxService` enumerates the device itself and checks its obligations in `ensure`, under the exclusive lease,
+    before use, resume, rebuild or provider switch. A device with an unresolved obligation, or with a candidate not yet
+    enumerated, never takes the shared path. `LocalInstanceBindings.bind` refuses while one is unresolved.
+    `RetireLegacyTasksJob` is retryable and bounded; the gate never depends on it.
+  - **Retirement.** The current cloud incarnation is destroyed whole by its provider (never resumed or `killAll`ed; files kept),
+    and the confirmed destruction is recorded in `device_instance_destructions`. `retire()` and `destroyRow` record theirs too.
+    A cloud incarnation the kernel cannot name (`unknown` provider or generation) resolves only once the device's current
+    incarnation is destroyed with confirmation (the gate destroys a live one), the row keeps no `prev_handle`, and the
+    obligation was recorded after the freeze. When the current row is not live (destroyed without a record, or `creating` with
+    no handle) but once had an instance, the gate calls the row's cloud provider's `destroyByName` for the device's instance
+    name and records that as the destruction of the row's incarnation; a failure keeps the obligation open. Any other
+    non-current cloud incarnation without a recorded destruction is quarantined for good (`device.recreate_required`), even
+    with a known provider and generation (kept fail-closed). A failed or impossible destroy stays retryable
+    (`device.unavailable`).
+  - **Same-name replacement carries the barrier.** The `unknown` rule holds only because every rebuild on one provider goes
+    through `create`, which first removes the old `cap-device-<id>` instance: a provider `gone` answer (E2B's token-failure
+    `gone` included) or `applyLimits`' swallowed destroy failure leaves nothing behind, and E2B's incarnations are one sandbox.
+    A provider or kernel path that rebuilds without same-name replacement breaks the barrier.
+  - **Deleted devices.** A device is gone when its row is missing, `deleted_at` is set, or its org is soft-deleted. The worker
+    (bounded per tick) leaves a cloud obligation alone while the device's instance row exists (its destroy is still owed and
+    records the destruction), then resolves an obligation by a recorded confirmed destruction, else moves it to `abandoned`. An
+    abandoned cloud obligation that later gains a matching recorded destruction resolves too. Abandonment is never evidence:
+    its members stay unsettled. `report()` keeps it out of `retired` and counts it in `abandoned` / `abandonedMembers`;
+    `cleanRetirement` also requires none.
+  - **Local machines.** A local obligation keeps the boot identity (`bootId`, from authenticated hellos; a hello without one clears
+    it) that the device's machine last reported. It resolves `host-rebooted` once any current machine of the device reports
+    another, not earlier, boot: the OS instance is the evidence, not the credential. Until then the device answers
+    `device.restart_required`. With no boot recorded it never resolves and answers `device.replace_required`: delete the device
+    and connect the computer as a new one.
+  - **What never clears an obligation.** A local destroy, a service restart, a new generation, a timeout or a SID.
+  - **After the freeze.** `killPendingTasks` neither signals nor clears kill marks.
+  - **`ifRunning`.** It refuses legacy SID polls, stops and reads and staged browse on such a device (`RetirementPendingError`).
+    Only exact-ref managed drains pass `exactRef: true`.
+  - **Cutover order.** Ship the device build that reports `bootId` first. Wait until `report().localWithoutBoot` (local devices with
+    legacy rows whose machine has no recorded boot) is empty or accepted. Review `report().cloudUnknown`: it lists cloud devices
+    whose legacy rows name no incarnation and never empties by itself (it reads the task rows). Devices flagged `prevHandle` or
+    `noInstance` will answer `recreate_required` (accept, or delete and recreate them); `currentUnconfirmed` ones clear on
+    first use through `destroyByName` only while their row's provider is loaded; unflagged ones clear on first use. Then
+    publish the freeze, and do so before managed starts are activated (a revoked start recorded before the freeze with an
+    unreadable generation stays `recreate_required`).
+  - **Release gate.** It passes on `retired`. With `abandoned > 0` it also needs the operator to acknowledge: "N old incarnations
+    were abandoned with their devices; legacy processes may still run on those computers; no device can reuse them".
 
 ### Limits, modes and networks (`SandboxLimits`)
 

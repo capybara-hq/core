@@ -9,6 +9,7 @@ import {
   validateSandboxPathShape,
 } from "@capybara-hq/plugin-sdk";
 import WebSocket from "ws";
+import { currentBootId } from "./boot-id.js";
 import type { CommandLog } from "./command-log.js";
 import type { Executor } from "./exec/types.js";
 import type { PolicyStore } from "./policy-store.js";
@@ -61,6 +62,11 @@ export interface ConnectOptions {
    * by a docker-mode device (it offers its container's workspace only).
    */
   home?: string;
+  /**
+   * The host's OS boot identity reported in each hello (`bootId`; default: read once from the
+   * OS); null leaves it out.
+   */
+  bootId?: string | null;
   /** A connection must stay up this long before the backoff resets (default 10 s). */
   stableMs?: number;
   /** Terminate a socket that heard nothing from the server for this long (default 60 s). */
@@ -337,6 +343,8 @@ export function connect(
     executor.mode === "os" && validateSandboxPathShape(ownerHome).length === 0
       ? ownerHome
       : undefined;
+  // the deployment's evidence that the host restarted (legacy retirement, cutover 8.5)
+  const bootId = opts.bootId === undefined ? currentBootId() : (opts.bootId ?? undefined);
   const hello = (): DeviceHello => {
     const summary = summaryNow();
     sentPolicy = summary === undefined ? undefined : JSON.stringify(summary);
@@ -358,6 +366,7 @@ export function connect(
       sessionIsolation: false,
       features,
       ...(home !== undefined && { home }),
+      ...(bootId !== undefined && { bootId }),
       ...(summary !== undefined && { policy: summary }),
       // what became of the latest policy ops, so an answer lost with a connection is not lost
       ...(opts.policy !== undefined && { recentOps: opts.policy.ops.recent() }),

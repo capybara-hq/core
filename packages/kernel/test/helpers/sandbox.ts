@@ -13,13 +13,14 @@ import type { TransactionHost } from "../../src/infra/database/transaction-host.
 import { LockService } from "../../src/infra/lock/lock.service.js";
 import type { KernelLogger } from "../../src/log.js";
 import { SandboxLeases } from "../../src/sandbox/leases.js";
+import type { LegacyRetirementStore } from "../../src/sandbox/legacy-retirement.js";
 import type { SandboxOperationAuthority } from "../../src/sandbox/operation-authority.js";
 import type { SandboxOperationIntents } from "../../src/sandbox/operation-intents.js";
 import { PermissionFacts } from "../../src/sandbox/permission-facts.js";
 import type { SandboxProviders } from "../../src/sandbox/providers.js";
 import { LOCAL_PROVIDER, type SandboxProviderEntry } from "../../src/sandbox/providers.js";
 import { SandboxService } from "../../src/sandbox/sandbox.service.js";
-import { instanceWritesFor } from "./identity.js";
+import { instanceWritesFor, retirementFor } from "./identity.js";
 
 /** A kernel logger over a test's partial logger (the missing levels are dropped). */
 function kernelLog(log: Partial<Pick<Logger, "info" | "warn" | "error">>): KernelLogger {
@@ -76,6 +77,8 @@ export interface SandboxServiceDeps {
   leases?: SandboxLeases;
   /** The background task store (default: one over `db`; the sandbox service opens no transaction). */
   background?: Pick<BackgroundTaskStore, "pendingKills" | "clearKill">;
+  /** The retirement obligations (8.5; default: the real store over `db`). */
+  retirement?: LegacyRetirementStore;
 }
 
 /** A {@link SandboxService} over a test's own database, Redis and provider. */
@@ -123,6 +126,7 @@ export function sandboxServiceFor(d: SandboxServiceDeps): SandboxService {
     { revokeHolders: async () => {} } as unknown as SandboxOperationIntents,
     {} as SandboxOperationAuthority,
     instanceWritesFor(d.db),
+    d.retirement ?? retirementFor(d.db),
   );
 }
 

@@ -21,7 +21,7 @@ import { type SandboxToolDeps, sandboxTools } from "../../src/tools/builtins/san
 import type { BuiltinCallContext, BuiltinTool } from "../../src/tools/registry.js";
 import { createFakeSandbox, fakeWorkspaceDir } from "../fixtures/plugins/sandbox-fake/index.js";
 import { truncateTables } from "../helpers/db.js";
-import { handlesFor } from "../helpers/identity.js";
+import { handlesFor, retirementFor } from "../helpers/identity.js";
 import { waitFor } from "../helpers/runs.js";
 import { sandboxServiceFor, seedDevice } from "../helpers/sandbox.js";
 import { seedConversation } from "../helpers/tool-fixtures.js";
@@ -58,6 +58,8 @@ let killFails: boolean;
 let leaveThrows: boolean;
 /** A stop claims the reservation while the launch exec runs (`claimStop`), when set. */
 let claimOnLaunch: boolean;
+/** Publishes the legacy-launch freeze as the call enters the sandbox (after its reservation). */
+let freezeOnEnter: boolean;
 /** The `changed` frames the tool published, as `[conversationId, what]`. */
 let published: [string, string][];
 
@@ -123,6 +125,7 @@ beforeEach(async () => {
   killFails = false;
   leaveThrows = false;
   claimOnLaunch = false;
+  freezeOnEnter = false;
   published = [];
   provider = fake;
   config = configWith({});
@@ -131,6 +134,7 @@ beforeEach(async () => {
 });
 
 afterEach(async () => {
+  await sql`DELETE FROM capybara.legacy_launch_freeze`.execute(raw);
   for (const h of handles) await fake.destroy(h, signal()).catch(() => {});
   await rm(root, { recursive: true, force: true });
 });
@@ -165,6 +169,7 @@ function bash(): BuiltinTool {
   wrapped.currentInstance = (env) =>
     noInstance ? Promise.resolve(null) : sandbox.currentInstance(env);
   wrapped.withSandbox = (async (...args: Parameters<typeof sandbox.withSandbox>) => {
+    if (freezeOnEnter) await retirementFor(raw).freeze("test");
     const v = await sandbox.withSandbox(...args);
     if (leaveThrows) throw new Error("cannot release the sandbox lease: redis down");
     return v;
@@ -173,6 +178,8 @@ function bash(): BuiltinTool {
     sandbox: wrapped,
     devices: { forTool: async () => envId },
     background: store,
+    // as the kernel wires it: every legacy launch checks the freeze right before its dispatch
+    legacyLaunch: retirementFor(raw),
     attachments: {
       listForConversation: async () => [],
       openForConversation: async () => null,
@@ -278,6 +285,52 @@ describe("Bash run_in_background", () => {
     expect(row.sandboxCreatedAt).toEqual(await sandboxCreatedAt(envId));
     // the command lives on after the call
     expect(await alive(row.sid as string)).toBe(true);
+  });
+
+  it("a launch admitted before the legacy-launch freeze is marked dispatched before its exec", async () => {
+    let markAtExec: string | undefined;
+    const exec = fake.exec;
+    fake.exec = async (h, args) => {
+      if (args.command.includes("setsid nohup")) {
+        const r = (
+          await sql<{
+            legacy_dispatch: string;
+            legacy_dispatch_provider: string | null;
+            legacy_dispatch_generation: string | null;
+          }>`SELECT legacy_dispatch, legacy_dispatch_provider, legacy_dispatch_generation
+            FROM capybara.background_tasks`.execute(raw)
+        ).rows[0];
+        // the exact incarnation it dispatches into, read under its lease (I2)
+        const at = await sandboxCreatedAt(envId);
+        markAtExec = `${r?.legacy_dispatch} ${r?.legacy_dispatch_provider} ${r?.legacy_dispatch_generation === String(at.getTime())}`;
+      }
+      return exec(h, args);
+    };
+    await bash().run(
+      { command: "sleep 30", description: "Before the freeze", run_in_background: true },
+      ctx(),
+    );
+    expect(markAtExec).toBe("dispatched sandbox-fake true");
+  });
+
+  it("a reservation made before the freeze is refused right before its dispatch: no launch exec", async () => {
+    freezeOnEnter = true;
+    const launches: string[] = [];
+    const exec = fake.exec;
+    fake.exec = async (h, args) => {
+      if (args.command.includes("setsid nohup")) launches.push(args.command);
+      return exec(h, args);
+    };
+    await expect(
+      bash().run({ command: "sleep 30", description: "Frozen", run_in_background: true }, ctx()),
+    ).rejects.toThrow(/cannot be started with the old launcher/);
+    expect(launches).toEqual([]);
+    const rows = (
+      await sql<{ status: string; sid: string | null; legacy_dispatch: string }>`SELECT status,
+        sid, legacy_dispatch FROM capybara.background_tasks`.execute(raw)
+    ).rows;
+    // never dispatched: it owes no retirement
+    expect(rows).toEqual([{ status: "failed", sid: null, legacy_dispatch: "reserved" }]);
   });
 
   it("a sub-agent's task is its own conversation's, counted in the parent's sandbox", async () => {

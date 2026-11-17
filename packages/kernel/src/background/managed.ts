@@ -95,7 +95,8 @@ export async function onManagedInstance<T>(
   const { ref, deviceId, generation } = exactRefOf(task);
   return ifRunning(
     deviceId,
-    { createdAt: new Date(generation) },
+    // an exact-ref drain: allowed on an incarnation under a retirement obligation (8.5)
+    { createdAt: new Date(generation), exactRef: true },
     async (p, h, sig) => {
       if (h.id !== ref.instanceId) throw new ManagedInstanceMismatchError();
       const bg = p.background;

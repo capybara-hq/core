@@ -21,6 +21,7 @@ import { PlatformOperations } from "../../platform/registry.js";
 import type { HookRunner } from "../../runtime/hook-calls.js";
 import { conversationTimeZone, RUN_CONTEXT_CLOCK } from "../../runtime/run-context.service.js";
 import { StepLog } from "../../runtime/step-log.js";
+import { LegacyRetirementStore } from "../../sandbox/legacy-retirement.js";
 import { SandboxService } from "../../sandbox/sandbox.service.js";
 import { ScheduledTaskStore } from "../../schedules/store.js";
 import { StorageService } from "../../storage/storage.service.js";
@@ -69,6 +70,8 @@ export class BuiltinTools {
     @Inject(BackgroundTaskStore) background: BackgroundTaskStore,
     @Inject(BackgroundTaskFinisher) finisher: BackgroundTaskFinisher,
     @Inject(BackgroundTaskStopper) stopper: BackgroundTaskStopper,
+    /** The legacy-launch freeze every legacy background launch checks before dispatch (8.5). */
+    @Inject(LegacyRetirementStore) legacyLaunch: LegacyRetirementStore,
     @Inject(PlatformOperations) platformOps: PlatformOperations,
     @Inject(PlatformActor) platformActor: PlatformActor,
     @Inject(AgentDocs) agentDocs: AgentDocs,
@@ -85,6 +88,7 @@ export class BuiltinTools {
       sandbox,
       devices,
       background,
+      legacyLaunch,
       tasks: { finisher, stopper },
       subagents: {
         inTree: async (root, id) =>

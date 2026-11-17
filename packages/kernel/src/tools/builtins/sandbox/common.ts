@@ -31,6 +31,7 @@ import type { KernelConfigService } from "../../../infra/config/kernel-config.se
 import { AUTO_MODE_NOT_ALLOWED_TEXT } from "../../../local-devices/local-device-provider.js";
 import { type DeviceModeLevel, devicePathsChange } from "../../../runtime/context/device-paths.js";
 import { SandboxPathBusyError } from "../../../sandbox/leases.js";
+import type { LegacyRetirementStore } from "../../../sandbox/legacy-retirement.js";
 import type { SandboxMode } from "../../../sandbox/modes.js";
 import {
   type HeldProvider,
@@ -72,6 +73,11 @@ export interface SandboxToolDeps {
     | "finishedOwnedBy"
   > &
     Partial<Pick<BackgroundTaskStore, "reserveManaged" | "failManagedPreEffect">>;
+  /**
+   * The legacy-launch freeze check (permission runtime cutover 8.5) every legacy background launch
+   * makes immediately before it dispatches; always wired in the kernel, absent in test stubs.
+   */
+  legacyLaunch?: Pick<LegacyRetirementStore, "admitLegacyDispatch">;
   /**
    * Whether `id` is a sub-agent conversation in the tree under `rootConversationId` (TaskOutput /
    * TaskStop tell a sub-agent's agentId apart from an unknown task id), and the sub-agents a
