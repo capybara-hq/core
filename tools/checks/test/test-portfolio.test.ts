@@ -127,6 +127,17 @@ describe("checkTestPortfolio", () => {
     expect(got[2]?.message).toContain("container-tests.json");
   });
 
+  it("enforces the device package's checked-in real-OS list", () => {
+    const root = fixture("device-os");
+    const got = checkTestPortfolio({ root });
+    expect(got.map((f) => [f.rule, relative(root, f.file).split(sep).join("/"), f.line])).toEqual([
+      ["test-portfolio-missing-file", "packages/device/test/os-tests.json", 3],
+      ["test-portfolio-list-overlap", "packages/device/test/os-tests.json", 4],
+      ["test-portfolio-os-unlisted", "packages/device/test/unlisted.test.ts", 1],
+    ]);
+    expect(got[2]?.message).toContain("os-tests.json");
+  });
+
   it("treats a base that does not resolve as skipped and a resolvable one as an empty diff", () => {
     expect(changedTestFiles(repoRoot, "no-such-ref-for-the-portfolio-check")).toBeUndefined();
     expect(changedTestFiles(repoRoot, "HEAD")).toEqual(new Set());

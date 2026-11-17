@@ -1,14 +1,15 @@
 [
+  "background-output.test.ts",
   "exec-docker.test.ts",
   "exec-host.test.ts",
-  "exec-os.test.ts",
   "exec-os-network.test.ts",
+  "exec-os.test.ts",
   "fs-helper.test.ts",
   "mac-operation-backend.test.ts",
   "native-helper-client.test.ts",
   "operation-supervisor.test.ts",
   "output-spool.test.ts",
   "permission-native-contract.test.ts",
-  "runtime-manifest.test.ts",
-  "runtime-manifest-pack.test.ts"
+  "runtime-manifest-pack.test.ts",
+  "runtime-manifest.test.ts"
 ]

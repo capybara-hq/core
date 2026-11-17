@@ -11,7 +11,7 @@ const dirs: string[] = [];
 afterEach(async () => {
   for (const d of dirs.splice(0)) await rm(d, { recursive: true, force: true });
 });
-async function workspace(dep: Record<string, unknown>, patched = false) {
+async function workspace(dep: Record<string, unknown>, patched: boolean | string = false) {
   const root = await realpath(await mkdtemp(join(tmpdir(), "cap-bundle-")));
   dirs.push(root);
   const write = async (path: string, text: string) => {
@@ -20,7 +20,7 @@ async function workspace(dep: Record<string, unknown>, patched = false) {
   };
   await write(
     join(root, "pnpm-workspace.yaml"),
-    `packages:\n  - packages/*\n${patched ? "patchedDependencies:\n  'dep@1.0.0': patches/dep@1.0.0.patch\n" : ""}`,
+    `packages:\n  - packages/*\n${patched ? `patchedDependencies:\n  ${patched === true ? "'dep@1.0.0'" : patched}: patches/dep@1.0.0.patch\n` : ""}`,
   );
   await write(join(root, "patches/dep@1.0.0.patch"), "--- a/i.js\n+++ b/i.js\n");
   const pkg = join(root, "packages/device");
@@ -63,5 +63,16 @@ it("refuses optional dependencies and platform-specific packages", async () => {
   ]) {
     const pkg = await workspace(dep);
     await expect(bundleRuntime(pkg)).rejects.toThrow(/platform|optional/);
+  }
+});
+
+it("matches a versionless patch key and refuses one it cannot match", async () => {
+  const bare = await workspace({}, "dep");
+  await bundleRuntime(bare);
+  expect(existsSync(join(bare, "dist/node_modules/dep/CAPYBARA-MODIFICATIONS.md"))).toBe(true);
+  // a patch keyed to another version or a range: never bundled without its notice
+  for (const key of ["'dep@2.0.0'", "'dep@^1.0.0'"]) {
+    const other = await workspace({}, key);
+    await expect(bundleRuntime(other)).rejects.toThrow(/patch/);
   }
 });

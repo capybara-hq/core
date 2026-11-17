@@ -202,6 +202,27 @@ async function workspacePatches(packageRoot: string): Promise<Map<string, string
   return new Map();
 }
 
+/** The package name of a patch key (`name`, `name@version`, `@scope/name@range`). */
+const keyName = (key: string) => {
+  const at = key.lastIndexOf("@");
+  return at > 0 ? key.slice(0, at) : key;
+};
+/**
+ * The workspace patch applied to `placed`: an exact `name@version` key, else a versionless `name`
+ * key. A key for the same name that is neither (another version, a range) is refused: the bundler
+ * would otherwise ship possibly patched bytes without their notice.
+ */
+function patchFor(patches: Map<string, string>, placed: Placed): string | undefined {
+  const exact = patches.get(`${placed.name}@${placed.version}`) ?? patches.get(placed.name);
+  if (exact) return exact;
+  const other = [...patches.keys()].find((k) => keyName(k) === placed.name);
+  if (other)
+    throw new Error(
+      `${placed.name}@${placed.version} has a workspace patch key ${other} the bundler cannot match; key it as name@version or name`,
+    );
+  return undefined;
+}
+
 /**
  * Apache-2.0 §4(b): a modified file must carry a prominent notice. A package the workspace patches
  * ships `CAPYBARA-MODIFICATIONS.md` and the exact patch next to its own LICENSE.
@@ -232,7 +253,7 @@ export async function bundleRuntime(packageRoot: string): Promise<number> {
       target,
       !relative(dirname(packageRoot), placed.source).startsWith(".."),
     );
-    const patch = patches.get(`${placed.name}@${placed.version}`);
+    const patch = patchFor(patches, placed);
     if (patch) await noteModification(placed, target, patch);
   }
   return tree.size;

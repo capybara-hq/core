@@ -41,6 +41,12 @@ import {
  *   device container (`startDevice(`) but is missing from that package's `container-tests.json`,
  *   which `vitest.config.ts` reads for the `testing-container` project. The testing list obeys
  *   the overlap and missing-file rules too.
+ * - `test-portfolio-os-unlisted`: a `packages/device/test` file that drives the real OS (a marker
+ *   in `DEVICE_OS_MARKERS`: the real macOS worker, the OS executor, the native or output helper,
+ *   the real environment probe, `pnpm pack`) but is missing from `os-tests.json`, which
+ *   `vitest.config.ts` reads for the `device-os` project; that list obeys the overlap and
+ *   missing-file rules too. Tests reaching the OS through Docker, a raw spawn or the fs helper
+ *   script carry no marker and are a blind spot: they are listed by hand.
  * - `test-portfolio-baseline-unjustified`: a grandfather entry (the baseline's `files` object
  *   maps a repo-relative path to the reason it stays) with an empty reason.
  * - `test-portfolio-baseline-removed-claim`: a grandfather entry whose reason says the file was
@@ -61,6 +67,21 @@ export const CONTAINER_LIST = "container-tests.json";
 export const TESTING_TEST_DIR = "packages/testing/test";
 /** The call that marks a testing-package test as a container test. */
 const CONTAINER_MARKER = "startDevice(";
+export const DEVICE_TEST_DIR = "packages/device/test";
+export const DEVICE_OS_LIST = "os-tests.json";
+/**
+ * What marks a device test as driving the real OS: the real worker, OS executor, native and output
+ * helpers, the real environment probe, and packing the published package. A test that reaches the
+ * OS some other way (Docker, a raw spawn, the fs helper script) is not detected: list it by hand.
+ */
+const DEVICE_OS_MARKERS = [
+  "startMacOperationWorker",
+  "createOsExecutor",
+  "runNativeHelper",
+  "ManagedOutputSpool",
+  "collectEnvironment",
+  '"pack", "--pack-destination"',
+];
 
 const RULE = {
   sleep: "test-fixed-sleep",
@@ -71,6 +92,7 @@ const RULE = {
   overlap: "test-portfolio-list-overlap",
   missing: "test-portfolio-missing-file",
   unlisted: "test-portfolio-container-unlisted",
+  osUnlisted: "test-portfolio-os-unlisted",
   unjustified: "test-portfolio-baseline-unjustified",
   removedClaim: "test-portfolio-baseline-removed-claim",
   stale: "test-portfolio-baseline-stale",
@@ -465,20 +487,20 @@ function checkLists(root: string): Finding[] {
       }
     }
   }
-  return [...out, ...checkTestingList(root)];
+  return [...out, ...CATEGORY_LISTS.flatMap((c) => checkCategoryList(root, c))];
 }
 
-/** Testing-package test files (fixtures excluded), repo-relative. */
-function testingTestFiles(root: string): string[] {
-  const base = join(root, TESTING_TEST_DIR);
+/** A package's test files (fixtures excluded), repo-relative. */
+function packageTestFiles(root: string, dir: string): string[] {
+  const base = join(root, dir);
   if (!existsSync(base)) return [];
   const out: string[] = [];
-  const walk = (dir: string) => {
-    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+  const walk = (at: string) => {
+    for (const entry of readdirSync(at, { withFileTypes: true })) {
       if (entry.isDirectory()) {
-        if (entry.name !== "fixtures" && entry.name !== "node_modules") walk(join(dir, entry.name));
+        if (entry.name !== "fixtures" && entry.name !== "node_modules") walk(join(at, entry.name));
       } else if (TEST_FILE.test(entry.name)) {
-        out.push(repoPath(root, join(dir, entry.name)));
+        out.push(repoPath(root, join(at, entry.name)));
       }
     }
   };
@@ -486,10 +508,40 @@ function testingTestFiles(root: string): string[] {
   return out.sort();
 }
 
-/** The testing package's container list: no overlap, no missing file, no unlisted container test. */
-function checkTestingList(root: string): Finding[] {
+/**
+ * A package's checked-in category list that `vitest.config.ts` reads for its own project: no
+ * overlap, no missing file, and no unlisted test file that carries one of the category's markers.
+ */
+interface CategoryList {
+  dir: string;
+  list: string;
+  markers: readonly string[];
+  rule: string;
+  what: string;
+  project: string;
+}
+const CATEGORY_LISTS: readonly CategoryList[] = [
+  {
+    dir: TESTING_TEST_DIR,
+    list: CONTAINER_LIST,
+    markers: [CONTAINER_MARKER],
+    rule: RULE.unlisted,
+    what: "starts a device container",
+    project: "testing-container",
+  },
+  {
+    dir: DEVICE_TEST_DIR,
+    list: DEVICE_OS_LIST,
+    markers: DEVICE_OS_MARKERS,
+    rule: RULE.osUnlisted,
+    what: "drives the real OS (a real worker, executor, helper, environment probe or pack)",
+    project: "device-os",
+  },
+];
+
+function checkCategoryList(root: string, category: CategoryList): Finding[] {
   const out: Finding[] = [];
-  const list = readList(root, CONTAINER_LIST, TESTING_TEST_DIR);
+  const list = readList(root, category.list, category.dir);
   const listed = new Set<string>();
   if (list !== undefined) {
     const seen = new Map<string, number>();
@@ -507,27 +559,27 @@ function checkTestingList(root: string): Finding[] {
         continue;
       }
       seen.set(entry, line);
-      listed.add(`${TESTING_TEST_DIR}/${entry}`);
-      if (!existsSync(join(root, TESTING_TEST_DIR, entry))) {
+      listed.add(`${category.dir}/${entry}`);
+      if (!existsSync(join(root, category.dir, entry))) {
         out.push({
           file: list.file,
           line,
           rule: RULE.missing,
-          message: `"${entry}" is listed but ${TESTING_TEST_DIR}/${entry} does not exist`,
+          message: `"${entry}" is listed but ${category.dir}/${entry} does not exist`,
         });
       }
     }
   }
-  for (const path of testingTestFiles(root)) {
+  for (const path of packageTestFiles(root, category.dir)) {
     if (listed.has(path)) continue;
     const lines = readFileSync(join(root, path), "utf8").split("\n");
-    const index = lines.findIndex((text) => text.includes(CONTAINER_MARKER));
+    const index = lines.findIndex((text) => category.markers.some((m) => text.includes(m)));
     if (index < 0) continue;
     out.push({
       file: join(root, path),
       line: index + 1,
-      rule: RULE.unlisted,
-      message: `starts a device container but is not listed in ${TESTING_TEST_DIR}/${CONTAINER_LIST}; add it so the testing-container project runs it`,
+      rule: category.rule,
+      message: `${category.what} but is not listed in ${category.dir}/${category.list}; add it so the ${category.project} project runs it`,
     });
   }
   return out;
