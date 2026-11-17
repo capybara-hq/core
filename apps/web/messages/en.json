@@ -1821,16 +1821,24 @@
         },
         "effect": {
           "widen": "Conversations on this device can then choose Full access: commands run in its environment without asking each time. Each conversation needs a new Full access confirmation.",
-          "narrow": "Work running with Full access on this device stops, and its conversations can no longer choose Full access."
+          "narrow": "Work running with Full access on this device stops now, and its conversations can no longer choose Full access."
         },
-        "network": "The device's network does not change.",
-        "nextUse": "It takes effect at the next use: the device's instance may restart, which ends its running commands. Its files are kept.",
+        "network": {
+          "widen": "The device's network then reaches public addresses, with private networks blocked, never beyond what the cloud administrator provisioned for it.",
+          "narrowOpen": "The organization's cloud network is open, so the device still reaches public addresses, with private networks blocked, never beyond what the cloud administrator provisioned for it.",
+          "narrowAllowlist": "The device's network then becomes the organization's cloud allowlist: it reaches only {hosts}, never beyond what it reaches now.",
+          "narrowNone": "The organization's cloud allowlist is empty, so the device then reaches no network host.",
+          "narrowOrg": "The device's network then follows the organization's cloud network, never beyond what it reaches now."
+        },
+        "nextUse": "Its instance takes the new limits and network at its next use and may restart then, which ends its running commands. Its files are kept.",
         "submit": {
           "widen": "Allow Full access",
           "narrow": "Turn off Full access"
         },
         "cancel": "Cancel"
-      }
+      },
+      "cloudForbidden": "The platform or the organization does not allow Full access, so it is already off on this device.",
+      "notMigrated": "This device's permissions have not been migrated yet, so its Full access ceiling can't be set from here now. Try again once the migration has run; resetting the files does not change this."
     },
     "recent": {
       "title": "Recent changes",

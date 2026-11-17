@@ -2,7 +2,9 @@ import { act, cleanup, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
+import zh from "../messages/zh.json";
 import { CEILING_COMMAND } from "../src/components/DeviceModeSection";
+import { keys } from "../src/lib/query/keys";
 import { bodyOf, json, lastStubRoutes, stubApi } from "./support/api";
 import { resetNavigation } from "./support/navigation";
 import { renderRouteEmptyCache, renderRouteWithCache } from "./support/query";
@@ -299,6 +301,13 @@ describe("a local device's owner ceiling", () => {
     expect(screen.getByRole("button", { name: `Copy ${COMMAND}` })).toBeTruthy();
   });
 
+  it("zh says Full access is off on this device, never that the device is off", async () => {
+    stubApi(detail(local({ ownerCeiling: report({ fullAccess: false }) })));
+    await renderDetail({ locale: "zh" });
+    await screen.findByRole("heading", { name: zh.devices.ceiling.title });
+    expect(factRow("完全访问")?.textContent).toContain("已在此设备上关闭");
+  });
+
   it("an older program narrows both at once with its sandbox switch, and says so", async () => {
     const calls = stubApi({
       ...detail(
@@ -368,6 +377,11 @@ describe("a local device's owner ceiling", () => {
     await ceilingSection();
     expect(screen.getByText(C.notice.noMachine)).toBeTruthy();
     expect(factRow(C.fullAccess)?.textContent).toContain(C.full.unconfirmed);
+    // 设置 names the login step only: the ceiling command needs a connected computer
+    await openSettings();
+    await ceilingSection();
+    expect(screen.queryByRole("button", { name: `Copy ${COMMAND}` })).toBeNull();
+    expect(document.querySelector('[data-part="keycap-command-caps"]')).toBeNull();
   });
 
   it("a refused narrowing shows its actionable copy: an outdated owner report", async () => {
@@ -409,7 +423,12 @@ describe("a cloud device's owner ceiling", () => {
     await user.click(await screen.findByRole("button", { name: C.turnOffFull }));
     const dialog = await screen.findByRole("dialog", { name: C.confirm.title.narrow });
     expect(within(dialog).getByText(C.confirm.effect.narrow)).toBeTruthy();
+    expect(within(dialog).getByText(C.confirm.network.narrowOpen)).toBeTruthy();
     expect(within(dialog).getByText(C.confirm.nextUse)).toBeTruthy();
+    // Full work stops now: nothing in the dialog defers that to the next use
+    expect(dialog.textContent).toMatch(/stops now/);
+    expect(dialog.textContent).not.toMatch(/takes effect at the next use/i);
+    expect(dialog.textContent).not.toMatch(/network does not change/i);
     expect(calls.some((c) => c.method === "PATCH")).toBe(false);
     await user.click(within(dialog).getByRole("button", { name: C.confirm.submit.narrow }));
     await vi.waitFor(() => expect(calls.some((c) => c.method === "PATCH")).toBe(true));
@@ -429,7 +448,8 @@ describe("a cloud device's owner ceiling", () => {
     await user.click(await screen.findByRole("button", { name: C.allowFull }));
     const dialog = await screen.findByRole("dialog", { name: C.confirm.title.widen });
     expect(within(dialog).getByText(C.confirm.effect.widen)).toBeTruthy();
-    expect(within(dialog).getByText(C.confirm.network)).toBeTruthy();
+    expect(within(dialog).getByText(C.confirm.network.widen)).toBeTruthy();
+    expect(dialog.textContent).not.toMatch(/network does not change/i);
     expect(calls.some((c) => c.method === "PATCH")).toBe(false);
     await user.click(within(dialog).getByRole("button", { name: C.confirm.submit.widen }));
     await vi.waitFor(() => expect(calls.some((c) => c.method === "PATCH")).toBe(true));
@@ -449,6 +469,88 @@ describe("a cloud device's owner ceiling", () => {
     await vi.waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     await settle();
     expect(calls.every((c) => c.method === "GET")).toBe(true);
+  });
+
+  it("turning Full access off names the organization's allowlist the device then reaches", async () => {
+    const hosts = ["files.example.com", "*.slack.com"];
+    stubApi(detail(cloud({ mode: cloudMode({ sandboxNetwork: { kind: "allowlist", hosts } }) })));
+    await renderDetail({ locale: "zh" });
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("tab", { name: "设置" }));
+    await user.click(await screen.findByRole("button", { name: "关闭完全访问" }));
+    const dialog = await screen.findByRole("dialog", {
+      name: zh.devices.ceiling.confirm.title.narrow,
+    });
+    expect(
+      within(dialog).getByText(
+        zh.devices.ceiling.confirm.network.narrowAllowlist.replace("{hosts}", hosts.join(", ")),
+      ),
+    ).toBeTruthy();
+    expect(dialog.textContent).not.toContain("网络不变");
+    expect(dialog.textContent).not.toContain("公网");
+  });
+
+  it("an empty organization allowlist says the device then reaches no host", async () => {
+    stubApi(
+      detail(cloud({ mode: cloudMode({ sandboxNetwork: { kind: "allowlist", hosts: [] } }) })),
+    );
+    await renderDetail();
+    const user = await openSettings();
+    await user.click(await screen.findByRole("button", { name: C.turnOffFull }));
+    const dialog = await screen.findByRole("dialog", { name: C.confirm.title.narrow });
+    expect(within(dialog).getByText(C.confirm.network.narrowNone)).toBeTruthy();
+  });
+
+  it("allowing Full access says it reaches public addresses, never beyond what was provisioned", async () => {
+    stubApi(
+      detail(
+        cloud({
+          ownerCeiling: cloudCeiling(false),
+          mode: cloudMode({
+            mode: "sandbox",
+            network: { kind: "allowlist", hosts: ["files.example.com"], source: "org" },
+            sandboxNetwork: { kind: "allowlist", hosts: ["files.example.com"] },
+          }),
+        }),
+      ),
+    );
+    await renderDetail();
+    const user = await openSettings();
+    await user.click(await screen.findByRole("button", { name: C.allowFull }));
+    const dialog = await screen.findByRole("dialog", { name: C.confirm.title.widen });
+    const line = within(dialog).getByText(C.confirm.network.widen);
+    expect(line.textContent).toMatch(/public addresses/);
+    expect(line.textContent).toMatch(/private networks/);
+    expect(line.textContent).toMatch(/provisioned/);
+  });
+
+  it("offers no narrowing while the platform or the org already keeps Full access off", async () => {
+    stubApi(
+      detail(
+        cloud({
+          ownerCeiling: cloudCeiling(true),
+          mode: cloudMode({ mode: "sandbox", allowedMode: "sandbox", allowedBy: null }),
+        }),
+      ),
+    );
+    await renderDetail();
+    await openSettings();
+    await ceilingSection();
+    expect(factRow(C.fullAccess)?.textContent).toContain(C.full.platform);
+    expect(screen.queryByRole("button", { name: C.turnOffFull })).toBeNull();
+    expect(screen.queryByRole("button", { name: C.allowFull })).toBeNull();
+    expect(screen.getByText(C.cloudForbidden)).toBeTruthy();
+  });
+
+  it("offers no narrowing while its old sandbox switch already keeps Full access off", async () => {
+    stubApi(
+      detail(cloud({ ownerCeiling: cloudCeiling(true), mode: cloudMode({ mode: "sandbox" }) })),
+    );
+    await renderDetail();
+    await openSettings();
+    await ceilingSection();
+    expect(factRow(C.fullAccess)?.textContent).toContain(C.full.owner);
+    expect(screen.queryByRole("button", { name: C.turnOffFull })).toBeNull();
   });
 
   it("offers no widening while the platform or the org forbids Full access", async () => {
@@ -506,7 +608,7 @@ describe("a cloud device's owner ceiling", () => {
     expect(screen.queryByRole("dialog")).toBeNull();
   });
 
-  it("a reconcile refusal offers the file rebuild it names", async () => {
+  it("a refusal because the device is not migrated yet explains that, offering no file rebuild", async () => {
     stubApi({
       ...detail(cloud()),
       [`PATCH ${BASE}/e1`]: failWith(409, "device.permission_reconcile_required"),
@@ -516,17 +618,10 @@ describe("a cloud device's owner ceiling", () => {
     await user.click(await screen.findByRole("button", { name: C.turnOffFull }));
     const dialog = await screen.findByRole("dialog", { name: C.confirm.title.narrow });
     await user.click(within(dialog).getByRole("button", { name: C.confirm.submit.narrow }));
-    const alert = await screen.findByRole("alert");
-    expect(alert.textContent).toContain(en.errors.device.permission_reconcile_required);
-    const rebuild = screen
-      .getAllByRole("button", { name: E.detail.resetFiles })
-      .find((b) => !b.closest("header"));
-    await user.click(rebuild as HTMLElement);
-    expect(
-      await screen.findByRole("dialog", {
-        name: E.detail.resetTitle.replace("{name}", "Build box"),
-      }),
-    ).toBeTruthy();
+    expect(await screen.findByText(C.notMigrated)).toBeTruthy();
+    // a file reset does not migrate a device: the page neither offers it nor says to do it
+    expect(screen.queryByText(en.errors.device.permission_reconcile_required)).toBeNull();
+    expect(screen.queryByRole("button", { name: E.detail.resetFiles })).toBeNull();
   });
 
   it("a pending ceiling change is one status line", async () => {
@@ -555,15 +650,24 @@ describe("a cloud device's owner ceiling", () => {
         return json(200, { device: cloud({ ownerCeiling: cloudCeiling(false) }) });
       },
     });
-    await renderDetail();
+    const { client } = await renderDetail();
+    const k = keys.org("o1");
+    // the composer's previews of this device (with and without a project), and another device's
+    const previews = [k.permissionPreview("e1"), k.permissionPreview("e1", "api")];
+    const other = k.permissionPreview("e2");
+    for (const key of [...previews, other]) client.setQueryData(key, { cached: true });
     const user = await openSettings();
+    const gets = () => calls.filter((c) => c.method === "GET" && c.url.endsWith("/e1")).length;
+    const before = gets();
     await user.click(await screen.findByRole("button", { name: C.turnOffFull }));
     const dialog = await screen.findByRole("dialog", { name: C.confirm.title.narrow });
     await user.click(within(dialog).getByRole("button", { name: C.confirm.submit.narrow }));
     await vi.waitFor(() => expect(factRow(C.fullAccess)?.textContent).toContain(C.full.owner));
-    expect(calls.filter((c) => c.method === "GET" && c.url.endsWith("/e1")).length).toBeGreaterThan(
-      0,
+    expect(gets()).toBeGreaterThan(before);
+    await vi.waitFor(() =>
+      expect(previews.map((key) => client.getQueryState(key)?.isInvalidated)).toEqual([true, true]),
     );
+    expect(client.getQueryState(other)?.isInvalidated).toBe(false);
   });
 });
 

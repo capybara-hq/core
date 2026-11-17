@@ -175,13 +175,10 @@ export function DeviceSettings({
   orgId,
   device: e,
   onDisconnect,
-  onResetFiles,
 }: {
   orgId: string;
   device: Device;
   onDisconnect(): void;
-  /** Opens 重建文件 (the page's own dialog), offered when a refusal names it as the next step. */
-  onResetFiles(): void;
 }) {
   const t = useTranslations("devices");
   const toast = useToast();
@@ -229,9 +226,11 @@ export function DeviceSettings({
       setFailure(err);
     }
   };
-  const reconcile =
+  // on a cloud PATCH this code means the device is not migrated yet, which a file reset does not
+  // change: the page says so instead of the error's generic copy (that names the file reset that
+  // clears a conversation's admission marker)
+  const notMigrated =
     !local &&
-    e.available &&
     failure instanceof ApiClientError &&
     failure.code === "device.permission_reconcile_required";
 
@@ -264,11 +263,14 @@ export function DeviceSettings({
           ) : (
             <CloudControls device={e} pending={pending} onChoose={setConfirming} />
           )}
-          {local && <KeycapCommand command={CEILING_COMMAND} hint={t("ceiling.widenLocal")} />}
+          {local && e.machine !== null && (
+            <KeycapCommand command={CEILING_COMMAND} hint={t("ceiling.widenLocal")} />
+          )}
         </Stack>
       </FormSection>
       {confirming !== null && (
         <CeilingConfirmDialog
+          device={e}
           change={confirming}
           pending={cloudChange.isPending}
           onCancel={() => setConfirming(null)}
@@ -285,13 +287,12 @@ export function DeviceSettings({
           </div>
         </FormSection>
       )}
-      {failure !== null && <ApiErrorDetail error={failure} open />}
-      {reconcile && (
-        <div>
-          <Button density="dense" onClick={onResetFiles}>
-            {t("detail.resetFiles")}
-          </Button>
-        </div>
+      {notMigrated ? (
+        <Text variant="prose" tone="warn">
+          {t("ceiling.notMigrated")}
+        </Text>
+      ) : (
+        failure !== null && <ApiErrorDetail error={failure} open />
       )}
     </>
   );
@@ -373,9 +374,12 @@ function LocalNarrowing({
 }
 
 /**
- * A cloud device's one control: Full access off while its ceiling allows it, or allowed again
- * while the platform and the org allow it and the device's permissions were migrated (before
- * that the kernel takes only the narrowing). A choice opens its confirmation; nothing is sent here.
+ * A cloud device's one control: Full access off while it is effectively on (its ceiling allows it
+ * and so do the platform and the org; an old sandbox switch already keeps it off), or allowed again
+ * while the platform and the org allow it and the device's permissions were migrated (before that
+ * the kernel takes only the narrowing). While the platform or the org keeps it off there is nothing
+ * to turn off, and the reason is shown instead. A choice opens its confirmation; nothing is sent
+ * here.
  */
 function CloudControls({
   device: e,
@@ -388,7 +392,14 @@ function CloudControls({
 }) {
   const t = useTranslations("devices.ceiling");
   const f = deviceCeilingOf(e);
-  if (f.ownerAllows) {
+  if (f.full === "platform") {
+    return (
+      <Text variant="prose" tone="muted">
+        {t("cloudForbidden")}
+      </Text>
+    );
+  }
+  if (f.full === "available") {
     return (
       <div>
         <Button density="dense" disabled={pending} onClick={() => onChoose("narrow")}>
@@ -408,16 +419,38 @@ function CloudControls({
 }
 
 /**
+ * The network line of a cloud ceiling change (kernel `cloudChosenMode` / `effectiveDevicePolicy`):
+ * Full off makes the device choose sandbox, whose network is the org's cloud network
+ * (`mode.sandboxNetwork`) within the device's outer network; Full allowed returns it to the open
+ * public network (private networks blocked) within that outer network, which no change widens.
+ */
+function confirmNetworkLine(
+  t: (key: string, values?: Record<string, string>) => string,
+  e: Device,
+  change: CloudChange,
+): string {
+  if (change === "widen") return t("network.widen");
+  const n = e.mode.sandboxNetwork;
+  if (n === null) return t("network.narrowOrg");
+  if (n.kind === "open-public") return t("network.narrowOpen");
+  if (n.hosts.length === 0) return t("network.narrowNone");
+  return t("network.narrowAllowlist", { hosts: n.hosts.join(", ") });
+}
+
+/**
  * The confirmation of a cloud device's ceiling change: what it does to conversations and running
- * work, that the network does not change, and that it takes effect at the next use (the instance
- * may restart; the files are kept). The widening's confirm is the only place that sends one.
+ * work (a narrowing stops Full work now), the network the device then reaches, and that its
+ * instance takes the new limits at its next use (it may restart; the files are kept). The
+ * widening's confirm is the only place that sends one.
  */
 function CeilingConfirmDialog({
+  device: e,
   change,
   pending,
   onCancel,
   onConfirm,
 }: {
+  device: Device;
   change: CloudChange;
   pending: boolean;
   onCancel(): void;
@@ -444,7 +477,7 @@ function CeilingConfirmDialog({
     >
       <Stack gap={8}>
         <Text variant="prose">{t(`effect.${change}`)}</Text>
-        <Text variant="prose">{t("network")}</Text>
+        <Text variant="prose">{confirmNetworkLine(t, e, change)}</Text>
         <Text variant="prose" tone="muted">
           {t("nextUse")}
         </Text>

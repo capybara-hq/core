@@ -248,12 +248,7 @@ function Detail({
           </Stack>
         ) : (
           <>
-            <DeviceSettings
-              orgId={orgId}
-              device={e}
-              onDisconnect={() => setOpen("revoke")}
-              onResetFiles={() => setOpen("reset")}
-            />
+            <DeviceSettings orgId={orgId} device={e} onDisconnect={() => setOpen("revoke")} />
             <DeviceProjectsSettings orgId={orgId} device={e} />
             <DangerZone title={t("danger.title")}>
               <DangerZoneItem
