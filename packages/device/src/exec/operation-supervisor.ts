@@ -178,6 +178,8 @@ export class MacOperationSupervisor {
   private verifiedJournal = JSON.stringify({ version: 1, entries: [] });
   private now: () => number;
   private draining = false;
+  /** Set by {@link close}: a superseded supervisor never writes the shared journal again. */
+  private closed = false;
   constructor(private readonly options: SupervisorOptions) {
     this.now = options.now ?? Date.now;
     this.file = join(options.stateDir, `operation-journal-${digest(options.deviceId)}.json`);
@@ -401,6 +403,10 @@ export class MacOperationSupervisor {
     return next;
   }
   private persist(): void {
+    if (this.closed)
+      throw new SandboxPermissionUnsupportedError(
+        "This instance generation was superseded; its journal belongs to the current binding",
+      );
     if (this.journalBlocked)
       throw Error("Operation journal requires recovery after uncertain commit");
     this.options.beforePersist?.();
@@ -1013,6 +1019,22 @@ export class MacOperationSupervisor {
    * or an established stop or exit. A binding to another generation is refused while any remains;
    * a newer generation alone never clears them.
    */
+  /**
+   * Gives the journal up for good (B4: one supervisor per journal). Only after everything owned
+   * settled; the caller then builds the successor from the journal on disk.
+   */
+  close(): void {
+    const o = this.ownership();
+    if (o.workers + o.cancellations + o.collectors + o.persistence > 0)
+      throw new SandboxPermissionUnsupportedError(
+        "The supervisor still owns work; settle it first",
+      );
+    this.draining = true;
+    this.closed = true;
+  }
+  get isClosed(): boolean {
+    return this.closed;
+  }
   retirementObligations(generation: string): number {
     let count = 0;
     for (const e of this.entries.values()) {

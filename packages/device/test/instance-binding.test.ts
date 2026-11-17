@@ -7,10 +7,12 @@ import {
   type DeviceResponseV3,
   parseDeviceFrameV3,
   type SandboxOperationScope,
+  SandboxPermissionUnsupportedError,
+  SandboxScopeDeniedError,
 } from "@capybara-hq/plugin-sdk";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import WebSocket, { WebSocketServer } from "ws";
-import { BINDING_FILE, InstanceBinder } from "../src/exec/instance-binding.js";
+import { bindingFile, InstanceBinder } from "../src/exec/instance-binding.js";
 import { createMacOperationBackend } from "../src/exec/mac-operation-backend.js";
 import { RuntimeManifestError } from "../src/exec/runtime-manifest.js";
 import { createStagedSessionState, serveStagedSession } from "../src/staged-session.js";
@@ -40,7 +42,7 @@ const verified = {
 
 async function fixture() {
   const root = await realpath(await mkdtemp(join(tmpdir(), "cap-binding-")));
-  cleanups.push(() => rm(root, { recursive: true, force: true }));
+  cleanups.push(() => rm(root, { recursive: true, force: true, maxRetries: 10 }));
   const roots = {
     workspace: join(root, "work"),
     skills: join(root, "skills"),
@@ -54,11 +56,22 @@ async function fixture() {
   const created: string[] = [];
   let runtime = { ...verified };
   let verifyFails = false;
-  const createBackend = async (instanceGeneration: string) => {
+  // a held verification (the ~1 s installed-byte hash) and a held worker launch
+  let verifyGate: Promise<void> | undefined;
+  let verifying = false;
+  let launchGate: Promise<void> | undefined;
+  const hold = () => {
+    let release!: () => void;
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    return { gate, release };
+  };
+  const createBackend = async (instanceGeneration: string, deviceId = "d") => {
     created.push(instanceGeneration);
     return createMacOperationBackend(
       {
-        deviceId: "d",
+        deviceId,
         instanceGeneration,
         stateDir: root,
         roots,
@@ -79,6 +92,7 @@ async function fixture() {
         now: () => 1,
         watch: () => () => {},
         startWorker: async (r) => {
+          await launchGate;
           await r.beforeLaunch();
           await r.onLaunch({ pid: 123, token: "owned-fixture-worker" });
           let finish!: () => void;
@@ -98,12 +112,16 @@ async function fixture() {
       },
     );
   };
-  const binder = () =>
+  const binder = (opts: { credential?: string; deviceId?: string } = {}) =>
     new InstanceBinder({
-      deviceId: "d",
+      deviceId: opts.deviceId ?? "d",
+      credentialIdentity: opts.credential ?? "credential-1",
       stateDir: root,
-      createBackend,
+      createBackend: (g) => createBackend(g, opts.deviceId ?? "d"),
       verify: async () => {
+        verifying = verifyGate !== undefined;
+        await verifyGate;
+        verifying = false;
         if (verifyFails) throw new RuntimeManifestError("Installed helpers differ (changed x)");
         return runtime;
       },
@@ -150,6 +168,23 @@ async function fixture() {
     failVerify: (v: boolean) => {
       verifyFails = v;
     },
+    verifying: () => verifying,
+    holdVerify: () => {
+      const h = hold();
+      verifyGate = h.gate;
+      return () => {
+        verifyGate = undefined;
+        h.release();
+      };
+    },
+    holdLaunch: () => {
+      const h = hold();
+      launchGate = h.gate;
+      return () => {
+        launchGate = undefined;
+        h.release();
+      };
+    },
   };
 }
 const request = (instanceGeneration: string, bindingId: string, previous: string | null) => ({
@@ -173,7 +208,7 @@ describe("device binding", () => {
       runtimeIdentity: { ...verified, instanceGeneration: G1 },
       ownerCeiling: owner,
     });
-    expect(JSON.parse(await readFile(join(f.root, BINDING_FILE), "utf8"))).toMatchObject({
+    expect(JSON.parse(await readFile(bindingFile(f.root, "d"), "utf8"))).toMatchObject({
       instanceGeneration: G1,
       bindingId: B1,
       previousGeneration: null,
@@ -196,7 +231,7 @@ describe("device binding", () => {
     const b = f.binder();
     await expect(b.bind(request(G1, B1, null), signal())).rejects.toThrow(RuntimeManifestError);
     expect(b.current()).toBeUndefined();
-    await expect(readFile(join(f.root, BINDING_FILE))).rejects.toThrow();
+    await expect(readFile(bindingFile(f.root, "d"))).rejects.toThrow();
   });
 
   it("restart recovers the same generation's journal; changed runtime stays unbound", async () => {
@@ -232,7 +267,7 @@ describe("device binding", () => {
     await expect(restarted.bind(request("1800000000000", B2, G1), signal())).rejects.toThrow(
       "not settled",
     );
-    expect(JSON.parse(await readFile(join(f.root, BINDING_FILE), "utf8")).instanceGeneration).toBe(
+    expect(JSON.parse(await readFile(bindingFile(f.root, "d"), "utf8")).instanceGeneration).toBe(
       G1,
     );
   });
@@ -259,8 +294,140 @@ describe("device binding", () => {
 
   it("a corrupt binding blocks instead of starting over", async () => {
     const f = await fixture();
-    await writeFile(join(f.root, BINDING_FILE), "{");
-    await expect(f.binder().bind(request(G1, B1, null), signal())).rejects.toThrow();
+    await writeFile(bindingFile(f.root, "d"), "{");
+    await expect(f.binder().bind(request(G1, B1, null), signal())).rejects.toBeInstanceOf(
+      SandboxScopeDeniedError,
+    );
+  });
+});
+
+describe("one supervisor per journal (fix round 1, I1)", () => {
+  const journal = async (root: string) => {
+    const { readdir } = await import("node:fs/promises");
+    const name = (await readdir(root)).find((n) => /^operation-journal-[a-f0-9]+\.json$/.test(n));
+    if (!name) throw new Error("no journal");
+    return JSON.parse(await readFile(join(root, name), "utf8")) as {
+      entries: { ref: { operationId: string }; stop?: { outcome: string }; revoked: boolean }[];
+    };
+  };
+  it("work admitted while a bind verifies blocks the bind instead of surviving it", async () => {
+    const f = await fixture();
+    const b = f.binder();
+    await b.bind(request(G1, B1, null), signal());
+    const old = b.current();
+    // a start already in flight on the old generation, its worker launch still pending
+    const releaseLaunch = f.holdLaunch();
+    const releaseVerify = f.holdVerify();
+    const starting = f.startTask(b, "op-in-flight");
+    await vi.waitFor(() => expect(old?.backend.lifecycle.ownership().workers).toBe(1));
+    const binding = b.bind(request(G2, B2, G1), signal());
+    // the old backend admits nothing fresh once the bind began
+    await vi.waitFor(() => expect(f.verifying()).toBe(true));
+    await expect(f.startTask(b, "op-fresh")).rejects.toBeInstanceOf(
+      SandboxPermissionUnsupportedError,
+    );
+    releaseLaunch();
+    await starting;
+    releaseVerify();
+    await expect(binding).rejects.toThrow("not settled");
+    expect(b.current()?.binding.instanceGeneration).toBe(G1);
+    expect(JSON.parse(await readFile(bindingFile(f.root, "d"), "utf8")).instanceGeneration).toBe(
+      G1,
+    );
+  });
+
+  it("a stop recorded by the old supervisor during the bind survives in the journal", async () => {
+    const f = await fixture();
+    const b = f.binder();
+    await b.bind(request(G1, B1, null), signal());
+    const old = b.current();
+    if (!old) throw new Error("expected binding");
+    const ref = await f.startTask(b, "op-1");
+    const releaseVerify = f.holdVerify();
+    const binding = b.bind(request(G2, B2, G1), signal());
+    // the old generation's exact stop lands while the new binding verifies
+    expect(
+      (await old.backend.background.stop(old.handle, ref, { graceMs: 0, signal: signal() }))
+        .outcome,
+    ).toMatch(/stopped|already-exited/);
+    await old.backend.lifecycle.settle(signal());
+    releaseVerify();
+    await binding;
+    expect(b.current()?.binding.instanceGeneration).toBe(G2);
+    // the new generation's first write must keep the tombstone
+    await f.startTask(b, "op-2");
+    const entries = (await journal(f.root)).entries;
+    expect(entries.find((e) => e.ref.operationId === "op-1")?.stop?.outcome).toMatch(
+      /stopped|already-exited/,
+    );
+    expect(entries.map((e) => e.ref.operationId).sort()).toEqual(["op-1", "op-2"]);
+    // the superseded backend can never write or admit again
+    await expect(old.backend.background.status(old.handle, ref, signal())).rejects.toBeInstanceOf(
+      SandboxPermissionUnsupportedError,
+    );
+  });
+
+  it("a refused bind leaves no second supervisor behind", async () => {
+    const f = await fixture();
+    const b = f.binder();
+    await b.bind(request(G1, B1, null), signal());
+    await f.startTask(b, "op-1");
+    const before = f.created.length;
+    await expect(b.bind(request(G2, B2, G1), signal())).rejects.toThrow("not settled");
+    expect(f.created.length).toBe(before);
+    // recover never builds a second backend beside the live one
+    expect(await b.recover()).toBe(b.current());
+    expect(f.created.length).toBe(before);
+  });
+});
+
+describe("binding chain across credentials and lost replies (fix round 1, I2)", () => {
+  it("a re-login with a new credential binds without the old machine's previous", async () => {
+    const f = await fixture();
+    await f.binder({ credential: "credential-1" }).bind(request(G1, B1, null), signal());
+    // the kernel names no previous for the new machine; the stored binding belongs to the old one
+    const relogged = f.binder({ credential: "credential-2" });
+    const answer = await relogged.bind(request(G2, B2, null), signal());
+    expect(answer.instanceGeneration).toBe(G2);
+    // still never backwards, whoever's binding it was
+    await expect(
+      f.binder({ credential: "credential-3" }).bind(request("1600000000000", B1, null), signal()),
+    ).rejects.toThrow("older generation");
+  });
+
+  it("another device id in the same state directory has its own binding", async () => {
+    const f = await fixture();
+    await f.binder().bind(request(G1, B1, null), signal());
+    const other = f.binder({ deviceId: "e" });
+    const answer = await other.bind({ ...request(G2, B2, null), instanceId: "e" }, signal());
+    expect(answer.instanceId).toBe("e");
+    expect(JSON.parse(await readFile(bindingFile(f.root, "d"), "utf8")).instanceGeneration).toBe(
+      G1,
+    );
+  });
+
+  it("a generation the kernel never confirmed is followed by its replacement", async () => {
+    const f = await fixture();
+    const b = f.binder();
+    // G1 persisted here, the answer lost; the kernel replaced the instance and names G1 as the
+    // last binding it sent this machine, or a later one this device never received
+    await b.bind(request(G1, B1, null), signal());
+    expect((await b.bind(request(G2, B2, G1), signal())).instanceGeneration).toBe(G2);
+    const later = f.binder();
+    expect(
+      (
+        await later.bind(
+          request("1700000000009", "6f1e0a52-8f5b-4d5e-9a1c-1f0e2d3c4b59", "1700000000005"),
+          signal(),
+        )
+      ).instanceGeneration,
+    ).toBe("1700000000009");
+    // a kernel that names an older previous than this device bound is not following it
+    await expect(
+      f
+        .binder()
+        .bind(request("1700000000010", "6f1e0a52-8f5b-4d5e-9a1c-1f0e2d3c4b5a", G1), signal()),
+    ).rejects.toThrow("previous binding");
   });
 });
 

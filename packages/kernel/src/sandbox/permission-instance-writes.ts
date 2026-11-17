@@ -173,25 +173,31 @@ export class PermissionInstanceWrites {
     return high;
   }
 
-  /** The committed binding the coordinator sends; the previous one is the machine's last installed. */
+  /**
+   * The committed binding the coordinator sends. Its previous is the last binding committed for
+   * this machine credential, delivered or not: a device may have persisted a binding whose answer
+   * was lost, so the chain names what was sent (the device accepts a stored binding of its own
+   * credential up to that one). Another machine's bindings never chain, so a re-login starts
+   * fresh. Old rows are pruned, keeping the chain, each machine's latest installed binding and any
+   * generation a retirement still needs.
+   */
   private async awaitDevice(deviceId: string, instanceGeneration: string): Promise<void> {
-    // the previous binding the device itself acknowledged: only the current machine's (a new
-    // machine credential never inherits, and can never be asked to confirm, another's binding)
     const machine = await this.db
       .selectFrom("device_machines")
       .select("id")
       .where("device_id", "=", deviceId)
       .where("revoked_at", "is", null)
       .executeTakeFirst();
-    const previous = await this.db
-      .selectFrom("device_instance_bindings")
-      .select("instance_generation")
-      .where("device_id", "=", deviceId)
-      .where("status", "=", "installed")
-      .where("machine_id", "=", machine?.id ?? null)
-      .orderBy(sql`instance_generation::bigint`, "desc")
-      .limit(1)
-      .executeTakeFirst();
+    const previous = machine
+      ? await this.db
+          .selectFrom("device_instance_bindings")
+          .select("instance_generation")
+          .where("device_id", "=", deviceId)
+          .where("machine_id", "=", machine.id)
+          .orderBy(sql`instance_generation::bigint`, "desc")
+          .limit(1)
+          .executeTakeFirst()
+      : undefined;
     await this.db
       .insertInto("device_instance_bindings")
       .values({
@@ -201,7 +207,37 @@ export class PermissionInstanceWrites {
         provider: LOCAL_PROVIDER,
         previous_generation: previous?.instance_generation ?? null,
         status: "awaiting-device",
+        machine_id: machine?.id ?? null,
       })
       .execute();
+    await this.pruneBindings(deviceId, [
+      instanceGeneration,
+      ...(previous ? [previous.instance_generation] : []),
+    ]);
+  }
+
+  /** Bounded retention of a device's binding records (one per instance generation otherwise). */
+  private async pruneBindings(deviceId: string, keep: readonly string[]): Promise<void> {
+    await sql`
+      DELETE FROM capybara.device_instance_bindings b
+      WHERE b.device_id = ${deviceId}::uuid
+        AND b.instance_generation <> ALL(${[...keep]}::text[])
+        -- each machine's latest installed binding stays
+        AND b.instance_generation IS DISTINCT FROM (
+          SELECT max(l.instance_generation::bigint)::text FROM capybara.device_instance_bindings l
+          WHERE l.device_id = b.device_id AND l.machine_id IS NOT DISTINCT FROM b.machine_id
+            AND l.status = 'installed')
+        -- a generation a retirement still owes stays
+        AND NOT EXISTS (
+          SELECT 1 FROM capybara.sandbox_operation_intents i
+          WHERE i.device_id::text = b.device_id::text
+            AND i.instance_generation = b.instance_generation
+            AND (i.state NOT IN ('completed', 'revoked')
+              OR (i.state = 'revoked' AND NOT i.revoke_acknowledged)))
+        AND NOT EXISTS (
+          SELECT 1 FROM capybara.background_tasks t
+          WHERE t.device_id::text = b.device_id::text
+            AND t.instance_generation = b.instance_generation
+            AND t.launch_state <> 'terminal')`.execute(this.db.db);
   }
 }

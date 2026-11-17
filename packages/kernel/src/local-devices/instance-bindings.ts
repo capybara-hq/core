@@ -88,6 +88,9 @@ export class LocalInstanceBindings {
    * lifecycle lease; no transaction is open across the RPC.
    */
   async bind(deviceId: string, signal: AbortSignal): Promise<BindInstanceResultV3 | null> {
+    // the device round trip may take the whole operation deadline: never inside a transaction
+    if (this.txHost.current())
+      throw new InstanceBindingError("bindInstance must not run inside a transaction");
     const committed = await this.committed(deviceId);
     if (!committed) throw new InstanceBindingError("No committed local instance to bind");
     if (committed.status === "installed") return null;

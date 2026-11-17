@@ -403,7 +403,11 @@ export async function enumerateInstalled(
 
   const runtime = new Map<string, ManifestEntry>();
   const pending = [
-    ...layout.runtimePackages.map((spec) => ({ spec, from: packageRoot })),
+    // resolved from where the worker runs (dist/exec), so a bundled dist/node_modules wins
+    ...layout.runtimePackages.map((spec) => ({
+      spec,
+      from: join(packageRoot, dirname(layout.helperModules[0] ?? "package.json")),
+    })),
     ...thirdParty,
   ];
   while (pending.length) {
@@ -487,9 +491,38 @@ function firstDifference(want: readonly ManifestEntry[], got: readonly ManifestE
 }
 
 const run = promisify(execFile);
-/** Isolated interpreter probe: the modules the fixed helpers import, and what they load. */
+/**
+ * The top-level modules a Python source imports (`import a, b.c as d`, `from x import y`, at any
+ * indentation; relative imports have none to resolve).
+ */
+export function pythonImports(source: string): string[] {
+  const out = new Set<string>();
+  for (const line of source.split("\n")) {
+    const from = /^\s*from\s+([A-Za-z_][\w.]*)\s+import\s/.exec(line);
+    if (from) out.add(from[1] as string);
+    const plain = /^\s*import\s+([\w.,\s]+?)\s*(?:#.*)?$/.exec(line);
+    if (plain)
+      for (const part of (plain[1] as string).split(",")) {
+        const name = part
+          .trim()
+          .split(/\s+as\s+/)[0]
+          ?.trim();
+        if (name && /^[A-Za-z_][\w.]*$/.test(name)) out.add(name);
+      }
+  }
+  return [...out].sort();
+}
+/** The Python sources the fixed helpers run (their imports join the environment fingerprint). */
+export function helperPythonSources(): string[] {
+  const inline = installedLayout().inline;
+  return Object.entries(inline)
+    .filter(([name]) => name.endsWith(".py"))
+    .map(([, source]) => source);
+}
+/** Isolated interpreter probe: imports the helpers' modules (argv[1]), reports what loaded. */
 const PYTHON_PROBE = [
-  "import os,sys,json,stat,base64,errno,sysconfig",
+  "import os,sys,json,sysconfig,importlib",
+  "[importlib.import_module(m) for m in json.loads(sys.argv[1])]",
   "files=sorted({os.path.realpath(m.__file__) for m in list(sys.modules.values()) if getattr(m,'__file__',None)})",
   "lib=os.path.join(sysconfig.get_config_var('LIBDIR') or '',sysconfig.get_config_var('LDLIBRARY') or '')",
   "files+=[os.path.realpath(lib)] if os.path.isfile(lib) else []",
@@ -503,6 +536,8 @@ export interface EnvironmentInputs {
   roots: { workspace: string; skills: string; tmp: string };
   /** A provider's verified immutable image digest; null for host execution. */
   providerImageDigest?: string | null;
+  /** The Python helper sources whose imports are fingerprinted (default: the shipped helpers). */
+  pythonSources?: readonly string[];
 }
 export async function collectEnvironment(input: EnvironmentInputs): Promise<EnvironmentFacts> {
   const nodeRealPath = await realpath(process.execPath);
@@ -513,7 +548,20 @@ export async function collectEnvironment(input: EnvironmentInputs): Promise<Envi
       ? (await run("/usr/bin/sw_vers", ["-buildVersion"])).stdout.trim()
       : `${release()} ${version()}`;
   const probe = JSON.parse(
-    (await run(pythonRealPath, ["-I", "-c", PYTHON_PROBE], { env: {} })).stdout,
+    (
+      await run(
+        pythonRealPath,
+        [
+          "-I",
+          "-c",
+          PYTHON_PROBE,
+          JSON.stringify([
+            ...new Set((input.pythonSources ?? helperPythonSources()).flatMap(pythonImports)),
+          ]),
+        ],
+        { env: {} },
+      )
+    ).stdout,
   ) as { executable: string; version: string; base: string; files: string[] };
   const libraries: ManifestEntry[] = [];
   const add = async (file: string) => {

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { constants } from "node:fs";
 import { mkdir, open, rename } from "node:fs/promises";
 import { join } from "node:path";
@@ -13,21 +14,33 @@ import {
 import type { MacOperationBackend } from "./mac-operation-backend.js";
 import type { VerifiedRuntime } from "./runtime-manifest.js";
 
-/** The durable device side of one bound instance generation (`instance-binding.json`). */
+/** The durable device side of one bound instance generation, one file per device. */
 export interface StoredBinding {
   version: 1;
   deviceId: string;
+  /** Which machine credential bound it: another credential's binding is no previous of ours. */
+  credentialIdentity: string;
   instanceId: string;
   instanceGeneration: string;
   bindingId: string;
   previousGeneration: string | null;
   runtimeIdentity: DeviceRuntimeIdentityV3;
 }
-export const BINDING_FILE = "instance-binding.json";
+/** Keyed by device like the operation journal, so another device id in the same directory is apart. */
+export const bindingFile = (stateDir: string, deviceId: string) =>
+  join(
+    stateDir,
+    `instance-binding-${createHash("sha256").update(JSON.stringify(deviceId)).digest("hex")}.json`,
+  );
+/** The identity of a machine credential as stored with a binding (never the secret itself). */
+export const credentialIdentity = (credential: string) =>
+  createHash("sha256").update(`capybara-device-credential:${credential}`).digest("hex");
 
 /** Trusted construction dependencies; nothing here is decoded from a request. */
 export interface InstanceBinderOptions {
   deviceId: string;
+  /** {@link credentialIdentity} of the machine credential this process runs with. */
+  credentialIdentity: string;
   stateDir: string;
   /** Builds (and recovers the journal of) the operation backend for one exact generation. */
   createBackend(instanceGeneration: string): Promise<MacOperationBackend>;
@@ -58,10 +71,18 @@ async function readStored(path: string, deviceId: string): Promise<StoredBinding
       `The instance binding cannot be read (${(e as Error).message}); repair the device state`,
     );
   }
-  const b = JSON.parse(text) as StoredBinding;
+  let b: StoredBinding;
+  try {
+    b = JSON.parse(text) as StoredBinding;
+  } catch {
+    throw new SandboxScopeDeniedError(
+      "The stored instance binding is not valid JSON; repair the device state",
+    );
+  }
   if (
     b?.version !== 1 ||
     b.deviceId !== deviceId ||
+    typeof b.credentialIdentity !== "string" ||
     typeof b.instanceGeneration !== "string" ||
     typeof b.bindingId !== "string" ||
     b.runtimeIdentity?.instanceGeneration !== b.instanceGeneration
@@ -75,7 +96,8 @@ async function readStored(path: string, deviceId: string): Promise<StoredBinding
 /** Write-then-rename with fsync of the file and its directory: durable before it is used. */
 async function writeStored(dir: string, binding: StoredBinding): Promise<void> {
   await mkdir(dir, { recursive: true, mode: 0o700 });
-  const tmp = join(dir, `${BINDING_FILE}.${binding.bindingId}.tmp`);
+  const target = bindingFile(dir, binding.deviceId);
+  const tmp = `${target}.${binding.bindingId}.tmp`;
   const file = await open(
     tmp,
     constants.O_CREAT | constants.O_TRUNC | constants.O_WRONLY | constants.O_NOFOLLOW,
@@ -87,7 +109,7 @@ async function writeStored(dir: string, binding: StoredBinding): Promise<void> {
   } finally {
     await file.close();
   }
-  await rename(tmp, join(dir, BINDING_FILE));
+  await rename(tmp, target);
   const d = await open(dir, constants.O_RDONLY);
   try {
     await d.sync();
@@ -100,10 +122,17 @@ async function writeStored(dir: string, binding: StoredBinding): Promise<void> {
  * The device half of the post-commit binding (permission runtime cutover B4; staged v3, protocol
  * 2 stays active). A process starts unbound unless it recovers a durable binding for its exact
  * generation; only {@link bind} — the authenticated `bindInstance` request carrying the kernel's
- * committed generation and binding id — binds a generation, after verifying the stored previous
- * binding, the installed manifest and that no other generation's work is unsettled. The binding is
- * written durably before that generation's backend is enabled. The same binding is idempotent; the
- * same generation with another binding id is a conflict; nothing else ever binds.
+ * committed generation and binding id — binds a generation.
+ *
+ * One supervisor per journal: the journal is per device, so a new generation's backend is built
+ * only after the old one stopped admitting (drain), everything it owned settled, no older
+ * generation's work is unsettled (checked again after the last await), the binding was written
+ * durably, and the old supervisor was disposed so it can never write again.
+ *
+ * The chain rule, shared with the kernel (which names as previous the last binding it committed
+ * for this machine credential, delivered or not): a stored binding of this credential must not be
+ * newer than the kernel's previous; another credential's binding is no previous. Generations only
+ * move forward. The same binding is idempotent; the same generation under another id conflicts.
  */
 export class InstanceBinder {
   private bound: BoundInstance | undefined;
@@ -118,12 +147,15 @@ export class InstanceBinder {
   /**
    * After a process restart: recover the persisted binding for same-generation journal and spool
    * recovery (never reattaching processes). Its runtime is verified again; a changed one leaves
-   * the process unbound until a binding request arrives.
+   * the process unbound until a binding request arrives. Never builds a second supervisor.
    */
   async recover(): Promise<BoundInstance | undefined> {
     return this.serial(async () => {
-      const stored = await readStored(this.path(), this.options.deviceId);
-      if (!stored) return undefined;
+      const stored = await this.stored();
+      if (this.bound)
+        return stored && this.bound.binding.bindingId === stored.bindingId ? this.bound : undefined;
+      if (!stored || stored.credentialIdentity !== this.options.credentialIdentity)
+        return undefined;
       const verified = await this.options.verify();
       if (!sameIdentity(stored.runtimeIdentity, verified)) return undefined;
       return this.enable(stored);
@@ -135,8 +167,8 @@ export class InstanceBinder {
       signal.throwIfAborted();
       if (request.instanceId !== this.options.deviceId)
         throw new SandboxScopeDeniedError("The binding names another instance");
-      const stored = await readStored(this.path(), this.options.deviceId);
-      let next: StoredBinding;
+      const stored = await this.stored();
+      let live: BoundInstance;
       if (stored?.instanceGeneration === request.instanceGeneration) {
         if (stored.bindingId !== request.bindingId)
           throw new SandboxScopeDeniedError(
@@ -148,39 +180,44 @@ export class InstanceBinder {
           throw new SandboxPermissionUnsupportedError(
             "The installed runtime changed since this generation was bound; a new instance is required",
           );
-        next = stored;
+        live =
+          this.bound?.binding.bindingId === stored.bindingId
+            ? this.bound
+            : await this.switchTo(stored, stored);
       } else {
-        if ((stored?.instanceGeneration ?? null) !== request.expectedPreviousGeneration)
+        if (stored && BigInt(request.instanceGeneration) <= BigInt(stored.instanceGeneration))
+          throw new SandboxScopeDeniedError("A binding never moves to an older generation");
+        const previous =
+          stored?.credentialIdentity === this.options.credentialIdentity
+            ? stored.instanceGeneration
+            : null;
+        if (
+          previous !== null &&
+          (request.expectedPreviousGeneration === null ||
+            BigInt(previous) > BigInt(request.expectedPreviousGeneration))
+        )
           throw new SandboxScopeDeniedError(
             "The binding does not follow this device's previous binding; the kernel must reconcile",
           );
-        if (stored && BigInt(request.instanceGeneration) <= BigInt(stored.instanceGeneration))
-          throw new SandboxScopeDeniedError("A binding never moves to an older generation");
-        // another generation's live or uncertain work blocks the new one; a timestamp clears nothing
-        const candidate = await this.options.createBackend(request.instanceGeneration);
-        const pending =
-          candidate.lifecycle.retirementObligations() +
-          (this.bound ? ownedTotal(this.bound.backend) : 0);
-        if (pending > 0)
-          throw new SandboxPermissionUnsupportedError(
-            `Earlier work on this device is not settled (${pending}); stop or retire it before a new instance`,
-          );
+        // the old generation admits nothing new from here on, whatever the outcome
+        this.bound?.backend.lifecycle.beginDrain();
         const verified = await this.options.verify();
-        next = {
-          version: 1,
-          deviceId: this.options.deviceId,
-          instanceId: request.instanceId,
-          instanceGeneration: request.instanceGeneration,
-          bindingId: request.bindingId,
-          previousGeneration: request.expectedPreviousGeneration,
-          runtimeIdentity: { ...verified, instanceGeneration: request.instanceGeneration },
-        };
         signal.throwIfAborted();
-        await writeStored(this.options.stateDir, next);
-        this.bound = { binding: next, backend: candidate, handle: { id: this.options.deviceId } };
+        live = await this.switchTo(
+          {
+            version: 1,
+            deviceId: this.options.deviceId,
+            credentialIdentity: this.options.credentialIdentity,
+            instanceId: request.instanceId,
+            instanceGeneration: request.instanceGeneration,
+            bindingId: request.bindingId,
+            previousGeneration: request.expectedPreviousGeneration,
+            runtimeIdentity: { ...verified, instanceGeneration: request.instanceGeneration },
+          },
+          stored,
+        );
       }
-      const live =
-        this.bound?.binding.bindingId === next.bindingId ? this.bound : await this.enable(next);
+      const next = live.binding;
       return {
         instanceId: next.instanceId,
         instanceGeneration: next.instanceGeneration,
@@ -192,13 +229,65 @@ export class InstanceBinder {
     });
   }
 
+  /**
+   * Makes `next` the bound generation with exactly one supervisor on the journal. With a live old
+   * backend: it must own nothing and leave no unsettled work of other generations, before the
+   * durable write and again after it (the last await); then it is disposed and the successor is
+   * built from the journal on disk. Without one: the successor itself reads the journal, and is
+   * disposed again when it refuses.
+   */
+  private async switchTo(
+    next: StoredBinding,
+    previous: StoredBinding | undefined,
+  ): Promise<BoundInstance> {
+    const old = this.bound;
+    const unsettled = (backend: MacOperationBackend) =>
+      ownedTotal(backend) + backend.lifecycle.retirementObligations(next.instanceGeneration);
+    const refuse = (pending: number) =>
+      new SandboxPermissionUnsupportedError(
+        `Earlier work on this device is not settled (${pending}); stop or retire it before a new instance`,
+      );
+    if (old) {
+      old.backend.lifecycle.beginDrain();
+      let pending = unsettled(old.backend);
+      if (pending > 0) throw refuse(pending);
+      if (previous !== next) await writeStored(this.options.stateDir, next);
+      pending = unsettled(old.backend);
+      if (pending > 0) {
+        if (previous && previous !== next) await writeStored(this.options.stateDir, previous);
+        throw refuse(pending);
+      }
+      old.backend.lifecycle.dispose();
+      this.bound = undefined;
+      return this.enable(next);
+    }
+    const candidate = await this.options.createBackend(next.instanceGeneration);
+    const pending = unsettled(candidate);
+    if (pending > 0) {
+      candidate.lifecycle.dispose();
+      throw refuse(pending);
+    }
+    try {
+      if (previous !== next) await writeStored(this.options.stateDir, next);
+    } catch (e) {
+      candidate.lifecycle.dispose();
+      throw e;
+    }
+    this.bound = { binding: next, backend: candidate, handle: { id: this.options.deviceId } };
+    return this.bound;
+  }
+
   private async enable(binding: StoredBinding): Promise<BoundInstance> {
+    if (this.bound) throw new Error("A supervisor already owns this device's journal");
     const backend = await this.options.createBackend(binding.instanceGeneration);
     this.bound = { binding, backend, handle: { id: this.options.deviceId } };
     return this.bound;
   }
-  private path(): string {
-    return join(this.options.stateDir, BINDING_FILE);
+  private stored(): Promise<StoredBinding | undefined> {
+    return readStored(
+      bindingFile(this.options.stateDir, this.options.deviceId),
+      this.options.deviceId,
+    );
   }
   private serial<T>(fn: () => Promise<T>): Promise<T> {
     const run = this.queue.then(fn, fn);
@@ -218,4 +307,4 @@ const ownedTotal = (backend: MacOperationBackend) => {
 
 /** Reads the stored binding without enabling anything (the bound hello's generation). */
 export const readInstanceBinding = (stateDir: string, deviceId: string) =>
-  readStored(join(stateDir, BINDING_FILE), deviceId);
+  readStored(bindingFile(stateDir, deviceId), deviceId);
