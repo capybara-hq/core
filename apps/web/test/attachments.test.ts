@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  acceptAttribute,
   attachmentTypeLabel,
   DEFAULT_LIMITS,
   fileContentType,
@@ -123,5 +124,30 @@ describe("DEFAULT_LIMITS", () => {
     expect(typeList(DEFAULT_LIMITS.types, zhMore)).toBe(
       "PNG / JPEG / GIF / WebP / PDF / TXT 等 13 种",
     );
+  });
+});
+
+describe("extension acceptance", () => {
+  it("a source or office file passes by extension whatever its content type", () => {
+    const limits = { ...DEFAULT_LIMITS, extensions: ["py", "html", "docx"] };
+    expect(
+      precheckFile({ name: "main.py", type: "application/octet-stream", size: 3 }, limits),
+    ).toBeNull();
+    expect(precheckFile({ name: "page.html", type: "text/html", size: 3 }, limits)).toBeNull();
+    expect(precheckFile({ name: "续约.DOCX", type: "", size: 3 }, limits)).toBeNull();
+    expect(precheckFile({ name: "a.exe", type: "application/x-msdownload", size: 3 }, limits)).toBe(
+      "attachment.type_not_allowed",
+    );
+    // the size limit still applies to an extension-accepted file
+    expect(
+      precheckFile({ name: "big.zip", type: "application/zip", size: limits.maxBytes + 1 }, limits),
+    ).toBe("attachment.too_large");
+  });
+
+  it("the accept attribute offers the types and the .ext entries", () => {
+    const attr = acceptAttribute({ ...DEFAULT_LIMITS, extensions: ["py", "html"] });
+    expect(attr).toContain("image/png");
+    expect(attr).toContain(".py");
+    expect(attr.split(",")).toContain(".html");
   });
 });

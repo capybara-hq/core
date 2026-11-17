@@ -30,7 +30,7 @@ import {
   useState,
 } from "react";
 import { ApiClientError } from "../../lib/api";
-import { fileContentType } from "../../lib/attachments";
+import { acceptAttribute, fileContentType } from "../../lib/attachments";
 import {
   type ConnectorPrompt,
   type ConnectorResource,
@@ -837,7 +837,7 @@ export function ComposerBar({
         multiple
         disabled={!drafts.limits.available}
         aria-label={t("addFiles")}
-        accept={drafts.limits.types.join(",")}
+        accept={acceptAttribute(drafts.limits)}
         onChange={(e: ChangeEvent<HTMLInputElement>) => {
           const picked = Array.from(e.target.files ?? []);
           e.target.value = "";

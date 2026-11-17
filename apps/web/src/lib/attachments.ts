@@ -8,6 +8,8 @@ import { ApiClientError, apiFetch } from "./api";
 /** 附件上限（内核 `GET /attachments/limits`）。 */
 export interface AttachmentLimits {
   types: string[];
+  /** Extensions accepted beside the types (lower case, no dot); the kernel's `allowedExtensions`. */
+  extensions: string[];
   /** 非图片的单个上限（字节）。 */
   maxBytes: number;
   /** 图片的单个上限（字节）。 */
@@ -38,6 +40,10 @@ export const DEFAULT_LIMITS: AttachmentLimits = {
     "application/zip",
     "application/json",
   ],
+  // The kernel's list is the authority; this fallback covers the content types only, so a source
+  // file dropped before the limits arrive is refused by the kernel (with its own error) rather than
+  // prechecked against a second copy of the extension list.
+  extensions: [],
   maxBytes: 20_971_520,
   imageMaxBytes: 5_242_880,
   maxPerMessage: 10,
@@ -84,11 +90,25 @@ export function precheckFile(
   limits: AttachmentLimits,
 ): "attachment.type_not_allowed" | "attachment.too_large" | null {
   const ct = fileContentType(file);
-  if (!limits.types.includes(ct)) return "attachment.type_not_allowed";
+  if (!limits.types.includes(ct) && !limits.extensions.includes(extensionOf(file.name))) {
+    return "attachment.type_not_allowed";
+  }
   const max = isImageType(ct) ? limits.imageMaxBytes : limits.maxBytes;
   if (file.size > max) return "attachment.too_large";
   return null;
 }
+
+/** 文件名的扩展名（小写、不带点）；没有或不像扩展名时为空串。 */
+export const extensionOf = (name: string): string => {
+  const dot = name.lastIndexOf(".");
+  if (dot <= 0 || dot === name.length - 1) return "";
+  const ext = name.slice(dot + 1).toLowerCase();
+  return /^[a-z0-9]{1,12}$/.test(ext) ? ext : "";
+};
+
+/** `accept` 属性的取值：内容类型，加上允许扩展名的 `.ext` 写法。 */
+export const acceptAttribute = (limits: AttachmentLimits): string =>
+  [...limits.types, ...limits.extensions.map((e) => `.${e}`)].join(",");
 
 /** 预签名上传（plugin-sdk `PresignedUpload`）。 */
 export interface PresignedUpload {

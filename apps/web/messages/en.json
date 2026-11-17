@@ -1435,7 +1435,7 @@
     "filesUnavailable": "File uploads are unavailable: no object storage is configured.",
     "filesOverBudget": "The selected files add up to more than {max} for one request. Older files will be left out when sending.",
     "fileTooLarge": "The file is too large: images up to {image}, other files up to {other}.",
-    "fileTypeNotAllowed": "This file type is not supported. Supported: {types}.",
+    "fileTypeNotAllowed": "This file type is not supported. Supported: {types}, plus common office documents and source files.",
     "fileTypeMore": "and {count} total",
     "newPlaceholder": "What should {agent} do?",
     "runningHint": "Messages sent while it works reach it at its next step",

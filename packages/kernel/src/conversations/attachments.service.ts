@@ -16,7 +16,7 @@ import type { MediaBytes, MediaInfo } from "../runtime/context/build.js";
 import { StorageService } from "../storage/storage.service.js";
 import { ConversationAccess } from "./access.js";
 import type { LogContentBlock } from "./events.js";
-import { isImageContentType, isMediaContentType } from "./media-types.js";
+import { acceptedContent, isImageContentType, isMediaContentType } from "./media-types.js";
 
 /** 预签名上传的有效期（秒）。尽量短：表单在有效期内可被再次使用（内容替换由 etag 核对兜底）。 */
 export const ATTACHMENT_UPLOAD_TTL_SECONDS = 300;
@@ -74,6 +74,8 @@ export interface AttachmentView {
 export interface AttachmentLimits {
   /** 允许的内容类型。 */
   types: string[];
+  /** 与 `types` 并列的允许扩展名（小写、不带点）。 */
+  extensions: string[];
   /** 非图片的单个上限（字节）。 */
   maxBytes: number;
   /** 图片的单个上限（字节，另受 `MEDIA_LIMITS.imageBytes` 限制）。 */
@@ -202,6 +204,7 @@ export class AttachmentsService {
     const cfg = this.config.get().attachments;
     return {
       types: [...cfg.allowedTypes],
+      extensions: [...cfg.allowedExtensions],
       maxBytes: Math.min(cfg.maxBytes, MEDIA_LIMITS.documentBytes),
       imageMaxBytes: Math.min(cfg.maxBytes, MEDIA_LIMITS.imageBytes),
       maxPerMessage: cfg.maxPerMessage,

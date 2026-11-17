@@ -62,6 +62,128 @@ export const DEFAULT_ATTACHMENT_TYPES = [
 ] as const;
 
 /**
+ * The default file extensions a chat attachment may carry (lower case, no dot). Source files and
+ * office documents arrive with content types that disagree across browsers and operating systems
+ * (`text/x-python`, `application/x-python`, `application/octet-stream`; a `.ts` can come as
+ * `video/mp2t`), so the extension is the reliable half of the accept rule. Executables are
+ * deliberately absent.
+ */
+export const DEFAULT_ATTACHMENT_EXTENSIONS = [
+  // office documents
+  "doc",
+  "docx",
+  "xls",
+  "xlsx",
+  "ppt",
+  "pptx",
+  "odt",
+  "ods",
+  "odp",
+  "rtf",
+  // archives
+  "zip",
+  "tar",
+  "gz",
+  "tgz",
+  "bz2",
+  "xz",
+  "7z",
+  // documents and text
+  "txt",
+  "md",
+  "markdown",
+  "rst",
+  "tex",
+  "adoc",
+  "csv",
+  "tsv",
+  "html",
+  "htm",
+  "xhtml",
+  "xml",
+  "xsd",
+  "xsl",
+  "svg",
+  "css",
+  "scss",
+  "sass",
+  "less",
+  // data and configuration
+  "json",
+  "jsonl",
+  "yaml",
+  "yml",
+  "toml",
+  "ini",
+  "cfg",
+  "conf",
+  "env",
+  "properties",
+  "sql",
+  // source code
+  "py",
+  "pyi",
+  "ipynb",
+  "js",
+  "mjs",
+  "cjs",
+  "jsx",
+  "ts",
+  "mts",
+  "cts",
+  "tsx",
+  "vue",
+  "svelte",
+  "java",
+  "kt",
+  "kts",
+  "scala",
+  "groovy",
+  "gradle",
+  "go",
+  "rs",
+  "c",
+  "h",
+  "cc",
+  "cpp",
+  "cxx",
+  "hpp",
+  "cs",
+  "fs",
+  "vb",
+  "rb",
+  "php",
+  "pl",
+  "swift",
+  "lua",
+  "r",
+  "jl",
+  "dart",
+  "ex",
+  "exs",
+  "erl",
+  "hs",
+  "clj",
+  "cljs",
+  "sh",
+  "bash",
+  "zsh",
+  "fish",
+  "ps1",
+  "bat",
+  "cmd",
+  "diff",
+  "patch",
+  "log",
+  "graphql",
+  "gql",
+  "proto",
+  "tf",
+  "tfvars",
+  "mk",
+] as const;
+
+/**
  * A chat attachment content type: a lower-case `type/subtype` (RFC 6838 restricted names), with no
  * parameters and no whitespace.
  */
@@ -1218,6 +1340,15 @@ export const KernelConfigSchema = z.object({
           meta({
             description:
               "Content types accepted for chat attachments (lower-case type/subtype, no parameters)",
+          }),
+        ),
+      allowedExtensions: z
+        .array(z.string().regex(/^[a-z0-9]{1,12}$/, "must be a lower-case extension without a dot"))
+        .default([...DEFAULT_ATTACHMENT_EXTENSIONS])
+        .meta(
+          meta({
+            description:
+              "File extensions accepted for chat attachments in addition to allowedTypes (lower case, no dot): office documents, archives and source files, whose content types differ between browsers and systems",
           }),
         ),
       maxPerMessage: z
