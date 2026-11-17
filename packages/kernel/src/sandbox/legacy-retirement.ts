@@ -9,7 +9,7 @@ import { isInternalProvider, LOCAL_PROVIDER } from "./providers.js";
 
 /**
  * Legacy retirement (permission runtime cutover phase 8.5): the durable legacy-launch freeze and
- * the physical no-reuse obligations of old instance incarnations (migration 0148).
+ * the physical no-reuse obligations of old instance incarnations (migration 0156).
  *
  * - **Freeze.** {@link freeze} writes the one freeze row under the platform authority writer (the
  *   exclusive platform permission lock). A legacy SID launch calls {@link admitLegacyDispatch}
@@ -113,7 +113,7 @@ export interface LegacyRetirementReport {
    * (`noInstance`); a device with either must be deleted and created again
    * (`device.recreate_required`).
    * `currentUnconfirmed`: the current row is not live and no destruction of it is recorded (the
-   * inactivity sweep before 0148, or a failed create); the gate then destroys by the device's
+   * inactivity sweep before 0156, or a failed create); the gate then destroys by the device's
    * instance name with the row's provider, which must be loaded (`device.unavailable` until then).
    */
   cloudUnknown: {
@@ -416,7 +416,7 @@ export class LegacyRetirementStore {
   /**
    * Legacy rows whose processes may still exist and that are not members yet (one device's, or
    * all). The `(status = 'running' OR kill_pending OR sid IS NULL)` conjunct is the partial index's
-   * predicate (0148), stated as is so the planner can use it.
+   * predicate (0156), stated as is so the planner can use it.
    */
   private legacyCandidates(deviceId?: string) {
     let q = this.db

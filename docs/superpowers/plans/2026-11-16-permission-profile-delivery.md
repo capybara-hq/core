@@ -192,7 +192,7 @@ versions; there is no local-link workaround for either stage.
 **Files:** Create `packages/kernel/src/conversations/permission-profiles.service.ts`,
 `permission-profiles.schemas.ts`, `permission-profiles.controller.ts`,
 `packages/kernel/src/sandbox/operation-authority.ts`,
-`packages/kernel/src/migrations/0137_conversation_permission_profiles.sql` (renumber if main advanced).
+`packages/kernel/src/migrations/0146_conversation_permission_profiles.sql` (renumbered from 0138 after main advanced).
 Modify `conversations/conversations.module.ts`, `conversations/events.ts`, `db/kernel-schema.ts`,
 `conversations/conversations.controller.ts`, `conversations/conversations.service.ts`,
 `conversations/conversations.schemas.ts`, `platform/exclusions.ts`, `devices/devices.service.ts`,

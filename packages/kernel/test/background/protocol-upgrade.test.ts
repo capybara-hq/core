@@ -606,7 +606,7 @@ describe("cloud incarnations the kernel cannot name (R1-I1)", () => {
 });
 
 describe("cloud incarnations the kernel cannot name, current row not live (R2-I1)", () => {
-  /** The row as the pre-0148 inactivity sweep or a failed create left it: nothing recorded. */
+  /** The row as the pre-0156 inactivity sweep or a failed create left it: nothing recorded. */
   const notLive = {
     destroyed: (dev: string) =>
       sql`UPDATE capybara.device_instances SET status = 'destroyed', destroyed_at = now(),
