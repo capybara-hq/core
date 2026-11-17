@@ -2,6 +2,9 @@ import {
   DEFAULT_SANDBOX_ROOTS,
   DeviceProtocolError,
   isFileSystemGoneError,
+  isSandboxOperationOutcomeUnknownError,
+  isSandboxPermissionUnsupportedError,
+  isSandboxScopeDeniedError,
   type Logger,
   type SandboxHandle,
   type SandboxPreparation,
@@ -24,11 +27,12 @@ import {
   type ConversationDevices,
   type WorkingFacts,
 } from "../../../devices/conversation-devices.js";
-import { workingRootOf } from "../../../devices/working-root.js";
+import { canonicalRoot, workingRootOf } from "../../../devices/working-root.js";
 import { ApiError } from "../../../errors.js";
 import type { KernelConfigService } from "../../../infra/config/kernel-config.service.js";
 import { InstanceBindingError } from "../../../local-devices/instance-bindings.js";
 import { AUTO_MODE_NOT_ALLOWED_TEXT } from "../../../local-devices/local-device-provider.js";
+import { isDeviceRequestNotSent } from "../../../local-devices/relay.js";
 import { type DeviceModeLevel, devicePathsChange } from "../../../runtime/context/device-paths.js";
 import {
   ATTACHMENTS_ROOT,
@@ -497,6 +501,43 @@ function legacyPreparationSession(s: SandboxSession): PreparationSession {
  * spec §4.3): the kernel's refusal text plus what the model can do.
  */
 const AUTO_MODE_TOOL_TEXT = `${AUTO_MODE_NOT_ALLOWED_TEXT} Ask the user to switch it on the machine, or to start a new conversation on another device.`;
+/**
+ * Full access refused by policy (B-13: `org.*` / `deployment.*`, old and renamed codes): the
+ * organization or the platform has it off. The kernel's own message is never shown.
+ */
+export const FULL_ACCESS_OFF_BY_POLICY_TOOL_TEXT =
+  "Full access is turned off by your organization's or the platform's policy, so nothing ran. Continue with the Request approval or Approve for me permission profile, or ask an org admin (or a super admin) to allow Full access.";
+/**
+ * The device's owner ceiling does not allow Full access (`device.full_access_not_allowed`).
+ */
+export const FULL_ACCESS_CEILING_TOOL_TEXT =
+  "This device's owner ceiling does not allow Full access, so nothing ran. Ask the device's owner to raise it with `capybara-device ceiling set` on that machine, or continue with the Request approval or Approve for me permission profile.";
+/**
+ * The full-access refusal codes off by policy: the renamed ones (W5-P3b) and the old organization
+ * and platform names until that rename lands; `device.auto_mode_not_allowed` keeps its machine
+ * text ({@link AUTO_MODE_TOOL_TEXT}).
+ */
+const FULL_ACCESS_OFF_BY_POLICY_CODES: ReadonlySet<string> = new Set([
+  "org.full_access_not_allowed",
+  "deployment.full_access_not_allowed",
+  "org.auto_mode_not_allowed",
+  "deployment.auto_mode_not_allowed",
+]);
+/**
+ * A managed operation outside the admitted scope (`SandboxScopeDeniedError`): fixed text, never
+ * the refusal's own message (a provider may write it).
+ */
+export const SCOPE_DENIED_TOOL_TEXT =
+  "This operation reaches outside what this conversation's permission profile allows on the device (a path outside the directories it may read or write, or a host it may not reach), so it did not run. Keep the call inside the working directory and the directories already granted, or ask the user to grant the directory or choose a broader permission profile, then retry.";
+/** A staged request the machine never got: it reconnected before the request was sent. */
+export const DEVICE_REQUEST_NOT_SENT_TOOL_TEXT =
+  "The device's machine reconnected before this operation was sent, so nothing ran. Retry the tool call.";
+/** The device cannot enforce the conversation's profile (`SandboxPermissionUnsupportedError`). */
+export const PERMISSION_UNSUPPORTED_TOOL_TEXT =
+  "This device cannot enforce this conversation's permission profile, so nothing ran. Ask the user to choose another permission profile for the conversation, or to start a new conversation on a device that supports it.";
+/** A managed operation whose outcome could not be confirmed (`SandboxOperationOutcomeUnknownError`). */
+export const OUTCOME_UNKNOWN_TOOL_TEXT =
+  "The device may or may not have run this operation: its outcome could not be confirmed. Check the device's state (for example with Read, Glob or TaskList) before retrying, and do not repeat an operation that must not run twice.";
 
 /**
  * Sandbox service errors → actionable text for the model; anything else is returned unchanged
@@ -517,6 +558,22 @@ export function mapSandboxError(e: unknown, log: Pick<Logger, "warn"> | undefine
     return new ToolError(MANAGED_DEVICE_CONTEXT_UNAVAILABLE_TEXT, { kind: "unavailable" });
   if (e instanceof ManagedDeviceContextFailed)
     return new ToolError(MANAGED_DEVICE_CONTEXT_FAILED_TEXT, { kind: "unavailable" });
+  // the managed route's typed refusals (unknown first: it never proves the operation had no effect)
+  if (isSandboxOperationOutcomeUnknownError(e)) {
+    log?.warn("sandbox operation outcome unknown", { err: e });
+    return new ToolError(OUTCOME_UNKNOWN_TOOL_TEXT, { kind: "unavailable" });
+  }
+  // kernel-typed, before the scope refusal it extends: nothing was sent, a retry is safe
+  if (isDeviceRequestNotSent(e))
+    return new ToolError(DEVICE_REQUEST_NOT_SENT_TOOL_TEXT, { kind: "unavailable" });
+  if (isSandboxScopeDeniedError(e)) {
+    log?.warn("sandbox operation outside its scope", { err: e });
+    return new ToolError(SCOPE_DENIED_TOOL_TEXT);
+  }
+  if (isSandboxPermissionUnsupportedError(e)) {
+    log?.warn("sandbox permission profile unsupported", { err: e });
+    return new ToolError(PERMISSION_UNSUPPORTED_TOOL_TEXT);
+  }
   if (e instanceof SandboxProviderUnreachableError) {
     log?.warn("sandbox provider unreachable", { failure: e.failure, err: e.cause });
     if (e.failure === "connect") {
@@ -545,6 +602,10 @@ export function mapSandboxError(e: unknown, log: Pick<Logger, "warn"> | undefine
     if (e.code === "device.offline") return new ToolError(DEVICE_OFFLINE_TEXT);
     if (e.code === "device.program_outdated") return new ToolError(DEVICE_OUTDATED_TEXT);
     if (e.code === "device.auto_mode_not_allowed") return new ToolError(AUTO_MODE_TOOL_TEXT);
+    if (e.code === "device.full_access_not_allowed")
+      return new ToolError(FULL_ACCESS_CEILING_TOOL_TEXT);
+    if (FULL_ACCESS_OFF_BY_POLICY_CODES.has(e.code))
+      return new ToolError(FULL_ACCESS_OFF_BY_POLICY_TOOL_TEXT);
     if (e.code === "device.permission_reconcile_required") {
       return new ToolError(RECONCILE_REQUIRED_TEXT, { kind: "unavailable" });
     }
@@ -583,6 +644,21 @@ export async function inSandbox<T>(
 ): Promise<{ value: T; notices: string[] }> {
   return inSandboxWith(deps, ctx, fn, false);
 }
+/**
+ * The device entry of every builtin tool (B-17): once the one activation gate is on (the managed
+ * writer required, {@link SandboxToolDeps.managedDeviceContextRequired}) the managed operation
+ * route ({@link inSandboxOperations}: the marked device paths recorded before the callback, every
+ * provider call a managed operation); otherwise the legacy route ({@link inSandbox}), unchanged.
+ */
+export async function inToolSandbox<T>(
+  deps: SandboxToolDeps,
+  ctx: BuiltinCallContext,
+  fn: (s: SandboxSession) => Promise<T>,
+): Promise<{ value: T; notices: string[] }> {
+  return deps.managedDeviceContextRequired
+    ? inSandboxOperations(deps, ctx, fn)
+    : inSandbox(deps, ctx, fn);
+}
 export async function inSandboxOperations<T>(
   deps: SandboxToolDeps,
   ctx: BuiltinCallContext,
@@ -595,7 +671,11 @@ export async function inSandboxOperations<T>(
 ): Promise<{ value: T; notices: string[] }> {
   return inSandboxWith(deps, ctx, fn, true, stage);
 }
-/** Trusted copy callbacks only receive preparation's three methods. */
+/**
+ * Trusted copy callbacks only receive preparation's three methods. Once the activation gate is on
+ * the copy is a trusted preparation on the managed route ({@link inSandboxOperationPreparation},
+ * scoped to `roots`, after the marked device paths); otherwise the protocol-2 binding.
+ */
 export async function inSandboxPreparation<T>(
   deps: SandboxToolDeps,
   ctx: BuiltinCallContext,
@@ -603,11 +683,11 @@ export async function inSandboxPreparation<T>(
   roots: (roots: SandboxRoots) => readonly string[],
   fn: (s: PreparationSession) => Promise<T>,
 ): Promise<{ value: T; notices: string[] }> {
-  void purpose;
-  void roots;
+  if (deps.managedDeviceContextRequired)
+    return inSandboxOperationPreparation(deps, ctx, purpose, roots, fn);
   return inSandbox(deps, ctx, (s) => fn(legacyPreparationSession(s)));
 }
-/** Dormant replacement for the trusted-copy entry; Task8 removes the protocol-2 binding above. */
+/** The trusted-copy entry on the managed route ({@link inSandboxPreparation} once activated). */
 export async function inSandboxOperationPreparation<T>(
   deps: SandboxToolDeps,
   ctx: BuiltinCallContext,
@@ -676,6 +756,15 @@ async function inSandboxWith<T>(
                 if (managed) {
                   // no installed binding to describe the held instance: unavailable, not stale
                   if (!info.contextEvidence) throw new ManagedDeviceContextUnavailable();
+                  // B-18: the review judged the call against a root (the workspace included);
+                  // held evidence of another root is stale, refused before anything is recorded
+                  // or run
+                  const against = ctx.reviewedAgainstRoot ?? reviewed;
+                  if (
+                    against !== undefined &&
+                    canonicalRoot(against) !== canonicalRoot(info.contextEvidence.workingRoot)
+                  )
+                    throw new ManagedDeviceContextStale();
                   await recordManagedDevicePaths(
                     { managedDeviceContext: managed },
                     ctx,
@@ -716,10 +805,11 @@ async function inSandboxWith<T>(
           mode,
           h,
           roots: info.roots,
-          // a managed call runs in the working root its device context recorded (admission's)
+          // a managed call runs in the working root its device context recorded (admission's),
+          // which a reviewed call's root equals (checked before the callback, B-18)
           workingRoot:
-            reviewed ??
             (managed ? info.contextEvidence?.workingRoot : undefined) ??
+            reviewed ??
             sessionWorkingRoot(working, mode, info.roots.workspace, reach),
           p,
           signal,

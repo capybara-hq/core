@@ -1,6 +1,9 @@
 import {
   isFileSystemGoneError,
   isSandboxGoneError,
+  isSandboxOperationOutcomeUnknownError,
+  isSandboxPermissionUnsupportedError,
+  isSandboxScopeDeniedError,
   ToolError,
   type ToolSpec,
 } from "@capybara-hq/plugin-sdk";
@@ -147,6 +150,13 @@ export function sandboxFetchAttachmentTool(deps: SandboxToolDeps): BuiltinTool {
             // withSandbox and mapSandboxError; never the provider's own words (they may name its
             // internal address)
             if (signal.aborted || isSandboxGoneError(e) || isFileSystemGoneError(e)) throw e;
+            // a managed route's typed refusal too: mapSandboxError gives its fixed text
+            if (
+              isSandboxScopeDeniedError(e) ||
+              isSandboxPermissionUnsupportedError(e) ||
+              isSandboxOperationOutcomeUnknownError(e)
+            )
+              throw e;
             if (e instanceof ToolError) throw e;
             if (e instanceof ApiError && e.code === "storage.unavailable") {
               throw new ToolError(storageText(name));

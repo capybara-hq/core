@@ -100,6 +100,12 @@ export interface BuiltinCallContext extends ToolCallContext {
    * was reviewed. Absent for a call the review does not cover.
    */
   reviewedWorkingRoot?: string;
+  /**
+   * The root the command review judged the call against, the workspace included (B-18): on the
+   * managed route a held device context naming another root refuses the call as stale before it
+   * runs. Absent for a call the review does not cover.
+   */
+  reviewedAgainstRoot?: string;
   /** The parent run of a sub-agent's run (absent for a top-level run). */
   parentRunId?: string;
   /**

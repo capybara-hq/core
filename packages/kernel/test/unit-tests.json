@@ -96,6 +96,7 @@
   "sandbox/lifecycle.test.ts",
   "sandbox/non-tool-callers.test.ts",
   "sandbox/operation-authority.test.ts",
+  "sandbox/operation-payloads.test.ts",
   "sandbox/operation-scopes.test.ts",
   "sandbox/sandbox-config.test.ts",
   "sandbox/sandbox-fake.test.ts",

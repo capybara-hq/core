@@ -107,6 +107,8 @@ function inlineValue(value: unknown): unknown {
     return Object.fromEntries(Object.entries(value).map(([k, v]) => [k, inlineValue(v)]));
   return value;
 }
+/** JSON text jsonb refuses: an escaped NUL or an escaped (hence lone) surrogate. */
+const JSONB_UNSAFE = /\\u(0000|d[89a-f][0-9a-f]{2})/i;
 export function describeOperationPayload(value: unknown): PayloadDigest {
   const hash = createHash("sha256");
   let bytes = 0,
@@ -117,7 +119,10 @@ export function describeOperationPayload(value: unknown): PayloadDigest {
     chunks++;
   }
   // Only a proven-small value enters JSON.stringify; binary data never expands without a bound.
-  const inline = bytes <= INLINE_BYTES ? (JSON.stringify(inlineValue(value)) ?? "null") : null;
+  const json = bytes <= INLINE_BYTES ? (JSON.stringify(inlineValue(value)) ?? "null") : null;
+  // jsonb holds no NUL and no lone surrogate (`find -print0` output, say): such a value is kept
+  // in chunks, whose framing preserves every UTF-16 code unit
+  const inline = json !== null && !JSONB_UNSAFE.test(json) ? json : null;
   return { digest: hash.digest("hex"), bytes, chunks, inline };
 }
 export function payloadReference(slot: Slot, p: PayloadDigest): string {
