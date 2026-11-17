@@ -31,7 +31,8 @@ const containerTests = JSON.parse(
   readFileSync(new URL("./packages/kernel/test/container-tests.json", import.meta.url), "utf8"),
 ) as string[];
 // Testing-package container tests: real hardened Docker containers (each file skips cleanly
-// without Docker). Checked-in list, like the kernel's (check:test-portfolio enforces it).
+// without Docker) and real-OS helper runs (the native conformance spawns a fresh Python helper per
+// operation). Checked-in list, like the kernel's (check:test-portfolio enforces it).
 const testingContainerTests = (
   JSON.parse(
     readFileSync(new URL("./packages/testing/test/container-tests.json", import.meta.url), "utf8"),
