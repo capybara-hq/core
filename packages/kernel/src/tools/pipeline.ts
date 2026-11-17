@@ -2470,6 +2470,7 @@ export class ToolPipeline {
               await credentials.onUnauthorized(orgId, connectorId, auth, ctx.accountId, stale);
             },
             signal,
+            orgId,
             onElicit: elicit.handle,
             onToolsChanged: () => {
               try {

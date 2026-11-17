@@ -1,7 +1,7 @@
 import { Inject, Injectable } from "@nestjs/common";
 import { sql } from "kysely";
 import { KernelDb } from "./kernel-db.js";
-import { TransactionHost } from "./transaction-host.js";
+import { assertNotSharedAdmission, TransactionHost } from "./transaction-host.js";
 import { Transactional } from "./transactional.decorator.js";
 
 /**
@@ -27,6 +27,36 @@ export class XactLock {
   /** Takes the lock named `key` until the caller's transaction ends (waits while another holds it). */
   @Transactional({ propagation: "mandatory" })
   async lock(key: string): Promise<void> {
+    assertNotSharedAdmission(`the advisory lock ${key}`);
     await sql`SELECT pg_advisory_xact_lock(hashtext(${key}))`.execute(this.db.db);
   }
+
+  /**
+   * The org admission lock in its shared mode: the run fence admitting a run's hot-path write
+   * (`RunExecution`). Shared holders never wait for each other; they wait for an exclusive holder,
+   * and also queue behind an exclusive waiter (PostgreSQL grants heavyweight locks in order), so
+   * org deletion and offboarding are never starved by a stream of run writes. Two-key form
+   * ({@link ORG_ADMISSION_SPACE}, org id): a key space apart from {@link lock}'s one-key locks.
+   */
+  @Transactional({ propagation: "mandatory" })
+  async admitOrgShared(orgId: string): Promise<void> {
+    await sql`SELECT pg_advisory_xact_lock_shared(hashtext(${ORG_ADMISSION_SPACE}), hashtext(${orgId}))`.execute(
+      this.db.db,
+    );
+  }
+
+  /**
+   * The org admission lock in its exclusive mode: org deletion and offboarding (`OrgLock`), taken
+   * first in their transaction. Waits for every admitted hot-path write of the org and keeps new
+   * ones out until the transaction ends.
+   */
+  @Transactional({ propagation: "mandatory" })
+  async admitOrgExclusive(orgId: string): Promise<void> {
+    await sql`SELECT pg_advisory_xact_lock(hashtext(${ORG_ADMISSION_SPACE}), hashtext(${orgId}))`.execute(
+      this.db.db,
+    );
+  }
 }
+
+/** The first key of the org admission lock ({@link XactLock.admitOrgShared}). */
+export const ORG_ADMISSION_SPACE = "capybara.org-admission";

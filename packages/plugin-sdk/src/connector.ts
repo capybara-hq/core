@@ -87,6 +87,11 @@ export interface ConnectorOpenArgs {
   onUnauthorized: () => Promise<void>;
   signal: AbortSignal;
   /**
+   * The org this session serves. Pass it to `ctx.net.fetch` as `opts.orgId` for every request to
+   * the endpoint, so the org's allowed internal endpoints apply (and no other org's).
+   */
+  orgId: string;
+  /**
    * Called when the remote reports during the session that its tool list changed (e.g. MCP
    * `notifications/tools/list_changed`), possibly several times; the kernel schedules one
    * drift check from it (new / changed tools are unavailable until an admin reviews them).
@@ -159,7 +164,12 @@ export interface Connector {
    * preview), returning the declared auth methods and an optional operation list.
    * `endpoint` is already validated against endpointSchema. On failure throw ToolError (message in
    * English, no credentials). Old connectors do not implement it; the kernel must check for
-   * absence.
+   * absence. `orgId` is the org the preview runs for: pass it to `ctx.net.fetch` as `opts.orgId`
+   * for every request to the endpoint, as with `ConnectorOpenArgs.orgId`.
    */
-  inspect?(args: { endpoint: unknown; signal: AbortSignal }): Promise<ConnectorInspection>;
+  inspect?(args: {
+    endpoint: unknown;
+    signal: AbortSignal;
+    orgId: string;
+  }): Promise<ConnectorInspection>;
 }

@@ -159,7 +159,7 @@ export async function startOrgEnv(
           secretAccessKey: s3.secretKey,
           forcePathStyle: true,
         },
-        "fake-connector": { allowInsecureLoopback: true },
+        "fake-connector": {},
       },
       tools: { timeoutMs: 5_000 },
       http: { port: 0, publicUrl: "https://capybara.example.com" },

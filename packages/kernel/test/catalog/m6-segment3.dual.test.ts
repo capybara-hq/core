@@ -296,7 +296,7 @@ describe("M6 第三段双副本验收（平台目录）", () => {
           secretAccessKey: s3.secretKey,
           forcePathStyle: true,
         },
-        "fake-connector": { allowInsecureLoopback: true },
+        "fake-connector": {},
       },
       config: {
         auth: { cookieSecure: false },

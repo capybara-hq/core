@@ -67,6 +67,9 @@ const idC = sql<string>`checkpoint_id collate "C"`;
  *   之后最新一份仍能独立还原。不要配合实验性的 `DeltaChannel` 使用：它依赖父链上的 writes 还原状态。
  * - thread_id 约定为 runId。
  * - 所有状态都在 PG 里，不持有进程内状态，任意副本都能续跑。
+ * - Writes are run loop hot-path writes: they ask the run fence for shared admission
+ *   (`RunExecution`) and lock only the run's own checkpoint rows. LangGraph calls them between
+ *   nodes, outside any transaction (never nested in a fenced one).
  */
 @Injectable()
 export class KyselyCheckpointSaver extends BaseCheckpointSaver {
@@ -134,7 +137,7 @@ export class KyselyCheckpointSaver extends BaseCheckpointSaver {
     }
   }
 
-  @Transactional({ propagation: "requires_new" })
+  @Transactional({ propagation: "requires_new", admission: "shared" })
   async put(
     config: RunnableConfig,
     checkpoint: Checkpoint,
@@ -213,7 +216,7 @@ export class KyselyCheckpointSaver extends BaseCheckpointSaver {
     await this.insertWrites(regular, special);
   }
 
-  @Transactional({ propagation: "requires_new" })
+  @Transactional({ propagation: "requires_new", admission: "shared" })
   private async insertWrites(regular: WriteRow[], special: WriteRow[]): Promise<void> {
     const key = ["thread_id", "checkpoint_ns", "checkpoint_id", "task_id", "idx"] as const;
     if (regular.length > 0) {
@@ -239,7 +242,7 @@ export class KyselyCheckpointSaver extends BaseCheckpointSaver {
     }
   }
 
-  @Transactional({ propagation: "requires_new" })
+  @Transactional({ propagation: "requires_new", admission: "shared" })
   async deleteThread(threadId: string): Promise<void> {
     await this.db.deleteFrom("lg_checkpoint_writes").where("thread_id", "=", threadId).execute();
     await this.db.deleteFrom("lg_checkpoints").where("thread_id", "=", threadId).execute();
@@ -251,7 +254,7 @@ export class KyselyCheckpointSaver extends BaseCheckpointSaver {
    * 读出最新与删除之间并发写入的更新 checkpoint 不会被误删（R20）。返回删除的 checkpoint 条数。其他命名空间（子图）不动。
    * 保留下来的 checkpoint 的 parent_checkpoint_id 原样保留（父 checkpoint 已不存在）。
    */
-  @Transactional({ propagation: "requires_new" })
+  @Transactional({ propagation: "requires_new", admission: "shared" })
   async pruneToLatest(threadId: string): Promise<number> {
     const db = this.db;
     const latest = await db

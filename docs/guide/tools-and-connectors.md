@@ -11,9 +11,16 @@ for p in connector-mcp connector-openapi todo; do
   pnpm capybara extensions approve $p --yes
   pnpm capybara extensions enable $p
 done
-# production accepts only https endpoints; turn on allowInsecureLoopback only for local integration (plain-http 127.0.0.1 / localhost / [::1])
-export CAPYBARA_EXTENSION_CONFIG='{"connector-mcp":{"allowInsecureLoopback":true},"connector-openapi":{"allowInsecureLoopback":true}}'
+# connector requests go through the kernel's guarded client (ctx.net): https only, and private addresses only
+# for endpoints a super admin allowed for the org; loopback is refused. For local integration against a
+# server on 127.0.0.1 set the tests-only kernel switch (never in production):
+export CAPYBARA_NET__ALLOW_INSECURE_LOOPBACK=true
 ```
+
+The official connector plugins move to `ctx.net` in their next release. Until then the pinned
+`connector-mcp` still requests with the global `fetch` and keeps its own `allowInsecureLoopback`
+deployment config (set `extensionConfig.connector-mcp.allowInsecureLoopback: true` for a local
+server on 127.0.0.1); the kernel switch above applies to connectors that use `ctx.net`.
 
 **Web wizard** (org admins): after logging in, open "Connectors" → "Install" (`/connectors/install`): pick the endpoint type (MCP service / OpenAPI document) → fill in the endpoint (for OpenAPI, give a document URL or upload JSON / YAML, up to 2 MB; `baseUrl` can override the document's servers) → pick the auth (for OpenAPI it is prefilled from the `securitySchemes` the document declares, and the operations are listed for you to tick) → preview the tools and default policies → install. On the installed connector's detail page you can enable or disable each tool, adjust its default policy, and review drift (see below). Select the connector's tools in the agent form; the agent won't use them otherwise.
 

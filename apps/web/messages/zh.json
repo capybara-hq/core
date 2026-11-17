@@ -131,7 +131,10 @@
       "owner_required": "只有组织所有者可以执行这个操作。",
       "creation_disabled": "本部署关闭了新建组织。",
       "slug_taken": "该 slug 已被其他组织使用。",
-      "auto_mode_not_allowed": "平台不允许自动模式。"
+      "auto_mode_not_allowed": "平台不允许自动模式。",
+      "network_allowance_invalid": "内部端点无效：请填写主机名、*.domain 通配符、IP 地址或 CIDR，或 http://host:8080 这样的源。链路本地、回环（包括 localhost）和未指定地址始终不允许，覆盖整个公共后缀的通配符也不允许。",
+      "network_allowance_not_found": "该组织没有这个内部端点（可能已被移除）。",
+      "network_allowance_widen_not_allowed": "只有超级管理员能在 Web 上的管理控制台里放行内部端点，API 令牌或 Platform 工具不可以。"
     },
     "setup": {
       "already_completed": "系统已完成初始化。",
@@ -2681,6 +2684,24 @@
       "label": "默认时区"
     }
   },
+  "orgNetwork": {
+    "title": "内部端点",
+    "sectionHelp": "超级管理员已放行本组织的扩展请求访问的内部主机。只有超级管理员能修改这份列表。",
+    "sheetTitle": "{name} 的内部端点",
+    "help": "扩展的请求默认不能访问私有或内部地址。在这里列出本组织的扩展可以调用的内部主机。回环地址和云元数据地址始终被拒绝。",
+    "field": "内部端点",
+    "fieldHelp": "主机名（mcp.internal）、通配符（*.corp.example）、源（http://mcp.internal:8080）或地址段（10.1.0.0/16）。",
+    "add": "放行",
+    "added": "添加于 {time}",
+    "added_toast": "已放行内部端点",
+    "removed": "已移除内部端点",
+    "remove": "移除",
+    "removeLabel": "移除 {entry}",
+    "listLabel": "内部端点",
+    "empty": "没有放行任何内部端点。",
+    "loadFailed": "无法读取内部端点。",
+    "retry": "重试"
+  },
   "compaction": {
     "title": "对话压缩",
     "description": "长对话在填满模型的上下文窗口之前先压缩成摘要，长期进行的对话仍能带着最近的轮次继续。",
@@ -4217,6 +4238,8 @@
         "orgMemberRemoved": "移除了成员",
         "orgMemberRoleChanged": "修改了成员角色",
         "orgModelDisabledSet": "为组织开启或关闭了模型",
+        "orgNetworkAllowanceAdded": "为组织放行了一个内部端点",
+        "orgNetworkAllowanceRemoved": "移除了组织的一个内部端点",
         "orgOwnershipTransferred": "转让了组织所有权",
         "orgPluginConfigUpdated": "修改了插件设置",
         "orgServiceTokenCreated": "创建了服务令牌",
@@ -4354,7 +4377,8 @@
         "emptyDefault": "留空的项使用部署默认。",
         "placeholder": "部署默认 {value}",
         "unlimited": "不限制"
-      }
+      },
+      "internalEndpoints": "内部端点"
     },
     "settings": {
       "title": "部署设置",

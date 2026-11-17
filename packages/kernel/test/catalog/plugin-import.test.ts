@@ -937,7 +937,7 @@ describe("invalid plugins: nothing is written", () => {
         "endpoint",
         await templatePlugin(
           "bad-ep",
-          mcpTemplate({ endpoint: { url: "http://insecure.example/mcp" } }),
+          mcpTemplate({ endpoint: { url: "ftp://insecure.example/mcp" } }),
         ),
         /connectors\/bad-ep\.json: template\.endpoint/,
       ],

@@ -31,6 +31,7 @@ function api(items: UiContributionItem[]) {
   return stubApi({
     [`GET ${ORG}/settings`]: () => json(200, { settings: { toolSearch: "on" } }),
     [`GET ${ORG}/ui/contributions`]: () => json(200, { items }),
+    [`GET ${ORG}/network-allowances`]: () => json(200, { allowances: [] }),
     [`GET ${ORG}/ui/views/fake-tools-ui/org-admin`]: () =>
       json(200, { view: { blocks: [{ type: "heading", text: "Org settings" }] } }),
   });

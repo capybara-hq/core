@@ -223,4 +223,78 @@ describe("resolvePublic", () => {
       "net.private_address",
     );
   });
+
+  it("cloud metadata endpoints outside link-local stay refused whatever the exemptions", async () => {
+    const policy: NetPolicy = {
+      ...POLICY,
+      allowPrivateHosts: ["meta.internal", "100.64.0.0/10", "fd00:ec2::/32"],
+    };
+    for (const [host, ip] of [
+      ["meta.internal", "100.100.100.200"],
+      ["meta.internal", "fd00:ec2::254"],
+      ["meta.internal", "::ffff:100.100.100.200"],
+    ] as const) {
+      const e = await denied(resolvePublic(host, policy, fixed(ip)));
+      expect(e.message, `${host} -> ${ip}`).toMatch(/link-local or cloud metadata/);
+    }
+    expect((await denied(resolvePublic("100.100.100.200", policy))).code).toBe(
+      "net.private_address",
+    );
+    expect((await denied(resolvePublic("[fd00:ec2::254]", policy))).code).toBe(
+      "net.private_address",
+    );
+    // the ranges around them stay exempt
+    await expect(resolvePublic("100.100.100.201", policy)).resolves.toEqual(["100.100.100.201"]);
+  });
+
+  describe("extension requests (ctx.net)", () => {
+    const EXT: NetPolicy = { ...POLICY, extension: { privateHint: "ask the org's super admin" } };
+    /** The same policy under the marketplace rules (no `extension`). */
+    const marketplace = ({ extension: _, ...rest }: NetPolicy): NetPolicy => rest;
+
+    it("refuses loopback and unspecified answers for an exempt host unless allowInsecureLoopback", async () => {
+      const policy: NetPolicy = {
+        ...EXT,
+        allowPrivateHosts: ["loop.internal"],
+        trustedOrigins: ["http://loop.internal:8080"],
+      };
+      for (const ip of ["127.0.0.1", "127.9.9.9", "::1", "::ffff:127.0.0.1", "0.0.0.0", "::"]) {
+        const e = await denied(resolvePublic("loop.internal", policy, fixed(ip)));
+        expect(e.message, ip).toMatch(/loopback address \(the kernel's own host\)/);
+        const viaOrigin = await denied(
+          resolvePublic("loop.internal", policy, fixed(ip), "http://loop.internal:8080"),
+        );
+        expect(viaOrigin.code, ip).toBe("net.private_address");
+      }
+      // the marketplace rules (no `extension`) keep exempting such a host
+      await expect(
+        resolvePublic("loop.internal", marketplace(policy), fixed("127.0.0.1")),
+      ).resolves.toEqual(["127.0.0.1"]);
+      // tests only: allowInsecureLoopback lets loopback through again
+      const loop = { ...policy, allowInsecureLoopback: true };
+      await expect(resolvePublic("loop.internal", loop, fixed("127.0.0.1"))).resolves.toEqual([
+        "127.0.0.1",
+      ]);
+      await expect(resolvePublic("127.0.0.1", loop)).resolves.toEqual(["127.0.0.1"]);
+    });
+
+    it("a *.domain entry exempts names under the domain, never the apex or IP literals", async () => {
+      const policy: NetPolicy = { ...EXT, allowPrivateHosts: ["*.corp.example"] };
+      await expect(resolvePublic("svc.corp.example", policy, fixed("10.2.0.1"))).resolves.toEqual([
+        "10.2.0.1",
+      ]);
+      await expect(resolvePublic("a.b.corp.example", policy, fixed("10.2.0.1"))).resolves.toEqual([
+        "10.2.0.1",
+      ]);
+      for (const host of ["corp.example", "evilcorp.example", "corp.example.evil"]) {
+        const e = await denied(resolvePublic(host, policy, fixed("10.2.0.1")));
+        expect(e.message, host).toContain("ask the org's super admin");
+      }
+      // the marketplace rules never read wildcards
+      expect(
+        (await denied(resolvePublic("svc.corp.example", marketplace(policy), fixed("10.2.0.1"))))
+          .code,
+      ).toBe("net.private_address");
+    });
+  });
 });

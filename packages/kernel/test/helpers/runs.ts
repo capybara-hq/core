@@ -100,6 +100,8 @@ export function runConfig(
     // The official marketplace is on by default and on the internet: off unless a test turns it on
     // (other marketplace settings are merged in).
     marketplaces: { ...marketplaces, official: { enabled: false, ...marketplaces?.official } },
+    // Fake servers run on loopback: ctx.net may reach them (a test overrides `net` to assert refusals)
+    net: { allowInsecureLoopback: true },
     ...rest,
   });
 }

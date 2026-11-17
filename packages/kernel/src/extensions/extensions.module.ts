@@ -1,6 +1,7 @@
 import { Module } from "@nestjs/common";
 import { SuperAdminLockModule } from "../identity/super-admin.js";
 import { ModelsModule } from "../models/models.module.js";
+import { OrgNetworkAllowancesModule } from "../orgs/network-allowances.service.js";
 import { OrgLockModule } from "../orgs/org-lock.js";
 import { StorageModule } from "../storage/storage.module.js";
 import { EmbedTokensModule } from "../ui/embed-token.js";
@@ -48,6 +49,8 @@ import { UsageSubscribersModule } from "./usage-subscribers.js";
     ModelsModule,
     // the lifecycle clears the `usage.report` subscriber cache on PLUGINS_CHANGED
     UsageSubscribersModule,
+    // ctx.net reads each org's allowed internal endpoints per call
+    OrgNetworkAllowancesModule,
   ],
   providers: [
     PluginInstallLock,

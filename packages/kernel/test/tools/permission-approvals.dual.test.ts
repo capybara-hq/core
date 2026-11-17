@@ -16,7 +16,7 @@ import {
   OutboxDispatcher,
 } from "../../src/infra/outbox/outbox.dispatcher.js";
 import { createLogger } from "../../src/log.js";
-import { RunExecution } from "../../src/runtime/run-execution.js";
+import { RunExecution, withExclusiveAdmission } from "../../src/runtime/run-execution.js";
 import { AGENT_LOOP_FACTORY, type AgentLoopFactory } from "../../src/runtime/run-steps.js";
 import { RunWorker } from "../../src/runtime/run-worker.js";
 import { Waits } from "../../src/runtime/waits.js";
@@ -43,7 +43,10 @@ let deliver = false;
 let active: Awaited<ReturnType<typeof permissionFixture>>;
 const loop: AgentLoopFactory = () => ({
   run: async (ctx) => {
-    const result = await b.app.get(ToolPipeline).runStep({ ...active.ctx, signal: ctx.signal });
+    // a tool step runs under exclusive admission, as the real loop runs it
+    const result = await withExclusiveAdmission(() =>
+      b.app.get(ToolPipeline).runStep({ ...active.ctx, signal: ctx.signal }),
+    );
     return result.kind === "suspended" ? result : { kind: "completed", consumedUpToSeq: 1 };
   },
 });

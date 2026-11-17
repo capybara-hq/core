@@ -1,7 +1,11 @@
 import { Inject, Injectable } from "@nestjs/common";
 import { ApiError } from "../errors.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
-import { currentStore, TransactionHost } from "../infra/database/transaction-host.js";
+import {
+  assertNotSharedAdmission,
+  currentStore,
+  TransactionHost,
+} from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { XactLock } from "../infra/database/xact-lock.js";
 export type AuthorityLevel = "platform" | "org" | "device" | "root";
@@ -24,6 +28,7 @@ export class PermissionAuthorityLock {
   ) {}
   @Transactional({ propagation: "mandatory" })
   async acquire(subject: AuthoritySubject, intent: AuthorityLockIntent): Promise<void> {
+    assertNotSharedAdmission("the permission authority lock");
     if (intent.kind === "write" && intent.level === "platform") {
       if (subject.orgId || subject.deviceId || subject.rootConversationId)
         throw new Error("Platform writes cannot acquire descendant locks");

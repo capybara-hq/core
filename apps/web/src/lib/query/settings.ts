@@ -2,6 +2,7 @@ import { listPluginInstalls } from "../catalog";
 import { listExtensionPointDefaults } from "../extensions";
 import { listInvitations } from "../members";
 import { getModelsCatalog, listOrgPurposes } from "../models";
+import { listOrgNetworkAllowances } from "../org-network";
 import { getOrgSettings } from "../org-settings";
 import { listOrgAudit, listServiceTokens } from "../orgs";
 import { getOrgFilePreviewers } from "../previewers";
@@ -80,5 +81,13 @@ export const modelsCatalogQuery = (orgId: string) =>
   defineQuery({
     key: keys.org(orgId).modelsCatalog(),
     fn: () => getModelsCatalog(orgId),
+    freshness: "orgConfig",
+  });
+
+/** The org's internal endpoints, read-only for org admins (`/settings/organization`). */
+export const orgNetworkAllowancesQuery = (orgId: string) =>
+  defineQuery({
+    key: keys.org(orgId).networkAllowances(),
+    fn: () => listOrgNetworkAllowances(orgId),
     freshness: "orgConfig",
   });

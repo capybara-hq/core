@@ -299,7 +299,7 @@ beforeAll(async () => {
     pgUrl: pgc.url,
     redisUrl: rdc.url,
     extensionConfig: {
-      "fake-connector": { allowInsecureLoopback: true, inspectAuth: "api_key" },
+      "fake-connector": { inspectAuth: "api_key" },
     },
     config: {
       auth: { cookieSecure: false },

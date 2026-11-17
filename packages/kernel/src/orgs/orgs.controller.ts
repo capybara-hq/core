@@ -12,8 +12,9 @@ import {
 import { createZodDto } from "../infra/validation/create-zod-dto.js";
 import { ZBody } from "../infra/validation/zod-params.js";
 import { type Member, MembersService } from "./members.service.js";
+import { OrgNetworkAllowances } from "./network-allowances.service.js";
 import { CurrentOrg, OrgAction, type OrgContext } from "./org.guard.js";
-import { OrgUpdateBody } from "./orgs.schemas.js";
+import { type NetworkAllowanceView, networkAllowanceView, OrgUpdateBody } from "./orgs.schemas.js";
 import { type Org, OrgsService } from "./orgs.service.js";
 import { ORG_ROLES, type OrgRole } from "./roles.js";
 
@@ -41,6 +42,7 @@ export class OrgsController {
     @Inject(OrgsService) private readonly orgs: OrgsService,
     @Inject(MembersService) private readonly members: MembersService,
     @Inject(ApiTokenService) private readonly tokens: ApiTokenService,
+    @Inject(OrgNetworkAllowances) private readonly allowances: OrgNetworkAllowances,
   ) {}
 
   @Post()
@@ -118,6 +120,18 @@ export class OrgsController {
   @OrgAction("org.members.read")
   async listMembers(@CurrentOrg() org: OrgContext): Promise<{ members: Member[] }> {
     return { members: await this.members.list(org.orgId) };
+  }
+
+  /**
+   * The internal endpoints a super admin lets this org's extension requests reach (plugin safe
+   * fetch spec), read-only for org admins so a refused request is explainable; members get 403.
+   */
+  @Get(":orgId/network-allowances")
+  @OrgAction("org.update")
+  async listNetworkAllowances(
+    @CurrentOrg() org: OrgContext,
+  ): Promise<{ allowances: NetworkAllowanceView[] }> {
+    return { allowances: (await this.allowances.list(org.orgId)).map(networkAllowanceView) };
   }
 
   @Patch(":orgId/members/:accountId")

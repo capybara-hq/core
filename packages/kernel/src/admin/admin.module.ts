@@ -14,6 +14,7 @@ import { RunJobsModule } from "../runtime/run-jobs.js";
 import { UsageReportModule } from "../runtime/usage-report.js";
 import { AuditLogService } from "./audit-log.service.js";
 import { AdminHealthService } from "./health.service.js";
+import { OrgNetworkAdmin } from "./org-network.service.js";
 import { OutboxDeadService } from "./outbox-dead.service.js";
 import { AdminOverviewService } from "./overview.service.js";
 import { SetupService } from "./setup.service.js";
@@ -23,7 +24,8 @@ import { AdminUsageService } from "./usage.service.js";
 /**
  * Deployment administration: the setup wizard, the audit log reader (the platform's and each
  * org's) and the admin overview with its health read, seven-day usage aggregate and dead outbox
- * rows (its controllers are the api role's, `ApiModule`).
+ * rows, and the super admin's side of the org network allowances (its controllers are the api
+ * role's, `ApiModule`).
  */
 @Module({
   imports: [
@@ -52,6 +54,7 @@ import { AdminUsageService } from "./usage.service.js";
     AdminHealthService,
     AdminUsageService,
     OutboxDeadService,
+    OrgNetworkAdmin,
   ],
   exports: [
     SetupService,
@@ -60,6 +63,7 @@ import { AdminUsageService } from "./usage.service.js";
     AdminHealthService,
     AdminUsageService,
     OutboxDeadService,
+    OrgNetworkAdmin,
   ],
 })
 export class AdminModule {}

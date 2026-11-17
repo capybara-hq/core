@@ -16,8 +16,12 @@ import { BlockList, isIP } from "node:net";
  * the embedded IPv4 address (proxy.mjs falls through to the IPv6 table, where they are not blocked);
  * a host behind a SIIT translator could otherwise reach a private IPv4 address.
  *
- * Link-local addresses (`169.254.0.0/16`, including cloud metadata, and `fe80::/10`) stay forbidden
- * whatever the exemptions: no internal mirror lives there.
+ * Link-local addresses (`169.254.0.0/16`, including cloud metadata, and `fe80::/10`) and the cloud
+ * metadata endpoints outside link-local (AWS IPv6 `fd00:ec2::254`, Alibaba Cloud `100.100.100.200`)
+ * stay forbidden whatever the exemptions: no internal mirror lives there.
+ *
+ * Extension requests (`ctx.net`, {@link NetPolicy.extension}) also refuse loopback and unspecified
+ * addresses whatever the exemptions (the kernel's own host), unless `allowInsecureLoopback` (tests).
  */
 
 const BLOCKED_V4: readonly (readonly [string, number])[] = [
@@ -53,9 +57,18 @@ const BLOCKED_V6: readonly (readonly [string, number])[] = [
 const blocked = new BlockList();
 for (const [a, p] of BLOCKED_V4) blocked.addSubnet(a, p, "ipv4");
 for (const [a, p] of BLOCKED_V6) blocked.addSubnet(a, p, "ipv6");
-const linkLocal = new BlockList();
-linkLocal.addSubnet("169.254.0.0", 16, "ipv4");
-linkLocal.addSubnet("fe80::", 10, "ipv6");
+/** Never allowed, whatever the exemptions: link-local and the cloud metadata endpoints. */
+const neverAllowed = new BlockList();
+neverAllowed.addSubnet("169.254.0.0", 16, "ipv4");
+neverAllowed.addSubnet("fe80::", 10, "ipv6");
+neverAllowed.addAddress("100.100.100.200", "ipv4"); // Alibaba Cloud metadata (inside CGNAT)
+neverAllowed.addAddress("fd00:ec2::254", "ipv6"); // AWS IMDS over IPv6 (inside ULA)
+/** Loopback and unspecified: never allowed for extension requests (see the file header). */
+const loopbackOrUnspecified = new BlockList();
+loopbackOrUnspecified.addSubnet("127.0.0.0", 8, "ipv4");
+loopbackOrUnspecified.addSubnet("0.0.0.0", 8, "ipv4");
+loopbackOrUnspecified.addAddress("::1", "ipv6");
+loopbackOrUnspecified.addAddress("::", "ipv6");
 
 /** An IPv6 address as its 8 16-bit groups; null when it cannot be parsed. */
 function v6Groups(ip: string): number[] | null {
@@ -112,9 +125,17 @@ export function isForbiddenAddress(ip: string): boolean {
   return inTable(ip, blocked);
 }
 
-/** Link-local (incl. cloud metadata 169.254.169.254) or unparseable: forbidden whatever the exemptions. */
+/**
+ * Link-local (incl. cloud metadata 169.254.169.254), another cloud metadata endpoint
+ * (`100.100.100.200`, `fd00:ec2::254`) or unparseable: forbidden whatever the exemptions.
+ */
 export function isLinkLocalAddress(ip: string): boolean {
-  return inTable(ip, linkLocal);
+  return inTable(ip, neverAllowed);
+}
+
+/** Loopback (`127.0.0.0/8`, `::1`) or unspecified (`0.0.0.0/8`, `::`), embedded forms included. */
+export function isLoopbackOrUnspecifiedAddress(ip: string): boolean {
+  return inTable(ip, loopbackOrUnspecified);
 }
 
 /** A hostname normalized for comparison: lower case, no IPv6 brackets, no trailing dots. */
@@ -152,6 +173,13 @@ export type NetPolicy = {
    * the target is then resolved by the proxy, not checked here, except IP-literal hosts.
    */
   proxy?: { url: string; noProxy: string[] };
+  /**
+   * Set for an extension's request (`ctx.net.fetch`): loopback and unspecified addresses are
+   * refused whatever the exemptions (unless `allowInsecureLoopback`), `*.domain` entries in
+   * `allowPrivateHosts` match subdomains (never the apex), and a refused private address says
+   * `privateHint` (where such an endpoint is allowed) instead of the marketplace hint.
+   */
+  extension?: { privateHint: string };
 };
 
 export type LookupFn = (host: string) => Promise<{ address: string; family: number }[]>;
@@ -234,6 +262,14 @@ function exemptions(
     cidrs.addAddress("::1", "ipv6");
   }
   for (const entry of policy.allowPrivateHosts) {
+    // a `*.domain` wildcard (extension requests): a name under the domain, never the apex
+    if (entry.startsWith("*.")) {
+      const base = normalizeHost(entry.slice(2));
+      if (policy.extension && !literal && HOSTNAME.test(base) && host.endsWith(`.${base}`)) {
+        all = true;
+      }
+      continue;
+    }
     if (!isPrivateHostEntry(entry)) continue;
     const cidr = parseCidr(entry);
     const name = normalizeHost(entry);
@@ -275,6 +311,16 @@ function allowedBy(cidrs: BlockList, ip: string): boolean {
 }
 
 /**
+ * Whether a host entry of `policy.allowPrivateHosts` (a hostname, a `*.domain` wildcard, an IP or a
+ * CIDR) names `host`, ignoring trusted origins: such entries exempt https requests only, so a
+ * refused plain-http request to that host can point at an `http://host:port` origin entry.
+ */
+export function hostEntryExempts(host: string, policy: NetPolicy): boolean {
+  const { all, cidrs } = exemptions(host, { ...policy, allowInsecureLoopback: false }, undefined);
+  return all || (isIP(host) !== 0 && allowedBy(cidrs, host));
+}
+
+/**
  * Resolves `host` (an IP literal is taken as is) and returns every address, in resolution order,
  * after checking that each is public or exempt by `policy`. `origin` is the request URL's origin:
  * only when it equals a `policy.trustedOrigins` entry does that trust apply (without it, trusted
@@ -300,15 +346,26 @@ export async function resolvePublic(
     if (addrs.length === 0) throw new NetDeniedError("net.dns_failed", h, `Cannot resolve ${h}.`);
   }
   const ex = exemptions(h, policy, origin);
+  // extension requests never reach the kernel's own host, whatever the exemptions
+  const ownHost = (a: string) =>
+    policy.extension !== undefined &&
+    !policy.allowInsecureLoopback &&
+    isLoopbackOrUnspecifiedAddress(a);
   const refused = (a: string) =>
-    isForbiddenAddress(a) && (isLinkLocalAddress(a) || (!ex.all && !allowedBy(ex.cidrs, a)));
+    isForbiddenAddress(a) &&
+    (isLinkLocalAddress(a) || ownHost(a) || (!ex.all && !allowedBy(ex.cidrs, a)));
   if (addrs.some(refused)) {
+    const hint =
+      policy.extension?.privateHint ??
+      "add the hostname to marketplaces.allowPrivateHosts to allow an internal host";
     throw new NetDeniedError(
       "net.private_address",
       h,
       addrs.some(isLinkLocalAddress)
-        ? `Access to ${h} is refused: it resolves to a link-local address, which is never allowed.`
-        : `Access to ${h} is refused: it resolves to a private or reserved address (add the hostname to marketplaces.allowPrivateHosts to allow an internal host).`,
+        ? `Access to ${h} is refused: it resolves to a link-local or cloud metadata address, which is never allowed.`
+        : addrs.some(ownHost)
+          ? `Access to ${h} is refused: it resolves to a loopback address (the kernel's own host), which is never allowed.`
+          : `Access to ${h} is refused: it resolves to a private or reserved address (${hint}).`,
     );
   }
   return addrs;

@@ -52,7 +52,7 @@ it("跨副本完成连接；两个副本并发 401 只刷新一次", async () =>
       extensions: [MODEL_FAKE, CONNECTOR],
       pgUrl: pgc.url,
       redisUrl: rdc.url,
-      extensionConfig: { "fake-connector": { allowInsecureLoopback: true } },
+      extensionConfig: { "fake-connector": {} },
       config: {
         auth: { cookieSecure: false },
         http: { publicUrl: PUBLIC_URL },
