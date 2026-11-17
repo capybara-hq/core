@@ -8,7 +8,7 @@ import type {
   PermissionExpansion,
   PermissionReviewSnapshot,
 } from "../permission-call-types.js";
-import { permissionScopeHash } from "../permission-facts.js";
+import { hostsWithinOuter, permissionScopeHash } from "../permission-facts.js";
 import { parseCommand } from "./rules.js";
 
 export const withinDirectory = (target: string, root: string): boolean =>
@@ -115,6 +115,10 @@ export function buildPermissionCandidate(
         }
       }
     }
+    // a host the applied cloud outer boundary does not cover is unreachable: never proposed,
+    // as admission and the recorded context cut it too (B-15)
+    const reachable = hostsWithinOuter(hosts, facts.outerNetwork ?? undefined);
+    hosts.splice(0, hosts.length, ...reachable);
     if (!reads.length && !writes.length && !hosts.length) return { kind: "in-scope" };
     const permissionScope = normalizePermissionExpansion(
       { readDirectories: reads, writeDirectories: writes, hosts },

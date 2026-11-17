@@ -27,6 +27,8 @@ import { ownerFactsOf, ownerModeOf } from "../local-devices/owner-report.js";
 import { deviceFeaturesOf } from "../local-devices/policy-summary.js";
 import { readOrgSettings } from "../orgs/settings.service.js";
 import {
+  appliedOf,
+  appliedWider,
   cloudChosenMode,
   coversHost,
   type DeviceNetwork,
@@ -548,6 +550,25 @@ export class PermissionFacts {
     deviceId: string;
   }): Promise<AppliedEnvironment | null> {
     assertAuthorityHeld("device", input.deviceId);
+    return this.readAppliedEnvironment(input);
+  }
+
+  /**
+   * {@link readAppliedEnvironmentLocked} without the authority locks: a managed operation's held
+   * evidence only (read under its lifecycle lease), which the managed writer validates again
+   * under the locks. Never a basis for admission or a recorded context.
+   */
+  async readHeldEnvironment(input: {
+    orgId: string;
+    deviceId: string;
+  }): Promise<AppliedEnvironment | null> {
+    return this.readAppliedEnvironment(input);
+  }
+
+  private async readAppliedEnvironment(input: {
+    orgId: string;
+    deviceId: string;
+  }): Promise<AppliedEnvironment | null> {
     const device = await this.db
       .selectFrom("devices")
       .select(["source", "provider"])
@@ -635,12 +656,13 @@ export class PermissionFacts {
    * A cloud instance's installed environment (B-15, Q1 option A): its current runtime report
    * recorded with the kernel-built cloud identity (provider plugin and version, handle,
    * generation, applied limits; `readCurrentReport`), named by that report's identity hash in
-   * place of a binding id. Null while the evidence is missing or stale and while desired limits
-   * wait for a file reset (`unapplied`): a pending desired change is never projected as
-   * installed. The outer boundary is the applied network, never the desired one. A desired mode or
-   * network kind the provider applies on use is applied by the next use's lifecycle lease before
-   * any operation of it is admitted; its new limits change the identity, so that use records the
-   * evidence again (until then the recorded applied boundary stands, as it is what runs).
+   * place of a binding id. Null while the evidence is missing or stale, while desired limits wait
+   * for a file reset (`unapplied`) and while the applied limits are more permissive than the
+   * effective desired ones in any dimension (mode, network kind, a host the desired allowlist
+   * does not cover; spec §124): a pending desired change is never projected as installed. Applied
+   * limits narrower than desired stand (the outer boundary is the applied network, and restricted
+   * hosts are cut to it); the next use's lifecycle lease applies any change before admitting an
+   * operation, and its new limits change the identity, so that use records the evidence again.
    */
   private async cloudAppliedLocked(
     input: { orgId: string; deviceId: string },
@@ -667,6 +689,9 @@ export class PermissionFacts {
     if (evidence.identityHash === null) return null;
     const limits = readInstanceLimits(instance.instance_limits);
     if (limits.applied === null || limits.unapplied !== null) return null;
+    // applied limits more permissive than the effective desired ones (spec §124) are not the
+    // installed authority: unproved until the next use's lifecycle lease applies the narrowing
+    if (appliedWider(limits.applied, appliedOf(await this.devicePolicy(input)))) return null;
     const outerNetwork = cloudOuterNetwork(limits.applied.network);
     if (outerNetwork === null) return null;
     const roots = rootsOf(instance.handle);

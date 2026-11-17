@@ -683,8 +683,10 @@ describe("cloud installed evidence in the real lifecycle", () => {
   let root: string;
   /** Every provider permission support read, in order (readers must never add one). */
   const probes: string[] = [];
-  const register = (version: string) => {
-    const base = fakeOperationFacade(root, createFakeSandbox(root));
+  /** Set: the provider's permission support read fails (a provider that cannot report). */
+  let supportFails = false;
+  const register = (version: string, options: Parameters<typeof createFakeSandbox>[1] = {}) => {
+    const base = fakeOperationFacade(root, createFakeSandbox(root, options));
     k.app.get(SandboxProviders).register({
       plugin: CLOUD,
       version,
@@ -692,6 +694,7 @@ describe("cloud installed evidence in the real lifecycle", () => {
         ...base,
         async permissionSupport() {
           probes.push(version);
+          if (supportFails) throw new Error("permission support unavailable");
           return REPORTS.both;
         },
         // the trusted preparation runs only once admission admitted its scope
@@ -710,6 +713,7 @@ describe("cloud installed evidence in the real lifecycle", () => {
   });
   beforeEach(() => {
     probes.length = 0;
+    supportFails = false;
     register("v1");
   });
 
@@ -880,5 +884,110 @@ describe("cloud installed evidence in the real lifecycle", () => {
     );
     expect(probes).toEqual(["v1", "v1"]);
     expect(await availability(f, "v1")).toBe("supported");
+  });
+
+  /** The device's B1 outer network snapshot, which caps its effective desired network. */
+  const setOuter = (f: Fixture, hosts: string[]) =>
+    f.db
+      .updateTable("devices")
+      .set({ outer_network: JSON.stringify({ kind: "allowlist", hosts }) })
+      .where("id", "=", f.deviceId)
+      .execute();
+  const appliedLimits = async (f: Fixture) =>
+    (
+      await f.db
+        .selectFrom("device_instances")
+        .select("instance_limits")
+        .where("device_id", "=", f.deviceId)
+        .executeTakeFirstOrThrow()
+    ).instance_limits as { network?: { hosts?: string[] }; unapplied?: unknown } | null;
+
+  it("a host-only narrowing is refused until the next use applies it, then admitted on the new outer network", async () => {
+    const f = await seedCloud();
+    await setOuter(f, ["a.example", "b.example"]);
+    await call(f);
+    expect((await appliedLimits(f))?.network?.hosts).toEqual(["a.example", "b.example"]);
+    expect(await admission(f)).toBe("admitted");
+    // narrowed: the running instance still allows b.example, so it is not installed authority
+    await setOuter(f, ["a.example"]);
+    expect(await admission(f)).toMatch(/not verified yet/);
+    // the next use applies the narrowing under the exclusive lease and records the evidence again
+    await call(f);
+    expect((await appliedLimits(f))?.network?.hosts).toEqual(["a.example"]);
+    expect(probes).toEqual(["v1", "v1"]);
+    expect(await admission(f)).toBe("admitted");
+  });
+
+  it("a narrowing a file-system-bound provider cannot apply is recorded unapplied and stays unprobed", async () => {
+    register("v1", { limitsApplyAt: "fileSystem" });
+    const f = await seedCloud();
+    await call(f);
+    expect(await admission(f)).toBe("admitted");
+    await setOuter(f, []);
+    expect(await admission(f)).toMatch(/not verified yet/);
+    // the next use records the narrowing as unapplied; managed work is unavailable until a reset
+    const err = await failure(call(f));
+    expect((err as ToolError).message).toBe(MANAGED_DEVICE_CONTEXT_UNAVAILABLE_TEXT);
+    expect((await appliedLimits(f))?.unapplied).toBeTruthy();
+    expect(await admission(f)).toMatch(/not verified yet/);
+  });
+
+  it("a holder whose probed limits changed meanwhile never overwrites the newer evidence", async () => {
+    const f = await seedCloud();
+    await call(f);
+    const row = await f.db
+      .selectFrom("device_instances")
+      .select(["handle", "created_at", "instance_limits"])
+      .where("device_id", "=", f.deviceId)
+      .executeTakeFirstOrThrow();
+    if (!row.handle) throw new Error("expected a provisioned cloud instance");
+    const stale = { handle: row.handle, createdAt: row.created_at.getTime(), limits: null };
+    const before = await f.db
+      .selectFrom("device_permission_reports")
+      .select(["report", "observed_at"])
+      .where("device_id", "=", f.deviceId)
+      .executeTakeFirstOrThrow();
+    const recorded = await runOutsideTransaction(() =>
+      k.app
+        .get(PermissionInstanceWrites)
+        .recordCloudSupport(
+          f.orgId,
+          f.deviceId,
+          stale,
+          { provider: CLOUD, version: "v1", report: REPORTS["full-only"] },
+          new AbortController().signal,
+        ),
+    );
+    expect(recorded).toBe(false);
+    expect(
+      await f.db
+        .selectFrom("device_permission_reports")
+        .select(["report", "observed_at"])
+        .where("device_id", "=", f.deviceId)
+        .executeTakeFirstOrThrow(),
+    ).toEqual(before);
+  });
+
+  it("a resume whose permission support cannot be read clears the evidence: unprobed, not stale-supported", async () => {
+    const f = await seedCloud();
+    await call(f);
+    const row = await f.db
+      .selectFrom("device_instances")
+      .select("handle")
+      .where("device_id", "=", f.deviceId)
+      .executeTakeFirstOrThrow();
+    const provider = k.app.get(SandboxProviders).forName(CLOUD);
+    if (!provider || !row.handle) throw new Error("expected a provisioned cloud instance");
+    await provider.impl.suspend(row.handle, new AbortController().signal);
+    await f.db
+      .updateTable("device_instances")
+      .set({ status: "suspended", suspended_at: new Date() })
+      .where("device_id", "=", f.deviceId)
+      .execute();
+    supportFails = true;
+    const err = await failure(call(f));
+    expect((err as ToolError).message).toBe(MANAGED_DEVICE_CONTEXT_UNAVAILABLE_TEXT);
+    expect(await availability(f, "v1")).toBe("unprobed");
+    expect(await admission(f)).not.toBe("admitted");
   });
 });

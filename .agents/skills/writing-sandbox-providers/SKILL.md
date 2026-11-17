@@ -139,15 +139,20 @@ Every provider must follow these; the kernel's behaviour below assumes them. How
   lease only on a `running` row of the task's instance, never creating or resuming one. sandbox-fake puts node shims for `setsid`,
   `timeout`, `pkill -s` and `pgrep -s` first on its PATH (macOS has none) and kills an instance's processes on `suspend` and `destroy`.
 - **Cloud installed evidence** (B-15, `sandbox/permission-runtime-reports.ts`): a cloud device has no installed binding.
-  Under the lifecycle lease the kernel reads `permissionSupport(handle)` from a just-created instance (recorded in the
-  `commitHandle` transaction), after every resume, and whenever the recorded report is stale (`cloudReportOwed`), and
-  records it with a kernel-built identity (`cloudRuntimeIdentity`: provider plugin and version, handle, generation,
-  recorded applied limits, no image digest). A changed one of these, a pending desired change (`unapplied`, or a mode or
-  network kind that differs from the effective policy) makes the context and admission unprobed alike; the outer
-  boundary is the applied network, and restricted hosts are cut to it. Readers never call the provider (a suspended
-  instance reads as recorded); a failed `permissionSupport` leaves the device unprobed, never fails the lifecycle step.
-  A cloud device without an instance is refused by admission but stays provisionable: provisioning is the lease's job,
-  and the first operation is admitted only after it recorded the evidence.
+  Under the lifecycle lease the kernel reads `permissionSupport(handle)` (bounded at 30 s) from a just-created instance
+  (recorded in the `commitHandle` transaction), after every resume, and whenever the recorded report is stale
+  (`cloudReportOwed`), and records it with a kernel-built identity (`cloudRuntimeIdentity`: provider plugin and version,
+  handle, generation, recorded applied limits, no image digest). A later record is written only while the row still
+  holds the probed handle, generation and limits. Any of these changing makes the context and admission unprobed alike,
+  and so do an `unapplied` record and applied limits more permissive than the effective desired ones (auto under a
+  sandbox device, open public under an allowlist, a host the desired allowlist does not cover; spec §124). Narrower
+  applied limits stand: the outer boundary is the applied network, and restricted hosts (base, accepted additions,
+  proposals) are cut to it. A narrowing, host-only too, goes through the exclusive lease on the next use: it is applied
+  (`update` or recreate) and recorded again, or, on a provider bound to its file system, recorded `unapplied` (unprobed
+  until a file reset). Readers never call the provider (a suspended instance reads as recorded). A failed read is logged
+  once per generation and never fails the lifecycle step; after a resume it clears the recorded identity (unprobed),
+  otherwise the evidence stays as it was. A cloud device without an instance is refused by admission but stays
+  provisionable: provisioning is the lease's job, and the first operation is admitted only after it recorded the evidence.
 - **Legacy retirement** (permission runtime cutover 8.5, migration 0157, `sandbox/legacy-retirement.ts`):
   - **Freeze.** `LegacyRetirementStore.freeze` writes the freeze row under the exclusive platform authority lock, then enumerates
     before it returns. Every SID launch checks the freeze under the shared lock right before its dispatch, recording the exact

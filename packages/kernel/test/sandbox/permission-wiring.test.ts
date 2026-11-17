@@ -1198,6 +1198,22 @@ it("sandbox egress changes preserve local Full while revoking cloud Full at its 
   await publisher.publish(before, next);
   const spy = vi.spyOn(config, "get").mockReturnValue(next);
   try {
+    // the cloud instance's next use applies the narrowed limits and records its evidence again
+    // before anything is admitted (B-15): applied limits wider than desired are never admitted
+    const desired = await facts.devicePolicy({ orgId: cloud.orgId, deviceId: cloud.deviceId });
+    await cloud.db
+      .updateTable("device_instances")
+      .set({
+        instance_limits: JSON.stringify({ mode: desired.mode, network: desired.network }),
+      })
+      .where("device_id", "=", cloud.deviceId)
+      .execute();
+    await seedCloudEvidence(k, {
+      orgId: cloud.orgId,
+      deviceId: cloud.deviceId,
+      provider: "@permission-test",
+      version: "test-1",
+    });
     for (const f of [local, cloud]) {
       const preview = await facts.preview(f.orgId, owner.id, f.deviceId);
       if (f === local) {

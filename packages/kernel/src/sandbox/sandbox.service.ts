@@ -94,19 +94,17 @@ import { ManagedDeviceContextFailed } from "./managed-device-context.js";
 import {
   type AppliedLimits,
   appliedOf,
+  appliedWider,
   type DeviceNetwork,
   type EffectiveDevicePolicy,
   instanceLimitsJson,
   readInstanceLimits,
   sameApplied,
+  sameAppliedExact,
 } from "./modes.js";
 import type { HeldDeviceContextEvidence } from "./permission-context-types.js";
 import { PermissionFacts } from "./permission-facts.js";
-import {
-  cloudReportOwed,
-  cloudSupportOf,
-  readCurrentReport,
-} from "./permission-runtime-reports.js";
+import { cloudReportOwed, cloudSupportOf } from "./permission-runtime-reports.js";
 import {
   isInternalProvider,
   LOCAL_PROVIDER,
@@ -133,6 +131,8 @@ const HOLDER_TTL_MARGIN_MS = 10 * 60_000;
 const PATH_LEASE_WAIT_MS = 30_000;
 /** Time limit of one provider call in maintenance (suspend, destroy). */
 const SWEEP_OP_TIMEOUT_MS = 120_000;
+/** The bound on one cloud `permissionSupport` read under a lifecycle lease (B-15). */
+const PERMISSION_SUPPORT_TIMEOUT_MS = 30_000;
 /** How long the suspension sweep holds the intent on a sandbox past `maxRunningMinutes` (ms). */
 const SWEEP_INTENT_WAIT_MS = 1000;
 /** Rows one sweep handles at most, and the provider calls it runs at once. */
@@ -632,7 +632,10 @@ export class SandboxService {
     @Inject(BackgroundTaskStore)
     private readonly background: Pick<BackgroundTaskStore, "pendingKills" | "clearKill">,
     @Inject(PermissionFacts)
-    private readonly facts: Pick<PermissionFacts, "devicePolicy" | "assertCloudReconciled">,
+    private readonly facts: Pick<
+      PermissionFacts,
+      "devicePolicy" | "assertCloudReconciled" | "readHeldEnvironment"
+    >,
     @Inject(SandboxOperationIntents) private readonly operationIntents: SandboxOperationIntents,
     @Inject(SandboxOperationAuthority) private readonly authority: SandboxOperationAuthority,
     @Inject(PermissionInstanceWrites) private readonly instanceWrites: PermissionInstanceWrites,
@@ -846,15 +849,22 @@ export class SandboxService {
 
   /**
    * Whether the running instance of `row` must get `want` before use (auto mode spec §4.2): a
-   * cloud instance whose recorded mode or network kind differs, unless only a file reset could
-   * apply it ({@link fsBound}). `want` null: a local device (the mode travels with each command).
+   * cloud instance whose recorded mode or network kind differs, or whose recorded limits are more
+   * permissive than `want` in any dimension (a host-only narrowing too, spec §124; a host-only
+   * widening still reaches instances created afterwards), unless only a file reset could apply it
+   * ({@link fsBound}). A provider bound to its file system still goes through the exclusive lease
+   * once for a narrowing, so `applyLimits` records it as `unapplied` (the device is then unprobed
+   * until the reset, never silently supported). `want` null: a local device (the mode travels
+   * with each command).
    */
   private mustApply(row: Row, p: SandboxProviderEntry, want: SandboxLimits | null): boolean {
     if (want === null) return false;
     const rec = readInstanceLimits(row.instance_limits);
     const target = appliedOf(want);
-    if (sameApplied(rec.applied, target)) return false;
-    return !this.fsBound(p, rec, target);
+    const wider = appliedWider(rec.applied, target);
+    if (sameApplied(rec.applied, target) && !wider) return false;
+    if (!this.fsBound(p, rec, target)) return true;
+    return wider && !sameAppliedExact(rec.unapplied, target);
   }
 
   /**
@@ -1637,19 +1647,22 @@ export class SandboxService {
     e: Entered,
   ): Promise<HeldDeviceContextEvidence | undefined> {
     const instanceGeneration = String(e.createdAt);
-    // a cloud instance is named by its current kernel-recorded evidence (B-15), as
-    // `PermissionFacts.readAppliedEnvironmentLocked` names it under the authority locks
+    // a cloud instance is named by its installed environment as the managed writer reads it
+    // under the authority locks (B-15): current evidence, nothing unapplied, nothing wider than
+    // desired; otherwise the device is unavailable for managed work, not a stale retry
     const cloud = (await this.deviceSource(ctx)) === "cloud";
-    const evidence = cloud
-      ? await readCurrentReport(this.db.db, ctx.deviceId, p.plugin, p.version)
+    const applied = cloud
+      ? await this.facts.readHeldEnvironment({ orgId: ctx.orgId, deviceId: ctx.deviceId })
       : null;
     if (
       cloud &&
-      (evidence?.identityHash == null || evidence.instanceGeneration !== instanceGeneration)
+      (applied === null ||
+        applied.provider !== p.plugin ||
+        applied.instanceGeneration !== instanceGeneration)
     )
       return undefined;
-    const binding = cloud
-      ? { binding_id: evidence?.identityHash as string }
+    const binding = applied
+      ? { binding_id: applied.bindingId }
       : await this.db
           .selectFrom("device_instance_bindings")
           .select("binding_id")
@@ -1780,40 +1793,58 @@ export class SandboxService {
 
   /**
    * The provider's permission support of the held instance `handle`, read under the caller's
-   * lifecycle lease; undefined (logged) when it cannot be read or is not a version 1 report. Never
-   * throws: missing evidence keeps the device unprobed, it never fails the lifecycle step.
+   * lifecycle lease within {@link PERMISSION_SUPPORT_TIMEOUT_MS}; undefined when it cannot be
+   * read in time or is not a version 1 report. Never throws: missing evidence keeps the device
+   * unprobed, it never fails the lifecycle step. A failure is logged once per instance generation
+   * (`warnOnce`: a Redis marker shared by the replicas; without it, every failure is logged).
    */
   private async cloudSupport(
     deviceId: string,
     p: SandboxProviderEntry,
     handle: SandboxHandle,
     signal: AbortSignal,
+    warnOnce?: string,
   ): Promise<CloudSupportReport | undefined> {
     const read = p.impl.permissionSupport?.bind(p.impl);
     if (!read || p.version === undefined) return undefined;
+    let failure: { message: string; err?: unknown };
     try {
-      const report = cloudSupportOf(await read(handle, signal));
+      const sig = AbortSignal.any([signal, AbortSignal.timeout(PERMISSION_SUPPORT_TIMEOUT_MS)]);
+      const report = cloudSupportOf(await read(handle, sig));
       if (report) return { provider: p.plugin, version: p.version, report };
-      this.log.warn("cloud provider returned an invalid permission support report", {
+      failure = { message: "cloud provider returned an invalid permission support report" };
+    } catch (err) {
+      if (signal.aborted) return undefined;
+      failure = {
+        message: "cannot read the cloud provider's permission support; device unprobed",
+        err,
+      };
+    }
+    // a log marker, not a lock: the previous value says whether this generation was logged (two
+    // replicas racing may both log, which is harmless)
+    const first =
+      warnOnce === undefined ||
+      (await this.redis
+        .set(`capk:cloud-support-warned:${deviceId}:${warnOnce}`, "1", "EX", 86_400, "GET")
+        .then((prev) => prev === null)
+        .catch(() => true));
+    if (first)
+      this.log.warn(failure.message, {
         deviceId,
         provider: p.plugin,
+        ...(failure.err !== undefined && { err: failure.err }),
       });
-    } catch (err) {
-      if (!signal.aborted)
-        this.log.warn("cannot read the cloud provider's permission support; device unprobed", {
-          deviceId,
-          provider: p.plugin,
-          err,
-        });
-    }
     return undefined;
   }
 
   /**
    * Under a lifecycle lease on the running instance `e`: records its cloud evidence again when
    * `force` (a resume) or when the recorded one is stale (another provider version, handle,
-   * generation or applied limits; `cloudReportOwed`). A read that fails, a lost lease or a
-   * storage error leaves the evidence as it was (unprobed); never throws.
+   * generation or applied limits; `cloudReportOwed`). The record is written only while the row
+   * still holds the probed instance with the limits read before the probe, so a holder whose
+   * lease was lost never overwrites newer evidence. A forced read that fails clears the recorded
+   * identity (a resumed instance is unprobed until a read succeeds); any other failure leaves the
+   * evidence as it was. Never throws.
    */
   private async refreshCloudSupport(
     ctx: { orgId: string; deviceId: string },
@@ -1825,11 +1856,28 @@ export class SandboxService {
     try {
       if (!(await this.recordsCloudSupport(ctx, p))) return;
       if (!force && !(await cloudReportOwed(this.db.db, ctx.deviceId, p.plugin, p.version))) return;
-      const support = await this.cloudSupport(ctx.deviceId, p, e.handle, signal);
-      if (!support) return;
-      await runOutsideTransaction(() =>
-        this.instanceWrites.recordCloudSupport(ctx.orgId, ctx.deviceId, e, support, signal),
+      const row = await this.db
+        .selectFrom("device_instances")
+        .select("instance_limits")
+        .where("device_id", "=", ctx.deviceId)
+        .executeTakeFirst();
+      if (!row) return;
+      const held = { ...e, limits: row.instance_limits };
+      const support = await this.cloudSupport(
+        ctx.deviceId,
+        p,
+        e.handle,
+        signal,
+        String(e.createdAt),
       );
+      if (support)
+        await runOutsideTransaction(() =>
+          this.instanceWrites.recordCloudSupport(ctx.orgId, ctx.deviceId, held, support, signal),
+        );
+      else if (force && !signal.aborted)
+        await runOutsideTransaction(() =>
+          this.instanceWrites.clearCloudSupport(ctx.orgId, ctx.deviceId, held, p.plugin),
+        );
     } catch (err) {
       if (!signal.aborted)
         this.log.warn("cannot record the cloud instance's permission evidence", {
@@ -3030,10 +3078,10 @@ export class SandboxService {
       fence.gen++;
     } catch (e) {
       // Lease lost (or the device read failed) before the handle was recorded: destroy the new
-      // instance (best effort) so it does not leak. A provider that reuses instances by name (Ruling M10) may then hit the one
-      // the new holder just resumed or created; that heals: its next provider call throws
-      // SandboxGoneError (or resume returns gone) and withSandbox rebuilds in place. The file
-      // system is never touched here.
+      // instance (best effort) so it does not leak. A provider that reuses instances by name
+      // (Ruling M10) may then hit the one the new holder just resumed or created; that heals:
+      // its next provider call throws SandboxGoneError (or resume returns gone) and withSandbox
+      // rebuilds in place. The file system is never touched here.
       await p.impl.destroy(handle, AbortSignal.timeout(SWEEP_OP_TIMEOUT_MS)).catch((err: unknown) =>
         this.log.warn("cannot destroy sandbox created after the lock was lost", {
           deviceId: id,

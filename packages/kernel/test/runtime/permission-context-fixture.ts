@@ -122,6 +122,8 @@ export async function toCloudDevice(
     evidence?: boolean;
     report?: ReportKind;
     limits?: (desired: AppliedLimits) => unknown;
+    /** The device's narrowing switch: its desired mode is then `sandbox`. */
+    sandboxMode?: boolean;
   } = {},
 ) {
   const spy = spyProvider(k, { plugin: CLOUD_PROVIDER, version: CLOUD_VERSION });
@@ -131,6 +133,7 @@ export async function toCloudDevice(
       source: "cloud",
       provider: CLOUD_PROVIDER,
       outer_network: JSON.stringify({ kind: "allowlist", hosts: [] }),
+      ...(opts.sandboxMode && { mode: "sandbox" as const }),
     })
     .where("id", "=", f.deviceId)
     .execute();

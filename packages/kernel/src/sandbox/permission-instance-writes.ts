@@ -29,6 +29,13 @@ export interface CloudSupportReport {
   report: SandboxPermissionSupport;
 }
 
+/** The instance a lifecycle holder probed: its handle, generation and limits before the probe. */
+export interface ProbedCloudInstance {
+  handle: SandboxHandle;
+  createdAt: number;
+  limits: unknown;
+}
+
 /** Prior generation identity that cannot be ordered; conversion stops instead of guessing. */
 export class InconsistentGenerationError extends Error {
   override name = "InconsistentGenerationError";
@@ -104,35 +111,64 @@ export class PermissionInstanceWrites {
   /**
    * Records a cloud instance's permission support read after a resume, a limits change or a
    * provider version change, under the caller's lifecycle lease (B-15). Recorded only while the
-   * row still holds exactly the probed instance (its handle and generation); a lease lost to a
-   * holder that replaced the instance records nothing. Never provider IO inside the transaction.
+   * row still holds exactly the probed instance (its handle and generation) with the limits read
+   * before the probe: a holder whose lease was lost to one that replaced the instance or changed
+   * its limits records nothing, so it never overwrites newer evidence. Never provider IO inside
+   * the transaction.
    */
   @Transactional({ propagation: "requires_new" })
   async recordCloudSupport(
     orgId: string,
     deviceId: string,
-    held: { handle: SandboxHandle; createdAt: number },
+    held: ProbedCloudInstance,
     cloud: CloudSupportReport,
     signal: AbortSignal,
   ): Promise<boolean> {
     signal.throwIfAborted();
+    if (!(await this.lockProbed(orgId, deviceId, held, cloud.provider))) return false;
+    await this.reports.recordCloud(deviceId, cloud.provider, cloud.version, cloud.report);
+    return true;
+  }
+
+  /**
+   * Clears the recorded cloud identity of the probed instance (same checks as
+   * {@link recordCloudSupport}): a resumed instance whose permission support could not be read
+   * is unprobed, never supported by evidence from before its suspension.
+   */
+  @Transactional({ propagation: "requires_new" })
+  async clearCloudSupport(
+    orgId: string,
+    deviceId: string,
+    held: ProbedCloudInstance,
+    provider: string,
+  ): Promise<boolean> {
+    if (!(await this.lockProbed(orgId, deviceId, held, provider))) return false;
+    await this.reports.clearCloud(deviceId, provider);
+    return true;
+  }
+
+  /** Takes the device writer lock; true while the row still holds exactly the probed instance. */
+  private async lockProbed(
+    orgId: string,
+    deviceId: string,
+    held: ProbedCloudInstance,
+    provider: string,
+  ): Promise<boolean> {
     await this.ceilings.lock({ orgId, deviceId }, "device");
     const row = await this.db
       .selectFrom("device_instances")
-      .select(["handle", "created_at", "provider"])
+      .select(["handle", "created_at", "provider", "instance_limits"])
       .where("device_id", "=", deviceId)
       .where("org_id", "=", orgId)
       .forUpdate()
       .executeTakeFirst();
-    if (
-      !row?.handle ||
-      row.provider !== cloud.provider ||
-      row.created_at.getTime() !== held.createdAt ||
-      canonicalJson(row.handle) !== canonicalJson(held.handle)
-    )
-      return false;
-    await this.reports.recordCloud(deviceId, cloud.provider, cloud.version, cloud.report);
-    return true;
+    return (
+      !!row?.handle &&
+      row.provider === provider &&
+      row.created_at.getTime() === held.createdAt &&
+      canonicalJson(row.handle) === canonicalJson(held.handle) &&
+      canonicalJson(row.instance_limits ?? null) === canonicalJson(held.limits ?? null)
+    );
   }
 
   /**

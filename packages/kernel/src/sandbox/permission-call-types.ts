@@ -1,5 +1,6 @@
 import type { PermissionProfile } from "@capybara-hq/plugin-sdk";
 import type { EffectiveDevicePolicy } from "./modes.js";
+import type { AppliedOuterNetwork } from "./permission-context-types.js";
 
 export type PermissionCallRef = { runId: string; callId: string };
 export type PermissionExpansion = Readonly<{
@@ -55,6 +56,12 @@ export type PermissionReviewSnapshot = Readonly<
      * its scope for the same state. Null or absent when admission may proceed.
      */
     admissionRefusal?: string | null;
+    /**
+     * The applied outer boundary of the device's installed environment (B-15): restricted hosts
+     * outside a cloud allowlist are cut from the base, accepted additions and new proposals alike.
+     * Null or absent when not proved.
+     */
+    outerNetwork?: AppliedOuterNetwork | null;
     policy: EffectiveDevicePolicy;
   }
 >;
