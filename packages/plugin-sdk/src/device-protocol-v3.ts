@@ -31,7 +31,8 @@ export type DeviceOperationV3 =
   | "backgroundTail"
   | "backgroundReadOutput"
   | "backgroundStop"
-  | "revokeOperation";
+  | "revokeOperation"
+  | "bindInstance";
 export interface DeviceOwnerCeilingV3 {
   readonly version: 2;
   readonly sequence: number;
@@ -47,12 +48,32 @@ export interface DeviceHelloV3 extends DeviceHello {
   instanceGeneration: string | null;
   transport: { maxFrameBytes: number };
   /** Absent until the program can attest actual installed runtime/helper/environment bytes. */
-  runtimeIdentity?: {
-    runtimeHash: string;
-    helperHash: string;
-    imageFingerprint: string;
-    instanceGeneration: string;
-  };
+  runtimeIdentity?: DeviceRuntimeIdentityV3;
+}
+/** A verified installed runtime/helper/environment identity bound to one instance generation. */
+export interface DeviceRuntimeIdentityV3 {
+  runtimeHash: string;
+  helperHash: string;
+  imageFingerprint: string;
+  instanceGeneration: string;
+}
+/**
+ * Private lifecycle request (permission runtime cutover B4): binds the kernel's committed instance
+ * generation to the device after commit. It carries no path, policy or manifest.
+ */
+export interface BindInstanceRequestV3 {
+  instanceId: string;
+  instanceGeneration: string;
+  bindingId: string;
+  expectedPreviousGeneration: string | null;
+}
+export interface BindInstanceResultV3 {
+  instanceId: string;
+  instanceGeneration: string;
+  bindingId: string;
+  runtimeIdentity: DeviceRuntimeIdentityV3;
+  permissionSupport: SandboxPermissionSupport;
+  ownerCeiling: DeviceOwnerCeilingV3;
 }
 export interface KernelReadyV3 {
   type: "ready";
@@ -159,6 +180,34 @@ function owner(value: unknown): DeviceOwnerCeilingV3 {
     throw new DeviceProtocolError("Invalid owner ceiling");
   return o as unknown as DeviceOwnerCeilingV3;
 }
+const GENERATION = /^[0-9]{1,16}$/;
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+function generation(value: unknown): string {
+  if (typeof value !== "string" || !GENERATION.test(value))
+    throw new DeviceProtocolError("Expected an instance generation");
+  return value;
+}
+function bindRequest(a: Record<string, unknown>): BindInstanceRequestV3 {
+  string(a.instanceId);
+  generation(a.instanceGeneration);
+  if (typeof a.bindingId !== "string" || !UUID.test(a.bindingId))
+    throw new DeviceProtocolError("Expected a binding id");
+  if (a.expectedPreviousGeneration !== null) {
+    generation(a.expectedPreviousGeneration);
+    if (BigInt(a.expectedPreviousGeneration as string) >= BigInt(a.instanceGeneration as string))
+      throw new DeviceProtocolError("Previous generation must precede the bound generation");
+  }
+  return a as unknown as BindInstanceRequestV3;
+}
+function identity(value: unknown): DeviceRuntimeIdentityV3 {
+  const o = object(value);
+  keys(o, ["runtimeHash", "helperHash", "imageFingerprint", "instanceGeneration"]);
+  for (const key of ["runtimeHash", "helperHash", "imageFingerprint"])
+    if (typeof o[key] !== "string" || !/^[a-f0-9]{64}$/.test(o[key] as string))
+      throw new DeviceProtocolError("Incomplete runtime identity");
+  string(o.instanceGeneration);
+  return o as unknown as DeviceRuntimeIdentityV3;
+}
 const natives = ["exec", "readFile", "writeFile", "stat", "list", "scan"];
 const legacy = ["create", "stop", "policy", "policyStatus"];
 function request(o: Record<string, unknown>): KernelRequestV3 {
@@ -172,7 +221,10 @@ function request(o: Record<string, unknown>): KernelRequestV3 {
     if (parsed.type !== "req") throw new DeviceProtocolError("Expected request");
     return freeze({ ...parsed, op: op as DeviceOperationV3, args: object(parsed.args) });
   }
-  if (op === "revokeOperation") {
+  if (op === "bindInstance") {
+    keys(a, ["instanceId", "instanceGeneration", "bindingId", "expectedPreviousGeneration"]);
+    bindRequest(a);
+  } else if (op === "revokeOperation") {
     keys(a, ["ref"]);
     a.ref = parseSandboxOperationRef(a.ref);
   } else if (
@@ -300,15 +352,9 @@ export function parseDeviceFrameV3(
     if (base.type !== "hello") throw new DeviceProtocolError("Expected hello");
     let runtimeIdentity: DeviceHelloV3["runtimeIdentity"];
     if (o.runtimeIdentity !== undefined) {
-      const identity = object(o.runtimeIdentity);
-      keys(identity, ["runtimeHash", "helperHash", "imageFingerprint", "instanceGeneration"]);
-      for (const key of ["runtimeHash", "helperHash", "imageFingerprint"]) {
-        if (typeof identity[key] !== "string" || !/^[a-f0-9]{64}$/.test(identity[key] as string))
-          throw new DeviceProtocolError("Incomplete runtime identity");
-      }
-      if (string(identity.instanceGeneration) !== string(o.instanceGeneration))
+      runtimeIdentity = identity(o.runtimeIdentity);
+      if (runtimeIdentity.instanceGeneration !== string(o.instanceGeneration))
         throw new DeviceProtocolError("Runtime identity generation mismatch");
-      runtimeIdentity = identity as unknown as NonNullable<DeviceHelloV3["runtimeIdentity"]>;
     }
     return freeze({
       ...base,
@@ -349,10 +395,39 @@ export function parseDeviceFrameV3(
 export function parseOperationResultV3(
   op: DeviceOperationV3,
   result: unknown,
-  request?: BackgroundReadOutputRequestV3,
+  request?: BackgroundReadOutputRequestV3 | BindInstanceRequestV3,
 ): unknown {
+  if (op === "bindInstance") {
+    if (!request || !("bindingId" in request))
+      throw new DeviceProtocolError("Binding validation requires the exact request");
+    const o = object(result);
+    keys(o, [
+      "instanceId",
+      "instanceGeneration",
+      "bindingId",
+      "runtimeIdentity",
+      "permissionSupport",
+      "ownerCeiling",
+    ]);
+    const runtimeIdentity = identity(o.runtimeIdentity);
+    if (
+      o.instanceId !== request.instanceId ||
+      o.instanceGeneration !== request.instanceGeneration ||
+      o.bindingId !== request.bindingId ||
+      runtimeIdentity.instanceGeneration !== request.instanceGeneration
+    )
+      throw new DeviceProtocolError("Binding answer belongs to another instance generation");
+    return freeze({
+      instanceId: request.instanceId,
+      instanceGeneration: request.instanceGeneration,
+      bindingId: request.bindingId,
+      runtimeIdentity,
+      permissionSupport: support(o.permissionSupport),
+      ownerCeiling: owner(o.ownerCeiling),
+    } satisfies BindInstanceResultV3);
+  }
   if (op === "backgroundReadOutput") {
-    if (!request)
+    if (!request || !("offset" in request))
       throw new DeviceProtocolError("Output validation requires the exact request bounds");
     const offset = integer(request.offset),
       maxBytes = integer(request.maxBytes, 0, 65536);

@@ -1621,6 +1621,30 @@ export interface KernelDatabase {
     report: Json<import("@capybara-hq/plugin-sdk").SandboxPermissionSupport>;
     observed_at: Ts;
   };
+  /** Migration 0146: per-device generation high-water mark; outlives instance rows. */
+  device_generation_high_water: {
+    device_id: string;
+    /** bigint: read as a decimal string. */
+    high_water_ms: ColumnType<string, string | number, string | number>;
+    updated_at: Ts;
+  };
+  /** Migration 0146: post-commit binding of a local instance generation. */
+  device_instance_bindings: {
+    device_id: string;
+    instance_generation: string;
+    binding_id: string;
+    provider: string;
+    previous_generation: string | null;
+    status: "awaiting-device" | "installed";
+    machine_id: string | null;
+    runtime_identity: ColumnType<
+      import("../sandbox/permission-runtime-reports.js").PermissionRuntimeIdentity | null,
+      string | null | undefined,
+      string | null
+    >;
+    created_at: Ts;
+    installed_at: TsNullable;
+  };
   sandbox_operation_intents: SandboxOperationIntentsTable;
   sandbox_operation_payload_chunks: {
     operation_id: string;

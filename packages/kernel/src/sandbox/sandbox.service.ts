@@ -2373,7 +2373,7 @@ export class SandboxService {
             status: "running",
             handle: JSON.stringify(handle),
             had_instance: true,
-            created_at: sql<Date>`now()`,
+            // created_at is the generation commitHandle allocates (never a reused millisecond)
             running_since: sql<Date>`now()`,
             last_used_at: sql<Date>`now()`,
             ...(!atFileSystem && { instance_limits: record }),

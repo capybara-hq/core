@@ -10,7 +10,10 @@ import {
   type PermissionAvailability,
   unprobedPermissionAvailability,
 } from "./permission-availability.js";
+import { LOCAL_PROVIDER } from "./providers.js";
 
+export const sameRuntimeIdentity = (a: PermissionRuntimeIdentity, b: PermissionRuntimeIdentity) =>
+  permissionScopeHash(a) === permissionScopeHash(b);
 const permissionScopeHash = (identity: PermissionRuntimeIdentity) =>
   createHash("sha256")
     .update(
@@ -65,6 +68,22 @@ export async function readRuntimeReport(
     .executeTakeFirst();
   if (!instance || instance.provider !== provider || !instance.permission_runtime_identity)
     return unprobedPermissionAvailability();
+  // A local instance attests only through its installed post-commit binding (B4): an unbound or
+  // still awaiting generation, or a report differing from the bound identity, is unprobed.
+  if (provider === LOCAL_PROVIDER) {
+    const binding = await db
+      .selectFrom("device_instance_bindings")
+      .select(["status", "runtime_identity"])
+      .where("device_id", "=", deviceId)
+      .where("instance_generation", "=", String(instance.created_at.getTime()))
+      .executeTakeFirst();
+    if (
+      binding?.status !== "installed" ||
+      !binding.runtime_identity ||
+      !sameRuntimeIdentity(binding.runtime_identity, instance.permission_runtime_identity)
+    )
+      return unprobedPermissionAvailability();
+  }
   const row = await db
     .selectFrom("device_permission_reports")
     .selectAll()

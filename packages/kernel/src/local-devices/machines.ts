@@ -20,7 +20,11 @@ import { KERNEL_BUS, KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
 import { MAINTENANCE_QUEUE_NAME } from "../runtime/maintenance-queue.js";
 import { PermissionCeilingWrites } from "../sandbox/permission-ceiling-writes.js";
-import { PermissionRuntimeReports } from "../sandbox/permission-runtime-reports.js";
+import {
+  type PermissionRuntimeIdentity,
+  PermissionRuntimeReports,
+  sameRuntimeIdentity,
+} from "../sandbox/permission-runtime-reports.js";
 import { LOCAL_PROVIDER } from "../sandbox/providers.js";
 import { deviceNotFound } from "../sandbox/sandbox.service.js";
 import { deviceRevokedTopic } from "./keys.js";
@@ -80,6 +84,17 @@ export interface ActiveMachine {
  * its connection (fire-and-forget, ruling R14) and `device.revoked.<deviceId>` published with
  * `{ machineId }`, so the holder closes that machine's connection.
  */
+/** Roots in a fixed key order (null when absent), whatever order jsonb stored them in. */
+const canonicalRoots = (roots: unknown): string => {
+  if (!roots || typeof roots !== "object") return "null";
+  const r = roots as Record<string, unknown>;
+  return JSON.stringify(
+    Object.keys(r)
+      .sort()
+      .map((k) => [k, r[k]]),
+  );
+};
+
 @Injectable()
 export class MachinesService {
   constructor(
@@ -281,18 +296,17 @@ export class MachinesService {
       }
     }
     const policy = await this.reportedPolicy(machineId, self, hello.policy, rawPolicy);
-    if (
-      JSON.stringify(self.roots) !== JSON.stringify(hello.roots) ||
-      JSON.stringify(localPolicyOf(self.local_policy)) !== JSON.stringify(policy)
-    )
+    // jsonb returns keys in its own order: compare roots canonically, or every reconnect would
+    // look like a changed reach and reset Full consent (B4 consent stability)
+    const rootsChanged = canonicalRoots(self.roots) !== canonicalRoots(hello.roots);
+    if (rootsChanged || JSON.stringify(localPolicyOf(self.local_policy)) !== JSON.stringify(policy))
       await this.ceilings.publishLocked(
         { orgId: self.org_id, deviceId: self.device_id },
         "device",
         (scope, row) =>
-          JSON.stringify(self.roots) !== JSON.stringify(hello.roots) ||
+          rootsChanged ||
           ownerPolicyRevokes(localPolicyOf(policy), scope, row.method, row.granted_hosts),
-        localPolicyOf(self.local_policy)?.mode !== localPolicyOf(policy)?.mode ||
-          JSON.stringify(self.roots) !== JSON.stringify(hello.roots),
+        localPolicyOf(self.local_policy)?.mode !== localPolicyOf(policy)?.mode || rootsChanged,
       );
     await this.db
       .updateTable("device_machines")
@@ -383,14 +397,59 @@ export class MachinesService {
       .where("revoked_at", "is", null)
       .executeTakeFirst();
     if (!machine) return;
-    await this.ceilings.lock({ orgId: machine.org_id, deviceId: machine.device_id }, "device");
+    const subject = { orgId: machine.org_id, deviceId: machine.device_id };
+    await this.ceilings.lock(subject, "device");
     await this.reports.record(
       machine.device_id,
       LOCAL_PROVIDER,
       parsed.programVersion,
-      parsed.runtimeIdentity,
+      await this.boundIdentityLocked(subject, parsed),
       parsed.permissionSupport,
     );
+  }
+
+  /**
+   * The runtime identity a v3 hello may attest (B4): only a bound hello re-reporting exactly the
+   * identity of the current instance generation's installed binding. An unbound hello, another
+   * generation or a binding still awaiting the device attests nothing (unprobed; it never finishes
+   * an installation, which only the bindInstance answer does). A changed identity under the same
+   * binding (helper, interpreter or environment bytes) invalidates the report and advances the
+   * device's admission epoch; a changed environment fingerprint also resets Full consent.
+   */
+  private async boundIdentityLocked(
+    subject: { orgId: string; deviceId: string },
+    hello: DeviceHelloV3,
+  ): Promise<PermissionRuntimeIdentity | undefined> {
+    const reported = hello.runtimeIdentity;
+    if (hello.instanceGeneration === null || !reported) return undefined;
+    const instance = await this.db
+      .selectFrom("device_instances")
+      .select(["provider", "created_at", "permission_runtime_identity"])
+      .where("device_id", "=", subject.deviceId)
+      .executeTakeFirst();
+    if (
+      !instance ||
+      instance.provider !== LOCAL_PROVIDER ||
+      String(instance.created_at.getTime()) !== reported.instanceGeneration
+    )
+      return undefined;
+    const binding = await this.db
+      .selectFrom("device_instance_bindings")
+      .select(["status", "runtime_identity"])
+      .where("device_id", "=", subject.deviceId)
+      .where("instance_generation", "=", reported.instanceGeneration)
+      .executeTakeFirst();
+    if (binding?.status !== "installed" || !binding.runtime_identity) return undefined;
+    if (sameRuntimeIdentity(binding.runtime_identity, reported)) return reported;
+    const previous = instance.permission_runtime_identity;
+    if (previous)
+      await this.ceilings.publishLocked(
+        subject,
+        "device",
+        true,
+        previous.imageFingerprint !== reported.imageFingerprint,
+      );
+    return undefined;
   }
 
   /**
