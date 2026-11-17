@@ -7,6 +7,7 @@ import {
 } from "@capybara-hq/plugin-sdk";
 import type WebSocket from "ws";
 import type { MacOperationBackend } from "./exec/mac-operation-backend.js";
+import { DrainPendingError } from "./exec/operation-supervisor.js";
 import { serveOperationV3 } from "./server-ops.js";
 import type { Credential } from "./state.js";
 
@@ -94,7 +95,9 @@ export async function drainStagedSession(
     if (signal.aborted) break;
     try {
       await backend.lifecycle.settle(signal);
-    } catch {
+    } catch (error) {
+      // Only the drain timeout is "still pending"; any other failure is a real error.
+      if (!(error instanceof DrainPendingError)) throw error;
       break; // aborted: reported below with what is still owned
     }
     if (idle()) return { drained: true };
