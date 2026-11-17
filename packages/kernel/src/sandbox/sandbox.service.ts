@@ -626,7 +626,8 @@ export class SandboxService {
     /** Background tasks lost while their process may live on (killed after a resume). */
     @Inject(BackgroundTaskStore)
     private readonly background: Pick<BackgroundTaskStore, "pendingKills" | "clearKill">,
-    @Inject(PermissionFacts) private readonly facts: Pick<PermissionFacts, "devicePolicy">,
+    @Inject(PermissionFacts)
+    private readonly facts: Pick<PermissionFacts, "devicePolicy" | "assertCloudReconciled">,
     @Inject(SandboxOperationIntents) private readonly operationIntents: SandboxOperationIntents,
     @Inject(SandboxOperationAuthority) private readonly authority: SandboxOperationAuthority,
     @Inject(PermissionInstanceWrites) private readonly instanceWrites: PermissionInstanceWrites,
@@ -911,6 +912,20 @@ export class SandboxService {
     fn: (p: TaggedProvider, h: SandboxHandle, signal: AbortSignal) => Promise<T>,
     signal: AbortSignal = new AbortController().signal,
   ): Promise<IfRunningResult<T>> {
+    return this.ifRunningAs(deviceId, instance, fn, signal, false);
+  }
+
+  /**
+   * {@link ifRunning}; `use` (staged owner browse) also refuses a device carrying the B1
+   * reconcile marker under the shared lease, before any provider call (B-11).
+   */
+  private async ifRunningAs<T>(
+    deviceId: string,
+    instance: { createdAt: Date; exactRef?: boolean },
+    fn: (p: TaggedProvider, h: SandboxHandle, signal: AbortSignal) => Promise<T>,
+    signal: AbortSignal,
+    use: boolean,
+  ): Promise<IfRunningResult<T>> {
     const p = await this.require(deviceId);
     const env = deviceId;
     const deadline = Date.now() + this.config.get().sandbox.lockWaitSeconds * 1000;
@@ -931,6 +946,9 @@ export class SandboxService {
       // admission there; only exact-ref managed drains go on (I1)
       if (!instance.exactRef && (await this.retirement.hasUnresolved(env)))
         throw retirementPending();
+      // staged owner browse never reaches an instance whose binding is not installed (B-8): the
+      // device admits nothing there, and only a use's exclusive holder binds it
+      if (use && !(await this.bound(p, env))) return { kind: "not_running", status: row.status };
       // the instance this check saw: its handle plus `created_at` (never `generation`, which
       // every lease bumps)
       const want: Instance = { handle: row.handle, createdAt: row.created_at.getTime() };
@@ -944,6 +962,7 @@ export class SandboxService {
             this.usable(r, p, null) && isInstance(r, want),
           signal,
           !instance.exactRef,
+          use ? "reconciled" : "none",
         );
         if (e) {
           try {
@@ -1085,7 +1104,7 @@ export class SandboxService {
         "Start the device before using staged owner browsing",
       );
     const entry = await this.require(ctx.deviceId, ctx.orgId);
-    const result = await this.ifRunning(
+    const result = await this.ifRunningAs(
       ctx.deviceId,
       { createdAt: row.created_at },
       async (provider, h, sig) => {
@@ -1142,6 +1161,7 @@ export class SandboxService {
         );
       },
       signal,
+      true,
     );
     if (result.kind !== "ran")
       throw new SandboxPermissionUnsupportedError("The device instance is not running");
@@ -1673,8 +1693,13 @@ export class SandboxService {
         const ready = (r: Row | undefined): r is Row & { handle: SandboxHandle } =>
           this.usable(r, p, gone) && !this.mustApply(r, p, want);
         // a device with an unresolved retirement obligation is only entered through the
-        // exclusive lease, whose gate retires the old incarnation or refuses (8.5)
-        if (!(await this.retirement.hasUnresolved(env)) && ready(row)) {
+        // exclusive lease, whose gate retires the old incarnation or refuses (8.5); on the
+        // staged path, so is an instance whose committed binding is not installed yet (B-8)
+        if (
+          !(await this.retirement.hasUnresolved(env)) &&
+          ready(row) &&
+          (await this.bound(p, env))
+        ) {
           const lease = await this.leases.tryShared(env, this.cap, token);
           if (lease) {
             if (intent) await this.clearIntent(env, token);
@@ -1690,7 +1715,7 @@ export class SandboxService {
               }
             }
             // an obligation recorded while the shared lease was taken: null, back to the gate
-            const e = await this.asShared(ctx, p, lease, ready, signal, true);
+            const e = await this.asShared(ctx, p, lease, ready, signal, true, "use");
             if (e) return e;
           }
         } else {
@@ -1705,6 +1730,11 @@ export class SandboxService {
       if (intent) await this.clearIntent(env, token);
       throw err;
     }
+  }
+
+  /** No binder (protocol 2), or the current generation's binding is installed (B-8). */
+  private async bound(p: SandboxProviderEntry, env: string): Promise<boolean> {
+    return !p.binder || (await p.binder.status(env)) === "installed";
   }
 
   private async clearIntent(env: string, token: string): Promise<void> {
@@ -1764,11 +1794,24 @@ export class SandboxService {
      * lease and before anything is killed or bumped; false only for exact-ref managed drains.
      */
     gated: boolean,
+    /**
+     * Checked under the lease (which the B1 snapshot writer's exclusive lease excludes) before
+     * anything is killed or bumped: `reconciled` and `use` refuse a device carrying the
+     * reconcile marker (B-11); `use` (entering a holder) also returns null on the staged path
+     * while the instance's binding is not installed, so the caller binds it exclusively (B-8).
+     * `none` for background polls, stops and drains.
+     */
+    check: "use" | "reconciled" | "none" = "none",
   ): Promise<Entered | null> {
     const env = ctx.deviceId;
     try {
       const row = await this.readRow(ctx);
       if (!accept(row) || (gated && (await this.retirement.hasUnresolved(env)))) {
+        await lease.release();
+        return null;
+      }
+      if (check !== "none") await this.facts.assertCloudReconciled(ctx.orgId, env);
+      if (check === "use" && !(await this.bound(p, env))) {
         await lease.release();
         return null;
       }
@@ -1815,6 +1858,9 @@ export class SandboxService {
     const env = ctx.deviceId;
     const sig = AbortSignal.any([signal, lease.signal]);
     try {
+      // under the lease the B1 snapshot writer needs: a device carrying the reconcile marker gets
+      // no create, resume, rebuild, limits change, retirement destroy or kill (B-11)
+      await this.facts.assertCloudReconciled(ctx.orgId, env);
       const s = await this.ensure(ctx, p, lease, sig, gone);
       const dead = await this.claim(env);
       if (s.resumed) await this.killLeftovers(env, s.handle, p, sig, dead);
@@ -1822,6 +1868,13 @@ export class SandboxService {
       if (s.resumed || s.info.fresh) {
         await this.killPendingTasks(env, s.handle, s.createdAt, p, lease.token, ctx.actor, sig);
       }
+      // staged path (B-8): create → commit → legacy gate (ensure) → cleanup → bind → installed →
+      // downgrade. The cleanup a resume or create owes runs first: a retry after a failed bind
+      // finds the instance running and would not owe it again. The binder sends the committed
+      // binding id again on every retry, refuses while a legacy obligation is open and runs
+      // outside any transaction; a failure releases the lease.
+      const binder = p.binder;
+      if (binder) await runOutsideTransaction(() => binder.bind(env, sig));
       const shared = await lease.downgrade();
       await this.register(env, shared.token);
       return {
@@ -2666,6 +2719,21 @@ export class SandboxService {
     const createdAt = row.created_at.getTime();
     const fsResets = row.fs_resets;
     if (handle && isInstance(row, gone) && row.status === "running") {
+      const created = await this.create(ctx, p, held, row, fence, signal, want);
+      return { ...created, fsResets, info: { fresh: true, restarted: true }, fence };
+    }
+    // the staged path's activation (B-8): an instance committed before the binder existed has no
+    // binding for its generation and never can get one; past the retirement gate above, a new
+    // generation is created (and committed with its binding) in its place
+    if (
+      handle &&
+      p.binder &&
+      (row.status === "running" || row.status === "suspended") &&
+      (await p.binder.status(id)) === null
+    ) {
+      this.log.info("instance without a committed binding; creating a bound generation", {
+        deviceId: id,
+      });
       const created = await this.create(ctx, p, held, row, fence, signal, want);
       return { ...created, fsResets, info: { fresh: true, restarted: true }, fence };
     }
