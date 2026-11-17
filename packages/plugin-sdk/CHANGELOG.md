@@ -1,5 +1,14 @@
 # @capybara-hq/plugin-sdk
 
+## 0.1.0-rc.28
+
+### Patch Changes
+
+- 7c91383: The restricted Linux launcher documents a known limitation: `/proc` stays readable, so a restricted
+  command can read the cmdline of a concurrent Full command of the same uid; Landlock cannot narrow
+  `/proc` to the command's own tree without breaking ordinary tools. Comment only; the launcher's
+  digest changes.
+
 ## 0.1.0-rc.27
 
 ### Minor Changes
