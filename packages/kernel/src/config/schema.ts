@@ -1663,7 +1663,7 @@ export const KernelConfigSchema = z.object({
             .enum(["none", "allowlist"], {
               error: (iss) =>
                 iss.input === "open"
-                  ? 'sandbox.limits.egress does not take "open": the open public network is set by devices.autoMode and an organization\'s cloudNetwork; use "allowlist" or "none"'
+                  ? 'sandbox.limits.egress does not take "open": the open public network is set by devices.fullAccess and an organization\'s cloudNetwork; use "allowlist" or "none"'
                   : undefined,
             })
             .default("allowlist")
@@ -1695,7 +1695,7 @@ export const KernelConfigSchema = z.object({
             .meta(
               meta({
                 description:
-                  "Whether organizations may go beyond allowHosts in sandbox mode: extend (the default: an organization may use the open cloud network and add hosts, and its admins approve network requests) or within (allowHosts is the ceiling: an organization's cloud network in sandbox mode is the allowlist, and it may only keep or drop hosts the list covers; only a super admin adds others). Auto mode is not limited by it: devices.autoMode governs auto mode's open network, so set devices.autoMode off as well for a hard ceiling",
+                  "Whether organizations may go beyond allowHosts in sandbox mode: extend (the default: an organization may use the open cloud network and add hosts, and its admins approve network requests) or within (allowHosts is the ceiling: an organization's cloud network in sandbox mode is the allowlist, and it may only keep or drop hosts the list covers; only a super admin adds others). Auto mode is not limited by it: devices.fullAccess governs Full permission's open network, so set devices.fullAccess off as well for a hard ceiling",
               }),
             ),
         })
@@ -1705,21 +1705,22 @@ export const KernelConfigSchema = z.object({
   devices: z
     .object({
       /**
-       * The platform's auto-mode switch (auto mode spec §4.3): whether a device may run in auto
-       * mode; when off, a cloud device keeps its org's cloudNetwork (open by default). Also a deployment setting the super admin changes
-       * in the admin console; the startup config wins over it, so this field is optional with no
-       * schema default (the default `allowed` is applied by `readDevicesAutoMode`: a schema default
-       * would be indistinguishable from a value the config source set, and the stored choice may
-       * only apply when the source is silent).
+       * The platform's Full permission switch (permission runtime cutover B1): whether a device's
+       * owner ceiling may allow Full permission. Also a deployment setting the super admin changes
+       * in the admin console (`devicesFullAccess`); the startup config wins over it, so this field
+       * is optional with no schema default (the default `allowed` is applied by
+       * `readDevicesFullAccess`: a schema default would be indistinguishable from a value the config
+       * source set). The old key `devices.autoMode` (`CAPYBARA_DEVICES__AUTO_MODE`) is translated
+       * per source by `translateLegacyPermissionKeys` until it is removed.
        */
-      autoMode: z
+      fullAccess: z
         .enum(["allowed", "off"])
         .optional()
         .meta(
           meta({
             hot: true,
             description:
-              "Whether devices may run in auto mode (default allowed): auto mode is the default of a new local device and of a cloud device, whose network in auto mode is the open public network (private and internal addresses blocked). When off, devices run in sandbox mode: local devices on their allowlist, cloud devices on their organization's cloud network (cloudNetwork, open by default, or the allowlist the organization sets). An organization may turn it off and follow the platform; only capybara-device on the machine turns auto mode on for a local device. Set here, it is read-only in the admin console",
+              "Whether devices may run with Full permission (default allowed): a device whose owner allows Full may then run a conversation with Full permission; a cloud device on Full reaches the open public network (private and internal addresses blocked) unless sandbox.limits.egress is none. When off, devices run restricted: local devices on their allowlist, cloud devices on their organization's cloud network (cloudNetwork). An organization may turn it off and follow the platform. Set here, it is read-only in the admin console. Replaces devices.autoMode (CAPYBARA_DEVICES__AUTO_MODE), which is still read with the same values; capybara config migrate-permissions converts a config file",
           }),
         ),
       maxPersonal: z

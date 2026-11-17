@@ -91,19 +91,19 @@ it("publishes permission authority before exposing a hot ceiling and keeps old c
   const ready = new Promise<void>((resolve) => {
     entered = resolve;
   });
-  const applied = svc.apply(raw({ devices: { autoMode: "off" } }), async () => {
+  const applied = svc.apply(raw({ devices: { fullAccess: "off" } }), async () => {
     entered();
     await barrier;
   });
   await ready;
-  expect(svc.get().devices.autoMode).toBeUndefined();
+  expect(svc.get().devices.fullAccess).toBeUndefined();
   release();
   await applied;
-  expect(svc.get().devices.autoMode).toBe("off");
-  await svc.apply(raw({ devices: { autoMode: "allowed" } }), async () => {
+  expect(svc.get().devices.fullAccess).toBe("off");
+  await svc.apply(raw({ devices: { fullAccess: "allowed" } }), async () => {
     throw new Error("database unavailable");
   });
-  expect(svc.get().devices.autoMode).toBe("off");
+  expect(svc.get().devices.fullAccess).toBe("off");
 });
 it("observing restart-only network fields preserves the active effective configuration", async () => {
   const { svc } = make();
@@ -123,11 +123,11 @@ it("permission publication keeps a bounded nonsecret projection of winning input
     parsePermissionConfigProjection,
   } = await import("../../src/sandbox/permission-config-publication.js");
   const delegated = resolveConfig(raw({}), {});
-  expect(permissionConfigProjection(delegated).autoMode).toEqual({ kind: "deployment-setting" });
-  const winning = resolveConfig(raw({ devices: { autoMode: "off" } }), {
+  expect(permissionConfigProjection(delegated).fullAccess).toEqual({ kind: "deployment-setting" });
+  const winning = resolveConfig(raw({ devices: { fullAccess: "off" } }), {
     CAPYBARA_DEVICES__AUTO_MODE: "allowed",
   });
-  expect(permissionConfigProjection(winning).autoMode).toEqual({
+  expect(permissionConfigProjection(winning).fullAccess).toEqual({
     kind: "configured",
     value: "allowed",
   });

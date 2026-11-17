@@ -1471,7 +1471,7 @@ describe("exact revocation of running background authority (8.4 B3)", () => {
       .where("operation_id", "=", op2)
       .execute();
     await f.db.updateTable("runs").set({ status: "completed" }).where("id", "=", f.runId).execute();
-    await k.app.get(OrgSettingsService).update(f.orgId, { autoMode: "off" }, owner.id);
+    await k.app.get(OrgSettingsService).update(f.orgId, { fullAccess: "off" }, owner.id);
     const state = async (id: string) =>
       (
         await f.db

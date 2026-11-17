@@ -34,7 +34,7 @@ let rd: TestContainer;
 let k: TestKernel;
 let db: KernelDb;
 const log = createLogger("error", { write: () => {} });
-const config = (autoMode: "allowed" | "off" = "allowed", allowHosts = ["a.example"]) =>
+const config = (fullAccess: "allowed" | "off" = "allowed", allowHosts = ["a.example"]) =>
   KernelConfigSchema.parse({
     db: { url: pgc.url },
     redis: { url: rd.url },
@@ -42,7 +42,7 @@ const config = (autoMode: "allowed" | "off" = "allowed", allowHosts = ["a.exampl
     roles: ["api"],
     http: { port: 0 },
     marketplaces: { official: { enabled: false } },
-    devices: { autoMode },
+    devices: { fullAccess },
     sandbox: { limits: { egress: "allowlist", allowHosts } },
   });
 const publisher = (cfg = config()) =>
@@ -66,7 +66,7 @@ beforeAll(async () => {
 });
 beforeEach(async () => {
   await db.deleteFrom("permission_config_publication").execute();
-  await db.deleteFrom("deployment_settings").where("key", "=", "devicesAutoMode").execute();
+  await db.deleteFrom("deployment_settings").where("key", "=", "devicesFullAccess").execute();
 });
 afterAll(async () => {
   await k?.close();
@@ -316,11 +316,11 @@ it("source labels normalize while delegated identity resolves current DB semanti
   expect((await envReader.publication.initialize()).outcome).toBe("matching");
   expect((await f.view(envReader)).profile).toBe("full-access");
   const delegated = config();
-  delete delegated.devices.autoMode;
+  delete delegated.devices.fullAccess;
   expect(permissionConfigFingerprint(delegated)).not.toBe(permissionConfigFingerprint(config()));
   await db
     .insertInto("deployment_settings")
-    .values({ key: "devicesAutoMode", value: JSON.stringify({ mode: "allowed" }) })
+    .values({ key: "devicesFullAccess", value: JSON.stringify({ permission: "allowed" }) })
     .execute();
   const d = readers(delegated);
   await d.publication.initialize({
@@ -332,8 +332,8 @@ it("source labels normalize while delegated identity resolves current DB semanti
   // would miss the actual transition to off here.
   await db
     .updateTable("deployment_settings")
-    .set({ value: JSON.stringify({ mode: "off" }) })
-    .where("key", "=", "devicesAutoMode")
+    .set({ value: JSON.stringify({ permission: "off" }) })
+    .where("key", "=", "devicesFullAccess")
     .execute();
   const explicit = readers(config());
   await explicit.publication.initialize({

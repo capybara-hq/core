@@ -105,7 +105,7 @@ export interface DeviceModeView {
    * device has no choice, so it follows {@link allowedMode}.
    */
   mode: SandboxMode;
-  /** `auto` only when the platform's and the org's `autoMode` leave it allowed. */
+  /** `auto` only when the platform's and the org's `fullAccess` leave it allowed. */
   allowedMode: SandboxMode;
   /** Which layer allows auto mode (`org`: the org set it; `platform`: the org follows the platform); null when only sandbox mode is allowed. */
   allowedBy: "org" | "platform" | null;
@@ -1443,7 +1443,7 @@ export function deviceModeViewOf(
     allowedBy:
       policy.allowedMode === "sandbox"
         ? null
-        : settings.autoMode === "allowed"
+        : settings.fullAccess === "allowed"
           ? "org"
           : "platform",
     network,

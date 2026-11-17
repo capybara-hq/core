@@ -124,7 +124,7 @@ const service = (p: () => SandboxProvider = () => provider, lockTtlMs?: number) 
  */
 const setAutoMode = (mode: "allowed" | "off") =>
   sql`UPDATE capybara.orgs SET settings = ${JSON.stringify({
-    autoMode: mode,
+    fullAccess: mode,
     cloudNetwork: { mode: mode === "off" ? "allowlist" : "open" },
   })}::jsonb
     WHERE id = ${orgId}`.execute(raw);
@@ -341,7 +341,7 @@ describe("a changed mode on use", () => {
     await setAutoMode("off");
     const first = await use(s);
     await setOrgSettings({
-      autoMode: "off",
+      fullAccess: "off",
       cloudNetwork: { mode: "allowlist", allowHosts: ["example.com"] },
     });
     await sql`INSERT INTO capybara.deployment_settings (key, value)

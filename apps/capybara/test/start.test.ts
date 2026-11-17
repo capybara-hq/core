@@ -160,7 +160,7 @@ describe("activation forwarding", () => {
       ];
       expect(options.permissionConfigActivation).toEqual({ expectedActiveHash: hash });
       expect(config.roles).toEqual(["api"]);
-      expect(config.devices.autoMode).toBe("allowed");
+      expect(config.devices.fullAccess).toBe("allowed");
       expect(options.env?.CAPYBARA_ROLES).toBe('["api"]');
       expect(JSON.stringify(config)).not.toContain(hash);
       expect(JSON.stringify(options.env)).not.toContain(hash);

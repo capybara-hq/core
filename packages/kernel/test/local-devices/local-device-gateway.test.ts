@@ -276,7 +276,7 @@ describe("the hello's policy summary and the reported mode", () => {
     });
     await db
       .updateTable("orgs")
-      .set({ settings: JSON.stringify({ autoMode: "off" }) })
+      .set({ settings: JSON.stringify({ fullAccess: "off" }) })
       .where("id", "=", orgId)
       .execute();
     try {
