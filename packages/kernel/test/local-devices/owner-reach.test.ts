@@ -267,6 +267,25 @@ describe("the device view's recent changes", () => {
   });
 });
 
+describe("the device view's effective owner Full access", () => {
+  it("an old program without a report follows its reported mode, as admission does", async () => {
+    const f = await fixture();
+    const setOld = (features: string[], localPolicy: unknown) =>
+      f.db
+        .updateTable("device_machines")
+        .set({ owner_report: null, features, local_policy: JSON.stringify(localPolicy) })
+        .where("id", "=", f.machineId)
+        .execute();
+    // a pre-auto-mode program that runs unsandboxed: admission derives auto mode from it
+    await setOld([], { isolation: "none" });
+    expect(await f.view()).toMatchObject({ fullAccess: false, effectiveFullAccess: true });
+    await setOld([], { isolation: "sandbox" });
+    expect(await f.view()).toMatchObject({ effectiveFullAccess: false });
+    await setOld(["networkReport"], { mode: "auto", allowedDomains: [] });
+    expect(await f.view()).toMatchObject({ state: "legacy", effectiveFullAccess: true });
+  });
+});
+
 describe("reordered carriers (fix round 1)", () => {
   it("I2: a lower sequence from a policy frame, answer or bind is ignored, never blocks", async () => {
     const f = await fixture();

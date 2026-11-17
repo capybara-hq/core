@@ -370,7 +370,7 @@
       "project_not_found": "This device has no project with this name.",
       "projects_unsupported": "This device does not support projects.",
       "projects_unavailable": "The device could not be asked about this directory right now. Try again in a moment.",
-      "permission_reconcile_required": "This device's permission limits have not been confirmed yet. Reset the device's files on the devices page, then try again.",
+      "permission_reconcile_required": "This device's sandbox limits must be established again before it runs anything. Rebuild its files on its device page, then try again.",
       "permission_not_migrated": "This device's permissions have not been migrated yet, so its Full access ceiling can't be set now. Turning Full access off still works; try allowing it again once the migration has run. Rebuilding the files does not change this.",
       "owner_report_stale": "This computer sent an outdated permission report, so new work is paused. Run capybara-device login again on the computer.",
       "owner_ceiling_confirmation_required": "Giving this device Full access needs your confirmation. Confirm the change and try again.",
@@ -1867,7 +1867,7 @@
       },
       "reach": {
         "workspace": "Project reach limited to the workspace",
-        "os-user": "Project reach widened to the computer's user"
+        "os-user": "Project reach widened to the computer user's files"
       }
     },
     "machine": {
