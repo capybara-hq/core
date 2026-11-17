@@ -18,6 +18,8 @@ const PERIOD_MS = 60_000;
 export const RETIRE_DEVICES_PER_TICK = 10;
 /** Members of resolved obligations one tick settles. */
 const SETTLE_PER_TICK = 100;
+/** Obligations of gone devices resolved or abandoned per tick. */
+const ABANDON_PER_TICK = 100;
 /** The run lock outlives the slowest tick: a destroy per device. */
 const TICK_TTL_MS = 15 * 60_000;
 
@@ -92,9 +94,10 @@ export class RetireLegacyTasksJob {
       abandoned: 0,
     };
     result.added = (await this.retirement.scanUntilStable()).added;
-    // obligations of deleted devices: resolved by a recorded confirmed destroy, else abandoned
-    // (never evidence; no device can reuse them)
-    result.abandoned = (await this.retirement.abandonDeleted()).abandoned;
+    // obligations of gone devices (deleted, or their org soft-deleted): a cloud one waits while
+    // its destroy is owed (instance row kept), then resolves by a recorded confirmed destroy (an
+    // abandoned one too), else abandoned (never evidence; no device can reuse them)
+    result.abandoned = (await this.retirement.abandonDeleted(ABANDON_PER_TICK)).abandoned;
     for (const deviceId of await this.retirement.due(RETIRE_DEVICES_PER_TICK)) {
       if (signal?.aborted) return result;
       try {

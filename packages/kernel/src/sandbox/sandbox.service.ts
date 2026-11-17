@@ -2162,6 +2162,56 @@ export class SandboxService {
         .executeTakeFirst();
       return true;
     };
+    /**
+     * R2-I1: the row is not live (destroyed before 0148 without a record, or a create that left
+     * `creating` with no handle). With no `prev_handle`, the row's own cloud provider holds at
+     * most one instance of the device's name (sandbox@2 same-name replacement), so its destroy by
+     * that name confirms every incarnation there; it is recorded as the destruction of the row's
+     * incarnation. A provider not loaded or a failed destroy keeps the obligation open.
+     */
+    const destroyNamed = async (o: { id: string }, row: Row): Promise<boolean> => {
+      const provider = row.provider ?? "unknown";
+      const impl = isCloudProvider(provider) ? this.providers.forName(provider)?.impl : undefined;
+      if (!impl) {
+        await this.retirement.noteFailure(o.id, `provider ${provider} is not loaded`);
+        return false;
+      }
+      try {
+        await impl.destroyByName(
+          deviceResourceName(id),
+          AbortSignal.any([
+            opSignal(held),
+            AbortSignal.timeout(SWEEP_OP_TIMEOUT_MS),
+            ...(signal ? [signal] : []),
+          ]),
+        );
+      } catch (err) {
+        if (held.signal.aborted || signal?.aborted) throw err;
+        await this.retirement.noteFailure(o.id, err);
+        this.log.warn("cannot destroy by name an instance that may run legacy work", {
+          deviceId: id,
+          err,
+        });
+        return false;
+      }
+      if (!(await held.renew())) throw new SandboxLockLostError(id);
+      await this.retirement.recordDestruction(id, provider, String(row.created_at.getTime()));
+      if (fence && row.status === "creating")
+        await this.fenced(held, id, fence, {
+          status: "destroyed",
+          destroyed_at: sql<Date>`now()`,
+          running_since: null,
+          suspended_at: null,
+          sweep_failed_at: null,
+        });
+      this.log.info("instance that may run legacy work destroyed by name", { deviceId: id });
+      now = await this.db
+        .selectFrom("device_instances")
+        .selectAll()
+        .where("device_id", "=", id)
+        .executeTakeFirst();
+      return true;
+    };
     for (const o of open) {
       const gen = o.instanceGeneration;
       const local = isInternalProvider(o.provider);
@@ -2204,13 +2254,20 @@ export class SandboxService {
         // stopped being current through a kernel destroy, a provider `gone` or a kept
         // `prev_handle`; so once the device's current incarnation is destroyed with
         // confirmation, nothing earlier is kept (`prev_handle`) and the obligation was recorded
-        // under the freeze (no dispatch after it), no instance of the device can run legacy work
+        // under the freeze (no dispatch after it), no instance of the device can run legacy work.
+        // This rests on sandbox@2 same-name replacement: every rebuild on the same provider goes
+        // through `create`, which first removes the old `cap-device-<id>` instance (so a `gone`
+        // answer, E2B's token-failure `gone` included, and `applyLimits`' swallowed destroy
+        // failure leave nothing behind), and E2B's incarnations are one sandbox (destroying the
+        // current one ends the earlier processes). A provider or kernel path that rebuilds
+        // without same-name replacement breaks this barrier.
         const frozenAt = await this.retirement.frozenAt();
         const reason =
           frozenAt === null || o.createdAt < frozenAt
             ? "an unknown cloud incarnation recorded before the freeze"
-            : now === undefined
-              ? "an unknown cloud incarnation and no instance record to destroy"
+            : now === undefined || !now.had_instance
+              ? // a row (re)inserted by this acquisition knows nothing of the earlier instances
+                "an unknown cloud incarnation and no instance record to destroy"
               : now.prev_handle !== null
                 ? "an unknown cloud incarnation while an earlier provider's instance may still exist"
                 : null;
@@ -2235,6 +2292,13 @@ export class SandboxService {
             await this.retirement.resolveDestroyed(o.id);
             continue;
           }
+          // not live and nothing recorded (R2-I1): confirm by name with the row's provider
+          if (await destroyNamed(o, now)) await this.retirement.resolveDestroyed(o.id);
+          else {
+            pending = true;
+            failed = true;
+          }
+          continue;
         }
         await this.retirement.quarantine(
           o.id,

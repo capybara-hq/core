@@ -47,6 +47,7 @@ let tasks: BackgroundTaskStore;
 /** Lifecycle calls the providers saw, `<provider> <op> [<instance>]`. */
 let calls: string[];
 let destroyFails: boolean;
+let destroyByNameFails: boolean;
 
 const signal = () => AbortSignal.timeout(30_000);
 const DAY = 24 * 3600_000;
@@ -67,6 +68,11 @@ function spied(name: string, impl: SandboxProvider): SandboxProvider {
     calls.push(`${name} destroy ${h.id}`);
     if (destroyFails) throw new Error("provider refused the destroy");
     return impl.destroy(h, s);
+  };
+  w.destroyByName = async (n, s) => {
+    calls.push(`${name} destroy-by-name ${n}`);
+    if (destroyByNameFails) throw new Error("provider refused the destroy by name");
+    return impl.destroyByName(n, s);
   };
   w.killAll = (h, s) => {
     calls.push(`${name} killAll ${h.id}`);
@@ -130,6 +136,7 @@ beforeEach(async () => {
   root = await mkdtemp(join(tmpdir(), "cap-protocol-upgrade-"));
   calls = [];
   destroyFails = false;
+  destroyByNameFails = false;
   cloud = spied("cloud", createFakeSandbox(join(root, "cloud")));
   local = spied("local", createFakeSandbox(join(root, "local")));
   config = KernelConfigSchema.parse({
@@ -518,7 +525,7 @@ describe("cloud incarnations the kernel cannot name (R1-I1)", () => {
     // a historical reservation that may have dispatched somewhere: (unknown, unknown)
     await legacyRow(dev, { sid: null, status: "failed" });
     expect((await retirement.report()).cloudUnknown).toEqual([
-      { deviceId: dev, prevHandle: false, noInstance: false },
+      { deviceId: dev, prevHandle: false, noInstance: false, currentUnconfirmed: false },
     ]);
     await retirement.freeze("test");
     expect(await obligations(dev)).toMatchObject([
@@ -543,7 +550,7 @@ describe("cloud incarnations the kernel cannot name (R1-I1)", () => {
       prev_handle = handle WHERE device_id = ${dev}`.execute(raw);
     await legacyRow(dev, { sid: null, status: "failed" });
     expect((await retirement.report()).cloudUnknown).toEqual([
-      { deviceId: dev, prevHandle: true, noInstance: false },
+      { deviceId: dev, prevHandle: true, noInstance: false, currentUnconfirmed: false },
     ]);
     await retirement.freeze("test");
     calls = [];
@@ -577,7 +584,7 @@ describe("cloud incarnations the kernel cannot name (R1-I1)", () => {
     const dev = await seedDevice(raw, seed.orgId, seed.accountId);
     await legacyRow(dev, { sid: null, status: "failed" });
     expect((await retirement.report()).cloudUnknown).toEqual([
-      { deviceId: dev, prevHandle: false, noInstance: true },
+      { deviceId: dev, prevHandle: false, noInstance: true, currentUnconfirmed: false },
     ]);
     await retirement.freeze("test");
     expect(await s.retireLegacy(dev)).toBe("unavailable");
@@ -595,6 +602,64 @@ describe("cloud incarnations the kernel cannot name (R1-I1)", () => {
     destroyFails = true;
     await expect(use(s, dev)).rejects.toMatchObject(unavailable);
     expect(await obligations(dev)).toMatchObject([{ state: "open", resolution: null }]);
+  });
+});
+
+describe("cloud incarnations the kernel cannot name, current row not live (R2-I1)", () => {
+  /** The row as the pre-0148 inactivity sweep or a failed create left it: nothing recorded. */
+  const notLive = {
+    destroyed: (dev: string) =>
+      sql`UPDATE capybara.device_instances SET status = 'destroyed', destroyed_at = now(),
+        running_since = NULL, suspended_at = NULL WHERE device_id = ${dev}`.execute(raw),
+    "creating without a handle": (dev: string) =>
+      sql`UPDATE capybara.device_instances SET status = 'creating', handle = NULL,
+        running_since = NULL WHERE device_id = ${dev}`.execute(raw),
+  };
+
+  for (const [shape, leave] of Object.entries(notLive)) {
+    it(`${shape}: the provider's destroy by name confirms it, then a fresh instance is built`, async () => {
+      const s = service();
+      const dev = await seedDevice(raw, seed.orgId, seed.accountId);
+      await use(s, dev);
+      const g = String((await instance(dev)).created_at.getTime());
+      await leave(dev);
+      await legacyRow(dev, { sid: null, status: "failed" });
+      expect((await retirement.report()).cloudUnknown).toEqual([
+        { deviceId: dev, prevHandle: false, noInstance: false, currentUnconfirmed: true },
+      ]);
+      await retirement.freeze("test");
+      calls = [];
+      const fresh = await use(s, dev);
+      expect(calls).toEqual([
+        `cloud destroy-by-name cap-device-${dev}`,
+        `cloud create ${fresh.id}`,
+      ]);
+      expect(await obligations(dev)).toMatchObject([
+        { state: "resolved", resolution: "provider-destroyed" },
+      ]);
+      expect(
+        await db.selectFrom("device_instance_destructions").selectAll().execute(),
+      ).toMatchObject([{ device_id: dev, provider: "sandbox-fake", instance_generation: g }]);
+    });
+  }
+
+  it("a failed destroy by name keeps the obligation open and answers unavailable", async () => {
+    const s = service();
+    const dev = await seedDevice(raw, seed.orgId, seed.accountId);
+    await use(s, dev);
+    await notLive.destroyed(dev);
+    await legacyRow(dev, { sid: null, status: "failed" });
+    await retirement.freeze("test");
+    destroyByNameFails = true;
+    calls = [];
+    await expect(use(s, dev)).rejects.toMatchObject(unavailable);
+    expect(calls).toEqual([`cloud destroy-by-name cap-device-${dev}`]);
+    expect(await obligations(dev)).toMatchObject([{ state: "open", resolution: null }]);
+    expect(await db.selectFrom("device_instance_destructions").selectAll().execute()).toEqual([]);
+    // the provider is back: the next use confirms and builds fresh
+    destroyByNameFails = false;
+    await use(s, dev);
+    expect(await obligations(dev)).toMatchObject([{ state: "resolved" }]);
   });
 });
 
@@ -646,6 +711,88 @@ describe("obligations of deleted devices", () => {
       { state: "resolved", resolution: "provider-destroyed" },
     ]);
     expect(await retirement.report()).toMatchObject({ abandoned: 0, cleanRetirement: true });
+  });
+});
+
+describe("obligations of deleted devices whose destroy is still owed (R2-I2)", () => {
+  it("production order: deletion, a tick while the provider is down, the owed destroy, a tick -> resolved", async () => {
+    const s = service();
+    const dev = await seedDevice(raw, seed.orgId, seed.accountId);
+    await use(s, dev);
+    await legacyRow(dev, { createdAt: (await instance(dev)).created_at });
+    await retirement.freeze("test");
+    // the device is deleted first; its destroy goes through the outbox later
+    await sql`UPDATE capybara.devices SET deleted_at = now() WHERE id = ${dev}`.execute(raw);
+    destroyFails = true;
+    const first = await jobFor(s).runOnce();
+    expect(first.abandoned).toBe(0);
+    expect(await obligations(dev)).toMatchObject([{ state: "open" }]);
+    destroyFails = false;
+    await s.destroyDevice(dev);
+    const second = await jobFor(s).runOnce();
+    expect(second.abandoned).toBe(0);
+    expect(await obligations(dev)).toMatchObject([
+      { state: "resolved", resolution: "provider-destroyed" },
+    ]);
+    expect(await retirement.report()).toMatchObject({ abandoned: 0, cleanRetirement: true });
+  });
+
+  it("an already abandoned cloud obligation resolves once a matching destruction is recorded", async () => {
+    const s = service();
+    const dev = await seedDevice(raw, seed.orgId, seed.accountId);
+    await use(s, dev);
+    const g = String((await instance(dev)).created_at.getTime());
+    const task = await legacyRow(dev, {
+      status: "lost",
+      createdAt: (await instance(dev)).created_at,
+      killPending: true,
+    });
+    await retirement.freeze("test");
+    await sql`UPDATE capybara.devices SET deleted_at = now() WHERE id = ${dev}`.execute(raw);
+    await sql`UPDATE capybara.device_retirement_obligations SET state = 'abandoned',
+      abandoned_at = now() WHERE device_id = ${dev}`.execute(raw);
+    await retirement.recordDestruction(dev, "sandbox-fake", g);
+    await jobFor(s).runOnce();
+    expect(await obligations(dev)).toMatchObject([
+      { state: "resolved", resolution: "provider-destroyed", abandoned_at: null },
+    ]);
+    // provider evidence: the member settles like any resolved one
+    expect((await tasks.get(task))?.killPending).toBe(false);
+    expect(await retirement.report()).toMatchObject({ abandoned: 0, cleanRetirement: true });
+  });
+
+  it("a device of a soft-deleted org is abandoned like a deleted device (m5)", async () => {
+    const s = service();
+    const dev = await seedDevice(raw, seed.orgId, seed.accountId, "local");
+    await use(s, dev);
+    await legacyRow(dev, {
+      status: "lost",
+      createdAt: (await instance(dev)).created_at,
+      killPending: true,
+    });
+    await retirement.freeze("test");
+    await sql`UPDATE capybara.orgs SET deleted_at = now() WHERE id = ${seed.orgId}`.execute(raw);
+    expect((await jobFor(s).runOnce()).abandoned).toBe(1);
+    expect(await obligations(dev)).toMatchObject([{ state: "abandoned" }]);
+  });
+
+  it("abandons at most `limit` obligations per call (m4)", async () => {
+    const s = service();
+    const a = await seedDevice(raw, seed.orgId, seed.accountId, "local");
+    const b = await seedDevice(raw, seed.orgId, seed.accountId, "local");
+    for (const dev of [a, b]) {
+      await use(s, dev);
+      await legacyRow(dev, {
+        status: "lost",
+        createdAt: (await instance(dev)).created_at,
+        killPending: true,
+      });
+    }
+    await retirement.freeze("test");
+    await sql`UPDATE capybara.devices SET deleted_at = now()`.execute(raw);
+    expect(await retirement.abandonDeleted(1)).toMatchObject({ abandoned: 1 });
+    expect(await retirement.abandonDeleted(1)).toMatchObject({ abandoned: 1 });
+    expect(await retirement.abandonDeleted(1)).toMatchObject({ abandoned: 0 });
   });
 });
 

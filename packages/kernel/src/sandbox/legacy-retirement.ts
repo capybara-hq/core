@@ -106,12 +106,22 @@ export interface LegacyRetirementReport {
   }[];
   /**
    * The cloud pre-check (before the freeze, too): cloud devices with legacy rows whose incarnation
-   * or provider is unknown. After the freeze such an obligation resolves only once the device's
-   * current incarnation is destroyed with confirmation and it keeps no earlier provider's instance
-   * (`prevHandle`) and it has an instance record (`noInstance`); a device with either must be
-   * deleted and created again (`device.recreate_required`).
+   * or provider is unknown. It reads the task rows, so it lists what the freeze will turn into
+   * such obligations; it does not empty by itself. After the freeze such an obligation resolves
+   * only once the device's current incarnation is destroyed with confirmation, it keeps no earlier
+   * provider's instance (`prevHandle`) and it has an instance record that once had an instance
+   * (`noInstance`); a device with either must be deleted and created again
+   * (`device.recreate_required`).
+   * `currentUnconfirmed`: the current row is not live and no destruction of it is recorded (the
+   * inactivity sweep before 0148, or a failed create); the gate then destroys by the device's
+   * instance name with the row's provider, which must be loaded (`device.unavailable` until then).
    */
-  cloudUnknown: { deviceId: string; prevHandle: boolean; noInstance: boolean }[];
+  cloudUnknown: {
+    deviceId: string;
+    prevHandle: boolean;
+    noInstance: boolean;
+    currentUnconfirmed: boolean;
+  }[];
   /**
    * The cutover pre-check (before the freeze, too): local devices with legacy rows whose processes
    * may still exist and whose current machine has no recorded boot identity. Their obligations
@@ -244,22 +254,80 @@ export class LegacyRetirementStore {
   }
 
   /**
-   * The worker's sweep of obligations whose device is gone (its row missing or `deleted_at` set):
-   * a cloud one whose exact incarnation has a recorded confirmed destruction resolves
-   * `provider-destroyed`; every other one becomes `abandoned`. Device ids are never reused, so no
-   * device can acquire that incarnation again, but abandonment is no evidence that its processes
-   * ended (they may still run on that computer); its members stay unsettled. Returns the counts.
+   * The worker's sweep of obligations whose device is gone (its row missing, `deleted_at` set, or
+   * its org soft-deleted), at most `limit` per call:
+   * - a cloud one (any provider not kernel-internal) waits while the device's instance row exists:
+   *   its destroy is still owed (the destroy job or the destruction sweep deletes the row when it
+   *   is done) and records the destruction then;
+   * - one whose exact incarnation has a recorded confirmed destruction resolves
+   *   `provider-destroyed`, an already `abandoned` cloud one too (provider evidence, not a
+   *   reopen);
+   * - every other one becomes `abandoned`. Device ids are never reused, so no device can acquire
+   *   that incarnation again, but abandonment is no evidence that its processes ended (they may
+   *   still run on that computer); its members stay unsettled.
+   * Returns the counts.
    */
-  async abandonDeleted(): Promise<{ resolved: number; abandoned: number }> {
+  async abandonDeleted(limit: number): Promise<{ resolved: number; abandoned: number }> {
+    let resolved = 0,
+      abandoned = 0;
+    // abandoned cloud obligations that gained a matching recorded destruction
+    const evidenced = await this.db
+      .selectFrom("device_retirement_obligations as o")
+      .innerJoin("device_instance_destructions as x", (j) =>
+        j
+          .onRef("x.device_id", "=", "o.device_id")
+          .onRef("x.provider", "=", "o.provider")
+          .onRef("x.instance_generation", "=", "o.instance_generation"),
+      )
+      .select("o.id")
+      .where("o.state", "=", "abandoned")
+      .limit(limit)
+      .execute();
+    for (const r of evidenced) {
+      const u = await this.db
+        .updateTable("device_retirement_obligations")
+        .set({
+          state: "resolved",
+          resolution: "provider-destroyed",
+          resolved_at: sql<Date>`now()`,
+          abandoned_at: null,
+          last_error: null,
+        })
+        .where("id", "=", r.id)
+        .where("state", "=", "abandoned")
+        .executeTakeFirst();
+      resolved += Number(u.numUpdatedRows);
+    }
     const rows = await this.db
       .selectFrom("device_retirement_obligations as o")
       .leftJoin("devices as d", "d.id", "o.device_id")
+      .leftJoin("orgs as g", "g.id", "d.org_id")
       .select(["o.id", "o.device_id", "o.provider", "o.instance_generation"])
       .where("o.state", "in", ["open", "quarantined"])
-      .where((eb) => eb.or([eb("d.id", "is", null), eb("d.deleted_at", "is not", null)]))
+      .where((eb) =>
+        eb.or([
+          eb("d.id", "is", null),
+          eb("d.deleted_at", "is not", null),
+          eb("g.deleted_at", "is not", null),
+        ]),
+      )
+      // a cloud destroy still owed keeps its instance row (R2-I2)
+      .where((eb) =>
+        eb.or([
+          eb("o.provider", "like", "@%"),
+          eb.not(
+            eb.exists(
+              eb
+                .selectFrom("device_instances as i")
+                .select("i.device_id")
+                .whereRef("i.device_id", "=", "o.device_id"),
+            ),
+          ),
+        ]),
+      )
+      .orderBy("o.created_at")
+      .limit(limit)
       .execute();
-    let resolved = 0,
-      abandoned = 0;
     for (const r of rows) {
       if (await this.destructionRecorded(r.device_id, r.provider, r.instance_generation)) {
         await this.resolveDestroyed(r.id);
@@ -894,6 +962,9 @@ export class LegacyRetirementStore {
         "i.provider as instance_provider",
         "i.created_at as instance_created_at",
         "i.prev_handle",
+        "i.status as instance_status",
+        "i.handle as instance_handle",
+        "i.had_instance",
       ])
       .where("d.source", "=", "cloud")
       .where("d.deleted_at", "is", null)
@@ -908,14 +979,38 @@ export class LegacyRetirementStore {
       )
       .orderBy("t.device_id")
       .execute();
-    const cloudUnknown = new Map<string, { prevHandle: boolean; noInstance: boolean }>();
+    const cloudUnknown = new Map<
+      string,
+      { prevHandle: boolean; noInstance: boolean; currentUnconfirmed: boolean }
+    >();
     for (const r of cloudCandidates) {
       const key = legacyKey({ ...r, source: "cloud" });
-      if (key.generation === "unknown" || key.provider === "unknown")
-        cloudUnknown.set(r.device_id as string, {
-          prevHandle: r.prev_handle !== null,
-          noInstance: r.instance_created_at === null,
-        });
+      if (key.generation !== "unknown" && key.provider !== "unknown") continue;
+      if (cloudUnknown.has(r.device_id as string)) continue;
+      const live =
+        r.instance_handle !== null &&
+        (r.instance_status === "running" ||
+          r.instance_status === "suspended" ||
+          r.instance_status === "creating");
+      const createdAt = r.instance_created_at;
+      const noInstance = createdAt === null || r.had_instance !== true;
+      const currentUnconfirmed =
+        createdAt !== null &&
+        !noInstance &&
+        !live &&
+        !(
+          r.instance_provider !== null &&
+          (await this.destructionRecorded(
+            r.device_id as string,
+            r.instance_provider,
+            generationOf(createdAt),
+          ))
+        );
+      cloudUnknown.set(r.device_id as string, {
+        prevHandle: r.prev_handle !== null,
+        noInstance,
+        currentUnconfirmed,
+      });
     }
     const open = n("open"),
       quarantined = n("quarantined"),

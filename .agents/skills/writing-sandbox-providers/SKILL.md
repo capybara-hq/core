@@ -153,11 +153,22 @@ Every provider must follow these; the kernel's behaviour below assumes them. How
     and the confirmed destruction is recorded in `device_instance_destructions`. `retire()` and `destroyRow` record theirs too.
     A cloud incarnation the kernel cannot name (`unknown` provider or generation) resolves only once the device's current
     incarnation is destroyed with confirmation (the gate destroys a live one), the row keeps no `prev_handle`, and the
-    obligation was recorded after the freeze. Any other non-current cloud incarnation without a recorded destruction is
-    quarantined for good (`device.recreate_required`). A failed or impossible destroy stays retryable (`device.unavailable`).
-  - **Deleted devices.** The worker resolves an obligation of a missing or deleted device by a recorded confirmed destruction,
-    else moves it to `abandoned`. That is never evidence: its members stay unsettled. `report()` keeps it out of `retired` and
-    counts it in `abandoned` / `abandonedMembers`; `cleanRetirement` also requires none.
+    obligation was recorded after the freeze. When the current row is not live (destroyed without a record, or `creating` with
+    no handle) but once had an instance, the gate calls the row's cloud provider's `destroyByName` for the device's instance
+    name and records that as the destruction of the row's incarnation; a failure keeps the obligation open. Any other
+    non-current cloud incarnation without a recorded destruction is quarantined for good (`device.recreate_required`), even
+    with a known provider and generation (kept fail-closed). A failed or impossible destroy stays retryable
+    (`device.unavailable`).
+  - **Same-name replacement carries the barrier.** The `unknown` rule holds only because every rebuild on one provider goes
+    through `create`, which first removes the old `cap-device-<id>` instance: a provider `gone` answer (E2B's token-failure
+    `gone` included) or `applyLimits`' swallowed destroy failure leaves nothing behind, and E2B's incarnations are one sandbox.
+    A provider or kernel path that rebuilds without same-name replacement breaks the barrier.
+  - **Deleted devices.** A device is gone when its row is missing, `deleted_at` is set, or its org is soft-deleted. The worker
+    (bounded per tick) leaves a cloud obligation alone while the device's instance row exists (its destroy is still owed and
+    records the destruction), then resolves an obligation by a recorded confirmed destruction, else moves it to `abandoned`. An
+    abandoned cloud obligation that later gains a matching recorded destruction resolves too. Abandonment is never evidence:
+    its members stay unsettled. `report()` keeps it out of `retired` and counts it in `abandoned` / `abandonedMembers`;
+    `cleanRetirement` also requires none.
   - **Local machines.** A local obligation keeps the boot identity (`bootId`, from authenticated hellos; a hello without one clears
     it) that the device's machine last reported. It resolves `host-rebooted` once any current machine of the device reports
     another, not earlier, boot: the OS instance is the evidence, not the credential. Until then the device answers
@@ -168,8 +179,12 @@ Every provider must follow these; the kernel's behaviour below assumes them. How
   - **`ifRunning`.** It refuses legacy SID polls, stops and reads and staged browse on such a device (`RetirementPendingError`).
     Only exact-ref managed drains pass `exactRef: true`.
   - **Cutover order.** Ship the device build that reports `bootId` first. Wait until `report().localWithoutBoot` (local devices with
-    legacy rows whose machine has no recorded boot) and `report().cloudUnknown` (cloud devices whose legacy rows name no
-    incarnation; `prevHandle` / `noInstance` ones need recreating) are empty or accepted. Then publish the freeze.
+    legacy rows whose machine has no recorded boot) is empty or accepted. Review `report().cloudUnknown`: it lists cloud devices
+    whose legacy rows name no incarnation and never empties by itself (it reads the task rows). Devices flagged `prevHandle` or
+    `noInstance` will answer `recreate_required` (accept, or delete and recreate them); `currentUnconfirmed` ones clear on
+    first use through `destroyByName` only while their row's provider is loaded; unflagged ones clear on first use. Then
+    publish the freeze, and do so before managed starts are activated (a revoked start recorded before the freeze with an
+    unreadable generation stays `recreate_required`).
   - **Release gate.** It passes on `retired`. With `abandoned > 0` it also needs the operator to acknowledge: "N old incarnations
     were abandoned with their devices; legacy processes may still run on those computers; no device can reuse them".
 
