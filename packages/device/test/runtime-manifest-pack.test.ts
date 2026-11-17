@@ -89,6 +89,14 @@ it("installs self-contained: no dependency is resolved from a registry", async (
     "utf8",
   );
   expect(patched).toContain('(sysctl-name "kern.hv_vmm_present")');
+  // with the Apache-2.0 modification notice and the exact patch
+  const vendored = join(installed, "dist/node_modules/@anthropic-ai/sandbox-runtime");
+  expect(await readFile(join(vendored, "CAPYBARA-MODIFICATIONS.md"), "utf8")).toContain(
+    "@anthropic-ai/sandbox-runtime@0.0.81",
+  );
+  expect(await readFile(join(vendored, "CAPYBARA-MODIFICATIONS.patch"), "utf8")).toContain(
+    "kern.hv_vmm_present",
+  );
   // packing never leaves the bundle in the workspace
   expect(existsSync(join(deviceRoot, "dist/node_modules"))).toBe(false);
 });

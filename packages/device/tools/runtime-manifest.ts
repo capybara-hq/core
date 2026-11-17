@@ -37,6 +37,10 @@ interface PackageJson {
   files?: string[];
   dependencies?: Record<string, string>;
   optionalDependencies?: Record<string, string>;
+  os?: unknown;
+  cpu?: unknown;
+  libc?: unknown;
+  license?: string;
   publishConfig?: { exports?: unknown };
   exports?: unknown;
   bundledRuntime?: string[];
@@ -99,6 +103,16 @@ async function layout(roots: readonly string[], fromDir: string): Promise<Map<st
       throw new Error(`Cannot resolve ${name} from ${from}; run pnpm install`);
     }
     const pkg = await readJson(join(source, "package.json"));
+    // the bundle is built on the release runner: anything platform-dependent would ship that
+    // runner's choice to every platform, so it is refused rather than guessed
+    if (Object.keys(pkg.optionalDependencies ?? {}).length)
+      throw new Error(
+        `${name}@${pkg.version} has optional dependencies, which are platform dependent; it cannot be bundled`,
+      );
+    if (pkg.os !== undefined || pkg.cpu !== undefined || pkg.libc !== undefined)
+      throw new Error(
+        `${name}@${pkg.version} is platform specific (os/cpu/libc); it cannot be bundled`,
+      );
     const chain = lookupChain(parent, name);
     let location = chain[chain.length - 1] as string;
     let satisfied = false;
@@ -112,11 +126,8 @@ async function layout(roots: readonly string[], fromDir: string): Promise<Map<st
     }
     if (satisfied) continue;
     tree.set(location, { name, version: pkg.version, source, location });
-    for (const [dep, optionalDep] of [
-      ...Object.keys(pkg.dependencies ?? {}).map((d) => [d, false] as const),
-      ...Object.keys(pkg.optionalDependencies ?? {}).map((d) => [d, true] as const),
-    ])
-      queue.push({ name: dep, from: source, parent: location, optional: optionalDep });
+    for (const dep of Object.keys(pkg.dependencies ?? {}))
+      queue.push({ name: dep, from: source, parent: location, optional: false });
   }
   // every dependent must resolve the exact version it was installed with
   for (const placed of tree.values()) {
@@ -171,18 +182,59 @@ async function copyPackage(placed: Placed, target: string, workspace: boolean): 
   await writeFile(join(target, "package.json"), `${JSON.stringify(published, null, 2)}\n`);
 }
 
+/** The workspace's pnpm `patchedDependencies` (`name@version` -> absolute patch file). */
+async function workspacePatches(packageRoot: string): Promise<Map<string, string>> {
+  for (let dir = packageRoot; dir !== dirname(dir); dir = dirname(dir)) {
+    let yaml: string;
+    try {
+      yaml = await readFile(join(dir, "pnpm-workspace.yaml"), "utf8");
+    } catch {
+      continue;
+    }
+    const patches = new Map<string, string>();
+    const block = /^patchedDependencies:\n((?:[ \t]+.*\n?)*)/m.exec(yaml)?.[1] ?? "";
+    for (const line of block.split("\n")) {
+      const m = /^\s+['"]?([^'"]+?)['"]?\s*:\s*['"]?([^'"]+?)['"]?\s*$/.exec(line);
+      if (m) patches.set(m[1] as string, join(dir, m[2] as string));
+    }
+    return patches;
+  }
+  return new Map();
+}
+
+/**
+ * Apache-2.0 §4(b): a modified file must carry a prominent notice. A package the workspace patches
+ * ships `CAPYBARA-MODIFICATIONS.md` and the exact patch next to its own LICENSE.
+ */
+async function noteModification(placed: Placed, target: string, patch: string): Promise<void> {
+  await copyFile(patch, join(target, "CAPYBARA-MODIFICATIONS.patch"), constants.COPYFILE_EXCL);
+  await writeFile(
+    join(target, "CAPYBARA-MODIFICATIONS.md"),
+    `# Modifications\n\nThis copy of ${placed.name}@${placed.version} was modified by the Capybara ` +
+      "project for capybara-device: the changes in `CAPYBARA-MODIFICATIONS.patch` (a unified diff " +
+      "against the published package) are applied to the files it names. The package's own " +
+      "license and notices apply unchanged.\n",
+    { flag: "wx" },
+  );
+}
+
 export async function bundleRuntime(packageRoot: string): Promise<number> {
   const pkg = await readJson(join(packageRoot, "package.json"));
   const roots = pkg.bundledRuntime ?? [];
   const base = join(packageRoot, "dist");
   await rm(join(base, "node_modules"), { recursive: true, force: true });
   const tree = await layout(roots, packageRoot);
-  for (const placed of tree.values())
+  const patches = await workspacePatches(packageRoot);
+  for (const placed of tree.values()) {
+    const target = join(base, placed.location);
     await copyPackage(
       placed,
-      join(base, placed.location),
+      target,
       !relative(dirname(packageRoot), placed.source).startsWith(".."),
     );
+    const patch = patches.get(`${placed.name}@${placed.version}`);
+    if (patch) await noteModification(placed, target, patch);
+  }
   return tree.size;
 }
 
