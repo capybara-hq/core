@@ -183,7 +183,7 @@ test("登录 → 新建 agent → 流式回复、停止、插话、刷新后历�
   await expect(page.getByRole("navigation", { name: "主导航" })).toBeVisible();
 });
 
-test("image attachment zoom: a thumbnail click zooms in the page and Escape returns the focus", async ({
+test("image viewer: a thumbnail click opens it in the page and Escape returns the focus", async ({
   page,
 }) => {
   await signIn(page);
@@ -207,13 +207,13 @@ test("image attachment zoom: a thumbnail click zooms in the page and Escape retu
   await expect(thumb.locator("img")).toBeVisible();
   await thumb.click();
 
-  // The zoom: the image (loaded through the download 302), its name and size, the download action;
-  // no new tab.
-  const dialog = page.getByRole("dialog", { name: designZh("files.preview") });
+  // The viewer: a dialog named by the image (loaded through the download 302), its size, the
+  // download and open-in-new-tab actions; no new tab opens by itself.
+  const dialog = page.getByRole("dialog", { name: "zoom.png" });
   await expect(dialog).toBeVisible();
-  await expect(dialog.getByText("zoom.png")).toBeVisible();
   await expect(dialog.getByText(/^\d+(\.\d+)? (B|KB|MB)$/)).toBeVisible();
   await expect(dialog.getByRole("button", { name: designZh("files.download") })).toBeVisible();
+  await expect(dialog.getByRole("button", { name: designZh("viewer.openInNewTab") })).toBeVisible();
   await expect
     .poll(() =>
       dialog.locator("img").evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth),
