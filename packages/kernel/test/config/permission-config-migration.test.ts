@@ -1,12 +1,15 @@
 import { createHash, randomUUID } from "node:crypto";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
-import { afterAll, beforeAll, beforeEach, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { KernelConfigSchema } from "../../src/config/schema.js";
+import { SettingsService } from "../../src/identity/settings.js";
 import { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
 import { KernelDb } from "../../src/infra/database/kernel-db.js";
 import { TransactionHost } from "../../src/infra/database/transaction-host.js";
 import { OutboxDispatcher } from "../../src/infra/outbox/outbox.dispatcher.js";
 import { createLogger } from "../../src/log.js";
+import { OrgSettingsService, readOrgSettings } from "../../src/orgs/settings.service.js";
+import { readDeploymentDevicePolicy } from "../../src/sandbox/modes.js";
 import { PermissionCeilingWrites } from "../../src/sandbox/permission-ceiling-writes.js";
 import {
   PermissionConfigPublication,
@@ -113,8 +116,13 @@ async function org(settings: Record<string, unknown>) {
       settings: JSON.stringify(settings),
     })
     .execute();
+  await db
+    .insertInto("memberships")
+    .values({ org_id: id, account_id: accountId, role: "owner" })
+    .execute();
   return {
     id,
+    accountId,
     settings: async () =>
       (
         await db
@@ -288,4 +296,99 @@ it("old replicas fail the barrier after conversion; their CAS predecessor is sta
     ),
   ).rejects.toThrow(/another replica/);
   expect((await row()).fingerprint).toBe(active.fingerprint);
+});
+
+describe("the window before conversion and stale-replica writes (fail closed until 8.6)", () => {
+  const changed = () => config(undefined, ["b.example"]);
+  async function admin() {
+    const id = randomUUID();
+    await db
+      .insertInto("accounts")
+      .values({ id, display_name: "B1 admin", email: null, is_super_admin: true })
+      .execute();
+    return id;
+  }
+
+  it("a mismatch window reads the legacy off, an org write keeps it, activation converts to off", async () => {
+    await publishV1(v1());
+    await store("devicesAutoMode", { mode: "off" });
+    const a = await org({ autoMode: "off" });
+    const p = publisher(changed());
+    expect((await p.initialize()).outcome).toBe("mismatch");
+    // the stored legacy keys are not converted, yet every new reader sees their off
+    expect((await k.app.get(SettingsService).view()).devicesFullAccess).toEqual({
+      permission: "off",
+      source: "db",
+    });
+    expect((await readOrgSettings(db.db, a.id)).fullAccess).toBe("off");
+    expect((await k.app.get(OrgSettingsService).get(a.id)).fullAccess).toBe("off");
+    expect(
+      (await readDeploymentDevicePolicy(db.db, k.app.get(KernelConfigService))).fullAccess,
+    ).toBe("off");
+    // an unrelated org write never drops the legacy key: it is carried, never erased
+    await k.app.get(OrgSettingsService).update(a.id, { locale: "zh" }, a.accountId);
+    expect(await a.settings()).toMatchObject({ autoMode: "off", fullAccess: "off", locale: "zh" });
+    expect((await readOrgSettings(db.db, a.id)).fullAccess).toBe("off");
+    await p.initialize({ activation: { expectedActiveHash: sha(v1()) } });
+    expect(await a.settings()).toMatchObject({ fullAccess: "off", locale: "zh" });
+    expect(await a.settings()).not.toHaveProperty("autoMode");
+    expect(await setting("devicesFullAccess")).toEqual({ permission: "off" });
+  });
+
+  it("a window write of the new key carries the old one for old replicas", async () => {
+    await publishV1(v1());
+    await store("devicesAutoMode", { mode: "off" });
+    const a = await org({ autoMode: "off" });
+    await publisher(changed()).initialize();
+    await k.app.get(OrgSettingsService).update(a.id, { fullAccess: null }, a.accountId);
+    expect(await a.settings()).not.toHaveProperty("fullAccess");
+    expect(await a.settings()).not.toHaveProperty("autoMode");
+    const id = await admin();
+    await k.app.get(SettingsService).update({ devicesFullAccess: { permission: "allowed" } }, id);
+    expect(await setting("devicesAutoMode")).toEqual({ mode: "allowed" });
+    expect(await setting("devicesFullAccess")).toEqual({ permission: "allowed" });
+  });
+
+  it("a divergent stored pair resolves to the narrower value; no write is refused", async () => {
+    await publishV1(v1());
+    const a = await org({ autoMode: "off", fullAccess: "allowed" });
+    await publisher(changed()).initialize();
+    expect((await readOrgSettings(db.db, a.id)).fullAccess).toBe("off");
+    await k.app.get(OrgSettingsService).update(a.id, { locale: "zh" }, a.accountId);
+    expect(await a.settings()).toMatchObject({ autoMode: "off", fullAccess: "off", locale: "zh" });
+  });
+
+  it("an agreeing stored pair never blocks a write that leaves fullAccess alone", async () => {
+    await publishV1(v1());
+    const a = await org({ autoMode: "allowed", fullAccess: "allowed" });
+    await publisher(changed()).initialize();
+    const settings = k.app.get(OrgSettingsService);
+    await settings.update(a.id, { locale: "zh" }, a.accountId);
+    await settings.update(a.id, { cloudNetwork: { mode: "allowlist" } }, a.accountId);
+    expect(await a.settings()).toMatchObject({
+      autoMode: "allowed",
+      fullAccess: "allowed",
+      locale: "zh",
+      cloudNetwork: { mode: "allowlist" },
+    });
+  });
+
+  it("stale-replica legacy writes after conversion still narrow", async () => {
+    await publishV1(v1());
+    const a = await org({ autoMode: "allowed" });
+    expect((await publisher().initialize()).outcome).toBe("migrated");
+    // what an old replica writes: its own key, keeping the new one it does not know
+    await db
+      .updateTable("orgs")
+      .set({ settings: JSON.stringify({ fullAccess: "allowed", autoMode: "off" }) })
+      .where("id", "=", a.id)
+      .execute();
+    await store("devicesAutoMode", { mode: "off" });
+    expect((await readOrgSettings(db.db, a.id)).fullAccess).toBe("off");
+    expect((await k.app.get(SettingsService).view()).devicesFullAccess.permission).toBe("off");
+    // an invalid old value narrows too
+    await store("devicesAutoMode", { mode: "maybe" });
+    await store("devicesFullAccess", { permission: "allowed" });
+    expect((await k.app.get(SettingsService).view()).devicesFullAccess.permission).toBe("off");
+  });
 });

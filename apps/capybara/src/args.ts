@@ -93,7 +93,10 @@ export const USAGE = `Usage:
                                                keeping every other key and comment; writes a
                                                new --out file and names the environment
                                                variables to rename. Publish a Nacos result
-                                               through your reviewed config change
+                                               through your reviewed config change. YAML or
+                                               JSON only (a properties-format Nacos data id is
+                                               not converted), and a key reached through a YAML
+                                               alias or merge key is not renamed
   capybara help                                Show this help
 
 Every command first loads .env from the working directory when it exists (variables already set

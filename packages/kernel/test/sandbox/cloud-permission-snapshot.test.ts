@@ -164,7 +164,24 @@ async function fixture(
         () => "admitted",
         (e: unknown) => (e as { code?: string }).code ?? String(e),
       );
-  return { orgId, deviceId, accountId, device, admit };
+  const root = async () =>
+    (
+      await db
+        .selectFrom("conversations")
+        .select(["permission_profile", "permission_revision"])
+        .where("id", "=", conversationId)
+        .executeTakeFirstOrThrow()
+    ).permission_profile;
+  const fullRoot = () =>
+    db
+      .updateTable("conversations")
+      .set({
+        permission_profile: "full-access",
+        permission_consent: JSON.stringify({ deviceId, scopeRevision: "x" }),
+      })
+      .where("id", "=", conversationId)
+      .execute();
+  return { orgId, deviceId, accountId, conversationId, ctx, device, admit, root, fullRoot };
 }
 const snapshots = () => k.app.get(CloudPermissionSnapshots);
 const policy = (f: { orgId: string; deviceId: string }) =>
@@ -259,7 +276,18 @@ it.each([
 it("a stricter applied instance is never widened to the inferred default", async () => {
   const strict = { mode: "sandbox", network: { kind: "allowlist", hosts: [] } };
   const f = await fixture({ instance: strict });
+  await f.fullRoot();
+  const epoch = () =>
+    db
+      .selectFrom("permission_authority_epochs")
+      .select(["revision", "full_revision"])
+      .where("kind", "=", "device")
+      .where("id", "=", f.deviceId)
+      .executeTakeFirst();
   expect(await snapshots().snapshot(f.orgId, f.deviceId)).toMatchObject({ state: "bound" });
+  // the narrowing is a real authority change: it publishes through the device ceiling writer
+  expect(await f.root()).toBe("approve-for-me");
+  expect(await epoch()).toMatchObject({ revision: 1, full_revision: 1 });
   expect(await f.device()).toMatchObject({
     owner_full_access: false,
     outer_network: { kind: "allowlist", hosts: [] },
@@ -317,4 +345,99 @@ it("the file reset job reconciles the device it reset", async () => {
   await runSandboxResetFiles(sandbox, { data: { deviceId: f.deviceId } }, snapshots());
   expect((await f.device()).permission_reconcile_required).toBe(false);
   expect(await f.admit()).toBe("admitted");
+});
+
+it("a snapshot that changes nothing publishes nothing", async () => {
+  const f = await fixture();
+  await f.fullRoot();
+  await snapshots().snapshot(f.orgId, f.deviceId);
+  expect(await f.root()).toBe("full-access");
+});
+
+it("a create that may have acted (creating, no handle) is reconcile-required, not unprobed", async () => {
+  const f = await fixture({ instance: null });
+  await db
+    .updateTable("device_instances")
+    .set({ status: "creating", handle: null, fs_status: "none", fs_handle: null })
+    .where("device_id", "=", f.deviceId)
+    .execute();
+  expect(await snapshots().snapshot(f.orgId, f.deviceId)).toMatchObject({
+    state: "reconcile-required",
+  });
+});
+
+it("refuses to snapshot on a replica whose permission configuration is not current", async () => {
+  const f = await fixture();
+  const row = await db
+    .selectFrom("permission_config_publication")
+    .selectAll()
+    .executeTakeFirstOrThrow();
+  await db
+    .updateTable("permission_config_publication")
+    .set({ fingerprint: "0".repeat(64) })
+    .execute();
+  try {
+    await expect(snapshots().snapshot(f.orgId, f.deviceId)).rejects.toThrow(
+      /current permission configuration/,
+    );
+    expect((await f.device()).owner_full_access).toBeNull();
+  } finally {
+    await db
+      .updateTable("permission_config_publication")
+      .set({ fingerprint: row.fingerprint })
+      .execute();
+  }
+});
+
+it("a snapshot narrowed to an allowlist revokes execution scopes outside any allowlist", async () => {
+  const f = await fixture({
+    instance: { mode: "auto", network: { kind: "allowlist", hosts: ["a.example"] } },
+  });
+  const scope = await k.app
+    .get(SandboxOperationAuthority)
+    .resolve(f.ctx, "exec", new AbortController().signal);
+  const insert = async (network: unknown) => {
+    const operationId = randomUUID();
+    await db
+      .insertInto("sandbox_operation_intents")
+      .values({
+        operation_id: operationId,
+        org_id: f.orgId,
+        account_id: f.accountId,
+        device_id: f.deviceId,
+        root_conversation_id: f.conversationId,
+        conversation_id: f.conversationId,
+        run_id: null,
+        call_id: null,
+        ordinal: 0,
+        method: "exec",
+        input_hash: "a".repeat(64),
+        admission_hash: "b".repeat(64),
+        input: "{}",
+        scope: JSON.stringify({ ...scope, operationId, network }),
+        epochs: JSON.stringify({ platform: 0, org: 0, device: 0, root: 0 }),
+        provider: PROVIDER,
+        provider_version: "test",
+        instance_generation: "test",
+        deadline: new Date(Date.now() + 30_000),
+        retain_until: new Date(Date.now() + 60_000),
+        state: "admitted",
+        execution_id: randomUUID(),
+      })
+      .execute();
+    return operationId;
+  };
+  const environment = await insert({ kind: "environment" });
+  const covered = await insert({ kind: "allowlist", hosts: ["a.example"] });
+  const none = await insert({ kind: "none" });
+  expect(await snapshots().snapshot(f.orgId, f.deviceId)).toMatchObject({ state: "bound" });
+  const states = await db
+    .selectFrom("sandbox_operation_intents")
+    .select(["operation_id", "state"])
+    .where("operation_id", "in", [environment, covered, none])
+    .execute();
+  const of = (id: string) => states.find((r) => r.operation_id === id)?.state;
+  expect(of(environment)).toBe("revoked");
+  expect(of(covered)).toBe("admitted");
+  expect(of(none)).toBe("admitted");
 });
