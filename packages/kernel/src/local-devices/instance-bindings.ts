@@ -15,7 +15,7 @@ import {
   PermissionRuntimeReports,
   runtimeIdentity,
 } from "../sandbox/permission-runtime-reports.js";
-import { LOCAL_PROVIDER } from "../sandbox/providers.js";
+import { LOCAL_PROVIDER, type SandboxInstanceBinder } from "../sandbox/providers.js";
 import { OP_DEADLINE_MS } from "./local-device-provider.js";
 import { OwnerReports } from "./owner-reports.js";
 import { LocalDeviceRelay } from "./relay.js";
@@ -46,7 +46,7 @@ export class InstanceBindingError extends Error {
  * replacement row.
  */
 @Injectable()
-export class LocalInstanceBindings {
+export class LocalInstanceBindings implements SandboxInstanceBinder {
   constructor(
     @Inject(KernelDb) private readonly db: KernelDb,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
@@ -88,6 +88,19 @@ export class LocalInstanceBindings {
         expectedPreviousGeneration: row.previous_generation,
       },
     };
+  }
+
+  /**
+   * Whether the device's current local instance generation has an installed binding (the staged
+   * acquire path's shared-use condition). No committed binding reads as not installed.
+   */
+  async installed(deviceId: string): Promise<boolean> {
+    return (await this.status(deviceId)) === "installed";
+  }
+
+  /** The current generation's committed binding status, or null when none was committed. */
+  async status(deviceId: string): Promise<"installed" | "awaiting-device" | null> {
+    return (await this.committed(deviceId))?.status ?? null;
   }
 
   /**
