@@ -55,6 +55,7 @@
     "@anthropic-ai/sandbox-runtime": "0.0.81",
     "@capybara-hq/plugin-sdk": "workspace:^",
     "@types/ws": "^8.5.13",
+    "esbuild": "0.28.2",
     "ws": "^8.18.0"
   }
 }

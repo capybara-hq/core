@@ -631,6 +631,28 @@ export class DockerExecutor implements Executor {
     this.pump();
   }
 
+  /**
+   * The container for one permission operation (protocol 3): running on its default bridge (Full
+   * access is the container user's own network; restricted operations are mediated by the
+   * launcher). The caller holds the container (it is not recreated) until it calls `release`,
+   * once; an abort while waiting for it rejects.
+   */
+  async operationContainer(
+    signal: AbortSignal,
+  ): Promise<{ name: string; user: string; release: () => void }> {
+    await this.acquire(true, signal);
+    let released = false;
+    return {
+      name: this.name,
+      user: containerUser(),
+      release: () => {
+        if (released) return;
+        released = true;
+        this.release();
+      },
+    };
+  }
+
   /** A docker-level failure that means the container vanished: the next call recreates it. */
   private noteFailure(stderr: string): void {
     if (/No such container|is not running|is restarting/i.test(stderr)) this.ready = false;

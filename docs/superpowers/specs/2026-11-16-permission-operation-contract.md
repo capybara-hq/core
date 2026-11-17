@@ -184,6 +184,31 @@ Full access and is not an accepted compatibility compromise. Restricted helper m
 only to restricted operations; owner/org restrictions and the cloud container/VM boundary still apply
 to Full access.
 
+Restricted operations never write the shared mandatory-deny policy
+(`packages/plugin-sdk/src/sandbox-write-denies.ts`; one source for the Linux broker, the native
+helper, the device agent and the macOS runtime's patterns): shell startup, git-global, direnv,
+npm, editor and agent configuration files; inside any `.git` (including submodule and worktree
+gitdirs) everything except git's ordinary internals; a `HEAD` file outside `.git` (a bare
+repository lookalike); and moves out of protected names. Known limitations: a restricted command
+cannot `git init`, add a submodule or worktree, or create a bare repository; it can forge a
+rebase or cherry-pick in progress (git's `rebase-merge/`, `rebase-apply/` and `sequencer/` state is
+writable for git's own use), and continuing it (`git rebase --continue`) runs the `exec` lines of
+the todo list it wrote, as the owner; on macOS and Linux alike it can leave, inside git's own
+internals, a directory shaped like a repository without a configuration of its own (a kept `HEAD`
+with git's ordinary entries), which only matters to an owner who runs git from inside `.git`; `git worktree prune` cannot remove
+worktree gitdirs and `git branch -D` warns that it cannot remove the branch's config section (both
+write what the policy keeps); on macOS a multi-commit cherry-pick or revert reports that it cannot
+remove `.git/sequencer` (its commits land; the device removes the empty directory after the
+command); files tools execute by convention without
+configuration, such as `package.json` scripts run by `npm test`, are not covered, so the owner
+reviews such changes before running them unsandboxed. macOS expresses the same policy as ordered Seatbelt
+regex rules (a pnpm patch of the sandbox runtime); Seatbelt sees paths, not contents, so a directory
+renamed into git's subtrees keeps what it held; directories that hold a `HEAD` git keeps (`logs`,
+`refs/remotes/<r>`, `sequencer`, submodule and worktree gitdirs) cannot be moved or removed by a
+restricted command, and every write root is matched in each spelling Seatbelt may see (as given,
+real on-disk path, `/private` form). Owners are advised to set
+`git config --global safe.bareRepository explicit` as defence in depth.
+
 Provider errors add duck-typed `SandboxPermissionUnsupportedError` and `SandboxScopeDeniedError`
 with fixed kernel-facing codes. Neither is `SandboxGoneError`: a denial must not recreate the
 instance or retry unrestricted. Existing abort, gone, output byte/UTF-8 and timeout semantics stay.
