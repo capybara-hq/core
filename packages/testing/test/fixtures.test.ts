@@ -491,10 +491,14 @@ describe("loaded by path in a kernel", () => {
       const open = await startFakeMcpServer({ tools: [{ name: "search", description: "Search" }] });
       try {
         const signal = new AbortController().signal;
-        expect(await connector().inspect?.({ endpoint: { url: locked.url }, signal })).toEqual({
+        expect(
+          await connector().inspect?.({ endpoint: { url: locked.url }, signal, orgId: "org-test" }),
+        ).toEqual({
           authHints: [{ scheme: "bearer", type: "bearer" }],
         });
-        expect(await connector().inspect?.({ endpoint: { url: open.url }, signal })).toEqual({
+        expect(
+          await connector().inspect?.({ endpoint: { url: open.url }, signal, orgId: "org-test" }),
+        ).toEqual({
           authHints: [],
           operations: [{ id: "search", method: "POST", path: "/tools/search", summary: "Search" }],
         });
@@ -511,6 +515,7 @@ describe("loaded by path in a kernel", () => {
           await c.inspect?.({
             endpoint: { url: locked.url },
             signal: new AbortController().signal,
+            orgId: "org-test",
           }),
         ).toEqual({
           authHints: [{ scheme: "apiKey", type: "api_key", in: "header", name: "X-API-Key" }],
@@ -1087,7 +1092,7 @@ describe("fake-openapi (connector kind openapi)", () => {
   });
 
   it("inspect answers like connector-openapi's preview: auth hints and operations", async () => {
-    expect(await c.inspect?.({ endpoint: endpoint(), signal })).toEqual({
+    expect(await c.inspect?.({ endpoint: endpoint(), signal, orgId: "org-test" })).toEqual({
       authHints: [{ scheme: "apiKey", type: "api_key", in: "header", name: "X-API-Key" }],
       operations: [
         { id: "listPets", method: "GET", path: "/pets", summary: "List pets" },

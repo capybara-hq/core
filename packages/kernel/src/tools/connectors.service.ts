@@ -711,6 +711,7 @@ export class ConnectorsService {
     let listed: { specs: unknown; resources: boolean } | undefined;
     if (auth.type !== "oauth_code") {
       listed = await this.drift.listTools(
+        orgId,
         input.connector,
         endpoint,
         async () => {
@@ -1092,7 +1093,11 @@ export class ConnectorsService {
     let inspection: Awaited<ReturnType<NonNullable<typeof connector.inspect>>> | undefined;
     if (connector.inspect) {
       try {
-        inspection = await connector.inspect({ endpoint, signal: AbortSignal.timeout(timeoutMs) });
+        inspection = await connector.inspect({
+          endpoint,
+          signal: AbortSignal.timeout(timeoutMs),
+          orgId,
+        });
       } catch (e) {
         const message =
           e instanceof ToolError
@@ -1116,7 +1121,7 @@ export class ConnectorsService {
     let tools: ToolPreview[] | null = null;
     let issues: ToolIssue[] = [];
     if (inject) {
-      const listed = await this.drift.listTools(input.connector, endpoint, inject, {
+      const listed = await this.drift.listTools(orgId, input.connector, endpoint, inject, {
         orgId,
         preview: true,
       });
@@ -1792,6 +1797,7 @@ export class ConnectorsService {
     const app = await this.row(this.db, orgId, connectorId);
     const auth = app.auth as unknown as ConnectorAuth;
     const { specs, resources } = await this.drift.listTools(
+      orgId,
       app.connector,
       app.endpoint,
       () => this.credentials.injection(orgId, connectorId, auth, actorAccountId),

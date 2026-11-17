@@ -1,5 +1,6 @@
 import { describe, expect, expectTypeOf, it } from "vitest";
 import {
+  type Connector,
   type ConnectorOpenArgs,
   type ExtensionContext,
   type ExtensionNet,
@@ -15,6 +16,11 @@ describe("ctx.net", () => {
     expect(e.code).toBe("net.private_address");
     expect(e.host).toBe("10.0.0.1");
     expect(e.message).toBe("refused 10.0.0.1");
+  });
+
+  it("NetDeniedError carries the status of a refused redirect", () => {
+    expect(new NetDeniedError("net.redirect", "a.example", "redirect", 302).status).toBe(302);
+    expect(new NetDeniedError("net.dns_failed", "a.example", "dns").status).toBeUndefined();
   });
 
   it("isNetDeniedError recognises the class and a copy from another package by name", () => {
@@ -49,5 +55,8 @@ describe("ctx.net", () => {
   it("ctx.net and ConnectorOpenArgs.orgId are part of the contract", () => {
     expectTypeOf<ExtensionContext["net"]>().toEqualTypeOf<ExtensionNet>();
     expectTypeOf<ConnectorOpenArgs["orgId"]>().toEqualTypeOf<string>();
+    expectTypeOf<
+      Parameters<NonNullable<Connector["inspect"]>>[0]["orgId"]
+    >().toEqualTypeOf<string>();
   });
 });

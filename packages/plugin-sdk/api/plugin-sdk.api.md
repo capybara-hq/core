@@ -503,6 +503,7 @@ export interface Connector {
     inspect?(args: {
         endpoint: unknown;
         signal: AbortSignal;
+        orgId: string;
     }): Promise<ConnectorInspection>;
     kind: string;
     open(args: ConnectorOpenArgs): Promise<ConnectorSession>;
@@ -2230,10 +2231,12 @@ export type NetDeniedCode = "net.insecure_url" | "net.private_address" | "net.dn
 
 // @public
 export class NetDeniedError extends Error {
-    constructor(code: NetDeniedCode, host: string, message: string);
+    constructor(code: NetDeniedCode, host: string, message: string,
+    status?: number | undefined);
     readonly code: NetDeniedCode;
     readonly host: string;
     readonly name: "NetDeniedError";
+    readonly status?: number | undefined;
 }
 
 // @public

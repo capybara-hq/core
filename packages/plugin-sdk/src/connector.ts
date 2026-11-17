@@ -164,7 +164,12 @@ export interface Connector {
    * preview), returning the declared auth methods and an optional operation list.
    * `endpoint` is already validated against endpointSchema. On failure throw ToolError (message in
    * English, no credentials). Old connectors do not implement it; the kernel must check for
-   * absence.
+   * absence. `orgId` is the org the preview runs for: pass it to `ctx.net.fetch` as `opts.orgId`
+   * for every request to the endpoint, as with `ConnectorOpenArgs.orgId`.
    */
-  inspect?(args: { endpoint: unknown; signal: AbortSignal }): Promise<ConnectorInspection>;
+  inspect?(args: {
+    endpoint: unknown;
+    signal: AbortSignal;
+    orgId: string;
+  }): Promise<ConnectorInspection>;
 }

@@ -282,11 +282,12 @@ export class ToolDrift {
    * 其余失败一律 502 `connector.connect_failed`，消息只带上游错误的类名（不带消息，消息里可能回显凭据）。
    */
   async listTools(
+    /** The org the session serves (`ConnectorOpenArgs.orgId`). */
+    orgId: string,
     connector: string,
     endpoint: unknown,
     auth: () => Promise<AuthInjection>,
-    /** Log fields; `orgId` is also the org the session serves (`ConnectorOpenArgs.orgId`). */
-    logCtx: { orgId: string } & Record<string, unknown>,
+    logCtx: Record<string, unknown>,
     /** 收到 401：OAuth 连接器在刷新锁内刷新（参数为最后一次注入的鉴权）。 */
     onUnauthorized: (last: AuthInjection | undefined) => Promise<void> = async () => {},
   ): Promise<{ specs: unknown; resources: boolean }> {
@@ -309,7 +310,7 @@ export class ToolDrift {
         auth: tracked,
         onUnauthorized: () => onUnauthorized(injected.at(-1)),
         signal,
-        orgId: logCtx.orgId,
+        orgId,
       });
       const specs = await session.listTools();
       return {
@@ -546,6 +547,7 @@ export class ToolDrift {
     for (const accountId of accounts) {
       try {
         listed = await this.listTools(
+          orgId,
           app.connector,
           app.endpoint,
           () => this.credentials.injection(orgId, connectorId, auth, accountId),

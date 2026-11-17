@@ -27,6 +27,8 @@ export class NetDeniedError extends Error {
     readonly code: NetDeniedCode,
     readonly host: string,
     message: string,
+    /** The HTTP status of a refused redirect (`net.redirect`); absent for the other codes. */
+    readonly status?: number,
   ) {
     super(message);
   }
