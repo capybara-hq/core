@@ -285,6 +285,8 @@ async function gatewayFor(
         c === device.credential ? { ...identity, machineId: "machine" } : null,
       recordHello: async () => {},
       recordPolicy: async () => {},
+      recordHelloV3: async () => {},
+      recordPolicyV3: async () => {},
       touch: async () => {},
     },
     locks,
