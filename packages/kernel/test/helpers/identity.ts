@@ -6,6 +6,7 @@ import { PermissionAuthorityEpochStore } from "../../src/sandbox/permission-auth
 import { PermissionAuthorityLock } from "../../src/sandbox/permission-authority-lock.js";
 import { PermissionCeilingWrites } from "../../src/sandbox/permission-ceiling-writes.js";
 import { PermissionInstanceWrites } from "../../src/sandbox/permission-instance-writes.js";
+import { PermissionRuntimeReports } from "../../src/sandbox/permission-runtime-reports.js";
 import { PermissionTransitions } from "../../src/sandbox/permission-transitions.js";
 /**
  * The identity / orgs / admin providers over a test's own Kysely, for tests without a running
@@ -349,5 +350,11 @@ export function retirementFor(db: Kysely<any>): LegacyRetirementStore {
 
 export function instanceWritesFor(db: Kysely<any>): PermissionInstanceWrites {
   const h = handlesFor(db);
-  return new PermissionInstanceWrites(h.db, h.txHost, ceilingWritesOver(h));
+  const lock = new PermissionAuthorityLock(h.db, h.txHost, new XactLock(h.db, h.txHost));
+  return new PermissionInstanceWrites(
+    h.db,
+    h.txHost,
+    ceilingWritesOver(h),
+    new PermissionRuntimeReports(h.db, h.txHost, lock),
+  );
 }

@@ -41,6 +41,7 @@ import { truncateTables } from "../helpers/db.js";
 import { MODEL_PLUGINS_CONFIG } from "../helpers/model-plugins.js";
 import { gate, startKernel, type TestKernel, waitFor } from "../helpers/runs.js";
 import {
+  CLOUD_PROVIDER,
   type ContextFixture,
   contexts,
   identityFor,
@@ -53,6 +54,7 @@ import {
   seedTaskRun,
   spyProvider,
   startRun,
+  toCloudDevice,
 } from "./permission-context-fixture.js";
 
 let pg: TestContainer, redis: TestContainer, k: TestKernel, raw: ReturnType<typeof createDb>;
@@ -100,7 +102,7 @@ beforeEach(async () => {
       k.app.get(PermissionCallGrants),
       ["issueLocked", "findForAdmission", "forExecution", "assertCurrent"],
     ],
-    [k.app.get(PermissionRuntimeReports), ["record"]],
+    [k.app.get(PermissionRuntimeReports), ["record", "recordCloud"]],
     [k.app.get(LocalInstanceBindings), ["bind", "install", "retarget"]],
     [
       k.app.get(ApprovalsService),
@@ -152,8 +154,11 @@ beforeEach(async () => {
     "capybara.accounts, capybara.orgs, capybara.audit_events, capybara.outbox, capybara.device_instance_bindings, capybara.device_permission_reports, capybara.device_generation_high_water",
   );
 });
+/** Every cloud provider spy of a case: a context read or admission never reaches it. */
+const cloudCalls: string[][] = [];
 afterEach(() => {
   expect(provider.calls).toEqual([]);
+  expect(cloudCalls.splice(0).flat()).toEqual([]);
   expect(lifecycle).toEqual([]);
 });
 
@@ -701,31 +706,27 @@ describe("permission context projection", () => {
           .execute();
       },
     ],
+    // 9.3 M3, made discriminating (B-15): the same cloud device with and without its recorded
+    // cloud evidence, and with evidence whose desired limits are not applied yet
     [
-      // 9.3 M3: every cloud device is unprobed today (no installed cloud evidence, B-15), so this
-      // case proves only that; the desired/applied distinction for cloud gets its own case with H1
-      "a cloud device is unprobed until its binding evidence exists",
+      "a cloud device without recorded cloud evidence",
       {},
       async (f) => {
-        await f.db
-          .updateTable("devices")
-          .set({
-            source: "cloud",
-            outer_network: JSON.stringify({ kind: "allowlist", hosts: [] }),
-          })
-          .where("id", "=", f.deviceId)
-          .execute();
-        await f.db
-          .updateTable("device_instances")
-          .set({
-            instance_limits: JSON.stringify({
-              mode: "sandbox",
-              network: { kind: "open-public", hosts: [] },
-              unapplied: { mode: "sandbox", network: { kind: "allowlist", hosts: [] } },
-            }),
-          })
-          .where("device_id", "=", f.deviceId)
-          .execute();
+        cloudCalls.push((await toCloudDevice(k, f)).spy.calls);
+      },
+    ],
+    [
+      "a cloud device with recorded evidence but desired limits still unapplied",
+      {},
+      async (f) => {
+        const { spy } = await toCloudDevice(k, f, {
+          evidence: true,
+          limits: (desired) => ({
+            ...desired,
+            unapplied: { mode: "sandbox", network: { kind: "allowlist", hosts: [] } },
+          }),
+        });
+        cloudCalls.push(spy.calls);
       },
     ],
   ])("%s is unprobed without scope and calls no provider", async (_name, seed, mutate) => {
@@ -748,6 +749,25 @@ describe("permission context projection", () => {
     await record(f);
     expect((await contexts(raw, f.rootId))[0]?.payload.availability).toEqual({
       state: "supported",
+    });
+  });
+
+  it("a cloud device with its recorded cloud evidence reports its applied outer boundary", async () => {
+    const f = await seedContext(k, raw);
+    // the device's outer network snapshot is an empty allowlist: its instance runs network-off
+    const { spy, desired } = await toCloudDevice(k, f, { evidence: true });
+    expect(desired.network).toEqual({ kind: "allowlist", hosts: [] });
+    cloudCalls.push(spy.calls);
+    await record(f);
+    expect((await contexts(raw, f.rootId))[0]?.payload).toMatchObject({
+      availability: { state: "supported" },
+      scope: {
+        location: "cloud",
+        workingRoot: "/work",
+        filesystem: { kind: "scoped", readDirectories: ["/work"], writeDirectories: ["/work"] },
+        network: { kind: "none" },
+        outerNetwork: { kind: "none" },
+      },
     });
   });
 
@@ -830,39 +850,20 @@ describe("permission context projection", () => {
 
   // B-16: admission reads the same applied environment and runtime verdict as the recorded context,
   // so a context without scope always matches a refused admission with the same reason (narrowing
-  // only: admission never admits what the model is told it cannot do, and vice versa)
-  const toCloud = (unapplied: boolean) => async (f: ContextFixture) => {
-    await f.db
-      .updateTable("devices")
-      .set({ source: "cloud", outer_network: JSON.stringify({ kind: "allowlist", hosts: [] }) })
-      .where("id", "=", f.deviceId)
-      .execute();
-    await f.db
-      .updateTable("device_instances")
-      .set({
-        instance_limits: JSON.stringify({
-          mode: "sandbox",
-          network: unapplied
-            ? { kind: "open-public", hosts: [] }
-            : { kind: "allowlist", hosts: [] },
-          ...(unapplied && {
-            unapplied: { mode: "sandbox", network: { kind: "allowlist", hosts: [] } },
-          }),
-        }),
-      })
-      .where("device_id", "=", f.deviceId)
-      .execute();
-  };
+  // only: admission never admits what the model is told it cannot do, and vice versa). B-15: a
+  // cloud device has no exception: its kernel-recorded cloud evidence decides both alike.
+  const cloud =
+    (opts: Parameters<typeof toCloudDevice>[2], after?: (f: ContextFixture) => Promise<void>) =>
+    async (f: ContextFixture) => {
+      cloudCalls.push((await toCloudDevice(k, f, opts)).spy.calls);
+      await after?.(f);
+    };
   it.each<
     [
       string,
       Parameters<typeof seedContext>[2],
       ((f: ContextFixture) => Promise<void>) | null,
       "supported" | "unsupported" | "unprobed",
-      // the one named exception: cloud admission enforces neither the runtime report nor the
-      // applied environment until installed cloud evidence exists (B-15; W2-H1 flips these cases
-      // to refused)
-      "cloud-admits-until-B-15"?,
     ]
   >([
     ["local applied, restricted", {}, null, "supported"],
@@ -927,22 +928,111 @@ describe("permission context projection", () => {
       },
       "unprobed",
     ],
+    ["cloud applied, with recorded cloud evidence", {}, cloud({ evidence: true }), "supported"],
     [
-      "cloud applied, without installed evidence",
+      "cloud applied and suspended: readable without a resume",
+      { status: "suspended" },
+      cloud({ evidence: true }),
+      "supported",
+    ],
+    [
+      "cloud restricted on a Full-only runtime",
       {},
-      toCloud(false),
-      "unprobed",
-      "cloud-admits-until-B-15",
+      cloud({ evidence: true, report: "full-only" }),
+      "unsupported",
     ],
-    ["cloud desired but unapplied", {}, toCloud(true), "unprobed", "cloud-admits-until-B-15"],
+    ["cloud applied, without recorded cloud evidence", {}, cloud({}), "unprobed"],
+    ["cloud without any runtime report", { report: null }, cloud({}), "unprobed"],
     [
-      "cloud without a runtime report",
-      { report: null },
-      toCloud(false),
+      "cloud desired but unapplied",
+      {},
+      cloud({
+        evidence: true,
+        limits: (desired) => ({
+          ...desired,
+          unapplied: { mode: "sandbox", network: { kind: "allowlist", hosts: [] } },
+        }),
+      }),
       "unprobed",
-      "cloud-admits-until-B-15",
     ],
-  ])("context and admission agree: %s", async (_name, seed, mutate, state, exception) => {
+    // applied limits narrower than (or equal to) the desired ones are what runs and what both report
+    [
+      "cloud applied mode no wider than the desired one",
+      {},
+      cloud({ evidence: true, limits: (desired) => ({ ...desired, mode: "sandbox" }) }),
+      "supported",
+    ],
+    // applied limits more permissive than the desired ones are never installed authority (spec
+    // §124): unprobed until the next use's lifecycle lease applies the narrowing
+    [
+      "cloud applied wider: Full mode on a device narrowed to sandbox",
+      {},
+      cloud({
+        evidence: true,
+        sandboxMode: true,
+        limits: (desired) => ({ ...desired, mode: "auto" }),
+      }),
+      "unprobed",
+    ],
+    [
+      "cloud applied wider: public network where the device wants an allowlist",
+      {},
+      cloud({
+        evidence: true,
+        limits: (desired) => ({ ...desired, network: { kind: "open-public", hosts: [] } }),
+      }),
+      "unprobed",
+    ],
+    [
+      "cloud applied wider: a host the desired allowlist does not cover",
+      {},
+      cloud({
+        evidence: true,
+        limits: (desired) => ({
+          ...desired,
+          network: { kind: "allowlist", hosts: ["x.example"] },
+        }),
+      }),
+      "unprobed",
+    ],
+    [
+      "cloud stale: the provider version changed",
+      {},
+      cloud({ evidence: true }, async () => {
+        cloudCalls.push(spyProvider(k, { plugin: CLOUD_PROVIDER, version: "cloud-2" }).calls);
+      }),
+      "unprobed",
+    ],
+    [
+      "cloud stale: the applied limits changed after the evidence",
+      {},
+      cloud({ evidence: true }, async (f) => {
+        await f.db
+          .updateTable("device_instances")
+          .set({
+            instance_limits: JSON.stringify({
+              mode: "sandbox",
+              network: { kind: "allowlist", hosts: ["changed.example"] },
+            }),
+          })
+          .where("device_id", "=", f.deviceId)
+          .execute();
+      }),
+      "unprobed",
+    ],
+    [
+      "cloud stale: the instance handle was replaced",
+      {},
+      cloud({ evidence: true }, async (f) => {
+        await f.db
+          .updateTable("device_instances")
+          .set({ handle: JSON.stringify({ id: `${f.deviceId}-2`, roots: ROOTS }) })
+          .where("device_id", "=", f.deviceId)
+          .execute();
+      }),
+      "unprobed",
+    ],
+  ])("context and admission agree: %s", async (_name, seed, mutate, state) => {
     const f = await seedContext(k, raw, seed);
     await mutate?.(f);
     await record(f);
@@ -964,8 +1054,7 @@ describe("permission context projection", () => {
         () => ({ admitted: true as const }),
         (e: unknown) => ({ refused: e instanceof Error ? e.message : String(e) }),
       );
-    if (payload.availability.state === "supported" || exception)
-      expect(admission).toEqual({ admitted: true });
+    if (payload.availability.state === "supported") expect(admission).toEqual({ admitted: true });
     else expect(admission).toEqual({ refused: payload.availability.reason });
   });
 

@@ -903,3 +903,48 @@ it("staged child classifier retains parent hooks and explicit budget accounting"
     hooks.mockRestore();
   }
 });
+
+it("a proposed host outside the applied cloud outer allowlist is cut like admission cuts it (B-15)", () => {
+  type Outer = NonNullable<PermissionReviewSnapshot["outerNetwork"]>;
+  const facts = (outerNetwork: Outer): PermissionReviewSnapshot => ({
+    orgId,
+    rootConversationId: conv,
+    conversationId: conv,
+    deviceId: "review-fixture",
+    accountId: ownerId,
+    runId,
+    callId: "outer-cut",
+    profile: "approve-for-me",
+    profileRevision: 0,
+    scopeRevision: "scope",
+    authorityRevision: "authority",
+    baseReadDirectories: [WORKSPACE],
+    baseWriteDirectories: [WORKSPACE],
+    baseHosts: [],
+    workingRoot: WORKSPACE,
+    fullAccessCeiling: true,
+    broadProjectReach: true,
+    fullConsent: false,
+    unattended: false,
+    availability: { state: "supported" },
+    outerNetwork,
+    policy: {
+      mode: "auto",
+      allowedMode: "auto",
+      modeSource: "device",
+      localAllowedDomains: [],
+      network: { kind: "open-public", hosts: [] },
+    },
+  });
+  const input = { command: "curl https://b.example/data https://a.example/data" };
+  const build = (outer: Outer) =>
+    buildPermissionCandidate(
+      { toolKey: "Bash", specHash: "bash-spec", rawInput: input, validatedInput: input },
+      facts(outer),
+    );
+  const hostsOf = (r: ReturnType<typeof build>) =>
+    r.kind === "proposal" ? r.candidate.permissionScope.hosts : r.kind;
+  expect(hostsOf(build({ kind: "open-public" }))).toEqual(["a.example", "b.example"]);
+  expect(hostsOf(build({ kind: "allowlist", hosts: ["a.example"] }))).toEqual(["a.example"]);
+  expect(hostsOf(build({ kind: "none" }))).toBe("in-scope");
+});

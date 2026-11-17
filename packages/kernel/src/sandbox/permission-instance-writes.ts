@@ -1,19 +1,40 @@
 import { randomUUID } from "node:crypto";
-import { DEFAULT_SANDBOX_ROOTS, type SandboxRoots } from "@capybara-hq/plugin-sdk";
+import {
+  DEFAULT_SANDBOX_ROOTS,
+  type SandboxHandle,
+  type SandboxPermissionSupport,
+  type SandboxRoots,
+} from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
 import { sql, type UpdateObject } from "kysely";
 import type { KernelDatabase } from "../db/kernel-schema.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
+import { canonicalJson } from "../tools/canonical-json.js";
 import { SandboxLockLostError } from "./leases.js";
 import { PermissionCeilingWrites } from "./permission-ceiling-writes.js";
+import { PermissionRuntimeReports } from "./permission-runtime-reports.js";
 import { LOCAL_PROVIDER } from "./providers.js";
 
 const rootKey = (r: SandboxRoots) => JSON.stringify([r.workspace, r.skills, r.tmp]);
 /** The greatest epoch millisecond a JavaScript Date (and so a generation) can represent. */
 export const MAX_GENERATION_MS = 8_640_000_000_000_000;
 const GENERATION = /^[0-9]{1,16}$/;
+
+/** A cloud provider's permission support read from the instance being committed (B-15). */
+export interface CloudSupportReport {
+  provider: string;
+  version: string;
+  report: SandboxPermissionSupport;
+}
+
+/** The instance a lifecycle holder probed: its handle, generation and limits before the probe. */
+export interface ProbedCloudInstance {
+  handle: SandboxHandle;
+  createdAt: number;
+  limits: unknown;
+}
 
 /** Prior generation identity that cannot be ordered; conversion stops instead of guessing. */
 export class InconsistentGenerationError extends Error {
@@ -33,7 +54,14 @@ export class PermissionInstanceWrites {
     @Inject(KernelDb) private readonly db: KernelDb,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
     @Inject(PermissionCeilingWrites) private readonly ceilings: PermissionCeilingWrites,
+    @Inject(PermissionRuntimeReports) private readonly reports: PermissionRuntimeReports,
   ) {}
+  /**
+   * `cloud`: the permission support the lifecycle holder read from the new cloud instance before
+   * this commit; it is recorded with the kernel-built cloud identity in this same transaction, so
+   * the committed handle and its evidence appear together (B-15). Absent: none recorded (a local
+   * instance attests through its binding; a failed read leaves the cloud instance unprobed).
+   */
   @Transactional({ propagation: "requires_new" })
   async commitHandle(
     orgId: string,
@@ -42,6 +70,7 @@ export class PermissionInstanceWrites {
     roots: SandboxRoots,
     set: UpdateObject<KernelDatabase, "device_instances">,
     signal: AbortSignal,
+    cloud?: CloudSupportReport,
   ): Promise<Date> {
     signal.throwIfAborted();
     await this.ceilings.lock({ orgId, deviceId }, "device");
@@ -74,7 +103,72 @@ export class PermissionInstanceWrites {
       throw new Error("Instance generation was not stored exactly; check the database clock type");
     if ((updated.provider ?? row.provider) === LOCAL_PROVIDER)
       await this.awaitDevice(deviceId, String(createdAt.getTime()));
+    else if (cloud)
+      await this.reports.recordCloud(deviceId, cloud.provider, cloud.version, cloud.report);
     return updated.created_at;
+  }
+
+  /**
+   * Records a cloud instance's permission support read after a resume, a limits change or a
+   * provider version change, under the caller's lifecycle lease (B-15). Recorded only while the
+   * row still holds exactly the probed instance (its handle and generation) with the limits read
+   * before the probe: a holder whose lease was lost to one that replaced the instance or changed
+   * its limits records nothing, so it never overwrites newer evidence. Never provider IO inside
+   * the transaction.
+   */
+  @Transactional({ propagation: "requires_new" })
+  async recordCloudSupport(
+    orgId: string,
+    deviceId: string,
+    held: ProbedCloudInstance,
+    cloud: CloudSupportReport,
+    signal: AbortSignal,
+  ): Promise<boolean> {
+    signal.throwIfAborted();
+    if (!(await this.lockProbed(orgId, deviceId, held, cloud.provider))) return false;
+    await this.reports.recordCloud(deviceId, cloud.provider, cloud.version, cloud.report);
+    return true;
+  }
+
+  /**
+   * Clears the recorded cloud identity of the probed instance (same checks as
+   * {@link recordCloudSupport}): a resumed instance whose permission support could not be read
+   * is unprobed, never supported by evidence from before its suspension.
+   */
+  @Transactional({ propagation: "requires_new" })
+  async clearCloudSupport(
+    orgId: string,
+    deviceId: string,
+    held: ProbedCloudInstance,
+    provider: string,
+  ): Promise<boolean> {
+    if (!(await this.lockProbed(orgId, deviceId, held, provider))) return false;
+    await this.reports.clearCloud(deviceId, provider);
+    return true;
+  }
+
+  /** Takes the device writer lock; true while the row still holds exactly the probed instance. */
+  private async lockProbed(
+    orgId: string,
+    deviceId: string,
+    held: ProbedCloudInstance,
+    provider: string,
+  ): Promise<boolean> {
+    await this.ceilings.lock({ orgId, deviceId }, "device");
+    const row = await this.db
+      .selectFrom("device_instances")
+      .select(["handle", "created_at", "provider", "instance_limits"])
+      .where("device_id", "=", deviceId)
+      .where("org_id", "=", orgId)
+      .forUpdate()
+      .executeTakeFirst();
+    return (
+      !!row?.handle &&
+      row.provider === provider &&
+      row.created_at.getTime() === held.createdAt &&
+      canonicalJson(row.handle) === canonicalJson(held.handle) &&
+      canonicalJson(row.instance_limits ?? null) === canonicalJson(held.limits ?? null)
+    );
   }
 
   /**
