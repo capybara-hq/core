@@ -44,6 +44,7 @@ import {
   identityFor,
   inputOf,
   type ReportKind,
+  ROOTS,
   recordUnder,
   seedContext,
   seedTask,
@@ -668,7 +669,9 @@ describe("permission context projection", () => {
       },
     ],
     [
-      "a cloud device whose desired outer boundary is not applied",
+      // 9.3 M3: every cloud device is unprobed today (no installed cloud evidence, B-15), so this
+      // case proves only that; the desired/applied distinction for cloud gets its own case with H1
+      "a cloud device is unprobed until its binding evidence exists",
       {},
       async (f) => {
         await f.db
@@ -791,6 +794,128 @@ describe("permission context projection", () => {
       if (state !== "supported") expect(payload?.scope).toBeNull();
     },
   );
+
+  // B-16: admission reads the same applied environment and runtime verdict as the recorded context,
+  // so a context without scope always matches a refused admission with the same reason (narrowing
+  // only: admission never admits what the model is told it cannot do, and vice versa)
+  const toCloud = (unapplied: boolean) => async (f: ContextFixture) => {
+    await f.db
+      .updateTable("devices")
+      .set({ source: "cloud", outer_network: JSON.stringify({ kind: "allowlist", hosts: [] }) })
+      .where("id", "=", f.deviceId)
+      .execute();
+    await f.db
+      .updateTable("device_instances")
+      .set({
+        instance_limits: JSON.stringify({
+          mode: "sandbox",
+          network: unapplied
+            ? { kind: "open-public", hosts: [] }
+            : { kind: "allowlist", hosts: [] },
+          ...(unapplied && {
+            unapplied: { mode: "sandbox", network: { kind: "allowlist", hosts: [] } },
+          }),
+        }),
+      })
+      .where("device_id", "=", f.deviceId)
+      .execute();
+  };
+  it.each<
+    [
+      string,
+      Parameters<typeof seedContext>[2],
+      ((f: ContextFixture) => Promise<void>) | null,
+      "supported" | "unsupported" | "unprobed",
+      // the one named exception: cloud admission enforces neither the runtime report nor the
+      // applied environment until installed cloud evidence exists (B-15; W2-H1 flips these cases
+      // to refused)
+      "cloud-admits-until-B-15"?,
+    ]
+  >([
+    ["local applied, restricted", {}, null, "supported"],
+    ["local applied, Full with consent", { profile: "full-access" }, null, "supported"],
+    ["local applied, suspended", { status: "suspended" }, null, "supported"],
+    ["local without a runtime report", { report: null }, null, "unprobed"],
+    ["local restricted on a Full-only runtime", { report: "full-only" }, null, "unsupported"],
+    ["local desired but unapplied: binding awaiting", { binding: "awaiting" }, null, "unprobed"],
+    ["local desired but unapplied: no binding", { binding: "none" }, null, "unprobed"],
+    [
+      "local stale: runtime identity replaced",
+      {},
+      async (f) => {
+        await f.db
+          .updateTable("device_instances")
+          .set({ permission_runtime_identity: JSON.stringify(identityFor(f.generation, "d")) })
+          .where("device_id", "=", f.deviceId)
+          .execute();
+      },
+      "unprobed",
+    ],
+    [
+      "local stale: binding of a replaced machine",
+      {},
+      async (f) => {
+        await f.db
+          .updateTable("device_instance_bindings")
+          .set({ machine_id: randomUUID() })
+          .where("device_id", "=", f.deviceId)
+          .execute();
+      },
+      "unprobed",
+    ],
+    [
+      "local stale: committed roots differ from the instance's",
+      {},
+      async (f) => {
+        await f.db
+          .updateTable("device_instances")
+          .set({ permission_roots: JSON.stringify({ ...ROOTS, workspace: "/old" }) })
+          .where("device_id", "=", f.deviceId)
+          .execute();
+      },
+      "unprobed",
+    ],
+    [
+      "cloud applied, without installed evidence",
+      {},
+      toCloud(false),
+      "unprobed",
+      "cloud-admits-until-B-15",
+    ],
+    ["cloud desired but unapplied", {}, toCloud(true), "unprobed", "cloud-admits-until-B-15"],
+    [
+      "cloud without a runtime report",
+      { report: null },
+      toCloud(false),
+      "unprobed",
+      "cloud-admits-until-B-15",
+    ],
+  ])("context and admission agree: %s", async (_name, seed, mutate, state, exception) => {
+    const f = await seedContext(k, raw, seed);
+    await mutate?.(f);
+    await record(f);
+    const payload = must((await contexts(raw, f.rootId))[0]).payload;
+    expect(payload.availability.state).toBe(state);
+    const admission = await k.app
+      .get(SandboxOperationAuthority)
+      .resolve(
+        {
+          orgId: f.orgId,
+          deviceId: f.deviceId,
+          holderConversationId: f.rootId,
+          actor: { accountId: f.accountId, conversationId: f.rootId, runId: f.runId },
+        },
+        "exec",
+        signal(),
+      )
+      .then(
+        () => ({ admitted: true as const }),
+        (e: unknown) => ({ refused: e instanceof Error ? e.message : String(e) }),
+      );
+    if (payload.availability.state === "supported" || exception)
+      expect(admission).toEqual({ admitted: true });
+    else expect(admission).toEqual({ refused: payload.availability.reason });
+  });
 
   it("scheduled roots, children and wakes evaluate Request approval with the actual task grants", async () => {
     // a scheduled root on a Full-only runtime: Request approval, unsupported
