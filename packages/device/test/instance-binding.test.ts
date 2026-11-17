@@ -54,12 +54,15 @@ async function fixture() {
     for (const f of finishers) f();
   });
   const created: string[] = [];
+  const attested: (string | undefined)[] = [];
   let runtime = { ...verified };
   let verifyFails = false;
   // a held verification (the ~1 s installed-byte hash) and a held worker launch
   let verifyGate: Promise<void> | undefined;
   let verifying = false;
   let launchGate: Promise<void> | undefined;
+  // a worker whose cancellation never settles (a wedged process)
+  let hangCancel = false;
   const hold = () => {
     let release!: () => void;
     const gate = new Promise<void>((r) => {
@@ -107,17 +110,28 @@ async function fixture() {
               } as never);
           });
           finishers.push(finish);
-          return { ready: Promise.resolve(), completion, cancel: async () => finish() };
+          return {
+            ready: Promise.resolve(),
+            completion,
+            cancel: async () => {
+              if (hangCancel) await new Promise(() => {});
+              finish();
+            },
+          };
         },
       },
     );
   };
-  const binder = (opts: { credential?: string; deviceId?: string } = {}) =>
+  const binder = (opts: { credential?: string; deviceId?: string; dropTimeoutMs?: number } = {}) =>
     new InstanceBinder({
+      ...(opts.dropTimeoutMs !== undefined && { dropTimeoutMs: opts.dropTimeoutMs }),
       deviceId: opts.deviceId ?? "d",
       credentialIdentity: opts.credential ?? "credential-1",
       stateDir: root,
-      createBackend: (g) => createBackend(g, opts.deviceId ?? "d"),
+      createBackend: (instanceGeneration, binding) => {
+        attested.push(binding.runtimeIdentity.runtimeHash);
+        return createBackend(instanceGeneration, opts.deviceId ?? "d");
+      },
       verify: async () => {
         verifying = verifyGate !== undefined;
         await verifyGate;
@@ -155,11 +169,30 @@ async function fixture() {
         signal: signal(),
       });
   };
+  // foreground work: owned until a finisher completes it
+  const startExec = async (b: InstanceBinder, operationId: string) => {
+    const bound = b.current();
+    if (!bound) throw new Error("unbound");
+    const operation = await bound.backend
+      .forExecution({ operationId, orgNetwork: { kind: "open-public", hosts: [] } })
+      .operation(bound.handle, scope(operationId), signal());
+    return operation.exec({
+      command: "fixture",
+      timeoutMs: 10000,
+      maxOutputBytes: 4,
+      signal: signal(),
+    });
+  };
   return {
     root,
     roots,
     binder,
     created,
+    attested,
+    startExec,
+    hangCancel: () => {
+      hangCancel = true;
+    },
     finishers,
     startTask,
     setRuntime: (r: typeof verified) => {
@@ -253,14 +286,25 @@ describe("device binding", () => {
     );
   });
 
-  it("an old generation's unsettled work blocks a newer asserted generation", async () => {
+  it("live foreground work of an older generation blocks a newer one", async () => {
     const f = await fixture();
     const b = f.binder();
     await b.bind(request(G1, B1, null), signal());
     await f.startTask(b, "op-1");
-    // live work in this process
+    // live foreground work in this process is never dropped by a bind
+    const running = f.startExec(b, "exec-1");
+    await vi.waitFor(() => expect(b.current()?.backend.lifecycle.ownership().workers).toBe(2));
     await expect(b.bind(request(G2, B2, G1), signal())).rejects.toThrow("not settled");
-    // after a restart the work is uncertain: the obligation survives any newer generation
+    for (const finish of f.finishers) finish();
+    await running;
+  });
+
+  it("after a restart an older generation's uncertain work blocks any newer one", async () => {
+    const f = await fixture();
+    const b = f.binder();
+    await b.bind(request(G1, B1, null), signal());
+    await f.startTask(b, "op-1");
+    // the process is lost with the task live: the next process cannot know it ended
     const restarted = f.binder();
     await restarted.recover();
     await expect(restarted.bind(request(G2, B2, G1), signal())).rejects.toThrow("not settled");
@@ -270,6 +314,95 @@ describe("device binding", () => {
     expect(JSON.parse(await readFile(bindingFile(f.root, "d"), "utf8")).instanceGeneration).toBe(
       G1,
     );
+  });
+
+  it("a bind exact-stops the older generation's live background tasks, then binds (W3-M)", async () => {
+    const f = await fixture();
+    const b = f.binder();
+    await b.bind(request(G1, B1, null), signal());
+    const ref = await f.startTask(b, "op-1");
+    const old = b.current();
+    if (!old) throw new Error("expected binding");
+    const answer = await b.bind(request(G2, B2, G1), signal());
+    expect(answer.instanceGeneration).toBe(G2);
+    // the old task was stopped by its exact ref and the stop is journaled
+    const restarted = f.binder();
+    const recovered = await restarted.recover();
+    expect(recovered?.binding.instanceGeneration).toBe(G2);
+    const { readdir } = await import("node:fs/promises");
+    const name = (await readdir(f.root)).find((n) => /^operation-journal-[a-f0-9]+\.json$/.test(n));
+    const entries = JSON.parse(await readFile(join(f.root, name ?? ""), "utf8")).entries as {
+      ref: { operationId: string; executionId: string };
+      stop?: { outcome: string };
+    }[];
+    const entry = entries.find((e) => e.ref.operationId === "op-1");
+    expect(entry?.ref.executionId).toBe(ref.executionId);
+    expect(entry?.stop?.outcome).toMatch(/stopped|already-exited/);
+  });
+
+  it("each generation's backend gets the runtime hash its binding attested (W1-B)", async () => {
+    const f = await fixture();
+    const b = f.binder();
+    await b.bind(request(G1, B1, null), signal());
+    f.setRuntime({ ...verified, runtimeHash: "e".repeat(64) });
+    await b.bind(request(G2, B2, G1), signal());
+    expect(f.attested).toEqual([verified.runtimeHash, "e".repeat(64)]);
+  });
+
+  it("dropOlderGenerations exact-stops the bound generation's background tasks only (create)", async () => {
+    const f = await fixture();
+    const b = f.binder();
+    expect(await b.dropOlderGenerations(signal())).toEqual([]);
+    await b.bind(request(G1, B1, null), signal());
+    const ref = await f.startTask(b, "op-1");
+    const running = f.startExec(b, "exec-1");
+    const bound = b.current();
+    if (!bound) throw new Error("expected binding");
+    await vi.waitFor(() => expect(bound.backend.lifecycle.ownership().workers).toBe(2));
+    const outcomes = await b.dropOlderGenerations(signal());
+    expect(outcomes.map((o) => [o.operationId, o.result.outcome])).toEqual([["op-1", "stopped"]]);
+    expect(
+      (await bound.backend.background.stop(bound.handle, ref, { graceMs: 0, signal: signal() }))
+        .outcome,
+    ).toBe("stopped");
+    // foreground work keeps running; the generation still admits
+    expect(bound.backend.lifecycle.ownership().workers).toBe(1);
+    for (const finish of f.finishers) finish();
+    await running;
+  });
+
+  it("a refused bind kills nothing: foreground work refuses before any task is stopped (M-1)", async () => {
+    const f = await fixture();
+    const b = f.binder();
+    await b.bind(request(G1, B1, null), signal());
+    const ref = await f.startTask(b, "op-1");
+    const running = f.startExec(b, "exec-1");
+    const bound = b.current();
+    if (!bound) throw new Error("expected binding");
+    await vi.waitFor(() => expect(bound.backend.lifecycle.ownership().workers).toBe(2));
+    await expect(b.bind(request(G2, B2, G1), signal())).rejects.toThrow("not settled");
+    // the background task still runs: nothing was stopped for a bind that was refused
+    expect(await bound.backend.background.status(bound.handle, ref, signal())).toMatchObject({
+      state: "running",
+    });
+    expect(bound.backend.lifecycle.ownership().workers).toBe(2);
+    for (const finish of f.finishers) finish();
+    await running;
+  });
+
+  it("a cancel that never settles is bounded: the bind is refused and the binder stays usable (M-1)", async () => {
+    const f = await fixture();
+    const b = f.binder({ dropTimeoutMs: 50 });
+    await b.bind(request(G1, B1, null), signal());
+    await f.startTask(b, "op-1");
+    f.hangCancel();
+    await expect(b.bind(request(G2, B2, G1), signal())).rejects.toThrow("not settled");
+    // the queue is not wedged: the next call is answered (and still refused: cancel-pending owns)
+    await expect(b.bind(request(G2, B2, G1), signal())).rejects.toThrow("not settled");
+    expect(b.current()?.binding.instanceGeneration).toBe(G1);
+    expect((await b.dropOlderGenerations(signal())).map((o) => o.result.outcome)).toEqual([
+      "cancel-pending",
+    ]);
   });
 
   it("a real replacement binds after the old work settled; old refs are refused", async () => {
@@ -318,7 +451,8 @@ describe("one supervisor per journal (fix round 1, I1)", () => {
     // a start already in flight on the old generation, its worker launch still pending
     const releaseLaunch = f.holdLaunch();
     const releaseVerify = f.holdVerify();
-    const starting = f.startTask(b, "op-in-flight");
+    // foreground work: a bind drops background tasks but never running foreground work
+    const starting = f.startExec(b, "op-in-flight");
     await vi.waitFor(() => expect(old?.backend.lifecycle.ownership().workers).toBe(1));
     const binding = b.bind(request(G2, B2, G1), signal());
     // the old backend admits nothing fresh once the bind began
@@ -327,9 +461,11 @@ describe("one supervisor per journal (fix round 1, I1)", () => {
       SandboxPermissionUnsupportedError,
     );
     releaseLaunch();
-    await starting;
+    await vi.waitFor(() => expect(f.finishers.length).toBeGreaterThan(0));
     releaseVerify();
     await expect(binding).rejects.toThrow("not settled");
+    for (const finish of f.finishers) finish();
+    await starting;
     expect(b.current()?.binding.instanceGeneration).toBe(G1);
     expect(JSON.parse(await readFile(bindingFile(f.root, "d"), "utf8")).instanceGeneration).toBe(
       G1,
@@ -371,13 +507,16 @@ describe("one supervisor per journal (fix round 1, I1)", () => {
     const f = await fixture();
     const b = f.binder();
     await b.bind(request(G1, B1, null), signal());
-    await f.startTask(b, "op-1");
+    const running = f.startExec(b, "op-1");
+    await vi.waitFor(() => expect(b.current()?.backend.lifecycle.ownership().workers).toBe(1));
     const before = f.created.length;
     await expect(b.bind(request(G2, B2, G1), signal())).rejects.toThrow("not settled");
     expect(f.created.length).toBe(before);
     // recover never builds a second backend beside the live one
     expect(await b.recover()).toBe(b.current());
     expect(f.created.length).toBe(before);
+    for (const finish of f.finishers) finish();
+    await running;
   });
 });
 

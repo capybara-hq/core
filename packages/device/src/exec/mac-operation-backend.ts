@@ -64,6 +64,19 @@ export type MacOperationBackend = Required<
     /** Unsettled work of generations other than `generation` (default: this backend's). */
     retirementObligations(generation?: string): number;
     /**
+     * Exact-stops what this backend owns live, each by its recorded ref (machine stop: all of it;
+     * a replacement instance: its background tasks only). Resolves once each attempt settled.
+     */
+    stopOwned(opts: {
+      backgroundOnly: boolean;
+      graceMs: number;
+      signal: AbortSignal;
+    }): Promise<
+      { operationId: string; result: import("@capybara-hq/plugin-sdk").SandboxStopResult }[]
+    >;
+    /** What would still refuse a binding to `generation` once the live background tasks stopped. */
+    blockersBesidesLiveBackground(generation: string): number;
+    /**
      * Supersedes this backend (B4): its supervisor gives the journal up and every later call is
      * refused. Throws while it still owns work.
      */
@@ -75,11 +88,25 @@ export interface MacBackendDependencies {
   platform?: NodeJS.Platform;
   startWorker?: (request: MacWorkerRequest, signal: AbortSignal) => Promise<MacWorkerHandle>;
   restrictedSupported?: boolean;
+  /** Why restricted support is off, reported instead of the default. */
+  unavailableReason?: string;
+  /**
+   * The per-generation restricted proof (the macOS worker self-check): restricted operations run
+   * only while it holds, and a permission report first retries a failed proof (rate-limited).
+   */
+  restrictedProof?: RestrictedProof;
   now?: () => number;
   watch?: (tick: () => Promise<void>) => () => void;
 }
 const PENDING =
   "Restricted macOS per-instance validation and coordinated policy/background activation are pending";
+/** A restricted-support proof that can fail transiently and be retried. */
+export interface RestrictedProof {
+  /** Null while the proof holds; otherwise why restricted execution is unavailable. */
+  failure(): string | null;
+  /** Retries a failed proof when its retry interval allows (bounded); never throws. */
+  refresh(): Promise<void>;
+}
 /**
  * What one platform contributes to the shared local operation backend: its proven restricted
  * support, whether Full access and background work run here, and the platform-specific checks.
@@ -110,6 +137,8 @@ export interface LocalBackendHost {
   };
   /** Called once per recorded launch identity a previous device process left running. */
   reapOrphan?: SupervisorOptions["reapOrphan"];
+  /** Restricted operations run only while this proof holds (see {@link RestrictedProof}). */
+  proof?: RestrictedProof;
 }
 export async function createMacOperationBackend(
   options: MacOperationBackendOptions,
@@ -125,15 +154,17 @@ export async function createMacOperationBackend(
     ...(!restricted
       ? {
           unavailableReason:
-            platform === "darwin"
+            dependencies.unavailableReason ??
+            (platform === "darwin"
               ? PENDING
-              : "Restricted Linux/local-Docker validation remains pending",
+              : "Restricted Linux/local-Docker validation remains pending"),
         }
       : {}),
     fullAccess: platform === "darwin",
     background: platform === "darwin",
-    pending: PENDING,
+    pending: (!restricted && dependencies.unavailableReason) || PENDING,
     ...(dependencies.startWorker ? { startWorker: dependencies.startWorker } : {}),
+    ...(restricted && dependencies.restrictedProof ? { proof: dependencies.restrictedProof } : {}),
     checkArtifactTarget: (outputPath) => {
       const canonical = (path: string) => path.replace(/^\/(tmp|var|etc)(?=\/|$)/, "/private/$1");
       if (implicitWritePaths().some((root) => within(canonical(outputPath), canonical(root))))
@@ -153,7 +184,9 @@ export async function createLocalOperationBackend(
   dependencies: Pick<MacBackendDependencies, "now" | "watch">,
   host: LocalBackendHost,
 ): Promise<MacOperationBackend> {
-  const restricted = host.restricted;
+  // restricted support now: the platform's and, when it has one, its proof's
+  const restrictedNow = () => host.restricted && (host.proof?.failure() ?? null) === null;
+  const refusal = () => host.proof?.failure() ?? host.pending;
   let disposed = false;
   const checkHandle = (h: SandboxHandle) => {
     if (disposed)
@@ -268,7 +301,7 @@ export async function createLocalOperationBackend(
       "profile" in scope
         ? intersectOperation(scope, ceiling, authority, native !== undefined)
         : auxiliaryGrant(scope, ceiling);
-    if (!grant.full && !restricted) throw new SandboxPermissionUnsupportedError(host.pending);
+    if (!grant.full && !restrictedNow()) throw new SandboxPermissionUnsupportedError(refusal());
     if (!grant.full) host.checkRestrictedGrant?.(grant, native ? "native" : "exec");
     if (native) boundedPath(native.path, grant, native.method === "writeFile");
     if (args) {
@@ -442,7 +475,10 @@ export async function createLocalOperationBackend(
     permissionSupport: async (h, signal) => {
       checkHandle(h);
       signal.throwIfAborted();
+      // a transiently failed proof is retried before it is reported (rate-limited, bounded)
+      await host.proof?.refresh();
       const c = await read();
+      const restricted = restrictedNow();
       return {
         version: 1,
         restricted: restricted
@@ -450,7 +486,9 @@ export async function createLocalOperationBackend(
           : null,
         fullAccess: host.fullAccess && c.fullAccess,
         background: host.background,
-        ...(!restricted ? { unavailableReason: host.unavailableReason ?? host.pending } : {}),
+        ...(!restricted
+          ? { unavailableReason: host.proof?.failure() ?? host.unavailableReason ?? host.pending }
+          : {}),
       };
     },
     operation: operation(),
@@ -479,6 +517,9 @@ export async function createLocalOperationBackend(
       beginDrain: () => supervisor.beginDrain(),
       ownership: () => supervisor.ownership(),
       settle: (signal) => supervisor.settle(signal),
+      stopOwned: (opts) => supervisor.stopOwned(opts),
+      blockersBesidesLiveBackground: (generation) =>
+        supervisor.blockersBesidesLiveBackground(generation),
       retirementObligations: (generation) =>
         supervisor.retirementObligations(generation ?? options.instanceGeneration),
       dispose: () => {
