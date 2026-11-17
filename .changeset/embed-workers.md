@@ -2,4 +2,4 @@
 "@capybara-hq/capybara": patch
 ---
 
-Embeds may start Web Workers (`worker-src 'self' blob:`).
+Embeds may start Web Workers (`worker-src blob:`).
