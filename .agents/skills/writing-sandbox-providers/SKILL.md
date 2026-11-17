@@ -178,13 +178,43 @@ Every provider must follow these; the kernel's behaviour below assumes them. How
   - **After the freeze.** `killPendingTasks` neither signals nor clears kill marks.
   - **`ifRunning`.** It refuses legacy SID polls, stops and reads and staged browse on such a device (`RetirementPendingError`).
     Only exact-ref managed drains pass `exactRef: true`.
-  - **Cutover order.** Ship the device build that reports `bootId` first. Wait until `report().localWithoutBoot` (local devices with
-    legacy rows whose machine has no recorded boot) is empty or accepted. Review `report().cloudUnknown`: it lists cloud devices
-    whose legacy rows name no incarnation and never empties by itself (it reads the task rows). Devices flagged `prevHandle` or
-    `noInstance` will answer `recreate_required` (accept, or delete and recreate them); `currentUnconfirmed` ones clear on
-    first use through `destroyByName` only while their row's provider is loaded; unflagged ones clear on first use. Then
-    publish the freeze, and do so before managed starts are activated (a revoked start recorded before the freeze with an
-    unreadable generation stays `recreate_required`).
+  - **Freeze state.** `freeze()` returns once its own enumeration settled (`scanUntilStable`) and records `enumerated_at`
+    (migration 0158); a run whose enumeration keeps finding new legacy or revoked rows throws
+    `LegacyFreezeUnsettledError` and clears `enumerated_at`, leaving the freeze published but not enumerated.
+    `assertCutoverBarrier()` (the cutover barrier) refuses before the freeze, while `enumerated_at` is NULL, and while an
+    unmarked legacy row (`legacy_dispatch = 'unknown'`) started after `enumerated_at` exists (both stamped by the database
+    clock); rerunning the freeze once the old replica is stopped opens it.
+  - **Cutover runbook** (`capybara permissions cutover …`, `apps/capybara/src/commands/permissions.ts`; kernel side
+    `infra/cli/permission-cutover.ts`; `--json` on each). `report` and `freeze` use PostgreSQL only; `snapshot` needs
+    Redis (the lifecycle leases).
+    1. Release the boot-reporting device build and kernel (R1, protocol 2, dormant). Stop every old kernel replica before
+       the first new one starts: an old replica is not fenced by the freeze and B1 settings writes are not fenced either.
+    2. `report`. It lists `localWithoutBoot` (local devices with legacy rows whose machine has no recorded boot) and
+       `cloudUnknown` (cloud devices whose legacy rows name no incarnation; it reads the task rows and never empties by
+       itself: `prevHandle` / `noInstance` devices will answer `recreate_required`, `currentUnconfirmed` ones clear on
+       first use through `destroyByName` while their row's provider is loaded, unflagged ones clear on first use). Wait
+       until both are empty or accepted. Old replicas are detected where possible: live replicas (presence, Redis) whose
+       kernel version differs from the CLI's (an old replica, or the CLI is the different build; builds of one version
+       are not told apart), and `unfencedWriters` (legacy rows without the dispatch marker started after migration
+       0157; how many after the freeze, after its enumeration and in the last 15 minutes by the database clock: only a
+       replica without the 8.5 code writes them; `latestAt` never resets, so act on `recent` / `afterFreeze`). Replica presence reads `unknown`
+       when Redis does not answer; an old replica that never starts a legacy task is not detectable, so step 1 still
+       applies.
+    3. Convert the config (`capybara config migrate-permissions`) and start it with `--activate-permission-config`.
+    4. `freeze`: publishes the freeze, enumerates until stable before returning, fences pending producers (reserved
+       legacy launches are refused at dispatch: `fencedReservations`). Do this before managed starts are activated (a
+       revoked start recorded before the freeze with an unreadable generation stays `recreate_required`).
+    5. `snapshot`: `CloudPermissionSnapshots.snapshotAll` snapshots every live cloud device without a snapshot, each under
+       its exclusive lifecycle lease and in its own transaction. It refuses behind an open barrier (no freeze, or not
+       enumerated) and when this CLI's permission configuration is not the published one (`assertCurrent`, also checked
+       per device under the platform lock; that failure stops the run). A rerun visits nothing and publishes nothing; a
+       crash or a failed device (lease wait) leaves that device without a snapshot for the next run, never half written
+       or published twice. A narrowing goes through the device ceiling writer (epoch, Full consent reset, exact
+       revocation). Devices whose applied limits are not established keep `permission_reconcile_required` (listed)
+       until a file reset reconciles them. Exit 1 while any device failed or is pending. Ctrl-C stops between devices
+       (the device in flight commits or rolls back whole); `--lease-wait-ms` bounds each device's lease wait.
+    6. Right before R2, run `snapshot` again until `pending` is 0: cloud devices created after step 5 start with
+       `owner_full_access` NULL. Then R2, gated on `retired` (below).
   - **Release gate.** It passes on `retired`. With `abandoned > 0` it also needs the operator to acknowledge: "N old incarnations
     were abandoned with their devices; legacy processes may still run on those computers; no device can reuse them".
 
