@@ -333,6 +333,12 @@ export class SandboxOperationAuthority {
       )
         throw new ApiError("forbidden", "Permission expansion exceeds the current ceiling");
     }
+    // an accepted host addition the applied cloud outer boundary does not cover cannot be
+    // reached: cut like the base hosts, so admission never names more than the context (B-15)
+    const expansionHosts = hostsWithinOuter(
+      grant?.expansion.hosts ?? [],
+      f.outerNetwork ?? undefined,
+    );
     const scope = this.scopeOf(ctx, operation, {
       ...f,
       baseReadDirectories: [...f.baseReadDirectories, ...(grant?.expansion.readDirectories ?? [])],
@@ -340,10 +346,10 @@ export class SandboxOperationAuthority {
         ...f.baseWriteDirectories,
         ...(grant?.expansion.writeDirectories ?? []),
       ],
-      baseHosts: [...f.baseHosts, ...(grant?.expansion.hosts ?? [])],
+      baseHosts: [...f.baseHosts, ...expansionHosts],
     });
     const hosts = isExecutionMethod(operation)
-      ? [...new Set([...(networkGrant?.hosts ?? []), ...(grant?.expansion.hosts ?? [])])].sort()
+      ? [...new Set([...(networkGrant?.hosts ?? []), ...expansionHosts])].sort()
       : [];
     const executionGrants = isExecutionMethod(operation)
       ? parseStartingExecutionGrants({
@@ -352,7 +358,7 @@ export class SandboxOperationAuthority {
             ? {
                 hosts,
                 // The accepted per-call addition takes source precedence over the run/task envelope.
-                source: grant?.expansion.hosts.length
+                source: expansionHosts.length
                   ? { kind: "run", id: call.runId, accountId: ctx.actor.accountId }
                   : networkGrant?.source,
               }
@@ -422,7 +428,7 @@ export class SandboxOperationAuthority {
     // Both readers refuse in the same two steps with the same errors: the unlocked owned-root read
     // (`conversation.not_found`), then this backstop under the locks for an actor removed in
     // between (`forbidden`, the text `readContextLocked` and the managed writer throw). The
-    // recorder maps both codes to its one `actor` run error, so the model-facing refusal is the same
+    // recorder maps both codes to its one `actor` run error: the model-facing refusal is the same
     if (!(await this.isActiveMember(ctx.orgId, ctx.actor.accountId)))
       throw new ApiError("forbidden", "This run's actor is no longer authorized");
     await this.publication.assertCurrent();
@@ -512,6 +518,7 @@ export class SandboxOperationAuthority {
       // the review and admission see the recorded context's verdict, never a wider one
       availability: withheld ?? view.availability,
       admissionRefusal: withheld?.reason ?? null,
+      outerNetwork: applied?.outerNetwork ?? null,
       policy:
         device.source === "local"
           ? { ...policy, network: { kind: "allowlist", hosts: policy.localAllowedDomains } }

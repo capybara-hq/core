@@ -369,4 +369,19 @@ export class PermissionRuntimeReports {
     const identity = currentCloudIdentity(instance, provider, version);
     await this.record(deviceId, provider, version, identity ?? undefined, report);
   }
+
+  /**
+   * Clears a cloud instance's recorded identity (its report then reads unprobed). Caller holds
+   * the device authority writer lock and has checked the instance it probed.
+   */
+  @Transactional({ propagation: "mandatory" })
+  async clearCloud(deviceId: string, provider: string): Promise<void> {
+    this.locks.assertHeld("device", deviceId, true);
+    await this.db
+      .updateTable("device_instances")
+      .set({ permission_runtime_identity: null })
+      .where("device_id", "=", deviceId)
+      .where("provider", "=", provider)
+      .execute();
+  }
 }

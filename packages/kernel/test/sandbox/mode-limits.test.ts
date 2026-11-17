@@ -335,14 +335,14 @@ describe("a changed mode on use", () => {
     expect(await ops("create")).toHaveLength(2);
   });
 
-  it("a changed host list, cpu or memory alone never touches the running instance", async () => {
+  it("a widened host list, cpu or memory alone never touches the running instance", async () => {
     provider = fake({ updateMode: "updated" });
     const s = service();
     await setAutoMode("off");
     const first = await use(s);
     await setOrgSettings({
       fullAccess: "off",
-      cloudNetwork: { mode: "allowlist", allowHosts: ["example.com"] },
+      cloudNetwork: { mode: "allowlist", extraHosts: ["example.com"] },
     });
     await sql`INSERT INTO capybara.deployment_settings (key, value)
       VALUES ('sandboxLimitOverrides', ${JSON.stringify({ [orgId]: { cpu: 4 } })}::jsonb)
@@ -354,6 +354,23 @@ describe("a changed mode on use", () => {
     await sql`DELETE FROM capybara.deployment_settings WHERE key = 'sandboxLimitOverrides'`.execute(
       raw,
     );
+  });
+
+  it("a host-only narrowing reaches the running instance on its next use (spec §124)", async () => {
+    provider = fake({ updateMode: "updated" });
+    const s = service();
+    await setAutoMode("off");
+    const first = await use(s);
+    await setOrgSettings({
+      fullAccess: "off",
+      cloudNetwork: { mode: "allowlist", excludedHosts: ["pypi.org"] },
+    });
+    const again = await use(s);
+    expect(again.h).toEqual(first.h);
+    expect(await ops("update")).toHaveLength(1);
+    const network = (await record())?.network as { hosts?: string[] } | undefined;
+    expect(network?.hosts).toContain("github.com");
+    expect(network?.hosts).not.toContain("pypi.org");
   });
 });
 

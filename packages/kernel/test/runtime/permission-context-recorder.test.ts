@@ -945,19 +945,45 @@ describe("permission context projection", () => {
       }),
       "unprobed",
     ],
-    // the next use applies a desired mode or network kind under its lifecycle lease before any
-    // operation is admitted; until then the applied boundary is what runs and what both report
+    // applied limits narrower than (or equal to) the desired ones are what runs and what both report
     [
-      "cloud desired mode differs from the applied one (applied on the next use)",
+      "cloud applied mode no wider than the desired one",
+      {},
+      cloud({ evidence: true, limits: (desired) => ({ ...desired, mode: "sandbox" }) }),
+      "supported",
+    ],
+    // applied limits more permissive than the desired ones are never installed authority (spec
+    // §124): unprobed until the next use's lifecycle lease applies the narrowing
+    [
+      "cloud applied wider: Full mode on a device narrowed to sandbox",
+      {},
+      cloud({
+        evidence: true,
+        sandboxMode: true,
+        limits: (desired) => ({ ...desired, mode: "auto" }),
+      }),
+      "unprobed",
+    ],
+    [
+      "cloud applied wider: public network where the device wants an allowlist",
+      {},
+      cloud({
+        evidence: true,
+        limits: (desired) => ({ ...desired, network: { kind: "open-public", hosts: [] } }),
+      }),
+      "unprobed",
+    ],
+    [
+      "cloud applied wider: a host the desired allowlist does not cover",
       {},
       cloud({
         evidence: true,
         limits: (desired) => ({
           ...desired,
-          mode: desired.mode === "auto" ? "sandbox" : "auto",
+          network: { kind: "allowlist", hosts: ["x.example"] },
         }),
       }),
-      "supported",
+      "unprobed",
     ],
     [
       "cloud stale: the provider version changed",

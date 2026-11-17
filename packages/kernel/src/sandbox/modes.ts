@@ -283,6 +283,26 @@ export const appliedOf = (limits: {
 export const sameApplied = (a: AppliedLimits | null | undefined, b: AppliedLimits): boolean =>
   a != null && a.mode === b.mode && a.network.kind === b.network.kind;
 
+/** Whether `a` and `b` are the same mode, network kind and host set (null is never the same). */
+export const sameAppliedExact = (a: AppliedLimits | null | undefined, b: AppliedLimits): boolean =>
+  sameApplied(a, b) &&
+  [...new Set(a?.network.hosts ?? [])].sort().join("\n") ===
+    [...new Set(b.network.hosts)].sort().join("\n");
+
+/**
+ * Whether applied limits `a` are more permissive than desired limits `b` in any dimension (spec
+ * §124): auto where `b` is sandbox, open public addresses where `b` is an allowlist, or an
+ * allowlisted host `b`'s allowlist does not cover. Narrower or equal is false; unknown (null) is
+ * false here (callers treat unknown separately).
+ */
+export function appliedWider(a: AppliedLimits | null | undefined, b: AppliedLimits): boolean {
+  if (a == null) return false;
+  if (a.mode === "auto" && b.mode === "sandbox") return true;
+  if (b.network.kind === "open-public") return false;
+  if (a.network.kind === "open-public") return true;
+  return a.network.hosts.some((host) => !b.network.hosts.some((p) => coversHost(p, host)));
+}
+
 const isMode = (v: unknown): v is SandboxMode => v === "auto" || v === "sandbox";
 
 function appliedFrom(v: unknown): AppliedLimits | null {
