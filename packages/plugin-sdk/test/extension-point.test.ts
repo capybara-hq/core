@@ -28,7 +28,7 @@ describe("EXTENSION_POINTS majors", () => {
       expect(info.majors.length, name).toBeGreaterThan(0);
     }
     expect(EXTENSION_POINTS.sandbox?.majors).toEqual([2]);
-    expect(EXTENSION_POINTS["model-provider"]?.majors).toEqual([1, 2]);
+    expect(EXTENSION_POINTS["model-provider"]?.majors).toEqual([2]);
     expect(EXTENSION_POINTS.channel?.majors).toEqual([1]);
   });
 });

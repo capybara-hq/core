@@ -8,7 +8,7 @@
 - Brokered by the platform: yes (extensions use it only through `ctx`)
 <!-- /generated -->
 
-Contract: ModelProvider (`model.ts`); refs `model-provider@1` and `@2`
+Contract: ModelProvider (`model.ts`); ref `model-provider@2`
 
 Map the kernel's messages and tools to the vendor API and stream the result. Do not retry inside the extension; return a `ModelError` with the right kind and let the kernel degrade. History sent to the model is append-only. Declare parameters and media support.
 

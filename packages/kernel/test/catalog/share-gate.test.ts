@@ -403,23 +403,16 @@ describe("share gate", () => {
     expect(cOn.statusCode, cOn.body).toBe(200);
     // org C sees it before
     expect((await orgCatalog(orgC, env.root)).map((i) => i.id)).toContain(itemId);
-    const before = await env.db
-      .selectFrom("catalog_items")
-      .select("scope_version")
-      .where("id", "=", itemId)
-      .executeTakeFirstOrThrow();
-
     await env.k.app.get(CatalogScopeService).setShareable(itemId, false);
 
     const item = await env.db
       .selectFrom("catalog_items")
-      .select(["scope", "shareable", "scope_version"])
+      .select(["scope", "shareable"])
       .where("id", "=", itemId)
       .executeTakeFirstOrThrow();
     expect(item).toEqual({
       scope: "named",
       shareable: false,
-      scope_version: before.scope_version + 1,
     });
     expect(await listed(itemId)).toEqual([orgA, env.orgId].sort());
     const comp = await env.db

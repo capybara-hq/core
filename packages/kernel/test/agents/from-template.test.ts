@@ -15,7 +15,7 @@ import {
   startOrgEnv,
 } from "../catalog/org-env.js";
 import { builtinsOff } from "../helpers/disabled-tools.js";
-import { createOrg, enableExtensions, type Req } from "../helpers/runs.js";
+import { createOrgWithProviders, enableExtensions, type Req } from "../helpers/runs.js";
 
 /**
  * Plugin scope phase 4, Task 3: creating an agent from a template (rulings P4-3…P4-6, P4-8). The
@@ -284,8 +284,6 @@ describe("creating an agent from a template", () => {
           plugin__nope__write: "deny",
         },
         skills: ["pdf", "manual", "missing-skill"],
-        // a stored field from before skills were on by default: read as absent
-        ...({ selectedSkills: ["sheets"] } as Partial<AgentTemplate>),
         connectors: [
           { template: "none", policies: { x: "ask" } },
           {
@@ -665,7 +663,7 @@ describe("creating an agent from a template", () => {
   });
 
   it("uses another org's shared template that is on, and 404s a template off in the org", async () => {
-    const other = await createOrg(env.root, "Other");
+    const other = await createOrgWithProviders(env.k, env.root, "Other");
     // optional scope: on in this org through its switch
     const shared = await platformTemplate(tpl({ name: "shared" }), {
       ownerOrgId: other,
@@ -1079,7 +1077,7 @@ describe("creating an agent from a template", () => {
   });
 
   it("404s another org's unshared org template", async () => {
-    const other = await createOrg(env.root, "Elsewhere");
+    const other = await createOrgWithProviders(env.k, env.root, "Elsewhere");
     const theirs = randomUUID();
     await env.db
       .insertInto("agent_templates")

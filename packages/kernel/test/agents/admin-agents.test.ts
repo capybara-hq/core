@@ -19,7 +19,7 @@ import { truncateTables } from "../helpers/db.js";
 import { accountsFor, orgsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
 import { MODEL_PLUGINS_CONFIG } from "../helpers/model-plugins.js";
-import { startKernel, type TestKernel } from "../helpers/runs.js";
+import { enableModelProviders, startKernel, type TestKernel } from "../helpers/runs.js";
 
 let pgc: TestContainer;
 let rd: TestContainer;
@@ -121,6 +121,7 @@ beforeEach(async () => {
   await members.add(orgB, memberB.id, "member", ownerB.id);
   const ownerC = await account();
   const orgC = (await orgs.create({ name: "Org C", slug: `org-c-${n}` }, ownerC)).id;
+  for (const id of [orgA, orgB, orgC]) await enableModelProviders(k, id);
 
   const agentA = (
     await agents.create(orgA, memberA.id, {

@@ -1,6 +1,7 @@
 import { SDK_VERSION } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
 import { sql } from "kysely";
+import { oweDeployedExtensionSync } from "../catalog/scope-jobs.js";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { SuperAdminLock } from "../identity/super-admin.js";
@@ -8,6 +9,7 @@ import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
+import { OutboxService } from "../infra/outbox/outbox.service.js";
 import { KERNEL_BUS, KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
 import {
@@ -74,8 +76,6 @@ interface Subject {
   configValid: boolean | null;
   /** Why the install record's package cannot be read (`set` is then empty). */
   broken?: string;
-  /** The package is in the pre-0.1.0 format (`broken` holds the legacy-format message). */
-  legacy?: boolean;
   /** 安装记录包里迁移 SQL 的审阅警告（配置声明为空）。 */
   warnings: PackageWarning[];
 }
@@ -88,11 +88,10 @@ const EMPTY_SET: PermissionSet = buildPermissionSet({
 });
 
 /**
- * The package cannot be read -> `extension.package_unavailable`, or is in the pre-0.1.0 format ->
- * `extension.legacy_format` (details and approval cannot be based on an unreadable package).
+ * The package cannot be read -> `extension.package_unavailable` (details and approval cannot be
+ * based on an unreadable package).
  */
 function assertReadable(s: Subject): void {
-  if (s.legacy) throw new ApiError("extension.legacy_format", s.broken as string);
   if (s.broken !== undefined) {
     throw new ApiError(
       "extension.package_unavailable",
@@ -138,6 +137,8 @@ export class ExtensionAdmin {
     @Inject(SingleProviderGuard) private readonly singleProvider: SingleProviderGuard,
     /** The plugins' icons (admin catalog routes). */
     @Inject(PluginIcons) private readonly icons: PluginIcons,
+    /** The plugin scope sync an approval of an enabled extension owes. */
+    @Inject(OutboxService) private readonly outbox: Pick<OutboxService, "add">,
   ) {}
 
   private get db(): KernelSchemaDb {
@@ -158,9 +159,7 @@ export class ExtensionAdmin {
    * A single extension; unknown -> `extension.not_found`; package unreadable ->
    * `extension.package_unavailable`. With `allowUnreadable` an unreadable package returns the same
    * degraded item as {@link list} (status failed, with `error`): used after a write has committed, so
-   * an operation that took effect is not reported as failed. A package in the pre-0.1.0 format is
-   * a state, not an error: it always returns the item with status `legacy_format` (so the admin can
-   * see it and uninstall it).
+   * an operation that took effect is not reported as failed.
    */
   async get(name: string, opts: { allowUnreadable?: boolean } = {}): Promise<AdminExtensionView> {
     const s = (await this.subjects(name))[0];
@@ -169,7 +168,7 @@ export class ExtensionAdmin {
         "extension.not_found",
         `Extension ${name} is not known to this deployment`,
       );
-    if (!opts.allowUnreadable && !s.legacy) assertReadable(s);
+    if (!opts.allowUnreadable) assertReadable(s);
     return (await this.views([s]))[0] as AdminExtensionView;
   }
 
@@ -262,15 +261,18 @@ export class ExtensionAdmin {
     const db = this.db;
     await this.adminLock.lockAndAuthorize(actor);
     await this.approveLock.lock(name);
+    // The install may have moved to another package since the review (an upgrade): re-checked
+    // under its row lock
+    let enabled = s.install === null;
     if (s.install !== null) {
-      // 审阅之后安装记录可能已换包（T14 升级）：锁行复核
       const row = await db
         .selectFrom("extension_installs")
-        .select("sha256")
+        .select(["sha256", "desired_state"])
         .where("name", "=", name)
         .forUpdate()
         .executeTakeFirst();
       if (row?.sha256 !== s.install.sha256) throw stale();
+      enabled = row.desired_state === "enabled";
     }
     const snapRow = await db
       .selectFrom("extension_permission_snapshots")
@@ -297,6 +299,9 @@ export class ExtensionAdmin {
       ...(actorTokenId !== undefined && { actorTokenId }),
       audit: { added, removed, sha256: s.install?.sha256 ?? null },
     });
+    // Approving an enabled (or config-declared) extension lets replicas load it: a deploy, which
+    // owes its plugin's scope sync
+    if (enabled) await oweDeployedExtensionSync(this.outbox, db, name);
   }
 
   /** 配置声明 → 安装记录（与配置声明重名的安装记录不生效，不单列）。`only` 给出时只取这一个。 */
@@ -325,17 +330,13 @@ export class ExtensionAdmin {
         info = await this.packageInfo(r.sha256);
       } catch (err) {
         // One unreadable package (bytes missing / corrupt, over the current limit) does not break
-        // the list: it becomes a failed item; a pre-0.1.0 package becomes a legacy_format item.
-        const legacy =
-          err instanceof ExtensionPackageError && err.code === "extension.legacy_format";
-        const detail = legacy
-          ? err.message
-          : `package ${r.name} ${r.version} (${r.sha256}) cannot be read: ${err instanceof Error ? err.message : String(err)}`;
-        // A pre-0.1.0 package is an expected state (repack needed), logged without a stack trace.
+        // the list: it becomes a failed item. An invalid package is an expected state (repack
+        // needed), logged without a stack trace.
+        const detail = `package ${r.name} ${r.version} (${r.sha256}) cannot be read: ${err instanceof Error ? err.message : String(err)}`;
         this.log.warn("plugin package unreadable for the admin view", {
           plugin: r.name,
           sha256: r.sha256,
-          ...(legacy ? { reason: detail } : { err }),
+          ...(err instanceof ExtensionPackageError ? { reason: detail } : { err }),
         });
         out.push({
           name: r.name,
@@ -346,7 +347,6 @@ export class ExtensionAdmin {
           configurable: false,
           configValid: null,
           broken: detail,
-          ...(legacy && { legacy }),
           warnings: [],
         });
         continue;
@@ -501,7 +501,7 @@ export class ExtensionAdmin {
           version: s.version,
           source: s.source,
           sha256: target,
-          status: s.legacy ? ("legacy_format" as const) : ("failed" as const),
+          status: "failed" as const,
           desired: install && {
             version: install.version,
             sha256: install.sha256,

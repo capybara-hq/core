@@ -18,7 +18,7 @@ import { accountsFor, apiTokensFor, sessionsFor } from "../helpers/identity.js";
 import {
   createAgent,
   createConv,
-  createOrg,
+  createOrgWithProviders,
   eventsOf,
   gate,
   PW,
@@ -334,7 +334,7 @@ describe("会话 SSE（单副本 api+worker）", () => {
     await resetDb();
     await account("owner");
     owner = await login(k, "owner");
-    orgId = await createOrg(owner.req);
+    orgId = await createOrgWithProviders(k, owner.req);
     const agentId = await createAgent(owner.req, orgId);
     convId = await createConv(owner.req, orgId, agentId);
   });
@@ -611,7 +611,7 @@ describe("会话 SSE：live drafts (spec 2026-11-07 §3.2)", () => {
     await resetDb();
     await account("owner");
     owner = await login(k, "owner");
-    orgId = await createOrg(owner.req);
+    orgId = await createOrgWithProviders(k, owner.req);
     const agentId = await createAgent(owner.req, orgId);
     convId = await createConv(owner.req, orgId, agentId);
   });
@@ -818,7 +818,7 @@ describe("会话 SSE（跨副本：运行在 worker 副本，SSE 连在 api 副�
     await resetDb();
     await account("owner");
     const owner = await login(api, "owner");
-    const orgId = await createOrg(owner.req);
+    const orgId = await createOrgWithProviders(api, owner.req);
     const agentId = await createAgent(owner.req, orgId);
     const convId = await createConv(owner.req, orgId, agentId);
 
@@ -855,7 +855,7 @@ describe("会话 SSE（跨副本：运行在 worker 副本，SSE 连在 api 副�
     await resetDb();
     await account("owner");
     const owner = await login(api, "owner");
-    const orgId = await createOrg(owner.req);
+    const orgId = await createOrgWithProviders(api, owner.req);
     const agentId = await createAgent(owner.req, orgId);
     const convId = await createConv(owner.req, orgId, agentId);
 
@@ -901,7 +901,7 @@ describe("会话 SSE：凭据复核（R35）", () => {
     await resetDb();
     const ownerId = await account("owner");
     const owner = await login(a, "owner");
-    const orgId = await createOrg(owner.req);
+    const orgId = await createOrgWithProviders(a, owner.req);
     const agentId = await createAgent(owner.req, orgId);
     const convId = await createConv(owner.req, orgId, agentId);
     return { ownerId, owner, orgId, convId };

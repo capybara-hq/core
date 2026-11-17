@@ -1,8 +1,6 @@
 import { createHash } from "node:crypto";
 import {
   assertValidDeclarations,
-  EFFORT_VALUES,
-  type Effort,
   type EmbedRequest,
   type EmbedResult,
   type ExtensionManifest,
@@ -11,13 +9,9 @@ import {
   type ModelCallOptions,
   type ModelEmbeddingInfo,
   type ModelInfo,
-  type ModelInfoV1,
   type ModelKind,
-  type ModelParameter,
   type ModelProvider,
-  type ModelProviderV1,
   type ModelRequest,
-  type ModelRequestV1,
   type ModelStreamEvent,
   parseExtensionPoint,
 } from "@capybara-hq/plugin-sdk";
@@ -62,9 +56,7 @@ const DROPPED_WARN_TTL_SECONDS = 24 * 3600;
 const MODELS_CACHE_FORMAT = 2;
 
 /**
- * The model list's cache key (`@Cacheable` stores it as `cache:<key>`). It carries the provider's
- * contract major: after a plugin moves from `@1` to `@2` it never reads the list written through
- * the `@1` adapter (both are `@2`-shaped, the shape cannot tell them apart). It also carries the
+ * The model list's cache key (`@Cacheable` stores it as `cache:<key>`). It carries the
  * plugin version and the digest of the effective config the list was read with (see
  * {@link ProviderRegistry}): after an upgrade (the parameter declarations may have changed) or a
  * config change (models added or removed) every replica validates the new list at once instead of
@@ -74,10 +66,10 @@ const MODELS_CACHE_FORMAT = 2;
  * it caches bumps it, so during a rolling upgrade it never reads a list an older kernel wrote.
  */
 const modelsKey = (p: ProviderEntry, hash: string | undefined) =>
-  `capk:models:${p.plugin}:v${p.major}:f${MODELS_CACHE_FORMAT}:${p.version ?? "-"}:${hash ?? "-"}`;
+  `capk:models:${p.plugin}:f${MODELS_CACHE_FORMAT}:${p.version ?? "-"}:${hash ?? "-"}`;
 /** 列表视图的失败标记（{@link LIST_FAILURE_TTL_SECONDS}），与模型列表同样按版本与配置摘要区分。 */
 const listFailedKey = (p: ProviderEntry, hash: string | undefined) =>
-  `capk:models-failed:${p.plugin}:v${p.major}:${p.version ?? "-"}:${hash ?? "-"}`;
+  `capk:models-failed:${p.plugin}:${p.version ?? "-"}:${hash ?? "-"}`;
 const droppedKey = (plugin: string, hash: string | undefined, model: string) =>
   `capk:models-dropped:${plugin}:${hash ?? "-"}:${model}`;
 
@@ -94,7 +86,6 @@ const copyHash = (orgId: string, schema: z.ZodTypeAny | undefined, config: unkno
 
 interface ProviderEntry {
   plugin: string;
-  major: 1 | 2;
   impl: ModelProvider;
   version?: string | undefined;
   /** The platform config's digest (`deploymentConfigHash`), shared by every following org. */
@@ -222,61 +213,18 @@ export class ProviderListError extends ApiError {
 /** Where a provider's calls for one org (or the platform) go: the call options and list digest. */
 type Target =
   | { ok: true; call: ModelCallOptions; hash: string | undefined }
-  | { ok: false; reason: "org_configured" | "needs_config" | "switched_off" };
+  | { ok: false; reason: "org_configured" | "needs_config" | "not_enabled" };
 
 /**
- * `@1` 适配层为 `capabilities.effort` 为真的模型补的 effort 旋钮：五档，不给默认值
- * （各家 API 的默认值不同；给了默认值会让未设置 effort 的 agent 每次都静默发送它）。
- */
-const V1_EFFORT_KNOB: ModelParameter = {
-  key: "effort",
-  standard: "effort",
-  schema: { type: "string", enum: [...EFFORT_VALUES] },
-  label: { zh: "思考深度", en: "Effort" },
-};
-
-/**
- * 把 `model-provider@1` 实现包成 `@2`：
- * - `listModels`：`parameters` 由 `capabilities.effort` 推导（为真时只有 effort 旋钮，否则为空）；
- *   an `@1` model is always a chat model: `kind` and `embedding` are dropped (an `@1` provider has
- *   no `embed`); the per-call options are not passed (an `@1` provider reads `ctx.config`);
- * - `stream`：`params.effort` 映射为 `req.effort`，其余参数丢弃（`@1` 没有对应字段）；
- *   没有 `params.effort` 时保留请求自带的 `effort`；only the signal is passed.
- */
-export function adaptModelProviderV1(impl: ModelProviderV1): ModelProvider {
-  return {
-    async listModels() {
-      const models = await impl.listModels();
-      return models.map(
-        ({ kind: _kind, embedding: _embedding, ...m }: ModelInfoV1): ModelInfo => ({
-          ...m,
-          parameters: m.capabilities.effort ? [structuredClone(V1_EFFORT_KNOB)] : [],
-        }),
-      );
-    },
-    stream(req, opts) {
-      // `@1` 没有 toolChoice：不传（旧插件按自己的默认处理）
-      const { params, toolChoice: _toolChoice, ...rest } = req;
-      const out: ModelRequestV1 = rest;
-      const effort = params?.effort;
-      if (typeof effort === "string" && (EFFORT_VALUES as readonly string[]).includes(effort)) {
-        out.effort = effort as Effort;
-      }
-      return impl.stream(out, { signal: opts.signal });
-    },
-  };
-}
-
-/**
- * 模型供应商注册表：供应商即提供 `model-provider` 能力的插件（以插件名为供应商名）。
- * 同时支持 `model-provider@1`（经 {@link adaptModelProviderV1} 适配）与 `@2`；
- * 同一插件两者都提供时用 `@2`。
+ * The model provider registry: a provider is an extension that provides `model-provider@2` (the
+ * provider's name is the plugin's name).
  *
  * Org-bound (spec B §5.5, A §6): every list and call is made for an org with the provider's
- * effective config there (`EffectiveConfigs.get`), passed as `{ orgId, config }`; a provider whose
- * effective config is not valid in the org offers no models there, and neither does one the org
- * explicitly turned off (its own extension switch row off, spec A §8; a provider with no switch row
- * stays usable). The admin view (no org) lists with the platform config.
+ * effective config there (`EffectiveConfigs.get`), passed as `{ orgId, config }`. A provider is on
+ * in an org only when the org enabled it, like every other extension (`enabledExtensionsQuery`: the
+ * org's switch on, or a required bootstrap plugin); one not enabled there, or whose effective
+ * config is not valid there, offers no models there. The admin view (no org) lists with the
+ * platform config.
  *
  * Each list is validated per model (spec B §5.1): kinds are normalised (absent = `chat`, unknown =
  * `other`); a chat model failing `assertValidDeclarations`, or an `embedding` model without
@@ -284,7 +232,7 @@ export function adaptModelProviderV1(impl: ModelProviderV1): ModelProvider {
  * provider stays usable. Only `chat` and `embedding` models resolve.
  *
  * Each list (`@2`-shaped) is cached in Redis (`@Cacheable`, key
- * `cache:capk:models:<provider>:v<major>:<plugin version>:<config digest>`, 600 s), never in
+ * `cache:capk:models:<provider>:f<format>:<plugin version>:<config digest>`, 600 s), never in
  * process memory: every replica shares it. The digest is the platform config's for every org that
  * follows the platform (one shared list), and a per-org digest for an org's own copy.
  */
@@ -297,7 +245,7 @@ export class ProviderRegistry {
     @Inject(REDIS) private readonly kv: Redis,
     @Inject(KernelConfigService) private readonly config: Pick<KernelConfigService, "get">,
     @Inject(ModelEnablement)
-    private readonly enablement: Pick<ModelEnablement, "disabled" | "switchedOff">,
+    private readonly enablement: Pick<ModelEnablement, "disabled" | "enabledIn">,
     @Inject(KERNEL_LOGGER) private readonly log?: Pick<Logger, "warn">,
     /** Overrides `models.listTimeoutMs` (tests). */
     @Optional()
@@ -305,7 +253,10 @@ export class ProviderRegistry {
     private readonly listTimeoutOverride?: number,
   ) {}
 
-  /** `listModels()` 加时限（到时按失败处理，供应商的调用留在后台、结果丢弃）。 */
+  /**
+   * `listModels()` with a time limit: a timeout counts as a failure; the provider's call runs on in
+   * the background and its result is dropped.
+   */
   private async listModelsWithTimeout(
     impl: ModelProvider,
     call: ModelCallOptions,
@@ -327,64 +278,53 @@ export class ProviderRegistry {
   }
 
   /**
-   * Whether at least one model-provider extension is loaded on this replica (enabled, configured,
-   * set up) with a valid effective config in `orgId`. Read from extension state and the org's
-   * config only: never calls a vendor, so a provider whose vendor is down still counts (org
-   * readiness, web-order spec §3.8).
+   * Whether a model provider is usable in `orgId` (org readiness, web-order spec §3.8,
+   * `ReadinessService`), from extension state, the org's switches and its config only: never calls
+   * a vendor, so a provider whose vendor is down still counts. True when a provider loaded on this
+   * replica is enabled in `orgId` with a valid effective config there.
    */
   async hasProvider(orgId: string): Promise<boolean> {
-    const off = await this.enablement.switchedOff(orgId);
+    const on = await this.enablement.enabledIn(orgId);
     for (const p of this.providers()) {
-      if ((await this.target(p, orgId, off)).ok) return true;
+      if (on.has(p.plugin) && (await this.target(p, orgId, on)).ok) return true;
     }
     return false;
   }
 
-  /** 每个插件取一个实现（`@2` 优先），按插件首次出现的顺序；不支持的主版本记 warn 后忽略。 */
+  /** One implementation per plugin, in the order plugins first appear; another major is ignored. */
   private providers(): ProviderEntry[] {
-    const chosen = new Map<
-      string,
-      { major: 1 | 2; impl: unknown; version: string | undefined; configHash: string | undefined }
-    >();
+    const chosen = new Map<string, ProviderEntry>();
     for (const p of this.host.list(CAPABILITY)) {
-      const { major } = parseExtensionPoint(p.capability);
-      if (major !== 1 && major !== 2) {
+      if (parseExtensionPoint(p.capability).major !== 2) {
         this.log?.warn("unsupported model-provider major version; ignored", {
           provider: p.plugin,
           capability: p.capability,
         });
         continue;
       }
-      const prev = chosen.get(p.plugin);
-      if (!prev || major > prev.major) {
-        chosen.set(p.plugin, {
-          major,
-          impl: p.impl,
-          version: p.version,
-          configHash: p.configHash,
-        });
-      }
+      if (chosen.has(p.plugin)) continue;
+      chosen.set(p.plugin, {
+        plugin: p.plugin,
+        impl: p.impl as ModelProvider,
+        version: p.version,
+        configHash: p.configHash,
+      });
     }
-    return [...chosen].map(([plugin, { major, impl, version, configHash }]) => ({
-      plugin,
-      major,
-      version,
-      configHash,
-      impl: major === 2 ? (impl as ModelProvider) : adaptModelProviderV1(impl as ModelProviderV1),
-    }));
+    return [...chosen.values()];
   }
 
   /**
    * The call options and list digest of `p` for `orgId`, or for the platform when `orgId` is
    * undefined (the admin view). An org: its effective config (not valid -> `needs_config`); the
    * platform's digest while it follows the platform, a per-org one for its copy. The platform: its
-   * own config (a required overridable field left empty -> `org_configured`). `off`: the
-   * extensions the org explicitly turned off (`ModelEnablement.switchedOff`) -> `switched_off`.
+   * own config (a required overridable field left empty -> `org_configured`). `on`: the
+   * extensions enabled in the org (`ModelEnablement.enabledIn`); a provider not in it ->
+   * `not_enabled`. Unused for the platform.
    */
   private async target(
     p: ProviderEntry,
     orgId: string | undefined,
-    off: ReadonlySet<string> = new Set(),
+    on: ReadonlySet<string> = new Set(),
   ): Promise<Target> {
     const inst = this.host.current?.(p.plugin);
     const schema = inst?.manifest.config?.deployment as z.ZodTypeAny | undefined;
@@ -394,12 +334,9 @@ export class ProviderRegistry {
       }
       return { ok: true, call: { config: inst?.config }, hash: p.configHash };
     }
-    if (off.has(p.plugin)) return { ok: false, reason: "switched_off" };
+    if (!on.has(p.plugin)) return { ok: false, reason: "not_enabled" };
     const eff = await this.effective.get(orgId, p.plugin);
     if (!eff.ok) return { ok: false, reason: "needs_config" };
-    // an `@1` provider ignores the per-call options (it reads `ctx.config`): the org's own copy
-    // could not be honoured, its calls would go out with the platform's config
-    if (eff.source === "copy" && p.major === 1) return { ok: false, reason: "needs_config" };
     return {
       ok: true,
       call: { orgId, config: eff.config },
@@ -516,8 +453,9 @@ export class ProviderRegistry {
   }
 
   /**
-   * 每个已安装供应商及其状态（按插件加载顺序），for `orgId` (enabled models only), or the platform
-   * view when undefined (`/admin/models`: every model, `disabled` from the platform's list only).
+   * Every installed provider with its status (in plugin load order), for `orgId` (the providers it enabled, their enabled
+   * models only), or the platform view when undefined (`/admin/models`: every model, `disabled`
+   * from the platform's list only).
    * See {@link statuses} for the statuses.
    */
   async listWithStatus(orgId?: string): Promise<ProviderStatus[]> {
@@ -539,36 +477,41 @@ export class ProviderRegistry {
   }
 
   /**
-   * 每个已安装供应商的完整列表与状态，for `orgId` or the platform: 列模型失败（含超过
-   * `models.listTimeoutMs`）的标 `error`、`models` 为空，不影响其他供应商；列模型失败的在
-   * {@link LIST_FAILURE_TTL_SECONDS} 秒内不再请求。An org where the provider needs configuration gets
-   * `error`; the platform view of a provider whose platform config leaves a required overridable
-   * field empty gets `org_configured`. `error` 只是内核自己的英文说明（不透出上游错误原文，原文记 warn
-   * 日志）。No disabled list applied.
+   * Every installed provider's full list and status, for `orgId` or the platform: a provider whose
+   * model listing fails (including passing `models.listTimeoutMs`) gets `error` with empty
+   * `models` without affecting the others, and is not asked again for
+   * {@link LIST_FAILURE_TTL_SECONDS} seconds. For an org only the providers it enabled are
+   * listed (one it did not enable is absent); one that needs configuration there gets `error`. The
+   * platform view of a provider whose platform config leaves a required overridable field empty
+   * gets `org_configured`. `error` is only the kernel's own English message (the upstream error
+   * text is never exposed; it goes to a warn log). No disabled list applied.
    */
   private async statuses(orgId: string | undefined): Promise<ProviderStatus[]> {
-    const providers = this.providers();
-    const off = orgId === undefined ? new Set<string>() : await this.enablement.switchedOff(orgId);
+    const on = orgId === undefined ? new Set<string>() : await this.enablement.enabledIn(orgId);
+    const providers = this.providers().filter((p) => orgId === undefined || on.has(p.plugin));
     const settled = await Promise.allSettled(
-      providers.map(
-        async (p): Promise<KernelModelInfo[] | Exclude<Target, { ok: true }>["reason"]> => {
-          const t = await this.target(p, orgId, off);
-          if (!t.ok) return t.reason;
-          const failed = listFailedKey(p, t.hash);
-          // 刚失败过的供应商：短时间内直接标 error，不再等它（每个供应商另有时限）
-          if ((await this.kv.get(failed)) !== null) {
-            throw new ProviderListError(p.plugin, new Error("listModels failed recently"));
+      providers.map(async (p): Promise<KernelModelInfo[] | "org_configured" | "needs_config"> => {
+        const t = await this.target(p, orgId, on);
+        if (!t.ok) {
+          // an org's providers are filtered to the enabled ones above
+          if (t.reason === "not_enabled") throw new Error(`${p.plugin} is not enabled here`);
+          return t.reason;
+        }
+        const failed = listFailedKey(p, t.hash);
+        // a provider that failed just now: mark it error for a while without waiting on it (each
+        // provider has its own time limit too)
+        if ((await this.kv.get(failed)) !== null) {
+          throw new ProviderListError(p.plugin, new Error("listModels failed recently"));
+        }
+        try {
+          return await this.models(p, t);
+        } catch (err) {
+          if (err instanceof ProviderListError) {
+            await this.kv.set(failed, "1", "EX", LIST_FAILURE_TTL_SECONDS);
           }
-          try {
-            return await this.models(p, t);
-          } catch (err) {
-            if (err instanceof ProviderListError) {
-              await this.kv.set(failed, "1", "EX", LIST_FAILURE_TTL_SECONDS);
-            }
-            throw err;
-          }
-        },
-      ),
+          throw err;
+        }
+      }),
     );
     return settled.map((r, i): ProviderStatus => {
       const provider = (providers[i] as { plugin: string }).plugin;
@@ -578,10 +521,6 @@ export class ProviderRegistry {
         }
         if (r.value === "needs_config") {
           const error = `Model provider ${provider} needs configuration in this organization`;
-          return { provider, plugin: provider, status: "error", error, models: [] };
-        }
-        if (r.value === "switched_off") {
-          const error = `Model provider ${provider} is turned off in this organization`;
           return { provider, plugin: provider, status: "error", error, models: [] };
         }
         return { provider, plugin: provider, status: "ok", models: r.value };
@@ -635,15 +574,15 @@ export class ProviderRegistry {
       );
     const p = this.providers().find((x) => x.plugin === ref.provider);
     if (!p) throw unavailable();
-    const off = orgId === undefined ? new Set<string>() : await this.enablement.switchedOff(orgId);
-    const t = await this.target(p, orgId, off);
+    const on = orgId === undefined ? new Set<string>() : await this.enablement.enabledIn(orgId);
+    const t = await this.target(p, orgId, on);
     if (!t.ok) {
       throw new ApiError(
         "agent.model_unavailable",
         t.reason === "org_configured"
           ? `Model provider ${ref.provider} is configured by each organization`
-          : t.reason === "switched_off"
-            ? `Model provider ${ref.provider} is turned off in this organization`
+          : t.reason === "not_enabled"
+            ? `Model provider ${ref.provider} is not enabled in this organization`
             : `Model provider ${ref.provider} needs configuration in this organization`,
       );
     }

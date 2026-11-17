@@ -1,86 +1,98 @@
+import { sql } from "kysely";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import type { OutboxService } from "../infra/outbox/outbox.service.js";
 
 /**
  * The plugin scope sync's jobs as the outbox owes them (transactional outbox spec §8.1): a leaf
- * module (type imports only), so the import confirm (`PluginImport`, below the scope service) and
- * the CLI owe them without the sync. `scope-sync.ts` (the consumer side) re-exports these names.
+ * module (type imports only), so the import confirm (`PluginImport`, below the scope service), the
+ * extension host's deploy (`ExtensionAdminOps`, `ExtensionAdmin`) and the CLI owe them without the
+ * sync. `scope-sync.ts` (the consumer side) re-exports these names.
  */
 
 /** The scope sync queue (no `:` in the name). */
 export const PLUGIN_SCOPE_QUEUE = "cap-kernel-plugin-scope";
-/** The job converging one item in every org. */
+/** The job fanning one item out to every org: one {@link SCOPE_CHUNK_JOB} per org chunk. */
 export const SCOPE_ITEM_JOB = "scope-item";
+/** The job converging one item in one chunk of orgs (at most {@link SCOPE_ORG_CHUNK} of them). */
+export const SCOPE_CHUNK_JOB = "scope-item-chunk";
 /** The job converging every item in one org. */
 export const SCOPE_ORG_JOB = "scope-org";
+/** How many orgs one chunk job converges. */
+export const SCOPE_ORG_CHUNK = 100;
 /**
- * The delayed backstop of an item job owed by a confirmation's commit (ruling R24): it converges
- * the item as {@link SCOPE_ITEM_JOB} does once the extension is deployed, and fails (BullMQ
- * retries it with its backoff) while the extension is not enabled on the deployment yet.
+ * Optional provider (a test seam): the chunk size instead of {@link SCOPE_ORG_CHUNK}, so a test
+ * with a few orgs fans out to several chunks.
  */
-export const SCOPE_BACKSTOP_JOB = "scope-item-backstop";
-/** How long after the confirmation's commit the backstop runs (the deploy has finished by then). */
-export const SCOPE_BACKSTOP_DELAY_MS = 5 * 60_000;
-/**
- * Optional provider (a test seam): the backstop's delay (ms) instead of
- * {@link SCOPE_BACKSTOP_DELAY_MS}, so a long test file never has a backstop fire in a later test.
- */
-export const SCOPE_BACKSTOP_DELAY = Symbol("SCOPE_BACKSTOP_DELAY");
+export const SCOPE_ORG_CHUNK_SIZE = Symbol("SCOPE_ORG_CHUNK_SIZE");
 
-/** One item job per scope version (no `:`: item ids are UUIDs). */
-export const scopeItemJobId = (itemId: string, version: number): string =>
-  `scope-item-${itemId}-${version}`;
-/** The backstop of the item job of a scope version (distinct from the immediate one). */
-export const scopeBackstopJobId = (itemId: string, version: number): string =>
-  `${scopeItemJobId(itemId, version)}-backstop`;
+/**
+ * One item job per owing transaction (`xact`: its PostgreSQL transaction id, so two owes in one
+ * transaction are one job, and a later transaction's job is never swallowed by an earlier one
+ * still running; no `:`: item ids are UUIDs).
+ */
+export const scopeItemJobId = (itemId: string, xact: string): string =>
+  `scope-item-${itemId}-x${xact}`;
+/** Chunk `n` of an item job (deterministic: a redelivered item job adds the same chunks). */
+export const scopeChunkJobId = (itemJobId: string, n: number): string => `${itemJobId}-c${n}`;
 /** One org job at a time per org. */
 export const scopeOrgJobId = (orgId: string): string => `scope-org-${orgId}`;
-/**
- * The delayed retry `n` of an item job whose extension this replica had not loaded yet (ruling
- * P3-38); deterministic, so replicas deferring the same item add it once.
- */
-export const scopeRetryJobId = (itemId: string, version: number, n: number): string =>
-  `scope-item-${itemId}-${version}-r${n}`;
 
-/**
- * The job's data. `retry`: the item job's delayed retry number (P3-38). `backstop`: a
- * {@link SCOPE_BACKSTOP_JOB}.
- */
+/** The job's data. */
 export type ScopeJob =
-  | { kind: "item"; itemId: string; retry?: number; backstop?: true }
+  | { kind: "item"; itemId: string }
+  | { kind: "chunk"; itemId: string; orgIds: string[] }
   | { kind: "org"; orgId: string };
 
+/** The id of the transaction in context (assigned now if it has none yet). */
+async function currentXact(db: KernelSchemaDb): Promise<string> {
+  const r = await sql<{ xact: string }>`SELECT pg_current_xact_id()::text AS xact`.execute(db);
+  const xact = r.rows[0]?.xact;
+  if (xact === undefined) throw new Error("no transaction id");
+  return xact;
+}
+
 /**
- * Owes the item's scope sync in the transaction in context, once per scope version (read in that
- * transaction, so after its own bump); `backstop` owes the delayed backstop instead, due
- * `backstopDelayMs` later (default {@link SCOPE_BACKSTOP_DELAY_MS}). A missing item owes nothing.
+ * Owes the item's scope sync in the transaction in context, one job per transaction (see
+ * {@link scopeItemJobId}). A missing item owes nothing.
  */
 export async function oweScopeItem(
   outbox: Pick<OutboxService, "add">,
   db: KernelSchemaDb,
   itemId: string,
-  opts: { backstop?: boolean; backstopDelayMs?: number } = {},
 ): Promise<void> {
   const row = await db
     .selectFrom("catalog_items")
-    .select("scope_version")
+    .select("id")
     .where("id", "=", itemId)
     .executeTakeFirst();
   if (!row) return;
-  if (opts.backstop === true) {
-    await outbox.add<ScopeJob>({
-      queue: PLUGIN_SCOPE_QUEUE,
-      name: SCOPE_BACKSTOP_JOB,
-      jobId: scopeBackstopJobId(itemId, row.scope_version),
-      data: { kind: "item", itemId, backstop: true },
-      runAt: new Date(Date.now() + (opts.backstopDelayMs ?? SCOPE_BACKSTOP_DELAY_MS)),
-    });
-    return;
-  }
   await outbox.add<ScopeJob>({
     queue: PLUGIN_SCOPE_QUEUE,
     name: SCOPE_ITEM_JOB,
-    jobId: scopeItemJobId(itemId, row.scope_version),
+    jobId: scopeItemJobId(itemId, await currentXact(db)),
     data: { kind: "item", itemId },
   });
+}
+
+/**
+ * Owes the scope sync of the live catalog item of an extension (its plugin, by name; at most one
+ * live item has a name) in the transaction that deploys it: the extension became enabled, a new
+ * version of an enabled one was installed, or its permissions were approved while enabled (or
+ * config-declared). The sync then installs it where its scope wants it on; a replica that has not
+ * loaded the extension yet fails the chunk job, and BullMQ retries it. A builtin item (on
+ * everywhere through its required extension) owes nothing.
+ */
+export async function oweDeployedExtensionSync(
+  outbox: Pick<OutboxService, "add">,
+  db: KernelSchemaDb,
+  extensionName: string,
+): Promise<void> {
+  const item = await db
+    .selectFrom("catalog_items")
+    .select("id")
+    .where("name", "=", extensionName)
+    .where("deleted_at", "is", null)
+    .where("builtin", "=", false)
+    .executeTakeFirst();
+  if (item) await oweScopeItem(outbox, db, item.id);
 }

@@ -16,7 +16,12 @@ import { asUser, cookieJar } from "../helpers/http.js";
 import { accountsFor, apiTokensFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
 import { MODEL_PLUGINS_CONFIG } from "../helpers/model-plugins.js";
-import { enableConnectorExtensions, startKernel, type TestKernel } from "../helpers/runs.js";
+import {
+  enableConnectorExtensions,
+  enableModelProviders,
+  startKernel,
+  type TestKernel,
+} from "../helpers/runs.js";
 
 // Tool presentation metadata for the conversation page (UI refresh B, Task 4):
 // GET /orgs/:orgId/conversations/:id/tools?keys=… -> titles, kinds, key arguments and sources.
@@ -110,6 +115,7 @@ async function setup(): Promise<{ req: Req; orgId: string; conversationId: strin
   expect(org.statusCode).toBe(201);
   const orgId = (org.json() as { org: { id: string } }).org.id;
   await enableConnectorExtensions(k, orgId);
+  await enableModelProviders(k, orgId);
   const agent = await req({
     method: "POST",
     url: `/api/v1/orgs/${orgId}/agents`,
@@ -226,36 +232,6 @@ describe("GET /conversations/:id/tools", () => {
     expect(t.AskUserQuestion).toMatchObject({ kind: "meta", keyArgs: [], title: null });
     // a sub-agent's task name, then its type (the page shows agent calls as sub-agent rows)
     expect(t.Agent).toMatchObject({ kind: "tool", keyArgs: ["description", "subagent_type"] });
-  });
-
-  it("an rc builtin key (old history) answers as its current tool with aliasOf and the old key arguments", async () => {
-    const { req, orgId, conversationId } = await setup();
-    const res = await tools(req, orgId, conversationId, [
-      "sandbox_bash",
-      "sandbox_read",
-      "agent",
-      "Bash",
-    ]);
-    expect(res.statusCode, res.body).toBe(200);
-    const t = byKey(res);
-    expect(t.sandbox_bash).toEqual({
-      key: "sandbox_bash",
-      aliasOf: "Bash",
-      title: null,
-      kind: "command",
-      sandbox: true,
-      keyArgs: ["command"],
-      tool: null,
-      source: { kind: "builtin" },
-    });
-    // the logged input of an rc call carries the old parameter names
-    expect(t.sandbox_read).toMatchObject({ aliasOf: "Read", kind: "read", keyArgs: ["path"] });
-    expect(t.agent).toMatchObject({
-      aliasOf: "Agent",
-      keyArgs: ["description", "subagent_type"],
-      source: { kind: "builtin" },
-    });
-    expect(t.Bash).not.toHaveProperty("aliasOf");
   });
 
   it("a connector tool returns its MCP title and key arguments, named by the connector", async () => {

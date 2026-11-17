@@ -1,6 +1,5 @@
 import type { ModelCallOptions, ModelProvider, ModelRequest } from "@capybara-hq/plugin-sdk";
 import { TITLE_PROMPT } from "../../src/conversations/titles.js";
-import { COMPACTION_MARKER } from "../../src/runtime/context/compaction.js";
 import {
   type BoundProvider,
   type ProviderHost,
@@ -68,7 +67,7 @@ export function captureProviderRequests(): ProviderCapture {
           ...(inner.embed && { embed: inner.embed }),
           stream(req, opts) {
             const copy = structuredClone(req);
-            if (req.system.some((s) => s.text.includes(COMPACTION_MARKER))) compactions.push(copy);
+            if (req.purpose === "compaction") compactions.push(copy);
             else if (req.system.some((s) => s.text === TITLE_PROMPT)) titles.push(copy);
             else if (req.system.some((s) => s.text.startsWith(WEB_FETCH_SYSTEM_PROMPT))) {
               webFetches.push(copy);

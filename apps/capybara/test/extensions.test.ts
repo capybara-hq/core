@@ -405,7 +405,7 @@ describe("capybara extensions install / enable / disable / uninstall（运行中
     }
   }, 60_000);
 
-  it("a stored package in the pre-0.1.0 format: list shows legacy_format with the repack message", async () => {
+  it("a stored old-format package: list shows it as unknown with the reason", async () => {
     const raw = createDb(pg.url, 1);
     const bytes = Buffer.from(await legacyTgz({ name: "oldpkg" }));
     const sha = createHash("sha256").update(bytes).digest("hex");
@@ -440,7 +440,7 @@ describe("capybara extensions install / enable / disable / uninstall（运行中
       expect(r.code, r.stderr).toBe(0);
       expect(r.stdout.split("\n")).toContainEqual(
         expect.stringMatching(
-          /^oldpkg\t1\.0\.0\tinstall\tenabled\tlegacy_format \(.*uses the pre-0\.1\.0 package format .*pnpm pack-plugin\)\)$/,
+          /^oldpkg\t1\.0\.0\tinstall\tenabled\tunknown \(.*plugin\.json not found in the package.*\)$/,
         ),
       );
       expect(r.stdout).not.toContain("    at ");

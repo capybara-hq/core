@@ -640,7 +640,7 @@ export interface MarketplaceEntry {
   adopted: { itemId: string; versions: string[] } | null;
   /**
    * The icon's kernel URL (super admins): an imported plugin's catalog icon (the one 已安装
-   * shows), else the icon the marketplace gives for the entry; null (or absent from older kernels)
+   * shows), else the icon the marketplace gives for the entry; null
    * without one: the row draws the initial.
    */
   icon?: string | null;
@@ -793,8 +793,8 @@ export interface CatalogRequest {
   decidedAt: string | null;
   /** The prepared import of an approved `import` request that is not confirmed yet. */
   stagingId: string | null;
-  /** A `connector_setup` request's agent (null for the other kinds; older kernels: absent). */
-  agent?: { id: string; name: string; deleted: boolean } | null;
+  /** A `connector_setup` request's agent (null for the other kinds). */
+  agent: { id: string; name: string; deleted: boolean } | null;
   /** A `connector_setup` request's remaining connectors (`[]` once closed; null otherwise). */
   connectors?: SetupRequestConnector[] | null;
   /** A `network_allowlist` request's hosts, conversation and agent (null otherwise). */
@@ -845,7 +845,7 @@ export interface OrgCatalogItem
   state: OrgPluginState;
   /**
    * Only when `unavailable`: why (kernel `OrgCatalogItem.reason`): `plugin_disabled` (the super
-   * admin disabled it), or its extension's reason. Older kernels leave it out.
+   * admin disabled it), or its extension's reason.
    */
   reason?: "plugin_disabled" | ExtensionUnavailableReason;
   /** The org admin may switch it (never for builtin items; `all` items are on unless switched off). */
@@ -882,7 +882,7 @@ export interface OrgCatalogTemplate {
   connected: boolean;
   /**
    * The template's setup guide in the item's latest version (setup guides v2 spec §9.3): the
-   * wizard shows it above the template's input. Null without one (older kernels: absent).
+   * wizard shows it above the template's input. Null without one (absent for other kinds).
    */
   guide?: { itemId: string; guideId: string } | null;
 }
@@ -911,13 +911,13 @@ export interface OrgCatalogDetail {
   dependencies: { name: string; range: string }[];
   /** The skill directories. */
   skills: string[];
-  /** The agent template files (`agents/<name>.md`; older kernels leave it out). */
-  agents?: string[];
+  /** The agent template files (`agents/<name>.md`). */
+  agents: string[];
   /**
    * An installed `needs_config` plugin: the connector templates on in the org that miss a
-   * connector there (补充配置 creates them); empty otherwise, absent from older kernels.
+   * connector there (Complete setup creates them); empty otherwise.
    */
-  missingTemplates?: OrgCatalogTemplate[];
+  missingTemplates: OrgCatalogTemplate[];
 }
 
 /** What an org fills in for one connector template at install. */
@@ -1009,7 +1009,7 @@ export interface PluginInstall {
   itemId: string;
   name: string;
   version: string;
-  status: "installing" | "installed" | "failed" | "uninstalling" | "upgrading";
+  status: "installing" | "installed" | "failed" | "uninstalling";
   installedBy: string | null;
   installedAt: string;
   /** The failed install's step and code, or the last failed upgrade's (the install stays installed). */

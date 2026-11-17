@@ -11,7 +11,7 @@ import {
   zh,
 } from "./support/chat";
 import { HOME_URL, hydrated } from "./support/nav";
-import { ORG_NAME, signIn } from "./support/sign-in";
+import { enableModelFake, ORG_NAME, signIn } from "./support/sign-in";
 
 /**
  * The web query cache (spec `docs/superpowers/specs/2026-11-03-web-query-cache-design.md` §9): a
@@ -254,6 +254,7 @@ test("switching org never shows the old org", async ({ page }) => {
   const r = await page.request.post("/api/v1/orgs", { headers: CSRF, data: { name: otherName } });
   expect(r.ok(), await r.text()).toBe(true);
   const otherId = ((await r.json()) as { org: { id: string } }).org.id;
+  await enableModelFake(page.request, otherId);
   await createAgent(page, otherId, names.other);
 
   try {

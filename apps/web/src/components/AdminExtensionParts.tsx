@@ -15,7 +15,6 @@ const MARK: Record<ExtensionStatus, "success" | "cancelled" | "failed" | "runnin
   failed: "failed",
   dependency: "failed",
   conflict: "waiting",
-  legacy_format: "failed",
 };
 
 /** Admin extension status (shared by the list and the detail page header). */

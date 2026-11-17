@@ -19,7 +19,7 @@ import type { ScheduledTask, TaskRun } from "../../src/schedules/types.js";
 import { builtinsOff } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
-import { PW, waitFor } from "../helpers/runs.js";
+import { enableExtensions, PW, waitFor } from "../helpers/runs.js";
 
 /**
  * Scheduled tasks spec §6, §13 on two replicas (Task 6): both replicas scan at once (the scan's
@@ -89,6 +89,7 @@ beforeAll(async () => {
     .join("; ");
   const org = await at(0, "POST", "/api/v1/orgs", { name: "Acme" });
   orgId = (org.json.org as { id: string }).id;
+  await enableExtensions(raw, orgId, "model-fake");
   const agent = await at(1, "POST", `/api/v1/orgs/${orgId}/agents`, {
     definition: {
       name: "Helper",

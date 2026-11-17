@@ -3,14 +3,15 @@ import type { z } from "zod";
 import { CurrentPrincipal, type Principal, SuperAdmin } from "../identity/principal.js";
 import { writeActorOf } from "../identity/write-actor.js";
 import { createZodDto } from "../infra/validation/create-zod-dto.js";
-import { ZParam } from "../infra/validation/zod-params.js";
-import { OutboxDeadParams } from "./outbox-dead.schemas.js";
+import { ZParam, ZQuery } from "../infra/validation/zod-params.js";
+import { OutboxDeadListQuery, OutboxDeadParams } from "./outbox-dead.schemas.js";
 import {
-  type OutboxDeadRow,
+  type OutboxDeadPage,
   OutboxDeadService,
   type OutboxRetryOutcome,
 } from "./outbox-dead.service.js";
 
+class OutboxDeadListQueryDto extends createZodDto(OutboxDeadListQuery, "OutboxDeadListQuery") {}
 class OutboxDeadParamsDto extends createZodDto(OutboxDeadParams, "OutboxDeadParams") {}
 
 /**
@@ -23,10 +24,12 @@ class OutboxDeadParamsDto extends createZodDto(OutboxDeadParams, "OutboxDeadPara
 export class OutboxDeadController {
   constructor(@Inject(OutboxDeadService) private readonly dead: OutboxDeadService) {}
 
-  /** The dead rows, oldest first (at most 200). */
+  /** A page of dead rows, oldest first; `next` is the `after` of the next page, null at the end. */
   @Get()
-  list(): Promise<{ items: OutboxDeadRow[] }> {
-    return this.dead.list();
+  list(
+    @ZQuery(OutboxDeadListQueryDto) q: z.infer<typeof OutboxDeadListQuery>,
+  ): Promise<OutboxDeadPage> {
+    return this.dead.list(q);
   }
 
   /** Makes the row due again, or discards it when the same job is owed already (`already_owed`). */

@@ -378,7 +378,10 @@ describe("输入框：上传文件（修正轮 1）", () => {
           types: ["image/png", "text/plain"],
           maxBytes: 1000,
           imageMaxBytes: 100,
+          extensions: [],
           maxPerMessage: 2,
+          requestMediaBytes: 10_000,
+          available: true,
         }),
     });
     const { container, calls: server } = await renderChat("zh");
@@ -798,6 +801,7 @@ describe("输入框：只发文件、存储不可用与请求预算（修正波 
           types: ["image/png"],
           maxBytes: 1000,
           imageMaxBytes: 1000,
+          extensions: [],
           maxPerMessage: 10,
           requestMediaBytes: 1000,
           available: false,
@@ -824,6 +828,7 @@ describe("输入框：只发文件、存储不可用与请求预算（修正波 
           types: ["image/png"],
           maxBytes: 1000,
           imageMaxBytes: 1000,
+          extensions: [],
           maxPerMessage: 10,
           requestMediaBytes: 10,
           available: true,

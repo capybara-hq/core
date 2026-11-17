@@ -1,7 +1,7 @@
 import type { NestInterceptor } from "@nestjs/common";
 import { APP_INTERCEPTOR } from "@nestjs/core";
 import { ADMIN_USAGE_TIMINGS, type AdminUsageTimings } from "./admin/usage.service.js";
-import { SCOPE_BACKSTOP_DELAY } from "./catalog/scope-jobs.js";
+import { SCOPE_ORG_CHUNK_SIZE } from "./catalog/scope-jobs.js";
 import { CHANNEL_WEBHOOK_TIMINGS, type ChannelWebhookTimings } from "./channels/webhook.js";
 import type { EvalReplayHooks } from "./evals/run-replay.js";
 import { EVAL_REPLAY_HOOKS } from "./evals/worker.js";
@@ -13,7 +13,6 @@ import { GIT_IDENTITY_API_BASE, type GitIdentityApiBase } from "./git/identity.j
 import { PLUGIN_PUBLIC_WRITE_LIMIT } from "./http/plugin-route-access.js";
 import { OUTBOX_DISPATCH_FAILS } from "./infra/outbox/outbox.dispatcher.js";
 import { OUTBOX_FAST_PATH_SETTLED } from "./infra/outbox/outbox.module.js";
-import { OUTBOX_STRICT_CONFLICTS } from "./infra/outbox/outbox.service.js";
 import { PRESENCE_INTERVAL_MS } from "./infra/presence/replica-presence.js";
 import type { KernelQueueName } from "./infra/queue/queue-names.js";
 import { DEVICE_POLICY_AFTER_CALL } from "./local-devices/device-policy.service.js";
@@ -50,8 +49,6 @@ import { EMBED_TOKEN_CLOCK } from "./ui/embed-token.js";
  *   `CurrentTime` builtin the time;
  * - `GIT_IDENTITY_API_BASE`: the API base of a git host for the commit identity (a loopback fake);
  * - `GIT_UPSTREAM_ORIGIN`: the origin the git gateway relays a git host to (a loopback fake);
- * - `OUTBOX_STRICT_CONFLICTS`: a reused outbox job id with different data throws (tests) instead
- *   of logging an error;
  * - `OUTBOX_DISPATCH_FAILS`: returns true to make the outbox dispatcher's adds to the given queue
  *   fail (a Redis outage);
  * - `USAGE_SUBSCRIBERS_CLOCK`: the clock the `usage.report` subscriber cache ages with;
@@ -63,7 +60,7 @@ import { EMBED_TOKEN_CLOCK } from "./ui/embed-token.js";
  * - `PROJECT_KNOWLEDGE_TIMEOUT`: the run-start read of a bound project's time limit, read at every
  *   read (a test shortens it for one run);
  * - `PLUGIN_PUBLIC_WRITE_LIMIT`: a lower limit for unsafe methods on `public` extension routes;
- * - `SCOPE_BACKSTOP_DELAY`: the delay of a confirmation's scope sync backstop (ruling R24);
+ * - `SCOPE_ORG_CHUNK_SIZE`: fewer orgs per plugin scope sync chunk job (several chunks in a test);
  * - `APP_INTERCEPTOR`: one more global interceptor (a probe of the matched routes).
  */
 interface KernelSeams {
@@ -84,12 +81,11 @@ interface KernelSeams {
   [RUN_CONTEXT_CLOCK]: () => number;
   [GIT_IDENTITY_API_BASE]: GitIdentityApiBase;
   [GIT_UPSTREAM_ORIGIN]: GitUpstreamOrigin;
-  [OUTBOX_STRICT_CONFLICTS]: boolean;
   [OUTBOX_DISPATCH_FAILS]: (queue: KernelQueueName) => boolean;
   [USAGE_SUBSCRIBERS_CLOCK]: () => number;
   [OUTBOX_FAST_PATH_SETTLED]: (pass: Promise<void>) => void;
   [ENSURE_RUN_FAILS]: () => boolean;
-  [SCOPE_BACKSTOP_DELAY]: number;
+  [SCOPE_ORG_CHUNK_SIZE]: number;
   [PROJECT_KNOWLEDGE_TIMEOUT]: () => number;
   [PLUGIN_PUBLIC_WRITE_LIMIT]: number;
   [DEVICE_POLICY_AFTER_CALL]: (opId: string) => void;
@@ -125,11 +121,10 @@ const SEAM_TOKENS = [
   RUN_CONTEXT_CLOCK,
   GIT_IDENTITY_API_BASE,
   GIT_UPSTREAM_ORIGIN,
-  OUTBOX_STRICT_CONFLICTS,
   OUTBOX_DISPATCH_FAILS,
   OUTBOX_FAST_PATH_SETTLED,
   ENSURE_RUN_FAILS,
-  SCOPE_BACKSTOP_DELAY,
+  SCOPE_ORG_CHUNK_SIZE,
   PROJECT_KNOWLEDGE_TIMEOUT,
   PLUGIN_PUBLIC_WRITE_LIMIT,
   DEVICE_POLICY_AFTER_CALL,

@@ -20,6 +20,25 @@ export interface OutboxJobSpec {
 }
 
 /**
+ * The plugin scope queue's one retry policy (`scope-item`, `scope-item-chunk`, `scope-org`): 7
+ * attempts, 5 s doubling, so the retries wait 5 + 10 + 20 + 40 + 80 + 160 = 315 s (about five
+ * minutes) before the last attempt. That is the window a replica has to load an extension its
+ * deploy enabled: the enable's `kernel.plugins.changed` message reconciles every replica at once,
+ * and if a replica misses it, its periodic reconcile does within
+ * `extensionHost.reconcileIntervalSeconds` (default 60 s). An interval longer than the window (it
+ * is not capped: tests set an hour to keep the periodic reconcile out of the way) leaves such a
+ * replica's chunk to its last attempt, which records `catalog.not_deployed` for the pair until the
+ * next sync of the item.
+ * Removed once done, so the next add of the same id is not swallowed.
+ */
+const SCOPE_JOB_OPTS = {
+  attempts: 7,
+  backoff: { type: "exponential", delay: 5_000 },
+  removeOnComplete: true,
+  removeOnFail: true,
+} as const satisfies OutboxJobSpec["opts"];
+
+/**
  * Every job name added through the outbox. The task that introduces a job name adds its entry; a
  * name without one does not type-check as an `OutboxJobName` (`add` does not check it at runtime).
  */
@@ -184,43 +203,41 @@ export const OUTBOX_JOBS = {
       removeOnFail: true,
     },
   },
-  // `catalog/scope-sync.ts` SCOPE_ITEM_JOB: owed by every transaction that changes an item's
-  // scope, disabled flag, list, owner or platform version, under `scopeItemJobId` (one per scope
-  // version), and by a sync deferred on a replica that had not loaded the extension yet, under
-  // `scopeRetryJobId` with `runAt` (spec §8.1)
+  // `catalog/scope-jobs.ts` SCOPE_ITEM_JOB: owed by every transaction that changes what an item's
+  // sync converges to (its scope, disabled flag, list, owner or platform version, an import's
+  // commit deploying no extension) and by the deploy of its extension (enable, a new version of an
+  // enabled one, an approval), under `scopeItemJobId` (one per owing transaction, spec §8.1)
   "scope-item": {
+    queue: "cap-kernel-plugin-scope",
+    idempotent:
+      "the fan-out owes the same chunk job ids again (`<item job id>-c<n>`), which the outbox and BullMQ dedupe, and each chunk converges from what it reads",
+    processedIn: "packages/kernel/src/catalog/scope-sync-workers.ts",
+    // the plugin scope queue's one retry policy (a PG or Redis blip); removed once done, so the
+    // next add of the same id is not swallowed
+    opts: SCOPE_JOB_OPTS,
+  },
+  // `catalog/scope-jobs.ts` SCOPE_CHUNK_JOB: owed by a scope-item job, one per chunk of orgs, under
+  // `scopeChunkJobId`
+  "scope-item-chunk": {
     queue: "cap-kernel-plugin-scope",
     idempotent:
       "the sync converges each (item, org) from the scope, switches and installs it reads under the org's lock, and the installer re-checks under the org row lock, so a second run changes nothing",
     processedIn: "packages/kernel/src/catalog/scope-sync-workers.ts",
-    // one attempt (a pair's failure is recorded, not retried); removed once done, so the next
-    // add of the same id is not swallowed
-    opts: { attempts: 1, removeOnComplete: true, removeOnFail: true },
+    // retried while the item's extension is enabled but not loaded on the replica (the job throws
+    // after its other pairs, P3-38): 5 s doubling, about five minutes in all; the last attempt
+    // installs anyway and records what fails. A pair's own failure is recorded and does not fail
+    // the job; a retry of a deferred chunk attempts every pair again, a failed one included
+    // (idempotent: it converges from what it reads)
+    opts: SCOPE_JOB_OPTS,
   },
-  // `catalog/scope-jobs.ts` SCOPE_BACKSTOP_JOB: owed by a confirmation's commit (an import, a
-  // permissions confirm, an org upload's first version) with `runAt` 5 min on, under
-  // `scopeBackstopJobId`, so a crash before the post-deploy add still converges (ruling R24)
-  "scope-item-backstop": {
-    queue: "cap-kernel-plugin-scope",
-    idempotent:
-      "the sync converges each (item, org) from what it reads, as a scope-item job does, so a run after the immediate job changes nothing",
-    processedIn: "packages/kernel/src/catalog/scope-sync-workers.ts",
-    // retried while the item's extension is not enabled on the deployment yet (the job throws):
-    // 1, 2, 4, 8 min; removed once done
-    opts: {
-      attempts: 5,
-      backoff: { type: "exponential", delay: 60_000 },
-      removeOnComplete: true,
-      removeOnFail: true,
-    },
-  },
-  // `catalog/scope-sync.ts` SCOPE_ORG_JOB: owed by an org's creation, under `scopeOrgJobId`
+  // `catalog/scope-jobs.ts` SCOPE_ORG_JOB: owed by an org's creation, under `scopeOrgJobId`
   "scope-org": {
     queue: "cap-kernel-plugin-scope",
     idempotent:
       "the sync converges each (item, org) of the org from what it reads, so a second run changes nothing",
     processedIn: "packages/kernel/src/catalog/scope-sync-workers.ts",
-    opts: { attempts: 1, removeOnComplete: true, removeOnFail: true },
+    // as a chunk job: retried while one of its items' extensions is not loaded on the replica
+    opts: SCOPE_JOB_OPTS,
   },
   // `catalog/job-ids.ts` OWNED_PLUGIN_CLEANUP_JOB: owed by the removal of an org-owned plugin
   // (and by a confirmation that took out the extension of an item removed meanwhile), under

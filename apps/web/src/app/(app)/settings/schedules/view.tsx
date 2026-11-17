@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  Callout,
   DataTable,
   Field,
   FormSection,
@@ -51,7 +52,9 @@ import NotFound from "../../not-found";
 /**
  * `/settings/schedules` (org admins, `schedules.manage`; SettingsPage): the scheduled-task settings
  * of spec §9 (on / off, what an ask outside the grants does, the limits, the forbidden tools), saved
- * through the shared org-settings PATCH with only the changed fields, and every task of the org
+ * through the shared org-settings PATCH with only the changed fields (while the kernel flags the
+ * forbidden list unreadable, a notice with its own save sends the list shown to repair it; that is
+ * no pending change of the form), and every task of the org
  * (a row opens it read-only; its menu pauses, resumes or deletes it: admins never edit another
  * member's task). From the query cache (the layout prefetched the settings and the tasks on a first
  * load).
@@ -147,6 +150,8 @@ function ScheduleSettings({ orgId }: { orgId: string }) {
   const countText = (k: CountKey) => draft.counts?.[k] ?? String(saved[k]);
   const expiryText =
     draft.expiry ?? (saved.defaultExpiryDays === null ? "" : String(saved.defaultExpiryDays));
+  // the stored list cannot be read (it reads []): the notice's save sends the list shown to repair it
+  const unreadable = saved.forbiddenToolsUnreadable === true;
   const forbiddenText = draft.forbidden ?? saved.forbiddenTools.join("\n");
   const forbidden = splitToolKeys(forbiddenText);
   const invalid = new Set<string>(COUNTS.filter((k) => count(countText(k)) === null));
@@ -180,6 +185,18 @@ function ScheduleSettings({ orgId }: { orgId: string }) {
       toast.error(errorMessage(e));
     }
   }
+  async function repair() {
+    try {
+      await update.mutateAsync({ scheduledTasks: { forbiddenTools: forbidden } });
+      setDraft((d) => {
+        const { forbidden: _, ...rest } = d;
+        return rest;
+      });
+      toast.success(t("saved"));
+    } catch (e) {
+      toast.error(errorMessage(e));
+    }
+  }
   const setCount = (k: CountKey, v: string) =>
     setDraft((d) => ({ ...d, counts: { ...d.counts, [k]: v } }));
 
@@ -204,6 +221,11 @@ function ScheduleSettings({ orgId }: { orgId: string }) {
           }
         : {})}
     >
+      {unreadable && (
+        <Callout tone="warn" action={{ label: t("saveRepair"), onSelect: () => void repair() }}>
+          {t("forbiddenUnreadable")}
+        </Callout>
+      )}
       <FormSection id="schedules-general" title={t("general")} description={t("generalHint")}>
         <Stack gap={12}>
           <Field label={t("enabled")} help={t("enabledHint")}>

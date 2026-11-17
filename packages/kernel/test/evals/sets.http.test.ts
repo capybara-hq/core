@@ -13,7 +13,7 @@ import { testMembers } from "../helpers/members.js";
 import {
   createAgent,
   createConv,
-  createOrg,
+  createOrgWithProviders,
   PW,
   type Req,
   runConfig,
@@ -125,7 +125,17 @@ async function seedRun(
         provider: "model-fake",
         model: "fake-1",
         fallback: false,
-        request: { fromSeq: 1, toSeq: 1, summarySeq: null, systemHash: "h", reminderSeqs: [] },
+        request: {
+          fromSeq: 1,
+          toSeq: 1,
+          summarySeq: null,
+          systemHash: "h",
+          reminderSeqs: [],
+          maxOutputTokens: 4096,
+          params: {},
+          absorbedUpToSeq: 1,
+          tools: [],
+        },
       },
     },
     {
@@ -222,7 +232,7 @@ async function seedCompactRun(
     {
       type: "compaction_summary",
       runId,
-      payload: { coversUpToSeq: msg?.seq ?? 0, text: "summary", savedTokens: 900 },
+      payload: { coversUpToSeq: msg?.seq ?? 0, text: "summary", savedTokens: 900, step: 0 },
     },
     {
       type: "usage",
@@ -255,7 +265,7 @@ beforeEach(async () => {
   adminId = await mk("admin");
   aliceId = await mk("alice");
   owner = await session(k, "owner");
-  orgId = await createOrg(owner);
+  orgId = await createOrgWithProviders(k, owner);
   const members = testMembers(db);
   await members.add(orgId, adminId, "admin", ownerId);
   await members.add(orgId, aliceId, "member", ownerId);

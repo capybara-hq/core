@@ -25,7 +25,7 @@ import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
   createAgent,
-  createOrg,
+  createOrgWithProviders,
   PW,
   type Req,
   runConfig,
@@ -189,7 +189,7 @@ describe("kernel channel checks over the routes", () => {
     redis = new Redis(rd.url);
     await accountsFor(db).createLocal({ login: "owner", password: PW, displayName: "O" });
     owner = await session(k, "owner");
-    orgId = await createOrg(owner);
+    orgId = await createOrgWithProviders(k, owner);
     agentId = await createAgent(owner, orgId);
     const en = await owner({
       method: "PUT",

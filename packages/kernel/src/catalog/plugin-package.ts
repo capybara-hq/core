@@ -27,7 +27,6 @@ import {
 import { ApiError } from "../errors.js";
 import {
   HOST_ZOD_VERSION,
-  LEGACY_FORMAT_MESSAGE,
   PackageTgzError,
   type PackageTgzLimits,
   packagePath,
@@ -35,7 +34,7 @@ import {
   unpackPackageTgz,
 } from "../packages/tgz.js";
 
-export { LEGACY_FORMAT_MESSAGE, packagePath };
+export { packagePath };
 
 /**
  * Reads a plugin tgz (spec §4.1): `package/.capybara-plugin/plugin.json` plus the skills, connector
@@ -44,10 +43,6 @@ export { LEGACY_FORMAT_MESSAGE, packagePath };
  * count, regular files only, safe paths under `package/`). No code from the package runs here; the extension's module graph is
  * checked by `readExtensionPackage`. The checks after unpacking live in {@link readPluginFiles},
  * shared with the git reader (`git-source.ts`), which reads the tree from a commit instead.
- *
- * A tgz in the pre-0.1.0 format (a `capybara` section in package.json, or `app.yaml`, and no
- * plugin.json) is rejected first, with {@link LEGACY_FORMAT_MESSAGE}: there is no reader for the
- * old formats.
  */
 
 /**
@@ -58,7 +53,6 @@ export { LEGACY_FORMAT_MESSAGE, packagePath };
  */
 export type PluginPackageErrorCode =
   | "catalog.invalid_manifest"
-  | "catalog.legacy_format"
   | "theme.invalid"
   | "theme.unreadable"
   | "client.undeclared";
@@ -78,13 +72,11 @@ export class PluginPackageError extends Error {
   readonly themes?: PluginThemeProblem[];
   constructor(code: PluginPackageErrorCode, issues: string[], themes?: PluginThemeProblem[]) {
     super(
-      code === "catalog.legacy_format"
-        ? (issues[0] ?? LEGACY_FORMAT_MESSAGE)
-        : code === "client.undeclared"
-          ? (issues[0] ?? code)
-          : code === "theme.invalid" || code === "theme.unreadable"
-            ? `Theme ${themes?.[0]?.theme ?? "?"} ${code === "theme.invalid" ? "is invalid" : "is not readable"}: ${issues[0] ?? "unknown problem"}`
-            : `Invalid plugin package: ${issues[0] ?? "unknown problem"}`,
+      code === "client.undeclared"
+        ? (issues[0] ?? code)
+        : code === "theme.invalid" || code === "theme.unreadable"
+          ? `Theme ${themes?.[0]?.theme ?? "?"} ${code === "theme.invalid" ? "is invalid" : "is not readable"}: ${issues[0] ?? "unknown problem"}`
+          : `Invalid plugin package: ${issues[0] ?? "unknown problem"}`,
     );
     this.name = "PluginPackageError";
     this.code = code;
@@ -251,7 +243,6 @@ export function iconProblem(path: string, data: Uint8Array): string | undefined 
   return /<svg[\s>/]/i.test(text) ? undefined : `${path} is not an SVG document`;
 }
 
-/** package.json parsed, or undefined when it is not valid (only used to name a legacy package). */
 /**
  * Client code the extension manifest does not declare (an `extension.client` section without
  * `permissions.client: true`), read from the raw plugin.json before it is parsed, so the refusal
@@ -270,15 +261,6 @@ function clientUndeclared(text: string): string | undefined {
   if (isObj(perms) && perms.client === true) return undefined;
   return `${PLUGIN_MANIFEST_FILE}: extension.client ships client code, but the extension manifest does not declare permissions.client: true; client code must be declared so it is reviewed (capybara-plugin pack writes both)`;
 }
-
-const parsedOrUndefined = (data: Uint8Array): unknown => {
-  try {
-    return parsePackageJsonFile({ data });
-  } catch (e) {
-    if (e instanceof PackageTgzError) return undefined;
-    throw e;
-  }
-};
 
 const invalid = (issues: string[]): never => {
   throw new PluginPackageError("catalog.invalid_manifest", issues);
@@ -316,9 +298,8 @@ function hostSdkIssues(manifest: PluginManifest, hostSdkVersion: string): string
 
 /**
  * Reads and validates a plugin tgz (see the file header). Invalid -> {@link PluginPackageError}:
- * `catalog.legacy_format` for the pre-0.1.0 format, otherwise `catalog.invalid_manifest` listing
- * every problem it can find, each naming the path it is about (unpacking and manifest parse
- * problems stop at the first stage that fails).
+ * `catalog.invalid_manifest` listing every problem it can find, each naming the path it is about
+ * (unpacking and manifest parse problems stop at the first stage that fails).
  */
 export async function readPluginPackage(
   bytes: Uint8Array,
@@ -405,20 +386,12 @@ export function readPluginFiles(
 ): PluginContents {
   const pj = files.get("package.json");
   const manifestBytes = files.get(PLUGIN_MANIFEST_FILE);
-  if (manifestBytes === undefined) {
-    // The old formats are recognised only to say so; nothing in them is read. app.yaml is checked
-    // before package.json is parsed, so an old bundle with a broken package.json is still legacy.
-    const pkg = pj && parsedOrUndefined(pj);
-    if (files.has("app.yaml") || (isObj(pkg) && pkg.capybara !== undefined)) {
-      const who =
-        isObj(pkg) && typeof pkg.name === "string" ? `Package ${pkg.name}` : "The package";
-      throw new PluginPackageError("catalog.legacy_format", [`${who} ${LEGACY_FORMAT_MESSAGE}`]);
-    }
-  }
   const fallback = manifestBytes === undefined ? fallbackManifest(files, opts) : undefined;
   if (manifestBytes === undefined && fallback === undefined) {
     if (pj) stepSync(() => parsePackageJsonFile({ data: pj }));
-    return invalid([`${PLUGIN_MANIFEST_FILE} not found in the package (the plugin manifest)`]);
+    return invalid([
+      `${PLUGIN_MANIFEST_FILE} not found in the package: a plugin package carries its manifest at that path (build it with \`capybara-plugin pack\`)`,
+    ]);
   }
 
   const packageJson =

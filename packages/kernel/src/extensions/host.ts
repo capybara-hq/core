@@ -108,7 +108,7 @@ export { deploymentConfigHash };
 export interface LoadedUiContribution {
   plugin: string;
   contribution: UiContribution;
-  /** The catalog slot the contribution resolved to (from `slot`, or the deprecated `place`). */
+  /** The catalog slot the contribution resolved to (from `slot`). */
   slot: UiSlotSpec;
   /** For a slot with anchors: the anchor it goes after (see `resolveUiSlots`). */
   after?: string;
@@ -1253,8 +1253,7 @@ export class ExtensionHost {
    * `permissionSetOfPackage` at review; the migrations directory comes only from
    * `extension.migrations`). Does not import the module: that happens after the permission gate
    * ({@link importInstalled}). A failure is recorded as failed (`sync_failed` / `sha_mismatch`, the
-   * detail is the error message only, e.g. the legacy-format message for a pre-0.1.0 package) and
-   * returns undefined. The result for a package never changes, so successes are cached by sha (a
+   * detail is the error message only) and returns undefined. The result for a package never changes, so successes are cached by sha (a
    * reconcile cycle does not unpack again).
    */
   private async prepare(
@@ -2125,9 +2124,6 @@ export class ExtensionHost {
     }
     if (inst.uiUnknownAnchors.length > 0) {
       this.log.warn("plugin ui anchors unknown", { ...at, anchors: inst.uiUnknownAnchors });
-    }
-    if (inst.uiDeprecatedPlace.length > 0) {
-      this.log.info("plugin ui uses the deprecated place", { ...at, ids: inst.uiDeprecatedPlace });
     }
     return inst;
   }

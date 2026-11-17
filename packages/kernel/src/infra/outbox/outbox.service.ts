@@ -1,12 +1,10 @@
 import { isDeepStrictEqual } from "node:util";
-import { Inject, Injectable, Optional } from "@nestjs/common";
-import type { KernelLogger } from "../../log.js";
+import { Inject, Injectable } from "@nestjs/common";
 import { afterCommit } from "../database/after-commit.js";
 import { KernelDb } from "../database/kernel-db.js";
 import { currentStore, TransactionHost } from "../database/transaction-host.js";
 import { Transactional } from "../database/transactional.decorator.js";
 import type { KernelQueueName } from "../queue/queue-names.js";
-import { KERNEL_LOGGER } from "../tokens.js";
 import type { OutboxJobName } from "./registry.js";
 
 /** A BullMQ job owed by the caller's transaction (transactional outbox spec §5). */
@@ -32,10 +30,22 @@ export type OutboxFastPath = (ids: readonly string[]) => Promise<void>;
 export const OUTBOX_FAST_PATH = Symbol("OUTBOX_FAST_PATH");
 
 /**
- * Test seam (`KernelOverride`): `true` makes a reused job id with different data throw instead of
- * logging an error (spec §4, designer's call: "throws in tests, logs in production").
+ * A job id reused with different data: the id is wrong (two pieces of work share it), so the
+ * caller's transaction fails in every environment instead of silently running one of them.
  */
-export const OUTBOX_STRICT_CONFLICTS = Symbol("OUTBOX_STRICT_CONFLICTS");
+export class OutboxConflictError extends Error {
+  constructor(
+    readonly queue: string,
+    readonly jobId: string,
+    readonly job: string,
+    readonly owedJob: string,
+  ) {
+    super(
+      `outbox job id reused with different data: ${JSON.stringify({ queue, jobId, job, owedJob })}`,
+    );
+    this.name = "OutboxConflictError";
+  }
+}
 
 /** Jobs per insert statement of {@link OutboxService.addMany} (6 parameters each). */
 const ADD_MANY_CHUNK = 1000;
@@ -82,18 +92,14 @@ export class OutboxService {
   constructor(
     @Inject(TransactionHost) readonly txHost: TransactionHost,
     @Inject(KernelDb) private readonly db: KernelDb,
-    @Inject(KERNEL_LOGGER) private readonly log: KernelLogger,
     @Inject(OUTBOX_FAST_PATH) private readonly fastPath: OutboxFastPath,
-    @Optional()
-    @Inject(OUTBOX_STRICT_CONFLICTS)
-    private readonly strictConflicts: boolean = false,
   ) {}
 
   /**
    * Adds the job to the outbox in the transaction in context (throws outside one). Returns true when
    * it inserted a row, false when the same (queue, jobId) is already owed (a no-op; a dead row is
-   * not owed). A conflict whose stored data differs is a bug in the job id: it throws under strict
-   * conflicts, else logs an error. Undefined data is stored as JSON null.
+   * not owed). A conflict whose stored data differs is a bug in the job id: it throws
+   * {@link OutboxConflictError}, so the caller's transaction fails. Undefined data is stored as JSON null.
    */
   @Transactional({ propagation: "mandatory" })
   async add<T>(job: OutboxJob<T>): Promise<boolean> {
@@ -117,15 +123,7 @@ export class OutboxService {
       .executeTakeFirst();
     // no row: the owed one was delivered (and deleted) since the conflict; BullMQ dedupes the id
     if (stored && !isDeepStrictEqual(stored.data, JSON.parse(json))) {
-      const msg = "outbox job id reused with different data";
-      const fields = {
-        queue: job.queue,
-        jobId: job.jobId,
-        job: job.name,
-        owedJob: stored.job_name,
-      };
-      if (this.strictConflicts) throw new Error(`${msg}: ${JSON.stringify(fields)}`);
-      this.log.error(msg, fields);
+      throw new OutboxConflictError(job.queue, job.jobId, job.name, stored.job_name);
     }
     return false;
   }

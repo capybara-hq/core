@@ -10,7 +10,7 @@ import { usableSkills } from "../../src/skills/usable.js";
 import { accountsFor } from "../helpers/identity.js";
 import { lifePkg } from "../helpers/plugin-packages.js";
 import { createOrg, PW, type Req, session, waitFor } from "../helpers/runs.js";
-import { type OrgEnv, resetOrgCatalog, setScope, startOrgEnv } from "./org-env.js";
+import { type OrgEnv, resetOrgCatalog, setScope, settleScope, startOrgEnv } from "./org-env.js";
 import { skillPlugin } from "./packages.js";
 
 /**
@@ -146,6 +146,8 @@ async function sharedWithB(itemId: string, skill: string): Promise<void> {
     .get(TransactionHost)
     .run(() => env.k.app.get(CatalogScopeService).enqueueSync(itemId));
   await waitFor(async () => (await usable(orgB)).includes(skill), 30_000, `${skill} usable in B`);
+  // nothing owed still runs (the confirm's sync under the old scope) behind a later preview
+  await settleScope(env, itemId);
 }
 
 /** An agent of the org whose current definition selects the item's (platform) skill. */

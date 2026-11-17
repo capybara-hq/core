@@ -15,7 +15,7 @@ import { testMembers } from "../helpers/members.js";
 import { MODEL_FAKE, MODEL_FAKE_B } from "../helpers/model-plugins.js";
 import {
   createConv,
-  createOrg,
+  createOrgWithProviders,
   eventsOf,
   PW,
   type Req,
@@ -31,8 +31,9 @@ import {
  * admin). A disabled model leaves the org's model list, agent save and the switch plan refuse it,
  * a run whose model was disabled after the agent was saved falls back (or ends
  * `run.model_unavailable`), and the write lists the agents and purposes still pointing at it.
- * Chat callers never resolve an embedding model. An `@1` provider is not usable in an org with its
- * own config copy, and a copy's list failure does not mark the platform's list as failed.
+ * Chat callers never resolve an embedding model. A run whose provider needs configuration in the
+ * org ends `run.model_unavailable`, and a copy's list failure does not mark the platform's list as
+ * failed.
  */
 
 const fixture = (name: string) =>
@@ -41,7 +42,7 @@ const fixture = (name: string) =>
 const FAKE_1 = { provider: "model-fake", model: "fake-1" };
 const FAKE_2 = { provider: "model-fake", model: "fake-2" };
 const FAKE_EMBED = { provider: "model-fake", model: "fake-embed" };
-const PLUGINS = ["model-fake", "model-v1-copy", "model-copy-fail"];
+const PLUGINS = ["model-fake", "model-copy-fail", "model-org-key"];
 
 let pgc: TestContainer;
 let rd: TestContainer;
@@ -69,8 +70,8 @@ beforeAll(async () => {
         extensions: [
           MODEL_FAKE,
           MODEL_FAKE_B,
-          fixture("model-v1-copy"),
           fixture("model-copy-fail"),
+          fixture("model-org-key"),
         ],
         extensionConfig: {
           "model-fake": {
@@ -116,8 +117,8 @@ beforeEach(async () => {
   const aliceId = await mk("alice");
   ent = await session(k, "ent");
   owner = await session(k, "owner");
-  org1 = await createOrg(owner, "One");
-  org2 = await createOrg(owner, "Two");
+  org1 = await createOrgWithProviders(k, owner, "One");
+  org2 = await createOrgWithProviders(k, owner, "Two");
   for (const org of [org1, org2]) {
     for (const plugin of PLUGINS) {
       await ok(owner, "PUT", `/api/v1/orgs/${org}/extensions/${plugin}`, { enabled: true });
@@ -524,12 +525,18 @@ describe("runs and the switch plan", () => {
     expect(failed.payload.error.code).toBe("run.model_unavailable");
   });
 
-  it("a run whose model's provider is not configured in the org ends run.model_unavailable", async () => {
-    const id = await agentId(owner, org1, "V1", { provider: "model-v1-copy", model: "v1-a" });
-    // the org keeps its own copy: an @1 provider cannot honour it, so it needs configuration here
-    await ok(owner, "PUT", `/api/v1/orgs/${org1}/extensions/model-v1-copy/overrides`, {
-      values: { label: "mine" },
+  it("a run whose model's provider needs configuration in the org ends run.model_unavailable", async () => {
+    // the org's own key makes model-org-key usable there (the platform has none)
+    await ok(owner, "PUT", `/api/v1/orgs/${org1}/extensions/model-org-key/overrides`, {
+      values: { apiKey: "k" },
     });
+    const id = await agentId(owner, org1, "Keyed", { provider: "model-org-key", model: "key-1" });
+    // dropping the copy: the org follows the platform again, which has no key
+    const dropped = await owner({
+      method: "DELETE",
+      url: `/api/v1/orgs/${org1}/extensions/model-org-key/overrides`,
+    });
+    expect(dropped.statusCode, dropped.body).toBeLessThan(300);
     const conv = await createConv(owner, org1, id);
     await ok(owner, "POST", `/api/v1/orgs/${org1}/conversations/${conv}/messages`, {
       text: "echo:hello",
@@ -560,7 +567,7 @@ describe("runs and the switch plan", () => {
   });
 });
 
-describe("a provider the org turned off (spec A §8)", () => {
+describe("a provider is on only in orgs that enabled it", () => {
   const B1 = { provider: "model-fake-b", model: "b-1" };
   const switchB = (orgId: string, enabled: boolean) =>
     ok(owner, "PUT", `/api/v1/orgs/${orgId}/extensions/model-fake-b`, { enabled });
@@ -577,12 +584,26 @@ describe("a provider the org turned off (spec A §8)", () => {
     return eventsOf(db, conv);
   };
 
-  it("a provider never switched in an org stays usable", async () => {
+  it("a provider never enabled in an org is absent and refused there; enabling it makes it usable", async () => {
+    // createOrg switched every loaded provider on: back to never enabled
+    await db.deleteFrom("extension_org_configs").where("plugin", "=", "model-fake-b").execute();
+    expect(await bIds(org1)).toBeUndefined();
+    expect((await catalog(admin, org1)).map((p) => p.provider)).not.toContain("model-fake-b");
+    const registry = k.app.get(ProviderRegistry);
+    expect(await codeOf(registry.resolve(org1, B1))).toBe("agent.model_unavailable");
+    expect((await agent(owner, org1, "New", B1)).code).toBe("agent.model_unavailable");
+
+    await switchB(org1, true);
     expect(await bIds(org1)).toEqual(["b-1", "b-2"]);
-    expect(await bIds(org2)).toEqual(["b-1", "b-2"]);
+    expect((await registry.resolve(org1, B1)).info.id).toBe("b-1");
+    // org 2 still never enabled it
+    expect(await bIds(org2)).toBeUndefined();
+    expect(await codeOf(registry.resolve(org2, B1))).toBe("agent.model_unavailable");
   });
 
   it("switched off in org 1: absent from its list, catalog and purposes; runs fall back or fail; org 2 keeps it", async () => {
+    await switchB(org1, true);
+    await switchB(org2, true);
     const withFallback = await agentId(owner, org1, "B fb", B1, FAKE_1);
     const without = await agentId(owner, org1, "B only", B1);
     await ok(admin, "PUT", `/api/v1/orgs/${org1}/model-purposes/title`, { target: { model: B1 } });
@@ -590,9 +611,7 @@ describe("a provider the org turned off (spec A §8)", () => {
 
     expect(await bIds(org1)).toBeUndefined();
     expect(await bIds(org2)).toEqual(["b-1", "b-2"]);
-    const cat = (await catalog(admin, org1)).find((p) => p.provider === "model-fake-b");
-    expect(cat?.status).toBe("error");
-    expect(cat?.models).toEqual([]);
+    expect((await catalog(admin, org1)).map((p) => p.provider)).not.toContain("model-fake-b");
     const registry = k.app.get(ProviderRegistry);
     expect(await codeOf(registry.resolve(org1, B1))).toBe("agent.model_unavailable");
     expect((await registry.resolve(org2, B1)).info.id).toBe("b-1");
@@ -624,23 +643,6 @@ describe("a provider the org turned off (spec A §8)", () => {
 });
 
 describe("org config copies", () => {
-  it("an @1 provider is absent in an org with its own copy and resolves to agent.model_unavailable there", async () => {
-    await ok(owner, "PUT", `/api/v1/orgs/${org1}/extensions/model-v1-copy/overrides`, {
-      values: { label: "mine" },
-    });
-    const registry = k.app.get(ProviderRegistry);
-    const v1 = { provider: "model-v1-copy", model: "v1-a" };
-    expect((await registry.list(org1)).map((p) => p.provider)).not.toContain("model-v1-copy");
-    expect(await codeOf(registry.resolve(org1, v1))).toBe("agent.model_unavailable");
-    // org 2 follows the platform: the @1 provider is usable there
-    expect(
-      (await registry.list(org2))
-        .find((p) => p.provider === "model-v1-copy")
-        ?.models.map((m) => m.id),
-    ).toEqual(["v1-a"]);
-    expect((await registry.resolve(org2, v1)).info.id).toBe("v1-a");
-  });
-
   it("a copy's list failure does not mark the platform's (or a following org's) list as failed", async () => {
     await ok(owner, "PUT", `/api/v1/orgs/${org1}/extensions/model-copy-fail/overrides`, {
       values: { fail: true },
@@ -654,7 +656,7 @@ describe("org config copies", () => {
       .get(ExtensionRegistry)
       .list("model-provider")
       .find((p) => p.plugin === "model-copy-fail");
-    const platformMarker = `capk:models-failed:model-copy-fail:v2:${entry?.version}:${entry?.configHash}`;
+    const platformMarker = `capk:models-failed:model-copy-fail:${entry?.version}:${entry?.configHash}`;
     const markers = await redis.keys("capk:models-failed:model-copy-fail:*");
     expect(markers).toHaveLength(1);
     expect(markers).not.toContain(platformMarker);

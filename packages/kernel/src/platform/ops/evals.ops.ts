@@ -355,69 +355,7 @@ export class EvalsOperations implements OnModuleInit {
           },
         ],
         precheck: async (i, ctx) => {
-          const found = await this.setCheck(ctx, i.setId);
-          if (!found.ok) return found;
-          const set = await this.sets.get(ctx.orgId, i.setId);
-          const conv = await this.kdb.db
-            .selectFrom("conversations")
-            .select(["agent_id", "kind"])
-            .where("id", "=", i.conversationId)
-            .where("org_id", "=", ctx.orgId)
-            .executeTakeFirst();
-          if (conv?.kind !== "chat" && conv?.kind !== "subagent") {
-            return {
-              ok: false,
-              code: "conversation.not_found",
-              message: "Conversation or run not found",
-            };
-          }
-          const sets = await this.kdb.db
-            .selectFrom("eval_sets")
-            .select("agent_id")
-            .where("id", "=", i.setId)
-            .executeTakeFirstOrThrow();
-          if (conv.agent_id !== sets.agent_id) {
-            return {
-              ok: false,
-              code: "eval.agent_mismatch",
-              message: "The run belongs to a different agent",
-            };
-          }
-          if (set.cases.some((c) => c.sourceRunId === i.runId)) {
-            return {
-              ok: false,
-              code: "eval.case_exists",
-              message: "That run is already a case of the eval set",
-            };
-          }
-          const run = await this.kdb.db
-            .selectFrom("runs")
-            .select(["status", "compact"])
-            .where("id", "=", i.runId)
-            .where("conversation_id", "=", i.conversationId)
-            .executeTakeFirst();
-          if (run === undefined) {
-            return {
-              ok: false,
-              code: "conversation.not_found",
-              message: "Conversation or run not found",
-            };
-          }
-          if (run.compact) {
-            return {
-              ok: false,
-              code: "eval.compact_not_replayable",
-              message: "A manual compaction run has no model step to replay",
-            };
-          }
-          if (run.status === "running" || run.status === "queued") {
-            return {
-              ok: false,
-              code: "eval.run_not_finished",
-              message: "The run has not finished yet",
-            };
-          }
-          return this.roomCheck(ctx, i.setId);
+          return precheckBy(() => this.sets.checkAddCase(ctx.orgId, i.setId, i));
         },
         summary: async (i, ctx) => {
           const n = await this.setName(ctx, i.setId);

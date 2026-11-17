@@ -1,6 +1,5 @@
 import { parseToolKey, type ToolSpec } from "@capybara-hq/plugin-sdk";
 import { BUILTIN_TOOL_NAMES, TOOL_SEARCH } from "../builtin-names.js";
-import { isLegacyBuiltinKey } from "../legacy-keys.js";
 import type { BuiltinTool, ResolvedTool } from "../registry.js";
 
 export { TOOL_SEARCH } from "../builtin-names.js";
@@ -57,12 +56,9 @@ export const CATALOG_HEADER =
 export const notLoadedText = (key: string): string =>
   `Tool "${key}" is not loaded. Call ToolSearch first with keywords for this tool, then call it in a later step.`;
 
-/**
- * 始终完整加载、不进目录的工具（内置工具）。A release-candidate builtin key counts too: a request
- * recorded before the tool rename is rebuilt with its old keys, and its builtins were loaded.
- */
+/** Tools always loaded in full and never in the catalog (the builtins). */
 export const isAlwaysLoaded = (key: string): boolean =>
-  (BUILTIN_TOOL_NAMES as readonly string[]).includes(key) || isLegacyBuiltinKey(key);
+  (BUILTIN_TOOL_NAMES as readonly string[]).includes(key);
 
 type CatalogTool = Pick<ResolvedTool, "key" | "spec">;
 
@@ -140,12 +136,12 @@ export function catalogLine(t: CatalogTool): string {
 }
 
 /**
- * 目录全文：开头说明 + 按 key 排序的目录行。只依赖工具集合，与加载状态无关（缓存前缀稳定）。
- * `header`: a request recorded before the tool rename passes the frozen legacy header.
+ * The catalog text: the header, then one line per tool sorted by key. It depends only on the tool
+ * set, never on what is loaded (a stable cache prefix).
  */
-export function catalogText(tools: readonly CatalogTool[], header = CATALOG_HEADER): string {
+export function catalogText(tools: readonly CatalogTool[]): string {
   const sorted = [...tools].sort((a, b) => (a.key < b.key ? -1 : a.key > b.key ? 1 : 0));
-  return [header, ...sorted.map(catalogLine)].join("\n");
+  return [CATALOG_HEADER, ...sorted.map(catalogLine)].join("\n");
 }
 
 /** 一个工具的完整定义文本（`ToolSearch` 的结果）。 */

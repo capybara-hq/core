@@ -82,7 +82,7 @@ export interface QueuedFile {
   size?: number;
 }
 
-/** What `POST …/queue` takes (the message fields that can be queued). */
+/** A queued message's fields (leftover items; tests seed them through the service). */
 export interface QueueInput {
   text: string;
   clientMessageId: string;

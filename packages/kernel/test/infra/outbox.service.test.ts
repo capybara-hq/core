@@ -7,16 +7,20 @@ import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
 import { KernelDb } from "../../src/infra/database/kernel-db.js";
 import { TransactionHost } from "../../src/infra/database/transaction-host.js";
-import { type OutboxJob, OutboxService } from "../../src/infra/outbox/outbox.service.js";
+import {
+  OutboxConflictError,
+  type OutboxJob,
+  OutboxService,
+} from "../../src/infra/outbox/outbox.service.js";
 import type { OutboxJobName } from "../../src/infra/outbox/registry.js";
-import { createLogger, type KernelLogger } from "../../src/log.js";
+import { createLogger } from "../../src/log.js";
 import { truncateTables } from "../helpers/db.js";
 import { accountsFor, orgsFor } from "../helpers/identity.js";
 
 /**
  * Transactional outbox spec §3.2, §4, §9: `OutboxService.add` writes the owed job in the caller's
  * transaction (and refuses to run outside one), a second add of the same (queue, jobId) is a no-op,
- * a conflicting add with other data throws under strict conflicts and logs otherwise, the fast path
+ * a conflicting add with other data throws `OutboxConflictError`, the fast path
  * gets the transaction's ids after the commit only, and an org's deletion takes its pending rows.
  */
 
@@ -30,9 +34,8 @@ let db: KernelSchemaDb;
 let host: TransactionHost;
 let kdb: KernelDb;
 let fastPath: ReturnType<typeof vi.fn<(ids: readonly string[]) => Promise<void>>>;
-let log: KernelLogger;
 
-const outboxWith = (strict: boolean) => new OutboxService(host, kdb, log, fastPath, strict);
+const outboxWith = () => new OutboxService(host, kdb, fastPath);
 
 const job = (jobId: string, data: unknown = { n: 1 }, extra: Partial<OutboxJob<unknown>> = {}) => ({
   queue: "cap-kernel-maintenance" as const,
@@ -69,17 +72,16 @@ afterAll(async () => {
 beforeEach(async () => {
   await truncateTables(pool, "capybara.outbox, capybara.accounts, capybara.orgs");
   fastPath = vi.fn(async (_ids: readonly string[]) => {});
-  log = createLogger("error", { write: () => {} });
 });
 
 describe("OutboxService.add", () => {
   it("add outside a transaction throws", async () => {
-    await expect(outboxWith(true).add(job("a"))).rejects.toThrow(/propagation "mandatory"/);
+    await expect(outboxWith().add(job("a"))).rejects.toThrow(/propagation "mandatory"/);
     expect(await rows()).toEqual([]);
   });
 
   it("add inside a committed transaction writes the row and hands its ids to the fast path after the commit", async () => {
-    const outbox = outboxWith(true);
+    const outbox = outboxWith();
     const runAt = new Date(Date.now() + 60_000);
     let calledInside = false;
     const inserted = await host.run(async () => {
@@ -102,7 +104,7 @@ describe("OutboxService.add", () => {
   });
 
   it("a transaction that owes only delayed jobs hands nothing to the fast path", async () => {
-    const outbox = outboxWith(true);
+    const outbox = outboxWith();
     await host.run(() =>
       outbox.add(job("later", { n: 1 }, { runAt: new Date(Date.now() + 30_000) })),
     );
@@ -114,7 +116,7 @@ describe("OutboxService.add", () => {
   });
 
   it("add inside a rolled-back transaction leaves no row", async () => {
-    const outbox = outboxWith(true);
+    const outbox = outboxWith();
     await expect(
       host.run(async () => {
         await outbox.add(job("a"));
@@ -126,7 +128,7 @@ describe("OutboxService.add", () => {
   });
 
   it("a second add of the same (queue, jobId) returns false and keeps one row", async () => {
-    const outbox = outboxWith(true);
+    const outbox = outboxWith();
     expect(await host.run(() => outbox.add(job("a", { n: 1, at: "x" })))).toBe(true);
     // the same data (keys in another order) in a later transaction: a no-op
     expect(await host.run(() => outbox.add(job("a", { at: "x", n: 1 })))).toBe(false);
@@ -139,30 +141,17 @@ describe("OutboxService.add", () => {
     expect(fastPath.mock.calls.map((c) => c[0].length)).toEqual([1, 1]);
   });
 
-  it("a conflicting add with different data throws in tests", async () => {
-    const outbox = outboxWith(true);
+  it("a conflicting add with different data throws OutboxConflictError", async () => {
+    const outbox = outboxWith();
     await host.run(() => outbox.add(job("a", { n: 1 })));
-    await expect(host.run(() => outbox.add(job("a", { n: 2 })))).rejects.toThrow(
-      /outbox job id reused with different data/,
-    );
-    expect(await rows()).toMatchObject([{ job_id: "a", data: { n: 1 } }]);
-  });
-
-  it("a conflicting add with different data logs an error in production and returns false", async () => {
-    const error = vi.fn();
-    log = { ...createLogger("error", { write: () => {} }), error } as KernelLogger;
-    const outbox = outboxWith(false);
-    await host.run(() => outbox.add(job("a", { n: 1 })));
-    expect(await host.run(() => outbox.add(job("a", { n: 2 })))).toBe(false);
-    expect(error).toHaveBeenCalledWith(
-      "outbox job id reused with different data",
-      expect.objectContaining({ queue: "cap-kernel-maintenance", jobId: "a", job: TEST_JOB }),
-    );
+    const err = await host.run(() => outbox.add(job("a", { n: 2 }))).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(OutboxConflictError);
+    expect(err).toMatchObject({ queue: "cap-kernel-maintenance", jobId: "a", job: TEST_JOB });
     expect(await rows()).toMatchObject([{ job_id: "a", data: { n: 1 } }]);
   });
 
   it("a dead row does not block a new owed job with the same id", async () => {
-    const outbox = outboxWith(true);
+    const outbox = outboxWith();
     await host.run(() => outbox.add(job("a", { n: 1 })));
     await db.updateTable("outbox").set({ dead_at: new Date() }).where("job_id", "=", "a").execute();
     // other data than the dead row's: no conflict either, the dead row is not owed
@@ -179,13 +168,13 @@ describe("OutboxService.add", () => {
   });
 
   it("a job id containing ':' is refused", async () => {
-    const outbox = outboxWith(true);
+    const outbox = outboxWith();
     await expect(host.run(() => outbox.add(job("run:1")))).rejects.toThrow(/must not contain ":"/);
     expect(await rows()).toEqual([]);
   });
 
   it("undefined data is stored as null and a second add is a no-op", async () => {
-    const outbox = outboxWith(true);
+    const outbox = outboxWith();
     expect(await host.run(() => outbox.add({ ...job("a"), data: undefined }))).toBe(true);
     expect(await host.run(() => outbox.add({ ...job("a"), data: undefined }))).toBe(false);
     expect(await rows()).toMatchObject([{ job_id: "a", data: null }]);
@@ -194,7 +183,7 @@ describe("OutboxService.add", () => {
 
 describe("OutboxService.addMany", () => {
   it("inserts every job in one transaction, skips owed ids, hands the due rows to one fast path", async () => {
-    const outbox = outboxWith(true);
+    const outbox = outboxWith();
     await expect(outbox.addMany([job("a")])).rejects.toThrow(/propagation "mandatory"/);
     await host.run(() => outbox.add(job("owed")));
     fastPath.mockClear();
@@ -220,7 +209,7 @@ describe("OutboxService.addMany", () => {
   });
 
   it("a rolled-back transaction leaves none of its rows, and a ':' in a job id is refused", async () => {
-    const outbox = outboxWith(true);
+    const outbox = outboxWith();
     await expect(
       host.run(async () => {
         await outbox.addMany([job("a"), job("b")]);
@@ -237,7 +226,7 @@ describe("OutboxService.addMany", () => {
 
 describe("org deletion", () => {
   it("deleting an org removes its pending rows and keeps rows without org_id", async () => {
-    const outbox = outboxWith(true);
+    const outbox = outboxWith();
     const accounts = accountsFor(pool);
     const orgs = orgsFor(pool);
     const alice = await accounts.createLocal({

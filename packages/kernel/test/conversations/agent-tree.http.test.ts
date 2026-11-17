@@ -16,7 +16,7 @@ import { testMembers } from "../helpers/members.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
   createConv,
-  createOrg,
+  createOrgWithProviders,
   eventsOf,
   PW,
   postMessage,
@@ -146,7 +146,7 @@ beforeEach(async () => {
   owner = o.req;
   ownerCookie = o.cookie;
   member = (await login("member")).req;
-  orgId = await createOrg(owner);
+  orgId = await createOrgWithProviders(k, owner);
   await testMembers(db).add(orgId, memberId, "member", ownerId);
   scriptRules([]);
   const res = await owner({
@@ -356,7 +356,7 @@ describe("GET /conversations/:id/agent-tree edge cases", () => {
       expect(r.json()).toMatchObject({ error: { code: "conversation.not_found" } });
     };
     // the owner is a member of a second org: the root is not found through it
-    const otherOrg = await createOrg(owner, "Beta");
+    const otherOrg = await createOrgWithProviders(k, owner, "Beta");
     notFound(
       await owner({
         method: "GET",

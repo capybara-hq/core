@@ -22,7 +22,7 @@ import { accountsFor, apiTokensFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
 import {
   createConv,
-  createOrg,
+  createOrgWithProviders,
   eventsOf,
   PW,
   type Req,
@@ -132,7 +132,7 @@ describe("插件视图接口", () => {
     const otherId = await account("other");
     owner = await session(k, "owner");
     other = await session(k, "other");
-    orgId = await createOrg(owner);
+    orgId = await createOrgWithProviders(k, owner);
     await testMembers(db).add(orgId, otherId, "member", ownerId);
     agentId = await createToolAgent(owner, orgId);
     convId = await createConv(owner, orgId, agentId);
@@ -271,7 +271,7 @@ describe("插件视图接口", () => {
       expect(errCode(a)).toBe("ui.not_found");
     }
     // 别的组织里自己的对话：在本组织路径下取 → 404
-    const org2 = await createOrg(owner, "Other");
+    const org2 = await createOrgWithProviders(k, owner, "Other");
     await enable(owner, org2, "ui-probe");
     const agent2 = await createToolAgent(owner, org2);
     const conv2 = await createConv(owner, org2, agent2);
@@ -542,7 +542,7 @@ describe("插件视图接口", () => {
     expect(probe().lastAction).toEqual(expect.objectContaining({ role: "guest" }));
   });
 
-  it("an inline card gets callId / key as args.card, a panel gets item; the old alias renders its target", async () => {
+  it("an inline card gets callId / key as args.card, a panel gets item", async () => {
     await enable(owner, orgId, "ui-probe");
     // the card is attested by the log: a tool_result of this conversation recorded it (review I2)
     await k.app.get(EventLog).append(convId, [
@@ -570,7 +570,7 @@ describe("插件视图接口", () => {
       url: `${ui}/views/ui-probe/card?conversationId=${convId}&callId=call-1&key=k1`,
     });
     expect(card.statusCode, card.body).toBe(200);
-    // open targets must name a panel of the same extension (an alias of one counts); others dropped
+    // open targets must name a panel of the same extension; others dropped
     expect((card.json() as { view: unknown }).view).toEqual({
       open: { contribution: "panel", item: "a" },
       blocks: [
@@ -586,7 +586,7 @@ describe("插件视图接口", () => {
           type: "table",
           columns: [{ key: "c", label: "C" }],
           rows: [{ c: "1" }, { c: "2" }],
-          open: [{ contribution: "old-panel" }, null],
+          open: [{ contribution: "panel" }, null],
         },
       ],
     });
@@ -614,15 +614,6 @@ describe("插件视图接口", () => {
       url: `${ui}/views/ui-probe/card?conversationId=${convId}&key=k1`,
     });
     expect(keyOnly.statusCode).toBe(400);
-    // the retired id answers with the panel it aliases (open pages keep working for a release)
-    const old = await owner({
-      method: "GET",
-      url: `${ui}/views/ui-probe/old-panel?conversationId=${convId}&locale=zh`,
-    });
-    expect(old.statusCode, old.body).toBe(200);
-    expect((old.json() as { view: { blocks: { text?: string }[] } }).view.blocks[0]?.text).toBe(
-      "panel zh",
-    );
     // other people's conversations stay 404 for the new places
     const theirs = await owner({
       method: "GET",
@@ -672,7 +663,6 @@ describe("插件视图接口", () => {
         "view:bad",
         "view:boom",
         "view:card",
-        "view:old-panel",
         "view:orgpage",
         "view:panel",
         "view:side",
@@ -684,7 +674,6 @@ describe("插件视图接口", () => {
           "view:bad",
           "view:boom",
           "view:card",
-          "view:old-panel",
           "view:orgpage",
           "view:panel",
           "view:side",
@@ -720,7 +709,7 @@ describe("工具显示摘要", () => {
     lines.length = 0;
     await account("owner");
     owner = await session(k, "owner");
-    orgId = await createOrg(owner);
+    orgId = await createOrgWithProviders(k, owner);
     await enable(owner, orgId, "fake-tools-ui");
     await enable(owner, orgId, "ui-probe");
     const agentId = await createToolAgent(owner, orgId);

@@ -16,7 +16,7 @@ import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
   createAgent,
   createConv,
-  createOrg,
+  createOrgWithProviders,
   PW,
   runConfig,
   session,
@@ -98,7 +98,7 @@ async function capScenario(
   const adminId = (await accounts.createLocal({ login: "admin", password: PW, displayName: "a" }))
     .id;
   const owner = await session(a, "owner");
-  const orgId = await createOrg(owner);
+  const orgId = await createOrgWithProviders(a, owner);
   await testMembers(db).add(orgId, adminId, "admin", ownerId);
   const adminA = await session(a, "admin");
   const adminB = await session(b, "admin");

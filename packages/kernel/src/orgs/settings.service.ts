@@ -43,13 +43,18 @@ import {
 import { OrgLock, OrgLockModule } from "./org-lock.js";
 
 /**
- * 组织设置（`capybara.orgs.settings` jsonb）。读取宽松：缺失或非法的字段按默认值，未知键保留不动
- * （更新时与存量合并），新版本加字段不需要迁移。
- * - `toolSearch`：工具超过阈值时是否改用目录 + `ToolSearch`（D11，默认 on）。
- * - `locale`：组织默认语言（`zh` / `en`，默认 en），机器人在 IM 里说的固定话术按它选择。
- * - `sandboxToolPolicy`：沙箱工具的默认策略（M5 T8，默认 allow）。为 `ask` 时除只读的
- *   `Read` / `Glob` / `Grep` 外都需要审批（执行时实时读取）。
- * - `wakeOnBackgroundTask`：组织对 `runtime.wakeOnBackgroundTask` 的覆盖（缺省跟随部署），见 {@link effectiveWakeOnBackgroundTask}。
+ * Org settings (`capybara.orgs.settings` jsonb). Read leniently: a missing or invalid field reads
+ * as its default and unknown keys are kept (merged with the stored value on update), so a new
+ * field needs no migration.
+ * - `toolSearch`: whether to switch to a catalog + `ToolSearch` once the tools pass the threshold
+ *   (D11, default on).
+ * - `locale`: the org's default language (`zh` / `en`, default en); the bot's fixed phrases in IM
+ *   follow it.
+ * - `sandboxToolPolicy`: the default policy of the sandbox tools (M5 T8, default allow). With
+ *   `ask`, every tool but the read-only `Read` / `Glob` / `Grep` needs approval (read live at
+ *   execution). An invalid stored value reads as `ask` (narrower, never wider) and is logged.
+ * - `wakeOnBackgroundTask`: the org's override of `runtime.wakeOnBackgroundTask` (absent follows
+ *   the deployment), see {@link effectiveWakeOnBackgroundTask}.
  * - `autoMode`: whether devices of the org may run in auto mode (auto mode spec §4.3); absent
  *   follows the platform's `devices.autoMode`, and an invalid stored value reads as `off`
  *   (narrower, never wider). Setting `allowed` while the platform is `off` is refused.
@@ -152,7 +157,9 @@ const isForbiddenToolEntry = (v: unknown): v is string =>
 
 /**
  * Org settings of scheduled tasks (spec §9); every field reads leniently (invalid = default,
- * except `forbiddenTools`, which keeps its valid entries).
+ * except `forbiddenTools`, which keeps its valid entries). A stored `forbiddenTools` that is not a
+ * list (or a group that is not an object) reads as `[]` here, for display; enforcement checks
+ * {@link invalidStoredForbiddenTools} and fails unattended runs instead (never wider).
  */
 export const ScheduledTasksSettingsSchema = z.object({
   enabled: z.boolean().default(true).catch(true),
@@ -215,7 +222,8 @@ export type GitGatewaySetting = z.infer<typeof GitGatewaySettingSchema>;
 export const OrgSettingsSchema = z.object({
   toolSearch: z.enum(["on", "off"]).default("on").catch("on"),
   locale: z.enum(["zh", "en"]).default("en").catch("en"),
-  sandboxToolPolicy: z.enum(["allow", "ask"]).default("allow").catch("allow"),
+  /** Absent = `allow`; an invalid stored value reads as `ask` (narrower, never wider). */
+  sandboxToolPolicy: z.enum(["allow", "ask"]).default("allow").catch("ask"),
   platformTool: z.enum(["on", "read-only", "off"]).default("on").catch("on"),
   /** The org's auto-mode switch (auto mode spec §4.3); absent follows the platform. */
   autoMode: AutoModeSetting.optional().catch("off"),
@@ -243,6 +251,25 @@ export const OrgSettingsSchema = z.object({
 });
 
 export type OrgSettings = z.infer<typeof OrgSettingsSchema>;
+
+/**
+ * The settings as the responses carry them: {@link OrgSettings} plus
+ * `scheduledTasks.forbiddenToolsUnreadable: true` when the stored list cannot be read
+ * ({@link invalidStoredForbiddenTools}; `forbiddenTools` then reads `[]`), so the settings page
+ * says so and saves the list. Never stored.
+ */
+export type OrgSettingsView = OrgSettings & {
+  scheduledTasks: OrgSettings["scheduledTasks"] & { forbiddenToolsUnreadable?: true };
+};
+
+/** {@link OrgSettingsView} of `settings`, flagged from the stored value `raw`. */
+const viewOf = (settings: OrgSettings, raw: unknown): OrgSettingsView =>
+  invalidStoredForbiddenTools(raw)
+    ? {
+        ...settings,
+        scheduledTasks: { ...settings.scheduledTasks, forbiddenToolsUnreadable: true },
+      }
+    : settings;
 
 /** PATCH 体：只改给出的字段；未知字段 → 400。 */
 export const OrgSettingsPatchSchema = z
@@ -359,15 +386,81 @@ export function parseOrgSettings(raw: unknown): OrgSettings {
   return OrgSettingsSchema.parse(asObject(raw));
 }
 
-/** 读组织设置（每次实时读 PG，多副本下改动立即生效）；组织不存在或已删除按默认值。 */
-export async function readOrgSettings(db: KernelSchemaDb, orgId: string): Promise<OrgSettings> {
+/** The org's stored settings jsonb, read live; undefined when the org is missing or deleted. */
+export async function readStoredOrgSettings(db: KernelSchemaDb, orgId: string): Promise<unknown> {
   const row = await db
     .selectFrom("orgs")
     .select("settings")
     .where("id", "=", orgId)
     .where("deleted_at", "is", null)
     .executeTakeFirst();
-  return parseOrgSettings(row?.settings);
+  return row?.settings;
+}
+
+/**
+ * Reads the org settings (live from PG every time, so a change applies at once across replicas);
+ * a missing or deleted org reads as the defaults. With `log`, an
+ * unreadable security setting ({@link logUnreadableSecuritySettings}) is logged.
+ */
+export async function readOrgSettings(
+  db: KernelSchemaDb,
+  orgId: string,
+  /** Per-call paths (the tool policy) log at debug; the settings reads and the fire warn. */
+  log?: Pick<KernelLogger, "debug">,
+): Promise<OrgSettings> {
+  const raw = await readStoredOrgSettings(db, orgId);
+  if (log !== undefined) {
+    logUnreadableSecuritySettings((msg, f) => log.debug(msg, f), orgId, raw);
+  }
+  return parseOrgSettings(raw);
+}
+
+/** Whether a stored settings object holds a `sandboxToolPolicy` this version reads as `ask`. */
+export function invalidStoredSandboxToolPolicy(raw: unknown): boolean {
+  const v = asObject(raw).sandboxToolPolicy;
+  return v !== undefined && !OrgSettingsPatchSchema.shape.sandboxToolPolicy.safeParse(v).success;
+}
+
+/**
+ * Whether the stored scheduled-task `forbiddenTools` cannot be read: the group or the field is
+ * present but not an object / a list. Unattended runs of such an org fail
+ * ({@link FORBIDDEN_TOOLS_UNREADABLE_ERROR}) rather than run with nothing forbidden. Invalid
+ * entries inside a list are dropped instead (the valid ones stay forbidden).
+ */
+export function invalidStoredForbiddenTools(raw: unknown): boolean {
+  const group = asObject(raw).scheduledTasks;
+  if (group === undefined) return false;
+  if (group === null || typeof group !== "object" || Array.isArray(group)) return true;
+  const v = (group as Record<string, unknown>).forbiddenTools;
+  return v !== undefined && !Array.isArray(v);
+}
+
+/** The refusal of an unattended run of an org whose `forbiddenTools` cannot be read. */
+export const FORBIDDEN_TOOLS_UNREADABLE_ERROR =
+  "The organization's forbidden tool list for scheduled tasks is unreadable, so this scheduled run cannot continue; an org admin must save the list again in the organization's scheduled task settings.";
+
+/** The refusal of a new task grant while the org's `forbiddenTools` cannot be read. */
+export const FORBIDDEN_TOOLS_UNREADABLE_GRANT_ERROR =
+  "The organization's forbidden tool list for scheduled tasks is unreadable, so no tool can be approved for a task now; an org admin must save the list again in the organization's scheduled task settings.";
+
+/**
+ * Logs (through `log`, at the caller's level) the security settings a stored value reads narrower
+ * than written, with the org id.
+ */
+export function logUnreadableSecuritySettings(
+  log: (msg: string, fields: Record<string, unknown>) => void,
+  orgId: string,
+  raw: unknown,
+): void {
+  if (invalidStoredSandboxToolPolicy(raw)) {
+    log("org settings: stored sandboxToolPolicy is invalid; it reads as ask", { orgId });
+  }
+  if (invalidStoredForbiddenTools(raw)) {
+    log(
+      "org settings: stored scheduledTasks.forbiddenTools is unreadable; unattended runs fail until an org admin saves it again",
+      { orgId },
+    );
+  }
 }
 
 const autoModeNotAllowed = (message: string): ApiError =>
@@ -426,8 +519,9 @@ export class OrgSettingsService {
     @Optional() @Inject(KERNEL_LOGGER) private readonly log?: KernelLogger,
   ) {}
 
-  /** Parses stored settings, warning when an invalid `autoMode` narrows to `off` or an invalid
-   * `cloudNetwork` to an empty allowlist. */
+  /** Parses stored settings, warning when an invalid `autoMode` narrows to `off`, an invalid
+   * `cloudNetwork` to an empty allowlist, or a security setting reads narrower
+   * ({@link logUnreadableSecuritySettings}, warn). */
   private parseStored(orgId: string, raw: unknown): OrgSettings {
     if (invalidStoredAutoMode(raw)) {
       this.log?.warn("org settings: stored autoMode is invalid; it reads as off", { orgId });
@@ -440,6 +534,8 @@ export class OrgSettingsService {
         },
       );
     }
+    const log = this.log;
+    if (log !== undefined) logUnreadableSecuritySettings((m, f) => log.warn(m, f), orgId, raw);
     return parseOrgSettings(raw);
   }
 
@@ -490,7 +586,7 @@ export class OrgSettingsService {
     };
   }
 
-  async get(orgId: string): Promise<OrgSettings> {
+  async get(orgId: string): Promise<OrgSettingsView> {
     const row = await this.db
       .selectFrom("orgs")
       .select("settings")
@@ -498,7 +594,7 @@ export class OrgSettingsService {
       .where("deleted_at", "is", null)
       .executeTakeFirst();
     if (!row) throw new ApiError("org.not_found", "Organization not found");
-    return this.parseStored(orgId, row.settings);
+    return viewOf(this.parseStored(orgId, row.settings), row.settings);
   }
 
   /**
@@ -559,7 +655,7 @@ export class OrgSettingsService {
      * change that widens (see {@link assertOnlyNarrows}); only a person in a session widens.
      */
     opts?: { onlyNarrows?: boolean },
-  ): Promise<OrgSettings> {
+  ): Promise<OrgSettingsView> {
     await this.check(patch);
     return this.updateIn(orgId, patch, actorAccountId, actorTokenId, auditDetail, opts);
   }
@@ -602,7 +698,7 @@ export class OrgSettingsService {
     actorTokenId: string | undefined,
     auditDetail: Record<string, unknown> | undefined,
     opts: { onlyNarrows?: boolean } | undefined,
-  ): Promise<OrgSettings> {
+  ): Promise<OrgSettingsView> {
     await this.orgLock.lockAndAuthorize(orgId, actorAccountId, "org.update");
     const row = await this.db
       .selectFrom("orgs")
@@ -657,7 +753,11 @@ export class OrgSettingsService {
       delete after.compaction;
     }
     if (after.compaction === undefined) delete after.compaction;
-    if (sameSettings(before, after)) return before;
+    // saving an unreadable security setting writes it even when it equals what it read as
+    const repairs =
+      (invalidStoredForbiddenTools(stored) && patch.scheduledTasks?.forbiddenTools !== undefined) ||
+      (invalidStoredSandboxToolPolicy(stored) && patch.sandboxToolPolicy !== undefined);
+    if (!repairs && sameSettings(before, after)) return viewOf(before, stored);
     // Lock order: the org row (orgLock above), then the theme's catalog item and its row FOR
     // SHARE (assertThemeOnIn), then the check, so no scope writer changes what it read first
     if (patch.theme?.id != null && patch.theme.id !== before.theme?.id) {
@@ -676,9 +776,19 @@ export class OrgSettingsService {
       compaction: _oldCompaction,
       ...rest
     } = stored;
+    const written: Record<string, unknown> = { ...rest, ...after };
+    // An unreadable forbiddenTools reads as [] for display only: a write that does not replace the
+    // list keeps it unreadable (never healed to "nothing forbidden"); saving the list fixes it
+    if (invalidStoredForbiddenTools(stored) && patch.scheduledTasks?.forbiddenTools === undefined) {
+      const group = asObject(stored.scheduledTasks);
+      written.scheduledTasks = {
+        ...after.scheduledTasks,
+        forbiddenTools: group.forbiddenTools ?? null,
+      };
+    }
     await this.db
       .updateTable("orgs")
-      .set({ settings: JSON.stringify({ ...rest, ...after }) })
+      .set({ settings: JSON.stringify(written) })
       .where("id", "=", orgId)
       .execute();
     await audit(this.db.db, {
@@ -687,9 +797,9 @@ export class OrgSettingsService {
       orgId,
       action: "org.settings_updated",
       target: orgId,
-      detail: { before, after, ...auditDetail },
+      detail: { before, after, ...(repairs && { repaired: true }), ...auditDetail },
     });
-    return after;
+    return viewOf(after, written);
   }
 }
 

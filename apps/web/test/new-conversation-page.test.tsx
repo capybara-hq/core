@@ -211,7 +211,11 @@ describe("the new conversation page (agent profile design §4)", () => {
   it("selecting another agent switches the quick actions and the composer's agent", async () => {
     const calls = stubApi({
       [`POST ${ORG}/conversations`]: () =>
-        json(201, { ...CONV("c9", { agentId: "ag1" }), event: userMsg(1, "go") }),
+        json(201, {
+          ...CONV("c9", { agentId: "ag1" }),
+          event: userMsg(1, "go"),
+          events: [userMsg(1, "go")],
+        }),
     });
     await renderRouteWithCache("/", routes());
     const user = userEvent.setup();
@@ -420,7 +424,12 @@ describe("the device picker (environments design §4.1)", () => {
     await user.type(input(), `${text}{Enter}`);
     return user;
   };
-  const createdAt = () => json(201, { ...CONV("c9", { agentId: "ag2" }), event: userMsg(1, "go") });
+  const createdAt = () =>
+    json(201, {
+      ...CONV("c9", { agentId: "ag2" }),
+      event: userMsg(1, "go"),
+      events: [userMsg(1, "go")],
+    });
 
   it("new conversation sends the chosen device", async () => {
     resetNavigation("/");

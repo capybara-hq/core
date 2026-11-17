@@ -26,7 +26,7 @@ import { onlyBuiltins } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { bootstrapFixture, packFake, sandboxFakePkg } from "../helpers/plugin-packages.js";
-import { eventsOf, PW, waitFor, waitForTerminal } from "../helpers/runs.js";
+import { enableExtensions, eventsOf, PW, waitFor, waitForTerminal } from "../helpers/runs.js";
 
 /**
  * M6 第二段验收（双副本）：两个独立进程的内核副本（api / worker）共享 PG / Redis / 插件目录，
@@ -355,6 +355,7 @@ describe("M6 第二段双副本验收（管理后台与免重启插件生命周�
 
     const org = await ok(0, "POST", "/api/v1/orgs", { name: "Acme" });
     orgId = (org.org as { id: string }).id;
+    await enableExtensions(raw, orgId, "model-fake");
     base = `/api/v1/orgs/${orgId}`;
     await ok(1, "PUT", `${base}/extensions/fake-tools-ui`, { enabled: true });
     await waitFor(

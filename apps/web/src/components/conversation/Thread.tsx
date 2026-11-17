@@ -30,15 +30,11 @@ import { ApiClientError, ensureSession } from "../../lib/api";
 import { artifactDownloadUrl } from "../../lib/artifacts";
 import { attachmentDownloadUrl } from "../../lib/attachments";
 import type { ModelRef, ToolInfo } from "../../lib/conversations";
+import { type ModelConfigViewer, modelConfigViewer } from "../../lib/model-config";
 import { retryOnMountOf } from "../../lib/query/client";
 import { toolOutputSizeQuery } from "../../lib/query/conversation";
 import { membersQuery } from "../../lib/query/members";
-import {
-  canConfigureModels,
-  canViewTrajectory,
-  isModelSetupError,
-  runParts,
-} from "../../lib/run-row";
+import { canViewTrajectory, configureModelsHref, runParts } from "../../lib/run-row";
 import type { CompactionProgress } from "../../lib/stream";
 import { shortTime } from "../../lib/time";
 import {
@@ -192,7 +188,8 @@ type EntryContext = {
   /** Member display names (another member who stopped a run). */
   names: ReadonlyMap<string, string>;
   /** The run rows' links this reader may follow. */
-  links: { trajectory: boolean; configureModels: boolean };
+  /** `configureModels`: who reads, for the model-setup fix of a failed run (null: no run links). */
+  links: { trajectory: boolean; configureModels: ModelConfigViewer | null };
   /** Which callbacks are given (an absent one hides its control). */
   has: {
     retry: boolean;
@@ -304,7 +301,12 @@ export function Thread({
     runLinks !== undefined &&
     runLinks.trajectory !== false &&
     canViewTrajectory(me, runLinks.agentOwnerId);
-  const configureModels = runLinks !== undefined && canConfigureModels(me);
+  const { superAdmin, orgAdmin } = modelConfigViewer(me);
+  const hasRunLinks = runLinks !== undefined;
+  const configureModels = useMemo(
+    () => (hasRunLinks ? { superAdmin, orgAdmin } : null),
+    [hasRunLinks, superAdmin, orgAdmin],
+  );
   const hasRetry = onRetry !== undefined;
   const hasOpenFile = onOpenFile !== undefined;
   const hasMoreFiles = onMoreFiles !== undefined;
@@ -590,10 +592,11 @@ function EntryNode({ e, c }: { e: TimelineEntry; c: EntryContext }): ReactNode {
     const detail = e.hook?.reason ?? e.message;
     const canRetry =
       !e.retried && e.retry !== null && e.hook === null && e.key === lastFailed && onRetry;
-    const fix =
-      c.links.configureModels && isModelSetupError(e.code)
-        ? [{ label: t("run.configureModels"), href: "/admin/extensions" }]
-        : [];
+    const fixHref =
+      c.links.configureModels !== null
+        ? configureModelsHref(c.links.configureModels, e.code)
+        : null;
+    const fix = fixHref !== null ? [{ label: t("run.configureModels"), href: fixHref }] : [];
     return (
       <RunRow
         status="failed"
@@ -800,7 +803,20 @@ function EntryNode({ e, c }: { e: TimelineEntry; c: EntryContext }): ReactNode {
         );
       }
       case "task":
-        return renderTask?.(e) ?? null;
+        return e.skills === undefined ? (
+          (renderTask?.(e) ?? null)
+        ) : (
+          <>
+            {renderTask?.(e) ?? null}
+            {e.skills.map((s) => (
+              <Disclosure key={s.label} summary={t("templateSkill", { skill: s.label })}>
+                <Text variant="small" tone="muted" pre>
+                  {s.instructions}
+                </Text>
+              </Disclosure>
+            ))}
+          </>
+        );
       case "delivery":
         return <DeliveryRow e={e} onOpen={onOpenAgent} />;
       case "skill-report":

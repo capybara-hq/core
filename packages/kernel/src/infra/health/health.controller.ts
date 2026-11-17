@@ -9,6 +9,7 @@ import type { FastifyReply } from "fastify";
 import { Public } from "../../identity/principal.js";
 import { KERNEL_LOGGER } from "../tokens.js";
 import { HEALTH_CHECKS, type ReadinessCheck } from "./health.options.js";
+import { processFault } from "./process-fault.js";
 import { SHUTDOWN_STATE, type ShutdownState } from "./shutdown-state.js";
 
 /** A dependency that hangs (Redis reconnecting, commands in the offline queue) must still give 503 fast. */
@@ -44,6 +45,13 @@ export class HealthController {
       return { ok: false, stopping: true };
     };
     if (this.shutdown.isShuttingDown()) return stopping();
+    // A swallowed fatal event: not ready while `capybara start` stops gracefully and exits 1
+    // (liveness stays)
+    const faulted = processFault();
+    if (faulted !== undefined) {
+      reply.code(503);
+      return { ok: false, faulted: faulted.kind };
+    }
     const names = Object.keys(this.checks);
     const logged = new Set<string>();
     const fns: HealthIndicatorFunction[] = names.map(

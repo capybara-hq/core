@@ -17,7 +17,7 @@ import { testMembers } from "../helpers/members.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
   createConv,
-  createOrg,
+  createOrgWithProviders,
   eventsOf,
   PW,
   postMessage,
@@ -89,7 +89,7 @@ beforeEach(async () => {
   memState().askCalls = [];
   reqA = await session(ka, "owner");
   reqB = await session(kb, "owner");
-  orgId = await createOrg(reqA);
+  orgId = await createOrgWithProviders(ka, reqA);
 });
 
 async function enableMem(): Promise<void> {

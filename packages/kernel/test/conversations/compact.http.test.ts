@@ -17,7 +17,7 @@ import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
   createAgent,
   createConv,
-  createOrg,
+  createOrgWithProviders,
   eventsOf,
   PW,
   postMessage,
@@ -86,7 +86,7 @@ beforeEach(async () => {
 });
 
 async function setup(): Promise<{ orgId: string; agentId: string; conv: string }> {
-  const orgId = await createOrg(owner);
+  const orgId = await createOrgWithProviders(k, owner);
   const agentId = await createAgent(owner, orgId);
   const conv = await createConv(owner, orgId, agentId);
   return { orgId, agentId, conv };

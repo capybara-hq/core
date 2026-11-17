@@ -2,7 +2,6 @@ import type { AppendEvent, EventLog } from "../../conversations/event-log.js";
 import type { ConversationEvent, EventPayload } from "../../conversations/events.js";
 import type { KernelSchemaDb } from "../../db/kernel-schema.js";
 import { ApiError } from "../../errors.js";
-import type { SkillInvoker } from "../../skills/invoke.js";
 import { AGENT_STOPPED_WITH_RUN_TEXT } from "../../tools/builtins/agent.js";
 import { type LoopContext, subagentsWait, type WaitingFor } from "../loop.js";
 import { TERMINAL_STATUSES } from "../run-jobs.js";
@@ -113,9 +112,8 @@ export interface SkillForks {
   advance(a: { ctx: LoopContext; fork: ForkInvocation }): Promise<SkillForkStep>;
 }
 
-export interface SkillForkDeps extends DispatchDeps {
-  invoker: Pick<SkillInvoker, "renderTask">;
-}
+/** The fork's dependencies: the dispatch's (its `invoker` renders the task). */
+export type SkillForkDeps = DispatchDeps;
 
 const reportEvent = (
   runId: string,

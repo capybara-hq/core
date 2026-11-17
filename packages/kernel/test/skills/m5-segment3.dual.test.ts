@@ -24,7 +24,7 @@ import { onlyBuiltins } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
-import { eventsOf, PW, waitForTerminal } from "../helpers/runs.js";
+import { enableExtensions, eventsOf, PW, waitForTerminal } from "../helpers/runs.js";
 import { MODEL } from "../runtime/context/fixtures.js";
 import { makeZip } from "./zip.js";
 
@@ -147,6 +147,7 @@ describe("M5 segment 3 dual-replica acceptance (agent skill registration + skill
     const org = await at("owner", 1, "POST", "/api/v1/orgs", { name: "Acme" });
     expect(org.status, JSON.stringify(org.json)).toBe(201);
     const orgId = (org.json.org as { id: string }).id;
+    await enableExtensions(raw, orgId, "model-fake");
     base = `/api/v1/orgs/${orgId}`;
     await testMembers(db).add(orgId, memberId, "member", ownerId);
     await testMembers(db).add(orgId, otherId, "member", ownerId);

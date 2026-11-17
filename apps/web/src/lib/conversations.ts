@@ -158,9 +158,15 @@ type EventBody =
         };
         /**
          * A person's skill invocation (phase D): `content[0]` is the rendered skill, this is what
-         * they typed (the chip and the arguments).
+         * they typed (the chip and the arguments). `template`: a template sub-agent's skill the
+         * kernel wrote after the task (part of the task, not a person's message).
          */
         skill?: SkillInvocationRecord;
+        /**
+         * The kernel's notice, in place of a template skill's invocation, that the skill could not
+         * be read at dispatch: part of the task, not a person's message.
+         */
+        templateSkillNotice?: { name: string };
       };
     }
   | {
@@ -189,11 +195,8 @@ type EventBody =
         step: number;
         provider: string;
         model: string;
-        /**
-         * The user messages the request took in (absent in older logs) and the tools it offered
-         * by key.
-         */
-        request?: { absorbedUpToSeq?: number; tools?: { key: string }[] };
+        /** The user messages the request took in and the tools it offered by key. */
+        request: { absorbedUpToSeq: number; tools: { key: string }[] };
       };
     }
   | {
@@ -278,7 +281,7 @@ type EventBody =
         approvalId: string;
         toolKey: string;
         expiresAt: string;
-        /** Which rule asked (display only; absent in older logs). */
+        /** Which rule asked a tool approval (display only; absent on the other asks). */
         policy?: ApprovalPolicy;
         /** A network ask: the device-layer hosts asked for (display only). */
         network?: { hosts: string[] };
@@ -405,8 +408,8 @@ type EventBody =
       payload: {
         coversUpToSeq: number;
         text: string;
-        /** What compaction saved (estimated transcript minus summary); absent in older logs. */
-        savedTokens?: number;
+        /** What compaction saved (estimated transcript minus summary). */
+        savedTokens: number;
       };
     }
   | { type: "compaction_failed"; payload: { attempt: number; reason: string } }
@@ -535,6 +538,11 @@ export interface SkillInvocationRecord {
   mode: "inline" | "fork";
   /** Fork only: the sub-agent type it ran as. */
   agentType?: string;
+  /**
+   * Written by the kernel at a template sub-agent's dispatch (one per template skill, after the
+   * task): nobody typed it; shown with the task.
+   */
+  template?: true;
 }
 
 /** Phase D: the report of the sub-agent that ran a person's fork invocation (model-visible). */
@@ -562,8 +570,8 @@ export interface ConversationUsage {
 }
 
 /**
- * Who may decide an approval (display only, absent in older logs): the assigned member, else the
- * escalation role (`approval_requested`, and a sub-agent's in `subagent_waiting`).
+ * Who may decide an approval (display only): the assigned member, else the escalation role
+ * (`approval_requested`, and a sub-agent's in `subagent_waiting`, where only an approval has it).
  */
 export interface Approver {
   requestedFor?: string | null;
@@ -617,8 +625,8 @@ export interface Conversation {
   orgId: string;
   agentId: string;
   title: string | null;
-  /** Who wrote `title` (absent on older kernels). */
-  titleSource?: "generated" | "manual" | null;
+  /** Who wrote `title`. */
+  titleSource: "generated" | "manual" | null;
   selection?: Selection;
   lastSeq: number;
   createdAt: string;
@@ -629,8 +637,8 @@ export interface Conversation {
   subagentType?: string | null;
   /** The conversation's owner. */
   accountId?: string;
-  /** The device it runs in, bound at the first message (null: none, or an older kernel). */
-  deviceId?: string | null;
+  /** The device it runs in, bound at the first message (null: none). */
+  deviceId: string | null;
   /** The scheduled task that started it (a `new`-mode task); null otherwise. */
   scheduledTaskId?: string | null;
   /**
@@ -644,8 +652,8 @@ export interface Conversation {
    * start recorded one (and in a list row).
    */
   projectState?: ProjectState | null;
-  /** What it is doing now: a run in progress, or waiting for me (absent on older kernels). */
-  activity?: "running" | "waiting" | null;
+  /** What it is doing now: a run in progress, or waiting for me. */
+  activity: "running" | "waiting" | null;
 }
 
 /** A parent conversation's sub-agent (`GET .../conversations/:id/subagents`). */
@@ -793,8 +801,8 @@ export const createConversationWithMessage = (
   apiFetch<{
     conversation: Conversation;
     event: ConversationEvent;
-    /** Every event the create wrote, from seq 1 (a `model_switched` first); older kernels omit it. */
-    events?: ConversationEvent[];
+    /** Every event the create wrote, from seq 1 (a `model_switched` first). */
+    events: ConversationEvent[];
   }>(base(orgId), {
     method: "POST",
     body: JSON.stringify({
@@ -939,8 +947,7 @@ export const HISTORY_PAGE = 200;
 
 /**
  * The turn-aligned page of events before `before` (`"end"`: the log's last page), with how many
- * runs started before its first event (history paging spec §2; an older kernel's answer has no
- * `turnsBefore`).
+ * runs started before its first event (history paging spec §2).
  */
 export const listEventsBefore = (
   orgId: string,
@@ -1013,11 +1020,6 @@ export const resumeQueue = (orgId: string, id: string) =>
 /** Display metadata of a tool (kernel `ToolInfo`). */
 export interface ToolInfo {
   key: string;
-  /**
-   * Set when `key` is an older name of a current tool (history logged before a rename): that
-   * tool's key. The rest describes that tool; the page treats the call as a call to it.
-   */
-  aliasOf?: string;
   title: string | null;
   kind: "command" | "read" | "edit" | "search" | "connector" | "meta" | "tool";
   /** True exactly for the builtin tools that run in the conversation's sandbox. */

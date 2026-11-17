@@ -2,7 +2,7 @@ import type { ConversationSource, ExtensionContext, Logger } from "@capybara-hq/
 import { Inject, Injectable, Optional } from "@nestjs/common";
 import { DelayedError, type Job, type Worker } from "bullmq";
 import { sql } from "kysely";
-import type { AgentDefinition } from "../agents/definition.js";
+import { type AgentDefinition, normalizeStoredDefinition } from "../agents/definition.js";
 import { EventLog } from "../conversations/event-log.js";
 import {
   type AbsorbableEvent,
@@ -30,7 +30,6 @@ import { KernelEvents } from "../infra/events/kernel-events.js";
 import type { LeaseHandle } from "../infra/lock/lock.service.js";
 import { KERNEL_BUS, KERNEL_LOGGER } from "../infra/tokens.js";
 import { SkillsCatalogService } from "../skills/catalog.js";
-import { normalizeStoredDefinitionIn } from "../tools/legacy-data.js";
 import { ToolRegistry } from "../tools/registry.js";
 import { RunAbort, type RunAbortBy, type RunAbortDetail } from "./abort.js";
 import { KyselyCheckpointSaver } from "./checkpointer.js";
@@ -66,8 +65,10 @@ const FOLLOW_UP_MIN_WAIT_MS = 250;
 /** 读插话的分页大小。 */
 const READ_PAGE = 500;
 /**
- * 任务结束后的 ensureRun 失败时的重试间隔（首次之外再试 3 次）。用进程内定时器：这是本进程刚完成的任务的
- * 后续处理，由 close() 跟踪并限时；全部失败也不会让会话永远卡住——打开 SSE / 读事件时会再次 ensureRun。
+ * Retry delays when the post-run ensureRun fails (3 retries after the first try). In-process timers:
+ * this is follow-up work for a job this process just finished, tracked and time-bounded by close().
+ * If every try fails the conversation is not stuck: the `run-orphan-check` repairs it (SSE and reads
+ * no longer call ensureRun). The ladder only shortens recovery from common transient failures.
  */
 const ENSURE_RETRY_DELAYS_MS = [200, 1000, 3000] as const;
 
@@ -184,7 +185,7 @@ export class RunWorker {
     @Inject(TitleQueue) private readonly titles: Pick<TitleQueue, "maybeEnqueue">,
     /** Resolves a switched-to model at run start (fallback when it is gone; UI refresh B). */
     @Inject(ProviderRegistry) private readonly models: Pick<ProviderRegistry, "resolve">,
-    /** Run start's skills catalog snapshot (reads the pinned skills' bodies, phase B). */
+    /** Run start's skills catalog snapshot. */
     @Inject(SkillsCatalogService)
     private readonly skillsCatalog: Pick<SkillsCatalogService, "record">,
     /** Run start's run context (run context spec §5): who the agent is, the day, the person. */
@@ -689,7 +690,7 @@ export class RunWorker {
         await this.eventLog.readAfter(conversationId, Number(run.trigger_seq) - 1, 1)
       )[0];
       agent = childRunDefinition(
-        await normalizeStoredDefinitionIn(this.db, conv.org_id, started.payload.definition),
+        normalizeStoredDefinition(started.payload.definition),
         trigger?.type === "user_message" && trigger.seq === Number(run.trigger_seq)
           ? trigger.payload.dispatch?.narrowed
           : undefined,
@@ -739,7 +740,7 @@ export class RunWorker {
         .where("agent_id", "=", conv.agent_id)
         .where("version", "=", run.agent_version)
         .executeTakeFirstOrThrow();
-      saved = await normalizeStoredDefinitionIn(this.db, conv.org_id, version.definition);
+      saved = normalizeStoredDefinition(version.definition);
       agent = saved;
     }
 

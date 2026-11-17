@@ -138,10 +138,9 @@ describe("defineExtension and ui slots", () => {
   const title = { zh: "任务", en: "Tasks" };
   const ui = (): UiContribution[] => [
     { id: "tasks-panel", title, slot: "conversation.panel", kind: "view", icon: "list-checks" },
-    { id: "tasks", title, place: "conversation", kind: "view", aliasOf: "tasks-panel" },
     { id: "tasks-section", title, slot: "conversation.properties.section@1", kind: "view" },
   ];
-  const perms = { ui: { views: ["tasks-panel", "tasks", "tasks-section"] } };
+  const perms = { ui: { views: ["tasks-panel", "tasks-section"] } };
 
   it("defineExtension keeps ui exactly as written", () => {
     const m = defineExtension(valid({ ui: ui(), permissions: perms }));

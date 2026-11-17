@@ -13,7 +13,7 @@ import { createLogger } from "../../src/log.js";
 import { truncateTables } from "../helpers/db.js";
 import { accountsFor } from "../helpers/identity.js";
 import {
-  createOrg,
+  createOrgWithProviders,
   PW,
   runConfig,
   session,
@@ -67,7 +67,7 @@ beforeEach(async () => {
   lines.length = 0;
   ownerId = (await accountsFor(db).createLocal({ login: "owner", password: PW, displayName: "O" }))
     .id;
-  orgId = await createOrg(await session(k, "owner"));
+  orgId = await createOrgWithProviders(k, await session(k, "owner"));
 });
 
 const enable = (plugin: string, token?: string) =>

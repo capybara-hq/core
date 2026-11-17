@@ -14,7 +14,6 @@ import { KernelDb } from "../infra/database/kernel-db.js";
 import { UUID_RE } from "../ui/registry.js";
 import { BUILTIN_TOOL_KINDS, SANDBOX_TOOL_NAMES } from "./builtin-names.js";
 import { pluginDisplayNames } from "./display-names.js";
-import { isLegacyBuiltinKey, LEGACY_BUILTINS, type LegacyBuiltin } from "./legacy-keys.js";
 import { toolKeyIssue } from "./naming.js";
 import { OrgToolSwitches } from "./org-tool-switches.js";
 import { policyFromAnnotations, ToolRegistry } from "./registry.js";
@@ -29,12 +28,6 @@ export type ToolKind = "command" | "read" | "edit" | "search" | "connector" | "m
 export interface ToolInfo {
   /** The model-visible tool key, as asked for. */
   key: string;
-  /**
-   * Set only for a release-candidate builtin key (old history, tool naming spec §9): the current
-   * tool it stands for. Everything else describes that tool, with `keyArgs` in the old parameter
-   * names the logged input carries. Pages map a call's name through it (the `Agent` row, labels).
-   */
-  aliasOf?: string;
   /** The declared display title (`ToolSpec.title`), or null. */
   title: string | null;
   kind: ToolKind;
@@ -74,7 +67,7 @@ const display = (spec: ToolSpec | undefined) => ({
 
 /**
  * Presentation metadata for `keys` in this org, in request order with repeats dropped. Builtins
- * by name (a release-candidate builtin key as its current tool, with `aliasOf`); `plugin__<plugin>__<tool>` keys as a loaded extension's registration, and `mcp__<slug>__<tool>` keys as a live
+ * by name; `plugin__<plugin>__<tool>` keys as a loaded extension's registration, and `mcp__<slug>__<tool>` keys as a live
  * connector's current stored tool (its reviewed definition, never a pending one). Anything else
  * comes back as an unknown plain tool.
  *
@@ -131,30 +124,18 @@ export async function toolInfo(
     return p && p.kind !== "builtin" ? p.tool : null;
   };
 
-  const builtinInfo = (key: string, name: string, spec: ToolSpec): ToolInfo => ({
+  const builtinInfo = (key: string, spec: ToolSpec): ToolInfo => ({
     key,
     ...display(spec),
-    kind: BUILTIN_TOOL_KINDS[name] ?? "tool",
-    sandbox: (SANDBOX_TOOL_NAMES as readonly string[]).includes(name),
+    kind: BUILTIN_TOOL_KINDS[key] ?? "tool",
+    sandbox: (SANDBOX_TOOL_NAMES as readonly string[]).includes(key),
     tool: null,
     source: { kind: "builtin" },
   });
 
   return unique.map((key): ToolInfo => {
     const b = builtins.get(key);
-    if (b) return builtinInfo(key, key, b);
-    const legacy = isLegacyBuiltinKey(key) ? (LEGACY_BUILTINS[key] as LegacyBuiltin) : undefined;
-    const current = legacy && builtins.get(legacy.name);
-    if (legacy && current) {
-      // the logged input of an rc call names the old parameters: key arguments in those names
-      const oldName = new Map(Object.entries(legacy.params).map(([o, n]) => [n, o]));
-      const info = builtinInfo(key, legacy.name, current);
-      return {
-        ...info,
-        aliasOf: legacy.name,
-        keyArgs: info.keyArgs.map((a) => oldName.get(a) ?? a),
-      };
-    }
+    if (b) return builtinInfo(key, b);
     const e = extensions.get(key);
     if (e)
       return {

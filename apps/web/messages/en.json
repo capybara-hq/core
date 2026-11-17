@@ -202,7 +202,8 @@
       "tool_not_found": "The tool does not exist in this connector.",
       "tool_not_pending": "The tool is not waiting for review.",
       "resources_disabled": "Reading resources is turned off for this connector.",
-      "not_personal": "This connector uses one credential for the whole organization, so it has no per-member tool permissions."
+      "not_personal": "This connector uses one credential for the whole organization, so it has no per-member tool permissions.",
+      "git_push_widen_not_allowed": "Loosening the connector's git push policy needs a person on the connector's settings page."
     },
     "approval": {
       "not_found": "The approval does not exist or you cannot handle it.",
@@ -238,7 +239,6 @@
       "single_provider_enabled": "Only one extension may provide this; disable the enabled one first, then enable this one.",
       "single_provider_required": "A plugin this deployment requires provides this; it can't be replaced.",
       "package_invalid": "The extension package is invalid:",
-      "legacy_format": "The package uses the pre-0.1.0 package format. Repack it as a plugin with .capybara-plugin/plugin.json (pnpm pack-plugin) and upload it again.",
       "no_extension": "This plugin has no extension, so there is no extension to install on the deployment. Install it into the platform catalog instead.",
       "package_too_large": "The extension package is over the size limit.",
       "unavailable": "The extension is unavailable right now.",
@@ -265,7 +265,6 @@
       "connector_removed": "The connector this install was going to take back was removed during the switch-on. Try again.",
       "icon_not_found": "No icon.",
       "invalid_manifest": "The plugin package is invalid:",
-      "legacy_format": "The package uses the pre-0.1.0 package format. Repack it as a plugin with .capybara-plugin/plugin.json (pnpm pack-plugin) and import it again.",
       "no_extension": "This plugin has no extension, so there is nothing to install on the deployment.",
       "dependency_unresolved": "A plugin this one depends on is not on the platform at a matching version. Ask the super admin to install it first.",
       "dependency_disabled": "A plugin this one depends on is disabled by the super admin.",
@@ -1410,6 +1409,7 @@
       "fork": "sub-agent"
     },
     "skillInstructions": "Skill instructions",
+    "templateSkill": "Skill {skill} for this sub-agent",
     "skillReport": "Report",
     "skillWaits": "Answered after the sub-agent running {skill} finishes.",
     "interjectionPending": "Pending",
@@ -1529,11 +1529,13 @@
       "title": "Before you start",
       "description": "A few steps are left before you can start a conversation.",
       "model": {
-        "description": "Enable at least one extension that provides models so agents can answer.",
-        "askAdmin": "No model is available yet. Super admins configure models under Admin → Extensions.",
-        "askOrgAdmin": "No model is available yet. An org admin can enable a model service under Extensions.",
+        "description": "Deploy and configure at least one model service so agents can answer.",
+        "askAdmin": "No model is available yet. Super admins deploy and configure model services under Admin → Models.",
         "action": "Set up",
-        "waiting": "Waiting for a super admin"
+        "waiting": "Waiting for a super admin",
+        "enableDescription": "The platform offers model services, but none is ready in this organization yet. Turn one on or finish its configuration under Settings → Models so agents can answer.",
+        "askOrgAdmin": "The platform offers model services. You can use them once an org admin turns one on or configures it for this organization.",
+        "enableAction": "Turn on"
       },
       "agent": {
         "description": "An agent sets the model it uses and the tools and skills it can use.",
@@ -2437,11 +2439,25 @@
         "readHint": "These tools declare that they only read data; allowed by default.",
         "write": "May write",
         "writeHint": "These may change data, or do not declare that they only read; ask by default."
+      },
+      "gitPush": {
+        "title": "Git push",
+        "hint": "The organization's default for pushes: {label}. Repositories you chose to always allow push without asking, unless the default is Deny; clear one to be asked again.",
+        "empty": "You have not allowed any repository.",
+        "clear": "Clear",
+        "undo": "Keep",
+        "clearing": "Cleared on save"
       }
     },
     "templates": {
       "needsConfig": "Needs setup",
       "configure": "Set up"
+    },
+    "gitPush": {
+      "title": "Git push",
+      "hint": "When an agent pushes through this connector's credential in a sandbox (hosts: {hosts}). Ask asks the person for each repository, and each member can always allow a repository for themselves; Deny refuses every push.",
+      "hintShared": "When an agent pushes through this connector's shared credential in a sandbox (hosts: {hosts}). Ask asks the person for every push (a repository can be always allowed only on a connector with personal credentials); Deny refuses every push.",
+      "label": "Default for pushes"
     }
   },
   "connections": {
@@ -2459,7 +2475,8 @@
       "tokens": "Service tokens",
       "preferences": "Preferences",
       "appearance": "Appearance",
-      "schedules": "Scheduled tasks"
+      "schedules": "Scheduled tasks",
+      "audit": "Audit log"
     },
     "empty": "No connector needs your own credential.",
     "emptyHint": "Connectors that use personal credentials show up here.",
@@ -3251,6 +3268,7 @@
       "user": "stopped by a user",
       "shutdown_exhausted": "server shutdown",
       "eval_stopped": "eval stopped",
+      "org_deleted": "organization deleted",
       "cancelled": "eval run cancelled",
       "capped": "token cap reached",
       "too_many_errors": "too many consecutive errors",
@@ -3546,8 +3564,6 @@
       "tools_changed": "Tool definitions changed",
       "tool_spec_missing": "A recorded tool definition is missing",
       "definition_missing": "The agent version definition is missing",
-      "pinned_changed": "This call rendered pinned skills, which no candidate pins any more",
-      "legacy_event": "Recorded by an older format",
       "params_changed": "Model parameters changed",
       "media_missing": "An attachment is no longer available",
       "media_changed": "An attachment changed",
@@ -3582,8 +3598,7 @@
         "description": "Installed model providers and their models. Prices are per million tokens in {currency} (change it in Deployment settings); costs in trajectories and evals are estimated from these prices."
       },
       "providerError": "Provider {provider} failed to list its models. Other providers are not affected.",
-      "noProviders": "No model providers yet. Install a model provider plugin and it will show up here.",
-      "toPlugins": "Go to plugins",
+      "noProviders": "No model services yet. Install a model service plugin from the marketplace, then configure it here.",
       "noModels": "This provider has no models.",
       "columns": {
         "model": "Model",
@@ -3617,14 +3632,36 @@
       "purposes": {
         "title": "Default model per purpose",
         "description": "The kernel and extensions pick models by purpose. Set the deployment default here; org admins can override it in their org settings. There is no model allowlist."
+      },
+      "toMarket": "Browse the marketplace",
+      "setup": {
+        "title": "Model services",
+        "description": "The platform's model service plugins: configure their connection here; each organization can use one once it turns it on. Model services in the marketplace that are not installed yet are listed here too.",
+        "configure": "Configure",
+        "configureLabel": "Configure {plugin}",
+        "enable": "Enable",
+        "enableLabel": "Enable {plugin}",
+        "install": "Install",
+        "installLabel": "Install {plugin}",
+        "notInstalled": "Not installed",
+        "marketPointer": "Other plugins are in the marketplace."
       }
     },
     "org": {
       "pageTitle": "Models",
       "title": "Model purposes",
       "description": "The kernel and extensions pick models by purpose. Each purpose uses the deployment default set by the super admins; you can override it for this org or restore the default.",
-      "noProviders": "This org has no model providers yet. Turn on a model provider plugin on the Plugins page, or ask a super admin to install one.",
-      "toPlugins": "Go to plugins"
+      "noProviders": "The platform has no model services yet. Super admins deploy them under Admin → Models.",
+      "toAdminModels": "Set up model services",
+      "providers": {
+        "title": "Model services",
+        "description": "This organization's models come from the model services turned on here. A service the platform deploys works here once this organization turns it on.",
+        "orgFixable": "No model service is ready in this organization yet. Turn one on or finish its configuration below so agents can answer.",
+        "enable": "Turn on",
+        "enableLabel": "Turn on {plugin} for this organization",
+        "configure": "Configure",
+        "configureLabel": "Configure {plugin}"
+      }
     },
     "evalUnmapped": "No model is set for the eval judge, so evals cannot use a judge.",
     "capability": {
@@ -3731,6 +3768,7 @@
           "catalog_request": "Catalog requests",
           "permission_confirmation": "Permission confirmations",
           "scope_sync_failed": "Scope sync failures",
+          "extension_disabled": "Extensions disabled",
           "ownership_transferred": "Ownership transfers",
           "org_upload_pending": "Org uploads to confirm"
         },
@@ -3741,8 +3779,7 @@
           "approval": "Permissions to approve",
           "dependency": "Dependency missing",
           "conflict": "Conflict",
-          "converging": "Converging",
-          "legacy_format": "Needs repackaging"
+          "converging": "Converging"
         },
         "problems": {
           "list_failed": "Model list failed",
@@ -3757,7 +3794,8 @@
           "discardHint": "{job} will never run. Retry it instead if the work is still needed.",
           "retried": "Queued again.",
           "alreadyOwed": "The same work was already queued; this copy was discarded.",
-          "discarded": "Discarded."
+          "discarded": "Discarded.",
+          "loadMore": "Load more"
         },
         "queue": {
           "lostJobs": "The queue lost background jobs",
@@ -3926,6 +3964,12 @@
           "dependencies": "The plugin is on in {org}, but a dependency a platform update added could not be installed. It is tried again the next time this plugin and organization sync: once the cause is fixed (install a version the dependency range accepts, for example), changing the plugin's scope on its page or a worker restart syncs it again (saving an unchanged scope does not)."
         }
       },
+      "extensionDisabled": {
+        "label": "Extension disabled",
+        "version": "Extension version",
+        "since": "Since",
+        "hint": "This plugin's scope turns it on, but its extension is disabled on the platform, so the scope sync installs it in no organization that lacks it. Enable the extension on the plugin's page (if another enabled extension provides the same single-provider extension point, disable that one first); the enable syncs the plugin's scope again."
+      },
       "orgUpload": {
         "label": "Upload to confirm",
         "title": "{org} uploaded {name}, waiting for confirmation",
@@ -4006,7 +4050,121 @@
         "modelPurposeMapped": "Changed a purpose's default model",
         "modelDisabledSet": "Changed the models switched off on the platform",
         "outboxRetried": "Retried background work that could not be queued",
-        "outboxDiscarded": "Discarded background work that could not be queued"
+        "outboxDiscarded": "Discarded background work that could not be queued",
+        "accountInitialPasswordShown": "Viewed an initial password",
+        "agentCreated": "Created an agent",
+        "agentDeleted": "Deleted an agent",
+        "agentOwnerChanged": "Changed an agent's owner",
+        "agentPendingConnectorBound": "Connected an agent's pending connector",
+        "agentProfileUpdated": "Updated an agent's profile",
+        "agentUpdated": "Updated an agent",
+        "agentTemplateCreated": "Created an agent template",
+        "agentTemplateDeleted": "Deleted an agent template",
+        "agentTemplateUpdated": "Updated an agent template",
+        "approvalDecided": "Decided an approval",
+        "backgroundTaskStopped": "Stopped a background task",
+        "catalogRequestCancelled": "Cancelled a plugin request",
+        "catalogRequestClosed": "Closed a plugin request",
+        "catalogRequestDecided": "Decided a plugin request",
+        "catalogRequestImportPrepared": "Prepared the import for a plugin request",
+        "catalogRequested": "Requested a plugin",
+        "catalogShareableChanged": "Changed whether a plugin is shared",
+        "channelCreated": "Created a channel connection",
+        "channelDeleted": "Deleted a channel connection",
+        "channelGuideConfirmed": "Confirmed a channel setup step",
+        "channelUpdated": "Updated a channel connection",
+        "componentOrgSwitched": "Switched a component on or off",
+        "componentPromoted": "Promoted a component to the platform",
+        "connectorCreated": "Created a connector",
+        "connectorCredentialCleared": "Cleared a connector credential",
+        "connectorCredentialSet": "Set a connector credential",
+        "connectorDeleted": "Deleted a connector",
+        "connectorGuideConfirmed": "Confirmed a connector setup step",
+        "connectorGitPushPolicyChanged": "Changed a connector's git push policy",
+        "connectorMemberPoliciesChanged": "Changed a connector's member policies",
+        "connectorTemplateApplied": "Created a connector from a template",
+        "connectorToolReviewed": "Reviewed a connector tool",
+        "connectorToolsDrifted": "Found changed connector tools",
+        "connectorToolsRefreshed": "Refreshed a connector's tools",
+        "connectorUpdated": "Updated a connector",
+        "deviceCommandAllowed": "Allowed a command",
+        "deviceCommandDenied": "Denied a command",
+        "deviceCreated": "Created a device",
+        "deviceDeleted": "Deleted a device",
+        "deviceFilesReset": "Reset a device's files",
+        "deviceMachineConnected": "Connected a local device",
+        "deviceMachineRevoked": "Disconnected a local device",
+        "deviceModeChanged": "Changed a device's mode",
+        "deviceNetworkAllowed": "Allowed network access",
+        "deviceNetworkDenied": "Denied network access",
+        "devicePolicyChanged": "Changed a device's policy",
+        "devicePolicyFailed": "A device policy change failed",
+        "devicePolicyRequested": "Requested a device policy change",
+        "devicePolicyUnknown": "A device policy change has no result",
+        "deviceProjectAdded": "Added a project to a device",
+        "deviceProjectRemoved": "Removed a project from a device",
+        "deviceRenamed": "Renamed a device",
+        "evalCaseAdded": "Added an eval case",
+        "evalCaseRemoved": "Removed an eval case",
+        "evalResultLabeled": "Labeled an eval result",
+        "evalResultsViewed": "Viewed eval results",
+        "evalRunCancelled": "Cancelled an eval run",
+        "evalRunStarted": "Started an eval run",
+        "evalSetCreated": "Created an eval set",
+        "evalSetDeleted": "Deleted an eval set",
+        "evalSetUpdated": "Updated an eval set",
+        "extensionOrgOverrideReset": "Reset the organization's extension settings",
+        "extensionOrgOverrideSaved": "Saved the organization's extension settings",
+        "extensionOrgOverrideTaken": "Took over the extension settings for the organization",
+        "extensionToolSwitched": "Switched an extension tool on or off",
+        "extensionPointDefaultSet": "Set the default provider of an extension point",
+        "gitFetch": "Fetched from a git repository",
+        "gitPush": "Pushed to a git repository",
+        "hookDenied": "A hook denied an action",
+        "orgCreated": "Created the organization",
+        "orgDeleted": "Deleted the organization",
+        "orgDirectoryRemovalBlocked": "Directory sync kept a member it would remove",
+        "orgDirectorySynced": "Synced the directory",
+        "orgFilePreviewersUpdated": "Changed the file previewers",
+        "orgInvitationAccepted": "Accepted an invitation",
+        "orgInvitationCreated": "Invited a member",
+        "orgInvitationRevoked": "Revoked an invitation",
+        "orgMemberAdded": "Added a member",
+        "orgMemberLeft": "Left the organization",
+        "orgMemberOffboarded": "Offboarded a member",
+        "orgMemberRemoved": "Removed a member",
+        "orgMemberRoleChanged": "Changed a member's role",
+        "orgModelDisabledSet": "Switched a model on or off for the organization",
+        "orgOwnershipTransferred": "Transferred the organization's ownership",
+        "orgPluginConfigUpdated": "Changed a plugin's settings",
+        "orgServiceTokenCreated": "Created a service token",
+        "orgServiceTokenRevoked": "Revoked a service token",
+        "orgSettingsUpdated": "Changed the organization settings",
+        "orgUpdated": "Updated the organization's name or slug",
+        "pluginOrgInstallFailed": "A plugin failed to install",
+        "pluginOrgInstalled": "Installed a plugin",
+        "pluginOrgUninstalled": "Uninstalled a plugin",
+        "pluginScopeSyncFailed": "A plugin scope sync failed",
+        "scheduleCreated": "Created a scheduled task",
+        "scheduleDeleted": "Deleted a scheduled task",
+        "scheduleGrantsChanged": "Changed a scheduled task's permissions",
+        "schedulePaused": "Paused a scheduled task",
+        "scheduleResumed": "Resumed a scheduled task",
+        "scheduleRunNow": "Ran a scheduled task now",
+        "scheduleUpdated": "Updated a scheduled task",
+        "skillChangeDecided": "Decided a skill change",
+        "skillChangeRequested": "Proposed a skill change",
+        "skillCreated": "Created a skill",
+        "skillDeleted": "Deleted a skill",
+        "skillShareRequested": "Requested to share a skill",
+        "skillShared": "Shared a skill",
+        "skillVersionCreated": "Uploaded a skill version",
+        "skillVersionReverted": "Reverted a skill version",
+        "subagentDispatched": "Started a sub-agent",
+        "subagentRefused": "Refused a sub-agent",
+        "toolCalled": "Called a tool",
+        "toolGrantRevoked": "Revoked a remembered approval",
+        "trajectoryViewed": "Viewed a trajectory"
       }
     },
     "accounts": {
@@ -4231,7 +4389,6 @@
         "failed": "Failed",
         "dependency": "Missing dependency",
         "conflict": "Conflict",
-        "legacy_format": "Repack needed",
         "runningOrgsConfigure": "Running · orgs configure their own ({count})"
       },
       "replicas": {
@@ -4745,7 +4902,7 @@
         "gitRefHelp": "Optional; empty uses the remote HEAD.",
         "gitPath": "Directory",
         "gitPathHelp": "Optional; the plugin's directory in the repository (default the root).",
-        "provenance": "Built from {repository}@{commit} by {workflow}",
+        "provenance": "Attestation (not verified): built from {repository}@{commit} by {workflow}",
         "provenanceMismatch": "The repository in the provenance differs from this git marketplace's repository. Check that this is the package you expect.",
         "buildVersion": "Recorded as {version}: {pluginVersion} is already in the catalog with other content.",
         "translation": {
@@ -5155,8 +5312,7 @@
         "installing": "Installing",
         "installed": "Installed",
         "failed": "Install failed (rolled back)",
-        "uninstalling": "Uninstalling",
-        "upgrading": "Upgrading"
+        "uninstalling": "Uninstalling"
       },
       "failedAt": "Failed at “{step}”: {code}",
       "components": "Components",
@@ -5408,7 +5564,8 @@
   "setupLayout": {
     "model": {
       "needsDeploymentAdmin": "A super admin needs to set up a model service",
-      "waitingForAdmin": "Waiting for an admin to set up a model"
+      "waitingForAdmin": "Waiting for an admin to set up a model",
+      "waitingForOrgAdmin": "Waiting for an org admin to set up a model service"
     },
     "agent": {
       "needsModel": "Set up a model first",
@@ -6422,6 +6579,8 @@
     "forbiddenHint": "Tools never allowed in scheduled runs, and never approved for a task.",
     "forbiddenTools": "Tool keys",
     "forbiddenHelp": "One tool key per line, for example Bash or mcp__github__create_issue.",
+    "forbiddenUnreadable": "This organization's forbidden tool list could not be read: unattended scheduled runs fail and no tool can be approved for a task. Check the list below and save it to fix this.",
+    "saveRepair": "Save the list",
     "invalid": "Enter a whole number of at least 1.",
     "save": "Save",
     "saved": "Settings saved",
@@ -6470,5 +6629,12 @@
     "send": "Send request",
     "sent": "Request sent to the organization's admins.",
     "refused": "The request can't be sent."
+  },
+  "orgAudit": {
+    "title": "Audit log",
+    "description": "Actions in this organization, newest first: members, settings, agents, connectors, skills, plugins and extensions. Only admins see this page.",
+    "empty": "No actions recorded yet.",
+    "emptyHint": "Changes made in this organization show up here.",
+    "loadMore": "Load more"
   }
 }

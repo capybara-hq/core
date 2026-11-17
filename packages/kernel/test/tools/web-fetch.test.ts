@@ -27,7 +27,7 @@ import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
   createConv,
-  createOrg,
+  createOrgWithProviders,
   eventsOf,
   PW,
   postMessage,
@@ -79,7 +79,7 @@ beforeEach(async () => {
   ownerId = (await accountsFor(db).createLocal({ login: "owner", password: PW, displayName: "O" }))
     .id;
   owner = await session(k, "owner");
-  orgId = await createOrg(owner);
+  orgId = await createOrgWithProviders(k, owner);
 });
 
 const enable = (org: string, plugin: string, token = "tok") =>
@@ -356,7 +356,7 @@ describe("WebFetch: page cache", () => {
     expect(got.map((g) => g.prompt)).toEqual(["a", "b"]);
     expect(got[1]?.page).toEqual(got[0]?.page);
 
-    const orgB = await createOrg(owner, "Beta");
+    const orgB = await createOrgWithProviders(k, owner, "Beta");
     await enable(orgB, "fake-web");
     await tool().run({ url, prompt: "c" }, callCtx(orgB));
     expect(callsOf(url)).toBe(2);

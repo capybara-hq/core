@@ -804,7 +804,7 @@ export class AgentsOperations implements OnModuleInit {
       defineOperation({
         id: "agents.readiness",
         description:
-          "Whether the org can run agents: modelProvider is ready when a model provider is available in the org (none otherwise); orgCanAddModel is true when an org admin can make one available on the org's extensions page (switch on a provider the platform offers, or fill its org config), false when only the super admin can; and how many agents you can see.",
+          "Whether the org can run agents: modelProvider is ready when a model provider is available in the org; org_fixable when an org admin can make one available on Settings > Models (orgFixableProviders names each provider and its reason: not_enabled, switch it on; needs_config, fill the org's config); none when only the super admin can help; and how many agents you can see.",
         input: z.object({}).strict(),
         example: {},
         authz: { orgAction: "org.read" },

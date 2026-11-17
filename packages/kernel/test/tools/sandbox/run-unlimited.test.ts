@@ -12,7 +12,7 @@ import { accountsFor } from "../../helpers/identity.js";
 import { MODEL_FAKE } from "../../helpers/model-plugins.js";
 import {
   createConv,
-  createOrg,
+  createOrgWithProviders,
   eventsOf,
   PW,
   postMessage,
@@ -73,7 +73,7 @@ describe("Bash under a run without a duration limit", () => {
   it("the command's timeout is the command maximum, with no time-budget sentence", async () => {
     await accountsFor(db).createLocal({ login: "owner", password: PW, displayName: "O" });
     const owner = await session(k, "owner");
-    const orgId = await createOrg(owner);
+    const orgId = await createOrgWithProviders(k, owner);
     const res = await owner({
       method: "POST",
       url: `/api/v1/orgs/${orgId}/agents`,

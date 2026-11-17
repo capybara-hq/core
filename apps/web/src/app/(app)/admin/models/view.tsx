@@ -16,6 +16,8 @@ import {
 import { useQueryClient } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
 import { useState } from "react";
+import type { ExtensionList } from "../../../../components/AdminExtensionPanels";
+import { AdminModelServices } from "../../../../components/AdminModelServices";
 import { ErrorFrame } from "../../../../components/ErrorFrame";
 import { FormError } from "../../../../components/form-error";
 import {
@@ -47,7 +49,11 @@ import {
   putModelPrice,
   selectedProvider,
 } from "../../../../lib/models";
-import { adminModelsQuery, adminPurposesQuery } from "../../../../lib/query/admin";
+import {
+  adminExtensionsQuery,
+  adminModelsQuery,
+  adminPurposesQuery,
+} from "../../../../lib/query/admin";
 import { keys } from "../../../../lib/query/keys";
 import { useAppMutation } from "../../../../lib/query/mutation";
 import { usePageQuery } from "../../../../lib/query/page-query";
@@ -95,17 +101,24 @@ const CHAT_COLUMNS = [
   "cacheWrite",
 ] as const;
 
+/** The Model services rows while they load: a name over its id and version. */
+const LOADING_SERVICES = [{ lines: 2 }, { lines: 2 }];
+
 /**
- * `/admin/models`：模型（超级管理员，ListPage，no inner nav：the sidebar's admin context navigates），
+ * `/admin/models`: Models (super admins, ListPage, no inner nav: the sidebar's admin context
+ * navigates),
  * two tabs in the head, kept in the address:
- * - 模型 (the bare page): the providers beside the open one's models (`?provider=<plugin>`, the
- *   first by default), one table per kind with the kind's columns (a chat model's capabilities,
- *   context and per-million-token prices, edited or cleared from the row menu; an embedding
- *   model's dimensions and input price); a provider that failed to list its models shows its error
- *   in the detail, never affecting the others;
- * - 用途默认 (`?tab=purposes`): one row per purpose (the deployment default, which each org may
+ * - Models (the bare page): the super admin's one place to set up a model service (the setup
+ *   checklist's model step leads here while the platform has none): Model services first
+ *   (`AdminModelServices`: the deployed model services with their deployment config in a Sheet,
+ *   and the marketplaces' model services not installed yet with Install); then the providers beside
+ *   the open one's models (`?provider=<plugin>`, the first by default), one table per kind with
+ *   the kind's columns (a chat model's capabilities, context and per-million-token prices, edited
+ *   or cleared from the row menu; an embedding model's dimensions and input price); a provider
+ *   that failed to list its models shows its error in the detail, never affecting the others;
+ * - Purpose defaults (`?tab=purposes`): one row per purpose (the deployment default, which each org may
  *   override in `/settings/models`), saved by the page's ActionRow.
- * From the query cache (the layout prefetched both reads on a first load, for either tab); a saved
+ * From the query cache (the layout prefetched the reads on a first load, for either tab); a saved
  * price or purpose is written into the cache.
  */
 export default function AdminModelsView({
@@ -135,6 +148,7 @@ function AdminModelsRead({
   const tc = useTranslations("models.admin.columns");
   const models = usePageQuery(adminModelsQuery());
   const purposes = usePageQuery(adminPurposesQuery());
+  const extensions = usePageQuery(adminExtensionsQuery());
   const [tab, setTab] = useUrlTab(initialTab, parseModelsTab, "models");
   const [provider, setProvider] = useUrlParam("provider", initialProvider, (r) => r ?? "", "");
   const header = {
@@ -147,21 +161,30 @@ function AdminModelsRead({
     })),
     activeTab: tab,
   };
-  if (models.kind === "notFound" || purposes.kind === "notFound") return <NotFound />;
-  if (models.kind === "error") return <ErrorFrame reset={models.retry} />;
-  if (purposes.kind === "error") return <ErrorFrame reset={purposes.retry} />;
-  if (models.kind === "loading" || purposes.kind === "loading") {
-    // The open tab's frame: the providers grid (its names come with the data) or the kernel's
-    // purposes as rows.
+  const reads = [models, purposes, extensions] as const;
+  if (reads.some((r) => r.kind === "notFound")) return <NotFound />;
+  for (const r of reads) if (r.kind === "error") return <ErrorFrame reset={r.retry} />;
+  if (models.kind !== "ready" || purposes.kind !== "ready" || extensions.kind !== "ready") {
+    // The open tab's frame: the Model services rows and the providers grid (its names come with the data),
+    // or the kernel's purposes as rows.
     return (
       <ListPage header={header} loading={{ keep: true }}>
         {tab === "models" ? (
-          <ModelProvidersLoading
-            columns={[
-              ...CHAT_COLUMNS.map((key) => ({ key, header: tc(key) })),
-              { key: "enabled", header: t("catalog.enabled") },
-            ]}
-          />
+          <Stack gap={16}>
+            <FormSection
+              id="services"
+              layout="stacked"
+              title={t("admin.setup.title")}
+              description={t("admin.setup.description")}
+              loading={{ items: LOADING_SERVICES }}
+            />
+            <ModelProvidersLoading
+              columns={[
+                ...CHAT_COLUMNS.map((key) => ({ key, header: tc(key) })),
+                { key: "enabled", header: t("catalog.enabled") },
+              ]}
+            />
+          </Stack>
         ) : (
           <FormSection
             id="purposes"
@@ -181,6 +204,7 @@ function AdminModelsRead({
       provider={provider}
       onProvider={setProvider}
       data={{ ...models.data, purposes: purposes.data.purposes }}
+      extensions={extensions.data}
       orgId={me.currentOrgId}
     />
   );
@@ -192,6 +216,7 @@ function ModelsBody({
   provider,
   onProvider,
   data,
+  extensions,
   orgId,
 }: {
   header: PageHeaderProps;
@@ -199,6 +224,7 @@ function ModelsBody({
   provider: string;
   onProvider(plugin: string): void;
   data: AdminModels & { purposes: PurposeView[] };
+  extensions: ExtensionList;
   orgId: string | null;
 }) {
   const t = useTranslations("models");
@@ -265,22 +291,13 @@ function ModelsBody({
   const nameOf = (p: AdminProvider) =>
     extensionLabel({ name: p.provider, displayName: p.displayName }, labelLocale(locale));
   return (
-    <ListPage
-      header={header}
-      {...(data.providers.length === 0
-        ? {
-            empty: {
-              text: t("admin.noProviders"),
-              action: {
-                label: t("admin.toPlugins"),
-                href: "/admin/plugins",
-                variant: "primary" as const,
-              },
-            },
-          }
-        : {})}
-    >
+    <ListPage header={header}>
       {disabling.notice}
+      <AdminModelServices
+        extensions={extensions.extensions}
+        drainSeconds={extensions.drainSeconds}
+        orgId={orgId}
+      />
       {open === undefined ? null : (
         <Stack gap={16}>
           <Text variant="prose" tone="muted">

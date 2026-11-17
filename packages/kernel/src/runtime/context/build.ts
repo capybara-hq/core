@@ -20,7 +20,6 @@ import { catalogText, isAlwaysLoaded } from "../../tools/builtins/tool-search.js
 import type { ResolvedTool } from "../../tools/registry.js";
 import { renderSubagentDelivery } from "../subagents/render.js";
 import { devicePathsAt, devicePathsText } from "./device-paths.js";
-import { LEGACY_CATALOG_HEADER, LEGACY_SKILL_TEXTS, usesLegacyToolNames } from "./legacy-text.js";
 import { pluginContextsAfterSummary, pluginContextText } from "./plugin-context.js";
 import { latestProjectRoot, projectRootText } from "./project-root.js";
 import {
@@ -34,7 +33,6 @@ import {
 import {
   invokedSkillNames,
   invokedSkillsText,
-  SKILL_TEXTS,
   type SkillsSnapshot,
   skillsCatalogEvents,
   snapshotChangeText,
@@ -79,6 +77,11 @@ export interface ModelCallMeta {
   tools: { key: string; specHash: string }[];
   /** 启用 ToolSearch 时 system 第二块目录里的工具（按 key 排序）及定义指纹；未启用没有该字段。 */
   catalog?: { key: string; specHash: string }[];
+  /**
+   * The step's tools were left out because the model has no tool support (set by
+   * `assembleModelRequest`); absent when the request carried them.
+   */
+  toolsOmitted?: true;
   /** 请求的 `toolChoice`（收尾调用为 `"none"`）；未设置则没有该字段。 */
   toolChoice?: "auto" | "none";
   /**
@@ -99,14 +102,18 @@ export interface BuildModelRequestInput {
   model: ModelInfo;
   step: number;
   /**
-   * loop 已吸收到的位置（R31）：the largest seq of the absorbable events (`user_message`,
-   * `background_task_finished` and `subagent_delivery`, {@link isAbsorbable}) the loop took. 提供时：
-   * - seq 大于它的可吸收事件不进请求（运行中途到达、尚未被吸收的插话或后台任务结束，由后续步骤吸收或触发下一轮）；
-   * - 每个可吸收事件放在**吸收它的那次模型调用**的位置：日志里第一个 `request.absorbedUpToSeq`
-   *   不小于它的 `model_call` 之前（没有该字段的旧 model_call 视为吸收了它之前的全部消息），
-   *   本次请求吸收的放在末尾。于是模型看到的历史只追加（插话不会插到已发送的回复之前），
-   *   且请求可由日志 + `model_call` 精确还原。
-   * 不提供时按 seq 原样回放全部可吸收事件。
+   * How far the loop has absorbed (R31): the largest seq of the absorbable events (`user_message`,
+   * `background_task_finished` and `subagent_delivery`, {@link isAbsorbable}) the loop took. When
+   * given:
+   * - absorbable events with a larger seq stay out of the request (an interjection or a finished
+   *   background task that arrived mid-run and is not absorbed yet; a later step absorbs it or it
+   *   starts the next run);
+   * - each absorbable event sits where **the model call that absorbed it** is: before the first
+   *   `model_call` in the log whose `request.absorbedUpToSeq` is not smaller than its seq, and
+   *   the ones this request absorbs go at the end. So the history the model sees is append-only
+   *   (an interjection never lands before a reply already sent) and the request can be rebuilt
+   *   exactly from the log + `model_call`.
+   * When absent, every absorbable event is replayed in seq order.
    */
   absorbedUpToSeq?: number;
   /**
@@ -719,9 +726,9 @@ export function buildModelRequest(input: BuildModelRequestInput): {
   const messages: ModelMessage[] = [];
   const reminderSeqs: number[] = [];
   const absorbed = input.absorbedUpToSeq;
-  /** model_call 吸收到的位置；没有该字段的旧事件视为吸收了它之前的全部消息。 */
+  /** Where a model_call had taken in absorbable events. */
   const absorbedBy = (e: ConversationEvent & { type: "model_call" }) =>
-    e.payload.request.absorbedUpToSeq ?? e.seq;
+    e.payload.request.absorbedUpToSeq;
   /** 每个位置之前最近一次 model_call 的吸收位置（之前没有 model_call 为 undefined）。 */
   const callBefore: (number | undefined)[] = [];
   let lastCall: number | undefined;
@@ -882,10 +889,6 @@ export function buildModelRequest(input: BuildModelRequestInput): {
     const k = resultKey(e.runId, e.payload.callId);
     if (!results.has(k)) results.set(k, e.payload);
   }
-  // System texts naming a builtin: a request whose tools were recorded before the tool rename
-  // renders the frozen pre-rename wording, so it rebuilds exactly (tool naming spec §10)
-  const legacyNames = usesLegacyToolNames(input.tools ?? []);
-  const skillTexts = legacyNames ? LEGACY_SKILL_TEXTS : SKILL_TEXTS;
   // 技能目录（Ruling M17）：第一份快照进 system；之后的每份在所在位置追加变更提醒（相对上一份快照）。
   const skillSnaps = skillsCatalogEvents(events);
   const systemSkills = systemSkillsCatalog(events);
@@ -923,15 +926,17 @@ export function buildModelRequest(input: BuildModelRequestInput): {
     // its instructions and skills (or the line that it is unavailable) outlive the summary
     const project = latestProjectRoot(events, after);
     if (project) messages.push({ role: "system", content: projectRootText(project) });
-    // 被摘要覆盖的变更提醒不再发送：摘要时生效的目录与 system 里的不同 → 紧随摘要补上完整的当前目录
+    // change notices the summary covers are not sent again: when the catalog in effect at the summary
+    // differs from the one in the system, the full current catalog follows the summary
     const covered = skillSnaps.filter((e) => e.seq <= after).at(-1);
-    // (phase B: plus the current pinned skills and tool-name map when they differ from system's)
+    // (phase B: plus the tool-name map when it differs from system's)
     if (covered && covered !== systemSkills) {
-      const text = snapshotCurrentText(systemSkills?.payload, covered.payload, skillTexts);
+      const text = snapshotCurrentText(systemSkills?.payload, covered.payload);
       if (text !== "") messages.push({ role: "system", content: text });
     }
-    // phase D: the skills a person invoked in the summarised range, by name (from the log only)
-    const invoked = invokedSkillsText(invokedSkillNames(events, after), skillTexts);
+    // phase D: the skills invoked in the summarised range (a person's, and template skills the
+    // kernel wrote as invocations), by name (from the log only)
+    const invoked = invokedSkillsText(invokedSkillNames(events, after));
     if (invoked !== "") messages.push({ role: "system", content: invoked });
   }
   for (const [i, e] of events.entries()) {
@@ -1038,12 +1043,37 @@ export function buildModelRequest(input: BuildModelRequestInput): {
         break;
       case "skills_catalog":
         if (e !== systemSkills) {
-          const text = snapshotChangeText(prevSnapshot.get(e.seq), e.payload, skillTexts);
+          const text = snapshotChangeText(prevSnapshot.get(e.seq), e.payload);
           if (text !== "") messages.push({ role: "system", content: text });
         }
         break;
-      default:
+      // Not model-visible as events of their own. tool_result is rendered with its assistant
+      // message's tool call (the `results` map above); compaction_summary is the `summary` that
+      // seeds the request; the rest are lifecycle, usage, approval, question and display records.
+      // Adding an event type fails typecheck here until it is listed with how it renders.
+      case "tool_result":
+      case "run_started":
+      case "usage":
+      case "tool_call_started":
+      case "connection_required":
+      case "approval_requested":
+      case "approval_decided":
+      case "approval_updated":
+      case "question_asked":
+      case "question_answered":
+      case "media_excluded":
+      case "artifact_created":
+      case "compaction_summary":
+      case "compaction_failed":
+      case "run_finished":
+      case "run_aborted":
+      case "run_failed":
         break;
+      default: {
+        const unrendered: never = e;
+        void unrendered;
+        break;
+      }
     }
   }
 
@@ -1059,9 +1089,7 @@ export function buildModelRequest(input: BuildModelRequestInput): {
       : `${BEHAVIOR_RULES}\n\n${agent.instructions}`;
   const system = [
     {
-      text: systemSkills
-        ? `${base}\n\n${snapshotSystemText(systemSkills.payload, skillTexts)}`
-        : base,
+      text: systemSkills ? `${base}\n\n${snapshotSystemText(systemSkills.payload)}` : base,
       cache: true,
     },
   ];
@@ -1077,10 +1105,7 @@ export function buildModelRequest(input: BuildModelRequestInput): {
     tools = [...sorted.filter((t) => isAlwaysLoaded(t.key)), ...loaded];
     if (deferred.length > 0) {
       catalog = deferred;
-      system.push({
-        text: catalogText(deferred, legacyNames ? LEGACY_CATALOG_HEADER : undefined),
-        cache: true,
-      });
+      system.push({ text: catalogText(deferred), cache: true });
     }
   }
   const request: ModelRequest = {

@@ -27,7 +27,7 @@ import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { captureProviderRequests } from "../helpers/provider-capture.js";
 import {
   createConv,
-  createOrg,
+  createOrgWithProviders,
   eventsOf,
   PW,
   postMessage,
@@ -106,8 +106,8 @@ beforeAll(async () => {
     })
   ).id;
   root = await session(k, "root");
-  orgA = await createOrg(root, "A");
-  orgB = await createOrg(root, "B");
+  orgA = await createOrgWithProviders(k, root, "A");
+  orgB = await createOrgWithProviders(k, root, "B");
 });
 
 afterAll(async () => {
@@ -853,26 +853,6 @@ describe("promote on share", () => {
     });
     expect(errorOf(put)).toEqual([409, "catalog.not_owned"]);
     expect(await db.selectFrom("platform_skills").select("id").execute()).toEqual([]);
-  });
-
-  it("a legacy uninstall never touches a promoted row (ruling P3-47)", async () => {
-    const r = await promotedReport();
-    const installer = k.app.get(PluginInstaller);
-    const removed = await installer.txHost.run(() =>
-      installer.removeComponent(
-        orgA,
-        rootId,
-        { kind: "skill", ref: r.id, created: true, skillVersion: null },
-        "plugin_install_cleanup",
-      ),
-    );
-    expect(removed).toBe(false);
-    const row = await db
-      .selectFrom("skills")
-      .select(["deleted_at", "current_version", "platform_skill_id"])
-      .where("id", "=", r.id)
-      .executeTakeFirstOrThrow();
-    expect(row).toEqual({ deleted_at: null, current_version: 3, platform_skill_id: r.platformId });
   });
 
   it("an org's own plugin's copies are still removed by its uninstall (ruling P3-47)", async () => {

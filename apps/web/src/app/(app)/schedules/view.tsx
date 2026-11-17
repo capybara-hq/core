@@ -70,7 +70,7 @@ function Schedules({
   const settingsQ = orgSettingsQuery(orgId);
   const off =
     useQuery({ ...settingsQ, retryOnMount: retryOnMountOf(settingsQ.queryKey) }).data?.settings
-      .scheduledTasks?.enabled === false;
+      .scheduledTasks.enabled === false;
   const header = {
     path: [...scope, { label: "schedules" }],
     title: t("title"),

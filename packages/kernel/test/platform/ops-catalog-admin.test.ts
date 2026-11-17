@@ -19,7 +19,7 @@ import {
   startOrgEnv,
 } from "../catalog/org-env.js";
 import { skillPlugin } from "../catalog/packages.js";
-import { createOrg, enableExtensions, waitFor } from "../helpers/runs.js";
+import { createOrgWithProviders, enableExtensions, waitFor } from "../helpers/runs.js";
 import { SKILL_MD } from "../skills/zip.js";
 
 /**
@@ -37,7 +37,7 @@ const ORG2_NAME = "Gamma Corp";
 beforeAll(async () => {
   env = await startOrgEnv();
   ops = env.k.app.get(PlatformOperations);
-  org2 = await createOrg(env.root, ORG2_NAME);
+  org2 = await createOrgWithProviders(env.k, env.root, ORG2_NAME);
 });
 afterAll(async () => {
   await env?.stop();

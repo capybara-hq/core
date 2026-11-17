@@ -160,8 +160,7 @@ export async function shareSkillIn(
 
 /**
  * The catalog snapshot `base` with skill `name` replaced by the version just written or proposed
- * (`source` = its prefix), or removed when that version is manual-only. Pinned skills of an old
- * snapshot are not carried (skills default-on spec §8).
+ * (`source` = its prefix), or removed when that version is manual-only.
  */
 function withVersion(
   base: SkillsSnapshot,

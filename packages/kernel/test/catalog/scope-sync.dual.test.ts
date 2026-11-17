@@ -11,7 +11,9 @@ import { Redis } from "ioredis";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   PLUGIN_SCOPE_QUEUE,
+  SCOPE_CHUNK_JOB,
   SCOPE_ITEM_JOB,
+  scopeChunkJobId,
   scopeItemJobId,
 } from "../../src/catalog/scope-sync.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
@@ -22,9 +24,10 @@ import { PW, waitFor } from "../helpers/runs.js";
 
 /**
  * Dual replica: the scope sync of one `all` item is enqueued from both replicas at once (org
- * creations on each replica enqueue their org's job; item jobs for several scope versions are added
- * besides), and both replicas' workers converge the same orgs concurrently. Exactly one live install
- * per org, no failed install.
+ * creations on each replica enqueue their org's job; item jobs of several transactions, each
+ * fanning out to its chunk jobs, and chunk jobs with overlapping orgs are added besides), and both
+ * replicas' workers converge the same orgs concurrently. Exactly one live install per org, no
+ * failed install.
  */
 
 let pgc: TestContainer;
@@ -151,16 +154,25 @@ describe("plugin scope sync (dual replica)", () => {
       expect(r.status).toBe(201);
       orgIds.push((r.json.org as { id: string }).id);
     }
-    // ...and item jobs for several scope versions, picked up by both replicas' workers
-    await Promise.all(
-      [1, 2, 3, 4].map((v) =>
+    // ...and item jobs of several transactions (each fans out to its chunk), plus chunk jobs
+    // whose orgs overlap, picked up by both replicas' workers
+    const opts = { removeOnComplete: true, removeOnFail: true };
+    await Promise.all([
+      ...["1", "2", "3", "4"].map((xact) =>
         queue?.add(
           SCOPE_ITEM_JOB,
           { kind: "item", itemId },
-          { jobId: scopeItemJobId(itemId, v), removeOnComplete: true, removeOnFail: true },
+          { jobId: scopeItemJobId(itemId, xact), ...opts },
         ),
       ),
-    );
+      ...[0, 1, 2, 3, 4, 5].map((n) =>
+        queue?.add(
+          SCOPE_CHUNK_JOB,
+          { kind: "chunk", itemId, orgIds: [orgIds[n], orgIds[(n + 1) % 6], orgIds[(n + 3) % 6]] },
+          { jobId: scopeChunkJobId(scopeItemJobId(itemId, "9"), n), ...opts },
+        ),
+      ),
+    ]);
 
     await waitFor(
       async () => {

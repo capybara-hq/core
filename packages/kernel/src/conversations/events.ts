@@ -46,13 +46,13 @@ const RefMediaSourceSchema = z.object({
 });
 
 /**
- * Who may decide an approval, as the approval row says (display only, absent in older logs): the
- * assigned account (`requestedFor`), else the escalation role (`approverRole`). Pages word the
- * waiting state with it ("等待 张三 批准") for viewers who cannot decide.
+ * Who may decide an approval, as the approval row says (display only): the assigned account
+ * (`requestedFor`), else the escalation role (`approverRole`). Pages word the waiting state with it
+ * ("Waiting for Alice to approve") for viewers who cannot decide.
  */
 const ApproverFields = {
-  requestedFor: z.string().nullable().optional(),
-  approverRole: z.enum(ORG_ROLES).nullable().optional(),
+  requestedFor: z.string().nullable(),
+  approverRole: z.enum(ORG_ROLES).nullable(),
 };
 
 /** The most hosts one network ask (and one `network_blocked` event) lists. */
@@ -122,8 +122,6 @@ export type CommandAsk = z.infer<typeof CommandAskSchema>;
 export const MEDIA_EXCLUDED_MAX_IDS = 50;
 /** 一份 `skills_catalog` 快照最多的技能数（组织技能引用上限 100，余量给 agent 自己的技能）。 */
 export const SKILLS_CATALOG_MAX = 1000;
-/** The longest pinned skill body in a `skills_catalog` snapshot (the pinned total is ≤ 32768 bytes). */
-export const PINNED_BODY_MAX_CHARS = 32768;
 
 /** 媒体块的名字：与 plugin-sdk `validateMediaBlock` 同规则（≤255 字符、不含控制字符）。 */
 const MediaNameSchema = z
@@ -380,8 +378,8 @@ export const RunContextSchema = z.object({
   /**
    * The attribution a run's requests carry for git commits and pull requests it creates (spec
    * 2026-11-14-agent-attribution): the effective values fixed at run start (platform defaults or
-   * the agent's override), so request building never reads config or the database. Absent in older
-   * logs. An empty `commit` / `pr` turns that line off; `sessionUrl` is the resolved conversation
+   * the agent's override), so request building never reads config or the database. Absent when it
+   * did not change (as every field here). An empty `commit` / `pr` turns that line off; `sessionUrl` is the resolved conversation
    * link, or null.
    */
   attribution: z
@@ -415,22 +413,6 @@ export const PluginContextSchema = z.object({
 });
 
 /**
- * An agent definition frozen into a log (`subagent_started`): the current schema, with the
- * selected and pinned skills of older logs still accepted (skills default-on spec §4: history
- * keeps the old fields; new definitions never carry them).
- */
-const LoggedAgentDefinition = AgentDefinitionSchema.extend({
-  skills: z
-    .object({
-      writePolicy: z.enum(["allow", "ask"]).optional(),
-      orgSkills: z.array(z.string()).optional(),
-      pinned: z.array(z.string()).optional(),
-    })
-    .strict()
-    .optional(),
-});
-
-/**
  * 会话事件（`type` + `payload`）的判别联合。事件日志只追加，写入前用它校验 payload；
  * 读出时按写入时的形状原样返回。
  */
@@ -452,8 +434,7 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
       authorAccountId: z.string(),
       /**
        * Who wrote the message, at send time (run context spec §3.2): display name and org role
-       * only (never email or ids). Absent in older logs, on a sub-agent's task or `SendMessage`
-       * message. Model-visible only through the sender line, written when the sender changes
+       * only (never email or ids). Absent on a sub-agent's task or `SendMessage` message. Model-visible only through the sender line, written when the sender changes
        * (`senderLines`, runtime/context/run-context.ts).
        */
       sender: MessageSenderSchema.optional(),
@@ -472,10 +453,15 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
        */
       retryOf: seqNo.optional(),
       /**
-       * A person's skill invocation (`/name args`, phase D spec §4.3): which skill version was
-       * rendered into `content[0]`, with the arguments as typed (trimmed). Not model-visible (the
-       * rendered text is); the web renders the chip and the arguments from it. `name` is the
-       * skill's bare name, `plugin` its catalog item; `agentType` is set for `mode: "fork"`.
+       * A skill invocation: which skill version was rendered into `content[0]`, with the
+       * arguments (trimmed). Not model-visible (the rendered text is). `name` is the skill's bare
+       * name, `plugin` its catalog item; `agentType` is set for `mode: "fork"`.
+       * - A person's (`/name args`, phase D spec §4.3): the arguments as typed; the web renders
+       *   the chip and the arguments from it.
+       * - `template: true`: written by the kernel at a template sub-agent's dispatch, after its
+       *   task, for each of the template's skills (`runtime/subagents/template-skills.ts`;
+       *   `mode: "inline"`, no arguments, `authorAccountId` the person whose run dispatched it);
+       *   nobody typed it: the web shows it with the task, never as a person's message.
        */
       skill: z
         .object({
@@ -487,8 +473,17 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
           arguments: z.string(),
           mode: z.enum(["inline", "fork"]),
           agentType: z.string().optional(),
+          template: z.literal(true).optional(),
         })
         .optional(),
+      /**
+       * The kernel's notice, written at a template sub-agent's dispatch in place of a template
+       * skill's invocation, that the skill (`name`) could not be read
+       * (`runtime/subagents/template-skills.ts`). Display only (the model sees the text): nobody
+       * typed it, so the web shows it with the task and eval case titles skip it, as a `template`
+       * invocation. It carries no `skill` record: nothing was rendered from a version.
+       */
+      templateSkillNotice: z.object({ name: z.string() }).optional(),
       /**
        * A scheduled task's message (scheduled tasks spec §6, §12): which task and tick posted it.
        * Not model-visible as such: request building renders only `taskName` and `localTime`, fixed
@@ -513,24 +508,13 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
           kind: z.enum(["task", "message"]).optional(),
           /**
            * A follow-up (`resume`, final review I1): the frozen and the current version's
-           * turned-off tools and skills together (`narrowFollowUp`; older logs: the frozen org
-           * skills intersected with the current ones); the child's run uses these instead of the
-           * frozen ones.
-           * Absent on a first dispatch and in older logs; logs from before tools were on by
-           * default carry an enabled `tools` list instead of `disabledTools` (read as no tool
-           * narrowing).
+           * turned-off tools and skills together (`narrowFollowUp`); the child's run uses these
+           * instead of the frozen ones. Absent on a first dispatch.
            */
           narrowed: z
             .object({
-              disabledTools: z.array(DisabledToolRef).optional(),
-              /**
-               * Skills default-on (spec §6.1): the frozen and the current version's turned-off
-               * skills together. Logs from before carry `skills` (`orgSkills` / `pinned`) instead.
-               */
-              disabledSkills: z.array(DisabledSkillRef).optional(),
-              skills: z
-                .object({ orgSkills: z.array(z.string()), pinned: z.array(z.string()).optional() })
-                .optional(),
+              disabledTools: z.array(DisabledToolRef),
+              disabledSkills: z.array(DisabledSkillRef),
             })
             .optional(),
         })
@@ -586,93 +570,118 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
       provider: z.string(),
       model: z.string(),
       fallback: z.boolean(),
-      request: z.object({
-        fromSeq: seqNo,
-        toSeq: seqNo,
-        summarySeq: seqNo.nullable(),
-        systemHash: z.string(),
-        reminderSeqs: z.array(seqNo),
-        /** 本次请求的输出上限（`min(模型上限, maxOutputTokens 旋钮 ?? runtime.maxOutputTokens)`）。较早的事件可能没有。 */
-        maxOutputTokens: count.optional(),
-        /**
-         * 本次请求的模型参数（`ModelRequest.params`）：agent 保存的参数按该模型声明 sanitize 后的结果
-         * （已补默认值）。主模型尝试来自 `modelParams`，兜底尝试来自 `fallbackParams`。较早的事件可能没有。
-         */
-        params: z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])).optional(),
-        /** sanitize 时丢弃的参数键（未声明或值不再合法，如插件升级后）；没有丢弃时不写。 */
-        droppedParams: z.array(z.string()).optional(),
-        /**
-         * 发出请求时的输入 token 估算（未校正）。与随后 `usage.inputTokens` 一起供下一次
-         * `calibrate` 使用。较早的事件可能没有。
-         */
-        estimatedInputTokens: count.optional(),
-        /**
-         * 发出请求时 loop 已吸收到的 user_message seq（R31）：seq 更大的 user_message 不进本次请求
-         * （由后续步骤吸收或触发下一轮）。还原请求时据此放置 / 排除用户消息。较早的事件可能没有。
-         */
-        absorbedUpToSeq: seqNo.optional(),
-        /**
-         * 本次请求带给模型的工具（按发送顺序：未启用 ToolSearch 时按 key 排序；启用时为内置工具按 key 排序，
-         * 其后是已加载工具按首次加载顺序）及其定义指纹（`ResolvedTool.specHash`）。
-         * 模型不支持工具时为空数组。较早的事件可能没有。
-         */
-        tools: z.array(z.object({ key: z.string(), specHash: z.string() })).optional(),
-        /**
-         * 启用 ToolSearch 时 system 第二块目录里的工具（按 key 排序）及定义指纹；定义同样存在
-         * `capybara.tool_specs`，目录文本可由它们还原。未启用时不写。
-         */
-        catalog: z.array(z.object({ key: z.string(), specHash: z.string() })).optional(),
-        /**
-         * 本次请求的 `toolChoice`：收尾调用为 `"none"`（照常带工具，但不得调用）；普通步骤不写（由模型决定）。
-         * 定义本身按 specHash 存在 `capybara.tool_specs`。
-         */
-        toolChoice: z.enum(["auto", "none"]).optional(),
-        /**
-         * 请求里每个附件的处理结果（Ruling M8，按首次出现，同一附件一条）：发了字节（`bytes`，带 finalize 时的
-         * etag）、内联文本、只给引用行（`reference`：`file` 块，或超过内联上限的文本）、模型不支持的占位、
-         * 因请求媒体预算省略（`omitted`）、图片太多（`too_many_images`）、单个超过供应商上限（`too_large`）、
-         * 不再可用、PDF 页数太多、被 `media_excluded` 排除。没有媒体时不写；较早的事件没有。
-         */
-        media: z
-          .array(
-            z.object({
-              attachmentId: AttachmentIdSchema,
-              outcome: z.enum([
-                "bytes",
-                "inline",
-                "reference",
-                "placeholder_unsupported",
-                "omitted",
-                "too_many_images",
-                "too_large",
-                "unavailable",
-                "too_many_pages",
-                "excluded",
-              ]),
-              etag: z.string().max(1024).optional(),
-            }),
-          )
-          .optional(),
-        /**
-         * 本次请求的媒体字节预算（`attachments.requestMediaBytes`，见 planMedia）：请求里有媒体时才写，
-         * 还原时用它重现同样的省略结果。较早的事件没有。
-         */
-        mediaBudgetBytes: count.optional(),
-        /**
-         * The hard fit guard's plan (context compaction spec §4.3): indexes into the assembled
-         * request's message list that were dropped, and text / tool_result blocks replaced by the
-         * truncation note. `assembleModelRequest` applies it (the runtime `buildRequest` calls it,
-         * and `evals/reconstruct` calls it directly), so the request replays byte-for-byte; absent
-         * when the request fit (and in older recordings). A candidate model with another window
-         * recomputes it and reports `context_fit`.
-         */
-        fit: z
-          .object({
-            droppedMessageIndexes: z.array(count),
-            truncated: z.array(z.object({ messageIndex: count, block: count, note: z.string() })),
-          })
-          .optional(),
-      }),
+      request: z
+        .object({
+          fromSeq: seqNo,
+          toSeq: seqNo,
+          summarySeq: seqNo.nullable(),
+          systemHash: z.string(),
+          reminderSeqs: z.array(seqNo),
+          /**
+           * The request's output cap: `min(model cap, maxOutputTokens knob ??
+           * runtime.maxOutputTokens)`, clamped by the hard fit guard.
+           */
+          maxOutputTokens: count,
+          /**
+           * The request's model parameters (`ModelRequest.params`): the agent's saved parameters
+           * sanitized against the model's declarations (defaults filled in), from `modelParams` for
+           * the agent's model and `fallbackParams` for a fallback attempt.
+           */
+          params: z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])),
+          /** Parameter keys sanitizing dropped (undeclared or no longer valid, e.g. after a plugin upgrade); absent when none were dropped. */
+          droppedParams: z.array(z.string()).optional(),
+          /**
+           * The input token estimate (uncalibrated) when the request went out. With the later
+           * `usage.inputTokens` it feeds the next `calibrate`. The runtime always writes it; calls
+           * logged before it was recorded lack it, and no value would stand in for them (a made-up
+           * estimate would skew the calibration), so it stays optional and such a call calibrates
+           * nothing.
+           */
+          estimatedInputTokens: count.optional(),
+          /**
+           * The largest absorbable event seq the loop had taken in when the request went out (R31):
+           * absorbable events with a larger seq are not in this request (a later step takes them in
+           * or they start the next run). Reconstruction places and leaves out messages by it.
+           */
+          absorbedUpToSeq: seqNo,
+          /**
+           * The tools the request carried, in sending order (sorted by key without ToolSearch; with
+           * it, the builtin tools sorted by key, then the loaded tools in first-load order), with
+           * their definition fingerprints (`ResolvedTool.specHash`). Empty when the model has no
+           * tool support (see `toolsOmitted`).
+           */
+          tools: z.array(z.object({ key: z.string(), specHash: z.string() })),
+          /**
+           * The kernel left this step's tools out because the model has no tool support
+           * (`capabilities.tools` false while the step had tools): `tools` is empty and says nothing
+           * about the step's resolved set. Absent when the request carried the step's tools.
+           */
+          toolsOmitted: z.literal(true).optional(),
+          /**
+           * With ToolSearch on, the tools of the catalog in the system's second block (sorted by
+           * key) with their definition fingerprints; the definitions are in `capybara.tool_specs`
+           * too, so the catalog text can be rebuilt from them. Absent without ToolSearch.
+           */
+          catalog: z.array(z.object({ key: z.string(), specHash: z.string() })).optional(),
+          /**
+           * The request's `toolChoice`: `"none"` on the wrap-up call (tools carried as usual, but
+           * none may be called); absent on ordinary steps (the model decides). The definitions
+           * themselves are in `capybara.tool_specs` by specHash.
+           */
+          toolChoice: z.enum(["auto", "none"]).optional(),
+          /**
+           * What became of each attachment in the request (Ruling M8, in first-seen order, one
+           * entry per attachment): bytes sent (`bytes`, with the etag at finalize), inline text, a
+           * reference line only (`reference`: a `file` block, or text over the inline cap), a
+           * placeholder for an unsupported kind, left out for the request's media budget
+           * (`omitted`), too many images (`too_many_images`), one over the provider's limit
+           * (`too_large`), no longer available, too many PDF pages, or excluded by
+           * `media_excluded`. Absent without media; written together with `mediaBudgetBytes`.
+           */
+          media: z
+            .array(
+              z.object({
+                attachmentId: AttachmentIdSchema,
+                outcome: z.enum([
+                  "bytes",
+                  "inline",
+                  "reference",
+                  "placeholder_unsupported",
+                  "omitted",
+                  "too_many_images",
+                  "too_large",
+                  "unavailable",
+                  "too_many_pages",
+                  "excluded",
+                ]),
+                etag: z.string().max(1024).optional(),
+              }),
+            )
+            .optional(),
+          /**
+           * The request's media byte budget (`attachments.requestMediaBytes`, see planMedia):
+           * written only when the request has media (together with `media`); reconstruction uses
+           * it to repeat the same omissions.
+           */
+          mediaBudgetBytes: count.optional(),
+          /**
+           * The hard fit guard's plan (context compaction spec §4.3): indexes into the assembled
+           * request's message list that were dropped, and text / tool_result blocks replaced by the
+           * truncation note. `assembleModelRequest` applies it (the runtime `buildRequest` calls it,
+           * and `evals/reconstruct` calls it directly), so the request replays byte-for-byte; absent
+           * when the request fit (and in older recordings). A candidate model with another window
+           * recomputes it and reports `context_fit`.
+           */
+          fit: z
+            .object({
+              droppedMessageIndexes: z.array(count),
+              truncated: z.array(z.object({ messageIndex: count, block: count, note: z.string() })),
+            })
+            .optional(),
+        })
+        .refine((r) => (r.media === undefined) === (r.mediaBudgetBytes === undefined), {
+          message: "media and mediaBudgetBytes are recorded together",
+        }),
     }),
   ),
   ev(
@@ -704,7 +713,7 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
       /**
        * The chunk a chunked compaction call summarised (1-based), with the number of calls the
        * compaction attempted (the full chunk count on a completed one; on a failed or hook-denied
-       * run only the calls that were made). Absent on a single-call compaction: older logs have none.
+       * run only the calls that were made). Absent on a single-call compaction.
        */
       chunk: count.optional(),
       chunks: count.optional(),
@@ -920,7 +929,7 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
       approvalId: z.string(),
       toolKey: z.string(),
       expiresAt: z.string(),
-      /** Which rule asked (UI refresh B; display only, absent in older logs). */
+      /** Which rule asked a tool approval (UI refresh B; display only; absent on the other asks). */
       policy: z.enum(["agent", "connector", "default", "role", "org", "fixed"]).optional(),
       /**
        * A network ask (network ask-to-allow spec §6.1): the hosts the device owner is asked to
@@ -1074,23 +1083,6 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
         )
         .max(SKILLS_CATALOG_MAX),
       /**
-       * Pinned skills (phase B, spec §9.1) in the agent's order: each a skill of `skills` (same
-       * id, version and source) with its SKILL.md body as read at run start or written by
-       * a skill registration. Absent means none (every snapshot before phase B).
-       */
-      pinned: z
-        .array(
-          z.object({
-            id: z.string().min(1).max(100),
-            version: z.number().int().positive(),
-            name: z.string().refine(isSkillName, "invalid skill name"),
-            source: z.string().min(1).max(512),
-            body: z.string().max(PINNED_BODY_MAX_CHARS),
-          }),
-        )
-        .max(3)
-        .optional(),
-      /**
        * The Claude Code tool-name map text (`CLAUDE_CODE_TOOL_MAP`), present iff a skill in
        * `skills` came from a Claude Code plugin.
        */
@@ -1178,7 +1170,7 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
         /**
          * Plugin scope phase 2: the platform template whose content a `plugin` child ran (a
          * platform template, or an org copy linked to one, recorded under the copy's `id`). Absent
-         * = the org's own template (and in every older event). Eval metadata, not model-visible.
+         * = the org's own template. Eval metadata, not model-visible.
          */
         platformTemplateId: z.string().optional(),
         /**
@@ -1189,14 +1181,12 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
           .object({ id: z.string(), version: z.number().int(), name: z.string() })
           .optional(),
       }),
+      /** The effective (narrowed) definition, frozen at dispatch. */
+      definition: AgentDefinitionSchema,
       /**
-       * The effective (narrowed) definition, frozen at dispatch. Logs from before skills were on
-       * by default also carry `skills.orgSkills` / `skills.pinned` (skills default-on spec §4).
-       */
-      definition: LoggedAgentDefinition,
-      /**
-       * `SUBAGENT_PREAMBLE` at dispatch time; since skills were on by default, followed by the line
-       * naming a template's skills the child loads first (skills default-on spec §6.1).
+       * `SUBAGENT_PREAMBLE` at dispatch time. Children dispatched between skills default-on and
+       * template skills written as invocations end it with the line naming a template's skills
+       * the child loads first (`Before you start, load these skills with Skill: …`).
        */
       preamble: z.string(),
       /** The child's step limit; 0 = no limit (`runtime.maxSteps` 0, no template limit). */
@@ -1245,8 +1235,9 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
       questionId: z.string().optional(),
       toolKey: z.string(),
       expiresAt: z.string().optional(),
-      /** An approval's approver (`kind: "approval"`), as in `approval_requested`. */
-      ...ApproverFields,
+      /** An approval's approver (`kind: "approval"` only), as in `approval_requested`. */
+      requestedFor: ApproverFields.requestedFor.optional(),
+      approverRole: ApproverFields.approverRole.optional(),
     }),
   ),
   /** Parent log: a sub-agent's run ended. Not model-visible (its reply is the call's tool_result). */
@@ -1269,8 +1260,7 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
    * `childRunId` finished. **Model-visible**: absorbed like an interjection and rendered as a system
    * message (`renderSubagentDelivery`). A finish after a handback carries `text: ""` and
    * `handedBack: true` and renders as one status line, except that a run that handed back and
-   * `completed` writes no finished delivery at all (acceptance 2026-11-07; older logs have one and
-   * keep rendering it); a finish without a handback carries the child's
+   * `completed` writes no finished delivery at all (acceptance 2026-11-07); a finish without a handback carries the child's
    * final reply, a failed finish its error message (`errorCode` the code), an aborted one no text
    * (`abortedBy` who stopped it), with `subagent_finished`'s vocabulary. `status` is present exactly
    * on `kind: "finished"`. `triggerAccountId`: the child run's trigger account, the one a wake runs
@@ -1356,23 +1346,22 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
       text: z.string(),
       /**
        * The estimated transcript input minus the stored summary output (context compaction spec
-       * §4.9), so the UI needs no chunked usage to show what compaction saved. Optional: older
-       * logs have none.
+       * §4.9), so the UI needs no chunked usage to show what compaction saved.
        */
-      savedTokens: count.optional(),
+      savedTokens: count,
       /**
        * The user messages that started the run being compacted, when the summary covers them
        * (context compaction spec §4.2, revision 2026-11-15), in seq order: request building
        * re-renders exactly these after the summary text. Decided when the summary is written, so a
-       * request never depends on later events. Optional: older logs (and summaries that cover no
-       * opening message) have none and re-render nothing.
+       * request never depends on later events. Absent when the summary covers no opening message
+       * (nothing re-rendered).
        */
       openingSeqs: z.array(seqNo).optional(),
       /**
        * The step the compaction ran in (0 for a manual compact run), so a later compaction in the
-       * same step takes the next idempotency key. Optional: older logs have none.
+       * same step takes the next idempotency key.
        */
-      step: count.optional(),
+      step: count,
     }),
   ),
   ev(
@@ -1380,8 +1369,8 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
     z.object({
       attempt: count,
       reason: z.string(),
-      /** The step the compaction ran in, as on `compaction_summary`. Optional: older logs. */
-      step: count.optional(),
+      /** The step the compaction ran in, as on `compaction_summary`. */
+      step: count,
     }),
   ),
   ev(
@@ -1398,7 +1387,7 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
     z.object({
       byAccountId: z.string().nullable(),
       /** `eval_stopped`：评测整轮回放被评测运行停下（只出现在 `kind = 'eval'` 的对话里），原因见 `detail`。 */
-      reason: z.enum(["user", "shutdown_exhausted", "eval_stopped"]),
+      reason: z.enum(["user", "shutdown_exhausted", "eval_stopped", "org_deleted"]),
       /**
        * Why an eval replay stopped (`eval_stopped`), or `wait_timeout`: a sub-agent run stopped
        * (`user`, no account) because its parent's sub-agents wait timed out (phase C).

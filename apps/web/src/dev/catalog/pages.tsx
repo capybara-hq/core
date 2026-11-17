@@ -11,7 +11,7 @@ import type {
   AdminHealthQueue,
   AdminOverview,
   AdminUsageWeek,
-  PlatformAuditPage,
+  AuditPage,
 } from "../../lib/admin";
 import type { PlatformInboxView } from "../../lib/admin-inbox";
 import {
@@ -51,6 +51,7 @@ const INBOX: PlatformInboxView = {
     catalog_request: 3,
     permission_confirmation: 1,
     scope_sync_failed: 2,
+    extension_disabled: 0,
     ownership_transferred: 0,
     org_upload_pending: 0,
   },
@@ -99,7 +100,7 @@ const ATTENTION: AdminAttention = {
   unavailable: [],
 };
 
-const AUDIT: PlatformAuditPage = {
+const AUDIT: AuditPage = {
   events: [
     {
       id: "12",

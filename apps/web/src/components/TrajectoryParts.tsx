@@ -220,8 +220,8 @@ function StepDetail({ step }: { step: TrajectoryRun["steps"][number] }) {
 function ModelDetail({ call, currency }: { call: TrajectoryModelCall; currency: string }) {
   const t = useTranslations("trajectories.detail.model");
   const formatCost = useFormatCost();
-  const params = Object.entries(call.request.params ?? {});
-  const tools = (call.request.tools ?? []).map((x) => x.key);
+  const params = Object.entries(call.request.params);
+  const tools = call.request.tools.map((x) => x.key);
   const u = call.usage;
   const rows: { k: ReactNode; v: ReactNode }[] = [
     { k: t("provider"), v: call.provider },

@@ -45,10 +45,6 @@ export const HOST_ZOD_VERSION: string = (
   createRequire(import.meta.url)("zod/package.json") as { version: string }
 ).version;
 
-/** The message for a tgz in the pre-0.1.0 format (follows the package's name). */
-export const LEGACY_FORMAT_MESSAGE =
-  "uses the pre-0.1.0 package format (capybara section / app.yaml); repack it as a plugin with .capybara-plugin/plugin.json (pnpm pack-plugin)";
-
 /** `./skills/x` → `skills/x` (manifest paths start with `./`). */
 export const packagePath = (p: string): string => p.replace(/^\.\//, "").replace(/\/+$/, "");
 

@@ -25,7 +25,7 @@ import { testMembers } from "../helpers/members.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
   createConv,
-  createOrg,
+  createOrgWithProviders,
   PW,
   postMessage,
   type Req,
@@ -105,7 +105,7 @@ beforeEach(async () => {
   });
   expect(login.statusCode).toBe(200);
   ownerCookie = () => jar.header() as string;
-  orgId = await createOrg(owner);
+  orgId = await createOrgWithProviders(k, owner);
   await testMembers(db).add(orgId, otherId, "member", ownerId);
   other = await session(k, "other");
 });

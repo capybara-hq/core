@@ -27,7 +27,7 @@ import { testMembers } from "../helpers/members.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
   cardRecorded,
-  createOrg,
+  createOrgWithProviders,
   eventsOf,
   PW,
   type Req,
@@ -113,7 +113,7 @@ beforeAll(async () => {
   ownerId = (await accounts.createLocal({ login: "owner", password: PW, displayName: "Owner" })).id;
   const member = await accounts.createLocal({ login: "mem", password: PW, displayName: "Mem" });
   owner = await session(k, "owner");
-  orgId = await createOrg(owner);
+  orgId = await createOrgWithProviders(k, owner);
   await testMembers(db).add(orgId, member.id, "member", ownerId);
   for (const plugin of [
     "chan-mini",

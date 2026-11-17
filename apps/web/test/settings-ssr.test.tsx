@@ -103,6 +103,7 @@ const ROUTES: Routes = {
   [`GET ${O}/ui/arrangement`]: () => json(200, { slots: [] }),
   [`GET ${O}/extension-points`]: () => json(200, { points: [] }),
   [`GET ${O}/service-tokens`]: () => json(200, { tokens: [] }),
+  [`GET ${O}/audit?limit=20`]: () => json(200, { events: [], next: null }),
   [`GET ${O}/connectors`]: () =>
     json(200, {
       connectors: [
@@ -510,7 +511,7 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
     const calls = stubApi({
       ...routes,
       [`GET ${O}/readiness`]: () =>
-        json(200, { modelProvider: "ready", orgCanAddModel: false, agents: 1 }),
+        json(200, { modelProvider: "ready", orgFixableProviders: [], agents: 1 }),
       [`PUT ${O}/extensions/todo`]: () =>
         json(200, { extension: { ...EXTENSION, enabled: false } }),
     });
@@ -547,6 +548,7 @@ const ROUTE_GATES: [string, "member" | "admin", boolean][] = [
   // a setup step since the 2026-11-07 acceptance: connecting a channel needs its extension on
   ["/extensions", "member", true],
   ["/settings/tokens", "admin", false],
+  ["/settings/audit", "admin", false],
 ];
 
 describe("the gates", () => {

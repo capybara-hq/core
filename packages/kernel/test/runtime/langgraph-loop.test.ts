@@ -37,7 +37,7 @@ import { truncateTables } from "../helpers/db.js";
 import { builtinsOff } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
-import { eventsOf, PW, waitFor, waitForTerminal } from "../helpers/runs.js";
+import { enableExtensions, eventsOf, PW, waitFor, waitForTerminal } from "../helpers/runs.js";
 import { checkpointsFor, providerRegistryFor, stepLogFor } from "../helpers/runtime.js";
 import {
   approvalsFor,
@@ -71,7 +71,6 @@ const stubInfo: ModelInfo = {
     reasoning: false,
     caching: false,
     midConversationSystem: true,
-    effort: false,
   },
   parameters: [],
 };
@@ -453,6 +452,7 @@ describe("LangGraphLoop crash resume (dual replica)", () => {
       const org = await call(cookie, "POST", "/api/v1/orgs", { name: "Acme" });
       expect(org.status).toBe(201);
       const orgId = (org.json.org as { id: string }).id;
+      await enableExtensions(hraw, orgId, "model-fake");
       const ag = await call(cookie, "POST", `/api/v1/orgs/${orgId}/agents`, {
         definition: {
           name: "Helper",

@@ -105,6 +105,7 @@ const PLUGINS = [
         ],
       },
     ],
+    provides: ["channel@1", "directory@1"],
     orgConfigSchema: null,
   },
   {
@@ -122,6 +123,7 @@ const PLUGINS = [
         entries: [{ value: "todo_add", sensitive: true, reason: "tools" }],
       },
     ],
+    provides: [],
     orgConfigSchema: null,
   },
   {
@@ -139,6 +141,7 @@ const PLUGINS = [
         entries: [{ value: "channel@1", sensitive: false }],
       },
     ],
+    provides: ["channel@1"],
     orgConfigSchema: null,
   },
 ];

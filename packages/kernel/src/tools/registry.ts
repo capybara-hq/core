@@ -45,7 +45,6 @@ import {
 import { agentToolSpec } from "./builtins/agent.js";
 import { BuiltinTools } from "./builtins/builtin-tools.js";
 import { canonicalJson } from "./canonical-json.js";
-import { legacyKeySaveText } from "./legacy-keys.js";
 import { toolKeyIssue } from "./naming.js";
 import { OrgToolSwitches, toolTurnedOffReason } from "./org-tool-switches.js";
 
@@ -491,13 +490,9 @@ export class ToolRegistry {
       if (keptJson.has(canonicalJson(ref))) return;
       if (ref.kind === "builtin") {
         if (!builtins.has(ref.name)) {
-          const renamed = legacyKeySaveText(ref.name);
           issues.push({
             path,
-            message:
-              renamed !== null
-                ? `Built-in tool ${renamed}`
-                : `"${ref.name}" is not a built-in tool an agent can turn off`,
+            message: `"${ref.name}" is not a built-in tool an agent can turn off`,
           });
         }
       } else if (ref.kind === "plugin") {

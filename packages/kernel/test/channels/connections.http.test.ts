@@ -17,7 +17,7 @@ import { testMembers } from "../helpers/members.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
   createAgent,
-  createOrg,
+  createOrgWithProviders,
   PW,
   type Req,
   runConfig,
@@ -67,7 +67,7 @@ beforeAll(async () => {
   const o = await accounts.createLocal({ login: "owner", password: PW, displayName: "Owner" });
   const m = await accounts.createLocal({ login: "member", password: PW, displayName: "M" });
   owner = await session(k, "owner");
-  orgId = await createOrg(owner);
+  orgId = await createOrgWithProviders(k, owner);
   agentId = await createAgent(owner, orgId);
   await testMembers(db).add(orgId, m.id, "member", o.id);
   member = await session(k, "member");

@@ -11,7 +11,7 @@ import { createDb } from "../../src/db/pool.js";
 import { builtinsOff } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
-import { PW, sleep, waitFor } from "../helpers/runs.js";
+import { enableExtensions, PW, sleep, waitFor } from "../helpers/runs.js";
 
 /**
  * Fair sharing of channel long connections across gateway replicas (E11-B), in separate processes:
@@ -112,6 +112,7 @@ describe("channel long connections: fair share across gateway replicas (dual rep
     const org = await call("POST", "/api/v1/orgs", { name: "Acme" });
     expect(org.status).toBe(201);
     const base = `/api/v1/orgs/${(org.json.org as { id: string }).id}`;
+    await enableExtensions(raw, (org.json.org as { id: string }).id, "model-fake");
     const ag = await call("POST", `${base}/agents`, {
       definition: {
         name: "Helper",

@@ -22,7 +22,7 @@ import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { captureProviderRequests } from "../helpers/provider-capture.js";
 import {
   createConv,
-  createOrg,
+  createOrgWithProviders,
   eventsOf,
   PW,
   postMessage,
@@ -89,7 +89,7 @@ beforeAll(async () => {
   memberId = (await accountsFor(db).createLocal({ login: "mem", password: PW, displayName: "M" }))
     .id;
   owner = await session(k, "owner");
-  orgId = await createOrg(owner);
+  orgId = await createOrgWithProviders(k, owner);
   await sql`INSERT INTO capybara.memberships (org_id, account_id, role)
     VALUES (${orgId}, ${memberId}, 'member')`.execute(db);
   member = await session(k, "mem");

@@ -285,13 +285,13 @@ export interface OrgComponent {
   switchable: boolean;
   /** On by platform default: effective scope `all`, not builtin (平台默认启用; the org may turn it off). */
   platformDefault?: boolean;
-  /** The org's copies linked to it (older agents select them; absent from older kernels). */
+  /** The org's copies linked to it (older agents select them; platform components only). */
   linkedIds?: string[];
-  /** The platform, or the org that owns it (an org's upload; absent from older kernels). */
-  owner?: Owner;
+  /** The platform, or the org that owns it (an org's upload). */
+  owner: Owner;
   /**
    * Connector templates only: the template's setup guide in its plugin's latest version, null
-   * without one (setup guides v2 spec §9.3; other kinds and older kernels: absent).
+   * without one (setup guides v2 spec §9.3; other kinds: absent).
    */
   guide?: { itemId: string; guideId: string } | null;
 }

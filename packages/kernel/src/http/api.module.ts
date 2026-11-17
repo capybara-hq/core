@@ -4,7 +4,7 @@ import { AdminController } from "../admin/admin.controller.js";
 import { AdminModule } from "../admin/admin.module.js";
 import { AdminAgentsController } from "../admin/admin-agents.controller.js";
 import { AdminConnectorsController } from "../admin/admin-connectors.controller.js";
-import { AdminAuditController } from "../admin/audit.controller.js";
+import { AdminAuditController, OrgAuditController } from "../admin/audit.controller.js";
 import { AdminExtensionsController } from "../admin/extensions.controller.js";
 import { OutboxDeadController } from "../admin/outbox-dead.controller.js";
 import { AdminOverviewController } from "../admin/overview.controller.js";
@@ -132,6 +132,7 @@ const CONTROLLERS: Type[] = [
   AdminAgentsController,
   AdminConnectorsController,
   AdminAuditController,
+  OrgAuditController,
   AdminOverviewController,
   OutboxDeadController,
   AdminExtensionsController,

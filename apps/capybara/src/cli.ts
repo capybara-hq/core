@@ -20,6 +20,7 @@ import {
 } from "./commands/extensions.js";
 import { runMigrate } from "./commands/migrate.js";
 import { runPluginsImport, runPluginsList } from "./commands/plugins.js";
+import { runSecretsRewrap } from "./commands/secrets.js";
 import { runStart } from "./commands/start.js";
 import { loadEnvFile, takeEnvFileOption } from "./env-file.js";
 import { exitAfterShutdown, runShutdownHooks } from "./shutdown.js";
@@ -146,6 +147,8 @@ export async function main(
       return runPluginsList(log, env, io);
     case "plugins-import":
       return runPluginsImport({ target: cmd.target, yes: cmd.yes }, log, env, io);
+    case "secrets-rewrap":
+      return runSecretsRewrap(log, env, io);
     case "start":
       if (envFile !== undefined) log.info("loaded env file", { path: envFile });
       return runStart(
@@ -161,8 +164,9 @@ export async function main(
 
 /**
  * The process-wide handlers: `capybara start` (a long-running kernel) gets the process guards (an
- * unhandled rejection or uncaught exception is logged through the kernel logger; more than 5 within
- * 60 s exit with 1); every other command is short-lived and exits with 1 on the first one.
+ * unhandled rejection or uncaught exception is logged through the kernel logger and starts the
+ * graceful stop that exits with 1, see `runStart`; more than 5 within 60 s exit with 1 at once);
+ * every other command is short-lived and exits with 1 on the first one.
  */
 function installFatalHandlers(command: string, log: KernelLogger): (log: KernelLogger) => void {
   if (command === "start") {

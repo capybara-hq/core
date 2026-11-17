@@ -10,7 +10,15 @@ import { usableSkills } from "../../src/skills/usable.js";
 import { lifePkg, pluginTgz } from "../helpers/plugin-packages.js";
 import { createOrg, type Req, waitFor } from "../helpers/runs.js";
 import { SKILL_MD } from "../skills/zip.js";
-import { importPlugin, type OrgEnv, resetOrgCatalog, setScope, startOrgEnv } from "./org-env.js";
+import {
+  importPlugin,
+  type OrgEnv,
+  resetOrgCatalog,
+  scopeQueueIdle,
+  setScope,
+  settleScope,
+  startOrgEnv,
+} from "./org-env.js";
 import { bundlePlugin, skillPlugin } from "./packages.js";
 
 /**
@@ -111,7 +119,12 @@ async function extensionAudits(name: string) {
   }));
 }
 
-/** Makes an item imported by the super admin org A's own (pre-flight F6). */
+/**
+ * Makes an item imported by the super admin org A's own (pre-flight F6), installed in org A only.
+ * The scope is set without a sync, so every scope job still owed (the import's) settles and the
+ * item converges here: a job landing between an update's preview and its confirm would change the
+ * orgs the update's diff covers (`plugin.upgrade_stale`).
+ */
 async function ownedByA(itemId: string): Promise<void> {
   await env.db
     .updateTable("catalog_items")
@@ -119,7 +132,20 @@ async function ownedByA(itemId: string): Promise<void> {
     .where("id", "=", itemId)
     .execute();
   await setScope(env, itemId, "named", [orgA]);
+  await settleScope(env, itemId, async () => (await liveIn(itemId)).join() === orgA);
 }
+
+/** The orgs where an item has a live install, sorted. */
+const liveIn = async (itemId: string) =>
+  (
+    await env.db
+      .selectFrom("plugin_installs")
+      .select("org_id")
+      .where("item_id", "=", itemId)
+      .where("status", "in", ["installing", "installed"])
+      .orderBy("org_id")
+      .execute()
+  ).map((r) => r.org_id);
 
 const usable = async (orgId: string) => (await usableSkills(env.db, orgId)).map((s) => s.name);
 
@@ -203,12 +229,7 @@ describe("owner updates without an extension", () => {
   it("a version dropping the extension applies at once", async () => {
     // v1 with an extension, seeded as a super admin import, then owned by org A (pre-flight F6)
     const itemId = await importPlugin(env, await lifePkg({ name: "own-ext", version: "1.0.0" }));
-    await env.db
-      .updateTable("catalog_items")
-      .set({ owner_org_id: orgA, shareable: false, shown_to_others: false })
-      .where("id", "=", itemId)
-      .execute();
-    await setScope(env, itemId, "named", [orgA]);
+    await ownedByA(itemId);
     expect(
       await env.db
         .selectFrom("extension_installs")
@@ -238,6 +259,55 @@ describe("owner updates without an extension", () => {
       { action: "extension.disabled", actor: env.bossId, ownerOrgId: orgA },
       { action: "extension.uninstalled", actor: env.bossId, ownerOrgId: orgA },
     ]);
+  });
+
+  it("the confirm's own import owes no scope sync that runs into its update", async () => {
+    // v1 with an extension, owned by org A but not installed there yet (its import's sync ran
+    // under the default scope `optional`; the owner and scope are then set without a sync)
+    const itemId = await importPlugin(env, await lifePkg({ name: "own-race", version: "1.0.0" }));
+    await waitFor(() => scopeQueueIdle(env), 30_000, "the import's scope sync settled");
+    await env.db
+      .updateTable("catalog_items")
+      .set({ owner_org_id: orgA, shareable: false, shown_to_others: false })
+      .where("id", "=", itemId)
+      .execute();
+    await setScope(env, itemId, "named", [orgA]);
+    const v2 = await pluginTgz({
+      manifest: { name: "own-race", version: "2.0.0", skills: [{ path: "./skills/race-notes" }] },
+      files: { "skills/race-notes/SKILL.md": SKILL_MD("race-notes") },
+    });
+    const p = (await prepared(env.boss, orgA, v2)) as Prepared & {
+      update: { extension: { orgs: string[] } | null };
+    };
+    expect(p.update?.extension?.orgs).toEqual([]);
+    // Every scope job owed so far runs as the update reaches its extension step, before its
+    // commit recomputes the reviewed diff. The confirm's import of 2.0.0 must owe none (the
+    // update owes the sync with its own commit): a sync then would install 1.0.0 in org A
+    // mid-update, and the update would refuse its own preview as plugin.upgrade_stale
+    const ops = env.k.app.get(ExtensionAdminOps);
+    const realDisable = ops.disable.bind(ops);
+    vi.spyOn(ops, "disable").mockImplementationOnce(async (...args) => {
+      await waitFor(() => scopeQueueIdle(env), 30_000, "the scope jobs owed so far ran");
+      return realDisable(...args);
+    });
+    const c = await confirm(env.boss, orgA, p);
+    expect(c.statusCode, c.body).toBe(201);
+    expect((c.json() as { outcome: string }).outcome).toBe("updated");
+    // the update's own sync installs 2.0.0 in org A
+    await waitFor(
+      async () =>
+        (
+          await env.db
+            .selectFrom("plugin_installs")
+            .select("version")
+            .where("item_id", "=", itemId)
+            .where("org_id", "=", orgA)
+            .where("status", "=", "installed")
+            .executeTakeFirst()
+        )?.version === "2.0.0",
+      30_000,
+      "own-race 2.0.0 installed in org A",
+    );
   });
 
   it("the owner's preview names the other orgs it mentions (orgNames)", async () => {

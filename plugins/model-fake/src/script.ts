@@ -43,7 +43,6 @@ const CACHE_TTL_SECONDS = 300;
 const CHUNK_CHARS = 4;
 /** 多块输出时块间默认间隔，保证调用方能在流进行中中止。 */
 const DEFAULT_CHUNK_DELAY_MS = 2;
-const COMPACTION_MARKER = "CAPYBARA_COMPACTION";
 
 /**
  * The parameters every model declares: the three-step effort (recorded only; it does not change the
@@ -224,7 +223,7 @@ function scripted(req: ModelRequest): Plan {
     delayMs: DEFAULT_CHUNK_DELAY_MS,
   });
 
-  if (req.system.some((s) => s.text.includes(COMPACTION_MARKER))) {
+  if (req.purpose === "compaction") {
     return std(`Summary: ${text.slice(0, 200)}`);
   }
   if (text.startsWith("echo:")) return std(text.slice(5));

@@ -207,7 +207,7 @@ function ScheduleForm({
   const tools = useGrantableTools(orgId, readOnly ? "" : draft.agentId);
   const settingsQ = orgSettingsQuery(orgId);
   const minInterval = useQuery({ ...settingsQ, retryOnMount: retryOnMountOf(settingsQ.queryKey) })
-    .data?.settings.scheduledTasks?.minIntervalMinutes;
+    .data?.settings.scheduledTasks.minIntervalMinutes;
   const unsaved = readOnly ? 0 : changedCount(saved, draft);
   const valid = draftValid(draft);
   const granted = grants?.items ?? [];

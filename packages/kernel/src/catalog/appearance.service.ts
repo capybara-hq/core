@@ -315,12 +315,7 @@ export class AppearanceService {
     const enabled = "orgId" in level ? await this.host.enabledPlugins(level.orgId) : null;
     const loaded = this.host
       .uiContributions()
-      .filter(
-        (c) =>
-          c.plugin === found.name &&
-          c.contribution.aliasOf === undefined &&
-          (enabled === null || enabled.has(c.plugin)),
-      );
+      .filter((c) => c.plugin === found.name && (enabled === null || enabled.has(c.plugin)));
     const arrangeable = "orgId" in level ? ORG_ARRANGEABLE : UI_ARRANGEABLE_SLOTS;
     const planned = new Set<UiSlotId>();
     for (const [ref, id] of entries) {

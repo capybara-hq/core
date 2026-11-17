@@ -56,27 +56,22 @@ describe("KernelConfigService", () => {
     expect(() => new KernelConfigService({ config, env: {} }, log)).not.toThrow();
   });
 
-  it("warns once at start when the retired env var of subagents.maxConcurrentPerRun is set", () => {
-    const lines: ({ level: string; msg: string } & Record<string, unknown>)[] = [];
-    const log = createLogger("info", { write: (line) => lines.push(JSON.parse(line)) });
-    const config = resolveConfig(raw(), {});
-    new KernelConfigService({ config, env: {} }, log);
-    expect(lines.filter((l) => l.msg.includes("MAX_CONCURRENT_PER_RUN"))).toEqual([]);
-    new KernelConfigService(
-      { config, env: { CAPYBARA_SUBAGENTS__MAX_CONCURRENT_PER_RUN: "2" } },
-      log,
-    );
-    const warns = lines.filter((l) => l.msg.includes("CAPYBARA_SUBAGENTS__MAX_CONCURRENT_PER_RUN"));
-    expect(warns).toHaveLength(1);
-    expect(warns[0]?.level).toBe("warn");
-    expect(warns[0]?.msg).toContain("CAPYBARA_SUBAGENTS__MAX_CONCURRENT_PER_CONVERSATION");
-  });
-
   it("an invalid reload keeps the current config", () => {
     const { svc, lines } = make();
     const before = svc.get();
     svc.apply({ nonsense: true });
     expect(svc.get()).toBe(before);
     expect(lines.some((l) => l.msg.includes("rejected"))).toBe(true);
+  });
+
+  it("a reload with an unknown key is rejected whole: no hot field is applied, the error names the key", () => {
+    const { svc, lines } = make();
+    const before = svc.get();
+    svc.apply(raw({ log: { level: "debug" }, http: { prot: 1 } }));
+    expect(svc.get()).toBe(before);
+    expect(svc.get().log.level).not.toBe("debug");
+    const rejected = lines.find((l) => l.msg.includes("rejected"));
+    expect(rejected?.level).toBe("error");
+    expect(JSON.stringify(rejected)).toContain("unknown config key http.prot");
   });
 });

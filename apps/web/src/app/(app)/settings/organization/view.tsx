@@ -166,7 +166,7 @@ function OrganizationSettings({ orgId }: { orgId: string }) {
   const saved = read.data.settings;
   const toolSearch = draft.toolSearch ?? saved.toolSearch ?? "on";
   const locale = draft.locale ?? saved.locale ?? "en";
-  const platformTool = draft.platformTool ?? saved.platformTool ?? "on";
+  const platformTool = draft.platformTool ?? saved.platformTool;
   const timeZone = draft.timeZone ?? saved.timeZone ?? "UTC";
   // The org's compaction override: absent follows the platform, null (an explicit choice) too.
   // The draft holds only the fields the admin set, merged over the stored override, so fields
@@ -192,7 +192,7 @@ function OrganizationSettings({ orgId }: { orgId: string }) {
   const patch: OrgSettingsPatch = {
     ...(toolSearch !== saved.toolSearch ? { toolSearch } : {}),
     ...(locale !== (saved.locale ?? "en") ? { locale } : {}),
-    ...(platformTool !== (saved.platformTool ?? "on") ? { platformTool } : {}),
+    ...(platformTool !== saved.platformTool ? { platformTool } : {}),
     // UTC is the default: choosing it clears the setting
     ...(timeZone !== (saved.timeZone ?? "UTC")
       ? { timeZone: timeZone === "UTC" ? null : timeZone }

@@ -8,18 +8,10 @@ const viewerOf = (p: Principal): string | null => (p.kind === "user" ? p.account
 
 /**
  * Whether the org can run (`/api/v1/orgs/:orgId/readiness`, web-order spec §3.8): the web app
- * decides between the shell and the setup layout with it. `modelProvider` is `ready` when a
- * model-provider extension is loaded (enabled and configured), from extension state only, never
- * a vendor call; `orgCanAddModel` says whether an org admin can make one usable from the org's
- * 扩展 page (switch on a provider the platform offers, or fill its org config) or only the super
- * admin can; `agents` is the number of agents the caller can see (the agent list's visibility).
- * Humans and service tokens (`org.read`).
- *
- * `modelProvider` counts the deployment's providers whose effective config is valid in this org
- * (spec B §5.5: a provider the platform installed without a key needs each org's own). It is read
- * from this replica's provider registry, which follows the per-replica extension reconcile: right
- * after a provider is enabled, a replica that has not reconciled yet may still answer `none` for
- * a moment.
+ * decides between the shell and the setup layout with it ({@link OrgReadiness}: `ready`,
+ * `org_fixable` with the providers an org admin can switch on or configure, or `none`; and the
+ * agents the caller can see). Computed by {@link ReadinessService}, from extension state only,
+ * never a vendor call. Humans and service tokens (`org.read`).
  */
 @Controller("api/v1/orgs/:orgId/readiness")
 export class ReadinessController {

@@ -21,7 +21,7 @@ import { accountsFor } from "../../helpers/identity.js";
 import { MODEL_FAKE } from "../../helpers/model-plugins.js";
 import {
   createConv,
-  createOrg,
+  createOrgWithProviders,
   eventsOf,
   PW,
   type Req,
@@ -100,7 +100,7 @@ beforeAll(async () => {
     payload: { login: "owner", password: PW },
   });
   expect(login.statusCode).toBe(200);
-  orgId = await createOrg(owner);
+  orgId = await createOrgWithProviders(a, owner);
   const res = await owner({
     method: "POST",
     url: `/api/v1/orgs/${orgId}/agents`,

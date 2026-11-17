@@ -63,8 +63,9 @@ When Nacos auth is enabled, choose one of two: `CAPYBARA_NACOS_USERNAME` + `CAPY
 
 ## Master key rotation
 
-The kernel builds a keyring with `createKeyring(masterKey, masterKeyPrevious)`: new wrapping always uses `masterKey`, and `masterKeyPrevious` is only used to unwrap old data keys. `rewrapDataKeys(db, keyring)` (exported from `@capybara-hq/kernel`; M0 has no CLI subcommand yet) re-wraps the org data keys still wrapped by an old master key with the current master key, and returns the number processed. The order must not be changed:
+The kernel builds a keyring with `createKeyring(masterKey, masterKeyPrevious)`: new wrapping always uses `masterKey`, and `masterKeyPrevious` is only used to unwrap (and to verify tokens signed with keys derived from it). Two tables are sealed directly with a master key: `org_data_keys` (one data key per org, which encrypts that org's secrets) and `account_initial_passwords`. `capybara secrets rewrap` (kernel: `rewrapMasterKeys(config, …)` over `rewrapToCurrentMasterKey(handles, keyring)`, exported from `@capybara-hq/kernel`) first checks that the keyring holds every master key in use (failing before any write, naming ids only), then rewraps every org data key and every unexpired initial password still sealed with an old key, in batches per transaction; it is idempotent and prints counts, never a key. The operator runbook (zero-downtime order, rolling-restart caveats) is "Rotating the master key" in [docs/deploy/README.md](../../../docs/deploy/README.md#rotating-the-master-key). In short, the order must not be changed:
 
-1. Roll out so that **all replicas** have the new keyring: `masterKey` = the new key, `masterKeyPrevious` = `[old key]`.
-2. Only after confirming no replica still holds just the old key, run `rewrapDataKeys` (otherwise an old replica cannot open data keys that were re-wrapped with the new key).
-3. After the rewrap completes, roll out once more to remove the old key from `masterKeyPrevious`.
+1. Every replica: `masterKey` unchanged, `masterKeyPrevious` = `[new key]`.
+2. Every replica: `masterKey` = the new key, `masterKeyPrevious` = `[old key]`.
+3. Only once no replica runs an older config, run `capybara secrets rewrap`.
+4. Wait `auth.accessTokenTtlSeconds`, then remove the old key from `masterKeyPrevious`.

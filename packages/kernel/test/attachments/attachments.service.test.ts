@@ -6,13 +6,11 @@ import {
   normalizeContentType,
   sniffMatches,
 } from "../../src/conversations/attachments.service.js";
-import { ATTACHMENT_CLEANUP_SCHEDULER_ID } from "../../src/conversations/job-ids.js";
 import {
   acceptedContent,
   isImageContentType,
   isMediaContentType,
 } from "../../src/conversations/media-types.js";
-import { RETIRED_SCHEDULER_IDS } from "../../src/runtime/retired-schedulers.js";
 import { PrefixedStorage } from "../../src/storage/storage.service.js";
 import { attachmentsFor } from "../helpers/conversations.js";
 
@@ -247,11 +245,5 @@ describe("媒体类型", () => {
     expect(
       isMediaContentType("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"),
     ).toBe(false);
-  });
-});
-
-describe("attachment-cleanup", () => {
-  it("its old maintenance scheduler is retired (the job is an hourly @LockedCron)", () => {
-    expect(RETIRED_SCHEDULER_IDS).toContain(ATTACHMENT_CLEANUP_SCHEDULER_ID);
   });
 });

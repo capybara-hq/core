@@ -40,7 +40,7 @@ export const channelGuideRefQuery = (orgId: string, plugin: string) =>
 
 /**
  * Whether a channel plugin's connections can use webhook inbound (channel inbound mode fields spec
- * §4); none known (an older kernel) reads as unavailable. The schema route answers it.
+ * §4); none known reads as unavailable. The schema route answers it.
  */
 export const channelInboundQuery = (orgId: string, plugin: string) =>
   defineQuery({

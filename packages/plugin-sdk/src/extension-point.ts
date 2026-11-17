@@ -71,7 +71,7 @@ export const EXTENSION_POINTS: Record<string, ExtensionPointInfo> = {
     true,
   ),
   "model-provider": info(
-    [1, 2],
+    [2],
     "Calls a model vendor's API and streams the result back to the runtime.",
     "multi",
     true,

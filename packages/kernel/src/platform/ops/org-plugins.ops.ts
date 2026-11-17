@@ -100,7 +100,7 @@ export class OrgPluginsOperations implements OnModuleInit {
       defineOperation({
         id: "plugins.installs",
         description:
-          "List the plugin installs of this org (org admins), one compact row each: the plugin, the install state (installing, installed, failed, uninstalling, upgrading), a failure's step and code (reason), the version and how many components it brought. Pages by 50: pass the returned next as params.cursor.",
+          "List the plugin installs of this org (org admins), one compact row each: the plugin, the install state (installing, installed, failed, uninstalling), a failure's step and code (reason), the version and how many components it brought. Pages by 50: pass the returned next as params.cursor.",
         input: z.object({ cursor: Cursor.optional() }).strict(),
         example: {},
         authz: { orgAction: "org.extensions.manage" },

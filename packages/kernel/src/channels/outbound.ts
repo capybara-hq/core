@@ -157,7 +157,7 @@ function isBusMessage(m: unknown): m is ConversationBusMessage {
  * the `locale` recorded on the conversation's latest `user_message` at or before `uptoSeq`, which
  * already follows the order IM language, latest web message language, org language
  * (`readMessageContext`). In a group thread that is whoever wrote last, i.e. the requester of the
- * approvals and questions that follow. A message from an older log without one: its author's
+ * approvals and questions that follow. A message without one (a sub-agent's task): its author's
  * language by {@link recipientLocale}; no user message at all: the conversation owner's.
  * Read from PG, so any replica derives the same value.
  */

@@ -2,8 +2,9 @@ import { type FormAnswer, type InputForm, validateInputForm } from "./tool.js";
 import { isHttpUrl } from "./url.js";
 
 /**
- * 渠道中立的 IM 卡片：由内核定义与产出，渠道插件按各自 IM 的原生格式渲染；
- * 不支持卡片的渠道用 {@link renderCardAsText} 退回为文本。
+ * Channel-neutral IM cards: defined and produced by the kernel, rendered by channel plugins in each
+ * IM's native format;
+ * channels without card support fall back to text with {@link renderCardAsText}.
  */
 export type ChannelCard =
   | {
@@ -35,7 +36,7 @@ export type ChannelCard =
       decidedBy?: string;
       /** A denied approval: the reason the person gave (plain text, never formatted). */
       denyReason?: string;
-      /** 可决定该审批的会话网页链接。 */
+      /** Web link to the conversation that can decide this approval. */
       webUrl: string;
     }
   | {
@@ -57,7 +58,10 @@ export type ChannelCard =
   | { kind: "connect"; appName: string; url: string }
   | { kind: "bind"; url: string; text: string };
 
-/** 用户在 IM 卡片上的操作，由渠道插件解析后经入站事件交给内核。 */
+/**
+ * A user action on an IM card, parsed by the channel plugin and handed to the kernel through an
+ * inbound event.
+ */
 export interface CardAction {
   cardKind: "approval" | "question";
   cardId: string;
@@ -66,7 +70,10 @@ export interface CardAction {
   answer?: FormAnswer;
 }
 
-/** 发往 IM 的一条消息：text 为 Markdown（渠道插件转换为原生富文本），可附卡片。 */
+/**
+ * One message sent to an IM: `text` is Markdown (the channel plugin converts it to native rich
+ * text); a card may be attached.
+ */
 export interface OutboundMessage {
   text: string;
   cards?: ChannelCard[];
@@ -107,7 +114,7 @@ const ISO_8601 = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:\d
 
 const list = (xs: readonly string[]) => xs.map((x) => JSON.stringify(x)).join(", ");
 
-/** 校验卡片结构，返回问题列表（空 = 合法）。 */
+/** Validates the card structure and returns the list of problems (empty = valid). */
 export function validateChannelCard(card: unknown): string[] {
   if (typeof card !== "object" || card === null || Array.isArray(card))
     return ["card must be an object"];
@@ -177,7 +184,8 @@ export function validateChannelCard(card: unknown): string[] {
       if (c.answerSummary !== undefined && typeof c.answerSummary !== "string")
         out.push("answerSummary must be a string");
       if (c.textReply !== undefined) oneOf("textReply", TEXT_REPLY);
-      // 不能在 IM 内作答的表单（见 questionRenderableInline）同样合法：渠道只渲染网页链接。
+      // A form that cannot be answered inside the IM (see questionRenderableInline) is equally
+      // valid: the channel renders only the web link.
       for (const p of validateInputForm(c.form as InputForm)) out.push(`form: ${p}`);
       return out;
     }
@@ -198,10 +206,14 @@ export function validateChannelCard(card: unknown): string[] {
 export type Locale = "zh" | "en";
 
 /**
- * 把模型可控的值（审批标题、调用摘要、提问标题、回答摘要）放进代码里，退回文本里它们不会变成链接、强调或 HTML：
- * 单行用行内代码，多行用围栏代码块（以换行开头），分隔符都比值里最长的反引号串更长（CommonMark 6.1 / 4.5）。
- * 选代码而不是给标点加反斜杠：代码是 CommonMark / GFM 里唯一保证内容按原样显示的写法（反斜杠挡不住 GFM 的裸网址
- * 自动链接，各渠道转换器对反斜杠的处理也不一致）。
+ * Puts model-controllable values (approval title, call summary, question title, answer summary)
+ * into code, so that in the fallback text they do not turn into links, emphasis or HTML:
+ * single-line values use inline code, multi-line values a fenced code block (starting with a
+ * newline); the delimiters are always longer than the longest backtick run in the value (CommonMark
+ * 6.1 / 4.5).
+ * Code is chosen over backslash-escaping punctuation because code is the only form CommonMark / GFM
+ * guarantee to display content verbatim (a backslash does not stop GFM bare-URL
+ * autolinks, and channel converters treat backslashes inconsistently).
  */
 function asCode(s: string): string {
   const v = s.replace(/\r\n?/g, "\n");
@@ -211,12 +223,16 @@ function asCode(s: string): string {
     return `\n${fence}\n${v}\n${fence}`;
   }
   const d = "`".repeat(longest + 1);
-  // 值以反引号开头 / 结尾、或首尾都是空格时补一个空格（渲染时去掉），否则会与分隔符粘连或被吃掉空格
+  // When the value starts / ends with a backtick, or has spaces at both ends, add one space
+  // (stripped when rendered); otherwise it would stick to the delimiter or lose its spaces
   const pad = /^`|`$/.test(v) || (v.startsWith(" ") && v.endsWith(" ")) ? " " : "";
   return `${d}${pad}${v}${pad}${d}`;
 }
 
-/** 前缀 + 代码：代码是围栏块（以换行开头）时去掉前缀末尾的空格。 */
+/**
+ * Prefix + code: when the code is a fenced block (starting with a newline), drop the trailing space
+ * of the prefix.
+ */
 const withCode = (prefix: string, code: string) =>
   code.startsWith("\n") ? `${prefix.trimEnd()}${code}` : `${prefix}${code}`;
 
@@ -314,8 +330,10 @@ export function questionStateLabel(state: string, locale: Locale): string {
 }
 
 /**
- * 不支持卡片的渠道的统一退回文本（含链接）；固定话术按 locale 取 zh / en。结果是 Markdown（放进
- * `OutboundMessage.text`，由渠道插件转换）：模型可控的字段放在代码里（见 `asCode`），不会产生链接。
+ * The uniform fallback text for channels without card support (links included); the fixed phrases
+ * are taken by locale, zh / en. The result is Markdown (put into
+ * `OutboundMessage.text`, converted by the channel plugin): model-controllable fields go into code
+ * (see `asCode`), so they never produce links.
  */
 export function renderCardAsText(card: ChannelCard, locale: Locale): string {
   const t = TEXT[locale] ?? TEXT.en;

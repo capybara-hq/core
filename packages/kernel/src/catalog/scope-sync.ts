@@ -2,7 +2,6 @@ import type { PluginManifest } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable, Optional } from "@nestjs/common";
 import type { KernelSchemaDb, ScopeSyncOp } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
-import { ExtensionLifecycle } from "../extensions/lifecycle.js";
 import { ExtensionRegistry } from "../extensions/registry.js";
 import { audit } from "../identity/audit.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
@@ -13,19 +12,20 @@ import { OutboxService } from "../infra/outbox/outbox.service.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
 import { connectorTemplatesOn, templateIdOfPath } from "./component-state.js";
+import { LIVE_INSTALL_STATUSES } from "./install-status.js";
 import { isUsable } from "./ownership.js";
 import { type InstallPlan, PluginInstaller } from "./plugin-install.js";
 import { wantedOn } from "./scope.js";
 import {
   oweScopeItem,
   PLUGIN_SCOPE_QUEUE,
-  SCOPE_BACKSTOP_DELAY,
-  SCOPE_BACKSTOP_DELAY_MS,
-  SCOPE_ITEM_JOB,
+  SCOPE_CHUNK_JOB,
+  SCOPE_ORG_CHUNK,
+  SCOPE_ORG_CHUNK_SIZE,
   SCOPE_ORG_JOB,
   type ScopeJob,
+  scopeChunkJobId,
   scopeOrgJobId,
-  scopeRetryJobId,
 } from "./scope-jobs.js";
 import { ScopeNoLongerWanted, ScopeStillWanted } from "./scope-state.js";
 
@@ -49,96 +49,97 @@ import { ScopeNoLongerWanted, ScopeStillWanted } from "./scope-state.js";
  * extension). A failed install, uninstall or dependency install is logged, audited
  * `plugin.scope_sync_failed`, kept as the pair's open failure (`plugin_scope_sync_failures`, the
  * super admin's inbox, until a later sync of the pair does not fail) and not retried until the next
- * enqueue. An error outside those steps (a read, the failure write itself) ends the attempt without
- * touching the pair's row, so an older failure stays open.
+ * sync of the item. An error outside those steps (a read, the failure write itself) ends the attempt
+ * without touching the pair's row, so an older failure stays open.
  *
- * Jobs (queue {@link PLUGIN_SCOPE_QUEUE}): one per item and scope version
- * (`scope-item-<itemId>-<scope_version>`, every org), one per org (`scope-org-<orgId>`, every item,
- * owed by the org's creation). Both are owed in the outbox by the transaction that changes what
- * they converge to (transactional outbox spec §8.1), so none is lost; a migration that changes a
- * scope inserts its outbox rows itself. A confirmation (import, permissions, org upload) owes the
- * immediate item job after its deploy and, in its commit, a backstop `scope-item-backstop` due
- * five minutes later (ruling R24) that waits, retrying, for the extension to be enabled. Both are removed when done, so the next add with the same
- * id is not swallowed. Pairs of one org are serialized across replicas by a Redis lock per org; the
- * installer's org row lock and its one-live-install rule are the backstop.
+ * Jobs (queue {@link PLUGIN_SCOPE_QUEUE}), all owed through the outbox (transactional outbox spec
+ * §8.1), so none is lost:
+ * - `scope-item` (`scope-item-<itemId>-x<xact>`, one per owing transaction): owed by every
+ *   transaction that changes what the item's sync converges to: its scope, disabled flag, list,
+ *   owner or platform version, an import's commit that deploys no extension, and the deploy of its
+ *   extension (`oweDeployedExtensionSync`: enabled, a new version of an enabled one, permissions
+ *   approved). It fans out: one `scope-item-chunk` per chunk of orgs (`<item job id>-c<n>`, at
+ *   most {@link SCOPE_ORG_CHUNK} orgs each), all owed in one transaction;
+ * - `scope-item-chunk`: converges the item in its orgs;
+ * - `scope-org` (`scope-org-<orgId>`): every item in one org, owed by the org's creation.
+ * A migration that changes a scope inserts its outbox rows itself. One BullMQ retry policy
+ * (registry): a chunk or org job whose extension is enabled on the deployment but not loaded on
+ * this replica yet fails after converging its other pairs, so BullMQ retries it with its backoff
+ * (on any replica); its last attempt installs anyway and records what fails. Pairs of one org are
+ * serialized across replicas by a Redis lock per org; the installer's org row lock and its
+ * one-live-install rule are the backstop.
  */
 
 export {
   PLUGIN_SCOPE_QUEUE,
-  SCOPE_BACKSTOP_DELAY,
-  SCOPE_BACKSTOP_DELAY_MS,
-  SCOPE_BACKSTOP_JOB,
+  SCOPE_CHUNK_JOB,
   SCOPE_ITEM_JOB,
+  SCOPE_ORG_CHUNK,
+  SCOPE_ORG_CHUNK_SIZE,
   SCOPE_ORG_JOB,
   type ScopeJob,
-  scopeBackstopJobId,
+  scopeChunkJobId,
   scopeItemJobId,
   scopeOrgJobId,
-  scopeRetryJobId,
 } from "./scope-jobs.js";
-
-/** How many delayed retries an item job gets while its extension is not loaded here (P3-38). */
-export const SCOPE_LOAD_RETRIES = 6;
-/** The delay of each such retry. */
-export const SCOPE_LOAD_RETRY_DELAY_MS = 5_000;
-/** How long a pair waits for this replica's reconcile before deferring (P3-38). */
-export const SCOPE_RECONCILE_WAIT_MS = 10_000;
-
-/**
- * Awaits this replica's extension reconcile for at most `ms` (a slower one carries on in the
- * background); a failure only warns.
- */
-export async function reconcileWithin(
-  lifecycle: Pick<ExtensionLifecycle, "reconcile">,
-  reason: string,
-  ms: number,
-  log: Pick<KernelLogger, "warn">,
-): Promise<void> {
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  try {
-    await Promise.race([
-      lifecycle.reconcile(reason),
-      new Promise<void>((resolve) => {
-        timer = setTimeout(resolve, ms);
-      }),
-    ]);
-  } catch (err) {
-    log.warn("reconciling extensions on this replica failed", { reason, err });
-  } finally {
-    if (timer !== undefined) clearTimeout(timer);
-  }
-}
 
 /**
  * What a sync of one (item, org) did. `deferred`: the plugin's extension is enabled on the
- * deployment but not loaded on this replica yet (P3-38); the item job retries later.
+ * deployment but not loaded on this replica yet (P3-38); the job fails for a BullMQ retry.
  */
 export type ScopeSyncResult = "installed" | "removed" | "needs_config" | "unchanged" | "deferred";
+
+/**
+ * A chunk or org job with a pair whose extension this replica has not loaded yet (P3-38): thrown
+ * after its other pairs converged, so BullMQ retries the job with its backoff.
+ */
+export class ScopeSyncDeferred extends Error {
+  constructor(readonly itemIds: string[]) {
+    super(
+      `the extension of catalog item(s) ${itemIds.join(", ")} is enabled on the deployment but not loaded on this replica yet; the scope sync job is retried`,
+    );
+    this.name = "ScopeSyncDeferred";
+  }
+}
+
+/** How a job runs: its BullMQ id and whether this is its last attempt. */
+export interface ScopeJobRun {
+  /** The job's id (an item job's chunks are named after it). */
+  jobId: string;
+  /** The job's last attempt: a pair whose extension is not loaded here is attempted anyway. */
+  finalAttempt: boolean;
+  /** Stops between pairs (the worker closing). */
+  signal?: AbortSignal;
+}
 
 /** How long one org's pairs wait for each other (an install can take a while). */
 const ORG_LOCK_TTL_MS = 60_000;
 const ORG_LOCK_WAIT_MS = 10 * 60_000;
-/** The worker's concurrency. */
+/** The worker's concurrency (per replica): how many chunk, item and org jobs run at once. */
 export const PLUGIN_SCOPE_CONCURRENCY = 2;
 
-const LIVE = ["installing", "installed", "upgrading"] as const;
+/** `ids` in chunks of `size` (the last one shorter). */
+export function chunked<T>(ids: readonly T[], size: number): T[][] {
+  if (!Number.isInteger(size) || size < 1) throw new Error(`invalid chunk size ${size}`);
+  const out: T[][] = [];
+  for (let i = 0; i < ids.length; i += size) out.push(ids.slice(i, i + size));
+  return out;
+}
 
 @Injectable()
 export class PluginScopeSync {
   constructor(
     @Inject(KernelDb) private readonly kdb: KernelDb,
-    @Inject(OutboxService) private readonly outbox: Pick<OutboxService, "add">,
+    @Inject(OutboxService) private readonly outbox: Pick<OutboxService, "add" | "addMany">,
     @Inject(PluginInstaller) private readonly installer: PluginInstaller,
     @Inject(ExtensionRegistry) private readonly registry: ExtensionRegistry,
-    /** This replica's reconcile, awaited (bounded) before deferring an install (P3-38). */
-    @Inject(ExtensionLifecycle) private readonly lifecycle: ExtensionLifecycle,
     @Inject(LockService) private readonly locks: LockService,
     @Inject(KERNEL_LOGGER) private readonly log: KernelLogger,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
-    /** The backstop's delay (a test seam; default {@link SCOPE_BACKSTOP_DELAY_MS}). */
+    /** Orgs per chunk job (a test seam; default {@link SCOPE_ORG_CHUNK}). */
     @Optional()
-    @Inject(SCOPE_BACKSTOP_DELAY)
-    private readonly backstopDelayMs: number = SCOPE_BACKSTOP_DELAY_MS,
+    @Inject(SCOPE_ORG_CHUNK_SIZE)
+    private readonly chunkSize: number = SCOPE_ORG_CHUNK,
   ) {}
 
   private get db(): KernelSchemaDb {
@@ -146,25 +147,12 @@ export class PluginScopeSync {
   }
 
   /**
-   * Owes the sync of an item in every org, once per scope version (the version read in the
-   * caller's transaction, so after its own bump), in the transaction that changes the scope.
+   * Owes the sync of an item in every org in the transaction in context (one job per
+   * transaction), the transaction that changes what it converges to.
    */
   @Transactional({ propagation: "mandatory" })
   async enqueueItem(itemId: string): Promise<void> {
     await oweScopeItem(this.outbox, this.db, itemId);
-  }
-
-  /**
-   * Owes the delayed backstop of the item's sync (ruling R24) in the transaction in context: a
-   * confirmation owes it before (or with) its deploy, so a crash before its post-deploy add still
-   * converges the orgs.
-   */
-  @Transactional({ propagation: "mandatory" })
-  async enqueueBackstop(itemId: string): Promise<void> {
-    await oweScopeItem(this.outbox, this.db, itemId, {
-      backstop: true,
-      backstopDelayMs: this.backstopDelayMs,
-    });
   }
 
   /** Owes the sync of every item in an org, in the transaction that creates the org. */
@@ -180,21 +168,18 @@ export class PluginScopeSync {
   }
 
   /**
-   * One job: every org of an item, or every item of an org; `signal` stops between pairs. A
-   * backstop job first checks the item's extension is deployed ({@link assertDeployed}).
+   * One job: an item job fans out to its chunk jobs; a chunk job converges the item in its orgs,
+   * an org job every item in the org. A pair deferred because its extension is not loaded here
+   * fails the job after the others ({@link ScopeSyncDeferred}), unless this is its last attempt.
    */
-  async process(data: ScopeJob, signal?: AbortSignal): Promise<void> {
-    if (data.kind === "item" && data.backstop === true) await this.assertDeployed(data.itemId);
+  async process(data: ScopeJob, run: ScopeJobRun): Promise<void> {
+    if (data.kind === "item") {
+      await this.fanOut(data.itemId, run.jobId);
+      return;
+    }
     const pairs: [string, string][] =
-      data.kind === "item"
-        ? (
-            await this.db
-              .selectFrom("orgs")
-              .select("id")
-              .where("deleted_at", "is", null)
-              .orderBy("id")
-              .execute()
-          ).map((o) => [data.itemId, o.id])
+      data.kind === "chunk"
+        ? data.orgIds.map((orgId) => [data.itemId, orgId])
         : (
             await this.db
               .selectFrom("catalog_items")
@@ -204,98 +189,61 @@ export class PluginScopeSync {
               .orderBy("id")
               .execute()
           ).map((i) => [i.id, data.orgId]);
-    const retry = data.kind === "item" ? (data.retry ?? 0) : 0;
-    const finalTry = data.kind === "item" && retry >= SCOPE_LOAD_RETRIES;
     const deferred = new Set<string>();
     for (const [itemId, orgId] of pairs) {
-      if (signal?.aborted) return;
+      // Stopped between pairs: failed, so BullMQ retries the job (on this or another replica).
+      // On the job's last attempt nothing retries it: the pairs not reached yet are dropped
+      // until the next sync of the item or org (a scope change, a deploy, a new org) owes them
+      if (run.signal?.aborted)
+        throw new Error("the plugin scope worker stopped; the job is retried");
       try {
-        const r = await this.syncPair(itemId, orgId, signal, { finalTry });
+        const r = await this.syncPair(itemId, orgId, run.signal, { finalTry: run.finalAttempt });
         if (r === "deferred") deferred.add(itemId);
       } catch (err) {
         this.log.warn("plugin scope sync of a pair failed", { itemId, orgId, err });
       }
     }
-    // An extension this replica had not loaded yet: the item again after a delay (P3-38)
-    for (const itemId of deferred) {
-      try {
-        await this.enqueueRetry(itemId, retry + 1);
-      } catch (err) {
-        this.log.warn("enqueueing a delayed plugin scope sync failed", { itemId, err });
-      }
-    }
+    if (deferred.size > 0) throw new ScopeSyncDeferred([...deferred]);
   }
 
   /**
-   * A backstop job (ruling R24) runs only once the item's extension is loaded here or enabled on
-   * the deployment; otherwise it throws, so BullMQ retries it with its backoff (bounded by its
-   * attempts) and no pair records a `catalog.not_deployed` failure that nothing would retry. An item without an
-   * extension, or one no longer live (deleted, disabled, still waiting, builtin), passes: its pairs
-   * converge (or change nothing) as for an immediate job.
-   */
-  private async assertDeployed(itemId: string): Promise<void> {
-    const item = await this.db
-      .selectFrom("catalog_items")
-      .select([
-        "builtin",
-        "disabled",
-        "deleted_at",
-        "awaiting_confirmation",
-        "latest_version",
-        "platform_synced_version",
-      ])
-      .where("id", "=", itemId)
-      .executeTakeFirst();
-    if (!item || item.builtin || !isUsable(item)) return;
-    const version = item.platform_synced_version ?? item.latest_version;
-    const v = await this.db
-      .selectFrom("catalog_item_versions")
-      .select("manifest")
-      .where("item_id", "=", itemId)
-      .where("version", "=", version)
-      .executeTakeFirst();
-    const m = v?.manifest as PluginManifest | undefined;
-    if (!m?.extension) return;
-    // loaded here (a config-declared extension has no install record), or enabled on the
-    // deployment (a replica that has not loaded it yet defers as P3-38 says)
-    if (this.registry.manifests().some((x) => x.name === m.name)) return;
-    const install = await this.db
-      .selectFrom("extension_installs")
-      .select("desired_state")
-      .where("name", "=", m.name)
-      .executeTakeFirst();
-    if (install?.desired_state === "enabled") return;
-    throw new Error(
-      `the extension ${m.name} of catalog item ${itemId} is not enabled on the deployment yet; the scope sync backstop is retried`,
-    );
-  }
-
-  /**
-   * Owes the delayed retry `n` of an item job (deterministic id, P3-38) in a transaction of its
-   * own: the job's own follow-up, delivered by the relay once due.
+   * Owes one chunk job per {@link chunkSize} live orgs of the item job `jobId`, in one
+   * transaction (a redelivered item job owes the same ids again: deduped).
    */
   @Transactional()
-  private async enqueueRetry(itemId: string, n: number): Promise<void> {
-    const row = await this.db
+  private async fanOut(itemId: string, jobId: string): Promise<void> {
+    const item = await this.db
       .selectFrom("catalog_items")
-      .select("scope_version")
+      .select("id")
       .where("id", "=", itemId)
+      .where("deleted_at", "is", null)
       .executeTakeFirst();
-    if (!row) return;
-    await this.outbox.add<ScopeJob>({
-      queue: PLUGIN_SCOPE_QUEUE,
-      name: SCOPE_ITEM_JOB,
-      jobId: scopeRetryJobId(itemId, row.scope_version, n),
-      data: { kind: "item", itemId, retry: n },
-      runAt: new Date(Date.now() + SCOPE_LOAD_RETRY_DELAY_MS),
-    });
+    if (!item) return;
+    const orgs = await this.db
+      .selectFrom("orgs")
+      .select("id")
+      .where("deleted_at", "is", null)
+      .orderBy("id")
+      .execute();
+    const chunks = chunked(
+      orgs.map((o) => o.id),
+      this.chunkSize,
+    );
+    await this.outbox.addMany<ScopeJob>(
+      chunks.map((orgIds, n) => ({
+        queue: PLUGIN_SCOPE_QUEUE,
+        name: SCOPE_CHUNK_JOB,
+        jobId: scopeChunkJobId(jobId, n),
+        data: { kind: "chunk", itemId, orgIds },
+      })),
+    );
   }
 
   /**
    * Whether the install of the item's `version` may go ahead on this replica (P3-38): its
    * extension is loaded here, or it is not enabled on the deployment (the install reports
-   * `catalog.not_deployed` as before). Enabled but not loaded here: this replica's reconcile is
-   * awaited (bounded); still not loaded -> false, unless this is the last try.
+   * `catalog.not_deployed` as before). Enabled but not loaded here (its deploy owed this sync, and
+   * this replica's reconcile has not caught up yet) -> false, unless this is the job's last try.
    */
   private async extensionReady(
     itemId: string,
@@ -310,21 +258,13 @@ export class PluginScopeSync {
       .executeTakeFirst();
     const m = v?.manifest as PluginManifest | undefined;
     if (!m?.extension) return true;
-    const loaded = () => this.registry.manifests().some((x) => x.name === m.name);
-    if (loaded()) return true;
+    if (this.registry.manifests().some((x) => x.name === m.name)) return true;
     const install = await this.db
       .selectFrom("extension_installs")
       .select("desired_state")
       .where("name", "=", m.name)
       .executeTakeFirst();
-    if (install?.desired_state !== "enabled") return true;
-    await reconcileWithin(
-      this.lifecycle,
-      `scope-sync:${m.name}`,
-      SCOPE_RECONCILE_WAIT_MS,
-      this.log,
-    );
-    return loaded() || finalTry;
+    return install?.desired_state !== "enabled" || finalTry;
   }
 
   /** Converges one (item, org), under the org's sync lock; `signal` ends the wait for it. */
@@ -413,7 +353,7 @@ export class PluginScopeSync {
         .select(["id", "status"])
         .where("org_id", "=", orgId)
         .where("item_id", "=", itemId)
-        .where("status", "in", [...LIVE])
+        .where("status", "in", [...LIVE_INSTALL_STATUSES])
         .executeTakeFirst(),
     ]);
     const wanted =
@@ -456,8 +396,8 @@ export class PluginScopeSync {
         return "unchanged";
       }
     }
-    // Wanted off: only a settled install is removed (one still installing or upgrading waits for
-    // the next enqueue)
+    // Wanted off: only a settled install is removed (one still installing waits for the next
+    // enqueue)
     if (live?.status !== "installed") return "unchanged";
     const deps = await this.createdDependencies(live.id);
     try {
@@ -483,7 +423,7 @@ export class PluginScopeSync {
       .innerJoin("plugin_installs as a", "a.id", "c.install_id")
       .select("a.id")
       .where("a.org_id", "=", orgId)
-      .where("a.status", "in", [...LIVE])
+      .where("a.status", "in", [...LIVE_INSTALL_STATUSES])
       .where("c.kind", "=", "plugin")
       .where("c.ref", "=", installId)
       .executeTakeFirst();

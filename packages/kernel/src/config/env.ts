@@ -1,7 +1,25 @@
 import { ConfigError } from "./types.js";
 
 const PREFIX = "CAPYBARA_";
-const IGNORED = ["CAPYBARA_CONFIG_", "CAPYBARA_NACOS_"];
+/**
+ * `CAPYBARA_*` variables that are not kernel config paths (the config source, the init container,
+ * the web app, tests and tooling). Every other `CAPYBARA_*` variable is a config path and must name
+ * a known key: the schema is strict.
+ */
+const IGNORED = [
+  "CAPYBARA_CONFIG_",
+  "CAPYBARA_NACOS_",
+  "CAPYBARA_INIT_ADMIN_",
+  "CAPYBARA_WEB_",
+  "CAPYBARA_TEST_",
+  "CAPYBARA_E2E_",
+  "CAPYBARA_VISUAL_",
+  "CAPYBARA_DEV_UI",
+  "CAPYBARA_KERNEL_URL",
+  "CAPYBARA_GATEWAY_",
+  "CAPYBARA_VERSION",
+  "CAPYBARA_IMAGE_PREFIX",
+];
 
 function snakeToCamel(segment: string): string {
   return segment.toLowerCase().replace(/_([a-z0-9])/g, (_, c: string) => c.toUpperCase());

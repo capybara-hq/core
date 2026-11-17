@@ -204,7 +204,7 @@ export const PLATFORM_DOMAINS: readonly { id: string; description: string }[] = 
   {
     id: "orgs",
     description:
-      "This org (read, rename, members) and, for the super admin, every org and its limits.",
+      "This org (read, rename, members, its audit log) and, for the super admin, every org and its limits.",
   },
   {
     id: "accounts",

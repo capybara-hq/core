@@ -17,6 +17,7 @@ import { QueueLostJobs } from "./queue-lost-jobs.js";
 import { RunDeletion } from "./run-deletion.js";
 import { notifyFinished, RunFinish } from "./run-finish.js";
 import { RunJobs, runJobId, runQueueNameFor } from "./run-jobs.js";
+import { isLive } from "./run-liveness.js";
 import { RunQueue } from "./run-queue.js";
 import { Waits } from "./waits.js";
 
@@ -113,7 +114,7 @@ export async function orphanCandidates(
     orgId: r.org_id,
     kind: r.kind,
     status: r.status as "queued" | "running",
-    deleted: r.conversation_deleted !== null || r.org_deleted !== null,
+    deleted: !isLive(r.conversation_deleted, r.org_deleted),
     jobId: r.job_id ?? runJobId(r.conversation_id, Number(r.trigger_seq)),
     queue: runQueueNameFor(r.kind),
     since: r.since,

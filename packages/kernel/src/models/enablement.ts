@@ -1,6 +1,7 @@
 import { Inject, Injectable, Module } from "@nestjs/common";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
+import { enabledExtensionsQuery } from "../extensions/enabled.js";
 import { ExtensionRegistry, ExtensionRegistryModule } from "../extensions/registry.js";
 import { audit } from "../identity/audit.js";
 import { SuperAdminLock, SuperAdminLockModule } from "../identity/super-admin.js";
@@ -103,23 +104,13 @@ export class ModelEnablement {
   }
 
   /**
-   * The extensions `orgId` explicitly turned off: a row of the org's own switch
-   * (`extension_org_configs.enabled = false`, what the org's extension or plugin switch writes when
-   * an org admin turns it off), never a required bootstrap plugin. An extension with no row for the
-   * org is not in the set (it keeps working as before: spec A §8 with B's no-breakage anti-goal).
-   * Read from PG on every call (one small query; the switch has its own writers, nothing to evict).
+   * The extensions enabled in `orgId` ({@link enabledExtensionsQuery}: the org's own switch on, or
+   * a required bootstrap plugin): a model provider is on in an org only then, like every other
+   * extension. Read from PG on every call (one small query; the switch has its own writers, nothing
+   * to evict).
    */
-  async switchedOff(orgId: string): Promise<Set<string>> {
-    const rows = await this.db
-      .selectFrom("extension_org_configs as eoc")
-      .leftJoin("extension_installs as ri", (j) =>
-        j.onRef("ri.name", "=", "eoc.plugin").on("ri.required", "=", true),
-      )
-      .select("eoc.plugin")
-      .where("eoc.org_id", "=", orgId)
-      .where("eoc.enabled", "=", false)
-      .where("ri.name", "is", null)
-      .execute();
+  async enabledIn(orgId: string): Promise<Set<string>> {
+    const rows = await enabledExtensionsQuery(this.db, orgId).execute();
     return new Set(rows.map((r) => r.plugin));
   }
 

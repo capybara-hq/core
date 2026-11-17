@@ -23,7 +23,7 @@ import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
   createConv,
-  createOrg,
+  createOrgWithProviders,
   eventsOf,
   PW,
   postMessage,
@@ -101,7 +101,7 @@ beforeAll(async () => {
     })
   ).id;
   root = await session(k, "root");
-  orgId = await createOrg(root);
+  orgId = await createOrgWithProviders(k, root);
   await sql`INSERT INTO capybara.memberships (org_id, account_id, role)
     VALUES (${orgId}, ${otherId}, 'admin')`.execute(db);
   other = await session(k, "root2");

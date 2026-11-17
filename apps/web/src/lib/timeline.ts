@@ -71,7 +71,7 @@ import { toolLabel, toolLabelOfKey, toolLabelText } from "./tool-label";
  *   task's description, and `background_task_finished` is a `background` notice entry.
  * - Interjections (run input spec D4): a person's message logged while a run is going stands where
  *   the model took it in, not at its `seq`: right before the first `model_call` whose
- *   `request.absorbedUpToSeq` covers it (a call without the field covers everything before it), so
+ *   `request.absorbedUpToSeq` covers it, so
  *   it sits below the step that was streaming when it was sent. Not taken in yet while the run goes
  *   on, it is `pending` and stands after the streaming drafts; a run that ends without taking it in
  *   leaves it after the run's row, where it starts the next run. A fork invocation stands before its
@@ -191,7 +191,7 @@ export interface ApprovalItem {
   input: unknown;
   expiresAt: string;
   policy?: ApprovalPolicy;
-  /** Who may decide it (absent in older logs). */
+  /** Who may decide it (absent when the event names neither an account nor a role). */
   approver?: Waiter;
   /** A network ask (network ask spec §6.5): the device-layer hosts asked for. */
   network?: { hosts: string[] };
@@ -336,12 +336,23 @@ export type TimelineEntry =
       wait: SubagentWaitKind;
       approvalId?: string;
       questionId?: string;
-      /** Who may decide the sub-agent's approval (absent in older logs). */
+      /** Who may decide the sub-agent's approval (absent when the event names nobody). */
       approver?: Waiter;
       toolKey: string;
       expiresAt?: string;
     }
-  | { kind: "task"; key: string; seq: number; text: string }
+  | {
+      kind: "task";
+      key: string;
+      seq: number;
+      text: string;
+      /**
+       * The template's skills the kernel wrote after the task (`skill.template`, or
+       * `templateSkillNotice` for one it could not read): each skill's chip ("/alpha-notes") and
+       * its rendered instructions (`content[0]`, the notice for an unreadable one).
+       */
+      skills?: { label: string; instructions: string }[];
+    }
   | {
       /** A sub-agent's delivery to its parent (`subagent_delivery`, agent map spec §4.5). */
       kind: "delivery";
@@ -429,11 +440,10 @@ const callKey = (runId: string | null, callId: string) => `${runId ?? ""}\u0000$
 export const isCallKey = (id: string) => id.includes("\u0000");
 
 /**
- * What a compaction divider shows as saved: the summary event's estimate, or null when the log has
- * none (older logs) or nothing was saved (0): "saved 0 tokens" is no news, the divider stays plain.
+ * What a compaction divider shows as saved: the summary event's estimate, or null when nothing was
+ * saved (0): "saved 0 tokens" is no news, the divider stays plain.
  */
-const savedTokensOf = (saved: number | undefined): number | null =>
-  saved === undefined || saved === 0 ? null : saved;
+const savedTokensOf = (saved: number): number | null => (saved === 0 ? null : saved);
 
 const joinText = (blocks: { type: string; text?: string }[], type: "text" | "thinking") =>
   blocks
@@ -910,10 +920,9 @@ export function buildEventTimeline(
         }
         break;
       case "model_call":
-        // the interjections this request took in stand before its output (a call logged before
-        // the field took in everything before it, as the kernel reads it)
-        placeHeld(e.payload.request?.absorbedUpToSeq ?? e.seq);
-        absorbed = Math.max(absorbed, e.payload.request?.absorbedUpToSeq ?? 0);
+        // the interjections this request took in stand before its output
+        placeHeld(e.payload.request.absorbedUpToSeq);
+        absorbed = Math.max(absorbed, e.payload.request.absorbedUpToSeq);
         if (e.runId !== null) {
           const k = stepKey(e.runId, e.payload.step);
           models.set(k, { provider: e.payload.provider, model: e.payload.model });
@@ -954,6 +963,17 @@ export function buildEventTimeline(
           break;
         }
         const skill = e.payload.skill;
+        const notice = e.payload.templateSkillNotice;
+        if (skill?.template || notice !== undefined) {
+          // A template sub-agent's skill the kernel wrote after the task (or its notice that the
+          // skill could not be read): part of the task block, never a person's bubble.
+          const name = skill?.name ?? notice?.name ?? "";
+          const loaded = { label: `/${name}`, instructions: userText(e) };
+          const task = out.findLast((x) => x.kind === "task");
+          if (task?.kind === "task") task.skills = [...(task.skills ?? []), loaded];
+          else out.push({ kind: "task", key, seq: e.seq, text: "", skills: [loaded] });
+          break;
+        }
         const text = skill ? skill.arguments : userText(e);
         const files = messageFiles(e.payload.content);
         const retryOf = e.payload.retryOf;
@@ -1027,8 +1047,7 @@ export function buildEventTimeline(
         for (const b of e.payload.content) {
           if (b.type !== "tool_call") continue;
           const ti = info.get(b.name);
-          // an older key of a current tool (history logged before a rename): the kernel says which
-          if ((ti?.aliasOf ?? b.name) === AGENT_TOOL) {
+          if (b.name === AGENT_TOOL) {
             const rec = asRecord(b.input);
             const sub: TimelineSubagent = {
               row: {
@@ -1052,7 +1071,7 @@ export function buildEventTimeline(
           const input = b.input;
           const rec = asRecord(input);
           const group = openGroup();
-          const question = (ti?.aliasOf ?? b.name) === QUESTION_TOOL;
+          const question = b.name === QUESTION_TOOL;
           const keyArg = question ? questionPreview(input, ti) : keyArgOf(input, ti);
           const kind: ToolRowData["kind"] = question ? "question" : (ti?.kind ?? "tool");
           const command = kind === "command" && typeof rec.command === "string";
@@ -1077,10 +1096,9 @@ export function buildEventTimeline(
             },
           };
           const tool: TimelineTool = { row, callId: b.id, toolKey: b.name, input, outputId: null };
-          const base = ti?.aliasOf ?? b.name;
-          if (base === BASH_TOOL && rec.run_in_background === true)
+          if (b.name === BASH_TOOL && rec.run_in_background === true)
             tool.background = { taskId: null };
-          if (TASK_TOOLS.has(base) && typeof rec.task_id === "string") {
+          if (TASK_TOOLS.has(b.name) && typeof rec.task_id === "string") {
             const description = taskDescriptions.get(rec.task_id);
             if (description) row.keyArg = description;
           }
@@ -1130,8 +1148,7 @@ export function buildEventTimeline(
         // A non-zero exit is information, not a failure (the summary names the code); a timeout or
         // a stopped command fails. A read-before-write refusal (`guard` view) is the guard working,
         // and a call to a tool the step's request did not carry (`not_loaded` view) is the catalog
-        // working: the model still gets an error, the row a neutral outcome. Older logs have
-        // neither view.
+        // working: the model still gets an error, the row a neutral outcome.
         const guard = view?.kind === "guard" ? view.reason : undefined;
         const notLoaded = view?.kind === "not_loaded";
         const failed =
@@ -1520,8 +1537,8 @@ export function buildEventTimeline(
         break;
       }
       case "compaction_summary":
-        // the summary event's own estimate (context compaction spec §4.9); with no value (an older
-        // log) or nothing saved there is no number to show, so the divider stays plain
+        // the summary event's own estimate (context compaction spec §4.9); with nothing saved
+        // there is no number to show, so the divider stays plain
         out.push({
           kind: "divider",
           key,

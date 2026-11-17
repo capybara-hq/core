@@ -29,7 +29,7 @@ import { accountsFor } from "../helpers/identity.js";
 import { captureProviderRequests } from "../helpers/provider-capture.js";
 import {
   createConv,
-  createOrg,
+  createOrgWithProviders,
   eventsOf,
   PW,
   type Req,
@@ -138,7 +138,7 @@ beforeAll(async () => {
     superAdmin: true,
   });
   admin = await session(k, "root");
-  orgId = await createOrg(admin);
+  orgId = await createOrgWithProviders(k, admin);
 });
 
 afterAll(async () => {

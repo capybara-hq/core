@@ -24,6 +24,7 @@ import { RUN_QUEUE_NAME, SUBAGENT_RUN_QUEUE_NAME } from "../../../src/runtime/ru
 import { SubagentDeliveries } from "../../../src/runtime/subagents/deliveries.js";
 import { type DispatchDeps, dispatchSubagent } from "../../../src/runtime/subagents/dispatch.js";
 import { resumeJobId } from "../../../src/runtime/waits.js";
+import { SkillInvoker } from "../../../src/skills/invoke.js";
 import { agentStartedText } from "../../../src/tools/builtins/agent.js";
 import {
   openBarrier,
@@ -37,7 +38,7 @@ import { accountsFor } from "../../helpers/identity.js";
 import { MODEL_FAKE } from "../../helpers/model-plugins.js";
 import {
   createConv,
-  createOrg,
+  createOrgWithProviders,
   eventsOf,
   PW,
   postMessage,
@@ -208,7 +209,7 @@ beforeEach(async () => {
   ownerId = (await accountsFor(db).createLocal({ login: "owner", password: PW, displayName: "O" }))
     .id;
   owner = await session(k, "owner");
-  orgId = await createOrg(owner);
+  orgId = await createOrgWithProviders(k, owner);
   const res = await owner({
     method: "POST",
     url: `/api/v1/orgs/${orgId}/agents`,
@@ -414,6 +415,7 @@ describe("finish deliveries", () => {
     eventLog: k.app.get(EventLog),
     purposes: k.app.get(ModelPurposesService),
     registry: k.app.get(ProviderRegistry),
+    invoker: k.app.get(SkillInvoker),
     config: { get: () => k.app.get(KernelConfigService).get() },
     // the children are finished by hand (or not at all) here: no run job is owed, none runs
     owe: async () => true,

@@ -36,9 +36,33 @@ test("setup wizard: a fresh deployment opens / → the setup page (language swit
   await expect(setup).toBeVisible();
   await expect(page.locator('[data-part="sidebar"][data-context="work"]')).toHaveCount(0);
   await expect(page.getByRole("heading", { level: 1, name: zh.chat.setup.title })).toBeVisible();
-  // the e2e stack loads model-fake: the model step is done, creating an agent is next. The step's
-  // action is a button: a click lands only once the page is hydrated (a cold `next dev` compile can
-  // keep the first document's script from running for a while)
+  // the e2e stack loads model-fake, but a provider is on only in the orgs that enabled it: the model
+  // step leads the org's admin to Settings → Models, where turning model-fake on completes it (through the
+  // UI alone). The step's action is a link and the page's "Turn on" a button: a click lands only once
+  // the page is hydrated (a cold `next dev` compile can keep the first document's script from
+  // running for a while)
+  await hydrated(page);
+  const modelStep = page.getByRole("listitem").filter({ hasText: zh.setupLayout.steps.model });
+  await expect(modelStep.getByText(zh.chat.setup.model.enableDescription)).toBeVisible();
+  await modelStep.getByRole("link", { name: zh.chat.setup.model.enableAction }).click();
+  await expect(page).toHaveURL(/\/settings\/models$/);
+  await expect(setup).toBeVisible();
+  await expect(page.getByText(zh.models.org.providers.orgFixable)).toBeVisible();
+  await hydrated(page);
+  await page
+    .getByRole("button", {
+      name: zh.models.org.providers.enableLabel.replace("{plugin}", "模拟模型"),
+    })
+    .click();
+  await expect(page.getByText(zh.models.org.providers.orgFixable)).toHaveCount(0);
+  await expect(
+    page.locator('[data-part="step-item"][data-rove="model"][data-state="done"]'),
+  ).toBeVisible();
+  await page
+    .locator('[data-part="sidebar"][data-context="setup"]')
+    .getByRole("link", { name: designZh("sidebar.setupHome"), exact: true })
+    .click();
+  await expect(page).toHaveURL(HOME_URL);
   await hydrated(page);
   const agentStep = page.getByRole("listitem").filter({ hasText: zh.setupLayout.steps.agent });
   await agentStep.getByRole("link", { name: zh.chat.setup.agent.action }).click();

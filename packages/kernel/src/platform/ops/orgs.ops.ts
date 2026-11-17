@@ -1,5 +1,7 @@
 import { Inject, Injectable, type OnModuleInit } from "@nestjs/common";
 import { z } from "zod";
+import { OrgAuditListQuery } from "../../admin/audit.schemas.js";
+import { AuditLogService } from "../../admin/audit-log.service.js";
 import { limitDefaults } from "../../admin/limit-defaults.js";
 import { ApiError } from "../../errors.js";
 import { AccountsService } from "../../identity/accounts.js";
@@ -39,8 +41,8 @@ async function limitsOf(settings: SettingsService, orgId: string) {
 /**
  * Org operations of the `Platform` tool (spec §14.2): the super admin's view of every org (list,
  * get, the per-org limits) through their own private agent, and the conversation's org for its
- * members (read, rename, member list). Creating, deleting and transferring an org, invitations,
- * member role changes and removal stay on the web (human-only).
+ * members (read, rename, member list, the org audit log for its admins). Creating, deleting and
+ * transferring an org, invitations, member role changes and removal stay on the web (human-only).
  */
 @Injectable()
 export class OrgsOperations implements OnModuleInit {
@@ -52,6 +54,7 @@ export class OrgsOperations implements OnModuleInit {
     @Inject(AccountsService) private readonly accounts: AccountsService,
     @Inject(KernelConfigService) private readonly config: KernelConfigService,
     @Inject(KernelDb) private readonly kdb: KernelDb,
+    @Inject(AuditLogService) private readonly audit: AuditLogService,
   ) {}
 
   private async org(orgId: string): Promise<Org> {
@@ -306,6 +309,17 @@ export class OrgsOperations implements OnModuleInit {
             startOf(input.cursor),
             PAGE,
           ),
+      }),
+      defineOperation({
+        id: "orgs.audit",
+        description:
+          "The audit log of this conversation's org (org admins), newest first: members and invitations, settings, agents, connectors, skills, plugins and extensions in the org, channels, schedules. Each event has its id, time, actor (id, name, email; null for the kernel itself), viaToken (done with a personal access token), viaAgent (done through the Platform tool), action and target; never the event's details. action filters by an action name or its prefix (e.g. org.member.). limit is 1 to 100 (default 20); pages by keyset: pass the returned next as params.after (null: no more).",
+        input: OrgAuditListQuery.strict(),
+        example: { limit: 20 },
+        authz: { orgAction: "org.update" },
+        mirrors: ["GET /api/v1/orgs/:orgId/audit"],
+        confirm: "read",
+        run: (input, ctx) => this.audit.list({ orgId: ctx.orgId }, input),
       }),
     ]);
   }

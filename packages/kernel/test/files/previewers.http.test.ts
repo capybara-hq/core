@@ -21,7 +21,7 @@ import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
   createAgent,
   createConv,
-  createOrg,
+  createOrgWithProviders,
   PW,
   type Req,
   runConfig,
@@ -100,7 +100,7 @@ beforeEach(async () => {
   const otherId = (await accounts.createLocal({ login: "other", password: PW, displayName: "X" }))
     .id;
   owner = await session(k, "owner");
-  orgId = await createOrg(owner);
+  orgId = await createOrgWithProviders(k, owner);
   await testMembers(db).add(orgId, otherId, "member", ownerId);
   other = await session(k, "other");
   conv = await createConv(owner, orgId, await createAgent(owner, orgId));

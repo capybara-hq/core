@@ -3,7 +3,6 @@ import {
   assertValidDeclarations,
   isModelError,
   isRetryableKind,
-  MODEL_PROVIDER_EXTENSION_POINT,
   MODEL_PROVIDER_EXTENSION_POINT_V2,
   ModelError,
   type ModelErrorKind,
@@ -66,7 +65,6 @@ describe("ModelError", () => {
 
 describe("model-provider capability", () => {
   it("constant", () => {
-    expect(MODEL_PROVIDER_EXTENSION_POINT).toBe("model-provider@1");
     expect(MODEL_PROVIDER_EXTENSION_POINT_V2).toBe("model-provider@2");
   });
 });

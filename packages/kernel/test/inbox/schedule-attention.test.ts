@@ -17,7 +17,7 @@ import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
-  createOrg,
+  createOrgWithProviders,
   PW,
   runConfig,
   session,
@@ -76,7 +76,7 @@ beforeEach(async () => {
   adminId = await mk("admin");
   aliceId = await mk("alice");
   const owner = await session(k, "owner");
-  orgId = await createOrg(owner);
+  orgId = await createOrgWithProviders(k, owner);
   await testMembers(db).add(orgId, adminId, "admin", ownerId);
   await testMembers(db).add(orgId, aliceId, "member", ownerId);
   const alice = await session(k, "alice");

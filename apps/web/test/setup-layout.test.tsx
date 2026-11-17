@@ -84,6 +84,12 @@ describe("setup layout scope", () => {
     expect(screen.getByText("grant@acme:~/setup")).toBeTruthy();
   });
 
+  it("a provider the org can switch on (org_fixable): the model step stays to do", () => {
+    renderFrame({ readiness: ORG_FIXABLE });
+    expect(setupPage()).not.toBeNull();
+    expect(step(sl.steps.model).getAttribute("data-state")).toBe("todo");
+  });
+
   it("not ready on /: the same setup home, never a composer", () => {
     resetNavigation("/");
     renderFrame();
@@ -220,11 +226,11 @@ describe("one step list: the setup home's card and the sidebar agree", () => {
 });
 
 describe("the checklist by role", () => {
-  it("a super admin configures the model in the admin console", async () => {
+  it("a super admin deploys the model service on the admin console's models page", async () => {
     renderFrame();
     const model = step(sl.steps.model);
     expect(within(model).getByRole("link", { name: s.model.action }).getAttribute("href")).toBe(
-      "/admin/extensions",
+      "/admin/models",
     );
     // creating an agent waits for the model: only the reason, no disabled button, no 待办 label
     const agent = step(sl.steps.agent);
@@ -244,31 +250,47 @@ describe("the checklist by role", () => {
     expect(screen.queryByText(sl.waiting)).toBeNull();
   });
 
-  it("a provider the org can switch on or configure: org admins and super admins go to the org's model extensions", () => {
+  it("a provider the org can switch on: org admins (a super admin who owns the org too) go to Settings → Models", () => {
     for (const me of [memberMe("admin"), memberMe("owner"), ME]) {
       renderFrame({ me, readiness: ORG_FIXABLE });
       const model = step(sl.steps.model);
-      expect(within(model).getByRole("link", { name: s.model.action }).getAttribute("href")).toBe(
-        "/extensions?tab=model",
-      );
-      expect(within(model).getByText(s.model.description)).toBeTruthy();
+      expect(
+        within(model).getByRole("link", { name: s.model.enableAction }).getAttribute("href"),
+      ).toBe("/settings/models");
+      expect(within(model).getByText(s.model.enableDescription)).toBeTruthy();
       expect(screen.queryByText(sl.waitingDeployment)).toBeNull();
-      expect(setupSidebar()?.querySelector('a[href="/extensions?tab=model"]')).not.toBeNull();
+      expect(setupSidebar()?.querySelector('a[href="/settings/models"]')).not.toBeNull();
       cleanup();
     }
+  });
+
+  it("a provider on in the org that waits for the org's config: the org admin sets it up on Settings → Models", () => {
+    renderFrame({
+      me: memberMe("admin"),
+      readiness: {
+        modelProvider: "org_fixable",
+        orgFixableProviders: [{ provider: "anthropic", reason: "needs_config" }],
+        agents: 0,
+      },
+    });
+    const model = step(sl.steps.model);
+    expect(within(model).getByRole("link", { name: s.model.action }).getAttribute("href")).toBe(
+      "/settings/models",
+    );
+    expect(within(model).queryByRole("link", { name: s.model.enableAction })).toBeNull();
   });
 
   it("a member waits for an org admin when the org can switch a provider on", () => {
     renderFrame({ me: memberMe("member"), readiness: ORG_FIXABLE });
     const model = step(sl.steps.model);
     expect(within(model).queryByRole("link")).toBeNull();
-    expect(within(model).getByText(sl.model.waitingForAdmin)).toBeTruthy();
+    expect(within(model).getByText(sl.model.waitingForOrgAdmin)).toBeTruthy();
     expect(within(model).getByText(s.model.askOrgAdmin)).toBeTruthy();
     expect(screen.getByText(sl.waiting)).toBeTruthy();
   });
 
-  it("the org's model extensions page is the model step in the setup sidebar", () => {
-    resetNavigation("/extensions");
+  it("Settings → Models is the model step in the setup sidebar", () => {
+    resetNavigation("/settings/models");
     renderFrame({ me: memberMe("admin"), readiness: ORG_FIXABLE });
     const current = setupSidebar()?.querySelector('[aria-current="page"]');
     expect(current?.textContent).toContain(sl.steps.model);

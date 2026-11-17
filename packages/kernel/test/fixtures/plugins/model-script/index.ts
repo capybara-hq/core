@@ -1,10 +1,10 @@
 import { randomUUID } from "node:crypto";
 import {
   defineExtension,
-  MODEL_PROVIDER_EXTENSION_POINT,
+  MODEL_PROVIDER_EXTENSION_POINT_V2,
   ModelError,
-  type ModelProviderV1,
-  type ModelRequestV1,
+  type ModelProvider,
+  type ModelRequest,
   type ModelStreamEvent,
 } from "@capybara-hq/plugin-sdk";
 import { z } from "zod";
@@ -94,12 +94,12 @@ export function scriptRules(rules: ScriptRule[]): void {
   s.barriers.clear();
 }
 
-const textOf = (blocks: ModelRequestV1["messages"][number]["content"]): string =>
+const textOf = (blocks: ModelRequest["messages"][number]["content"]): string =>
   typeof blocks === "string"
     ? blocks
     : blocks.flatMap((b) => (b.type === "text" ? [b.text] : [])).join("");
 
-function lastUserText(req: ModelRequestV1): string {
+function lastUserText(req: ModelRequest): string {
   for (let i = req.messages.length - 1; i >= 0; i--) {
     const m = req.messages[i];
     if (m?.role !== "user" || typeof m.content === "string") continue;
@@ -109,7 +109,7 @@ function lastUserText(req: ModelRequestV1): string {
   return "";
 }
 
-function lastToolResults(req: ModelRequestV1): string {
+function lastToolResults(req: ModelRequest): string {
   // system messages absorbed after the results (deliveries, interjection notes) are skipped
   let i = req.messages.length - 1;
   while (i >= 0 && req.messages[i]?.role === "system") i--;
@@ -119,7 +119,7 @@ function lastToolResults(req: ModelRequestV1): string {
 }
 
 /** The `agentId`s of the `agent` results in the request, in order. */
-function agentIds(req: ModelRequestV1): string[] {
+function agentIds(req: ModelRequest): string[] {
   const ids: string[] = [];
   for (const m of req.messages) {
     if (m.role !== "user" || typeof m.content === "string") continue;
@@ -133,7 +133,7 @@ function agentIds(req: ModelRequestV1): string[] {
   return ids;
 }
 
-function matches(when: z.infer<typeof When>, req: ModelRequestV1): boolean {
+function matches(when: z.infer<typeof When>, req: ModelRequest): boolean {
   if (
     when.systemIncludes !== undefined &&
     !req.system.some((s) => s.text.includes(when.systemIncludes as string))
@@ -217,10 +217,10 @@ export default defineExtension({
   name: "model-script",
   version: "0.1.0",
   sdk: "^0.1.0-rc.0",
-  provides: [MODEL_PROVIDER_EXTENSION_POINT],
+  provides: [MODEL_PROVIDER_EXTENSION_POINT_V2],
   config: { deployment: ConfigSchema },
   setup(ctx) {
-    const provider: ModelProviderV1 = {
+    const provider: ModelProvider = {
       async listModels() {
         // script-2 answers like script-1: a conversation can switch to it (UI refresh B)
         return ["script-1", "script-2"].map((id) => ({
@@ -234,8 +234,8 @@ export default defineExtension({
             reasoning: false,
             caching: false,
             midConversationSystem: true,
-            effort: false,
           },
+          parameters: [],
         }));
       },
       async *stream(req, { signal }): AsyncGenerator<ModelStreamEvent> {
@@ -276,6 +276,6 @@ export default defineExtension({
         };
       },
     };
-    ctx.provide(MODEL_PROVIDER_EXTENSION_POINT, provider);
+    ctx.provide(MODEL_PROVIDER_EXTENSION_POINT_V2, provider);
   },
 });

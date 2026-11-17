@@ -42,7 +42,7 @@ import { testMembers } from "../../helpers/members.js";
 import { MODEL_FAKE } from "../../helpers/model-plugins.js";
 import {
   createConv,
-  createOrg,
+  createOrgWithProviders,
   eventsOf,
   PW,
   postMessage,
@@ -109,8 +109,7 @@ beforeAll(async () => {
           },
           "sandbox-fake": { root },
         },
-        // the platform allows open; an org without settings follows the default (dev)
-        sandbox: { deliverMaxBytes: 1024, tiers: { max: "open" } },
+        sandbox: { deliverMaxBytes: 1024 },
       },
     ),
     { logger: createLogger("warn", { write: (l) => logLines.push(l) }) },
@@ -139,7 +138,7 @@ beforeEach(async () => {
   const otherId = (await accounts.createLocal({ login: "other", password: PW, displayName: "X" }))
     .id;
   owner = await session(k, "owner");
-  orgId = await createOrg(owner);
+  orgId = await createOrgWithProviders(k, owner);
   await testMembers(db).add(orgId, otherId, "member", ownerId);
   other = await session(k, "other");
 });

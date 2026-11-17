@@ -424,7 +424,7 @@ export interface SandboxProvider {
   ): Promise<{ path: string; suggestedName: string }[]>;
 }
 
-// biome-ignore lint/suspicious/noControlCharactersInRegex: 正是要拦控制字符
+// biome-ignore lint/suspicious/noControlCharactersInRegex: control characters are exactly what must be blocked
 const CONTROL = /[\u0000-\u001f\u007f]/;
 
 /** The longest project name, in UTF-16 code units. */
@@ -528,7 +528,10 @@ export function validateSandboxPath(p: string, roots?: SandboxRoots): string[] {
 
 const LABEL = /^[a-z0-9]([a-z0-9-]{0,61}[a-z0-9])?$/;
 
-/** 校验出站白名单主机名：小写、无协议与端口、可选前导 `*.`、IDN 只认 punycode。 */
+/**
+ * Validates an outbound allowlist host name: lowercase, no protocol or port, optional leading `*.`,
+ * IDN accepted only as punycode.
+ */
 export function validateAllowHost(h: string): string[] {
   if (typeof h !== "string" || h.length === 0) return ["host must be a non-empty string"];
   if (h.length > 253) return ["host must be at most 253 characters"];
@@ -538,7 +541,8 @@ export function validateAllowHost(h: string): string[] {
   if (labels.every((l) => LABEL.test(l))) {
     const tld = labels[labels.length - 1] as string;
     if (labels.length < 2) return ["host must have at least two labels (no single-label names)"];
-    // 末段必须以字母开头：挡住 IPv4 的十进制 / 八进制 / 十六进制写法
+    // The last label must start with a letter: this blocks the decimal / octal / hexadecimal
+    // spellings of IPv4
     if (!/^[a-z]/.test(tld)) return ["host must not be an IP address literal"];
     if (["local", "internal", "localhost"].includes(tld)) {
       return ["host must not be in an internal-only domain (.local, .internal, .localhost)"];

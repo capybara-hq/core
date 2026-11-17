@@ -9,7 +9,7 @@ import { accountsFor, apiTokensFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
-  createOrg,
+  createOrgWithProviders,
   PW,
   type Req,
   runConfig,
@@ -64,7 +64,7 @@ beforeEach(async () => {
   const guestId = await mk("guest");
   await mk("outsider");
   const owner = await session(k, "owner");
-  orgId = await createOrg(owner);
+  orgId = await createOrgWithProviders(k, owner);
   await testMembers(db).add(orgId, adminId, "admin", ownerId);
   await testMembers(db).add(orgId, aliceId, "member", ownerId);
   await testMembers(db).add(orgId, bobId, "member", ownerId);
@@ -74,7 +74,7 @@ beforeEach(async () => {
   guest = await session(k, "guest");
   admin = await session(k, "admin");
   outsider = await session(k, "outsider");
-  otherOrgId = await createOrg(outsider, "Other");
+  otherOrgId = await createOrgWithProviders(k, outsider, "Other");
   const res = await alice({
     method: "POST",
     url: `/api/v1/orgs/${orgId}/agents`,

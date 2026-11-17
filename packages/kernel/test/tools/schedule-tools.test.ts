@@ -35,7 +35,7 @@ import { testMembers } from "../helpers/members.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
   createConv,
-  createOrg,
+  createOrgWithProviders,
   enableExtensions,
   eventsOf,
   PW,
@@ -99,7 +99,7 @@ beforeEach(async () => {
   aliceId = await mk("alice");
   bobId = await mk("bob");
   owner = await session(k, "owner");
-  orgId = await createOrg(owner);
+  orgId = await createOrgWithProviders(k, owner);
   await testMembers(db).add(orgId, aliceId, "member", ownerId);
   await testMembers(db).add(orgId, bobId, "member", ownerId);
   alice = await session(k, "alice");

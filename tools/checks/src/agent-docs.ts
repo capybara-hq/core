@@ -20,6 +20,8 @@ import type { Finding } from "./source.js";
  *   its file, a generated section a topic must carry, a field of plugin.v1 / connector-template.v1 /
  *   the agent template absent from its table, or a title not starting with 'Authoring:' (the usage
  *   topics `concepts` and `setup` aside; using the platform is otherwise covered by operations);
+ *   A spec under `docs/superpowers/specs/` dated on or after 2026-11-17 without an
+ *   "AGENTS.md rules touched" heading is agent-docs-missing too;
  * - agent-docs-orphan: a topic, or a row (generated or in a hand-written table), for an extension
  *   point or plugin-format field that no longer exists in the code.
  *
@@ -30,6 +32,10 @@ import type { Finding } from "./source.js";
  */
 
 export const AGENT_DOCS_DIR = "packages/plugin-sdk/agent-docs";
+export const SPECS_DIR = "docs/superpowers/specs";
+/** Specs dated on or after this (the date in the file name) must state the AGENTS.md rules they touch. */
+export const SPEC_RULES_FROM = "2026-11-17";
+const SPEC_RULES_HEADING = /^#{2,}\s+AGENTS\.md rules touched\s*$/m;
 const SCHEMAS_DIR = "packages/plugin-sdk/schemas";
 
 /** The hand-written topics every deployment serves. */
@@ -334,7 +340,30 @@ export function checkAgentDocs(root: string, opts: AgentDocsOptions = {}): Findi
       );
     }
   }
+  findings.push(...checkSpecRules(root));
   return findings;
+}
+
+/**
+ * agent-docs-missing: a spec under `docs/superpowers/specs/` dated on or after `SPEC_RULES_FROM`
+ * without an "AGENTS.md rules touched" heading (older specs are exempt by the date in the name).
+ */
+function checkSpecRules(root: string): Finding[] {
+  const dir = join(root, SPECS_DIR);
+  if (!existsSync(dir)) return [];
+  const out: Finding[] = [];
+  for (const name of readdirSync(dir).sort()) {
+    const date = /^(\d{4}-\d{2}-\d{2})-.+\.md$/.exec(name)?.[1];
+    if (!date || date < SPEC_RULES_FROM) continue;
+    if (SPEC_RULES_HEADING.test(readFileSync(join(dir, name), "utf8"))) continue;
+    out.push({
+      rule: "agent-docs-missing",
+      file: join(dir, name),
+      line: 1,
+      message: `spec dated ${date} needs a "## AGENTS.md rules touched" section naming the rules it touches (or "none" with a reason)`,
+    });
+  }
+  return out;
 }
 
 /** Rewrites every generated section the generator knows; returns the files that changed. */

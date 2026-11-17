@@ -34,7 +34,7 @@ import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
   createConv,
-  createOrg,
+  createOrgWithProviders,
   enableConnectorExtensions,
   eventsOf,
   postMessage,
@@ -86,7 +86,6 @@ describe("tools 节点（LangGraphLoop + 执行管线）", () => {
       reasoning: false,
       caching: false,
       midConversationSystem: true,
-      effort: false,
     },
     parameters: [],
   };
@@ -349,7 +348,7 @@ describe("端到端：model-fake 脚本工具调用 → 连接器工具与插件
       },
     };
     req = await session(k, "owner");
-    orgId = await createOrg(req);
+    orgId = await createOrgWithProviders(k, req);
     await enableConnectorExtensions(k, orgId);
   });
 

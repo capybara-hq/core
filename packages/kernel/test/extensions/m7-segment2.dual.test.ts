@@ -20,7 +20,7 @@ import { hookDeniedText } from "../../src/tools/pipeline.js";
 import { onlyBuiltins } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
 import { packPluginDir } from "../helpers/plugin-packages.js";
-import { eventsOf, PW, waitFor, waitForTerminal } from "../helpers/runs.js";
+import { enableExtensions, eventsOf, PW, waitFor, waitForTerminal } from "../helpers/runs.js";
 
 /**
  * M7 segment 2 acceptance (dual replica): two kernel processes (both `api` + `worker`) share PG /
@@ -304,6 +304,7 @@ describe("M7 segment 2: plugin hooks and usage.report (dual replica)", () => {
 
     const org = await ok(0, "POST", "/api/v1/orgs", { name: "Acme" });
     orgId = (org.org as { id: string }).id;
+    await enableExtensions(raw, orgId, "model-fake");
     base = `/api/v1/orgs/${orgId}`;
     await orgEnable("fake-tools-ui");
     await orgEnable(PROBE);

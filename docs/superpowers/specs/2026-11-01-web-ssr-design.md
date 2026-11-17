@@ -67,7 +67,7 @@ browser ──► server.mjs (peer address, object-store proxy)
 Runs for every page request (matcher: everything except `/api`, `/plugin-ui`, `/_next`, `/dev`, and
 paths with a file extension). In order:
 
-1. **Legacy locale prefix** (unchanged): `/zh/...`, `/en/...` → 308 to the path without it.
+1. ~~Legacy locale prefix~~ (removed before 0.1.0, no compatibility): `/zh/...` and `/en/...` are no longer redirected.
 2. **Session renewal.** When the request has `cap_rt` and no `cap_at`, or a `cap_at` whose JWT
    `exp` (read without verifying) is less than 30 s away (the cookie can outlive its token by the
    response latency; an undecodable token counts as valid), the proxy calls
@@ -280,6 +280,8 @@ Steps per role, taken from the existing table:
 | 连接渠道 (optional) | when also org admin: `/channels/new` | `/channels/new` | — | — |
 | 邀请成员 (optional) | when also org admin: `/settings/members` | `/settings/members` | — | — |
 | 安装插件 (optional) | when also org admin: `/catalog` | `/catalog` | — | — |
+
+> Superseded by design review 2026-11-16 task 14: the model step leads super admins to `/admin/models` and, while the org has not turned a deployed service on, org admins to `/settings/models` (`modelConfigHref`).
 | 我的连接 (optional) | — | — | `/account/connections` | — |
 
 The columns are the viewer's highest role; the optional steps follow the org role, so an enterprise

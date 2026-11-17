@@ -337,3 +337,22 @@ the kernel's degradation ladder reports the model error as it does for any other
   fetching bytes for a text attachment above it (no partial read, no truncation note); the
   zero-drift fixtures and any affected case snapshots are updated with their `DriftReason`.
 - `docs/config.md` and the web's refusal copy (`fileTypeNotAllowed`) follow the longer accept list.
+
+## AGENTS.md rules touched
+
+Added when this spec was merged into the design-review fixes branch, which introduced the section
+(`pnpm check:agent-docs`); it records how the design as merged meets each rule.
+
+- **Runtime and replay:** the reference line is built at request time from the logged block (a `ref`
+  with name and size) and the attachment's row (`MediaInfo`: size, etag, unsigned `uri`), as image
+  and document blocks already are; no new model-visible input is logged, so no `DriftReason` is
+  added. The `model_call` record notes the outcome `reference`; a log of the current format
+  rebuilds with zero drift (`reconstruct.test.ts`).
+- **Tools, sub-agents, web tools, skills:** `FetchAttachment` has an English description and
+  actionable English errors, and its key has no dots.
+- **Object storage:** `ObjectStore.uri` names an object without signing it; key prefixes stay the
+  kernel's, and the bytes are copied by the kernel, never through a URL the model sees.
+- **SDK public API:** the `file` content block and `ObjectStore.uri` regenerate the API report
+  (`pnpm gen:sdk-api`) with a `@capybara-hq/plugin-sdk` changeset.
+- **Web UI and Config:** the refusal copy goes through i18n (zh and en); the accept list stays a
+  deployment setting (`attachments`), documented in `docs/config.md`.

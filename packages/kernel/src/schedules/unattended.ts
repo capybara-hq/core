@@ -133,6 +133,8 @@ export interface UnattendedRun {
   trial: boolean;
   unattendedAsk: "fail" | "wait";
   forbiddenTools: string[];
+  /** The org's stored `forbiddenTools` cannot be read: every tool call of the run is refused. */
+  forbiddenToolsUnreadable?: boolean;
 }
 
 /** An unattended run that is not a trial run: the §7 rules apply. */
@@ -196,7 +198,12 @@ export async function unattendedRunOf(
   if (run === null) return null;
   if (!run.trial && (await personJoined(db, runId))) return null;
   const s = await readScheduleSettings(db, config, orgId);
-  return { ...run, unattendedAsk: s.unattendedAsk, forbiddenTools: s.forbiddenTools };
+  return {
+    ...run,
+    unattendedAsk: s.unattendedAsk,
+    forbiddenTools: s.forbiddenTools,
+    forbiddenToolsUnreadable: s.forbiddenToolsUnreadable,
+  };
 }
 
 /**

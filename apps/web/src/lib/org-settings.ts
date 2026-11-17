@@ -63,8 +63,7 @@ export interface OrgSettings {
   autoMode?: "allowed" | "off";
   /** The org's sandbox network delta; absent = follow the platform. */
   cloudNetwork?: CloudNetworkSetting;
-  /** An older kernel leaves it out: read as on. */
-  platformTool?: "on" | "read-only" | "off";
+  platformTool: "on" | "read-only" | "off";
   /** The org's default time zone (IANA) for senders without one of their own; absent = UTC. */
   timeZone?: string;
   /**
@@ -72,11 +71,11 @@ export interface OrgSettings {
    * (themes spec §7); absent: follow the platform, allowed.
    */
   theme?: OrgThemeSetting;
-  /** Scheduled tasks (scheduled tasks spec §9); an older kernel leaves it out (the defaults). */
-  scheduledTasks?: ScheduledTasksSettings;
+  /** Scheduled tasks (scheduled tasks spec §9). */
+  scheduledTasks: ScheduledTasksSettings;
   /**
    * The organization's conversation compaction overrides (context compaction spec §4.8); absent
-   * follows the platform. An older kernel leaves it out too.
+   * follows the platform.
    */
   compaction?: CompactionSettingsPatch;
 }
@@ -99,16 +98,16 @@ export interface OrgSettingsDeployment {
   cloudNetwork: { allowHosts: string[]; orgHosts: "extend" | "within"; off: boolean };
   /**
    * The platform's effective attribution defaults for agent-created commits and pull requests
-   * (spec 2026-11-14-agent-attribution); absent from older kernels the org settings are read from.
+   * (spec 2026-11-14-agent-attribution).
    */
-  attribution?: { commit: string; pr: string; sessionUrl: boolean };
+  attribution: { commit: string; pr: string; sessionUrl: boolean };
   /**
    * Whether the deployment set `http.publicUrl`. Without it no conversation link is added to a pull
-   * request, so the agent page can say why the link setting has no effect; absent from older kernels.
+   * request, so the agent page can say why the link setting has no effect.
    */
-  publicUrl?: boolean;
-  /** The platform's conversation compaction settings; absent from an older kernel. */
-  compaction?: CompactionSettings;
+  publicUrl: boolean;
+  /** The platform's conversation compaction settings. */
+  compaction: CompactionSettings;
 }
 
 /** 组织实际生效的沙箱 cpu / 内存（只读：超级管理员在部署设置里按组织覆盖；旧内核不返回）。 */

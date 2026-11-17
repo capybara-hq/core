@@ -15,7 +15,7 @@ import { createDb } from "../../src/db/pool.js";
 import { builtinsOff } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
-import { PW, sleep, waitFor } from "../helpers/runs.js";
+import { enableExtensions, PW, sleep, waitFor } from "../helpers/runs.js";
 
 /**
  * Channel long connections live on the gateway role (E11-A): the supervisor runs only on replicas
@@ -93,6 +93,7 @@ async function setup(roles: [string[], string[]], appId: string) {
   const org = await call("POST", "/api/v1/orgs", { name: "Acme" });
   expect(org.status).toBe(201);
   const base = `/api/v1/orgs/${(org.json.org as { id: string }).id}`;
+  await enableExtensions(raw, (org.json.org as { id: string }).id, "model-fake");
   const ag = await call("POST", `${base}/agents`, {
     definition: {
       name: "Helper",

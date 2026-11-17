@@ -36,7 +36,7 @@ import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { drainOutbox } from "../helpers/outbox.js";
 import {
   createConv,
-  createOrg,
+  createOrgWithProviders,
   eventsOf,
   PW,
   postMessage,
@@ -146,6 +146,7 @@ afterAll(async () => {
 
 let owner: Req;
 let ownerId: string;
+let adminId: string;
 let orgId: string;
 let agentId: string;
 
@@ -161,8 +162,17 @@ beforeEach(async () => {
   errors.length = 0;
   ownerId = (await accountsFor(db).createLocal({ login: "owner", password: PW, displayName: "O" }))
     .id;
+  // the dead-letter retry is a super admin write: it re-checks its actor under the admin lock
+  adminId = (
+    await accountsFor(db).createLocal({
+      login: "root",
+      password: PW,
+      displayName: "Root",
+      superAdmin: true,
+    })
+  ).id;
   owner = await session(k, "owner");
-  orgId = await createOrg(owner);
+  orgId = await createOrgWithProviders(k, owner);
   const res = await owner({
     method: "POST",
     url: `/api/v1/orgs/${orgId}/agents`,
@@ -600,7 +610,7 @@ describe("run-orphan-check", () => {
       .where("job_id", "=", runJobId(dead.conv, dead.seq))
       .where("dead_at", "is not", null)
       .executeTakeFirstOrThrow();
-    await k.app.get(OutboxDeadService).retry(row.id, { accountId: ownerId });
+    await k.app.get(OutboxDeadService).retry(row.id, { accountId: adminId });
     await drainOutbox(k.app, { jobId: runJobId(dead.conv, dead.seq) });
     await waitForRunJobDone(db, runQueue, dead.runId, 15_000);
     expect(await runStatus(db, dead.runId)).toBe("failed");
@@ -637,7 +647,7 @@ describe("run-orphan-check", () => {
     const spy = vi
       .spyOn(service, "failIn")
       .mockImplementationOnce(async (candidate, deliveryFailed) => {
-        await k.app.get(OutboxDeadService).retry(rows[1]?.id as string, { accountId: ownerId });
+        await k.app.get(OutboxDeadService).retry(rows[1]?.id as string, { accountId: adminId });
         await drainOutbox(k.app, { jobId });
         expect(await runQueue.getJob(jobId)).toBeDefined();
         return fail(candidate, deliveryFailed);

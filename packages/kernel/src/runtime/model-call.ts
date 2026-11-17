@@ -139,10 +139,28 @@ export const contextTooLargeText = (model: ModelInfo, target: number, estimate: 
 const DEFAULT_RETRY_DELAY_MS = 1000;
 
 /**
- * 供应商建议等待（retryAfterMs）的上限。超过它就不在同一模型上等待重试，直接切兜底（没有兜底则失败），
- * 避免一次运行被「请 10 分钟后再试」之类的建议长时间挂起。
+ * Longest provider-suggested wait (retryAfterMs) honoured on the same model. With a run deadline
+ * the wait must also fit the time the run has left.
  */
-const MAX_RETRY_AFTER_MS = 10_000;
+const MAX_RETRY_AFTER_MS = 5 * 60_000;
+
+/**
+ * Whether waiting `retryAfterMs` on the same model is allowed, and which limit decided it:
+ * the ceiling, or the run's remaining deadline (absent: no deadline, only the ceiling applies).
+ */
+function retryAfterDecision(
+  retryAfterMs: number | undefined,
+  deadline: number | undefined,
+): { fits: boolean; limit: "ceiling" | "deadline"; remainingMs: number | undefined } {
+  const wait = retryAfterMs ?? 0;
+  const remainingMs = deadline === undefined ? undefined : deadline - Date.now();
+  if (wait > MAX_RETRY_AFTER_MS) return { fits: false, limit: "ceiling", remainingMs };
+  // the wait must leave time for the retry itself: a wait that ends at the deadline is no wait
+  if (remainingMs !== undefined && wait >= remainingMs) {
+    return { fits: false, limit: "deadline", remainingMs };
+  }
+  return { fits: true, limit: remainingMs === undefined ? "ceiling" : "deadline", remainingMs };
+}
 
 /** 读事件日志的分页大小。 */
 const READ_PAGE = 1000;
@@ -271,6 +289,11 @@ export interface ModelStepInput {
    * reminder is sent.
    */
   maxSteps?: number;
+  /**
+   * The run's deadline in epoch ms (`LoopContext.limits.deadline`); absent: no deadline. A
+   * provider's retry-after is honoured when it fits the time left.
+   */
+  deadline?: number;
 }
 
 export interface ModelStepResult {
@@ -911,6 +934,8 @@ export function assembleModelRequest(input: AssembleModelRequestInput): {
     tools: input.model.capabilities.tools ? [...tools] : [],
   });
   const { request } = built;
+  // the omission is recorded, so readers never infer it from the reminder text
+  if (tools.length > 0 && !input.model.capabilities.tools) built.meta.toolsOmitted = true;
   request.messages = guardToolPairs(request.messages);
   const knob = request.params.maxOutputTokens;
   request.maxOutputTokens = Math.min(
@@ -1052,20 +1077,12 @@ function consecutiveCompactionFailures(events: ConversationEvent[]): number {
   return n;
 }
 
-/** The step an event of a run belongs to, when its payload names one. */
-function stepOf(e: ConversationEvent): number | undefined {
-  const step = (e.payload as { step?: unknown }).step;
-  return typeof step === "number" ? step : undefined;
-}
-
 /**
  * The ordinal of the next compaction of this run's `step`: 1 + the `compaction_summary` /
  * `compaction_failed` events the step already wrote (context compaction spec §4.4, revision
  * 2026-11-15). It keys the compaction's events (summary, failure, usage, hook denial), so every
  * compaction of a step writes its own, while a crash-retried compaction (nothing written yet) gets
- * the same keys again. Outcome events record their step, so they are counted by it. Older ones
- * have none: a run's step N compacts after every event of its earlier steps, so those are counted
- * from the run's last event of an earlier step on. The backoff keeps counting consecutive failures
+ * the same keys again. The backoff keeps counting consecutive failures
  * ({@link consecutiveCompactionFailures}).
  */
 function compactionOrdinal(
@@ -1074,18 +1091,12 @@ function compactionOrdinal(
   step: number,
 ): number {
   let recorded = 0;
-  let legacy = 0;
   for (const e of events) {
     if (e.runId !== runId) continue;
-    const of = stepOf(e);
-    if (e.type === "compaction_summary" || e.type === "compaction_failed") {
-      if (of === undefined) legacy++;
-      else if (of === step) recorded++;
-      continue;
-    }
-    if (of !== undefined && of < step) legacy = 0;
+    if (e.type !== "compaction_summary" && e.type !== "compaction_failed") continue;
+    if (e.payload.step === step) recorded++;
   }
-  return recorded + legacy + 1;
+  return recorded + 1;
 }
 
 /** Estimated input tokens of a plain text (a user message's only content). */
@@ -1588,12 +1599,15 @@ async function mergeWritten(
 }
 
 /**
- * 降级梯子：主模型 → 主模型重试一次（等 `retryAfterMs ?? 1000`，可被中止）→ `agent.fallback`（若有）。
- * 建议等待超过 `MAX_RETRY_AFTER_MS` 时跳过同模型重试。
- * 每次尝试解析出模型后、写 `model_call` 之前写本步的尾部提醒（均按本步幂等，只写一次）：所用模型不支持工具而本步有工具
- * → {@link TOOLS_UNSUPPORTED_REMINDER}；然后是轮次提醒或收尾提醒（收尾提醒因此位于请求末尾）。
- * 每次实际尝试写自己的 `model_call`（attempt 从 1 连续递增，跳过的不计）；重试前经 sink 发 `step_reset`。
- * 不可重试的失败或梯子用尽 → `RunError`; except that the agent's own model failing to resolve as
+ * The degradation ladder: the main model -> one retry of the main model (waiting
+ * `retryAfterMs ?? 1000`, abortable) -> `agent.fallback` (when set). The same-model retry is
+ * skipped when the suggested wait does not fit the run's remaining time or exceeds
+ * `MAX_RETRY_AFTER_MS`. After each attempt resolves its model and before it writes `model_call`,
+ * the step's trailing reminders are written (each idempotent per step, written once): the model has
+ * no tool support while the step has tools -> {@link TOOLS_UNSUPPORTED_REMINDER}; then the turn
+ * reminder or the wrap-up reminder (which therefore ends the request). Every real attempt writes
+ * its own `model_call` (attempt counts up from 1, skipped ones not counted); a retry first sends
+ * `step_reset` through the sink. A non-retryable failure or an exhausted ladder -> `RunError`; except that the agent's own model failing to resolve as
  * `agent.model_unavailable` (gone from the list, disabled since the agent was saved, its provider
  * not configured in the org: spec B §5.3) goes straight to `agent.fallback` when there is one,
  * without the same-model retry.
@@ -1637,14 +1651,19 @@ async function ladder(
   let sentMedia: string[] = [];
   for (const rung of rungs) {
     if ((mainUnavailable || skipToFallback) && !rung.fallback) continue;
-    if (last && !rung.fallback && (last.retryAfterMs ?? 0) > MAX_RETRY_AFTER_MS) {
-      deps.log.warn("model retry skipped: suggested wait exceeds cap", {
-        conversationId,
-        runId,
-        step,
-        retryAfterMs: last.retryAfterMs,
-      });
-      continue;
+    if (last && !rung.fallback) {
+      const d = retryAfterDecision(last.retryAfterMs, input.deadline);
+      if (!d.fits) {
+        deps.log.warn("model retry skipped: suggested wait exceeds the limit", {
+          conversationId,
+          runId,
+          step,
+          retryAfterMs: last.retryAfterMs,
+          limit: d.limit,
+          ...(d.remainingMs !== undefined && { remainingMs: d.remainingMs }),
+        });
+        continue;
+      }
     }
     // reactive `model.context_overflow` fix-ups, at most one of each per rung (context compaction
     // spec §4.4): media exclusion, forced compaction, then a progressive trim

@@ -38,6 +38,7 @@ const webExtension = (plugin: string) => ({
   config: null,
   secrets: [],
   permissions: [],
+  provides: [],
   orgConfigSchema: null,
 });
 

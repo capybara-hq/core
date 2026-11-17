@@ -17,7 +17,7 @@ import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
   createConv,
-  createOrg,
+  createOrgWithProviders,
   enableExtensions,
   eventsOf,
   PW,
@@ -101,7 +101,7 @@ const ctx = (): ExtensionContext => {
 
 /** A fresh org with the extensions enabled and the purpose mapped to the probe model. */
 async function freshOrg(): Promise<string> {
-  const orgId = await createOrg(owner, `Org ${++orgSeq}`);
+  const orgId = await createOrgWithProviders(k, owner, `Org ${++orgSeq}`);
   await enableExtensions(raw, orgId, "embed-consumer", "embed-observer", "hooks-probe");
   const res = await owner({
     method: "PUT",

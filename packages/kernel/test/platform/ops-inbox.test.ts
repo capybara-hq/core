@@ -380,6 +380,7 @@ describe("the platform inbox and pending permissions (super admin)", () => {
     const byType = (out as unknown as { byType: Record<string, number> }).byType;
     expect(Object.keys(byType).sort()).toEqual([
       "catalog_request",
+      "extension_disabled",
       "org_upload_pending",
       "ownership_transferred",
       "permission_confirmation",
@@ -418,6 +419,7 @@ describe("the platform inbox and pending permissions (super admin)", () => {
         permission_confirmation: 0,
         org_upload_pending: 0,
         scope_sync_failed: 0,
+        extension_disabled: 0,
         ownership_transferred: PLATFORM_INBOX_MAX_ITEMS + 30,
       },
     });

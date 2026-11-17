@@ -109,6 +109,7 @@ import {
   extensionPointDefaultsQuery,
   invitationsQuery,
   modelsCatalogQuery,
+  orgAuditQuery,
   orgFilePreviewersQuery,
   orgPurposesQuery,
   orgSettingsQuery,
@@ -200,9 +201,7 @@ async function prefetchFirstTemplateGuide(
   const detail = qc.getQueryData<OrgCatalogDetail>(orgCatalogItemQuery(orgId, itemId).queryKey);
   if (detail === undefined || (from === "templates" && detail.item.state === "on")) return;
   const first =
-    from === "templates"
-      ? installTemplates(detail.templates)[0]
-      : (detail.missingTemplates ?? [])[0];
+    from === "templates" ? installTemplates(detail.templates)[0] : detail.missingTemplates[0];
   const guide = first?.guide;
   if (!guide) return;
   await qc.prefetchQuery({
@@ -337,7 +336,17 @@ export const ROUTES: readonly RouteEntry[] = [
   },
   {
     pattern: "/admin/models",
-    queries: ({ me }) => (superAdmin(me) ? [q(adminModelsQuery()), q(adminPurposesQuery())] : []),
+    // The providers and their models, the purposes, and Model services: the deployment's extensions and
+    // the marketplaces' entries (the model services not installed yet)
+    queries: ({ me }) =>
+      superAdmin(me)
+        ? [
+            q(adminModelsQuery()),
+            q(adminPurposesQuery()),
+            q(adminExtensionsQuery()),
+            q(marketplaceEntriesQuery("", "")),
+          ]
+        : [],
   },
   {
     pattern: "/admin/orgs",
@@ -1229,6 +1238,12 @@ export const ROUTES: readonly RouteEntry[] = [
     pattern: "/settings/sandbox",
     queries: ({ orgId, me }) =>
       orgId === null || !atLeast(me, "member") ? [] : [q(orgSettingsQuery(orgId))],
+  },
+  {
+    pattern: "/settings/audit",
+    // Org admins (org.update): the newest page of the org's audit log.
+    queries: ({ orgId, me }) =>
+      orgId === null || !atLeast(me, "admin") ? [] : [q(orgAuditQuery(orgId))],
   },
   {
     pattern: "/settings/tokens",
