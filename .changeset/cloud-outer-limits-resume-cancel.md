@@ -16,3 +16,8 @@ Trusted attachment preparation accepts exactly the directory FetchAttachment wri
 root conversation (the shortened `attachmentsDir`), and a managed request refused before it was
 sent (its device connection changed) is recorded as a distinct `not_sent` failure: definite, never
 an unknown outcome, and replayed as the same typed refusal.
+
+The lifecycle reconcile never resumes an instance under an open retirement obligation and visits
+marked devices round-robin; an exact cancel resolves only the refs it stopped (a member added
+meanwhile, or by an older replica, reopens the obligation), a failed pre-resume cancel destroys the
+instance while still suspended, and only limits in force narrow a device's authority.

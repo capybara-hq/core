@@ -180,8 +180,13 @@ Every provider must follow these; the kernel's behaviour below assumes them. How
     B-22: a **suspended** current cloud incarnation whose members are all revoked managed starts is not destroyed (its other
     tasks would be lost): each revoked ref's exact `background.stop` is sent while suspended (the provider persists the
     cancel), the instance is resumed, each stop is confirmed (`stopped` / `already-exited`) and the obligation resolves
-    `exact-cancelled` (migration 0159); a use then goes on with the resumed instance, the worker suspends it again. A member
-    recorded later reopens the obligation. Any failure is noted and falls back to the whole-instance destroy.
+    `exact-cancelled` (migration 0159) and acknowledges exactly the stopped refs, under the obligation's row lock and only
+    while no other member exists; a use then goes on with the resumed instance, the worker suspends it again (a throw
+    after the resume suspends it too). A pre-resume answer other than `cancel-pending` / `stopped` / `already-exited`
+    destroys it while still suspended. A member recorded later (an unacknowledged revoked start or a legacy row) reopens
+    the obligation: in `addMember`, or on the next scan for a member an old replica added (never settled meanwhile). Any
+    failure is noted and falls back to the whole-instance destroy. The lifecycle reconcile (`reconcileLimits`) never
+    touches an instance while the device has an unresolved obligation.
     A cloud incarnation the kernel cannot name (`unknown` provider or generation) resolves only once the device's current
     incarnation is destroyed with confirmation (the gate destroys a live one), the row keeps no `prev_handle`, and the
     obligation was recorded after the freeze. When the current row is not live (destroyed without a record, or `creating` with
@@ -220,6 +225,8 @@ Every provider must follow these; the kernel's behaviour below assumes them. How
     Redis (the lifecycle leases).
     1. Release the boot-reporting device build and kernel (R1, protocol 2, dormant). Stop every old kernel replica before
        the first new one starts: an old replica is not fenced by the freeze and B1 settings writes are not fenced either.
+       Drain the old workers too: an old retirement worker neither reopens an `exact-cancelled` obligation (B-22) nor
+       skips a member added to one after the cancel, so it could acknowledge a revoked start nobody stopped.
     2. `report`. It lists `localWithoutBoot` (local devices with legacy rows whose machine has no recorded boot) and
        `cloudUnknown` (cloud devices whose legacy rows name no incarnation; it reads the task rows and never empties by
        itself: `prevHandle` / `noInstance` devices will answer `recreate_required`, `currentUnconfirmed` ones clear on

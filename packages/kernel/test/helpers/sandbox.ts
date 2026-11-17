@@ -12,6 +12,7 @@ import { KernelDb } from "../../src/infra/database/kernel-db.js";
 import type { TransactionHost } from "../../src/infra/database/transaction-host.js";
 import { LockService } from "../../src/infra/lock/lock.service.js";
 import type { KernelLogger } from "../../src/log.js";
+import type { CloudPermissionSnapshots } from "../../src/sandbox/cloud-permission-snapshot.js";
 import { SandboxLeases } from "../../src/sandbox/leases.js";
 import type { LegacyRetirementStore } from "../../src/sandbox/legacy-retirement.js";
 import type { SandboxOperationAuthority } from "../../src/sandbox/operation-authority.js";
@@ -79,6 +80,8 @@ export interface SandboxServiceDeps {
   background?: Pick<BackgroundTaskStore, "pendingKills" | "clearKill">;
   /** The retirement obligations (8.5; default: the real store over `db`). */
   retirement?: LegacyRetirementStore;
+  /** The cloud snapshot reconcile (B-12; default: every device already reconciled). */
+  snapshots?: Pick<CloudPermissionSnapshots, "reconcileHeld">;
 }
 
 /** A {@link SandboxService} over a test's own database, Redis and provider. */
@@ -127,6 +130,7 @@ export function sandboxServiceFor(d: SandboxServiceDeps): SandboxService {
     {} as SandboxOperationAuthority,
     instanceWritesFor(d.db),
     d.retirement ?? retirementFor(d.db),
+    d.snapshots ?? { reconcileHeld: async () => ({ state: "existing" }) },
   );
 }
 

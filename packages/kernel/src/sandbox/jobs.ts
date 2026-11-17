@@ -7,7 +7,7 @@ import { LockedCron } from "../infra/schedule/locked-cron.decorator.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
 import { MAINTENANCE_QUEUE_NAME } from "../runtime/maintenance-queue.js";
-import { CloudPermissionSnapshots } from "./cloud-permission-snapshot.js";
+import type { CloudPermissionSnapshots } from "./cloud-permission-snapshot.js";
 import { SandboxService } from "./sandbox.service.js";
 
 /** The idle suspension sweep (every minute, once per tick across replicas). */
@@ -158,8 +158,6 @@ export class SandboxSweepJobs {
       SandboxService,
       "suspendIdle" | "destroyInactive" | "reconcileMarked"
     >,
-    @Inject(CloudPermissionSnapshots)
-    private readonly snapshots: Pick<CloudPermissionSnapshots, "reconcileHeld">,
     @Inject(LockService) readonly lockService: LockService,
     @Inject(KERNEL_LOGGER) readonly log: KernelLogger,
   ) {}
@@ -172,7 +170,7 @@ export class SandboxSweepJobs {
 
   @LockedCron("* * * * *", { name: SANDBOX_RECONCILE_JOB })
   async reconcileLimits(): Promise<void> {
-    const n = await this.sandbox.reconcileMarked(this.snapshots);
+    const n = await this.sandbox.reconcileMarked();
     if (n > 0) this.log.info("cloud device limits reconciled", { count: n });
   }
 

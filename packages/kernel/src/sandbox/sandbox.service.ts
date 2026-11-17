@@ -37,10 +37,10 @@ export type { HeldProvider } from "./held-operations.js";
 /**
  * The recorded kind of a definite pre-effect refusal: `not_sent` for a request refused before it
  * was sent (`isDeviceRequestNotSent`; checked before `denied`, which it subclasses), else
- * `denied` or `unsupported`. The relay is loaded at call time: it imports this module.
+ * `denied` or `unsupported`.
  */
-const failureKindOf = async (error: Error): Promise<OperationFailureKind> =>
-  (await import("../local-devices/relay.js")).isDeviceRequestNotSent(error)
+const failureKindOf = (error: Error): OperationFailureKind =>
+  isDeviceRequestNotSent(error)
     ? "not_sent"
     : isSandboxScopeDeniedError(error)
       ? "denied"
@@ -96,9 +96,10 @@ import type { KernelLogger } from "../log.js";
 import { effectiveSandboxLimits } from "../orgs/settings.service.js";
 import { isStorageError } from "../runtime/permission-context-errors.js";
 import { canonicalJson } from "../tools/canonical-json.js";
-import type {
+import { attachmentsDir } from "./attachments-path.js";
+import {
   CloudPermissionSnapshots,
-  CloudSnapshotOutcome,
+  type CloudSnapshotOutcome,
 } from "./cloud-permission-snapshot.js";
 import {
   type SandboxLease,
@@ -131,6 +132,7 @@ import {
   type SandboxProviderEntry,
   SandboxProviders,
 } from "./providers.js";
+import { isDeviceRequestNotSent } from "./request-not-sent.js";
 import { SandboxProviderUnreachableError } from "./unreachable.js";
 import type { SandboxUseContext } from "./use-context.js";
 
@@ -152,6 +154,8 @@ const PATH_LEASE_WAIT_MS = 30_000;
 const SWEEP_OP_TIMEOUT_MS = 120_000;
 /** How long a cloud device's lifecycle reconcile waits before the sweep tries it again (B-12). */
 const RECONCILE_RETRY_SECONDS = 600;
+/** Where the reconcile sweep goes on from (the last device id it visited; B-12). */
+const RECONCILE_CURSOR_KEY = "capk:cloud-reconcile-cursor";
 /** The bound on one cloud `permissionSupport` read under a lifecycle lease (B-15). */
 const PERMISSION_SUPPORT_TIMEOUT_MS = 30_000;
 /** How long the suspension sweep holds the intent on a sandbox past `maxRunningMinutes` (ms). */
@@ -641,7 +645,7 @@ export class SandboxService {
   constructor(
     @Inject(KernelDb) private readonly db: KernelDb,
     /** The record of the instance each holder last used (`capk:sandbox-seen:…`). */
-    @Inject(REDIS) private readonly redis: Pick<Redis, "set" | "getdel">,
+    @Inject(REDIS) private readonly redis: Pick<Redis, "get" | "set" | "getdel">,
     @Inject(SandboxLeases) private readonly leases: SandboxLeases,
     /** The providers (read at every call: providers are ready after the extension load). */
     @Inject(SandboxProviders)
@@ -678,6 +682,9 @@ export class SandboxService {
       | "recordDestruction"
       | "destructionRecorded"
     >,
+    /** The cloud snapshot writer's reconcile, for the lifecycle reconcile of marked devices (B-12). */
+    @Inject(CloudPermissionSnapshots)
+    private readonly snapshots: Pick<CloudPermissionSnapshots, "reconcileHeld">,
   ) {}
 
   /** Poll interval while waiting for a lease (the leases' own). */
@@ -1088,15 +1095,11 @@ export class SandboxService {
     const operation = async () => {
       const authority = await runOutsideTransaction(() => this.authority.resolve(ctx, "stat", sig));
       // attachments: exactly the one directory FetchAttachment writes for the call's root
-      // conversation, derived by the same helper (loaded at call time: the builtin tools module
-      // imports this one), nothing else under the attachments root
+      // conversation, derived by the same helper, nothing else under the attachments root
       const base =
         purpose === "skills"
           ? info.roots.skills
-          : (await import("../tools/builtins/sandbox/common.js")).attachmentsDir(
-              info.roots,
-              authority.rootConversationId,
-            );
+          : attachmentsDir(info.roots, authority.rootConversationId);
       if (
         roots.length === 0 ||
         roots.some(
@@ -1499,7 +1502,7 @@ export class SandboxService {
                 current.state === "admitted" &&
                 (isSandboxScopeDeniedError(error) || isSandboxPermissionUnsupportedError(error))
               ) {
-                const kind = await failureKindOf(error);
+                const kind = failureKindOf(error);
                 await runOutsideTransaction(() =>
                   this.operationIntents.refusePreDispatch(ctx, identity, {
                     kind,
@@ -1566,7 +1569,7 @@ export class SandboxService {
                   { cause: error },
                 );
               }
-              const kind = await failureKindOf(error);
+              const kind = failureKindOf(error);
               await runOutsideTransaction(() =>
                 this.operationIntents.complete(admitted.operation_id, identity.claim.executionId, {
                   $failure: { kind, message: error.message },
@@ -2395,7 +2398,9 @@ export class SandboxService {
    * The lifecycle reconcile of a cloud device carrying `permission_reconcile_required` (B-12),
    * under one try at its exclusive lifecycle lease (`busy`: a holder has it). The snapshot
    * writer's reconcile runs first ({@link CloudPermissionSnapshots.reconcileHeld}: it narrows the
-   * authority to what the instance is known to run, and may clear the marker by itself). When the
+   * authority to what the instance is known to run, and may clear the marker by itself). A device
+   * with an unresolved retirement obligation stops there: its incarnation is the retirement
+   * gate's alone (never resumed here). When the
    * marker stays on a live instance whose provider can `update`, the provider applies the
    * reconcile target, which is never wider than the instance in any dimension, so this only
    * narrows; a suspended instance is resumed for it (its leftover commands killed, nobody else
@@ -2405,7 +2410,6 @@ export class SandboxService {
    */
   async reconcileLimits(
     deviceId: string,
-    snapshots: Pick<CloudPermissionSnapshots, "reconcileHeld">,
     signal: AbortSignal = AbortSignal.timeout(SWEEP_OP_TIMEOUT_MS),
   ): Promise<CloudSnapshotOutcome | "busy"> {
     const lease = await this.leases.tryExclusive(deviceId);
@@ -2425,7 +2429,13 @@ export class SandboxService {
         .executeTakeFirst();
       const fence = row ? { gen: row.generation } : null;
       if (row && fence) await this.fenced(lease, deviceId, fence, {});
-      const before = await runOutsideTransaction(() => snapshots.reconcileHeld(orgId, deviceId));
+      const before = await runOutsideTransaction(() =>
+        this.snapshots.reconcileHeld(orgId, deviceId),
+      );
+      // an incarnation under a retirement obligation is never resumed or updated here: only the
+      // retirement gate may touch it (C1); the marker stays until the gate cleared it
+      if (before.state === "reconcile-required" && (await this.retirement.hasUnresolved(deviceId)))
+        return before;
       const p = row ? this.rowProvider(row) : undefined;
       const update = p?.impl.update?.bind(p.impl);
       if (
@@ -2476,7 +2486,9 @@ export class SandboxService {
         instance_limits: instanceLimitsJson(appliedOf(want)),
       });
       this.log.info("sandbox instance limits reconciled by the provider's update", facts);
-      const after = await runOutsideTransaction(() => snapshots.reconcileHeld(orgId, deviceId));
+      const after = await runOutsideTransaction(() =>
+        this.snapshots.reconcileHeld(orgId, deviceId),
+      );
       // a running instance records its evidence for the new limits now; a suspended one on its
       // next use's resume
       if (!suspended)
@@ -2495,29 +2507,43 @@ export class SandboxService {
 
   /**
    * The worker's sweep of {@link reconcileLimits} (`sandbox-reconcile-limits`): up to `limit`
-   * live cloud devices of the loaded cloud provider carrying the marker on a live instance, each
-   * tried at most once per {@link RECONCILE_RETRY_SECONDS} across replicas (a Redis marker).
+   * live cloud devices of the loaded cloud provider carrying the marker on a live instance, in
+   * id order from a shared keyset cursor that wraps around (no starvation), each tried at most
+   * once per {@link RECONCILE_RETRY_SECONDS} across replicas (a Redis marker).
    * Nothing without a cloud provider that can `update`. Returns how many it reconciled.
    */
-  async reconcileMarked(
-    snapshots: Pick<CloudPermissionSnapshots, "reconcileHeld">,
-    limit = 10,
-  ): Promise<number> {
+  async reconcileMarked(limit = 10): Promise<number> {
     const p = this.providers.cloud();
     if (!p?.impl.update) return 0;
-    const rows = await this.db
-      .selectFrom("devices as d")
-      .innerJoin("device_instances as i", "i.device_id", "d.id")
-      .select("d.id")
-      .where("d.source", "=", "cloud")
-      .where("d.deleted_at", "is", null)
-      .where("d.permission_reconcile_required", "=", true)
-      .where("i.provider", "=", p.plugin)
-      .where("i.handle", "is not", null)
-      .where("i.status", "in", ["running", "suspended"])
-      .orderBy("d.id")
-      .limit(limit)
-      .execute();
+    const page = (after: string, n: number) =>
+      this.db
+        .selectFrom("devices as d")
+        .innerJoin("device_instances as i", "i.device_id", "d.id")
+        .select("d.id")
+        .where("d.source", "=", "cloud")
+        .where("d.deleted_at", "is", null)
+        .where("d.permission_reconcile_required", "=", true)
+        .where("i.provider", "=", p.plugin)
+        .where("i.handle", "is not", null)
+        .where("i.status", "in", ["running", "suspended"])
+        .where(sql<boolean>`d.id COLLATE "C" > ${after}`)
+        .orderBy(sql`d.id COLLATE "C"`)
+        .limit(n)
+        .execute();
+    // a keyset cursor shared by the replicas (the cron runs once per tick): each tick goes on
+    // after the last device the previous one visited and wraps around, so devices that stay
+    // marked never starve the ones after them
+    const after = (await this.redis.get(RECONCILE_CURSOR_KEY).catch(() => null)) ?? "";
+    const rows = await page(after, limit);
+    if (rows.length < limit && after !== "") {
+      const seen = new Set(rows.map((r) => r.id));
+      for (const r of await page("", limit - rows.length))
+        if (!seen.has(r.id) && r.id <= after) rows.push(r);
+    }
+    const last = rows.at(-1)?.id;
+    await this.redis
+      .set(RECONCILE_CURSOR_KEY, last ?? "", "EX", 86_400)
+      .catch((err: unknown) => this.log.warn("cannot record the reconcile cursor", { err }));
     let n = 0;
     for (const { id } of rows) {
       // a retry window shared by the replicas, not a lock: a second try within it waits
@@ -2527,7 +2553,7 @@ export class SandboxService {
         .catch(() => false);
       if (!first) continue;
       try {
-        const r = await this.reconcileLimits(id, snapshots);
+        const r = await this.reconcileLimits(id);
         if (r !== "busy" && r.state === "bound") n++;
       } catch (err) {
         this.log.warn("cannot reconcile a cloud device's limits; will retry", {
@@ -2606,7 +2632,7 @@ export class SandboxService {
     const cancelOnResume = async (
       o: { id: string; provider: string; instanceGeneration: string },
       live: Row & { handle: SandboxHandle },
-    ): Promise<"cancelled" | "skip" | { failed: string }> => {
+    ): Promise<{ cancelled: string[] } | "skip" | { failed: string }> => {
       if (live.status !== "suspended" || !isCloudProvider(o.provider)) return "skip";
       const impl = this.providers.forName(o.provider)?.impl;
       const background = impl?.background;
@@ -2654,11 +2680,21 @@ export class SandboxService {
       try {
         // persisted while suspended: the provider applies a pending cancel before any work of
         // the instance runs again; the answer is confirmed after the resume
-        for (const ref of owed)
-          await background.stop(live.handle, ref, {
+        for (const ref of owed) {
+          const r = await background.stop(live.handle, ref, {
             graceMs: MANAGED_STOP_GRACE_MS,
             signal: bounded(),
           });
+          // anything but a recorded (or already settled) cancel: never resume into the work
+          if (
+            r.outcome !== "cancel-pending" &&
+            r.outcome !== "stopped" &&
+            r.outcome !== "already-exited"
+          )
+            return {
+              failed: `the exact stop of ${ref.operationId} answered ${r.outcome} while suspended`,
+            };
+        }
         if ((await impl.resume(live.handle, bounded())) === "gone")
           return { failed: "the instance is gone at the provider" };
         resumedHere = { impl, handle: live.handle };
@@ -2679,7 +2715,8 @@ export class SandboxService {
         deviceId: id,
         operations: owed.map((r) => r.operationId),
       });
-      return "cancelled";
+      // every member read is covered (an acknowledged one needed no stop)
+      return { cancelled: members.map((m) => m.refId) };
     };
     /**
      * Destroys the live incarnation of `now` whole with its own provider (never resumed or
@@ -2783,125 +2820,138 @@ export class SandboxService {
         .executeTakeFirst();
       return true;
     };
-    for (const o of open) {
-      const gen = o.instanceGeneration;
-      const local = isInternalProvider(o.provider);
-      const current =
-        isLive(now) && now.provider === o.provider && String(now.created_at.getTime()) === gen;
-      if (current && isLive(now)) {
-        if (local) {
-          await this.retirement.quarantine(
-            o.id,
-            o.bootId === null
-              ? "local instance: no boot identity was reported, so no restart can prove its legacy work ended"
-              : "local instance: waiting for a restart of the computer (a later boot identity)",
-          );
-          if (o.bootId === null) unknownBoot = true;
-          pending = true;
-          continue;
-        }
-        const cancel = await cancelOnResume(o, now);
-        if (cancel === "cancelled") {
-          await this.retirement.resolveCancelled(o.id);
-          continue;
-        }
-        if (cancel !== "skip") {
-          this.log.warn("cannot cancel revoked starts exactly; destroying the instance", {
-            deviceId: id,
-            reason: cancel.failed,
-          });
-          await this.retirement.noteFailure(o.id, cancel.failed);
-        }
-        if (await destroyLive(o, now)) await this.retirement.resolveDestroyed(o.id);
-        else {
-          pending = true;
-          failed = true;
-        }
-        continue;
-      }
-      // the existing whole-instance destroy left the row `destroyed` on exactly this incarnation
-      // with nothing kept for a later retry: the provider confirmed it
-      const destroyedHere =
-        now !== undefined &&
-        now.status === "destroyed" &&
-        now.provider === o.provider &&
-        String(now.created_at.getTime()) === gen &&
-        now.prev_handle === null &&
-        isCloudProvider(o.provider);
-      if (destroyedHere || (await this.retirement.destructionRecorded(id, o.provider, gen))) {
-        await this.retirement.resolveDestroyed(o.id);
-        continue;
-      }
-      if (!local && (gen === "unknown" || o.provider === "unknown")) {
-        // R1-I1 (b): a cloud incarnation the kernel cannot name. Every incarnation the device had
-        // stopped being current through a kernel destroy, a provider `gone` or a kept
-        // `prev_handle`; so once the device's current incarnation is destroyed with
-        // confirmation, nothing earlier is kept (`prev_handle`) and the obligation was recorded
-        // under the freeze (no dispatch after it), no instance of the device can run legacy work.
-        // This rests on sandbox@2 same-name replacement: every rebuild on the same provider goes
-        // through `create`, which first removes the old `cap-device-<id>` instance (so a `gone`
-        // answer, E2B's token-failure `gone` included, and `applyLimits`' swallowed destroy
-        // failure leave nothing behind), and E2B's incarnations are one sandbox (destroying the
-        // current one ends the earlier processes). A provider or kernel path that rebuilds
-        // without same-name replacement breaks this barrier.
-        const frozenAt = await this.retirement.frozenAt();
-        const reason =
-          frozenAt === null || o.createdAt < frozenAt
-            ? "an unknown cloud incarnation recorded before the freeze"
-            : now === undefined || !now.had_instance
-              ? // a row (re)inserted by this acquisition knows nothing of the earlier instances
-                "an unknown cloud incarnation and no instance record to destroy"
-              : now.prev_handle !== null
-                ? "an unknown cloud incarnation while an earlier provider's instance may still exist"
-                : null;
-        if (reason === null && now !== undefined) {
-          if (isLive(now)) {
-            if (await destroyLive(o, now)) await this.retirement.resolveDestroyed(o.id);
-            else {
-              pending = true;
-              failed = true;
-            }
+    try {
+      for (const o of open) {
+        const gen = o.instanceGeneration;
+        const local = isInternalProvider(o.provider);
+        const current =
+          isLive(now) && now.provider === o.provider && String(now.created_at.getTime()) === gen;
+        if (current && isLive(now)) {
+          if (local) {
+            await this.retirement.quarantine(
+              o.id,
+              o.bootId === null
+                ? "local instance: no boot identity was reported, so no restart can prove its legacy work ended"
+                : "local instance: waiting for a restart of the computer (a later boot identity)",
+            );
+            if (o.bootId === null) unknownBoot = true;
+            pending = true;
             continue;
           }
-          if (
-            now.status === "destroyed" &&
-            now.provider !== null &&
-            (await this.retirement.destructionRecorded(
-              id,
-              now.provider,
-              String(now.created_at.getTime()),
-            ))
-          ) {
-            await this.retirement.resolveDestroyed(o.id);
-            continue;
+          let cancel = await cancelOnResume(o, now);
+          if (cancel !== "skip" && "cancelled" in cancel) {
+            // resolved only while no member outside the stopped refs exists (a concurrent scan's)
+            if (await this.retirement.resolveCancelled(o.id, cancel.cancelled)) continue;
+            cancel = { failed: "a revoked start was recorded while the cancel ran" };
           }
-          // not live and nothing recorded (R2-I1): confirm by name with the row's provider
-          if (await destroyNamed(o, now)) await this.retirement.resolveDestroyed(o.id);
+          if (cancel !== "skip") {
+            this.log.warn("cannot cancel revoked starts exactly; destroying the instance", {
+              deviceId: id,
+              reason: cancel.failed,
+            });
+            await this.retirement.noteFailure(o.id, cancel.failed);
+          }
+          if (await destroyLive(o, now)) await this.retirement.resolveDestroyed(o.id);
           else {
             pending = true;
             failed = true;
           }
           continue;
         }
+        // the existing whole-instance destroy left the row `destroyed` on exactly this incarnation
+        // with nothing kept for a later retry: the provider confirmed it
+        const destroyedHere =
+          now !== undefined &&
+          now.status === "destroyed" &&
+          now.provider === o.provider &&
+          String(now.created_at.getTime()) === gen &&
+          now.prev_handle === null &&
+          isCloudProvider(o.provider);
+        if (destroyedHere || (await this.retirement.destructionRecorded(id, o.provider, gen))) {
+          await this.retirement.resolveDestroyed(o.id);
+          continue;
+        }
+        if (!local && (gen === "unknown" || o.provider === "unknown")) {
+          // R1-I1 (b): a cloud incarnation the kernel cannot name. Every incarnation the device had
+          // stopped being current through a kernel destroy, a provider `gone` or a kept
+          // `prev_handle`; so once the device's current incarnation is destroyed with
+          // confirmation, nothing earlier is kept (`prev_handle`) and the obligation was recorded
+          // under the freeze (no dispatch after it), no instance of the device can run legacy work.
+          // This rests on sandbox@2 same-name replacement: every rebuild on the same provider goes
+          // through `create`, which first removes the old `cap-device-<id>` instance (so a `gone`
+          // answer, E2B's token-failure `gone` included, and `applyLimits`' swallowed destroy
+          // failure leave nothing behind), and E2B's incarnations are one sandbox (destroying the
+          // current one ends the earlier processes). A provider or kernel path that rebuilds
+          // without same-name replacement breaks this barrier.
+          const frozenAt = await this.retirement.frozenAt();
+          const reason =
+            frozenAt === null || o.createdAt < frozenAt
+              ? "an unknown cloud incarnation recorded before the freeze"
+              : now === undefined || !now.had_instance
+                ? // a row (re)inserted by this acquisition knows nothing of the earlier instances
+                  "an unknown cloud incarnation and no instance record to destroy"
+                : now.prev_handle !== null
+                  ? "an unknown cloud incarnation while an earlier provider's instance may still exist"
+                  : null;
+          if (reason === null && now !== undefined) {
+            if (isLive(now)) {
+              if (await destroyLive(o, now)) await this.retirement.resolveDestroyed(o.id);
+              else {
+                pending = true;
+                failed = true;
+              }
+              continue;
+            }
+            if (
+              now.status === "destroyed" &&
+              now.provider !== null &&
+              (await this.retirement.destructionRecorded(
+                id,
+                now.provider,
+                String(now.created_at.getTime()),
+              ))
+            ) {
+              await this.retirement.resolveDestroyed(o.id);
+              continue;
+            }
+            // not live and nothing recorded (R2-I1): confirm by name with the row's provider
+            if (await destroyNamed(o, now)) await this.retirement.resolveDestroyed(o.id);
+            else {
+              pending = true;
+              failed = true;
+            }
+            continue;
+          }
+          await this.retirement.quarantine(
+            o.id,
+            reason ??
+              "an unknown cloud incarnation and no confirmed destruction of the current one",
+          );
+          cloudPermanent = true;
+          pending = true;
+          continue;
+        }
         await this.retirement.quarantine(
           o.id,
-          reason ?? "an unknown cloud incarnation and no confirmed destruction of the current one",
+          local
+            ? o.bootId === null
+              ? "local instance: no boot identity was reported, so no restart can prove its legacy work ended"
+              : "local instance: waiting for a restart of the computer (a later boot identity)"
+            : "the old instance was replaced without a recorded confirmed destruction",
         );
-        cloudPermanent = true;
+        if (!local) cloudPermanent = true;
+        else if (o.bootId === null) unknownBoot = true;
         pending = true;
-        continue;
       }
-      await this.retirement.quarantine(
-        o.id,
-        local
-          ? o.bootId === null
-            ? "local instance: no boot identity was reported, so no restart can prove its legacy work ended"
-            : "local instance: waiting for a restart of the computer (a later boot identity)"
-          : "the old instance was replaced without a recorded confirmed destruction",
-      );
-      if (!local) cloudPermanent = true;
-      else if (o.bootId === null) unknownBoot = true;
-      pending = true;
+    } catch (err) {
+      // a throw after a resume (a lost lease, an abort, a failed write): the row still says
+      // suspended, so the instance is suspended again (best effort) before the error goes on
+      const left = resumedHere as { impl: SandboxProvider; handle: SandboxHandle } | null;
+      if (left !== null)
+        await this.bestEffort(id, "suspend the instance again after a failed retirement", (s) =>
+          left.impl.suspend(left.handle, s),
+        );
+      throw err;
     }
     // a use runs on the instance this gate resumed; anything else leaves it as its row says
     const still = resumedHere as { impl: SandboxProvider; handle: SandboxHandle } | null;

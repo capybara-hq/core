@@ -37,7 +37,6 @@ import {
   ExecutionRevoked,
   RunExecution,
 } from "../../src/runtime/run-execution.js";
-import { CloudPermissionSnapshots } from "../../src/sandbox/cloud-permission-snapshot.js";
 import {
   MANAGED_DEVICE_CONTEXT_FAILED_TEXT,
   MANAGED_DEVICE_CONTEXT_STALE_TEXT,
@@ -1042,13 +1041,7 @@ describe("cloud installed evidence in the real lifecycle", () => {
       .map((e) => ({ mode: e.limits.mode, network: e.limits.network }));
   };
   const reconcileMarked = (f: Fixture) =>
-    k.app
-      .get(SandboxService)
-      .reconcileLimits(
-        f.deviceId,
-        k.app.get(CloudPermissionSnapshots),
-        AbortSignal.timeout(30_000),
-      );
+    k.app.get(SandboxService).reconcileLimits(f.deviceId, AbortSignal.timeout(30_000));
   const marked = async (f: Fixture) =>
     (
       await f.db

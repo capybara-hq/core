@@ -169,7 +169,8 @@ Each W5 task is reviewed alone. Exports become obsolete only once a grep finds n
 ## 4. Cutover runbook (production order)
 
 1. Release R1 (protocol 2, dormant). Operators upgrade the kernel and the devices. Stop every old kernel replica before
-   the first new one starts, because B1 settings writes are not fenced.
+   the first new one starts, because B1 settings writes are not fenced. Drain the old workers as well: an old retirement
+   worker does not reopen an `exact-cancelled` obligation (B-22) and could acknowledge a revoked start added after it.
 2. `capybara permissions cutover report`: wait until `localWithoutBoot` and `cloudUnknown` are empty, or accept that
    those devices will answer `replace_required` / `recreate_required`.
 3. `capybara config migrate-permissions` for file and Nacos, then rename the env variables. Start the new config with

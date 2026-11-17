@@ -4,6 +4,7 @@ import { SandboxLeases } from "./leases.js";
 import { LegacyRetirementModule } from "./legacy-retirement.module.js";
 import { PermissionAuthorityModule } from "./permission-authority.module.js";
 import { PermissionFactsModule } from "./permission-facts.module.js";
+import { SandboxProviderRegistryModule } from "./providers.module.js";
 
 /**
  * The cloud snapshot writer (permission runtime cutover B1) and its driver (B-10), with the
@@ -12,7 +13,12 @@ import { PermissionFactsModule } from "./permission-facts.module.js";
  * (`capybara permissions cutover snapshot`), which has Redis but no extension host.
  */
 @Module({
-  imports: [PermissionAuthorityModule, PermissionFactsModule, LegacyRetirementModule],
+  imports: [
+    PermissionAuthorityModule,
+    PermissionFactsModule,
+    LegacyRetirementModule,
+    SandboxProviderRegistryModule,
+  ],
   providers: [SandboxLeases, CloudPermissionSnapshots],
   exports: [SandboxLeases, CloudPermissionSnapshots],
 })

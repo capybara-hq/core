@@ -389,6 +389,14 @@ export const KC_EXCEPTIONS: readonly KcException[] = [
   },
   {
     rule: "kc-cache",
+    path: "packages/kernel/src/sandbox/sandbox.service.ts",
+    within: "reconcileMarked",
+    reason:
+      "the reconcile sweep's keyset cursor (the last device id visited), read and moved once " +
+      "per tick of a once-per-tick cron; sweep progress, not a read-through cache",
+  },
+  {
+    rule: "kc-cache",
     path: "packages/kernel/src/runtime/media-cache.ts",
     reason:
       "a per-run in-process LRU of immutable attachment bytes (keyed by etag), dropped with the " +

@@ -27,6 +27,7 @@ import {
 import { PermissionAuthorityEpochStore } from "./permission-authority-epochs.js";
 import { type AuthoritySubject, PermissionAuthorityLock } from "./permission-authority-lock.js";
 import { permissionScopeHash } from "./permission-facts.js";
+import { DeviceRequestNotSentError } from "./request-not-sent.js";
 import type { SandboxUseContext } from "./use-context.js";
 
 export class PermissionAdmissionStale extends Error {}
@@ -95,9 +96,7 @@ export function operationResult(value: unknown): unknown {
   if (value && typeof value === "object" && "$failure" in value) {
     const f = (value as { $failure: { kind: string; message: string } }).$failure;
     if (f.kind === "denied") throw new SandboxScopeDeniedError(f.message);
-    // the relay's `DeviceRequestNotSentError` is a tagged scope denial (`isDeviceRequestNotSent`)
-    if (f.kind === "not_sent")
-      throw Object.assign(new SandboxScopeDeniedError(f.message), { notSent: true as const });
+    if (f.kind === "not_sent") throw new DeviceRequestNotSentError(f.message);
     if (f.kind === "unsupported") throw new SandboxPermissionUnsupportedError(f.message);
   }
   return hydrateOperationBytes(value);
