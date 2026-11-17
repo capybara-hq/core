@@ -83,7 +83,7 @@ export class PlatformImportUpdate {
       const imported = await this.pluginImport.confirm(
         actor,
         stagingId,
-        { reviewHash: input.reviewHash, deploy: false },
+        { reviewHash: input.reviewHash, deploy: false, updateFollows: true },
         opts,
       );
       try {

@@ -1275,6 +1275,14 @@ export class PluginImport {
        * `approval`.
        */
       deploy?: boolean;
+      /**
+       * A platform update of the item to this version follows the confirm (`PlatformImportUpdate`,
+       * an org's own version applied at once by `OrgPluginUploads`): the update owes the item's
+       * scope sync with its own commit, so this commit owes none. A sync owed here would run while
+       * the update moves the extension, converge the orgs to the old version, and turn the
+       * update's reviewed diff stale before its commit.
+       */
+      updateFollows?: boolean;
     },
     opts: ActorOpts & { owner?: ImportOwner } = {},
   ): Promise<PluginConfirmResult> {
@@ -1345,6 +1353,7 @@ export class PluginImport {
       stored,
       opts,
       prepared,
+      input.updateFollows === true,
     );
 
     const { now } = committed;
@@ -1460,6 +1469,8 @@ export class PluginImport {
     stored: ExtensionPackage | undefined,
     opts: ActorOpts,
     prepared: PreparedSync | undefined,
+    /** A platform update follows and owes the scope sync (see `confirm`'s `updateFollows`). */
+    updateFollows: boolean,
   ): Promise<{
     itemId: string;
     /** This confirm created the catalog item (a first import of the name). */
@@ -1722,9 +1733,10 @@ export class PluginImport {
     }
     // The commit owes the item's scope sync when its scope turns it on by itself (`all` or
     // `named`; an org's own item always), unless an extension is to be installed or upgraded: then
-    // its deploy owes it (`oweDeployedExtensionSync`), so no sync runs before it is enabled
+    // its deploy owes it (`oweDeployedExtensionSync`), so no sync runs before it is enabled; or a
+    // platform update to this version follows: its commit owes it
     const deploys = now !== undefined && now.action !== "keep";
-    if (!pending && !deploys) {
+    if (!pending && !deploys && !updateFollows) {
       const item = await t
         .selectFrom("catalog_items")
         .select("scope")

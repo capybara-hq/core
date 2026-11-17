@@ -128,6 +128,8 @@ export class OrgPluginUploads {
       {
         reviewHash: st.reviewHash,
         ...(input.shareable !== undefined && { shareable: input.shareable }),
+        // the update below owes the scope sync with its commit
+        updateFollows: true,
       },
       { ...opts, owner: { orgId } },
     );
