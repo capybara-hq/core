@@ -89,6 +89,24 @@ describe("Shares pages", () => {
     expect(current?.textContent).toBe(en.connections.nav.myShares);
   });
 
+  it("a guest has My shares too (guests hold agents.use): the nav item, prefetched on load", async () => {
+    resetNavigation("/account/shares");
+    stubApi({
+      "GET /api/v1/orgs/o1/shares?scope=mine": () => json(200, { shares: [share("g1")] }),
+    });
+    const guest: Me = {
+      ...ME,
+      memberships: [{ orgId: "o1", slug: "acme", name: "Acme", role: "guest" }],
+    };
+    const { calls, container } = await renderRouteWithCache("/account/shares", lastStubRoutes(), {
+      me: guest,
+    });
+    expect(calls.some((c) => c.url === "/api/v1/orgs/o1/shares?scope=mine")).toBe(true);
+    expect(await screen.findByText("report-g1.html")).toBeTruthy();
+    const current = container.querySelector('.cb-settings-nav [aria-current="page"]');
+    expect(current?.textContent).toBe(en.connections.nav.myShares);
+  });
+
   it("a member does not get the org Shares nav item or the page", async () => {
     stubApi({
       "GET /api/v1/orgs/o1/settings": () => json(200, { settings: { toolSearch: "on" } }),

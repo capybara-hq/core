@@ -252,9 +252,10 @@ export const ROUTES: readonly RouteEntry[] = [
   },
   {
     pattern: "/account/shares",
-    // Members up: the person's own shares.
+    // Every role, guests too (sharing needs `agents.use`, which guests hold): the person's own
+    // shares; the nav offers the page to everyone.
     queries: ({ orgId, me }) =>
-      orgId === null || !atLeast(me, "member") ? [] : [q(orgSharesQuery(orgId, "mine"))],
+      orgId === null || !atLeast(me, "guest") ? [] : [q(orgSharesQuery(orgId, "mine"))],
   },
   {
     pattern: "/account/preferences",
