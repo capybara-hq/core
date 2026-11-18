@@ -1671,6 +1671,9 @@ export class SandboxService {
             await runOutsideTransaction(() =>
               this.operationIntents.unknown(admitted.operation_id, admitted.execution_id),
             );
+            // The machine's files are gone (R24): the operation stays unknown, and the caller still
+            // records the files lost so later calls fail without reaching the machine.
+            if (isFileSystemGoneError(error)) throw error;
             // A transport/gone error after durable dispatch cannot justify a new identity retry.
             throw new SandboxOperationOutcomeUnknownError(
               "The operation outcome must be reconciled with its recorded identity",

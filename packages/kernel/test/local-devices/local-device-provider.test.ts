@@ -820,3 +820,48 @@ it.each(["exec", "backgroundStart"] as const)(
     expect(sent).toHaveLength(2);
   },
 );
+
+it("staged exec re-layers the machine's refused hosts against the limits it carried (spec §4.1)", async () => {
+  const staged = provider.stagedOperations({
+    call: async () => ({
+      ...EXEC_RESULT,
+      network: {
+        blocked: [
+          // the org allows it: the machine's word stands
+          { host: "example.com", port: 443, layer: "device" },
+          // the machine calls it its own; the org does not allow it: only an admin can lift it
+          { host: "evil.example.net", port: 443, layer: "device" },
+          { host: "other.org", port: 80, layer: "org" },
+        ],
+      },
+    }),
+    permissionSupport: async () => ({
+      version: 1,
+      restricted: null,
+      fullAccess: false,
+      background: false,
+    }),
+  });
+  const signal = new AbortController().signal;
+  const scope = {
+    operationId: "operation",
+    admitBeforeMs: Date.now() + 30000,
+    deviceId: "device",
+    rootConversationId: "root",
+    profileRevision: 1,
+    ceilingRevision: "c",
+    profile: "approve-for-me" as const,
+    actor: { accountId: "owner", conversationId: "root", runId: "run" },
+    tag: "operation",
+    filesystem: { kind: "scoped" as const, readRoots: ["/work"], writeRoots: ["/work"] },
+    network: { kind: "none" as const },
+  };
+  admittedGrants = undefined;
+  const operation = await staged.operation({ id: "device" }, scope, signal);
+  const r = await operation.exec({ command: "curl", timeoutMs: 100, maxOutputBytes: 100, signal });
+  expect(r.network?.blocked).toEqual([
+    { host: "example.com", port: 443, layer: "device" },
+    { host: "evil.example.net", port: 443, layer: "org" },
+    { host: "other.org", port: 80, layer: "org" },
+  ]);
+});
