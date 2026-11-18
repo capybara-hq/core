@@ -102,6 +102,7 @@ Routes that check credentials inject `CredentialThrottler` (`src/infra/throttler
 
 - Login `login`, `login-ip`, `login-account`: (login, IP) 10 attempts, IP 50, a single login across IPs 100. An attacker exhausting a login name from their own IP does not affect the real user logging in from another IP.
 - Change password `change-password` (10 per account), `change-password-ip` (50, apart from the login IP quota); setup token `setup-token` (100 for the whole deployment), `setup-ip` (10); accept invitation `invitation` (10 per token), `invitation-ip` (20).
+- Share links `share-open` (file sharing spec §3; its own 600 s window): 30 per client IP, reserved before the lookup on every `/api/v1/s/:code` route (metadata, `content`, `text`, `inline`, `html`, `embed-token`, `previews`); a live share refunds the attempt, so only unknown, revoked, expired or refused codes count and codes cannot be enumerated. Over the limit → 429 `rate_limited` with `Retry-After` (the code `NAMED_THROTTLERS` gives it; not `auth.rate_limited`). The key is the client IP the kernel derives through `http.trustProxy`: behind an untrusted proxy every visitor shares one counter (deploy guide, File sharing).
 
 A new public entry point that checks credentials / tokens adds named throttlers (one group, one window) and calls `CredentialThrottler` the same way; plain per-route limits use `@Throttled(...)`.
 

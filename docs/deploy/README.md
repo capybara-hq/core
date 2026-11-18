@@ -664,6 +664,63 @@ worker crashes after Slack accepted an approval or question card but before the 
 the retry can post the card a second time. This is rare, and both copies act on the same request.
 Lark and the test fake deliver exactly once.
 
+## File sharing and rendered HTML
+
+Members can share one conversation file through a link `https://<CAPYBARA_PUBLIC_URL host>/s/<code>`,
+and HTML files render in full (scripts, CDN libraries) in the conversation's right panel and on the
+share page. See [the conversation guide](../guide/conversation-ui.md#sharing-a-file) for what people
+see.
+
+- **External links are off until two people turn them on.** The super admin allows them in the
+  admin console (部署设置 / "Deployment settings" › 对外分享 / "External sharing"), then an org admin
+  turns them on in the org's settings. Internal links (signed-in members of the org) need neither.
+  Turning the platform switch off stops every external link of every org at once; links that have
+  not expired work again when it is turned back on.
+- **Config:** `sharing.external` (`CAPYBARA_SHARING__EXTERNAL`, `allow` | `deny`, default `deny`) and
+  `sharing.maxExpiryDays` (`CAPYBARA_SHARING__MAX_EXPIRY_DAYS`, 1 to 365, default 30: the longest
+  expiry a link may get; external links always expire). Set in the environment, file or Nacos, a
+  field is read-only in the console; otherwise the super admin edits it there (stored in
+  PostgreSQL). See [docs/config.md](../config.md).
+- **CDN allowlist** (`htmlRenderCdnAllowlist`, admin console only): the `https://` origins (scheme,
+  host, optional port; no paths or wildcards) rendered HTML may load scripts, styles, fonts and
+  images from. Default `https://cdnjs.cloudflare.com`, `https://cdn.jsdelivr.net`,
+  `https://unpkg.com`, `https://fonts.googleapis.com`, `https://fonts.gstatic.com`. A change applies
+  to the next document load. Remove an origin you don't want browsers to contact; an air-gapped
+  deployment can host a mirror and list only that.
+- **Widening is a person's act.** An API token or the Platform tool can only turn the switches off,
+  lower the expiry maximum and remove CDN origins; allowing external sharing, raising the maximum
+  and adding an origin need a person in the web console.
+- **No presigned URL serves shared or rendered content.** The kernel streams the snapshot and the
+  HTML document itself, with a sandbox content security policy; nothing extra to configure in
+  object storage. Snapshots live under `kernel/<orgId>/shares/` in the bucket: a revoked link's
+  snapshot is deleted right away (through the outbox), an expired one's by the daily share sweep on
+  the `worker` role once it has been expired for 7 days.
+- **The `share-open` rate limit keys on the client address.** Failed lookups of `/api/v1/s/<code>`
+  count (30 per address per 10 minutes) so codes cannot be enumerated. The address is the one the
+  kernel derives through `http.trustProxy` (and, in front of `web`, `CAPYBARA_WEB_TRUST_PROXY`):
+  behind a proxy that isn't trusted, every visitor has the proxy's address and they all share one
+  limit, so a few bad links can lock everyone out of share links for 10 minutes. Configure the
+  trusted proxies as in [HTTPS, the public URL and cookies](#https-the-public-url-and-cookies).
+
+Residual risks the design accepts (spec `docs/superpowers/specs/2026-11-18-file-sharing-design.md`,
+"Isolation without a second origin"):
+
+- Shared and rendered HTML is served under the app's own domain, in an opaque sandboxed origin: it
+  cannot read the app's cookies or storage, call `/api` with the session, script the page around it
+  or navigate the app's window, but a hostile page can still look like a sign-in page on your domain
+  (phishing look-alike).
+- A script may encode data into the URL of a resource it loads from an allowlisted CDN; the CDN
+  operator sees it. Keep the allowlist short.
+- The document is served with `referrer-policy: no-referrer`, but an HTML file can override that for
+  its own requests with `<meta name="referrer">`, so an allowlisted CDN may see the document URL. That
+  URL holds a short-lived document token (5 minutes, good only for loading that one document), not a
+  session or the share code.
+- A share-scoped embed token (an extension previewer on a share page) lives up to 5 minutes and
+  names no viewer: after an org admin disables that previewer, or after a viewer of an internal
+  link leaves the org, a token already issued keeps working for up to that long. Revoking the link
+  stops it at once (the share is checked on every use).
+- Guests of an org count as its members for internal links: a guest who has the link can open it.
+
 ## Connected devices
 
 People can connect their own laptop or server as a local device with `@capybara-hq/device`
