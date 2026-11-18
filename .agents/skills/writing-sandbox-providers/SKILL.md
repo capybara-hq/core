@@ -280,7 +280,7 @@ Every provider must follow these; the kernel's behaviour below assumes them. How
   mechanism implements it: `auto` runs commands with the environment's own capability (local: the
   owner's machine; cloud: the container is the boundary), `sandbox` adds the OS sandbox on a local
   device and the allowlist network on a cloud one. The kernel computes one effective mode per use,
-  `effectiveDevicePolicy`, from the platform's `devices.autoMode`, the org's `autoMode` and, on a
+  `effectiveDevicePolicy`, from the platform's `devices.fullAccess`, the org's `fullAccess` and, on a
   local device, the machine's own reported mode (`packages/kernel/src/sandbox/modes.ts`, read live
   in the caller's transaction). Only the machine turns a local device's auto on; the platform, the
   org and the web may narrow to `sandbox`, and a cloud device's owner may clear that narrowing on
@@ -525,6 +525,10 @@ reaches a kernel still on protocol 2 gets the same 426 from that kernel, so upgr
   unavailable.
 - **E2B is Full access only.** `sandbox-e2b` reports no restricted support, so an E2B device runs only
   conversations on Full access; restricted profiles read `unsupported` there.
+- **Version managers are readable under `workspace` reach too.** A restricted exec on a macOS or Linux
+  host reads the version manager directories of the device user's home (`TOOL_HOME_DIRS`) and asdf's
+  global `~/.tool-versions` read only (`restrictedToolHomes`, never a path at, under or holding an
+  owner-denied one), even when the owner limited restricted project reach to the workspace.
 - **`DockerContainer.ready` is not reset after a `docker rm` or a daemon restart.** The Docker provider keeps
   its readiness flag, so operations on that container fail closed until the provider (the kernel process)
   restarts.

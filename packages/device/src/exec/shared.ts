@@ -30,6 +30,15 @@ export const TOOL_HOME_DIRS: readonly (readonly [string, string])[] = [
   ["RUSTUP_HOME", ".rustup"],
 ];
 
+/**
+ * Single files in the home that hold a version manager's global pins, granted read only next to
+ * {@link TOOL_HOME_DIRS}: asdf's global `.tool-versions` (mise reads it too). The other managers
+ * keep their global version inside their data directory (pyenv and rbenv `version`, nvm
+ * `alias/default`, rustup `settings.toml`, mise `config.toml`); a per-project file such as
+ * `.nvmrc` is not global. Never a dotfile that could hold a secret.
+ */
+export const TOOL_HOME_FILES: readonly string[] = [".tool-versions"];
+
 function isDir(path: string): boolean {
   try {
     return statSync(path).isDirectory();
@@ -73,40 +82,48 @@ export function toolHomeEnv(
 
 /**
  * What a restricted exec on the host gets for its version managers: the {@link toolHomeEnv}
- * variables of the device process (its real `home` and its own environment `env`) and, as
- * read-only roots, the canonical directories they name. A directory is left out of the roots when
- * it does not exist, is `/`, lies at or under an owner-denied path, or contains one (Landlock
- * cannot hide a denied path inside a granted root). The roots are never made writable. A command
- * in the device's container uses none of this: its home is the image's.
+ * variables of the device process (its real `home` and its own environment `env`), the canonical
+ * directories they name as read-only roots, and the global pin files ({@link TOOL_HOME_FILES})
+ * that exist as regular files, canonical, as read-only files. A directory is left out when it does
+ * not exist, is `/`, lies at or under an owner-denied path, or contains one (Landlock cannot hide
+ * a denied path inside a granted root); a file is left out when it, or the target of a link it
+ * is, lies at or under one. Nothing here is ever made writable. A command in the device's
+ * container uses none of this: its home is the image's.
  */
 export function restrictedToolHomes(
   home: string,
   env: Record<string, string | undefined>,
   deniedReadRoots: readonly string[],
-): { env: Record<string, string>; readRoots: string[] } {
+): { env: Record<string, string>; readRoots: string[]; readFiles: string[] } {
   const vars = toolHomeEnv(home, env);
   const inside = (path: string, root: string) =>
     root === "/" || path === root || path.startsWith(`${root}/`);
+  const denied = (paths: string[], contains: boolean) =>
+    paths.some((p) => deniedReadRoots.some((d) => inside(p, d) || (contains && inside(d, p))));
+  const canonical = (path: string, kind: "dir" | "file"): string | undefined => {
+    try {
+      const real = realpathSync(path);
+      const info = statSync(real);
+      return (kind === "dir" ? info.isDirectory() : info.isFile()) ? real : undefined;
+    } catch {
+      return undefined;
+    }
+  };
   const readRoots = new Set<string>();
   for (const dir of Object.values(vars)) {
     const path = normalize(dir).replace(/(.)\/+$/, "$1");
-    let real: string;
-    try {
-      real = realpathSync(path);
-      if (!statSync(real).isDirectory()) continue;
-    } catch {
-      continue;
-    }
-    if (real === "/") continue;
-    if (
-      [path, real].some((p) =>
-        deniedReadRoots.some((denied) => inside(p, denied) || inside(denied, p)),
-      )
-    )
-      continue;
+    const real = canonical(path, "dir");
+    if (real === undefined || real === "/" || denied([path, real], true)) continue;
     readRoots.add(real);
   }
-  return { env: vars, readRoots: [...readRoots] };
+  const readFiles = new Set<string>();
+  for (const rel of TOOL_HOME_FILES) {
+    const path = join(home, rel);
+    const real = canonical(path, "file");
+    if (real === undefined || denied([path, real], false)) continue;
+    readFiles.add(real);
+  }
+  return { env: vars, readRoots: [...readRoots], readFiles: [...readFiles] };
 }
 
 /**

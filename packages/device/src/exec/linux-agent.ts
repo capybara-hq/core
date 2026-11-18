@@ -67,6 +67,9 @@ NR_PIDFD_SEND_SIGNAL = 424
 PROXY_KEYS = ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy", "ALL_PROXY", "all_proxy",
               "NO_PROXY", "no_proxy")
 LAUNCHER_ENV = {"PATH": "/usr/local/bin:/usr/bin:/bin", "LANG": "C.UTF-8"}
+# The SDK launcher's own default read-only system roots (linux-sandbox.py DEFAULT_SYSTEM_ROOTS,
+# kept equal by a test); a request's single read files are appended to them.
+LAUNCHER_SYSTEM_ROOTS = ("/usr", "/bin", "/sbin", "/lib", "/lib64", "/etc", "/proc")
 libc = ctypes.CDLL(None, use_errno=True)
 libc.syscall.restype = ctypes.c_long
 out_lock = threading.Lock()
@@ -270,6 +273,30 @@ def establish(path):
         os.close(fd)
         raise Refused("SCOPE_DENIED", "A write root changed while it was established")
     return {"path": path, "fd": fd, "dev": info.st_dev, "ino": info.st_ino}
+
+
+def read_files(request):
+    """The request's single read-only files (a global version pin): each canonical, absolute and,
+    opened without following a link, a regular file at exactly its path. A missing one grants
+    nothing; anything else is refused."""
+    files = request.get("readFiles", [])
+    if not isinstance(files, list):
+        raise Refused("INVALID_REQUEST", "Supply read files as a list")
+    out = []
+    for path in files:
+        if not isinstance(path, str) or not path.startswith("/") or os.path.normpath(path) != path:
+            raise Refused("SCOPE_DENIED", "Supply canonical absolute read files")
+        try:
+            fd = os.open(path, os.O_PATH | os.O_NOFOLLOW | os.O_CLOEXEC)
+        except FileNotFoundError:
+            continue
+        try:
+            if not stat.S_ISREG(os.fstat(fd).st_mode) or not canonical_fd(fd, path):
+                raise Refused("SCOPE_DENIED", "A read file is not a regular file at its path")
+        finally:
+            os.close(fd)
+        out.append(path)
+    return out
 
 
 def within(root, path):
@@ -629,10 +656,13 @@ def run_sealed(request, control, runtime):
             launcher_network = {"kind": "endpoints",
                                 "endpoints": [{"address": "127.0.0.1", "port": forwarder.port}]}
         report_r, report_w = os.pipe()
+        files = read_files(request)
         body = {"mode": "exec", "roots": {"read": read, "write": write},
                 "network": launcher_network, "reportFd": report_w, "env": env,
                 "cwd": request["cwd"], "argv": ["/bin/bash", "-c", request["command"]],
                 "timeoutMs": request["timeoutMs"], "nativeFd": runtime["native-files.py"]}
+        if files:
+            body["systemRoots"] = list(LAUNCHER_SYSTEM_ROOTS) + files
         if control.cancel is not None:
             os.close(report_r)
             os.close(report_w)

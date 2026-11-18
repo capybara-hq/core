@@ -67,6 +67,12 @@ interface Common {
   }) => void;
   onControl?: (event: "cancelled" | "process-exit") => void;
   onRuntimeReady?: (info: { pid: number; proxyUrl: string }) => Promise<void>;
+  /**
+   * macOS worker only, a test seam (trusted construction): the home and environment whose
+   * version managers a restricted exec reads (default: this process's own). The Linux worker
+   * takes them from its options.
+   */
+  toolHome?: { home: string; env: Record<string, string | undefined> };
 }
 export type MacWorkerRequest = Common &
   (
@@ -429,7 +435,11 @@ export async function startMacOperationWorker(
       // grants their directories read only. Full access inherits this process's environment.
       const toolHomes =
         request.kind === "exec" && !request.grant.full
-          ? restrictedToolHomes(homedir(), process.env, request.grant.deniedReadRoots)
+          ? restrictedToolHomes(
+              request.toolHome?.home ?? homedir(),
+              request.toolHome?.env ?? process.env,
+              request.grant.deniedReadRoots,
+            )
           : undefined;
       let wrap = async (script: string) => script;
       {
@@ -454,6 +464,7 @@ export async function startMacOperationWorker(
           ...(javaAgent ? [{ path: javaAgent, literal: true }] : []),
           ...runtimeRoots,
           ...(toolHomes?.readRoots ?? []),
+          ...(toolHomes?.readFiles ?? []).map((path) => ({ path, literal: true })),
           ...ancestors([
             ...runtimeRoots,
             ...(helper ? [helper] : []),

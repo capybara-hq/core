@@ -155,6 +155,8 @@ export function linuxOperationWorker(
               kind: request.grant.full ? "environment" : "allowlist",
               hosts: [...request.grant.hosts],
             },
+            // single read-only files (a global version pin); the agent grants each exactly
+            ...(toolHomes?.readFiles.length ? { readFiles: toolHomes.readFiles } : {}),
             // background output is one merged stream; its stderr is the launcher's diagnostics
             ...(options.allowPrivateProxyTargets ? { allowPrivate: true } : {}),
             command: request.managedOutput

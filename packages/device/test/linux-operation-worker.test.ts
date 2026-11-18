@@ -1,10 +1,11 @@
 import { spawn } from "node:child_process";
-import { mkdir, mkdtemp, readFile, realpath, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { ExecResult } from "@capybara-hq/plugin-sdk";
+import { type ExecResult, SANDBOX_RUNTIME_SOURCE } from "@capybara-hq/plugin-sdk";
 import { afterEach, describe, expect, it } from "vitest";
 import { createDockerOperationBackend } from "../src/exec/docker-operations.js";
+import { LINUX_DEVICE_AGENT } from "../src/exec/linux-agent.js";
 import { linuxOperationWorker } from "../src/exec/linux-operation-worker.js";
 import { type LinuxAgentTransport, probeLinuxRuntime } from "../src/exec/linux-runtime.js";
 import type { MacWorkerRequest } from "../src/exec/operation-worker.js";
@@ -174,6 +175,7 @@ describe("Linux operation worker", () => {
     dirs.push(home);
     await mkdir(join(home, ".asdf"));
     await mkdir(join(home, ".ssh"));
+    await writeFile(join(home, ".tool-versions"), "nodejs 22.12.0\n");
     const fake = await fakeTransport("exit");
     const request = execRequest(false, {
       grant: { ...grant(false), readRoots: ["/repo"], deniedReadRoots: [join(home, ".ssh")] },
@@ -189,6 +191,7 @@ describe("Linux operation worker", () => {
     const [sent] = await fake.lines();
     expect(sent).toMatchObject({
       readRoots: ["/repo", join(home, ".asdf")],
+      readFiles: [join(home, ".tool-versions")],
       writeRoots: ["/work"],
       env: {
         PATH: "/bin",
@@ -227,6 +230,7 @@ describe("Linux operation worker", () => {
     ).completion;
     const [containerSent] = await container.lines();
     expect(containerSent).toMatchObject({ readRoots: [] });
+    expect(containerSent).not.toHaveProperty("readFiles");
     expect(containerSent?.env).not.toHaveProperty("ASDF_DATA_DIR");
   });
 
@@ -424,5 +428,16 @@ describe("local-Docker skill preparation", () => {
     );
     await prepare.writeFile("/skills/new/SKILL.md", new TextEncoder().encode("skill"), signal);
     expect(await readFile(join(hostRoots.skills, "new", "SKILL.md"), "utf8")).toBe("skill");
+  });
+});
+
+describe("Linux agent read files", () => {
+  it("appends to exactly the SDK launcher's default system roots", () => {
+    const tuple = (source: string, name: string) =>
+      new RegExp(`^${name} = \\(([^)]*)\\)`, "m").exec(source)?.[1];
+    const launcher = SANDBOX_RUNTIME_SOURCE.files.find((f) => f.name === "linux-sandbox.py");
+    const sdk = tuple(launcher?.source ?? "", "DEFAULT_SYSTEM_ROOTS");
+    expect(sdk).toBeDefined();
+    expect(tuple(LINUX_DEVICE_AGENT, "LAUNCHER_SYSTEM_ROOTS")).toBe(sdk);
   });
 });
