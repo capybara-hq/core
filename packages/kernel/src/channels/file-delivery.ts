@@ -53,7 +53,8 @@ export function formatFileSize(bytes: number): string {
   const units = ["KB", "MB", "GB"];
   let v = bytes / 1024;
   let i = 0;
-  while (v >= 1024 && i < units.length - 1) {
+  // A value that rounds up to 1024.0 is shown in the next unit
+  while (Number(v.toFixed(1)) >= 1024 && i < units.length - 1) {
     v /= 1024;
     i++;
   }
@@ -108,29 +109,28 @@ export async function readArtifactCapped(
     const got = await store.get(key, { signal });
     if (got === null) return { kind: "missing" };
     const reader = got.body.getReader();
-    if (got.head.size > cap) {
-      await reader.cancel().catch(() => undefined);
-      return { kind: "too_large" };
-    }
-    const chunks: Uint8Array[] = [];
-    let total = 0;
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      total += value.length;
-      if (total > cap) {
-        await reader.cancel().catch(() => undefined);
-        return { kind: "too_large" };
+    try {
+      if (got.head.size > cap) return { kind: "too_large" };
+      const chunks: Uint8Array[] = [];
+      let total = 0;
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        total += value.length;
+        if (total > cap) return { kind: "too_large" };
+        chunks.push(value);
       }
-      chunks.push(value);
+      const data = new Uint8Array(total);
+      let off = 0;
+      for (const c of chunks) {
+        data.set(c, off);
+        off += c.length;
+      }
+      return { kind: "ok", data };
+    } finally {
+      // A no-op after a complete read; cancels the body on every early exit and on a failed read
+      await reader.cancel().catch(() => undefined);
     }
-    const data = new Uint8Array(total);
-    let off = 0;
-    for (const c of chunks) {
-      data.set(c, off);
-      off += c.length;
-    }
-    return { kind: "ok", data };
   } catch (e) {
     if (isStorageUnavailable(e)) return { kind: "unavailable" };
     throw e;

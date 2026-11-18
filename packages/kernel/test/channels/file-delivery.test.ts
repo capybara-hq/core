@@ -87,6 +87,11 @@ describe("formatFileSize", () => {
     expect(formatFileSize(1536)).toBe("1.5 KB");
     expect(formatFileSize(2_411_724)).toBe("2.3 MB");
     expect(formatFileSize(1_073_741_824)).toBe("1.0 GB");
+    expect(formatFileSize(1023)).toBe("1023 B");
+    expect(formatFileSize(1024)).toBe("1.0 KB");
+    expect(formatFileSize(1_048_575)).toBe("1.0 MB");
+    expect(formatFileSize(1_048_576)).toBe("1.0 MB");
+    expect(formatFileSize(1_073_741_823)).toBe("1.0 GB");
   });
 });
 
@@ -131,6 +136,41 @@ describe("readArtifactCapped", () => {
     });
     expect(await readArtifactCapped(store, "nope", 3, signal)).toEqual({ kind: "missing" });
     expect(await readArtifactCapped(store, "big", 3, signal)).toEqual({ kind: "too_large" });
+  });
+  it("a head larger than the cap cancels the body", async () => {
+    let cancelled = false;
+    const store = {
+      async get() {
+        const body = new ReadableStream<Uint8Array>({
+          cancel() {
+            cancelled = true;
+          },
+        });
+        return { head: { key: "k", size: 11, contentType: "x/y" }, body };
+      },
+    } as unknown as ObjectStore;
+    expect(await readArtifactCapped(store, "k", 10, signal)).toEqual({ kind: "too_large" });
+    expect(cancelled).toBe(true);
+  });
+  it("a read that throws mid-stream cancels the reader and rethrows", async () => {
+    let cancelled = false;
+    const store = {
+      async get() {
+        const body = {
+          getReader: () => ({
+            read: async () => {
+              throw new Error("ECONNRESET");
+            },
+            cancel: async () => {
+              cancelled = true;
+            },
+          }),
+        };
+        return { head: { key: "k", size: 5, contentType: "x/y" }, body };
+      },
+    } as unknown as ObjectStore;
+    await expect(readArtifactCapped(store, "k", 10, signal)).rejects.toThrow("ECONNRESET");
+    expect(cancelled).toBe(true);
   });
   it("a body longer than its head cancels the reader", async () => {
     let cancelled = false;
