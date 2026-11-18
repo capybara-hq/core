@@ -13,6 +13,8 @@ export const metadata: Metadata = {
  * link without a session to sign in. A dead link is the view's own 404 page.
  */
 export default async function SharePage({ params }: { params: Promise<{ code: string }> }) {
-  const code = decodeURIComponent((await params).code);
+  // Codes are [A-Za-z0-9]: the segment is used as it arrives (no decode, which throws on a
+  // malformed %-escape); anything else is the kernel's 404, as in the route table's prefetch.
+  const { code } = await params;
   return <ShareView code={code} />;
 }

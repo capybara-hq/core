@@ -251,6 +251,15 @@ describe("the share layout's decision before anything renders (file sharing desi
     await expect(shareAt("AbCdEfGh12")).resolves.toBeTruthy();
   });
 
+  it("a malformed %-escape in the code is the kernel's 404, never a thrown decode", async () => {
+    const calls = serverRoutes({
+      "GET /api/v1/s/%25E0%25A4%25A": () =>
+        json(404, { error: { code: "share.not_found", message: "x" } }),
+    });
+    await expect(shareAt("%E0%A4%A")).resolves.toBeTruthy();
+    expect(calls.map((c) => c.url)).toEqual(["/api/v1/s/%25E0%25A4%25A"]);
+  });
+
   it("the (auth) layout prefetches the share's metadata and nothing of a workspace", async () => {
     const calls = serverRoutes({ [`GET ${META}`]: () => json(200, { name: "a.txt" }) });
     const state = stateOf(await layoutAt("/s/AbCdEfGh12"));

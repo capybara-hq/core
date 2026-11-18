@@ -19,7 +19,9 @@ export default async function ShareLayout({
   children: ReactNode;
   params: Promise<{ code: string }>;
 }) {
-  const code = decodeURIComponent((await params).code);
+  // Codes are [A-Za-z0-9]: the segment is used as it arrives (no decode, which throws on a
+  // malformed %-escape); anything else is the kernel's 404, as in the route table's prefetch.
+  const { code } = await params;
   const meta = await settledQuery(serverQueryClient(), shareMetaQuery(code));
   if ("error" in meta && meta.error instanceof ApiClientError && meta.error.status === 401) {
     redirect(loginPathFor(shareLink("", encodeURIComponent(code))));

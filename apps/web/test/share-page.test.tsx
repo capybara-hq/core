@@ -379,6 +379,20 @@ describe("the share page /s/[code]", () => {
     );
   });
 
+  it("a malformed %-escape in the code renders the 404 page, not a server error", async () => {
+    const { default: SharePage } = await import("../src/app/(auth)/s/[code]/page");
+    stubApi({
+      "GET /api/v1/s/%25E0%25A4%25A": () =>
+        json(404, { error: { code: "share.not_found", message: "x" } }),
+    });
+    const { container } = renderPage(
+      await SharePage({ params: Promise.resolve({ code: "%E0%A4%A" }) }),
+    );
+    await vi.waitFor(() =>
+      expect(container.querySelector('[data-template="StatusPage"]')).not.toBeNull(),
+    );
+  });
+
   it("the page is not indexed and sends no referrer", async () => {
     const { metadata } = await import("../src/app/(auth)/s/[code]/page");
     expect(metadata).toMatchObject({
