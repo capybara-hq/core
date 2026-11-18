@@ -9,7 +9,25 @@ export interface StartupActivationOptions {
   connectTimeoutMs?: number;
   signal: AbortSignal;
   remainingMs: () => number;
+  /**
+   * Test seam: the owned session's `idle_in_transaction_session_timeout` instead of
+   * {@link STARTUP_IDLE_IN_TRANSACTION_TIMEOUT_MS} (tests shorten it to prove the bound fails
+   * closed). Not an operator setting.
+   */
+  idleInTransactionTimeoutMs?: number;
 }
+
+/** Server-side bound on one statement of the owned startup session. */
+export const STARTUP_STATEMENT_TIMEOUT_MS = 500;
+/** Server-side bound on one lock wait of the owned startup session. */
+export const STARTUP_LOCK_TIMEOUT_MS = 500;
+/**
+ * Server-side bound on the gap between two statements of the owned startup transaction. A client
+ * pause (OS scheduling, GC, CPU throttling) counts against it, so it is longer than the statement
+ * and lock bounds; it still bounds how long a stalled process can hold the platform permission
+ * lock (activation design spec, "Timeouts precede all SQL").
+ */
+export const STARTUP_IDLE_IN_TRANSACTION_TIMEOUT_MS = 5_000;
 
 /** Deliberately safe diagnostics: driver errors may contain connection or statement inputs. */
 export class StartupActivationError extends Error {
@@ -105,6 +123,7 @@ export async function runOwnedStartupActivation<T>(
   options: StartupActivationOptions,
 ): Promise<T> {
   const workDeadline = performance.now() + Math.max(0, Math.min(30_000, options.remainingMs()));
+  const idleMs = options.idleInTransactionTimeoutMs ?? STARTUP_IDLE_IN_TRANSACTION_TIMEOUT_MS;
   let cleanupDeadline = workDeadline;
   const cleanupControl = new AsyncLocalStorage<boolean>();
   let transaction: ControlledTransaction<unknown> | undefined;
@@ -148,11 +167,11 @@ export async function runOwnedStartupActivation<T>(
       super(config);
       client = this;
       const params = internal(this).connectionParameters;
-      params.options = `${params.options ?? ""} -c statement_timeout=500 -c lock_timeout=500 -c idle_in_transaction_session_timeout=500`;
+      params.options = `${params.options ?? ""} -c statement_timeout=${STARTUP_STATEMENT_TIMEOUT_MS} -c lock_timeout=${STARTUP_LOCK_TIMEOUT_MS} -c idle_in_transaction_session_timeout=${idleMs}`;
       // pg also sends direct startup GUC fields after options, so pin both DSN spellings.
-      params.statement_timeout = 500;
-      params.lock_timeout = 500;
-      params.idle_in_transaction_session_timeout = 500;
+      params.statement_timeout = STARTUP_STATEMENT_TIMEOUT_MS;
+      params.lock_timeout = STARTUP_LOCK_TIMEOUT_MS;
+      params.idle_in_transaction_session_timeout = idleMs;
       // A client read timeout rejects before server completion and would advance our tail
       // into pg's unguarded queue. Server timeouts and our owned deadline bound this session.
       params.query_timeout = 0;
