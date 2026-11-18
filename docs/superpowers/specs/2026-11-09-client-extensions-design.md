@@ -644,6 +644,7 @@ interface SuggestedAppearance {
 | `switch.knob` | the knob inside a `switch` | design `controls/toggles.tsx` | — (follow the switch's state) |
 | `org-avatar` | the org's initial block in the org switcher | design `shell/sidebar.tsx` | — |
 | `agent-chip` | an agent chip of the new conversation's agents row | design `conversation/agent-row.tsx` | `aria-pressed` |
+| `image-placeholder` | a generating image's placeholder | design `conversation/files.tsx` | `aria-busy` |
 
   Added after the theme plugin round (2026-11-10): themes style only what carries a part, so
   these were added on their owning elements; no existing part was renamed.

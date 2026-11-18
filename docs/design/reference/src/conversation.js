@@ -752,6 +752,17 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
       const shown = FI.many.slice(0, 3).map((f) => fileCard(f, { max: 24 })).join("");
       return `<div class="r-fgrid">${shown}<a class="r-fcard r-fmore" href="#">还有 ${FI.many.length - 3} 个文件${icon("chevron-right", 12)}</a></div>`;
     }
+    if (o.state === "generating" || o.state === "generating-several" || o.state === "generating-wide") {
+      const G = FI.generating;
+      const gen = (ratio, label) =>
+        `<figure class="r-img"><div class="r-img-gen" role="img" aria-busy="true" aria-label="${esc(label)}" data-ratio="${ratio}">${icon("image", 16)}</div><figcaption class="r-tline"><span class="r-tlabel"><span class="r-em">${esc(label.split("，")[0])}</span><span class="r-faint"> · ${ratio}</span></span></figcaption></figure>`;
+      if (o.state === "generating") return gen(G.ratio, "正在生成图片，" + G.ratio);
+      if (o.state === "generating-several")
+        return `<div class="r-col-gap">${[1, 2].map((i) => gen(G.several.ratio, `正在生成图片 ${i}/${G.several.count}，${G.several.ratio}`)).join("")}</div>`;
+      const I = FI.image;
+      const delivered = `<figure class="r-img"><div class="r-img-frame">${chart()}</div><figcaption class="r-tline"><span class="r-tlabel"><span class="r-em">${esc(I.name)}</span><span class="r-faint"> · ${esc(I.dimensions)} · ${esc(I.size)}</span></span></figcaption></figure>`;
+      return `<div class="r-col-gap">${gen(G.wide.ratio, "正在生成图片，" + G.wide.ratio)}${delivered}</div>`;
+    }
     if (o.state === "image" || o.state === "image-hover") {
       const I = FI.image;
       const tools =

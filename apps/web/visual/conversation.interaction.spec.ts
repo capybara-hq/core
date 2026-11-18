@@ -1,4 +1,5 @@
 import { expect, type Page, test } from "@playwright/test";
+import { openInteractive } from "./reference-page";
 
 /**
  * Conversation-page interaction (design spec §6.11, §6.16.8–§6.16.9; §9.5): opening a tool line,
@@ -8,8 +9,7 @@ import { expect, type Page, test } from "@playwright/test";
 const block = (page: Page, id: string) => page.locator(`[data-ref-block="${id}"]`);
 
 async function open(page: Page) {
-  await page.goto("/dev/ui/reference/tool-group");
-  await page.waitForLoadState("networkidle");
+  await openInteractive(page, "/dev/ui/reference/tool-group");
 }
 
 const animation = (page: Page, sel: string) =>

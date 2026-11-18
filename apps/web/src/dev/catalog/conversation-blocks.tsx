@@ -19,6 +19,7 @@ import {
   type ForcedPseudo,
   Greeting,
   ImageOutput,
+  ImagePlaceholder,
   ImagePreview,
   MarkdownPreview,
   NetworkBlockedFacts,
@@ -969,6 +970,30 @@ function ChartOutput({ id, hover }: { id: string; hover?: boolean }) {
   );
 }
 
+/** A wide placeholder above the delivered 16:9 image of the same call. */
+function GeneratingWide({ id }: { id: string }) {
+  const src = useChartImage(360, 202.5, 1280 / 360);
+  return (
+    <Block id={id}>
+      <Stack gap={8}>
+        <ImagePlaceholder ratio={FI.generating.wide.ratio} index={0} count={1} />
+        {src ? (
+          <ImageOutput
+            src={src}
+            name={FI.image.name}
+            size={bytes(FI.image.size)}
+            ratio="16:9"
+            onOpen={noop}
+            onDownload={noop}
+          />
+        ) : (
+          <RefPending />
+        )}
+      </Stack>
+    </Block>
+  );
+}
+
 function fileOutputsBlocks(): ReactNode {
   return (
     <>
@@ -980,6 +1005,24 @@ function fileOutputsBlocks(): ReactNode {
       </Block>
       <ChartOutput id="file-outputs-image" />
       <ChartOutput id="file-outputs-image-hover" hover />
+      <Block id="file-outputs-generating">
+        <ImagePlaceholder ratio={FI.generating.ratio} index={0} count={1} />
+      </Block>
+      <Block id="file-outputs-generating-several">
+        <Stack gap={8}>
+          <ImagePlaceholder
+            ratio={FI.generating.several.ratio}
+            index={0}
+            count={FI.generating.several.count}
+          />
+          <ImagePlaceholder
+            ratio={FI.generating.several.ratio}
+            index={1}
+            count={FI.generating.several.count}
+          />
+        </Stack>
+      </Block>
+      <GeneratingWide id="file-outputs-generating-wide" />
       <Block id="file-outputs-text">
         <TextOutput
           name={FI.text.name}
