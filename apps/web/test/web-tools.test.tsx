@@ -400,3 +400,44 @@ describe("agent page Tools section: the CurrentTime builtin", () => {
     },
   );
 });
+
+describe("agent page Tools section: GenerateImage", () => {
+  beforeEach(() => resetNavigation("/agents/ag1"));
+
+  const render = async (mapped: boolean, disabled: unknown[]) => {
+    stubApi({
+      ...sessionRoutes(),
+      [`GET ${ORG}/agents/ag1`]: () => json(200, { agent: agentWith(disabled) }),
+      [`GET ${ORG}/models`]: () => json(200, MODELS),
+      [`GET ${ORG}/extension-points/available`]: available(false, false),
+      [`GET ${ORG}/model-purposes/available`]: () =>
+        json(200, { purposes: [{ purpose: "image", available: mapped }] }),
+    });
+    await renderEditAgent({ section: "tools", locale: "en" });
+    await screen.findByRole("checkbox", { name: en.agents.form.builtin.Bash });
+  };
+  const box = () => screen.queryByRole("checkbox", { name: en.agents.form.builtin.GenerateImage });
+
+  it("ToolsSection hides GenerateImage while the image purpose is unmapped", async () => {
+    await render(false, [{ kind: "builtin", name: "AskUserQuestion" }]);
+    expect(box()).toBeNull();
+  });
+
+  it("shows it once mapped", async () => {
+    await render(true, [{ kind: "builtin", name: "AskUserQuestion" }]);
+    expect(await screen.findByRole("checkbox", { name: "Generate images" })).toHaveProperty(
+      "checked",
+      true,
+    );
+  });
+
+  it("shows it when turned off", async () => {
+    await render(false, [{ kind: "builtin", name: "GenerateImage" }]);
+    expect(box()).toHaveProperty("checked", false);
+  });
+
+  it("has its label in both languages", () => {
+    expect(zh.agents.form.builtin.GenerateImage).toBe("生成图片");
+    expect(en.agents.form.builtin.GenerateImage).toBe("Generate images");
+  });
+});

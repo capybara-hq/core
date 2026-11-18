@@ -245,6 +245,7 @@ export const orgExtensionChangeKeys = (orgId: string): (readonly unknown[])[] =>
     k.models(),
     k.modelsCatalog(),
     k.orgPurposes(),
+    k.purposeAvailability(),
     // the client code the org's pages load (client extensions spec §11)
     k.clientExtensions(),
   ];

@@ -11,6 +11,7 @@ import { ModelsModule } from "../models/models.module.js";
 import { OrgLockModule } from "../orgs/org-lock.js";
 import { PlatformModule } from "../platform/platform.module.js";
 import { MAINTENANCE_QUEUE_NAME } from "../runtime/maintenance-queue.js";
+import { ProvidersModule } from "../runtime/providers.js";
 import { RunJobsModule } from "../runtime/run-jobs.js";
 import { StepLogModule } from "../runtime/step-log.js";
 import { SubagentsModule } from "../runtime/subagents/subagents.service.js";
@@ -77,6 +78,8 @@ import { ToolRegistry } from "./registry.js";
     ConversationAccessModule,
     // the WebFetch extraction call: its purpose and step writes (its usage report owed with them)
     ModelsModule,
+    // `GenerateImage`'s availability resolves the image purpose's model in the org
+    ProvidersModule,
     StepLogModule,
     // a decision resumes its waiting run in the decision's transaction (`RunResume`)
     RunJobsModule,

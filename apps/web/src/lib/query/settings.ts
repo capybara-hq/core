@@ -1,7 +1,7 @@
 import { listPluginInstalls } from "../catalog";
 import { listExtensionPointDefaults } from "../extensions";
 import { listInvitations } from "../members";
-import { getModelsCatalog, listOrgPurposes } from "../models";
+import { getModelsCatalog, listOrgPurposes, listPurposeAvailability } from "../models";
 import { listOrgNetworkAllowances } from "../org-network";
 import { getOrgSettings } from "../org-settings";
 import { listOrgAudit, listServiceTokens } from "../orgs";
@@ -30,6 +30,14 @@ export const orgPurposesQuery = (orgId: string) =>
   defineQuery({
     key: keys.org(orgId).orgPurposes(),
     fn: () => listOrgPurposes(orgId),
+    freshness: "orgConfig",
+  });
+
+/** Whether each purpose has a usable model (`{ purposes }`): the agent form's gate for tools. */
+export const purposeAvailabilityQuery = (orgId: string) =>
+  defineQuery({
+    key: keys.org(orgId).purposeAvailability(),
+    fn: () => listPurposeAvailability(orgId),
     freshness: "orgConfig",
   });
 

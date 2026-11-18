@@ -10,7 +10,7 @@ import { bodyOf, type Call, json, lastStubRoutes, stubApi } from "./support/api"
 import { resetNavigation } from "./support/navigation";
 import { renderRouteEmptyCache, renderRouteWithCache } from "./support/query";
 import { ME } from "./support/render";
-import { pickOption } from "./support/select";
+import { fieldOptionLabels, pickOption } from "./support/select";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
 
@@ -137,6 +137,7 @@ const actionRow = () =>
 /** The titles the stubbed purposes carry (both locales): rows are found by title, ids never show. */
 const PURPOSE_TITLES: Record<string, string[]> = {
   eval: ["评测评委", "Eval judge"],
+  image: ["图片生成", "Image generation"],
   title: ["会话标题", "Conversation titles"],
   "notes.summarize": ["摘要", "Summarize"],
   subagent_fast: ["Sub-agent: fast"],
@@ -735,5 +736,71 @@ describe("/settings/models（组织管理员）", () => {
     orgRoutes([evalView()]);
     await renderRouteWithCache("/settings/models", lastStubRoutes());
     expect(await screen.findByRole("link", { name: en.connections.nav.models })).toBeTruthy();
+  });
+});
+
+describe("the image purpose", () => {
+  const IMG = {
+    provider: "pix",
+    plugin: "pix",
+    status: "ok",
+    models: [
+      {
+        id: "pix-1",
+        displayName: "Pix One",
+        kind: "image_generation",
+        contextWindow: 0,
+        maxOutputTokens: 0,
+        capabilities: caps({ tools: false }),
+        parameters: [],
+      },
+    ],
+  };
+  const imageView = (over: Record<string, unknown> = {}) => ({
+    purpose: "image",
+    kind: "image_generation",
+    label: { zh: "图片生成", en: "Image generation" },
+    declaredBy: "kernel",
+    declaredByName: null,
+    default: null,
+    override: null,
+    effective: null,
+    ...over,
+  });
+  const routes = (view: Record<string, unknown>) =>
+    adminRoutes({
+      "GET /api/v1/admin/models": () => json(200, { ...ADMIN_MODELS, providers: [ALPHA, IMG] }),
+      "GET /api/v1/admin/model-purposes": () => json(200, { purposes: [evalView(), view] }),
+    });
+
+  it("the image purpose offers only image models", async () => {
+    routes(imageView());
+    await renderRouteWithCache("/admin/models?tab=purposes", lastStubRoutes(), { locale: "en" });
+    const box = await purposeBox("image");
+    const labels = fieldOptionLabels(box.getByRole("combobox", { name: en.models.purpose.model }));
+    expect(labels.some((l) => l.includes("Pix One"))).toBe(true);
+    expect(labels.some((l) => l.includes("Alpha"))).toBe(false);
+  });
+
+  it.each(LOCALES)("the hint shows with image models and no mapping (%s)", async (locale) => {
+    routes(imageView());
+    await renderRouteWithCache("/admin/models?tab=purposes", lastStubRoutes(), { locale });
+    const box = await purposeBox("image");
+    expect(box.getByText(msgs[locale].models.imageUnmapped)).toBeTruthy();
+  });
+
+  it("the hint is gone once mapped, and absent without image models", async () => {
+    const t = { model: { provider: "pix", model: "pix-1" }, params: {} };
+    routes(imageView({ default: t, effective: t }));
+    await renderRouteWithCache("/admin/models?tab=purposes", lastStubRoutes(), { locale: "en" });
+    const box = await purposeBox("image");
+    expect(box.queryByText(en.models.imageUnmapped)).toBeNull();
+    cleanup();
+    adminRoutes({
+      "GET /api/v1/admin/model-purposes": () => json(200, { purposes: [evalView(), imageView()] }),
+    });
+    await renderRouteWithCache("/admin/models?tab=purposes", lastStubRoutes(), { locale: "en" });
+    await purposeBox("image");
+    expect(screen.queryByText(en.models.imageUnmapped)).toBeNull();
   });
 });

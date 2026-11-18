@@ -120,13 +120,14 @@ Each line is the rule you must not miss; the skill has the rest.
   extensions load and may fail without stopping the start; the rest optional preinstalls, off in
   every org until switched on);
   hooks observe or deny, never rewrite; every kernel model call fires `model.request`, an
-  extension's `ctx.models.embed` too (`purpose: "embedding"`, no conversation fields), and policy
-  hooks fail closed. An extension call made for an org carries `config`, the
-  effective config (platform deployment config plus the org's copy of overridable fields: never an
-  overridable platform secret, hidden secrets stay); an org whose effective config is invalid gets
-  no call (`needsConfig`); org admins may switch off single extension tools. A setup check
-  (`ctx.setup.check`, declared in `permissions.setupChecks`) never writes and never returns a
-  secret; it never gets an OAuth client secret or a member's token.
+  extension's `ctx.models.embed` too (`purpose: "embedding"`, no conversation fields) and
+  `ctx.models.generateImage` (`purpose: "image"`), and policy hooks fail closed. An extension
+  call made for an org carries `config`, the effective config (platform deployment config plus
+  the org's copy of overridable fields: never an overridable platform secret, hidden secrets
+  stay); an org whose effective config is invalid gets no call (`needsConfig`); org admins may
+  switch off single extension tools. A setup check (`ctx.setup.check`, declared in
+  `permissions.setupChecks`) never writes and never returns a secret; it never gets an OAuth
+  client secret or a member's token.
   [writing-extensions](.agents/skills/writing-extensions/SKILL.md)
 - **Plugins and the catalog:** plugin tgz with `.capybara-plugin/plugin.json`; downloads always
   verified against recorded integrity; every admin-supplied URL goes through
@@ -147,12 +148,14 @@ Each line is the rule you must not miss; the skill has the rest.
 - **Tools, sub-agents, web tools, skills:** English descriptions and actionable errors; tool keys
   contain no dots. [writing-tools](.agents/skills/writing-tools/SKILL.md)
 - **Model providers:** no retries inside the extension; media limits and placeholders are the
-  kernel's. A model has a kind (`ModelInfo.kind`, absent = `chat`); only `chat` (`stream`) and
-  `embedding` (`embed`) are callable, other kinds are list-only. Models are enabled by default and
-  disabled on demand by the platform and per org (the kernel refuses a disabled model for agents,
-  purposes and `ctx.models`); calls made for an org carry `{ orgId, config }`. Extensions embed
-  through `ctx.models.embed` (needs `permissions.models`, an org where the extension is enabled;
-  recorded in `model_usage`, delivered by `usage.report` with purpose `embedding`). [writing-model-providers](.agents/skills/writing-model-providers/SKILL.md)
+  kernel's. A model has a kind (`ModelInfo.kind`, absent = `chat`); only `chat` (`stream`),
+  `embedding` (`embed`) and `image_generation` (`generateImage`) are callable, other kinds are
+  list-only. Models are enabled by default and disabled on demand by the platform and per org (the
+  kernel refuses a disabled model for agents, purposes and `ctx.models`); calls made for an org
+  carry `{ orgId, config }`. Extensions embed through `ctx.models.embed` (needs
+  `permissions.models`, an org where the extension is enabled; recorded in `model_usage`,
+  delivered by `usage.report` with purpose `embedding`; `generateImage` likewise, purpose
+  `image`). [writing-model-providers](.agents/skills/writing-model-providers/SKILL.md)
 - **Sandboxes:** work happens in devices (one instance + a file system kept until the device is
   deleted) in one of two modes (auto: the environment's own capability; sandbox: the OS sandbox
   and the allowlist network); every command and every write outside the workspace passes the

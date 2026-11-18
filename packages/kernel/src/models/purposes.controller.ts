@@ -44,6 +44,15 @@ export class ModelPurposesController {
     };
   }
 
+  /** Whether each purpose has a usable model in the org now, no model names (any member). */
+  @Get("available")
+  @OrgAction("agents.use")
+  async available(
+    @CurrentOrg() org: OrgContext,
+  ): Promise<{ purposes: { purpose: string; available: boolean }[] }> {
+    return { purposes: await this.purposes.availability(org.orgId) };
+  }
+
   @Put(":purpose")
   @OrgAction("org.models.manage")
   async put(

@@ -130,6 +130,7 @@ const routes = (over: Routes = {}): Routes => ({
   [`GET ${ORG}/skills`]: () => json(200, { skills: [] }),
   [`GET ${ORG}/tools/extensions`]: () => json(200, { extensions: [] }),
   [`GET ${ORG}/extension-points/available`]: () => json(200, { points: [] }),
+  [`GET ${ORG}/model-purposes/available`]: () => json(200, { purposes: [] }),
   [`GET ${ORG}/agent-templates`]: () => json(200, { templates: [] }),
   ...over,
 });
@@ -760,6 +761,26 @@ describe("/agents/templates/[id]: the editor's sections save their part (ruling 
     expect(definition.tools).toBeUndefined();
     expect(definition.disallowedTools).toEqual(["ReadToolOutput"]);
     expect(definition.toolPolicies).toEqual({ AskUserQuestion: "ask", Platform: "deny" });
+  });
+
+  it("工具: GenerateImage is listed only while the image purpose is available, or when turned off", async () => {
+    const avail = (available: boolean) => () =>
+      json(200, { purposes: [{ purpose: "image", available }] });
+    const name = TF.builtin.GenerateImage;
+    // unmapped: hidden
+    let r = live();
+    r[`GET ${ORG}/model-purposes/available`] = avail(false);
+    stubApi(r);
+    await renderRouteWithCache("/agents/templates/t9?s=tools", r);
+    await screen.findByRole("checkbox", { name: TF.builtin.Bash });
+    expect(screen.queryByRole("checkbox", { name })).toBeNull();
+    cleanup();
+    // available: listed, on
+    r = live();
+    r[`GET ${ORG}/model-purposes/available`] = avail(true);
+    stubApi(r);
+    await renderRouteWithCache("/agents/templates/t9?s=tools", r);
+    expect(await screen.findByRole("checkbox", { name })).toHaveProperty("checked", true);
   });
 
   it("技能: sub-agents load at most 3 first; unticking drops one, the select adds an on skill", async () => {

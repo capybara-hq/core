@@ -1,6 +1,7 @@
 import {
   type ContentBlock,
   type LocalizedName,
+  type Logger,
   type ModelRequest,
   type ModelUsage,
   type ParamValue,
@@ -18,11 +19,14 @@ import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
+import { KERNEL_LOGGER } from "../infra/tokens.js";
 import { createZodDto } from "../infra/validation/create-zod-dto.js";
 import { OrgLock } from "../orgs/org-lock.js";
 import { estimateTokens } from "../runtime/context/tokens.js";
 import { consumeModelStream } from "../runtime/model-call.js";
 import { ProviderListError, ProviderRegistry } from "../runtime/providers.js";
+import { StorageService } from "../storage/storage.service.js";
+import { IMAGE_PURPOSE, imagePurposeUsable } from "./image-usable.js";
 
 /**
  * 模型用途映射（C9）：内核与插件按「用途」取模型，不在代码里写死模型。
@@ -34,6 +38,9 @@ import { ProviderListError, ProviderRegistry } from "../runtime/providers.js";
  *   the org (by either layer) counts as unconfigured there (spec B §5.3)；参数按目标模型自己的声明严格校验；
  * - 每次都查 PG，不在进程内缓存（多副本下改映射立即生效）。`ctx.models` 仍预留，插件暂不能调用。
  */
+
+/** The kinds a purpose can need: the callable model kinds. */
+export type PurposeKind = "chat" | "embedding" | "image_generation";
 
 /**
  * Purposes the kernel declares: the eval judge, and the three sub-agent model tiers (phase C,
@@ -69,6 +76,8 @@ export const KERNEL_PURPOSES = [
     kind: "chat",
     label: { zh: "子智能体：最强", en: "Sub-agent: capable" },
   },
+  /** The `GenerateImage` tool's model; no fallback: unmapped → `model.unconfigured`. */
+  { purpose: "image", kind: "image_generation", label: { zh: "图片生成", en: "Image generation" } },
 ] as const;
 
 /** 一个用途映射到的模型与参数。 */
@@ -79,7 +88,7 @@ export interface PurposeTarget {
 
 export interface PurposeView {
   purpose: string;
-  kind: "chat" | "embedding";
+  kind: PurposeKind;
   label: { zh: string; en: string };
   /** `kernel` 或声明它的插件名。 */
   declaredBy: string;
@@ -143,7 +152,7 @@ export class PurposeAttemptError extends Error {
 
 interface Declared {
   purpose: string;
-  kind: "chat" | "embedding";
+  kind: PurposeKind;
   label: { zh: string; en: string };
   declaredBy: string;
 }
@@ -185,6 +194,9 @@ export class ModelPurposesService {
     @Inject(TransactionHost) readonly txHost: TransactionHost,
     @Inject(SuperAdminLock) private readonly adminLock: SuperAdminLock,
     @Inject(OrgLock) private readonly orgLock: OrgLock,
+    /** The `image` purpose's availability needs an object store (`GenerateImage` delivers there). */
+    @Inject(StorageService) private readonly storage: Pick<StorageService, "available">,
+    @Inject(KERNEL_LOGGER) private readonly log: Pick<Logger, "warn">,
   ) {}
 
   /** 全部已声明的用途：内核的在前，其后按插件加载顺序。 */
@@ -252,13 +264,43 @@ export class ModelPurposesService {
   }
 
   /**
+   * Whether each purpose (kernel and extension-declared) resolves to a usable model for the org
+   * now, as {@link resolve} decides, without naming the model (the agent form's gate for
+   * `GenerateImage`, readable by every member). The `image` purpose reads `GenerateImage`'s own
+   * predicate ({@link imagePurposeUsable}: an image model callable now and an object store).
+   */
+  async availability(orgId: string): Promise<{ purpose: string; available: boolean }[]> {
+    const out: { purpose: string; available: boolean }[] = [];
+    for (const d of this.declared()) {
+      if (d.purpose === IMAGE_PURPOSE) {
+        // `GenerateImage`'s own predicate: the form offers the tool exactly when it is listed
+        const usable = await imagePurposeUsable(
+          { purposes: this, providers: this.providers, storage: this.storage, log: this.log },
+          orgId,
+        );
+        out.push({ purpose: d.purpose, available: usable === "usable" });
+        continue;
+      }
+      const available = await this.resolve(orgId, d.purpose).then(
+        () => true,
+        (e: unknown) => {
+          if (e instanceof ApiError && e.code === "model.unconfigured") return false;
+          throw e;
+        },
+      );
+      out.push({ purpose: d.purpose, available });
+    }
+    return out;
+  }
+
+  /**
    * 校验目标：模型可解析且启用（an org's override for the org, a deployment default in the
    * platform view）、its kind is the purpose's `kind`、参数按它的声明严格通过。
    */
   private async check(
     orgId: string | null,
     target: PurposeTarget,
-    kind: "chat" | "embedding",
+    kind: PurposeKind,
   ): Promise<void> {
     let info: Awaited<ReturnType<ProviderRegistry["resolve"]>>["info"];
     try {
@@ -277,7 +319,7 @@ export class ModelPurposesService {
       throw invalid([
         {
           path: "target.model",
-          message: `this purpose needs ${kind === "embedding" ? "an" : "a"} ${kind} model, not ${info.kind}`,
+          message: `this purpose needs ${/^[aeiou]/.test(kind) ? "an" : "a"} ${kind} model, not ${info.kind}`,
         },
       ]);
     }

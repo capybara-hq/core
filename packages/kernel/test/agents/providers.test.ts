@@ -355,6 +355,114 @@ describe("model-provider@2", () => {
     expect(warns).toEqual(Object.keys(bad).map(() => "model dropped from the provider's list"));
   });
 
+  const imageInfo = {
+    sizes: [{ width: 1024, height: 1024 }],
+    defaultSize: { width: 1024, height: 1024 },
+    maxImages: 2,
+    maxReferenceImages: 0,
+    outputMediaTypes: ["image/png" as const],
+  };
+  const imageProvider = (
+    models: ModelInfo[],
+    withGenerate: boolean,
+    seen: unknown[] = [],
+  ): ModelProvider => ({
+    async listModels() {
+      return models;
+    },
+    stream() {
+      throw new Error("unused");
+    },
+    ...(withGenerate && {
+      async generateImage(r, opts) {
+        seen.push({ orgId: opts.orgId, hasSignal: opts.signal instanceof AbortSignal });
+        return {
+          images: Array.from({ length: r.n }, () => ({
+            mediaType: "image/png" as const,
+            data: "AAAA",
+          })),
+          usage: { inputTokens: 0, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 },
+        };
+      },
+    }),
+  });
+
+  it("an image model with info and generateImage resolves as image_generation", async () => {
+    const seen: unknown[] = [];
+    const m: ModelInfo = {
+      ...chatInfo("img"),
+      parameters: [],
+      kind: "image_generation",
+      imageGeneration: imageInfo,
+    };
+    const r = reg([
+      { plugin: "i1", capability: "model-provider@2", impl: imageProvider([m], true, seen) },
+    ]);
+    const { provider, info } = await r.resolve(
+      ORG,
+      { provider: "i1", model: "img" },
+      { kind: "image_generation" },
+    );
+    expect(info.kind).toBe("image_generation");
+    expect(info.imageGeneration).toEqual(imageInfo);
+    await provider.generateImage?.(
+      { model: "img", prompt: "a cat", size: imageInfo.defaultSize, n: 1, params: {} },
+      signal(),
+    );
+    expect(seen).toEqual([{ orgId: ORG, hasSignal: true }]);
+    // a chat caller never gets it, a purpose check (callable) does
+    expect(await codeOf(r.resolve(ORG, { provider: "i1", model: "img" }))).toBe(
+      "agent.model_unavailable",
+    );
+    expect(
+      (await r.resolve(ORG, { provider: "i1", model: "img" }, { kind: "callable" })).info.kind,
+    ).toBe("image_generation");
+  });
+
+  it("an image model without generateImage stays listed and does not resolve", async () => {
+    const m: ModelInfo = {
+      ...chatInfo("img"),
+      parameters: [],
+      kind: "image_generation",
+      imageGeneration: imageInfo,
+    };
+    const warns: unknown[] = [];
+    const r = reg(
+      [{ plugin: "i2", capability: "model-provider@2", impl: imageProvider([m], false) }],
+      warns,
+    );
+    expect((await r.list(ORG))[0]?.models.map((x) => [x.id, x.kind])).toEqual([
+      ["img", "image_generation"],
+    ]);
+    expect(warns).toEqual([]);
+    expect(
+      await codeOf(r.resolve(ORG, { provider: "i2", model: "img" }, { kind: "image_generation" })),
+    ).toBe("agent.model_unavailable");
+  });
+
+  it("malformed imageGeneration is dropped with one warning", async () => {
+    const base: ModelInfo = { ...chatInfo("img"), parameters: [], kind: "image_generation" };
+    const warns: unknown[] = [];
+    const r = reg(
+      [
+        {
+          plugin: "i3",
+          capability: "model-provider@2",
+          impl: imageProvider(
+            [
+              { ...base, id: "ok", imageGeneration: imageInfo },
+              { ...base, id: "bad", imageGeneration: { ...imageInfo, sizes: [] } },
+            ],
+            true,
+          ),
+        },
+      ],
+      warns,
+    );
+    expect((await r.list(ORG))[0]?.models.map((m) => m.id)).toEqual(["ok"]);
+    expect(warns).toEqual(["model dropped from the provider's list"]);
+  });
+
   it("@2：模型信息与请求原样透传", async () => {
     const p = v2();
     const r = reg([{ plugin: "p2", capability: "model-provider@2", impl: p.impl }]);

@@ -93,11 +93,19 @@ describe("ctx.models (permissions.models)", () => {
   it("calls the broker with a frozen copy of the declared purposes and the instance signal", async () => {
     const seen: { plugin: string; declared: unknown; signal: AbortSignal }[] = [];
     const models = {
-      embed: async (plugin: string, declared: unknown, _req: unknown, signal: AbortSignal) => {
-        seen.push({ plugin, declared, signal });
-        return { vectors: [], model: { provider: "p", id: "m" }, dimensions: 8 };
+      embeddings: {
+        embed: async (plugin: string, declared: unknown, _req: unknown, signal: AbortSignal) => {
+          seen.push({ plugin, declared, signal });
+          return { vectors: [], model: { provider: "p", id: "m" }, dimensions: 8 };
+        },
+        describe: async () => null,
       },
-      describe: async () => null,
+      images: {
+        generateForExtension: async () => {
+          throw new Error("not called");
+        },
+        describeForExtension: async () => null,
+      },
     };
     const declared = [
       { purpose: "perm-test.memory", kind: "embedding" as const, label: { zh: "记", en: "M" } },
@@ -111,6 +119,73 @@ describe("ctx.models (permissions.models)", () => {
     expect(seen[0]?.declared).toEqual([declared[0]]);
     expect(Object.isFrozen(seen[0]?.declared)).toBe(true);
     expect(seen[0]?.signal).toBe(ctx.signal);
+    await ctx.close();
+  });
+
+  it("generateImage goes to the image broker; describe dispatches on the declared kind", async () => {
+    const calls: string[] = [];
+    let imageSignal: AbortSignal | undefined;
+    const models = {
+      embeddings: {
+        embed: async () => {
+          throw new Error("not called");
+        },
+        describe: async (_plugin: string, _declared: unknown, req: { purpose: string }) => {
+          calls.push(`embeddings.describe ${req.purpose}`);
+          return null;
+        },
+      },
+      images: {
+        generateForExtension: async (
+          plugin: string,
+          _declared: unknown,
+          req: { purpose: string },
+          signal: AbortSignal,
+        ) => {
+          calls.push(`images.generate ${plugin} ${req.purpose}`);
+          imageSignal = signal;
+          return {
+            images: [],
+            model: { provider: "p", id: "i" },
+            size: { width: 1, height: 1 },
+          };
+        },
+        describeForExtension: async (
+          _plugin: string,
+          _declared: unknown,
+          req: { purpose: string },
+        ) => {
+          calls.push(`images.describe ${req.purpose}`);
+          return null;
+        },
+      },
+    };
+    const manifest = mf({
+      permissions: {
+        models: [
+          { purpose: "perm-test.memory", kind: "embedding", label: { zh: "记", en: "M" } },
+          { purpose: "perm-test.art", kind: "image_generation", label: { zh: "图", en: "A" } },
+        ],
+      },
+    });
+    const ctx = createExtensionContext({ ...deps, models }, manifest, {});
+    await ctx.models.generateImage({ orgId: "o", purpose: "perm-test.art", prompt: "x" });
+    await ctx.models.describe({ orgId: "o", purpose: "perm-test.art" });
+    await ctx.models.describe({ orgId: "o", purpose: "perm-test.memory" });
+    // an undeclared purpose reaches no broker: refused with a text that names no kind
+    await expect(
+      ctx.models.describe({ orgId: "o", purpose: "perm-test.other" }),
+    ).rejects.toMatchObject({
+      code: "model.purpose_unknown",
+      message:
+        'Extension perm-test declared no model purpose "perm-test.other" in permissions.models',
+    });
+    expect(calls).toEqual([
+      "images.generate perm-test perm-test.art",
+      "images.describe perm-test.art",
+      "embeddings.describe perm-test.memory",
+    ]);
+    expect(imageSignal).toBe(ctx.signal);
     await ctx.close();
   });
 

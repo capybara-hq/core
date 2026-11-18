@@ -1,6 +1,8 @@
 import { createHash } from "node:crypto";
 import {
   type ContentBlock,
+  type ImageGenerateRequest,
+  type ImageSize,
   type ModelCallOptions,
   ModelError,
   type ModelErrorKind,
@@ -37,7 +39,25 @@ export interface FakeModelConfig {
   dimensions?: number[] | undefined;
   /** Most inputs per embed call (default 4). */
   maxBatch?: number | undefined;
+  /** Most images per generateImage call (image_generation models; default 4). */
+  maxImages?: number | undefined;
+  /** Most reference images per generateImage call (image_generation models; default 2). */
+  maxReferenceImages?: number | undefined;
 }
+
+/**
+ * A valid 1x1 PNG, base64. `@capybara-hq/testing` exports `FAKE_PNG_BASE64` with the same value
+ * (a test keeps them equal); plugins import no testing package, so the value lives here too.
+ */
+export const FAKE_PNG_BASE64 =
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC";
+
+// capybara:allow-module-state a read-only constant list (copied before use)
+const IMAGE_SIZES: ImageSize[] = [
+  { width: 1024, height: 1024 },
+  { width: 1536, height: 1024 },
+  { width: 1024, height: 1536 },
+];
 
 const CACHE_TTL_SECONDS = 300;
 const CHUNK_CHARS = 4;
@@ -347,6 +367,7 @@ export function createFakeProvider(opts: FakeProviderOptions): ModelProvider {
     "invalid_request",
     "context_overflow",
     "aborted",
+    "refusal",
   ] satisfies ModelErrorKind[];
   function infosOf(models: readonly FakeModelConfig[] | undefined): ModelInfo[] {
     const configured = models !== undefined && models.length > 0 ? models : [{ id: "fake-1" }];
@@ -365,6 +386,17 @@ export function createFakeProvider(opts: FakeProviderOptions): ModelProvider {
                 defaultDimensions: m.dimensions?.[0] ?? 8,
                 maxInputTokens: 512,
                 maxBatch: m.maxBatch ?? 4,
+              },
+            }
+          : {}),
+        ...(m.kind === "image_generation"
+          ? {
+              imageGeneration: {
+                sizes: IMAGE_SIZES.map((z) => ({ ...z })),
+                defaultSize: { width: 1024, height: 1024 },
+                maxImages: m.maxImages ?? 4,
+                maxReferenceImages: m.maxReferenceImages ?? 2,
+                outputMediaTypes: ["image/png" as const],
               },
             }
           : {}),
@@ -437,6 +469,47 @@ export function createFakeProvider(opts: FakeProviderOptions): ModelProvider {
       return {
         vectors: req.input.map((t) => embedVector(t, dim)),
         usage: { inputTokens: req.input.reduce((n, t) => n + Math.ceil(t.length / 4), 0) },
+      };
+    },
+
+    async generateImage(req: ImageGenerateRequest, call) {
+      const { signal } = call;
+      if (signal.aborted) throw abortError();
+      const info = infosFor(call).find(
+        (i) => i.id === req.model && i.kind === "image_generation",
+      )?.imageGeneration;
+      if (info === undefined) {
+        throw new ModelError("invalid_request", `Unknown image model "${req.model}"`);
+      }
+      if (!info.sizes.some((z) => z.width === req.size.width && z.height === req.size.height)) {
+        throw new ModelError("invalid_request", "Unsupported image size");
+      }
+      if (!Number.isInteger(req.n) || req.n < 1 || req.n > info.maxImages) {
+        throw new ModelError("invalid_request", "Unsupported image count");
+      }
+      if ((req.referenceImages?.length ?? 0) > info.maxReferenceImages) {
+        throw new ModelError("invalid_request", "Too many reference images");
+      }
+      const [word, arg] = req.prompt.trim().split(/\s+/);
+      if (word === "refuse") throw new ModelError("refusal", "Scripted refusal");
+      if (word === "stall") return await waitForAbort(signal);
+      if (word === "fail") {
+        const kind =
+          arg !== undefined && ERROR_KINDS.includes(arg) ? (arg as ModelErrorKind) : "server";
+        throw new ModelError(kind, `scripted failure: ${kind}`);
+      }
+      const count = word === "short" ? req.n - 1 : req.n;
+      const data = word === "url" ? "https://example.invalid/x.png" : FAKE_PNG_BASE64;
+      return {
+        images: Array.from({ length: count }, () => ({ mediaType: "image/png" as const, data })),
+        revisedPrompt: `revised: ${req.prompt}`,
+        usage: {
+          inputTokens: tokens(req.prompt.length),
+          outputTokens: 0,
+          cacheReadTokens: 0,
+          cacheWriteTokens: 0,
+          outputImages: req.n,
+        },
       };
     },
 

@@ -1454,6 +1454,35 @@ export interface ExtensionEmbedResult {
 }
 
 // @public
+export interface ExtensionImageGenerateRequest {
+    aspectRatio?: ImageAspectRatio;
+    n?: number;
+    orgId: string;
+    prompt: string;
+    purpose: string;
+    referenceImages?: {
+        mediaType: ImageMediaType;
+        data: string;
+    }[];
+    signal?: AbortSignal;
+    size?: ImageSize;
+}
+
+// @public
+export interface ExtensionImageGenerateResult {
+    images: {
+        mediaType: ImageMediaType;
+        data: string;
+    }[];
+    model: {
+        provider: string;
+        id: string;
+    };
+    revisedPrompt?: string;
+    size: ImageSize;
+}
+
+// @public
 export interface ExtensionManifest {
     config?: {
         deployment?: z.ZodTypeAny;
@@ -1484,12 +1513,14 @@ export interface ExtensionModels {
         purpose: string;
     }): Promise<ExtensionModelTarget | null>;
     embed(req: ExtensionEmbedRequest): Promise<ExtensionEmbedResult>;
+    generateImage(req: ExtensionImageGenerateRequest): Promise<ExtensionImageGenerateResult>;
 }
 
 // @public
 export interface ExtensionModelTarget {
     embedding?: ModelEmbeddingInfo;
     id: string;
+    imageGeneration?: ModelImageGenerationInfo;
     kind: ModelKind;
     provider: string;
 }
@@ -1513,7 +1544,7 @@ export interface ExtensionPermissions {
     http?: HttpPermission[];
     models?: {
         purpose: string;
-        kind: "chat" | "embedding";
+        kind: "chat" | "embedding" | "image_generation";
         label: {
             zh: string;
             en: string;
@@ -1759,7 +1790,7 @@ export interface HookParentScope {
 export interface HookPayloads {
     "agent.deleted": AgentDeletedPayload;
     "model.request": ModelRequestHookPayload;
-    "model.response": ModelResponseHookPayload;
+    "model.response": ModelResponseHookPayload | ImageResponseHookPayload;
     "org.deleted": OrgDeletedPayload;
     "org.member_removed": OrgMemberRemovedPayload;
     "tool.postExecute": ToolPostHookPayload;
@@ -1833,10 +1864,94 @@ export interface IdentitySource {
 }
 
 // @public
+export const IMAGE_ASPECT_RATIOS: readonly ["1:1", "4:3", "3:4", "3:2", "2:3", "16:9", "9:16"];
+
+// @public
 export const IMAGE_MEDIA_TYPES: readonly ["image/png", "image/jpeg", "image/gif", "image/webp"];
 
 // @public
+export type ImageAspectRatio = (typeof IMAGE_ASPECT_RATIOS)[number];
+
+// @public
+export interface ImageGenerateRequest {
+    model: string;
+    n: number;
+    params: Record<string, ParamValue>;
+    prompt: string;
+    referenceImages?: {
+        mediaType: ImageMediaType;
+        data: string;
+    }[];
+    size: ImageSize;
+}
+
+// @public
+export interface ImageGenerateResult {
+    images: {
+        mediaType: ImageMediaType;
+        data: string;
+    }[];
+    revisedPrompt?: string;
+    usage: ModelUsage;
+}
+
+// @public
 export type ImageMediaType = (typeof IMAGE_MEDIA_TYPES)[number];
+
+// @public
+export interface ImageRequestHookPayload {
+    accountId?: string;
+    agentId?: string;
+    agentVersion?: number;
+    callId?: string;
+    conversationId?: string;
+    extension?: string;
+    imagePurpose?: string;
+    model: string;
+    n: number;
+    orgId: string;
+    parent?: HookParentScope;
+    prompt: string;
+    provider: string;
+    purpose: "image";
+    referenceImages: HookMediaPlaceholder[];
+    runId?: string;
+    size: ImageSize;
+    step?: number;
+}
+
+// @public
+export interface ImageResponseHookPayload {
+    accountId?: string;
+    agentId?: string;
+    agentVersion?: number;
+    callId?: string;
+    conversationId?: string;
+    errorCode?: string;
+    extension?: string;
+    imagePurpose?: string;
+    images: {
+        mediaType: string;
+        size: number;
+    }[];
+    latencyMs: number;
+    model: string;
+    orgId: string;
+    outcome: "ok" | "failed";
+    parent?: HookParentScope;
+    provider: string;
+    purpose: "image";
+    revisedPrompt?: string;
+    runId?: string;
+    step?: number;
+    usage: ModelUsage | null;
+}
+
+// @public
+export interface ImageSize {
+    height: number;
+    width: number;
+}
 
 // @public
 export type InboundEvent = {
@@ -1969,6 +2084,9 @@ export function isThemeAssetPath(v: unknown): v is string;
 
 // @public
 export function isThemeFontFamily(v: unknown): v is string;
+
+// @public
+export function isValidImageGenerationInfo(x: unknown): x is ModelImageGenerationInfo;
 
 // @public
 export type JsonSchema = Record<string, unknown>;
@@ -2208,14 +2326,14 @@ export interface ModelCallOptions {
 }
 
 // @public
-export type ModelCallPurpose = "step" | "compaction" | "title" | "web_fetch" | "review";
+export type ModelCallPurpose = "step" | "compaction" | "title" | "web_fetch" | "review" | "image";
 
 // @public
 export interface ModelCallRequestHookPayload extends HookScope {
     attempt: number;
     model: string;
     provider: string;
-    purpose: ModelCallPurpose;
+    purpose: Exclude<ModelCallPurpose, "image">;
     request: Readonly<HookModelRequest>;
     step: number;
 }
@@ -2240,7 +2358,16 @@ export class ModelError extends Error {
 }
 
 // @public
-export type ModelErrorKind = "rate_limited" | "overloaded" | "server" | "timeout" | "network" | "auth" | "invalid_request" | "context_overflow" | "aborted";
+export type ModelErrorKind = "rate_limited" | "overloaded" | "server" | "timeout" | "network" | "auth" | "invalid_request" | "context_overflow" | "refusal" | "aborted";
+
+// @public
+export interface ModelImageGenerationInfo {
+    defaultSize: ImageSize;
+    maxImages: number;
+    maxReferenceImages: number;
+    outputMediaTypes: ImageMediaType[];
+    sizes: ImageSize[];
+}
 
 // @public
 export interface ModelInfo {
@@ -2257,6 +2384,7 @@ export interface ModelInfo {
     displayName: string;
     embedding?: ModelEmbeddingInfo;
     id: string;
+    imageGeneration?: ModelImageGenerationInfo;
     kind?: ModelKind;
     maxOutputTokens: number;
     parameters: ModelParameter[];
@@ -2306,6 +2434,9 @@ export interface ModelProvider {
     embed?(req: EmbedRequest, opts: {
         signal: AbortSignal;
     } & ModelCallOptions): Promise<EmbedResult>;
+    generateImage?(req: ImageGenerateRequest, opts: {
+        signal: AbortSignal;
+    } & ModelCallOptions): Promise<ImageGenerateResult>;
     listModels(opts?: ModelCallOptions): Promise<ModelInfo[]>;
     stream(req: ModelRequest, opts: {
         signal: AbortSignal;
@@ -2328,7 +2459,7 @@ export interface ModelRequest {
 }
 
 // @public
-export type ModelRequestHookPayload = ModelCallRequestHookPayload | EmbeddingRequestHookPayload;
+export type ModelRequestHookPayload = ModelCallRequestHookPayload | EmbeddingRequestHookPayload | ImageRequestHookPayload;
 
 // @public
 export interface ModelResponseHookPayload extends HookScope {
@@ -2339,7 +2470,7 @@ export interface ModelResponseHookPayload extends HookScope {
     model: string;
     outcome: "ok" | "failed";
     provider: string;
-    purpose: ModelCallPurpose;
+    purpose: Exclude<ModelCallPurpose, "image">;
     step: number;
     stopReason: string | null;
     usage: ModelUsage | null;
@@ -2364,6 +2495,7 @@ export interface ModelUsage {
     cacheReadTokens: number;
     cacheWriteTokens: number;
     inputTokens: number;
+    outputImages?: number;
     outputTokens: number;
 }
 
@@ -2649,6 +2781,18 @@ export function parseToolKey(key: string): ParsedToolKey | null;
 
 // @public
 export type PermissionProfile = "request-approval" | "approve-for-me" | "full-access";
+
+// @public
+export function pickImageSize(info: ModelImageGenerationInfo, opts: {
+    size?: ImageSize;
+    aspectRatio?: ImageAspectRatio;
+}): {
+    ok: true;
+    size: ImageSize;
+} | {
+    ok: false;
+    error: string;
+};
 
 // @public
 export interface PlatformEmbedClaims extends EmbedClaimsBase {
@@ -4363,6 +4507,9 @@ export function validateFilePreviewProvider(p: unknown): string[];
 
 // @public
 export function validateGitSource(git: unknown, at?: string): string[];
+
+// @public
+export function validateImageGenerateResult(req: ImageGenerateRequest, info: ModelImageGenerationInfo, res: unknown): string | null;
 
 // @public
 export function validateInputForm(form: InputForm): string[];

@@ -132,11 +132,13 @@ export function narrowPending(stored: readonly string[] | undefined, failed: rea
  * Nothing is written to the event log (never model-visible). Compaction calls log usage too (`purpose: "compaction"`) and are reported,
  * as are conversation title calls (`purpose: "title"`, no run: `runId` is "") and `WebFetch`
  * extraction calls (`purpose: "web_fetch"`). Command-review classifier calls log usage with
- * `purpose: "review"` and the reviewed tool call's `callId`.
+ * `purpose: "review"` and the reviewed tool call's `callId`; `GenerateImage` calls with
+ * `purpose: "image"` and their `outputImages`, passed through in `usage`.
  * Single-step eval replays and judge requests log no usage: not reported (M7).
- * - **Model usage outside conversations** (spec B §5.4): each `ctx.models.embed` call writes a
- *   `model_usage` row and owes job `usage-model-<rowId>` with it; the payload
- *   (`purpose: "embedding"`, `eventId` = the row id, the calling `extension`, no conversation fields)
+ * - **Model usage outside conversations** (spec B §5.4): each `ctx.models.embed` and
+ *   `ctx.models.generateImage` call writes a `model_usage` row and owes job `usage-model-<rowId>`
+ *   with it; the payload (`purpose: "embedding"`, or `"image"` with `usage.outputImages` for an
+ *   image generation row; `eventId` = the row id, the calling `extension`, no conversation fields)
  *   is read from the row when the job runs, and the row's `reported_at` is set once nothing is left
  *   to deliver; a job that gives up after its last attempt sets `report_failed_at`. A row with
  *   `reported_at IS NULL` is not necessarily pending: no job is owed when no enabled extension
@@ -258,28 +260,45 @@ export class UsageReporter {
   }
 
   /**
-   * The payload of one `model_usage` row (spec B §5.4): purpose `embedding`, the calling extension,
-   * no conversation fields; `eventId` is the row id. Null when the row no longer exists.
+   * The payload of one `model_usage` row (spec B §5.4, image generation spec §9): purpose `image`
+   * for an image generation call (`kind = 'image_generation'`, with its output and cache tokens
+   * and `usage.outputImages` when it produced any), else `embedding`; the calling extension, no
+   * conversation fields; `eventId` is the row id. Null when the row no longer exists.
    */
   private async payloadOfUsage(id: string): Promise<UsageReportPayload | null> {
     const row = await this.db
       .selectFrom("model_usage")
-      .select(["id", "org_id", "extension", "provider", "model", "input_tokens", "occurred_at"])
+      .select([
+        "id",
+        "org_id",
+        "extension",
+        "kind",
+        "provider",
+        "model",
+        "input_tokens",
+        "output_tokens",
+        "cache_read_tokens",
+        "cache_write_tokens",
+        "output_images",
+        "occurred_at",
+      ])
       .where("id", "=", id)
       .executeTakeFirst();
     if (!row) return null;
     return {
       eventId: row.id,
-      purpose: "embedding",
+      purpose: row.kind === "image_generation" ? "image" : "embedding",
       orgId: row.org_id,
       extension: row.extension,
       provider: row.provider,
       model: row.model,
       usage: {
         inputTokens: row.input_tokens,
-        outputTokens: 0,
-        cacheReadTokens: 0,
-        cacheWriteTokens: 0,
+        // an embedding row's are 0: only an image answer carries output and cache tokens
+        outputTokens: row.output_tokens,
+        cacheReadTokens: row.cache_read_tokens,
+        cacheWriteTokens: row.cache_write_tokens,
+        ...(row.output_images > 0 && { outputImages: row.output_images }),
       },
       occurredAt: new Date(row.occurred_at).toISOString(),
     };
@@ -333,13 +352,15 @@ export class UsageReporter {
       .executeTakeFirst();
     if (row?.type !== "usage") return null;
     const p = row.payload as {
-      purpose?: "compaction" | "title" | "web_fetch" | "review";
+      purpose?: "compaction" | "title" | "web_fetch" | "review" | "image";
       provider: string;
       model: string;
       inputTokens: number;
       outputTokens: number;
       cacheReadTokens: number;
       cacheWriteTokens: number;
+      /** A `GenerateImage` call's images (image generation spec §7). */
+      outputImages?: number;
     };
     // a sub-agent's run: where it was dispatched from (spec §11), its own dispatch, else (a wake
     // run nobody dispatched, agent map spec §5.3) its conversation's latest one
@@ -371,6 +392,7 @@ export class UsageReporter {
         outputTokens: p.outputTokens,
         cacheReadTokens: p.cacheReadTokens,
         cacheWriteTokens: p.cacheWriteTokens,
+        ...(typeof p.outputImages === "number" && { outputImages: p.outputImages }),
       },
       occurredAt: new Date(row.created_at).toISOString(),
     };

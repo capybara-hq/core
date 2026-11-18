@@ -13,12 +13,14 @@ import { ExtensionPointDefaults } from "../../extensions/point-defaults.js";
 import { KernelConfigService } from "../../infra/config/kernel-config.service.js";
 import { KernelDb } from "../../infra/database/kernel-db.js";
 import { KERNEL_LOGGER } from "../../infra/tokens.js";
+import { ModelImages } from "../../models/images.js";
 import { ModelPurposesService } from "../../models/purposes.js";
 import { readOrgSettings } from "../../orgs/settings.service.js";
 import { PlatformActor } from "../../platform/actor.js";
 import { AgentDocs } from "../../platform/agent-docs.js";
 import { PlatformOperations } from "../../platform/registry.js";
 import type { HookRunner } from "../../runtime/hook-calls.js";
+import { ProviderRegistry } from "../../runtime/providers.js";
 import { conversationTimeZone, RUN_CONTEXT_CLOCK } from "../../runtime/run-context.service.js";
 import { StepLog } from "../../runtime/step-log.js";
 import { LegacyRetirementStore } from "../../sandbox/legacy-retirement.js";
@@ -39,6 +41,7 @@ import { agentTool } from "./agent.js";
 import { askUserTool } from "./ask-user.js";
 import { currentTimeTool } from "./current-time.js";
 import { handbackTool } from "./handback.js";
+import { generateImageTool } from "./image/index.js";
 import { platformTool } from "./platform.js";
 import { readToolOutputTool } from "./read-tool-output.js";
 import type { SandboxToolDeps } from "./sandbox/common.js";
@@ -89,6 +92,9 @@ export class BuiltinTools {
     @Inject(ScheduleUpdates) scheduleUpdates: ScheduleUpdates,
     /** The task service, bound by `SchedulesModule` at start (a registration port: no cycle). */
     @Inject(ScheduleToolsPort) schedulePort: ScheduleToolsPort,
+    /** `GenerateImage`: the image calls, and the image model's availability per listing. */
+    @Inject(ModelImages) images: ModelImages,
+    @Inject(ProviderRegistry) providers: ProviderRegistry,
     /** The clock `CurrentTime` reads (the run context's clock seam; `Date.now` by default). */
     /** The managed sandbox route's device context writer (permission context replay spec B3). */
     @Inject(ManagedDeviceContextRecorder) managedDeviceContext: ManagedDeviceContextRecorder,
@@ -155,6 +161,22 @@ export class BuiltinTools {
             page,
             prompt,
           ),
+      }),
+      // images from the org's `image` purpose model, delivered as artifacts (image generation
+      // spec §5.3); written into the device too with `file_path`
+      generateImageTool({
+        images,
+        purposes,
+        providers,
+        storage,
+        eventLog,
+        stepLog,
+        config,
+        log,
+        hooks: host?.hooks,
+        db: () => db.db,
+        attachments,
+        sandbox: sandboxDeps,
       }),
       // the platform's own operations and docs, as the run's person (Platform tool spec)
       platformTool({

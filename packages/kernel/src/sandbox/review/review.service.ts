@@ -14,6 +14,7 @@ import { KERNEL_LOGGER } from "../../infra/tokens.js";
 import { ModelPurposesService } from "../../models/purposes.js";
 import type { ConversationKindForHooks } from "../../runtime/hook-calls.js";
 import { StepLog } from "../../runtime/step-log.js";
+import { generateImagePaths } from "../../tools/builtins/image/paths.js";
 import type { PermissionCandidate } from "../permission-call-types.js";
 import {
   boundMessages,
@@ -63,7 +64,7 @@ export interface ReviewInput {
   conversationId: string;
   runId: string;
   accountId: string;
-  /** `Bash` / `Write` / `Edit`; any other tool is not reviewed. */
+  /** `Bash` / `Write` / `Edit` / `GenerateImage` with `file_path`; others are not reviewed. */
   toolKey: string;
   /** The validated tool input (the command for `Bash`, the path for a file write). */
   input: unknown;
@@ -129,8 +130,15 @@ export const REVIEW_REASONS = {
   sessionGrant: "Allowed for the rest of this conversation by an earlier approval.",
 } as const;
 
-/** The tools the review covers: the shell, and the file tools whose writes may leave the workspace. */
-const REVIEWED_TOOLS: ReadonlySet<string> = new Set(["Bash", "Write", "Edit"]);
+/**
+ * The tools the review covers: the shell, and the file tools whose writes may leave the workspace
+ * (`GenerateImage` writes its images into the device at `file_path`, reviewed as a `Write`; a call
+ * without `file_path` writes nothing there and is not reviewed).
+ */
+const REVIEWED_TOOLS: ReadonlySet<string> = new Set(["Bash", "Write", "Edit", "GenerateImage"]);
+
+/** The reviewed tools that write a file at `file_path` (the rest run a shell command). */
+const WRITE_TOOLS: ReadonlySet<string> = new Set(["Write", "Edit", "GenerateImage"]);
 
 /** How many of a conversation tree's latest assistant messages the review reads for its writes. */
 const WRITTEN_EVENTS_READ = 200;
@@ -199,17 +207,21 @@ export class CommandReviewService implements CommandReview {
     if (!REVIEWED_TOOLS.has(input.toolKey) && !input.permissionProfile) {
       return allow(REVIEW_REASONS.notReviewed, null);
     }
+    // a path call: the file writes, and a `Read` under a permission profile (its path is judged)
     const isWrite =
-      input.toolKey === "Write" ||
-      input.toolKey === "Edit" ||
+      WRITE_TOOLS.has(input.toolKey) ||
       (input.toolKey === "Read" && input.permissionProfile !== undefined);
+    // every path the call names (a GenerateImage call without file_path writes none)
+    const paths = isWrite ? writePathsOf(input.toolKey, input.input) : [];
+    if (isWrite && paths.length === 0) return allow(REVIEW_REASONS.notReviewed, null);
     if (input.mode === "sandbox" && isWrite && !input.permissionProfile) {
       return allow(REVIEW_REASONS.sandboxWrite, null);
     }
     const workspace = input.workspace;
     if (workspace === undefined) return allow(REVIEW_REASONS.noDevice, null);
 
-    const target = isWrite ? pathOf(input.input) : commandOf(input.input);
+    // the classifier reads every path a write call writes, one per line
+    const target = isWrite ? paths.join("\n") : commandOf(input.input);
     if (target === null) {
       // argument validation runs before this stage; a shape the tool itself will refuse
       return allow(REVIEW_REASONS.notReviewed, null);
@@ -229,7 +241,7 @@ export class CommandReviewService implements CommandReview {
     };
     // running a file this conversation wrote is not a development command (hardening spec R1)
     const result = isWrite
-      ? reviewWrite(target, facts)
+      ? reviewWrites(paths, facts)
       : reviewRules(target, {
           ...facts,
           written: await this.writtenInTree(await rootOf(), facts),
@@ -432,8 +444,10 @@ export class CommandReviewService implements CommandReview {
     const written = new Set<string>();
     for (const row of rows) {
       for (const call of toolCallsOf(row.payload)) {
-        if ((call.name === "Write" || call.name === "Edit") && typeof call.path === "string") {
-          written.add(call.path.startsWith("/") ? call.path : `${facts.workspace}/${call.path}`);
+        if (WRITE_TOOLS.has(call.name)) {
+          for (const path of writePathsOf(call.name, call.input)) {
+            written.add(path.startsWith("/") ? path : `${facts.workspace}/${path}`);
+          }
         } else if (call.name === "Bash" && typeof call.command === "string") {
           for (const path of writtenPaths(call.command, facts)) written.add(path);
         }
@@ -461,7 +475,7 @@ export class CommandReviewService implements CommandReview {
 }
 
 /** The tool calls of an `assistant_message` payload, with the fields the review reads. */
-function toolCallsOf(payload: unknown): { name: string; path?: unknown; command?: unknown }[] {
+function toolCallsOf(payload: unknown): { name: string; input: unknown; command?: unknown }[] {
   const content = (payload as { content?: unknown } | null)?.content;
   if (!Array.isArray(content)) return [];
   return content.flatMap((b) => {
@@ -469,7 +483,7 @@ function toolCallsOf(payload: unknown): { name: string; path?: unknown; command?
     const block = b as { type?: unknown; name?: unknown; input?: unknown };
     if (block.type !== "tool_call" || typeof block.name !== "string") return [];
     const input = (block.input ?? {}) as { file_path?: unknown; command?: unknown };
-    return [{ name: block.name, path: input.file_path, command: input.command }];
+    return [{ name: block.name, input: block.input, command: input.command }];
   });
 }
 
@@ -493,8 +507,29 @@ function commandOf(input: unknown): string | null {
   return typeof command === "string" ? command : null;
 }
 
-/** The path of a validated `Write` / `Edit` input, or null when it has none (the tool refuses it). */
-function pathOf(input: unknown): string | null {
+/**
+ * The paths a validated write call writes: `Write` / `Edit`'s `file_path`, every path of a
+ * `GenerateImage` call ({@link generateImagePaths}: none without `file_path`, the suffixed paths
+ * of several images). Empty when there is none (the file tools refuse such an input).
+ */
+function writePathsOf(toolKey: string, input: unknown): string[] {
+  if (toolKey === "GenerateImage") return generateImagePaths(input);
   const path = (input as { file_path?: unknown } | null)?.file_path;
-  return typeof path === "string" ? path : null;
+  return typeof path === "string" ? [path] : [];
+}
+
+const OUTCOME_RANK: Record<RuleOutcome, number> = { allow: 0, unsure: 1, ask: 2, deny: 3 };
+
+/**
+ * The review of a call that writes several paths: each path reviewed as a `Write`, the worst
+ * outcome deciding (deny, then ask, then unsure) over all their hits, so the call is allowed only
+ * when every path is and a session grant settles it only when it covers every path's asks.
+ */
+function reviewWrites(paths: readonly string[], facts: Parameters<typeof reviewWrite>[1]) {
+  const results = paths.map((p) => reviewWrite(p, facts));
+  const outcome = results.reduce<RuleOutcome>(
+    (worst, r) => (OUTCOME_RANK[r.outcome] > OUTCOME_RANK[worst] ? r.outcome : worst),
+    "allow",
+  );
+  return { outcome, hits: results.flatMap((r) => r.hits) };
 }

@@ -252,7 +252,9 @@ function ModelsBody({
       putAdminPurpose(v.purpose, v.target),
     invalidates: () => [
       keys.deployment().platformAuditAll(),
-      ...(orgId === null ? [] : [keys.org(orgId).orgPurposes()]),
+      ...(orgId === null
+        ? []
+        : [keys.org(orgId).orgPurposes(), keys.org(orgId).purposeAvailability()]),
     ],
   });
   const replacePurpose = (v: PurposeView) =>

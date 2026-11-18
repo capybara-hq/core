@@ -28,6 +28,10 @@ const HOT_APPLIERS: Record<string, (k: { log: KernelLogger }, value: unknown) =>
   // The provider registry reads the list time limit at every listModels call.
   "models.listTimeoutMs": () => {},
   "models.embedTimeoutMs": () => {},
+  // ModelImages reads the image limits at every prepare and run.
+  "models.imageTimeoutMs": () => {},
+  "models.imageMaxPerCall": () => {},
+  "models.imagePromptMaxChars": () => {},
   // SandboxService reads the shared-lease cap at every acquisition.
   "sandbox.maxConcurrentCommands": () => {},
   // The command-review service reads the classifier's bounds at every classifier call.

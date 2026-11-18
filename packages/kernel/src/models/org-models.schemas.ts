@@ -12,6 +12,7 @@ export const ORG_MODEL_ROUTES: readonly RouteSchemas[] = [
   { route: "GET /api/v1/orgs/:orgId/models", query: ModelsQuery },
   { route: "GET /api/v1/orgs/:orgId/models/catalog" },
   { route: "GET /api/v1/orgs/:orgId/model-purposes" },
+  { route: "GET /api/v1/orgs/:orgId/model-purposes/available" },
   {
     route: "PUT /api/v1/orgs/:orgId/model-purposes/:purpose",
     params: ModelPurposePathParams,

@@ -1,7 +1,7 @@
 import { fileURLToPath } from "node:url";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { ApiError } from "../../src/errors.js";
@@ -12,6 +12,7 @@ import {
   withDeclaredByNames,
 } from "../../src/models/purposes.js";
 import { ProviderListError, ProviderRegistry } from "../../src/runtime/providers.js";
+import { StorageService } from "../../src/storage/storage.service.js";
 import { evalModelState, resetEvalModel } from "../fixtures/plugins/model-eval/index.js";
 import { truncateTables } from "../helpers/db.js";
 import { accountsFor } from "../helpers/identity.js";
@@ -59,7 +60,11 @@ beforeAll(async () => {
         extensions: [MODEL_FAKE, MODEL_EVAL, EMBED_CONSUMER],
         extensionConfig: {
           "model-fake": {
-            models: [{ id: "fake-1" }, { id: "fake-embed", kind: "embedding", dimensions: [4] }],
+            models: [
+              { id: "fake-1" },
+              { id: "fake-embed", kind: "embedding", dimensions: [4] },
+              { id: "fake-image", kind: "image_generation" },
+            ],
           },
         },
       },
@@ -149,6 +154,7 @@ const KERNEL = [
   "subagent_fast",
   "subagent_standard",
   "subagent_capable",
+  "image",
 ];
 
 describe("purpose list", () => {
@@ -172,6 +178,11 @@ describe("purpose list", () => {
         purpose: "subagent_capable",
         kind: "chat",
         label: { zh: "子智能体：最强", en: "Sub-agent: capable" },
+      },
+      {
+        purpose: "image",
+        kind: "image_generation",
+        label: { zh: "图片生成", en: "Image generation" },
       },
     ]);
     const views = await list(ent, adminUrl());
@@ -372,6 +383,36 @@ describe("kinds and disabled models (spec B §5.3)", () => {
     );
   });
 
+  it("image purpose maps to an image model", async () => {
+    const IMG = { model: { provider: "model-fake", model: "fake-image" }, params: {} };
+    expect(await put(ent, adminUrl("image"), IMG)).toMatchObject({
+      kind: "image_generation",
+      effective: IMG,
+    });
+    expect(await k.app.get(ModelPurposesService).resolve(orgId, "image")).toEqual(IMG);
+  });
+
+  it("image purpose refuses a chat model", async () => {
+    for (const [req, url] of [
+      [ent, adminUrl("image")],
+      [admin, orgUrl("image")],
+    ] as const) {
+      const res = await req({ method: "PUT", url, payload: { target: FAKE_1 } });
+      expect(res.statusCode, res.body).toBe(400);
+      expect(errCode(res)).toBe("validation_failed");
+      expect(res.body).toContain("this purpose needs an image_generation model, not chat");
+    }
+  });
+
+  it("unmapped image purpose resolves to model.unconfigured", async () => {
+    const err = await k.app
+      .get(ModelPurposesService)
+      .resolve(orgId, "image")
+      .catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ApiError);
+    expect((err as ApiError).code).toBe("model.unconfigured");
+  });
+
   it("an org override on a model disabled in the org is refused", async () => {
     expect((await disable(admin, orgDisabledUrl(), { disable: ["fake-1"] })).statusCode).toBe(200);
     const res = await admin({ method: "PUT", url: orgUrl("title"), payload: { target: FAKE_1 } });
@@ -547,5 +588,65 @@ describe("权限", () => {
     expect((await owner({ method: "GET", url: orgUrl() })).statusCode).toBe(200);
     expect((await k.http.inject({ method: "GET", url: orgUrl() })).statusCode).toBe(401);
     expect((await k.http.inject({ method: "GET", url: adminUrl() })).statusCode).toBe(401);
+  });
+});
+
+describe("purpose availability for a member", () => {
+  const availUrl = () => `/api/v1/orgs/${orgId}/model-purposes/available`;
+  const FAKE_IMAGE = { model: { provider: "model-fake", model: "fake-image" }, params: {} };
+  const imageAvailable = async (req: Req) => {
+    const res = await req({ method: "GET", url: availUrl() });
+    expect(res.statusCode, res.body).toBe(200);
+    const { purposes } = res.json() as { purposes: { purpose: string; available: boolean }[] };
+    expect(Object.keys(purposes[0] ?? {}).sort()).toEqual(["available", "purpose"]);
+    return purposes.find((p) => p.purpose === "image")?.available;
+  };
+
+  /** The kernel here has no object store: `GenerateImage` needs one, so it is faked available. */
+  const withStorage = (available = true) =>
+    vi.spyOn(k.app.get(StorageService), "available", "get").mockReturnValue(available);
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  it("a plain member reads false unmapped, true once mapped, false once the target is disabled", async () => {
+    withStorage();
+    // not an org.models.manage action: the full list refuses the member
+    expect((await alice({ method: "GET", url: orgUrl() })).statusCode).toBe(403);
+    expect(await imageAvailable(alice)).toBe(false);
+    await put(admin, orgUrl("image"), FAKE_IMAGE);
+    expect(await imageAvailable(alice)).toBe(true);
+    expect(
+      (
+        await admin({
+          method: "PATCH",
+          url: `/api/v1/orgs/${orgId}/models/model-fake/disabled`,
+          payload: { disable: ["fake-image"] },
+        })
+      ).statusCode,
+    ).toBe(200);
+    expect(await imageAvailable(alice)).toBe(false);
+  });
+
+  it("image reads false without object storage, as GenerateImage is unavailable then", async () => {
+    await put(admin, orgUrl("image"), FAKE_IMAGE);
+    withStorage(true);
+    expect(await imageAvailable(alice)).toBe(true);
+    withStorage(false);
+    expect(await imageAvailable(alice)).toBe(false);
+  });
+
+  it("image reads false while the provider's model list fails, as for GenerateImage", async () => {
+    await put(admin, orgUrl("image"), FAKE_IMAGE);
+    withStorage();
+    const registry = k.app.get(ProviderRegistry);
+    const original = registry.resolve.bind(registry);
+    vi.spyOn(registry, "resolve").mockImplementation(async (...args) => {
+      if (args[1].provider === "model-fake") {
+        throw new ProviderListError("model-fake", new Error("list down"));
+      }
+      return original(...args);
+    });
+    expect(await imageAvailable(alice)).toBe(false);
   });
 });
