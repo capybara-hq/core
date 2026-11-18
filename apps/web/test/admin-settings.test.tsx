@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import zh from "../messages/zh.json";
+import { cdnOriginOf, isCdnOrigin } from "../src/lib/admin";
 import { keys } from "../src/lib/query/keys";
 import { bodyOf, type Call, json, lastStubRoutes, stubApi } from "./support/api";
 import { resetNavigation } from "./support/navigation";
@@ -167,7 +168,7 @@ describe("External sharing on /admin/settings", () => {
     await user.clear(days);
     await user.type(days, "7");
     const list = within(section).getByRole("textbox", { name: S.cdnAllowlist });
-    await user.type(list, "{Enter}https://cdn.example.com:8443");
+    await user.type(list, "{Enter}HTTPS://CDN.Example.com:8443");
     await user.click(screen.getByRole("button", { name: en.admin.settings.save }));
     await waitFor(() => expect(calls.some((c) => c.method === "PUT")).toBe(true));
     expect(bodyOf(calls.find((c) => c.method === "PUT"))).toEqual({
@@ -176,6 +177,12 @@ describe("External sharing on /admin/settings", () => {
       htmlRenderCdnAllowlist: ["https://unpkg.com", "https://cdn.example.com:8443"],
     });
     expect(findNestedBoxes(document.body).map(describeNestedBox)).toEqual([]);
+  });
+
+  it("an allowlist entry is checked trimmed and lower-cased, as it is sent", () => {
+    expect(isCdnOrigin(" HTTPS://Cdn.Example.COM:8443 ")).toBe(true);
+    expect(cdnOriginOf(" HTTPS://Cdn.Example.COM ")).toBe("https://cdn.example.com");
+    expect(isCdnOrigin("HTTP://cdn.example.com")).toBe(false);
   });
 
   it("the allowlist editor rejects http:// and a path, and blocks saving", async () => {

@@ -38,6 +38,7 @@ import {
   CLIENT_EXTENSIONS_DEFAULT,
   type ClientExtensionsSetting,
   type CustomPolicy,
+  cdnOriginOf,
   type DeploymentSettings,
   type DeploymentSettingsPatch,
   isCdnOrigin,
@@ -447,7 +448,7 @@ const originsOf = (text: string): string[] => [
   ...new Set(
     text
       .split(/[\s,]+/)
-      .map((o) => o.trim().toLowerCase())
+      .map(cdnOriginOf)
       .filter((o) => o !== ""),
   ),
 ];

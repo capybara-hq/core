@@ -343,8 +343,12 @@ export interface SharingSetting<T> {
 const CDN_ORIGIN_RE =
   /^https:\/\/(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)*[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?::\d{1,5})?$/;
 
-/** Whether `s` is an allowed CDN allowlist entry (the kernel checks it again; lower case only). */
-export const isCdnOrigin = (s: string): boolean => {
+/** An allowlist entry as it is checked and sent: trimmed, lower case (the kernel stores that). */
+export const cdnOriginOf = (s: string): string => s.trim().toLowerCase();
+
+/** Whether `s` is an allowed CDN allowlist entry, compared as {@link cdnOriginOf} sends it. */
+export const isCdnOrigin = (raw: string): boolean => {
+  const s = cdnOriginOf(raw);
   const port = /:(\d{1,5})$/.exec(s)?.[1];
   return (
     s.length <= 300 &&
