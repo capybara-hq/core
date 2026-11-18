@@ -40,7 +40,6 @@ import {
   attachmentsRoot,
 } from "../../../sandbox/attachments-path.js";
 import { SandboxPathBusyError } from "../../../sandbox/leases.js";
-import type { LegacyRetirementStore } from "../../../sandbox/legacy-retirement.js";
 import {
   MANAGED_DEVICE_CONTEXT_FAILED_TEXT,
   MANAGED_DEVICE_CONTEXT_STALE_TEXT,
@@ -85,22 +84,9 @@ export interface SandboxToolDeps {
   /** Background `Bash` tasks; absent in test stubs, where `run_in_background` is refused. */
   background?: Pick<
     BackgroundTaskStore,
-    | "reserve"
-    | "markStarted"
-    | "failLaunch"
-    | "finishStoppedLaunch"
-    | "releaseStop"
-    | "get"
-    | "advanceOffset"
-    | "runningOwnedBy"
-    | "finishedOwnedBy"
+    "releaseStop" | "get" | "advanceOffset" | "runningOwnedBy" | "finishedOwnedBy"
   > &
     Partial<Pick<BackgroundTaskStore, "reserveManaged" | "failManagedPreEffect">>;
-  /**
-   * The legacy-launch freeze check (permission runtime cutover 8.5) every legacy background launch
-   * makes immediately before it dispatches; always wired in the kernel, absent in test stubs.
-   */
-  legacyLaunch?: Pick<LegacyRetirementStore, "admitLegacyDispatch">;
   /**
    * Whether `id` is a sub-agent conversation in the tree under `rootConversationId` (TaskOutput /
    * TaskStop tell a sub-agent's agentId apart from an unknown task id), and the sub-agents a

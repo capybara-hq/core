@@ -21,3 +21,9 @@ and `capybara config migrate-permissions`. The admin settings no longer read or 
 `deployment.autoMode`); use `devicesFullAccess` and `fullAccess`. The refusals are renamed
 `org.full_access_not_allowed` and `deployment.full_access_not_allowed`. Stored old keys are still
 converted by the permission configuration publication.
+
+Kernel: the old background launcher is gone. A background `Bash` task starts, is polled, stopped
+and read only by its exact device reference; no session-id script runs any more. Tasks left from
+the old launcher are handed to the legacy retirement and never signalled or read live. A refused
+background start, and an old task's failed launch, are reported in actionable words instead of
+the device's raw message.

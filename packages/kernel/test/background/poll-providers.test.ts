@@ -37,7 +37,7 @@ describe("background poll per device provider", () => {
         pruneFinished: async () => 0,
         runningManaged: async () => [],
         owedCancels: async () => [],
-        runningStarted: async () => [
+        runningLegacy: async () => [
           task("t1", "env-device"),
           task("t2", "env-cloud"),
           task("t3", null),

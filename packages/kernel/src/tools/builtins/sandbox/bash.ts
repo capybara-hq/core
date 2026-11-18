@@ -10,40 +10,28 @@ import {
 import {
   backgroundMaxSeconds,
   LAUNCH_EXEC_TIMEOUT_MS,
-  launchScript,
   managedStartedText,
   managedTaskArtifactPath,
   newTaskId,
-  startedText,
-  taskOutputPath,
-  taskSidPath,
 } from "../../../background/launch.js";
-import { KILL_SESSION_TIMEOUT_MS, killSession, SID_RE } from "../../../background/session.js";
 import type { BackgroundTaskRow } from "../../../background/store.js";
-import { runOutsideTransaction } from "../../../infra/database/transaction-host.js";
 import { isDeviceRequestNotSent } from "../../../local-devices/relay.js";
 import { launchRefusedText, operationIdFor } from "../../../sandbox/operation-intents.js";
 import type { BuiltinCallContext, BuiltinResult, BuiltinTool } from "../../registry.js";
 import {
   clip,
   display,
-  inSandbox,
   inSandboxOperations,
   inToolSandbox,
-  mapSandboxError,
-  noSandboxError,
   runBudgetNote,
   runTimeLeftMs,
-  type SandboxSession,
   type SandboxToolDeps,
   sandboxBaseTimeoutMs,
   sandboxConversationOf,
-  shellQuote,
   unavailableWhenNoSandbox,
   withNotices,
 } from "./common.js";
 import { parseDeviceCode } from "./device-code.js";
-import { assertDeviceOfRunAccount } from "./device-owner.js";
 
 /** The command timeout in seconds when `timeout` is not given, at most `sandbox.limits.maxCommandSeconds`. */
 export const BASH_DEFAULT_TIMEOUT_SECONDS = 120;
@@ -173,283 +161,8 @@ export function formatExec(
   return parts.join("\n");
 }
 
-/** The most output the launch exec keeps (it prints only the session id, or an error). */
+/** The most output a background start keeps (the device acknowledges it with a typed ref). */
 const LAUNCH_MAX_OUTPUT_BYTES = 64 * 1024;
-/** Above about this many bytes of base64, a provider may refuse the launch exec's command. */
-const LARGE_COMMAND_BASE64_BYTES = 96 * 1024;
-
-/** How a launch ended, decided under the call's lease. */
-type Launch =
-  | { kind: "started" }
-  /** A stop claimed the reservation while it launched: the command was killed at once. */
-  | { kind: "stopped" }
-  /** The launch failed (any session it started and whose id could be read was killed). */
-  | { kind: "not_started"; why: string }
-  /**
-   * The command started, but its row could not be completed; `stopped` when the kill confirmed
-   * its session empty.
-   */
-  | { kind: "unrecorded"; why: string; stopped: boolean };
-
-/** Why a launch exec did not start the command, for the model and the row's reason. */
-function launchFailure(r: ExecResult): string {
-  if (r.timedOut) return `the launch did not finish within ${LAUNCH_EXEC_TIMEOUT_MS / 1000}s`;
-  if (r.exitCode === null) return "the launch was stopped before it finished";
-  const said = clip(r.stderr || (r.exitCode === 0 ? "" : r.stdout), 500).replace(/\.$/, "");
-  if (said !== "") return said;
-  return r.exitCode === 0
-    ? "the launch printed no session id"
-    : `the launch exited with code ${r.exitCode}`;
-}
-
-/**
- * `Bash` with `run_in_background` (spec 2026-11-05-background-bash-design §2.1, §4.2):
- * 1. reserves the task's row (`BackgroundTaskStore.reserve`: `running`, no `sid`), refused once
- *    the sandbox runs `sandbox.background.maxTasks` tasks; the count and the insert are one step
- *    under the sandbox's launch lock;
- * 2. runs one short launch exec under the call's shared lease, and in the same lease records the
- *    session id and the instance (`markStarted`); a command that started but could not be
- *    recorded is killed there (`pkill -KILL -s <sid>`), so no process runs untracked;
- * 3. any failure finishes the row as `failed` with the reason (`failLaunch`);
- * 4. a stop that claimed the reservation meanwhile (`markStarted` answers `stopping`) has the
- *    command killed at once and the row finished `stopped` (`finishStoppedLaunch`).
- * The command runs in a session of its own under its own `timeout` (default and maximum
- * {@link backgroundMaxSeconds}).
- */
-async function runInBackground(
-  deps: SandboxToolDeps,
-  ctx: BuiltinCallContext,
-  input: BashInput,
-): Promise<BuiltinResult> {
-  const { background, sandbox } = deps;
-  if (!background || !sandbox.currentInstance) {
-    throw new ToolError(
-      "Background tasks are not available here; call Bash without run_in_background.",
-    );
-  }
-  if (ctx.runId === undefined) {
-    throw new ToolError(
-      "Background tasks can only be started from an agent run; call Bash without run_in_background.",
-    );
-  }
-  // another account's run never launches on the owner's device: refused before the reservation
-  assertDeviceOfRunAccount(deps.managedDeviceContextRequired, ctx);
-  const currentInstance = sandbox.currentInstance.bind(sandbox);
-  const cfg = deps.config.get();
-  const maxMs = backgroundMaxSeconds(cfg) * 1000;
-  const requested = input.timeout;
-  const seconds = Math.max(1, Math.ceil(Math.min(requested ?? maxMs, maxMs) / 1000));
-  const root = sandboxConversationOf(ctx);
-  // the device the task will run in (the root conversation's, bound for good)
-  let deviceId: string;
-  try {
-    deviceId = await deps.devices.forTool(ctx.orgId, root);
-  } catch (e) {
-    throw mapSandboxError(e, deps.log);
-  }
-  if (!(await sandbox.availableFor(deviceId))) throw noSandboxError();
-  const maxTasks = cfg.sandbox.background.maxTasks;
-  const id = newTaskId();
-  const description = input.description ?? clip(input.command, 120);
-  const startedAt = new Date();
-  const reserved = await background.reserve(
-    {
-      id,
-      orgId: ctx.orgId,
-      conversationId: ctx.conversationId,
-      sandboxConversationId: root,
-      deviceId,
-      runId: ctx.runId,
-      callId: ctx.callId,
-      // the run's trigger account (the pipeline passes `runs.trigger_account_id` as `accountId`)
-      triggerAccountId: ctx.accountId,
-      description,
-      command: input.command,
-      outputPath: taskOutputPath(id),
-      startedAt,
-      deadlineAt: new Date(startedAt.getTime() + seconds * 1000),
-    },
-    maxTasks,
-  );
-  if (!reserved) {
-    throw new ToolError(
-      `${maxTasks} background tasks are already running; stop one with TaskStop or wait for one to finish, then retry`,
-    );
-  }
-
-  // the conversation's background panel lists the task live (a sub-agent's task shows in its
-  // parent's panel too): announced when it starts and when its launch ends it (failed, stopped),
-  // since a client may have listed the reservation as running meanwhile; a failed publish only logs
-  const announce = async (): Promise<void> => {
-    if (!deps.eventLog.publishChanged) return;
-    for (const c of new Set([ctx.conversationId, root])) {
-      await deps.eventLog.publishChanged(c, "background");
-    }
-  };
-  // the instance's workspace once the call entered it (the default until then)
-  let workspace = DEFAULT_SANDBOX_ROOTS.workspace;
-  const isLarge =
-    Math.ceil(Buffer.byteLength(input.command, "utf8") / 3) * 4 > LARGE_COMMAND_BASE64_BYTES;
-  const largeText = (): string =>
-    isLarge
-      ? ` A very large command (over about 96 KB after base64) cannot be started in the background; write it to a script under ${workspace} and run that instead.`
-      : "";
-  // set once the row has its sid: from then on the task runs and is tracked, whatever follows
-  let started = false;
-  let launch: Launch;
-  let notices: string[];
-  try {
-    ({ value: launch, notices } = await inSandbox(deps, ctx, async (s) => {
-      const { h, roots, p, signal } = s;
-      workspace = roots.workspace;
-      // right after the launch a process may fork while it is killed: killSession repeats
-      const kill = (sid: string): Promise<boolean> => killSession(p, h, sid);
-      // the session id the launch wrote before printing it: the launch may have ended (aborted,
-      // timed out, thrown) after starting the command but before its output came back
-      const sidFile = async (): Promise<string | null> => {
-        const f = await p
-          .readFile(h, `${roots.workspace}/${taskSidPath(id)}`, {
-            maxBytes: 64,
-            signal: AbortSignal.timeout(KILL_SESSION_TIMEOUT_MS),
-          })
-          .catch(() => null);
-        const v = f ? new TextDecoder().decode(f.data).trim() : "";
-        return SID_RE.test(v) ? v : null;
-      };
-      // immediately before the dispatch (0157): refused once the legacy-launch freeze is
-      // published, else the reservation is marked as possibly dispatched in the same step
-      const legacyLaunch = deps.legacyLaunch;
-      if (legacyLaunch) {
-        // under the shared lease: the incarnation the launch dispatches into, exactly (I2)
-        const at = await currentInstance(deviceId);
-        const admission = await runOutsideTransaction(() =>
-          legacyLaunch.admitLegacyDispatch(ctx.orgId, id, {
-            provider: at?.provider ?? "unknown",
-            generation: at ? String(at.createdAt.getTime()) : "unknown",
-          }),
-        );
-        if (admission === "frozen")
-          return {
-            kind: "not_started",
-            why: "background tasks are being upgraded on this deployment and cannot be started with the old launcher",
-          } satisfies Launch;
-        if (admission === "gone")
-          return {
-            kind: "not_started",
-            why: "its task record was finished meanwhile",
-          } satisfies Launch;
-      }
-      let r: ExecResult;
-      try {
-        r = await p.exec(h, {
-          // the launch keeps its task files under the workspace (`.capybara/tasks`, where
-          // TaskOutput and TaskStop find them); the command itself starts in the working root
-          command: launchScript(id, inWorkingRoot(input.command, s), seconds),
-          cwd: roots.workspace,
-          timeoutMs: LAUNCH_EXEC_TIMEOUT_MS,
-          maxOutputBytes: LAUNCH_MAX_OUTPUT_BYTES,
-          signal,
-        });
-      } catch (e) {
-        const sid = await sidFile();
-        if (sid !== null) await kill(sid);
-        throw e;
-      }
-      const out = r.stdout.trim();
-      if (r.exitCode !== 0 || !SID_RE.test(out)) {
-        const sid = SID_RE.test(out) ? out : await sidFile();
-        if (sid !== null) await kill(sid);
-        return { kind: "not_started", why: launchFailure(r) } satisfies Launch;
-      }
-      const sid = out;
-      try {
-        // under the shared lease: no rebuild can come between the launch and this read
-        const instance = await currentInstance(deviceId);
-        if (instance === null) throw new Error("the sandbox instance could not be read");
-        const marked = await background.markStarted(id, {
-          sid,
-          sandboxCreatedAt: instance.createdAt,
-          outputPath: `${roots.workspace}/${taskOutputPath(id)}`,
-        });
-        if (!marked) throw new Error("its task record was finished meanwhile");
-        started = true;
-        if (marked === "stopping") {
-          // a stop claimed the reservation before the command started: kill it at once
-          if (await kill(sid)) {
-            await background.finishStoppedLaunch(id);
-            return { kind: "stopped" } satisfies Launch;
-          }
-          // not confirmed: the task runs on and is tracked like any other (the poller checks it)
-          await background.releaseStop(id);
-        }
-        return { kind: "started" } satisfies Launch;
-      } catch (e) {
-        const stopped = await kill(sid);
-        const why = e instanceof Error ? e.message : String(e);
-        return { kind: "unrecorded", why, stopped } satisfies Launch;
-      }
-    }));
-  } catch (e) {
-    if (started) {
-      // the task runs and its row has its sid: an error after that (releasing the lease, say)
-      // does not undo the launch
-      launch = { kind: "started" };
-      notices = [];
-    } else {
-      // no sandbox, a busy or lost lease, an abort, a provider error: nothing started (or what
-      // did was killed above, when its session id could be read)
-      const why = e instanceof Error ? e.message : String(e);
-      await background.failLaunch(id, `launch failed: ${why}`).catch(() => undefined);
-      await announce();
-      if (!isLarge || e instanceof ToolError) throw e;
-      throw new ToolError(
-        `The background task was not started: ${clip(why, 500).replace(/\.$/, "")}. Check the environment, or call Bash without run_in_background.${largeText()}`,
-      );
-    }
-  }
-  if (launch.kind === "not_started") {
-    await background.failLaunch(id, launch.why);
-    await announce();
-    throw new ToolError(
-      `The background task was not started: ${launch.why}. Check the environment, or call Bash without run_in_background.${largeText()}`,
-    );
-  }
-  if (launch.kind === "stopped") {
-    await announce();
-    throw new ToolError(
-      `Background task ${id} ("${description}") was stopped while it was starting, so nothing runs. Call Bash again if it is still needed.`,
-    );
-  }
-  if (launch.kind === "unrecorded") {
-    await background.failLaunch(id, `started but not recorded: ${launch.why}`);
-    await announce();
-    if (launch.stopped) {
-      throw new ToolError(
-        `The background command started but could not be recorded (${launch.why}), so it was stopped. Retry, or call Bash without run_in_background.`,
-      );
-    }
-    throw new ToolError(
-      `The background command started but could not be recorded (${launch.why}); an attempt to stop it failed, so it ends at its timeout. Check the sandbox before you retry, or call Bash without run_in_background.`,
-    );
-  }
-  await announce();
-  const lowered =
-    requested !== undefined && requested > maxMs
-      ? `\n[timeout ${requested} ms is over the background task maximum; it was lowered to ${maxMs} ms.]`
-      : "";
-  const shown = clip(input.command, 120);
-  return {
-    content: [
-      {
-        type: "text",
-        text: withNotices(notices, startedText(id, description, workspace) + lowered),
-      },
-    ],
-    isError: false,
-    view: { kind: "command", description, exitCode: null, timedOut: false },
-    display: display(`后台运行命令：${shown}`, `Started in the background: ${shown}`),
-  };
-}
 
 /** How a managed launch ended (permission runtime cutover phase 8.2). */
 type ManagedLaunch =
@@ -464,9 +177,8 @@ type ManagedLaunch =
   | { kind: "refused"; task: BackgroundTaskRow; why: string };
 
 /**
- * Managed `Bash` background launch (permission runtime cutover phase 8.2): the tool's background
- * path once the one activation gate is on (B-17); while it is off the protocol-2 launch above
- * stays the active path.
+ * Managed `Bash` background launch (permission runtime cutover phase 8.2): the tool's only
+ * background path (the SID launch is gone, permission activation W5-P2).
  *
  * Inside the held operation session it reserves the task (or, for a retry of the same run call,
  * reuses the reservation it persisted before: the same task id, artifact, deadline and
@@ -669,17 +381,6 @@ const isRefusal = (e: unknown): boolean =>
   !isSandboxOperationOutcomeUnknownError(e) &&
   (isSandboxScopeDeniedError(e) || isSandboxPermissionUnsupportedError(e));
 
-/**
- * A background command's script, started in the conversation's working root: the launch itself
- * runs in the workspace (its task files live under `.capybara/tasks` there), so for a bound
- * project the script first changes into the project's root, and ends (exit 1) without running the
- * command when it cannot.
- */
-function inWorkingRoot(command: string, s: Pick<SandboxSession, "roots" | "workingRoot">): string {
-  if (s.workingRoot === s.roots.workspace) return command;
-  return `cd -- ${shellQuote(s.workingRoot)} || exit 1\n${command}`;
-}
-
 /** 内置工具 `Bash`：在本对话的沙箱里执行命令。 */
 export function sandboxBashTool(deps: SandboxToolDeps): BuiltinTool {
   return {
@@ -690,7 +391,7 @@ export function sandboxBashTool(deps: SandboxToolDeps): BuiltinTool {
     // 命令自己的超时先到（提供方停掉命令、返回 timedOut），管线的时限再留出等锁与创建 / 恢复的余量
     timeoutMs: (input) => {
       const cfg = deps.config.get();
-      // a background call is only the short launch; the task's own timeout runs in the sandbox
+      // a background call is only the short start; the task's own timeout runs on the device
       if ((input as BashInput).run_in_background === true) {
         return LAUNCH_EXEC_TIMEOUT_MS + sandboxBaseTimeoutMs(cfg);
       }
@@ -699,11 +400,8 @@ export function sandboxBashTool(deps: SandboxToolDeps): BuiltinTool {
     },
     async run(input, ctx) {
       if ((input as BashInput).run_in_background === true) {
-        // once the activation gate is on, only the managed launch (B-17): the legacy launch
-        // would refuse before entering
-        return deps.managedDeviceContextRequired
-          ? runInBackgroundManaged(deps, ctx, input as BashInput)
-          : runInBackground(deps, ctx, input as BashInput);
+        // the managed launch only: it refuses before any effect where it cannot run
+        return runInBackgroundManaged(deps, ctx, input as BashInput);
       }
       const { command, description } = input as BashInput;
       const max = deps.config.get().sandbox.limits.maxCommandSeconds;

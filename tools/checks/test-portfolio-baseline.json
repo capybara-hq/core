@@ -3,7 +3,6 @@
     "packages/kernel/test/agents/avatar.test.ts": "double boot: the second kernel runs without an object store, and the avatar upload guard it exercises is the subject",
     "packages/kernel/test/agents/from-template.test.ts": "setTimeout wait: created_at has millisecond resolution, so a 5 ms gap orders a template's connectors as \"the first by creation\"",
     "packages/kernel/test/agents/readiness.http.test.ts": "small app file kept on purpose: each test boots a kernel with its own extension set (model-needs-config pending or configured), which is the readiness subject",
-    "packages/kernel/test/background/macos-device.test.ts": "fixed sleep: a 1.5 s hold proves a background task survives past a later foreground call (nothing-happened assertion); the suite moves to the container list because it drives real OS processes",
     "packages/kernel/test/background/poll.dual.test.ts": "small app file with a double boot: two polling replicas are the subject; the in-process api kernel only launches the managed task through the real Bash path",
     "packages/kernel/test/background/poll.test.ts": "setTimeout wait: a 1 s window after a conversation delete proves no late wake run is started",
     "packages/kernel/test/catalog/claude-live.test.ts": "small app file kept on purpose, and now in the container project whose 240 s bound its network run needs: its one test is the live GitHub run (skipped without CAPYBARA_TEST_CLAUDE_SUPERPOWERS=1) over an S3-backed object store and a temp extension dir no sibling shares",

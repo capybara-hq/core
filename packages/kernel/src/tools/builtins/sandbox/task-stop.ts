@@ -1,10 +1,9 @@
-import { rootsOf, ToolError, type ToolSpec } from "@capybara-hq/plugin-sdk";
+import { ToolError, type ToolSpec } from "@capybara-hq/plugin-sdk";
 import {
   LAST_LINES_UNAVAILABLE,
   lastLinesByRef,
   onManagedInstance,
 } from "../../../background/managed.js";
-import { decodeTail, tailCommand } from "../../../background/session.js";
 import { type BackgroundTaskRow, isManagedTask } from "../../../background/store.js";
 import type { BuiltinResult, BuiltinTool } from "../../registry.js";
 import {
@@ -17,16 +16,13 @@ import {
 } from "./common.js";
 import { assertDeviceOfRunAccount } from "./device-owner.js";
 import {
-  onTaskInstance,
   ownedTask,
   recheckDevice,
+  retirementRefusal,
   statusLine,
   type TaskEnv,
   taskEnv,
 } from "./task-output.js";
-
-/** The time limit of reading a stopped task's last lines. */
-const TAIL_EXEC_TIMEOUT_MS = 10_000;
 
 const SPEC: ToolSpec = {
   name: "TaskStop",
@@ -55,7 +51,10 @@ interface TaskStopInput {
   task_id: string;
 }
 
-/** The task's last 20 lines, read from its own sandbox instance; null when that is not running. */
+/**
+ * The task's last 20 lines, read by its exact ref from its own instance; null when that is not
+ * running.
+ */
 async function lastLinesOf(
   env: TaskEnv,
   task: BackgroundTaskRow,
@@ -79,27 +78,8 @@ async function lastLinesOf(
       return LAST_LINES_UNAVAILABLE;
     }
   }
-  try {
-    const r = await onTaskInstance(
-      env,
-      task,
-      async (p, h, sig) => {
-        const res = await p.exec(h, {
-          command: tailCommand(task.id),
-          cwd: rootsOf(h).workspace,
-          timeoutMs: TAIL_EXEC_TIMEOUT_MS,
-          maxOutputBytes: 64 * 1024,
-          signal: sig,
-        });
-        return res.exitCode === 0 ? decodeTail(res.stdout) : null;
-      },
-      signal,
-    );
-    return r.kind === "ran" ? r.value : null;
-  } catch {
-    // the task is stopped either way; only its last lines are missing
-    return null;
-  }
+  // a legacy (SID) task's output is never read by an exec: its lines are labelled unavailable
+  return LAST_LINES_UNAVAILABLE;
 }
 
 /** The result text: what happened, the status line and the last lines. */
@@ -137,8 +117,8 @@ function text(task: BackgroundTaskRow, body: string): BuiltinResult {
 
 /**
  * Built-in `TaskStop` (spec 2026-11-05-background-bash-design §2.3): stops one of this
- * conversation's background tasks through `BackgroundTaskStopper` (SIGTERM to its session, SIGKILL
- * after 5 s, never creating or resuming a sandbox). A task that had already finished is not an
+ * conversation's background tasks through `BackgroundTaskStopper` (by its exact ref, with the device's
+ * five-second grace, never creating or resuming a sandbox). A task that had already finished is not an
  * error; a reservation still launching, or a task another stop already claimed, is reported as
  * stopping. A stop that failed leaves the task running and is an error the model can retry.
  */
@@ -162,7 +142,8 @@ export function taskStopTool(deps: SandboxToolDeps): BuiltinTool {
       try {
         after = await env.tasks.stopper.stop(task, "tool", ctx.signal);
       } catch (e) {
-        const mapped = mapSandboxError(e, env.log);
+        // a running legacy task's stop is the retirement gate's refusal, in its own words
+        const mapped = retirementRefusal(e, env);
         if (mapped instanceof ToolError) throw mapped;
         const why = e instanceof Error ? e.message : String(e);
         throw new ToolError(
