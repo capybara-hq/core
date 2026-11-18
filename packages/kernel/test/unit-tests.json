@@ -103,6 +103,7 @@
   "sandbox/unreachable.test.ts",
   "schedules/calendar.test.ts",
   "schedules/effective-settings.test.ts",
+  "shares/sharing-settings.test.ts",
   "skills/invocable.test.ts",
   "skills/invocation-keys.test.ts",
   "storage/storage.service.test.ts",

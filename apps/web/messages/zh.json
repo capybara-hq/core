@@ -134,7 +134,8 @@
       "auto_mode_not_allowed": "平台不允许自动模式。",
       "network_allowance_invalid": "内部端点无效：请填写主机名、*.domain 通配符、IP 地址或 CIDR，或 http://host:8080 这样的源。链路本地、回环（包括 localhost）和未指定地址始终不允许，覆盖整个公共后缀的通配符也不允许。",
       "network_allowance_not_found": "该组织没有这个内部端点（可能已被移除）。",
-      "network_allowance_widen_not_allowed": "只有超级管理员能在 Web 上的管理控制台里放行内部端点，API 令牌或 Platform 工具不可以。"
+      "network_allowance_widen_not_allowed": "只有超级管理员能在 Web 上的管理控制台里放行内部端点，API 令牌或 Platform 工具不可以。",
+      "external_sharing_not_allowed": "无法开启对外分享：平台不允许，或这次修改来自 API 令牌或平台工具。超级管理员允许后，由组织管理员在 Web 上的组织设置里开启。"
     },
     "setup": {
       "already_completed": "系统已完成初始化。",
@@ -555,7 +556,15 @@
     },
     "deployment": {
       "setting_readonly": "这项设置由部署的启动配置（环境变量、配置文件或 Nacos）设定，只能在那里修改。",
-      "auto_mode_not_allowed": "通过 API 令牌或平台工具只能关闭平台的自动模式；要重新开放，请超级管理员在后台设置。"
+      "auto_mode_not_allowed": "通过 API 令牌或平台工具只能关闭平台的自动模式；要重新开放，请超级管理员在后台设置。",
+      "external_sharing_not_allowed": "通过 API 令牌或平台工具只能关闭对外分享；要允许，请超级管理员在后台设置。"
+    },
+    "share": {
+      "not_found": "这个链接不存在、已撤销或已过期。",
+      "sign_in_required": "请用这个组织的账号登录后打开文件。",
+      "external_not_allowed": "这个组织目前不允许对外分享。",
+      "expiry_too_long": "有效期超过了平台允许的上限，请选短一些。",
+      "file_unavailable": "文件已不可用，可能已被删除。"
     }
   },
   "agents": {
@@ -4265,6 +4274,10 @@
         "scheduleResumed": "恢复了定时任务",
         "scheduleRunNow": "立即运行了定时任务",
         "scheduleUpdated": "修改了定时任务",
+        "shareCreated": "分享了文件",
+        "shareOpened": "打开了分享的文件",
+        "shareRefreshed": "把分享的文件更新到最新版本",
+        "shareRevoked": "撤销了文件分享",
         "skillChangeDecided": "处理了技能变更",
         "skillChangeRequested": "提出了技能变更",
         "skillCreated": "创建了技能",

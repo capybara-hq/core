@@ -44,6 +44,11 @@ import {
   narrowedOrgFullAccess,
   readDevicesFullAccess,
 } from "../sandbox/platform-full-access.js";
+import {
+  type ExternalSharingView,
+  readExternalSharing,
+  readShareMaxExpiry,
+} from "../shares/settings.js";
 import { assertThemeOnIn } from "../themes/theme-state.js";
 import { IanaTimeZone } from "../time-zone.js";
 import {
@@ -193,6 +198,8 @@ export const GIT_GATEWAY_INVALID = { enabled: false } as const;
 
 export type GitGatewaySetting = z.infer<typeof GitGatewaySettingSchema>;
 
+const ExternalSharingSetting = z.enum(["on", "off"]);
+
 export const OrgSettingsSchema = z.object({
   toolSearch: z.enum(["on", "off"]).default("on").catch("on"),
   locale: z.enum(["zh", "en"]).default("en").catch("en"),
@@ -222,6 +229,11 @@ export const OrgSettingsSchema = z.object({
    * rest follow the platform; absent (or an invalid stored value) follows the platform entirely.
    */
   compaction: COMPACTION_SETTINGS_PARTIAL.optional().catch(undefined),
+  /**
+   * The org's external sharing switch (file sharing spec §8); absent = off. An invalid stored
+   * value reads as `off` (never wider). The platform's switch must allow it too.
+   */
+  externalSharing: ExternalSharingSetting.optional().catch("off"),
 });
 
 export type OrgSettings = z.infer<typeof OrgSettingsSchema>;
@@ -288,6 +300,12 @@ export const OrgSettingsPatchSchema = z
      * (follow the platform again). Strict: a misspelled field is a 400, not a silent no-op.
      */
     compaction: COMPACTION_SETTINGS_PATCH.nullable().optional(),
+    /**
+     * The org's external sharing switch; null clears it (off). `on` while the platform denies it
+     * -> 400 `org.external_sharing_not_allowed`; through the Platform tool or an API token it may
+     * only be turned off (the same code).
+     */
+    externalSharing: ExternalSharingSetting.nullable().optional(),
   })
   .strict()
   .refine((p) => p.autoMode === undefined || p.fullAccess === undefined, {
@@ -372,6 +390,10 @@ export interface OrgSettingsDeployment {
   publicUrl: boolean;
   /** The platform's conversation compaction settings (what "follow the platform" means). */
   compaction: CompactionSettings;
+  /** The platform's external sharing switch and its source (deny: the org cannot turn it on). */
+  externalSharing: ExternalSharingView;
+  /** The longest expiry a share may take, in days. */
+  shareMaxExpiryDays: number;
 }
 
 /** Compare by value (`cloudNetwork` is an object); the schema fixes the key order. */
@@ -474,6 +496,15 @@ export function logUnreadableSecuritySettings(
 const autoModeNotAllowed = (message: string): ApiError =>
   new ApiError("org.auto_mode_not_allowed", message);
 
+const externalSharingNotAllowed = (message: string): ApiError =>
+  new ApiError("org.external_sharing_not_allowed", message);
+
+/** Whether a stored settings object holds an `externalSharing` this version reads as `off`. */
+export function invalidStoredExternalSharing(raw: unknown): boolean {
+  const v = asObject(raw).externalSharing;
+  return v !== undefined && !ExternalSharingSetting.safeParse(v).success;
+}
+
 /** Whether a stored settings object holds a `fullAccess` this version reads as `off`. */
 export function invalidStoredFullAccess(raw: unknown): boolean {
   const v = asObject(raw).fullAccess;
@@ -535,6 +566,9 @@ export class OrgSettingsService {
     if (invalidStoredFullAccess(raw)) {
       this.log?.warn("org settings: stored fullAccess is invalid; it reads as off", { orgId });
     }
+    if (invalidStoredExternalSharing(raw)) {
+      this.log?.warn("org settings: stored externalSharing is invalid; it reads as off", { orgId });
+    }
     if (invalidStoredCloudNetwork(raw)) {
       this.log?.warn(
         "org settings: stored cloudNetwork is invalid; it reads as an empty allowlist",
@@ -551,11 +585,14 @@ export class OrgSettingsService {
   /** 部署默认值（设置页展示「跟随部署」时的实际取值）。 */
   async deployment(): Promise<OrgSettingsDeployment> {
     const lim = this.config.get().sandbox.limits;
-    const [fullAccess, attribution, compaction] = await Promise.all([
-      readDevicesFullAccess(this.db.db, this.config, this.log),
-      readPlatformAttribution(this.db.db, this.config, this.log),
-      readPlatformCompactionSettings(this.db.db),
-    ]);
+    const [fullAccess, attribution, compaction, externalSharing, shareMaxExpiry] =
+      await Promise.all([
+        readDevicesFullAccess(this.db.db, this.config, this.log),
+        readPlatformAttribution(this.db.db, this.config, this.log),
+        readPlatformCompactionSettings(this.db.db),
+        readExternalSharing(this.db.db, this.config, this.log),
+        readShareMaxExpiry(this.db.db, this.config, this.log),
+      ]);
     return {
       fullAccess,
       autoMode: legacyAutoModeView(fullAccess),
@@ -567,6 +604,8 @@ export class OrgSettingsService {
       attribution,
       publicUrl: this.config.get().http.publicUrl !== undefined,
       compaction,
+      externalSharing,
+      shareMaxExpiryDays: shareMaxExpiry.value,
     };
   }
 
@@ -609,7 +648,7 @@ export class OrgSettingsService {
 
   /**
    * The refusals of {@link update} that need no read of the org (the Platform tool's precheck):
-   * auto mode where the platform turned it off.
+   * auto mode where the platform turned it off, external sharing where the platform denies it.
    */
   async check(input: OrgSettingsPatch): Promise<void> {
     const patch = normalizeOrgSettingsPatch(input);
@@ -618,6 +657,14 @@ export class OrgSettingsService {
       const platform = await readDevicesFullAccess(this.db.db, this.config, this.log);
       if (platform.permission === "off") {
         throw autoModeNotAllowed("The platform does not allow Full permission");
+      }
+    }
+    if (patch.externalSharing === "on") {
+      const platform = await readExternalSharing(this.db.db, this.config, this.log);
+      if (platform.value !== "allow") {
+        throw externalSharingNotAllowed(
+          "The platform does not allow external sharing; a super admin must allow it in the admin console settings first",
+        );
       }
     }
   }
@@ -662,8 +709,9 @@ export class OrgSettingsService {
     /** Merged into the audit detail (the Platform tool's `via: "agent"`). */
     auditDetail?: Record<string, unknown>,
     /**
-     * `onlyNarrows` (the Platform tool, API tokens): refuse a `fullAccess` or `cloudNetwork`
-     * change that widens (see {@link assertOnlyNarrows}); only a person in a session widens.
+     * `onlyNarrows` (the Platform tool, API tokens): refuse a `fullAccess`, `cloudNetwork` or
+     * `externalSharing` change that widens (see {@link assertOnlyNarrows}); only a person in a
+     * session widens.
      */
     opts?: { onlyNarrows?: boolean },
   ): Promise<OrgSettingsView> {
@@ -696,7 +744,8 @@ export class OrgSettingsService {
    *   platform); clearing it follows the platform too, never wider than the platform allows;
    * - `cloudNetwork`: compared as stored deltas ({@link cloudNetworkWidens}), never as effective
    *   values: under the kill switch or the platform ceiling the effective values hide a widening
-   *   that takes effect when the platform relaxes (org egress ceiling spec §D3).
+   *   that takes effect when the platform relaxes (org egress ceiling spec §D3);
+   * - `externalSharing`: `on` where the org is off (absent = off).
    */
   async assertOnlyNarrows(before: OrgSettings, input: OrgSettingsPatch): Promise<void> {
     const patch = normalizeOrgSettingsPatch(input);
@@ -716,6 +765,11 @@ export class OrgSettingsService {
       throw new ApiError(
         "org.sandbox_egress_not_allowed",
         "Widening the cloud network needs a person in the organization settings.",
+      );
+    }
+    if (patch.externalSharing === "on" && before.externalSharing !== "on") {
+      throw externalSharingNotAllowed(
+        "Turning external sharing on needs a person in the organization settings on the web; an API token or the Platform tool may only turn it off.",
       );
     }
   }
@@ -746,7 +800,8 @@ export class OrgSettingsService {
     const changes = Object.fromEntries(
       Object.entries(patch)
         .filter(([, v]) => v !== undefined)
-        // null clears fullAccess / cloudNetwork / wakeOnBackgroundTask: follow the deployment again
+        // null clears fullAccess / cloudNetwork / wakeOnBackgroundTask (follow the deployment
+        // again) and externalSharing (off)
         .map(([k, v]) => [k, v === null ? undefined : v]),
     ) as Partial<OrgSettings>;
     const arrangementPatch = patch.uiArrangement;
@@ -791,6 +846,7 @@ export class OrgSettingsService {
       delete after.compaction;
     }
     if (after.compaction === undefined) delete after.compaction;
+    if (after.externalSharing === undefined) delete after.externalSharing;
     // saving an unreadable security setting writes it even when it equals what it read as
     const repairs =
       (invalidStoredForbiddenTools(stored) && patch.scheduledTasks?.forbiddenTools !== undefined) ||
@@ -813,6 +869,7 @@ export class OrgSettingsService {
       uiArrangement: _oldArrangement,
       scheduledTasks: _oldScheduled,
       compaction: _oldCompaction,
+      externalSharing: _oldExternalSharing,
       ...rest
     } = stored;
     const written: Record<string, unknown> = {

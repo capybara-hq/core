@@ -13,6 +13,7 @@ import { createLogger } from "../../src/log.js";
 import type { OrgsService } from "../../src/orgs/orgs.service.js";
 import { OrgQuota, orgRunLimit } from "../../src/runtime/quota.js";
 import { PermissionConfigPublication } from "../../src/sandbox/permission-config-publication.js";
+import { HTML_CDN_ALLOWLIST_DEFAULT } from "../../src/shares/settings.js";
 import { truncateTables } from "../helpers/db.js";
 import { asUser, cookieJar, setCookies } from "../helpers/http.js";
 import { accountsFor, apiTokensFor, orgsFor, settingsFor } from "../helpers/identity.js";
@@ -78,6 +79,13 @@ const DEFAULT_ATTRIBUTION = {
   pr: "🤖 Generated with [Capybara](https://github.com/capybara-hq/core)",
   sessionUrl: false,
   sources: { commit: "default", pr: "default", sessionUrl: "default" },
+};
+
+/** The sharing settings with no startup config or stored choice (file sharing spec §8). */
+const DEFAULT_SHARING = {
+  externalSharing: { value: "deny", source: "default" },
+  shareMaxExpiryDays: { value: 30, source: "default" },
+  htmlRenderCdnAllowlist: [...HTML_CDN_ALLOWLIST_DEFAULT],
 };
 
 /** The compaction settings with no stored platform value or org override (spec §4.8). */
@@ -551,6 +559,7 @@ describe("超级管理员端点", () => {
       devicesAutoMode: DEFAULT_AUTO_MODE,
       attribution: DEFAULT_ATTRIBUTION,
       compaction: DEFAULT_COMPACTION,
+      ...DEFAULT_SHARING,
     });
     const put = await adminReq({
       method: "PUT",
@@ -574,6 +583,7 @@ describe("超级管理员端点", () => {
       devicesAutoMode: DEFAULT_AUTO_MODE,
       attribution: DEFAULT_ATTRIBUTION,
       compaction: DEFAULT_COMPACTION,
+      ...DEFAULT_SHARING,
     });
     const bad = await adminReq({
       method: "PUT",
@@ -617,6 +627,7 @@ describe("超级管理员端点", () => {
       devicesAutoMode: DEFAULT_AUTO_MODE,
       attribution: DEFAULT_ATTRIBUTION,
       compaction: DEFAULT_COMPACTION,
+      ...DEFAULT_SHARING,
     });
 
     // 配额读取部署设置：orgA 上限 1，第二个运行进不去；未覆盖的组织用 runtime.orgConcurrency
@@ -648,6 +659,7 @@ describe("超级管理员端点", () => {
       devicesAutoMode: DEFAULT_AUTO_MODE,
       attribution: DEFAULT_ATTRIBUTION,
       compaction: DEFAULT_COMPACTION,
+      ...DEFAULT_SHARING,
     });
     expect(await limit("orgA")).toBe(k.app.get(KernelConfigService).get().runtime.orgConcurrency);
     expect(await quota.tryEnter("orgA", "r2", await limit("orgA"))).toBe(true);
@@ -680,6 +692,7 @@ describe("超级管理员端点", () => {
       devicesAutoMode: DEFAULT_AUTO_MODE,
       attribution: DEFAULT_ATTRIBUTION,
       compaction: DEFAULT_COMPACTION,
+      ...DEFAULT_SHARING,
     });
   });
 
