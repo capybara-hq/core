@@ -202,7 +202,8 @@ export class ModelPurposesService {
         seen.add(p.purpose);
         out.push({
           purpose: p.purpose,
-          kind: p.kind,
+          // image_generation joins the registry's kinds in the image generation plan (task 2)
+          kind: p.kind as "chat" | "embedding",
           label: { zh: p.label.zh, en: p.label.en },
           declaredBy: m.name,
         });

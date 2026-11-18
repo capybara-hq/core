@@ -1,4 +1,4 @@
-import type { ContentBlock, ModelRequest, ModelUsage } from "./model.js";
+import type { ContentBlock, ImageSize, ModelRequest, ModelUsage } from "./model.js";
 
 /**
  * Hook mount points a plugin can register on through `ctx.hooks.on` (from M7). The other names in
@@ -56,7 +56,7 @@ export interface HookScope {
  * `WebFetch` tool, `review` is the command-review classifier's call (`review` purpose, no run
  * step; absent = no classifier).
  */
-export type ModelCallPurpose = "step" | "compaction" | "title" | "web_fetch" | "review";
+export type ModelCallPurpose = "step" | "compaction" | "title" | "web_fetch" | "review" | "image";
 
 /**
  * What a reported or requested model call was for: the {@link ModelCallPurpose} values, or
@@ -142,13 +142,72 @@ export interface EmbeddingRequestHookPayload {
 }
 
 /**
+ * `model.request` of an image generation call (`purpose: "image"`): once per `GenerateImage` tool
+ * call (conversation fields set) or `ctx.models.generateImage` call (`extension` and `imagePurpose`
+ * set, conversation fields absent). Reference images are placeholders: no bytes. A policy denial
+ * sends nothing and records no usage.
+ */
+export interface ImageRequestHookPayload {
+  purpose: "image";
+  orgId: string;
+  provider: string;
+  model: string;
+  prompt: string;
+  size: ImageSize;
+  n: number;
+  referenceImages: HookMediaPlaceholder[];
+  /** Conversation call: */
+  accountId?: string;
+  agentId?: string;
+  agentVersion?: number;
+  conversationId?: string;
+  runId?: string;
+  parent?: HookParentScope;
+  step?: number;
+  callId?: string;
+  /** Extension call: */
+  extension?: string;
+  imagePurpose?: string;
+}
+
+/**
+ * `model.response` of an image generation call: after it finished or failed. Same identity fields
+ * as {@link ImageRequestHookPayload}; images carry only their media type and byte size.
+ */
+export interface ImageResponseHookPayload {
+  purpose: "image";
+  orgId: string;
+  provider: string;
+  model: string;
+  accountId?: string;
+  agentId?: string;
+  agentVersion?: number;
+  conversationId?: string;
+  runId?: string;
+  parent?: HookParentScope;
+  step?: number;
+  callId?: string;
+  extension?: string;
+  imagePurpose?: string;
+  outcome: "ok" | "failed";
+  images: { mediaType: string; size: number }[];
+  revisedPrompt?: string;
+  usage: ModelUsage | null;
+  latencyMs: number;
+  errorCode?: string;
+}
+
+/**
  * `model.request`: before a model call is sent. A policy hook may deny it. Either a chat model call
  * ({@link ModelCallRequestHookPayload}: steps, compaction, titles, `WebFetch`) or an extension's
  * embedding call ({@link EmbeddingRequestHookPayload}, `purpose: "embedding"`); tell them apart by
  * `purpose`. Handlers must accept the absent conversation fields of an embedding call (a policy
  * hook that throws on one denies the call). Payloads carry no media bytes.
  */
-export type ModelRequestHookPayload = ModelCallRequestHookPayload | EmbeddingRequestHookPayload;
+export type ModelRequestHookPayload =
+  | ModelCallRequestHookPayload
+  | EmbeddingRequestHookPayload
+  | ImageRequestHookPayload;
 
 /**
  * `model.response`: after a sent model call finished or failed, with its usage when known (step
@@ -256,7 +315,7 @@ export interface OrgDeletedPayload {
 /** Payload type of each mount point. */
 export interface HookPayloads {
   "model.request": ModelRequestHookPayload;
-  "model.response": ModelResponseHookPayload;
+  "model.response": ModelResponseHookPayload | ImageResponseHookPayload;
   "tool.preExecute": ToolPreHookPayload;
   "tool.postExecute": ToolPostHookPayload;
   "usage.report": UsageReportPayload;

@@ -462,6 +462,10 @@ export function createExtensionContext(
             if (!deps.models) throw new Error(`plugin ${name}: ctx.models is not available`);
             return deps.models.embed(name, declaredModels, req, lifecycle.signal, deps.hooks);
           },
+          // wired to the ModelImages service by a later task of the image generation plan
+          generateImage: async () => {
+            throw new Error(`plugin ${name}: ctx.models.generateImage is not available yet`);
+          },
           describe: async (req) => {
             if (!deps.models) throw new Error(`plugin ${name}: ctx.models is not available`);
             return deps.models.describe(name, declaredModels, req);

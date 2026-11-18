@@ -92,7 +92,10 @@ describe("hook mount points", () => {
     // a handler reading conversation fields off the union must handle their absence
     expectTypeOf<ModelRequestHookPayload["conversationId"]>().toEqualTypeOf<string | undefined>();
     expectTypeOf<
-      Exclude<ModelRequestHookPayload, Embedding>
+      Exclude<
+        ModelRequestHookPayload,
+        Embedding | Extract<ModelRequestHookPayload, { purpose: "image" }>
+      >
     >().toEqualTypeOf<ModelCallRequestHookPayload>();
   });
 

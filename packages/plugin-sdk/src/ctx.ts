@@ -2,7 +2,14 @@ import type { Kysely } from "kysely";
 import type { ExtensionPointRef } from "./extension-point.js";
 import type { AvailableHook, HookHandler, HookOptions } from "./hooks.js";
 import type { RouteCaller } from "./http-access.js";
-import type { ModelEmbeddingInfo, ModelKind } from "./model.js";
+import type {
+  ImageAspectRatio,
+  ImageMediaType,
+  ImageSize,
+  ModelEmbeddingInfo,
+  ModelImageGenerationInfo,
+  ModelKind,
+} from "./model.js";
 import type { ExtensionNet } from "./net.js";
 import type { SetupCheckDefinition } from "./setup-check.js";
 import type { ObjectHead, PresignedUpload, PresignGetOptions } from "./storage.js";
@@ -91,6 +98,32 @@ export interface ExtensionEmbedResult {
   dimensions: number;
 }
 
+/** A `ctx.models.generateImage` request: images generated for one org with the model of a purpose. */
+export interface ExtensionImageGenerateRequest {
+  orgId: string;
+  /** A purpose this extension declared in `permissions.models` with `kind: "image_generation"`. */
+  purpose: string;
+  prompt: string;
+  /** An exact size the model offers; rejected otherwise. Wins over `aspectRatio`. */
+  size?: ImageSize;
+  /** The closest size the model offers; the model's default size when neither is given. */
+  aspectRatio?: ImageAspectRatio;
+  /** Images to produce (default 1, at most the model's `maxImages`). */
+  n?: number;
+  /** Base64 reference images, at most the model's `maxReferenceImages`. */
+  referenceImages?: { mediaType: ImageMediaType; data: string }[];
+  /** Aborts this call; combined with `ctx.signal`. */
+  signal?: AbortSignal;
+}
+
+/** A `ctx.models.generateImage` result. */
+export interface ExtensionImageGenerateResult {
+  images: { mediaType: ImageMediaType; data: string }[];
+  revisedPrompt?: string;
+  model: { provider: string; id: string };
+  size: ImageSize;
+}
+
 /** The model a purpose maps to in an org (`ctx.models.describe`). */
 export interface ExtensionModelTarget {
   provider: string;
@@ -98,14 +131,16 @@ export interface ExtensionModelTarget {
   kind: ModelKind;
   /** Present for an embedding model. */
   embedding?: ModelEmbeddingInfo;
+  /** Present for an image generation model. */
+  imageGeneration?: ModelImageGenerationInfo;
 }
 
 /**
  * Models by purpose (`permissions.models`): the purpose → model mapping is chosen by org admins
  * (and the deployment default by the super admin), never by the extension. Only purposes this
- * extension declared with `kind: "embedding"` are accepted (`model.purpose_unknown` otherwise), and
+ * extension declared with a matching `kind` (`embedding` for `embed`, `image_generation` for `generateImage`) are accepted (`model.purpose_unknown` otherwise), and
  * only for an org that enabled the extension (`extension.not_enabled`). Usage is recorded by the
- * kernel and reported through `usage.report` (purpose `embedding`).
+ * kernel and reported through `usage.report` (purpose `embedding`, or `image` for `generateImage`).
  */
 export interface ExtensionModels {
   /**
@@ -118,6 +153,14 @@ export interface ExtensionModels {
    * extension route), and nothing is sent or billed.
    */
   embed(req: ExtensionEmbedRequest): Promise<ExtensionEmbedResult>;
+  /**
+   * Generates images with the org's effective model for `purpose`. Rejects with
+   * `model.unconfigured` when the purpose maps to no usable model, `validation_failed` for a size,
+   * count or reference count the model does not offer, and a `ModelError` when the provider fails
+   * (kind `refusal` when it declines the prompt). Not retried. Fires `model.request` first
+   * (`purpose: "image"`); a policy denial rejects with `model.hook_denied`.
+   */
+  generateImage(req: ExtensionImageGenerateRequest): Promise<ExtensionImageGenerateResult>;
   /** The org's effective model for `purpose`, or null when it maps to no model the org can use. */
   describe(req: { orgId: string; purpose: string }): Promise<ExtensionModelTarget | null>;
 }

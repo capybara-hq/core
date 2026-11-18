@@ -7,7 +7,10 @@ import type { ModelCallPurpose } from "./hooks.js";
 import type { ModelParameter, ParamValue } from "./model-params.js";
 import type { LocalizedName } from "./plugin-package.js";
 
-/** What a model does. Absent on a `ModelInfo` means `chat`. */
+/**
+ * What a model does. Absent on a `ModelInfo` means `chat`. Callable kinds: `chat` (`stream`),
+ * `embedding` (`embed`) and `image_generation` (`generateImage`); the others are list-only.
+ */
 export type ModelKind =
   | "chat"
   | "embedding"
@@ -28,6 +31,30 @@ export interface ModelEmbeddingInfo {
   maxBatch: number;
 }
 
+/** An output size of an image generation model, in pixels. */
+export interface ImageSize {
+  width: number;
+  height: number;
+}
+
+/** The aspect ratios a caller may ask for instead of an exact size. */
+export const IMAGE_ASPECT_RATIOS = ["1:1", "4:3", "3:4", "3:2", "2:3", "16:9", "9:16"] as const;
+export type ImageAspectRatio = (typeof IMAGE_ASPECT_RATIOS)[number];
+
+/** Image generation facts of a model whose `kind` is `image_generation`. */
+export interface ModelImageGenerationInfo {
+  /** The output sizes the model offers. */
+  sizes: ImageSize[];
+  /** One of `sizes`, used when the caller asks for none. */
+  defaultSize: ImageSize;
+  /** Most images one `generateImage` call may produce. */
+  maxImages: number;
+  /** Most reference images one call may carry (0 = text to image only). */
+  maxReferenceImages: number;
+  /** The media types the model returns. */
+  outputMediaTypes: ImageMediaType[];
+}
+
 export interface ModelInfo {
   id: string;
   displayName: string;
@@ -41,6 +68,8 @@ export interface ModelInfo {
   retiresAt?: string;
   /** Set when `kind` is `embedding`. */
   embedding?: ModelEmbeddingInfo;
+  /** Set when `kind` is `image_generation`. */
+  imageGeneration?: ModelImageGenerationInfo;
   contextWindow: number;
   maxOutputTokens: number;
   capabilities: {
@@ -328,6 +357,8 @@ export interface ModelUsage {
   cacheReadTokens: number;
   /** Input tokens written to the prompt cache in this call. */
   cacheWriteTokens: number;
+  /** Images produced (image generation calls). */
+  outputImages?: number;
 }
 
 export type ModelStreamEvent =
@@ -349,6 +380,7 @@ export type ModelErrorKind =
   | "auth"
   | "invalid_request"
   | "context_overflow"
+  | "refusal"
   | "aborted";
 
 const ALL_KINDS: ReadonlySet<string> = new Set<ModelErrorKind>([
@@ -360,6 +392,7 @@ const ALL_KINDS: ReadonlySet<string> = new Set<ModelErrorKind>([
   "auth",
   "invalid_request",
   "context_overflow",
+  "refusal",
   "aborted",
 ]);
 
@@ -460,6 +493,117 @@ export function validateEmbedResult(
   return null;
 }
 
+export interface ImageGenerateRequest {
+  model: string;
+  prompt: string;
+  /** One of the model's `imageGeneration.sizes`. */
+  size: ImageSize;
+  /** Images to produce, 1 to `imageGeneration.maxImages`. */
+  n: number;
+  /** Base64 reference images, at most `imageGeneration.maxReferenceImages`. */
+  referenceImages?: { mediaType: ImageMediaType; data: string }[];
+  params: Record<string, ParamValue>;
+}
+
+export interface ImageGenerateResult {
+  /** Exactly `req.n` images, base64 encoded. */
+  images: { mediaType: ImageMediaType; data: string }[];
+  /** The prompt as the vendor rewrote it, when it did. */
+  revisedPrompt?: string;
+  usage: ModelUsage;
+}
+
+const BASE64 = /^[A-Za-z0-9+/]+={0,2}$/;
+
+/** True when `x` is a well-formed {@link ModelImageGenerationInfo}. */
+export function isValidImageGenerationInfo(x: unknown): x is ModelImageGenerationInfo {
+  if (typeof x !== "object" || x === null) return false;
+  const o = x as Record<string, unknown>;
+  const isSize = (s: unknown): s is ImageSize =>
+    typeof s === "object" &&
+    s !== null &&
+    Number.isInteger((s as ImageSize).width) &&
+    Number.isInteger((s as ImageSize).height) &&
+    (s as ImageSize).width > 0 &&
+    (s as ImageSize).height > 0;
+  if (!Array.isArray(o.sizes) || o.sizes.length === 0 || !o.sizes.every(isSize)) return false;
+  if (!isSize(o.defaultSize)) return false;
+  const d = o.defaultSize;
+  if (!o.sizes.some((s: ImageSize) => s.width === d.width && s.height === d.height)) return false;
+  if (!Number.isInteger(o.maxImages) || (o.maxImages as number) < 1) return false;
+  if (!Number.isInteger(o.maxReferenceImages) || (o.maxReferenceImages as number) < 0) {
+    return false;
+  }
+  return (
+    Array.isArray(o.outputMediaTypes) &&
+    o.outputMediaTypes.length > 0 &&
+    o.outputMediaTypes.every((t) => (IMAGE_MEDIA_TYPES as readonly unknown[]).includes(t))
+  );
+}
+
+/**
+ * Checks an image generation result against its request and the model's facts. Returns null when
+ * valid, else the reason: wrong image count, an undeclared media type, or data that is not base64.
+ */
+export function validateImageGenerateResult(
+  req: ImageGenerateRequest,
+  info: ModelImageGenerationInfo,
+  res: unknown,
+): string | null {
+  const images = (res as { images?: unknown } | null)?.images;
+  if (!Array.isArray(images)) return "result has no images array";
+  if (images.length !== req.n) return `expected ${req.n} images, got ${images.length}`;
+  for (let i = 0; i < images.length; i++) {
+    const img = images[i] as { mediaType?: unknown; data?: unknown } | null;
+    const type = img?.mediaType;
+    if (typeof type !== "string" || !(info.outputMediaTypes as string[]).includes(type)) {
+      return `image ${i} has media type ${String(type)}, not one of ${info.outputMediaTypes.join(", ")}`;
+    }
+    if (typeof img?.data !== "string" || !BASE64.test(img.data)) {
+      return `image ${i} data is not base64`;
+    }
+  }
+  return null;
+}
+
+/**
+ * Chooses an output size: an exact `size` must be one the model offers; an `aspectRatio` picks the
+ * closest declared ratio (ties by area closest to the default's, then declaration order); neither
+ * gives the default size.
+ */
+export function pickImageSize(
+  info: ModelImageGenerationInfo,
+  opts: { size?: ImageSize; aspectRatio?: ImageAspectRatio },
+): { ok: true; size: ImageSize } | { ok: false; error: string } {
+  const fmt = (s: ImageSize) => `${s.width}x${s.height}`;
+  const { size, aspectRatio } = opts;
+  if (size) {
+    const hit = info.sizes.find((s) => s.width === size.width && s.height === size.height);
+    if (hit) return { ok: true, size: hit };
+    return {
+      ok: false,
+      error: `Size ${fmt(size)} is not offered by this model; use one of ${info.sizes.map(fmt).join(", ")}.`,
+    };
+  }
+  if (!aspectRatio) return { ok: true, size: info.defaultSize };
+  const [rw, rh] = aspectRatio.split(":").map(Number) as [number, number];
+  const target = Math.log(rw / rh);
+  const area = info.defaultSize.width * info.defaultSize.height;
+  let best = info.defaultSize;
+  let bestDiff = Number.POSITIVE_INFINITY;
+  let bestArea = Number.POSITIVE_INFINITY;
+  for (const s of info.sizes) {
+    const diff = Math.abs(Math.log(s.width / s.height) - target);
+    const areaDiff = Math.abs(s.width * s.height - area);
+    if (diff < bestDiff - 1e-9 || (Math.abs(diff - bestDiff) <= 1e-9 && areaDiff < bestArea)) {
+      best = s;
+      bestDiff = diff;
+      bestArea = areaDiff;
+    }
+  }
+  return { ok: true, size: best };
+}
+
 /** The `model-provider@2` implementation. */
 export interface ModelProvider {
   /**
@@ -474,6 +618,14 @@ export interface ModelProvider {
   ): AsyncIterable<ModelStreamEvent>;
   /** Present only on a provider that lists `embedding` models. */
   embed?(req: EmbedRequest, opts: { signal: AbortSignal } & ModelCallOptions): Promise<EmbedResult>;
+  /**
+   * Present only on a provider that lists `image_generation` models. Throws `ModelError` of kind
+   * `refusal` when the vendor declines the prompt.
+   */
+  generateImage?(
+    req: ImageGenerateRequest,
+    opts: { signal: AbortSignal } & ModelCallOptions,
+  ): Promise<ImageGenerateResult>;
 }
 
 /** The model provider extension point (the only version since `@1` was removed before 0.1.0). */

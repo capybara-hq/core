@@ -25,9 +25,13 @@ export interface ExtensionPermissions {
   policyHooks?: PolicyHook[];
   /**
    * Model purposes (`ctx.models`): each key must be `<extension name>.<name>`; an org admin maps
-   * each to a model of its `kind`. `ctx.models.embed` / `describe` accept the `embedding` ones.
+   * each to a model of its `kind`. `ctx.models.embed` accepts the `embedding` ones, `generateImage` the `image_generation` ones.
    */
-  models?: { purpose: string; kind: "chat" | "embedding"; label: { zh: string; en: string } }[];
+  models?: {
+    purpose: string;
+    kind: "chat" | "embedding" | "image_generation";
+    label: { zh: string; en: string };
+  }[];
   /** ctx.storage (object storage, keys confined under `plugins/<plugin name>/<orgId>/`). */
   storage?: boolean;
   /** Domains accessed; displayed only, not enforced. */
@@ -243,14 +247,16 @@ export function validatePermissions(plugin: string, p: unknown): string[] {
         if (
           !isObj(m) ||
           typeof m.purpose !== "string" ||
-          (m.kind !== "chat" && m.kind !== "embedding") ||
+          (m.kind !== "chat" && m.kind !== "embedding" && m.kind !== "image_generation") ||
           !label ||
           typeof label.zh !== "string" ||
           label.zh === "" ||
           typeof label.en !== "string" ||
           label.en === ""
         ) {
-          errs.push("permissions.models entries need purpose, kind chat/embedding and label zh/en");
+          errs.push(
+            "permissions.models entries need purpose, kind chat/embedding/image_generation and label zh/en",
+          );
           continue;
         }
         if (!m.purpose.startsWith(`${plugin}.`) || m.purpose.length === plugin.length + 1) {
