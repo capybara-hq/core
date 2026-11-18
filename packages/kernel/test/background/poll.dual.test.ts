@@ -1,4 +1,3 @@
-import { existsSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -10,19 +9,17 @@ import {
   startTestRedis,
   type TestContainer,
 } from "@capybara-hq/testing";
-import { Redis } from "ioredis";
+import { sql } from "kysely";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import { launchScript, newTaskId, taskOutputPath } from "../../src/background/launch.js";
 import { BackgroundTaskStore } from "../../src/background/store.js";
-import { KernelConfigSchema } from "../../src/config/schema.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
-import type { SandboxService } from "../../src/sandbox/sandbox.service.js";
-import { createFakeSandbox } from "../fixtures/plugins/sandbox-fake/index.js";
-import { handlesFor } from "../helpers/identity.js";
+import { SandboxService } from "../../src/sandbox/sandbox.service.js";
+import { launchManaged } from "../helpers/background-fake.js";
+import { startClaimedRun } from "../helpers/managed-calls.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
-import { eventsOf, waitFor } from "../helpers/runs.js";
-import { sandboxServiceFor, seedDevice } from "../helpers/sandbox.js";
+import { eventsOf, runConfig, startKernel, type TestKernel, waitFor } from "../helpers/runs.js";
+import { seedDevice } from "../helpers/sandbox.js";
 import { seedConversation } from "../helpers/tool-fixtures.js";
 
 /**
@@ -30,6 +27,8 @@ import { seedConversation } from "../helpers/tool-fixtures.js";
  * 2026-11-05-background-bash-design §4.3, Review Focus 3): the `@LockedInterval` tick runs once
  * across replicas and the finish is a conditional update in the event's transaction, so a task
  * that finishes while both replicas poll for 30 s gets exactly one `background_task_finished`.
+ * The task is a managed one, launched through the real `Bash` path by an api-only kernel in this
+ * process on the same fake provider root.
  */
 
 const SANDBOX_FAKE = fileURLToPath(
@@ -44,9 +43,8 @@ describe("background task poll (dual replica)", () => {
   let h: Harness;
   let raw: ReturnType<typeof createDb>;
   let db: KernelSchemaDb;
-  let redis: Redis;
-  let sandbox: SandboxService;
-  let store: BackgroundTaskStore;
+  /** The api-only kernel that launches the task (it polls nothing). */
+  let launcher: TestKernel;
 
   beforeAll(async () => {
     root = await mkdtemp(join(tmpdir(), "cap-bg-poll-dual-"));
@@ -60,31 +58,29 @@ describe("background task poll (dual replica)", () => {
     });
     raw = createDb(h.dbUrl, 3);
     db = kernelDb(raw);
-    redis = new Redis(rdc.url);
-    const config = KernelConfigSchema.parse({
-      db: { url: h.dbUrl },
-      redis: { url: rdc.url },
-      masterKey: Buffer.alloc(32, 7).toString("base64"),
-    });
-    // this process starts the task in the replicas' sandbox (one fake provider root)
-    sandbox = sandboxServiceFor({
-      db,
-      redis,
-      provider: () => ({ plugin: "sandbox-fake", impl: createFakeSandbox(root) }),
-      config: () => config,
-      log: {},
-    });
-    const hd = handlesFor(raw);
-    store = new BackgroundTaskStore(hd.db, hd.txHost, {} as never);
+    launcher = await startKernel(
+      runConfig(
+        { pg: h.dbUrl, redis: rdc.url },
+        {
+          roles: ["api"],
+          extensions: [MODEL_FAKE, SANDBOX_FAKE],
+          extensionConfig: { "sandbox-fake": { root } },
+        },
+      ),
+    );
   });
 
   afterAll(async () => {
-    if (db) {
+    if (db && launcher) {
       const rows = await db.selectFrom("device_instances").select("device_id").execute();
-      for (const r of rows) await sandbox.destroyDevice(r.device_id).catch(() => {});
+      for (const r of rows)
+        await launcher.app
+          .get(SandboxService)
+          .destroyDevice(r.device_id)
+          .catch(() => {});
     }
+    await launcher?.close();
     await h?.stop();
-    redis?.disconnect();
     await raw?.destroy();
     await Promise.all([pgc?.stop(), rdc?.stop()]);
     if (root) await rm(root, { recursive: true, force: true });
@@ -93,59 +89,21 @@ describe("background task poll (dual replica)", () => {
   it("a task finishing while both replicas poll gets exactly one finish event", async () => {
     expect(h.replicas.map((r) => r.roles.includes("worker"))).toEqual([true, true]);
     const c = await seedConversation(raw);
+    await sql`INSERT INTO capybara.memberships (org_id, account_id, role)
+      VALUES (${c.orgId}, ${c.accountId}, 'owner')`.execute(raw);
     const deviceId = await seedDevice(raw, c.orgId, c.accountId);
-    const id = newTaskId();
+    await db
+      .updateTable("conversations")
+      .set({ device_id: deviceId })
+      .where("id", "=", c.conversationId)
+      .execute();
+    const run = await startClaimedRun(launcher, raw, c.conversationId, c.accountId);
     const t0 = Date.now();
-    const sid = await sandbox.withSandbox(
-      {
-        orgId: c.orgId,
-        deviceId,
-        holderConversationId: c.conversationId,
-        actor: { accountId: c.accountId, conversationId: c.conversationId },
-      },
-      async (hd, p, _info, sig) => {
-        const r = await p.exec(hd, {
-          command: launchScript(id, "sleep 4; echo done", 60),
-          cwd: "/workspace",
-          timeoutMs: 20_000,
-          maxOutputBytes: 4096,
-          signal: sig,
-        });
-        expect(r.exitCode).toBe(0);
-        return r.stdout.trim();
-      },
-      AbortSignal.timeout(30_000),
-    );
-    const { handle } = await db
-      .selectFrom("device_instances")
-      .select("handle")
-      .where("device_id", "=", deviceId)
-      .executeTakeFirstOrThrow();
-    const record = join(root, "instances", (handle as { id: string }).id, "sessions", sid);
-    await waitFor(async () => existsSync(record), 10_000, "session record");
-    const instance = await sandbox.currentInstance(deviceId);
-    const startedAt = new Date();
-    await store.insert({
-      id,
-      orgId: c.orgId,
-      conversationId: c.conversationId,
-      sandboxConversationId: c.conversationId,
-      deviceId,
-      runId: "run-x",
-      callId: "call-x",
-      triggerAccountId: c.accountId,
-      description: "Sleep then print",
-      command: "sleep 4; echo done",
-      sid,
-      outputPath: taskOutputPath(id),
-      startedAt,
-      deadlineAt: new Date(startedAt.getTime() + 60_000),
-      sandboxCreatedAt: instance?.createdAt as Date,
-    });
-
+    const task = await launchManaged(launcher, raw, { ...c, ...run }, "sleep 4; echo done", 60);
+    const store = launcher.app.get(BackgroundTaskStore);
     const finished = await waitFor(
       async () => {
-        const r = await store.get(id);
+        const r = await store.get(task.id);
         return r?.status !== "running" && r;
       },
       20_000,
@@ -160,7 +118,7 @@ describe("background task poll (dual replica)", () => {
     );
     expect(events).toHaveLength(1);
     expect(events[0]?.payload).toMatchObject({
-      taskId: id,
+      taskId: task.id,
       status: "completed",
       lastLines: "done\n",
     });

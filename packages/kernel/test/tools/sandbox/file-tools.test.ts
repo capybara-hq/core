@@ -8,9 +8,12 @@ import { sql } from "kysely";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { EventLog } from "../../../src/conversations/event-log.js";
 import type { ConversationEvent } from "../../../src/conversations/events.js";
+import { PermissionProfilesService } from "../../../src/conversations/permission-profiles.service.js";
 import { type KernelSchemaDb, kernelDb } from "../../../src/db/kernel-schema.js";
 import { createDb } from "../../../src/db/pool.js";
 import { ConversationDevices } from "../../../src/devices/conversation-devices.js";
+import { MANAGED_DEVICE_CONTEXT_STALE_TEXT } from "../../../src/sandbox/managed-device-context.js";
+import { PermissionFacts } from "../../../src/sandbox/permission-facts.js";
 import { CommandReviewService } from "../../../src/sandbox/review/index.js";
 import { SandboxService } from "../../../src/sandbox/sandbox.service.js";
 import { checkToolPath, checkToolWritable } from "../../../src/tools/builtins/sandbox/common.js";
@@ -160,6 +163,7 @@ async function call(conv: string, key: string, input: unknown, n: number): Promi
 describe("file tool paths in the device's mode", () => {
   it("auto mode: a write outside the workspace is approved once, then read anywhere", async () => {
     const conv = await createConv(owner, orgId, agentId);
+    await fullAccess(conv);
     const written = await callAllowed(
       conv,
       "Write",
@@ -177,6 +181,7 @@ describe("file tool paths in the device's mode", () => {
 
   it("auto mode: an Edit of a file outside the workspace that was never read hits the guard after the review", async () => {
     const conv = await createConv(owner, orgId, agentId);
+    await fullAccess(conv);
     // the file lives on the device's machine (another conversation wrote it)
     const edit = await callAllowed(
       conv,
@@ -309,6 +314,22 @@ async function followPlatformMode(): Promise<void> {
   expect(res.statusCode, res.body).toBe(200);
 }
 
+/**
+ * Switches `convId` to Full access with the displayed scope's consent: on the activated tree a
+ * restricted profile reaches only its working root, while these tests exercise the device's auto
+ * mode reaching its whole machine (the command review still asks for writes outside the root).
+ */
+async function fullAccess(convId: string): Promise<void> {
+  const deviceId = await deviceOf(convId);
+  const preview = await k.app.get(PermissionFacts).scope(orgId, deviceId, null, null);
+  if (!preview.scopeRevision) throw new Error("the device offers no Full access scope");
+  await k.app.get(PermissionProfilesService).set(orgId, convId, ownerId, {
+    profile: "full-access",
+    consentScopeRevision: preview.scopeRevision,
+    expectedRevision: 0,
+  });
+}
+
 const appendProjectRoot = (convId: string, payload: Record<string, unknown>) =>
   k.app.get(EventLog).append(convId, [{ type: "project_root", payload } as never]);
 
@@ -368,7 +389,9 @@ describe("a bound conversation works in its project's root", () => {
     const r = await call(free, "Bash", touch, 1);
     expect(r.payload.review).toMatchObject({ decision: "allow", rule: "allow.workspace-write" });
   });
-  it("an approved command runs against the working root it was reviewed with, not a later snapshot", async () => {
+  // B-18: the review judged the call against a working root; held evidence of another root is
+  // stale, so the approved call is refused before it runs (never in the later snapshot's root)
+  it("an approved command never runs against a later snapshot than the root it was reviewed with", async () => {
     const dir = `p-${randomUUID().slice(0, 8)}`;
     const conv = await boundConversation(`/workspace/${dir}`);
     await put(await deviceOf(conv), {
@@ -402,8 +425,9 @@ describe("a bound conversation works in its project's root", () => {
     expect(approved.statusCode, approved.body).toBe(200);
     await waitForTerminal(db, conv, 1, 30_000);
     const r = (await results(conv)).at(-1) as ToolResult;
-    expect(r.payload.isError).toBe(false);
-    expect(r.payload.content).toMatch(new RegExp(`/workspace/${dir}\\n`));
+    expect(r.payload.isError).toBe(true);
+    expect(r.payload.content).toContain(MANAGED_DEVICE_CONTEXT_STALE_TEXT);
+    expect(r.payload.content).not.toContain(`/workspace/${dir}-later`);
   });
 
   it("a free conversation with a stale recorded workspace runs where the instance is", async () => {
@@ -415,7 +439,7 @@ describe("a bound conversation works in its project's root", () => {
       } as never,
     ]);
     const r = await call(conv, "Bash", { command: "pwd", description: "Where" }, 1);
-    expect(r.payload.isError).toBe(false);
+    expect(r.payload.isError, r.payload.content).toBe(false);
     expect(r.payload.content).toMatch(/^\/workspace\n/m);
   });
 
@@ -454,7 +478,9 @@ describe("a bound conversation works in its project's root", () => {
     expect(r.payload.content).toMatch(/^\/workspace\n/m);
   });
 
-  it("an approved command resumed after a mode switch decides its working root afresh", async () => {
+  // B-18: a mode switch and a newer snapshot while the run waits change the working root the
+  // call was reviewed against, so the approved call is refused as stale instead of re-deciding it
+  it("an approved command resumed after a mode switch and a newer snapshot is refused as stale", async () => {
     const dir = `p-${randomUUID().slice(0, 8)}`;
     const conv = await boundConversation(`/workspace/${dir}`);
     await put(await deviceOf(conv), {
@@ -496,7 +522,8 @@ describe("a bound conversation works in its project's root", () => {
       expect(approved.statusCode, approved.body).toBe(200);
       await waitForTerminal(db, conv, 1, 30_000);
       const r = (await results(conv)).at(-1) as ToolResult;
-      expect(r.payload.content).toMatch(new RegExp(`/workspace/${dir}-later\\n`));
+      expect(r.payload.isError).toBe(true);
+      expect(r.payload.content).toContain(MANAGED_DEVICE_CONTEXT_STALE_TEXT);
     } finally {
       await followPlatformMode();
     }

@@ -204,6 +204,9 @@ function setup(s: Setup) {
         local: true,
       }),
     },
+    // the send-time device read is the dormant (gate-off) route, kept behind the explicit test
+    // seam; the activated stub is covered by non-tool-callers.test.ts and invoke.http.test.ts
+    false,
   );
   const prepare = (name: string, args = "", conversationId: string | null = "conv") =>
     invoker.prepare({

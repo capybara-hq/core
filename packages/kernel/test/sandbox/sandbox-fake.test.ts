@@ -3,17 +3,21 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   isFileSystemGoneError,
+  isSandboxScopeDeniedError,
   type SandboxHandle,
+  type SandboxOperationScope,
   type SandboxProvider,
 } from "@capybara-hq/plugin-sdk";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   createFakeSandbox,
+  FAKE_PERMISSION_SUPPORT,
   fakeFileSystems,
   fakeSandboxMeta,
   fakeSandboxState,
   readFakeSandboxOps,
   removeFakeFileSystem,
+  setFakeSandboxPermissionSupport,
 } from "../fixtures/plugins/sandbox-fake/index.js";
 
 /** 假沙箱（测试夹具）本身的冒烟测试：T8 的工具测试依赖这些行为。 */
@@ -330,3 +334,154 @@ describe("sandbox-fake background task shims", () => {
     await p.destroyFileSystemByName("legacy-name", sig());
   });
 });
+
+const ADMIT_BEFORE_MS = Date.now() + 3_600_000;
+/** The scope of one operation (fixture tests only; a retry reuses the same scope). */
+function scopeOf(
+  operationId: string,
+  filesystem: SandboxOperationScope["filesystem"],
+): SandboxOperationScope {
+  return {
+    operationId,
+    admitBeforeMs: ADMIT_BEFORE_MS,
+    deviceId: "dev-1",
+    rootConversationId: "conv-1",
+    profileRevision: 1,
+    ceilingRevision: "c1",
+    profile: filesystem.kind === "device" ? "full-access" : "approve-for-me",
+    actor,
+    tag: operationId,
+    filesystem,
+    network: { kind: "none" },
+  };
+}
+const scoped = (write: string[], read: string[] = []): SandboxOperationScope["filesystem"] => ({
+  kind: "scoped",
+  readRoots: read,
+  writeRoots: write,
+});
+
+describe("sandbox-fake permission-scoped surface", () => {
+  it("reports restricted and Full support with background ownership, overridable", async () => {
+    const p = createFakeSandbox(root);
+    const h = await mk(p, "cap-perm");
+    expect(await p.permissionSupport?.(h, sig())).toEqual(FAKE_PERMISSION_SUPPORT);
+    await setFakeSandboxPermissionSupport(root, { ...FAKE_PERMISSION_SUPPORT, restricted: null });
+    try {
+      expect((await p.permissionSupport?.(h, sig()))?.restricted).toBeNull();
+    } finally {
+      await setFakeSandboxPermissionSupport(root, null);
+    }
+  });
+
+  it("enforces the scope's roots on native operations and commands", async () => {
+    const p = createFakeSandbox(root);
+    const h = await mk(p, "cap-scope");
+    const op = (id: string, fs = scoped(["/workspace/a"], ["/skills"])) =>
+      (p.operation as NonNullable<SandboxProvider["operation"]>)(h, scopeOf(id, fs), sig());
+    const data = new TextEncoder().encode("x");
+    await (await op("op-w1")).writeFile("/workspace/a/f.txt", data, sig());
+    await expect((await op("op-w2")).writeFile("/workspace/b.txt", data, sig())).rejects.toSatisfy(
+      isSandboxScopeDeniedError,
+    );
+    // a read root is readable, never writable
+    expect(await (await op("op-r1")).stat("/skills", sig())).toMatchObject({ isDir: true });
+    await expect((await op("op-w3")).writeFile("/skills/s.txt", data, sig())).rejects.toSatisfy(
+      isSandboxScopeDeniedError,
+    );
+    // a command outside the roots (its working directory, or a root its text names) is denied
+    const exec = async (id: string, command: string, cwd = "/workspace/a") =>
+      (await op(id)).exec({ command, cwd, timeoutMs: 5000, maxOutputBytes: 1000, signal: sig() });
+    expect((await exec("op-e1", "cat f.txt")).stdout).toBe("x");
+    await expect(exec("op-e2", "pwd", "/workspace")).rejects.toSatisfy(isSandboxScopeDeniedError);
+    await expect(exec("op-e3", "ls /tmp")).rejects.toSatisfy(isSandboxScopeDeniedError);
+    // Full access (device scope) reaches what the raw provider reaches
+    const full = await op("op-f1", { kind: "device" });
+    expect(await full.stat("/workspace/b.txt", sig())).toBeNull();
+  });
+
+  it("consumes each operation id once: a retry returns the recorded result, other input is denied", async () => {
+    const p = createFakeSandbox(root);
+    const h = await mk(p, "cap-once");
+    const op = () =>
+      (p.operation as NonNullable<SandboxProvider["operation"]>)(
+        h,
+        scopeOf("op-once", scoped(["/workspace"])),
+        sig(),
+      );
+    const run = async (command: string) =>
+      (await op()).exec({ command, timeoutMs: 5000, maxOutputBytes: 1000, signal: sig() });
+    const first = await run("echo $$");
+    expect(await run("echo $$")).toEqual(first);
+    await expect(run("echo other")).rejects.toSatisfy(isSandboxScopeDeniedError);
+  });
+
+  it("owns background executions by exact reference: output, status, stop and loss", async () => {
+    const p = createFakeSandbox(root);
+    const h = await mk(p, "cap-bg");
+    const bg = p.background as NonNullable<SandboxProvider["background"]>;
+    const start = (id: string, command: string, outputPath = `/workspace/${id}.out`) =>
+      bg.start(h, scopeOf(id, scoped(["/workspace"])), {
+        command,
+        cwd: "/workspace",
+        timeoutMs: 30_000,
+        maxOutputBytes: 1000,
+        taskId: id,
+        outputPath,
+        retainUntilMs: ADMIT_BEFORE_MS,
+        instanceGeneration: "1700000000000",
+        signal: sig(),
+      });
+    // the artifact must be writable under the scope
+    await expect(start("bg-out", "true", "/tmp/x.out")).rejects.toSatisfy(
+      isSandboxScopeDeniedError,
+    );
+    const done = await start("bg-done", "printf 'a\\nb\\n'; exit 3");
+    expect(done.instanceGeneration).toBe("1700000000000");
+    // idempotent per operation id
+    expect(await start("bg-done", "printf 'a\\nb\\n'; exit 3")).toEqual(done);
+    await waitUntil(async () => (await bg.status(h, done, sig())).state === "exited");
+    expect(await bg.status(h, done, sig())).toEqual({
+      state: "exited",
+      exitCode: 3,
+      timedOut: false,
+    });
+    const out = await bg.readOutput(h, done, { offset: 2, maxBytes: 10, signal: sig() });
+    expect(out).toMatchObject({ offset: 2, nextOffset: 4, totalBytes: 4 });
+    expect(new TextDecoder().decode((out as { data: Uint8Array }).data)).toBe("b\n");
+    expect(await bg.stop(h, done, { graceMs: 0, signal: sig() })).toEqual({
+      outcome: "already-exited",
+      exitCode: 3,
+      timedOut: false,
+    });
+    // another reference to the same operation is denied
+    await expect(bg.status(h, { ...done, executionId: "fx-other" }, sig())).rejects.toSatisfy(
+      isSandboxScopeDeniedError,
+    );
+    const running = await start("bg-run", "sleep 30");
+    expect(await bg.status(h, running, sig())).toEqual({ state: "running" });
+    expect(await bg.stop(h, running, { graceMs: 1000, signal: sig() })).toEqual({
+      outcome: "stopped",
+    });
+    // the claimed outcome is kept on every retry
+    expect(await bg.stop(h, running, { graceMs: 0, signal: sig() })).toEqual({
+      outcome: "stopped",
+    });
+    // suspending the instance loses what still ran, its output unavailable
+    const lost = await start("bg-lost", "sleep 30");
+    await p.suspend(h, sig());
+    expect(await bg.status(h, lost, sig())).toEqual({ state: "lost" });
+    expect(await bg.tail(h, lost, { maxBytes: 100, signal: sig() })).toEqual({
+      unavailable: "lost",
+    });
+    expect(await fakeSandboxState(root, h.id)).toBe("suspended");
+  });
+});
+
+async function waitUntil(cond: () => Promise<boolean>): Promise<void> {
+  const end = Date.now() + 10_000;
+  while (!(await cond())) {
+    if (Date.now() > end) throw new Error("timed out waiting for the condition");
+    await new Promise((r) => setTimeout(r, 20));
+  }
+}

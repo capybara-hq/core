@@ -150,15 +150,16 @@ async function revision(conv: string): Promise<number> {
 }
 
 describe("the paired activation gate", () => {
-  it("is one explicit switch, off in production and on only where it is provided", () => {
-    expect(PERMISSION_CONTEXT_ACTIVE).toBe(false);
-    expect(permissionContextActive(undefined)).toBe(false);
-    expect(permissionContextActive(true)).toBe(true);
+  it("is one explicit switch, on in production since the paired activation", () => {
+    expect(PERMISSION_CONTEXT_ACTIVE).toBe(true);
+    expect(permissionContextActive(undefined)).toBe(true);
+    // an explicit false stays the seam for the dormant state
+    expect(permissionContextActive(false)).toBe(false);
     // this kernel provides the gate: the live recorder is the step deps' request boundary
     expect(k.app.get(RunSteps).deps.permissionContext).toBeDefined();
-    // the production value (no provider for the token) wires no boundary at all
+    // the production value (no provider for the token) wires the boundary; only false removes it
     const recorder = k.app.get(PermissionContextRecorder);
-    expect(livePermissionContext(recorder, undefined)).toEqual({});
+    expect(livePermissionContext(recorder, undefined).permissionContext).toBeDefined();
     expect(livePermissionContext(recorder, false)).toEqual({});
     expect(livePermissionContext(recorder, true).permissionContext).toBeDefined();
   });

@@ -1,7 +1,25 @@
 import { execFile, spawn } from "node:child_process";
-import { randomUUID } from "node:crypto";
-import { mkdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import { appendFile, mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { createHash, randomUUID } from "node:crypto";
+import {
+  closeSync,
+  mkdirSync,
+  openSync,
+  readFileSync,
+  realpathSync,
+  renameSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
+import {
+  appendFile,
+  mkdir,
+  readdir,
+  readFile,
+  rename,
+  rm,
+  stat,
+  writeFile,
+} from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import {
@@ -9,17 +27,26 @@ import {
   type ExecResult,
   FileSystemGoneError,
   type FileSystemHandle,
+  parseSandboxBrowseScope,
+  parseSandboxExecutionRef,
+  parseSandboxOperationRef,
   parseSandboxOperationScope,
   parseSandboxPreparationScope,
   SANDBOX_EXTENSION_POINT,
   SANDBOX_TAG_RE,
+  type SandboxBackground,
+  type SandboxExecutionRef,
+  type SandboxExecutionStatus,
+  type SandboxFileScope,
   SandboxGoneError,
   type SandboxHandle,
   type SandboxLimits,
+  type SandboxOperation,
   SandboxOperationOutcomeUnknownError,
-  SandboxPermissionUnsupportedError,
+  type SandboxPermissionSupport,
   type SandboxProvider,
   SandboxScopeDeniedError,
+  type SandboxStopResult,
   validateSandboxPathShape,
 } from "@capybara-hq/plugin-sdk";
 import { z } from "zod";
@@ -81,6 +108,15 @@ import { z } from "zod";
  *   the open public network make `create`, `update` and (with `limitsApplyAt: "fileSystem"`)
  *   `createFileSystem` throw an ordinary error whose message carries {@link FAKE_REFUSAL_SECRET},
  *   so tests can check that it never reaches the model.
+ *
+ * - the permission-scoped surface (`permissionSupport`, `operation`, `prepare`, `browse` with
+ *   `list`, `revokeOperation`, `background`; see {@link managedSurface}): restricted and Full
+ *   access with background ownership by default ({@link FAKE_PERMISSION_SUPPORT};
+ *   `root/permission-support.json` overrides it, {@link setFakeSandboxPermissionSupport}).
+ *   Operation records live in `root/operation-records`, revocation tombstones in
+ *   `root/operation-revoked`, background executions in `root/instances/<id>/executions/<hash>`
+ *   (`ref.json`, `pgid`, `exit`, `claim`, `lost`); `ops.log` adds `bg-start <id> <operationId>
+ *   <pgid>`, `bg-stop <id> <operationId>` and `revoke <id> <operationId>`.
  *
  * `exec` runs the command with `/bin/sh -c` in the instance's directories: `/workspace`, `/skills`
  * and `/tmp` in the command are replaced by their host directories and mapped back in the output;
@@ -629,6 +665,7 @@ export function createFakeSandbox(
         // already exited
       }
     }
+    await killExecutions(instanceDir(root, h.id));
   };
   /**
    * The host path of a device path. `/workspace`, `/skills` and `/tmp` map to the instance's
@@ -943,6 +980,18 @@ export function createFakeSandbox(
       return mode;
     };
   }
+  Object.assign(
+    provider,
+    managedSurface(provider, {
+      root,
+      binDir,
+      list: options.list === true,
+      real,
+      mounts,
+      requireRunning,
+      log,
+    }),
+  );
   return withFaults(root, provider);
 }
 
@@ -968,135 +1017,574 @@ export default defineExtension({
   },
 });
 
-/** Dormant operation adapter for tests. This fixture has no restricted OS isolation. */
-export function fakeOperationFacade(root: string, provider: SandboxProvider): SandboxProvider {
-  const consume = async <T>(id: string, input: unknown, work: () => Promise<T>): Promise<T> => {
-    const { createHash } = await import("node:crypto");
-    const dir = join(root, "operation-records", createHash("sha256").update(id).digest("hex"));
+/** What the managed surface needs from the raw fake (see {@link createFakeSandbox}). */
+interface FakeInternals {
+  root: string;
+  binDir: string;
+  list: boolean;
+  /** The host path of a device path (throws on a bad shape or, in sandbox mode, outside the roots). */
+  real(h: SandboxHandle, p: string): Promise<string>;
+  /** Where `/workspace`, `/skills` and `/tmp` of the instance live on the host. */
+  mounts(h: SandboxHandle): Promise<Record<string, string>>;
+  /** Starts a suspended instance (the contract's auto-start); throws when it is gone. */
+  requireRunning(h: SandboxHandle): Promise<void>;
+  log(line: string): Promise<void>;
+}
+
+/** The fake's default permission support: both profiles and background ownership. */
+export const FAKE_PERMISSION_SUPPORT: SandboxPermissionSupport = Object.freeze({
+  version: 1,
+  restricted: Object.freeze({
+    filesystem: true,
+    network: true,
+    native: true,
+    concurrentScopes: true,
+  }),
+  fullAccess: true,
+  background: true,
+}) as SandboxPermissionSupport;
+
+/**
+ * Overrides what `permissionSupport` answers (read at each call); `null` restores
+ * {@link FAKE_PERMISSION_SUPPORT}.
+ */
+export async function setFakeSandboxPermissionSupport(
+  root: string,
+  report: SandboxPermissionSupport | null,
+): Promise<void> {
+  await mkdir(root, { recursive: true });
+  const file = join(root, "permission-support.json");
+  if (report === null) await rm(file, { force: true });
+  else await writeFile(file, JSON.stringify(report));
+}
+
+const sha256 = (s: string) => createHash("sha256").update(s).digest("hex");
+const within = (p: string, root: string) =>
+  p === root || p.startsWith(root.endsWith("/") ? root : `${root}/`);
+const exists = (p: string) =>
+  stat(p).then(
+    () => true,
+    () => false,
+  );
+
+/** JSON with byte arrays kept (an operation's recorded result). */
+const encode = (value: unknown) =>
+  JSON.stringify({ value }, (_key, v) =>
+    v instanceof Uint8Array ? { $bytes: Buffer.from(v).toString("base64") } : v,
+  );
+const decode = (text: string) =>
+  (
+    JSON.parse(text, (_key, v) =>
+      v && typeof v === "object" && "$bytes" in v
+        ? new Uint8Array(Buffer.from(v.$bytes, "base64"))
+        : v,
+    ) as { value: unknown }
+  ).value;
+
+/** One background execution as the fake records it (`instances/<id>/executions/<hash>/ref.json`). */
+interface FakeExecutionRecord {
+  ref: SandboxExecutionRef;
+  inputHash: string;
+  /** The host path of the task's output file. */
+  output: string;
+  retainUntilMs: number;
+}
+
+/** Final lines a terminal tail keeps (as the device's supervisor does). */
+const TAIL_LINES = 20;
+const MAX_READ = 65_536;
+
+/**
+ * The permission-scoped operation surface of `sandbox@2` (permission operation contract) over the
+ * raw fake. Every check below is real so tests stay meaningful; what the fake cannot do is isolate
+ * a command: a restricted `exec` runs on the host like any other, and only its working directory
+ * and the instance roots its text names are checked against the scope (no network filter).
+ *
+ * - `operation`: each method consumes its operation id before any effect (`operation-records/`);
+ *   a matching retry returns the recorded result, a retry after an effect without a recorded
+ *   result throws `SandboxOperationOutcomeUnknownError`, another input under the same id is
+ *   denied. Scoped file access is checked against the read roots (writable roots are readable)
+ *   and the write roots; `device` scope reaches what the raw provider reaches.
+ * - `prepare`: reads and writes inside the preparation's write roots only, no exec.
+ * - `browse` (with `list`): stat, list and scan inside the read roots only.
+ * - `revokeOperation`: a tombstone (`operation-revoked/`) checked before every launch, then kills
+ *   the operation's exec commands and its background execution (never auto-starts).
+ * - `background`: `start` launches the command in its own process group (through the `timeout`
+ *   shim) with merged output appended to the task's output file and the exit code written to the
+ *   execution record; idempotent per operation id. `status` / `tail` / `readOutput` / `stop` take
+ *   the exact reference and never start or resume the instance. Suspending or destroying the
+ *   instance kills its executions, which are then `lost` with their output unavailable.
+ */
+function managedSurface(
+  raw: SandboxProvider,
+  f: FakeInternals,
+): Pick<
+  SandboxProvider,
+  "permissionSupport" | "operation" | "prepare" | "browse" | "revokeOperation" | "background"
+> {
+  const instanceDir = (h: SandboxHandle) => join(f.root, "instances", h.id);
+  const executionDir = (h: SandboxHandle, operationId: string) =>
+    join(instanceDir(h), "executions", sha256(operationId));
+  const revoked = (operationId: string) =>
+    exists(join(f.root, "operation-revoked", sha256(operationId)));
+  /** The mode the instance was created in (the raw `list` / `scan` read in it). */
+  const modeOf = async (h: SandboxHandle): Promise<Pick<SandboxLimits, "mode">> => ({
+    mode: (await fakeSandboxMeta(f.root, h.id))?.limits.mode ?? "sandbox",
+  });
+  const deny = (what: string): never => {
+    throw new SandboxScopeDeniedError(`${what} is outside this operation's permitted scope`);
+  };
+
+  /** Consumes `operationId` for `input`, then runs `work` once (see the surface's doc). */
+  const consume = async <T>(
+    operationId: string,
+    input: unknown,
+    work: () => Promise<T>,
+  ): Promise<T> => {
+    const dir = join(f.root, "operation-records", sha256(operationId));
     await mkdir(dirname(dir), { recursive: true });
-    const hash = createHash("sha256").update(JSON.stringify(input)).digest("hex");
+    const hash = sha256(encode(input));
     try {
       await mkdir(dir);
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
-      const prior = JSON.parse(await readFile(join(dir, "request"), "utf8").catch(() => "{}")) as {
-        hash?: string;
-      };
-      if (prior.hash !== hash) throw new SandboxScopeDeniedError("Operation identity was reused");
+      const prior = await readFile(join(dir, "request"), "utf8").catch(() => "");
+      if (prior !== hash) throw new SandboxScopeDeniedError("Operation identity was reused");
       const result = await readFile(join(dir, "result"), "utf8").catch(() => null);
       if (result === null)
-        throw new SandboxOperationOutcomeUnknownError("The test operation outcome is unknown");
-      return JSON.parse(result, (_key, value) =>
-        value && typeof value === "object" && "$bytes" in value
-          ? new Uint8Array(Buffer.from(value.$bytes, "base64"))
-          : value,
-      ).value as T;
+        throw new SandboxOperationOutcomeUnknownError("The fake operation outcome is unknown");
+      return decode(result) as T;
     }
-    await writeFile(join(dir, "request"), JSON.stringify({ hash }));
-    const cancelled = join(
-      root,
-      "operation-revoked",
-      createHash("sha256").update(id).digest("hex"),
-    );
-    if (
-      await stat(cancelled).then(
-        () => true,
-        () => false,
-      )
-    )
-      throw new SandboxScopeDeniedError("Operation revoked");
+    await writeFile(join(dir, "request"), hash);
+    if (await revoked(operationId)) throw new SandboxScopeDeniedError("Operation revoked");
     const value = await work();
-    await writeFile(
-      join(dir, "result"),
-      JSON.stringify({ value }, (_key, value) =>
-        value instanceof Uint8Array ? { $bytes: Buffer.from(value).toString("base64") } : value,
-      ),
-    );
+    await writeFile(join(dir, "result"), encode(value));
     return value;
   };
-  const pathAllowed = (path: string, roots: readonly string[]) => {
-    if (
-      validateSandboxPathShape(path).length ||
-      !roots.some((root) => path === root || path.startsWith(`${root}/`))
-    )
-      throw new SandboxScopeDeniedError("Outside preparation roots");
+
+  const readable = (scope: SandboxFileScope, path: string) => {
+    if (validateSandboxPathShape(path).length > 0) deny(`The path ${path}`);
+    if (scope.kind === "device") return;
+    if (![...scope.readRoots, ...scope.writeRoots].some((r) => within(path, r)))
+      deny(`Reading ${path}`);
   };
-  return {
-    ...provider,
-    async permissionSupport() {
-      return {
-        version: 1,
-        restricted: null,
-        fullAccess: true,
-        background: false,
-        unavailableReason: "Test fixture has no restricted OS isolation",
-      };
+  const writable = (scope: SandboxFileScope, path: string) => {
+    if (validateSandboxPathShape(path).length > 0) deny(`The path ${path}`);
+    if (scope.kind === "device") return;
+    if (!scope.writeRoots.some((r) => within(path, r))) deny(`Writing ${path}`);
+  };
+  /** A command's working directory and the instance roots its text names (see the doc above). */
+  const runnable = (scope: SandboxFileScope, command: string, cwd: string) => {
+    readable(scope, cwd);
+    if (scope.kind === "device") return;
+    const roots = [...scope.readRoots, ...scope.writeRoots];
+    for (const m of command.matchAll(ROOT_RE)) {
+      const named = m[2] as string;
+      if (!roots.some((r) => within(r, named) || within(named, r))) deny(`Running in ${named}`);
+    }
+  };
+
+  const native = (
+    h: SandboxHandle,
+    fs: SandboxFileScope,
+    signal: AbortSignal,
+    once: <T>(input: unknown, work: () => Promise<T>) => Promise<T>,
+  ) => ({
+    readFile: async (path: string, opts: { maxBytes: number; signal: AbortSignal }) => {
+      readable(fs, path);
+      return once({ method: "readFile", path, maxBytes: opts.maxBytes }, () =>
+        raw.readFile(h, path, { ...opts, signal: AbortSignal.any([signal, opts.signal]) }),
+      );
     },
-    async revokeOperation(h, ref, signal) {
-      const { createHash } = await import("node:crypto");
-      const dir = join(root, "operation-revoked");
-      await mkdir(dir, { recursive: true });
-      await writeFile(join(dir, createHash("sha256").update(ref.operationId).digest("hex")), "");
-      await provider.killTagged?.(h, [ref.operationId], signal);
+    writeFile: async (path: string, data: Uint8Array, sig: AbortSignal) => {
+      writable(fs, path);
+      return once({ method: "writeFile", path, data: new Uint8Array(data) }, () =>
+        raw.writeFile(h, path, data, AbortSignal.any([signal, sig])),
+      );
     },
-    async operation(h, given, signal) {
-      const scope = parseSandboxOperationScope(given);
-      if (scope.profile !== "full-access")
-        throw new SandboxPermissionUnsupportedError("Test fixture has no restricted OS isolation");
-      return {
-        exec: (args) =>
-          consume(
-            scope.operationId,
-            { scope, method: "exec", args: { ...args, signal: undefined } },
-            () =>
-              provider.exec(h, {
-                ...args,
-                actor: scope.actor,
-                tag: scope.tag,
-                signal: AbortSignal.any([signal, args.signal]),
-              }),
-          ),
-        readFile: (path, opts) =>
-          consume(
-            scope.operationId,
-            { scope, method: "readFile", path, maxBytes: opts.maxBytes },
-            () =>
-              provider.readFile(h, path, {
+    stat: async (path: string, sig: AbortSignal) => {
+      readable(fs, path);
+      return once({ method: "stat", path }, () =>
+        raw.stat(h, path, AbortSignal.any([signal, sig])),
+      );
+    },
+    ...(raw.list && raw.scan
+      ? {
+          list: async (path: string, opts: { limit: number; signal: AbortSignal }) => {
+            readable(fs, path);
+            return once({ method: "list", path, limit: opts.limit }, async () =>
+              (raw.list as NonNullable<SandboxProvider["list"]>)(h, path, {
                 ...opts,
+                limits: await modeOf(h),
                 signal: AbortSignal.any([signal, opts.signal]),
               }),
-          ),
-        writeFile: (path, data, sig) =>
-          consume(
-            scope.operationId,
-            { scope, method: "writeFile", path, bytes: Buffer.from(data).toString("base64") },
-            () => provider.writeFile(h, path, data, AbortSignal.any([signal, sig])),
-          ),
-        stat: (path, sig) =>
-          consume(scope.operationId, { scope, method: "stat", path }, () =>
-            provider.stat(h, path, AbortSignal.any([signal, sig])),
-          ),
+            );
+          },
+          scan: async (base: string, opts: { signal: AbortSignal }) => {
+            readable(fs, base);
+            return once({ method: "scan", base }, async () =>
+              (raw.scan as NonNullable<SandboxProvider["scan"]>)(h, base, {
+                limits: await modeOf(h),
+                signal: AbortSignal.any([signal, opts.signal]),
+              }),
+            );
+          },
+        }
+      : {}),
+  });
+
+  /** Kills every process of the group `pgid` with `sig`; false when none was left. */
+  const signalGroup = (pgid: number, sig: NodeJS.Signals | 0): boolean => {
+    try {
+      process.kill(-pgid, sig);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  /** The record of `ref`, checked field by field; scope-denied on any mismatch. */
+  const recordOf = async (h: SandboxHandle, given: SandboxExecutionRef) => {
+    const ref = parseSandboxExecutionRef(given);
+    if (ref.instanceId !== h.id) deny("This execution's instance");
+    const dir = executionDir(h, ref.operationId);
+    const text = await readFile(join(dir, "ref.json"), "utf8").catch(() => null);
+    // the instance (and with it the record) is gone: nothing to validate against
+    if (text === null) {
+      if (!(await exists(instanceDir(h)))) return { dir, record: null };
+      return deny("No execution with this exact reference");
+    }
+    const record = JSON.parse(text) as FakeExecutionRecord;
+    if (
+      record.ref.executionId !== ref.executionId ||
+      record.ref.instanceGeneration !== ref.instanceGeneration
+    )
+      deny("No execution with this exact reference");
+    return { dir, record };
+  };
+  const exitOf = async (dir: string) => {
+    const text = await readFile(join(dir, "exit"), "utf8").catch(() => null);
+    if (text === null) return null;
+    const code = Number(text.trim());
+    return { exitCode: Number.isInteger(code) ? code : null, timedOut: code === 124 };
+  };
+  const statusOf = async (
+    dir: string,
+    record: FakeExecutionRecord | null,
+  ): Promise<SandboxExecutionStatus> => {
+    if (record === null || (await exists(join(dir, "lost")))) return { state: "lost" };
+    const exit = await exitOf(dir);
+    if (exit) return { state: "exited", ...exit };
+    const pgid = Number(await readFile(join(dir, "pgid"), "utf8").catch(() => "0"));
+    if (pgid > 0 && signalGroup(pgid, 0)) return { state: "running" };
+    // the exit record may have been written since it was read
+    const late = await exitOf(dir);
+    return late ? { state: "exited", ...late } : { state: "lost" };
+  };
+  /** The output a read may serve, or why none is. */
+  const retained = async (
+    dir: string,
+    record: FakeExecutionRecord | null,
+  ): Promise<{ unavailable: "lost" | "expired" } | { status: SandboxExecutionStatus }> => {
+    if (record === null || (await exists(join(dir, "lost")))) return { unavailable: "lost" };
+    if (record.retainUntilMs <= Date.now()) return { unavailable: "expired" };
+    if (!(await exists(record.output))) return { unavailable: "lost" };
+    return { status: await statusOf(dir, record) };
+  };
+
+  const background: SandboxBackground = {
+    async start(h, given, args) {
+      const scope = parseSandboxOperationScope(given);
+      args.signal.throwIfAborted();
+      const generation = args.instanceGeneration;
+      if (generation === undefined || !/^[0-9]{1,16}$/.test(generation))
+        throw new SandboxScopeDeniedError("The fake needs the kernel's instance generation");
+      const cwd = args.cwd ?? "/workspace";
+      runnable(scope.filesystem, args.command, cwd);
+      writable(scope.filesystem, args.outputPath);
+      const { signal: _signal, ...input } = args;
+      const inputHash = sha256(JSON.stringify({ scope, input }));
+      const dir = executionDir(h, scope.operationId);
+      await mkdir(dirname(dir), { recursive: true });
+      try {
+        await mkdir(dir);
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+        const text = await readFile(join(dir, "ref.json"), "utf8").catch(() => null);
+        if (text === null)
+          throw new SandboxOperationOutcomeUnknownError("The fake start outcome is unknown");
+        const record = JSON.parse(text) as FakeExecutionRecord;
+        if (record.inputHash !== inputHash)
+          throw new SandboxScopeDeniedError("Operation identity was reused");
+        return record.ref;
+      }
+      if (await revoked(scope.operationId)) {
+        await rm(dir, { recursive: true, force: true });
+        throw new SandboxScopeDeniedError("Operation revoked");
+      }
+      await f.requireRunning(h);
+      const m = await f.mounts(h);
+      const output = await f.real(h, args.outputPath);
+      await mkdir(dirname(output), { recursive: true });
+      // the artifact exists once the start is acknowledged; the command writes through the
+      // descriptor opened here, so a later removal of the file never brings it back
+      const fd = openSync(output, "a");
+      const command = args.command.replace(
+        ROOT_RE,
+        (_m, pre: string, r: string) => `${pre}${m[r] as string}`,
+      );
+      const seconds = Math.max(0.001, args.timeoutMs / 1000);
+      // the wrapper owns the group: the command's exit code (124 after the timeout) is recorded
+      // through a rename, so a reader never sees a half-written one; then what the command left
+      // running in the group is killed, as a device ends what an exec left behind
+      const script =
+        'timeout -s TERM "$1" /bin/sh -c "$2" 2>&1 </dev/null; ' +
+        'printf "%s" "$?" >"$3.tmp" && mv "$3.tmp" "$3"; kill -KILL 0';
+      const child = spawn(
+        "/bin/sh",
+        ["-c", script, "sh", String(seconds), command, join(dir, "exit")],
+        {
+          cwd: await f.real(h, cwd),
+          env: {
+            HOME: m["/workspace"],
+            ...args.env,
+            PATH: `${f.binDir}:${args.env?.PATH ?? process.env.PATH ?? "/usr/bin:/bin"}`,
+            [INSTANCE_ENV]: instanceDir(h),
+          },
+          detached: true,
+          stdio: ["ignore", fd, fd],
+        },
+      );
+      closeSync(fd);
+      if (child.pid === undefined) {
+        await rm(dir, { recursive: true, force: true });
+        throw new Error("the fake could not start the background command");
+      }
+      child.unref();
+      await writeFile(join(dir, "pgid"), String(child.pid));
+      const ref: SandboxExecutionRef = {
+        executionId: `fx-${randomUUID().slice(0, 12)}`,
+        operationId: scope.operationId,
+        instanceId: h.id,
+        instanceGeneration: generation,
+      };
+      const record: FakeExecutionRecord = {
+        ref,
+        inputHash,
+        output,
+        retainUntilMs: args.retainUntilMs,
+      };
+      await writeFile(join(dir, "ref.json.tmp"), JSON.stringify(record));
+      await rename(join(dir, "ref.json.tmp"), join(dir, "ref.json"));
+      await f.log(`bg-start ${h.id} ${scope.operationId} ${child.pid}`);
+      return ref;
+    },
+
+    async status(h, ref, signal) {
+      signal.throwIfAborted();
+      const { dir, record } = await recordOf(h, ref);
+      return statusOf(dir, record);
+    },
+
+    async tail(h, ref, opts) {
+      opts.signal.throwIfAborted();
+      if (!Number.isSafeInteger(opts.maxBytes) || opts.maxBytes < 0 || opts.maxBytes > MAX_READ)
+        throw new SandboxScopeDeniedError("Tail budget must be between 0 and 65536 bytes");
+      const { dir, record } = await recordOf(h, ref);
+      const r = await retained(dir, record);
+      if ("unavailable" in r) return r;
+      const out = await readFile((record as FakeExecutionRecord).output);
+      let bytes = out.subarray(Math.max(0, out.length - MAX_READ));
+      let begin = 0;
+      while (begin < bytes.length && ((bytes[begin] as number) & 0xc0) === 0x80) begin++;
+      bytes = bytes.subarray(begin);
+      let start = Math.max(0, bytes.length - opts.maxBytes);
+      if (r.status.state === "exited") {
+        let cursor = bytes.length - (bytes.at(-1) === 10 ? 1 : 0);
+        for (let line = 0; line < TAIL_LINES; line++) {
+          const previous = bytes.lastIndexOf(10, cursor - 1);
+          if (previous < 0) {
+            cursor = -1;
+            break;
+          }
+          cursor = previous;
+        }
+        start = Math.max(start, cursor + 1);
+      }
+      while (start < bytes.length && ((bytes[start] as number) & 0xc0) === 0x80) start++;
+      return {
+        data: new Uint8Array(bytes.subarray(start)),
+        truncated: out.length > bytes.length || start > 0,
       };
     },
-    async prepare(h, given, signal) {
-      const scope = parseSandboxPreparationScope(given);
-      return {
-        readFile: (path, opts) => {
-          pathAllowed(path, scope.writeRoots);
-          return provider.readFile(h, path, {
-            ...opts,
-            signal: AbortSignal.any([signal, opts.signal]),
-          });
-        },
-        writeFile: (path, data, sig) => {
-          pathAllowed(path, scope.writeRoots);
-          return provider.writeFile(h, path, data, AbortSignal.any([signal, sig]));
-        },
-        stat: (path, sig) => {
-          pathAllowed(path, scope.writeRoots);
-          return provider.stat(h, path, AbortSignal.any([signal, sig]));
-        },
+
+    async readOutput(h, ref, opts) {
+      opts.signal.throwIfAborted();
+      if (!Number.isSafeInteger(opts.offset) || opts.offset < 0)
+        throw new SandboxScopeDeniedError("The offset must be a nonnegative safe integer");
+      if (!Number.isInteger(opts.maxBytes) || opts.maxBytes < 0 || opts.maxBytes > MAX_READ)
+        throw new SandboxScopeDeniedError("maxBytes must be between 0 and 65536");
+      const { dir, record } = await recordOf(h, ref);
+      const r = await retained(dir, record);
+      if ("unavailable" in r) return r;
+      // one snapshot: the size pinned now, the bytes read below it
+      const out = await readFile((record as FakeExecutionRecord).output);
+      const totalBytes = out.length;
+      const n = Math.max(0, Math.min(opts.maxBytes, totalBytes - opts.offset));
+      const data = new Uint8Array(out.subarray(opts.offset, opts.offset + n));
+      return { data, offset: opts.offset, nextOffset: opts.offset + n, totalBytes };
+    },
+
+    async stop(h, ref, opts) {
+      opts.signal.throwIfAborted();
+      if (!Number.isFinite(opts.graceMs) || opts.graceMs < 0 || opts.graceMs > 30_000)
+        throw new SandboxScopeDeniedError("Invalid stop grace");
+      const { dir, record } = await recordOf(h, ref);
+      const claimed = await readFile(join(dir, "claim"), "utf8").catch(() => null);
+      if (claimed !== null) return JSON.parse(claimed) as SandboxStopResult;
+      const claim = async (outcome: SandboxStopResult): Promise<SandboxStopResult> => {
+        try {
+          // the first claim wins; a retry or a racing stop answers what it claimed
+          await writeFile(join(dir, "claim"), JSON.stringify(outcome), { flag: "wx" });
+          return outcome;
+        } catch (error) {
+          if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+          return JSON.parse(await readFile(join(dir, "claim"), "utf8")) as SandboxStopResult;
+        }
       };
+      const now = await statusOf(dir, record);
+      if (record === null) return { outcome: "lost" };
+      if (now.state === "lost") return claim({ outcome: "lost" });
+      if (now.state === "exited")
+        return claim({ outcome: "already-exited", exitCode: now.exitCode, timedOut: now.timedOut });
+      const pgid = Number(await readFile(join(dir, "pgid"), "utf8").catch(() => "0"));
+      signalGroup(pgid, "SIGTERM");
+      const until = Date.now() + opts.graceMs;
+      while (Date.now() < until && signalGroup(pgid, 0)) {
+        await sleep(20, opts.signal);
+      }
+      signalGroup(pgid, "SIGKILL");
+      const outcome = await claim({ outcome: "stopped" });
+      // a stopped execution exits as a terminated one, unless its own exit was recorded first
+      if (!(await exists(join(dir, "exit")))) await writeFile(join(dir, "exit"), "143");
+      await f.log(`bg-stop ${h.id} ${ref.operationId}`);
+      return outcome;
     },
   };
+
+  return {
+    async permissionSupport(_h, signal) {
+      signal.throwIfAborted();
+      const text = await readFile(join(f.root, "permission-support.json"), "utf8").catch(
+        () => null,
+      );
+      return text === null
+        ? FAKE_PERMISSION_SUPPORT
+        : (JSON.parse(text) as SandboxPermissionSupport);
+    },
+
+    async operation(h, given, signal) {
+      const scope = parseSandboxOperationScope(given);
+      signal.throwIfAborted();
+      const once = <T>(input: unknown, work: () => Promise<T>) =>
+        consume(scope.operationId, { scope, ...(input as object) }, work);
+      await mkdir(join(f.root, "operation-tags"), { recursive: true });
+      await writeFile(join(f.root, "operation-tags", sha256(scope.operationId)), scope.tag);
+      return {
+        ...native(h, scope.filesystem, signal, once),
+        exec: async (args) => {
+          runnable(scope.filesystem, args.command, args.cwd ?? "/workspace");
+          const { signal: callSignal, ...input } = args;
+          return once({ method: "exec", args: input }, () =>
+            raw.exec(h, {
+              ...args,
+              actor: scope.actor,
+              tag: scope.tag,
+              signal: AbortSignal.any([signal, callSignal]),
+            }),
+          );
+        },
+      };
+    },
+
+    async prepare(h, given, signal) {
+      const scope = parseSandboxPreparationScope(given);
+      const fs: SandboxFileScope = {
+        kind: "scoped",
+        readRoots: scope.writeRoots,
+        writeRoots: scope.writeRoots,
+      };
+      const { readFile, writeFile, stat } = native(h, fs, signal, (_input, work) => work());
+      return { readFile, writeFile, stat };
+    },
+
+    ...(f.list && {
+      async browse(h, given, signal) {
+        const scope = parseSandboxBrowseScope(given);
+        const fs: SandboxFileScope = { kind: "scoped", readRoots: scope.readRoots, writeRoots: [] };
+        const n = native(h, fs, signal, (_input, work) => work());
+        return {
+          stat: n.stat,
+          list: n.list as NonNullable<SandboxOperation["list"]>,
+          scan: n.scan as NonNullable<SandboxOperation["scan"]>,
+        };
+      },
+    }),
+
+    async revokeOperation(h, ref, signal) {
+      signal.throwIfAborted();
+      const { operationId } = parseSandboxOperationRef(ref);
+      await mkdir(join(f.root, "operation-revoked"), { recursive: true });
+      await writeFile(join(f.root, "operation-revoked", sha256(operationId)), "");
+      // the operation's exec commands, by its tag (never auto-starting the instance)
+      const tag = await readFile(join(f.root, "operation-tags", sha256(operationId)), "utf8").catch(
+        () => null,
+      );
+      const procs = join(instanceDir(h), "procs");
+      for (const pid of await readdir(procs).catch(() => [] as string[])) {
+        const t = await readFile(join(procs, pid), "utf8").catch(() => null);
+        if (t !== null && (t === tag || t === operationId)) signalGroup(Number(pid), "SIGKILL");
+      }
+      // and its background execution
+      const dir = executionDir(h, operationId);
+      const pgid = Number(await readFile(join(dir, "pgid"), "utf8").catch(() => "0"));
+      if (pgid > 0 && !(await exists(join(dir, "exit")))) {
+        signalGroup(pgid, "SIGKILL");
+        await writeFile(join(dir, "claim"), JSON.stringify({ outcome: "stopped" }), {
+          flag: "wx",
+        }).catch(() => {});
+        if (!(await exists(join(dir, "exit")))) await writeFile(join(dir, "exit"), "143");
+      }
+      await f.log(`revoke ${h.id} ${operationId}`);
+    },
+
+    background,
+  };
+}
+
+/**
+ * Kills the instance's background executions (suspend, destroy): an execution that had not
+ * exited is then `lost`, its output unavailable.
+ */
+async function killExecutions(instanceDir: string): Promise<void> {
+  const base = join(instanceDir, "executions");
+  for (const name of await readdir(base).catch(() => [] as string[])) {
+    const dir = join(base, name);
+    const pgid = Number(await readFile(join(dir, "pgid"), "utf8").catch(() => "0"));
+    if (pgid > 0) {
+      try {
+        process.kill(-pgid, "SIGKILL");
+      } catch {
+        // already exited
+      }
+    }
+    if (!(await exists(join(dir, "exit")))) await writeFile(join(dir, "lost"), "").catch(() => {});
+  }
+}
+
+/**
+ * Kept for callers written before the fake carried the permission-scoped surface itself: the
+ * provider from {@link createFakeSandbox} is returned as it is.
+ */
+export function fakeOperationFacade(_root: string, provider: SandboxProvider): SandboxProvider {
+  return provider;
 }

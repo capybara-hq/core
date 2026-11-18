@@ -1,5 +1,5 @@
-import { randomUUID } from "node:crypto";
-import { mkdtemp, rm } from "node:fs/promises";
+import { createHash, randomUUID } from "node:crypto";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -15,6 +15,7 @@ import { createDb } from "../../src/db/pool.js";
 import { ConversationDevices } from "../../src/devices/conversation-devices.js";
 import { ApiError } from "../../src/errors.js";
 import { CLAUDE_CODE_TOOL_MAP } from "../../src/runtime/context/claude-tools.js";
+import type { ExecutionClaim } from "../../src/runtime/run-execution.js";
 import { SandboxService } from "../../src/sandbox/sandbox.service.js";
 import { BuiltinTools } from "../../src/tools/builtins/builtin-tools.js";
 import { TASK_LIST_FINISHED_LIMIT } from "../../src/tools/builtins/sandbox/task-list.js";
@@ -24,10 +25,11 @@ import {
 } from "../../src/tools/builtins/sandbox/task-output.js";
 import type { BuiltinCallContext, BuiltinTool } from "../../src/tools/registry.js";
 import { ToolRegistry } from "../../src/tools/registry.js";
-import { readFakeSandboxOps } from "../fixtures/plugins/sandbox-fake/index.js";
 import { legacyDbFor } from "../helpers/conversations.js";
 import { builtinsOff, onlyBuiltins } from "../helpers/disabled-tools.js";
+import { fakeEnvFile } from "../helpers/fake-fs.js";
 import { accountsFor } from "../helpers/identity.js";
+import { runClaimed, startClaimedRun } from "../helpers/managed-calls.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
   createOrgWithProviders,
@@ -106,9 +108,13 @@ afterEach(async () => {
 
 const tool = (name: string): BuiltinTool => tools.find((t) => t.spec.name === name) as BuiltinTool;
 
-type Conv = Awaited<ReturnType<typeof seedConversation>> & { deviceId: string };
+type Conv = Awaited<ReturnType<typeof seedConversation>> & {
+  deviceId: string;
+  runId: string;
+  claim: ExecutionClaim;
+};
 
-/** A seeded conversation bound to a device of its own. */
+/** A seeded conversation bound to a device of its own, with a running claimed run. */
 async function conversation(): Promise<Conv> {
   const s = await seedConversation(raw);
   const deviceId = await seedDevice(raw, s.orgId, s.accountId);
@@ -118,7 +124,12 @@ async function conversation(): Promise<Conv> {
     .where("id", "=", s.conversationId)
     .execute();
   used.push(deviceId);
-  return { ...s, deviceId };
+  // a managed call's actor must be an active member of the org
+  await db
+    .insertInto("memberships")
+    .values({ org_id: s.orgId, account_id: s.accountId, role: "owner" })
+    .execute();
+  return { ...s, deviceId, ...(await startClaimedRun(k, raw, s.conversationId, s.accountId)) };
 }
 
 const ctxOf = (c: Conv, over: Partial<BuiltinCallContext> = {}): BuiltinCallContext => ({
@@ -127,10 +138,26 @@ const ctxOf = (c: Conv, over: Partial<BuiltinCallContext> = {}): BuiltinCallCont
   agentId: c.agentId,
   conversationId: c.conversationId,
   callId: `call-${randomUUID().slice(0, 8)}`,
-  runId: "run-1",
+  runId: c.runId,
+  executionClaim: c.claim,
   signal: AbortSignal.timeout(60_000),
   ...over,
 });
+
+/** The call context of `parent`'s sub-agent conversation `childId`, under a run of its own. */
+async function childCtx(parent: Conv, childId: string): Promise<BuiltinCallContext> {
+  const run = await startClaimedRun(k, raw, childId, parent.accountId);
+  return ctxOf(parent, {
+    conversationId: childId,
+    sandboxConversationId: parent.conversationId,
+    runId: run.runId,
+    executionClaim: run.claim,
+  });
+}
+
+/** Runs builtin `name` as the pipeline does (its started call logged, under the run's claim). */
+const call = (name: string, input: Record<string, unknown>, ctx: BuiltinCallContext) =>
+  runClaimed(k, raw, tool(name), input, ctx);
 
 type Result = Awaited<ReturnType<BuiltinTool["run"]>>;
 const textOf = (r: Result): string =>
@@ -139,42 +166,53 @@ const isError = (r: Result): boolean => "isError" in r && r.isError === true;
 
 /** Starts `command` in the background through `Bash`; returns the task's row. */
 async function start(ctx: BuiltinCallContext, command: string): Promise<BackgroundTaskRow> {
-  const r = await tool("Bash").run(
-    { command, description: "Run it", run_in_background: true },
-    ctx,
-  );
+  const r = await call("Bash", { command, description: "Run it", run_in_background: true }, ctx);
   const id = /Started background task (bt_[a-z2-7]{6})/.exec(textOf(r))?.[1];
   expect(id, textOf(r)).toBeDefined();
   return (await store.get(id as string)) as BackgroundTaskRow;
 }
 
-/** Runs `command` in the conversation's sandbox. */
-async function shell(c: Conv, command: string): Promise<string> {
-  return sandbox.withSandbox(
-    {
-      orgId: c.orgId,
-      deviceId: c.deviceId,
-      holderConversationId: c.conversationId,
-      actor: { accountId: c.accountId, conversationId: c.conversationId },
-    },
-    async (h, p, _info, sig) =>
-      (
-        await p.exec(h, {
-          command,
-          cwd: "/workspace",
-          timeoutMs: 20_000,
-          maxOutputBytes: 64_000,
-          signal: sig,
-        })
-      ).stdout,
-    AbortSignal.timeout(30_000),
+/** The task's output file as the fake provider holds it ("" before it exists). */
+async function taskOut(c: Conv, t: BackgroundTaskRow): Promise<string> {
+  const rel = t.outputPath.replace(/^\/workspace\//, "workspace/");
+  return (await fakeEnvFile(db, root, c.conversationId, rel)) ?? "";
+}
+
+/** The host directory of the conversation's device workspace (the fake provider's). */
+async function workspaceDir(c: Conv): Promise<string> {
+  return join(root, "filesystems", (await fakeInstance(c)).fileSystem, "workspace");
+}
+
+/** The fake instance of the conversation's device and the file system it mounts. */
+async function fakeInstance(c: Conv): Promise<{ instanceId: string; fileSystem: string }> {
+  const row = await db
+    .selectFrom("device_instances")
+    .select("handle")
+    .where("device_id", "=", c.deviceId)
+    .executeTakeFirstOrThrow();
+  const instanceId = (row.handle as { id: string }).id;
+  const meta = JSON.parse(
+    await readFile(join(root, "instances", instanceId, "meta.json"), "utf8"),
+  ) as { fileSystem: string };
+  return { instanceId, fileSystem: meta.fileSystem };
+}
+
+/** Whether the fake recorded the task's exit (its execution ended on its own). */
+async function fakeExited(c: Conv, t: BackgroundTaskRow): Promise<boolean> {
+  const { instanceId } = await fakeInstance(c);
+  const hash = createHash("sha256")
+    .update(t.operationId as string)
+    .digest("hex");
+  return readFile(join(root, "instances", instanceId, "executions", hash, "exit"), "utf8").then(
+    () => true,
+    () => false,
   );
 }
 
 const output = (c: Conv, input: Record<string, unknown>, over?: Partial<BuiltinCallContext>) =>
-  tool("TaskOutput").run(input, ctxOf(c, over));
+  call("TaskOutput", input, ctxOf(c, over));
 const stop = (c: Conv, input: Record<string, unknown>, over?: Partial<BuiltinCallContext>) =>
-  tool("TaskStop").run(input, ctxOf(c, over));
+  call("TaskStop", input, ctxOf(c, over));
 
 type Finished = Extract<ConversationEvent, { type: "background_task_finished" }>;
 const finishedEvents = async (conversationId: string, taskId: string): Promise<Finished[]> =>
@@ -264,17 +302,13 @@ describe("TaskOutput", () => {
   it("two reads return the new output only: first a, then b", async () => {
     const c = await conversation();
     const t = await start(ctxOf(c), "echo a; while [ ! -f go ]; do sleep 0.1; done; echo b");
-    await waitFor(
-      async () => (await shell(c, `cat .capybara/tasks/${t.id}.out`)).includes("a"),
-      10_000,
-      "first line",
-    );
+    await waitFor(async () => (await taskOut(c, t)).includes("a"), 10_000, "first line");
     const first = textOf(await output(c, { task_id: t.id, block: false }));
     expect(first).toMatch(/^Status: running \(\d+s\)/);
     expect(first).toContain("\na\n");
     expect(first).not.toContain("b");
     expect((await store.get(t.id))?.readOffset).toBe(2);
-    await shell(c, "touch go");
+    await writeFile(join(await workspaceDir(c), "go"), "");
     const second = textOf(await output(c, { task_id: t.id, timeout: 10_000 }));
     expect(second).toMatch(/^Status: completed, exit code 0, after \d+s/);
     expect(second).toContain("\nb\n");
@@ -353,15 +387,17 @@ describe("TaskOutput", () => {
     );
   });
 
-  it("a multi-byte character cut by the cap is left for the next read", async () => {
+  it("a multi-byte character cut by the cap is completed, never split across reads", async () => {
     const c = await conversation();
-    // 3 bytes each: a cap of 50 000 bytes ends inside the 16 667th one
+    // 3 bytes each: a cap of 50 000 bytes ends inside the 16 667th one, which the read completes
+    // with its adjacent bytes (managed output design §B5)
     const t = await start(ctxOf(c), `i=0; while [ $i -lt 17000 ]; do printf '€'; i=$((i+1)); done`);
     const text = textOf(await output(c, { task_id: t.id, timeout: 30_000 }));
-    expect(text.match(/€+/)?.[0]).toHaveLength(16_666);
-    expect((await store.get(t.id))?.readOffset).toBe(16_666 * 3);
+    expect(text.match(/€+/)?.[0]).toHaveLength(16_667);
+    expect(text).not.toContain("\uFFFD");
+    expect((await store.get(t.id))?.readOffset).toBe(16_667 * 3);
     const next = textOf(await output(c, { task_id: t.id, block: false }));
-    expect(next.match(/€+/)?.[0]).toHaveLength(17_000 - 16_666);
+    expect(next.match(/€+/)?.[0]).toHaveLength(17_000 - 16_667);
   });
 
   it("a failed task shows its exit code", async () => {
@@ -401,10 +437,7 @@ describe("TaskOutput", () => {
       VALUES (${childId}, ${parent.orgId}, ${parent.agentId}, ${parent.accountId}, 'subagent',
         ${parent.conversationId})`.execute(raw);
     // the child's task runs in the parent's sandbox
-    const t = await start(
-      ctxOf(parent, { conversationId: childId, sandboxConversationId: parent.conversationId }),
-      "sleep 30",
-    );
+    const t = await start(await childCtx(parent, childId), "sleep 30");
     expect(t).toMatchObject({
       conversationId: childId,
       sandboxConversationId: parent.conversationId,
@@ -491,15 +524,17 @@ describe("TaskOutput: leases, reservations, reporting", () => {
   it("a blocking TaskOutput holds no lease while it waits: a Bash call runs meanwhile", async () => {
     const c = await conversation();
     const t = await start(ctxOf(c), "sleep 30");
-    const checkExecs = async () =>
-      (await readFakeSandboxOps(root)).filter((l) => l[0] === "exec" && l[6] === c.conversationId)
-        .length;
-    const before = await checkExecs();
+    // every exact-ref status check goes through ifRunning (a shared lease held only for the check)
+    const checks = vi.spyOn(sandbox, "ifRunning");
     const waiting = output(c, { task_id: t.id, timeout: 8000 });
-    // once the blocking call's first check exec is recorded it is in its wait, holding no lease
-    await waitFor(async () => (await checkExecs()) > before, 5_000, "TaskOutput's first check");
+    // once the blocking call's first check returned it is in its wait, holding no lease
+    await waitFor(
+      async () => checks.mock.results.length > 0 && checks.mock.settledResults.length > 0,
+      5_000,
+      "TaskOutput's first check",
+    );
     const t0 = Date.now();
-    const r = await tool("Bash").run({ command: "echo hi", description: "Say hi" }, ctxOf(c));
+    const r = await call("Bash", { command: "echo hi", description: "Say hi" }, ctxOf(c));
     expect(textOf(r)).toContain("hi");
     // well before the blocking call's 8 s wait ends (with one command slot)
     expect(Date.now() - t0).toBeLessThan(5000);
@@ -536,11 +571,7 @@ describe("TaskOutput: leases, reservations, reporting", () => {
   it("a call that fails after the task finished leaves the finish to the poller, unreported", async () => {
     const c = await conversation();
     const t = await start(ctxOf(c), "echo bye");
-    await waitFor(
-      async () => (await shell(c, `test -s .capybara/tasks/${t.id}.exit && echo y`)).includes("y"),
-      10_000,
-      "exit file",
-    );
+    await waitFor(async () => fakeExited(c, t), 10_000, "the task's exit");
     vi.spyOn(store, "advanceOffset").mockRejectedValueOnce(new Error("database down"));
     await expect(output(c, { task_id: t.id })).rejects.toThrow("database down");
     expect((await store.get(t.id))?.status).toBe("running");
@@ -550,21 +581,27 @@ describe("TaskOutput: leases, reservations, reporting", () => {
     expect(events.map((e) => e.payload)).toMatchObject([{ status: "completed", reported: false }]);
   });
 
-  it("a sandbox gone under the read gives the status line and output unavailable", async () => {
+  it("a sandbox gone under the read gives the status line and output unavailable, the task lost", async () => {
     const c = await conversation();
     const t = await start(ctxOf(c), "sleep 30");
-    // the exec on the instance throws SandboxGoneError (the provider found it gone)
+    // the exact-ref calls on the instance throw SandboxGoneError (the provider found it gone)
+    const gone = async () => {
+      throw new SandboxGoneError("instance gone");
+    };
     vi.spyOn(sandbox, "ifRunning").mockImplementationOnce(async (_conv, _inst, fn) => {
       const p = {
-        exec: async () => {
-          throw new SandboxGoneError("instance gone");
-        },
+        background: { status: gone, readOutput: gone, tail: gone, stop: gone },
       } as unknown as Parameters<typeof fn>[0];
-      return { kind: "ran", value: await fn(p, {} as Parameters<typeof fn>[1], signal()) };
+      const h = { id: t.instanceId } as Parameters<typeof fn>[1];
+      return { kind: "ran", value: await fn(p, h, signal()) };
     });
     const r = await output(c, { task_id: t.id, block: false });
     expect(isError(r)).toBe(false);
-    expect(textOf(r)).toMatch(/^Status: running \(\d+s\)\n\[Output unavailable: /);
+    // the exact instance is gone: the task cannot run on, so it is settled as lost
+    expect(textOf(r)).toMatch(
+      /^Status: lost \(the sandbox was recreated[^\n]*\n\[Output unavailable/,
+    );
+    expect((await store.get(t.id))?.status).toBe("lost");
   });
 });
 
@@ -572,11 +609,7 @@ describe("TaskStop", () => {
   it("stops a running task, with its final status and last lines", async () => {
     const c = await conversation();
     const t = await start(ctxOf(c), "echo started; sleep 300");
-    await waitFor(
-      async () => (await shell(c, `cat .capybara/tasks/${t.id}.out`)).includes("started"),
-      10_000,
-      "output",
-    );
+    await waitFor(async () => (await taskOut(c, t)).includes("started"), 10_000, "output");
     const r = await stop(c, { task_id: t.id });
     expect(isError(r)).toBe(false);
     expect(textOf(r)).toContain(`Background task ${t.id} ("Run it") was stopped.`);
@@ -630,7 +663,7 @@ describe("the Claude Code tool map", () => {
 
 describe("TaskList", () => {
   const list = (c: Conv, input: Record<string, unknown> = {}, over?: Partial<BuiltinCallContext>) =>
-    tool("TaskList").run(input, ctxOf(c, over));
+    call("TaskList", input, ctxOf(c, over));
 
   /** A fresh task id (`bt_` and six base32 letters). */
   const taskId = (): string => {
@@ -717,9 +750,8 @@ describe("TaskList", () => {
 
   it("lists running tasks first, then finished ones with exit code and output path", async () => {
     const c = await conversation();
-    const ctx = ctxOf(c);
-    const running = await start(ctx, "sleep 30");
-    const failed = await start(ctx, "echo out; exit 3");
+    const running = await start(ctxOf(c), "sleep 30");
+    const failed = await start(ctxOf(c), "echo out; exit 3");
     // TaskOutput observes the end: the failed task is finished
     await output(c, { task_id: failed.id, timeout: 10_000 });
     expect((await store.get(failed.id))?.status).toBe("failed");

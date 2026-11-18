@@ -266,9 +266,15 @@ describe("Conversation permission profiles", () => {
       orgId = await createOrg(req),
       agentId = await createAgent(req, orgId),
       deviceId = await localDevice(orgId);
+    // a provider without the operation factory (since the paired activation, @local has them)
+    const local = k.app.get(SandboxProviders).forName("@local");
+    if (!local) throw new Error("Local provider was not registered");
+    const impl = Object.create(local.impl);
+    Object.assign(impl, { operation: undefined, revokeOperation: undefined });
+    k.app.get(SandboxProviders).register({ plugin: "@no-factory-test", impl });
     await kernelDb(raw)
       .updateTable("devices")
-      .set({ provider: "@local" })
+      .set({ provider: "@no-factory-test" })
       .where("id", "=", deviceId)
       .execute();
     const preview = await req({
