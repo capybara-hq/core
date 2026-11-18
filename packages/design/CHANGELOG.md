@@ -1,5 +1,11 @@
 # @capybara-hq/design
 
+## 0.2.0-rc.17
+
+### Patch Changes
+
+- b0e2cda: List sibling agents in the agent map newest first, so the agent dispatched last is on top.
+
 ## 0.2.0-rc.16
 
 ### Patch Changes
