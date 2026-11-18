@@ -415,9 +415,11 @@ describe("GenerateImage calls", () => {
     for (const a of artifacts) {
       expect(a.payload).toMatchObject({
         contentType: "image/png",
-        size: PNG.byteLength,
         callId: r.payload.callId,
       });
+      // the fake provider returns different bytes per index: the first is the sample, the
+      // others carry one extra chunk
+      expect(a.payload.size).toBeGreaterThanOrEqual(PNG.byteLength);
       expect(a.payload.objectKey).toBe(`artifacts/${conv}/${a.payload.artifactId}`);
       // each call's images are their own files, never versions of another call's
       expect(a.payload.sourcePath).toBe(`generated/${r.payload.callId}/${a.payload.name}`);
@@ -444,7 +446,7 @@ describe("GenerateImage calls", () => {
     );
     for (const [i, a] of artifacts.entries()) {
       expect(lines[i + 1]).toBe(
-        `- ${a.payload.name} (artifact ${a.payload.artifactId}, image/png, ${PNG.byteLength} B)`,
+        `- ${a.payload.name} (artifact ${a.payload.artifactId}, image/png, ${a.payload.size} B)`,
       );
       expect(lines[i + 1]).toMatch(ARTIFACT_LINE);
     }
@@ -689,7 +691,11 @@ describe("GenerateImage file_path", () => {
     expect(line).toMatch(
       new RegExp(`^Written to the device: \\S+/out/${name}-1\\.png, \\S+/out/${name}-2\\.png$`),
     );
-    for (const i of [1, 2]) expect(await deviceFiles(`${name}-${i}.png`)).toEqual([PNG]);
+    expect(await deviceFiles(`${name}-1.png`)).toEqual([PNG]);
+    const second = await deviceFiles(`${name}-2.png`);
+    expect(second).toHaveLength(1);
+    expect(second[0]?.equals(PNG)).toBe(false);
+    expect(second[0]?.subarray(1, 4).toString()).toBe("PNG");
     // inside the workspace the review allows the write
     expect(r.payload.review).toMatchObject({ decision: "allow", by: "rule" });
     // the images were delivered as well
