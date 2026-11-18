@@ -73,7 +73,7 @@ export interface PurposeTarget {
 /** 用途视图：部署级接口的 `override` 一律为 null。 */
 export interface PurposeView {
   purpose: string;
-  kind: "chat" | "embedding";
+  kind: "chat" | "embedding" | "image_generation";
   label: { zh: string; en: string };
   /** `kernel` 或声明它的插件名。 */
   declaredBy: string;

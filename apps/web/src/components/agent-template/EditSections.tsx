@@ -34,6 +34,7 @@ import {
   AGENT_TIERS,
   type AgentTier,
   BUILTIN_TOOLS,
+  IMAGE_TOOL_PURPOSE,
   type TightenedPolicy,
   WEB_TOOL_POINTS,
 } from "../../lib/agents";
@@ -48,6 +49,7 @@ import {
 import { retryOnMountOf } from "../../lib/query/client";
 import { orgComponentsQuery } from "../../lib/query/components";
 import { modelsQuery } from "../../lib/query/conversation";
+import { orgPurposesQuery } from "../../lib/query/settings";
 import { skillsQuery } from "../../lib/query/skills";
 import {
   canonicalOff,
@@ -428,6 +430,10 @@ export function ToolsEdit() {
   const ext = useQuery({ ...extQ, retryOnMount: retryOnMountOf(extQ.queryKey) });
   const pointsQ = availableExtensionPointsQuery(orgId);
   const points = useQuery({ ...pointsQ, retryOnMount: retryOnMountOf(pointsQ.queryKey) });
+  const purposesQ = orgPurposesQuery(orgId);
+  const purposes = useQuery({ ...purposesQ, retryOnMount: retryOnMountOf(purposesQ.queryKey) });
+  const imageMapped =
+    purposes.data?.purposes.find((p) => p.purpose === IMAGE_TOOL_PURPOSE)?.effective != null;
   const saved = {
     off: definition.disallowedTools ?? [],
     policies: definition.toolPolicies ?? {},
@@ -438,6 +444,7 @@ export function ToolsEdit() {
     (points.data?.points ?? []).filter((p) => p.available).map((p) => p.point),
   );
   const builtins = BUILTIN_TOOLS.filter((name) => {
+    if (name === "GenerateImage") return imageMapped || saved.off.includes(name);
     const point = WEB_TOOL_POINTS[name];
     return point === undefined || available.has(point) || saved.off.includes(name);
   });

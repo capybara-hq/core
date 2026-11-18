@@ -21,6 +21,7 @@ import {
   type AgentToolPolicy,
   BUILTIN_TOOLS,
   type DisabledToolRef,
+  IMAGE_TOOL_PURPOSE,
   WEB_TOOL_POINTS,
 } from "../../lib/agents";
 import type { ConnectorDetail } from "../../lib/connectors";
@@ -28,6 +29,7 @@ import type { ExtensionToolsOffer } from "../../lib/extensions";
 import { availableExtensionPointsQuery, extensionToolsQuery } from "../../lib/query/agents";
 import { retryOnMountOf } from "../../lib/query/client";
 import { connectorQuery } from "../../lib/query/conversation";
+import { orgPurposesQuery } from "../../lib/query/settings";
 import {
   connectorToolKey,
   extensionToolKey,
@@ -177,8 +179,20 @@ function ToolsEdit({ data }: { data: AgentFormData }) {
       : points.isError
         ? new Set()
         : undefined;
-  /** The builtins listed: a web tool only while its point has a provider, or once turned off. */
+  // whether the org's image purpose has a target (unreadable: GenerateImage is not offered, a
+  // turned-off one stays)
+  const purposesQ = orgPurposesQuery(orgId);
+  const purposes = useQuery({ ...purposesQ, retryOnMount: retryOnMountOf(purposesQ.queryKey) });
+  const imageMapped =
+    purposes.data?.purposes.find((p) => p.purpose === IMAGE_TOOL_PURPOSE)?.effective != null;
+  /**
+   * The builtins listed: a web tool only while its point has a provider, `GenerateImage` only while
+   * the image purpose has a target, either once turned off.
+   */
   const listedBuiltins = BUILTIN_TOOLS.filter((name) => {
+    if (name === "GenerateImage") {
+      return imageMapped || saved.builtins.includes(name) || d.builtins.includes(name);
+    }
     const point = WEB_TOOL_POINTS[name];
     return (
       point === undefined ||

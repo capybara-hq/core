@@ -38,6 +38,7 @@ export function agentFormDefaults(agentId = "ag1"): Routes {
     }),
     [`GET ${ORG}/ui/contributions`]: ok({ items: [] }),
     [`GET ${ORG}/extension-points/available`]: ok({ points: [] }),
+    [`GET ${ORG}/model-purposes`]: ok({ purposes: [] }),
     [`GET ${ORG}/tools/extensions`]: ok({ extensions: [] }),
     [`GET ${ORG}/attachments/limits`]: ok({
       types: ["image/png"],

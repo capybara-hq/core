@@ -400,3 +400,55 @@ describe("agent page Tools section: the CurrentTime builtin", () => {
     },
   );
 });
+
+const imageView = (effective: unknown) => ({
+  purpose: "image",
+  kind: "image_generation",
+  label: { zh: "图片生成", en: "Image generation" },
+  declaredBy: "kernel",
+  declaredByName: null,
+  default: null,
+  override: null,
+  effective,
+});
+const IMAGE_TARGET = { model: { provider: "model-fake", model: "img-1" }, params: {} };
+
+describe("agent page Tools section: GenerateImage", () => {
+  beforeEach(() => resetNavigation("/agents/ag1"));
+
+  const render = async (effective: unknown, disabled: unknown[]) => {
+    stubApi({
+      ...sessionRoutes(),
+      [`GET ${ORG}/agents/ag1`]: () => json(200, { agent: agentWith(disabled) }),
+      [`GET ${ORG}/models`]: () => json(200, MODELS),
+      [`GET ${ORG}/extension-points/available`]: available(false, false),
+      [`GET ${ORG}/model-purposes`]: () => json(200, { purposes: [imageView(effective)] }),
+    });
+    await renderEditAgent({ section: "tools", locale: "en" });
+    await screen.findByRole("checkbox", { name: en.agents.form.builtin.Bash });
+  };
+  const box = () => screen.queryByRole("checkbox", { name: en.agents.form.builtin.GenerateImage });
+
+  it("ToolsSection hides GenerateImage while the image purpose is unmapped", async () => {
+    await render(null, [{ kind: "builtin", name: "AskUserQuestion" }]);
+    expect(box()).toBeNull();
+  });
+
+  it("shows it once mapped", async () => {
+    await render(IMAGE_TARGET, [{ kind: "builtin", name: "AskUserQuestion" }]);
+    expect(await screen.findByRole("checkbox", { name: "Generate images" })).toHaveProperty(
+      "checked",
+      true,
+    );
+  });
+
+  it("shows it when turned off", async () => {
+    await render(null, [{ kind: "builtin", name: "GenerateImage" }]);
+    expect(box()).toHaveProperty("checked", false);
+  });
+
+  it("has its label in both languages", () => {
+    expect(zh.agents.form.builtin.GenerateImage).toBe("生成图片");
+    expect(en.agents.form.builtin.GenerateImage).toBe("Generate images");
+  });
+});

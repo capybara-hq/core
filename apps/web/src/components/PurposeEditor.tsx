@@ -12,7 +12,13 @@ import {
 } from "@capybara-hq/design";
 import { useLocale, useTranslations } from "next-intl";
 import { useState } from "react";
-import { findModel, keepDeclared, type ParamValue, type ProviderModels } from "../lib/agents";
+import {
+  findModel,
+  IMAGE_TOOL_PURPOSE,
+  keepDeclared,
+  type ParamValue,
+  type ProviderModels,
+} from "../lib/agents";
 import { extensionLabel, labelLocale, modelLabel } from "../lib/extension-label";
 import {
   decodeModel,
@@ -268,6 +274,12 @@ function PurposeEditor({
     view.purpose === EVAL_PURPOSE &&
     (scope === "deployment" ? view.default : view.effective) === null;
 
+  // The image purpose with image models on offer but no target: the tool stays hidden until mapped
+  const imageUnmapped =
+    view.purpose === IMAGE_TOOL_PURPOSE &&
+    (scope === "deployment" ? view.default : view.effective) === null &&
+    providersOfKind(providers, "image_generation").some((p) => p.models.length > 0);
+
   return (
     <ItemListItem
       // The purpose id is an internal identifier: never shown
@@ -300,6 +312,11 @@ function PurposeEditor({
           {hint !== undefined && hint !== null ? (
             <Text variant="small" tone="muted">
               {t(hint)}
+            </Text>
+          ) : null}
+          {imageUnmapped ? (
+            <Text variant="small" tone="warn" icon="circle-alert">
+              {tm("imageUnmapped")}
             </Text>
           ) : null}
           {evalUnmapped ? (

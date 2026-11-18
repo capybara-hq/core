@@ -45,7 +45,8 @@ export type AgentToolPolicy = "allow" | TightenedPolicy;
  * which the Sub-agents section switches; `ToolSearch` and `Skill` are added by the kernel, and
  * `TaskOutput` / `TaskStop` come with `Bash`). All are on unless turned off. The web tools
  * (`WebSearch` / `WebFetch`) are listed only while their point has a provider, or when turned off
- * ({@link WEB_TOOL_POINTS}).
+ * ({@link WEB_TOOL_POINTS}); `GenerateImage` likewise follows the `image` purpose
+ * ({@link IMAGE_TOOL_PURPOSE}).
  */
 export const BUILTIN_TOOLS = [
   "AskUserQuestion",
@@ -79,6 +80,12 @@ export const WEB_TOOL_POINTS: Readonly<Record<string, string>> = {
   WebSearch: "web-search",
   WebFetch: "web-fetch",
 };
+
+/**
+ * The purpose `GenerateImage` resolves: the form lists the tool only while the org's purpose has an
+ * effective target, or when the agent turned it off.
+ */
+export const IMAGE_TOOL_PURPOSE = "image";
 
 export interface AgentDefinitionInput {
   name: string;

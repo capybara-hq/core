@@ -130,6 +130,7 @@ const routes = (over: Routes = {}): Routes => ({
   [`GET ${ORG}/skills`]: () => json(200, { skills: [] }),
   [`GET ${ORG}/tools/extensions`]: () => json(200, { extensions: [] }),
   [`GET ${ORG}/extension-points/available`]: () => json(200, { points: [] }),
+  [`GET ${ORG}/model-purposes`]: () => json(200, { purposes: [] }),
   [`GET ${ORG}/agent-templates`]: () => json(200, { templates: [] }),
   ...over,
 });
