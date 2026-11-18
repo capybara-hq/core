@@ -88,7 +88,7 @@ async function newChat(page: Page, agentId: string): Promise<void> {
   await expect(composer(page)).not.toHaveAttribute("placeholder", /—/);
 }
 
-/** The composer's permission picker button, named `权限: <profile>`. */
+/** The composer's permission picker button, named "Permission: <profile>" in zh. */
 const permissionButton = (page: Page, profile?: string): Locator =>
   page.getByRole("button", {
     name: profile === undefined ? new RegExp(`^${p.label}: `) : `${p.label}: ${profile}`,
@@ -124,7 +124,7 @@ test.describe("permission profiles", () => {
     const deviceName = "Profiles device";
     devices.push({ orgId, id: await createDevice(page, orgId, deviceName) });
 
-    // 1. The new conversation: 帮我批准 is the default, three rows in order with an explanation
+    // 1. The new conversation: Approve for me is the default, three rows in order with an explanation
     // each, only the selected one checked, all in the same neutral treatment.
     await newChat(page, agentId);
     await pickDevice(page, deviceName);
@@ -157,7 +157,7 @@ test.describe("permission profiles", () => {
     expect(new Set(colors).size, colors.join(", ")).toBe(1);
 
     // 2. Full access only through its confirmation, naming the device and what it is not;
-    // canceling keeps 帮我批准.
+    // canceling keeps Approve for me.
     const fullTitle = new RegExp(`^${p.full.title.replace("{device}", deviceName)}$`);
     await row(page, PROFILE.fullAccess).click();
     let dialog = page.getByRole("dialog", { name: fullTitle });
@@ -184,7 +184,7 @@ test.describe("permission profiles", () => {
     expect(full.deviceId).toBe(devices[0]?.id);
     expect(full.consentScope?.deviceId).toBe(devices[0]?.id);
 
-    // 3. An existing conversation started on 帮我批准: choosing 请求批准 is saved (a new
+    // 3. An existing conversation started on Approve for me: choosing Request approval is saved (a new
     // revision, an event in the log) and read back after a reload.
     await newChat(page, agentId);
     await pickDevice(page, deviceName);
@@ -316,7 +316,7 @@ test.describe("permission profiles", () => {
       });
 
       // The existing conversation's picker: both restricted rows unavailable with the reason,
-      // 请求批准 still the selected profile, 完全访问 offered but not chosen.
+      // Request approval still the selected profile, Full access offered but not chosen.
       await page.reload();
       await expect(page.locator('[data-template="ConversationPage"]')).toBeVisible();
       await permissionButton(page, PROFILE.requestApproval).click();
@@ -332,8 +332,8 @@ test.describe("permission profiles", () => {
       await page.keyboard.press("Escape");
       await expect(permissionButton(page, PROFILE.requestApproval)).toBeVisible();
 
-      // A new conversation on that device shows the same reasons; the default stays 帮我批准
-      // (shown unavailable), never switched to 完全访问.
+      // A new conversation on that device shows the same reasons; the default stays Approve for me
+      // (shown unavailable), never switched to Full access.
       await newChat(page, agentId);
       await pickDevice(page, deviceName);
       await permissionButton(page, PROFILE.approveForMe).click();
