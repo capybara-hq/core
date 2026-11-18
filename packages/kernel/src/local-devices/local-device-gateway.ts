@@ -493,9 +493,7 @@ class DeviceConnection {
           continue;
         }
         wire = JSON.stringify(request);
-        frame = parseDeviceFrame(wire, "kernel", this.effectiveCap) as
-          | KernelRequest
-          | KernelCancel;
+        frame = parseDeviceFrame(wire, "kernel", this.effectiveCap) as KernelRequest | KernelCancel;
       } catch (e) {
         this.gw.log.warn("dropping an invalid device request", {
           deviceId: this.deviceId,
@@ -550,22 +548,22 @@ class DeviceConnection {
     // a backstop for a lost nudge (the bus delivers at most once)
     if (this.state === "holding") {
       void this.publishCapacity().then(
-          () => {
-            this.publishFailures = 0;
-          },
-          (e: unknown) => {
-            // the key lives three pings: a transient failure is retried on the next ping, and
-            // only failures that would let the key expire close the connection
-            this.publishFailures++;
-            this.gw.log.warn("could not publish a device connection's capacity", {
-              deviceId: this.deviceId,
-              failures: this.publishFailures,
-              error: errMsg(e),
-            });
-            if (this.publishFailures >= MAX_PUBLISH_FAILURES)
-              void this.close(DEVICE_CLOSE.internal, "Capacity publication failed; reconnect");
-          },
-        );
+        () => {
+          this.publishFailures = 0;
+        },
+        (e: unknown) => {
+          // the key lives three pings: a transient failure is retried on the next ping, and
+          // only failures that would let the key expire close the connection
+          this.publishFailures++;
+          this.gw.log.warn("could not publish a device connection's capacity", {
+            deviceId: this.deviceId,
+            failures: this.publishFailures,
+            error: errMsg(e),
+          });
+          if (this.publishFailures >= MAX_PUBLISH_FAILURES)
+            void this.close(DEVICE_CLOSE.internal, "Capacity publication failed; reconnect");
+        },
+      );
       this.drain();
     }
     if (this.state === "holding" && Date.now() - this.lastAuth >= REAUTH_EVERY_MS) {

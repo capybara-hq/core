@@ -382,10 +382,12 @@ describe("acceptance: auto mode on a real kernel", () => {
     expect(tasks, "the denied launch created no background task").toEqual([]);
     // a managed launch is a provider background start (`bg-start`), not an exec of the conversation
     const launches = async () =>
-      (await readFakeSandboxOps(root)).slice(opsBefore).filter(
-        ([op, , , , , , conversationId]) =>
-          op === "bg-start" || (op === "exec" && conversationId === conv),
-      );
+      (await readFakeSandboxOps(root))
+        .slice(opsBefore)
+        .filter(
+          ([op, , , , , , conversationId]) =>
+            op === "bg-start" || (op === "exec" && conversationId === conv),
+        );
     expect(await launches(), "the denied launch reached no command in the sandbox").toEqual([]);
 
     const launched = await call(
