@@ -1,5 +1,17 @@
 # @capybara-hq/capybara
 
+## 0.1.0-rc.50
+
+### Patch Changes
+
+- 5f6f6b1: An extension shipped in a builtin platform plugin (a `builtin: true`, not required bootstrap entry
+  such as file-preview) is now enabled in every org, existing and future, like a required one: the
+  org enablement helpers count live builtin platform catalog items, so its tools, previewers and
+  other org-scoped capabilities work everywhere. Before, its plugin showed on with a locked switch
+  while the extension stayed off in every org with no way to turn it on.
+- Updated dependencies [5f6f6b1]
+  - @capybara-hq/kernel@0.1.0-rc.44
+
 ## 0.1.0-rc.49
 
 ### Patch Changes
