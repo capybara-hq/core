@@ -105,7 +105,10 @@ the rule correct if that ever changes. A call that has its images shows them wha
 (today's behavior: a `file_path` failure after delivery keeps the images).
 
 The ratio is the input `aspect_ratio` when it is one of `IMAGE_ASPECT_RATIOS`, else `null` (the
-model's default size, unknown to the web), drawn as 1:1.
+model's default size, unknown to the web), drawn as 1:1. `ImageRatio` is a design type
+(`INLINE_IMAGE_RATIOS` in `packages/design/src/conversation/files.tsx`), a copy of the SDK list,
+since neither the design package nor the web may import the SDK; a `tools/checks` test keeps the
+two lists equal.
 
 Nothing is drawn while the call is `pending` (policy, approval, hooks): no money is being spent
 and the call may never run. A denied approval, a hook denial, an early refusal (`n` above the
@@ -199,6 +202,9 @@ from the conversation index), spec §6.16.20 "Generating image":
 |---|---|---|
 | `files.generating` | 正在生成图片 | Generating image |
 | `files.generatingOf` | 正在生成图片 {index}/{count} | Generating image {index}/{count} |
+| `files.generatingRatio` | {label}，{ratio} | {label}, {ratio} |
+
+`files.generatingRatio` builds the `aria-label` when the ratio is known.
 
 No 智能体 / agent wording is involved.
 
@@ -246,14 +252,16 @@ No 智能体 / agent wording is involved.
 - **Design jsdom** (`packages/design/test/files.test.tsx`): `ImagePlaceholder` aria (`role`,
   `aria-busy`, label in zh and en), `data-ratio` per ratio, caption with and without count;
   `ImageOutput.ratio` sets the pre-load box and drops it after load.
-- **Web jsdom** (`apps/web/test/chat-files.test.tsx`): rerendering the thread from the running log
+- **Web jsdom** (`apps/web/test/chat-image-progress.test.tsx`, a new file on the
+  emitting `FakeEventSource` of `test/support/conversation.ts`): rerendering the thread from the running log
   to the delivered log keeps the files entry's DOM node and puts each image at its placeholder's
   index; `findNestedBoxes` finds no box in a box.
 - **Visual**: catalog blocks and reference blocks for the new `file-outputs` states
   `generating` (one 1:1, light and dark), `generating-several` (2 × 3:4 with captions) and
   `generating-wide` (16:9 beside a finished image in the same entry); the size table rows (frame
   width `layout.inline-image`, radius `md`, ground `panel`, caption `type.small`) measured by
-  `fidelity.spec.ts`; baselines through the `visual-update` workflow (animations are disabled
+  `fidelity.spec.ts`; reference PNGs through the `reference-update` workflow and screenshot
+  baselines through the `visual-update` workflow (animations are disabled
   there, so the frame is the rest pose); compare reviewed blind per the writing-web-ui flow.
 - **Checks**: `check:ui-parts`, `check:tokens`, `check:i18n`, `check:web-ui`, `check:sdk-api`,
   `check:sdk-api-changeset`.
@@ -262,7 +270,8 @@ No 智能体 / agent wording is involved.
 
 One PR: design component and spec, web timeline and thread, SDK part. Changesets:
 `@capybara-hq/plugin-sdk` (patch: a new part name, additive), `@capybara-hq/plugin-client` (patch:
-its generated parts copy), `@capybara-hq/capybara` (the image carries the web). No kernel change,
+its generated parts copy), `@capybara-hq/design` and `@capybara-hq/web` (patch, private, versioned
+like the earlier parts round), `@capybara-hq/capybara` (the image carries the web). No kernel change,
 no migration, no config. The theme-cyberpunk plugin may add a rule for the new part afterwards in
 capybara-hq/plugins; nothing breaks without it.
 
