@@ -1,9 +1,10 @@
-import { mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   type BindInstanceResult,
   FileSystemGoneError,
+  type KernelRequest,
   parseDeviceFrame,
   type SandboxOperationScope,
   SandboxPermissionUnsupportedError,
@@ -16,6 +17,7 @@ import type { MacSelfCheckInput } from "../src/exec/mac-self-check.js";
 import type { MacWorkerRequest } from "../src/exec/operation-worker.js";
 import type { EnvironmentInputs } from "../src/exec/runtime-manifest.js";
 import { PolicyStore } from "../src/policy-store.js";
+import { serveOperationV3 } from "../src/server-ops.js";
 import { CREDENTIAL_CHANGED_MESSAGE, connectStaged } from "../src/staged-connect.js";
 import { createStagedDevice, UNBOUND_SUPPORT } from "../src/staged-device.js";
 import { type Credential, DEFAULT_POLICY, FULL_OWNER_CEILING, writePolicy } from "../src/state.js";
@@ -355,6 +357,35 @@ describe("staged device parts (W3-M)", () => {
   });
 });
 
+describe("staged device: the local command log", () => {
+  it("the program's owner controls write commands.log in the state directory", async () => {
+    writePolicy(state, { ...DEFAULT_POLICY, ownerCeiling: { ...FULL_OWNER_CEILING } });
+    const s = staged();
+    const res = await serveOperationV3(
+      s.device.backend(),
+      s.device.handle,
+      {
+        type: "req",
+        id: "q",
+        op: "policy",
+        args: {
+          opId: "op_log",
+          add: ["files.slack.com"],
+          source: { accountId: "acc_1", accountName: "Ada", via: "web" },
+        },
+        deadlineMs: 1000,
+      } as KernelRequest,
+      signal(),
+      s.device.binder,
+      s.device.owner,
+    );
+    expect(res).toMatchObject({ ok: true });
+    expect(readFileSync(join(state, "commands.log"), "utf8")).toContain(
+      "policy add files.slack.com by Ada (acc_1) via web",
+    );
+  });
+});
+
 describe("staged device parts: fix round", () => {
   it("a failed self-check is retried by the next report, not kept for the generation (M-4)", async () => {
     let clock = 0;
@@ -454,6 +485,38 @@ describe("staged connection (W3-M)", () => {
       ok: true,
       result: { roots: { workspace: join(root, "device", "workspace") } },
     });
+  });
+
+  it("an owner report that breaks after the hello is reported, never an unhandled rejection", async () => {
+    const k = await kernel();
+    const s = staged({ cred: credential({ connectUrl: k.url }) });
+    const report = s.device.owner.report;
+    let calls = 0;
+    s.device.owner.report = () => {
+      calls += 1;
+      // the hello's report succeeds; policy.json breaks right after
+      if (calls > 1) throw new Error("policy.json is not valid JSON");
+      return report();
+    };
+    const unhandled = vi.fn();
+    process.on("unhandledRejection", unhandled);
+    cleanups.push(async () => {
+      process.off("unhandledRejection", unhandled);
+    });
+    const errs: string[] = [];
+    const conn = connectStaged(s.device, {
+      err: (l) => errs.push(l),
+      bootId: null,
+      policyCheckMs: 60_000,
+    });
+    cleanups.push(() => {
+      conn.stop();
+      return conn.done;
+    });
+    await k.waitFor("hello", () => k.of("hello")[0]);
+    await vi.waitFor(() => expect(errs.join("\n")).toMatch(/not valid JSON/));
+    await new Promise((r) => setImmediate(r));
+    expect(unhandled).not.toHaveBeenCalled();
   });
 
   it("an answer produced while disconnected waits the credential's grace and reaches the next socket (B-3, B-4)", async () => {

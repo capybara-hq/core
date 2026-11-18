@@ -40,8 +40,9 @@ Who chooses what:
 - **Org admin**: the org setting `autoMode` follows the platform, may turn it off, and may turn it
   back on only while the platform allows it. The org setting `cloudNetwork` is the cloud device's
   sandbox-mode network (below).
-- **Device owner (local)**: `capybara-device mode auto|sandbox` on the machine. A new login starts
-  in auto mode when the org allows it, and `login` prints one line saying so and how to switch.
+- **Device owner (local)**: the owner ceiling, `capybara-device ceiling set --full-access
+  allow|deny --project-reach workspace|os-user` on the machine. A new login starts restricted
+  (Full access denied, workspace reach), and `login` prints one line saying so and how to widen it.
 - **Device owner (cloud)**: the device page switches between auto and sandbox; sandbox only
   narrows the network. From the web a local device can be switched to sandbox too (the kernel sends
   the change to the machine), but never to auto: turning auto mode on is a decision at the machine.

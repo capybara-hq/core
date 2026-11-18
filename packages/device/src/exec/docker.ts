@@ -1,39 +1,12 @@
-import { type ChildProcess, spawn } from "node:child_process";
+import { spawn } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
 import { existsSync, mkdirSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import {
-  DEFAULT_SANDBOX_ROOTS,
-  DEVICE_SCAN_SKIPPED_BASE_DIRS,
-  DEVICE_SCAN_SKIPPED_DIRS,
-  type DeviceExecArgs,
-  type DeviceListResult,
-  type DeviceScanResult,
-  type ExecResult,
-  MAX_DEVICE_SCAN_DEPTH,
-  MAX_DEVICE_SCAN_DIRS,
-  type SandboxLimits,
-  type SandboxRoots,
-  validateSandboxPathShape,
-} from "@capybara-hq/plugin-sdk";
-import { effectiveMode } from "../policy.js";
-import type { Policy, SandboxMode } from "../state.js";
-import { policyMode } from "../state.js";
-import { finishScan } from "./listing.js";
-import { EXEC_MARKER } from "./procs.js";
-import {
-  ENV_NAME_RE,
-  HostFiles,
-  isUnder,
-  OutputCap,
-  osRoots,
-  PIPE_GRACE_MS,
-  policyError,
-  ROOT_MARKER,
-  RootGuard,
-} from "./shared.js";
-import { FILE_OPS_DECISION_TTL_MS } from "./switch.js";
-import { DeviceOpError, type Executor } from "./types.js";
+import { DEFAULT_SANDBOX_ROOTS, type SandboxRoots } from "@capybara-hq/plugin-sdk";
+import type { Policy } from "../state.js";
+import type { OperationContainerHost } from "./docker-operations.js";
+import { osRoots } from "./shared.js";
+import { DeviceOpError } from "./types.js";
 
 /** The version of the published sandbox images this program runs commands in. */
 export const SANDBOX_IMAGE_TAG = "0.1.0-rc.5";
@@ -60,8 +33,18 @@ export function containerUser(
 
 const SPEC_LABEL = "capybara.device.spec";
 
-/** A file operation in the container that takes longer than this is killed. */
-const FILE_OP_TIMEOUT_S = 30;
+/**
+ * The container format. It is part of the run flags, so a container an older format made (a
+ * protocol 2 program's, which may hold its commands' leftovers and may run without a network) is
+ * recreated at its first use, once nothing holds it, never reused.
+ */
+export const CONTAINER_FORMAT = 2;
+export const CONTAINER_FORMAT_LABEL = "capybara.device.format";
+
+/** The spec label of a container made with `runFlags`: a container made otherwise is recreated. */
+export function containerSpec(runFlags: string[]): string {
+  return createHash("sha256").update(JSON.stringify(runFlags)).digest("hex").slice(0, 16);
+}
 
 const ROOTS: SandboxRoots = DEFAULT_SANDBOX_ROOTS;
 
@@ -79,10 +62,10 @@ interface DockerRun {
 /** Runs `docker <args>` to completion (not a command of the device). */
 function docker(
   args: string[],
-  o: { input?: Uint8Array; timeoutMs?: number; maxBytes?: number; signal?: AbortSignal } = {},
+  o: { timeoutMs?: number; maxBytes?: number } = {},
 ): Promise<DockerRun> {
   return new Promise((resolvePromise, reject) => {
-    const child = spawn("docker", args, { stdio: [o.input ? "pipe" : "ignore", "pipe", "pipe"] });
+    const child = spawn("docker", args, { stdio: ["ignore", "pipe", "pipe"] });
     const out: Buffer[] = [];
     const err: Buffer[] = [];
     let size = 0;
@@ -92,24 +75,14 @@ function docker(
       size += b.length;
     });
     child.stderr?.on("data", (b: Buffer) => err.push(b));
-    if (child.stdin) {
-      child.stdin.on("error", () => {});
-      child.stdin.end(Buffer.from(o.input as Uint8Array));
-    }
     const timer =
       o.timeoutMs !== undefined ? setTimeout(() => child.kill("SIGKILL"), o.timeoutMs) : undefined;
-    const onAbort = (): void => {
-      child.kill("SIGKILL");
-    };
-    o.signal?.addEventListener("abort", onAbort, { once: true });
     child.once("error", (e) => {
       if (timer) clearTimeout(timer);
-      o.signal?.removeEventListener("abort", onAbort);
       reject(e);
     });
     child.once("close", (code) => {
       if (timer) clearTimeout(timer);
-      o.signal?.removeEventListener("abort", onAbort);
       resolvePromise({ code, stdout: Buffer.concat(out), stderr: Buffer.concat(err) });
     });
   });
@@ -127,183 +100,18 @@ export async function dockerAvailability(): Promise<{ ok: true } | { ok: false; 
   }
 }
 
-/** Kills the processes whose `CAPYBARA_EXEC` is `$1` exactly, or starts with `$2` (when `$1` is empty). */
-const KILL_SCRIPT = `m=$1; pre=$2; for round in 1 2; do for e in /proc/[0-9]*/environ; do
-p=\${e%/environ}; p=\${p#/proc/}; [ "$p" = "$$" ] && continue
-if [ -n "$m" ]; then tr '\\0' '\\n' < "$e" 2>/dev/null | grep -qxF "${EXEC_MARKER}=$m" && kill -9 "$p" 2>/dev/null
-else tr '\\0' '\\n' < "$e" 2>/dev/null | grep -q "^${EXEC_MARKER}=$pre" && kill -9 "$p" 2>/dev/null; fi
-done; done; exit 0`;
-
-/**
- * The command wrapper. The host sends a random nonce on stdin; the wrapper keeps it in a shell
- * variable, runs the command (stdin `/dev/null`), then writes one final line on stderr with the
- * nonce and the exit status. `docker exec` itself ends only when every process holding its
- * output (a background child) has closed it, so the host reads the status from this line instead.
- * The command cannot suppress the line (the wrapper writes it after waiting) and never sees the
- * nonce; a forged line without it is ordinary output.
- */
-const EXEC_WRAPPER =
-  'read -r n; /bin/bash -c "$1" </dev/null; s=$?; printf \'\\nCAPYBARA-DONE:%s:%d:END\\n\' "$n" "$s" >&2; exit $s';
-
 /** The pids limit of a container (as the cloud sandbox). */
 const PIDS_LIMIT = 1024;
 
-// Exit codes of the file scripts.
-const E_MODE = 9;
-const E_MISSING = 10;
-const E_OUTSIDE = 11;
-const E_NOT_FILE = 12;
-const E_FAIL = 13;
-const E_DANGLING = 14;
-
-/**
- * The shared prologue of the file scripts: `$1` is the mode, `$2` the path, `$3` the extra
- * argument. In sandbox mode `allowed` checks a real path against the mounted roots; in auto mode
- * any absolute path in the container is allowed (the host checks its shape already).
- */
-const FILE_PROLOGUE = `mode=$1; p=$2; arg=$3
-allowed() {
-  if [ "$mode" = "auto" ]; then
-    case "$1" in /*) ;; *) return 1;; esac
-    case "/$1/" in *"/../"*) return 1;; esac
-    return 0
-  fi
-  case "$1" in /workspace|/workspace/*|/tmp|/tmp/*) return 0;; esac
-  return 1
-}
-if [ "$mode" != "auto" ] && [ "$mode" != "sandbox" ]; then exit ${E_MODE}; fi
-`;
-
-const READ_SCRIPT = `${FILE_PROLOGUE}r=$(realpath -e -- "$p" 2>/dev/null) || exit ${E_MISSING}
-allowed "$r" || exit ${E_OUTSIDE}
-[ -d "$r" ] && exit ${E_MISSING}
-[ -f "$r" ] || exit ${E_NOT_FILE}
-head -c "$arg" -- "$r"`;
-
-const STAT_SCRIPT = `${FILE_PROLOGUE}r=$(realpath -e -- "$p" 2>/dev/null) || exit ${E_MISSING}
-allowed "$r" || exit ${E_OUTSIDE}
-if [ -d "$r" ]; then printf '%s d' "$(stat -c %s -- "$r")"; else printf '%s f' "$(stat -c %s -- "$r")"; fi`;
-
-const WRITE_SCRIPT = `${FILE_PROLOGUE}d=$(dirname -- "$p"); a=$d
-while [ ! -e "$a" ] && [ "$a" != / ]; do a=$(dirname -- "$a"); done
-ra=$(realpath -e -- "$a" 2>/dev/null) || exit ${E_FAIL}
-allowed "$ra" || exit ${E_OUTSIDE}
-mkdir -p -- "$d" || exit ${E_FAIL}
-rp=$(realpath -e -- "$d" 2>/dev/null) || exit ${E_FAIL}
-allowed "$rp" || exit ${E_OUTSIDE}
-f="$rp/$(basename -- "$p")"
-if [ -L "$f" ]; then r=$(realpath -e -- "$f" 2>/dev/null) || exit ${E_DANGLING}; allowed "$r" || exit ${E_OUTSIDE}; f=$r; fi
-if [ -e "$f" ] && [ ! -f "$f" ]; then exit ${E_NOT_FILE}; fi
-cat > "$f" || exit ${E_FAIL}`;
-
-/**
- * `list` / `scan` in the container (python3, which the sandbox image carries): argv `<op> <path>
- * <limit>`, the path lexically under /workspace already. The same rules as `listing.ts`'s
- * `listDirectory` / `scanDirectory` with /workspace as the area: realpath containment, a link
- * leaving the workspace is not a directory, null / [] for a missing path, the same breadth-first
- * walk and budget. Names sort by UTF-16 code unit (`utf-16-be` bytes). stdout: `{"r": ...}` or
- * `{"e": "policy" | "error", "m": ...}`; scan answers raw paths (the caller applies `finishScan`).
- */
-const LIST_SCRIPT = `
-import errno, json, os, sys
-op, p, limit = sys.argv[1], sys.argv[2], int(sys.argv[3])
-W = "/workspace"
-def out(o):
-    sys.stdout.write(json.dumps(o)); sys.exit(0)
-def key(s):
-    return s.encode("utf-16-be", "surrogatepass")
-def under(r):
-    return r == W or r.startswith(W + "/")
-def fail(e):
-    c = errno.errorcode.get(getattr(e, "errno", None) or 0)
-    out({"e": "error", "m": p + " cannot be read" + (" (" + c + ")" if c else "")})
-away = {"e": "policy", "m": p + " is outside the container's workspace (/workspace); this device reads only that"}
-q = os.path.normpath(p)
-if not os.path.isabs(q) or not under(q):
-    out(away)
-try:
-    r = os.path.realpath(q, strict=True)
-except (FileNotFoundError, NotADirectoryError):
-    out({"r": None if op == "list" else []})
-except OSError as e:
-    fail(e)
-if not under(r):
-    out(away)
-if not os.path.isdir(r):
-    out({"e": "error", "m": p + " is not a directory"})
-try:
-    with os.scandir(r) as it:
-        ents = sorted(it, key=lambda e: key(e.name))
-except OSError as e:
-    fail(e)
-def is_dir(d, e):
-    try:
-        if e.is_dir(follow_symlinks=False):
-            return True
-        if not e.is_symlink():
-            return False
-        t = os.path.realpath(os.path.join(d, e.name), strict=True)
-        return under(t) and os.path.isdir(t)
-    except OSError:
-        return False
-if op == "list":
-    out({"r": {"entries": [{"name": e.name, "isDir": is_dir(r, e)} for e in ents[:limit]], "truncated": len(ents) > limit}})
-skip_any = ${JSON.stringify(DEVICE_SCAN_SKIPPED_DIRS)}
-skip_base = ${JSON.stringify(DEVICE_SCAN_SKIPPED_BASE_DIRS)}
-found = []
-def below(d, rep, es, depth):
-    if any(e.name == ".git" or (e.name == "AGENTS.md" and not e.is_dir(follow_symlinks=False)) for e in es):
-        found.append(rep)
-    if depth >= ${MAX_DEVICE_SCAN_DEPTH}:
-        return []
-    return [(os.path.join(d, e.name), os.path.join(rep, e.name)) for e in es
-            if e.is_dir(follow_symlinks=False) and not e.name.startswith(".")
-            and e.name not in skip_any and not (depth == 0 and e.name in skip_base)]
-visits = 1
-level = below(r, q, ents, 0)
-depth = 1
-while level and visits < ${MAX_DEVICE_SCAN_DIRS}:
-    level.sort(key=lambda n: key(n[1]))
-    nxt = []
-    for d, rep in level:
-        if visits >= ${MAX_DEVICE_SCAN_DIRS}:
-            break
-        visits += 1
-        try:
-            with os.scandir(d) as it:
-                es = list(it)
-        except OSError:
-            continue
-        nxt.extend(below(d, rep, es, depth))
-    level = nxt
-    depth += 1
-out({"r": found})
-`;
-
-export interface DockerExecutorOptions {
+export interface DockerContainerOptions {
   /** The device directory (from login). */
   dir: string;
   deviceId: string;
   /**
-   * The local policy now. The network decision reads it at each command; cpu and memory apply
-   * when the container is next created (at the next command that finds it idle).
+   * The local policy now; cpu and memory apply when the container is next created (when an
+   * operation finds it idle with other flags). An unreadable policy refuses the operation.
    */
   policy: () => Policy;
-}
-
-interface Waiter {
-  open: boolean;
-  dead: boolean;
-  /** The caller was counted in `inflight`. */
-  counted: boolean;
-  resolve: () => void;
-  reject: (e: unknown) => void;
-}
-
-interface Running {
-  tag: string;
-  killed: boolean;
-  child: ChildProcess;
 }
 
 interface Inspected {
@@ -315,58 +123,30 @@ interface Inspected {
 }
 
 /**
- * Runs every command with `docker exec` in one long-lived container of the published sandbox
- * image: the device directory's workspace, skills (read only) and tmp are mounted at
- * /workspace, /skills and /tmp. Workspace and tmp files are read and written inside the container
- * (as the `sandbox` user, so a link a command plants resolves in the container and never on the
- * host); the skills directory, which commands cannot write, is accessed from the host with the
- * same real-path checks as the OS executor. Auto mode: the container on its default bridge, and
- * file operations reach any absolute path in the container. Sandbox mode: no network attached and
- * file operations stay in the mounted roots. Docker mode has no per-domain filter. A change of the
- * container's flags recreates it at the next command that finds it idle.
+ * The docker-mode device's one long-lived container of the published sandbox image: the device
+ * directory's workspace, skills (read only) and tmp are mounted at /workspace, /skills and /tmp.
+ * It hosts the permission operations (`docker-operations.ts`): each one holds the container
+ * through {@link operationContainer}, so it is never recreated under a running operation. A change
+ * of the container's flags recreates it at the next operation that finds it idle. Nothing here
+ * runs commands or kills processes: the operation backend owns its work and stops it exactly.
  */
-export class DockerExecutor implements Executor {
-  readonly mode = "docker" as const;
+export class DockerContainer implements OperationContainerHost {
   readonly roots: SandboxRoots = ROOTS;
   readonly name: string;
   private readonly dir: string;
   private readonly hostRoots: SandboxRoots;
-  private readonly guard: RootGuard;
-  private readonly hostFiles: HostFiles;
-  /** Marks every process of this device's commands: `<dirKey>.<tag>`. */
-  private readonly dirKey: string;
-  private readonly running = new Set<Running>();
   private chain: Promise<unknown> = Promise.resolve();
   private ready = false;
-  /** The container has the default bridge (commands may reach the network). */
-  private netOpen = false;
+  /** Operations holding the container now. */
   private inflight = 0;
-  private readonly queue: Waiter[] = [];
-  private pumping = false;
-  private dirty = false;
-  /** The limits of the latest command: the kernel's mode ceiling for file operations. */
-  private lastLimits: Pick<SandboxLimits, "mode"> | undefined;
-  /** When {@link lastLimits} came (file operations follow it only inside the window). */
-  private lastLimitsAt = 0;
   /** The spec hash of the container in use (set when it is created or reused). */
   private spec: string | undefined;
 
-  constructor(private readonly opts: DockerExecutorOptions) {
+  constructor(private readonly opts: DockerContainerOptions) {
     const dir = resolve(opts.dir);
     this.dir = existsSync(dir) ? realpathSync(dir) : dir;
     this.hostRoots = osRoots(this.dir);
-    this.guard = new RootGuard(this.dir, this.hostRoots);
-    this.hostFiles = new HostFiles(this.hostRoots, "sandbox");
     this.name = containerName(opts.deviceId);
-    this.dirKey = createHash("sha256").update(this.dir).digest("hex").slice(0, 16);
-  }
-
-  async ensureRoot(): Promise<"ok" | "gone"> {
-    return this.guard.ensure();
-  }
-
-  markerOf(tag: string): string {
-    return `${this.dirKey}.${tag}`;
   }
 
   private serial<T>(f: () => Promise<T>): Promise<T> {
@@ -389,20 +169,8 @@ export class DockerExecutor implements Executor {
     ];
   }
 
-  /**
-   * The mode file operations use now. File operations carry no limits and never pass command
-   * review, so they use the sandboxed result before any exec and once the latest decision is stale
-   * (the safe default for an organization whose ceiling is sandbox), else
-   * `effectiveMode(policy, limits)`.
-   */
-  private modeNow(policy: Policy = this.opts.policy()): SandboxMode {
-    if (policyMode(policy) === "sandbox" || this.lastLimits === undefined) return "sandbox";
-    if (Date.now() - this.lastLimitsAt > FILE_OPS_DECISION_TTL_MS) return "sandbox";
-    return effectiveMode(policy, this.lastLimits);
-  }
-
   /** Every `docker run` flag of the container except its name and spec label. */
-  private runArgs(): string[] {
+  runFlags(): string[] {
     const policy = this.opts.policy();
     return [
       "--init",
@@ -419,6 +187,8 @@ export class DockerExecutor implements Executor {
       ROOTS.workspace,
       "--label",
       `capybara.device.id=${this.opts.deviceId}`,
+      "--label",
+      `${CONTAINER_FORMAT_LABEL}=${CONTAINER_FORMAT}`,
       ...this.wanted().flatMap((m) => [
         "--mount",
         `type=bind,source=${m.source},target=${m.dest}${m.rw ? "" : ",readonly"}`,
@@ -436,11 +206,7 @@ export class DockerExecutor implements Executor {
 
   /** A hash of the run flags: a container made with other flags is recreated. */
   private specHash(): string {
-    return this.hashOf(this.runArgs());
-  }
-
-  private hashOf(runArgs: string[]): string {
-    return createHash("sha256").update(JSON.stringify(runArgs)).digest("hex").slice(0, 16);
+    return containerSpec(this.runFlags());
   }
 
   private matches(c: Inspected): boolean {
@@ -458,13 +224,8 @@ export class DockerExecutor implements Executor {
     return r;
   }
 
-  /**
-   * Creates the container, or reuses the existing one when it matches; call inside `serial`.
-   * A file operation (`anySpec`) reuses any container that sees the directory: it needs no
-   * particular flags, and before the first command the policy is not known yet. The next command
-   * that finds it idle recreates it if its flags differ.
-   */
-  private async ensureContainer(opts: { anySpec?: boolean } = {}): Promise<void> {
+  /** Creates the container, or reuses the existing one when it matches; call inside `serial`. */
+  private async ensureContainer(): Promise<void> {
     if (this.ready) return;
     if (!existsSync(this.dir)) {
       throw new DeviceOpError("error", "the device directory is gone");
@@ -476,26 +237,27 @@ export class DockerExecutor implements Executor {
       mkdirSync(r, { recursive: true });
     }
     let c = await this.inspect();
+    // other flags, an older format, a lost bridge or stale mounts: recreated, never repaired
     if (
       c !== null &&
-      ((opts.anySpec !== true && !this.matches(c)) || !(await this.seesHostRoots(c)))
+      (!this.matches(c) ||
+        !("bridge" in (c.NetworkSettings.Networks ?? {})) ||
+        !(await this.seesHostRoots(c)))
     ) {
       await this.mustDocker(["rm", "-f", this.name], "removing the old container");
       c = null;
     }
     if (c === null) {
-      const runArgs = this.runArgs();
-      const spec = this.hashOf(runArgs);
+      const runArgs = this.runFlags();
+      const spec = containerSpec(runArgs);
       await this.mustDocker(
         ["run", "-d", "--name", this.name, "--label", `${SPEC_LABEL}=${spec}`, ...runArgs],
         "creating the container",
       );
+      // created on the default bridge
       this.spec = spec;
-      // Created on the default bridge (a container created with `none` cannot join it later).
-      this.netOpen = true;
     } else {
       if (!c.State.Running) await this.mustDocker(["start", this.name], "starting the container");
-      this.netOpen = "bridge" in (await this.inspectNetworks());
       this.spec = c.Config.Labels?.[SPEC_LABEL];
     }
     this.ready = true;
@@ -519,128 +281,46 @@ export class DockerExecutor implements Executor {
     }
   }
 
-  private async inspectNetworks(): Promise<Record<string, unknown>> {
-    const c = await this.inspect();
-    return c?.NetworkSettings.Networks ?? {};
-  }
-
-  private async setNet(open: boolean): Promise<void> {
-    await this.mustDocker(
-      ["network", open ? "connect" : "disconnect", "bridge", this.name],
-      open ? "enabling the network" : "disabling the network",
-    );
-    this.netOpen = open;
-  }
-
   /**
-   * Waits until the container exists with the wanted network state and counts the caller as
-   * running. Callers are served in arrival order: once one needs the other network state, later
-   * callers for the current state queue behind it, so it is not starved.
-   */
-  private acquire(open: boolean, signal: AbortSignal): Promise<void> {
-    signal.throwIfAborted();
-    return new Promise<void>((resolveWait, rejectWait) => {
-      const w: Waiter = {
-        open,
-        dead: false,
-        counted: false,
-        resolve: resolveWait,
-        reject: rejectWait,
-      };
-      const onAbort = (): void => {
-        w.dead = true;
-        this.dequeue(w);
-        rejectWait(signal.reason);
-      };
-      signal.addEventListener("abort", onAbort, { once: true });
-      const done = w.resolve;
-      w.resolve = () => {
-        signal.removeEventListener("abort", onAbort);
-        done();
-      };
-      this.queue.push(w);
-      this.pump();
-    });
-  }
-
-  private pump(): void {
-    if (this.pumping) {
-      this.dirty = true;
-      return;
-    }
-    this.pumping = true;
-    void this.drain().finally(() => {
-      this.pumping = false;
-      if (this.dirty) this.pump();
-    });
-  }
-
-  private dequeue(w: Waiter): void {
-    const i = this.queue.indexOf(w);
-    if (i >= 0) this.queue.splice(i, 1);
-  }
-
-  private async drain(): Promise<void> {
-    do {
-      this.dirty = false;
-      while (this.queue.length > 0) {
-        const w = this.queue[0] as Waiter;
-        if (w.dead) {
-          this.dequeue(w);
-          continue;
-        }
-        let served: boolean;
-        try {
-          served = await this.serial(async () => {
-            // The policy or the mode changed the container's flags (shm, cpu, memory): recreate
-            // it once nothing runs in it.
-            if (this.ready && this.inflight === 0 && this.spec !== this.specHash()) {
-              this.ready = false;
-            }
-            await this.ensureContainer();
-            if (w.dead) return true;
-            if (this.netOpen !== w.open) {
-              // Commands run with the other network state: wait for them.
-              if (this.inflight > 0) return false;
-              await this.setNet(w.open);
-            }
-            this.inflight++;
-            w.counted = true;
-            return true;
-          });
-        } catch (e) {
-          // An abort while being served already removed it; never remove another waiter.
-          this.dequeue(w);
-          if (!w.dead) w.reject(e);
-          continue;
-        }
-        if (!served) break;
-        this.dequeue(w);
-        if (w.dead) {
-          // Aborted while being served: give back the slot if it was counted.
-          if (w.counted) this.inflight--;
-          continue;
-        }
-        w.resolve();
-      }
-    } while (this.dirty);
-  }
-
-  private release(): void {
-    this.inflight--;
-    this.pump();
-  }
-
-  /**
-   * The container for one permission operation (protocol 3): running on its default bridge (Full
-   * access is the container user's own network; restricted operations are mediated by the
-   * launcher). The caller holds the container (it is not recreated) until it calls `release`,
-   * once; an abort while waiting for it rejects.
+   * The container for one permission operation: running on its default bridge (Full access is
+   * the container user's own network; restricted operations are mediated by the launcher). The
+   * caller holds the
+   * container (it is not recreated) until it calls `release`, once; an abort while waiting for it
+   * rejects and holds nothing.
    */
   async operationContainer(
     signal: AbortSignal,
   ): Promise<{ name: string; user: string; release: () => void }> {
-    await this.acquire(true, signal);
+    signal.throwIfAborted();
+    const acquired = this.serial(async () => {
+      // the policy changed the container's flags (cpu, memory): recreate it once nothing holds it
+      if (this.ready && this.inflight === 0 && this.spec !== this.specHash()) this.ready = false;
+      await this.ensureContainer();
+      this.inflight++;
+    });
+    try {
+      await new Promise<void>((resolveWait, rejectWait) => {
+        const onAbort = (): void => rejectWait(signal.reason);
+        signal.addEventListener("abort", onAbort, { once: true });
+        acquired.then(
+          () => {
+            signal.removeEventListener("abort", onAbort);
+            resolveWait();
+          },
+          (e: unknown) => {
+            signal.removeEventListener("abort", onAbort);
+            rejectWait(e);
+          },
+        );
+      });
+    } catch (e) {
+      // aborted while waiting: a hold acquired later is given back at once
+      acquired.then(
+        () => this.inflight--,
+        () => {},
+      );
+      throw e;
+    }
     let released = false;
     return {
       name: this.name,
@@ -648,431 +328,21 @@ export class DockerExecutor implements Executor {
       release: () => {
         if (released) return;
         released = true;
-        this.release();
+        this.inflight--;
       },
     };
-  }
-
-  /** A docker-level failure that means the container vanished: the next call recreates it. */
-  private noteFailure(stderr: string): void {
-    if (/No such container|is not running|is restarting/i.test(stderr)) this.ready = false;
-  }
-
-  async exec(args: DeviceExecArgs, signal: AbortSignal): Promise<ExecResult> {
-    signal.throwIfAborted();
-    const mode = effectiveMode(this.opts.policy(), args.limits);
-    const cwd = this.containerPath(args.cwd ?? ROOTS.workspace, mode);
-    const env: Record<string, string> = {
-      HOME: ROOTS.workspace,
-      TERM: "dumb",
-      ...args.env,
-      TMPDIR: ROOTS.tmp,
-      [EXEC_MARKER]: this.markerOf(args.tag),
-    };
-    for (const k of Object.keys(env)) {
-      if (!ENV_NAME_RE.test(k))
-        throw policyError(`invalid environment variable name ${JSON.stringify(k)}`);
-    }
-    this.lastLimits = args.limits;
-    this.lastLimitsAt = Date.now();
-    // Auto: the container on its default bridge. Sandbox: no network at all (spec P-D7).
-    const open = effectiveMode(this.opts.policy(), args.limits) === "auto";
-    await this.acquire(open, signal);
-    try {
-      signal.throwIfAborted();
-      return await this.run(args, cwd, env, signal);
-    } finally {
-      this.release();
-    }
-  }
-
-  private run(
-    args: DeviceExecArgs,
-    cwd: string,
-    env: Record<string, string>,
-    signal: AbortSignal,
-  ): Promise<ExecResult> {
-    const nonce = randomBytes(16).toString("hex");
-    return new Promise<ExecResult>((resolvePromise, reject) => {
-      const child = spawn(
-        "docker",
-        [
-          "exec",
-          "-i",
-          "--workdir",
-          cwd,
-          ...Object.entries(env).flatMap(([k, v]) => ["-e", `${k}=${v}`]),
-          this.name,
-          "/bin/bash",
-          "-c",
-          EXEC_WRAPPER,
-          "capybara-exec",
-          args.command,
-        ],
-        { stdio: ["pipe", "pipe", "pipe"] },
-      );
-      child.stdin?.on("error", () => {});
-      child.stdin?.end(`${nonce}\n`);
-      const sentinel = Buffer.from(`\nCAPYBARA-DONE:${nonce}:`);
-      const entry: Running = { tag: args.tag, killed: false, child };
-      this.running.add(entry);
-      const cap = new OutputCap(args.maxOutputBytes);
-      const dockerErr: Buffer[] = [];
-      let timedOut = false;
-      let exit: { code: number | null; sig: NodeJS.Signals | null } | undefined;
-      let settled = false;
-      let grace: NodeJS.Timeout | undefined;
-      const kill = (): void => {
-        if (exit === undefined) entry.killed = true;
-        void this.killMarker(this.markerOf(args.tag)).then(() => {
-          // The docker client normally ends with the command; never leave it behind.
-          setTimeout(() => child.kill("SIGKILL"), 1000).unref();
-        });
-      };
-      const timer = setTimeout(() => {
-        if (exit === undefined) timedOut = true;
-        kill();
-      }, args.timeoutMs);
-      const onAbort = (): void => kill();
-      signal.addEventListener("abort", onAbort, { once: true });
-      const cleanup = (): void => {
-        clearTimeout(timer);
-        if (grace) clearTimeout(grace);
-        // A background child may keep the client attached: it is not needed any more.
-        child.kill("SIGKILL");
-        signal.removeEventListener("abort", onAbort);
-        this.running.delete(entry);
-      };
-      const finish = (): void => {
-        if (settled || exit === undefined) return;
-        settled = true;
-        cleanup();
-        child.stdout?.destroy();
-        child.stderr?.destroy();
-        if (status === undefined && pending.length > 0) cap.push("stderr", pending);
-        const stderr = cap.text("stderr");
-        if (exit.code === 126 || exit.code === 125 || exit.code === 1) {
-          this.noteFailure(Buffer.concat(dockerErr).toString("utf8"));
-        }
-        resolvePromise({
-          exitCode: entry.killed || timedOut ? null : (exit.code ?? 128),
-          stdout: cap.text("stdout"),
-          stderr,
-          truncated: cap.truncated,
-          timedOut,
-        });
-      };
-      child.stdout?.on("data", (b: Buffer) => cap.push("stdout", b));
-      // stderr carries the wrapper's final status line; hold back a tail that might begin it.
-      let pending = Buffer.alloc(0);
-      let status: Buffer | undefined;
-      const onStderr = (b: Buffer): void => {
-        if (dockerErr.length < 64) dockerErr.push(b);
-        if (status !== undefined) {
-          status = Buffer.concat([status, b]);
-        } else {
-          const data = Buffer.concat([pending, b]);
-          const at = data.indexOf(sentinel);
-          if (at >= 0) {
-            cap.push("stderr", data.subarray(0, at));
-            pending = Buffer.alloc(0);
-            status = data.subarray(at + sentinel.length);
-          } else {
-            const keep = Math.min(data.length, sentinel.length - 1);
-            cap.push("stderr", data.subarray(0, data.length - keep));
-            pending = data.subarray(data.length - keep);
-          }
-        }
-        if (status !== undefined && exit === undefined) {
-          const m = /^(\d+):END\n/.exec(status.toString("latin1"));
-          if (m) {
-            exit = { code: Number(m[1]), sig: null };
-            grace = setTimeout(finish, PIPE_GRACE_MS);
-          }
-        }
-      };
-      child.stderr?.on("data", onStderr);
-      child.once("error", (e) => {
-        if (settled) return;
-        settled = true;
-        cleanup();
-        reject(e);
-      });
-      child.once("exit", (code, sig) => {
-        if (exit !== undefined) return;
-        exit = { code, sig };
-        grace = setTimeout(finish, PIPE_GRACE_MS);
-      });
-      child.once("close", () => finish());
-    });
-  }
-
-  /**
-   * `path` made absolute and normalized. Auto mode accepts any clean absolute path (the container
-   * is the boundary); sandbox mode refuses anything outside the mounted roots.
-   */
-  private containerPath(path: string, mode: SandboxMode): string {
-    if (mode === "auto") {
-      const errors = validateSandboxPathShape(path);
-      if (errors.length > 0) throw policyError(`${path}: ${errors.join("; ")}`);
-      return resolve(path);
-    }
-    if (!path.startsWith("/")) throw policyError(`${path} is not an absolute path`);
-    const p = resolve(path);
-    const roots = Object.values(ROOTS);
-    if (!roots.some((r) => isUnder(p, r))) {
-      throw policyError(`${path} is outside the device's roots (${roots.join(", ")})`);
-    }
-    return p;
-  }
-
-  /** The host path of a /skills path (the skills directory is mounted read only). */
-  private skillsHostPath(p: string): string {
-    return join(this.hostRoots.skills, p.slice(ROOTS.skills.length));
-  }
-
-  private inSkills(p: string): boolean {
-    return isUnder(p, ROOTS.skills);
-  }
-
-  /** Runs one file script in the container; `null` for a missing file. */
-  private async fileOp(
-    script: string,
-    mode: SandboxMode,
-    path: string,
-    arg2: string,
-    input?: Uint8Array,
-  ): Promise<DockerRun | null> {
-    // A file operation does not need the network; it runs on whichever state the container has.
-    await this.serial(() => this.ensureContainer({ anySpec: true }));
-    const r = await docker(
-      [
-        "exec",
-        ...(input !== undefined ? ["-i"] : []),
-        this.name,
-        "timeout",
-        "-s",
-        "KILL",
-        String(FILE_OP_TIMEOUT_S),
-        "/bin/sh",
-        "-c",
-        script,
-        "capybara-file",
-        mode,
-        path,
-        arg2,
-      ],
-      {
-        ...(input !== undefined && { input }),
-        timeoutMs: (FILE_OP_TIMEOUT_S + 5) * 1000,
-      },
-    );
-    return this.fileResult(r, path);
-  }
-
-  private fileResult(r: DockerRun, path: string): DockerRun | null {
-    switch (r.code) {
-      case 0:
-        return r;
-      case E_MODE:
-        throw new DeviceOpError("policy", `missing or unknown mode for ${path}`);
-      case E_MISSING:
-        return null;
-      case E_OUTSIDE:
-        throw policyError(`${path} resolves outside the device's roots`);
-      case E_NOT_FILE:
-        throw policyError(`${path} is not a regular file`);
-      case E_DANGLING:
-        throw policyError(`${path} is a dangling symbolic link`);
-      default:
-        this.noteFailure(r.stderr.toString("utf8"));
-        throw new DeviceOpError(
-          "error",
-          `file operation on ${path} failed: ${r.stderr.toString("utf8").trim().slice(0, 300)}`,
-        );
-    }
-  }
-
-  async readFile(
-    path: string,
-    maxBytes: number,
-  ): Promise<{ data: Uint8Array; truncated: boolean } | null> {
-    const mode = this.modeNow();
-    const p = this.containerPath(path, mode);
-    if (this.inSkills(p)) return this.hostFiles.read(this.skillsHostPath(p), maxBytes);
-    const r = await this.fileOp(READ_SCRIPT, mode, p, String(maxBytes + 1));
-    if (r === null) return null;
-    return {
-      data: r.stdout.subarray(0, maxBytes),
-      truncated: r.stdout.length > maxBytes,
-    };
-  }
-
-  async writeFile(path: string, data: Uint8Array): Promise<void> {
-    const mode = this.modeNow();
-    const p = this.containerPath(path, mode);
-    if (this.inSkills(p)) return this.hostFiles.write(this.skillsHostPath(p), data);
-    await this.fileOp(WRITE_SCRIPT, mode, p, "", data);
-  }
-
-  async stat(path: string): Promise<{ size: number; isDir: boolean } | null> {
-    const mode = this.modeNow();
-    const p = this.containerPath(path, mode);
-    if (this.inSkills(p)) return this.hostFiles.stat(this.skillsHostPath(p));
-    const r = await this.fileOp(STAT_SCRIPT, mode, p, "");
-    if (r === null) return null;
-    const [size, kind] = r.stdout.toString("utf8").split(" ");
-    return { size: Number(size), isDir: kind === "d" };
-  }
-
-  /**
-   * `path` made absolute and normalized, refused unless it lies lexically under the container's
-   * workspace: a container device offers its workspace only, in either mode (spec §4.2).
-   */
-  private workspacePath(path: string): string {
-    if (!path.startsWith("/")) throw policyError(`${path} is not an absolute path`);
-    const p = resolve(path);
-    if (!isUnder(p, ROOTS.workspace)) {
-      throw policyError(
-        `${path} is outside the container's workspace (${ROOTS.workspace}); this device reads only that`,
-      );
-    }
-    return p;
-  }
-
-  /**
-   * Whether the device directory is marked and holds all three roots. `list` and `scan` only
-   * read: a removed root under a marked directory lost its files and is never recreated empty
-   * (`ensureContainer` would create it), and an unmarked or vanished directory gets no roots either.
-   */
-  private rootsIntact(): boolean {
-    return (
-      existsSync(join(this.dir, ROOT_MARKER)) &&
-      Object.values(this.hostRoots).every((r) => existsSync(r))
-    );
-  }
-
-  /**
-   * Runs {@link LIST_SCRIPT} in the container (as the `sandbox` user, like the file operations):
-   * links resolve in the container, so whatever a command there does to the workspace, the answer
-   * shows only what the container itself can see, never the host behind the bind mount. A stopped
-   * container is started first, as for the file operations.
-   */
-  private async listOp(
-    op: "list" | "scan",
-    path: string,
-    limit: number,
-    signal?: AbortSignal,
-  ): Promise<unknown> {
-    signal?.throwIfAborted();
-    await this.serial(() => this.ensureContainer({ anySpec: true }));
-    signal?.throwIfAborted();
-    const r = await docker(
-      [
-        "exec",
-        this.name,
-        "timeout",
-        "-s",
-        "KILL",
-        String(FILE_OP_TIMEOUT_S),
-        "python3",
-        "-I",
-        "-c",
-        LIST_SCRIPT,
-        op,
-        path,
-        String(limit),
-      ],
-      { timeoutMs: (FILE_OP_TIMEOUT_S + 5) * 1000, ...(signal !== undefined && { signal }) },
-    );
-    signal?.throwIfAborted();
-    let res: { r?: unknown; e?: "policy" | "error"; m?: string };
-    try {
-      res = JSON.parse(r.stdout.toString("utf8")) as typeof res;
-    } catch {
-      this.noteFailure(r.stderr.toString("utf8"));
-      throw new DeviceOpError(
-        "error",
-        `${op} ${path} failed in the container: ${r.stderr.toString("utf8").trim().slice(0, 300)}`,
-      );
-    }
-    if (res.e !== undefined) {
-      throw new DeviceOpError(res.e === "policy" ? "policy" : "error", res.m ?? "failed");
-    }
-    return res.r ?? null;
-  }
-
-  /** Lists a container workspace directory, read in the container, in either mode. */
-  async list(
-    _mode: SandboxMode,
-    path: string,
-    limit: number,
-    signal?: AbortSignal,
-  ): Promise<DeviceListResult> {
-    const p = this.workspacePath(path);
-    // nothing under the workspace exists (as the OS reader answers)
-    if (!this.rootsIntact()) return null;
-    const r = await this.listOp("list", p, limit, signal);
-    if (r !== null && !Array.isArray((r as { entries?: unknown }).entries)) {
-      throw new DeviceOpError("error", `list ${path} answered an invalid result`);
-    }
-    return r as DeviceListResult;
-  }
-
-  /** Scans a container workspace directory, read in the container ({@link list}'s rules). */
-  async scan(_mode: SandboxMode, base: string, signal?: AbortSignal): Promise<DeviceScanResult> {
-    const p = this.workspacePath(base);
-    if (!this.rootsIntact()) return [];
-    const r = await this.listOp("scan", p, 0, signal);
-    if (!Array.isArray(r) || !r.every((x) => typeof x === "string")) {
-      throw new DeviceOpError("error", `scan ${base} answered an invalid result`);
-    }
-    return finishScan(r);
-  }
-
-  /** Kills the container processes of one marker (exact) or marker prefix. */
-  private async killScript(marker: string, prefix: string): Promise<void> {
-    try {
-      await docker(
-        ["exec", this.name, "/bin/sh", "-c", KILL_SCRIPT, "capybara-kill", marker, prefix],
-        { timeoutMs: 15_000 },
-      );
-    } catch {
-      // No docker, or no container: nothing of ours runs.
-    }
-  }
-
-  private killMarker(marker: string): Promise<void> {
-    return this.killScript(marker, "");
-  }
-
-  async killTagged(tags: string[]): Promise<void> {
-    const want = new Set(tags);
-    for (const r of this.running) if (want.has(r.tag)) r.killed = true;
-    await Promise.all(tags.map((t) => this.killMarker(this.markerOf(t))));
-  }
-
-  async killAll(): Promise<void> {
-    for (const r of this.running) r.killed = true;
-    await this.killLeftovers();
-  }
-
-  /** Kills every process carrying this device's marker (also a previous run's). */
-  async killLeftovers(): Promise<void> {
-    await this.killScript("", `${this.dirKey}.`);
-  }
-
-  /** Kills every running command; the container stays for the next start. */
-  async dispose(): Promise<void> {
-    await this.killAll();
   }
 }
 
-/** The Docker executor: checks the daemon and kills what a previous run left running. */
-export async function createDockerExecutor(opts: DockerExecutorOptions): Promise<DockerExecutor> {
+/**
+ * The docker-mode device's container host: checks the daemon. It kills nothing at startup (no
+ * marker reaper): work an earlier run left is the operation backend's, recovered and stopped
+ * exactly through its journal.
+ */
+export async function createDockerContainer(
+  opts: DockerContainerOptions,
+): Promise<DockerContainer> {
   const available = await dockerAvailability();
   if (!available.ok) throw new Error(available.reason);
-  const executor = new DockerExecutor(opts);
-  await executor.killLeftovers();
-  return executor;
+  return new DockerContainer(opts);
 }

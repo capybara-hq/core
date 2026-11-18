@@ -238,8 +238,14 @@ export function connectStaged(device: StagedDevice, opts: StagedConnectOptions =
             sock.close(4400, "Device report unavailable; reconnect");
             return;
           }
-          // the owner changed the ceiling on the machine: push the new owner report
-          let sent = JSON.stringify(report_(device));
+          // the owner changed the ceiling on the machine: push the new owner report. A report that
+          // fails now (a broken policy.json) is said and retried by the check, never thrown.
+          let sent = "";
+          try {
+            sent = JSON.stringify(report_(device));
+          } catch (error) {
+            err(`Owner report unavailable: ${(error as Error).message}`);
+          }
           policyCheck = setInterval(() => {
             void (async () => {
               await device.owner.reconcile(AbortSignal.timeout(30_000));

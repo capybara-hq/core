@@ -241,15 +241,19 @@ describe("capybara-device ceiling", () => {
     });
   });
 
-  it("M2: show says the reach is not enforced on protocol 2; mode auto says it sets OS-user reach", async () => {
+  it("show no longer carries the protocol 2 note, and the daily mode command is gone", async () => {
     writePolicy(state, {
       ...FULL_POLICY,
       ownerCeiling: { fullAccess: true, restrictedProjectReach: "workspace" },
     });
     const shown = await cli(["ceiling", "show"]);
-    expect(shown.out).toMatch(/project reach takes effect only/i);
-    const auto = await cli(["mode", "auto", "--yes"]);
-    expect(auto.out).toMatch(/project reach: os-user/i);
+    expect(shown.out).not.toMatch(/project reach takes effect only/i);
+    const mode = await cli(["mode", "auto", "--yes"]);
+    expect(mode.code).toBe(2);
+    expect(readPolicyFile(state).policy.ownerCeiling).toEqual({
+      fullAccess: true,
+      restrictedProjectReach: "workspace",
+    });
   });
 
   it("shows the owner ceiling and the network baseline separately", async () => {

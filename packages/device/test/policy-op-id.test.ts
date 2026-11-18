@@ -1,28 +1,34 @@
 import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { KernelReq } from "@capybara-hq/plugin-sdk";
+import type { DeviceOwnerCeiling, KernelRequest } from "@capybara-hq/plugin-sdk";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { type Connection, connect } from "../src/client.js";
+import type { MacOperationBackend } from "../src/exec/mac-operation-backend.js";
 import {
   MAX_LOGGED_MESSAGE_LENGTH,
   MAX_LOGGED_POLICY_OPS,
   PolicyOpLog,
 } from "../src/policy-ops.js";
 import { PolicyStore } from "../src/policy-store.js";
-import { MODE_ON_DEVICE_MESSAGE, serveOp } from "../src/server-ops.js";
+import { type StagedOwnerPolicy, serveOperationV3 } from "../src/server-ops.js";
 import { policyOpsPath, policyPath } from "../src/state.js";
-import { FakeExecutor, FakeKernel } from "./fake-kernel.js";
 
 const never = new AbortController().signal;
 const source = { accountId: "acc_1", accountName: "Ada", via: "web" as const };
-const r = (op: KernelReq["op"], args: unknown, id = "x"): KernelReq => ({
-  type: "req",
-  id,
-  op,
-  args,
-  deadlineMs: 1000,
-});
+const r = (op: string, args: unknown, id = "x") =>
+  ({ type: "req", id, op, args, deadlineMs: 1000 }) as KernelRequest;
+/** A valid owner report; its content is not what these tests are about. */
+const REPORT: DeviceOwnerCeiling = {
+  version: 2,
+  sequence: 0,
+  revision: "rev",
+  fullAccess: false,
+  restrictedProjectReach: "workspace",
+  restrictedAllowedDomains: [],
+};
+/** A policy op the device itself refuses (the frame is valid): a host both added and removed. */
+const refusedArgs = (opId: string) => ({ opId, add: ["a.com"], remove: ["a.com"], source });
+const REFUSED_MESSAGE = "a.com is both added and removed";
 
 let dir: string;
 let store: PolicyStore;
@@ -32,7 +38,12 @@ beforeEach(() => {
 });
 afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
-const serve = (req: KernelReq) => serveOp(new FakeExecutor(), req, never, { policy: store });
+const owner = (): StagedOwnerPolicy => ({ store, report: () => REPORT, reconcile: async () => {} });
+const backend = {} as MacOperationBackend;
+/** Served by the device's one dispatch, with the owner policy controls. */
+const serve = async (req: KernelRequest) => ({
+  res: await serveOperationV3(backend, { id: "dev" }, req, never, undefined, owner()),
+});
 const logged = (): unknown[] => JSON.parse(readFileSync(policyOpsPath(dir), "utf8"));
 
 describe("policy ops by op id", () => {
@@ -53,17 +64,16 @@ describe("policy ops by op id", () => {
   });
 
   it("a refused op is recorded refused with its message", async () => {
-    // The deployment may never turn auto mode on: only the machine does.
-    const { res } = await serve(r("policy", { opId: "op_2", mode: "auto", source }));
+    const { res } = await serve(r("policy", refusedArgs("op_2")));
     expect(res).toMatchObject({
       ok: false,
-      error: { kind: "policy", message: MODE_ON_DEVICE_MESSAGE },
+      error: { kind: "policy", message: REFUSED_MESSAGE },
     });
     expect(logged()).toEqual([
       {
         opId: "op_2",
         outcome: "refused",
-        message: MODE_ON_DEVICE_MESSAGE,
+        message: REFUSED_MESSAGE,
         kind: "policy",
         time: expect.any(String),
       },
@@ -85,8 +95,8 @@ describe("policy ops by op id", () => {
     expect(after.mtimeMs).toBe(before.mtimeMs);
     expect(store.current().allowedDomains).toEqual(["a.com"]);
     // a refusal is answered with its stored message
-    const refused = await serve(r("policy", { opId: "op_2", mode: "auto", source }, "r3"));
-    const repeat = await serve(r("policy", { opId: "op_2", mode: "auto", source }, "r4"));
+    const refused = await serve(r("policy", refusedArgs("op_2"), "r3"));
+    const repeat = await serve(r("policy", refusedArgs("op_2"), "r4"));
     expect(repeat.res).toEqual({ ...refused.res, id: "r4" });
     expect(store.current().allowedDomains).toEqual(["a.com"]);
   });
@@ -106,7 +116,7 @@ describe("policy ops by op id", () => {
       type: "res",
       id: "x",
       ok: true,
-      result: { outcome: "unknown", policy: expect.objectContaining({ allowedDomains: [] }) },
+      result: { outcome: "unknown", policy: { mode: "sandbox", allowedDomains: [] } },
     });
     await serve(r("policy", { opId: "op_1", add: ["a.com"], source }));
     const applied = await serve(r("policyStatus", { opId: "op_1" }));
@@ -114,19 +124,24 @@ describe("policy ops by op id", () => {
       ok: true,
       result: { outcome: "applied", policy: { allowedDomains: ["a.com"] } },
     });
-    await serve(r("policy", { opId: "op_2", mode: "auto", source }));
+    await serve(r("policy", refusedArgs("op_2")));
     const refused = await serve(r("policyStatus", { opId: "op_2" }));
     expect(refused.res).toMatchObject({
       ok: true,
-      result: { outcome: "refused", message: MODE_ON_DEVICE_MESSAGE },
+      result: { outcome: "refused", message: REFUSED_MESSAGE },
     });
     // an op the device was stopped in the middle of stays started
     new PolicyOpLog(dir).record({ opId: "op_3", outcome: "started" });
     const started = await serve(r("policyStatus", { opId: "op_3" }));
     expect(started.res).toMatchObject({ ok: true, result: { outcome: "started" } });
-    // without a policy store the op is unsupported
-    const none = await serveOp(new FakeExecutor(), r("policyStatus", { opId: "op_1" }), never);
-    expect(none.res).toMatchObject({ ok: false, error: { kind: "error" } });
+    // without the owner policy controls the op is unsupported
+    const none = await serveOperationV3(
+      backend,
+      { id: "dev" },
+      r("policyStatus", { opId: "op_1" }),
+      never,
+    );
+    expect(none).toMatchObject({ ok: false, error: { kind: "unsupported" } });
   });
 
   it("the log keeps the last outcomes, oldest dropped", () => {
@@ -161,71 +176,20 @@ describe("policy ops by op id", () => {
   });
 });
 
-describe("the hello and op outcomes", () => {
-  let kernel: FakeKernel;
-  let conn: Connection | undefined;
-  beforeEach(async () => {
-    kernel = new FakeKernel();
-    await kernel.start();
-    conn = undefined;
-  });
-  afterEach(async () => {
-    conn?.stop();
-    await conn?.done;
-    await kernel.stop();
-  });
-  const start = (withStore: boolean) => {
-    conn = connect(
-      {
-        url: "http://x.test",
-        connectUrl: kernel.url,
-        credential: "cap_dev_secret",
-        orgId: "o",
-        deviceId: "e1",
-        dir: "/work/e1",
-        mode: "os",
-        reconnectGraceSeconds: 120,
-        maxFrameBytes: 16 * 1024 * 1024,
-      },
-      new FakeExecutor(),
-      {
-        err: () => {},
-        sleep: () => Promise.resolve(),
-        ...(withStore && { policy: store }),
-      },
-    );
-  };
-
-  it("hello carries the last 100 outcomes, oldest dropped", async () => {
+describe("the op outcomes the hello carries", () => {
+  it("the last 100 outcomes, oldest dropped, an interrupted op included", async () => {
     const log = new PolicyOpLog(dir);
     for (let i = 0; i < 105; i++) {
       log.record({ opId: `op${i}`, outcome: i % 2 === 0 ? "applied" : "refused", message: "m" });
     }
     log.record({ opId: "op_started", outcome: "started" });
-    start(true);
-    const hello = await kernel.waitFor("hello", () => kernel.of("hello")[0]);
-    expect(hello.recentOps).toHaveLength(100);
-    expect(hello.recentOps[0]).toEqual({ opId: "op6", outcome: "applied" });
-    expect(hello.recentOps.at(-1)).toEqual({ opId: "op_started", outcome: "started" });
-    // an op answered on this connection shows on the next hello
-    kernel.send(0, r("policy", { opId: "op_new", add: ["a.com"], source }, "p1"));
-    await kernel.waitFor("res", () => kernel.of("res")[0]);
-    kernel.sockets[0]?.close(1001);
-    const again = await kernel.waitFor("reconnect", () => kernel.of("hello", 1)[0]);
-    expect(again.recentOps.at(-1)).toEqual({ opId: "op_new", outcome: "applied" });
-    expect(again.recentOps).toHaveLength(100);
-  });
-
-  it("the hello announces policyOpId only with a policy store", async () => {
-    start(true);
-    const hello = await kernel.waitFor("hello", () => kernel.of("hello")[0]);
-    expect(hello.features).toEqual(["networkReport", "policyOp", "policyOpId", "mode", "projects"]);
-    expect(hello.recentOps).toEqual([]);
-    conn?.stop();
-    await conn?.done;
-    start(false);
-    const bare = await kernel.waitFor("hello", () => kernel.of("hello", 1)[0]);
-    expect(bare.features).toEqual(["networkReport", "mode"]);
-    expect(bare.recentOps).toBeUndefined();
+    const recent = store.ops.recent();
+    expect(recent).toHaveLength(100);
+    expect(recent[0]).toEqual({ opId: "op6", outcome: "applied" });
+    expect(recent.at(-1)).toEqual({ opId: "op_started", outcome: "started" });
+    // an op answered now shows in the next report
+    await serve(r("policy", { opId: "op_new", add: ["a.com"], source }, "p1"));
+    expect(store.ops.recent().at(-1)).toEqual({ opId: "op_new", outcome: "applied" });
+    expect(store.ops.recent()).toHaveLength(100);
   });
 });

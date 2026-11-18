@@ -10,8 +10,7 @@ import { stop } from "../src/commands/stop.js";
 import { type ProcessLookup, pidPath, readRunning, removePid, writePid } from "../src/pid.js";
 import type { PolicyStore } from "../src/policy-store.js";
 import type { StagedDevice } from "../src/staged-device.js";
-import { DEFAULT_POLICY, ownerCeilingOfMode, writeCredential, writePolicy } from "../src/state.js";
-import { FakeExecutor } from "./fake-kernel.js";
+import { DEFAULT_POLICY, writeCredential, writePolicy } from "../src/state.js";
 
 /** `ps` for a test: every pid is a capybara-device that started long ago. */
 const ps: ProcessLookup = () => ({
@@ -89,57 +88,6 @@ describe("start: legacy policy notice", () => {
     writePolicy(dir, DEFAULT_POLICY);
     expect(await run()).not.toContain(legacyPolicyNotice("auto"));
     expect(await run()).not.toContain(legacyPolicyNotice("sandbox"));
-  });
-});
-
-describe("start without the OS sandbox", () => {
-  const fake = (available: boolean) => {
-    const ex = new FakeExecutor() as FakeExecutor & {
-      available?: boolean;
-      unavailableReason?: string;
-    };
-    ex.available = available;
-    if (!available) ex.unavailableReason = "bwrap is missing";
-    return ex;
-  };
-  const run = async (ex: FakeExecutor) => {
-    const proc = Object.assign(new EventEmitter(), { pid: 4251 });
-    const out: string[] = [];
-    const errs: string[] = [];
-    const conn: Connection = { done: Promise.resolve(0), drain: () => {}, stop: () => {} };
-    // the protocol 2 executors' own availability report (the legacy path, removed with it)
-    const code = await start({
-      stateDir: dir,
-      out: (l) => out.push(l),
-      err: (l) => errs.push(l),
-      proc: proc as never,
-      protocol: 2,
-      createExecutor: () => ex,
-      connect: () => conn,
-    });
-    return { code, out, errs: errs.join("\n") };
-  };
-
-  it("serves auto mode silently, and logs the reason for a sandbox policy", async () => {
-    writeCredential(dir, cred);
-    writePolicy(dir, { ...DEFAULT_POLICY, ownerCeiling: ownerCeilingOfMode("auto") });
-    const auto = await run(fake(false));
-    // The device starts and serves: no error, and the client is connected.
-    expect(auto.code).toBe(0);
-    expect(auto.errs).not.toContain("OS sandbox is unavailable");
-    writePolicy(dir, { ...DEFAULT_POLICY, ownerCeiling: ownerCeilingOfMode("sandbox") });
-    const sandbox = await run(fake(false));
-    expect(sandbox.code).toBe(0);
-    expect(sandbox.errs).toContain("OS sandbox is unavailable");
-    expect(sandbox.errs).toContain("bwrap is missing");
-  });
-
-  it("says nothing when the sandbox is available", async () => {
-    writeCredential(dir, cred);
-    writePolicy(dir, { ...DEFAULT_POLICY, ownerCeiling: ownerCeilingOfMode("sandbox") });
-    const ok = await run(fake(true));
-    expect(ok.code).toBe(0);
-    expect(ok.errs).not.toContain("OS sandbox is unavailable");
   });
 });
 
@@ -416,7 +364,7 @@ describe("start: the staged protocol (W3-M)", () => {
       },
     }) as unknown as StagedDevice;
 
-  it("the default protocol constant (3) selects the staged program, never protocol 2's", async () => {
+  it("start always serves the protocol 3 program", async () => {
     writeCredential(dir, cred);
     const calls: string[] = [];
     const conn: Connection = { done: Promise.resolve(0), drain: () => {}, stop: () => {} };
@@ -425,14 +373,6 @@ describe("start: the staged protocol (W3-M)", () => {
       out: () => {},
       err: () => {},
       proc: Object.assign(new EventEmitter(), { pid: 4260 }) as never,
-      createExecutor: () => {
-        calls.push("executor");
-        return new FakeExecutor();
-      },
-      connect: () => {
-        calls.push("connect");
-        return conn;
-      },
       createStaged: () => {
         calls.push("staged");
         return fakeStaged(calls);
@@ -446,23 +386,19 @@ describe("start: the staged protocol (W3-M)", () => {
     expect(calls).toEqual(["staged", "recover", "connectStaged"]);
   });
 
-  it("without staged parts in the build, start refuses (no protocol 2 fallback)", async () => {
+  it("without the program's parts in the build, start refuses (no other path)", async () => {
     writeCredential(dir, cred);
     const err: string[] = [];
     const code = await start({
       stateDir: dir,
       out: () => {},
       err: (l) => err.push(l),
-      createExecutor: () => new FakeExecutor(),
-      connect: () => {
-        throw new Error("protocol 2 connect is not used");
-      },
     });
     expect(code).toBe(1);
     expect(err[0]).toContain("no execution backend");
   });
 
-  it("protocol 3 builds the staged parts, recovers the binding and maps signals", async () => {
+  it("builds the program's parts, recovers the binding and maps signals", async () => {
     writeCredential(dir, cred);
     const proc = Object.assign(new EventEmitter(), { pid: 4261 });
     const calls: string[] = [];
@@ -483,13 +419,6 @@ describe("start: the staged protocol (W3-M)", () => {
       out: () => {},
       err: () => {},
       proc: proc as never,
-      protocol: 3,
-      createExecutor: () => {
-        throw new Error("protocol 2 executors are not built");
-      },
-      connect: () => {
-        throw new Error("protocol 2 connect is not used");
-      },
       createStaged: (c, policy) => {
         expect(c.deviceId).toBe("e1");
         store = policy;
@@ -512,20 +441,6 @@ describe("start: the staged protocol (W3-M)", () => {
     expect(existsSync(pidPath(dir))).toBe(false);
   });
 
-  it("protocol 3 without staged parts in the build refuses to start", async () => {
-    writeCredential(dir, cred);
-    const err: string[] = [];
-    const code = await start({
-      stateDir: dir,
-      out: () => {},
-      err: (l) => err.push(l),
-      protocol: 3,
-      createExecutor: () => new FakeExecutor(),
-    });
-    expect(code).toBe(1);
-    expect(err[0]).toContain("no execution backend");
-  });
-
   it("a stop before the staged program connected disposes what it built (M-5)", async () => {
     writeCredential(dir, cred);
     const proc = Object.assign(new EventEmitter(), { pid: 4262 });
@@ -535,7 +450,6 @@ describe("start: the staged protocol (W3-M)", () => {
       out: () => {},
       err: () => {},
       proc: proc as never,
-      protocol: 3,
       createStaged: () => {
         proc.emit("SIGTERM");
         return {

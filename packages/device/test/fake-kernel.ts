@@ -1,9 +1,7 @@
 import { createServer, type IncomingMessage, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import type { Duplex } from "node:stream";
-import type { DeviceExecArgs, ExecResult, SandboxRoots } from "@capybara-hq/plugin-sdk";
 import { type WebSocket, WebSocketServer } from "ws";
-import type { ExecHooks, Executor } from "../src/exec/types.js";
 
 /** A stand-in for the kernel's `/device/connect` gateway, as the program sees it. */
 export class FakeKernel {
@@ -63,107 +61,5 @@ export class FakeKernel {
       if (Date.now() > end) throw new Error(`timed out waiting for ${what}`);
       await new Promise((r) => setTimeout(r, 5));
     }
-  }
-}
-
-export const ROOTS: SandboxRoots = {
-  workspace: "/work/e1",
-  skills: "/work/e1/.skills",
-  tmp: "/work/e1/.tmp",
-};
-
-export const OK_EXEC: ExecResult = {
-  exitCode: 0,
-  stdout: "hi\n",
-  stderr: "",
-  truncated: false,
-  timedOut: false,
-};
-
-export function execArgs(command: string, tag = "t1"): DeviceExecArgs {
-  return {
-    command,
-    timeoutMs: 1000,
-    maxOutputBytes: 1000,
-    tag,
-    actor: { accountId: "acc", conversationId: "conv" },
-    limits: {
-      cpu: 1,
-      memoryMb: 512,
-      diskMb: 1024,
-      mode: "sandbox",
-      network: { kind: "allowlist", hosts: [] },
-    },
-  };
-}
-
-export function req(id: string, op: string, args: unknown) {
-  return {
-    type: "req",
-    id,
-    op,
-    args:
-      op === "readFile" || op === "stat"
-        ? { limits: { mode: "sandbox" }, ...(args as object) }
-        : args,
-    deadlineMs: 5000,
-  };
-}
-
-/** Commands block until `release(command)` is called or the request is aborted. */
-export class FakeExecutor implements Executor {
-  readonly mode = "os" as const;
-  readonly roots = ROOTS;
-  root: "ok" | "gone" = "ok";
-  readonly started: string[] = [];
-  readonly aborted: string[] = [];
-  readonly killed: string[][] = [];
-  files = new Map<string, Uint8Array>();
-  private readonly gates = new Map<string, () => void>();
-
-  release(command: string): void {
-    this.gates.get(command)?.();
-  }
-
-  /** When set, exec waits for it before its `beforeSpawn` hook (a slow start). */
-  startGate: Promise<void> | undefined;
-
-  async exec(args: DeviceExecArgs, signal: AbortSignal, hooks?: ExecHooks): Promise<ExecResult> {
-    await this.startGate;
-    hooks?.beforeSpawn?.();
-    this.started.push(args.command);
-    return new Promise((resolve, reject) => {
-      if (args.command === "now") return resolve(OK_EXEC);
-      this.gates.set(args.command, () => resolve({ ...OK_EXEC, stdout: `${args.command}\n` }));
-      signal.addEventListener("abort", () => {
-        this.aborted.push(args.command);
-        reject(new Error("aborted"));
-      });
-    });
-  }
-
-  async readFile(path: string, maxBytes: number) {
-    const d = this.files.get(path);
-    if (!d) return null;
-    return { data: d.subarray(0, maxBytes), truncated: d.length > maxBytes };
-  }
-  async writeFile(path: string, data: Uint8Array) {
-    this.files.set(path, data);
-  }
-  async stat(path: string) {
-    const d = this.files.get(path);
-    return d ? { size: d.length, isDir: false } : null;
-  }
-  async killTagged(tags: string[]) {
-    this.killed.push(tags);
-  }
-  async killAll() {
-    this.killed.push(["*"]);
-  }
-  /** When set, ensureRoot waits for it. */
-  rootGate: Promise<void> | undefined;
-  async ensureRoot() {
-    await this.rootGate;
-    return this.root;
   }
 }

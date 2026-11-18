@@ -27,3 +27,16 @@ and read only by its exact device reference; no session-id script runs any more.
 the old launcher are handed to the legacy retirement and never signalled or read live. A refused
 background start, and an old task's failed launch, are reported in actionable words instead of
 the device's raw message.
+
+`capybara-device` drops its protocol 2 surface: the old connection and dispatch (`killTagged`,
+`killAll` and unscoped operations are refused as unknown), the host and switching executors, the
+daily `capybara-device mode` command (use `capybara-device ceiling set`), the Docker executor's
+own commands and its startup marker reaper (the container now only hosts permission operations),
+and the last-good fallback of a broken `policy.json` (it is refused until fixed).
+Under protocol 3 the local `commands.log` records each exec and background start again (tag,
+account, conversation, restricted or full isolation, exit code, the grants' source; never the
+command or its environment) and every policy change from the deployment or the CLI.
+Upgrading from a protocol 2 `capybara-device`: processes the old auto mode left running are not
+searched for; restart the machine or kill leftovers from before the upgrade. A Docker-mode
+device's old container is recreated at its first operation (a container format version), and a
+container found without its bridge is recreated, never reconnected.

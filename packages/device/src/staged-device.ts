@@ -12,6 +12,7 @@ import {
   type SandboxStopResult,
   validateSandboxPathShape,
 } from "@capybara-hq/plugin-sdk";
+import { CommandLog } from "./command-log.js";
 import type { OperationContainerHost } from "./exec/docker-operations.js";
 import { credentialIdentity, InstanceBinder, type StoredBinding } from "./exec/instance-binding.js";
 import type { LinuxBackendDependencies } from "./exec/linux-operation-backend.js";
@@ -88,9 +89,9 @@ export interface StagedDeviceOptions {
   /** The owner's home (default: the user's), for the denied secret paths and the hello. */
   home?: string;
   platform?: NodeJS.Platform;
-  /** A docker-mode device lends its container to each operation (the Docker executor). */
+  /** A docker-mode device lends its container to each operation (`DockerContainer`). */
   container?: OperationContainerHost;
-  /** Releases what construction acquired (the Docker executor); called by {@link StagedDevice.dispose}. */
+  /** Releases what construction acquired; called by {@link StagedDevice.dispose}. */
   dispose?: () => Promise<void>;
   /**
    * The host interpreter the trusted helpers run with (the output spool helper and the native
@@ -267,6 +268,8 @@ export function createStagedDevice(o: StagedDeviceOptions): StagedDevice {
   });
   const owner: StagedOwnerPolicy = {
     store: policy,
+    // operations and policy changes are recorded in the owner's local command log
+    log: new CommandLog(stateDir),
     report: () => issueOwnerReport({ stateDir, deviceId: cred.deviceId, dir: cred.dir, home }),
     reconcile: async (signal) => {
       await binder.current()?.backend.reconcileOwnerCeiling(signal);

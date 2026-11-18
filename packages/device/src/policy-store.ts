@@ -14,19 +14,16 @@ function versionOf(file: string): string {
 }
 
 /**
- * The device's local policy as the running program sees it. Commands read {@link current} at
- * each exec, so a change applies at the next command without a restart, whether this program
- * wrote it ({@link update}) or someone ran `capybara-device mode` / `capybara-device policy`
- * meanwhile. Each new version is a new object, so a reader can tell a reload by identity (the
- * switching executor kills auto-mode commands when the policy turns the sandbox back on).
+ * The device's local policy as the running program sees it. {@link current} re-reads policy.json
+ * whenever it changed, so a change applies without a restart, whether this program wrote it
+ * ({@link update}) or someone ran `capybara-device ceiling` / `capybara-device policy` meanwhile.
+ * A file that cannot be read is no authority: {@link current} throws until it is fixed, and never
+ * falls back to a policy read earlier. Each new version is a new object.
  */
 export class PolicyStore {
   private policy: Policy;
   private version: string;
-  /** The broken version last reported, so each one is reported once. */
-  private reportedBad: string | undefined;
   private readonly file: string;
-  private readonly err: (line: string) => void;
   /**
    * policy.json was written before auto mode (no `mode`) when the store was made: `start` prints
    * one notice, and the key is dropped at the next write.
@@ -37,10 +34,9 @@ export class PolicyStore {
 
   constructor(
     private readonly dir: string,
-    opts: { err?: (line: string) => void; initial?: Policy } = {},
+    opts: { initial?: Policy } = {},
   ) {
     this.file = policyPath(dir);
-    this.err = opts.err ?? (() => {});
     this.ops = new PolicyOpLog(dir);
     this.version = versionOf(this.file);
     // Without an initial policy, an unreadable file throws here: the program does not start.
@@ -56,23 +52,14 @@ export class PolicyStore {
 
   /**
    * The policy now: re-reads policy.json when it changed (or appeared, or vanished: defaults).
-   * An invalid file keeps the last good policy and is reported once per version.
+   * An invalid file throws (with the reason) at every call until it is fixed.
    */
   current(): Policy {
     const version = versionOf(this.file);
     if (version === this.version) return this.policy;
-    try {
-      this.policy = readPolicyFile(this.dir).policy;
-      // Advanced only on a good read: a broken version is retried until it is fixed.
-      this.version = version;
-      this.reportedBad = undefined;
-    } catch (e) {
-      // A broken file never changes the mode: the last good policy stands.
-      if (this.reportedBad !== version) {
-        this.reportedBad = version;
-        this.err(`${(e as Error).message}; keeping the last valid policy until the file is fixed`);
-      }
-    }
+    this.policy = readPolicyFile(this.dir).policy;
+    // advanced only on a good read: a broken version is read again until it is fixed
+    this.version = version;
     return this.policy;
   }
 

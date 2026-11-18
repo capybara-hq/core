@@ -1,10 +1,6 @@
 [
   "background-output.test.ts",
   "exec-docker.test.ts",
-  "exec-host.test.ts",
-  "exec-os-network.test.ts",
-  "exec-os.test.ts",
-  "fs-helper.test.ts",
   "linux-operation-backend.test.ts",
   "linux-operation-worker.test.ts",
   "mac-operation-backend.test.ts",

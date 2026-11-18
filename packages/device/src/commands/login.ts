@@ -20,7 +20,29 @@ import {
   writeCredential,
   writePolicy,
 } from "../state.js";
-import { AUTO_MODE_RISK_TEXT, checkSandbox, type SandboxCheck } from "./mode.js";
+
+/**
+ * Shown once at login when the owner ceiling allows Full access in an organization that allows
+ * it: the trust model of Full access is command review, not the OS sandbox.
+ */
+export const FULL_ACCESS_RISK_TEXT =
+  "With Full access, agent commands run on this computer as you: they can read and write all " +
+  "your files, use your credentials (SSH keys, cloud accounts, keychain), Docker and any network, " +
+  "and the deployment reviews every command before it runs. Prompt injection can make an agent " +
+  "try to delete files or send your credentials away; the review blocks or asks about the " +
+  "dangerous ones. Such commands can also read this program's own credential: if you suspect " +
+  "misuse, run capybara-device logout and log in again.";
+
+/** The OS sandbox check `login` uses (default: the runtime's, loaded on demand). */
+export type SandboxCheck = () => { ok: true } | { ok: false; reason: string };
+
+async function checkSandbox(
+  check: SandboxCheck | undefined,
+): Promise<{ ok: true } | { ok: false; reason: string }> {
+  if (check !== undefined) return check();
+  const { sandboxAvailability } = await import("../exec/sandbox-check.js");
+  return sandboxAvailability();
+}
 
 /** How the owner widens the ceiling, on this machine only (the deployment may only narrow it). */
 export const WIDEN_CEILING_HINT =
@@ -221,7 +243,7 @@ export async function login(
           if (granted.autoMode === "off") out(FULL_ACCESS_NOT_ALLOWED_LOGIN_LINE);
           // the risk text is shown once at login, and only when Full access runs as the owner on
           // this machine (outside Docker)
-          else if (cmd.mode !== "docker") out(AUTO_MODE_RISK_TEXT);
+          else if (cmd.mode !== "docker") out(FULL_ACCESS_RISK_TEXT);
         } else {
           out(RESTRICTED_CEILING_LOGIN_LINE);
         }

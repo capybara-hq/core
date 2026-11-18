@@ -16,7 +16,7 @@ import type { DeviceOwnerCeiling } from "../src/exec/operation-types.js";
 /**
  * A hardened Linux container standing in for a local device (the 2b harness's hardening: a
  * non-root UID, cap-drop ALL, no-new-privileges, a read-only root, Docker's default seccomp and no
- * network), with the operation runtime staged root-owned the way the device's Docker executor
+ * network), with the operation runtime staged root-owned the way the device's container host
  * stages it, and root-run endpoints whose receipts the device user cannot forge.
  */
 export const IMAGE =

@@ -16,12 +16,13 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { runCli } from "../src/cli.js";
 import {
   FULL_ACCESS_NOT_ALLOWED_LOGIN_LINE,
+  FULL_ACCESS_RISK_TEXT,
   FULL_CEILING_LOGIN_LINE,
   RESTRICTED_CEILING_LOGIN_LINE,
   restrictedUnavailableLoginLine,
 } from "../src/commands/login.js";
 import { logout } from "../src/commands/logout.js";
-import { AUTO_MODE_RISK_TEXT } from "../src/commands/mode.js";
+
 import { pidPath, writePid } from "../src/pid.js";
 import { PolicyStore } from "../src/policy-store.js";
 import { policySummary } from "../src/server-ops.js";
@@ -204,7 +205,7 @@ describe("login", () => {
       "capybara-device ceiling set --full-access allow --project-reach os-user",
     );
     expect(out).not.toContain(FULL_CEILING_LOGIN_LINE);
-    expect(out).not.toContain(AUTO_MODE_RISK_TEXT);
+    expect(out).not.toContain(FULL_ACCESS_RISK_TEXT);
   });
 
   it("an organization without Full access gets the same restricted default", async () => {
@@ -213,7 +214,7 @@ describe("login", () => {
     expect(readPolicy(stateDir()).ownerCeiling).toEqual(RESTRICTED);
     expect(out).toContain(RESTRICTED_CEILING_LOGIN_LINE);
     expect(out).not.toContain(FULL_ACCESS_NOT_ALLOWED_LOGIN_LINE);
-    expect(out).not.toContain(AUTO_MODE_RISK_TEXT);
+    expect(out).not.toContain(FULL_ACCESS_RISK_TEXT);
   });
 
   it("keeps an existing old auto policy (exact mapping) and says the org does not allow Full access", async () => {
@@ -228,7 +229,7 @@ describe("login", () => {
     });
     expect(out).toContain(FULL_CEILING_LOGIN_LINE);
     expect(out).toContain(FULL_ACCESS_NOT_ALLOWED_LOGIN_LINE);
-    expect(out).not.toContain(AUTO_MODE_RISK_TEXT);
+    expect(out).not.toContain(FULL_ACCESS_RISK_TEXT);
   });
 
   it("keeps an existing old sandbox policy (exact mapping)", async () => {
@@ -241,7 +242,7 @@ describe("login", () => {
     expect(JSON.parse(readFileSync(policyPath(stateDir()), "utf8"))).toEqual({ mode: "sandbox" });
     expect(readPolicy(stateDir()).ownerCeiling).toEqual(RESTRICTED);
     expect(out).toContain(RESTRICTED_CEILING_LOGIN_LINE);
-    expect(out).not.toContain(AUTO_MODE_RISK_TEXT);
+    expect(out).not.toContain(FULL_ACCESS_RISK_TEXT);
   });
 
   it("prints the Full line and the risk text once when the owner allows Full access", async () => {
@@ -249,7 +250,7 @@ describe("login", () => {
     tokenAnswers = [granted];
     expect(await run(["login", "--url", base])).toBe(0);
     expect(out).toContain(FULL_CEILING_LOGIN_LINE);
-    expect(out.filter((l) => l === AUTO_MODE_RISK_TEXT)).toHaveLength(1);
+    expect(out.filter((l) => l === FULL_ACCESS_RISK_TEXT)).toHaveLength(1);
     expect(out).not.toContain(RESTRICTED_CEILING_LOGIN_LINE);
     expect(policyMode(readPolicy(stateDir()))).toBe("auto");
     expect(helloMode()).toBe("auto");
@@ -314,7 +315,7 @@ describe("login", () => {
     tokenAnswers = [granted];
     expect(await run(["login", "--url", base, "--mode", "docker"])).toBe(0);
     expect(out).toContain(FULL_CEILING_LOGIN_LINE);
-    expect(out).not.toContain(AUTO_MODE_RISK_TEXT);
+    expect(out).not.toContain(FULL_ACCESS_RISK_TEXT);
   });
 
   it("points at the installed login service instead of start", async () => {
