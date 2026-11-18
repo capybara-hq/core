@@ -1,5 +1,12 @@
 # @capybara-hq/testing
 
+## 0.1.0-rc.26
+
+### Patch Changes
+
+- 37f0166: The model-provider conformance suite skips its two-image case for an image model that declares `maxImages` below 2.
+- @capybara-hq/plugin-tools@0.1.0-rc.17
+
 ## 0.1.0-rc.25
 
 ### Patch Changes
