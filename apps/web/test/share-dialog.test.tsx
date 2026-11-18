@@ -144,7 +144,9 @@ describe("the share dialog", () => {
     );
     const recent = await screen.findByRole("list", { name: "Recent links" });
     expect(within(recent).getByText("Paused")).toBeTruthy();
-    expect(within(recent).getByText(/https:\/\/capybara\.example\.com\/s\/DDDDDDDDDD/)).toBeTruthy();
+    expect(
+      within(recent).getByText(/https:\/\/capybara\.example\.com\/s\/DDDDDDDDDD/),
+    ).toBeTruthy();
     const user = userEvent.setup();
     await user.click(within(recent).getByRole("button", { name: "Revoke" }));
     await vi.waitFor(() =>
