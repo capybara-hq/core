@@ -75,6 +75,8 @@ const channels: KernelConfig["channels"] = {
   deliveryConcurrency: 1,
   deliveryIdleMs: 1000,
   webhookMaxBodyBytes: 1_048_576,
+  fileMaxBytes: 20_971_520,
+  fileConcurrency: 4,
 };
 
 beforeAll(async () => {

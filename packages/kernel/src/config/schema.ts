@@ -1298,6 +1298,28 @@ export const KernelConfigSchema = z.strictObject({
               "Largest channel webhook request body in bytes; a larger request is rejected with 413",
           }),
         ),
+      fileMaxBytes: z
+        .number()
+        .int()
+        .nonnegative()
+        .default(20_971_520)
+        .meta(
+          meta({
+            description:
+              "Largest conversation file a channel delivery sends into the IM chat as a native file or image, in bytes; larger files, and every file when 0, become one line linking to the web conversation. Each worker replica holds at most fileConcurrency such files in memory at once",
+          }),
+        ),
+      fileConcurrency: z
+        .number()
+        .int()
+        .positive()
+        .default(4)
+        .meta(
+          meta({
+            description:
+              "How many conversation files one worker replica reads and uploads to IM platforms at the same time; further file deliveries wait for a slot",
+          }),
+        ),
     })
     // 续租周期必须明显短于 TTL：至少能在租约过期前续两次，偶尔一次 Redis 抖动不至于丢租约
     .refine((c) => c.scanIntervalMs <= c.leaseTtlMs / 2, {
@@ -1312,6 +1334,8 @@ export const KernelConfigSchema = z.strictObject({
       deliveryConcurrency: 100,
       deliveryIdleMs: 15000,
       webhookMaxBodyBytes: 1_048_576,
+      fileMaxBytes: 20_971_520,
+      fileConcurrency: 4,
     }),
   storage: z
     .strictObject({

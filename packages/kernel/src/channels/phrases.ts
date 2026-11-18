@@ -172,6 +172,18 @@ export const CHANNEL_PHRASES = {
     zh: "项目技能没有运行：这个智能体不能加载项目技能，请为它打开 Skill 工具。你的消息没有发送。",
     en: "The project skill was not run: this agent cannot load project skills; turn on its Skill tool. Your message was not sent.",
   },
+  /** A conversation file too large (or not sendable) for the IM chat; `{name}` is already code. */
+  fileOnWeb: {
+    zh: "{name}（{size}）在网页会话里：{url}",
+    en: "{name} ({size}) is in the web conversation: {url}",
+  },
+  /** The same without a web link (no public base URL configured). */
+  fileOnWebNoLink: {
+    zh: "{name}（{size}）已交付，请在网页上打开 Capybara 中的这个会话获取。",
+    en: "{name} ({size}) was delivered; open the conversation in Capybara on the web to get it.",
+  },
+  /** The root message of a native file delivery; `{name}` is already code. */
+  fileDelivered: { zh: "已交付文件 {name}。", en: "Delivered {name}." },
   /** 运行被中止（收尾挂着的草稿时附在已有文本之后）。 */
   runStopped: { zh: "已停止。", en: "Stopped." },
   /** 运行失败。 */

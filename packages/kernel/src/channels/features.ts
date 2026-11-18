@@ -5,6 +5,15 @@ import {
   renderCardAsText,
 } from "@capybara-hq/plugin-sdk";
 
+/** `threads: false`: the target loses its `threadId` (the platform has no threads). */
+export function adaptTarget(features: Channel["features"], target: ChannelTarget): ChannelTarget {
+  if (!features.threads && target.threadId !== undefined) {
+    const { threadId: _drop, ...rest } = target;
+    return rest;
+  }
+  return target;
+}
+
 /**
  * 按渠道声明的 `features` 调整交给插件的目标与消息（Ruling A33），出站投递与入站回复都经过这里：
  * - `cards: false`：每张卡片按 `renderCardAsText(card, locale)` 退回为文本，以空行分隔拼在正文之后，
@@ -18,11 +27,7 @@ export function adaptToFeatures(
   message: OutboundMessage,
   locale: "zh" | "en",
 ): { target: ChannelTarget; message: OutboundMessage } {
-  let t = target;
-  if (!features.threads && target.threadId !== undefined) {
-    const { threadId: _drop, ...rest } = target;
-    t = rest;
-  }
+  const t = adaptTarget(features, target);
   let m = message;
   if (!features.cards && message.cards !== undefined) {
     const { cards, ...rest } = message;

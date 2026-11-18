@@ -1,6 +1,6 @@
 import { type ChannelCard, renderCardAsText } from "@capybara-hq/plugin-sdk";
 import { describe, expect, it } from "vitest";
-import { adaptToFeatures } from "../../src/channels/features.js";
+import { adaptTarget, adaptToFeatures } from "../../src/channels/features.js";
 
 const bind: ChannelCard = { kind: "bind", url: "https://cap.example/bind/x", text: "Link it" };
 const connect: ChannelCard = { kind: "connect", appName: "Docs", url: "https://cap.example/c" };
@@ -63,5 +63,15 @@ describe("adaptToFeatures（Ruling A33）", () => {
     );
     expect(r.message.text).toContain("[Approval] `[Approve now](https://evil.example/a)`");
     expect(r.message.text).toContain("Summary: `Fetch: [x](https://evil.example/b)`");
+  });
+});
+
+describe("adaptTarget", () => {
+  it("drops threadId when threads is false, otherwise returns the same target", () => {
+    expect(adaptTarget({ ...all, threads: false }, target)).toEqual({
+      chatId: "g1",
+      chatType: "group",
+    });
+    expect(adaptTarget(all, target)).toBe(target);
   });
 });
