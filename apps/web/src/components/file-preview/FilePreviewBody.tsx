@@ -100,16 +100,22 @@ export function FilePreviewBody({
   const urls = sourceUrls(source);
   const conv = source.kind === "conversation" ? source : null;
   const share = source.kind === "share" ? source : null;
-  // A share the kernel renders as `download` has no previewer; otherwise its built-in kind follows
-  // the snapshot's type (its meta carries no `previewable`).
+  // For a share the kernel's `render` decides: `download` offers no previewer, `html` the
+  // document, and `previewers` never the document (an HTML file over the limit gets its text).
   const offersNone = share?.meta.render === "download";
-  const builtin = offersNone
+  const kind = offersNone
     ? null
     : builtinPreview({
         name: file.name,
         contentType: file.contentType,
-        previewable: conv ? conv.file.previewable : sharePreviewable(file.contentType),
+        previewable: conv ? conv.file.previewable : (share?.meta.previewable ?? null),
       });
+  const builtin =
+    share === null || kind !== "html" || share.meta.render === "html"
+      ? kind
+      : share.meta.previewable === "text"
+        ? "text"
+        : null;
   const html = builtin === "html";
   const fileId = conv?.file.id ?? "";
   const orgId = conv?.orgId ?? "";
@@ -181,15 +187,22 @@ export function FilePreviewBody({
     else dropToken();
   }, [wantsToken, orgId, conversationId, fileId, mint, dropToken]);
   const remint = () => mint({ orgId, conversationId, fileId });
+  // Only this file's token counts: after a switch the previous answer never frames the new file.
+  const tokenIsOurs =
+    token.variables?.orgId === orgId &&
+    token.variables.conversationId === conversationId &&
+    token.variables.fileId === fileId;
+  const tokenPath = tokenIsOurs ? token.data?.path : undefined;
+  const tokenError = tokenIsOurs ? token.error : null;
 
   const body: Load<{ text?: string; truncated?: boolean; view?: UiView }> =
     extensions === null || current === undefined
       ? { kind: "loading" }
       : wantsToken
-        ? token.data !== undefined
+        ? tokenPath !== undefined
           ? { kind: "ready", data: {} }
-          : token.error !== null
-            ? { kind: "error", e: token.error }
+          : tokenError !== null
+            ? { kind: "error", e: tokenError }
             : { kind: "loading" }
         : viewP !== null
           ? viewQ.data !== undefined
@@ -262,8 +275,8 @@ export function FilePreviewBody({
       );
     } else if (share) {
       content = <HtmlDocumentFrame src={urls.html ?? ""} title={file.name} />;
-    } else if (token.data) {
-      content = <HtmlDocumentFrame src={token.data.path} title={file.name} />;
+    } else if (tokenPath !== undefined) {
+      content = <HtmlDocumentFrame src={tokenPath} title={file.name} />;
     }
   } else if (p?.kind === "embed") {
     content =
@@ -310,28 +323,6 @@ export function FilePreviewBody({
     content = <TextPreview text={data.text ?? ""} truncated={data.truncated === true} />;
   }
   return frame({ ...header, state: "ready", children: content });
-}
-
-/** Bitmap types the share's inline route serves (the panel's `previewable: "image"` set). */
-const SHARE_INLINE = new Set(["image/png", "image/jpeg", "image/gif", "image/webp"]);
-
-/**
- * A share snapshot's built-in kind from its type: bitmaps the inline route serves, else text for
- * `text/*` and the usual structured text types; anything else has no built-in.
- */
-function sharePreviewable(contentType: string): "image" | "text" | null {
-  const type = (contentType.split(";")[0] ?? "").trim().toLowerCase();
-  if (SHARE_INLINE.has(type)) return "image";
-  if (
-    type.startsWith("text/") ||
-    type === "application/json" ||
-    type === "application/xml" ||
-    type.endsWith("+json") ||
-    type.endsWith("+xml")
-  ) {
-    return "text";
-  }
-  return null;
 }
 
 /** The built-in image previewer: a click opens the image viewer for this file. */

@@ -107,6 +107,10 @@ describe("the share dialog", () => {
       audience: "external",
       expiresInDays: 30,
     });
+    // the link exists: Done replaces Create, so no second share is made by accident
+    expect(screen.queryByRole("button", { name: "Create link" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Done" })).toBeTruthy();
+    expect(calls.filter((c) => c.method === "POST")).toHaveLength(1);
   });
 
   it("internal defaults to never expiring; external to 7 days", async () => {

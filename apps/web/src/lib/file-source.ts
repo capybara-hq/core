@@ -21,6 +21,8 @@ export interface ShareMeta {
   sharedBy: string;
   expiresAt: string | null;
   audience: "internal" | "external";
+  /** The built-in kind the share routes serve (the conversation files list's rule). */
+  previewable: "image" | "text" | null;
   /** `html`: the HTML document; `previewers`: `previewers` or a web built-in; `download`: the card. */
   render: "html" | "previewers" | "download";
   /** The extension previewers that take the snapshot, in the org's order. */

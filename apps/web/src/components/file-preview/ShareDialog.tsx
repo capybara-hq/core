@@ -92,6 +92,7 @@ export function ShareDialog({
   };
   const fail = (e: Parameters<typeof errorMessage>[0]) => setError(errorMessage(e));
   const submit = () => {
+    if (create.isPending || created !== null) return;
     setError(null);
     create.mutate(
       { audience, expiresInDays: expiry },
@@ -236,19 +237,26 @@ export function ShareDialog({
       size={640}
       title={t("title", { name: file.name })}
       footer={
-        <>
-          <Button variant="ghost" onClick={() => close(false)}>
+        // Once the link exists, Done replaces Create: a second click never makes a duplicate.
+        created !== null ? (
+          <Button variant="primary" onClick={() => close(false)}>
             {t("done")}
           </Button>
-          <Button
-            variant="primary"
-            loading={create.isPending}
-            disabled={policy === undefined}
-            onClick={submit}
-          >
-            {t("create")}
-          </Button>
-        </>
+        ) : (
+          <>
+            <Button variant="ghost" onClick={() => close(false)}>
+              {t("done")}
+            </Button>
+            <Button
+              variant="primary"
+              loading={create.isPending}
+              disabled={policy === undefined}
+              onClick={submit}
+            >
+              {t("create")}
+            </Button>
+          </>
+        )
       }
     >
       {body}

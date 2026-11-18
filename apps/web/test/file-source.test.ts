@@ -27,6 +27,7 @@ const META: ShareMeta = {
   expiresAt: null,
   audience: "internal",
   render: "html",
+  previewable: "text",
   previewers: [],
 };
 
