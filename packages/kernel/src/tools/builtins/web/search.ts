@@ -27,7 +27,7 @@ export const WEB_SEARCH_SPEC: ToolSpec = {
     "Search the web and get a list of results with title, URL and a short snippet. Use it for " +
     "information newer than your training data, or to check whether something you know is still " +
     "current. Then use WebFetch to read the pages you need. Do not use it for questions you can " +
-    "answer reliably without the web. Cite the sources you use.",
+    "answer reliably without the web. Cite the sources you use as markdown links in your answer.",
   inputSchema: {
     type: "object",
     properties: {
@@ -59,9 +59,6 @@ export const WEB_SEARCH_SPEC: ToolSpec = {
   },
   annotations: { readOnlyHint: true, openWorldHint: true },
 };
-
-/** The last line of a result with entries (Claude Code tells the model to list its sources). */
-const CITE_LINE = "Cite the sources you use as markdown links in your answer.";
 
 /** Why the tool is unavailable in an org (web tools spec §3.4; English, actionable). */
 function unavailableText(reason: "none" | "ambiguous"): string {
@@ -172,7 +169,7 @@ function resultText(day: string, entries: readonly Entry[]): string {
       ...(e.snippet !== undefined ? [`   ${e.snippet}`] : []),
     ].join("\n"),
   );
-  return [head, ...blocks, CITE_LINE].join("\n\n");
+  return [head, ...blocks].join("\n\n");
 }
 
 /** The query in the display summary: one line, at most this many code points. */

@@ -4,7 +4,11 @@ import type { KernelLogger } from "../../log.js";
 import type { OrgSettings } from "../../orgs/settings.service.js";
 import type { ActorFacts } from "../../platform/actor.js";
 import type { AgentDocTopic } from "../../platform/agent-docs.js";
-import { type Availability, availability } from "../../platform/availability.js";
+import {
+  type Availability,
+  availability,
+  PLATFORM_UNAVAILABLE_OFF,
+} from "../../platform/availability.js";
 import {
   type ErrorRole,
   errorRoleOf,
@@ -56,10 +60,6 @@ export const LIST_MAX = 50;
 /** The most operations `search` returns. */
 const SEARCH_MAX = 20;
 
-/** The tool's `unavailable` reason when the org setting `platformTool` is `off` (spec §3). */
-export const PLATFORM_UNAVAILABLE_OFF =
-  "The org turned the Platform tool off; ask an org admin to turn it on.";
-
 const ACTIONS = ["browse", "search", "describe", "call", "read"] as const;
 type Action = (typeof ACTIONS)[number];
 
@@ -79,8 +79,8 @@ const SPEC: ToolSpec = {
     "connectors, extensions, conversations, devices, models, evals, channels, requests, " +
     "approvals and the inbox, org settings, and for admins accounts, orgs and the admin console) " +
     'and its documentation, as the person you are working for. Start with action "browse", which ' +
-    'lists every domain, then "describe" an operation before you "call" it; never guess ' +
-    'parameters. Writes ask the person to confirm. Use "read" for how-to documentation (plugin ' +
+    'lists every domain; "describe" gives an operation\'s input schema and an example. ' +
+    'Writes ask the person to confirm. Use "read" for how-to documentation (plugin ' +
     "format, skills, extension points).",
   inputSchema: {
     type: "object",

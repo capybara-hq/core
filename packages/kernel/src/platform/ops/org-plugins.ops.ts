@@ -148,7 +148,7 @@ export class OrgPluginsOperations implements OnModuleInit {
       defineOperation({
         id: "plugins.upload-review",
         description:
-          "Read one of this org's staged plugin uploads (org admins): what the plugin brings, and for a new version of the org's own plugin the update it applies. Uploading the package and confirming it are done by a person on the web (插件 page).",
+          "Read one of this org's staged plugin uploads (org admins): what the plugin brings, and for a new version of the org's own plugin the update it applies. Uploading the package and confirming it are done by a person on the web (Plugins page).",
         input: z.object({ stagingId: OrgUploadStagingParams.shape.stagingId }).strict(),
         example: { stagingId: EXAMPLE_ID },
         authz: { orgAction: "catalog.upload" },
@@ -157,7 +157,7 @@ export class OrgPluginsOperations implements OnModuleInit {
         errors: [
           {
             code: "plugin.staging_not_found",
-            next: "The staged upload expired (24 hours), was confirmed, or is not this org's; the person uploads it again on the 插件 page.",
+            next: "The staged upload expired (24 hours), was confirmed, or is not this org's; the person uploads it again on the Plugins page.",
           },
         ],
         run: async (input, ctx) => {
@@ -173,7 +173,7 @@ export class OrgPluginsOperations implements OnModuleInit {
                     to: r.update.to,
                     components: r.update.components.filter((c) => c.change !== "same").length,
                   },
-            next: "The person confirms the upload on the web (插件 page).",
+            next: "The person confirms the upload on the web (Plugins page).",
           };
         },
       }),
@@ -355,7 +355,7 @@ export class OrgPluginsOperations implements OnModuleInit {
       defineOperation({
         id: "plugins.apply-appearance",
         description:
-          "Apply a plugin's suggested appearance in this org (org admins; the 扩展 page's 应用此插件的外观), for a plugin whose extension is on here: in one step, its theme becomes the org's default theme (whether members may pick their own stays as it is) and each component it suggests replaces the built-in block of its slot (shell.brand, conversation.empty, conversation.composer.frame) in the org's arrangement. The card shows exactly what changes; a theme that is not on in the org refuses the whole call, a component that is not available is skipped. Asked every time, never remembered.",
+          "Apply a plugin's suggested appearance in this org (org admins; the Extensions page's \"Apply this plugin's appearance\" action), for a plugin whose extension is on here: in one step, its theme becomes the org's default theme (whether members may pick their own stays as it is) and each component it suggests replaces the built-in block of its slot (shell.brand, conversation.empty, conversation.composer.frame) in the org's arrangement. The card shows exactly what changes; a theme that is not on in the org refuses the whole call, a component that is not available is skipped.",
         input: z.object({ extension: OrgExtensionParams.shape.extension }).strict(),
         example: { extension: "theme-cyberpunk" },
         authz: { orgAction: "org.update" },

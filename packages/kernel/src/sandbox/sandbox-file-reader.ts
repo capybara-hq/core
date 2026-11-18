@@ -160,7 +160,7 @@ const notFound = (path: string) =>
 const isDirectory = (path: string) =>
   new ApiError(
     "sandbox.file_is_directory",
-    `${clip(path, 200)} is a directory; pass one file, e.g. archive the directory first with Bash (zip -r) and retry.`,
+    `${clip(path, 200)} is a directory; pass the path of one file.`,
   );
 const tooLarge = (path: string, size: number, max: number) =>
   new ApiError(

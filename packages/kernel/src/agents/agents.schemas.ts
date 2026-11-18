@@ -18,7 +18,8 @@ const RequestInstructions = z.string().max(100_000).optional();
 const RequestOnly = {
   tools: z
     .undefined({
-      error: "tools was replaced by disabledTools: an agent has every tool unless it turns it off",
+      error:
+        "tools is not a definition field: an agent has every tool unless disabledTools turns it off",
     })
     .optional(),
   subagentTools: z

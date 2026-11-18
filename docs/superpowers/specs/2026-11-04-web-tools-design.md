@@ -75,16 +75,15 @@ Sending both lists is a validation error **(designer's call**, matches the Claud
 (lowercased, no scheme or path); a subdomain is covered by its parent.
 
 Result `content` (one text block): a numbered list, one entry per result: title, URL, published date
-when the provider has one, and the snippet; followed by the line
-`Cite the sources you use as markdown links in your answer.` (Claude Code tells the model to list
-sources; the exact sentence is the builder's). At most 10 results **(designer's call)**.
+when the provider has one, and the snippet. The request to cite sources is said once, in the
+description, not repeated in every result. At most 10 results **(designer's call)**.
 
 Description (proposed):
 
 > Search the web and get a list of results with title, URL and a short snippet. Use it for
 > information newer than your training data, or to check whether something you know is still
 > current. Then use WebFetch to read the pages you need. Do not use it for questions you can answer
-> reliably without the web. Cite the sources you use.
+> reliably without the web. Cite the sources you use as markdown links in your answer.
 
 The description is fixed text with **no date** **(designer's call**, revised after the builder
 check). Claude Code puts today's date in the description, but here that would break two things:

@@ -501,10 +501,10 @@ describe("fix round 2: deliver failures, grep exit 2", () => {
     expect(r.puts).toEqual([]);
   });
 
-  it("deliver: the description suggests tar -czf, not zip (the sandbox image has no zip)", () => {
+  it("deliver: the description states the one-file contract without prescribing a command", () => {
     const d = rig().tool("Deliver").spec.description;
-    expect(d).toContain("tar -czf");
-    expect(d).not.toContain("zip");
+    expect(d).toContain("a directory must first be packed into one archive");
+    expect(d).not.toMatch(/\b(tar|zip) -/);
   });
 
   it("deliver without an object store: unavailable with an English reason, fails before stat / read", async () => {

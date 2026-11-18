@@ -610,7 +610,7 @@ export function normalizeDeploymentSettingsPatch(
     throw new ApiError("validation_failed", "Invalid deployment settings", [
       {
         path: "devicesAutoMode",
-        message: "give devicesFullAccess only: devicesAutoMode is its old name",
+        message: "pass devicesFullAccess only, not together with devicesAutoMode",
       },
     ]);
   const { devicesAutoMode, ...rest } = patch;

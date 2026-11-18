@@ -257,7 +257,7 @@ export class AgentSkillsOperations implements OnModuleInit {
       defineOperation({
         id: "agents.delete-skill",
         description:
-          "Delete one of an agent's own skills (soft delete; a pending change of the same name is cancelled and the name can be written again). Only the agent's owner can; takes the agent id from agents.list and the skill id from agents.skills. The person confirms every delete; it is never remembered.",
+          "Delete one of an agent's own skills (soft delete; a pending change of the same name is cancelled and the name can be written again). Only the agent's owner can; takes the agent id from agents.list and the skill id from agents.skills.",
         input: z.object({ agentId: AgentId, skillId: AgentSkillPathParams.shape.skillId }).strict(),
         example: {
           agentId: "7c1a5b0e-9a53-4c6b-8d64-2f5a1b0c3e77",
@@ -354,11 +354,11 @@ export class AgentSkillsOperations implements OnModuleInit {
           },
           {
             code: "sandbox.file_not_found",
-            next: "Check the path with Glob, or build the zip first with Bash (cd into the skill directory, then zip -r ../<name>.zip .).",
+            next: "No file at that path. Check it with Glob, or build the package first: a zip archive with SKILL.md at its root or in one top-level folder.",
           },
           {
             code: "sandbox.file_is_directory",
-            next: "Archive the directory into one zip with Bash (zip -r) and pass the zip's path.",
+            next: "The path is a directory; package it as a zip archive (SKILL.md at its root or in one top-level folder) and pass the archive's path.",
           },
           {
             code: "sandbox.file_too_large",
@@ -530,7 +530,7 @@ export class AgentSkillsOperations implements OnModuleInit {
       defineOperation({
         id: "skills.get-change",
         description:
-          "Read one skill change request as the inbox shows it: a share of an agent's skill with the org or a proposed version of a shared skill (kind), the agent, the skill name and description, the version, its file paths and sizes, who asked, its state and who decided. Never file contents: review those on the web, where org admins decide it (agents never decide skill changes). Only org admins and the person who asked can read it.",
+          "Read one skill change request as the inbox shows it: a share of an agent's skill with the org or a proposed version of a shared skill (kind), the agent, the skill name and description, the version, its file paths and sizes, who asked, its state and who decided. Never file contents: review those on the web, where org admins decide it. Only org admins and the person who asked can read it.",
         input: z.object({ changeId: SkillChangePathParams.shape.id }).strict(),
         example: { changeId: "6a1d3e5f-2b4c-4d70-8e91-0f2a4c6e8b13" },
         // approvals.decide is stricter than the service (a plain-member requester is refused by
@@ -563,7 +563,7 @@ export class AgentSkillsOperations implements OnModuleInit {
               decidedAt: d.decidedAt,
               createdAt: d.createdAt,
               ...(d.status === "pending" && {
-                next: "Review the files and decide it on the web, in the inbox; agents never decide skill changes.",
+                next: "Review the files and decide it on the web, in the inbox.",
               }),
             },
           };

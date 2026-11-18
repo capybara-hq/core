@@ -36,7 +36,7 @@ const SPEC: ToolSpec = {
     "offset and limit to read part of a long file. Binary files are not shown; use Bash " +
     "to inspect them. Do not use it to list directories; use Glob instead. Read a file before you " +
     "write it: Write and Edit fail on a file you have not read, or one changed since you read it. " +
-    "In auto mode paths may be anywhere on the machine; writes outside the workspace need the user's approval.",
+    "In auto mode paths may be anywhere on the machine.",
   inputSchema: {
     type: "object",
     properties: {
@@ -127,7 +127,7 @@ export function sandboxReadTool(deps: SandboxToolDeps): BuiltinTool {
       // display only: the line range shown on the row
       let range: { fromLine?: number; toLine?: number } = {};
       if (looksBinary(value.data)) {
-        text = `Binary file (${value.size} bytes); use Bash to inspect it (for example file or xxd).`;
+        text = `Binary file (${value.size} bytes); use Bash to inspect it.`;
       } else if (value.data.byteLength === 0) {
         text = "(empty file)";
       } else {
@@ -138,7 +138,7 @@ export function sandboxReadTool(deps: SandboxToolDeps): BuiltinTool {
           toLine: Math.min(fileLines(decoded).length, offset - 1 + limit),
         };
         if (value.truncated) {
-          text += `\n[Only the first ${READ_MAX_BYTES} bytes of this ${value.size}-byte file were read; use Bash (e.g. sed -n or tail) for the rest.]`;
+          text += `\n[Only the first ${READ_MAX_BYTES} bytes of this ${value.size}-byte file were read; use Bash to read the rest.]`;
         }
       }
       return {

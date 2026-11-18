@@ -59,7 +59,7 @@ Rules that the schema cannot show:
   by `parseThemeFile` (schema `https://capybarahq.com/schemas/theme.v1.schema.json`).
 - `setupGuides` (at most 8): `{ id, place, template? }`. Each guide is a Markdown document at
   `guides/<id>.md` (English, required) and `guides/<id>.zh.md` (Chinese, optional), shown where a
-  person sets up what the plugin brings. `place` is `channel-connection` (新建渠道 and the channel
+  person sets up what the plugin brings. `place` is `channel-connection` (New channel and the channel
   detail; the extension must provide `channel@1`; one per plugin) or `connector-template`
   (`template` names one of the plugin's `connectors/<id>.json`; one per template). See "Setup
   guides" below.

@@ -206,7 +206,7 @@ export class ConnectorAccountPolicies {
         pushSet.map((n) => ({
           path: `tools.${n}`,
           message:
-            "A standing push decision can only be cleared here; 「一直允许」 on a push ask sets one",
+            "A standing push decision can only be cleared here; 'Always allow' on a push ask sets one",
         })),
       );
     }
