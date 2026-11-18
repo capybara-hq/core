@@ -229,7 +229,9 @@ export class SandboxOperationReconcileJob {
         await this.intents.acknowledgeRevocation(row.operation_id);
         return;
       }
-    } else if (task?.launchState === "terminal") {
+    } else if (task?.launchState === "terminal" && task.status !== "lost") {
+      // a verified end (an exit, a stop, a refusal); a `lost` task (a launch revoked or given
+      // up before its ref was known) proves nothing about the process: stopped by the ref below
       await this.intents.acknowledgeRevocation(row.operation_id);
       return;
     }

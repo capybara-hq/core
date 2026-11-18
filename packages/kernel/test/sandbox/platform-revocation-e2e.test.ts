@@ -284,6 +284,70 @@ it("a revocation that arrives before the start is acknowledged stops it by its r
   expect(f.provider.executions.size).toBe(1);
 });
 
+// final review M1: a start revoked while its ref is unknown ends its task `lost` / `terminal`;
+// a ref arriving later is no proof the process ended, so its exact stop runs before the
+// revocation is acknowledged
+it.each([
+  ["a dead holder's revocation", "holder"],
+  ["an abandoned unknown launch", "abandon"],
+] as const)(
+  "%s: a late ref is stopped exactly before the revocation is acknowledged",
+  async (_name, how) => {
+    const f = await fullAccessFixture();
+    const entered = barrier();
+    const release = barrier();
+    f.provider.state.beforeStart = async () => {
+      entered.resolve();
+      await release.promise;
+    };
+    const launch = runInBackgroundManaged(f.depsOf(k), await f.ctxFor(), {
+      command: "npm run dev",
+      description: "Serve",
+      run_in_background: true,
+    });
+    await entered.promise;
+    const dispatching = await f.intent();
+    expect(dispatching.state).toBe("dispatching");
+    const intents = k.app.get(SandboxOperationIntents);
+    // the dispatcher's lease lapsed: an acquirer revokes its holder (or the launch is given up)
+    if (how === "holder") await intents.revokeHolders(f.deviceId, [dispatching.holder_token ?? ""]);
+    else await intents.abandonBackgroundLaunch(f.operationId, "expired");
+    expect(await f.taskRow()).toMatchObject({ status: "lost", launch_state: "terminal" });
+    // the first revoke runs before the ref is known: only the operation's tombstone
+    await revokeJobRan(revokeJobId(f.operationId, how === "holder" ? "" : "-expired"));
+    expect(f.provider.calls.stop).toEqual([]);
+
+    // the late ref joins the owed cancellation; acknowledging needs a verified stop by that ref
+    const order: string[] = [];
+    const stop = f.provider.impl.background?.stop.bind(f.provider.impl.background);
+    if (!stop || !f.provider.impl.background) throw new Error("no background stop");
+    f.provider.impl.background.stop = async (...args: Parameters<typeof stop>) => {
+      order.push("stop");
+      return stop(...args);
+    };
+    const acknowledge = intents.acknowledgeRevocation.bind(intents);
+    const ack = vi.spyOn(intents, "acknowledgeRevocation").mockImplementation(async (id) => {
+      order.push("acknowledge");
+      return acknowledge(id);
+    });
+    try {
+      release.resolve();
+      // the call reports no started task (its record ended when the launch was revoked)
+      await expect(launch).rejects.toThrow(/was not started/);
+      expect(await f.intent()).toMatchObject({ state: "revoked", revoke_acknowledged: false });
+      await revokeJobRan(revokeJobId(f.operationId, "-ack"));
+    } finally {
+      ack.mockRestore();
+    }
+    expect(order).toEqual(["stop", "acknowledge"]);
+    expect(f.provider.calls.stop).toEqual([{ graceMs: 5000 }]);
+    expect(f.provider.only()).toMatchObject({ ref: f.provider.only().ref, cancelled: true });
+    expect(await f.intent()).toMatchObject({ state: "revoked", revoke_acknowledged: true });
+    // the task's record stays as it ended (lost, its slot freed)
+    expect(await f.taskRow()).toMatchObject({ status: "lost", launch_state: "terminal" });
+  },
+);
+
 it("Full-off revokes only Full work: a restricted sibling keeps its grant and keeps running", async () => {
   const f = await fullAccessFixture();
   // the machine reports every root of the instance, so restricted work stays within its reach
