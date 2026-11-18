@@ -19,7 +19,7 @@ const AccountId = AccountParams.shape.accountId.describe("The account id (accoun
 
 /** What the tool result says instead of the password (model-visible English). */
 export const INITIAL_PASSWORD_NOTE =
-  "The kernel generated a one-time initial password. It is shown once, on the web, to the person who approved this call (the approval card in this conversation); it is not available to you, so never ask for it or make one up. If it is not read within 24 hours it is lost: disable the account and create it again. The account must change it at first sign-in.";
+  "The kernel generated a one-time initial password. It is shown once, on the web, to the person who approved this call (the approval card in this conversation), and is not available in this conversation. The account must change it at first sign-in.";
 
 /** An account as a detail returns it (the admin console's account fields). */
 const accountView = (a: Account, login: string | null) => ({

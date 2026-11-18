@@ -79,8 +79,8 @@ const INPUT_SCHEMA: ToolSpec["inputSchema"] = {
 /** The text before the roster (§4.3, agent map spec §4.1), with the concurrency limit. */
 const head = (maxConcurrent: number): string =>
   "Dispatch a sub-agent: a fresh agent with its own context that works on one task in the " +
-  "background. This tool returns at once with the sub-agent's agentId; keep working or end your " +
-  "turn, and do not wait for it. When the sub-agent hands back a report or finishes, its result " +
+  "background. This tool returns at once with the sub-agent's agentId, and you can keep working " +
+  "or end your turn while it runs. When the sub-agent hands back a report or finishes, its result " +
   "arrives in this conversation as a notification. The sub-agent sees only your prompt, not this " +
   "conversation, so include everything it needs and say what its report must contain. It shares " +
   "your sandbox files. To run several at once, call this tool several times (at most " +
@@ -134,8 +134,8 @@ const SPEC: ToolSpec = {
   name: "Agent",
   description:
     "Dispatch a sub-agent: a fresh agent with its own context that works on one task in the " +
-    "background. This tool returns at once with the sub-agent's agentId; keep working or end your " +
-    "turn, and do not wait for it. When the sub-agent hands back a report or finishes, its result " +
+    "background. This tool returns at once with the sub-agent's agentId, and you can keep working " +
+    "or end your turn while it runs. When the sub-agent hands back a report or finishes, its result " +
     "arrives in this conversation as a notification. The sub-agent sees only your prompt, not this " +
     "conversation, so include everything it needs and say what its report must contain. It shares " +
     "your sandbox files. To run several at once, call this tool several times (at most 4 of your " +
@@ -194,7 +194,7 @@ function duration(ms: number): string {
 export const agentStartedText = (agentId: string, opts: { ownModel?: boolean } = {}): string =>
   `agentId: ${agentId} (running in the background)\n` +
   "The sub-agent is working on the task. Its result arrives in this conversation as a " +
-  "notification when it hands back a report or finishes; keep working or end your turn. To send " +
+  "notification when it hands back a report or finishes. To send " +
   "it more instructions, use SendMessage with this agentId." +
   (opts.ownModel === true ? " It runs on its own model; the model you passed was ignored." : "");
 

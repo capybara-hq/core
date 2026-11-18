@@ -290,7 +290,7 @@ export class AgentsOperations implements OnModuleInit {
       defineOperation({
         id: "agents.update",
         description:
-          'Change an agent you may edit: your own, private or shared, and as an org admin any agent of the org. Send the version you read from agents.get and only the fields to change; the others keep their value. The description (one short paragraph, "" removes it) is saved with the definition; the avatar and quick actions are changed with agents.update-profile. disabledTools replaces the whole list of turned-off tools (send [] to turn every tool on). disabledSkills replaces the whole list of turned-off skills (send [] to turn every skill on); an agent has every skill on in the org unless disabledSkills turns it off: { kind: "plugin", plugin, skills: "all" | [names] } for skills of a plugin (skills.list gives the plugin of each), or { kind: "skill", skillId } for a skill without a plugin; the skills of builtin plugins (builtin in skills.list) and the own skills of the agent cannot be turned off. A version that is no longer current is refused, so read the agent again first. The visibility cannot be changed here (that is done on the agents page of the web app). A change to your own private agent may be remembered by the person; a change to a shared agent, or one that sets a tool policy to allow, is confirmed every time.',
+          'Change an agent you may edit: your own, private or shared, and as an org admin any agent of the org. Send the version you read from agents.get and only the fields to change; the others keep their value. The description (one short paragraph, "" removes it) is saved with the definition; the avatar and quick actions are changed with agents.update-profile. disabledTools replaces the whole list of turned-off tools (send [] to turn every tool on). disabledSkills replaces the whole list of turned-off skills (send [] to turn every skill on), with entries as agents.create describes. A version that is no longer current is refused, so read the agent again first. The visibility cannot be changed here. A change to your own private agent may be remembered by the person; a change to a shared agent, or one that sets a tool policy to allow, is confirmed every time.',
         input: z
           .object({
             agentId: AgentId,
@@ -477,7 +477,7 @@ export class AgentsOperations implements OnModuleInit {
       defineOperation({
         id: "agents.create-from-template",
         description:
-          "Create a private agent from an agent template, with the previewHash of agents.preview-from-template; a changed template or org makes the hash stale and the preview must be redone. Connectors the template needs that the org lacks become pending entries and a setup request goes to the org admins. Agents created with the Platform tool are private; sharing an agent with the org or with members is done on the agents page of the web app.",
+          "Create a private agent from an agent template, with the previewHash of agents.preview-from-template; a changed template or org makes the hash stale and the preview must be redone. Connectors the template needs that the org lacks become pending entries and a setup request goes to the org admins.",
         input: AgentFromTemplateBody.pick({
           templateId: true,
           name: true,
@@ -567,7 +567,7 @@ export class AgentsOperations implements OnModuleInit {
       defineOperation({
         id: "agents.delete",
         description:
-          "Delete an agent you may edit: your own, and as an org admin any agent of the org. Its conversations stay readable but it can no longer be used, its eval runs stop and its pending skill changes are cancelled. The person confirms every delete; it is never remembered. The agent you are running as cannot be deleted.",
+          "Delete an agent you may edit: your own, and as an org admin any agent of the org. Its conversations stay readable but it can no longer be used, its eval runs stop and its pending skill changes are cancelled. The agent you are running as cannot be deleted.",
         input: z.object({ agentId: AgentId }).strict(),
         example: { agentId: "7c1a5b0e-9a53-4c6b-8d64-2f5a1b0c3e77" },
         authz: { orgAction: "agents.create" },

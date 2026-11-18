@@ -761,7 +761,6 @@ describe("background tasks and previewers", () => {
     ).toBe("personal");
     // a stop kills the command: asked every time, like conversations.abort
     expect(op("conversations.stop-background-task").rememberable).toBe(false);
-    expect(op("conversations.stop-background-task").description).toContain("never remembered");
     await expect(
       run("conversations.stop-background-task", { conversationId: conv.id, taskId: "bg-1" }, c),
     ).rejects.toThrow(/conversations\.background-tasks/);

@@ -309,7 +309,7 @@ export const OrgSettingsPatchSchema = z
   })
   .strict()
   .refine((p) => p.autoMode === undefined || p.fullAccess === undefined, {
-    message: "give fullAccess only: autoMode is its old name",
+    message: "pass fullAccess only, not together with autoMode",
     path: ["autoMode"],
   });
 

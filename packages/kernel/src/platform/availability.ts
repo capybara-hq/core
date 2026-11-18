@@ -15,6 +15,13 @@ const HOLDER: Record<OrgRole, string> = {
 const refuse = (reason: string): Availability => ({ ok: false, reason });
 
 /**
+ * Why nothing runs while the org setting `platformTool` is `off` (spec §3): the tool's
+ * `unavailable` reason and the operation refusal both use it.
+ */
+export const PLATFORM_UNAVAILABLE_OFF =
+  "The org turned the Platform tool off; an org admin can switch it on in the organization settings.";
+
+/**
  * Whether the actor may call `op` now (spec §6), decided on facts read at call time. The reason
  * is model-visible English: it says who can do it or why not, so the agent can offer the next
  * step (a request operation, the web page, an admin) instead of retrying.
@@ -25,11 +32,7 @@ export function availability(op: PlatformOperation, f: ActorFacts): Availability
       "You are not a member of this org any more, or your account is disabled, so no Platform operation is available; ask an org admin to add you back or the super admin to enable your account.",
     );
   }
-  if (f.setting === "off") {
-    return refuse(
-      "The org turned the Platform tool off; an org admin can switch it on in the organization settings.",
-    );
-  }
+  if (f.setting === "off") return refuse(PLATFORM_UNAVAILABLE_OFF);
   if ("superAdmin" in op.authz) {
     if (!f.isSuperAdmin) {
       return refuse(

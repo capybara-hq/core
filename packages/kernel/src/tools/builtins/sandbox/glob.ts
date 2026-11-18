@@ -29,7 +29,7 @@ const SPEC: ToolSpec = {
     "against paths relative to path (default: the workspace directory): * matches within one directory, ** " +
     "matches across directories, ? matches one character, {a,b} matches either. Returns absolute " +
     "paths sorted by name, up to 1000. To search file contents, use Grep. " +
-    "In auto mode paths may be anywhere on the machine; writes outside the workspace need the user's approval.",
+    "In auto mode paths may be anywhere on the machine.",
   inputSchema: {
     type: "object",
     properties: {

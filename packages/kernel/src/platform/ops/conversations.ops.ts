@@ -426,7 +426,7 @@ export class ConversationsOperations implements OnModuleInit {
       defineOperation({
         id: "conversations.abort",
         description:
-          "Stop the run that is active in one of your other conversations (its sub-agents stop with it; stopping a sub-agent's conversation stops it and those below it). Nothing happens if no run is active. The person confirms every stop; it is never remembered. The conversation you are working in cannot be stopped.",
+          "Stop the run that is active in one of your other conversations (its sub-agents stop with it; stopping a sub-agent's conversation stops it and those below it). Nothing happens if no run is active. The conversation you are working in cannot be stopped.",
         input: Id,
         example: { conversationId: "3f2b8a40-6c1d-4e0b-9a77-5d1e2c8b9f10" },
         authz: { orgAction: "agents.use" },
@@ -518,7 +518,7 @@ export class ConversationsOperations implements OnModuleInit {
       defineOperation({
         id: "conversations.delete",
         description:
-          "Delete one of your conversations: a running run in it is stopped and the conversation disappears from every list. This cannot be undone from the tool. The person confirms every delete; it is never remembered. The conversation you are working in cannot be deleted.",
+          "Delete one of your conversations: a running run in it is stopped and the conversation disappears from every list. This cannot be undone from the tool. The conversation you are working in cannot be deleted.",
         input: Id,
         example: { conversationId: "3f2b8a40-6c1d-4e0b-9a77-5d1e2c8b9f10" },
         authz: { orgAction: "agents.use" },
