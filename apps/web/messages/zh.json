@@ -602,6 +602,7 @@
         "Deliver": "交付文件",
         "WebSearch": "搜索网页",
         "WebFetch": "读取网页",
+        "GenerateImage": "生成图片",
         "Platform": "操作平台",
         "CurrentTime": "获取当前时间",
         "ScheduleCreate": "创建定时任务",
@@ -3770,6 +3771,7 @@
         "configureLabel": "配置 {plugin}"
       }
     },
+    "imageUnmapped": "有可用的图片生成模型，但尚未指定用途。指定后，智能体才能生成图片。",
     "evalUnmapped": "还没有给评测评委配模型：评测不能开评委。",
     "capability": {
       "tools": "工具",

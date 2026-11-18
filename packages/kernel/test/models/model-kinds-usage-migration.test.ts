@@ -97,3 +97,46 @@ describe("0089 model kinds and usage", () => {
     expect(await q("select count(*)::int as n from capybara.model_usage")).toEqual([{ n: 0 }]);
   });
 });
+
+/**
+ * 0160_model_usage_image_kind.sql: the row's call kind, its image count and its output and cache
+ * tokens (0159 -> 0160).
+ */
+const FILE_0160 = "0160_model_usage_image_kind.sql";
+
+describe("0160 model usage kind and output images", () => {
+  it("existing rows read kind embedding, 0 output images and 0 tokens; a rerun is a no-op", async () => {
+    await migrate(pg.url, { schema: "capybara", dir: copyMigrations((f) => f < FILE_0160) });
+    await sql`insert into capybara.orgs (id, slug, name) values ('o2', 'o2', 'O')`.execute(db);
+    await sql`insert into capybara.model_usage
+      (org_id, extension, purpose, provider, model, input_tokens)
+      values ('o2', 'memory', 'memory_embed', 'p', 'e', 7)`.execute(db);
+    const upTo = copyMigrations((f) => f <= FILE_0160);
+    await migrate(pg.url, { schema: "capybara", dir: upTo });
+    const rows = () =>
+      q(`select input_tokens, kind, output_images, output_tokens, cache_read_tokens,
+        cache_write_tokens from capybara.model_usage order by input_tokens`);
+    const zeros = { output_tokens: 0, cache_read_tokens: 0, cache_write_tokens: 0 };
+    expect(await rows()).toEqual([
+      { input_tokens: 7, kind: "embedding", output_images: 0, ...zeros },
+    ]);
+    await sql`insert into capybara.model_usage
+      (org_id, extension, purpose, provider, model, input_tokens, kind, output_images,
+       output_tokens, cache_read_tokens, cache_write_tokens)
+      values ('o2', 'art', 'art.cover', 'p', 'i', 9, 'image_generation', 2, 30, 3, 4)`.execute(db);
+    const text = readFileSync(join(upTo, FILE_0160), "utf8");
+    await sql`set search_path to capybara, public`.execute(db);
+    await sql.raw(text).execute(db);
+    expect(await rows()).toEqual([
+      { input_tokens: 7, kind: "embedding", output_images: 0, ...zeros },
+      {
+        input_tokens: 9,
+        kind: "image_generation",
+        output_images: 2,
+        output_tokens: 30,
+        cache_read_tokens: 3,
+        cache_write_tokens: 4,
+      },
+    ]);
+  });
+});

@@ -109,7 +109,7 @@ export type PickerProps = {
   /** The note that closes the menu ("从下一条消息起生效"). */
   note?: string;
   /**
-   * One plain action after the items, not a choice (设置审查模型 for an org admin): a menu item
+   * One plain action after the items, not a choice ("Set the review model" for an org admin): a menu item
    * that closes the menu, a ghost button in the phone sheet.
    */
   action?: { label: string; icon?: IconName; onSelect(): void };

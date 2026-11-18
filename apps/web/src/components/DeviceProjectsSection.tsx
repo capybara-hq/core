@@ -139,7 +139,7 @@ export function DeviceProjectsOverview({
 }
 
 /**
- * 设置's projects, beside the access ceiling and the allowlist: the list with 移除 each (after a
+ * The Settings tab's projects, beside the access ceiling and the allowlist: the list with Remove each (after a
  * confirmation), and 添加项目 in a dialog taking the path relative to the base of the device's
  * current mode (§4.2), the base drawn as a fixed prefix. A device without project support says
  * why and offers no form.

@@ -5,6 +5,9 @@ import {
   type EmbedResult,
   type ExtensionManifest,
   type ExtensionPointRef,
+  type ImageGenerateRequest,
+  type ImageGenerateResult,
+  isValidImageGenerationInfo,
   type Logger,
   type ModelCallOptions,
   type ModelEmbeddingInfo,
@@ -131,14 +134,16 @@ export type KernelModelInfo = Omit<ModelInfo, "kind"> & { kind: ModelKind | "oth
  */
 export type ListedModelInfo = KernelModelInfo & { disabled?: boolean };
 
-/** A model `resolve` returns: only `chat` and `embedding` models are callable. */
-export type ResolvedModelInfo = Omit<ModelInfo, "kind"> & { kind: "chat" | "embedding" };
+/** A model `resolve` returns: only `chat`, `embedding` and `image_generation` models are callable. */
+export type ResolvedModelInfo = Omit<ModelInfo, "kind"> & {
+  kind: "chat" | "embedding" | "image_generation";
+};
 
 /**
  * The kind a `resolve` caller needs (default `chat`: every streaming caller); `callable` accepts
- * either callable kind (a purpose target checked against the purpose's own kind).
+ * any callable kind (a purpose target checked against the purpose's own kind).
  */
-export type ExpectedKind = "chat" | "embedding" | "callable";
+export type ExpectedKind = "chat" | "embedding" | "image_generation" | "callable";
 
 /**
  * A provider bound to one org's call options (`orgId` and the effective config, spec B §5.5): the
@@ -149,6 +154,11 @@ export interface BoundProvider {
   stream(req: ModelRequest, opts: { signal: AbortSignal }): AsyncIterable<ModelStreamEvent>;
   /** Present when the provider implements `embed`. */
   embed?(req: EmbedRequest, opts: { signal: AbortSignal }): Promise<EmbedResult>;
+  /** Present when the provider implements `generateImage`. */
+  generateImage?(
+    req: ImageGenerateRequest,
+    opts: { signal: AbortSignal },
+  ): Promise<ImageGenerateResult>;
 }
 
 function bindProvider(impl: ModelProvider, call: ModelCallOptions): BoundProvider {
@@ -158,6 +168,13 @@ function bindProvider(impl: ModelProvider, call: ModelCallOptions): BoundProvide
   if (typeof impl.embed === "function") {
     bound.embed = (req, opts) =>
       (impl.embed as NonNullable<ModelProvider["embed"]>)(req, { signal: opts.signal, ...call });
+  }
+  if (typeof impl.generateImage === "function") {
+    bound.generateImage = (req, opts) =>
+      (impl.generateImage as NonNullable<ModelProvider["generateImage"]>)(req, {
+        signal: opts.signal,
+        ...call,
+      });
   }
   return bound;
 }
@@ -222,7 +239,7 @@ type Target =
  * Org-bound (spec B §5.5, A §6): every list and call is made for an org with the provider's
  * effective config there (`EffectiveConfigs.get`), passed as `{ orgId, config }`. A provider is on
  * in an org only when the org enabled it, like every other extension (`enabledExtensionsQuery`: the
- * org's switch on, or a required bootstrap plugin); one not enabled there, or whose effective
+ * org's switch on, or always on: required or builtin); one not enabled there, or whose effective
  * config is not valid there, offers no models there. The admin view (no org) lists with the
  * platform config.
  *
@@ -381,6 +398,11 @@ export class ProviderRegistry {
         else if (!isValidEmbeddingInfo(m.embedding)) problem = "malformed embedding info";
         else if (typeof impl.embed !== "function") {
           problem = "an embedding model from a provider without embed";
+        }
+      } else if (kind === "image_generation") {
+        // absent info (or a provider without generateImage) stays listed, list-only
+        if (m.imageGeneration !== undefined && !isValidImageGenerationInfo(m.imageGeneration)) {
+          problem = "malformed image generation info";
         }
       }
       if (problem !== undefined) {
@@ -587,11 +609,15 @@ export class ProviderRegistry {
       );
     }
     const info = (await this.models(p, t)).find((m) => m.id === ref.model);
-    if (!info || (info.kind !== "chat" && info.kind !== "embedding")) throw unavailable();
+    if (!info) throw unavailable();
+    if (info.kind === "image_generation") {
+      // callable only with valid info and a provider that implements generateImage
+      if (!info.imageGeneration || typeof p.impl.generateImage !== "function") throw unavailable();
+    } else if (info.kind !== "chat" && info.kind !== "embedding") throw unavailable();
     if (kind !== "callable" && info.kind !== kind) {
       throw new ApiError(
         "agent.model_unavailable",
-        `Model ${ref.provider}/${ref.model} is not ${kind === "embedding" ? "an" : "a"} ${kind} model`,
+        `Model ${ref.provider}/${ref.model} is not ${/^[aeiou]/.test(kind) ? "an" : "a"} ${kind} model`,
       );
     }
     const key = modelKey(ref.provider, ref.model);

@@ -3,7 +3,7 @@
   "schemaVersion": 1,
   "marketplace": {
     "url": "https://github.com/capybara-hq/plugins.git",
-    "commit": "7b9ad17111bc253fbfcd70b2cdeb6aefb4d43497"
+    "commit": "d83e667fb99d3251dc148ee2583ad8b4722b711f"
   },
   "plugins": [
     {
@@ -34,8 +34,8 @@
       "name": "openai",
       "source": "npm",
       "npm": "@capybara-hq/plugin-openai",
-      "version": "0.1.0-rc.10",
-      "integrity": "sha512-0dO5a/89XrYy6BMsvbew5yLL2JhBP7mcTYasJARyVbJRfyv5R2ljiVlNiM9QyEXGIrLCn1TPRgylIEIGlMGjlw==",
+      "version": "0.1.0-rc.11",
+      "integrity": "sha512-vFV/CgyPyRdE2OJ2JO+esoDeJ2jP+6jMqIautSOHyCMvpWkrg3UGnUH1iBN1z1Dy0cp293ddwo2CZAmlS6FI7w==",
       "required": false
     },
     {
@@ -50,16 +50,16 @@
       "name": "bailian",
       "source": "npm",
       "npm": "@capybara-hq/plugin-bailian",
-      "version": "0.1.0-rc.9",
-      "integrity": "sha512-DU9D5qiPtKLhyJDI0i3ZF6OI+QeJj9zOIFpzwuyGAay981JbJxe0YRPrIrANhDVxmGUyUmdb1NF7yHSoFgEoKA==",
+      "version": "0.1.0-rc.10",
+      "integrity": "sha512-yXDrvaJh3DtGg/hHpYFSJkoRxQdJCJQM6Y+mNLL1Cff53FraGYAZZi7ZIc1FnK9jFEp6nfHgnsuCJcvRmvpqqg==",
       "required": false
     },
     {
       "name": "ark",
       "source": "npm",
       "npm": "@capybara-hq/plugin-ark",
-      "version": "0.1.0-rc.9",
-      "integrity": "sha512-5LtkgqeJsdU0jTKW5KmdeKoznkKu8jH86BrHJZnAqClhZxHqrErTtvOIAYsY98ia6V3C3X/si2ocMbcz0rAsDg==",
+      "version": "0.1.0-rc.10",
+      "integrity": "sha512-8SRYcBBb/wROJX8ByBisL/SKNg7z4RvWFq8X7L+944QBzSed4YHwNATLRDTL4pW1l6VIC2rr+0DeSBCjmsF4Qw==",
       "required": false
     },
     {
@@ -90,8 +90,8 @@
       "name": "sandbox-docker",
       "source": "npm",
       "npm": "@capybara-hq/plugin-sandbox-docker",
-      "version": "0.1.0-rc.18",
-      "integrity": "sha512-H954po34kPuuG8gmORWD1C7f5wKknP6TmoeQjXvmDMpIfI5EBQlkJVbM16/74q+wk4Na31d9MKo0Z9qsT0tCjw==",
+      "version": "0.1.0-rc.19",
+      "integrity": "sha512-kzxoniwY4XgsjlfZTx6RAIao1P6876hED9fGnl8Z8USH7RE51t/3HbwUE5ljfhf7+pp0uB8M0eUjogVm8Jf3EA==",
       "required": false
     },
     {
@@ -115,8 +115,8 @@
       "name": "file-preview",
       "source": "npm",
       "npm": "@capybara-hq/plugin-file-preview",
-      "version": "0.1.0-rc.0",
-      "integrity": "sha512-ClsZznUmoUO+Bc3uzp//i3BBw43nWybbtJhMfL073VGCP3i3eP70uymaC+hzMSurnAFk8As2fa/3WgGL23V5Ig==",
+      "version": "0.1.0-rc.2",
+      "integrity": "sha512-pEV/P8ahHt2wU3xudhUmJKX6sKfJCG+q+MNo0T+AiySl31TyPl7bsg9el5Romtg3iFbFlOh7DameL5YgAAzVnw==",
       "required": false,
       "builtin": true
     }

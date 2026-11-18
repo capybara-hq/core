@@ -27,6 +27,7 @@ export const BUILTIN = {
   TaskList: "TaskList",
   WebSearch: "WebSearch",
   WebFetch: "WebFetch",
+  GenerateImage: "GenerateImage",
   Platform: "Platform",
   CurrentTime: "CurrentTime",
   ScheduleCreate: "ScheduleCreate",
@@ -102,7 +103,8 @@ export const SCHEDULE_TOOL_NAMES: readonly BuiltinName[] = [
  * by the registry; `Agent` dispatches sub-agents and its description is built per agent;
  * `SendMessage` and `SubagentHandback` are added by the registry ({@link SUBAGENT_MESSAGE_TOOLS}).
  * `Platform` calls the platform's own operations as the run's person (Platform tool spec).
- * `CurrentTime` reads the clock (the run context carries only the date). The schedule tools
+ * `CurrentTime` reads the clock (the run context carries only the date). `GenerateImage` makes
+ * images with the org's `image` purpose model (image generation spec §5.3). The schedule tools
  * manage the person's scheduled tasks ({@link SCHEDULE_TOOL_NAMES}).
  */
 export const BUILTIN_TOOL_NAMES: readonly BuiltinName[] = [
@@ -115,6 +117,7 @@ export const BUILTIN_TOOL_NAMES: readonly BuiltinName[] = [
   BUILTIN.SendMessage,
   BUILTIN.SubagentHandback,
   ...WEB_TOOL_NAMES,
+  BUILTIN.GenerateImage,
   BUILTIN.Platform,
   BUILTIN.CurrentTime,
   ...SCHEDULE_TOOL_NAMES,
@@ -207,6 +210,7 @@ export const BUILTIN_TOOL_KINDS: Readonly<Record<string, ToolKind>> = {
   [BUILTIN.SubagentHandback]: "meta",
   [BUILTIN.WebSearch]: "search",
   [BUILTIN.WebFetch]: "read",
+  [BUILTIN.GenerateImage]: "tool",
   [BUILTIN.Platform]: "tool",
   [BUILTIN.CurrentTime]: "tool",
   [BUILTIN.ScheduleCreate]: "tool",

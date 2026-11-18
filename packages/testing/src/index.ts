@@ -211,6 +211,7 @@ export {
   waitForTerminal,
 } from "./kernel-helpers.js";
 export {
+  FAKE_PNG_BASE64,
   isPngBase64,
   pdfBase64,
   pdfSampleWord,

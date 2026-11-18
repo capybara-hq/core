@@ -1070,3 +1070,112 @@ describe("the permission review of a managed call", () => {
     expect(built.kind === "proposal" && built.candidate.targetPath).toBe("/outside/report.txt");
   });
 });
+
+/**
+ * Image generation spec §5.3 on a permission profile: a `GenerateImage` call with `file_path` is a
+ * permission candidate exactly like `Write` (every path it writes judged, the worst outcome
+ * deciding); one without `file_path` writes nothing into the device and proposes nothing.
+ */
+describe("GenerateImage under a permission profile", () => {
+  const facts: PermissionReviewSnapshot = {
+    orgId: "o",
+    rootConversationId: "c",
+    conversationId: "c",
+    deviceId: "review-fixture",
+    accountId: "a",
+    runId: "r",
+    callId: "image-candidate",
+    profile: "approve-for-me",
+    profileRevision: 0,
+    scopeRevision: "scope",
+    authorityRevision: "authority",
+    baseReadDirectories: [WORKSPACE],
+    baseWriteDirectories: [WORKSPACE],
+    baseHosts: [],
+    workingRoot: WORKSPACE,
+    fullAccessCeiling: true,
+    broadProjectReach: true,
+    fullConsent: false,
+    unattended: false,
+    availability: { state: "supported" },
+    policy: {
+      mode: "auto",
+      allowedMode: "auto",
+      modeSource: "device",
+      localAllowedDomains: [],
+      network: { kind: "open-public", hosts: [] },
+    },
+  };
+  const build = (toolKey: string, input: Record<string, unknown>) =>
+    buildPermissionCandidate(
+      { toolKey, specHash: "spec", rawInput: input, validatedInput: input },
+      facts,
+    );
+
+  it("proposes the write directory of every path it writes, as Write does", () => {
+    const write = build("Write", { file_path: "/outside/art/a.png", content: "x" });
+    const one = build("GenerateImage", { prompt: "p", file_path: "/outside/art/a.png" });
+    if (write.kind !== "proposal" || one.kind !== "proposal") throw new Error("expected proposals");
+    expect(one.candidate.permissionScope).toEqual(write.candidate.permissionScope);
+    expect(one.candidate.targetPath).toBe("/outside/art/a.png");
+    const two = build("GenerateImage", { prompt: "p", n: 2, file_path: "/outside/art/a.png" });
+    if (two.kind !== "proposal") throw new Error("expected a proposal");
+    expect(two.candidate.permissionScope.writeDirectories).toEqual(["/outside/art"]);
+    expect(two.candidate.targetPath).toBe("/outside/art/a-1.png, /outside/art/a-2.png");
+  });
+
+  it("in scope inside the workspace, and without file_path", () => {
+    expect(build("GenerateImage", { prompt: "p", file_path: "out/a.png" }).kind).toBe("in-scope");
+    expect(build("GenerateImage", { prompt: "p" }).kind).toBe("in-scope");
+  });
+
+  it("an unbounded path is unsupported, as for Write", () => {
+    expect(build("GenerateImage", { prompt: "p", file_path: "/outside/*.png" }).kind).toBe(
+      "unsupported",
+    );
+  });
+
+  it("the review judges every suffixed path as a Write: the device directory is denied", async () => {
+    const allowed = await call({
+      toolKey: "GenerateImage",
+      input: { prompt: "p", n: 2, file_path: `${WORKSPACE}/out/a.png` },
+      permissionProfile: "approve-for-me",
+    });
+    expect(allowed.decision).toBe("allow");
+    const write = await call({
+      toolKey: "Write",
+      input: { file_path: "/etc/capybara-device/a-1.png", content: "x" },
+      permissionProfile: "approve-for-me",
+    });
+    expect(write).toMatchObject({ decision: "deny", rule: "deny.tooling-edit" });
+    const denied = await call({
+      toolKey: "GenerateImage",
+      input: { prompt: "p", n: 2, file_path: "/etc/capybara-device/a.png" },
+      permissionProfile: "approve-for-me",
+    });
+    expect(denied).toMatchObject({ decision: "deny", rule: "deny.tooling-edit" });
+  });
+
+  it("request-approval asks for a GenerateImage candidate as for a Write candidate", async () => {
+    const input = { prompt: "p", file_path: "/outside/art/a.png" };
+    const built = build("GenerateImage", input);
+    if (built.kind !== "proposal") throw new Error("expected a proposal");
+    const verdict = await call({
+      toolKey: "GenerateImage",
+      input,
+      permissionProfile: "request-approval",
+      permissionCandidate: built.candidate,
+    });
+    expect(verdict.decision).toBe("ask");
+    // without file_path: nothing to review
+    const none = await call({
+      toolKey: "GenerateImage",
+      input: { prompt: "p" },
+      permissionProfile: "request-approval",
+    });
+    expect(none).toMatchObject({
+      decision: "allow",
+      reason: "This tool call needs no command review.",
+    });
+  });
+});

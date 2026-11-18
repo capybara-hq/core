@@ -999,6 +999,13 @@
   border: 1px solid var(--cb-line);
   background: var(--cb-panel);
 }
+/* Fill mode (spec §6.9): the remaining height of the flex column it sits in (a pane's body). */
+.cb-embed[data-fill="true"] {
+  flex: 1 1 0;
+  min-height: 0;
+  height: 100%;
+  box-sizing: border-box;
+}
 /* Inside a box the box is the embed's frame (spec §6.9): no border, no ground of its own. */
 .cb-embed[data-framed="false"] {
   border: 0;

@@ -76,3 +76,7 @@ export function pdfSampleWord(data: unknown): string | null {
   if (!pdf.startsWith("%PDF-")) return null;
   return /\(([A-Z0-9]+)\) Tj/.exec(pdf)?.[1] ?? null;
 }
+
+/** A valid 1x1 PNG, base64; model-fake keeps an identical copy (a test checks they are equal). */
+export const FAKE_PNG_BASE64 =
+  "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC";

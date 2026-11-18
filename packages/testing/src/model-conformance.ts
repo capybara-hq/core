@@ -3,6 +3,7 @@ import {
   type ContentBlock,
   EFFORT_VALUES,
   isModelError,
+  isValidImageGenerationInfo,
   type ModelInfo,
   type ModelParameter,
   type ModelProvider,
@@ -11,6 +12,7 @@ import {
   type ParamValue,
   sanitizeParams,
   validateEmbedResult,
+  validateImageGenerateResult,
   validateParams,
 } from "@capybara-hq/plugin-sdk";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -23,6 +25,8 @@ interface TargetCommon {
     caching: boolean;
     /** Set when the provider lists an embedding model: runs the embedding cases. */
     embedding?: { model: string; dimensions: number };
+    /** Set when the provider lists an image generation model: runs the image cases. */
+    imageGeneration?: { model: string };
   };
   /** caching 用例的稳定前缀大小（约 token 数），默认 5000。 */
   cachePrefixTokens?: number;
@@ -370,6 +374,54 @@ export function describeModelProviderConformance(
         expect(info).toBeDefined();
         if (!info) return;
         expect(validateEmbedResult(req, info, res)).toBeNull();
+      });
+    });
+
+    describe("image generation", () => {
+      const run = async (n: number) => {
+        const img = t.expect.imageGeneration;
+        const provider = t.provider as ModelProvider;
+        if (!img || !provider.generateImage) {
+          throw new Error("the target declares imageGeneration but has no generateImage");
+        }
+        const models = await provider.listModels();
+        const info = models.find((m) => m.id === img.model)?.imageGeneration;
+        if (!info) throw new Error(`model ${img.model} lists no imageGeneration`);
+        const req = {
+          model: img.model,
+          prompt: "a small red square",
+          size: info.defaultSize,
+          n,
+          params: {},
+        };
+        const res = await provider.generateImage(req, { signal: new AbortController().signal });
+        return { req, res, info };
+      };
+
+      it("lists valid imageGeneration info", async (ctx) => {
+        const img = t.expect.imageGeneration;
+        if (!img) return ctx.skip();
+        const models = await t.provider.listModels();
+        const info = models.find((m) => m.id === img.model)?.imageGeneration;
+        expect(isValidImageGenerationInfo(info)).toBe(true);
+      });
+
+      it("generates one image that passes validateImageGenerateResult", async (ctx) => {
+        if (!t.expect.imageGeneration) return ctx.skip();
+        const { req, res, info } = await run(1);
+        expect(validateImageGenerateResult(req, info, res)).toBeNull();
+      });
+
+      // A model that returns one image per call declares maxImages 1; the kernel never asks it
+      // for more, so the suite does not either.
+      it("generates two images when the model allows it", async (ctx) => {
+        const img = t.expect.imageGeneration;
+        if (!img) return ctx.skip();
+        const listed = (await t.provider.listModels()).find((m) => m.id === img.model);
+        if ((listed?.imageGeneration?.maxImages ?? 0) < 2) return ctx.skip();
+        const { req, res, info } = await run(2);
+        expect(res.images).toHaveLength(2);
+        expect(validateImageGenerateResult(req, info, res)).toBeNull();
       });
     });
 

@@ -1,5 +1,101 @@
 # @capybara-hq/capybara
 
+## 0.1.0-rc.51
+
+### Patch Changes
+
+- 106f7c5: The file-preview bootstrap pin moves to rc.2 (capybara-hq/plugins#127): scrollbars draw as the theme's thumb on a clear track. The marketplace pin and the sandbox-docker build contexts move to capybara-hq/plugins d83e667, which also lists releases core had not pinned yet, so those pins move with it: openai rc.11, bailian rc.10 and ark rc.10 (image generation, capybara-hq/plugins#125) and sandbox-docker rc.19 (on core R1, capybara-hq/plugins#123).
+- Updated dependencies [106f7c5]
+  - @capybara-hq/kernel@0.1.0-rc.45
+
+## 0.1.0-rc.50
+
+### Patch Changes
+
+- 5f6f6b1: An extension shipped in a builtin platform plugin (a `builtin: true`, not required bootstrap entry
+  such as file-preview) is now enabled in every org, existing and future, like a required one: the
+  org enablement helpers count live builtin platform catalog items, so its tools, previewers and
+  other org-scoped capabilities work everywhere. Before, its plugin showed on with a locked switch
+  while the extension stayed off in every org with no way to turn it on.
+- Updated dependencies [5f6f6b1]
+  - @capybara-hq/kernel@0.1.0-rc.44
+
+## 0.1.0-rc.49
+
+### Patch Changes
+
+- 2c333b9: The agent form lists GenerateImage while the org's image purpose has a target, and the model purposes pages offer image models for the image purpose and hint when none is mapped.
+  
+  A new member-readable route, GET /api/v1/orgs/:orgId/model-purposes/available, says whether each purpose has a usable model in the org (the image purpose also needs an object store, exactly as GenerateImage does), so the agent form gates GenerateImage for every member.
+- Updated dependencies [ee9a4b5]
+- Updated dependencies [ade6e20]
+- Updated dependencies [2c333b9]
+  - @capybara-hq/kernel@0.1.0-rc.43
+
+## 0.1.0-rc.48
+
+### Patch Changes
+
+- c5d2996: The file-preview bootstrap pin moves to rc.1 (capybara-hq/plugins#121): its THIRD-PARTY-LICENSES.txt covers the whole production dependency closure of the prebuilt bundles. The marketplace pin and the sandbox-docker build contexts move to capybara-hq/plugins c9f2fc7, which only adds that release.
+- c04a4d1: `capybara config migrate-permissions --in <file> --out <file>` converts a config file (or a saved
+  Nacos data id) to the new permission keys (`devices.autoMode` -> `devices.fullAccess`) in place,
+  keeping every other key and comment, refuses conflicting or invalid values, never overwrites the
+  output and names the environment variables to rename.
+- c9fde6f: Add explicit startup CAS activation of resolved permission configuration with bounded PostgreSQL
+  cancellation, idempotent retries and atomic semantic revocation. Ordinary stale restarts cannot replace
+  active deployment authority. Expose the start-only `--activate-permission-config` operator option.
+- 012f74e: `capybara permissions cutover report | freeze | snapshot` drive the permission runtime cutover. The
+  report shows the pre-checks (local devices without a boot identity, cloud devices with unknown
+  incarnations), live replicas on another version, legacy rows only an old unfenced replica writes, the
+  freeze, the retirement obligations and the cloud snapshot's progress. The freeze returns only once
+  its enumeration settled and records it (migration 0158); the snapshot runs the new cloud snapshot
+  driver behind that barrier, under each device's lifecycle lease, idempotently and resumably. The
+  report and the freeze need PostgreSQL only; `--json` prints machine-readable output.
+- Add owner-scoped conversation permission reads and selected-device permission previews to the web
+  query cache, preserving account isolation and direct permission API response shapes. Profile controls
+  and execution changes remain gated by the coordinated runtime cutover.
+- Updated dependencies [8a84219]
+- Updated dependencies [c5d2996]
+- Updated dependencies [ce94b4d]
+- Updated dependencies [ab911e3]
+- Updated dependencies [dbac47e]
+- Updated dependencies [47926ef]
+- Updated dependencies [2ea4298]
+- Updated dependencies [2256b24]
+- Updated dependencies [124eb1f]
+- Updated dependencies [a4974d5]
+- Updated dependencies [09de26a]
+- Updated dependencies [6429c80]
+- Updated dependencies [3069b5d]
+- Updated dependencies [c9fde6f]
+- Updated dependencies [429e837]
+- Updated dependencies [2655a98]
+- Updated dependencies [cdf5abd]
+- Updated dependencies [e366658]
+- Updated dependencies [c94c7c4]
+- Updated dependencies [22617f8]
+- Updated dependencies [87886a2]
+- Updated dependencies [243109f]
+- Updated dependencies [587dbd0]
+- Updated dependencies
+- Updated dependencies [28ff1e5]
+- Updated dependencies [b3b3173]
+- Updated dependencies [8f5af77]
+- Updated dependencies [37da07e]
+- Updated dependencies [46c6a52]
+- Updated dependencies [6454e51]
+- Updated dependencies [e826cf6]
+- Updated dependencies [012f74e]
+- Updated dependencies [af94040]
+- Updated dependencies [dd6d426]
+- Updated dependencies [0f34c66]
+- Updated dependencies [0cdecf3]
+- Updated dependencies [d41a57f]
+- Updated dependencies [fe24223]
+- Updated dependencies [61ca73e]
+- Updated dependencies [bcb5d96]
+  - @capybara-hq/kernel@0.1.0-rc.42
+
 ## 0.1.0-rc.47
 
 ### Patch Changes

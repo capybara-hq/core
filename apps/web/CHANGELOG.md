@@ -1,5 +1,69 @@
 # @capybara-hq/web
 
+## 0.1.0-rc.51
+
+### Patch Changes
+
+- 0364c94: A file previewer embed (`file.preview`, such as the file-preview plugin's sheet, PDF and archive
+  viewers) fills the right panel below its header, frameless like the built-in previews, instead of
+  a 360 px framed iframe. `EmbedFrame` gains `fill`.
+- Updated dependencies [0364c94]
+  - @capybara-hq/design@0.2.0-rc.15
+
+## 0.1.0-rc.50
+
+No changes in this release.
+
+## 0.1.0-rc.49
+
+No changes in this release.
+
+## 0.1.0-rc.48
+
+### Patch Changes
+
+- 04eab10: A new conversation's first send carries the chosen permission profile: Request approval, Approve
+  for me (the default) or Full access after its confirmation for the displayed device and scope, sent
+  with the message through the atomic first-message request (never created and then changed). A lost
+  answer is retried with the same request bytes and id, so it never makes a second conversation; a
+  409 drops Full access consent and asks again, and a changed request is sent as a new one while the
+  original keeps its Retry original. With every local device offline, a restricted first send goes
+  without a device.
+- 780ce49: Devices have no daily auto / sandbox mode in the web any more. The device page shows the owner
+  ceiling read only (Full access available or why not, a local machine's project reach and report
+  time, a notice while the report is stale, blocked, missing or from an older program) and offers
+  only the narrowing the kernel allows: a local machine through the policy op while it is online
+  (its owner widens it on the machine with `capybara-device ceiling set`), a cloud device after a
+  confirmation, Full access allowed again only from that confirmation with `confirmWidening`.
+  Lists, the nameplate and a conversation's properties carry one neutral ceiling mark; the
+  composer's device picker carries none. Adding or removing a project reads the device's
+  permission previews again. New error copy for `device.restart_required`; device and project
+  copy no longer speaks of modes.
+- a4974d5: The device page says up front when a cloud device's sandbox limits must be established again and
+  offers 重建文件 then; the Full access confirmation names the exact network the device then
+  reaches; the ceiling facts follow the kernel's effective owner Full access; a refusal before the
+  migration shows its own copy; and owner ceiling changes appear in the recent changes.
+  Polling after a file reset stops at a deadline, so a marker that stays set never polls forever.
+- 4f45c91: The owner of an interactive conversation changes its permission profile in place: the choice is
+  saved with the revision on display (Full access only after its confirmation for the conversation's
+  own device and scope), and the profile stays marked as last confirmed, without a second change,
+  until a read reaches the saved revision, even when that read fails; Refresh only reads. A 409 reads
+  the state again and asks for a new choice, never resending. An owner's sub-agent conversation
+  follows its main conversation's profile live through the main conversation's stream; viewers read
+  and open nothing. Approval cards in the conversation and the inbox show every directory, host and
+  the target file of a permission request in full, and a request a permission change superseded is
+  final, without actions. Running background work says it keeps the permissions it started with.
+- f058454: Show the three conversation permission profiles (Request approval, Approve for me, Full access)
+  in one neutral look: picker rows may carry an icon, a description and a picker action, in the
+  menu and the phone options sheet. The web shows the profile read-only for now: the new
+  conversation's default and an owner's recorded or inherited profile.
+- 6454e51: Add the dormant recorder of the model-facing permission context: one authority projection shared with operation admission (`SandboxOperationAuthority.readContextLocked`, no call, grant expansion or provider effect), an applied-environment reader over the installed local instance binding and its current runtime attestation, and `PermissionContextRecorder`, which appends a `permission_context` snapshot only when the persisted log's latest one differs, under the ordered authority locks and the run's execution claim. Its failures are named run errors (`run.permission_context_*`, with zh and en copy); it refuses replay conversations. Nothing in production calls it until the request boundary and the managed tool path activate together.
+- af94040: Refuse unsupported recorded permission context markers the same way in request building and replay diagnostics, report a corrupt recorded permission context in a case snapshot as `eval.snapshot_invalid` instead of a provider error, and share the sandbox host coverage rule with the permission context schema.
+- dd6d426: Prepare recorded-only full-run replay of the permission context: a recorded feeder for the target run's permission context events (sparse request coordinates, persistent idempotency), the structural removal of any live permission recorder from replay loop dependencies, original-coordinate drift reported as `permission_profile_changed` (with zh and en labels), and verbatim copies of recorded command reviews and managed device paths. The request boundary that invokes the feeder stays dormant until the paired activation.
+- Updated dependencies [09272da]
+- Updated dependencies [f058454]
+  - @capybara-hq/design@0.2.0-rc.14
+
 ## 0.1.0-rc.47
 
 No changes in this release.

@@ -92,10 +92,17 @@ function chunked(
  * nearest existing ancestor's), and the `/private` form of `/tmp`, `/var` and `/etc`. A root with
  * a control character is refused (fail closed).
  */
-export function macWriteRootSpellings(root: string): string[] {
+export function macWriteRootSpellings(
+  root: string,
+  platform: NodeJS.Platform = process.platform,
+): string[] {
   if ([...root].some((ch) => (ch.codePointAt(0) as number) < 0x20 || ch === "\u007f"))
     throw new Error("A write root with a control character cannot be expressed as a policy");
-  const spellings = new Set([root, root.replace(/^\/(tmp|var|etc)(?=\/|$)/, "/private/$1")]);
+  // only macOS links /tmp, /var and /etc under /private
+  const spellings = new Set([
+    root,
+    ...(platform === "darwin" ? [root.replace(/^\/(tmp|var|etc)(?=\/|$)/, "/private/$1")] : []),
+  ]);
   let anchor = root;
   const missing: string[] = [];
   for (;;) {

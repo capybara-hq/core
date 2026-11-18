@@ -1197,6 +1197,66 @@ describe("a builtin entry", () => {
       ],
     });
   });
+
+  it("with an extension: enabled in every org, existing and later, and locked on (not required)", async () => {
+    await reset();
+    // A deployment with an org before the builtin entry exists
+    const before = await fixture([{ bytes: await packFake("fake-bootstrap-b") }]);
+    const k1 = await boot(before, OBJECT_STORE_CONFIG);
+    await loginAdmin(k1);
+    const existing = await createOrgWithProviders(k1, admin, "Existing");
+    await stopAll();
+
+    // A core upgrade adds a builtin, not required entry that ships an extension (like file-preview)
+    const fx = await fixture([
+      { bytes: await packFake("fake-bootstrap-b") },
+      { bytes: await lifePkg({ name: "eta", version: "1.0.0" }), builtin: true },
+    ]);
+    const k = await boot(fx, OBJECT_STORE_CONFIG);
+    admin = await session(k, "root");
+    expect((await installs()).find((r) => r.name === "eta")).toMatchObject({
+      required: false,
+      desired_state: "enabled",
+    });
+    expect(await itemNamed("eta")).toMatchObject({ builtin: true, scope: "all" });
+    const later = await createOrgWithProviders(k, admin, "Later");
+
+    for (const orgId of [existing, later]) {
+      // No org config row: the builtin item alone turns it on
+      expect(
+        await db
+          .selectFrom("extension_org_configs")
+          .select("plugin")
+          .where("org_id", "=", orgId)
+          .where("plugin", "=", "eta")
+          .execute(),
+      ).toEqual([]);
+      expect((await k.app.get(ExtensionHost).enabledPlugins(orgId)).has("eta")).toBe(true);
+      expect(await isExtensionEnabled(db, orgId, "eta")).toBe(true);
+      expect(await enabledExtensionsByOrg(db).execute()).toContainEqual({
+        org_id: orgId,
+        plugin: "eta",
+      });
+      // The org view: enabled, not switchable, not required
+      const list = await admin({ method: "GET", url: `/api/v1/orgs/${orgId}/extensions` });
+      expect(list.statusCode, list.body).toBe(200);
+      const eta = (list.json().extensions as { plugin: string }[]).find((p) => p.plugin === "eta");
+      expect(eta).toMatchObject({ enabled: true, required: false, switchable: false });
+      // Its tools reach the org's agents
+      const tools = await k.app.get(ToolRegistry).forAgent(orgId, {
+        source: "web",
+        disabledTools: onlyBuiltins([{ kind: "plugin", plugin: "eta", name: "wait" }]),
+      });
+      expect(tools.tools.map((t) => t.key)).toEqual(["plugin__eta__wait"]);
+      // Switching it off is refused: its plugin is builtin
+      const off = await admin({
+        method: "PUT",
+        url: `/api/v1/orgs/${orgId}/extensions/eta`,
+        payload: { enabled: false },
+      });
+      expect(off.statusCode, off.body).toBe(409);
+    }
+  });
 });
 
 const ICON =

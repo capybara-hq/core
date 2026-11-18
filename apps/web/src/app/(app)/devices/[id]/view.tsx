@@ -59,11 +59,11 @@ import NotFound from "../../not-found";
  * band — name, origin, status light and the ceiling mark (Full access available or restricted) on
  * the left, program version, last seen and creation time on the right — the page's one bright
  * element, and the page's title: the PageHeader is title-less, so the name is said once
- * (`titleHidden`). Everything below is quiet and dense: the owner ceiling (read only on 概览, with
- * the narrowing the kernel allows on 设置; no daily mode), the cloud facts (提供方, 资源 and 网络,
+ * (`titleHidden`). Everything below is quiet and dense: the owner ceiling (read only on Overview, with
+ * the narrowing the kernel allows on Settings; no daily mode), the cloud facts (Provider, Resources and Network,
  * each said once), the files and suspension notes, the recent changes, and for a local device its
- * allowlist and machine block (系统 and 断开这台机器).
- * 重命名, 重建文件 (only when its files are lost, a change waits for a file reset or its sandbox
+ * allowlist and machine block (System and Disconnect this machine).
+ * Rename, Rebuild files (only when its files are lost, a change waits for a file reset or its sandbox
  * limits must be established again, said up front in a callout; behind a confirmation; a job, so the page then
  * polls until the files are back) and 删除 (typing its name; the files are deleted with it, a
  * destructive item of the ⋯ menu; deleting 个人设备 says a new empty one is created the next time
@@ -82,7 +82,7 @@ export default function DeviceView({ id }: { id: string }) {
 function DevicePage({ orgId, id }: { orgId: string; id: string }) {
   const t = useTranslations("devices");
   const scope = usePagePath("org");
-  // 重建文件 is a job: after the request the page polls until the files are back, within a deadline
+  // Rebuild files is a job: after the request the page polls until the files are back, within a deadline
   const [resetAt, setResetAt] = useState<number | null>(null);
   const read = usePageQuery({
     ...deviceQuery(orgId, id),

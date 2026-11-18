@@ -5,9 +5,15 @@ import {
   type ModelRequest,
   type ModelStreamEvent,
 } from "@capybara-hq/plugin-sdk";
+import { FAKE_PNG_BASE64 } from "@capybara-hq/testing";
 import { describe, expect, it } from "vitest";
 import plugin from "../src/index.js";
-import { createFakeProvider, type Kv, type Sleep } from "../src/script.js";
+import {
+  createFakeProvider,
+  FAKE_PNG_BASE64 as FAKE_PNG_BASE64_LOCAL,
+  type Kv,
+  type Sleep,
+} from "../src/script.js";
 
 function memKv(): Kv & { store: Map<string, string>; ttls: number[] } {
   const store = new Map<string, string>();
@@ -464,5 +470,112 @@ describe("model-fake extension per-call config", () => {
     });
     const ok = await provided[0]?.listModels({ config: { models: [{ id: "x" }] } });
     expect(ok?.map((m) => m.id)).toEqual(["x"]);
+  });
+});
+
+describe("model-fake image generation", () => {
+  const provider = () =>
+    createFakeProvider({
+      kv: memKv(),
+      models: [{ id: "fake-1" }, { id: "img-1", kind: "image_generation" }],
+    });
+  const imgReq = (prompt: string, n = 1) => ({
+    model: "img-1",
+    prompt,
+    size: { width: 1024, height: 1024 },
+    n,
+    params: {},
+  });
+  const sig = () => ({ signal: new AbortController().signal });
+
+  it("keeps its PNG constant equal to the testing package's", () => {
+    expect(FAKE_PNG_BASE64_LOCAL).toBe(FAKE_PNG_BASE64);
+  });
+
+  it("lists the scripted image generation info", async () => {
+    const models = await provider().listModels();
+    expect(models.find((m) => m.id === "img-1")?.imageGeneration).toEqual({
+      sizes: [
+        { width: 1024, height: 1024 },
+        { width: 1536, height: 1024 },
+        { width: 1024, height: 1536 },
+      ],
+      defaultSize: { width: 1024, height: 1024 },
+      maxImages: 4,
+      maxReferenceImages: 2,
+      outputMediaTypes: ["image/png"],
+    });
+    expect(models.find((m) => m.id === "fake-1")?.imageGeneration).toBeUndefined();
+  });
+
+  it("generates n scripted images", async () => {
+    const res = await provider().generateImage?.(imgReq("a cat", 3), sig());
+    expect(res?.images).toEqual(Array(3).fill({ mediaType: "image/png", data: FAKE_PNG_BASE64 }));
+    expect(res?.usage.outputImages).toBe(3);
+    expect(res?.revisedPrompt).toBe("revised: a cat");
+  });
+
+  it("refuse script raises refusal", async () => {
+    await expect(provider().generateImage?.(imgReq("refuse this"), sig())).rejects.toMatchObject({
+      kind: "refusal",
+      message: "Scripted refusal",
+    });
+  });
+
+  it("fail script raises the named kind", async () => {
+    await expect(
+      provider().generateImage?.(imgReq("fail rate_limited"), sig()),
+    ).rejects.toMatchObject({ kind: "rate_limited" });
+  });
+
+  it("stall waits for abort", async () => {
+    const ac = new AbortController();
+    let settled = false;
+    const pending = provider().generateImage?.(imgReq("stall"), { signal: ac.signal });
+    pending?.then(
+      () => {
+        settled = true;
+      },
+      () => {
+        settled = true;
+      },
+    );
+    await Promise.resolve();
+    expect(settled).toBe(false);
+    ac.abort();
+    await expect(pending).rejects.toMatchObject({ kind: "aborted" });
+  });
+
+  it("short returns one image too few", async () => {
+    const res = await provider().generateImage?.(imgReq("short", 3), sig());
+    expect(res?.images).toHaveLength(2);
+  });
+
+  it("url returns a URL instead of base64", async () => {
+    const res = await provider().generateImage?.(imgReq("url"), sig());
+    expect(res?.images[0]?.data).toBe("https://example.invalid/x.png");
+  });
+
+  it("rejects non-image models, bad sizes and too many images", async () => {
+    const p = provider();
+    await expect(
+      p.generateImage?.({ ...imgReq("x"), model: "fake-1" }, sig()),
+    ).rejects.toMatchObject({ kind: "invalid_request" });
+    await expect(
+      p.generateImage?.({ ...imgReq("x"), size: { width: 1, height: 1 } }, sig()),
+    ).rejects.toMatchObject({ kind: "invalid_request" });
+    await expect(p.generateImage?.(imgReq("x", 5), sig())).rejects.toMatchObject({
+      kind: "invalid_request",
+    });
+  });
+
+  it("honours maxImages and maxReferenceImages config", async () => {
+    const p = createFakeProvider({
+      kv: memKv(),
+      models: [{ id: "img-2", kind: "image_generation", maxImages: 2, maxReferenceImages: 0 }],
+    });
+    const info = (await p.listModels())[0]?.imageGeneration;
+    expect(info?.maxImages).toBe(2);
+    expect(info?.maxReferenceImages).toBe(0);
   });
 });

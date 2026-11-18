@@ -102,6 +102,7 @@ import { Breaker, breakerOpenMessage } from "./breaker.js";
 import { BUILTIN, SEND_MESSAGE, SUBAGENT_HANDBACK, TOOL_SEARCH } from "./builtin-names.js";
 import { AGENT_TOOL, AgentToolInput } from "./builtins/agent.js";
 import { HandbackInput } from "./builtins/handback.js";
+import { generateImagePaths } from "./builtins/image/paths.js";
 import {
   DEVICE_CODE_PATTERN,
   deviceCodeIdemKey,
@@ -534,10 +535,20 @@ type ToolCall = { id: string; name: string; input: unknown };
 
 /**
  * The tools the command review covers (auto mode spec §5.1): the shell and the file tools whose
- * writes may leave the workspace. Any other tool call is not reviewed (the review service answers
- * `allow` for it too; the pipeline skips the facts read).
+ * writes may leave the workspace, and `GenerateImage` when it writes its images into the device
+ * (`file_path`; image generation spec §5.3, reviewed as a `Write`). Any other tool call is not
+ * reviewed (the review service answers `allow` for it too; the pipeline skips the facts read).
  */
-const REVIEWED_TOOL_KEYS: ReadonlySet<string> = new Set(["Bash", "Write", "Edit"]);
+const REVIEWED_TOOL_KEYS: ReadonlySet<string> = new Set(["Bash", "Write", "Edit", "GenerateImage"]);
+
+/** Whether the review covers this call ({@link REVIEWED_TOOL_KEYS}; `GenerateImage` with a path). */
+const isReviewedCall = (toolKey: string, input: unknown): boolean =>
+  REVIEWED_TOOL_KEYS.has(toolKey) &&
+  (toolKey !== "GenerateImage" || generateImagePaths(input).length > 0);
+
+/** The paths a reviewed write writes: `file_path`, or every path of a `GenerateImage` call. */
+const writePathsOf = (toolKey: string, input: unknown): string[] =>
+  toolKey === "GenerateImage" ? generateImagePaths(input) : [textField(input, "file_path")];
 /**
  * A call that needs reach beyond the working directory on a device whose permission support is
  * not verified: no approval could let admission run it, so nothing is offered.
@@ -1679,7 +1690,7 @@ export class ToolPipeline {
     const review = this.deps.review;
     const devices = this.deps.devices;
     if (review === undefined || devices === undefined) return { kind: "continue" };
-    if (!REVIEWED_TOOL_KEYS.has(tool.key)) return { kind: "continue" };
+    if (!isReviewedCall(tool.key, input)) return { kind: "continue" };
     const asked = await this.deps.approvals.commandForCall(ctx.runId, call.id);
     const rootConversationId = ctx.parent?.rootConversationId ?? ctx.conversationId;
     if (asked !== null && asked.status !== "superseded") {
@@ -1773,11 +1784,14 @@ export class ToolPipeline {
       // the whole command the approval covers (the event keeps a clamped copy for display)
       command,
       // a relative path as it will be written: resolved against the working root
+      // (every path a GenerateImage call writes, comma-separated)
       ...(kind === "write" && {
         path: clipText(
-          facts.workingRoot === undefined
-            ? textField(input, "file_path")
-            : pathAgainstWorkingRoot(textField(input, "file_path"), facts.workingRoot),
+          writePathsOf(tool.key, input)
+            .map((p) =>
+              facts.workingRoot === undefined ? p : pathAgainstWorkingRoot(p, facts.workingRoot),
+            )
+            .join(", "),
           4096,
         ),
       }),

@@ -284,6 +284,23 @@ describe("EmbedFrame", () => {
     wrap(<EmbedFrame src="about:blank" title="f" height={480} onMessage={() => {}} />);
     expect(screen.getByTitle("f").getAttribute("height")).toBe("480");
   });
+  it("fill: no fixed height, frameless by default (the pane is its box), framed on request", () => {
+    wrap(<EmbedFrame src="about:blank" title="f" height={480} fill onMessage={() => {}} />);
+    const frame = screen.getByTitle("f");
+    expect(frame.getAttribute("data-fill")).toBe("true");
+    expect(frame.hasAttribute("height")).toBe(false);
+    expect(frame.getAttribute("data-framed")).toBe("false");
+    cleanup();
+    wrap(<EmbedFrame src="about:blank" title="g" fill framed onMessage={() => {}} />);
+    expect(screen.getByTitle("g").getAttribute("data-framed")).toBe("true");
+  });
+  it("without fill: a fixed height and no fill marker", () => {
+    wrap(<EmbedFrame src="about:blank" title="f" onMessage={() => {}} />);
+    const frame = screen.getByTitle("f");
+    expect(frame.getAttribute("height")).toBe("360");
+    expect(frame.hasAttribute("data-fill")).toBe(false);
+    expect(frame.getAttribute("data-framed")).toBe("true");
+  });
   it("只转发来自本 iframe 的 message，并暴露 frameRef", () => {
     const onMessage = vi.fn();
     const ref = createRef<HTMLIFrameElement>();

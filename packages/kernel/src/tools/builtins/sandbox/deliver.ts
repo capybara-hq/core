@@ -1,13 +1,7 @@
-import { randomUUID } from "node:crypto";
-import {
-  ExtensionPointUnavailableError,
-  MEDIA_NAME_MAX_CHARS,
-  ToolError,
-  type ToolSpec,
-} from "@capybara-hq/plugin-sdk";
+import { MEDIA_NAME_MAX_CHARS, ToolError, type ToolSpec } from "@capybara-hq/plugin-sdk";
 import { isValidArtifactName } from "../../../conversations/events.js";
-import { ApiError } from "../../../errors.js";
 import type { BuiltinTool } from "../../registry.js";
+import { NO_STORAGE, NO_STORAGE_REASON, storeArtifacts } from "../artifacts.js";
 import {
   checkPath,
   checkPathShape,
@@ -118,11 +112,6 @@ function defaultName(path: string): string {
   return isValidArtifactName(out) ? out : "artifact";
 }
 
-const NO_STORAGE =
-  "File storage is not configured in this deployment, so files cannot be delivered; ask an administrator, or provide the result in your reply instead.";
-/** 「工具不可用」提醒里的原因（内核在后面补句号）。 */
-const NO_STORAGE_REASON = NO_STORAGE.slice(0, -1);
-
 /** 内置工具 `Deliver`：把沙箱里的文件存进对象存储，写 `artifact_created`，用户可下载。 */
 export function sandboxDeliverTool(deps: SandboxToolDeps): BuiltinTool {
   return {
@@ -161,50 +150,12 @@ export function sandboxDeliverTool(deps: SandboxToolDeps): BuiltinTool {
         },
       );
       const name = given ?? defaultName(path);
-      // 上传在沙箱锁之外进行：不占着沙箱
-      const artifactId = randomUUID();
-      const objectKey = `artifacts/${ctx.conversationId}/${artifactId}`;
+      // uploaded outside the device lock: the device is not held meanwhile
       const contentType = contentTypeFor(name);
-      try {
-        await deps.storage.kernel(ctx.orgId).put(objectKey, data, {
-          contentType,
-          size: data.byteLength,
-          signal: ctx.signal,
-        });
-      } catch (e) {
-        if (
-          (e instanceof ApiError && e.code === "storage.unavailable") ||
-          e instanceof ExtensionPointUnavailableError
-        ) {
-          throw new ToolError(NO_STORAGE);
-        }
-        throw e;
-      }
-      try {
-        await deps.eventLog.append(ctx.conversationId, [
-          {
-            type: "artifact_created",
-            ...(ctx.runId !== undefined && { runId: ctx.runId }),
-            payload: {
-              artifactId,
-              name,
-              contentType,
-              size: data.byteLength,
-              objectKey,
-              sourcePath: path,
-              callId: ctx.callId,
-            },
-          },
-        ]);
-      } catch (e) {
-        // 事件没写进去：对象没人引用，尽力删掉
-        await deps.storage
-          .kernel(ctx.orgId)
-          .delete(objectKey)
-          .catch(() => {});
-        throw e;
-      }
-      await deps.eventLog.publishChanged?.(ctx.conversationId, "files");
+      const [stored] = await storeArtifacts(deps, ctx, [
+        { name, contentType, data, sourcePath: path },
+      ]);
+      const artifactId = (stored as { artifactId: string }).artifactId;
       const text = `Delivered ${name} (${data.byteLength} bytes, ${contentType}) to the user as artifact ${artifactId}; the user can download it from the conversation.`;
       return {
         content: [{ type: "text", text: withNotices(notices, text) }],

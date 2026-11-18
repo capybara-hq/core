@@ -3,6 +3,7 @@ import type { UsageReportPayload } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Queue } from "bullmq";
 import { Redis } from "ioredis";
+import { sql } from "kysely";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { EventLog } from "../../src/conversations/event-log.js";
 import type { ConversationEvent } from "../../src/conversations/events.js";
@@ -321,6 +322,76 @@ describe("usage.report delivery", () => {
       eventId: ids[1],
       purpose: "compaction",
       usage: { inputTokens: 800, outputTokens: 70, cacheReadTokens: 0, cacheWriteTokens: 0 },
+    });
+  });
+
+  it("a GenerateImage call's usage event is reported with purpose image and outputImages", async () => {
+    await probe({});
+    const conv = await createConv(owner, orgId, agentId);
+    await postMessage(owner, orgId, conv, "echo:draw");
+    await waitForTerminal(db, conv, 1, 20_000);
+    const [step] = (await eventsOf(db, conv)).filter((e) => e.type === "usage");
+    const runId = (step as ConversationEvent).runId;
+    if (runId === null) throw new Error("the turn's usage event has no run");
+    // written as the GenerateImage tool writes it (image generation spec §7); seeded as a row so
+    // this case does not depend on the event schema of the tool's own change
+    const seq = await db.transaction().execute(async (tx) => {
+      // the seq is allocated as EventLog allocates it (the conversation row's last_seq, locked)
+      const { last_seq } = await tx
+        .updateTable("conversations")
+        .set({ last_seq: sql`last_seq + 1` })
+        .where("id", "=", conv)
+        .returning("last_seq")
+        .executeTakeFirstOrThrow();
+      const next = Number(last_seq);
+      await tx
+        .insertInto("conversation_events")
+        .values({
+          conversation_id: conv,
+          seq: String(next),
+          type: "usage",
+          run_id: runId,
+          idem_key: null,
+          payload: JSON.stringify({
+            step: 0,
+            provider: "model-fake",
+            model: "fake-image",
+            inputTokens: 7,
+            outputTokens: 0,
+            cacheReadTokens: 0,
+            cacheWriteTokens: 0,
+            outputImages: 2,
+            purpose: "image",
+            callId: "call-img",
+          }),
+        })
+        .execute();
+      return next;
+    });
+    const id = `${conv}/${seq}`;
+    await addJob({ conversationId: conv, seq }, usageReportJobId(conv, seq));
+    const got = await waitFor(
+      async () => {
+        const d = await probeUsage([id]);
+        return d[id]?.calls === 1 && d[id]?.last != null ? d : null;
+      },
+      10_000,
+      "image usage delivered",
+    );
+    expect(got[id]?.last).toMatchObject({
+      eventId: id,
+      purpose: "image",
+      conversationId: conv,
+      runId,
+      provider: "model-fake",
+      model: "fake-image",
+      usage: {
+        inputTokens: 7,
+        outputTokens: 0,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+        outputImages: 2,
+      },
     });
   });
 
@@ -969,6 +1040,52 @@ describe("usage.report for model usage outside conversations (spec B §5.4)", ()
     await waitFor(async () => (await reportedAt(id)) !== null, 10_000, "reported_at");
     const job = await queue.getJob(modelUsageJobId(id));
     expect(job?.id).toBe(`usage-model-${id}`);
+  });
+
+  it("an image generation row reports purpose image with its output images", async () => {
+    await probe({});
+    const row = await db
+      .insertInto("model_usage")
+      .values({
+        org_id: orgId,
+        extension: "image-consumer",
+        purpose: "image-consumer.art",
+        kind: "image_generation",
+        provider: "model-fake",
+        model: "fake-image",
+        input_tokens: 5,
+        output_tokens: 30,
+        cache_read_tokens: 3,
+        cache_write_tokens: 4,
+        output_images: 2,
+      })
+      .returning(["id", "occurred_at"])
+      .executeTakeFirstOrThrow();
+    await addJob({ usageId: row.id }, modelUsageJobId(row.id));
+    const got = await waitFor(
+      async () => {
+        const d = await probeUsage([row.id]);
+        return d[row.id]?.calls === 1 && d[row.id]?.last != null ? d : null;
+      },
+      10_000,
+      "image usage delivered",
+    );
+    expect(got[row.id]?.last).toEqual({
+      eventId: row.id,
+      purpose: "image",
+      orgId,
+      extension: "image-consumer",
+      provider: "model-fake",
+      model: "fake-image",
+      usage: {
+        inputTokens: 5,
+        outputTokens: 30,
+        cacheReadTokens: 3,
+        cacheWriteTokens: 4,
+        outputImages: 2,
+      },
+      occurredAt: new Date(row.occurred_at).toISOString(),
+    });
   });
 
   it("a failing handler is retried with the same eventId; the row is marked once delivered", async () => {

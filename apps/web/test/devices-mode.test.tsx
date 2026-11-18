@@ -177,7 +177,7 @@ const openSettings = async () => {
   await user.click(await screen.findByRole("tab", { name: E.detail.tabSettings }));
   return user;
 };
-/** The access ceiling section of 设置 (or 概览). */
+/** The access ceiling section of Settings (or Overview). */
 const ceilingSection = () =>
   screen.findByRole("heading", { name: C.title }).then((h) => {
     const section = h.closest("section") ?? h.parentElement?.parentElement;
@@ -246,7 +246,7 @@ describe("a local device's owner ceiling", () => {
     expect(factRow(C.fullAccess)?.textContent).toContain(C.full.available);
     expect(factRow(C.reach)?.textContent).toContain(C.reachValue["os-user"]);
     expect(factRow(C.reported)).toBeTruthy();
-    // values only on 概览: no control
+    // values only on Overview: no control
     expect(within(section).queryByRole("button")).toBeNull();
     await settle();
     expect(calls.every((c) => c.method === "GET")).toBe(true);
@@ -386,7 +386,7 @@ describe("a local device's owner ceiling", () => {
     await ceilingSection();
     expect(screen.getByText(C.notice.noMachine)).toBeTruthy();
     expect(factRow(C.fullAccess)?.textContent).toContain(C.full.unconfirmed);
-    // 设置 names the login step only: the ceiling command needs a connected computer
+    // Settings names the login step only: the ceiling command needs a connected computer
     await openSettings();
     await ceilingSection();
     expect(screen.queryByRole("button", { name: `Copy ${COMMAND}` })).toBeNull();

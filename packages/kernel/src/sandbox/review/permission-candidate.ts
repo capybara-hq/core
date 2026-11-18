@@ -2,6 +2,7 @@ import { isIP } from "node:net";
 import path from "node:path";
 import { validateAllowHost } from "@capybara-hq/plugin-sdk";
 import { ApiError } from "../../errors.js";
+import { generateImagePaths } from "../../tools/builtins/image/paths.js";
 import { coversHost } from "../modes.js";
 import type {
   PermissionCandidate,
@@ -86,20 +87,34 @@ export function buildPermissionCandidate(
     if (!base.some((root) => withinDirectory(normalized, root)))
       (write ? writes : reads).push(normalized);
   };
+  // the paths a file call names: `file_path`, or every path a `GenerateImage` call writes into the
+  // device (none without `file_path`; the suffixed paths of several images), each judged
+  const targets =
+    call.toolKey === "GenerateImage"
+      ? generateImagePaths(call.validatedInput)
+      : ["Read", "Write", "Edit"].includes(call.toolKey) && typeof input?.file_path === "string"
+        ? [input.file_path]
+        : [];
   try {
-    if (["Read", "Write", "Edit"].includes(call.toolKey) && typeof input?.file_path === "string") {
-      if (input.file_path.length > 4096 || /[\0*?[\]{}]/.test(input.file_path))
-        throw new Error("Invalid target path");
-      // a `..` segment proposes nothing: the file tools refuse that path shape themselves. A `.`
-      // segment is normalized lexically like any other spelling (`/outside/./x` is `/outside/x`)
-      if (input.file_path.split("/").some((segment) => segment === ".."))
-        return { kind: "in-scope" };
-      targetPath = path.posix.resolve(facts.workingRoot, input.file_path);
+    if (targets.length > 0) {
       const write = call.toolKey !== "Read",
         base = write ? facts.baseWriteDirectories : facts.baseReadDirectories;
-      if (!base.some((root) => withinDirectory(targetPath as string, root))) {
-        proposeDirectory(path.posix.dirname(targetPath), write);
+      for (const target of targets)
+        if (target.length > 4096 || /[\0*?[\]{}]/.test(target))
+          throw new Error("Invalid target path");
+      // a `..` segment proposes nothing: the file tools refuse that path shape themselves. A `.`
+      // segment is normalized lexically like any other spelling (`/outside/./x` is `/outside/x`)
+      if (targets.some((target) => target.split("/").some((segment) => segment === "..")))
+        return { kind: "in-scope" };
+      const resolved = targets.map((target) => path.posix.resolve(facts.workingRoot, target));
+      for (const target of resolved) {
+        if (!base.some((root) => withinDirectory(target, root))) {
+          proposeDirectory(path.posix.dirname(target), write);
+        }
       }
+      // what the person approves: every path the call writes
+      targetPath = resolved.join(", ");
+      if (targetPath.length > 4096) throw new Error("Invalid target path");
     } else if (call.toolKey === "Bash" && typeof input?.command === "string") {
       const parsed = parseCommand(input.command);
       for (const command of parsed?.commands ?? []) {

@@ -85,6 +85,17 @@ export class ModelsOperations implements OnModuleInit {
         }),
       }),
       defineOperation({
+        id: "models.purpose-availability",
+        description:
+          "Whether each model purpose (such as image generation) has a usable model in this org now, without naming models.",
+        input: z.object({}).strict(),
+        example: {},
+        authz: { orgAction: "agents.use" },
+        mirrors: ["GET /api/v1/orgs/:orgId/model-purposes/available"],
+        confirm: "read",
+        run: async (_input, ctx) => ({ purposes: await this.purposes.availability(ctx.orgId) }),
+      }),
+      defineOperation({
         id: "models.set-purpose",
         description:
           "Set the org's model for one purpose (org admins): target.model is { provider, model } with optional params, or target null to clear the override and fall back to the platform default. The model must be usable in the org and of the purpose's kind.",

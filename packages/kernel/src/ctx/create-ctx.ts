@@ -41,12 +41,14 @@ import {
 } from "kysely";
 import { conversationTopic } from "../conversations/event-log.js";
 import { kernelDb } from "../db/kernel-schema.js";
+import { ApiError } from "../errors.js";
 import { enabledExtensionsQuery, isExtensionEnabled } from "../extensions/enabled.js";
 import { checkHookRegistration, type RegisteredHook } from "../extensions/hooks.js";
 import { RegistrationLedger } from "../extensions/ledger.js";
 import { audit } from "../identity/audit.js";
 import type { LockService } from "../infra/lock/lock.service.js";
 import type { ModelEmbeddings } from "../models/embeddings.js";
+import type { ModelImages } from "../models/images.js";
 import type { OrgRole } from "../orgs/roles.js";
 import type { HookRunner } from "../runtime/hook-calls.js";
 import { PrefixedStorage } from "../storage/storage.service.js";
@@ -83,17 +85,22 @@ export interface KernelDeps {
   /** Verifies embed tokens (`ctx.ui` embed requests; the one `EmbedTokens` provider). */
   embedTokens: Pick<EmbedTokens, "verify">;
   /**
-   * The `ctx.models` broker (the one `ModelEmbeddings` provider). Absent (a ctx built alone in a
-   * test): `ctx.models` calls reject.
+   * The `ctx.models` brokers: embeddings (the one `ModelEmbeddings` provider) and image generation
+   * (the one `ModelImages` provider). Absent (a ctx built alone in a test): `ctx.models` calls
+   * reject.
    */
-  models?: Pick<ModelEmbeddings, "embed" | "describe">;
+  models?: {
+    embeddings: Pick<ModelEmbeddings, "embed" | "describe">;
+    images: Pick<ModelImages, "generateForExtension" | "describeForExtension">;
+  };
   /**
    * What `ctx.net` reads per call: the kernel config (`net.*`) and the org network allowances.
    * Absent (a ctx built alone in a test): `ctx.net.fetch` rejects every request.
    */
   net?: ExtensionNetServices;
   /**
-   * The host's hook registry: `ctx.models.embed` fires `model.request` through it (spec B §5.4).
+   * The host's hook registry: `ctx.models.embed` and `generateImage` fire `model.request` through
+   * it (spec B §5.4, image generation spec §5.6).
    * A required key, so no builder leaves policy hooks out by omission (fail closed by
    * construction); only a ctx built alone in a test passes `undefined` (no hooks fire).
    */
@@ -141,7 +148,7 @@ export type RegisteredSetupCheck = Readonly<{
 export interface ExtensionPointAccess {
   /** 已加载（setup 完成）的提供方，按加载顺序；按完整引用（含主版本）精确匹配。 */
   providers(ref: ExtensionPointRef): { plugin: string; impl: unknown }[];
-  /** Names of the extensions enabled in the organization (`extension_org_configs.enabled` plus required bootstrap plugins, `enabled.ts`); queried every time, not cached. */
+  /** Names of the extensions enabled in the organization (`extension_org_configs.enabled` plus always-on extensions, `enabled.ts`); queried every time, not cached. */
   enabledPlugins(orgId: string): Promise<Set<string>>;
   /**
    * Whether the extension's effective config is valid in the organization (layering spec A §6):
@@ -383,7 +390,8 @@ export class LiveConfig {
  * - Granted automatically: `kv`, `lock`, `bus`, `queue`, `log`, `db`, `config`, `provide`, `net`
  *   (through `deps.net`, see `ctx/net.ts`);
  * - `secrets` only with `permissions.secrets`, `storage` only with `permissions.storage`, `models`
- *   only with `permissions.models` (and only its `embedding` purposes, through `deps.models`); `http.route`
+ *   only with `permissions.models` (`embed` only its `embedding` purposes, `generateImage` only its
+ *   `image_generation` ones, through `deps.models`); `http.route`
  *   only the method + path declared in `permissions.http` (the record carries the declared access and
  *   its mount, see {@link Route}); `tools.register` only names declared in
  *   `permissions.tools`; `ui.view` / `ui.action` only ids declared in `permissions.ui.views` or
@@ -449,8 +457,9 @@ export function createExtensionContext(
         plugins: async () => [name],
       }).forPlugin(name)
     : undefined;
-  // ctx.models: only with permissions.models; the broker accepts only the purposes declared there
-  // with kind embedding (spec B §5.4), aborted by this instance's signal
+  // ctx.models: only with permissions.models; each broker accepts only the purposes declared there
+  // with its kind (embedding: spec B §5.4; image_generation: image generation spec §5.5), aborted
+  // by this instance's signal
   // a frozen copy: the approved manifest, not an object the extension could change later
   const declaredModels = Object.freeze(
     structuredClone(perms.models ?? []).map((m) => Object.freeze(m)),
@@ -460,11 +469,38 @@ export function createExtensionContext(
       ? {
           embed: async (req) => {
             if (!deps.models) throw new Error(`plugin ${name}: ctx.models is not available`);
-            return deps.models.embed(name, declaredModels, req, lifecycle.signal, deps.hooks);
+            return deps.models.embeddings.embed(
+              name,
+              declaredModels,
+              req,
+              lifecycle.signal,
+              deps.hooks,
+            );
           },
+          generateImage: async (req) => {
+            if (!deps.models) throw new Error(`plugin ${name}: ctx.models is not available`);
+            return deps.models.images.generateForExtension(
+              name,
+              declaredModels,
+              req,
+              lifecycle.signal,
+              deps.hooks,
+            );
+          },
+          // by the declared purpose's kind; an undeclared purpose has none, so its refusal
+          // (model.purpose_unknown) names no kind
           describe: async (req) => {
             if (!deps.models) throw new Error(`plugin ${name}: ctx.models is not available`);
-            return deps.models.describe(name, declaredModels, req);
+            const kind = declaredModels.find((d) => d.purpose === req?.purpose)?.kind;
+            if (kind === undefined && typeof req?.purpose === "string") {
+              throw new ApiError(
+                "model.purpose_unknown",
+                `Extension ${name} declared no model purpose "${req.purpose}" in permissions.models`,
+              );
+            }
+            return kind === "image_generation"
+              ? deps.models.images.describeForExtension(name, declaredModels, req)
+              : deps.models.embeddings.describe(name, declaredModels, req);
           },
         }
       : undefined;

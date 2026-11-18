@@ -176,6 +176,8 @@ describe("tool kinds", () => {
       SubagentHandback: "meta",
       WebSearch: "search",
       WebFetch: "read",
+      // generates and delivers images: a plain tool row
+      GenerateImage: "tool",
       // calls the platform's operations: a plain tool row
       Platform: "tool",
       // reads the clock: a plain tool row

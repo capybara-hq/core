@@ -9,6 +9,7 @@ import type {
   HookParentScope,
   HookPayloads,
   HookScope,
+  ImageRequestHookPayload,
   Logger,
   ModelRequest,
 } from "@capybara-hq/plugin-sdk";
@@ -86,7 +87,7 @@ export function fireObserve<K extends "model.response" | "tool.postExecute">(
 }
 
 /** Decoded size of standard padded base64, in bytes. */
-const base64Bytes = (data: string): number => {
+export const base64Bytes = (data: string): number => {
   const pad = data.endsWith("==") ? 2 : data.endsWith("=") ? 1 : 0;
   return Math.max(0, Math.floor(data.length / 4) * 3 - pad);
 };
@@ -221,6 +222,36 @@ export function embeddingDeniedAudit(
       purpose: "embedding",
       extension: call.extension,
       embeddingPurpose: call.embeddingPurpose,
+      provider: call.provider,
+      model: call.model,
+      ...denialAuditDetail(denial),
+    },
+  };
+}
+
+/**
+ * The `hook.denied` audit entry of a denied image generation call (`ctx.models.generateImage`,
+ * image generation spec §5.6): as {@link embeddingDeniedAudit}, with the call's image purpose.
+ */
+export function imageDeniedAudit(
+  call: Pick<ImageRequestHookPayload, "orgId" | "provider" | "model"> & {
+    extension: string;
+    imagePurpose: string;
+  },
+  denial: HookDenial,
+): AuditEntry {
+  return {
+    orgId: call.orgId,
+    action: "hook.denied",
+    target: call.extension,
+    detail: {
+      mount: "model.request",
+      plugin: denial.plugin,
+      reason: denial.reason,
+      cause: denial.cause,
+      purpose: "image",
+      extension: call.extension,
+      imagePurpose: call.imagePurpose,
       provider: call.provider,
       model: call.model,
       ...denialAuditDetail(denial),

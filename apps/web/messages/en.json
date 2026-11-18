@@ -602,6 +602,7 @@
         "Deliver": "Deliver files",
         "WebSearch": "Search the web",
         "WebFetch": "Read web pages",
+        "GenerateImage": "Generate images",
         "Platform": "Use the platform",
         "CurrentTime": "Current time",
         "ScheduleCreate": "Create scheduled tasks",
@@ -3782,6 +3783,7 @@
         "configureLabel": "Configure {plugin}"
       }
     },
+    "imageUnmapped": "Image generation models are available but no purpose uses one yet. Map the Image generation purpose so agents can generate images.",
     "evalUnmapped": "No model is set for the eval judge, so evals cannot use a judge.",
     "capability": {
       "tools": "Tools",

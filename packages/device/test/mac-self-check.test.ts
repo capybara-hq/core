@@ -64,7 +64,11 @@ it.runIf(process.platform === "darwin")(
 it("needs an attested runtime, and fails off macOS", async () => {
   const dir = await stateDir();
   expect(
-    await macRestrictedSelfCheck({ stateDir: dir, pythonPath: "/usr/bin/python3" }, signal()),
+    // on macOS (stated, so the attestation check is what answers on every host)
+    await macRestrictedSelfCheck(
+      { stateDir: dir, pythonPath: "/usr/bin/python3", platform: "darwin" },
+      signal(),
+    ),
   ).toMatch(/attested runtime/);
   expect(
     await macRestrictedSelfCheck(

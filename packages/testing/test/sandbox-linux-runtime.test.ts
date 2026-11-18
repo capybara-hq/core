@@ -578,9 +578,17 @@ attempt("clone3", lambda: raw(435, 0, 0))
         await mutant.ready;
         try {
           const fixture = await dockerPermissionFixture(device, mutant, async () => {});
-          // The outsider case is what fails, and it fails because the probe reads everything.
+          // The outsider case is what fails. Without Yama (ptrace_scope 0) the probe reads
+          // everything. Under Yama's restricted ptrace (scope 1, Ubuntu's default) a non-ancestor
+          // cannot attach or read mem even of a dumpable process, but environ needs only read
+          // access, which the dumpable flag alone guards: the mutant is still detected by it.
+          const scope = Number(
+            device.run("cat /proc/sys/kernel/yama/ptrace_scope 2>/dev/null || echo 0").trim(),
+          );
           await expect(runSandboxPermissionConformance(fixture)).rejects.toThrow(
-            /a same-uid outsider must not ptrace.*"target": \{"mem": "ALLOWED", "environ": "ALLOWED", "attach": "ALLOWED"\}/,
+            scope === 0
+              ? /a same-uid outsider must not ptrace.*"target": \{"mem": "ALLOWED", "environ": "ALLOWED", "attach": "ALLOWED"\}/
+              : /a same-uid outsider must not ptrace.*"target": \{"mem": "EACCES", "environ": "ALLOWED", "attach": "EPERM"\}/,
           );
         } finally {
           mutant.close();

@@ -1,5 +1,24 @@
 # @capybara-hq/design
 
+## 0.2.0-rc.15
+
+### Patch Changes
+
+- 0364c94: A file previewer embed (`file.preview`, such as the file-preview plugin's sheet, PDF and archive
+  viewers) fills the right panel below its header, frameless like the built-in previews, instead of
+  a 360 px framed iframe. `EmbedFrame` gains `fill`.
+
+## 0.2.0-rc.14
+
+### Patch Changes
+
+- 09272da: Support an optional permission picker in the composer toolbar and phone options sheet, with
+  localized group titles, selection checkmarks and disabled capability reasons.
+- f058454: Show the three conversation permission profiles (Request approval, Approve for me, Full access)
+  in one neutral look: picker rows may carry an icon, a description and a picker action, in the
+  menu and the phone options sheet. The web shows the profile read-only for now: the new
+  conversation's default and an owner's recorded or inherited profile.
+
 ## 0.2.0-rc.13
 
 ### Patch Changes

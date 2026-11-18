@@ -44,7 +44,7 @@ export const CEILING_COMMAND =
 /**
  * The owner ceiling's facts, read only (permission profiles spec, "Device and execution model"):
  * whether Full access is available here and why not, a local machine's project reach and when it
- * reported them, and one notice when the facts are not current. Shared by 概览 and 设置.
+ * reported them, and one notice when the facts are not current. Shared by the Overview and Settings tabs.
  */
 function CeilingFacts({ device: e }: { device: Device }) {
   const t = useTranslations("devices.ceiling");
@@ -74,11 +74,11 @@ function CeilingFacts({ device: e }: { device: Device }) {
 }
 
 /**
- * 概览: what the device is and does now, read only (the device page's split of values and
+ * Overview: what the device is and does now, read only (the device page's split of values and
  * controls, 2026-11-14). The band above says origin and state; the tab adds the owner ceiling, the
  * network restricted work reaches (a local machine's allowlist, a cloud device's org allowlist), a
  * cloud device's provider and resources, a local machine's system, and what the files are. Every
- * control lives in 设置; this tab links there.
+ * control lives in Settings; this tab links there.
  */
 export function DeviceOverview({
   device: e,
@@ -157,9 +157,9 @@ export function DeviceOverview({
 type CloudChange = "widen" | "narrow";
 
 /**
- * 设置: the device's controls, and the only place they live (2026-11-14). There is no daily mode
+ * Settings: the device's controls, and the only place they live (2026-11-14). There is no daily mode
  * any more (permission profiles spec): a conversation picks its permission profile, and the device
- * only keeps its owner's ceiling. 访问上限 shows that ceiling and the controls the kernel allows:
+ * only keeps its owner's ceiling. Access ceiling shows that ceiling and the controls the kernel allows:
  * - a local machine's ceiling is its owner's, widened only on the machine (`capybara-device
  *   ceiling set`, shown as keycaps); the page only narrows it through the policy op (Full access
  *   off, the project reach to the workspace; an older program's one narrowing turns both off), and
@@ -167,7 +167,7 @@ type CloudChange = "widen" | "narrow";
  * - a cloud device's owner turns Full access off, or on again within what the platform and the org
  *   allow, each after a confirmation naming the effect; a widening is never sent without
  *   `confirmWidening`, and never from anywhere but that confirmation.
- * 网络 edits a local machine's allowlist through the machine. 断开这台机器 lives with the machine,
+ * Network edits a local machine's allowlist through the machine. Disconnect this machine lives with the machine,
  * and the page's danger zone follows this block.
  */
 export function DeviceSettings({

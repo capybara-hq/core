@@ -1,5 +1,131 @@
 # @capybara-hq/device
 
+## 0.1.0-rc.14
+
+### Minor Changes
+
+- 429e837: Stage durable permission operation admission, fresh native operation facades and validated protocol adapters. Protocol activation remains gated on the coordinated caller and background migration.
+- 9777d14: Replace the local policy's `mode` with a version-2 owner ceiling (`ownerCeiling: {fullAccess,
+  restrictedProjectReach}`): old `mode: auto` converts exactly to Full allowed with OS-user reach,
+  `mode: sandbox` to neither; `start` converts once under the policy lock and any write converts.
+  The strict reader only trusts a version-2 file. New `capybara-device ceiling show|set`: setting
+  needs both fields, narrowing applies directly, widening needs `--yes` or a confirmed prompt.
+  Stage authenticated owner reports for protocol 3: the `owner-report.json` sequence sidecar,
+  `parseOwnerCeilingReportV3`, and the report on policy frames, policy answers and applied policy
+  statuses; a staged `policy` op may only narrow the owner ceiling and reconciles live work before
+  answering. Protocol 2 and its `mode` summary are unchanged.
+- 7a4762b: Stage a private macOS operation backend with strict owner-ceiling intersection, immutable workers,
+  pinned native helpers and durable exact-execution supervision. Keep wire version 2 and current
+  executors unchanged; restricted capability remains unavailable pending adapter acceptance and
+  coordinated protocol, policy-reconciliation and background activation.
+
+### Patch Changes
+
+- 2256b24: The device hello can carry the host's OS boot identity (`bootId`; SDK `DEVICE_BOOT_ID_RE`,
+  `isDeviceBootId`): `capybara-device` reports Linux's `boot_id` or macOS's boot session UUID (nothing
+  otherwise) on the active and the staged hello. The kernel records it per machine from
+  authenticated hellos only (a hello without one clears it); a local legacy retirement obligation keeps the boot its machine last
+  reported and resolves once a current machine of the device (a re-login counts) reports another boot
+  (the computer restarted). An obligation without a recorded boot never resolves by itself; the same
+  boot from a new credential, a stale or replayed boot and a revoked machine are no evidence. A local device waiting for that restart
+  answers `device.restart_required` ("Restart this computer to finish the upgrade").
+  One whose computer never reported a boot identity answers `device.replace_required` (delete the
+  device and connect the computer as a new one).
+- 527c6a3: The published device package is now self-contained: packing bundles its whole runtime closure
+  (the SDK, the patched sandbox runtime, ws and their dependencies) into `dist/node_modules`, byte for
+  byte, and declares no dependencies, so an install gets exactly the bytes its runtime manifest names.
+  The pack scripts run with `node --experimental-strip-types`.
+- 124eb1f: Staged protocol 3: the device binds an instance generation only through the authenticated
+  `bindInstance` request. It checks its stored previous binding, verifies the installed manifest and
+  refuses while another generation's work is live or uncertain, then writes the binding durably
+  before enabling that generation's operation backend. An unbound session admits no operation; a
+  restart recovers the same generation's journal only when the installed runtime is unchanged. The
+  kernel names as previous binding only one the current machine acknowledged.
+- 427f193: Linux and local-Docker operation backends for permission profiles (dormant: reachable only through
+  the staged protocol 3 path). On Linux hosts the device runs restricted commands through the SDK's
+  Landlock and seccomp-broker launcher on pinned root descriptors, with every filesystem write
+  brokered and the mandatory write denies refused, and network none or an allowlist served by a
+  token-protected proxy owned by the operation (CONNECT to ports 80 and 443 and plain requests to
+  port 80 only, globally routable addresses only). Native file work uses the SDK helper on pinned descriptors and refuses
+  owner-denied paths (compared by real path too), link targets and the mandatory write denies; Full
+  access runs as the OS user without restricted filters. The agent runs from inline source and
+  executes the SDK runtime only from sealed memfds whose digests it checked. Background work,
+  retained output and exact cancellation share the macOS supervisor; cancellation works without
+  pidfds too, an abort escalates like a cancel, and a lost agent's recorded session (SID and start
+  time) is reaped, also by the next device process. Restricted support is the launcher's own probe:
+  an unsupported kernel, ABI, architecture or Python below 3.9 fails closed. A local-Docker device
+  runs the same agent in its container. The macOS worker now enforces the same write policy through ordered Seatbelt regex rules (the
+  pnpm patch of `@anthropic-ai/sandbox-runtime` accepts `writeRegexRules`): case-insensitive denies,
+  the gitdir allowlist, no bare-repository `HEAD`, no forged repository, no `.git` and no directory
+  holding a kept `HEAD` moved away, each write root matched in every spelling Seatbelt may see; git keeps working inside submodules,
+  and the worker removes an empty `.git/sequencer` after a restricted command.
+  The README recommends `git config --global safe.bareRepository explicit` as defence in depth.
+- e6c338b: The macOS operation backend accepts the runtime bundle that also carries the Linux launcher and
+  picks the native helper by name.
+- 2b2e132: A restricted macOS worker no longer loads the sandbox runtime from the install by path. The
+  verification a binding relies on (`verifyInstalledRuntime` with `stageIn`) copies the exact bytes
+  it hashed into a private, content-addressed directory of the state directory and seals that copy;
+  workers import only from it, and only when its runtime hash is the one the binding attested (the
+  backend's `runtimeHash`). Each launch checks that the installed closure still holds the verified
+  bytes and that the copy is untouched: a changed byte, a replaced file, an added file or a link swap
+  (an in-place `npm update` while the service runs, say) refuses the launch with a typed unsupported
+  error until a restart or rebind verifies the runtime again. Sandboxed JVMs get the staged proxy
+  agent, and a runtime package declaring peer or optional dependencies is refused at verification.
+- f241880: The device package now ships a canonical installed-byte manifest (`dist/runtime-manifest.json`,
+  written by `tools/runtime-manifest.ts` at pack time from the emitted modules, the inline helper
+  sources and the installed sandbox runtime closure) and a private verifier that re-hashes the
+  installed bytes and the interpreter environment before attesting a runtime identity. Nothing uses
+  it on the active protocol 2 path yet.
+- 000b0fe: Prepares the device side of protocol 3 (dormant: protocol 2 still runs until the protocol constant
+  changes). `start` builds the instance binder with one operation backend per bound generation
+  (macOS, Linux or the device's container), attested to the binding's runtime hash and verified with
+  the runtime staged in the state directory; one session state per machine credential with the
+  credential's reconnect grace; a drain that waits for the owned work and the held answers; every
+  end of the program (stop, machine stop, revoked, replaced, outdated) exact-stops the owned
+  operations and names any stop still pending. A bind that passed its other checks, or a create,
+  exact-stops the older generation's background tasks. macOS reports restricted support only after a
+  real worker on the verified runtime passes a write, read and network self-check, retried after a
+  transient failure; a docker-mode device attests its container's image id.
+- a4eea48: The dormant protocol 3 session keeps one state per machine credential (a credential change drops
+  the old state and its held answers), requires the reconnect grace explicitly, holds at most 64
+  answers while no socket is ready (expired ones are swept on each hold), and refuses `bindInstance`
+  while draining; status, reads, tails and stops are still served. Protocol 2 stays the live wire.
+- cdf5abd: Staged instance binding (fix round 1): one operation supervisor owns a device's journal at a time,
+  so binding a new generation drains the old backend, re-checks unsettled work after its last await
+  and disposes the old supervisor before the new one reads the journal. Bindings are stored per
+  device with the machine credential; the kernel names as previous the last binding it committed for
+  the machine, so a lost answer, a re-login or a shared state directory no longer deadlocks the
+  chain. Old binding records are pruned; the environment fingerprint covers every module the Python
+  helpers import.
+- e366658: Staged instance binding (fix round 2): a binding compares the environment fingerprint with the
+  device's latest installed binding, so an environment change across a generation whose answer was
+  lost still resets Full consent; a binding committed before a re-login follows the active machine
+  before it is sent. The bundled device runtime carries the Apache-2.0 modification notice of the
+  patched sandbox runtime and refuses optional or platform-specific packages.
+- Complete dormant managed output transport with strict positional ranges, authenticated connection capacity negotiation, and original admitted execution grant provenance. Protocol 2 remains active pending the coordinated runtime cutover.
+- 28ff1e5: Owner report fixes: a late, lower-sequence report from a policy frame, answer, status or bind
+  answer is ignored instead of blocking the device (only a hello regression or a conflict blocks);
+  unblocking with the same Full permission resets no consent; every carrier records its connection.
+  The cloud owner-ceiling PATCH is refused until the device's permissions are migrated, and widening
+  also checks the provider. Platform, org and publication Full-off writers revoke running restricted
+  work outside the machine's roots; working roots outside the workspace follow the project reach.
+  `capybara-device login` resets the owner-report sequence; `ceiling set` decides widening under the
+  policy lock; `ceiling show` and `mode` explain the project reach on the current protocol.
+- d174573: Retain managed macOS background output in an exact-reference private spool and a separate ordinary artifact, with bounded positional reads, durable checkpoints, explicit output credit, and sticky collector-failure cancellation.
+  
+  Preserve immutable read snapshots, exact cancellation ownership, conservative journal recovery after failed publication, and the restricted worker's artifact write exclusions.
+  
+  Require durable final journal decisions before acknowledgment and independently validate and finalize indeterminate commits during recovery, preserving sticky faults and cancellation tombstones.
+  
+  Merge cancellation evidence monotonically and keep owned stop/revocation and failure-credit release independent of blocked journal and deferred fault-control writes.
+- 3ef9ae9: Stage graceful drain for the protocol-3 session: a draining device refuses new admissions but keeps
+  serving exact status, output reads, tails, stops, revocation and retries of already admitted
+  operations. The drain finishes only when in-flight requests and everything the supervisor owns
+  (acknowledged tasks whose start request already answered, output collectors, pending exact
+  cancellations and deferred persistence) have settled; a timed-out drain reports what is pending and
+  the device is not reused. The owner watcher now also stays on while an exact cancellation settles.
+  Protocol 2 is unchanged.
+
 ## 0.1.0-rc.13
 
 ### Patch Changes

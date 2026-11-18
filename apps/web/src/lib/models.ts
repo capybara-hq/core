@@ -73,7 +73,7 @@ export interface PurposeTarget {
 /** 用途视图：部署级接口的 `override` 一律为 null。 */
 export interface PurposeView {
   purpose: string;
-  kind: "chat" | "embedding";
+  kind: "chat" | "embedding" | "image_generation";
   label: { zh: string; en: string };
   /** `kernel` 或声明它的插件名。 */
   declaredBy: string;
@@ -111,6 +111,12 @@ export const putAdminPurpose = (purpose: string, target: PurposeTarget | null) =
 
 export const listOrgPurposes = (orgId: string) =>
   apiFetch<{ purposes: PurposeView[] }>(`/api/v1/orgs/${enc(orgId)}/model-purposes`);
+
+/** Whether each purpose has a usable model in the org now (any member; no model names). */
+export const listPurposeAvailability = (orgId: string) =>
+  apiFetch<{ purposes: { purpose: string; available: boolean }[] }>(
+    `/api/v1/orgs/${enc(orgId)}/model-purposes/available`,
+  );
 
 export const putOrgPurpose = (orgId: string, purpose: string, target: PurposeTarget | null) =>
   apiFetch<{ purpose: PurposeView }>(

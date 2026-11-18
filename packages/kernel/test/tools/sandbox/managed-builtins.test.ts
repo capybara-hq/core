@@ -9,7 +9,12 @@ import {
   SandboxScopeDeniedError,
   ToolError,
 } from "@capybara-hq/plugin-sdk";
-import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
+import {
+  FAKE_PNG_BASE64,
+  startTestPostgres,
+  startTestRedis,
+  type TestContainer,
+} from "@capybara-hq/testing";
 import { sql } from "kysely";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { BackgroundTaskFinisher } from "../../../src/background/finish.js";
@@ -23,12 +28,14 @@ import { ConversationDevices } from "../../../src/devices/conversation-devices.j
 import { KernelConfigService } from "../../../src/infra/config/kernel-config.service.js";
 import { createLogger } from "../../../src/log.js";
 import { RunExecution } from "../../../src/runtime/run-execution.js";
+import { StepLog } from "../../../src/runtime/step-log.js";
 import {
   MANAGED_DEVICE_CONTEXT_STALE_TEXT,
   ManagedDeviceContextRecorder,
 } from "../../../src/sandbox/managed-device-context.js";
 import { SandboxProviders } from "../../../src/sandbox/providers.js";
 import { SandboxService } from "../../../src/sandbox/sandbox.service.js";
+import { generateImageTool } from "../../../src/tools/builtins/image/index.js";
 import type { SandboxToolDeps } from "../../../src/tools/builtins/sandbox/common.js";
 import { sandboxTools } from "../../../src/tools/builtins/sandbox/index.js";
 import { type SkillLoadDeps, skillLoadTool } from "../../../src/tools/builtins/skill-load.js";
@@ -43,7 +50,7 @@ import { startRun } from "../../runtime/permission-context-fixture.js";
 /**
  * B-17 / B-18 (permission activation W3-K): with the one activation gate on, every builtin that
  * enters a device (Read, Write, Edit, Glob, Grep, Deliver, foreground and background Bash,
- * FetchAttachment and Skill) goes through the managed operation route: the managed writer records
+ * FetchAttachment, Skill and GenerateImage's device copy) goes through the managed operation route: the managed writer records
  * the marked `device_paths` before the tool's first provider operation, every operation is a
  * managed one, and the legacy `withSandbox` route is never entered. A call reviewed against
  * another working root than the held evidence's fails as stale before its callback. With the gate
@@ -380,6 +387,36 @@ async function started(f: Fixture, callId: string, toolKey: string): Promise<voi
     .execute();
 }
 
+/**
+ * `GenerateImage` on the given sandbox deps: a stub image model answering one PNG, the real event
+ * and step logs (its delivery and usage event), and the sandbox deps for its device copy.
+ */
+function imageToolOf(deps: SandboxToolDeps): BuiltinTool {
+  const ref = { provider: "p", model: "img" };
+  return generateImageTool({
+    images: {
+      prepare: async () => ({ ref, info: {}, request: { size: { width: 8, height: 8 } } }) as never,
+      run: async () =>
+        ({
+          images: [{ mediaType: "image/png", data: FAKE_PNG_BASE64 }],
+          usage: { inputTokens: 1, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 },
+          model: "img",
+          latencyMs: 1,
+        }) as never,
+    },
+    purposes: { resolve: async () => ({ model: ref, params: {} }) as never },
+    providers: { resolve: async () => ({}) as never },
+    storage: deps.storage as never,
+    eventLog: k.app.get(EventLog),
+    stepLog: k.app.get(StepLog),
+    config: k.app.get(KernelConfigService),
+    log: { warn: () => {} },
+    db: () => kernelDb(raw),
+    attachments: { openForConversation: async () => null },
+    sandbox: deps,
+  });
+}
+
 /** Runs one builtin call under the run's real claim fence, as the pipeline does. */
 async function runTool(
   f: Fixture,
@@ -392,6 +429,7 @@ async function runTool(
   const tools: BuiltinTool[] = [
     ...sandboxTools(deps),
     skillLoadTool({ ...deps, db: kernelDb(raw) } as unknown as SkillLoadDeps),
+    imageToolOf(deps),
   ];
   const tool = tools.find((t) => t.spec.name === name);
   if (!tool) throw new Error(`no builtin ${name}`);
@@ -611,6 +649,31 @@ describe("builtin tools on the managed route with the activation gate on", () =>
     expect(textOf(r)).toContain("Plug body.");
     expect(textOf(r)).toMatch(/copied to \/skills\/plug@/);
     expectManaged(legacy, ["prepare"]);
+  });
+
+  it("GenerateImage writes its device copy through managed operations after the marked paths", async () => {
+    const f = await seed();
+    const legacy = vi.spyOn(k.app.get(SandboxService), "withSandbox");
+    const r = await runTool(f, "GenerateImage", { prompt: "a fox", file_path: "/workspace/f.png" });
+    expect(textOf(r)).toContain("Written to the device: /workspace/f.png");
+    expectManaged(legacy, ["stat", "writeFile"]);
+    expect(await markedPaths(f)).toHaveLength(1);
+  });
+
+  it("GenerateImage reviewed against another root than the held evidence's is stale: nothing written", async () => {
+    const f = await seed();
+    const legacy = vi.spyOn(k.app.get(SandboxService), "withSandbox");
+    const r = await runTool(
+      f,
+      "GenerateImage",
+      { prompt: "a fox", file_path: "/workspace/s.png" },
+      { over: { reviewedAgainstRoot: "/workspace/other" } },
+    );
+    // the images are delivered; the device line carries the stale refusal
+    expect(textOf(r)).toContain(`Not written to the device: ${MANAGED_DEVICE_CONTEXT_STALE_TEXT}`);
+    expect(legacy).not.toHaveBeenCalled();
+    expect(reached).toEqual([]);
+    expect(await markedPaths(f)).toEqual([]);
   });
 
   it("a call reviewed against the held evidence's own working root runs (any spelling of it)", async () => {
