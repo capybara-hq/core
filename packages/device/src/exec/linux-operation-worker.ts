@@ -21,7 +21,7 @@ import {
   type TrustedLaunchIdentity,
 } from "./operation-worker.js";
 import { acquireSealedRuntime } from "./runtime-source.js";
-import { ENV_NAME_RE, OutputCap, shellQuote } from "./shared.js";
+import { ENV_NAME_RE, OutputCap, restrictedToolHomes, shellQuote } from "./shared.js";
 
 /** This device process: a later one reaps sessions recorded under another token. */
 export const DEVICE_PROCESS_TOKEN = randomUUID();
@@ -38,6 +38,12 @@ export interface LinuxWorkerOptions {
    * this process's; in the container, the image's), restricted only a fixed outer set.
    */
   baseEnv(full: boolean): Record<string, string>;
+  /**
+   * The OS user's real home and the device process's own environment: a restricted command gets
+   * their version manager variables and reads those directories ({@link restrictedToolHomes}).
+   * Host only; a command in the device's container keeps the image's home and gets none.
+   */
+  toolHome?: { home: string; env: Record<string, string | undefined> };
   /**
    * The runtime-hash gate (W1-B) every restricted launch passes before anything starts: the
    * binding's attested runtime must be the one verified and sealed in this process, unchanged.
@@ -101,10 +107,21 @@ export function linuxOperationWorker(
       let closed: Promise<void> | undefined;
       try {
         if (!request.grant.full) (await acquire(request.runtimeHash)).release();
+        // only restricted exec on the host: native work never runs a version manager
+        const toolHomes =
+          request.kind === "exec" && !request.grant.full && options.toolHome
+            ? restrictedToolHomes(
+                options.toolHome.home,
+                options.toolHome.env,
+                request.grant.deniedReadRoots,
+              )
+            : undefined;
         const roots = request.grant.full
           ? {}
           : {
-              readRoots: [...request.grant.readRoots],
+              readRoots: [
+                ...new Set([...request.grant.readRoots, ...(toolHomes?.readRoots ?? [])]),
+              ],
               writeRoots: [...request.grant.writeRoots],
             };
         let body: Record<string, unknown>;
@@ -122,6 +139,7 @@ export function linuxOperationWorker(
           for (const key of Object.keys(args.env ?? {}))
             if (!ENV_NAME_RE.test(key)) throw new Error("Invalid environment variable name");
           const env = {
+            ...toolHomes?.env,
             ...options.baseEnv(request.grant.full),
             ...(request.grant.full
               ? {}

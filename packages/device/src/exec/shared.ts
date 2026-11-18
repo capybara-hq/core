@@ -1,5 +1,5 @@
-import { existsSync, mkdirSync, statSync, writeFileSync } from "node:fs";
-import { isAbsolute, join } from "node:path";
+import { existsSync, mkdirSync, realpathSync, statSync, writeFileSync } from "node:fs";
+import { isAbsolute, join, normalize } from "node:path";
 import type { SandboxRoots } from "@capybara-hq/plugin-sdk";
 
 /** The file that marks a directory as a device directory this program has used. */
@@ -69,6 +69,44 @@ export function toolHomeEnv(
     if (isDir(dir)) out[name] = dir;
   }
   return out;
+}
+
+/**
+ * What a restricted exec on the host gets for its version managers: the {@link toolHomeEnv}
+ * variables of the device process (its real `home` and its own environment `env`) and, as
+ * read-only roots, the canonical directories they name. A directory is left out of the roots when
+ * it does not exist, is `/`, lies at or under an owner-denied path, or contains one (Landlock
+ * cannot hide a denied path inside a granted root). The roots are never made writable. A command
+ * in the device's container uses none of this: its home is the image's.
+ */
+export function restrictedToolHomes(
+  home: string,
+  env: Record<string, string | undefined>,
+  deniedReadRoots: readonly string[],
+): { env: Record<string, string>; readRoots: string[] } {
+  const vars = toolHomeEnv(home, env);
+  const inside = (path: string, root: string) =>
+    root === "/" || path === root || path.startsWith(`${root}/`);
+  const readRoots = new Set<string>();
+  for (const dir of Object.values(vars)) {
+    const path = normalize(dir).replace(/(.)\/+$/, "$1");
+    let real: string;
+    try {
+      real = realpathSync(path);
+      if (!statSync(real).isDirectory()) continue;
+    } catch {
+      continue;
+    }
+    if (real === "/") continue;
+    if (
+      [path, real].some((p) =>
+        deniedReadRoots.some((denied) => inside(p, denied) || inside(denied, p)),
+      )
+    )
+      continue;
+    readRoots.add(real);
+  }
+  return { env: vars, readRoots: [...readRoots] };
 }
 
 /**

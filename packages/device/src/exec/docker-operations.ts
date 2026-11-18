@@ -295,7 +295,8 @@ export interface DockerOperationBackendOptions
  */
 export async function createDockerOperationBackend(
   options: DockerOperationBackendOptions,
-  dependencies: Omit<LinuxBackendDependencies, "transport" | "baseEnv"> = {},
+  // no toolHome: a command in the container has the image's home, not the host user's
+  dependencies: Omit<LinuxBackendDependencies, "transport" | "baseEnv" | "toolHome"> = {},
 ): Promise<LocalOperationBackend> {
   const transport = dockerLinuxTransport(options.container);
   let probe = await (dependencies.probe ?? (() => probeLinuxRuntime(transport)))();

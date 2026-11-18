@@ -169,6 +169,67 @@ describe("Linux operation worker", () => {
     });
   });
 
+  it("a restricted exec gets the version manager variables and reads their directories", async () => {
+    const home = await realpath(await mkdtemp(join(tmpdir(), "cap-tool-home-")));
+    dirs.push(home);
+    await mkdir(join(home, ".asdf"));
+    await mkdir(join(home, ".ssh"));
+    const fake = await fakeTransport("exit");
+    const request = execRequest(false, {
+      grant: { ...grant(false), readRoots: ["/repo"], deniedReadRoots: [join(home, ".ssh")] },
+    });
+    const handle = await linuxOperationWorker({
+      ...fake,
+      baseEnv: env,
+      acquireRuntime: gate,
+      // the device's environment leaves ASDF_DATA_DIR unset and sets VOLTA_HOME
+      toolHome: { home, env: { VOLTA_HOME: "/opt/volta" } },
+    })(request, new AbortController().signal);
+    await handle.completion;
+    const [sent] = await fake.lines();
+    expect(sent).toMatchObject({
+      readRoots: ["/repo", join(home, ".asdf")],
+      writeRoots: ["/work"],
+      env: {
+        PATH: "/bin",
+        HOME: "/work",
+        ASDF_DATA_DIR: join(home, ".asdf"),
+        VOLTA_HOME: "/opt/volta",
+      },
+    });
+    // read only: never a write root
+    expect(sent?.writeRoots).not.toContain(join(home, ".asdf"));
+  });
+
+  it("Full access and a worker without a host home add no version manager roots", async () => {
+    const home = await realpath(await mkdtemp(join(tmpdir(), "cap-tool-home-")));
+    dirs.push(home);
+    await mkdir(join(home, ".asdf"));
+    const full = await fakeTransport("exit");
+    await (
+      await linuxOperationWorker({
+        ...full,
+        baseEnv: env,
+        acquireRuntime: gate,
+        toolHome: { home, env: {} },
+      })(execRequest(true), new AbortController().signal)
+    ).completion;
+    const [fullSent] = await full.lines();
+    expect(fullSent).not.toHaveProperty("readRoots");
+    expect(fullSent?.env).not.toHaveProperty("ASDF_DATA_DIR");
+    // a container's worker (no toolHome) keeps the restricted env as it was
+    const container = await fakeTransport("exit");
+    await (
+      await linuxOperationWorker({ ...container, baseEnv: env, acquireRuntime: gate })(
+        execRequest(false),
+        new AbortController().signal,
+      )
+    ).completion;
+    const [containerSent] = await container.lines();
+    expect(containerSent).toMatchObject({ readRoots: [] });
+    expect(containerSent?.env).not.toHaveProperty("ASDF_DATA_DIR");
+  });
+
   it("an abort sends one immediate cancel; a second cancel is coalesced", async () => {
     const fake = await fakeTransport("hold");
     const abort = new AbortController();

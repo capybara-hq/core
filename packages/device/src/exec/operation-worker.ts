@@ -2,6 +2,7 @@ import { type ChildProcess, fork, spawn, spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { constants } from "node:fs";
 import { type FileHandle, open, realpath, stat } from "node:fs/promises";
+import { homedir } from "node:os";
 import { basename, dirname } from "node:path";
 import {
   type ExecResult,
@@ -29,7 +30,7 @@ import {
   stagePrivateSource,
   stageRuntimeSource,
 } from "./runtime-source.js";
-import { ENV_NAME_RE, OutputCap, shellQuote } from "./shared.js";
+import { ENV_NAME_RE, OutputCap, restrictedToolHomes, shellQuote } from "./shared.js";
 export interface TrustedLaunchIdentity {
   pid: number;
   token: string;
@@ -422,6 +423,14 @@ export async function startMacOperationWorker(
             roots.push({ path: canonical, fd: file.fd, access, components });
           }
         }
+      // Version managers (asdf, nvm, pyenv, ...) read their data under the real home, while HOME
+      // is the working directory: this trusted process has the real home and the device's own
+      // environment (the forked worker runs with a reduced one), so it picks the variables and
+      // grants their directories read only. Full access inherits this process's environment.
+      const toolHomes =
+        request.kind === "exec" && !request.grant.full
+          ? restrictedToolHomes(homedir(), process.env, request.grant.deniedReadRoots)
+          : undefined;
       let wrap = async (script: string) => script;
       {
         const source = await stagePrivateSource(request.stateDir, "mac-worker.mjs", WORKER);
@@ -444,6 +453,7 @@ export async function startMacOperationWorker(
           ...(helper ? [{ path: helper, literal: true }] : []),
           ...(javaAgent ? [{ path: javaAgent, literal: true }] : []),
           ...runtimeRoots,
+          ...(toolHomes?.readRoots ?? []),
           ...ancestors([
             ...runtimeRoots,
             ...(helper ? [helper] : []),
@@ -592,6 +602,7 @@ export async function startMacOperationWorker(
       for (const key of Object.keys(args.env ?? {}))
         if (!ENV_NAME_RE.test(key)) throw new Error("Invalid environment variable name");
       const outerEnv = {
+        ...toolHomes?.env,
         PATH: process.env.PATH,
         LANG: process.env.LANG,
         HOME: args.cwd ?? "/",

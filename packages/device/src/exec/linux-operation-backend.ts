@@ -1,3 +1,4 @@
+import { homedir } from "node:os";
 import { SandboxScopeDeniedError } from "@capybara-hq/plugin-sdk";
 import { DEVICE_PROCESS_TOKEN, linuxOperationWorker } from "./linux-operation-worker.js";
 import {
@@ -26,6 +27,8 @@ export interface LinuxBackendDependencies {
   transport?: LinuxAgentTransport;
   /** The environment a command starts from; see {@link hostBaseEnv}. */
   baseEnv?: (full: boolean) => Record<string, string>;
+  /** Where restricted commands find version managers (default: this process's home and env). */
+  toolHome?: { home: string; env: Record<string, string | undefined> };
   /** The runtime support probe (default: the launcher's own probe through the agent). */
   probe?: () => Promise<LinuxProbe>;
   /** Forces restricted support off (an owner or wiring decision); it can never force it on. */
@@ -105,6 +108,7 @@ export async function createLinuxOperationBackend(
     linuxOperationWorker({
       transport,
       baseEnv: dependencies.baseEnv ?? hostBaseEnv,
+      toolHome: dependencies.toolHome ?? { home: homedir(), env: process.env },
       ...(dependencies.allowPrivateProxyTargets ? { allowPrivateProxyTargets: true } : {}),
       ...(dependencies.acquireRuntime ? { acquireRuntime: dependencies.acquireRuntime } : {}),
     });
