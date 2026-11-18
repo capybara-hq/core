@@ -90,8 +90,16 @@ see `.agents/skills/writing-web-ui`). Design basis: overall design §6 principle
   permissionContext`, old-mode `device_paths` lines with `mode`) rebuilds byte for byte on an activated kernel.
   Cases in `reconstruct.test.ts` ("the device's permission context"): a provisioned device and a profile change
   between runs, and a log written before the activation (made with the request boundary removed from
-  `RunSteps.deps`). Activated cases that run builtins bind a cloud device whose provider reports permission
-  support (`bindScopedCloudDevice`): sandbox-fake alone reports none, so its devices are `unsupported`.
+  `RunSteps.deps`, `beforeActivation`). Activated cases that run builtins bind a cloud device on sandbox-fake,
+  which reports permission support (restricted and Full) and serves the managed operation route
+  (`bindFreshCloudDevice`: unprobed until its first provisioning, then `supported`).
+  **The 9.6 group** (run sequentially, 2 workers, before and after any change to request building, the
+  recorder or the managed device writer): `evals/reconstruct.test.ts`, `evals/run-replay.test.ts`,
+  `evals/recorded-permission-context.test.ts`, `runtime/permission-context*.test.ts` (including the
+  `.dual` file in the container project) and the cross-path smoke test `runtime/permission-activation.test.ts`
+  (one app on the production gate: an anonymous IM guest, a protocol 3 local device and a sandbox-fake cloud
+  device each record a schema-valid v1 context before their first request, every request locates the latest
+  one, a profile change appends one, an unchanged follow-up none).
   Full-run replay (`evals/recorded-permission-context.ts`, spec B4): earlier runs' contexts are seeds; the target
   run's are fed by the recorded-only feeder at the generated request boundary (sparse `(step, attempt)` table,
   monotone, idem `replay_permission_context:<generatedRunId>:<originalSeq>`), so generated requests carry the

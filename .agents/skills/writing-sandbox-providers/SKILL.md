@@ -52,6 +52,15 @@ interface SandboxProvider {
 }
 ```
 
+On the activated tree (device protocol 3, `PERMISSION_CONTEXT_ACTIVE`) the kernel never calls the raw `exec` / `readFile` /
+`writeFile` / `stat` / `list` / `scan`, `killAll` or `killTagged` for a tool: every builtin enters a device through the
+permission-scoped surface (`packages/plugin-sdk/src/sandbox-operation.ts`): `permissionSupport(h)`, `operation(h, scope)`
+(the admitted `SandboxOperationScope`: filesystem roots, network, actor and tag come only from it), `prepare` (trusted staging
+of skills and attachments), `browse` (owner metadata only), `revokeOperation(h, ref)` and `background` (`start` / `status` /
+`tail` / `readOutput` / `stop` by exact `SandboxExecutionRef`). A provider without that surface makes its devices
+`unsupported`: missing operation support never falls back to the raw methods. The raw methods stay in the `sandbox@2`
+signature for the lifecycle and the conformance suite.
+
 Instance name: `cap-device-<deviceId>` for both the file system and the instance. Old per-conversation instances (`cap-<conversationId>`) are removed by the one-off
 job `devices-legacy-cleanup`, which calls `destroyByName` and `destroyFileSystemByName` on every `sandboxes` row (see Lifecycle).
 
@@ -67,7 +76,7 @@ job `devices-legacy-cleanup`, which calls `destroyByName` and `destroyFileSystem
 - `exec` carries `actor: { accountId, conversationId }` for audit and attribution; providers record it and must not use it for anything else in phase 1.
 
 `glob` / `grep` / `edit` are composed by the kernel from `exec` + `readFile` / `writeFile`; the provider does not implement them. So the image must have GNU `find`
-(`-print0`) and `grep` (`-rnHIE`, `--include`), `timeout`, `setsid`, `pkill` / `pgrep`.
+(`-print0`) and `grep` (`-rnHIE`, `--include`) and `timeout`. Background tasks need no shell tools of the image (below).
 
 ### Semantics the kernel relies on
 
@@ -127,17 +136,20 @@ Every provider must follow these; the kernel's behaviour below assumes them. How
   name and paths the mode cannot reach (`node_modules` and a macOS `Library` may be skipped); a missing `base` is `[]`. Entries only, never
   file contents. The kernel checks every answer again (shape, inside the base and the mode, the name rule, the bound). A cloud provider
   answers inside the container's workspace in both modes (the kernel scopes a cloud device's projects to it).
-- **Background tasks** (`Bash` `run_in_background`, spec `docs/superpowers/specs/2026-11-05-background-bash-design.md` §4; no contract
-  change): the kernel launches a task with one short `exec` (`cwd: /workspace`, relative paths `.capybara/tasks/<id>.*`) that runs
-  `setsid nohup sh -c 'timeout -s KILL <s> bash <id>.sh; echo $? > <id>.exit'` in the background and prints the session id; liveness is
-  `pgrep -s <sid>`, stopping is `pkill -TERM|-KILL -s <sid>`. So the sandbox needs `sh`, `bash`, `setsid`, `nohup`, `timeout`, `pkill -s`,
-  `pgrep -s` and `base64` (a provider without them fails the launch with a readable error), and `exec` must return once its own process and stdio end,
-  without waiting for a detached session. The exec wrapper's abort, timeout, `killTagged` and `killAll` don't reach a task, and a task holds
-  no lease while it runs. Tasks don't survive a Docker suspend or a rebuild (the poll marks them `lost`); a task marked lost while its
-  process may live on (an E2B pause keeps processes) is `kill_pending`; a stored SID is no authority, so `SandboxService` signals nothing
-  after a resume or a rebuild (the retirement obligations own those marks). The poll and `TaskOutput` / `TaskStop` use `SandboxService.ifRunning`: a shared
-  lease only on a `running` row of the task's instance, never creating or resuming one. sandbox-fake puts node shims for `setsid`,
-  `timeout`, `pkill -s` and `pgrep -s` first on its PATH (macOS has none) and kills an instance's processes on `suspend` and `destroy`.
+- **Background tasks** (`Bash` `run_in_background`, permission runtime cutover 8.2-8.4, `packages/kernel/src/background/managed.ts`):
+  the kernel reserves the task row, writes the durable launch intent and calls `background.start(h, scope, { command,
+  timeoutMs, maxOutputBytes, taskId, outputPath, retainUntilMs, instanceGeneration })` under the admitted operation scope; the
+  output artifact is `${workingRoot}/.capybara/tasks/<taskId>.out` (never a caller path). The provider persists exact ownership
+  before it acknowledges, returns a `SandboxExecutionRef` (a retry of the same generation, operation and input returns the same
+  ref) and keeps the starting grants for the execution's lifetime. The poll, `TaskOutput` and `TaskStop` act only by that exact
+  ref on its exact recorded generation, through `SandboxService.ifRunning` (a shared lease only on a running instance of that
+  generation, never creating, resuming or rebuilding one): `status`, `readOutput` (an append-only prefix, at most 65,536 bytes
+  a read), `tail` and `stop` (a persisted pending cancellation when unreachable, applied before an explicit resume runs
+  work). No session id, PID or shell script is built or signalled (`test/background/legacy-removal.test.ts` scans the whole
+  kernel for the SID tools). A task holds no lease while it runs and counts against `sandbox.background.maxTasks`; a revoked
+  start is cancelled by its operation id (`revokeOperation`), and one on an incarnation that no longer runs becomes a
+  retirement member (below). Rows left by the old launcher (`launch_state = 'legacy'`) are never read or stopped live: they
+  belong to the legacy retirement.
 - **Cloud installed evidence** (B-15, `sandbox/permission-runtime-reports.ts`): a cloud device has no installed binding.
   Under the lifecycle lease the kernel reads `permissionSupport(handle)` (bounded at 30 s) from a just-created instance
   (recorded in the `commitHandle` transaction), after every resume, and whenever the recorded report is stale
@@ -166,8 +178,9 @@ Every provider must follow these; the kernel's behaviour below assumes them. How
   `update`, `recreate`, a gone instance or a failure leave the marker and its file reset action.
 - **Legacy retirement** (permission runtime cutover 8.5, migration 0157, `sandbox/legacy-retirement.ts`):
   - **Freeze.** `LegacyRetirementStore.freeze` writes the freeze row under the exclusive platform authority lock, then enumerates
-    before it returns. Every SID launch checks the freeze under the shared lock right before its dispatch, recording the exact
-    incarnation (provider and generation) it dispatches into.
+    before it returns. An R1 (protocol 2) kernel checked the freeze under the shared lock right before each SID launch's
+    dispatch, recording the exact incarnation (provider and generation) it dispatched into; this release launches no SID task
+    and only reads those marks.
   - **Obligations.** One per device, provider and exact instance generation, for every legacy row whose processes may live on and
     for each revoked managed start on an incarnation that no longer runs. A historical reservation without a recorded incarnation
     is `unknown`, never the current instance.
@@ -255,6 +268,9 @@ Every provider must follow these; the kernel's behaviour below assumes them. How
        `owner_full_access` NULL. Then R2, gated on `retired` (below). Deploying R2, again stop and drain every
        replica of the previous release before the first R2 worker runs (its retirement worker must be the only one
        settling `exact-cancelled` obligations, as in step 1).
+    Operator notes: upgrade the kernel before the devices at R2 (a v3 device that reaches a kernel not yet on R2 gets 426
+    "Update capybara-device"); running legacy background rows finish only after the freeze (step 4), and until then each
+    holds a background slot and keeps its instance from idling.
   - **Release gate.** It passes on `retired`. With `abandoned > 0` it also needs the operator to acknowledge: "N old incarnations
     were abandoned with their devices; legacy processes may still run on those computers; no device can reuse them".
 
@@ -490,14 +506,28 @@ The kernel owns it; the extension implements only primitives. **Do not do schedu
   renamed into git's subtrees keeps contents Seatbelt never saw; owners are advised to set
   `git config --global safe.bareRepository explicit` (documented, never changed automatically).
 
-## Local file-read ceiling
+## Local file access on protocol 3
 
-Device protocol v2 requires `limits: { mode }` on `readFile` and `stat`, just as `list` and
-`scan` do. `LocalDeviceProvider` resolves the current org ceiling for every read, never from the
-instance handle. The device intersects it with its live local choice and routes reads through
-`SwitchingExecutor.readerFor`, independent of the latest command and its 60-second window.
-Only file writes still use that window; their command-review behavior is unchanged. Kernels and
-device programs upgrade together: protocol v1 connections are refused, not silently adapted.
+A protocol 3 machine runs work only under an admitted operation scope: `LocalDeviceProvider.staged`
+(`packages/kernel/src/local-devices/local-device-provider.ts`) is the `@local` registration, and its raw
+`exec` / `readFile` / `writeFile` / `stat` / `list` / `scan` refuse with `SandboxPermissionUnsupportedError` before anything
+is queued, while `killAll` / `killTagged` queue nothing. Reads and writes go through `operation(h, scope)` (the scope's read
+and write roots, the frame-sized `readFile` cap of `devices.local.maxFrameBytes`), staging through `prepare`, owner browsing
+through `browse`, commands through the request-bound execution adapter (the admitted call grants, cut to the org's current
+limits; a host the limits now refuse fails the call). The machine re-checks every scope against its owner ceiling. Kernels and
+device programs upgrade together: a protocol 2 device is refused (426, "Update capybara-device"), and a protocol 3 device that
+reaches a kernel still on protocol 2 gets the same 426 from that kernel, so upgrade the kernel first.
+
+## Known limitations (permission activation)
+
+- **Local Docker mode needs the host's `/usr/bin/python3`.** A `capybara-device` in Docker mode runs the
+  restricted output helper with the host interpreter; without it the device reports restricted support
+  unavailable.
+- **E2B is Full access only.** `sandbox-e2b` reports no restricted support, so an E2B device runs only
+  conversations on Full access; restricted profiles read `unsupported` there.
+- **`DockerContainer.ready` is not reset after a `docker rm` or a daemon restart.** The Docker provider keeps
+  its readiness flag, so operations on that container fail closed until the provider (the kernel process)
+  restarts.
 
 ## Tests
 

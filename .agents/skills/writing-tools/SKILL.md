@@ -102,7 +102,8 @@ Writing requirements beyond the checks:
 ## The command review stage (auto mode)
 
 Auto mode spec §5.1: in both modes, `Bash` (foreground and `run_in_background`) and the file tools
-`Write` / `Edit` pass a **command review** before the device runs them. It is a kernel step in
+`Write` / `Edit` (and `GenerateImage` with `file_path`, judged per path exactly like `Write`) pass a
+**command review** before the device runs them. It is a kernel step in
 `runCall` (`reviewCall` in `pipeline.ts`), not an extension hook: it must run for every device and
 fails closed.
 
@@ -302,13 +303,16 @@ the same transaction as the business rows.
 `tools/builtins/sandbox/{bash,task-output,task-stop,task-list}.ts`):
 
 - `Bash` `run_in_background: true` reserves a `capybara.background_tasks` row first (counted against `sandbox.background.maxTasks` under a
-  per-root-conversation `XactLock`, `sid` null; the row records its `device_id`), then launches with one short exec under the call's shared lease (`setsid` + `timeout -s KILL` + `bash`,
-  output in `/workspace/.capybara/tasks/<id>.out`), then records the session id. The call returns at once; `timeout` is the task's own limit
+  per-root-conversation `XactLock`; the row records its `device_id`), writes the durable launch intent and starts the task through the
+  managed route under the call's admitted operation scope (`background.start`, output in `<working root>/.capybara/tasks/<id>.out`),
+  then records the exact `SandboxExecutionRef` it returns (`launch_state` `started`). No session-id script is built: the poll,
+  `TaskOutput` and `TaskStop` act only by that ref (`background/managed.ts`), and rows the old launcher left (`launch_state = 'legacy'`)
+  are refused with the retirement text and left to the legacy retirement. The call returns at once; `timeout` is the task's own limit
   (default and cap `sandbox.background.maxSeconds`, itself at most `sandbox.limits.maxCommandSeconds`). A failed launch finishes the row `failed`; a full sandbox is refused with
   "N background tasks are already running; stop one with TaskStop or wait for one to finish, then retry".
 - `TaskOutput {task_id, block?, timeout?}` (block default true, timeout 30 s, at most 600 s and the run's time left, checked every 2 s) returns
   the status and the output since this conversation's last read (`read_offset` in PG, spilled like any large result); `TaskStop {task_id}`
-  claims the task (`stopping_at`), sends SIGTERM to the session, SIGKILL after 5 s. Both are `defaultPolicy: "allow"`, offered whenever
+  claims the task (`stopping_at`) and calls `background.stop` on its exact ref (a grace, then a kill on the device). Both are `defaultPolicy: "allow"`, offered whenever
   `Bash` is (the registry adds them, `BASH_COMPANION_TOOLS`), given to sub-agents, and go through `SandboxService.ifRunning` (see
   `.agents/skills/writing-sandbox-providers`). A conversation reads and stops only its own tasks.
 - `TaskList {status?: "running" | "all"}` (no required input; default `all`) lists the calling conversation's own tasks (owner
@@ -357,7 +361,7 @@ the same transaction as the business rows.
 
 ## `GenerateImage`
 
-`packages/kernel/src/tools/builtins/image/` (`generate.ts`, `paths.ts`). Listed only while `imagePurposeUsable` (`models/image-usable.ts`) says the org's `image` purpose resolves to a callable, enabled image model and an object store is there; the member-readable purpose availability the agent form reads uses the same predicate. Default policy `allow`. Input: `prompt`, optional `aspect_ratio`, `n`, `reference_images`, `name` and `file_path`. Reference indices in error texts are 0-based. Each image is saved as an artifact with sourcePath `generated/<callId>/<name>`; only with `file_path` is it also written to the device (suffixed `-1`, `-2` when `n > 1`) through `inToolSandbox` with `Write`'s checks (no directory; an existing file only when this conversation read it and it is unchanged), each refusal a line of the result since the images are delivered; a path whose extension is not the image's type is listed with the media type. Such a call is reviewed and is a permission candidate exactly like `Write`: every path it writes is judged and the worst outcome decides. Once the permission activation is on, a call with `file_path` takes the managed route as `Write` does (`MANAGED_OPERATION_TOOLS`: the run-account device guard, the permission review in its order, a call grant for an outside directory that admission reads, fail closed); a call without `file_path` never touches the device, so it takes neither the guard nor the permission review (`entersDevice` in `pipeline.ts`). Usage is recorded once the provider returns a valid result (before storage, abort, size check or device copy; an invalid result, its `usage` included, records none); `outputImages` is never more than the images returned (`billedImages`). An over-limit image fails as a tool error with actionable text, not a `ModelError`. Error texts carry the suffixes `check:tool-design` requires.
+`packages/kernel/src/tools/builtins/image/` (`generate.ts`, `paths.ts`). Listed only while `imagePurposeUsable` (`models/image-usable.ts`) says the org's `image` purpose resolves to a callable, enabled image model and an object store is there; the member-readable purpose availability the agent form reads uses the same predicate. Default policy `allow`. Input: `prompt`, optional `aspect_ratio`, `n`, `reference_images`, `name` and `file_path`. Reference indices in error texts are 0-based. Each image is saved as an artifact with sourcePath `generated/<callId>/<name>`; only with `file_path` is it also written to the device (suffixed `-1`, `-2` when `n > 1`) through `inToolSandbox` with `Write`'s checks (no directory; an existing file only when this conversation read it and it is unchanged), each refusal a line of the result since the images are delivered; a path whose extension is not the image's type is listed with the media type. Such a call is reviewed and is a permission candidate exactly like `Write`: every path it writes is judged and the worst outcome decides. On the activated tree a call with `file_path` takes the managed route and the same permission review as `Write` (`MANAGED_OPERATION_TOOLS`: the run-account device guard, the permission review in its order, a call grant for an outside directory that admission reads, fail closed); a call without `file_path` never touches the device, so it takes neither the guard nor the permission review (`entersDevice` in `pipeline.ts`). Usage is recorded once the provider returns a valid result (before storage, abort, size check or device copy; an invalid result, its `usage` included, records none); `outputImages` is never more than the images returned (`billedImages`). An over-limit image fails as a tool error with actionable text, not a `ModelError`. Error texts carry the suffixes `check:tool-design` requires.
 
 ## Web tools: `WebSearch` and `WebFetch`
 
