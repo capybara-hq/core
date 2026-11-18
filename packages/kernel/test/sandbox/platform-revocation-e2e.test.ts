@@ -334,8 +334,14 @@ it.each([
     });
     try {
       release.resolve();
-      // the call reports no started task (its record ended when the launch was revoked)
-      await expect(launch).rejects.toThrow(/was not started/);
+      // the process may have started before its launch was revoked: the call never claims that
+      // nothing runs, says it is being stopped and to check its effects
+      const err = (await launch.catch((e: unknown) => e)) as Error;
+      expect(err).toBeInstanceOf(Error);
+      expect(err.message).not.toMatch(/was not started|Nothing runs/);
+      expect(err.message).toMatch(
+        /^Background task \S+ \("Serve"\) may have started before its launch was (revoked|given up) \(.+\); any process it started is being stopped and will not keep running, but it may already have had effects\. Check them before calling Bash again as a new call\.$/,
+      );
       expect(await f.intent()).toMatchObject({ state: "revoked", revoke_acknowledged: false });
       await revokeJobRan(revokeJobId(f.operationId, "-ack"));
     } finally {

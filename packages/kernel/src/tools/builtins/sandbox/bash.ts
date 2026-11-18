@@ -14,6 +14,7 @@ import {
   managedTaskArtifactPath,
   newTaskId,
 } from "../../../background/launch.js";
+import { taskReasonText } from "../../../background/render.js";
 import type { BackgroundTaskRow } from "../../../background/store.js";
 import { isDeviceRequestNotSent } from "../../../local-devices/relay.js";
 import { launchRefusedText, operationIdFor } from "../../../sandbox/operation-intents.js";
@@ -317,6 +318,14 @@ export async function runInBackgroundManaged(
   const started =
     task.executionRef !== null &&
     (task.launchState === "acknowledged" || task.status !== "running");
+  if (!started && launch.kind !== "refused" && task.status === "lost") {
+    // revoked or given up before its start was confirmed: the process may have started, and its
+    // exact revoke (owed with the revocation) stops it; never claim that nothing ran
+    const how = task.lostReason === "launch_unknown" ? "given up" : "revoked";
+    throw new ToolError(
+      `Background task ${task.id} ("${description}") may have started before its launch was ${how} (${taskReasonText(task)}); any process it started is being stopped and will not keep running, but it may already have had effects. Check them before calling Bash again as a new call.`,
+    );
+  }
   if (!started && (launch.kind === "refused" || task.launchState === "terminal")) {
     // the recorded reason may hold a provider's words: the model gets kernel text only
     const why =

@@ -16,6 +16,10 @@ const LOST_REASONS: Readonly<Record<string, string>> = {
   process_gone: "its processes ended without an exit code",
   launch_abandoned: "its launch was interrupted",
   supervision_lost: "its supervision was lost",
+  launch_unknown:
+    "whether its launch started could not be confirmed; any process it started is being stopped",
+  launch_revoked:
+    "its launch was revoked before its start was confirmed; any process it started is being stopped",
 };
 
 /** Why a task was lost, as the model reads it (an unknown reason as is). */

@@ -7,6 +7,7 @@
   "background/managed-artifact.test.ts",
   "background/managed-output.test.ts",
   "background/poll-providers.test.ts",
+  "background/render-reasons.test.ts",
   "catalog/claude-marketplace.test.ts",
   "catalog/claude-translate.test.ts",
   "catalog/cli.test.ts",

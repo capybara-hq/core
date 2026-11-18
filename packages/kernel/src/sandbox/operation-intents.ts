@@ -41,11 +41,11 @@ export const OPERATION_REVOKE = "sandbox-operation-revoke";
  */
 export const HOLDER_REVOKE = "sandbox-holder-revoke";
 /**
- * Why a revoked background launch ended (model-visible, `lostReasonText` passes it through): the
- * kernel replica that was starting it stopped, so its launch was revoked.
+ * Why a revoked background launch ended (`lost_reason`; `lostReasonText` renders it): its launch
+ * was revoked before its start was confirmed (the replica starting it stopped, or its instance was
+ * cleaned up). The process may have started; its exact revoke stays owed.
  */
-export const REVOKED_LAUNCH_REASON =
-  "its launch was revoked because the server that started it stopped; run the command again if it is still needed";
+export const REVOKED_LAUNCH_REASON = "launch_revoked";
 /** The instance whose operations an exact cleanup covers: its provider and generation. */
 export interface RevokedIncarnation {
   provider: string;
