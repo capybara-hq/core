@@ -6,8 +6,11 @@ import { fileURLToPath } from "node:url";
 import {
   DEFAULT_SANDBOX_ROOTS,
   isSandboxGoneError,
+  isSandboxOperationOutcomeUnknownError,
+  SandboxGoneError,
   type SandboxHandle,
   type SandboxLimits,
+  SandboxOperationOutcomeUnknownError,
   type SandboxProvider,
 } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
@@ -1062,6 +1065,56 @@ describe("执行中发现实例已不在（SandboxGoneError，fix round 1）", (
       .catch((e: unknown) => e);
     expect(calls).toBe(2);
     expect(isSandboxGoneError(err)).toBe(true);
+  });
+});
+
+describe("gone after a durable dispatch (final review m4)", () => {
+  it("the outcome stays unknown and fn is not retried; the instance is rebuilt and each lease is left once", async () => {
+    const leases = sandboxLeasesFor({ redis, log, pollMs: 20 });
+    const left: string[] = [];
+    const unregister = leases.unregisterHolder.bind(leases);
+    leases.unregisterHolder = async (env, token) => {
+      left.push(token);
+      return unregister(env, token);
+    };
+    const s = service(undefined, undefined, { leases });
+    const a = await use(s);
+    left.length = 0;
+    let calls = 0;
+    const err = await s
+      .withSandbox(
+        at(),
+        async (h) => {
+          calls++;
+          // the dispatched operation's instance vanished: its outcome is unknown
+          await removeFakeSandbox(root, h.id);
+          throw new SandboxOperationOutcomeUnknownError("lost after dispatch", {
+            cause: new SandboxGoneError("the instance is gone"),
+          });
+        },
+        signal(),
+      )
+      .catch((e: unknown) => e);
+    expect(isSandboxOperationOutcomeUnknownError(err)).toBe(true);
+    // never retried under a new identity
+    expect(calls).toBe(1);
+    // rebuilt on the kept files at once
+    const rebuilt = await row();
+    if (!rebuilt?.handle) throw new Error("expected the rebuilt instance");
+    expect(rebuilt.status).toBe("running");
+    expect(rebuilt.handle).not.toEqual(a.h);
+    expect(await fakeSandboxState(root, (rebuilt.handle as SandboxHandle).id)).toBe("running");
+    // the use's lease and the rebuild's were each left exactly once; nothing is held after
+    expect(left).toHaveLength(2);
+    expect(new Set(left).size).toBe(2);
+    expect(await redis.hlen(`capk:sandbox-holders:${envId}`)).toBe(0);
+    const free = await leases.tryExclusive(envId);
+    expect(free).not.toBeNull();
+    await free?.release();
+    // the holder's next call runs on the rebuilt instance and is told of the restart
+    const next = await use(s);
+    expect(next.h).toEqual(rebuilt.handle);
+    expect(next.info).toMatchObject({ restarted: true });
   });
 });
 
