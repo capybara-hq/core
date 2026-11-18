@@ -106,8 +106,8 @@ export type HookModelRequest = Omit<ModelRequest, "messages"> & { messages: Hook
  * once for each conversation title call (`purpose: "title"`, `runId` "", `step` 0, `attempt` 1; a
  * denial skips the title and is recorded only in the audit log), once for each `WebFetch`
  * extraction call (`purpose: "web_fetch"`) and once for each prompt suggestion call
- * (`purpose: "suggestion"`, `step` 0, `attempt` 1; a denial skips the suggestion and is recorded only
- * in the audit log).
+ * (`purpose: "suggestion"`, `step` 0, `attempt` 1; a denial skips the suggestion and is recorded
+ * only in the audit log).
  * `request` is the request as sent, except that images and documents are placeholders
  * ({@link HookMediaPlaceholder}): no media bytes, no attachment ids.
  */
@@ -223,10 +223,11 @@ export type ModelRequestHookPayload =
 
 /**
  * `model.response`: after a sent model call finished or failed, with its usage when known (step
- * attempts, compaction, title and suggestion calls, see `purpose`). Not fired for a call the user aborted (the run was
- * stopped while the call was in flight), nor for a call that was never sent (denied, or failed
- * before sending), so a `model.request` can have no matching `model.response`. The mount's payload
- * is this or, for an image generation call, an {@link ImageResponseHookPayload}.
+ * attempts, compaction, title and suggestion calls, see `purpose`). Not fired for a call the user
+ * aborted (the run was stopped while the call was in flight), nor for a call that was never sent
+ * (denied, or failed before sending), so a `model.request` can have no matching `model.response`.
+ * The mount's payload is this or, for an image generation call, an
+ * {@link ImageResponseHookPayload}.
  */
 export interface ModelResponseHookPayload extends HookScope {
   purpose: Exclude<ModelCallPurpose, "image">;
