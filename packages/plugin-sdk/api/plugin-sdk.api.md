@@ -1642,8 +1642,20 @@ export const FILE_PREVIEW_MAX_BYTES: number;
 // @public
 export type FilePreviewArgs = FilePreviewConversationArgs | FilePreviewShareArgs;
 
-// Warning: (ae-forgotten-export) The symbol "FilePreviewArgsBase" needs to be exported by the entry point index.d.ts
-//
+// @public
+export interface FilePreviewArgsBase {
+    config?: unknown;
+    file: {
+        id: string;
+        name: string;
+        contentType: string;
+        size: number;
+    };
+    locale: Locale;
+    read(): Promise<Uint8Array>;
+    signal: AbortSignal;
+}
+
 // @public
 export interface FilePreviewConversationArgs extends FilePreviewArgsBase {
     accountId: string;
@@ -4418,7 +4430,6 @@ export interface UiPlatformActionArgs extends UiPlatformRenderArgs, UiActionInpu
 
 // @public
 export interface UiPlatformRenderArgs extends UiRenderArgsBase {
-    accountId: string;
     agentId?: undefined;
     card?: undefined;
     conversationId?: undefined;

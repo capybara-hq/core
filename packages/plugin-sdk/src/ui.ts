@@ -508,7 +508,6 @@ export interface UiOrgRenderArgs extends UiRenderArgsBase {
  */
 export interface UiPlatformRenderArgs extends UiRenderArgsBase {
   scope: "platform";
-  accountId: string;
   orgId?: undefined;
   role: "superAdmin";
   conversationId?: undefined;

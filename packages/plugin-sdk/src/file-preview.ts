@@ -34,7 +34,7 @@ export interface FilePreviewProvider {
 }
 
 /** What every {@link FilePreviewArgs} variant carries. */
-interface FilePreviewArgsBase {
+export interface FilePreviewArgsBase {
   locale: Locale;
   /** Aborted at the kernel's time limit: stop reading and rendering. */
   signal: AbortSignal;
