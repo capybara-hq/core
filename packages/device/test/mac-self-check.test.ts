@@ -91,6 +91,36 @@ it.runIf(process.platform === "darwin")(
   },
 );
 
+// A read probe passes only when its `cat` is refused: a `cat` that fails for every file (here a
+// shell function shadowing it) would pass every probe, so a granted file must read first.
+it.runIf(process.platform === "darwin")(
+  "a worker whose reads fail for every file fails the check (positive control)",
+  async () => {
+    const dir = await stateDir();
+    const broken = async (request: MacWorkerRequest, s: AbortSignal) => {
+      if (request.kind !== "exec") throw new Error("expected exec");
+      return startMacOperationWorker(
+        {
+          ...request,
+          args: { ...request.args, command: `cat() { return 1; }; ${request.args.command}` },
+        },
+        s,
+      );
+    };
+    expect(
+      await macRestrictedSelfCheck(
+        {
+          stateDir: dir,
+          pythonPath: "/usr/bin/python3",
+          runtimeHash: workspace.runtimeHash,
+          startWorker: broken,
+        },
+        signal(),
+      ),
+    ).toMatch(/read of a granted file failed/);
+  },
+);
+
 it("needs an attested runtime, and fails off macOS", async () => {
   const dir = await stateDir();
   expect(

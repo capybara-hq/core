@@ -30,6 +30,7 @@ const PROBE_FAILURES: Record<number, string> = {
   4: "a read of a denied path went through",
   5: "a network connection went through",
   6: "a read of an ungranted file went through",
+  7: "a read of a granted file failed, so the read probes prove nothing",
 };
 
 /** Whether a TCP connection reaches a local listener while `run` runs; the listener is closed after. */
@@ -56,7 +57,8 @@ async function withListener<T>(
 /**
  * The worker self-check a macOS binding runs before it reports restricted support (permission
  * activation B-27): a real restricted worker, launched from the sealed runtime the binding
- * attested, must write and remove a file inside its one write root, and must be refused a write
+ * attested, must write and remove a file inside its one write root and read a file there (the
+ * positive control of the read probes), and must be refused a write
  * to a sibling directory outside it, a read of a file under a denied read root, a read of an
  * ordinary file it was never granted (one beside its root, one in a temporary directory of its
  * own: no secret path, so only the read scope keeps them out), and a TCP connection to a
@@ -84,6 +86,9 @@ export async function macRestrictedSelfCheck(
     const hidden = join(base, "hidden");
     for (const dir of [allowed, denied, hidden]) await mkdir(dir, { mode: 0o700 });
     await writeFile(join(hidden, "secret"), "restricted self-check", { mode: 0o600 });
+    // granted: the positive control the read probes are measured against
+    const control = join(allowed, "control");
+    await writeFile(control, "restricted self-check", { mode: 0o600 });
     // ungranted, never denied: readable only if the read scope is wider than the grant
     const ungranted = join(base, "ungranted");
     await writeFile(ungranted, "restricted self-check", { mode: 0o600 });
@@ -92,9 +97,12 @@ export async function macRestrictedSelfCheck(
     await writeFile(unrelated, "restricted self-check", { mode: 0o600 });
     const probe = (dir: string) => shellQuote(join(dir, "probe"));
     const { value: result, reached } = await withListener(async (port) => {
-      // exit 3 to 6: a refused action went through; any other failure: the allowed write failed
+      // exit 3 to 6: a refused action went through; 7: the positive control (a granted file
+      // must read, else a `cat` failing for any reason would pass every read probe); any other
+      // failure: the allowed write failed
       const command =
         `: > ${probe(allowed)} && rm ${probe(allowed)} && ` +
+        `if ! cat ${shellQuote(control)} >/dev/null 2>&1; then exit 7; fi; ` +
         `if (: > ${probe(denied)}) 2>/dev/null; then exit 3; fi; ` +
         `if cat ${shellQuote(join(hidden, "secret"))} >/dev/null 2>&1; then exit 4; fi; ` +
         `if cat ${shellQuote(ungranted)} >/dev/null 2>&1; then exit 6; fi; ` +

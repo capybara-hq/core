@@ -13,3 +13,6 @@ directory.
 A `capybara-device` newer than its deployment no longer tells the person to upgrade the program
 when the deployment refuses it as outdated (HTTP 426): it reads the deployment's device protocol
 from the refusal and, when the deployment's is older, says to upgrade the deployment first.
+
+The macOS restricted self-check first proves that a granted file reads: a read probe that fails
+for any reason no longer counts as a refused read.
