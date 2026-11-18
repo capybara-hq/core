@@ -447,6 +447,17 @@ export const PLATFORM_EXCLUSIONS: readonly {
     category: "internal",
     reason: "The right panel's per-file view; conversations.list-shares lists the same shares",
   },
+  // the HTML document (file sharing spec §4, §10)
+  {
+    route: "POST /api/v1/orgs/:orgId/conversations/:id/files/:fileId/html-token",
+    category: "transport",
+    reason: "Mints the HTML document's load token for the web panel",
+  },
+  {
+    route: "GET /api/v1/html/*",
+    category: "transport",
+    reason: "Serves a sandboxed HTML document",
+  },
   // identity
   {
     route: "POST /api/v1/orgs/:orgId/approvals/:approvalId/initial-password",

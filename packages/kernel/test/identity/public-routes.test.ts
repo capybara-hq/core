@@ -43,6 +43,8 @@ const PUBLIC_ROUTES = new Set([
   // gateway itself (sandbox git credentials spec §5)
   "GET /git/v1/*",
   "POST /git/v1/*",
+  // File sharing spec §4: the HTML document; its short-lived signed token is the authority
+  "GET /api/v1/html/*",
 ]);
 
 const ZERO_UUID = "00000000-0000-0000-0000-000000000000";

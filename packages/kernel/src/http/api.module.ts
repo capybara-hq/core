@@ -65,6 +65,8 @@ import { ExtensionPointDefaultsController } from "../extensions/point-defaults.c
 import { FilesModule } from "../files/files.module.js";
 import { FilePreviewersController } from "../files/previewers.controller.js";
 import { GitModule } from "../git/git.module.js";
+import { HtmlModule } from "../html/html.module.js";
+import { HtmlDocumentController } from "../html/html-document.controller.js";
 import { AuthController } from "../identity/auth.controller.js";
 import { AuthGuard } from "../identity/auth.guard.js";
 import { IdentityModule } from "../identity/identity.module.js";
@@ -186,6 +188,7 @@ const CONTROLLERS: Type[] = [
   SlotsController,
   FilePreviewersController,
   SharesController,
+  HtmlDocumentController,
   ExtensionPointDefaultsController,
   TrajectoryController,
   EvalSetsController,
@@ -246,6 +249,8 @@ const CONTROLLERS: Type[] = [
     GitModule,
     // file sharing (shares of conversation files)
     SharesModule,
+    // HTML files rendered as sandboxed documents (the document token and route)
+    HtmlModule,
   ],
   controllers: CONTROLLERS,
   providers: [{ provide: APP_GUARD, useClass: AuthGuard }],
