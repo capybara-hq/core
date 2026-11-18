@@ -51,7 +51,9 @@ import {
   HTML_CDN_ALLOWLIST_DEFAULT,
   HtmlCdnAllowlistSchema,
   readExternalSharing,
+  readHtmlCdnAllowlist,
   readShareMaxExpiry,
+  SHARE_MAX_EXPIRY_DEFAULT,
   SHARE_MAX_EXPIRY_SETTING,
   ShareMaxExpiryDays,
   type ShareMaxExpiryView,
@@ -321,6 +323,9 @@ const externalSharingWidenRefused = (): ApiError =>
     "deployment.external_sharing_not_allowed",
     "Allowing external sharing at the platform level (externalSharing) needs a super admin in the admin console; an API token or the Platform tool may only turn it off.",
   );
+
+const sharingWidenRefused = (field: string, message: string): ApiError =>
+  new ApiError("deployment.sharing_widen_not_allowed", message, [{ path: field }]);
 
 /**
  * 设置的修改（PUT /api/v1/admin/settings 的 body）：只改给出的键。
@@ -688,13 +693,18 @@ export class SettingsService {
   }
 
   /**
-   * The refusals of an `externalSharing` / `shareMaxExpiryDays` change: a field set in the startup
-   * config (`deployment.setting_readonly`) and, with `onlyNarrows` (an API token, the Platform
-   * tool), allowing external sharing where it is denied (`deployment.external_sharing_not_allowed`).
-   * Clearing the switch (null) goes back to deny, a narrowing.
+   * The refusals of an `externalSharing` / `shareMaxExpiryDays` / `htmlRenderCdnAllowlist` change:
+   * a field set in the startup config (`deployment.setting_readonly`) and, with `onlyNarrows` (an
+   * API token, the Platform tool), any widening: allowing external sharing where it is denied
+   * (`deployment.external_sharing_not_allowed`; clearing it goes back to deny, a narrowing), an
+   * expiry maximum above the effective one (null counts as the default, 30) or an allowlist origin
+   * the effective list does not hold (`deployment.sharing_widen_not_allowed`). Only a person widens.
    */
   async checkSharing(
-    patch: Pick<DeploymentSettingsPatch, "externalSharing" | "shareMaxExpiryDays">,
+    patch: Pick<
+      DeploymentSettingsPatch,
+      "externalSharing" | "shareMaxExpiryDays" | "htmlRenderCdnAllowlist"
+    >,
     opts: { onlyNarrows?: boolean } = {},
   ): Promise<void> {
     const fields = [
@@ -714,6 +724,25 @@ export class SettingsService {
     if (opts.onlyNarrows && patch.externalSharing === "allow") {
       const before = await readExternalSharing(this.db.db, this.config, this.log);
       if (before.value !== "allow") throw externalSharingWidenRefused();
+    }
+    if (opts.onlyNarrows && patch.shareMaxExpiryDays !== undefined) {
+      const before = await readShareMaxExpiry(this.db.db, this.config, this.log);
+      const after = patch.shareMaxExpiryDays ?? SHARE_MAX_EXPIRY_DEFAULT;
+      if (after > before.value)
+        throw sharingWidenRefused(
+          "shareMaxExpiryDays",
+          `Raising the share expiry maximum (now ${before.value} days) needs a super admin in the admin console; an API token or the Platform tool may only lower it.`,
+        );
+    }
+    if (opts.onlyNarrows && patch.htmlRenderCdnAllowlist !== undefined) {
+      // both sides are lower-cased by the schema; a Set compares them without duplicates
+      const current = new Set(await readHtmlCdnAllowlist(this.db.db, this.log));
+      const added = [...new Set(patch.htmlRenderCdnAllowlist)].filter((o) => !current.has(o));
+      if (added.length > 0)
+        throw sharingWidenRefused(
+          "htmlRenderCdnAllowlist",
+          `Adding origins to the HTML CDN allowlist (${added.join(", ")}) needs a super admin in the admin console; an API token or the Platform tool may only remove origins.`,
+        );
     }
   }
 
@@ -767,7 +796,8 @@ export class SettingsService {
   /**
    * Updates settings under the super admin lock, re-checking the actor (else `forbidden`).
    * `onlyNarrows` (an API token, the Platform tool): `devicesFullAccess` may only turn Full off,
-   * `externalSharing` may only turn external sharing off.
+   * `externalSharing` may only turn external sharing off, `shareMaxExpiryDays` may only decrease and
+   * `htmlRenderCdnAllowlist` may only shrink.
    */
   async update(
     patch: DeploymentSettingsPatch,
@@ -926,7 +956,11 @@ export class SettingsService {
     }
     // the sharing switches: checked under the lock; null deletes the stored choice (the default)
     const deletes: string[] = [];
-    if (patch.externalSharing !== undefined || patch.shareMaxExpiryDays !== undefined) {
+    if (
+      patch.externalSharing !== undefined ||
+      patch.shareMaxExpiryDays !== undefined ||
+      patch.htmlRenderCdnAllowlist !== undefined
+    ) {
       await this.checkSharing(patch, opts);
       for (const [key, value] of [
         [EXTERNAL_SHARING_SETTING, patch.externalSharing],

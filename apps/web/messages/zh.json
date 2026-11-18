@@ -557,7 +557,8 @@
     "deployment": {
       "setting_readonly": "这项设置由部署的启动配置（环境变量、配置文件或 Nacos）设定，只能在那里修改。",
       "auto_mode_not_allowed": "通过 API 令牌或平台工具只能关闭平台的自动模式；要重新开放，请超级管理员在后台设置。",
-      "external_sharing_not_allowed": "通过 API 令牌或平台工具只能关闭对外分享；要允许，请超级管理员在后台设置。"
+      "external_sharing_not_allowed": "通过 API 令牌或平台工具只能关闭对外分享；要允许，请超级管理员在后台设置。",
+      "sharing_widen_not_allowed": "通过 API 令牌或平台工具只能调低分享有效期上限、移除 CDN 来源；要调高或添加，请超级管理员在后台设置。"
     },
     "share": {
       "not_found": "这个链接不存在、已撤销或已过期。",

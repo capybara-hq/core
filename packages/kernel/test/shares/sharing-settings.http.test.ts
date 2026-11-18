@@ -142,6 +142,48 @@ describe("platform sharing settings", () => {
     expect(cleared.json().externalSharing).toEqual({ value: "deny", source: "default" });
   });
 
+  it("an API token may only lower the expiry maximum and remove CDN origins", async () => {
+    const req = await viaToken();
+    const put = (payload: Record<string, unknown>) => req("PUT", "/api/v1/admin/settings", payload);
+    // the expiry maximum: raising it (from the default 30) is refused, lowering it is fine
+    const raised = await put({ shareMaxExpiryDays: 365 });
+    expect(raised.statusCode, raised.body).toBe(400);
+    expect(errCode(raised)).toBe("deployment.sharing_widen_not_allowed");
+    const lowered = await put({ shareMaxExpiryDays: 7 });
+    expect(lowered.statusCode, lowered.body).toBe(200);
+    expect(lowered.json().shareMaxExpiryDays).toEqual({ value: 7, source: "db" });
+    // clearing from 7 goes back to 30: a widening
+    const cleared = await put({ shareMaxExpiryDays: null });
+    expect(cleared.statusCode, cleared.body).toBe(400);
+    expect(errCode(cleared)).toBe("deployment.sharing_widen_not_allowed");
+    expect((await put({ shareMaxExpiryDays: 8 })).statusCode).toBe(400);
+    expect((await put({ shareMaxExpiryDays: 7 })).statusCode).toBe(200);
+
+    // the allowlist: adding an origin is refused (even next to a removal), removing one is fine
+    const added = await put({
+      htmlRenderCdnAllowlist: [...HTML_CDN_ALLOWLIST_DEFAULT, "https://attacker.example"],
+    });
+    expect(added.statusCode, added.body).toBe(400);
+    expect(errCode(added)).toBe("deployment.sharing_widen_not_allowed");
+    const swapped = await put({ htmlRenderCdnAllowlist: ["https://attacker.example"] });
+    expect(swapped.statusCode, swapped.body).toBe(400);
+    const shrunk = HTML_CDN_ALLOWLIST_DEFAULT.slice(1);
+    // upper case and duplicates compare as the same origins
+    const removed = await put({
+      htmlRenderCdnAllowlist: [...shrunk.map((o) => o.toUpperCase()), shrunk[0]],
+    });
+    expect(removed.statusCode, removed.body).toBe(200);
+    expect(removed.json().htmlRenderCdnAllowlist).toEqual(shrunk);
+    // the dropped origin cannot come back through the token, but a person adds it
+    const back = await put({ htmlRenderCdnAllowlist: [...HTML_CDN_ALLOWLIST_DEFAULT] });
+    expect(back.statusCode, back.body).toBe(400);
+    const person = await putSettings({
+      htmlRenderCdnAllowlist: [...HTML_CDN_ALLOWLIST_DEFAULT],
+      shareMaxExpiryDays: 365,
+    });
+    expect(person.statusCode, person.body).toBe(200);
+  });
+
   it("an invalid stored value reads as deny / 30 days / the default allowlist (fail closed)", async () => {
     await db
       .insertInto("deployment_settings")

@@ -53,6 +53,11 @@ export const ERROR_CODES = {
   "deployment.auto_mode_not_allowed": 400,
   /** Allowing external sharing at the platform level through an API token or the Platform tool. */
   "deployment.external_sharing_not_allowed": 400,
+  /**
+   * Raising the share expiry maximum or adding a CDN allowlist origin through an API token or the
+   * Platform tool (only lowering and removing).
+   */
+  "deployment.sharing_widen_not_allowed": 400,
   /** No live share with this code (unknown, revoked, expired, or its creator lost access). */
   "share.not_found": 404,
   /** An internal share opened without a session: sign in as a member of its org. */
