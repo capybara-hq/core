@@ -154,17 +154,18 @@ it("owner baseline removal preserves Full and explicit additions but revokes bas
   expect(ownerPolicyRevokes(next, restricted, "exec", [])).toBe(true);
   expect(ownerPolicyRevokes(next, restricted, "exec", ["api.example.com"])).toBe(false);
   expect(ownerPolicyRevokes(next, restricted, "stat", [])).toBe(false);
-  expect(ownerPolicyRevokes(next, { ...restricted, profile: "full-access" }, "exec", [])).toBe(
-    false,
-  );
-  expect(
-    ownerPolicyRevokes(
-      { ...next, mode: "sandbox" },
-      { ...restricted, profile: "full-access" },
-      "exec",
-      [],
-    ),
-  ).toBe(true);
+  // full execution is the scope's reach: a Full access operation and an escalated call alike
+  const full = {
+    ...restricted,
+    filesystem: { kind: "device" as const },
+    network: { kind: "environment" as const },
+  };
+  for (const profile of ["full-access", "approve-for-me"] as const) {
+    expect(ownerPolicyRevokes(next, { ...full, profile }, "exec", [])).toBe(false);
+    expect(ownerPolicyRevokes({ ...next, mode: "sandbox" }, { ...full, profile }, "exec", [])).toBe(
+      true,
+    );
+  }
 });
 
 // final review m4: a cloud provider's background start is told the kernel's generation of the

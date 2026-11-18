@@ -5,13 +5,15 @@ import {
   validateAllowHost,
 } from "@capybara-hq/plugin-sdk";
 /**
- * Whether an operation scope runs with full execution (no OS sandbox): a Full access operation, or
- * a per-call sandbox escalation under a restricted profile. Decided by the scope's filesystem and
- * network, as the device decides it, never by the profile name alone: an escalated call keeps its
- * conversation's restricted profile.
+ * Whether an operation scope needs the Full access ceiling and the runtime's Full support: a Full
+ * access operation (its reach is full, or narrowed for a kernel read on a Full-only runtime), or a
+ * per-call sandbox escalation under a restricted profile, whose reach is full (`filesystem:
+ * device`, `network: environment`) while it keeps its conversation's restricted profile.
  */
 export const isFullExecutionScope = (scope: SandboxOperationScope | SandboxBrowseScope): boolean =>
-  "profile" in scope && scope.filesystem.kind === "device" && scope.network.kind === "environment";
+  "profile" in scope &&
+  (scope.profile === "full-access" ||
+    (scope.filesystem.kind === "device" && scope.network.kind === "environment"));
 
 export const isExecutionMethod = (method: string): method is "exec" | "backgroundStart" =>
   method === "exec" || method === "backgroundStart";

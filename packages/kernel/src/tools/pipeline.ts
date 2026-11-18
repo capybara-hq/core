@@ -1293,7 +1293,7 @@ export class ToolPipeline {
     const reviewedRoots = {
       workingRoot: reviewed.workingRoot,
       against: reviewed.reviewedAgainst,
-      escalation: reviewed.sandboxEscalation,
+      ...(reviewed.sandboxEscalation !== undefined && { escalation: reviewed.sandboxEscalation }),
     };
     if (reviewed.commandAsk !== undefined)
       authorization = approvalAuthorization(reviewed.commandAsk);

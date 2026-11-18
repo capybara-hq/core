@@ -349,8 +349,8 @@ An admitted escalated command gets an operation scope with the conversation's re
 the base scope, and the next call is restricted again. The device decides full execution from the
 scope's reach (`intersectOperation`), so local macOS, Linux and Docker-mode devices run it with
 their existing `full` grant; the owner's Full ceiling still refuses it. Kernel checks that used the
-profile name as "full execution" now use the scope's reach (`isFullExecutionScope`: the provider
-support check, the Full ceiling revocation predicates), so revoking the Full ceiling cancels an
+profile name as "needs Full" now also count a full reach under a restricted profile
+(`isFullExecutionScope`: the provider support check, the Full ceiling revocation predicates), so revoking the Full ceiling cancels an
 escalated command too. E2B is Full only, so escalation does not apply there. `commands.log` records
 `isolation: "full"` and `grantSource: "call approval"` for an escalated operation, never the
 command text. No SDK or protocol change.

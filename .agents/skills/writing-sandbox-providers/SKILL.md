@@ -528,8 +528,8 @@ reaches a kernel still on protocol 2 gets the same 426 from that kernel, so upgr
 An approved escalated `Bash` call (approval profiles design, "Per-call sandbox escalation") is
 admitted with the conversation's restricted `profile` and full reach (`filesystem: device`,
 `network: environment`) for its command only (exec or backgroundStart; its native methods keep the
-base scope). "Full execution" is therefore the scope's reach, never the profile name:
-`isFullExecutionScope` (`sandbox/operation-authority-types.ts`) drives the provider support check
+base scope). "Needs Full" is therefore the Full access profile or a full reach, never the profile
+name alone: `isFullExecutionScope` (`sandbox/operation-authority-types.ts`) drives the provider support check
 (`held-operations.ts`) and the Full ceiling revocation predicates (`permission-ceiling-writes.ts`,
 `owner-report.ts`, `policy-summary.ts`), and the device's `intersectOperation` decides the same way,
 so the owner's Full ceiling bounds an escalation exactly as it bounds Full access. Admission
