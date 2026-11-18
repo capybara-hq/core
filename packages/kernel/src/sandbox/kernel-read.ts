@@ -59,3 +59,34 @@ export class KernelReadNotAdmitted extends Error {
     this.name = "KernelReadNotAdmitted";
   }
 }
+
+/**
+ * How a kernel read is sent, from the device's recorded runtime support and whether its runtime is
+ * isolated (its file system holds no host home: a cloud device, or a local machine recorded in its
+ * Docker mode): `restricted` whenever the runtime enforces the restricted profiles (the read-only
+ * scope, whatever the conversation selected); `full` only for an isolated Full-only runtime (the
+ * conversation's admitted Full access, still with the one covering path and the read methods);
+ * `refused` otherwise (a host machine without restricted enforcement: fail closed).
+ */
+export type KernelReadRoute = "restricted" | "full" | "refused";
+
+export function kernelReadRoute(support: {
+  restricted: boolean;
+  fullAccess: boolean;
+  isolated: boolean;
+}): KernelReadRoute {
+  if (support.restricted) return "restricted";
+  if (support.fullAccess && support.isolated) return "full";
+  return "refused";
+}
+
+/**
+ * The device's runtime cannot enforce a read-only kernel read of the project (a host machine
+ * without restricted enforcement): nothing is sent, and the project is recorded unreadable.
+ */
+export class KernelReadUnsupported extends Error {
+  constructor() {
+    super("This device's runtime cannot enforce a read-only kernel read on its host");
+    this.name = "KernelReadUnsupported";
+  }
+}

@@ -18,13 +18,16 @@ import { EventLog } from "../../src/conversations/event-log.js";
 import { kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { KernelDb } from "../../src/infra/database/kernel-db.js";
+import { TransactionHost } from "../../src/infra/database/transaction-host.js";
 import { ProjectKnowledgeService } from "../../src/runtime/project/knowledge.service.js";
 import { type ExecutionClaim, RunExecution } from "../../src/runtime/run-execution.js";
 import { SandboxOperationAuthority } from "../../src/sandbox/operation-authority.js";
 import { SandboxOperationIntents } from "../../src/sandbox/operation-intents.js";
 import { SandboxOperationReconcileJob } from "../../src/sandbox/operation-reconcile.job.js";
+import { PermissionAuthorityLock } from "../../src/sandbox/permission-authority-lock.js";
 import { PERMISSION_CONTEXT_ACTIVATION } from "../../src/sandbox/permission-context-types.js";
 import { PermissionFacts } from "../../src/sandbox/permission-facts.js";
+import { PermissionRuntimeReports } from "../../src/sandbox/permission-runtime-reports.js";
 import { SandboxProviders } from "../../src/sandbox/providers.js";
 import { SandboxService } from "../../src/sandbox/sandbox.service.js";
 import { SandboxFileReader } from "../../src/sandbox/sandbox-file-reader.js";
@@ -41,6 +44,7 @@ import {
   type TestKernel,
 } from "../helpers/runs.js";
 import { seedConversation } from "../helpers/tool-fixtures.js";
+import { identityFor, REPORTS, type ReportKind } from "../runtime/permission-context-fixture.js";
 
 /**
  * The non-tool device callers once the one activation gate is on (permission activation L2), on
@@ -64,6 +68,8 @@ let root: string;
 const files = new Map<string, string>();
 /** Symbolic links: a path → the file it points at. */
 const links = new Map<string, string>();
+/** Set: the cloud runtime reports Full access only (E2B's support). */
+let fullOnly = false;
 /** Every provider entry reached: the route, the method, the path and the operation's scope. */
 const seen: {
   route: "operation" | "browse" | "raw";
@@ -145,12 +151,7 @@ beforeAll(async () => {
       return [{ path: APP, suggestedName: "app" }];
     },
     async permissionSupport() {
-      return {
-        version: 1,
-        restricted: { filesystem: true, network: true, native: true, concurrentScopes: true },
-        fullAccess: true,
-        background: false,
-      };
+      return fullOnly ? REPORTS["full-only"] : REPORTS.both;
     },
     async revokeOperation() {},
     async operation(h, scope) {
@@ -220,6 +221,7 @@ beforeEach(async () => {
   seen.length = 0;
   files.clear();
   links.clear();
+  fullOnly = false;
   files.set(`${APP}/AGENTS.md`, "Be kind to the build.");
   files.set(
     `${APP}/.agents/skills/fix/SKILL.md`,
@@ -565,6 +567,159 @@ const ctxOf = (f: Fixture, run: { runId: string }) => ({
   holderConversationId: f.conversationId,
   silent: true as const,
   actor: { accountId: f.accountId, conversationId: f.conversationId, runId: run.runId },
+});
+
+/** Full access with consent for the bound project (a Full-only runtime admits nothing else). */
+async function fullAccess(f: Fixture): Promise<void> {
+  const consent = await k.app.get(PermissionFacts).scope(f.orgId, f.deviceId, APP, "app");
+  await f.db
+    .updateTable("conversations")
+    .set({
+      permission_profile: "full-access",
+      permission_consent: JSON.stringify({
+        deviceId: f.deviceId,
+        scopeRevision: consent.scopeRevision,
+      }),
+    })
+    .where("id", "=", f.conversationId)
+    .execute();
+}
+
+/**
+ * A local device whose machine is connected in `mode` (`os`: the host backend; `docker`: its
+ * Docker mode), its running instance with an installed binding and the runtime report `report`.
+ */
+async function seedLocal(mode: "os" | "docker", report: ReportKind): Promise<Fixture> {
+  const f = await seed();
+  await f.db.updateTable("devices").set({ source: "local" }).where("id", "=", f.deviceId).execute();
+  const generation = String(1_700_000_000_000 + Math.floor(Math.random() * 1_000_000_000));
+  const machineId = (
+    await f.db
+      .insertInto("device_machines")
+      .values({
+        org_id: f.orgId,
+        device_id: f.deviceId,
+        account_id: f.accountId,
+        credential_hash: randomUUID(),
+        name: "Laptop",
+        os: "linux",
+        arch: "x64",
+        program_version: "0.1.0",
+        mode,
+        features: ["mode", "projects"],
+        roots: JSON.stringify(DEFAULT_SANDBOX_ROOTS),
+        home: "/home/owner",
+        local_policy: JSON.stringify({ mode: "auto", allowedDomains: [] }),
+      })
+      .returning("id")
+      .executeTakeFirstOrThrow()
+  ).id;
+  await f.db
+    .insertInto("device_instances")
+    .values({
+      device_id: f.deviceId,
+      org_id: f.orgId,
+      provider: CLOUD,
+      status: "running",
+      handle: JSON.stringify({ id: f.deviceId, roots: DEFAULT_SANDBOX_ROOTS }),
+      permission_roots: JSON.stringify(DEFAULT_SANDBOX_ROOTS),
+      created_at: new Date(Number(generation)),
+      fs_status: "ready",
+      had_instance: true,
+      instance_limits: JSON.stringify({
+        mode: "auto",
+        network: { kind: "open-public", hosts: [] },
+      }),
+    })
+    .execute();
+  const identity = identityFor(generation);
+  await k.app.get(TransactionHost).run(async () => {
+    await k.app
+      .get(PermissionAuthorityLock)
+      .acquire({ orgId: f.orgId, deviceId: f.deviceId }, { kind: "write", level: "device" });
+    await k.app
+      .get(PermissionRuntimeReports)
+      .record(f.deviceId, CLOUD, "v1", identity, REPORTS[report]);
+  });
+  await f.db
+    .insertInto("device_instance_bindings")
+    .values({
+      device_id: f.deviceId,
+      instance_generation: generation,
+      binding_id: randomUUID(),
+      provider: CLOUD,
+      status: "installed",
+      machine_id: machineId,
+      runtime_identity: JSON.stringify(identity),
+    })
+    .execute();
+  return f;
+}
+
+describe("the kernel read's route follows the device's recorded runtime support", () => {
+  const profilesOf = async (f: Fixture) =>
+    (await intentsOf(f)).map((r) => (r.scope as unknown as SandboxOperationScope).profile);
+
+  it("a cloud Full-only runtime reads under Full access, still on the narrowed paths", async () => {
+    fullOnly = true;
+    const f = await seed();
+    await bindProject(f);
+    await fullAccess(f);
+    const run = await claimRun(f);
+    expect(await recordKnowledge(f, run)).toBe(true);
+    expect(await latestProjectRoot(f.conversationId)).toMatchObject({
+      agentsMd: "Be kind to the build.",
+      skills: [{ name: "fix" }],
+    });
+    const profiles = await profilesOf(f);
+    expect(profiles.length).toBeGreaterThan(0);
+    expect(new Set(profiles)).toEqual(new Set(["full-access"]));
+    expect(seen.some((x) => x.path.endsWith("secret.txt"))).toBe(false);
+    for (const x of seen.filter((y) => y.route === "operation"))
+      expect(x.readRoots?.[0]?.startsWith(APP)).toBe(true);
+  });
+
+  it("a local Docker-mode Full-only runtime reads under Full access", async () => {
+    const f = await seedLocal("docker", "full-only");
+    await bindProject(f);
+    await fullAccess(f);
+    const run = await claimRun(f);
+    expect(await recordKnowledge(f, run)).toBe(true);
+    expect(await latestProjectRoot(f.conversationId)).toMatchObject({
+      agentsMd: "Be kind to the build.",
+    });
+    expect(new Set(await profilesOf(f))).toEqual(new Set(["full-access"]));
+  });
+
+  it("a host machine without restricted enforcement gets no read: unreadable with the reason, the run goes on", async () => {
+    const f = await seedLocal("os", "full-only");
+    await bindProject(f);
+    await fullAccess(f);
+    const run = await claimRun(f);
+    expect(await recordKnowledge(f, run)).toBe(true);
+    const latest = await latestProjectRoot(f.conversationId);
+    expect(latest).toMatchObject({
+      project: "app",
+      root: APP,
+      skills: [],
+      unavailable: { reason: "unreadable" },
+    });
+    expect(latest?.unavailable?.message).toContain("cannot enforce a read-only read");
+    expect(seen.filter((x) => x.route === "operation")).toEqual([]);
+    expect(await intentsOf(f)).toEqual([]);
+  });
+
+  it("a host machine with restricted enforcement reads under the restricted scope, even under Full access", async () => {
+    const f = await seedLocal("os", "both");
+    await bindProject(f);
+    await fullAccess(f);
+    const run = await claimRun(f);
+    expect(await recordKnowledge(f, run)).toBe(true);
+    expect(await latestProjectRoot(f.conversationId)).toMatchObject({
+      agentsMd: "Be kind to the build.",
+    });
+    expect(new Set(await profilesOf(f))).toEqual(new Set(["request-approval"]));
+  });
 });
 
 describe("admission's working root follows the command review's fallbacks", () => {

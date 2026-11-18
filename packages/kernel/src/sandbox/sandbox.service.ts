@@ -105,6 +105,7 @@ import {
   isKernelReadMethod,
   type KernelReadInvocation,
   KernelReadNotAdmitted,
+  KernelReadUnsupported,
 } from "./kernel-read.js";
 import {
   type SandboxLease,
@@ -1782,7 +1783,7 @@ export class SandboxService {
         );
       } catch (error) {
         // a refusal before dispatch: nothing reached the device
-        if (sig.aborted) throw error;
+        if (sig.aborted || error instanceof KernelReadUnsupported) throw error;
         throw new KernelReadNotAdmitted(error);
       }
       sig.throwIfAborted();

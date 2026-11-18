@@ -14,7 +14,7 @@ import { TransactionHost } from "../../infra/database/transaction-host.js";
 import { Transactional } from "../../infra/database/transactional.decorator.js";
 import { KERNEL_LOGGER } from "../../infra/tokens.js";
 import type { KernelLogger } from "../../log.js";
-import { KernelReadNotAdmitted } from "../../sandbox/kernel-read.js";
+import { KernelReadNotAdmitted, KernelReadUnsupported } from "../../sandbox/kernel-read.js";
 import { SandboxLockLostError, SandboxPathBusyError } from "../../sandbox/leases.js";
 import {
   PERMISSION_CONTEXT_ACTIVATION,
@@ -65,6 +65,7 @@ function isDeviceFailure(e: unknown): boolean {
   return (
     providerConnectionFailure(e) !== undefined ||
     e instanceof KernelReadNotAdmitted ||
+    e instanceof KernelReadUnsupported ||
     e instanceof ApiError ||
     e instanceof DeviceProtocolError ||
     e instanceof SandboxLockLostError ||
@@ -269,10 +270,28 @@ export class ProjectKnowledgeService {
                 list.call(p, h, path, { limit, limits: { mode: readModeOf(scope) }, signal: sig }),
             }),
           };
-          return readProjectKnowledge(files, target, {
-            log: (msg, detail) => this.log.info(msg, { ...where, ...detail }),
-            isDeviceFailure: (e) => sig.aborted || isDeviceFailure(e),
-          });
+          try {
+            return await readProjectKnowledge(files, target, {
+              log: (msg, detail) => this.log.info(msg, { ...where, ...detail }),
+              isDeviceFailure: (e) => sig.aborted || isDeviceFailure(e),
+            });
+          } catch (e) {
+            // gate on: a host runtime without restricted enforcement gets no kernel read; the
+            // project is recorded unreadable with the reason and the run goes on
+            if (!(e instanceof KernelReadUnsupported)) throw e;
+            this.log.warn(
+              "project knowledge not read: the device cannot enforce a read-only read",
+              {
+                ...where,
+                deviceId,
+              },
+            );
+            return unavailableProject(
+              bound.project,
+              bound.root,
+              projectUnavailable.notEnforceable(bound.root),
+            );
+          }
         },
         signal,
       );

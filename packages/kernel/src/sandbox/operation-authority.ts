@@ -28,7 +28,14 @@ import {
 } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { NetworkGrants } from "../local-devices/network-grants.js";
-import { type KernelReadInvocation, type KernelReadMethod, kernelReadRoot } from "./kernel-read.js";
+import {
+  type KernelReadInvocation,
+  type KernelReadMethod,
+  type KernelReadRoute,
+  KernelReadUnsupported,
+  kernelReadRoot,
+  kernelReadRoute,
+} from "./kernel-read.js";
 import { coversHost, type EffectiveDevicePolicy, projectReachOf } from "./modes.js";
 import { isExecutionMethod, parseStartingExecutionGrants } from "./operation-authority-types.js";
 import { PermissionAuthorityEpochStore } from "./permission-authority-epochs.js";
@@ -380,9 +387,12 @@ export class SandboxOperationAuthority {
    * scope from the same authority snapshot admission reads, with the bound project as the working
    * root it becomes once read (the review's fallbacks apply: a root outside the mode or above the
    * home is refused), intersected with the one path the read may reach
-   * ({@link kernelReadRoot}: the root's `stat`, `AGENTS.md`, `.agents/skills/**`). Always the
-   * restricted {@link KERNEL_READ_PROFILE} (never Full access or its consent, so the runtime
-   * enforces the read root, symlinks included), no write roots, no hosts, never a per-call grant. Called under the run start's claim only (the intents
+   * ({@link kernelReadRoot}: the root's `stat`, `AGENTS.md`, `.agents/skills/**`). The restricted
+   * {@link KERNEL_READ_PROFILE} whenever the runtime enforces it (the runtime then enforces the
+   * read root, symlinks included); the conversation's admitted Full access only on an isolated
+   * Full-only runtime; a host machine without restricted enforcement throws
+   * {@link KernelReadUnsupported} ({@link kernelReadRoute}). No write roots, no hosts, never a
+   * per-call grant. Called under the run start's claim only (the intents
    * check that its run is still `queued`).
    */
   @Transactional()
@@ -422,6 +432,18 @@ export class SandboxOperationAuthority {
         "forbidden",
         "The kernel read's root is not the conversation's usable project root",
       );
+    // the recorded runtime support decides the route: restricted when enforced, Full access only
+    // on an isolated Full-only runtime, nothing on a host machine without restricted enforcement
+    const availability = f.availability as PermissionAvailability;
+    let route: KernelReadRoute = "restricted";
+    if (availability.state === "supported") {
+      route = kernelReadRoute({
+        restricted: availability.report.restricted !== null,
+        fullAccess: availability.report.fullAccess,
+        isolated: await this.isolatedRuntime(ctx.orgId, ctx.deviceId),
+      });
+      if (route === "refused") throw new KernelReadUnsupported();
+    }
     const profile = this.scopeOf(ctx, method, f);
     if (
       profile.filesystem.kind === "scoped" &&
@@ -430,15 +452,34 @@ export class SandboxOperationAuthority {
       )
     )
       throw new ApiError("forbidden", "The kernel read is outside the conversation's profile");
-    // always a restricted read-only scope, whatever the conversation's profile: a runtime keyed
-    // on Full access may follow a symlinked AGENTS.md or SKILL.md out of the project, and a
-    // kernel read has no tool call or review to show for it
+    // a restricted read-only scope whenever the runtime enforces it, whatever the conversation's
+    // profile: a runtime keyed on Full access may follow a symlinked AGENTS.md or SKILL.md out of
+    // the project, and a kernel read has no tool call or review to show for it
     return parseSandboxOperationScope({
       ...profile,
-      profile: KERNEL_READ_PROFILE,
+      profile: route === "full" ? profile.profile : KERNEL_READ_PROFILE,
       filesystem: { kind: "scoped", readRoots: [covering], writeRoots: [] },
       network: { kind: "none" },
     });
+  }
+
+  /**
+   * Whether the device's runtime is isolated from its host's files (a kernel read may then go
+   * under the conversation's Full access on a Full-only runtime): a cloud device, or a local
+   * machine whose authenticated connection recorded its Docker mode (`device_machines.mode`,
+   * written at hello; a mode change resets the device's files).
+   */
+  private async isolatedRuntime(orgId: string, deviceId: string): Promise<boolean> {
+    const row = await this.db
+      .selectFrom("devices as d")
+      .leftJoin("device_machines as m", (j) =>
+        j.onRef("m.device_id", "=", "d.id").on("m.revoked_at", "is", null),
+      )
+      .select(["d.source", "m.mode"])
+      .where("d.id", "=", deviceId)
+      .where("d.org_id", "=", orgId)
+      .executeTakeFirst();
+    return row !== undefined && (row.source !== "local" || row.mode === "docker");
   }
 
   private scopeOf(

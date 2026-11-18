@@ -127,6 +127,12 @@ export const projectUnavailable = {
       "removed",
       `The project "${clipped(project, 80)}" was removed from the device's projects.`,
     ),
+  /** A host machine whose runtime cannot enforce the kernel's read-only read (gate on). */
+  notEnforceable: (root: string) =>
+    unavailable(
+      "unreadable",
+      `The project's root ${clipped(root)} was not read: this device's runtime cannot enforce a read-only read on its host; turn on its sandbox enforcement or use another device.`,
+    ),
   unsupported: () =>
     unavailable(
       "unsupported",
