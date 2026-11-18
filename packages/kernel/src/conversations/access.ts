@@ -1,5 +1,5 @@
 import { Inject, Injectable, Module } from "@nestjs/common";
-import { type ExpressionBuilder, sql } from "kysely";
+import { type Expression, type ExpressionBuilder, type SqlBool, sql } from "kysely";
 import { visibleTo } from "../agents/agent-lookup.js";
 import type { KernelDatabase } from "../db/kernel-schema.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
@@ -34,7 +34,8 @@ const rootOfParent = () => sql<string | null>`(
  * agent, §5.5) is checked on top by the callers.
  */
 export const parentReachable =
-  (viewerAccountId: string) => (eb: ExpressionBuilder<KernelDatabase, "conversations">) =>
+  (viewerAccountId: string | Expression<string>) =>
+  (eb: ExpressionBuilder<KernelDatabase, "conversations">) =>
     eb.or([
       eb("conversations.kind", "<>", "subagent"),
       eb.exists(
@@ -53,6 +54,40 @@ export const parentReachable =
     ]);
 
 /**
+ * The predicate of {@link ConversationAccess.isAccessible} over the `conversations` table (the
+ * org is the caller's condition): the conversation belongs to the viewer and is not deleted, it is
+ * a chat or sub-agent conversation whose tree root is reachable ({@link parentReachable}), the
+ * viewer's account is active, and its agent is not deleted and still visible to the viewer
+ * (`visibleTo` includes "the org is not deleted, the viewer is still a member"). The viewer may be
+ * a column of the outer query: the share liveness check (`shares/liveness.ts`) asks it of each
+ * share's creator (`sql.ref("file_shares.created_by")`) in the same query.
+ */
+export const accessibleTo =
+  (viewer: string | Expression<string>) =>
+  (eb: ExpressionBuilder<KernelDatabase, "conversations">): Expression<SqlBool> =>
+    eb.and([
+      eb("conversations.account_id", "=", viewer),
+      eb("conversations.deleted_at", "is", null),
+      eb("conversations.kind", "in", ["chat", "subagent"]),
+      parentReachable(viewer)(eb),
+      eb.exists(
+        eb
+          .selectFrom("accounts")
+          .select(sql`1`.as("one"))
+          .where("accounts.id", "=", viewer)
+          .where("accounts.status", "=", "active"),
+      ),
+      eb.exists(
+        eb
+          .selectFrom("agents")
+          .select(sql`1`.as("one"))
+          .whereRef("agents.id", "=", "conversations.agent_id")
+          .where("agents.deleted_at", "is", null)
+          .where(visibleTo(viewer)),
+      ),
+    ]);
+
+/**
  * Whether a person may still see a conversation (one query, no agent view): what the event stream,
  * attachment downloads, file and output reads and the extension UI check. `ConversationsService`
  * delegates to it; it depends on the database only, so the attachments (which the skills and tools
@@ -63,9 +98,8 @@ export class ConversationAccess {
   constructor(@Inject(KernelDb) private readonly db: KernelDb) {}
 
   /**
-   * 轻量的可见性判定（一条查询，不加载 agent 视图），供长连接（SSE）建立时与定期复核用：
-   * 会话属于该组织且归 viewer 所有、viewer 账号仍为 active、agent 未删除且对 viewer 仍可见
-   * （`visibleTo` 已含「组织未删除、viewer 仍是成员」）。
+   * The light visibility check (one query, no agent view) used when a long connection (SSE) opens
+   * and on its periodic re-check: {@link accessibleTo} for a conversation of this org.
    */
   async isAccessible(
     orgId: string,
@@ -77,29 +111,7 @@ export class ConversationAccess {
       .select("conversations.id")
       .where("conversations.id", "=", conversationId)
       .where("conversations.org_id", "=", orgId)
-      .where("conversations.account_id", "=", viewerAccountId)
-      .where("conversations.deleted_at", "is", null)
-      .where("conversations.kind", "in", ["chat", "subagent"])
-      .where(parentReachable(viewerAccountId))
-      .where((eb) =>
-        eb.and([
-          eb.exists(
-            eb
-              .selectFrom("accounts")
-              .select(sql`1`.as("one"))
-              .where("accounts.id", "=", viewerAccountId)
-              .where("accounts.status", "=", "active"),
-          ),
-          eb.exists(
-            eb
-              .selectFrom("agents")
-              .select(sql`1`.as("one"))
-              .whereRef("agents.id", "=", "conversations.agent_id")
-              .where("agents.deleted_at", "is", null)
-              .where(visibleTo(viewerAccountId)),
-          ),
-        ]),
-      )
+      .where(accessibleTo(viewerAccountId))
       .executeTakeFirst();
     return row !== undefined;
   }

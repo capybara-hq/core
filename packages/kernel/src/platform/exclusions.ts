@@ -431,6 +431,22 @@ export const PLATFORM_EXCLUSIONS: readonly {
     category: "transport",
     reason: "Serves a rendered file preview",
   },
+  // shares of conversation files (file sharing spec §10); listing and revoking are operations
+  {
+    route: "POST /api/v1/orgs/:orgId/conversations/:id/files/:fileId/shares",
+    category: "human-only",
+    reason: "Publishing a file outside the conversation is a person's act",
+  },
+  {
+    route: "POST /api/v1/orgs/:orgId/shares/:shareId/refresh",
+    category: "human-only",
+    reason: "Publishing a file outside the conversation is a person's act",
+  },
+  {
+    route: "GET /api/v1/orgs/:orgId/conversations/:id/files/:fileId/shares",
+    category: "internal",
+    reason: "The right panel's per-file view; conversations.list-shares lists the same shares",
+  },
   // identity
   {
     route: "POST /api/v1/orgs/:orgId/approvals/:approvalId/initial-password",

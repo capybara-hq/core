@@ -46,6 +46,11 @@ export interface FileOutput {
    * `callId` is empty).
    */
   origin: "delivered" | "uploaded";
+  /**
+   * The viewer has a share of this file that is not revoked or expired (file sharing spec §5): of
+   * its source path for a delivered file (any version), of the attachment for an uploaded one.
+   */
+  shared: boolean;
 }
 
 /** Text content of one file version, at most the requested bytes. */
@@ -179,6 +184,8 @@ export class ConversationFiles {
     contentType: string;
     size: number;
     objectKey: string;
+    /** The version group of a delivered file; null for an attachment. */
+    sourcePath: string | null;
     upload?: BoundAttachment;
   }> {
     if (!UUID_RE.test(fileId)) throw artifactNotFound();
@@ -198,6 +205,7 @@ export class ConversationFiles {
         contentType: a.contentType,
         size: a.size,
         objectKey: a.objectKey,
+        sourcePath: a.sourcePath,
       };
     }
     const [u] = await this.attachments.boundRows(orgId, conversationId, fileId);
@@ -208,6 +216,7 @@ export class ConversationFiles {
       contentType: u.contentType,
       size: u.size,
       objectKey: u.objectKey,
+      sourcePath: null,
       upload: u,
     };
   }
@@ -270,6 +279,7 @@ export class ConversationFiles {
       start = at + 1;
     }
     const page = ordered.slice(start, start + opts.limit);
+    const shares = await this.viewerShares(conversationId, viewer);
     const store = this.storage.kernel(orgId);
     const files = await mapLimit(page, HEAD_CONCURRENCY, async (e): Promise<FileOutput> => {
       if (e.origin === "uploaded") {
@@ -289,6 +299,7 @@ export class ConversationFiles {
           status: same ? "available" : "removed",
           previewable: previewKind(u.contentType),
           origin: "uploaded",
+          shared: shares.uploads.has(u.id),
         };
       }
       const g = e.group;
@@ -310,6 +321,7 @@ export class ConversationFiles {
         status: head ? "available" : "removed",
         previewable: previewKind(latest.contentType),
         origin: "delivered",
+        shared: shares.paths.has(latest.sourcePath),
       };
     });
     const next = start + opts.limit < ordered.length ? (files.at(-1)?.id ?? null) : null;
@@ -322,6 +334,7 @@ export class ConversationFiles {
    * (previewers, embed grants): the key never leaves the kernel. An attachment whose stored object
    * is gone or no longer the one finalize checked → `conversation.artifact_removed`; `recorded` is
    * then what a later read of the object must still match ({@link attachmentContentMatches}).
+   * `sourcePath` is the version group of a delivered file, null for an attachment.
    */
   async file(
     orgId: string,
@@ -334,6 +347,8 @@ export class ConversationFiles {
     contentType: string;
     size: number;
     objectKey: string;
+    /** The version group of a delivered file; null for an attachment. */
+    sourcePath: string | null;
     recorded?: { size: number; etag: string | null };
   }> {
     await this.checkAccess(orgId, conversationId, viewer);
@@ -342,6 +357,95 @@ export class ConversationFiles {
     const head = await this.storage.kernel(orgId).head(upload.objectKey);
     if (!this.attachments.storedMatches(upload, head, { orgId, conversationId })) throw removed();
     return { ...f, recorded: { size: upload.size, etag: upload.etag } };
+  }
+
+  /**
+   * Which file a file id names (any version's id, or an attachment sent in the conversation), after
+   * checking the viewer can read the conversation; storage is not read, so a removed file still
+   * resolves (its shares are listed and revoked by it).
+   */
+  async identify(
+    orgId: string,
+    conversationId: string,
+    viewer: string,
+    fileId: string,
+  ): Promise<{ id: string; sourcePath: string | null }> {
+    await this.checkAccess(orgId, conversationId, viewer);
+    const f = await this.resolve(orgId, conversationId, fileId);
+    return { id: f.id, sourcePath: f.sourcePath };
+  }
+
+  /**
+   * The newest delivered version of `sourcePath` whose object is still stored, after checking the
+   * viewer can read the conversation (a share's "update to latest", file sharing spec §2); with
+   * `after` (a version id), only versions delivered after it. Versions whose object is gone are
+   * skipped; at most {@link FILE_VERSIONS_MAX} are looked at. Null when none is available.
+   */
+  async latestAvailable(
+    orgId: string,
+    conversationId: string,
+    viewer: string,
+    sourcePath: string,
+    opts: { after?: string } = {},
+  ): Promise<{
+    id: string;
+    name: string;
+    contentType: string;
+    size: number;
+    objectKey: string;
+  } | null> {
+    await this.checkAccess(orgId, conversationId, viewer);
+    const rows = await this.db
+      .selectFrom("conversation_events")
+      .select(["payload", "seq"])
+      .where("conversation_id", "=", conversationId)
+      .where("type", "=", "artifact_created")
+      .where(sql<string>`payload->>'sourcePath'`, "=", sourcePath)
+      .orderBy("seq", "desc")
+      .execute();
+    let candidates = rows.map((r) => r.payload as EventPayload<"artifact_created">);
+    if (opts.after !== undefined) {
+      const at = candidates.findIndex((d) => d.artifactId === opts.after);
+      if (at >= 0) candidates = candidates.slice(0, at);
+    }
+    const store = this.storage.kernel(orgId);
+    for (const d of candidates.slice(0, FILE_VERSIONS_MAX)) {
+      if (await store.head(d.objectKey)) {
+        return {
+          id: d.artifactId,
+          name: d.name,
+          contentType: d.contentType,
+          size: d.size,
+          objectKey: d.objectKey,
+        };
+      }
+    }
+    return null;
+  }
+
+  /**
+   * The source paths and attachments the viewer has a share of in the conversation that is not
+   * revoked or expired ({@link FileOutput.shared}).
+   */
+  private async viewerShares(
+    conversationId: string,
+    viewer: string,
+  ): Promise<{ paths: Set<string>; uploads: Set<string> }> {
+    const rows = await this.db
+      .selectFrom("file_shares")
+      .select(["source_path", "file_id"])
+      .where("conversation_id", "=", conversationId)
+      .where("created_by", "=", viewer)
+      .where("revoked_at", "is", null)
+      .where((eb) => eb.or([eb("expires_at", "is", null), eb("expires_at", ">", sql<Date>`now()`)]))
+      .execute();
+    const paths = new Set<string>();
+    const uploads = new Set<string>();
+    for (const r of rows) {
+      if (r.source_path === null) uploads.add(r.file_id);
+      else paths.add(r.source_path);
+    }
+    return { paths, uploads };
   }
 
   /**

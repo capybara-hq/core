@@ -94,6 +94,8 @@ import { SchedulesModule } from "../schedules/schedules.module.js";
 import { SetupModule } from "../setup/setup.module.js";
 import { SetupChecksController } from "../setup/setup-checks.controller.js";
 import { SetupGuidesController } from "../setup/setup-guides.controller.js";
+import { SharesController } from "../shares/shares.controller.js";
+import { SharesModule } from "../shares/shares.module.js";
 import { AgentSkillsController } from "../skills/agent-skills.controller.js";
 import { InboxController, SkillChangesController } from "../skills/changes.controller.js";
 import { InvocableSkillsController } from "../skills/invocable.controller.js";
@@ -183,6 +185,7 @@ const CONTROLLERS: Type[] = [
   AdminUiController,
   SlotsController,
   FilePreviewersController,
+  SharesController,
   ExtensionPointDefaultsController,
   TrajectoryController,
   EvalSetsController,
@@ -241,6 +244,8 @@ const CONTROLLERS: Type[] = [
     SchedulesModule,
     // the git gateway (run tickets; the gateway route comes with it)
     GitModule,
+    // file sharing (shares of conversation files)
+    SharesModule,
   ],
   controllers: CONTROLLERS,
   providers: [{ provide: APP_GUARD, useClass: AuthGuard }],
