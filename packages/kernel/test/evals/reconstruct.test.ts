@@ -3,7 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { ModelInfo, ModelRequest } from "@capybara-hq/plugin-sdk";
+import type { ModelInfo, ModelRequest, SandboxProvider } from "@capybara-hq/plugin-sdk";
 import {
   fakeExtensionEntry,
   startTestPostgres,
@@ -39,11 +39,15 @@ import { MachinesService } from "../../src/local-devices/machines.js";
 import type { KernelLogger } from "../../src/log.js";
 import { type MediaInfo, TEXT_INLINE_MAX_CHARS } from "../../src/runtime/context/build.js";
 import { CLAUDE_CODE_TOOL_MAP } from "../../src/runtime/context/claude-tools.js";
+import { devicePathsText } from "../../src/runtime/context/device-paths.js";
+import { permissionContextText } from "../../src/runtime/context/permission-profile.js";
 import { MORE_SKILLS_HEADER } from "../../src/runtime/context/skills.js";
 import { WRAP_UP_REMINDER } from "../../src/runtime/model-call.js";
 import { ProjectKnowledgeService } from "../../src/runtime/project/knowledge.service.js";
 import { ProviderRegistry } from "../../src/runtime/providers.js";
 import { RUN_CONTEXT_CLOCK } from "../../src/runtime/run-context.service.js";
+import { RunSteps } from "../../src/runtime/run-steps.js";
+import { SandboxProviders } from "../../src/sandbox/providers.js";
 import { SandboxService } from "../../src/sandbox/sandbox.service.js";
 import { ScheduledTaskFirer } from "../../src/schedules/fire.js";
 import { ScheduledTaskStore } from "../../src/schedules/store.js";
@@ -52,6 +56,7 @@ import { StorageService } from "../../src/storage/storage.service.js";
 import { allowedOnceNote } from "../../src/tools/network-asks.js";
 import { hookDeniedText, QUESTION_SKIPPED_TEXT } from "../../src/tools/pipeline.js";
 import { specHash } from "../../src/tools/registry.js";
+import { createFakeSandbox, fakeOperationFacade } from "../fixtures/plugins/sandbox-fake/index.js";
 import { onlyBuiltins } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
@@ -195,6 +200,78 @@ async function enableProbe(enabled: boolean): Promise<void> {
     payload: { enabled },
   });
   expect(res.statusCode, res.body).toBe(200);
+}
+
+/** The cloud provider of the activated cases: sandbox-fake with permission-scoped operations. */
+const SCOPED_CLOUD = "@reconstruct-scoped-cloud";
+let scopedCloudRegistered = false;
+
+/**
+ * A cloud device of the owner on {@link SCOPED_CLOUD}, bound to `conv`. With the activation gate
+ * on, builtins enter a device only through the managed operation route, which needs a provider
+ * that reports permission support (sandbox-fake alone has none: its devices are `unsupported`).
+ * The provider enforces no scope; what these cases replay is what the tools logged.
+ */
+async function bindScopedCloudDevice(conv: string): Promise<string> {
+  if (!scopedCloudRegistered) {
+    const base = createFakeSandbox(sandboxRoot);
+    const facade = fakeOperationFacade(sandboxRoot, base);
+    const impl: SandboxProvider = {
+      ...facade,
+      async permissionSupport() {
+        return {
+          version: 1,
+          restricted: { filesystem: true, network: true, native: true, concurrentScopes: true },
+          fullAccess: true,
+          background: false,
+        };
+      },
+      async operation(h, scope) {
+        return {
+          exec: (args) => base.exec(h, { ...args, actor: scope.actor, tag: scope.tag }),
+          readFile: (path, opts) => base.readFile(h, path, opts),
+          writeFile: (path, data, signal) => base.writeFile(h, path, data, signal),
+          stat: (path, signal) => base.stat(h, path, signal),
+        };
+      },
+    };
+    k.app.get(SandboxProviders).register({ plugin: SCOPED_CLOUD, version: "v1", impl });
+    scopedCloudRegistered = true;
+  }
+  const deviceId = randomUUID();
+  await db
+    .insertInto("devices")
+    .values({
+      id: deviceId,
+      org_id: orgId,
+      owner_kind: "personal",
+      owner_account_id: ownerId,
+      source: "cloud",
+      provider: SCOPED_CLOUD,
+      name: `Scoped cloud ${deviceId.slice(0, 8)}`,
+    })
+    .execute();
+  await db
+    .updateTable("conversations")
+    .set({ device_id: deviceId })
+    .where("id", "=", conv)
+    .execute();
+  return deviceId;
+}
+
+/**
+ * Runs `work` with the live permission context producers dormant, as every run before the paired
+ * activation was (the request boundary off: no `permission_context`, no request metadata).
+ */
+async function beforeActivation<T>(work: () => Promise<T>): Promise<T> {
+  const deps = k.app.get(RunSteps).deps as { permissionContext?: unknown };
+  const live = deps.permissionContext;
+  delete deps.permissionContext;
+  try {
+    return await work();
+  } finally {
+    deps.permissionContext = live;
+  }
 }
 
 const ASK_INPUT = {
@@ -977,9 +1054,17 @@ describe("reconstructRequest：基线零漂移", () => {
     const covered = afterSummary.find((r) =>
       r.messages.some((m) => m.role === "system" && m.content === tag("notes", "- notes v2")),
     );
-    // right after the summary and the run context
+    // right after the summary, the run context and the recorded permission context (each run
+    // records one since the activation; the latest covered one follows a summary before them)
     expect(String(covered?.messages[1]?.content)).toMatch(/^Context from the platform:/);
-    expect(covered?.messages.slice(2, 4)).toEqual([
+    // the context did not change between the runs: one snapshot, logged before the first request
+    const contexts = events.filter((e) => e.type === "permission_context");
+    expect(contexts).toHaveLength(1);
+    expect(covered?.messages[2]).toEqual({
+      role: "system",
+      content: permissionContextText(contexts[0]?.payload as never),
+    });
+    expect(covered?.messages.slice(3, 5)).toEqual([
       { role: "system", content: tag("memory", "- prefers tea") },
       { role: "system", content: tag("notes", "- notes v2") },
     ]);
@@ -1907,6 +1992,8 @@ describe("reconstructRequest：基线零漂移", () => {
       credential,
       (req) => {
         if (req.op === "create") return { ok: true, result: { roots: { ...HELLO.roots } } };
+        // the staged binding gets the fake's installed evidence (FakeMachineV3's default answer)
+        if (String(req.op) === "bindInstance") return undefined;
         if (req.op !== "exec") return { ok: true, result: null };
         return {
           ok: true,
@@ -2193,6 +2280,7 @@ describe("reconstructRequest: UI refresh B tool views", () => {
       },
     );
     const conv = await createConv(owner, orgId, agentId);
+    await bindScopedCloudDevice(conv);
     const bash = { command: "echo hi && false", description: "Greet and fail" };
     await postMessage(owner, orgId, conv, `tool:Bash:${JSON.stringify(bash)}`);
     await waitForTerminal(db, conv, 1, 30_000);
@@ -2293,38 +2381,100 @@ describe("reconstructRequest: UI refresh B tool views", () => {
   });
 });
 
-describe("reconstructRequest: the device mode (auto mode spec §4.2)", () => {
-  it("a device narrowed between runs: two device_paths lines, each in the requests, zero drift", async () => {
+describe("reconstructRequest: the device's permission context (permission runtime cutover)", () => {
+  it("a device provisioned, then a profile changed between runs: each permission_context in the requests, zero drift", async () => {
     reset();
     const agentId = await createAgent(
       { provider: "model-fake", model: "fake-1" },
       { tools: [{ kind: "builtin", name: "Bash" }] },
     );
     const conv = await createConv(owner, orgId, agentId);
+    await bindScopedCloudDevice(conv);
     const bash = { command: "echo one", description: "One" };
     await postMessage(owner, orgId, conv, `tool:Bash:${JSON.stringify(bash)}`);
     await waitForTerminal(db, conv, 1, 30_000);
-    const { device_id: deviceId } = await db
-      .selectFrom("conversations")
-      .select("device_id")
-      .where("id", "=", conv)
-      .executeTakeFirstOrThrow();
+    const current = await owner({
+      method: "GET",
+      url: `/api/v1/orgs/${orgId}/conversations/${conv}/permissions`,
+    });
+    expect(current.statusCode, current.body).toBe(200);
+    const body = current.json() as { revision?: number; permission?: { revision: number } };
     const patched = await owner({
       method: "PATCH",
-      url: `/api/v1/orgs/${orgId}/devices/${deviceId}`,
-      payload: { mode: "sandbox" },
+      url: `/api/v1/orgs/${orgId}/conversations/${conv}/permissions`,
+      payload: {
+        profile: "request-approval",
+        expectedRevision: body.revision ?? body.permission?.revision ?? 0,
+      },
     });
     expect(patched.statusCode, patched.body).toBe(200);
-    const again = { command: "echo two", description: "Two" };
-    await postMessage(owner, orgId, conv, `tool:Bash:${JSON.stringify(again)}`);
+    await postMessage(owner, orgId, conv, "echo:two");
     await waitForTerminal(db, conv, 2, 30_000);
-    const modes = (await eventsOf(db, conv)).flatMap((e) =>
-      e.type === "device_paths" && e.payload.permissionContextVersion !== 1 ? [e.payload.mode] : [],
+    const events = await eventsOf(db, conv);
+    const contexts = events.filter(
+      (e): e is Extract<ConversationEvent, { type: "permission_context" }> =>
+        e.type === "permission_context",
     );
-    expect(modes).toEqual(["auto", "sandbox"]);
+    // the unprobed device before its first call, provisioned (supported) after it, then the
+    // person's profile change: three recorded snapshots, each before the request that saw it
+    expect(contexts.map((c) => [c.payload.selectedProfile, c.payload.availability.state])).toEqual([
+      ["approve-for-me", "unprobed"],
+      ["approve-for-me", "supported"],
+      ["request-approval", "supported"],
+    ]);
+    // the managed route marked the device's paths: no old-mode line was written
+    const paths = events.filter((e) => e.type === "device_paths");
+    expect(paths.length).toBeGreaterThan(0);
+    for (const p of paths)
+      expect(p.type === "device_paths" && p.payload.permissionContextVersion).toBe(1);
+    // the latest request repeats the first snapshot (append-only) and appends the second
     const last = JSON.stringify(sent.at(-1));
-    expect(last).toContain("Mode: auto. Commands run in the device's container;");
-    expect(last).toContain("Mode: sandbox. Commands run in the device's container;");
+    for (const c of contexts)
+      expect(last).toContain(JSON.stringify(permissionContextText(c.payload)).slice(1, -1));
+    expect(last).not.toContain("Mode: auto.");
+    const calls = modelCalls(events);
+    expect(calls.at(-1)?.payload.request.permissionContext?.contextSeq).toBe(contexts[2]?.seq);
+    const snap = await snapshotOf(conv);
+    await expectZeroDrift(conv, snap);
+  });
+
+  it("a log written before the activation (old-mode device lines, no permission context) replays byte for byte", async () => {
+    reset();
+    const agentId = await createAgent({ provider: "model-fake", model: "fake-1" });
+    const conv = await createConv(owner, orgId, agentId);
+    // the old-mode lines the legacy route wrote before a device narrowed between runs; written
+    // directly: the activated route never writes them any more
+    const legacy = (mode: "auto" | "sandbox") => ({
+      roots: { workspace: "/workspace", skills: "/skills", tmp: "/tmp" },
+      mode,
+      allowedMode: mode,
+      network: { kind: "allowlist" as const, hosts: ["*.example.com"] },
+    });
+    const line = async (key: string, mode: "auto" | "sandbox") => {
+      await k.app.get(EventLog).append(conv, [
+        {
+          type: "device_paths",
+          idemKey: `test_device_paths:${conv}:${key}`,
+          payload: legacy(mode) as never,
+        },
+      ]);
+    };
+    await beforeActivation(async () => {
+      await line("1", "auto");
+      await postMessage(owner, orgId, conv, "echo:one");
+      await waitForTerminal(db, conv, 1, 30_000);
+      await line("2", "sandbox");
+      await postMessage(owner, orgId, conv, "echo:two");
+      await waitForTerminal(db, conv, 2, 30_000);
+    });
+    const events = await eventsOf(db, conv);
+    expect(events.filter((e) => e.type === "permission_context")).toEqual([]);
+    for (const c of modelCalls(events)) expect(c.payload.request.permissionContext).toBeUndefined();
+    const last = JSON.stringify(sent.at(-1));
+    for (const mode of ["auto", "sandbox"] as const)
+      expect(last).toContain(JSON.stringify(devicePathsText(legacy(mode) as never)).slice(1, -1));
+    expect(last).not.toContain("Permission context for new operations");
+    // the reconstruction runs on the activated kernel: the log, not the live gate, decides
     const snap = await snapshotOf(conv);
     await expectZeroDrift(conv, snap);
   });

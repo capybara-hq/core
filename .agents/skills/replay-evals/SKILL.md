@@ -78,10 +78,20 @@ see `.agents/skills/writing-web-ui`). Design basis: overall design §6 principle
   no call and no reread (old requests build byte for byte). A revoked execution keeps its identical
   `ExecutionRevoked` (checked before the abort); every other callback or refresh failure is a named no-send
   `run.permission_context_*` run error, never a provider error or fallback. Compaction, title, review and
-  extraction calls get no permission context. **Live producers are dormant**: `RunSteps` wires the recorder
-  (`PermissionContextRecorder`) and `BuiltinTools` the managed device writer (`ManagedDeviceContextRecorder`) only
-  when the one gate `PERMISSION_CONTEXT_ACTIVATION` is on (production default `PERMISSION_CONTEXT_ACTIVE = false`,
-  flipped by the paired Task 8 phase 8.6 activation; tests provide the seam).
+  extraction calls get no permission context. **Live producers are on** (the paired activation, device
+  protocol 3): `RunSteps` wires the recorder (`PermissionContextRecorder`) and `BuiltinTools` the managed device
+  writer (`ManagedDeviceContextRecorder`) while the one gate `PERMISSION_CONTEXT_ACTIVATION` is on (production
+  `PERMISSION_CONTEXT_ACTIVE = true`; a test may provide `false` for the dormant state). Every agent run now
+  records a context before its first request (a conversation without a usable device records it as
+  `unavailable` / `unsupported`, which the model sees), and again whenever it changes (a device's first
+  provisioning moves `unprobed` to `supported`, a profile change): all logged, so zero drift without a new
+  `DriftReason`. **The log, never the live gate, decides rendering**: request building and replay read only the
+  recorded events, so a log written with the gate off (no `permission_context`, no `model_call.request.
+  permissionContext`, old-mode `device_paths` lines with `mode`) rebuilds byte for byte on an activated kernel.
+  Cases in `reconstruct.test.ts` ("the device's permission context"): a provisioned device and a profile change
+  between runs, and a log written before the activation (made with the request boundary removed from
+  `RunSteps.deps`). Activated cases that run builtins bind a cloud device whose provider reports permission
+  support (`bindScopedCloudDevice`): sandbox-fake alone reports none, so its devices are `unsupported`.
   Full-run replay (`evals/recorded-permission-context.ts`, spec B4): earlier runs' contexts are seeds; the target
   run's are fed by the recorded-only feeder at the generated request boundary (sparse `(step, attempt)` table,
   monotone, idem `replay_permission_context:<generatedRunId>:<originalSeq>`), so generated requests carry the
