@@ -74,7 +74,7 @@ export function checkLinuxRestrictedGrant(
     for (const root of [...grant.readRoots, ...grant.writeRoots])
       if (within(denied, root))
         throw new SandboxScopeDeniedError(
-          "A granted root contains a path the owner denies; restricted Linux execution cannot exclude it, so grant a narrower root",
+          `The granted root ${root} contains ${denied}, a path the owner denies; restricted Linux execution (Landlock) cannot exclude a path inside a granted root. Run the command from a narrower directory (a project directory, not the home directory) or, if the owner allows it, with Full access`,
         );
 }
 

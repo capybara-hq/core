@@ -67,7 +67,7 @@ export function containerBaseEnv(full: boolean): Record<string, string> {
  * (PID plus start time, checked again before each signal) gets SIGTERM, then SIGKILL, and this
  * returns once it is gone.
  */
-const END_AGENT = String.raw`
+const END_AGENT = `
 import os, sys, time
 pid, start = int(sys.argv[1]), int(sys.argv[2])
 def same():

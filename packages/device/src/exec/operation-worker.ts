@@ -25,6 +25,7 @@ import {
   runNativeHelper,
 } from "./native-helper-client.js";
 import type { LocalExecAuthority, LocalOperationGrant } from "./operation-types.js";
+import { withCanonicalForms } from "./operation-types.js";
 import {
   acquireSealedRuntime,
   type SealedRuntime,
@@ -133,7 +134,7 @@ export function mandatoryDenyPatterns(root: string): string[] {
  * `.git/modules`) under each write root, descriptor-relative and never following a link, after a
  * restricted command ended. Anything not empty, missing or not a directory is left alone.
  */
-const REMOVE_EMPTY_SEQUENCERS = String.raw`
+const REMOVE_EMPTY_SEQUENCERS = `
 import json, os, stat, sys
 FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
 budget = [4000]
@@ -557,6 +558,11 @@ export async function startMacOperationWorker(
             ],
             denyWrite: [
               ...implicitWritePaths(),
+              // The owner-denied roots (the secret paths, the device's state directory) are
+              // unwritable too: a write root may contain one (a project bound at the home, an
+              // approved `cd ~`), and the runtime turns each deny into write, move and creation
+              // denies on the path and moves of its ancestors.
+              ...withCanonicalForms(request.grant.deniedReadRoots),
               // Per-root deny entries pin every ancestor against creation in SRT.
               // The fixed helper has no rename API; retain global Git content denies
               // while it establishes a missing root without those ancestor pins.

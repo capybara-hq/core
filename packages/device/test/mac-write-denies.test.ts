@@ -1,10 +1,11 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync, writeFileSync } from "node:fs";
 import { mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { ExecResult } from "@capybara-hq/plugin-sdk";
 import { afterAll, beforeAll, expect, it } from "vitest";
+import { withCanonicalForms } from "../src/exec/operation-types.js";
 import { startMacOperationWorker } from "../src/exec/operation-worker.js";
 import { sealWorkspaceRuntime } from "./runtime-seal.js";
 
@@ -281,3 +282,101 @@ it.runIf(process.platform === "darwin")(
       expect(existsSync(join(project, path)), `${path}: ${result.stderr}`).toBe(false);
   },
 );
+
+// A write root that contains a denied directory (a project bound at the home directory, an
+// approved `cd ~`): the denied secret paths and the device's state directory stay unwritable,
+// their files, the directories themselves (rename, delete) and a symbolic link swapped into
+// their place; an ordinary file in the root stays writable.
+it.runIf(process.platform === "darwin")(
+  "a write root containing a denied directory cannot write, move, delete or swap it",
+  async () => {
+    const home = await mkdtemp(join(root, "home-"));
+    const ssh = join(home, ".ssh");
+    const state = join(home, ".config/capybara-device");
+    await mkdir(ssh, { recursive: true });
+    await mkdir(state, { recursive: true });
+    writeFileSync(join(ssh, "authorized_keys"), "orig\n");
+    writeFileSync(join(state, "policy.json"), "{}");
+    const elsewhere = join(home, "elsewhere");
+    await mkdir(elsewhere);
+    const tries = [
+      "echo pwn >> .ssh/authorized_keys",
+      "echo pwn > .ssh/authorized_keys",
+      "echo pwn > .ssh/new_key",
+      "mv .ssh/authorized_keys .ssh/k2",
+      "rm -f .ssh/authorized_keys",
+      "mv .ssh .ssh.bak",
+      "rm -rf .ssh",
+      "mv .ssh elsewhere/ssh",
+      "ln -s elsewhere .ssh/link",
+      "echo '{\"x\":1}' > .config/capybara-device/policy.json",
+      "mv .config/capybara-device/policy.json .config/capybara-device/p2",
+      "rm -f .config/capybara-device/policy.json",
+      "mv .config/capybara-device .config/cd2",
+      "rm -rf .config/capybara-device",
+      "mv .config .config2",
+      "rm -rf .config",
+    ];
+    const result = await restrictedRunDenied(
+      home,
+      [ssh, state],
+      [...tries.map((c) => `${c} 2>/dev/null`), "printf ok > plain.txt", "true"].join("; "),
+    );
+    expect(result.exitCode, result.stderr).toBe(0);
+    expect(readFileSync(join(home, "plain.txt"), "utf8"), result.stderr).toBe("ok");
+    expect(readFileSync(join(ssh, "authorized_keys"), "utf8")).toBe("orig\n");
+    expect(readFileSync(join(state, "policy.json"), "utf8")).toBe("{}");
+    for (const path of [
+      ".ssh/new_key",
+      ".ssh/k2",
+      ".ssh/link",
+      ".ssh.bak",
+      "elsewhere/ssh",
+      ".config/capybara-device/p2",
+      ".config/cd2",
+      ".config2",
+    ])
+      expect(existsSync(join(home, path)), path).toBe(false);
+    expect(lstatSync(ssh).isDirectory()).toBe(true);
+    expect(lstatSync(state).isDirectory()).toBe(true);
+    // a symbolic link swapped in place of a denied directory, in a second command once it is gone
+    const swap = await restrictedRunDenied(
+      home,
+      [ssh, state],
+      "mv .ssh .ssh-old 2>/dev/null; rm -rf .ssh 2>/dev/null; ln -s elsewhere .ssh 2>/dev/null; true",
+    );
+    expect(lstatSync(ssh).isDirectory(), swap.stderr).toBe(true);
+    expect(readFileSync(join(ssh, "authorized_keys"), "utf8")).toBe("orig\n");
+  },
+);
+
+/** One restricted macOS operation writing `writeRoot`, with the given owner-denied roots. */
+async function restrictedRunDenied(
+  writeRoot: string,
+  denied: string[],
+  command: string,
+): Promise<ExecResult> {
+  const stateDir = await mkdtemp(join(root, "state-"));
+  const worker = await startMacOperationWorker(
+    {
+      kind: "exec",
+      scope: { operationId: "deny", tag: "deny" } as never,
+      grant: {
+        full: false,
+        readRoots: [writeRoot],
+        writeRoots: [writeRoot],
+        hosts: [],
+        deniedReadRoots: withCanonicalForms([...denied, stateDir]),
+        revision: "r",
+      },
+      args: { command, cwd: writeRoot, timeoutMs: 60_000, maxOutputBytes: 1 << 16 },
+      stateDir,
+      pythonPath: "/usr/bin/python3",
+      runtimeHash: workspace.runtimeHash,
+      beforeLaunch: async () => {},
+      onLaunch: async () => {},
+    },
+    new AbortController().signal,
+  );
+  return (await worker.completion) as ExecResult;
+}
