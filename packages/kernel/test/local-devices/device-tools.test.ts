@@ -394,11 +394,14 @@ describe("local devices through the sandbox tools", () => {
     expect(await waiting).toBe(OUTCOME_UNKNOWN_TOOL_TEXT);
     // far sooner than the command's deadline plus the 60 s grace
     expect(Date.now() - t0).toBeLessThan(HOLDER_POLL_MS + 5000);
-    // the next call is refused before it reaches the revoked machine, never as offline (the held
-    // instance's installed binding went with the machine, so the managed route refuses it first)
+    // the next calls are refused the same way before they reach the revoked machine: the
+    // actionable disconnected text, never offline and never "retry" (R27)
     const sent = machine.frames.length;
-    const next = await toolError(m.run("Read", { file_path: `${ROOTS_A.workspace}/a.txt` }));
-    expect(next).not.toMatch(/offline/i);
+    for (let i = 0; i < 2; i++) {
+      const next = await toolError(m.run("Read", { file_path: `${ROOTS_A.workspace}/a.txt` }));
+      expect(next).toMatch(/was disconnected.*capybara-device login/);
+      expect(next).not.toMatch(/retry/i);
+    }
     expect(machine.frames.length).toBe(sent);
     const again = await refusal(url, {
       Authorization: `Bearer ${credential}`,
@@ -422,6 +425,12 @@ describe("local devices through the sandbox tools", () => {
     expect((await machine.closed).code).toBe(4003);
     expect(await waiting).toBe(OUTCOME_UNKNOWN_TOOL_TEXT);
     expect(Date.now() - t0).toBeLessThan(HOLDER_POLL_MS + 5000);
+    // the next call says the device was deleted (never "retry"), without reaching the machine
+    const sent = machine.frames.length;
+    const next = await toolError(m.run("Read", { file_path: `${ROOTS_A.workspace}/a.txt` }));
+    expect(next).toMatch(/device was deleted/);
+    expect(next).not.toMatch(/retry/i);
+    expect(machine.frames.length).toBe(sent);
     const again = await refusal(url, {
       Authorization: `Bearer ${credential}`,
       "X-Capybara-Device-Protocol": DEVICE_PROTOCOL_HEADER_VALUE,
