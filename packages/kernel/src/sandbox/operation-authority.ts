@@ -50,7 +50,7 @@ import {
   PermissionContextSubjectChanged,
 } from "./permission-context-types.js";
 import { hostsWithinOuter, PermissionFacts, permissionScopeHash } from "./permission-facts.js";
-import { normalizePermissionExpansion } from "./review/permission-candidate.js";
+import { normalizePermissionExpansion, withinDirectory } from "./review/permission-candidate.js";
 import type { SandboxUseContext } from "./use-context.js";
 export type SandboxAuthorityOperation =
   | "exec"
@@ -155,6 +155,24 @@ export function intersectPermissionScope(f: PermissionScopeFacts): SandboxOperat
   });
 }
 /** Fresh authority shape only. Provider dispatch must add durable admission fencing before use. */
+/**
+ * The read roots of a restricted profile: the working root, plus the held instance's
+ * kernel-staged skills root (its committed roots), read-only, so a staged skill's scripts run
+ * (`sh /skills/<name>@<digest>/…`). Never writable; nothing else is added. Sorted by code point,
+ * as the recorded context requires.
+ */
+export function restrictedReadRoots(
+  workingRoot: string,
+  applied: Pick<AppliedEnvironment, "roots"> | null | undefined,
+): string[] {
+  const skills = applied?.roots.skills;
+  const roots =
+    skills && skills.startsWith("/") && !withinDirectory(skills, workingRoot)
+      ? [workingRoot, skills]
+      : [workingRoot];
+  return [...new Set(roots)].sort(permissionCodePointCompare);
+}
+
 @Injectable()
 export class SandboxOperationAuthority {
   constructor(
@@ -623,7 +641,7 @@ export class SandboxOperationAuthority {
       scopeRevision: view.scopeRevision,
       authorityRevision: permissionScopeHash({ scopeRevision: view.scopeRevision, vector }),
       workingRoot,
-      baseReadDirectories: [workingRoot],
+      baseReadDirectories: restrictedReadRoots(workingRoot, applied),
       baseWriteDirectories: [workingRoot],
       baseHosts: allowedHosts,
       fullAccessCeiling: view.fullAccessCeiling,
@@ -977,7 +995,7 @@ export class SandboxOperationAuthority {
           ? { kind: "device" }
           : {
               kind: "scoped",
-              readDirectories: [base.workingRoot],
+              readDirectories: restrictedReadRoots(base.workingRoot, applied),
               writeDirectories: [base.workingRoot],
             },
         network: full
