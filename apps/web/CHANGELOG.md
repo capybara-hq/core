@@ -1,5 +1,12 @@
 # @capybara-hq/web
 
+## 0.1.0-rc.54
+
+### Patch Changes
+
+- Updated dependencies [b0e2cda]
+  - @capybara-hq/design@0.2.0-rc.17
+
 ## 0.1.0-rc.53
 
 No changes in this release.
