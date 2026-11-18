@@ -942,12 +942,16 @@ describe("GenerateImage facts: repeats, billing, device copies", () => {
 
   it("n the listing does not offer fails validation", async () => {
     await map("fake-image-one");
-    const conv = await createConv(owner, orgId, agentId);
-    const seen = providerCalls();
-    const r = await call(conv, { prompt: "a fox", n: 2 });
-    expect(r.payload.isError).toBe(true);
-    expect(seen).toEqual([]);
-    await map("fake-image");
+    try {
+      const conv = await createConv(owner, orgId, agentId);
+      const seen = providerCalls();
+      const r = await call(conv, { prompt: "a fox", n: 2 });
+      expect(r.payload.isError).toBe(true);
+      expect(r.payload.content).toMatch(/\bn\b/);
+      expect(seen).toEqual([]);
+    } finally {
+      await map("fake-image");
+    }
   });
 });
 

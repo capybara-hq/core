@@ -105,7 +105,7 @@ once per listing.
 
 `GenerateImage.specFor` derives from the static spec: no `n` when `maxImages` is 1, else
 `n.maximum` = `maxImages`; no `reference_images` when `maxReferenceImages` is 0, else
-`maxItems` = min(4, `maxReferenceImages`). Description and other fields are unchanged.
+`maxItems` = min(4, `maxReferenceImages`). The description drops its reference-images sentence with the field; other fields are unchanged.
 
 - Validation: the pipeline validates against the listed spec (`additionalProperties: false`), so
   an argument the org cannot serve is refused by the schema check. The `prepare` refusals stay as

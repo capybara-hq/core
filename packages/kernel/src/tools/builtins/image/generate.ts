@@ -88,8 +88,16 @@ export function generateImageSpec(caps: ImageInputCaps): ToolSpec {
       maxItems: Math.min(MAX_REFERENCES, caps.maxReferenceImages),
     };
   }
-  return { ...base, inputSchema: { ...base.inputSchema, properties } };
+  const description =
+    caps.maxReferenceImages > 0
+      ? base.description
+      : base.description.replace(REFERENCE_SENTENCE, "");
+  return { ...base, description, inputSchema: { ...base.inputSchema, properties } };
 }
+
+/** The description sentence about reference images; dropped with the `reference_images` field. */
+const REFERENCE_SENTENCE =
+  "Optionally pass reference images (attachment or earlier generated image ids) to guide the result. ";
 
 export const GENERATE_IMAGE_SPEC: ToolSpec = {
   name: "GenerateImage",
@@ -98,8 +106,9 @@ export const GENERATE_IMAGE_SPEC: ToolSpec = {
   description:
     "Generate images from a text prompt with this organization's image model, and deliver them to " +
     "the user in the conversation. Write a specific prompt: subject, composition, style, lighting, " +
-    "any text that must appear. Optionally pass reference images (attachment or earlier generated " +
-    "image ids) to guide the result. Each call costs money: generate only what the user asked for.",
+    "any text that must appear. " +
+    REFERENCE_SENTENCE +
+    "Each call costs money: generate only what the user asked for.",
   inputSchema: {
     type: "object",
     properties: {

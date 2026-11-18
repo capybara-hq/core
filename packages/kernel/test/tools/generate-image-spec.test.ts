@@ -17,6 +17,14 @@ describe("generateImageSpec", () => {
     expect(props({ maxImages: 2, maxReferenceImages: 2 }).reference_images.maxItems).toBe(2);
     expect(props({ maxImages: 2, maxReferenceImages: 9 }).reference_images.maxItems).toBe(4);
   });
+  it("mentions reference images in the description only while the field is listed", () => {
+    expect(generateImageSpec({ maxImages: 2, maxReferenceImages: 2 }).description).toContain(
+      "reference images",
+    );
+    const without = generateImageSpec({ maxImages: 2, maxReferenceImages: 0 }).description;
+    expect(without).not.toMatch(/reference/i);
+    expect(without).toContain("Each call costs money");
+  });
   it("keeps the other arguments", () =>
     expect(Object.keys(props({ maxImages: 1, maxReferenceImages: 0 }))).toContain("prompt"));
 });
