@@ -21,11 +21,13 @@ import {
   COMMAND_ASK_TEXT_MAX_CHARS,
   type ConversationEvent,
 } from "../../src/conversations/events.js";
+import { PermissionProfilesService } from "../../src/conversations/permission-profiles.service.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { ConversationDevices } from "../../src/devices/conversation-devices.js";
 import { RunQueue } from "../../src/runtime/run-queue.js";
 import { Waits } from "../../src/runtime/waits.js";
+import { PermissionFacts } from "../../src/sandbox/permission-facts.js";
 import { REVIEW_SYSTEM_PROMPT } from "../../src/sandbox/review/index.js";
 import { ScheduledTaskFirer } from "../../src/schedules/fire.js";
 import { SCHED_SCAN_JOB } from "../../src/schedules/job-ids.js";
@@ -576,8 +578,9 @@ describe("the command review in the pipeline", () => {
     expect(denied.payload.review).toMatchObject({ decision: "deny", by: "rule" });
   });
 
-  it("a classifier ask offers only once (no rule to remember)", async () => {
-    // a mapped `review` purpose whose answer is ask; a classifier ask has no rule hit (P-D2)
+  it("a classifier ask keeps the consent rule it is about and offers only once for sudo", async () => {
+    // a mapped `review` purpose whose answer is ask: Approve for me sends the sudo consent to the
+    // review model, whose ask still names the rule (sudo is never remembered for the session)
     await db
       .insertInto("model_purpose_mappings")
       .values({
@@ -596,11 +599,11 @@ describe("the command review in the pipeline", () => {
     ]);
     try {
       const conv = await createConv(owner, orgId, agentId);
-      const unsure = { command: "some-unknown-binary --flag", description: "Run it" };
-      await postMessage(owner, orgId, conv, `tool:Bash:${JSON.stringify(unsure)}`);
+      const sudo = { command: "sudo -n true", description: "Run it" };
+      await postMessage(owner, orgId, conv, `tool:Bash:${JSON.stringify(sudo)}`);
       const ask = await pendingCommandAsk(conv);
       expect(ask.detail as Record<string, unknown>).toMatchObject({
-        rule: null,
+        rule: "ask.sudo",
         reason: "Needs a person's decision.",
       });
       expect(ask.scopes).toEqual(["once"]);
@@ -618,10 +621,10 @@ describe("the command review in the pipeline", () => {
     }
   });
 
-  it("an unsure ask with no classifier offers only once: a stored catch-all grant covers nothing", async () => {
+  it("an unsure command runs under the enforced scope with no ask; a stored catch-all grant adds nothing", async () => {
     const conv = await createConv(owner, orgId, agentId);
     // a session grant keyed to the `unsure.*` catch-all can no longer be created; an old row must
-    // never suppress the ask (it would whitelist every parser-unreadable command for the conversation)
+    // never widen anything: an in-scope call is not a discretionary review on the activated tree
     await db
       .insertInto("conversation_tool_grants")
       .values({
@@ -632,19 +635,30 @@ describe("the command review in the pipeline", () => {
       })
       .execute();
     const unsure = { command: "some-unknown-binary --flag", description: "Run it" };
-    await postMessage(owner, orgId, conv, `tool:Bash:${JSON.stringify(unsure)}`);
-    const ask = await pendingCommandAsk(conv);
-    await waitRunWaiting(conv);
-    // the catch-all has no grantable rule class: `once` only, as a classifier ask
-    expect(ask.detail as Record<string, unknown>).toMatchObject({ rule: null });
-    expect(ask.scopes).toEqual(["once"]);
-    const refused = await decide(ask.id, { decision: "approve", scope: "session" });
-    expect(refused.statusCode).toBe(409);
-    expect((refused.json() as { error: { code: string } }).error.code).toBe(
-      "approval.scope_not_allowed",
-    );
-    expect((await decide(ask.id, { decision: "deny" })).statusCode).toBe(200);
-    await waitForTerminal(db, conv, 1, 30_000);
+    const r = await call(conv, "Bash", unsure, 1);
+    expect(r.payload.review).toMatchObject({
+      decision: "allow",
+      rule: null,
+      decisionSource: "scope",
+    });
+    const asks = await db
+      .selectFrom("approvals")
+      .select("id")
+      .where("conversation_id", "=", conv)
+      .execute();
+    expect(asks).toEqual([]);
+    const exec = await db
+      .selectFrom("sandbox_operation_intents")
+      .select(["scope", "permission_grant_id"])
+      .where("conversation_id", "=", conv)
+      .where("method", "=", "exec")
+      .executeTakeFirstOrThrow();
+    expect(exec.permission_grant_id).toBeNull();
+    expect((exec.scope as { filesystem: unknown }).filesystem).toEqual({
+      kind: "scoped",
+      readRoots: ["/skills", "/workspace"],
+      writeRoots: ["/workspace"],
+    });
   });
 
   it("a command over the ask ceiling is refused with an actionable error and never runs", async () => {
@@ -823,8 +837,15 @@ describe("the command review in the pipeline", () => {
       path: "/etc/capybara-t7/note.txt",
       rule: "ask.outside-write",
     });
-    // a write has no 本会话允许同类 on a classifier ask either; the rule ask does (grantable rule)
-    expect(ask.scopes).toEqual(["once", "session"]);
+    // the ask is about the proposed directory: a grant belongs to this one call, never the session
+    expect(ask.scopes).toEqual(["once"]);
+    expect(ask.detail as Record<string, unknown>).toMatchObject({
+      permissionScope: {
+        readDirectories: ["/etc/capybara-t7"],
+        writeDirectories: ["/etc/capybara-t7"],
+        hosts: [],
+      },
+    });
     expect((await decide(ask.id, { decision: "approve", scope: "once" })).statusCode).toBe(200);
     await waitForTerminal(db, conv, 1, 30_000);
     const written = (await results(conv)).at(-1) as ToolResult;
@@ -1016,5 +1037,164 @@ describe("runs of accounts that own no device here", () => {
     const ops = JSON.stringify(await readFakeSandboxOps(root));
     expect(ops).not.toContain(otherId);
     expect(ops).not.toContain("from-member");
+  });
+});
+
+/**
+ * The permission review on the activated tree (permission operation contract, policy order):
+ * explicit denies and mandatory asks first; Full access skips discretionary review; the restricted
+ * profiles keep the sensitive-command consent (its approval adds no reach: the call runs under
+ * the base scope), then a call that needs more reach asks about the displayed directory or host
+ * proposal, whose approval issues the call's grant.
+ */
+describe("the permission review order", () => {
+  const SUDO = { command: "sudo -n true", description: "Check sudo" };
+  const setProfile = async (conv: string, profile: "request-approval" | "full-access") => {
+    const current = await db
+      .selectFrom("conversations")
+      .select(["permission_revision", "device_id"])
+      .where("id", "=", conv)
+      .executeTakeFirstOrThrow();
+    const consent =
+      profile === "full-access"
+        ? (await k.app.get(PermissionFacts).scope(orgId, current.device_id as string, null, null))
+            .scopeRevision
+        : undefined;
+    await k.app.get(PermissionProfilesService).set(orgId, conv, ownerId, {
+      profile,
+      ...(consent ? { consentScopeRevision: consent } : {}),
+      expectedRevision: current.permission_revision,
+    });
+  };
+  const intentsOf = (conv: string) =>
+    db
+      .selectFrom("sandbox_operation_intents")
+      .select(["method", "scope", "permission_grant_id"])
+      .where("conversation_id", "=", conv)
+      .execute();
+  const grantsOf = (conv: string) =>
+    db
+      .selectFrom("permission_call_grants")
+      .selectAll()
+      .where("conversation_id", "=", conv)
+      .execute();
+
+  it("Request approval: sudo asks the person with its rule; approved, it runs under the base scope", async () => {
+    const conv = await createConv(owner, orgId, agentId);
+    await call(conv, "Bash", { command: "echo bound", description: "Bind" }, 1);
+    await setProfile(conv, "request-approval");
+    await postMessage(owner, orgId, conv, `tool:Bash:${JSON.stringify(SUDO)}`);
+    const ask = await pendingCommandAsk(conv);
+    await waitFor(
+      async () =>
+        (
+          await db
+            .selectFrom("runs")
+            .select("status")
+            .where("conversation_id", "=", conv)
+            .where("status", "=", "waiting")
+            .executeTakeFirst()
+        )?.status,
+      15_000,
+      "run waiting",
+    );
+    expect(ask.detail as Record<string, unknown>).toMatchObject({ rule: "ask.sudo" });
+    expect(ask.detail as Record<string, unknown>).not.toHaveProperty("permissionScope");
+    expect((await decide(ask.id, { decision: "approve", scope: "once" })).statusCode).toBe(200);
+    await waitForTerminal(db, conv, 2, 30_000);
+    const r = (await results(conv)).at(-1) as ToolResult;
+    expect(r.payload.content).not.toContain("permission profile allows");
+    expect(r.payload.review).toMatchObject({ decision: "allow", by: "person", rule: "ask.sudo" });
+    expect((await eventsOf(db, conv)).filter((e) => e.type === "tool_call_started")).toHaveLength(
+      2,
+    );
+    // no expansion: no grant, and the command ran under the base scope
+    expect(await grantsOf(conv)).toEqual([]);
+    const exec = (await intentsOf(conv)).filter((i) => i.method === "exec").at(-1);
+    expect(exec?.permission_grant_id).toBeNull();
+    expect((exec?.scope as { filesystem: unknown } | undefined)?.filesystem).toEqual({
+      kind: "scoped",
+      readRoots: ["/skills", "/workspace"],
+      writeRoots: ["/workspace"],
+    });
+  });
+
+  it("Approve for me: sudo goes to the review model, which allows it without asking anyone", async () => {
+    await db
+      .insertInto("model_purpose_mappings")
+      .values({
+        org_id: null,
+        purpose: "review",
+        provider: "model-script",
+        model: "script-2",
+        params: "{}",
+      })
+      .execute();
+    scriptRules([
+      {
+        when: { systemIncludes: REVIEW_SYSTEM_PROMPT },
+        reply: { text: JSON.stringify({ decision: "allow", reason: "The person asked for it." }) },
+      },
+    ]);
+    try {
+      const conv = await createConv(owner, orgId, agentId);
+      const r = await call(conv, "Bash", SUDO, 1);
+      expect(r.payload.review).toMatchObject({ decision: "allow", by: "classifier" });
+      const asks = await db
+        .selectFrom("approvals")
+        .select("id")
+        .where("conversation_id", "=", conv)
+        .execute();
+      expect(asks).toEqual([]);
+      expect(await grantsOf(conv)).toEqual([]);
+    } finally {
+      scriptRules([]);
+      await db.deleteFrom("model_purpose_mappings").where("purpose", "=", "review").execute();
+    }
+  });
+
+  it("Full access: sudo runs without an ask or a review", async () => {
+    const conv = await createConv(owner, orgId, agentId);
+    await call(conv, "Bash", { command: "echo bound", description: "Bind" }, 1);
+    await setProfile(conv, "full-access");
+    const r = await call(conv, "Bash", SUDO, 2);
+    expect(r.payload.review).toMatchObject({ decision: "allow", decisionSource: "full-access" });
+    const asks = await db
+      .selectFrom("approvals")
+      .select("id")
+      .where("conversation_id", "=", conv)
+      .execute();
+    expect(asks).toEqual([]);
+  });
+
+  it("an outside Write asks with the directory proposal; approved, the grant lets it write", async () => {
+    const conv = await createConv(owner, orgId, agentId);
+    const target = "/etc/capybara-grant/note.txt";
+    await postMessage(
+      owner,
+      orgId,
+      conv,
+      `tool:Write:${JSON.stringify({ file_path: target, content: "granted" })}`,
+    );
+    const ask = await pendingCommandAsk(conv);
+    await waitRunWaiting(conv);
+    expect(ask.detail as Record<string, unknown>).toMatchObject({
+      kind: "write",
+      targetPath: target,
+      permissionScope: {
+        readDirectories: ["/etc/capybara-grant"],
+        writeDirectories: ["/etc/capybara-grant"],
+        hosts: [],
+      },
+    });
+    expect((await decide(ask.id, { decision: "approve", scope: "once" })).statusCode).toBe(200);
+    await waitForTerminal(db, conv, 1, 30_000);
+    const r = (await results(conv)).at(-1) as ToolResult;
+    expect(r.payload.isError, r.payload.content).toBe(false);
+    expect(r.payload.content).toContain(`Created ${target}`);
+    const [grant] = await grantsOf(conv);
+    expect(grant).toMatchObject({ source: "human" });
+    const write = (await intentsOf(conv)).find((i) => i.method === "writeFile");
+    expect(write?.permission_grant_id).toBe((grant as { id: string }).id);
   });
 });

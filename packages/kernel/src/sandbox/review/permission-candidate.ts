@@ -1,3 +1,4 @@
+import { isIP } from "node:net";
 import path from "node:path";
 import { validateAllowHost } from "@capybara-hq/plugin-sdk";
 import { ApiError } from "../../errors.js";
@@ -89,6 +90,9 @@ export function buildPermissionCandidate(
     if (["Read", "Write", "Edit"].includes(call.toolKey) && typeof input?.file_path === "string") {
       if (input.file_path.length > 4096 || /[\0*?[\]{}]/.test(input.file_path))
         throw new Error("Invalid target path");
+      // a path with `.` or `..` segments proposes nothing: the tool refuses that shape itself
+      if (input.file_path.split("/").some((segment) => segment === "." || segment === ".."))
+        return { kind: "in-scope" };
       targetPath = path.posix.resolve(facts.workingRoot, input.file_path);
       const write = call.toolKey !== "Read",
         base = write ? facts.baseWriteDirectories : facts.baseReadDirectories;
@@ -103,6 +107,8 @@ export function buildPermissionCandidate(
         for (const word of command.argv) {
           if (!/^https?:\/\//i.test(word)) continue;
           const url = new URL(word);
+          // an IP literal is no grantable host: nothing is proposed, the enforced network decides
+          if (isIP(url.hostname.replace(/^\[|\]$/g, "")) !== 0) continue;
           if (
             url.username ||
             url.password ||
@@ -132,7 +138,15 @@ export function buildPermissionCandidate(
           !facts.policy.network.hosts.some((pattern) => coversHost(pattern, host)),
       )
     )
-      throw new Error("The requested expansion exceeds current owner or organization limits");
+      throw new Error(
+        `This call needs access outside the working directory ${facts.workingRoot} (${[
+          ...writes,
+          ...reads,
+          ...hosts,
+        ].join(
+          ", ",
+        )}), which the device owner's or the organization's limits do not allow, so it did not run. Keep the call inside ${facts.workingRoot}, or ask the user to have the device's limits widened.`,
+      );
     const {
       orgId,
       rootConversationId,

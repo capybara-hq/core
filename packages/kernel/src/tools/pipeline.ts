@@ -67,6 +67,10 @@ import { SandboxOperationAuthority } from "../sandbox/operation-authority.js";
 import { PermissionAuthorityLock } from "../sandbox/permission-authority-lock.js";
 import { PermissionCallGrants } from "../sandbox/permission-call-grants.js";
 import type { PermissionCandidate } from "../sandbox/permission-call-types.js";
+import {
+  PERMISSION_CONTEXT_ACTIVATION,
+  permissionContextActive,
+} from "../sandbox/permission-context-types.js";
 import { permissionScopeHash } from "../sandbox/permission-facts.js";
 import {
   type CommandReview,
@@ -94,7 +98,7 @@ import {
   type NetworkAskDetail,
 } from "./approvals.service.js";
 import { Breaker, breakerOpenMessage } from "./breaker.js";
-import { SEND_MESSAGE, SUBAGENT_HANDBACK, TOOL_SEARCH } from "./builtin-names.js";
+import { BUILTIN, SEND_MESSAGE, SUBAGENT_HANDBACK, TOOL_SEARCH } from "./builtin-names.js";
 import { AGENT_TOOL, AgentToolInput } from "./builtins/agent.js";
 import { HandbackInput } from "./builtins/handback.js";
 import {
@@ -532,6 +536,18 @@ type ToolCall = { id: string; name: string; input: unknown };
  * `allow` for it too; the pipeline skips the facts read).
  */
 const REVIEWED_TOOL_KEYS: ReadonlySet<string> = new Set(["Bash", "Write", "Edit"]);
+/** The builtins whose device entry is the managed operation route once activated. */
+const MANAGED_OPERATION_TOOLS: ReadonlySet<string> = new Set([
+  BUILTIN.Bash,
+  BUILTIN.Read,
+  BUILTIN.Write,
+  BUILTIN.Edit,
+  BUILTIN.Glob,
+  BUILTIN.Grep,
+  BUILTIN.Deliver,
+  BUILTIN.FetchAttachment,
+  BUILTIN.Skill,
+]);
 
 /** Whether the review holds a shell command or a file write, for the texts and the ask's detail. */
 const reviewKindOf = (toolKey: string): "command" | "write" =>
@@ -818,8 +834,16 @@ export class ToolPipeline {
     @Optional()
     @Inject(PermissionAuthorityLock)
     private readonly permissionLocks?: PermissionAuthorityLock,
+    /** The paired activation gate: on, the managed builtins take the permission review. */
+    @Optional() @Inject(PERMISSION_CONTEXT_ACTIVATION) activation?: boolean,
   ) {
     this.deps = {
+      // the builtins that enter a device on the managed operation route once activated (common.ts
+      // `inToolSandbox`, `inSandboxPreparation`): their review is the permission review, whose
+      // approvals issue the exact call grants admission reads; dormant, none (the command review)
+      permissionOperations: permissionContextActive(activation)
+        ? MANAGED_OPERATION_TOOLS
+        : new Set<string>(),
       get db() {
         return kdb.db;
       },
@@ -1767,6 +1791,9 @@ export class ToolPipeline {
       ctx.conversationId,
     );
     if (!device) return null;
+    // a run another account triggered never uses the owner's device (the tool refuses it): there
+    // is no permission authority of that account here to review against
+    if (ctx.accountId !== device.ownerAccountId) return null;
     const use = {
       orgId: ctx.orgId,
       deviceId: device.deviceId,
@@ -1804,6 +1831,27 @@ export class ToolPipeline {
         review: denyRecord("rule", null, built.message),
       };
     const candidate = built.kind === "proposal" ? built.candidate : undefined;
+    // a sensitive-command consent the person settled (no proposed reach): the call runs under
+    // the base scope it was asked under; the approval adds nothing
+    if (
+      previous &&
+      previous.status !== "superseded" &&
+      !candidate &&
+      !previous.command?.permissionCandidate
+    ) {
+      const settled = this.settledCommandAsk(previous, tool.key);
+      // the root the person approved is carried only while the device still runs in the mode
+      // recorded with the ask (B-18: the judged root stays the one recorded)
+      if (
+        settled.kind === "continue" &&
+        settled.workingRoot !== undefined &&
+        (device.mode !== previous.command?.mode ||
+          carriedRoot({ workspace: device.workspace, workingRoot: settled.workingRoot }) ===
+            undefined)
+      )
+        return { ...settled, workingRoot: undefined };
+      return settled;
+    }
     if (
       previous &&
       previous.status !== "superseded" &&
@@ -1922,16 +1970,17 @@ export class ToolPipeline {
           ...allowRecord(verdict),
           ...provenance,
           decisionSource:
-            facts.profile === "full-access" ? "full-access" : candidate ? "review-model" : "scope",
+            facts.profile === "full-access"
+              ? "full-access"
+              : verdict.by === "classifier"
+                ? "review-model"
+                : "scope",
         },
       };
-    if (!candidate)
-      return {
-        kind: "result",
-        content:
-          "Current permission review could not decide; retry with an explicit bounded directory or host.",
-        review: denyRecord(verdict.by, verdict.rule, verdict.reason),
-      };
+    // an ask: the sensitive-command consent (no proposed reach: approved, the call runs under the
+    // base scope) or the displayed expansion (approved, the call's grant is issued)
+    const kind = reviewKindOf(tool.key);
+    const filePath = textField(input, "file_path");
     const ask = await this.deps.approvals.requestCommand({
       orgId: ctx.orgId,
       conversationId: ctx.conversationId,
@@ -1939,22 +1988,29 @@ export class ToolPipeline {
       step: ctx.step,
       callId: call.id,
       requestedFor: ctx.accountId,
-      scopes: ["once"],
+      // `session` only for a consent rule class with no expansion (a grant is per call)
+      scopes: !candidate && isSessionGrantableRule(verdict.rule) ? ["once", "session"] : ["once"],
       detail: {
         deviceId: device.deviceId,
         deviceName: device.deviceName,
         mode: device.mode,
-        kind: reviewKindOf(tool.key),
+        kind,
         command: tool.key === "Bash" ? textField(input, "command") : tool.key,
         rule: verdict.rule,
-        reason: verdict.reason,
+        reason: clipText(verdict.reason, COMMAND_ASK_TEXT_MAX_CHARS),
         workingRoot: facts.workingRoot,
-        permissionCandidate: candidate,
-        permissionScope: candidate.permissionScope,
-        candidateHash: candidate.candidateHash,
-        ...(candidate.targetPath
-          ? { targetPath: candidate.targetPath, path: candidate.targetPath }
-          : {}),
+        ...(candidate
+          ? {
+              permissionCandidate: candidate,
+              permissionScope: candidate.permissionScope,
+              candidateHash: candidate.candidateHash,
+              ...(candidate.targetPath
+                ? { targetPath: candidate.targetPath, path: candidate.targetPath }
+                : {}),
+            }
+          : kind === "write" && filePath
+            ? { path: clipText(pathAgainstWorkingRoot(filePath, facts.workingRoot), 4096) }
+            : {}),
       },
     });
     return { kind: "wait", wait: approvalWait(ask) };

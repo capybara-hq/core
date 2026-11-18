@@ -179,11 +179,12 @@ describe("file tool paths in the device's mode", () => {
     expect(read.payload.view).toMatchObject({ kind: "read", path: "/etc/capybara-t7/note.txt" });
   });
 
-  it("auto mode: an Edit of a file outside the workspace that was never read hits the guard after the review", async () => {
+  it("Full access: an Edit of a file outside the workspace that was never read hits the guard, with no review", async () => {
     const conv = await createConv(owner, orgId, agentId);
     await fullAccess(conv);
-    // the file lives on the device's machine (another conversation wrote it)
-    const edit = await callAllowed(
+    // the file lives on the device's machine (another conversation wrote it); Full access has no
+    // discretionary review, so nothing asks
+    const edit = await call(
       conv,
       "Edit",
       { file_path: "/etc/capybara-t7/note.txt", old_string: "hello", new_string: "bye" },
@@ -192,11 +193,10 @@ describe("file tool paths in the device's mode", () => {
     expect(edit.payload.isError).toBe(true);
     expect(edit.payload.content).toContain("File has not been read yet");
     expect(edit.payload.view).toMatchObject({ kind: "guard", reason: "not_read" });
-    // the review record is still the person's allow: the guard refused after it
-    expect(edit.payload.review).toMatchObject({ decision: "allow", by: "person" });
-    // reading it first makes the edit succeed (the write outside the workspace asks again)
+    expect(edit.payload.review).toMatchObject({ decision: "allow", decisionSource: "full-access" });
+    // reading it first makes the edit succeed
     await call(conv, "Read", { file_path: "/etc/capybara-t7/note.txt" }, 2);
-    const ok = await callAllowed(
+    const ok = await call(
       conv,
       "Edit",
       { file_path: "/etc/capybara-t7/note.txt", old_string: "hello", new_string: "bye" },
@@ -361,8 +361,8 @@ describe("a bound conversation works in its project's root", () => {
     const dir = `p-${randomUUID().slice(0, 8)}`;
     const conv = await boundConversation(`/workspace/${dir}`);
     await put(await deviceOf(conv), { [`${dir}/notes.txt`]: "x\n" });
-    const touch = { command: "touch /workspace/elsewhere.txt", description: "Touch" };
-    await postMessage(owner, orgId, conv, `tool:Bash:${JSON.stringify(touch)}`);
+    const elsewhere = { file_path: "/workspace/elsewhere.txt", content: "x" };
+    await postMessage(owner, orgId, conv, `tool:Write:${JSON.stringify(elsewhere)}`);
     const ask = await waitFor(
       async () =>
         db
@@ -375,7 +375,11 @@ describe("a bound conversation works in its project's root", () => {
       30_000,
       "the command ask",
     );
-    expect(ask.detail as Record<string, unknown>).toMatchObject({ rule: "ask.outside-write" });
+    // the device's workspace is outside the project root: its directory is the proposal
+    expect(ask.detail as Record<string, unknown>).toMatchObject({
+      rule: "ask.outside-write",
+      permissionScope: { writeDirectories: ["/workspace"] },
+    });
     const declined = await owner({
       method: "POST",
       url: `/api/v1/orgs/${orgId}/approvals/${ask.id}/decision`,
@@ -386,7 +390,7 @@ describe("a bound conversation works in its project's root", () => {
 
     // the same command in a free conversation writes inside its workspace: allowed
     const free = await createConv(owner, orgId, agentId);
-    const r = await call(free, "Bash", touch, 1);
+    const r = await call(free, "Write", elsewhere, 1);
     expect(r.payload.review).toMatchObject({ decision: "allow", rule: "allow.workspace-write" });
   });
   // B-18: the review judged the call against a working root; held evidence of another root is
@@ -398,7 +402,8 @@ describe("a bound conversation works in its project's root", () => {
       [`${dir}/notes.txt`]: "x\n",
       [`${dir}-later/notes.txt`]: "y\n",
     });
-    const line = { command: "pwd && touch /workspace/elsewhere2.txt", description: "Where" };
+    // a sensitive-command consent ask holds the call (approved, it runs under the base scope)
+    const line = { command: "pwd && sudo -n true", description: "Where" };
     await postMessage(owner, orgId, conv, `tool:Bash:${JSON.stringify(line)}`);
     const ask = await waitFor(
       async () =>
@@ -456,7 +461,7 @@ describe("a bound conversation works in its project's root", () => {
         payload: { roots: { workspace: "/stale", skills: "/skills", tmp: "/tmp" } },
       } as never,
     ]);
-    const line = { command: "pwd && touch /workspace/../outside-free.txt", description: "Where" };
+    const line = { command: "pwd && sudo -n true", description: "Where" };
     await postMessage(owner, orgId, conv, `tool:Bash:${JSON.stringify(line)}`);
     const ask = await waitFor(
       async () =>
@@ -494,7 +499,7 @@ describe("a bound conversation works in its project's root", () => {
       [`${dir}/notes.txt`]: "x\n",
       [`${dir}-later/notes.txt`]: "y\n",
     });
-    const line = { command: "pwd && touch /workspace/elsewhere3.txt", description: "Where" };
+    const line = { command: "pwd && sudo -n true", description: "Where" };
     await postMessage(owner, orgId, conv, `tool:Bash:${JSON.stringify(line)}`);
     const ask = await waitFor(
       async () =>
