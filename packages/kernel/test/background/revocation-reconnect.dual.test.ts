@@ -198,7 +198,12 @@ async function stagedDevice(deviceId: string) {
     },
   );
   cleanups.push(async () => {
+    // finish every worker, then wait until the backend persisted each outcome and give its
+    // journal up: removing the state directory while a completion is still being written races
+    // the supervisor (ENOTEMPTY)
     for (const w of workers) w.finish();
+    await backend.lifecycle.settle(AbortSignal.timeout(30_000));
+    backend.lifecycle.dispose();
   });
   const credential = randomUUID();
   const states = new StagedSessionStates();
