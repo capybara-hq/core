@@ -861,3 +861,31 @@ async function crashedHolderScenario(redis: Redis) {
   expect(owed).toContain(`${HOLDER_REVOKE}-${f.deviceId}-${dead}`);
   expect(owed).toContain(`sandbox-operation-revoke-${operationId}`);
 }
+
+// final review m3: every owed revocation row carries its org, so the org's deletion removes it
+it("owed holder and operation revocations carry the device's org", async () => {
+  const f = await intentDevice();
+  const intents = k.app.get(SandboxOperationIntents);
+  const outbox = k.app.get(OutboxService);
+  const add = outbox.add.bind(outbox);
+  const owed: { jobId: string; orgId: string | undefined }[] = [];
+  // the relay may take a committed row at once: what was written is read at the write
+  const spy = vi.spyOn(outbox, "add").mockImplementation(async (job) => {
+    owed.push({ jobId: job.jobId, orgId: job.orgId });
+    return add(job);
+  });
+  try {
+    const dead = randomUUID();
+    const op = await seedIntent(f, { holder: dead, generation: "1", state: "admitted" });
+    await intents.oweHolderRevocations(f.deviceId, [dead]);
+    await intents.revokeHolders(f.deviceId, [dead]);
+    await intents.deferRevocation(op);
+    expect(owed).toEqual([
+      { jobId: `${HOLDER_REVOKE}-${f.deviceId}-${dead}`, orgId: f.orgId },
+      { jobId: revokeJobId(op), orgId: f.orgId },
+      { jobId: revokeJobId(op, "-1"), orgId: f.orgId },
+    ]);
+  } finally {
+    spy.mockRestore();
+  }
+});

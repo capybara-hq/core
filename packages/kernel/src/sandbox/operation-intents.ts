@@ -1362,12 +1362,20 @@ export class SandboxOperationIntents {
    */
   @Transactional({ propagation: "requires_new" })
   async oweHolderRevocations(deviceId: string, tokens: readonly string[]): Promise<void> {
+    if (!tokens.length) return;
+    // the device's org, as every intent outbox row carries it: the org's deletion removes them
+    const device = await this.db
+      .selectFrom("devices")
+      .select("org_id")
+      .where("id", "=", deviceId)
+      .executeTakeFirst();
     for (const token of tokens)
       await this.outbox.add({
         queue: "cap-kernel-maintenance",
         name: HOLDER_REVOKE,
         jobId: `${HOLDER_REVOKE}-${deviceId}-${token}`,
         data: { deviceId, token },
+        ...(device && { orgId: device.org_id }),
       });
   }
   /** Cleanup association only: a claimed dead holder can never authorize dispatch. */
@@ -1445,6 +1453,7 @@ export class SandboxOperationIntents {
         name: OPERATION_REVOKE,
         jobId: `${OPERATION_REVOKE}-${row.operation_id}`,
         data: { operationId: row.operation_id },
+        orgId: device.org_id,
       });
   }
   /**
@@ -1494,6 +1503,7 @@ export class SandboxOperationIntents {
         name: OPERATION_REVOKE,
         jobId: `${OPERATION_REVOKE}-${id}-${row.reconcile_attempt}`,
         data: { operationId: id },
+        orgId: row.org_id,
         runAt: new Date(
           Date.now() + Math.min(30_000 * 2 ** Math.min(row.reconcile_attempt - 1, 20), 3_600_000),
         ),
