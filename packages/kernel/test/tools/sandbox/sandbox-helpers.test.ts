@@ -481,6 +481,7 @@ describe("fix round 2: deliver failures, grep exit 2", () => {
       } as unknown as SandboxToolDeps["storage"],
       eventLog: {
         append: opts.append ?? (async () => []),
+        readDeliveryScope: async () => ({ boundary: 0, artifacts: [] }),
       } as unknown as SandboxToolDeps["eventLog"],
       config: { get: () => cfg },
     });
@@ -604,6 +605,7 @@ describe("read before write over Read's byte limit", () => {
       storage: {} as any,
       eventLog: {
         append: async () => [],
+        readDeliveryScope: async () => ({ boundary: 0, artifacts: [] }),
         latestFileState: async (_c: string, path: string) => recorded.get(path) ?? null,
       },
       config: {
@@ -728,6 +730,7 @@ describe("custom roots (environments phase 2, spec §13.1)", () => {
       storage: {} as any,
       eventLog: {
         append: async () => [],
+        readDeliveryScope: async () => ({ boundary: 0, artifacts: [] }),
         latestFileState: async () => null,
       },
       config: { get: () => cfg },

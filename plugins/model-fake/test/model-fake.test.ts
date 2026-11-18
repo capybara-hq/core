@@ -558,9 +558,15 @@ describe("model-fake image generation", () => {
     expect(models.find((m) => m.id === "fake-1")?.imageGeneration).toBeUndefined();
   });
 
-  it("generates n scripted images", async () => {
+  it("returns n distinct valid PNGs, the first the shared sample", async () => {
     const res = await provider().generateImage?.(imgReq("a cat", 3), sig());
-    expect(res?.images).toEqual(Array(3).fill({ mediaType: "image/png", data: FAKE_PNG_BASE64 }));
+    const data = (res?.images ?? []).map((i) => i.data);
+    expect(data[0]).toBe(FAKE_PNG_BASE64);
+    expect(new Set(data).size).toBe(3);
+    for (const d of data) {
+      expect(Buffer.from(d, "base64").subarray(1, 4).toString()).toBe("PNG");
+    }
+    expect(res?.images.every((i) => i.mediaType === "image/png")).toBe(true);
     expect(res?.usage.outputImages).toBe(3);
     expect(res?.revisedPrompt).toBe("revised: a cat");
   });

@@ -658,7 +658,9 @@ describe("builtin tools on the managed route with the activation gate on", () =>
     const f = await seed();
     const legacy = vi.spyOn(k.app.get(SandboxService), "withSandbox");
     const r = await runTool(f, "GenerateImage", { prompt: "a fox", file_path: "/workspace/f.png" });
-    expect(textOf(r)).toContain("Written to the device: /workspace/f.png");
+    expect(textOf(r)).toMatch(
+      /Also written to the device \(same bytes as artifact [0-9a-f-]{36}\): \/workspace\/f\.png/,
+    );
     expectManaged(legacy, ["stat", "writeFile"]);
     expect(await markedPaths(f)).toHaveLength(1);
   });

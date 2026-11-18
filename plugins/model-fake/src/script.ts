@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { crc32 } from "node:zlib";
 import {
   type ContentBlock,
   type ImageGenerateRequest,
@@ -51,6 +52,24 @@ export interface FakeModelConfig {
  */
 export const FAKE_PNG_BASE64 =
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC";
+
+/**
+ * The PNG for image `index`: index 0 is the shared sample; the others carry a `tEXt` chunk
+ * ("index\0<i>") before IEND, so each image has different bytes and stays a valid PNG.
+ */
+export function fakePng(index: number): string {
+  if (index === 0) return FAKE_PNG_BASE64;
+  const png = Buffer.from(FAKE_PNG_BASE64, "base64");
+  const body = png.subarray(0, png.length - 12);
+  const iend = png.subarray(png.length - 12);
+  const type = Buffer.from("tEXt");
+  const data = Buffer.from(`index\0${index}`, "latin1");
+  const length = Buffer.alloc(4);
+  length.writeUInt32BE(data.length);
+  const crc = Buffer.alloc(4);
+  crc.writeUInt32BE(crc32(Buffer.concat([type, data])));
+  return Buffer.concat([body, length, type, data, crc, iend]).toString("base64");
+}
 
 // capybara:allow-module-state a read-only constant list (copied before use)
 const IMAGE_SIZES: ImageSize[] = [
@@ -543,9 +562,11 @@ export function createFakeProvider(opts: FakeProviderOptions): ModelProvider {
         throw new ModelError(kind, `scripted failure: ${kind}`);
       }
       const count = word === "short" ? req.n - 1 : req.n;
-      const data = word === "url" ? "https://example.invalid/x.png" : FAKE_PNG_BASE64;
       return {
-        images: Array.from({ length: count }, () => ({ mediaType: "image/png" as const, data })),
+        images: Array.from({ length: count }, (_, i) => ({
+          mediaType: "image/png" as const,
+          data: word === "url" ? "https://example.invalid/x.png" : fakePng(i),
+        })),
         revisedPrompt: `revised: ${req.prompt}`,
         usage: {
           inputTokens: tokens(req.prompt.length),

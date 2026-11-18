@@ -443,10 +443,12 @@ const TERMINAL = new Set<ConversationEvent["type"]>(["run_finished", "run_failed
 export const AGENT_TOOL = "Agent";
 /** The builtin image tool: while it runs, its images show as placeholders. */
 export const GENERATE_IMAGE_TOOL = "GenerateImage";
-/** How many images a `GenerateImage` call asked for: `n` when an integer 1–4, else 1. */
+/** The most images one call may ask for (the kernel's `models.imageMaxPerCall` maximum). */
+const MAX_IMAGES_PER_CALL = 10;
+/** How many images a `GenerateImage` call asked for: `n` when an integer 1–10, else 1. */
 function wantedImages(input: unknown): number {
   const n = asRecord(input).n;
-  return typeof n === "number" && Number.isInteger(n) && n >= 1 && n <= 4 ? n : 1;
+  return typeof n === "number" && Number.isInteger(n) && n >= 1 && n <= MAX_IMAGES_PER_CALL ? n : 1;
 }
 /** The builtin question tool: its row reads "已提问 <header>" (design kind `question`, §6.16.9). */
 export const QUESTION_TOOL = "AskUserQuestion";

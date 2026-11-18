@@ -496,6 +496,7 @@ describe("Skill handler", () => {
       storage: k.app.get(StorageService),
       eventLog: {
         append: async () => [],
+        readDeliveryScope: async () => ({ boundary: 0, artifacts: [] }),
         latestFileState: async () => null,
         latestOfType: async () =>
           snapshot === null
@@ -594,6 +595,7 @@ describe("Skill handler", () => {
       storage: k.app.get(StorageService),
       eventLog: {
         append: async () => [],
+        readDeliveryScope: async () => ({ boundary: 0, artifacts: [] }),
         latestFileState: async () => null,
         latestOfType: async (_c: string, type: string) =>
           (type !== "skills_catalog"

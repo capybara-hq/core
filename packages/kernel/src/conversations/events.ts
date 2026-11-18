@@ -1345,6 +1345,15 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
       objectKey: z.string().min(1),
       sourcePath: z.string().min(1),
       callId: z.string(),
+      /**
+       * The hex sha256 of the bytes (truthful delivery spec §2): the same bytes are delivered once
+       * per delivery scope. Optional only because earlier events cannot be backfilled; an event
+       * without it never matches.
+       */
+      sha256: z
+        .string()
+        .regex(/^[0-9a-f]{64}$/)
+        .optional(),
     }),
   ),
   /**

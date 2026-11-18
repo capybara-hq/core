@@ -73,6 +73,7 @@ function setup(s: Setup) {
     storage: {} as never,
     eventLog: {
       append: async () => [],
+      readDeliveryScope: async () => ({ boundary: 0, artifacts: [] }),
       latestFileState: async () => null,
       latestOfType: (async (conversation: string, type: string) => {
         asked.push({ conversation, type });
