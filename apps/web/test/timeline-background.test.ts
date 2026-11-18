@@ -68,6 +68,43 @@ describe("background Bash in the timeline", () => {
     expect(row?.row.description).toBe("Start the dev server");
   });
 
+  it("a background launch (no exit code yet) is done, not failed", () => {
+    const launched = ev(3, "tool_result", {
+      step: 0,
+      callId: "k1",
+      toolKey: "Bash",
+      content: 'Started background task bt_abc234 ("Start the dev server").',
+      isError: false,
+      view: {
+        kind: "command",
+        description: "Start the dev server",
+        exitCode: null,
+        timedOut: false,
+      },
+    });
+    const [row] = rows(build([...LAUNCH.slice(0, 2), launched]));
+    expect(row?.row.status).toBe("done");
+    expect(row?.row.error).toBeUndefined();
+    expect(row?.background).toEqual({ taskId: "bt_abc234" });
+  });
+
+  it("a foreground command with no exit code (stopped) still fails", () => {
+    const [row] = rows(
+      build([
+        call(1, "k1", "Bash", { command: "sleep 99", description: "Wait" }),
+        ev(2, "tool_result", {
+          step: 0,
+          callId: "k1",
+          toolKey: "Bash",
+          content: "Command stopped.",
+          isError: false,
+          view: { kind: "command", description: "Wait", exitCode: null, timedOut: false },
+        }),
+      ]),
+    );
+    expect(row?.row.status).toBe("failed");
+  });
+
   it("a background Bash row before its result is still background, with no task yet", () => {
     const [row] = rows(build(LAUNCH.slice(0, 2)));
     expect(row?.background).toEqual({ taskId: null });
