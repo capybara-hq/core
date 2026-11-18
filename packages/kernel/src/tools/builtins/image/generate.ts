@@ -88,6 +88,9 @@ export function generateImageSpec(caps: ImageInputCaps): ToolSpec {
       maxItems: Math.min(MAX_REFERENCES, caps.maxReferenceImages),
     };
   }
+  if (!base.description.includes(REFERENCE_SENTENCE)) {
+    throw new Error("GenerateImage description lost its reference-images sentence");
+  }
   const description =
     caps.maxReferenceImages > 0
       ? base.description
@@ -95,7 +98,10 @@ export function generateImageSpec(caps: ImageInputCaps): ToolSpec {
   return { ...base, description, inputSchema: { ...base.inputSchema, properties } };
 }
 
-/** The description sentence about reference images; dropped with the `reference_images` field. */
+/**
+ * The description sentence about reference images (spelled out in the description below); dropped
+ * with the `reference_images` field. `generateImageSpec` fails loudly if the two drift apart.
+ */
 const REFERENCE_SENTENCE =
   "Optionally pass reference images (attachment or earlier generated image ids) to guide the result. ";
 
@@ -107,7 +113,8 @@ export const GENERATE_IMAGE_SPEC: ToolSpec = {
     "Generate images from a text prompt with this organization's image model, and deliver them to " +
     "the user in the conversation. Write a specific prompt: subject, composition, style, lighting, " +
     "any text that must appear. " +
-    REFERENCE_SENTENCE +
+    // REFERENCE_SENTENCE, spelled out: the tool-description check reads string literals only
+    "Optionally pass reference images (attachment or earlier generated image ids) to guide the result. " +
     "Each call costs money: generate only what the user asked for.",
   inputSchema: {
     type: "object",
