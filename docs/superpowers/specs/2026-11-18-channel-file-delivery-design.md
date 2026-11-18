@@ -141,15 +141,17 @@ interface Channel {
 interface ChannelSendFileArgs {
   config: unknown;
   target: ChannelTarget;          // after adaptToFeatures (no threadId without threads)
-  file: {
-    name: string;                 // display name, as delivered
-    contentType: string;
-    kind: "image" | "file";       // chosen by the kernel, see below
-    data: Uint8Array;             // the whole file, size <= the caps below
-  };
+  file: ChannelFile;              // exported on its own
   signal: AbortSignal;
   locale: Locale;
   idempotencyKey?: string;        // same rules as ChannelSendArgs.idempotencyKey
+}
+
+interface ChannelFile {
+  name: string;                   // display name, as delivered
+  contentType: string;
+  kind: "image" | "file";         // chosen by the kernel, see below
+  data: Uint8Array;               // the whole file, size <= the caps below
 }
 ```
 
@@ -183,7 +185,8 @@ every present and future producer is covered by writing the event. The case, for
 `seq` with payload `a`:
 
 1. **Check.** `a.objectKey` must start with `artifacts/<this conversation id>/` (defence in
-   depth: the key is read under the conversation's own org prefix anyway, §4.7). A size of 0 goes
+   depth: the key is read under the conversation's own org prefix anyway, §4.7); a key that does
+   not goes to the link line without reading the object (log `warn`). A size of 0 goes
    to the link line (Lark refuses empty files; an empty file in a chat helps no one).
 2. **Decide.** Send natively when the session's `features.files` is present and `sendFile` exists,
    and `a.size <= min(features.files.maxBytes, channels.fileMaxBytes)`. Otherwise go to the link
@@ -253,7 +256,7 @@ The **link line** is one text message sent with `send` and the key `key(seq, "-l
 | No `sendFile` / no `features.files`, `fileMaxBytes` 0, over a cap, size 0 | link line, advance |
 | Object missing or storage unavailable | link line, advance (log `warn`) |
 | `sendFile` throws non-retryable `too_large` | link line, advance (log `info`) |
-| `sendFile` throws non-retryable `rejected` | link line, advance; the redacted message goes to the connection's `last_error` (a missing scope shows on the connection page) |
+| `sendFile` throws non-retryable `rejected`, or non-retryable without a reason (the SDK counts that as `rejected`) | link line, advance; the redacted message goes to the connection's `last_error` (a missing scope shows on the connection page). A plugin maps its platform's missing-permission error for uploads to `rejected`, not `auth`, so text keeps flowing |
 | `sendFile` throws non-retryable `auth` / `target_gone` | as for text: stop the round, `last_error` for `auth`, scheduled task paused (`outbound.ts:737-751`) |
 | `sendFile` throws retryable / any other error | rethrown: BullMQ backoff with `retryAfterMs` (`deliverBackoff`); after the last attempt the job fails and the next event resumes from `last_seq` |
 | The link line itself fails non-retryably | the existing poison counting of the event (`countFailure`): after 3 the event is skipped with "handle on web" |
@@ -365,20 +368,23 @@ a pnpm override when bumping, as before).
 - **Unit (kernel, no app):** the decision function (native vs link line by features, caps, size 0,
   image kind by type and `imageMaxBytes`, SVG is a file); the link line text in zh and en with and
   without `publicUrl`, the name in inline code (a name with backticks, `<@U1>`, a URL).
-- **Integration (`packages/kernel/test/channels/outbound.test.ts`, on `fake-im`):**
-  - a `Deliver` / scripted `artifact_created` in an IM conversation reaches `/send-file` with the
-    bytes (sha256), name, type, kind, the thread, the key; order relative to the step text and the
-    final reply;
-  - `chan-mini` / `chan-noedit` (no `sendFile`) get the link line; `channels.fileMaxBytes: 0` and an
-    oversized file get it without reading the object;
-  - the fake answers `too_large` / `rejected` → link line, `last_error` only for `rejected`;
-    retryable 429 → retried with `retryAfterMs`; `target_gone` stops the round;
+- **Integration (a new `packages/kernel/test/channels/outbound-files.test.ts`, one app with an
+  object store and an image model; `chan-mini` shares fake-im's implementation and declares
+  `features.files`, `chan-noedit` does not):**
+  - a `GenerateImage` / scripted `artifact_created` in an IM conversation reaches `/send-file` with
+    the bytes (sha256), name, type, kind, the thread, the key; order relative to the final reply;
+  - `chan-noedit` (no `sendFile`) gets the link line; an oversized or empty file gets it too
+    (`channels.fileMaxBytes: 0` is covered by the unit test of the decision: config is not hot and
+    an integration file boots one app);
+  - the fake answers `too_large` / `rejected` / a failure without a reason → link line, `last_error`
+    for `rejected` and no reason; retryable 429 → retried with `retryAfterMs` and the same key;
+    `target_gone` stops the round;
   - object deleted from storage → link line;
-  - a scheduled group run whose first post is a file: root text, then the file in the bound thread;
-  - redelivery after a simulated crash between send and advance passes the same key (the fake's
-    `idempotencyKey` dedupe shows one file).
-- **Dual-replica (`container` project):** an artifact delivered while the replica holding the
-  delivery dies mid-upload is delivered by the other replica, once on a key-honouring fake.
+  - a scheduled group run whose first post is a file (`schedules/channel-delivery.test.ts`): root
+    text, then the file in the bound thread.
+- **Dual-replica (`container` project, `outbound-files.dual.test.ts`):** an artifact delivered
+  while the replica holding the delivery dies mid-upload is delivered by the other replica with the
+  same key, once on a key-honouring fake (this is the crash-between-send-and-advance case).
 - **Fakes (`packages/testing`):** `fake-channel` records `/send-file` (`sentFiles`, deduped by
   key like `/send`) and can answer a scripted failure; `fake-im` declares `features.files` and
   implements `sendFile`; `startFakeSlack` gains `files.getUploadURLExternal`, the upload URL and
@@ -397,7 +403,8 @@ a pnpm override when bumping, as before).
    in IM becomes a link line, already an improvement and safe to release alone.
 2. Plugins: Slack, Lark, Telegram `sendFile` + manifests / READMEs / setup checks, one PR each or
    together, after the SDK release.
-3. Bootstrap pins in `packages/kernel/bootstrap.json` move with the next plugin releases.
+3. No channel plugin is a bootstrap plugin (`packages/kernel/bootstrap.json`), so core moves no
+   pin; deployments pick the plugin versions up through the marketplace.
 4. Release notes tell Slack and Lark admins to add the new scope / permission (the Slack setup
    check shows it).
 
