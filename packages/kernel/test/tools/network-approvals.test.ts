@@ -38,7 +38,7 @@ import {
   type TestKernel,
   waitFor,
 } from "../helpers/runs.js";
-import { FakeMachine } from "../local-devices/fake-machine-v3.js";
+import { FakeMachine, policyAnswer } from "../local-devices/fake-machine-v3.js";
 import type { Answer } from "../local-devices/test-holder.js";
 
 /**
@@ -332,7 +332,7 @@ describe("decide", () => {
       if (req.op !== "policy") return { ok: true, result: null };
       const add = (req.args as { add?: string[] }).add ?? [];
       now = { ...now, allowedDomains: [...now.allowedDomains, ...add] };
-      return { ok: true, result: { policy: now } };
+      return policyAnswer(now);
     });
     const a = await ask();
     const res = await decide(a.id, {

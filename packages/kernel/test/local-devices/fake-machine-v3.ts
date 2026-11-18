@@ -1,6 +1,7 @@
 import {
   DEVICE_PROTOCOL_VERSION,
   type DeviceHello,
+  type DeviceLocalPolicySummary,
   type DeviceOwnerCeiling,
   type KernelCancel,
   type KernelReady,
@@ -115,9 +116,12 @@ export class FakeMachineV3 implements FakeMachineApi {
         }
       }
       if (frame.type === "req") {
-        const a =
-          this.answer(frame) ??
-          (String(frame.op) === "bindInstance" ? bindAnswer(frame) : undefined);
+        let a = this.answer(frame);
+        // a bind nobody scripted (no answer, or the catch-all `null` result many answers give
+        // every op they do not handle) gets the installed evidence an enforcing device returns
+        if (String(frame.op) === "bindInstance" && (a === undefined || isNullResult(a))) {
+          a = bindAnswer(frame);
+        }
         if (a !== undefined) this.respond(frame.id, a);
       }
     });
@@ -147,6 +151,56 @@ export class FakeMachineV3 implements FakeMachineApi {
     this.ws.terminate();
   }
 }
+
+let ownerSequence = 0;
+
+/**
+ * A fresh owner report of a machine whose local allowlist is `policy.allowedDomains` (the device
+ * reports its restricted allowance from it): each call issues a higher sequence and a new revision,
+ * so a report after a policy change, or a reconnect's hello, is never stale for the kernel.
+ */
+export function ownerReportFor(
+  policy: { readonly allowedDomains: readonly string[] },
+  over: Partial<DeviceOwnerCeiling> = {},
+): DeviceOwnerCeiling {
+  ownerSequence += 1;
+  return {
+    ...FAKE_OWNER_CEILING,
+    sequence: ownerSequence,
+    revision: `test-owner-r${ownerSequence}`,
+    restrictedAllowedDomains: [...policy.allowedDomains],
+    ...over,
+  };
+}
+
+/** A v3 `policy` answer: the policy as written and the owner report issued for it. */
+export function policyAnswer(policy: DeviceLocalPolicySummary): NonNullable<Answer> {
+  return {
+    ok: true,
+    result: { policy, ownerCeiling: ownerReportFor(policy) },
+  } as NonNullable<Answer>;
+}
+
+/**
+ * A v3 `policyStatus` answer: an `applied` outcome carries the machine's current owner report
+ * (protocol 3 requires it); other outcomes carry none.
+ */
+export function policyStatusAnswer(
+  outcome: "applied" | "refused" | "started" | "unknown",
+  policy: DeviceLocalPolicySummary,
+): NonNullable<Answer> {
+  return {
+    ok: true,
+    result: {
+      outcome,
+      policy,
+      ...(outcome === "applied" && { ownerCeiling: ownerReportFor(policy) }),
+    },
+  } as NonNullable<Answer>;
+}
+
+const isNullResult = (a: NonNullable<Answer>): boolean =>
+  (a as { ok?: unknown }).ok === true && (a as { result?: unknown }).result === null;
 
 /**
  * The installed evidence an enforcing device answers `bindInstance` with: the asked generation and

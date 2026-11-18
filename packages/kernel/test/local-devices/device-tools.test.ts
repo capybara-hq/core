@@ -4,9 +4,10 @@ import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara
 import { Redis } from "ioredis";
 import { sql } from "kysely";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
-import type { AppendEvent } from "../../src/conversations/event-log.js";
+import { EventLog } from "../../src/conversations/event-log.js";
 import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
+import { ConversationDevices } from "../../src/devices/conversation-devices.js";
 import { DevicesService } from "../../src/devices/devices.service.js";
 import { ApiError } from "../../src/errors.js";
 import { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
@@ -14,18 +15,22 @@ import { TransactionHost } from "../../src/infra/database/transaction-host.js";
 import { deviceLeaseKey } from "../../src/local-devices/keys.js";
 import { MachinesService } from "../../src/local-devices/machines.js";
 import { HOLDER_POLL_MS } from "../../src/local-devices/relay.js";
+import { RunExecution } from "../../src/runtime/run-execution.js";
+import { ManagedDeviceContextRecorder } from "../../src/sandbox/managed-device-context.js";
 import { SandboxService } from "../../src/sandbox/sandbox.service.js";
 import {
+  OUTCOME_UNKNOWN_TOOL_TEXT,
   SANDBOX_RESTARTED_NOTICE,
   sandboxFilesResetNotice,
 } from "../../src/tools/builtins/sandbox/common.js";
 import { type SandboxToolDeps, sandboxTools } from "../../src/tools/builtins/sandbox/index.js";
-import type { BuiltinTool } from "../../src/tools/registry.js";
+import type { BuiltinCallContext, BuiltinTool } from "../../src/tools/registry.js";
 import { legacyDbFor } from "../helpers/conversations.js";
 import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
 import {
   createOrgWithProviders,
+  eventsOf,
   PW,
   runConfig,
   session,
@@ -33,6 +38,7 @@ import {
   type TestKernel,
   waitFor,
 } from "../helpers/runs.js";
+import { startRun } from "../runtime/permission-context-fixture.js";
 import { DEVICE_PROTOCOL_HEADER_VALUE, FakeMachine, refusal } from "./fake-machine-v3.js";
 import type { Answer } from "./test-holder.js";
 
@@ -194,47 +200,70 @@ async function signIn(
   return { machine, dir, ...issued };
 }
 
-/** A member with a local device, and the sandbox tools of one of their conversations. */
+/**
+ * A member with a local device, one of their conversations bound to it with a running, claimed
+ * run, and its sandbox tools on the managed operation route (the activation gate is on: every
+ * call is admitted under the run's claim with its canonical started event, as the pipeline does).
+ */
 async function member() {
   const login = `m-${randomUUID().slice(0, 8)}`;
   const accountId = (await accountsFor(db).createLocal({ login, password: PW, displayName: login }))
     .id;
   await testMembers(db).add(orgId, accountId, "member", ownerId);
   const { id: deviceId } = await txHost.run(() => devices.createLocal(orgId, accountId, "Box"));
-  const appended: AppendEvent[] = [];
+  const agentId = randomUUID();
+  const conversationId = randomUUID();
+  await sql`INSERT INTO capybara.agents (id, org_id, owner_account_id, visibility, current_version)
+    VALUES (${agentId}, ${orgId}, ${accountId}, 'org', 1)`.execute(raw);
+  await sql`INSERT INTO capybara.conversations (id, org_id, agent_id, account_id, device_id)
+    VALUES (${conversationId}, ${orgId}, ${agentId}, ${accountId}, ${deviceId})`.execute(raw);
+  const { runId, claim } = await startRun(k, raw, conversationId, accountId);
   const deps: SandboxToolDeps = {
     sandbox: k.app.get(SandboxService),
-    devices: { forTool: async () => deviceId },
+    devices: k.app.get(ConversationDevices),
     attachments: { listForConversation: async () => [], openForConversation: async () => null },
     // biome-ignore lint/suspicious/noExplicitAny: never called (no attachments)
     storage: {} as any,
-    eventLog: {
-      append: async (_c: string, events: AppendEvent[]) => {
-        appended.push(...events);
-        return [];
-      },
-      latestOfType: async (_c: string, type: string) =>
-        appended.findLast((e) => e.type === type) as never,
-      latestFileState: async () => null,
-      // biome-ignore lint/suspicious/noExplicitAny: append / latestOfType / latestFileState only
-    } as any,
+    eventLog: k.app.get(EventLog),
     config: k.app.get(KernelConfigService),
+    managedDeviceContext: k.app.get(ManagedDeviceContextRecorder),
+    managedDeviceContextRequired: true,
   };
   const tools = sandboxTools(deps);
-  const tool = (name: string) => tools.find((t) => t.spec.name === name) as BuiltinTool;
-  const conversationId = randomUUID();
-  const ctx = (signal: AbortSignal = AbortSignal.timeout(60_000)) =>
-    ({
-      orgId,
-      conversationId,
-      runId: randomUUID(),
-      callId: randomUUID(),
-      accountId,
-      signal,
-      // biome-ignore lint/suspicious/noExplicitAny: only these fields are read
-    }) as any;
-  const paths = () =>
-    appended
+  /** Runs one builtin call under the run's claim fence, after its canonical started event. */
+  const run = async (
+    name: string,
+    input: Record<string, unknown>,
+    signal: AbortSignal = AbortSignal.timeout(60_000),
+  ): Promise<unknown> => {
+    const tool = tools.find((t) => t.spec.name === name) as BuiltinTool;
+    const callId = randomUUID();
+    await k.app.get(EventLog).append(conversationId, [
+      {
+        type: "tool_call_started",
+        runId,
+        idemKey: `started:${callId}`,
+        payload: { step: 1, callId, toolKey: name, specHash: "test" },
+      } as never,
+    ]);
+    return k.app.get(RunExecution).withClaim(
+      claim,
+      () => true,
+      () =>
+        tool.run(input, {
+          orgId,
+          conversationId,
+          runId,
+          callId,
+          accountId,
+          agentId,
+          signal,
+          executionClaim: claim,
+        } as BuiltinCallContext),
+    );
+  };
+  const paths = async () =>
+    (await eventsOf(db, conversationId))
       .filter((e) => e.type === "device_paths")
       .map((e) => (e.payload as { roots: SandboxRoots }).roots);
   const instance = () =>
@@ -243,7 +272,7 @@ async function member() {
       .select(["status", "fs_status", "handle"])
       .where("device_id", "=", deviceId)
       .executeTakeFirst();
-  return { accountId, deviceId, tool, ctx, paths, instance };
+  return { accountId, deviceId, conversationId, runId, run, paths, instance };
 }
 
 const rejection = (p: Promise<unknown>) =>
@@ -263,37 +292,33 @@ describe("local devices through the sandbox tools", () => {
   it("a new login with other roots: the next call runs on a new instance in the new roots (R23)", async () => {
     const m = await member();
     const first = await signIn(m.deviceId, m.accountId, ROOTS_A);
-    await m.tool("Write").run({ file_path: `${ROOTS_A.workspace}/a.txt`, content: "a" }, m.ctx());
+    await m.run("Write", { file_path: `${ROOTS_A.workspace}/a.txt`, content: "a" });
     expect(first.dir.files.has(`${ROOTS_A.workspace}/a.txt`)).toBe(true);
-    expect(m.paths()).toEqual([ROOTS_A]);
+    expect(await m.paths()).toEqual([ROOTS_A]);
 
     // the owner signs in again from another directory: the old machine is replaced
     const second = await signIn(m.deviceId, m.accountId, ROOTS_B);
     expect((await first.machine.closed).code).toBeGreaterThanOrEqual(4000);
     expect(await m.instance()).toMatchObject({ status: "none", handle: null, fs_status: "ready" });
 
-    const written = await m
-      .tool("Write")
-      .run({ file_path: `${ROOTS_B.workspace}/b.txt`, content: "b" }, m.ctx());
+    const written = await m.run("Write", { file_path: `${ROOTS_B.workspace}/b.txt`, content: "b" });
     expect(second.dir.files.has(`${ROOTS_B.workspace}/b.txt`)).toBe(true);
     // another directory holds other files: the conversation is told its files were reset
     expect(JSON.stringify(written)).toContain(
       JSON.stringify(sandboxFilesResetNotice(ROOTS_B)).slice(1, -1),
     );
     expect(second.machine.frames.find((f) => f.type === "req")).toMatchObject({ op: "create" });
-    expect(m.paths()).toEqual([ROOTS_A, ROOTS_B]);
+    expect(await m.paths()).toEqual([ROOTS_A, ROOTS_B]);
     // a path of the old roots is now outside the device
     expect(
-      await toolError(
-        m.tool("Write").run({ file_path: `${ROOTS_A.workspace}/c.txt`, content: "c" }, m.ctx()),
-      ),
+      await toolError(m.run("Write", { file_path: `${ROOTS_A.workspace}/c.txt`, content: "c" })),
     ).toMatch(/workspace/i);
   });
 
   it("a new login on the same machine and directory keeps the files; another machine resets them", async () => {
     const m = await member();
     await signIn(m.deviceId, m.accountId, ROOTS_A);
-    await m.tool("Write").run({ file_path: `${ROOTS_A.workspace}/a.txt`, content: "a" }, m.ctx());
+    await m.run("Write", { file_path: `${ROOTS_A.workspace}/a.txt`, content: "a" });
     const resets = async () =>
       (
         await db
@@ -307,18 +332,14 @@ describe("local devices through the sandbox tools", () => {
     // the same machine, the same directory: a restart on kept files
     await signIn(m.deviceId, m.accountId, ROOTS_A);
     expect(await resets()).toBe(before);
-    const kept = await m
-      .tool("Write")
-      .run({ file_path: `${ROOTS_A.workspace}/b.txt`, content: "b" }, m.ctx());
+    const kept = await m.run("Write", { file_path: `${ROOTS_A.workspace}/b.txt`, content: "b" });
     expect(JSON.stringify(kept)).toContain(SANDBOX_RESTARTED_NOTICE);
     expect(JSON.stringify(kept)).not.toContain("files were reset");
 
     // another machine with the same roots: other files
     await signIn(m.deviceId, m.accountId, ROOTS_A, undefined, "laptop");
     expect(await resets()).toBe(before + 1);
-    const reset = await m
-      .tool("Write")
-      .run({ file_path: `${ROOTS_A.workspace}/c.txt`, content: "c" }, m.ctx());
+    const reset = await m.run("Write", { file_path: `${ROOTS_A.workspace}/c.txt`, content: "c" });
     expect(JSON.stringify(reset)).toContain(
       JSON.stringify(sandboxFilesResetNotice(ROOTS_A)).slice(1, -1),
     );
@@ -327,7 +348,7 @@ describe("local devices through the sandbox tools", () => {
   it("every exec carries the org's sandbox allowlist of the moment (R27)", async () => {
     const m = await member();
     const { machine } = await signIn(m.deviceId, m.accountId, ROOTS_A);
-    await m.tool("Bash").run({ command: "true" }, m.ctx());
+    await m.run("Bash", { command: "true" });
     const execs = () => machine.frames.filter((f) => f.type === "req" && f.op === "exec");
     expect((execs()[0] as KernelReq).args).toMatchObject({
       limits: { mode: "auto", network: { kind: "allowlist", hosts: ["example.com"] } },
@@ -336,7 +357,7 @@ describe("local devices through the sandbox tools", () => {
       cloudNetwork: { mode: "allowlist", base: "none", extraHosts: ["other.example.com"] },
     })}::jsonb WHERE id = ${orgId}`.execute(raw);
     try {
-      await m.tool("Bash").run({ command: "true" }, m.ctx());
+      await m.run("Bash", { command: "true" });
       expect((execs()[1] as KernelReq).args).toMatchObject({
         limits: { network: { kind: "allowlist", hosts: ["other.example.com"] } },
       });
@@ -348,11 +369,13 @@ describe("local devices through the sandbox tools", () => {
   it("every exec names the call's run in its actor; no grants without approved asks (P-D3)", async () => {
     const m = await member();
     const { machine } = await signIn(m.deviceId, m.accountId, ROOTS_A);
-    const ctx = m.ctx();
-    await m.tool("Bash").run({ command: "true" }, ctx);
+    await m.run("Bash", { command: "true" });
     const exec = machine.frames.find((f) => f.type === "req" && f.op === "exec") as KernelReq;
+    // protocol 3: the actor rides in the exec's admitted scope
     expect(exec.args).toMatchObject({
-      actor: { accountId: m.accountId, conversationId: ctx.conversationId, runId: ctx.runId },
+      scope: {
+        actor: { accountId: m.accountId, conversationId: m.conversationId, runId: m.runId },
+      },
     });
     expect(exec.args).not.toHaveProperty("grants");
   });
@@ -360,20 +383,23 @@ describe("local devices through the sandbox tools", () => {
   it("a revoked machine: its socket closes, the waiting call fails at once, the credential is refused", async () => {
     const m = await member();
     const { machine, dir, credential } = await signIn(m.deviceId, m.accountId, ROOTS_A);
-    await m.tool("Write").run({ file_path: `${ROOTS_A.workspace}/a.txt`, content: "a" }, m.ctx());
+    await m.run("Write", { file_path: `${ROOTS_A.workspace}/a.txt`, content: "a" });
     dir.hold.add("exec");
     const t0 = Date.now();
-    const waiting = toolError(m.tool("Bash").run({ command: "sleep 100" }, m.ctx()));
+    const waiting = toolError(m.run("Bash", { command: "sleep 100" }));
     await machine.next((f) => f.type === "req" && f.op === "exec");
     await machines.revoke(orgId, m.accountId, m.deviceId);
     expect((await machine.closed).code).toBe(4003);
-    expect(await waiting).toMatch(/was disconnected.*capybara-device login/);
+    // the machine may have started the command: a managed operation's outcome stays unknown
+    expect(await waiting).toBe(OUTCOME_UNKNOWN_TOOL_TEXT);
     // far sooner than the command's deadline plus the 60 s grace
     expect(Date.now() - t0).toBeLessThan(HOLDER_POLL_MS + 5000);
-    // the next call is refused the same way, not as offline
-    expect(
-      await toolError(m.tool("Read").run({ file_path: `${ROOTS_A.workspace}/a.txt` }, m.ctx())),
-    ).toMatch(/was disconnected/);
+    // the next call is refused before it reaches the revoked machine, never as offline (the held
+    // instance's installed binding went with the machine, so the managed route refuses it first)
+    const sent = machine.frames.length;
+    const next = await toolError(m.run("Read", { file_path: `${ROOTS_A.workspace}/a.txt` }));
+    expect(next).not.toMatch(/offline/i);
+    expect(machine.frames.length).toBe(sent);
     const again = await refusal(url, {
       Authorization: `Bearer ${credential}`,
       "X-Capybara-Device-Protocol": DEVICE_PROTOCOL_HEADER_VALUE,
@@ -384,17 +410,17 @@ describe("local devices through the sandbox tools", () => {
   it("a deleted device: stop and close, the waiting call fails as not found, the credential is refused", async () => {
     const m = await member();
     const { machine, dir, credential } = await signIn(m.deviceId, m.accountId, ROOTS_A);
-    await m.tool("Write").run({ file_path: `${ROOTS_A.workspace}/a.txt`, content: "a" }, m.ctx());
+    await m.run("Write", { file_path: `${ROOTS_A.workspace}/a.txt`, content: "a" });
     dir.hold.add("exec");
     const t0 = Date.now();
-    const waiting = toolError(m.tool("Bash").run({ command: "sleep 100" }, m.ctx()));
+    const waiting = toolError(m.run("Bash", { command: "sleep 100" }));
     await machine.next((f) => f.type === "req" && f.op === "exec");
     await devices.remove(orgId, m.accountId, m.deviceId);
     expect(await machine.next((f) => f.type === "req" && f.op === "stop")).toMatchObject({
       args: { reason: "deleted" },
     });
     expect((await machine.closed).code).toBe(4003);
-    expect(await waiting).toMatch(/device was deleted/);
+    expect(await waiting).toBe(OUTCOME_UNKNOWN_TOOL_TEXT);
     expect(Date.now() - t0).toBeLessThan(HOLDER_POLL_MS + 5000);
     const again = await refusal(url, {
       Authorization: `Bearer ${credential}`,
@@ -406,18 +432,18 @@ describe("local devices through the sandbox tools", () => {
   it("a vanished directory: files_lost through the tools, no reset from the platform, a new login recovers (R24)", async () => {
     const m = await member();
     const { machine, dir } = await signIn(m.deviceId, m.accountId, ROOTS_A);
-    await m.tool("Write").run({ file_path: `${ROOTS_A.workspace}/a.txt`, content: "a" }, m.ctx());
+    await m.run("Write", { file_path: `${ROOTS_A.workspace}/a.txt`, content: "a" });
 
     dir.gone = true;
     const lost =
       /directory is gone from the device's machine.*capybara-device logout, then capybara-device login/;
-    expect(
-      await toolError(m.tool("Read").run({ file_path: `${ROOTS_A.workspace}/a.txt` }, m.ctx())),
-    ).toMatch(lost);
+    expect(await toolError(m.run("Read", { file_path: `${ROOTS_A.workspace}/a.txt` }))).toMatch(
+      lost,
+    );
     expect((await m.instance())?.fs_status).toBe("lost");
     // later calls fail the same way without reaching the machine
     const sent = machine.frames.length;
-    expect(await toolError(m.tool("Bash").run({ command: "ls" }, m.ctx()))).toMatch(lost);
+    expect(await toolError(m.run("Bash", { command: "ls" }))).toMatch(lost);
     expect(machine.frames.length).toBe(sent);
 
     // the platform cannot reset a machine's files, and never tells it to stop
@@ -427,9 +453,7 @@ describe("local devices through the sandbox tools", () => {
 
     // the owner signs in again (the program recreates the directory): the next call works
     const next = await signIn(m.deviceId, m.accountId, ROOTS_A);
-    const written = await m
-      .tool("Write")
-      .run({ file_path: `${ROOTS_A.workspace}/b.txt`, content: "b" }, m.ctx());
+    const written = await m.run("Write", { file_path: `${ROOTS_A.workspace}/b.txt`, content: "b" });
     expect(next.dir.files.has(`${ROOTS_A.workspace}/b.txt`)).toBe(true);
     // the recreated directory is empty: the conversation is told its files were reset
     expect(JSON.stringify(written)).toContain(

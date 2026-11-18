@@ -21,6 +21,7 @@ import { MachinesService } from "../../src/local-devices/machines.js";
 import { NetworkGrants, type NetworkRunState } from "../../src/local-devices/network-grants.js";
 import { PlatformOperations } from "../../src/platform/registry.js";
 import { assistantIdemKey } from "../../src/runtime/model-call.js";
+import { RunExecution } from "../../src/runtime/run-execution.js";
 import { networkGrantRefusal } from "../../src/schedules/grant-rules.js";
 import { ScheduledTasksService } from "../../src/schedules/scheduled-tasks.service.js";
 import { ScheduledTaskStore } from "../../src/schedules/store.js";
@@ -353,25 +354,33 @@ async function curlStep(
     model: { provider: "model-fake", model: "fake-1" },
     disabledTools: onlyBuiltins([{ kind: "builtin", name: "Bash" }]),
   } as AgentDefinition;
-  return k.app.get(ToolPipeline).runStep({
-    orgId,
-    conversationId: s.conversationId,
-    runId: run.runId,
-    step: 1,
-    agentId: s.agentId,
-    agentVersion: 1,
-    agent,
-    accountId: s.accountId,
-    ...webCaller(s.accountId),
-    signal: new AbortController().signal,
-    unattended: {
-      taskId,
-      taskRunId: run.taskRunId,
-      trial,
-      unattendedAsk: "fail",
-      forbiddenTools: [],
-    },
-  });
+  // a tool step runs under its run's execution claim (managed operations revalidate it)
+  const claim = await k.app.get(RunExecution).claim(s.conversationId, run.runId, randomUUID());
+  if (!claim) throw new Error("the run could not be claimed");
+  return k.app.get(RunExecution).withClaim(
+    claim,
+    () => true,
+    () =>
+      k.app.get(ToolPipeline).runStep({
+        orgId,
+        conversationId: s.conversationId,
+        runId: run.runId,
+        step: 1,
+        agentId: s.agentId,
+        agentVersion: 1,
+        agent,
+        accountId: s.accountId,
+        ...webCaller(s.accountId),
+        signal: new AbortController().signal,
+        unattended: {
+          taskId,
+          taskRunId: run.taskRunId,
+          trial,
+          unattendedAsk: "fail",
+          forbiddenTools: [],
+        },
+      }),
+  );
 }
 
 const curlExecs = (m: FakeMachine) =>

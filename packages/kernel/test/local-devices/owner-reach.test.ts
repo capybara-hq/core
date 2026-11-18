@@ -420,14 +420,20 @@ describe("web writes only narrow", () => {
       expect(DevicePolicyBody.safeParse({ ownerCeiling }).success).toBe(false);
     expect(DevicePolicyBody.safeParse({ ownerCeiling: { fullAccess: false } }).success).toBe(true);
     const f = await fixture();
-    // a protocol 2 program cannot express it: nothing is sent
+    // a connected program that reports no authenticated owner facts cannot take it: nothing is
+    // sent (protocol 2 programs are refused at the upgrade since the activation)
     await f.db
       .updateTable("device_machines")
-      .set({ features: ["mode", "projects", "policyOp", "policyOpId"] })
+      .set({ features: ["mode", "projects", "policyOp", "policyOpId"], owner_report: null })
       .where("id", "=", f.machineId)
       .execute();
-    vi.spyOn(k.app.get(LocalDeviceRelay), "holderLive").mockResolvedValue(true);
-    const call = vi.spyOn(k.app.get(LocalDeviceRelay), "call");
+    const relay = k.app.get(LocalDeviceRelay);
+    vi.spyOn(relay, "holderLive").mockResolvedValue(true);
+    vi.spyOn(relay, "stagedTransport").mockResolvedValue({
+      connectionId: "c-1",
+      maxFrameBytes: 69632,
+    });
+    const call = vi.spyOn(relay, "callV3");
     await expect(
       k.app
         .get(DevicesService)
