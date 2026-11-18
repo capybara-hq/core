@@ -169,7 +169,16 @@ describe.skipIf(unavailable !== null)("capybara-device Linux operation backends"
     await chmod(join(dir, "workspace"), 0o777);
     await chmod(join(dir, "tmp"), 0o1777);
     const bound = await startLinuxDevice({ bindWorkspace: dir });
-    cleanups.push(async () => bound.remove());
+    // Cleanups run in order: before the host removes dir, the container user (uid 1000, which
+    // on a Linux host differs from the test's own uid) removes what it created in the bind
+    // mounts: directories it made are 0755 and its own, so the host user could not empty them.
+    // (A real device runs its container as the host user, so this is a fixture concern.)
+    cleanups.unshift(async () => {
+      bound.run(
+        "chmod -R u+rwX /workspace /tmp 2>/dev/null; find /workspace /tmp -mindepth 1 -delete 2>/dev/null; true",
+      );
+      bound.remove();
+    });
     const server = new HostServer(await localServerFile(dir));
     servers.push(server);
     const state = join(dir, "state");
