@@ -360,18 +360,25 @@ automatically, and its default abort strategy may ignore a query. Do not assume 
 AbortSignal cancels inherited writer queries. The private helper uses the installed pg 8.23.1
 PID/key cancellation mechanism; it does not copy the migrator's SQL termination path.
 
-**Timeouts precede all SQL.** Put session-level `statement_timeout`, `lock_timeout` and
-`idle_in_transaction_session_timeout` defaults (at most 500 ms each) into the owned PG connection's
-startup `options`. Install them before controlled BEGIN, any identity/setup query, and inherited
-fence execution; do not install them only with SET LOCAL or only before authority acquisition.
-Pin the effective startup values after parsing trusted connection options; a DSN option must not
-silently override these bounds. Preserve unrelated connection/TLS settings and keep the DSN private.
-These startup defaults survive statement failure and transaction rollback. Later budget tightening
-is additional and cannot replace them. TCP/Unix connection and authentication setup is independently
-bounded by the smaller of configured connect timeout, the absolute work deadline and remaining
-shutdown budget; abort destroys an unfinished handshake and closes the SQL gate before any late
-connect callback can begin a transaction. No initial SQL is allowed until startup defaults have
-been accepted. The helper owns final connection disposal even if startup never reaches BEGIN.
+**Timeouts precede all SQL.** Put session-level `statement_timeout` and `lock_timeout` defaults (at
+most 500 ms each) and an `idle_in_transaction_session_timeout` default of at most 5 s into the owned
+PG connection's startup `options`. The idle bound is longer on purpose (decision 2026-11-18): it
+counts time the server waits for the client's next statement, so an ordinary client pause (OS
+scheduling on a loaded host, a GC pause, CPU throttling) of 500 ms or more failed the start
+spuriously while nothing was slow or contended on the server. 5 s tolerates those pauses and still
+bounds how long a stalled process can hold the exclusive platform permission lock and block every
+replica's permission prelude; the statement and lock bounds keep rejecting slow scans and contention
+at 500 ms, so the restriction stays fail-closed. Install them before controlled BEGIN, any
+identity/setup query, and inherited fence execution; do not install them only with SET LOCAL or only
+before authority acquisition. Pin the effective startup values after parsing trusted connection
+options; a DSN option must not silently override these bounds. Preserve unrelated connection/TLS
+settings and keep the DSN private. These startup defaults survive statement failure and transaction
+rollback. Later budget tightening is additional and cannot replace them. TCP/Unix connection and
+authentication setup is independently bounded by the smaller of configured connect timeout, the
+absolute work deadline and remaining shutdown budget; abort destroys an unfinished handshake and
+closes the SQL gate before any late connect callback can begin a transaction. No initial SQL is
+allowed until startup defaults have been accepted. The helper owns final connection disposal even if
+startup never reaches BEGIN.
 
 **Abort fences all later SQL, not just COMMIT.** Abort or either deadline synchronously latches a
 closed startup guard. Every owned driver dispatch (including queued statements after dequeue)
@@ -410,7 +417,7 @@ budget, inside the existing 2-second startup drain. Cancellation connect/send/cl
 500 ms and consumes that same cleanup budget. Recompute remaining time before each blocking phase;
 never refresh a full phase allowance or use zero as an unbounded PG timeout. Setup, statements,
 rollback and socket disposal all consume their applicable deadline. Server statement then idle
-timeouts (500 ms each) provide fallback margin if cancellation is unavailable, but server stalls
+timeouts (500 ms and 5 s) provide fallback margin if cancellation is unavailable, but server stalls
 and partitions still preclude unconditional remote-completion guarantees. Report uncertainty
 rather than infer rollback from elapsed time. This intentional fail-closed startup restriction
 can reject slow scans or contention and require a later deliberate retry. It does not apply new
