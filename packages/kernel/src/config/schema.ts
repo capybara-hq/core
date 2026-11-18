@@ -1882,8 +1882,8 @@ export const KernelConfigSchema = z.strictObject({
        * in the admin console (`devicesFullAccess`); the startup config wins over it, so this field
        * is optional with no schema default (the default `allowed` is applied by
        * `readDevicesFullAccess`: a schema default would be indistinguishable from a value the config
-       * source set). The old key `devices.autoMode` (`CAPYBARA_DEVICES__AUTO_MODE`) is translated
-       * per source by `translateLegacyPermissionKeys` until it is removed.
+       * source set). The old key `devices.autoMode` (`CAPYBARA_DEVICES__AUTO_MODE`) is refused with
+       * the conversion message (`config/load.ts`).
        */
       fullAccess: z
         .enum(["allowed", "off"])
@@ -1892,7 +1892,7 @@ export const KernelConfigSchema = z.strictObject({
           meta({
             hot: true,
             description:
-              "Whether devices may run with Full permission (default allowed): a device whose owner allows Full may then run a conversation with Full permission; a cloud device on Full reaches the open public network (private and internal addresses blocked) unless sandbox.limits.egress is none. When off, devices run restricted: local devices on their allowlist, cloud devices on their organization's cloud network (cloudNetwork). An organization may turn it off and follow the platform. Set here, it is read-only in the admin console. Replaces devices.autoMode (CAPYBARA_DEVICES__AUTO_MODE), which is still read with the same values; capybara config migrate-permissions converts a config file",
+              "Whether devices may run with Full permission (default allowed): a device whose owner allows Full may then run a conversation with Full permission; a cloud device on Full reaches the open public network (private and internal addresses blocked) unless sandbox.limits.egress is none. When off, devices run restricted: local devices on their allowlist, cloud devices on their organization's cloud network (cloudNetwork). An organization may turn it off and follow the platform. Set here, it is read-only in the admin console. Replaces devices.autoMode (CAPYBARA_DEVICES__AUTO_MODE), which is refused: rename it (the same values), or convert a config file with capybara config migrate-permissions",
           }),
         ),
       maxPersonal: z

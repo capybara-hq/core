@@ -13,7 +13,7 @@ const log = createLogger("error", { write: () => {} });
 const fullAccess = (raw: Record<string, unknown>, env: NodeJS.ProcessEnv = {}) =>
   resolveConfig({ ...base, ...raw }, env).devices.fullAccess;
 
-describe("devices.fullAccess (B1 replacement of devices.autoMode)", () => {
+describe("devices.fullAccess (the old devices.autoMode is refused)", () => {
   it("has no schema default: an unset source leaves the deployment setting in charge", () => {
     expect(KernelConfigSchema.parse(base).devices.fullAccess).toBeUndefined();
     expect(fullAccess({})).toBeUndefined();
@@ -28,59 +28,60 @@ describe("devices.fullAccess (B1 replacement of devices.autoMode)", () => {
     expect(fullAccess({}, { CAPYBARA_DEVICES__FULL_ACCESS: "allowed" })).toBe("allowed");
   });
 
-  it("translates the old key of the same source exactly, keeping its presence", () => {
-    expect(fullAccess({ devices: { autoMode: "off" } })).toBe("off");
-    expect(fullAccess({ devices: { autoMode: "allowed" } })).toBe("allowed");
-    expect(fullAccess({}, { CAPYBARA_DEVICES__AUTO_MODE: "off" })).toBe("off");
-    expect(() => fullAccess({ devices: { autoMode: "maybe" } })).toThrow(ConfigError);
-    // the old key never survives into the validated config
-    expect(
-      Object.hasOwn(
-        resolveConfig({ ...base, devices: { autoMode: "off" } }, {}).devices as object,
-        "autoMode",
-      ),
-    ).toBe(false);
-  });
-
-  it("keeps strict source precedence across old and new keys: env > file", () => {
-    expect(
-      fullAccess({ devices: { autoMode: "allowed" } }, { CAPYBARA_DEVICES__AUTO_MODE: "off" }),
-    ).toBe("off");
-    expect(
-      fullAccess({ devices: { autoMode: "off" } }, { CAPYBARA_DEVICES__FULL_ACCESS: "allowed" }),
-    ).toBe("allowed");
-  });
-
-  it("refuses conflicting old and new keys in one source, accepts equal ones", () => {
-    expect(() => fullAccess({ devices: { autoMode: "allowed", fullAccess: "off" } })).toThrow(
+  it("refuses the old file / Nacos key with the conversion message (W5-P3b)", () => {
+    for (const value of ["off", "allowed", "maybe"]) {
+      const thrown = (() => {
+        try {
+          fullAccess({ devices: { autoMode: value } });
+        } catch (e) {
+          return e;
+        }
+        return undefined;
+      })();
+      expect(thrown).toBeInstanceOf(ConfigError);
+      const msg = (thrown as Error).message;
+      expect(msg).toContain("devices.autoMode");
+      expect(msg).toContain("devices.fullAccess");
+      expect(msg).toContain("capybara config migrate-permissions");
+      // never the value
+      expect(msg).not.toContain("maybe");
+    }
+    // even together with an equal new key
+    expect(() => fullAccess({ devices: { autoMode: "off", fullAccess: "off" } })).toThrow(
       /devices\.autoMode.*devices\.fullAccess/s,
+    );
+  });
+
+  it("refuses the old environment variable with the conversion message (W5-P3b)", () => {
+    expect(() => fullAccess({}, { CAPYBARA_DEVICES__AUTO_MODE: "off" })).toThrow(
+      /CAPYBARA_DEVICES__AUTO_MODE.*CAPYBARA_DEVICES__FULL_ACCESS/s,
     );
     expect(() =>
       fullAccess(
-        {},
-        { CAPYBARA_DEVICES__AUTO_MODE: "allowed", CAPYBARA_DEVICES__FULL_ACCESS: "off" },
+        { devices: { fullAccess: "off" } },
+        { CAPYBARA_DEVICES__AUTO_MODE: "off", CAPYBARA_DEVICES__FULL_ACCESS: "off" },
       ),
-    ).toThrow(/CAPYBARA_DEVICES__AUTO_MODE/);
-    expect(fullAccess({ devices: { autoMode: "off", fullAccess: "off" } })).toBe("off");
+    ).toThrow(ConfigError);
   });
 
-  it("labels the winning source of either key", () => {
+  it("labels the winning source of the key", () => {
     const of = (raw: Record<string, unknown>, env: NodeJS.ProcessEnv) =>
       new KernelConfigService(
         { config: resolveConfig({ ...base, ...raw }, env), env },
         log,
       ).fieldSource("devices.fullAccess");
-    expect(of({}, { CAPYBARA_DEVICES__AUTO_MODE: "off" })).toBe("env");
     expect(of({}, { CAPYBARA_DEVICES__FULL_ACCESS: "off" })).toBe("env");
-    expect(of({ devices: { autoMode: "off" } }, {})).toBe("file");
-    expect(of({ devices: { autoMode: "off" } }, { CAPYBARA_CONFIG_SOURCE: "nacos" })).toBe("nacos");
+    expect(of({ devices: { fullAccess: "off" } }, {})).toBe("file");
+    expect(of({ devices: { fullAccess: "off" } }, { CAPYBARA_CONFIG_SOURCE: "nacos" })).toBe(
+      "nacos",
+    );
     expect(of({}, {})).toBeUndefined();
   });
 
-  it("a hot change of either key goes through durable publication first", async () => {
+  it("a hot change goes through durable publication first; a reload with the old key is rejected", async () => {
     const svc = new KernelConfigService({ config: resolveConfig(base, {}), env: {} }, log);
     const published: [unknown, unknown][] = [];
-    await svc.apply({ ...base, devices: { autoMode: "off" } }, async (before, next) => {
+    await svc.apply({ ...base, devices: { fullAccess: "off" } }, async (before, next) => {
       published.push([before.devices.fullAccess, next.devices.fullAccess]);
     });
     expect(published).toEqual([[undefined, "off"]]);
@@ -88,6 +89,12 @@ describe("devices.fullAccess (B1 replacement of devices.autoMode)", () => {
     await svc.apply({ ...base, devices: { fullAccess: "allowed" } }, async () => {
       throw new Error("lost");
     });
+    expect(svc.get().devices.fullAccess).toBe("off");
+    // a Nacos push still naming the old key is refused whole: nothing is published or applied
+    await svc.apply({ ...base, devices: { autoMode: "allowed" } }, async () => {
+      published.push(["unexpected", "publish"]);
+    });
+    expect(published).toHaveLength(1);
     expect(svc.get().devices.fullAccess).toBe("off");
   });
 });
