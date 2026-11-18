@@ -376,7 +376,7 @@ describe("SettingsService devicesFullAccess (B1)", () => {
       const widened = await s
         .update(patch, admin.id, "tok", undefined, { onlyNarrows: true })
         .catch((e: unknown) => e);
-      expect(widened).toMatchObject({ code: "deployment.auto_mode_not_allowed" });
+      expect(widened).toMatchObject({ code: "deployment.full_access_not_allowed" });
     }
     // a person in a session may allow it again; null clears back to the default
     expect(

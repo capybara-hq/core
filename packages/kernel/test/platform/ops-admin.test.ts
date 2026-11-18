@@ -578,7 +578,7 @@ describe("admin and models", () => {
         JSON.stringify(devicesAutoMode),
       ).toMatchObject({
         ok: false,
-        code: "deployment.auto_mode_not_allowed",
+        code: "deployment.full_access_not_allowed",
       });
       await expect(run("admin.update-settings", { devicesAutoMode })).rejects.toThrow(
         /only turn it off/,
@@ -599,7 +599,7 @@ describe("admin and models", () => {
       payload: { devicesAutoMode: { mode: "allowed" } },
     });
     expect(viaToken.statusCode).toBe(400);
-    expect(viaToken.json().error.code).toBe("deployment.auto_mode_not_allowed");
+    expect(viaToken.json().error.code).toBe("deployment.full_access_not_allowed");
     // a person (super admin) turns it back on in the admin console, then the agent may turn it off
     const back = await root({
       method: "PUT",

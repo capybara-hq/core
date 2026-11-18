@@ -289,9 +289,9 @@ export type DeploymentSettingsView = DeploymentSettings & {
   attribution: PlatformAttributionView;
 };
 
-const autoModeWidenRefused = (): ApiError =>
+const fullAccessWidenRefused = (): ApiError =>
   new ApiError(
-    "deployment.auto_mode_not_allowed",
+    "deployment.full_access_not_allowed",
     "Allowing Full permission at the platform level (devicesFullAccess) needs a super admin in the admin console; an API token or the Platform tool may only turn it off.",
   );
 
@@ -344,7 +344,7 @@ export const DEPLOYMENT_SETTINGS_PATCH = z
      * The platform's Full permission switch (B1): `permission` replaced, null clears it (back to
      * the default, allowed). A value set in the startup config is read-only (409
      * `deployment.setting_readonly`); an API token or the Platform tool may only turn it off (400
-     * `deployment.auto_mode_not_allowed`).
+     * `deployment.full_access_not_allowed`).
      */
     devicesFullAccess: DEVICES_FULL_ACCESS_PATCH.optional(),
     /**
@@ -614,7 +614,7 @@ export class SettingsService {
   /**
    * The refusals of a `devicesFullAccess` change: a value set in the startup config
    * (`deployment.setting_readonly`) and, with `onlyNarrows` (an API token, the Platform tool),
-   * allowing Full where it is off (`deployment.auto_mode_not_allowed`). Returns the next stored
+   * allowing Full where it is off (`deployment.full_access_not_allowed`). Returns the next stored
    * choice and the effective switch before it.
    */
   async checkDevicesFullAccess(
@@ -636,7 +636,7 @@ export class SettingsService {
     );
     const after = next.permission ?? DEVICES_FULL_ACCESS_DEFAULT;
     if (opts.onlyNarrows && before.permission === "off" && after === DEVICES_FULL_ACCESS_DEFAULT) {
-      throw autoModeWidenRefused();
+      throw fullAccessWidenRefused();
     }
     return { next, before };
   }

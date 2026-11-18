@@ -850,7 +850,7 @@ describe("超级管理员端点", () => {
     // turning it back on widens: refused for a token, allowed for a person in a session
     const widened = await viaToken({ devicesAutoMode: { mode: "allowed" } });
     expect(widened.statusCode).toBe(400);
-    expect(errCode(widened)).toBe("deployment.auto_mode_not_allowed");
+    expect(errCode(widened)).toBe("deployment.full_access_not_allowed");
     const adminReq = await session("admin");
     const on = await adminReq({
       method: "PUT",

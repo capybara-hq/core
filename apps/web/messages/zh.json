@@ -131,7 +131,7 @@
       "owner_required": "只有组织所有者可以执行这个操作。",
       "creation_disabled": "本部署关闭了新建组织。",
       "slug_taken": "该 slug 已被其他组织使用。",
-      "auto_mode_not_allowed": "平台不允许自动模式。",
+      "full_access_not_allowed": "无法允许完全访问：平台已关闭它，或者需要组织管理员在网页的组织设置中允许。",
       "network_allowance_invalid": "内部端点无效：请填写主机名、*.domain 通配符、IP 地址或 CIDR，或 http://host:8080 这样的源。链路本地、回环（包括 localhost）和未指定地址始终不允许，覆盖整个公共后缀的通配符也不允许。",
       "network_allowance_not_found": "该组织没有这个内部端点（可能已被移除）。",
       "network_allowance_widen_not_allowed": "只有超级管理员能在 Web 上的管理控制台里放行内部端点，API 令牌或 Platform 工具不可以。"
@@ -555,7 +555,7 @@
     },
     "deployment": {
       "setting_readonly": "这项设置由部署的启动配置（环境变量、配置文件或 Nacos）设定，只能在那里修改。",
-      "auto_mode_not_allowed": "通过 API 令牌或平台工具只能关闭平台的自动模式；要重新开放，请超级管理员在后台设置。"
+      "full_access_not_allowed": "通过 API 令牌或平台工具只能关闭平台的完全访问；要重新允许，请超级管理员在管理后台设置。"
     }
   },
   "agents": {

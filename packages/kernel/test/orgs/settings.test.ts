@@ -149,10 +149,10 @@ describe("org fullAccess (B1)", () => {
     await storePlatformMode({ permission: "off" });
     const s = settingsWith();
     expect(await codeOf(s.update(orgId, { fullAccess: "allowed" }, accountId))).toBe(
-      "org.auto_mode_not_allowed",
+      "org.full_access_not_allowed",
     );
     expect(await codeOf(s.update(orgId, { autoMode: "allowed" }, accountId))).toBe(
-      "org.auto_mode_not_allowed",
+      "org.full_access_not_allowed",
     );
     // off is the only value left, and clearing it is fine (it follows the platform's off)
     expect(await s.update(orgId, { fullAccess: "off" }, accountId)).toMatchObject({
@@ -166,7 +166,7 @@ describe("org fullAccess (B1)", () => {
     const s = settingsWith({ fullAccess: "off" });
     expect((await s.deployment()).fullAccess).toEqual({ permission: "off", source: "file" });
     expect(await codeOf(s.update(orgId, { fullAccess: "allowed" }, accountId))).toBe(
-      "org.auto_mode_not_allowed",
+      "org.full_access_not_allowed",
     );
   });
 
@@ -176,7 +176,7 @@ describe("org fullAccess (B1)", () => {
     expect((await s.deployment()).fullAccess).toEqual({ permission: "off", source: "db" });
     expect((await s.deployment()).autoMode).toEqual({ mode: "off", source: "db" });
     expect(await codeOf(s.update(orgId, { fullAccess: "allowed" }, accountId))).toBe(
-      "org.auto_mode_not_allowed",
+      "org.full_access_not_allowed",
     );
   });
 
@@ -200,7 +200,7 @@ describe("org fullAccess (B1)", () => {
     for (const patch of [{ fullAccess: "allowed" as const }, { autoMode: "allowed" as const }])
       expect(
         await codeOf(s.update(orgId, patch, accountId, "tok", undefined, { onlyNarrows: true })),
-      ).toBe("org.auto_mode_not_allowed");
+      ).toBe("org.full_access_not_allowed");
     expect((await s.get(orgId)).fullAccess).toBe("off");
   });
 });

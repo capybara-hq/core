@@ -271,7 +271,7 @@ describe("org settings", () => {
     for (const input of [{ autoMode: "allowed" }, { autoMode: null }]) {
       expect(await pre(input), JSON.stringify(input)).toMatchObject({
         ok: false,
-        code: "org.auto_mode_not_allowed",
+        code: "org.full_access_not_allowed",
         message: expect.stringMatching(
           /^Allowing Full permission needs a person in the organization settings\./,
         ),
@@ -355,7 +355,7 @@ describe("org settings", () => {
     expect(off.statusCode, off.body).toBe(200);
     const on = await viaToken({ autoMode: "allowed" });
     expect(on.statusCode).toBe(400);
-    expect(on.json().error.code).toBe("org.auto_mode_not_allowed");
+    expect(on.json().error.code).toBe("org.full_access_not_allowed");
     // an extra host widens under either mode (the hosts are the local ceiling whatever the mode)
     const openOutside = await viaToken({ cloudNetwork: { mode: "open", extraHosts: ["x.com"] } });
     expect(openOutside.statusCode).toBe(400);

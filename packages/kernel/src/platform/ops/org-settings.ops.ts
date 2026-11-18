@@ -71,7 +71,7 @@ export class OrgSettingsOperations implements OnModuleInit {
             next: "Through this tool the org's cloud network may only be narrowed: it may drop extra hosts, exclude platform hosts, move base to none or switch open to allowlist, but never add an extra host, drop an exclusion or switch back to open (the hosts are the local sandbox-mode ceiling whatever the cloud mode). To widen it, ask an org admin to change it in the organization settings on the web. When the platform limits hosts to its allowlist (deployment.cloudNetwork.orgHosts within), a host outside it needs a super admin.",
           },
           {
-            code: "org.auto_mode_not_allowed",
+            code: "org.full_access_not_allowed",
             next: "Through this tool the org's Full permission (fullAccess) may only be turned off, never allowed (the platform may turn it off too; org-settings.get shows both); to allow it, ask an org admin to change it in the organization settings on the web.",
           },
           {

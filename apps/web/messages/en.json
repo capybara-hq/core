@@ -131,7 +131,7 @@
       "owner_required": "Only an org owner can do this.",
       "creation_disabled": "Creating organizations is turned off on this deployment.",
       "slug_taken": "This slug is already used by another organization.",
-      "auto_mode_not_allowed": "The platform does not allow auto mode.",
+      "full_access_not_allowed": "Full access cannot be allowed: the platform has it off, or an org admin must allow it in the organization settings on the web.",
       "network_allowance_invalid": "The internal endpoint is not valid: use a hostname, a *.domain wildcard, an IP address or CIDR, or an origin such as http://host:8080. Link-local, loopback (including localhost) and unspecified addresses are never allowed, nor wildcards over a public suffix.",
       "network_allowance_not_found": "The organization has no such internal endpoint (it may have been removed already).",
       "network_allowance_widen_not_allowed": "Only a super admin in the admin console on the web can allow an internal endpoint, not an API token or the Platform tool."
@@ -555,7 +555,7 @@
     },
     "deployment": {
       "setting_readonly": "This setting is set in the deployment's startup config (environment, file or Nacos) and can only be changed there.",
-      "auto_mode_not_allowed": "An API token or the Platform tool can only turn the platform's auto mode off; a super admin turns it on in the admin console."
+      "full_access_not_allowed": "An API token or the Platform tool can only turn the platform's Full access off; a super admin allows it in the admin console."
     }
   },
   "agents": {

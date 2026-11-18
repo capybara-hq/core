@@ -258,7 +258,7 @@ export const OrgSettingsPatchSchema = z
     wakeOnBackgroundTask: z.boolean().nullable().optional(),
     /**
      * The org's Full permission switch; null clears it (follow the platform). `allowed` while the
-     * platform is `off` -> 400 `org.auto_mode_not_allowed`.
+     * platform is `off` -> 400 `org.full_access_not_allowed`.
      */
     fullAccess: FullAccessSetting.nullable().optional(),
     /** The old name of `fullAccess`, still accepted (never together with it). */
@@ -471,8 +471,8 @@ export function logUnreadableSecuritySettings(
   }
 }
 
-const autoModeNotAllowed = (message: string): ApiError =>
-  new ApiError("org.auto_mode_not_allowed", message);
+const fullAccessNotAllowed = (message: string): ApiError =>
+  new ApiError("org.full_access_not_allowed", message);
 
 /** Whether a stored settings object holds a `fullAccess` this version reads as `off`. */
 export function invalidStoredFullAccess(raw: unknown): boolean {
@@ -617,7 +617,7 @@ export class OrgSettingsService {
     if (patch.fullAccess === "allowed") {
       const platform = await readDevicesFullAccess(this.db.db, this.config, this.log);
       if (platform.permission === "off") {
-        throw autoModeNotAllowed("The platform does not allow Full permission");
+        throw fullAccessNotAllowed("The platform does not allow Full permission");
       }
     }
   }
@@ -704,7 +704,7 @@ export class OrgSettingsService {
       const platform = await readDevicesFullAccess(this.db.db, this.config, this.log);
       const next = patch.fullAccess === null ? platform.permission : patch.fullAccess;
       if ((before.fullAccess ?? platform.permission) !== "allowed" && next === "allowed") {
-        throw autoModeNotAllowed(
+        throw fullAccessNotAllowed(
           "Allowing Full permission needs a person in the organization settings.",
         );
       }

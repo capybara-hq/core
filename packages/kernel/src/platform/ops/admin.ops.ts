@@ -238,7 +238,7 @@ export class AdminOperations implements OnModuleInit {
             next: "Fix the values as the message says (admin.settings shows the current ones).",
           },
           {
-            code: "deployment.auto_mode_not_allowed",
+            code: "deployment.full_access_not_allowed",
             next: "Through this tool the platform's Full permission switch may only be turned off; to allow it, ask a super admin to change it in the admin console settings on the web.",
           },
           {
