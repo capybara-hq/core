@@ -90,6 +90,7 @@ const ICONS = {
   "trash-2": "trash-2",
   "list-checks": "list-checks",
   link: "link",
+  share: "share-2",
   "zoom-in": "zoom-in",
   // The image viewer (§6.16.20).
   "zoom-out": "zoom-out",

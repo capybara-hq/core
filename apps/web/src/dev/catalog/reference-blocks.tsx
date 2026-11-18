@@ -80,6 +80,7 @@ import { headRhythmBlocks } from "./head-rhythm-blocks";
 import { OVERVIEW_SECTION_BLOCKS } from "./overview-section-blocks";
 import { RefBlock } from "./ref-block";
 import { SCHEDULE_CALENDAR_BLOCKS } from "./schedule-calendar-blocks";
+import { SHARE_BLOCKS } from "./share-blocks";
 import { type SidebarFixture, sidebarProps, statusFixture } from "./shell-fixture";
 import { listLoadingBlocks, TEMPLATE_LOADING_BLOCKS } from "./template-loading-blocks";
 import { SetupHomeBody, setupFrameProps } from "./templates/setup";
@@ -1348,4 +1349,5 @@ export const REFERENCE_BLOCKS = {
   ...SCHEDULE_CALENDAR_BLOCKS,
   ...THEME_SWATCH_BLOCKS,
   ...DEVICE_BLOCKS,
+  ...SHARE_BLOCKS,
 } as const;

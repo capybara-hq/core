@@ -321,7 +321,7 @@ const header = (over: Partial<FilePreviewHeader> = {}): FilePreviewHeader => ({
 });
 
 describe("FilePreviewFrame (§6.16.22)", () => {
-  it("header: badge, name, version, download, full screen, close; never Share", async () => {
+  it("header: badge, name, version, download, full screen, close; no Share without onShare", async () => {
     const onClose = vi.fn();
     const { container } = wrap(
       <FilePreviewFrame header={header({ onClose })} state="ready">
@@ -334,22 +334,39 @@ describe("FilePreviewFrame (§6.16.22)", () => {
     expect(screen.getByRole("button", { name: "全屏" })).toBeTruthy();
     await userEvent.click(screen.getByRole("button", { name: "关闭" }));
     expect(onClose).toHaveBeenCalled();
-    expect(screen.queryByRole("button", { name: /分享|Share/ })).toBeNull();
-    expect(container.textContent).not.toMatch(/分享|Share/);
+    expect(screen.queryByRole("button", { name: /分享/ })).toBeNull();
     // no switcher without files
     expect(screen.queryByRole("button", { name: /差异行\.csv/ })).toBeNull();
     expect(screen.getByText("差异行.csv")).toBeTruthy();
   });
 
-  it("has no Share in English either", () => {
+  it("onShare renders a Share button right before Download", async () => {
+    const onShare = vi.fn();
+    const { container } = wrap(<FilePreviewFrame header={header({ onShare })} state="ready" />);
+    const share = screen.getByRole("button", { name: "分享" });
+    const download = screen.getByRole("button", { name: "下载" });
+    expect(share.nextElementSibling).toBe(download);
+    expect(container.querySelector('[data-part="share-marker"]')).toBeNull();
+    await userEvent.click(share);
+    expect(onShare).toHaveBeenCalled();
+  });
+
+  it("shared adds the marker and names the button Shared", () => {
     const { container } = wrap(
-      <FilePreviewFrame
-        header={header({ files: [{ id: "a", name: "a.csv" }], onSwitch: () => {} })}
-        state="ready"
-      />,
+      <FilePreviewFrame header={header({ onShare: () => {}, shared: true })} state="ready" />,
       "en",
     );
-    expect(container.textContent).not.toMatch(/Share/);
+    const button = screen.getByRole("button", { name: "Shared" });
+    expect(button.querySelector('[data-part="share-marker"]')).not.toBeNull();
+    expect(screen.queryByRole("button", { name: "Share" })).toBeNull();
+    expect(container.querySelectorAll('[data-part="share-marker"]').length).toBe(1);
+  });
+
+  it("shared without onShare shows nothing", () => {
+    const { container } = wrap(
+      <FilePreviewFrame header={header({ shared: true })} state="ready" />,
+    );
+    expect(container.querySelector('[data-part="share-marker"]')).toBeNull();
   });
 
   it("the file switcher appears with files", () => {

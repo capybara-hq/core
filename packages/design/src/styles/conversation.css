@@ -1630,6 +1630,20 @@ button.cb-file-card:focus-visible {
   flex: 1;
   min-width: 0;
 }
+/* Share (§6.16.22): a live share marks the button with an `ok` dot ringed by the panel ground. */
+.cb-share-btn {
+  position: relative;
+}
+.cb-share-marker {
+  position: absolute;
+  top: var(--cb-space-1);
+  right: var(--cb-space-1);
+  width: var(--cb-space-2);
+  height: var(--cb-space-2);
+  border-radius: 50%;
+  background: var(--cb-ok);
+  box-shadow: 0 0 0 2px var(--cb-panel-2);
+}
 .cb-rpanel-body {
   flex: 1;
   min-height: 0;

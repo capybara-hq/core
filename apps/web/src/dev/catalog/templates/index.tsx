@@ -9,6 +9,7 @@ import { OnboardingTemplate } from "./onboarding";
 import { OverviewTemplate } from "./overview";
 import { SettingsTemplate } from "./settings";
 import { SetupTemplate } from "./setup";
+import { SharedFileTemplate } from "./shared-file";
 import { StatusTemplate } from "./status";
 import { TraceTemplate } from "./trace";
 import { WizardTemplate } from "./wizard";
@@ -27,9 +28,10 @@ const TEMPLATES: Record<TemplateRoute, () => React.JSX.Element> = {
   "templates/status": StatusTemplate,
   "templates/onboarding": OnboardingTemplate,
   "templates/setup": SetupTemplate,
+  "templates/shared-file": SharedFileTemplate,
 };
 
-/** `/dev/ui/templates/*`：13 个页面模板，除认证页外都套在假 App Shell 里。 */
+/** `/dev/ui/templates/*`: the 14 page templates, all but the auth and shared file pages in a fake App Shell. */
 export function TemplateCatalog({ route }: { route: TemplateRoute }) {
   const Template = TEMPLATES[route];
   return <Template />;
