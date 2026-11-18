@@ -39,6 +39,7 @@ export const UI_PART_NAMES = [
   "switch.knob",
   "org-avatar",
   "agent-chip",
+  "image-placeholder",
 ] as const;
 
 export type UiPartName = (typeof UI_PART_NAMES)[number];
@@ -356,6 +357,16 @@ export const UI_PARTS: readonly UiPartSpec[] = [
     description: {
       en: "An agent chip of the new conversation's agents row; `aria-pressed` on the selected one.",
       zh: "新会话智能体行里的智能体标签；选中的那个带 aria-pressed。",
+    },
+  },
+  {
+    name: "image-placeholder",
+    version: 1,
+    owner: ["packages/design/src/conversation/files.tsx"],
+    states: ["aria-busy"],
+    description: {
+      en: "A generating image's placeholder in the conversation.",
+      zh: "对话中正在生成的图片的占位框。",
     },
   },
 ];
