@@ -252,7 +252,7 @@ type EventBody =
          * classifier, also with the reviewed call's `callId`) or `suggestion` (a prompt suggestion
          * after a completed run).
          */
-        purpose?: "compaction" | "title" | "web_fetch" | "review" | "suggestion";
+        purpose?: "compaction" | "title" | "web_fetch" | "review" | "image" | "suggestion";
         /** A chunked compaction call's 1-based chunk and the calls the compaction attempted. */
         chunk?: number;
         chunks?: number;

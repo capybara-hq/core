@@ -429,7 +429,7 @@ class Connection implements StreamHandle {
       const stored = await this.d.suggestions.get(conversationId);
       if (stored === null) return;
       if (!(await this.d.suggestions.isFresh(conversationId, stored))) {
-        await this.d.suggestions.delete(conversationId);
+        await this.d.suggestions.delete(conversationId, stored);
         return;
       }
       if (await this.d.suggestionsEnabled(orgId)) frame = suggestionFrame(stored);

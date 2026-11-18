@@ -546,6 +546,18 @@ describe("会话 SSE（单副本 api+worker）", () => {
       }
     });
 
+    it("deleting a stale suggestion keeps a newer one written since the read", async () => {
+      const { runId } = await suggested();
+      const store = k.app.get(PromptSuggestionStore);
+      const stale = { runId, afterSeq: 0, text: "Old", createdAt: 1 };
+      const newer = { runId, afterSeq: 1, text: "New", createdAt: 2 };
+      await store.put(convId, newer);
+      await store.delete(convId, stale);
+      expect(await store.get(convId)).toEqual(newer);
+      await store.delete(convId, newer);
+      expect(await store.get(convId)).toBeNull();
+    });
+
     it("sends nothing on open while the org switch is off", async () => {
       const { runId, afterSeq } = await suggested();
       const res = await owner.req({

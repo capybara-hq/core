@@ -576,3 +576,12 @@ Where the implementation differs from the text above, the smallest change that k
     job: hooks, fail-closed policy, usage, timeout, billing) and `prompt-suggestions.test.ts`
     (end to end through HTTP and SSE: exclusions, freshness race, NONE / tool / failure replies);
     the channel case sets `conversations.source` directly since eligibility reads only that.
+14. **Delivery details.** An SSE open deletes a stale key with a compare-and-delete (only while the
+    key still holds the suggestion it read, so a newer one written meanwhile is kept). A live
+    `prompt_suggestion` bus frame is forwarded without re-reading the switch (the job checked it
+    just before writing; a frame racing a switch-off is harmless). `maybeEnqueue` checks the
+    outcome, the conversation kind and source; the trigger (`schedule`, `compact`) is checked by
+    the job, so a scheduled run on a web conversation costs one skipped job and no model call.
+15. **Existing tests.** Suggestions stay on by default in tests, as titles do; tests that count
+    usage events, `usage.report` deliveries or model hook calls on web chats exclude
+    `purpose: "suggestion"` (as they already exclude `title`).

@@ -154,11 +154,11 @@ export class PromptSuggestionProcessor extends WorkerHost<Worker<PromptSuggestio
 
 /**
  * The runtime's queue consumers: the run worker on both run queues, `usage.report` deliveries,
- * conversation titles and prompt suggestions. Imported only by the worker role (`WorkerModule`), so other roles get no
- * processor and no BullMQ worker. Their worker options come from the startup config (concurrency
- * per queue, the run queues' job lock and stalled detection, which the usage and title workers
- * follow, as do the suggestion workers). The workers never start by themselves: the worker role (`WorkerRole`) starts them after
- * the extensions loaded, and pauses them on stop.
+ * conversation titles and prompt suggestions. Imported only by the worker role (`WorkerModule`),
+ * so other roles get no processor and no BullMQ worker. Their worker options come from the
+ * startup config (concurrency per queue, the run queues' job lock and stalled detection, which
+ * the usage, title and suggestion workers follow). The workers never start by themselves: the
+ * worker role (`WorkerRole`) starts them after the extensions loaded, and pauses them on stop.
  */
 @Module({})
 // biome-ignore lint/complexity/noStaticOnlyClass: a Nest dynamic module

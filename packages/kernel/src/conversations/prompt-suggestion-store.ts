@@ -55,11 +55,20 @@ const parse = (raw: string | null): StoredSuggestion | null => {
   return { runId: s.runId, afterSeq: s.afterSeq, text: s.text, createdAt: s.createdAt };
 };
 
+/** The stored form of a suggestion (`put` writes it; `delete` compares against it). */
+const serialize = (s: StoredSuggestion): string =>
+  JSON.stringify({ runId: s.runId, afterSeq: s.afterSeq, text: s.text, createdAt: s.createdAt });
+
+const DELETE_IF_UNCHANGED = `if redis.call("GET", KEYS[1]) == ARGV[1] then
+  return redis.call("DEL", KEYS[1])
+end
+return 0`;
+
 /** The conversation's prompt suggestion key and its freshness rule (spec §4). */
 @Injectable()
 export class PromptSuggestionStore {
   constructor(
-    @Inject(REDIS) private readonly redis: Pick<Redis, "set" | "get" | "del">,
+    @Inject(REDIS) private readonly redis: Pick<Redis, "set" | "get" | "eval">,
     @Inject(KERNEL_BUS) private readonly bus: Pick<ExtensionContext["bus"], "publish">,
     @Inject(KernelDb) private readonly kdb: KernelDb,
   ) {}
@@ -72,12 +81,7 @@ export class PromptSuggestionStore {
   async put(conversationId: string, s: StoredSuggestion): Promise<void> {
     await this.redis.set(
       promptSuggestionKey(conversationId),
-      JSON.stringify({
-        runId: s.runId,
-        afterSeq: s.afterSeq,
-        text: s.text,
-        createdAt: s.createdAt,
-      }),
+      serialize(s),
       "EX",
       PROMPT_SUGGESTION_TTL_SECONDS,
     );
@@ -96,9 +100,17 @@ export class PromptSuggestionStore {
     return parse(await this.redis.get(promptSuggestionKey(conversationId)));
   }
 
-  /** Deletes the key (a reader found it stale). */
-  async delete(conversationId: string): Promise<void> {
-    await this.redis.del(promptSuggestionKey(conversationId));
+  /**
+   * Deletes the key only while it still holds `s` (a reader found `s` stale): a newer suggestion
+   * written since the read is kept (compare and delete in one script).
+   */
+  async delete(conversationId: string, s: StoredSuggestion): Promise<void> {
+    await this.redis.eval(
+      DELETE_IF_UNCHANGED,
+      1,
+      promptSuggestionKey(conversationId),
+      serialize(s),
+    );
   }
 
   /**
