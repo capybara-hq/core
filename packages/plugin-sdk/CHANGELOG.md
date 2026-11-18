@@ -1,5 +1,11 @@
 # @capybara-hq/plugin-sdk
 
+## 0.1.0-rc.33
+
+### Minor Changes
+
+- 909442f: Embed tokens and plugin route callers gain a `share` scope (file previewers on a share page); `FilePreviewArgs` is a union on `source` (`conversation` | `share`), with the shared fields exported as `FilePreviewArgsBase`.
+
 ## 0.1.0-rc.32
 
 ### Patch Changes
