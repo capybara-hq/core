@@ -1179,14 +1179,16 @@ export function buildEventTimeline(
         }
         const view = p.view;
         // A non-zero exit is information, not a failure (the summary names the code); a timeout or
-        // a stopped command fails. A read-before-write refusal (`guard` view) is the guard working,
+        // a stopped command fails. A background launch has no exit yet (`exitCode: null` in a
+        // result that is no error): it started, and its task's end is a notice of its own. A read-before-write refusal (`guard` view) is the guard working,
         // and a call to a tool the step's request did not carry (`not_loaded` view) is the catalog
         // working: the model still gets an error, the row a neutral outcome.
         const guard = view?.kind === "guard" ? view.reason : undefined;
         const notLoaded = view?.kind === "not_loaded";
         const failed =
           (p.isError && guard === undefined && !notLoaded) ||
-          (view?.kind === "command" && (view.timedOut || view.exitCode === null)) ||
+          (view?.kind === "command" &&
+            (view.timedOut || (view.exitCode === null && !(c.tool.background && !p.isError)))) ||
           row.blockedBy !== undefined;
         row.status = failed ? "failed" : "done";
         if (guard !== undefined && !failed) row.guard = guard;

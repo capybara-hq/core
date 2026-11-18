@@ -181,7 +181,16 @@ export type FixtureDiffLine = {
 
 export type FixtureTool = {
   id: string;
-  kind: "command" | "read" | "edit" | "search" | "connector" | "meta" | "question" | "tool";
+  kind:
+    | "command"
+    | "read"
+    | "edit"
+    | "search"
+    | "connector"
+    | "meta"
+    | "task"
+    | "question"
+    | "tool";
   /**
    * The bold name: a builtin's tool name ("Bash", "Read"), or the connector's / plugin's display
    * name of a connector or extension tool.
