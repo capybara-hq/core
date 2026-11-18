@@ -35,7 +35,7 @@ export type ComposerOptionsProps = {
 };
 
 /**
- * One compact button (`DeepSeek · 高 · 个人`) for the device, permission, model and effort pickers,
+ * One compact button (`DeepSeek · High · Personal`) for the device, permission, model and effort pickers,
  * opening a bottom sheet with one group each. The groups reuse the pickers' props: their items
  * (disabled ones with their reason), their notes, and a locked picker (a conversation's
  * device) shown read-only with its hint. Choosing an item calls the picker's `onPick` and

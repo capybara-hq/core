@@ -382,7 +382,7 @@ const asObject = (v: unknown): Record<string, unknown> =>
   v !== null && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
 
 /**
- * 把存储的 jsonb 解析为设置（宽松，见 {@link OrgSettingsSchema}）。Until 8.6 `fullAccess` is read
+ * Parses the stored jsonb into settings (leniently, see {@link OrgSettingsSchema}). Until 8.6 `fullAccess` is read
  * over both keys, the narrower of it and the old `autoMode` ({@link narrowedOrgFullAccess}).
  */
 export function parseOrgSettings(raw: unknown): OrgSettings {
