@@ -183,6 +183,21 @@ function mediaSummary(req: ModelRequest): string {
  */
 const SENDER_LINE = /^From [^\n]+$/;
 
+/** The text of every user message in order (sender line stripped, tool results skipped). */
+function userTexts(req: ModelRequest): string[] {
+  const out: string[] = [];
+  for (const m of req.messages) {
+    if (m.role !== "user") continue;
+    const first = m.content[0];
+    const blocks =
+      m.content.length > 1 && first?.type === "text" && SENDER_LINE.test(first.text)
+        ? m.content.slice(1)
+        : m.content;
+    out.push(blocks.map((b) => (b.type === "text" ? b.text : "")).join(""));
+  }
+  return out;
+}
+
 /** 最后一条 user 消息：文本，以及它是否带 tool_result。 */
 function lastUser(req: ModelRequest): { text: string; hasToolResult: boolean; result: string } {
   for (let i = req.messages.length - 1; i >= 0; i--) {
@@ -243,6 +258,35 @@ function scripted(req: ModelRequest): Plan {
     delayMs: DEFAULT_CHUNK_DELAY_MS,
   });
 
+  // The prompt suggestion call: its instruction is the last user message, so the script lines are
+  // read from the earlier ones. `suggest-fail:<kind>` fails the call, `suggest:<text>` is the exact
+  // reply (`suggest:tool:<name>:<json>` makes a tool call), else `Suggestion: <earliest user text>`.
+  if (req.purpose === "suggestion") {
+    const earlier = userTexts(req).slice(0, -1);
+    const failLine = earlier.find((t) => t.startsWith("suggest-fail:"));
+    if (failLine !== undefined) {
+      const kind = failLine.slice("suggest-fail:".length).trim();
+      return {
+        kind: "fail",
+        error: isErrorKind(kind)
+          ? new ModelError(kind, `Scripted ${kind} failure`)
+          : new ModelError("invalid_request", `Unknown failure kind "${kind}"`),
+      };
+    }
+    const line = earlier.find((t) => t.startsWith("suggest:"));
+    if (line !== undefined) {
+      const reply = line.slice("suggest:".length);
+      if (reply.startsWith("tool:")) {
+        const { purpose: _purpose, ...rest } = req;
+        return scripted({
+          ...rest,
+          messages: [{ role: "user", content: [{ type: "text", text: reply }] }],
+        });
+      }
+      return std(reply);
+    }
+    return std(`Suggestion: ${(userTexts(req)[0] ?? "").slice(0, 40)}`);
+  }
   if (req.purpose === "compaction") {
     return std(`Summary: ${text.slice(0, 200)}`);
   }
