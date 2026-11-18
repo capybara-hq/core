@@ -1,5 +1,11 @@
 # @capybara-hq/kernel
 
+## 0.1.0-rc.47
+
+### Patch Changes
+
+- 228db64: The file-preview bootstrap pin moves to rc.3 (capybara-hq/plugins#129): the plugin drops its `html` previewer, since the kernel's built-in previewer renders HTML. The marketplace pin and the sandbox-docker build contexts move to capybara-hq/plugins 84a5307; every other pin already matches that commit's marketplace.
+
 ## 0.1.0-rc.46
 
 ### Minor Changes
