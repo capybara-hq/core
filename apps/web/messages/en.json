@@ -4503,7 +4503,13 @@
         "maxExpiryDays": "Longest link expiry (days)",
         "cdnAllowlist": "Script and style sources for HTML files",
         "cdnHelp": "https:// origins (scheme and host, optional port; no paths, no wildcards) that rendered HTML files may load scripts, styles, fonts and images from.",
-        "readonly": "Set by the deployment's configuration; change it there."
+        "readonly": "Set by the deployment's configuration; change it there.",
+        "title": "External sharing",
+        "description": "Whether members may share conversation files with anyone who has the link, how long such links may last, and where rendered HTML files may load resources from.",
+        "externalHelp": "Off by default. An organization turns it on in its own settings only while this is allowed.",
+        "maxExpiryHelp": "Share links cannot last longer than this (1 to 365 days).",
+        "maxExpiryInvalid": "Enter a whole number of days from 1 to 365.",
+        "invalidOrigin": "\"{origin}\" is not an https:// origin: use scheme and host, an optional port, and no path or wildcard."
       }
     },
     "extensions": {
@@ -6849,7 +6855,17 @@
       "expiry": "Expires",
       "lastOpened": "Last opened",
       "revoke": "Revoke",
-      "empty": "No shared links."
+      "empty": "No shared links.",
+      "description": "Every shared link in this organization. Revoke one to stop it working at once.",
+      "mineDescription": "The links you shared. Revoke one to stop it working at once.",
+      "neverOpened": "Never opened",
+      "revokeTitle": "Revoke this link?",
+      "revokeDescription": "Anyone who opens the link to \"{name}\" will get an error. This cannot be undone.",
+      "revokeConfirm": "Revoke link",
+      "revokedToast": "Link revoked.",
+      "stateLive": "Active",
+      "state": "State",
+      "actions": "Actions"
     }
   }
 }

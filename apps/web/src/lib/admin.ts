@@ -325,7 +325,33 @@ export interface DeploymentSettings {
    * may override. Absent from a kernel before the setting (read as the built-in defaults).
    */
   compaction?: CompactionSettings;
+  /** File sharing governance (spec §8): the platform switch and where it comes from. */
+  externalSharing?: SharingSetting<"allow" | "deny">;
+  /** The longest expiry a share may take, in days, and where it comes from. */
+  shareMaxExpiryDays?: SharingSetting<number>;
+  /** The https:// origins a rendered HTML file may load scripts, styles, fonts and images from. */
+  htmlRenderCdnAllowlist?: string[];
 }
+
+/** A sharing setting in effect with its source (`env` / `file` / `nacos` are read-only here). */
+export interface SharingSetting<T> {
+  value: T;
+  source: "env" | "file" | "nacos" | "db" | "default";
+}
+
+/** An allowlist entry: an https:// origin (host with an optional port; no path, no wildcard). */
+const CDN_ORIGIN_RE =
+  /^https:\/\/(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)*[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?(?::\d{1,5})?$/;
+
+/** Whether `s` is an allowed CDN allowlist entry (the kernel checks it again; lower case only). */
+export const isCdnOrigin = (s: string): boolean => {
+  const port = /:(\d{1,5})$/.exec(s)?.[1];
+  return (
+    s.length <= 300 &&
+    CDN_ORIGIN_RE.test(s) &&
+    (port === undefined || (+port >= 1 && +port <= 65535))
+  );
+};
 
 /** The attribution fields, in display order. */
 export const ATTRIBUTION_FIELDS = ["commit", "pr", "sessionUrl"] as const;
@@ -385,8 +411,14 @@ export type DeploymentSettingsPatch = Partial<
     | "devicesAutoMode"
     | "attribution"
     | "compaction"
+    | "externalSharing"
+    | "shareMaxExpiryDays"
   >
 > & {
+  /** `allow` / `deny`; null clears the stored choice (back to deny). */
+  externalSharing?: "allow" | "deny" | null;
+  /** 1..365 days; null clears the stored choice (back to 30). */
+  shareMaxExpiryDays?: number | null;
   subagentLimitOverrides?: Record<string, SubagentLimitOverride | null>;
   runConcurrencyOverrides?: Record<string, number | null>;
   sandboxLimitOverrides?: Record<string, SandboxLimitOverride | null>;

@@ -4491,7 +4491,13 @@
         "maxExpiryDays": "链接最长有效期（天）",
         "cdnAllowlist": "HTML 文件的脚本和样式来源",
         "cdnHelp": "渲染的 HTML 文件可以从这些 https:// 源（协议和主机，可带端口；不含路径和通配符）加载脚本、样式、字体和图片。",
-        "readonly": "由部署配置设定，请在配置中修改。"
+        "readonly": "由部署配置设定，请在配置中修改。",
+        "title": "对外分享",
+        "description": "成员是否可以把对话中的文件分享给任何拿到链接的人、这类链接最长的有效期，以及渲染的 HTML 文件可以从哪里加载资源。",
+        "externalHelp": "默认关闭。组织只有在这里允许时，才能在自己的设置中开启。",
+        "maxExpiryHelp": "分享链接的有效期不能超过这个值（1 到 365 天）。",
+        "maxExpiryInvalid": "请输入 1 到 365 之间的整数天数。",
+        "invalidOrigin": "“{origin}”不是 https:// 源：只写协议和主机，可带端口，不含路径和通配符。"
       }
     },
     "extensions": {
@@ -6837,7 +6843,17 @@
       "expiry": "有效期至",
       "lastOpened": "最近打开",
       "revoke": "撤销",
-      "empty": "没有分享链接。"
+      "empty": "没有分享链接。",
+      "description": "本组织的所有分享链接。撤销后链接立即失效。",
+      "mineDescription": "你分享的链接。撤销后链接立即失效。",
+      "neverOpened": "从未打开",
+      "revokeTitle": "撤销这个链接？",
+      "revokeDescription": "之后任何人打开“{name}”的链接都会看到错误。此操作无法撤销。",
+      "revokeConfirm": "撤销链接",
+      "revokedToast": "链接已撤销。",
+      "stateLive": "有效",
+      "state": "状态",
+      "actions": "操作"
     }
   }
 }

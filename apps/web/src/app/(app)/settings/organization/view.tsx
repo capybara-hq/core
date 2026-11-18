@@ -10,6 +10,7 @@ import {
   Select,
   SettingsPage,
   Stack,
+  SwitchField,
   Text,
   useToast,
 } from "@capybara-hq/design";
@@ -71,7 +72,7 @@ export default function OrganizationSettingsView() {
  */
 type OrgDraft = Pick<
   Partial<OrgSettings>,
-  "toolSearch" | "locale" | "platformTool" | "timeZone"
+  "toolSearch" | "locale" | "platformTool" | "timeZone" | "externalSharing"
 > & { compaction?: CompactionSettingsPatch | null };
 
 function OrganizationSettings({ orgId }: { orgId: string }) {
@@ -144,6 +145,12 @@ function OrganizationSettings({ orgId }: { orgId: string }) {
           loading={{ fields: [{ control: "select", help: true }] }}
         />
         <FormSection
+          id="external-sharing"
+          title={t("externalSharing.label")}
+          description={t("externalSharing.help")}
+          loading={{ fields: [{ control: "switch" }] }}
+        />
+        <FormSection
           id="compaction"
           title={tcp("title")}
           description={tcp("description")}
@@ -169,6 +176,10 @@ function OrganizationSettings({ orgId }: { orgId: string }) {
   const locale = draft.locale ?? saved.locale ?? "en";
   const platformTool = draft.platformTool ?? saved.platformTool;
   const timeZone = draft.timeZone ?? saved.timeZone ?? "UTC";
+  // External sharing: off unless the org turned it on, and never on while the platform denies it
+  const platformDeniesSharing = read.data.deployment?.externalSharing?.value === "deny";
+  const savedSharing = saved.externalSharing ?? "off";
+  const externalSharing = draft.externalSharing ?? savedSharing;
   // The org's compaction override: absent follows the platform, null (an explicit choice) too.
   // The draft holds only the fields the admin set, merged over the stored override, so fields
   // left alone keep following the platform; the fields show the values the org actually gets.
@@ -198,6 +209,7 @@ function OrganizationSettings({ orgId }: { orgId: string }) {
     ...(timeZone !== (saved.timeZone ?? "UTC")
       ? { timeZone: timeZone === "UTC" ? null : timeZone }
       : {}),
+    ...(externalSharing !== savedSharing ? { externalSharing } : {}),
     ...(compactionPatch !== undefined ? { compaction: compactionPatch } : {}),
   };
   const unsaved = Object.keys(patch).length;
@@ -306,6 +318,25 @@ function OrganizationSettings({ orgId }: { orgId: string }) {
             }))}
           />
         </Field>
+      </FormSection>
+      <FormSection
+        id="external-sharing"
+        title={t("externalSharing.label")}
+        description={t("externalSharing.help")}
+      >
+        <Stack gap={4}>
+          <SwitchField
+            label={t("externalSharing.label")}
+            checked={externalSharing === "on" && !platformDeniesSharing}
+            disabled={!manage || platformDeniesSharing}
+            onChange={(on) => setDraft((d) => ({ ...d, externalSharing: on ? "on" : "off" }))}
+          />
+          {platformDeniesSharing && (
+            <Text variant="small" tone="muted">
+              {t("externalSharing.platformDenied")}
+            </Text>
+          )}
+        </Stack>
       </FormSection>
       <CompactionSection
         value={compaction}

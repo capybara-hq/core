@@ -78,6 +78,11 @@ export interface OrgSettings {
    * follows the platform.
    */
   compaction?: CompactionSettingsPatch;
+  /**
+   * Whether members may share conversation files with anyone who has the link (file sharing spec
+   * §8); absent = off. Turning it on needs the platform to allow it.
+   */
+  externalSharing?: "on" | "off";
 }
 
 /** The org level of the themes (`orgs.settings.theme`). */
@@ -108,6 +113,13 @@ export interface OrgSettingsDeployment {
   publicUrl: boolean;
   /** The platform's conversation compaction settings. */
   compaction: CompactionSettings;
+  /** The platform's external sharing switch (`deny`: the org cannot turn it on) and its source. */
+  externalSharing?: {
+    value: "allow" | "deny";
+    source: "env" | "file" | "nacos" | "db" | "default";
+  };
+  /** The longest expiry a share may take, in days. */
+  shareMaxExpiryDays?: number;
 }
 
 /** 组织实际生效的沙箱 cpu / 内存（只读：超级管理员在部署设置里按组织覆盖；旧内核不返回）。 */

@@ -120,6 +120,7 @@ import {
 } from "./settings";
 import { memberGuideQuery, setupGuideQuery } from "./setup";
 import { setupCheckStatesQuery } from "./setup-checks";
+import { orgSharesQuery } from "./shares";
 import { conversationGroupsQuery, maybeMeQuery, readinessQuery } from "./shell";
 import { skillQuery, skillsQuery } from "./skills";
 import { orgThemesQuery, platformThemeQuery } from "./themes";
@@ -248,6 +249,12 @@ export const ROUTES: readonly RouteEntry[] = [
     // No org needed: my identities, and the sign-in sources (which plugins offer 验证).
     queries: ({ me }) =>
       me === null ? [] : [q(identitiesQuery(me.account.id)), q(authSourcesQuery())],
+  },
+  {
+    pattern: "/account/shares",
+    // Members up: the person's own shares.
+    queries: ({ orgId, me }) =>
+      orgId === null || !atLeast(me, "member") ? [] : [q(orgSharesQuery(orgId, "mine"))],
   },
   {
     pattern: "/account/preferences",
@@ -1250,6 +1257,12 @@ export const ROUTES: readonly RouteEntry[] = [
     // Org admins (org.update): the newest page of the org's audit log.
     queries: ({ orgId, me }) =>
       orgId === null || !atLeast(me, "admin") ? [] : [q(orgAuditQuery(orgId))],
+  },
+  {
+    pattern: "/settings/shares",
+    // Org admins: every share of the org.
+    queries: ({ orgId, me }) =>
+      orgId === null || !atLeast(me, "admin") ? [] : [q(orgSharesQuery(orgId, "all"))],
   },
   {
     pattern: "/settings/tokens",
