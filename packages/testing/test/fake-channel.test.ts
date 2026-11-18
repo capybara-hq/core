@@ -265,14 +265,27 @@ describe("startFakeChannelServer", () => {
     it("delayNext records at arrival and answers late", async () => {
       im = await startFakeChannelServer();
       im.delayNext("/send-file", 300);
+      const start = performance.now();
       const pending = post(`${im.url}/send-file`, fileBody("d"));
       await expect.poll(() => im?.sentFiles.length).toBe(1);
-      let answered = false;
-      void pending.then(() => {
-        answered = true;
-      });
-      expect(answered).toBe(false);
-      expect((await pending).status).toBe(200);
+      const recordedAfter = performance.now() - start;
+      const res = await pending;
+      const answeredAfter = performance.now() - start;
+      expect(res.status).toBe(200);
+      expect(recordedAfter).toBeLessThan(250);
+      expect(answeredAfter).toBeGreaterThanOrEqual(290);
+    });
+
+    it("keeps text and file idempotency keys apart", async () => {
+      im = await startFakeChannelServer();
+      await post(`${im.url}/send`, msg("same"));
+      await post(`${im.url}/send-file`, fileBody("same"));
+      expect(im.sent).toHaveLength(1);
+      expect(im.sentFiles).toHaveLength(1);
+      expect(im.duplicateSends).toHaveLength(0);
+      expect(im.duplicateFiles).toHaveLength(0);
+      await post(`${im.url}/send`, msg("same"));
+      expect(im.duplicateSends).toHaveLength(1);
     });
   });
 });

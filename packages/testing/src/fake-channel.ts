@@ -236,6 +236,7 @@ export async function startFakeChannelServer(
     { user: FakeChannelUser; nonce: string; clientId: string; challenge: string | null }
   >();
   const byKey = new Map<string, string>();
+  const fileByKey = new Map<string, string>();
   const failures: {
     path: string;
     status: number;
@@ -312,7 +313,7 @@ export async function startFakeChannelServer(
       };
       const data = Buffer.from(fb.file.data, "base64");
       const fkey = fb.idempotencyKey ? `${fb.appId}\u0000${fb.idempotencyKey}` : undefined;
-      const fseen = fkey !== undefined ? byKey.get(fkey) : undefined;
+      const fseen = fkey !== undefined ? fileByKey.get(fkey) : undefined;
       const fid = fseen ?? `of_${++seq}`;
       const frec: FakeChannelSentFile = {
         appId: fb.appId,
@@ -331,7 +332,7 @@ export async function startFakeChannelServer(
       if (fseen !== undefined && dedupe) duplicateFiles.push(frec);
       else {
         sentFiles.push(frec);
-        if (fkey !== undefined && fseen === undefined) byKey.set(fkey, fid);
+        if (fkey !== undefined && fseen === undefined) fileByKey.set(fkey, fid);
       }
       const fd = delays.find((x) => x.path === path && x.left > 0);
       if (fd) {
