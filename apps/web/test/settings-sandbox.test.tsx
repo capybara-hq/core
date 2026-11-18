@@ -201,7 +201,7 @@ describe("沙箱设置（SettingsPage）", () => {
     expect(actionRow("en")).toBeNull();
   });
 
-  describe("完全访问 (fullAccess)", () => {
+  describe("Full access (fullAccess)", () => {
     it.each(LOCALES)("an org admin narrows to off, then allows it again (%s)", async (locale) => {
       const o = msgs[locale].orgSettings;
       const calls = stub({ toolSearch: "on" }, DEPLOYMENT);

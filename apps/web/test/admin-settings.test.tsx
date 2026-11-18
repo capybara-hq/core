@@ -20,7 +20,7 @@ vi.mock("next/navigation", () => ({
 }));
 
 /**
- * 完全访问 on the admin settings page (`devicesFullAccess`): one control, allowed or off, the
+ * Full access on the admin settings page (`devicesFullAccess`): one control, allowed or off, the
  * source line (env / file / nacos / db / default; a startup-config value is read-only), and a save
  * that invalidates every org's settings and devices. A signed-in super admin may set it either
  * way; only an API token or the Platform tool may narrow alone (a kernel rule, tested there).
@@ -69,7 +69,7 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe("完全访问 on /admin/settings", () => {
+describe("Full access on /admin/settings", () => {
   it("turning it off saves devicesFullAccess and invalidates every org's settings and devices", async () => {
     const calls = routes();
     const { client } = await renderRouteWithCache("/admin/settings", lastStubRoutes());

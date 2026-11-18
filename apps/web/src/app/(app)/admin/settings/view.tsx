@@ -77,8 +77,8 @@ import NotFound from "../../not-found";
  * (themes spec §7, §10), 内置主题 or a platform-owned theme whose scope is `all` and that is not
  * disabled; the kernel refuses one off in some org with the orgs (shown). 插件界面代码: the client
  * code kill switch and the plugins whose client code alone is stopped (client extensions spec
- * §10.2); a save that changes it marks every cached client set stale. 完全访问: the platform's
- * Full permission switch (`devicesFullAccess`), read with where it comes from; a value set in the startup
+ * §10.2); a save that changes it marks every cached client set stale. Full access: the
+ * platform's switch (`devicesFullAccess`), read with where it comes from; a value set in the startup
  * config is shown read-only with its source. 按组织的限额在「组织」页；
  * 组织自己的设置仍在 `/settings/*`。有改动时出现 ActionRow，只提交改过的项。
  * From the query cache (the layout prefetched it on a first load); a save writes the answered
@@ -549,7 +549,7 @@ function attributionOf(
 }
 
 /**
- * 完全访问 (`devicesFullAccess`): one control, allowed or off, with where the value comes from. A
+ * Full access (`devicesFullAccess`): one control, allowed or off, with where the value comes from. A
  * value set in the startup config is disabled with its source. Off runs every device restricted:
  * local devices on their allowlist, cloud devices on the organization's cloud network. The kernel
  * refuses allowing it through an API token or the Platform tool, which may only turn it off; a
