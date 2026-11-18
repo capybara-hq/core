@@ -1,5 +1,76 @@
 # @capybara-hq/testing
 
+## 0.1.0-rc.24
+
+### Patch Changes
+
+- 54efba6: The restricted Linux launcher (`linux-sandbox.py` in `SANDBOX_RUNTIME_SOURCE`) makes itself
+  non-dumpable (`PR_SET_DUMPABLE 0`) as its first statement, so a same-uid process outside the
+  operation (another session's Full-access work, with no Yama) can no longer ptrace the launcher,
+  supervisor or broker, nor read its `/proc/<pid>/mem`, `environ` or `fd`. A launcher already traced
+  at that point reports restricted unavailable. The restricted command stays dumpable after its own
+  execve (the broker reads its memory). The launcher digest changes, so consumers restage it.
+  
+  The permission conformance gains an optional fixture hook, `inspect.outside(program, args)`, that
+  runs a program as the device user outside every operation; when present, the harness proves that
+  the parent of a restricted command refuses `PTRACE_ATTACH`, `mem` and `environ` to it.
+- 427f193: `SandboxPermissionFixture.restrictedEnvironment: "refused"` lets a provider whose policy refuses a
+  restricted filesystem with the environment network (a local device ties that network to Full
+  access) prove the refusal, a scope denial with nothing run, instead of the environment-network
+  UNIX probe. The permission conformance also proves the mandatory write denies: a restricted
+  command cannot write or create `.git/config` or git hooks (directly, by rename, hard or symbolic
+  link, or in a repository it creates), a `.git` pointer file, shell startup files or editor and
+  agent configuration, `.envrc` or `.npmrc` (also in case-folded and compatibility forms), the
+  configuration, hooks or pointers of submodule and worktree gitdirs, a bare-repository `HEAD`, or
+  move `.git` away, forge a repository inside git's subtrees, or write hook-manager files, while ordinary git work in a restricted repository keeps working; native writes
+  of those paths are scope denials.
+- Updated dependencies [8a84219]
+- Updated dependencies [c5d2996]
+- Updated dependencies [ce94b4d]
+- Updated dependencies [ab911e3]
+- Updated dependencies [dbac47e]
+- Updated dependencies [47926ef]
+- Updated dependencies [2ea4298]
+- Updated dependencies [2256b24]
+- Updated dependencies [124eb1f]
+- Updated dependencies [a4974d5]
+- Updated dependencies [09de26a]
+- Updated dependencies [6429c80]
+- Updated dependencies [3069b5d]
+- Updated dependencies [c9fde6f]
+- Updated dependencies [429e837]
+- Updated dependencies [2655a98]
+- Updated dependencies [cdf5abd]
+- Updated dependencies [e366658]
+- Updated dependencies [c94c7c4]
+- Updated dependencies [22617f8]
+- Updated dependencies [87886a2]
+- Updated dependencies [243109f]
+- Updated dependencies [587dbd0]
+- Updated dependencies
+- Updated dependencies [54efba6]
+- Updated dependencies [9777d14]
+- Updated dependencies [28ff1e5]
+- Updated dependencies [b3b3173]
+- Updated dependencies [8f5af77]
+- Updated dependencies [37da07e]
+- Updated dependencies [46c6a52]
+- Updated dependencies [6454e51]
+- Updated dependencies [e826cf6]
+- Updated dependencies [012f74e]
+- Updated dependencies [af94040]
+- Updated dependencies [dd6d426]
+- Updated dependencies [0f34c66]
+- Updated dependencies [0cdecf3]
+- Updated dependencies [a9626ee]
+- Updated dependencies [d41a57f]
+- Updated dependencies [fe24223]
+- Updated dependencies [61ca73e]
+- Updated dependencies [bcb5d96]
+  - @capybara-hq/kernel@0.1.0-rc.42
+  - @capybara-hq/plugin-sdk@0.1.0-rc.31
+  - @capybara-hq/plugin-tools@0.1.0-rc.17
+
 ## 0.1.0-rc.23
 
 ### Patch Changes

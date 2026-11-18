@@ -1,5 +1,70 @@
 # @capybara-hq/plugin-sdk
 
+## 0.1.0-rc.31
+
+### Minor Changes
+
+- 429e837: Stage durable permission operation admission, fresh native operation facades and validated protocol adapters. Protocol activation remains gated on the coordinated caller and background migration.
+- 9777d14: Replace the local policy's `mode` with a version-2 owner ceiling (`ownerCeiling: {fullAccess,
+  restrictedProjectReach}`): old `mode: auto` converts exactly to Full allowed with OS-user reach,
+  `mode: sandbox` to neither; `start` converts once under the policy lock and any write converts.
+  The strict reader only trusts a version-2 file. New `capybara-device ceiling show|set`: setting
+  needs both fields, narrowing applies directly, widening needs `--yes` or a confirmed prompt.
+  Stage authenticated owner reports for protocol 3: the `owner-report.json` sequence sidecar,
+  `parseOwnerCeilingReportV3`, and the report on policy frames, policy answers and applied policy
+  statuses; a staged `policy` op may only narrow the owner ceiling and reconciles live work before
+  answering. Protocol 2 and its `mode` summary are unchanged.
+
+### Patch Changes
+
+- 2256b24: The device hello can carry the host's OS boot identity (`bootId`; SDK `DEVICE_BOOT_ID_RE`,
+  `isDeviceBootId`): `capybara-device` reports Linux's `boot_id` or macOS's boot session UUID (nothing
+  otherwise) on the active and the staged hello. The kernel records it per machine from
+  authenticated hellos only (a hello without one clears it); a local legacy retirement obligation keeps the boot its machine last
+  reported and resolves once a current machine of the device (a re-login counts) reports another boot
+  (the computer restarted). An obligation without a recorded boot never resolves by itself; the same
+  boot from a new credential, a stale or replayed boot and a revoked machine are no evidence. A local device waiting for that restart
+  answers `device.restart_required` ("Restart this computer to finish the upgrade").
+  One whose computer never reported a boot identity answers `device.replace_required` (delete the
+  device and connect the computer as a new one).
+- Complete dormant managed output transport with strict positional ranges, authenticated connection capacity negotiation, and original admitted execution grant provenance. Protocol 2 remains active pending the coordinated runtime cutover.
+- 54efba6: The restricted Linux launcher (`linux-sandbox.py` in `SANDBOX_RUNTIME_SOURCE`) makes itself
+  non-dumpable (`PR_SET_DUMPABLE 0`) as its first statement, so a same-uid process outside the
+  operation (another session's Full-access work, with no Yama) can no longer ptrace the launcher,
+  supervisor or broker, nor read its `/proc/<pid>/mem`, `environ` or `fd`. A launcher already traced
+  at that point reports restricted unavailable. The restricted command stays dumpable after its own
+  execve (the broker reads its memory). The launcher digest changes, so consumers restage it.
+  
+  The permission conformance gains an optional fixture hook, `inspect.outside(program, args)`, that
+  runs a program as the device user outside every operation; when present, the harness proves that
+  the parent of a restricted command refuses `PTRACE_ATTACH`, `mem` and `environ` to it.
+- a9626ee: Restricted Linux exec now brokers every filesystem write and refuses the mandatory write denies:
+  `linux-sandbox.py` grants the command read access only to its write roots in Landlock, and each
+  write-capable open, create, mkdir, mknod, unlink, rename, link, symlink, truncate and metadata
+  change (and pathname UNIX binds) is performed by the broker on its own no-follow resolution from
+  the pinned descriptors; openat2 is refused. New exports (`isSandboxWriteDenied`, `isSandboxMoveDenied`,
+  `SANDBOX_MANDATORY_WRITE_DENIES`, `SANDBOX_GIT_ALLOWED_DIRECTORIES`, `SANDBOX_GIT_ALLOWED_FILES`,
+  `SANDBOX_GIT_DENIED_INTERNALS`, `SANDBOX_PROTECTED_PATH_NAMES`) are the one write policy the
+  launcher, `native-files.py` (roots with `denyWrites: true`) and consumers share: shell startup,
+  git-global, `.envrc`, `.npmrc`, editor and agent files; inside any `.git` (submodule and worktree
+  gitdirs included) only git's ordinary internals; no `HEAD` file outside `.git` (bare-repository
+  lookalikes) and no repository forged inside git's own subtrees; hook-manager files (husky,
+  pre-commit, lefthook, overcommit, simple-git-hooks, `.githooks`) denied; nothing moved out of a
+  protected name; names compared after NFKC and full case folding, identical in TypeScript
+  (`sandboxFoldName`'s table) and Python.
+  git's `index.stash.<n>`, `packed-refs.new` and `MERGE_AUTOSTASH` are allowlisted internals. A
+  brokered FIFO open no longer pins a broker thread. The launcher also accepts `nativeFd`, a verified descriptor of the native helper (exec mode).
+  New digests: `linux-sandbox.py` b17b714a445912508d5082598af42960df550387c4a73b379561af19b0b45c87,
+  `native-files.py` 09a78c9bb7264ad6a1fe3b1aadd4c0f489192dc47c903c7fcc42fdf405590b42.
+- fe24223: Staged device protocol 3 gains the private `bindInstance` lifecycle request and its strict answer
+  parser (`BindInstanceRequestV3`, `BindInstanceResultV3`, `DeviceRuntimeIdentityV3`). The kernel
+  allocates each instance generation from a durable per-device high-water mark (no reuse after a
+  deleted row, a clock rollback or two creates in one millisecond), commits an awaiting binding for a
+  local instance and installs its runtime report only from the verified post-commit bind answer. A
+  bound hello re-reports only the installed identity; a changed identity stops admission, and a
+  changed environment resets Full consent. A reconnect no longer resets Full consent because stored
+  roots came back in another key order. Protocol 2 stays active.
+
 ## 0.1.0-rc.30
 
 ### Patch Changes
