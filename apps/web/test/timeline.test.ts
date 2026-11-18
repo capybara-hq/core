@@ -2049,7 +2049,7 @@ describe("image slots", () => {
   });
 
   it("invalid n and ratio fall back", () => {
-    for (const n of [2.5, "2", 0, 5, undefined]) {
+    for (const n of [2.5, "2", 0, 11, undefined]) {
       const events = [gen(1, "a", { n }), started(2, "a", GEN)];
       expect(filesOf(events)[0]?.images).toMatchObject([{ kind: "generating", count: 1 }]);
     }
@@ -2101,6 +2101,16 @@ describe("image slots", () => {
       expect.objectContaining({ kind: "generating", callId: "b", ratio: "9:16" }),
     ]);
     expect(files?.others.map((f) => f.id)).toEqual(["csv"]);
+  });
+
+  it("a placeholder counts the requested images up to the configured maximum of 10", () => {
+    const count = (n: number) => {
+      const events = [user(1, "go"), gen(2, "a", { n }), started(3, "a", GEN)];
+      return (filesOf(events)[0]?.images[0] as { count?: number } | undefined)?.count;
+    };
+    expect(count(10)).toBe(10);
+    expect(count(5)).toBe(5);
+    expect(count(11)).toBe(1);
   });
 
   it("images survive a later tool error", () => {
