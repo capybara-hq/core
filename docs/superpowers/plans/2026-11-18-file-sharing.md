@@ -16,7 +16,7 @@ get a share-scoped embed token (SDK change).
 
 **Tech Stack:** TypeScript, Nest + Fastify kernel, Kysely / PostgreSQL, Redis, BullMQ outbox,
 `@capybara-hq/plugin-sdk`, Next web app + `@capybara-hq/design`, Vitest (unit, integration,
-container), Playwright (Chromium + WebKit, headless), the plugins repository (`plugins/file-preview`).
+container), Playwright (Chromium in CI; WebKit only for an optional local headless run), the plugins repository (`plugins/file-preview`).
 
 **Spec:** [file sharing and full HTML rendering](../specs/2026-11-18-file-sharing-design.md). Its
 "Approaches", decisions and "Left to the builder" are binding. Read it whole before any task, and
@@ -49,7 +49,7 @@ the skills of the area a task touches before that task:
 - A new unit or container kernel test joins `packages/kernel/test/unit-tests.json` or `packages/kernel/test/container-tests.json` in the same change; integration is the default (one app per file). Run tests from the root: `pnpm exec vitest run <path>`.
 - Pre-0.1.0: no compatibility layers; migration 0160 is expand-only.
 - Changesets: `@capybara-hq/plugin-sdk` minor (Task 1), `@capybara-hq/kernel` minor (kernel tasks, one changeset per task), `@capybara-hq/web` / `@capybara-hq/design` patch (web and design tasks); plugins repo: `@capybara-hq/plugin-file-preview` patch.
-- Browser checks headless Chromium and WebKit only, never Firefox.
+- Browser checks headless Chromium and WebKit only, never Firefox. CI stays Chromium-only (maintainer decision 2026-11-18: no WebKit in CI, `ci.yml` untouched).
 - Each task ends with `pnpm verify --fast` green before handoff.
 
 ## Review Focus
@@ -504,11 +504,10 @@ Shared files and their owners: `apps/web/messages/{en,zh}.json` — Task 2 (erro
 
 ## Wave 6 — end to end and docs
 
-### Task 13: E2E in Chromium and WebKit; AGENTS.md and docs
+### Task 13: E2E (Chromium); AGENTS.md and docs
 
 **Files:**
 - Create: `apps/web/e2e/file-sharing.spec.ts`
-- Modify: `apps/web/playwright.config.ts` (project `webkit`: `testMatch: /file-sharing\.spec\.ts$/`, `dependencies: ["setup"]`, `devices["Desktop Safari"]`), `.github/workflows/ci.yml` (`playwright install --with-deps chromium webkit`, and `install-deps` likewise), `tools/ci/README.md` (the e2e job installs WebKit for `file-sharing.spec.ts`)
 - Modify: `AGENTS.md` (new area rule line), `docs/architecture.md` (`shares` and `html` modules in the kernel map), `docs/guide/conversation-ui.md` (Share, HTML rendering), `docs/deploy/README.md` (external sharing switches, `sharing.*` config, CDN allowlist, residual risks from spec "Isolation without a second origin"), `.agents/skills/writing-extension-ui/SKILL.md` (share scope, previewers on a share page, HTML built-in wins), `.agents/skills/writing-kernel-api/SKILL.md` (the `share-open` throttler in the named-throttler list)
 
 **Interfaces:**
@@ -516,10 +515,10 @@ Shared files and their owners: `apps/web/messages/{en,zh}.json` — Task 2 (erro
 - AGENTS.md line (verbatim from spec): "**File sharing:** a share is a snapshot; external links need the platform and org switches; shared and rendered HTML is served only with the sandbox CSP and the CDN allowlist, never from a presigned URL on the app origin."
 
 - [ ] **Step 1: Write the e2e** — `test.beforeEach`: `page.route("https://cdn.jsdelivr.net/npm/fake-chart@1.0.0/chart.js", r => r.fulfill({ contentType: "application/javascript", body: "<draws into #chart and sets data-drawn>" }))` so no real CDN is needed. Cases: (1) model-fake delivers `report.html` that loads that URL, tries `fetch("https://example.com/x")` and writes the outcome and `document.cookie` into the page: the panel's `HtmlDocumentFrame` shows `#chart[data-drawn]`, the fetch outcome is "blocked", the cookie text is empty; (2) the super admin allows external sharing, the org admin turns it on, the owner shares externally (7 days), a fresh browser context without cookies opens `/s/<code>` and sees the same drawn chart and the file name; (3) after Revoke the link shows the invalid page. Headless only.
-- [ ] **Step 2: Run** `pnpm --filter @capybara-hq/web e2e -- --project=chromium --project=webkit file-sharing` — Expected: PASS in both projects.
+- [ ] **Step 2: Run** `pnpm --filter @capybara-hq/web e2e -- --project=chromium file-sharing` — Expected: PASS. Once, locally and headless, also run the spec in WebKit (`npx playwright test --browser=webkit` style, no config or CI change) and note the result in the PR; a WebKit-only failure is reported, not a blocker.
 - [ ] **Step 3: Docs** as listed; `pnpm check:agent-docs` (the spec already has `## AGENTS.md rules touched`), `pnpm check`.
 - [ ] **Step 4: Run** `pnpm verify` — Expected: PASS.
-- [ ] **Step 5: Commit** `git add apps/web/e2e apps/web/playwright.config.ts .github/workflows/ci.yml tools/ci/README.md AGENTS.md docs .agents/skills && git commit -m "test(web): file sharing end to end in Chromium and WebKit; docs"`
+- [ ] **Step 5: Commit** `git add apps/web/e2e AGENTS.md docs .agents/skills && git commit -m "test(web): file sharing end to end; docs"`
 
 ---
 
