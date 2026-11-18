@@ -79,6 +79,7 @@ import {
 } from "../sandbox/review/index.js";
 import { buildPermissionCandidate } from "../sandbox/review/permission-candidate.js";
 import { CommandReviewService } from "../sandbox/review/review.service.js";
+import { SandboxService } from "../sandbox/sandbox.service.js";
 import {
   appendMissingGrant,
   connectionGrantKey,
@@ -536,6 +537,23 @@ type ToolCall = { id: string; name: string; input: unknown };
  * `allow` for it too; the pipeline skips the facts read).
  */
 const REVIEWED_TOOL_KEYS: ReadonlySet<string> = new Set(["Bash", "Write", "Edit"]);
+/**
+ * A call that needs reach beyond the working directory on a device whose permission support is
+ * not verified: no approval could let admission run it, so nothing is offered.
+ */
+export const PERMISSION_SUPPORT_UNVERIFIED_TEXT =
+  "This call needs access outside the working directory, but this device's permission support is not verified yet, so only paths inside the working directory work now. Keep the call inside the working directory, or retry once the device is ready.";
+/**
+ * The managed builtins whose review depends on the device's facts (a proposed reach or a
+ * sensitive command): their first call starts the device before it is reviewed. The others start
+ * it only when they run (a Skill without scripts never does).
+ */
+const REVIEWED_ON_FACTS: ReadonlySet<string> = new Set([
+  BUILTIN.Bash,
+  BUILTIN.Read,
+  BUILTIN.Write,
+  BUILTIN.Edit,
+]);
 /** The builtins whose device entry is the managed operation route once activated. */
 const MANAGED_OPERATION_TOOLS: ReadonlySet<string> = new Set([
   BUILTIN.Bash,
@@ -836,6 +854,10 @@ export class ToolPipeline {
     private readonly permissionLocks?: PermissionAuthorityLock,
     /** The paired activation gate: on, the managed builtins take the permission review. */
     @Optional() @Inject(PERMISSION_CONTEXT_ACTIVATION) activation?: boolean,
+    /** Starts a cloud device before its first managed call is reviewed (absent: never). */
+    @Optional()
+    @Inject(SandboxService)
+    private readonly sandboxes?: Pick<SandboxService, "ensureRunning">,
   ) {
     this.deps = {
       // the builtins that enter a device on the managed operation route once activated (common.ts
@@ -1800,12 +1822,50 @@ export class ToolPipeline {
       holderConversationId: ctx.conversationId,
       actor: { accountId: ctx.accountId, conversationId: ctx.conversationId, runId: ctx.runId },
     };
-    const facts = await this.permissionAuthority.previewCall(
-      use,
-      { runId: ctx.runId, callId: call.id },
-      ctx.signal,
-    );
-    if (facts.availability.state !== "supported" || facts.unattended) return null;
+    const preview = () =>
+      (this.permissionAuthority as SandboxOperationAuthority).previewCall(
+        use,
+        { runId: ctx.runId, callId: call.id },
+        ctx.signal,
+      );
+    let facts = await preview();
+    // the facts first: a device not yet started (or not yet probed) whose review depends on them
+    // is started under the normal lifecycle lease, which records a cloud instance's permission
+    // evidence or a local one's installed binding, and read again
+    if (
+      facts.availability.state === "unprobed" &&
+      !facts.unattended &&
+      this.sandboxes &&
+      REVIEWED_ON_FACTS.has(tool.key)
+    ) {
+      try {
+        await this.sandboxes.ensureRunning(use, ctx.signal);
+        facts = await preview();
+      } catch (err) {
+        // a start that fails leaves the facts unverified (the conservative branch below); the
+        // tool's own entry reports the device's state
+        ctx.signal.throwIfAborted();
+        this.deps.log.warn("cannot start the device before its review; reviewing unverified", {
+          conversationId: ctx.conversationId,
+          deviceId: device.deviceId,
+          err,
+        });
+      }
+    }
+    if (facts.unattended) return null;
+    if (facts.availability.state !== "supported") {
+      // still unverified: the conservative command review decides (Full access too), but a call
+      // that needs more reach is refused now: admission could never run what an approval allowed
+      if (facts.profile === "full-access") return null;
+      const unverified = buildPermissionCandidate(
+        { toolKey: tool.key, specHash: tool.specHash, rawInput: call.input, validatedInput: input },
+        facts,
+      );
+      if (unverified.kind === "in-scope") return null;
+      const content =
+        unverified.kind === "proposal" ? PERMISSION_SUPPORT_UNVERIFIED_TEXT : unverified.message;
+      return { kind: "result", content, review: denyRecord("rule", null, content) };
+    }
     if (tool.key === "Bash" && textField(input, "command").length > COMMAND_ASK_MAX_CHARS)
       return {
         kind: "result",

@@ -34,9 +34,12 @@ import { SCHED_SCAN_JOB } from "../../src/schedules/job-ids.js";
 import { type ScheduledTaskInsert, ScheduledTaskStore } from "../../src/schedules/store.js";
 import type { TaskRun } from "../../src/schedules/types.js";
 import { DEVICE_OF_ANOTHER_ACCOUNT_TEXT } from "../../src/tools/builtins/sandbox/common.js";
-import { ToolPipeline } from "../../src/tools/pipeline.js";
+import { PERMISSION_SUPPORT_UNVERIFIED_TEXT, ToolPipeline } from "../../src/tools/pipeline.js";
 import { scriptRules } from "../fixtures/plugins/model-script/index.js";
-import { readFakeSandboxOps } from "../fixtures/plugins/sandbox-fake/index.js";
+import {
+  readFakeSandboxOps,
+  setFakeSandboxPermissionSupport,
+} from "../fixtures/plugins/sandbox-fake/index.js";
 import { onlyBuiltins } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
@@ -1196,5 +1199,94 @@ describe("the permission review order", () => {
     expect(grant).toMatchObject({ source: "human" });
     const write = (await intentsOf(conv)).find((i) => i.method === "writeFile");
     expect(write?.permission_grant_id).toBe((grant as { id: string }).id);
+  });
+});
+
+/**
+ * A device's first managed call is reviewed with its facts established: a cloud device is started
+ * and probed before the review reads its permission support. A device whose support is still not
+ * verified keeps the conservative command review, but never offers an approval admission would
+ * refuse: a call that needs more reach fails with an actionable text.
+ */
+describe("the first managed call of a device", () => {
+  /** A new cloud device of the owner on sandbox-fake, bound to `conv`, never started. */
+  const freshDevice = async (conv: string): Promise<string> => {
+    const deviceId = randomUUID();
+    await db
+      .insertInto("devices")
+      .values({
+        id: deviceId,
+        org_id: orgId,
+        owner_kind: "personal",
+        owner_account_id: ownerId,
+        source: "cloud",
+        provider: "sandbox-fake",
+        name: `Fresh ${deviceId.slice(0, 8)}`,
+      })
+      .execute();
+    await db
+      .updateTable("conversations")
+      .set({ device_id: deviceId })
+      .where("id", "=", conv)
+      .execute();
+    return deviceId;
+  };
+  const asksOf = (conv: string) =>
+    db.selectFrom("approvals").select("id").where("conversation_id", "=", conv).execute();
+
+  it("a fresh cloud device's first call is reviewed as supported: Full access runs sudo with no ask", async () => {
+    const conv = await createConv(owner, orgId, agentId);
+    const deviceId = await freshDevice(conv);
+    const consent = (await k.app.get(PermissionFacts).scope(orgId, deviceId, null, null))
+      .scopeRevision;
+    await k.app.get(PermissionProfilesService).set(orgId, conv, ownerId, {
+      profile: "full-access",
+      ...(consent ? { consentScopeRevision: consent } : {}),
+      expectedRevision: 0,
+    });
+    const r = await call(conv, "Bash", { command: "sudo -n true", description: "Check sudo" }, 1);
+    expect(r.payload.review).toMatchObject({ decision: "allow", decisionSource: "full-access" });
+    expect(await asksOf(conv)).toEqual([]);
+  });
+
+  it("a fresh cloud device's first outside Write asks with the proposal; approved, the grant lets it write", async () => {
+    const conv = await createConv(owner, orgId, agentId);
+    await freshDevice(conv);
+    const target = "/etc/capybara-first/note.txt";
+    await postMessage(
+      owner,
+      orgId,
+      conv,
+      `tool:Write:${JSON.stringify({ file_path: target, content: "first" })}`,
+    );
+    const ask = await pendingCommandAsk(conv);
+    expect(ask.detail as Record<string, unknown>).toMatchObject({
+      permissionScope: { writeDirectories: ["/etc/capybara-first"] },
+    });
+    expect((await decide(ask.id, { decision: "approve", scope: "once" })).statusCode).toBe(200);
+    await waitForTerminal(db, conv, 1, 30_000);
+    const r = (await results(conv)).at(-1) as ToolResult;
+    expect(r.payload.isError, r.payload.content).toBe(false);
+    expect(r.payload.content).toContain(`Created ${target}`);
+  });
+
+  it("a device whose permission support stays unverified refuses an outside Write with no ask", async () => {
+    // the provider reports no usable support: the device stays unprobed after it starts
+    await setFakeSandboxPermissionSupport(root, { version: 99 } as never);
+    try {
+      const conv = await createConv(owner, orgId, agentId);
+      await freshDevice(conv);
+      const r = await call(
+        conv,
+        "Write",
+        { file_path: "/etc/capybara-unverified/note.txt", content: "x" },
+        1,
+      );
+      expect(r.payload.isError).toBe(true);
+      expect(r.payload.content).toBe(PERMISSION_SUPPORT_UNVERIFIED_TEXT);
+      expect(await asksOf(conv)).toEqual([]);
+    } finally {
+      await setFakeSandboxPermissionSupport(root, null);
+    }
   });
 });

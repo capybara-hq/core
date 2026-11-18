@@ -2011,7 +2011,9 @@ describe("reconstructRequest：基线零漂移", () => {
         .set({ device_id: deviceId })
         .where("id", "=", conv)
         .execute();
-      const bash = { command: "curl https://files.example.com/x", description: "Fetch" };
+      // no literal URL operand: nothing is proposed before the run, the device itself refuses
+      // the domain and its network ask follows (a literal URL would be asked about up front)
+      const bash = { command: "curl files.example.com/x", description: "Fetch" };
       await postMessage(owner, orgId, conv, `tool:Bash:${JSON.stringify(bash)}`);
       const asked = await waitForEvent(db, conv, (e) => e.type === "approval_requested");
       const approvalId = asked.type === "approval_requested" && asked.payload.approvalId;

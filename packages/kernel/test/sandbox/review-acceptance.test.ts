@@ -252,21 +252,47 @@ async function callIn(
   return (await results(conv)).at(-1) as ToolResult;
 }
 
+/**
+ * A Bash call in the auto org whose literal URL names a host outside the device's allowed hosts:
+ * the person is asked about that exact host (Approve for me with no review model) and approves it.
+ */
+async function callApprovingHost(conv: string, input: unknown, n: number): Promise<ToolResult> {
+  await postMessage(owner, orgAuto, conv, `tool:Bash:${JSON.stringify(input)}`);
+  const ask = await waitFor(
+    async () =>
+      db
+        .selectFrom("approvals")
+        .select(["id", "detail"])
+        .where("conversation_id", "=", conv)
+        .where("kind", "=", "command")
+        .where("status", "=", "pending")
+        .executeTakeFirst(),
+    30_000,
+    "the host ask",
+  );
+  expect(ask.detail as Record<string, unknown>).toMatchObject({
+    permissionScope: { hosts: ["github.com"] },
+  });
+  const approved = await owner({
+    method: "POST",
+    url: `/api/v1/orgs/${orgAuto}/approvals/${ask.id}/decision`,
+    payload: { decision: "approve", scope: "once" },
+  });
+  expect(approved.statusCode, approved.body).toBe(200);
+  await waitForTerminal(db, conv, n, 30_000);
+  return (await results(conv)).at(-1) as ToolResult;
+}
+
 describe("acceptance: auto mode on a real kernel", () => {
   it("scenario 1: cloning a repository with protected files succeeds in auto mode and is allowed", async () => {
     const conv = await createConv(owner, orgAuto, agentAuto);
-    const cloned = await call(
+    const cloned = await callApprovingHost(
       conv,
-      "Bash",
       { command: `git clone ${CORE_URL}`, description: "Clone core" },
       1,
     );
     expect(cloned.payload.isError, cloned.payload.content).toBe(false);
-    expect(cloned.payload.review).toMatchObject({
-      decision: "allow",
-      by: "rule",
-      rule: "allow.git",
-    });
+    expect(cloned.payload.review).toMatchObject({ decision: "allow", by: "person" });
     expect(cloned.payload.content).toContain("Cloning into");
 
     // the protected-file tree today's sandbox refused to write is in the device's workspace

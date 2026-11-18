@@ -1259,6 +1259,23 @@ export class SandboxService {
   }
 
   /**
+   * Makes the device's instance run for a managed call before its permission review reads the
+   * device's facts: the lifecycle `enter` the call's own use takes (the exclusive lease creates
+   * or resumes the instance through the retirement gate, the binding, the limits and fencing, and
+   * records a cloud instance's permission evidence), then the lease is left at once. Nothing runs
+   * in it; what the start caused is kept for the holder's next use to tell (as a silent use).
+   */
+  async ensureRunning(use: SandboxUseContext, signal: AbortSignal): Promise<void> {
+    const p = await this.require(use.deviceId, use.orgId);
+    const e = await this.enter(use, p, signal, null, () => this.wantedLimits(use, p));
+    try {
+      await this.deferNotice(use.deviceId, use.holderConversationId, e);
+    } finally {
+      await this.leave(use.deviceId, e);
+    }
+  }
+
+  /**
    * A run start's kernel read of the bound project (permission activation L2, Hook 1): the use
    * a tool call's would be (the instance made or resumed, the read silent for the holder), whose
    * provider stats, reads and lists only, each call a kernel read admitted and claimed on its own

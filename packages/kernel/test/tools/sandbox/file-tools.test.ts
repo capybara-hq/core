@@ -161,10 +161,11 @@ async function call(conv: string, key: string, input: unknown, n: number): Promi
 }
 
 describe("file tool paths in the device's mode", () => {
-  it("auto mode: a write outside the workspace is approved once, then read anywhere", async () => {
+  it("Full access: a write outside the workspace runs with no ask, then is read anywhere", async () => {
     const conv = await createConv(owner, orgId, agentId);
     await fullAccess(conv);
-    const written = await callAllowed(
+    // Full access: no discretionary review, so nothing asks
+    const written = await call(
       conv,
       "Write",
       { file_path: "/etc/capybara-t7/note.txt", content: "hello\n" },
