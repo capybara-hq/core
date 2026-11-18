@@ -23,7 +23,16 @@ import { policyFromAnnotations, ToolRegistry } from "./registry.js";
  * kind picks the row verb and the group counts, the title and key arguments the row's wording.
  * Display only: nothing here reaches the model.
  */
-export type ToolKind = "command" | "read" | "edit" | "search" | "connector" | "meta" | "tool";
+export type ToolKind =
+  | "command"
+  | "read"
+  | "edit"
+  | "search"
+  | "connector"
+  | "meta"
+  /** Reading background tasks (`TaskOutput`, `TaskList`): neither a file read nor a command. */
+  | "task"
+  | "tool";
 
 export interface ToolInfo {
   /** The model-visible tool key, as asked for. */

@@ -1660,7 +1660,7 @@ States: `stopped`, `failed`, `compacted`, `compacted-open`, `fallback`, `hook-de
 
 - **One call** is a tool line: the row label (§6.16.9) and a chevron when it has detail; opening it shows the detail (or the diff) in a tool box below.
 - **Two or more consecutive calls** form a group: a header tool line (the summary) and, when open, the **tool box**: `panel` ground, radius `md`, `small` type, overflow hidden, one row per call, rows divided by `line-soft`. A finished group is collapsed by default; a running group is open and its header has no chevron.
-- **Summary** (copy in §7): counts by kind with each kind's verb, joined by "，" / ", " in a fixed order (commands, tools, reads, edits, as reference set B draws it); failures add "（N 个失败）" / " (N failed)" in `fail` (only rows in the failed state: a non-zero exit, a guard refusal and a not-loaded notice are not failures, §6.16.9); guard refusals add "（N 个已拦下）" / " (N blocked)" in the header's own color; edits add " · +a −b" in `faint`; a group whose rows all read, or all edit, one path names it in `ink` ("已读取 示例表.xlsx"). Running: a `spinner` (16), the running verb of the running row's kind and " · 已完成 N 个" / " · N done" in `faint`; when every live call waits for a person (§6.16.9), no spinner and the waiting word in `accent` instead of the verb ("等待你回答 · 已完成 N 个").
+- **Summary** (copy in §7): counts by kind with each kind's verb, joined by "，" / ", " in a fixed order (commands, background task reads, tools, reads, edits, as reference set B draws it); failures add "（N 个失败）" / " (N failed)" in `fail` (only rows in the failed state: a non-zero exit, a guard refusal and a not-loaded notice are not failures, §6.16.9); guard refusals add "（N 个已拦下）" / " (N blocked)" in the header's own color; edits add " · +a −b" in `faint`; a group whose rows all read, or all edit, one path names it in `ink` ("已读取 示例表.xlsx"). Running: a `spinner` (16), the running verb of the running row's kind and " · 已完成 N 个" / " · N done" in `faint`; when every live call waits for a person (§6.16.9), no spinner and the waiting word in `accent` instead of the verb ("等待你回答 · 已完成 N 个").
 - **One call with a link** (§6.16.9): the tool line holds its toggle (the label and the chevron) and, after it, the link; the two are separate buttons.
 - Groups sit between prose and end at prose, a user message, a human-in-the-loop card, a sub-agent group or a divider. Pages never group calls themselves: `apps/web/src/lib/timeline.ts` turns events into groups.
 
@@ -3459,11 +3459,12 @@ States: `idle`, `copied`, `manual`
 - Error messages state the cause and give an actionable next step; include the error code and request ID for troubleshooting.
 - **Files, not artifacts**: what an agent delivers from its sandbox is "文件" / "files" in UI copy, never "产出物" / "artifacts" (reserved for project C's Artifacts). The kernel identifiers (`artifact_created`, `/artifacts/:id/download`) stay as they are.
 - **Untitled conversations** read "未命名会话 · MM-DD HH:mm" / "Untitled conversation · MM-DD HH:mm" (the start time) until a title exists.
-- **Tool group wording** (§6.16.8; rows carry no verb: they name the tool, §6.16.9), as the signed reference set B draws them. Counts are Arabic numerals; failures append "（N 个失败）" / " (N failed)" in `fail`, then guard refusals (§6.16.9) "（N 个已拦下）" / " (N blocked)" in the header's own color; mixed kinds join with "，" / ", " in the fixed order command, tools (connector, tool, search, meta, question), read, edit:
+- **Tool group wording** (§6.16.8; rows carry no verb: they name the tool, §6.16.9), as the signed reference set B draws them. Counts are Arabic numerals; failures append "（N 个失败）" / " (N failed)" in `fail`, then guard refusals (§6.16.9) "（N 个已拦下）" / " (N blocked)" in the header's own color; mixed kinds join with "，" / ", " in the fixed order command, task, tools (connector, tool, search, meta, question), read, edit:
 
   | Kind | Group count zh / en | Running header zh / en |
   |---|---|---|
   | command | 已运行 N 个命令 / Ran N commands | 正在运行命令 / Running command |
+  | task (`TaskOutput`, `TaskList`: reading background tasks, never a file read) | 已查看 N 次后台任务 / Checked background tasks N times (one: 已查看 1 次后台任务 / Checked a background task) | 正在等待后台任务 / Waiting on a background task |
   | read | 已读取 N 个文件 / Read N files (one path: 已读取 <path> / Read <path>) | 正在读取文件 / Reading file |
   | edit | 已修改 N 个文件 · +a −b / Edited N files · +a −b (one path: 已修改 <path>) | 正在修改文件 / Editing file |
   | search | counted with tools | 正在使用工具 / Using tool |

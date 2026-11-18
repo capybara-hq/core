@@ -124,10 +124,10 @@ describe("builtin names", () => {
     // reading or stopping a task changes nothing the person has not already approved
     expect(SANDBOX_ASK_TOOL_NAMES.has("TaskOutput")).toBe(false);
     expect(SANDBOX_ASK_TOOL_NAMES.has("TaskStop")).toBe(false);
-    expect(BUILTIN_TOOL_KINDS.TaskOutput).toBe("read");
+    expect(BUILTIN_TOOL_KINDS.TaskOutput).toBe("task");
     expect(BUILTIN_TOOL_KINDS.TaskStop).toBe("command");
     expect(SANDBOX_ASK_TOOL_NAMES.has("TaskList")).toBe(false);
-    expect(BUILTIN_TOOL_KINDS.TaskList).toBe("read");
+    expect(BUILTIN_TOOL_KINDS.TaskList).toBe("task");
     expect([...SANDBOX_ASK_TOOL_NAMES]).toEqual(["Bash", "Write", "Edit", "Deliver"]);
   });
 
