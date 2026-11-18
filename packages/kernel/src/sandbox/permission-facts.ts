@@ -229,14 +229,22 @@ export class PermissionFacts {
     holderConversationId: string;
     deviceId: string;
   }): Promise<WorkingFacts> {
-    const [recorded, recordedRoot, machine, project] = await Promise.all([
+    const [applied, recorded, recordedRoot, machine, project] = await Promise.all([
+      this.readAppliedEnvironment({ orgId, deviceId }),
       this.recordedWorkspace(conversationId),
       conversationId === rootConversationId ? null : this.recordedWorkspace(rootConversationId),
       this.machineRoots(deviceId),
       this.workingProject(orgId, rootConversationId),
     ]);
+    // the held instance's committed (and, local, installed) roots first: a recorded
+    // `device_paths` may be stale (an earlier instance's), and the managed writer records the
+    // device paths from these roots; the records only stand in while no instance is committed
     const workspace =
-      recorded ?? recordedRoot ?? machine?.workspace ?? DEFAULT_SANDBOX_ROOTS.workspace;
+      applied?.roots.workspace ??
+      recorded ??
+      recordedRoot ??
+      machine?.workspace ??
+      DEFAULT_SANDBOX_ROOTS.workspace;
     // never from a project root: the machine's home, else the device workspace's home prefix
     const reported = machine?.home;
     const home = reported?.startsWith("/") ? reported : homeOf(workspace);

@@ -441,6 +441,11 @@ describe("a bound conversation works in its project's root", () => {
     const r = await call(conv, "Bash", { command: "pwd", description: "Where" }, 1);
     expect(r.payload.isError, r.payload.content).toBe(false);
     expect(r.payload.content).toMatch(/^\/workspace\n/m);
+    // the managed writer records the device paths from the held instance's roots
+    const paths = (await eventsOf(db, conv)).filter((e) => e.type === "device_paths");
+    expect(
+      (paths.at(-1)?.payload as { roots?: { workspace?: string } } | undefined)?.roots?.workspace,
+    ).toBe("/workspace");
   });
 
   it("a free conversation's ask records the root it judged; the approved call still runs where the instance is", async () => {
@@ -465,7 +470,9 @@ describe("a bound conversation works in its project's root", () => {
       30_000,
       "the command ask",
     );
-    expect(ask.detail as Record<string, unknown>).toMatchObject({ workingRoot: "/stale" });
+    // the review reads the same source as admission: the held instance's committed roots, not
+    // the stale record
+    expect(ask.detail as Record<string, unknown>).toMatchObject({ workingRoot: "/workspace" });
     const approved = await owner({
       method: "POST",
       url: `/api/v1/orgs/${orgId}/approvals/${ask.id}/decision`,
