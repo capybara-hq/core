@@ -340,6 +340,7 @@ export class PreviewerRegistry {
           l.inflight.run(signal, async (s) => {
             try {
               return await render.call(l.previewer, {
+                source: "conversation",
                 orgId: t.orgId,
                 accountId: t.accountId,
                 conversationId: t.conversationId,

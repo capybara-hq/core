@@ -33,14 +33,12 @@ export interface FilePreviewProvider {
   previewers: FilePreviewer[];
 }
 
-/** Arguments of {@link FilePreviewer.render}; identities come from the kernel after authentication. */
-export interface FilePreviewArgs {
-  orgId: string;
-  accountId: string;
-  conversationId: string;
+/** What every {@link FilePreviewArgs} variant carries. */
+interface FilePreviewArgsBase {
   locale: Locale;
   /** Aborted at the kernel's time limit: stop reading and rendering. */
   signal: AbortSignal;
+  /** In the share variant `file.id` is the share id. */
   file: { id: string; name: string; contentType: string; size: number };
   /**
    * The read grant: this one file's bytes, valid only during this call (rejects afterwards), and
@@ -56,6 +54,28 @@ export interface FilePreviewArgs {
    */
   config?: unknown;
 }
+
+/** A preview inside a conversation; identities come from the kernel after authentication. */
+export interface FilePreviewConversationArgs extends FilePreviewArgsBase {
+  source: "conversation";
+  orgId: string;
+  accountId: string;
+  conversationId: string;
+}
+
+/**
+ * A preview on a share page: there is no account and no conversation. A previewer that needs the
+ * conversation declines this variant by throwing; the kernel reports the failure and the page falls
+ * to the next previewer.
+ */
+export interface FilePreviewShareArgs extends FilePreviewArgsBase {
+  source: "share";
+  orgId: string;
+  shareId: string;
+}
+
+/** Arguments of {@link FilePreviewer.render}: narrow on `source`. */
+export type FilePreviewArgs = FilePreviewConversationArgs | FilePreviewShareArgs;
 
 const ID_RE = /^[a-z0-9-]{1,40}$/;
 const TITLE_MAX = 100;

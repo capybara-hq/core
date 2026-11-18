@@ -790,4 +790,24 @@ describe("component contributions (client extensions spec §5.1)", () => {
     expect(check({ a: 1, b: undefined, nested: { c: [null, true, "x", -0.5] } })).toEqual([]);
     expect(check(Object.assign(Object.create(null), { k: 1 }))).toEqual([]);
   });
+
+  it("narrows embed claims on scope, including share", () => {
+    const describeClaims = (c: EmbedClaims): string => {
+      const unnarrowed = () =>
+        // @ts-expect-error accountId is possibly undefined until narrowed to an account scope
+        c.accountId.length;
+      void unnarrowed;
+      return c.scope === "share" ? c.shareId : c.accountId;
+    };
+    const c: EmbedClaims = {
+      plugin: "p",
+      contribution: "x",
+      exp: 1,
+      scope: "share",
+      orgId: "o",
+      shareId: "s",
+      generation: 1,
+    };
+    expect(describeClaims({ ...c, scope: "share" })).toBe("s");
+  });
 });

@@ -126,6 +126,8 @@ export class PluginRouteAccess implements RouteAccessResolver {
         exp: claims.exp,
       };
     }
+    // A share token is never issued yet; a later change resolves it for the share routes.
+    if (claims.scope === "share") throw authRequired();
     const config = await this.config(claims.orgId, route.plugin);
     return {
       access: "embed",
