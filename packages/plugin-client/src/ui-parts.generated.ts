@@ -29,7 +29,8 @@ export type UiPartName =
   | "switch"
   | "switch.knob"
   | "org-avatar"
-  | "agent-chip";
+  | "agent-chip"
+  | "image-placeholder";
 
 /** Every part name plugin CSS and components may rely on. */
 export const UI_PART_NAMES: readonly UiPartName[] = [
@@ -62,4 +63,5 @@ export const UI_PART_NAMES: readonly UiPartName[] = [
   "switch.knob",
   "org-avatar",
   "agent-chip",
+  "image-placeholder",
 ];

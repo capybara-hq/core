@@ -29,7 +29,8 @@ export type UiPartName =
   | "switch"
   | "switch.knob"
   | "org-avatar"
-  | "agent-chip";
+  | "agent-chip"
+  | "image-placeholder";
 
 /** Every `data-cap-part` name the design system may render. */
 export const UI_PART_NAMES: readonly UiPartName[] = [
@@ -62,4 +63,5 @@ export const UI_PART_NAMES: readonly UiPartName[] = [
   "switch.knob",
   "org-avatar",
   "agent-chip",
+  "image-placeholder",
 ];
