@@ -364,6 +364,7 @@ describe("acceptance: auto mode on a real kernel", () => {
     // if executed (`binDir` carries the no-op `rm`, see FAKE_RM); the assertions are what make a
     // launch-then-deny regression red: a launch inserts its `background_tasks` row as soon as it
     // starts, and every exec reaches the sandbox's own log.
+    const opsBefore = (await readFakeSandboxOps(root)).length;
     const denied = await call(
       conv,
       "Bash",
@@ -379,10 +380,13 @@ describe("acceptance: auto mode on a real kernel", () => {
       .where("conversation_id", "=", conv)
       .execute();
     expect(tasks, "the denied launch created no background task").toEqual([]);
-    const execs = (await readFakeSandboxOps(root)).filter(
-      ([op, , , , , , conversationId]) => op === "exec" && conversationId === conv,
-    );
-    expect(execs, "the denied launch reached no command in the sandbox").toEqual([]);
+    // a managed launch is a provider background start (`bg-start`), not an exec of the conversation
+    const launches = async () =>
+      (await readFakeSandboxOps(root)).slice(opsBefore).filter(
+        ([op, , , , , , conversationId]) =>
+          op === "bg-start" || (op === "exec" && conversationId === conv),
+      );
+    expect(await launches(), "the denied launch reached no command in the sandbox").toEqual([]);
 
     const launched = await call(
       conv,
@@ -398,9 +402,7 @@ describe("acceptance: auto mode on a real kernel", () => {
     // the launch itself carries the review decision: the command was judged before it ran
     expect(launched.payload.review).toMatchObject({ decision: "allow", rule: "allow.git" });
     // the same log now holds this conversation's launch exec: the empty check above is not vacuous
-    const launchExecs = (await readFakeSandboxOps(root)).filter(
-      ([op, , , , , , conversationId]) => op === "exec" && conversationId === conv,
-    );
+    const launchExecs = await launches();
     expect(launchExecs.length, "the allowed launch reached the sandbox").toBeGreaterThan(0);
     const taskId = /Started background task (bt_[A-Za-z0-9_-]+)/.exec(
       launched.payload.content,
