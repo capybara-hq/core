@@ -1,5 +1,32 @@
 # @capybara-hq/capybara
 
+## 0.1.0-rc.57
+
+### Patch Changes
+
+- eea8ef6: Model-facing text states mechanisms, contracts and limits only. Bash keeps the proxy rule general
+  (no browser flag) and says "keep results in files" once; Deliver states the one-file contract and
+  that an HTML file is shown on its own (no tar or CDN recipe); the skill registration errors state
+  the zip package format instead of a `zip -r` recipe; Read / Glob / Grep drop the write-approval
+  sentence; the ToolSearch catalog header, WebSearch (cite once, in the description), the WebFetch
+  extraction prompt, Agent / SendMessage results and the Platform tool and operations lose
+  duplicated or one-slip warnings ("never guess", "there is no all", "agents never decide" in every
+  hint, "never remembered", old field-name hints). Platform text names pages by their English
+  labels. Agent docs: `concepts.md` describes devices instead of "a sandbox per conversation", and
+  the docker socket rule leaves the model-facing sandbox doc (it stays in the contributor skills).
+  The new-agent AGENTS.md starter no longer repeats the platform's behaviour rules.
+- 4e9bc7e: The web shows prompt suggestions in the conversation composer (Tab fills, Esc or typing dismisses
+  for that run), with a 输入建议 / Prompt suggestions switch on the admin and organization settings
+  pages, and labels the `cap-kernel-suggestions` queue on the admin overview.
+- df19d51: The timeline shows one image placeholder per requested image up to the configured maximum of 10
+  (it stopped at 4).
+- Updated dependencies [b8e2313]
+- Updated dependencies [2577900]
+- Updated dependencies [5de7182]
+- Updated dependencies [95fed18]
+- Updated dependencies [bb2b304]
+  - @capybara-hq/kernel@0.1.0-rc.49
+
 ## 0.1.0-rc.56
 
 ### Patch Changes

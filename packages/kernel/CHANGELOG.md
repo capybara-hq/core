@@ -1,5 +1,31 @@
 # @capybara-hq/kernel
 
+## 0.1.0-rc.49
+
+### Patch Changes
+
+- b8e2313: The same bytes are delivered to the user once per run since the person last spoke: a second
+  `Deliver` (or generated image) with identical content creates no artifact and its result names the
+  artifact already delivered. Delivering v1, v2, then v1 of one path still delivers v1 again, and
+  `artifact_created` now records the content's sha256.
+- 2577900: `GenerateImage`'s result states facts: it counts only newly stored images as delivered, names the
+  earlier artifact for an image whose bytes were already delivered since the person last spoke (with
+  a line saying the usage is still billed), and its device line names the artifact that holds the
+  same bytes.
+  
+  Its listed description no longer mentions reference images when the org's image model takes none
+  and the `reference_images` field is dropped.
+- 5de7182: GenerateImage lists only the image count and reference images the org's image model accepts.
+- 95fed18: Prompt suggestions: after a completed web run the worker sends one side request to the run's own
+  model (the run's last request plus the final reply and an instruction, `purpose: "suggestion"`),
+  fires the model hooks, logs a run-less `usage` event and stores the suggestion in a Redis key with
+  a bus message (queue `cap-kernel-suggestions`). On by default; the platform and org switches turn
+  it off.
+- bb2b304: Add the platform and org switches for prompt suggestions (`promptSuggestions`, on or off, absent meaning on).
+- Updated dependencies [eea8ef6]
+- Updated dependencies [9f8c8d5]
+  - @capybara-hq/plugin-sdk@0.1.0-rc.35
+
 ## 0.1.0-rc.48
 
 ### Minor Changes
