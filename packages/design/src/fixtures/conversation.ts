@@ -840,6 +840,15 @@ export const FILE_FIXTURE: {
   image: FixtureFile & { dimensions: string };
   text: FixtureFile & { head: string };
   removed: FixtureFile & { reason: string };
+  /**
+   * Generating image placeholders: a single one, two in a call that asked for several (index 1 of
+   * `count`), and a wide one shown above a delivered image.
+   */
+  generating: {
+    ratio: "1:1" | "4:3" | "3:4" | "3:2" | "2:3" | "16:9" | "9:16";
+    several: { ratio: "3:4"; count: 2 };
+    wide: { ratio: "16:9" };
+  };
   /** Paths mentioned in prose that name file outputs. */
   paths: string[];
   /** The markdown file's rendered preview and the plain-text preview. */
@@ -883,6 +892,7 @@ export const FILE_FIXTURE: {
     removed: true,
     reason: "文件已不可用",
   },
+  generating: { ratio: "1:1", several: { ratio: "3:4", count: 2 }, wide: { ratio: "16:9" } },
   paths: ["reports/9月差异明细.xlsx", "reports/对账报告.md"],
   markdownPreview: [
     "# 9 月对账报告",
