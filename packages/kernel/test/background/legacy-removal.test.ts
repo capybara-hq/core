@@ -51,18 +51,6 @@ const SID_MARKERS = [
 ];
 
 /**
- * Files still allowed to mention the SID protocol, each with the task that removes it. Remove an
- * entry with that removal; the test then holds for the whole kernel.
- */
-const PENDING: Record<string, string> = {
-  // re-exports SESSION_MODE_SCRIPT for sandbox.service.ts only; the re-export goes with W5-P3a
-  "background/launch.ts": "W5-P3a",
-  // W5-P3a removes the SID cleanup on resume and rebuild (its only user of the fragment below)
-  "sandbox/sandbox.service.ts": "W5-P3a",
-  "background/legacy-session-mode.ts": "W5-P3a",
-};
-
-/**
  * Files that name these programs without building any script: the command review classifies a
  * person's or model's own command that runs them (`pkill`, `setsid` as a prefix, `pgrep`).
  */
@@ -71,11 +59,10 @@ const NOT_A_BUILDER: Record<string, string> = {
 };
 
 describe("no SID script is built anywhere in the kernel", () => {
-  it("no source file outside the pending list names a SID shell tool or builder", () => {
+  it("no source file names a SID shell tool or builder", () => {
     const hits: string[] = [];
     for (const file of sources(SRC)) {
       const rel = relative(SRC, file).split("\\").join("/");
-      if (rel in PENDING) continue;
       if (rel in NOT_A_BUILDER) {
         // only the program names: never a builder or a SID shell function
         const text = readFileSync(file, "utf8");

@@ -27,7 +27,7 @@ the admin console or with `capybara extensions install`. See
 
 ### Permission configuration rollout
 
-`sandbox.limits.egress`, `orgHosts` and `allowHosts` require restart. `devices.autoMode` remains hot;
+`sandbox.limits.egress`, `orgHosts` and `allowHosts` require restart. `devices.fullAccess` remains hot;
 watching a mixed hot/restart payload publishes only the locally effective network plus the new hot
 value. Watching a restart-only change never activates it.
 
@@ -122,10 +122,12 @@ allowed`, anything lower `off`; an org's `sandboxTier` with `max: "open"` become
 allowed`, any other stored `sandboxTier` `off`. `allowUnsandboxed` is not read, and the source keys
 are deleted, so no later migration can recover it. If you set `allowUnsandboxed: false` (open
 egress, but no command outside the sandbox), auto mode is now allowed where you had kept the
-sandbox on: after upgrading, turn auto mode off for those orgs (org settings, `autoMode: off`) or
-for the platform (`devices.autoMode: off`, or the admin console). Leftover `sandbox.tiers`,
+sandbox on: after upgrading, turn Full access off for those orgs (org settings, `fullAccess: off`)
+or for the platform (`devices.fullAccess: off`, or the admin console; the old names `autoMode` and
+`devices.autoMode` are refused now: rename them, or convert a config file with
+`capybara config migrate-permissions`). Leftover `sandbox.tiers`,
 `sandbox.limits.devHosts` or `sandbox.limits.egress: "open"` in the config file, Nacos or the
-environment now stop the kernel at startup with an error naming `devices.autoMode` and
+environment now stop the kernel at startup with an error naming `devices.fullAccess` and
 `cloudNetwork`: remove them and set those instead.
 
 ### Org sandbox networks follow the platform (migration 0134)
@@ -147,8 +149,8 @@ hosts.
 - **A ceiling for the super admin.** `sandbox.limits.orgHosts: within`
   (`CAPYBARA_SANDBOX__LIMITS__ORG_HOSTS`) makes `allowHosts` the ceiling: organizations cannot add
   other hosts or use the open cloud network in sandbox mode, and their admins cannot approve network
-  requests for hosts outside it. Auto mode is not limited by it: set `devices.autoMode: off` as well
-  for a hard ceiling (startup warns otherwise). The default `extend` keeps today's behaviour.
+  requests for hosts outside it. Full access is not limited by it: set `devices.fullAccess: off` as
+  well for a hard ceiling (startup warns otherwise). The default `extend` keeps today's behaviour.
 
 ### Moving config-declared extensions to install records
 

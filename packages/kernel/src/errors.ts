@@ -387,12 +387,6 @@ export const ERROR_CODES = {
   /** The device cannot change its network policy from the platform (cloud, or an older program). */
   "device.policy_unsupported": 409,
   /**
-   * The device's machine reports auto mode while the organization (or the platform) allows only
-   * sandbox mode (auto mode spec §4.3); checked at each command. The owner narrows the machine
-   * with `capybara-device ceiling set`.
-   */
-  "device.auto_mode_not_allowed": 403,
-  /**
    * B1: a cloud device's snapshot found applied limits it could not establish exactly; no operation
    * is admitted until a lifecycle action (a file reset) establishes them.
    */

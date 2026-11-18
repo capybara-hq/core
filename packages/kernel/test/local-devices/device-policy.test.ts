@@ -292,7 +292,7 @@ describe("DevicePolicyService.apply", () => {
       policy: applied,
       ownerCeiling: ownerReportFor(applied, { fullAccess: true }),
     });
-    // the owner on the machine: `capybara-device mode sandbox`,
+    // the owner on the machine: `capybara-device ceiling set --full-access deny`,
     // `policy add allowedDomains github.com`, `policy remove allowedDomains pypi.org`
     const own: DeviceLocalPolicySummary = {
       ...applied,

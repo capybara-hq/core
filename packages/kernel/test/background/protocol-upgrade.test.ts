@@ -281,23 +281,17 @@ describe("enumeration under the legacy-launch freeze", () => {
     expect(await retirement.scanUntilStable()).toEqual({ added: 0, stable: true });
   });
 
-  it("the freeze refuses a reserved legacy dispatch and marks an admitted one dispatched", async () => {
+  it("a reservation an R1 kernel admitted for dispatch owes retirement on its admitted incarnation", async () => {
     const dev = await seedDevice(raw, seed.orgId, seed.accountId);
-    const before = await legacyRow(dev, { sid: null, dispatch: "reserved" });
-    const after = await legacyRow(dev, { sid: null, dispatch: "reserved" });
+    // reserved by the fenced R1 launcher and never admitted: owes nothing
+    await legacyRow(dev, { sid: null, dispatch: "reserved" });
+    // admitted by the R1 launcher before the freeze: carries the incarnation it was admitted for
+    const admitted = await legacyRow(dev, { sid: null, dispatch: "dispatched" });
     const at = { provider: "sandbox-fake", generation: "1763370000123" };
-    expect(await retirement.admitLegacyDispatch(seed.orgId, before, at)).toBe("admitted");
+    await sql`UPDATE capybara.background_tasks SET legacy_dispatch_provider = ${at.provider},
+      legacy_dispatch_generation = ${at.generation} WHERE id = ${admitted}`.execute(raw);
     await retirement.freeze("test");
-    expect(await retirement.admitLegacyDispatch(seed.orgId, after, at)).toBe("frozen");
-    const marks = await db
-      .selectFrom("background_tasks")
-      .select(["id", "legacy_dispatch", "legacy_dispatch_generation"])
-      .orderBy("id")
-      .execute();
-    expect(Object.fromEntries(marks.map((m) => [m.id, m]))).toMatchObject({
-      [before]: { legacy_dispatch: "dispatched", legacy_dispatch_generation: at.generation },
-      [after]: { legacy_dispatch: "reserved", legacy_dispatch_generation: null },
-    });
+    await retirement.scanUntilStable();
     // the admitted reservation's obligation is keyed by the incarnation it was admitted for
     expect(await obligations(dev)).toMatchObject([
       { provider: "sandbox-fake", instance_generation: at.generation },

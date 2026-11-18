@@ -25,8 +25,7 @@ import { seedConversation } from "../helpers/tool-fixtures.js";
  * `SandboxService` and a retirement store with its own PG pool and Redis connection, sharing PG,
  * Redis and the fake provider's root: the service keeps no state in process, so this equals two
  * processes. The worker's retirement on one replica and ordinary acquisitions on the other never
- * reuse the old incarnation and destroy it exactly once; the freeze fences concurrent dispatch
- * admissions on the other replica.
+ * reuse the old incarnation and destroy it exactly once.
  */
 
 vi.setConfig({ testTimeout: 60_000 });
@@ -114,8 +113,6 @@ function replica(): { s: SandboxService; store: LegacyRetirementStore } {
 }
 
 const signal = () => AbortSignal.timeout(50_000);
-/** The incarnation a racing dispatch is admitted for. */
-const AT = { provider: "sandbox-fake", generation: "1763370000123" };
 const use = (s: SandboxService, deviceId: string) =>
   s.withSandbox(
     {
@@ -203,30 +200,4 @@ it("a failing destroy keeps both replicas out: no acquisition reuses or replaces
     expect(r.status === "fulfilled" && ["unavailable", "busy"].includes(r.value)).toBe(true);
   expect(calls.every((c) => c === `destroy ${old}`)).toBe(true);
   expect(calls.length).toBeGreaterThan(0);
-});
-
-it("the freeze on one replica fences dispatch admissions racing it on the other", async () => {
-  const a = replica();
-  const b = replica();
-  const dev = await seedDevice(raw, seed.orgId, seed.accountId);
-  const ids = await Promise.all(Array.from({ length: 12 }, () => runningLegacyRow(dev, null)));
-  const [admissions] = await Promise.all([
-    Promise.all(ids.map((id) => b.store.admitLegacyDispatch(seed.orgId, id, AT))),
-    a.store.freeze("replica-a"),
-  ]);
-  // after the freeze committed nothing more is admitted
-  expect(await b.store.admitLegacyDispatch(seed.orgId, ids[0] as string, AT)).toBe("frozen");
-  await a.store.scanUntilStable();
-  const admitted = ids.filter((_, i) => admissions[i] === "admitted").sort();
-  const members = await sql<{ ref_id: string }>`SELECT ref_id
-    FROM capybara.device_retirement_members ORDER BY ref_id`.execute(raw);
-  // every reservation the other replica admitted before the freeze owes retirement, and only those
-  expect(members.rows.map((m) => m.ref_id)).toEqual(admitted);
-  for (const [i, id] of ids.entries()) {
-    const mark = await sql<{ legacy_dispatch: string }>`SELECT legacy_dispatch
-      FROM capybara.background_tasks WHERE id = ${id}`.execute(raw);
-    expect(mark.rows[0]?.legacy_dispatch).toBe(
-      admissions[i] === "admitted" ? "dispatched" : "reserved",
-    );
-  }
 });

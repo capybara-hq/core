@@ -1,15 +1,9 @@
-import { constants, existsSync, mkdirSync, statSync, writeFileSync } from "node:fs";
-import { lstat, mkdir, open, realpath } from "node:fs/promises";
-import { basename, dirname, isAbsolute, join, resolve } from "node:path";
-import { type SandboxRoots, validateSandboxPathShape } from "@capybara-hq/plugin-sdk";
-import type { SandboxMode } from "../state.js";
-import { DeviceOpError } from "./types.js";
+import { existsSync, mkdirSync, statSync, writeFileSync } from "node:fs";
+import { isAbsolute, join } from "node:path";
+import type { SandboxRoots } from "@capybara-hq/plugin-sdk";
 
 /** The file that marks a directory as a device directory this program has used. */
-export const ROOT_MARKER = ".capybara-device";
-
-/** How long a finished command's output pipes may stay open (held by a background child). */
-export const PIPE_GRACE_MS = 200;
+const ROOT_MARKER = ".capybara-device";
 
 export const ENV_NAME_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
 
@@ -98,19 +92,6 @@ export function shellQuote(s: string): string {
   return `'${s.replaceAll("'", "'\\''")}'`;
 }
 
-export function isUnder(p: string, root: string): boolean {
-  return p === root || p.startsWith(`${root}/`);
-}
-
-export function policyError(message: string): DeviceOpError {
-  return new DeviceOpError("policy", message);
-}
-
-export function isMissing(e: unknown): boolean {
-  const code = (e as NodeJS.ErrnoException).code;
-  return code === "ENOENT" || code === "ENOTDIR";
-}
-
 /** Captures stdout and stderr up to a combined byte budget; the rest is drained and dropped. */
 export class OutputCap {
   private readonly chunks = { stdout: [] as Buffer[], stderr: [] as Buffer[] };
@@ -178,148 +159,5 @@ export class RootGuard {
     this.seen = true;
     for (const r of rootList) mkdirSync(r, { recursive: true });
     return "ok";
-  }
-}
-
-/**
- * Host-side file access. In sandbox mode `path`s are confined to the three roots (real paths,
- * symlinks resolved, refused when they leave a root); in auto mode any clean absolute path is
- * accepted (shape checks only: absolute, no `..` segments, no control characters). Used for the
- * skills root (commands can only read it, so nothing can race it) and by the host executor.
- */
-export class HostFiles {
-  constructor(
-    private readonly roots: SandboxRoots,
-    private readonly mode: SandboxMode,
-  ) {}
-
-  /**
-   * `path` made absolute and normalized; in sandbox mode refused unless it is lexically under a
-   * root, in auto mode accepted when its shape is clean.
-   */
-  lexical(path: string): string {
-    if (this.mode === "auto") {
-      const errors = validateSandboxPathShape(path);
-      if (errors.length > 0) throw policyError(`${path}: ${errors.join("; ")}`);
-      return resolve(path);
-    }
-    if (!isAbsolute(path)) throw policyError(`${path} is not an absolute path`);
-    const p = resolve(path);
-    if (!this.rootList().some((r) => isUnder(p, r))) {
-      throw policyError(`${path} is outside the device's roots (${this.rootList().join(", ")})`);
-    }
-    return p;
-  }
-
-  /**
-   * The real path of an existing `path` (null when missing); in sandbox mode refused unless under
-   * a root after resolving links.
-   */
-  async existing(path: string): Promise<string | null> {
-    const p = this.lexical(path);
-    let real: string;
-    try {
-      real = await realpath(p);
-    } catch (e) {
-      if (isMissing(e)) return null;
-      throw e;
-    }
-    return this.checkReal(path, real);
-  }
-
-  /**
-   * The real path of an existing `path` (symlinks resolved); in sandbox mode refused unless under
-   * a root.
-   */
-  async inside(path: string, what: string): Promise<string> {
-    const p = this.lexical(path);
-    let real: string;
-    try {
-      real = await realpath(p);
-    } catch (e) {
-      if (isMissing(e)) throw new DeviceOpError("error", `${what} ${path} does not exist`);
-      throw e;
-    }
-    return this.checkReal(path, real);
-  }
-
-  private async checkReal(path: string, real: string): Promise<string> {
-    if (this.mode === "auto") return real;
-    const roots = await Promise.all(this.rootList().map((r) => realpath(r).catch(() => r)));
-    if (!roots.some((r) => isUnder(real, r))) {
-      throw policyError(`${path} resolves to ${real}, outside the device's roots`);
-    }
-    return real;
-  }
-
-  private rootList(): string[] {
-    return [this.roots.workspace, this.roots.skills, this.roots.tmp];
-  }
-
-  async read(
-    path: string,
-    maxBytes: number,
-  ): Promise<{ data: Uint8Array; truncated: boolean } | null> {
-    const real = await this.existing(path);
-    if (real === null) return null;
-    const fh = await open(real, constants.O_RDONLY | constants.O_NONBLOCK | constants.O_NOFOLLOW);
-    try {
-      const st = await fh.stat();
-      if (st.isDirectory()) return null;
-      if (!st.isFile()) throw policyError(`${path} is not a regular file`);
-      const want = Math.min(st.size, maxBytes);
-      const buf = Buffer.alloc(want);
-      let off = 0;
-      while (off < want) {
-        const { bytesRead } = await fh.read(buf, off, want - off, off);
-        if (bytesRead === 0) break;
-        off += bytesRead;
-      }
-      return { data: buf.subarray(0, off), truncated: st.size > maxBytes };
-    } finally {
-      await fh.close();
-    }
-  }
-
-  async stat(path: string): Promise<{ size: number; isDir: boolean } | null> {
-    const real = await this.existing(path);
-    if (real === null) return null;
-    const st = await lstat(real);
-    return { size: st.size, isDir: st.isDirectory() };
-  }
-
-  async write(path: string, data: Uint8Array): Promise<void> {
-    const target = this.lexical(path);
-    const parent = dirname(target);
-    // Check the nearest existing ancestor before creating anything beneath it.
-    let ancestor = parent;
-    while (!existsSync(ancestor)) ancestor = dirname(ancestor);
-    await this.inside(ancestor, "path");
-    await mkdir(parent, { recursive: true });
-    const realParent = await this.inside(parent, "path");
-    let file = join(realParent, basename(target));
-    const st = await lstat(file).catch((e: unknown) => {
-      if (isMissing(e)) return null;
-      throw e;
-    });
-    if (st?.isSymbolicLink()) {
-      const real = await realpath(file).catch((e: unknown) => {
-        if (isMissing(e)) throw policyError(`${path} is a dangling symbolic link`);
-        throw e;
-      });
-      file = await this.inside(real, "path");
-    }
-    const fh = await open(
-      file,
-      constants.O_WRONLY | constants.O_CREAT | constants.O_NONBLOCK | constants.O_NOFOLLOW,
-      0o644,
-    );
-    try {
-      if (!(await fh.stat()).isFile()) throw policyError(`${path} is not a regular file`);
-      await fh.truncate(0);
-      await fh.writeFile(data);
-    } finally {
-      await fh.close();
-    }
   }
 }

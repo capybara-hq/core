@@ -301,7 +301,7 @@ describe("MachinesService", () => {
     await machines.recordPolicy(m.machineId, base);
     expect(await changes("device.policy_changed")).toEqual([]);
     expect(await changes("device.mode_changed")).toEqual([]);
-    // `capybara-device mode sandbox`, reported to both replicas at once, and again
+    // `capybara-device ceiling set --full-access deny`, reported to both replicas at once, and again
     const k2 = await startKernel(runConfig({ pg: pgc.url, redis: rd.url }, { roles: ["api"] }));
     try {
       const other = k2.app.get(MachinesService);

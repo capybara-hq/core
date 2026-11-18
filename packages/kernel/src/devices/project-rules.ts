@@ -15,8 +15,8 @@ export interface DeviceProjectScope {
   home: string | null;
   supported: boolean;
   /**
-   * A machine whose own policy is auto mode while the organization allows only sandbox mode: exec
-   * refuses it (`device.auto_mode_not_allowed`), and the kernel reads nothing on it unasked.
+   * A machine without an authenticated owner report whose own policy is auto mode while the
+   * organization allows only sandbox mode: the kernel reads nothing on it unasked.
    */
   widerThanAllowed: boolean;
 }

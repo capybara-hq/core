@@ -31,7 +31,6 @@ import { canonicalRoot, workingRootOf } from "../../../devices/working-root.js";
 import { ApiError } from "../../../errors.js";
 import type { KernelConfigService } from "../../../infra/config/kernel-config.service.js";
 import { InstanceBindingError } from "../../../local-devices/instance-bindings.js";
-import { AUTO_MODE_NOT_ALLOWED_TEXT } from "../../../local-devices/local-device-provider.js";
 import { isDeviceRequestNotSent } from "../../../local-devices/relay.js";
 import { type DeviceModeLevel, devicePathsChange } from "../../../runtime/context/device-paths.js";
 import {
@@ -53,6 +52,7 @@ import type { SandboxMode } from "../../../sandbox/modes.js";
 import type { HeldDeviceContextEvidence } from "../../../sandbox/permission-context-types.js";
 import {
   type HeldProvider,
+  RetirementPendingError,
   SandboxLockLostError,
   type SandboxService,
 } from "../../../sandbox/sandbox.service.js";
@@ -487,13 +487,8 @@ function legacyPreparationSession(s: SandboxSession): PreparationSession {
 }
 
 /**
- * A machine that reports auto mode while the organization allows only sandbox mode (auto mode
- * spec §4.3): the kernel's refusal text plus what the model can do.
- */
-const AUTO_MODE_TOOL_TEXT = `${AUTO_MODE_NOT_ALLOWED_TEXT} Ask the user to switch it on the machine, or to start a new conversation on another device.`;
-/**
- * Full access refused by policy (B-13: `org.*` / `deployment.*`, old and renamed codes): the
- * organization or the platform has it off. The kernel's own message is never shown.
+ * Full access refused by policy (B-13: `org.*` / `deployment.*`): the organization or the
+ * platform has it off. The kernel's own message is never shown.
  */
 export const FULL_ACCESS_OFF_BY_POLICY_TOOL_TEXT =
   "Full access is turned off by your organization's or the platform's policy, so nothing ran. Continue with the Request approval or Approve for me permission profile, or ask an org admin (or a super admin) to allow Full access.";
@@ -502,17 +497,26 @@ export const FULL_ACCESS_OFF_BY_POLICY_TOOL_TEXT =
  */
 export const FULL_ACCESS_CEILING_TOOL_TEXT =
   "This device's owner ceiling does not allow Full access, so nothing ran. Ask the device's owner to raise it with `capybara-device ceiling set` on that machine, or continue with the Request approval or Approve for me permission profile.";
-/**
- * The full-access refusal codes off by policy: the renamed ones (W5-P3b) and the old organization
- * and platform names until that rename lands; `device.auto_mode_not_allowed` keeps its machine
- * text ({@link AUTO_MODE_TOOL_TEXT}).
- */
+/** The full-access refusal codes off by policy (organization and platform). */
 const FULL_ACCESS_OFF_BY_POLICY_CODES: ReadonlySet<string> = new Set([
   "org.full_access_not_allowed",
   "deployment.full_access_not_allowed",
-  "org.auto_mode_not_allowed",
-  "deployment.auto_mode_not_allowed",
 ]);
+/**
+ * The legacy retirement gate's refusals (`RetirementPendingError`, permission runtime cutover
+ * 8.5): the device's earlier instance may still run background work an earlier version started.
+ * Each says what clears it; the generic `device.unavailable` text would name an inactive provider.
+ */
+export const RETIREMENT_TOOL_TEXT: Readonly<Record<string, string>> = {
+  "device.unavailable":
+    "This device is unavailable: background work started by an earlier version may still run on its previous instance, which has not been confirmed destroyed yet, so nothing ran. Retry later (a cloud device becomes usable once its provider confirms the old instance destroyed), continue without the device, or ask the user to start a new conversation on another device.",
+  "device.restart_required":
+    "Background work started by an earlier version may still be running on this device's computer, so nothing ran. Ask the user to restart that computer to finish the upgrade, then retry; or continue without the device.",
+  "device.recreate_required":
+    "Background work started by an earlier version may still be running on an earlier instance of this device, which can no longer be verified as destroyed, so nothing ran. Ask the device's owner to delete the device and create it again, or ask the user to start a new conversation on another device.",
+  "device.replace_required":
+    "Background work started by an earlier version may still be running on this device's computer, which cannot prove a restart, so nothing ran. Ask the device's owner to delete the device and connect the computer again as a new device, or ask the user to start a new conversation on another device.",
+};
 /**
  * A managed operation outside the admitted scope (`SandboxScopeDeniedError`): fixed text, never
  * the refusal's own message (a provider may write it).
@@ -593,6 +597,11 @@ export function mapSandboxError(e: unknown, log: Pick<Logger, "warn"> | undefine
     }
     return new ToolError(SANDBOX_CONNECTION_DROPPED_TEXT, { kind: "unavailable" });
   }
+  if (e instanceof RetirementPendingError) {
+    return new ToolError(
+      RETIREMENT_TOOL_TEXT[e.code] ?? (RETIREMENT_TOOL_TEXT["device.unavailable"] as string),
+    );
+  }
   if (e instanceof ApiError) {
     if (e.code === "sandbox.busy") return new ToolError(BUSY_TEXT);
     if (e.code === "sandbox.unavailable") {
@@ -613,7 +622,6 @@ export function mapSandboxError(e: unknown, log: Pick<Logger, "warn"> | undefine
     if (e.code === "device.files_lost") return new ToolError(ENV_FILES_LOST_TEXT);
     if (e.code === "device.offline") return new ToolError(DEVICE_OFFLINE_TEXT);
     if (e.code === "device.program_outdated") return new ToolError(DEVICE_OUTDATED_TEXT);
-    if (e.code === "device.auto_mode_not_allowed") return new ToolError(AUTO_MODE_TOOL_TEXT);
     if (e.code === "device.full_access_not_allowed")
       return new ToolError(FULL_ACCESS_CEILING_TOOL_TEXT);
     if (FULL_ACCESS_OFF_BY_POLICY_CODES.has(e.code))

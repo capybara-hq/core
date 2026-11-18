@@ -356,7 +356,6 @@
       "credential_invalid": "This computer's connection credential is no longer valid. Connect again on the computer.",
       "policy_refused": "This device does not accept this change from the platform. Change it on the machine.",
       "policy_unsupported": "This device can't change its network settings from the platform. Upgrade the device program on the machine.",
-      "auto_mode_not_allowed": "This device's machine allows Full access, which your organization or the platform does not allow. On that machine, run capybara-device ceiling set --full-access deny --project-reach workspace to turn it off.",
       "mode_on_device": "This device's owner ceiling is kept on its connected computer: narrow it from the device page, or run capybara-device ceiling set on that computer.",
       "mode_requires_session": "A device's mode is changed by its owner on the device page, not with an API token.",
       "project_name_invalid": "This project name is not allowed: use 1-64 characters, not . or .., without / or control characters, and without spaces at either end.",

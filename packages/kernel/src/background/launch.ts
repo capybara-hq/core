@@ -49,10 +49,6 @@ export function newTaskId(): string {
 /** A task id ({@link newTaskId}). */
 export const TASK_ID_RE = /^bt_[a-z2-7]{6}$/;
 
-// Kept only for the SID cleanup on resume in `sandbox.service.ts` (removed by W5-P3a, then this
-// re-export and its file go too).
-export { SESSION_MODE_SCRIPT } from "./legacy-session-mode.js";
-
 /**
  * The artifact of a managed task (permission runtime cutover §"Artifact location decision"):
  * `${workingRoot}/.capybara/tasks/${taskId}.out`, where the working root is the trusted root the

@@ -14,7 +14,7 @@ const ruleOf = (selector: string) =>
   new RegExp(`${selector.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*\\{([^}]*)\\}`).exec(
     display,
   )?.[1] ?? "";
-const COMMAND = "capybara-device mode auto|sandbox";
+const COMMAND = "capybara-device ceiling set --full-access deny";
 
 /** A KeycapCommand in the design's provider (zh: the labels are the design's own). */
 const capybara = (ui: React.ReactElement) =>
@@ -30,7 +30,7 @@ describe("KeycapCommand", () => {
     const caps = document.querySelector('[data-part="keycap-command-caps"]') as HTMLElement;
     expect(
       [...caps.querySelectorAll('[data-part="keycap-command-cap"]')].map((c) => c.textContent),
-    ).toEqual(["capybara-device", "mode", "auto|sandbox"]);
+    ).toEqual(["capybara-device", "ceiling", "set", "--full-access", "deny"]);
     expect(screen.getByText("在这台机器的终端里运行。")).toBeTruthy();
     // one inline row: the hint, the keycaps and the copy button beside them, not a stack
     expect(ruleOf(".cb-keycap")).toMatch(/display:\s*flex/);

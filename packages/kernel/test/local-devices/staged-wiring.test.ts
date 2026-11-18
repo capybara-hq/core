@@ -112,11 +112,9 @@ async function fixture() {
   });
   const provider = new LocalDeviceProvider(
     relay,
-    { orgOf: forbidden, machineRoots: forbidden, machineFeatures: forbidden },
+    { orgOf: forbidden, machineRoots: forbidden },
     { devicePolicy: forbidden, deviceLimits: forbidden },
     config,
-    { forExec: forbidden, reportedMode: forbidden },
-    log,
   );
   const staged = provider.staged({
     call: relay.callV3.bind(relay),

@@ -156,9 +156,6 @@ export interface AuthInjection {
 export type AvailableHook = (typeof HOOKS_AVAILABLE)[number];
 
 // @public
-export const BACKGROUND_LAUNCH_LINE = "# capybara: background task launch";
-
-// @public
 export interface BackgroundReadOutputRequest {
     maxBytes: number;
     offset: number;
@@ -1960,9 +1957,6 @@ export interface InputRequired {
 
 // @public
 export function isAttachmentId(s: unknown): s is string;
-
-// @public
-export function isBackgroundLaunch(command: string): boolean;
 
 // @public
 export function isChannelSendError(e: unknown): e is ChannelSendError;

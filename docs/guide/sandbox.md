@@ -35,9 +35,11 @@ device says what that means in practice. Commands are reviewed in both modes (be
 
 Who chooses what:
 
-- **Super admin**: `devices.autoMode` is `allowed` (the default) or `off`; it can be set in the
-  startup config (environment, file or Nacos, which wins) or in the admin console.
-- **Org admin**: the org setting `autoMode` follows the platform, may turn it off, and may turn it
+- **Super admin**: `devices.fullAccess` (`CAPYBARA_DEVICES__FULL_ACCESS`) is `allowed` (the
+  default) or `off`; it can be set in the startup config (environment, file or Nacos, which wins)
+  or in the admin console. The old key `devices.autoMode` is refused at startup: rename it (same
+  values), or convert a config file with `capybara config migrate-permissions`.
+- **Org admin**: the org setting `fullAccess` follows the platform, may turn it off, and may turn it
   back on only while the platform allows it. The org setting `cloudNetwork` is the cloud device's
   sandbox-mode network (below).
 - **Device owner (local)**: the owner ceiling, `capybara-device ceiling set --full-access

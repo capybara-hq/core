@@ -633,21 +633,6 @@ export class BackgroundTaskStore {
       .execute();
   }
 
-  /**
-   * Finished tasks of a device whose process may still exist (any conversation's: they
-   * share the instance).
-   */
-  async pendingKills(deviceId: string): Promise<BackgroundTaskRow[]> {
-    const rows = await this.db
-      .selectFrom("background_tasks")
-      .selectAll()
-      .where("device_id", "=", deviceId)
-      .where("kill_pending", "=", true)
-      .orderBy("started_at", "asc")
-      .execute();
-    return rows.map(toRow);
-  }
-
   async clearKill(ids: string[]): Promise<void> {
     if (ids.length === 0) return;
     await this.db

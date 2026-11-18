@@ -584,7 +584,7 @@ export class MachinesService {
    * null. When both the stored and the reported summary are readable and what the owner sets
    * changed ({@link localPolicyDiff}) by no `policy` op the platform sent ({@link opExplains}: its
    * answer may come after the machine's own report), the owner changed it on the machine
-   * (`capybara-device mode` / `capybara-device policy ...`): the host changes are audited
+   * (`capybara-device ceiling set ...`): the host changes are audited
    * `device.policy_changed` and the mode change `device.mode_changed`, both `via: "device"`, so the
    * device page lists them beside the platform's changes; one an op explains is not audited here
    * (the op's answer is). A summary reported again is no change. Runs in the caller's transaction,

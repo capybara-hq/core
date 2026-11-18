@@ -175,7 +175,7 @@ describe("DevicesService.modeLevel", () => {
     const deviceId = await legacyLocalDevice("none");
     await sql`UPDATE capybara.orgs SET settings = ${JSON.stringify({ fullAccess: "off" })}::jsonb
       WHERE id = ${orgId}`.execute(raw);
-    // the gate reads `reportedMode`; the policy's ceiling is sandbox: the provider refuses it
+    // the machine reports auto mode while the policy's ceiling is sandbox
     expect(await k.app.get(NetworkGrants).reportedMode(deviceId)).toBe("auto");
     expect(await k.app.get(SandboxService).devicePolicy({ orgId, deviceId })).toMatchObject({
       mode: "sandbox",
@@ -205,7 +205,7 @@ describe("DevicesService.modeLevel", () => {
     expect(devicePathsText(first?.payload as DevicePathsPayload)).toContain(
       "Mode: auto. Commands run as the user on this machine",
     );
-    // the owner ran `capybara-device mode sandbox` and allowed a host: the program pushes it
+    // the owner ran `capybara-device ceiling set --full-access deny` and allowed a host: the program pushes it
     const summary: DeviceLocalPolicySummary = { mode: "sandbox", allowedDomains: ["a.com"] };
     await machines.recordPolicy(machineId, summary);
     expect((await machines.activeFor(deviceId))?.localPolicy).toEqual(summary);

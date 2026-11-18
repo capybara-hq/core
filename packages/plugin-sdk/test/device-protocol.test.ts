@@ -1,10 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
-  BACKGROUND_LAUNCH_LINE,
   DEFAULT_SANDBOX_ROOTS,
   type DeviceLocalPolicySummary,
   DeviceProtocolError,
-  isBackgroundLaunch,
   isDeviceBootId,
   isDeviceProjectName,
   type LegacyDeviceHello,
@@ -815,17 +813,5 @@ describe("device protocol", () => {
         );
       }
     });
-  });
-});
-
-describe("isBackgroundLaunch", () => {
-  it("is true only for a command whose first line is the launch line", () => {
-    expect(BACKGROUND_LAUNCH_LINE.startsWith("#")).toBe(true);
-    expect(isBackgroundLaunch(`${BACKGROUND_LAUNCH_LINE}\nset -e`)).toBe(true);
-    expect(isBackgroundLaunch(BACKGROUND_LAUNCH_LINE)).toBe(true);
-    expect(isBackgroundLaunch(`${BACKGROUND_LAUNCH_LINE} x\nset -e`)).toBe(false);
-    expect(isBackgroundLaunch(`echo hi\n${BACKGROUND_LAUNCH_LINE}`)).toBe(false);
-    expect(isBackgroundLaunch(` ${BACKGROUND_LAUNCH_LINE}\n`)).toBe(false);
-    expect(isBackgroundLaunch("sleep 300 &")).toBe(false);
   });
 });

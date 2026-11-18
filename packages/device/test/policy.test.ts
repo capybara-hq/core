@@ -4,15 +4,7 @@ import { join } from "node:path";
 import type { SandboxLimits } from "@capybara-hq/plugin-sdk";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { describeCeiling, policyCommand } from "../src/commands/policy.js";
-import {
-  DENIED_SECRET_PATHS,
-  deniedSecretPaths,
-  effectiveEgress,
-  effectiveMode,
-  grantedHosts,
-  implicitWritePaths,
-  srtConfig,
-} from "../src/policy.js";
+import { effectiveEgress, effectiveMode, grantedHosts } from "../src/policy.js";
 import {
   DEFAULT_POLICY,
   ownerCeilingOfMode,
@@ -117,61 +109,6 @@ describe("grantedHosts", () => {
 
   it("is empty without grants", () => {
     expect(grantedHosts(limits("sandbox", ["a.com"]), undefined)).toEqual([]);
-  });
-});
-
-describe("srtConfig", () => {
-  const roots = { workspace: "/d/w", skills: "/d/s", tmp: "/d/t" };
-
-  it("is the strict profile: workspace and tmp writable, skills read only", () => {
-    const c = srtConfig(roots, ["a.com"], { home: "/home/u" });
-    expect(c.filesystem.allowWrite).toEqual(["/d/w", "/d/t"]);
-    expect(c.filesystem.denyWrite).toEqual(
-      expect.arrayContaining([
-        "/d/s",
-        "/tmp/claude",
-        "/private/tmp/claude",
-        "/home/u/.npm/_logs",
-        "/home/u/.claude/debug",
-        "/d/w/.git/hooks/**",
-        "/d/w/.git/config",
-        "/d/t/**/.git/hooks/**",
-        "/d/t/**/.git/config",
-      ]),
-    );
-    expect(c.filesystem.denyRead).toEqual(expect.arrayContaining(deniedSecretPaths("/home/u")));
-    expect(c.network.allowedDomains).toEqual(["a.com"]);
-    expect(c.network.deniedDomains).toEqual([]);
-    expect(c.network).not.toHaveProperty("allowLocalBinding");
-    expect(c.network).not.toHaveProperty("allowUnixSockets");
-    expect(c.filesystem).not.toHaveProperty("allowGitConfig");
-  });
-
-  it("adds extra denied paths (the program's own state directory)", () => {
-    const c = srtConfig(roots, [], { denyRead: ["/state"] });
-    expect(c.filesystem.denyRead).toContain("/state");
-  });
-
-  it("keeps the spec's secret paths and browser profiles", () => {
-    for (const p of [
-      "~/.ssh",
-      "~/.aws",
-      "~/.config/gcloud",
-      "~/.azure",
-      "~/.kube",
-      "~/.docker/config.json",
-      "~/.netrc",
-      "~/.gnupg",
-      "~/.config/gh",
-      "~/.git-credentials",
-      "~/.npmrc",
-      "~/Library/Keychains",
-      "~/Library/Safari",
-    ]) {
-      expect(DENIED_SECRET_PATHS).toContain(p);
-    }
-    expect(deniedSecretPaths("/home/u")).toContain("/home/u/.ssh");
-    expect(implicitWritePaths("/home/u")).toContain("/home/u/.npm/_logs");
   });
 });
 

@@ -600,7 +600,7 @@ export class DevicesService {
       if (before.source !== "cloud") {
         throw new ApiError(
           "device.mode_on_device",
-          "This device's mode is kept on its connected machine: switch to sandbox mode from the device page (sent to the machine) or run capybara-device mode sandbox there.",
+          "This device's owner ceiling is kept on its connected computer: narrow it from the device page, or run capybara-device ceiling set --full-access deny --project-reach workspace on that computer.",
         );
       }
       if ((before.mode ?? null) !== patch.mode) {

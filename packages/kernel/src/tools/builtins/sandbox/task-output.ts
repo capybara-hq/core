@@ -214,37 +214,6 @@ export function unavailableText(task: BackgroundTaskRow, r: IfRunningResult<unkn
   return "[Output unavailable: the sandbox that ran this task is gone, and its output with it.]";
 }
 
-/**
- * How many bytes before the read offset a `TaskOutput` read also reads again, so a prompt split
- * across reads still matches: `gh auth login --web` prints its one-time code and its URL line
- * separately, and a read that lands between them (or a read cap that splits them) otherwise sees
- * only one half, and no later read sees both. The tail only ever holds this many already-delivered
- * bytes, whatever the task's output size: a read's buffer stays bounded.
- */
-export const READ_TAIL_BYTES = 4096;
-
-/** The byte window one `TaskOutput` read covers. */
-export interface ReadWindow {
-  /** Where the read exec starts (the output offset minus at most {@link READ_TAIL_BYTES}). */
-  offset: number;
-  /** How many bytes the exec reads from there. */
-  cap: number;
-  /** How many of the returned bytes were already delivered by earlier reads. */
-  skip: number;
-}
-
-/**
- * The window of a read at `offset` (the output bytes already delivered) with `cap` new bytes: it
- * starts up to {@link READ_TAIL_BYTES} earlier, and the first `skip` bytes of what it returns were
- * delivered already, so the parser can match a pattern spanning the boundary. Bounded: the window
- * is `cap + READ_TAIL_BYTES` bytes at most, never more as the output grows.
- */
-export function readWindow(offset: number, cap: number): ReadWindow {
-  const start = Math.max(0, offset - READ_TAIL_BYTES);
-  const skip = offset - start;
-  return { offset: start, cap: cap + skip, skip };
-}
-
 /** How a running task ended, as the poller would finish it. */
 interface End {
   to: BackgroundFinish;
