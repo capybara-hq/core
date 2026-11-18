@@ -15,6 +15,7 @@ import { IdentityModule } from "../identity/identity.module.js";
 import { LockService } from "../infra/lock/lock.service.js";
 import { QueueModule } from "../infra/queue/queue.module.js";
 import { REDIS } from "../infra/tokens.js";
+import { OrgSettingsModule } from "../orgs/settings.service.js";
 import { OperationAuthorityModule } from "../sandbox/operation-authority.module.js";
 import { PermissionAuthorityModule } from "../sandbox/permission-authority.module.js";
 import { SandboxModule } from "../sandbox/sandbox.module.js";
@@ -80,6 +81,8 @@ import { Waits } from "./waits.js";
     UsageReportModule,
     TitlesModule,
     PromptSuggestionsModule,
+    // the stream reads the org's prompt suggestion switch
+    OrgSettingsModule,
     StepLogModule,
     BackgroundModule,
     // a scheduled task's run follows its kernel run's end (`RunFinish`)

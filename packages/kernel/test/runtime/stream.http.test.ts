@@ -6,6 +6,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vites
 import type { KernelConfig } from "../../src/config/schema.js";
 import { conversationTopic, EventLog } from "../../src/conversations/event-log.js";
 import type { ConversationEvent } from "../../src/conversations/events.js";
+import { PromptSuggestionStore } from "../../src/conversations/prompt-suggestion-store.js";
 import { createBus, createBusSubscriber } from "../../src/ctx/bus.js";
 import { createKeyring } from "../../src/ctx/secrets.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
@@ -359,6 +360,8 @@ describe("会话 SSE（单副本 api+worker）", () => {
           return [];
         },
       },
+      k.app.get(PromptSuggestionStore),
+      { promptSuggestionsEnabled: async () => true },
     );
     vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
     try {
@@ -445,6 +448,124 @@ describe("会话 SSE（单副本 api+worker）", () => {
     } finally {
       s.close();
     }
+  });
+
+  describe("prompt suggestions", () => {
+    const suggestionsIn = (msgs: SseMessage[]) =>
+      msgs
+        .filter((m) => m.event === "suggestion")
+        .map(
+          (m) => JSON.parse(m.data as string) as { runId: string; afterSeq: number; text: string },
+        );
+    const publish = (message: unknown) =>
+      redis.publish(`cap:kernel:${conversationTopic(convId)}`, JSON.stringify(message));
+    /** Resolves once the stream has processed everything queued before a `changed` hint. */
+    const drained = async (s: SseClient) => {
+      await publish({ kind: "changed", what: "title" });
+      await s.until((m) => m.some((x) => x.event === "changed"), 10_000, "changed frame");
+    };
+    /** A completed run whose suggestion is stored (the model-fake `suggest:` line). */
+    async function suggested(): Promise<{ runId: string; afterSeq: number }> {
+      await postMessage(owner.req, orgId, convId, "suggest:Next step");
+      const stored = await waitFor(
+        async () => k.app.get(PromptSuggestionStore).get(convId),
+        15_000,
+        "stored suggestion",
+      );
+      return { runId: stored.runId, afterSeq: stored.afterSeq };
+    }
+
+    it("a published prompt_suggestion reaches an open stream as `event: suggestion`", async () => {
+      const s = await openSse(streamUrl(k, orgId, convId), { cookie: owner.cookie() });
+      try {
+        await publish({
+          kind: "prompt_suggestion",
+          conversationId: convId,
+          runId: "run-x",
+          afterSeq: 7,
+          text: "Run the tests",
+        });
+        await s.until((m) => m.some((x) => x.event === "suggestion"), 10_000, "suggestion frame");
+        expect(suggestionsIn(s.messages)).toEqual([
+          { runId: "run-x", afterSeq: 7, text: "Run the tests" },
+        ]);
+      } finally {
+        s.close();
+      }
+    });
+
+    it("drops a malformed prompt_suggestion message", async () => {
+      const s = await openSse(streamUrl(k, orgId, convId), { cookie: owner.cookie() });
+      try {
+        const base = { kind: "prompt_suggestion", conversationId: convId, runId: "r", text: "t" };
+        await publish({ ...base, afterSeq: 1.5 });
+        await publish({ ...base, afterSeq: "3" });
+        await publish({ ...base, afterSeq: 3, text: 5 });
+        await publish({
+          kind: "prompt_suggestion",
+          conversationId: convId,
+          afterSeq: 3,
+          text: "t",
+        });
+        await drained(s);
+        expect(suggestionsIn(s.messages)).toEqual([]);
+      } finally {
+        s.close();
+      }
+    });
+
+    it("sends a fresh stored suggestion after the catch-up on open", async () => {
+      const { runId, afterSeq } = await suggested();
+      const s = await openSse(streamUrl(k, orgId, convId), { cookie: owner.cookie() });
+      try {
+        await s.until((m) => m.some((x) => x.event === "suggestion"), 10_000, "suggestion frame");
+        expect(suggestionsIn(s.messages)).toEqual([{ runId, afterSeq, text: "Next step" }]);
+        const frame = s.messages.findIndex((x) => x.event === "suggestion");
+        const finished = s.messages.findIndex(
+          (x) => x.event === "event" && JSON.parse(x.data as string).type === "run_finished",
+        );
+        expect(finished).toBeGreaterThanOrEqual(0);
+        expect(finished).toBeLessThan(frame);
+      } finally {
+        s.close();
+      }
+    });
+
+    it("a stale stored suggestion is not sent and its key is deleted", async () => {
+      const { runId } = await suggested();
+      const store = k.app.get(PromptSuggestionStore);
+      // afterSeq 0: the log has a user_message above it
+      await store.put(convId, { runId, afterSeq: 0, text: "Old", createdAt: Date.now() });
+      const s = await openSse(streamUrl(k, orgId, convId), { cookie: owner.cookie() });
+      try {
+        await waitFor(async () => (await store.get(convId)) === null, 10_000, "key deleted");
+        await drained(s);
+        expect(suggestionsIn(s.messages)).toEqual([]);
+      } finally {
+        s.close();
+      }
+    });
+
+    it("sends nothing on open while the org switch is off", async () => {
+      const { runId, afterSeq } = await suggested();
+      const res = await owner.req({
+        method: "PATCH",
+        url: `/api/v1/orgs/${orgId}/settings`,
+        payload: { promptSuggestions: "off" },
+      });
+      expect(res.statusCode, res.body).toBe(200);
+      const s = await openSse(streamUrl(k, orgId, convId), { cookie: owner.cookie() });
+      try {
+        await drained(s);
+        expect(suggestionsIn(s.messages)).toEqual([]);
+        expect(await k.app.get(PromptSuggestionStore).get(convId)).toMatchObject({
+          runId,
+          afterSeq,
+        });
+      } finally {
+        s.close();
+      }
+    });
   });
 
   it("a compaction progress bus message reaches the stream as `event: compaction`", async () => {
