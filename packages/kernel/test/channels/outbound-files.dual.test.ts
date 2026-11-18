@@ -30,8 +30,9 @@ import { enableExtensions, eventsOf, PW, waitFor } from "../helpers/runs.js";
  * platform answers, and the other replica resends it with the same idempotency key, so the chat
  * shows the file once; a replica that stops while a delivery waits for a file slot hands the job
  * back without a link line, and another replica delivers the file. Both replicas share PG, Redis
- * and the object store (`fake-object-store` on SeaweedFS); the job lock, stalled detection and the
- * delivery lease are shortened to 2 s / 1 s / 3 s.
+ * and the object store (`fake-object-store` on SeaweedFS); the job lock (which the delivery lock
+ * follows) and stalled detection are shortened to 2 s / 1 s, the gateway's long-connection lease
+ * to 3 s.
  */
 
 const CHAN_MINI = fileURLToPath(new URL("../fixtures/plugins/chan-mini/index.ts", import.meta.url));
@@ -286,22 +287,27 @@ describe("channel file delivery (dual replica)", () => {
     // after the image (the reply) has reached the chat
     platform.push(connId, group("b1", "u-owner", GENERATE, { chatId: "grp-b" }));
     const convB = await convOf("grp-b");
-    await waitFor(
-      async () =>
-        (await runsDone(convB)) &&
-        (await runsDone(convA)) &&
-        (await eventsOf(db, convB)).some((e) => e.type === "artifact_created") &&
-        (await jobsOf(convB, ["active"])).length > 0,
+    const waiting = await waitFor(
+      async () => {
+        if (!(await runsDone(convB)) || !(await runsDone(convA))) return undefined;
+        if (!(await eventsOf(db, convB)).some((e) => e.type === "artifact_created"))
+          return undefined;
+        const active = await jobsOf(convB, ["active"]);
+        return active.length > 0 ? active.map((j) => j.id) : undefined;
+      },
       30_000,
       "chat B's delivery waiting for the file slot",
     );
     expect(textsTo("grp-b")).toHaveLength(0);
     expect(filesTo("grp-b")).toHaveLength(0);
 
-    // Stop replica 0: chat B's delivery is handed back (not turned into a link line)
+    // Stop replica 0: chat B's delivery is handed back (not turned into a link line). Replica 1
+    // runs no worker, so no stalled check moves a job left active: only the hand-back empties
+    // `active`. (A later event, such as the title's usage, may have queued a second job behind it.)
     await harness.stopReplica(0);
-    // (a later event, such as the title's usage, may have queued a second job behind it)
-    expect((await jobsOf(convB, ["waiting", "delayed"])).length).toBeGreaterThan(0);
+    expect(await jobsOf(convB, ["active"])).toHaveLength(0);
+    const handedBack = new Set((await jobsOf(convB, ["waiting", "delayed"])).map((j) => j.id));
+    expect(waiting.some((id) => handedBack.has(id))).toBe(true);
     expect(textsTo("grp-b")).toHaveLength(0);
     expect(filesTo("grp-b")).toHaveLength(0);
 

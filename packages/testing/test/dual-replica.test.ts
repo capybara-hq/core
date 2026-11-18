@@ -197,6 +197,21 @@ describe("双副本测试工具", { timeout: 60_000 }, () => {
     expect(alive(b.pid)).toBe(false);
   });
 
+  it("stopReplica(i): a graceful stop (exit code 0); requests to it throw, the other replica works; stop stays idempotent", async () => {
+    const h = await harness("whoami");
+    const [a, b] = h.replicas;
+    await h.stopReplica(0);
+    expect(alive(a.pid)).toBe(false);
+    expect(alive(b.pid)).toBe(true);
+    // request 1 goes to replica 0 (stopped) and throws; request 2 reaches replica 1
+    await expect(h.request("/plugins/whoami/pid")).rejects.toThrow(/replica 0 .*code 0/);
+    const r = await h.request("/plugins/whoami/pid");
+    expect(((await r.json()) as { pid: number }).pid).toBe(b.pid);
+    await h.stopReplica(0);
+    await h.stop();
+    expect(alive(b.pid)).toBe(false);
+  });
+
   it("插件启动失败时 start 以 stderr 尾部 reject，且不泄露配置", async () => {
     await expect(
       createDualReplicaHarness({ extensions: ["/nonexistent/plugin.ts"], pgUrl: pgc.url }),

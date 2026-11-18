@@ -128,7 +128,9 @@ export interface Harness {
   kill(index: number): Promise<void>;
   /**
    * Stops replica `index` gracefully, through the kernel's own shutdown (as `stop()` does for all of
-   * them: SIGKILL after 15 s), and waits for it to exit; the other replicas keep working. A no-op
+   * them), and waits for it to exit; the other replicas keep working. A stop stuck for 10 s ends
+   * with the replica's own forced exit (code 1), and the harness SIGKILLs it after 15 s. Like after
+   * `kill`, `request()` keeps rotating to the stopped replica and requests to it throw. A no-op
    * when it already exited.
    */
   stopReplica(index: number): Promise<void>;
