@@ -190,6 +190,10 @@ describe("ctx.models.generateImage: admission", () => {
       expect((e as ApiError).code).toBe("model.purpose_unknown");
       const d = await rejection(ctx().models.describe({ orgId, purpose }));
       expect((d as ApiError).code).toBe("model.purpose_unknown");
+      // an undeclared purpose has no kind: the refusal names none
+      expect((d as ApiError).message).toBe(
+        `Extension image-consumer declared no model purpose "${purpose}" in permissions.models`,
+      );
     }
     expect((await probeRequests()).count).toBe(before);
     expect(await usageRows()).toEqual([]);

@@ -41,6 +41,7 @@ import {
 } from "kysely";
 import { conversationTopic } from "../conversations/event-log.js";
 import { kernelDb } from "../db/kernel-schema.js";
+import { ApiError } from "../errors.js";
 import { enabledExtensionsQuery, isExtensionEnabled } from "../extensions/enabled.js";
 import { checkHookRegistration, type RegisteredHook } from "../extensions/hooks.js";
 import { RegistrationLedger } from "../extensions/ledger.js";
@@ -486,11 +487,17 @@ export function createExtensionContext(
               deps.hooks,
             );
           },
-          // by the declared purpose's kind; an undeclared purpose (or one of another kind) is
-          // refused by the embeddings broker (model.purpose_unknown)
+          // by the declared purpose's kind; an undeclared purpose has none, so its refusal
+          // (model.purpose_unknown) names no kind
           describe: async (req) => {
             if (!deps.models) throw new Error(`plugin ${name}: ctx.models is not available`);
             const kind = declaredModels.find((d) => d.purpose === req?.purpose)?.kind;
+            if (kind === undefined && typeof req?.purpose === "string") {
+              throw new ApiError(
+                "model.purpose_unknown",
+                `Extension ${name} declared no model purpose "${req.purpose}" in permissions.models`,
+              );
+            }
             return kind === "image_generation"
               ? deps.models.images.describeForExtension(name, declaredModels, req)
               : deps.models.embeddings.describe(name, declaredModels, req);

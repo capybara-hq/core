@@ -16,6 +16,7 @@ import { type EventPayload, isValidArtifactName } from "../../../conversations/e
 import type { KernelSchemaDb } from "../../../db/kernel-schema.js";
 import { ApiError } from "../../../errors.js";
 import type { KernelConfigService } from "../../../infra/config/kernel-config.service.js";
+import { IMAGE_PURPOSE, imagePurposeUsable } from "../../../models/image-usable.js";
 import {
   billedImages,
   ImageCallDenied,
@@ -59,7 +60,7 @@ import { READ_MAX_BYTES } from "../sandbox/read.js";
 import { generateImagePaths } from "./paths.js";
 
 /** The model purpose the tool calls (image generation spec §5.4; no fallback). */
-const PURPOSE = "image";
+const PURPOSE = IMAGE_PURPOSE;
 
 /** The most reference images one call names (the schema's `maxItems`). */
 const MAX_REFERENCES = 4;
@@ -208,17 +209,6 @@ export interface GenerateImageDeps {
   sandbox: SandboxToolDeps;
 }
 
-/** Whether the org's `image` purpose resolves to an image model the org can call now. */
-async function imageModelUsable(deps: GenerateImageDeps, orgId: string): Promise<boolean> {
-  try {
-    const target = await deps.purposes.resolve(orgId, PURPOSE);
-    await deps.providers.resolve(orgId, target.model, { kind: "image_generation" });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
 /**
  * The builtin `GenerateImage` (image generation spec §5.3): generates images with the org's
  * `image` purpose model ({@link ModelImages}), stores them as artifacts of the conversation as
@@ -235,9 +225,11 @@ export function generateImageTool(deps: GenerateImageDeps): BuiltinTool {
     spec: GENERATE_IMAGE_SPEC,
     // the admins mapped a model to the purpose on purpose: that is the opt-in (spec §5.3)
     defaultPolicy: "allow",
+    // the predicate the agent form's purpose availability reads too (one rule, no drift)
     unavailable: async (scope) => {
-      if (!(await imageModelUsable(deps, scope.orgId))) return NO_IMAGE_MODEL_REASON;
-      return deps.storage.available ? null : NO_STORAGE_REASON;
+      const usable = await imagePurposeUsable(deps, scope.orgId);
+      if (usable === "no-model") return NO_IMAGE_MODEL_REASON;
+      return usable === "no-storage" ? NO_STORAGE_REASON : null;
     },
     timeoutMs: () => deps.config.get().models.imageTimeoutMs + 60_000,
     async run(raw, ctx) {

@@ -21,7 +21,7 @@ import { RecordedToolPipeline, recordedCalls } from "../../src/evals/recorded-to
 import type { CaseSnapshot } from "../../src/evals/snapshot.js";
 import { ModelImages } from "../../src/models/images.js";
 import { assistantIdemKey } from "../../src/runtime/model-call.js";
-import { ProviderRegistry } from "../../src/runtime/providers.js";
+import { ProviderListError, ProviderRegistry } from "../../src/runtime/providers.js";
 import { StorageService } from "../../src/storage/storage.service.js";
 import { NO_STORAGE_REASON } from "../../src/tools/builtins/artifacts.js";
 import { BuiltinTools } from "../../src/tools/builtins/builtin-tools.js";
@@ -385,6 +385,16 @@ describe("GenerateImage availability", () => {
   it("hidden without object storage", async () => {
     vi.spyOn(k.app.get(StorageService), "available", "get").mockReturnValue(false);
     expect(await tool().unavailable?.({ orgId })).toBe(NO_STORAGE_REASON);
+  });
+
+  it("hidden while the provider's model list fails; a kernel fault is not hidden but thrown", async () => {
+    const registry = k.app.get(ProviderRegistry);
+    const spy = vi
+      .spyOn(registry, "resolve")
+      .mockRejectedValue(new ProviderListError("model-fake", new Error("list down")));
+    expect(await tool().unavailable?.({ orgId })).toBe(NO_IMAGE_MODEL_REASON);
+    spy.mockRejectedValue(new Error("kernel fault"));
+    await expect(tool().unavailable?.({ orgId })).rejects.toThrow("kernel fault");
   });
 
   it("listed once mapped", async () => {

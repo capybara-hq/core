@@ -4,6 +4,7 @@ import { IdentityModule } from "../identity/identity.module.js";
 import { OrgLockModule } from "../orgs/org-lock.js";
 import { ProvidersModule } from "../runtime/providers.js";
 import { UsageReportJobsModule } from "../runtime/usage-report-jobs.js";
+import { StorageModule } from "../storage/storage.module.js";
 import { ModelEmbeddings } from "./embeddings.js";
 import { ModelEnablementModule } from "./enablement.js";
 import { ModelImages } from "./images.js";
@@ -25,6 +26,8 @@ import { ModelPurposesService } from "./purposes.js";
     ModelEnablementModule,
     // an extension model call's `usage.report` delivery, owed with its `model_usage` row (no queue)
     UsageReportJobsModule,
+    // the `image` purpose's availability needs an object store (GenerateImage delivers there)
+    StorageModule,
   ],
   providers: [PricesService, ModelPurposesService, ModelEmbeddings, ModelImages],
   exports: [

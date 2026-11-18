@@ -1,6 +1,7 @@
 import {
   type ContentBlock,
   type LocalizedName,
+  type Logger,
   type ModelRequest,
   type ModelUsage,
   type ParamValue,
@@ -18,11 +19,14 @@ import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
+import { KERNEL_LOGGER } from "../infra/tokens.js";
 import { createZodDto } from "../infra/validation/create-zod-dto.js";
 import { OrgLock } from "../orgs/org-lock.js";
 import { estimateTokens } from "../runtime/context/tokens.js";
 import { consumeModelStream } from "../runtime/model-call.js";
 import { ProviderListError, ProviderRegistry } from "../runtime/providers.js";
+import { StorageService } from "../storage/storage.service.js";
+import { IMAGE_PURPOSE, imagePurposeUsable } from "./image-usable.js";
 
 /**
  * 模型用途映射（C9）：内核与插件按「用途」取模型，不在代码里写死模型。
@@ -190,6 +194,9 @@ export class ModelPurposesService {
     @Inject(TransactionHost) readonly txHost: TransactionHost,
     @Inject(SuperAdminLock) private readonly adminLock: SuperAdminLock,
     @Inject(OrgLock) private readonly orgLock: OrgLock,
+    /** The `image` purpose's availability needs an object store (`GenerateImage` delivers there). */
+    @Inject(StorageService) private readonly storage: Pick<StorageService, "available">,
+    @Inject(KERNEL_LOGGER) private readonly log: Pick<Logger, "warn">,
   ) {}
 
   /** 全部已声明的用途：内核的在前，其后按插件加载顺序。 */
@@ -259,11 +266,21 @@ export class ModelPurposesService {
   /**
    * Whether each purpose (kernel and extension-declared) resolves to a usable model for the org
    * now, as {@link resolve} decides, without naming the model (the agent form's gate for
-   * `GenerateImage`, readable by every member).
+   * `GenerateImage`, readable by every member). The `image` purpose reads `GenerateImage`'s own
+   * predicate ({@link imagePurposeUsable}: an image model callable now and an object store).
    */
   async availability(orgId: string): Promise<{ purpose: string; available: boolean }[]> {
     const out: { purpose: string; available: boolean }[] = [];
     for (const d of this.declared()) {
+      if (d.purpose === IMAGE_PURPOSE) {
+        // `GenerateImage`'s own predicate: the form offers the tool exactly when it is listed
+        const usable = await imagePurposeUsable(
+          { purposes: this, providers: this.providers, storage: this.storage, log: this.log },
+          orgId,
+        );
+        out.push({ purpose: d.purpose, available: usable === "usable" });
+        continue;
+      }
       const available = await this.resolve(orgId, d.purpose).then(
         () => true,
         (e: unknown) => {

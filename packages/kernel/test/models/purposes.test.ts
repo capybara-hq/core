@@ -1,7 +1,7 @@
 import { fileURLToPath } from "node:url";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { ApiError } from "../../src/errors.js";
@@ -12,6 +12,7 @@ import {
   withDeclaredByNames,
 } from "../../src/models/purposes.js";
 import { ProviderListError, ProviderRegistry } from "../../src/runtime/providers.js";
+import { StorageService } from "../../src/storage/storage.service.js";
 import { evalModelState, resetEvalModel } from "../fixtures/plugins/model-eval/index.js";
 import { truncateTables } from "../helpers/db.js";
 import { accountsFor } from "../helpers/identity.js";
@@ -601,7 +602,15 @@ describe("purpose availability for a member", () => {
     return purposes.find((p) => p.purpose === "image")?.available;
   };
 
+  /** The kernel here has no object store: `GenerateImage` needs one, so it is faked available. */
+  const withStorage = (available = true) =>
+    vi.spyOn(k.app.get(StorageService), "available", "get").mockReturnValue(available);
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
   it("a plain member reads false unmapped, true once mapped, false once the target is disabled", async () => {
+    withStorage();
     // not an org.models.manage action: the full list refuses the member
     expect((await alice({ method: "GET", url: orgUrl() })).statusCode).toBe(403);
     expect(await imageAvailable(alice)).toBe(false);
@@ -616,6 +625,28 @@ describe("purpose availability for a member", () => {
         })
       ).statusCode,
     ).toBe(200);
+    expect(await imageAvailable(alice)).toBe(false);
+  });
+
+  it("image reads false without object storage, as GenerateImage is unavailable then", async () => {
+    await put(admin, orgUrl("image"), FAKE_IMAGE);
+    withStorage(true);
+    expect(await imageAvailable(alice)).toBe(true);
+    withStorage(false);
+    expect(await imageAvailable(alice)).toBe(false);
+  });
+
+  it("image reads false while the provider's model list fails, as for GenerateImage", async () => {
+    await put(admin, orgUrl("image"), FAKE_IMAGE);
+    withStorage();
+    const registry = k.app.get(ProviderRegistry);
+    const original = registry.resolve.bind(registry);
+    vi.spyOn(registry, "resolve").mockImplementation(async (...args) => {
+      if (args[1].provider === "model-fake") {
+        throw new ProviderListError("model-fake", new Error("list down"));
+      }
+      return original(...args);
+    });
     expect(await imageAvailable(alice)).toBe(false);
   });
 });
