@@ -175,6 +175,16 @@ export class BackgroundTaskStopper {
    * running (never resumed) or was replaced leaves the cancellation owed. Who asked is recorded,
    * so a later finish keeps their wake rule.
    */
+  /** `conversation_deleted` when the task's conversation is deleted, else null. */
+  private async deletedConversationStop(cur: BackgroundTaskRow): Promise<CancelRequester | null> {
+    const row = await this.db.db
+      .selectFrom("conversations")
+      .select("deleted_at")
+      .where("id", "=", cur.conversationId)
+      .executeTakeFirst();
+    return row === undefined || row.deleted_at !== null ? "conversation_deleted" : null;
+  }
+
   private async stopManaged(
     cur: BackgroundTaskRow,
     why: StopReason,
@@ -183,8 +193,10 @@ export class BackgroundTaskStopper {
   ): Promise<BackgroundTaskRow> {
     if (cur.status !== "running") return cur;
     const asker: CancelRequester | null = why === "revoked" ? null : why;
-    // the first asker's wake rule holds for the finish, whoever applies the stop
-    const by = cur.cancelRequestedBy ?? asker;
+    // the first asker's wake rule holds for the finish, whoever applies the stop; a revocation
+    // that wins the race against its conversation's deletion stop is still the deletion's (its
+    // finish must never wake anything)
+    const by = cur.cancelRequestedBy ?? asker ?? (await this.deletedConversationStop(cur));
     if (cur.executionRef === null) {
       if (asker !== null) await this.store.requestCancel(cur.id, asker, false);
       return (await this.store.get(cur.id)) ?? cur;

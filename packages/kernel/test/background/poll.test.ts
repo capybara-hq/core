@@ -877,6 +877,26 @@ describe("stopping", () => {
       expect(await alive({ orgId, conversationId: conv }, t)).toBe(false);
     });
 
+    it("a revocation that stops a task of a deleted conversation first still marks the stop the deletion's", async () => {
+      const conv = await createConv(owner, orgId, agentId);
+      used.push(conv);
+      const owned = await db
+        .selectFrom("conversations")
+        .select("account_id")
+        .where("id", "=", conv)
+        .executeTakeFirstOrThrow();
+      const t = await launchIdle(conv, owned.account_id, "sleep 319");
+      // the deletion committed; its revocation reaches the task before the deletion's own stop
+      await sql`UPDATE capybara.conversations SET deleted_at = now() WHERE id = ${conv}`.execute(
+        raw,
+      );
+      const stopped = await k.app.get(BackgroundTaskStopper).stop(t, "revoked");
+      expect(stopped.status).toBe("stopped");
+      expect((await finishedEvents(conv, t.id)).map((e) => e.payload)).toMatchObject([
+        { status: "stopped", reported: false, stoppedBy: "deletion" },
+      ]);
+    });
+
     it("deleting an idle conversation with a running task wakes no run (I1)", async () => {
       const conv = await createConv(owner, orgId, agentId);
       used.push(conv);
