@@ -1,5 +1,8 @@
 import {
   type DiffData,
+  type ImageRatio,
+  isImageRatio,
+  isInlineImageType,
   type SubagentFinishStatus,
   type SubagentRowData,
   type SubagentWaitKind,
@@ -33,7 +36,9 @@ import { toolLabel, toolLabelOfKey, toolLabelText } from "./tool-label";
  * - A call's `artifact_created` files and its inline card (`tool_result.card`) land right after the
  *   group that holds the call (files first), then its network facts (`network_blocked` hosts of the
  *   `org` and `address` layers; `device`-layer hosts are asked about in an approval instead), then
- *   a `device_code` card (`gh auth login --web`).
+ *   a `device_code` card (`gh auth login --web`). Inline images of a group stand in call order
+ *   (not log order); while a `GenerateImage` call runs (started, not waiting for a person), its
+ *   images still missing are `generating` slots that the images replace in place.
  * - `hook_denied` with a `callId` marks that row as blocked by the extension.
  * - Every run that ended (`run_finished`, `run_failed`, `run_aborted`) becomes a `run` entry at its
  *   terminal event: its model (the last `model_call`, else `run_started`), duration and tokens (its
@@ -391,7 +396,13 @@ export type TimelineEntry =
       url: string;
       code: string;
     }
-  | { kind: "files"; key: string; files: FileRef[] }
+  | {
+      /** A group's files: inline images (and generating placeholders) in call order, then the rest. */
+      kind: "files";
+      key: string;
+      images: ImageSlot[];
+      others: FileRef[];
+    }
   | ({ kind: "divider"; key: string } & DividerData)
   | {
       /** A background task ended (`background_task_finished`): a one-line notice that opens it. */
@@ -404,6 +415,21 @@ export type TimelineEntry =
     }
   | ({ kind: "run"; key: string } & RunData);
 
+/**
+ * One inline image place: a delivered image, or a placeholder for an image a running
+ * `GenerateImage` call has not produced yet (`index` 0-based within the call, `count` requested).
+ */
+export type ImageSlot =
+  | { kind: "image"; file: FileRef; ratio: ImageRatio | null }
+  | {
+      kind: "generating";
+      key: string;
+      callId: string;
+      ratio: ImageRatio | null;
+      index: number;
+      count: number;
+    };
+
 /** A streaming draft (`event: delta`), not in the log yet. */
 export interface TimelineDraft {
   runId: string;
@@ -415,6 +441,13 @@ export interface TimelineDraft {
 const TERMINAL = new Set<ConversationEvent["type"]>(["run_finished", "run_failed", "run_aborted"]);
 /** The builtin tool that dispatches sub-agents. */
 export const AGENT_TOOL = "Agent";
+/** The builtin image tool: while it runs, its images show as placeholders. */
+export const GENERATE_IMAGE_TOOL = "GenerateImage";
+/** How many images a `GenerateImage` call asked for: `n` when an integer 1–4, else 1. */
+function wantedImages(input: unknown): number {
+  const n = asRecord(input).n;
+  return typeof n === "number" && Number.isInteger(n) && n >= 1 && n <= 4 ? n : 1;
+}
 /** The builtin question tool: its row reads "已提问 <header>" (design kind `question`, §6.16.9). */
 export const QUESTION_TOOL = "AskUserQuestion";
 /** The builtin shell tool; `run_in_background: true` makes a background task. */
@@ -766,7 +799,7 @@ export function buildEventTimeline(
   };
   const modelDenials = new Map<string, { plugin: string; reason: string }>();
   /** Group key → files delivered by its calls / cards of its calls. */
-  const groupFiles = new Map<string, FileRef[]>();
+  const groupFiles = new Map<string, { callKey: string; file: FileRef }[]>();
   const groupCards = new Map<string, Extract<TimelineEntry, { kind: "card" }>[]>();
   /** Group key → the network facts of its calls. */
   const groupFacts = new Map<string, Extract<TimelineEntry, { kind: "network-facts" }>[]>();
@@ -1276,10 +1309,16 @@ export function buildEventTimeline(
         };
         if (c) {
           const list = groupFiles.get(c.group) ?? [];
-          list.push(f);
+          list.push({ callKey: callKey(e.runId, e.payload.callId), file: f });
           groupFiles.set(c.group, list);
         } else {
-          out.push({ kind: "files", key, files: [f] });
+          const inline = isInlineImageType(f.contentType);
+          out.push({
+            kind: "files",
+            key,
+            images: inline ? [{ kind: "image", file: f, ratio: null }] : [],
+            others: inline ? [] : [f],
+          });
         }
         break;
       }
@@ -1683,19 +1722,50 @@ export function buildEventTimeline(
     (entry) => entry.kind !== "connect" || lastConnect.get(entry.item.connectorId) === entry.key,
   );
 
+  // After the pass above: a call of an ended run is cancelled, so it draws no placeholder.
+  const generating = (t: TimelineTool) =>
+    t.toolKey === GENERATE_IMAGE_TOOL && t.row.status === "running" && t.row.waiting === undefined;
   if (
     groupFiles.size === 0 &&
     groupCards.size === 0 &&
     groupFacts.size === 0 &&
-    groupDeviceCodes.size === 0
+    groupDeviceCodes.size === 0 &&
+    !shown.some((entry) => entry.kind === "tools" && entry.rows.some(generating))
   )
     return { entries: shown, modelOf };
   const withExtras: TimelineEntry[] = [];
   for (const entry of shown) {
     withExtras.push(entry);
     if (entry.kind !== "tools") continue;
-    const files = groupFiles.get(entry.key);
-    if (files) withExtras.push({ kind: "files", key: `${entry.key}:files`, files });
+    const delivered = groupFiles.get(entry.key) ?? [];
+    const images: ImageSlot[] = [];
+    for (const t of entry.rows) {
+      const isGen = t.toolKey === GENERATE_IMAGE_TOOL;
+      const requested = asRecord(t.input).aspect_ratio;
+      const ratio = isGen && isImageRatio(requested) ? requested : null;
+      let have = 0;
+      for (const d of delivered) {
+        if (d.callKey !== t.row.id || !isInlineImageType(d.file.contentType)) continue;
+        images.push({ kind: "image", file: d.file, ratio });
+        have++;
+      }
+      if (!generating(t)) continue;
+      const want = wantedImages(t.input);
+      for (let index = have; index < want; index++)
+        images.push({
+          kind: "generating",
+          key: `${t.row.id}:${index}`,
+          callId: t.callId,
+          ratio,
+          index,
+          count: want,
+        });
+    }
+    const others = delivered
+      .filter((d) => !isInlineImageType(d.file.contentType))
+      .map((d) => d.file);
+    if (images.length > 0 || others.length > 0)
+      withExtras.push({ kind: "files", key: `${entry.key}:files`, images, others });
     for (const card of groupCards.get(entry.key) ?? []) withExtras.push(card);
     for (const fact of groupFacts.get(entry.key) ?? []) withExtras.push(fact);
     for (const device of groupDeviceCodes.get(entry.key) ?? []) withExtras.push(device);
