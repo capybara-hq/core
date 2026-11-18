@@ -206,12 +206,15 @@ export interface ChannelWebhook {
 
 /** One conversation artifact handed to {@link Channel.sendFile}. */
 export interface ChannelFile {
+  /** File name shown to the user. Model-controlled: never interpret it as markup, a path or a mention. */
   name: string;
   contentType: string;
+  /** Chosen by the kernel (an image type within the image cap, else a file). */
   kind: "image" | "file";
   data: Uint8Array;
 }
 
+/** Arguments of {@link Channel.sendFile}: one file for one message; the whole file is in memory. */
 export interface ChannelSendFileArgs {
   config: unknown;
   target: ChannelTarget;
