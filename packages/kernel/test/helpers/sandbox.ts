@@ -2,14 +2,11 @@ import { randomUUID } from "node:crypto";
 import type { Logger, SandboxProvider } from "@capybara-hq/plugin-sdk";
 import type { Redis } from "ioredis";
 import { type Kysely, sql } from "kysely";
-import type { BackgroundLaunchLock } from "../../src/background/launch-lock.js";
-import { BackgroundTaskStore } from "../../src/background/store.js";
 import type { KernelConfig } from "../../src/config/schema.js";
 import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import { DeviceAccess } from "../../src/devices/access.js";
 import type { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
 import { KernelDb } from "../../src/infra/database/kernel-db.js";
-import type { TransactionHost } from "../../src/infra/database/transaction-host.js";
 import { LockService } from "../../src/infra/lock/lock.service.js";
 import type { KernelLogger } from "../../src/log.js";
 import type { CloudPermissionSnapshots } from "../../src/sandbox/cloud-permission-snapshot.js";
@@ -76,8 +73,11 @@ export interface SandboxServiceDeps {
   lockTtlMs?: number;
   /** The leases (default: {@link sandboxLeasesFor} over `redis` with the two values above). */
   leases?: SandboxLeases;
-  /** The background task store (default: one over `db`; the sandbox service opens no transaction). */
-  background?: Pick<BackgroundTaskStore, "pendingKills" | "clearKill">;
+  /**
+   * The operation intents the takeover and resume cleanup use (B-1; default: no intents, every
+   * revocation a no-op, nothing owed).
+   */
+  operationIntents?: Partial<SandboxOperationIntents>;
   /** The retirement obligations (8.5; default: the real store over `db`). */
   retirement?: LegacyRetirementStore;
   /** The cloud snapshot reconcile (B-12; default: every device already reconciled). */
@@ -118,15 +118,15 @@ export function sandboxServiceFor(d: SandboxServiceDeps): SandboxService {
     providers,
     config,
     kernelLog(d.log),
-    d.background ??
-      new BackgroundTaskStore(
-        kernelDbOver(d.db),
-        {} as TransactionHost,
-        // the sandbox service never reserves a launch
-        {} as BackgroundLaunchLock,
-      ),
     new PermissionFacts(db, config, providers, new DeviceAccess(db, providers)),
-    { revokeHolders: async () => {} } as unknown as SandboxOperationIntents,
+    {
+      oweHolderRevocations: async () => {},
+      revokeHolders: async () => {},
+      revokeIncarnation: async () => {},
+      owedRevocations: async () => [],
+      acknowledgeRevocation: async () => {},
+      ...d.operationIntents,
+    } as unknown as SandboxOperationIntents,
     {} as SandboxOperationAuthority,
     instanceWritesFor(d.db),
     d.retirement ?? retirementFor(d.db),

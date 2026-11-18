@@ -80,7 +80,6 @@ const facts: PermissionReviewSnapshot = {
   unattended: false,
   availability: { state: "supported" },
   policy: {
-    modeSource: "device",
     mode: "auto",
     allowedMode: "auto",
     localAllowedDomains: [],

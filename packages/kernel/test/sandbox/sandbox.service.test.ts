@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdtemp, readdir, rm } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -13,7 +13,7 @@ import {
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
 import { sql } from "kysely";
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { type KernelConfig, KernelConfigSchema } from "../../src/config/schema.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
@@ -161,19 +161,6 @@ const at = (env = envId, org = orgId, holder = conversationId) => ({
 
 const row = (id = envId) =>
   db.selectFrom("device_instances").selectAll().where("device_id", "=", id).executeTakeFirst();
-/** Waits until the fake records a running command (`instances/<id>/procs/<pid>`), instead of a fixed wait. */
-async function waitForProc(id: string, timeoutMs = 10_000): Promise<void> {
-  const dir = join(root, "instances", id, "procs");
-  await vi.waitFor(
-    async () => {
-      if ((await readdir(dir).catch(() => [])).length === 0) {
-        throw new Error(`no running command registered for ${id} yet`);
-      }
-    },
-    { timeout: timeoutMs },
-  );
-}
-
 /** Commands run one at a time (the behavior before phase C). */
 const oneAtATime = () => {
   config = { ...config, sandbox: { ...config.sandbox, maxConcurrentCommands: 1 } };
@@ -1476,76 +1463,108 @@ describe("taking over from a crashed holder", () => {
     expect(await ops("kill-tagged")).toHaveLength(0);
   });
 
-  it("a crashed holder's record on a freshly created instance kills nothing and is claimed", async () => {
-    const s = service();
+  it("a crashed holder's record on a freshly created instance is owed, revoked and forgotten, never killed", async () => {
+    const owed: string[][] = [];
+    const revoked: string[][] = [];
+    const s = service(undefined, undefined, {
+      operationIntents: {
+        oweHolderRevocations: async (_env, tokens) => void owed.push([...tokens]),
+        revokeHolders: async (_env, tokens) => void revoked.push([...tokens]),
+      },
+    });
     await deadHolder();
     const { info } = await use(s);
     expect(info.fresh).toBe(true);
+    expect(owed).toEqual([["dead-holder"]]);
+    expect(revoked).toEqual([["dead-holder"]]);
     expect(await ops("kill-all")).toHaveLength(0);
     expect(await ops("kill-tagged")).toHaveLength(0);
     expect(await redis.exists(`capk:sandbox-holders:${envId}`)).toBe(0);
   });
 
-  it("a failing killTagged is only warned; fn still runs", async () => {
-    const base = createFakeSandbox(root);
-    const failing: SandboxProvider = {
-      ...base,
-      killTagged: async () => {
-        throw new Error("kill failed");
+  it("a failing inline revocation is only warned after it is owed; fn still runs", async () => {
+    const s = service(undefined, undefined, {
+      operationIntents: {
+        revokeHolders: async () => {
+          throw new Error("database unavailable");
+        },
       },
-    };
-    const s = service(() => failing);
+    });
     await use(s);
     await deadHolder();
     const r = await s.withSandbox(at(), async () => "ran", signal());
     expect(r).toBe("ran");
-    expect(warned).toContain("cannot kill leftover sandbox commands");
+    expect(warned).toContain(
+      "cannot revoke a crashed sandbox holder's operations now; a worker retries",
+    );
+    // owed already: the record is forgotten
+    expect(await redis.exists(`capk:sandbox-holders:${envId}`)).toBe(0);
   });
 
-  it("a failing killAll after a resume is only warned; fn still runs", async () => {
+  it("a failing inline operation revoke is only warned (its job retries); fn still runs", async () => {
     const base = createFakeSandbox(root);
     const failing: SandboxProvider = {
       ...base,
-      killAll: async () => {
-        throw new Error("kill failed");
+      revokeOperation: async () => {
+        throw new Error("revoke failed");
       },
     };
-    const s = service(() => failing);
+    const acked: string[] = [];
+    const s = service(() => failing, undefined, {
+      operationIntents: {
+        owedRevocations: async () => [{ operationId: "op-1", deadline: new Date() }],
+        acknowledgeRevocation: async (id) => void acked.push(id),
+      },
+    });
     await use(s);
     expect(await s.suspendIdle(later(DAY))).toBe(1);
     const r = await s.withSandbox(at(), async () => "ran", signal());
     expect(r).toBe("ran");
-    expect(warned).toContain("cannot kill leftover sandbox commands");
+    expect(warned).toContain("cannot deliver an owed operation revoke now; its job retries");
+    expect(acked).toEqual([]);
   });
 });
 
-describe("a resume kills leftover commands", () => {
-  it("resume from suspended runs killAll before fn (a provider that keeps memory across a pause brings old commands back)", async () => {
-    const s = service();
-    const { h } = await use(s);
-    // a command an earlier holder left behind, with no holder record left
-    const left = provider?.exec(h, {
-      command: "sleep 30",
-      timeoutMs: 60_000,
-      maxOutputBytes: 100,
-      signal: signal(),
-      tag: "dead-holder",
-      actor: at().actor,
-    });
-    await waitForProc(h.id);
-    expect(await s.suspendIdle(later(DAY))).toBe(1);
+describe("a resume revokes exactly, never killAll (B-1)", () => {
+  it("resume from suspended revokes the generation and delivers its owed revokes before fn", async () => {
     const order: string[] = [];
-    await s.withSandbox(
-      at(),
-      async () => {
-        order.push(`fn after ${(await ops("kill-all")).length} kill-all`);
+    const base = createFakeSandbox(root);
+    const spy: SandboxProvider = {
+      ...base,
+      revokeOperation: async (_h, ref) => void order.push(`revoke ${ref.operationId}`),
+    };
+    const s = service(() => spy, undefined, {
+      operationIntents: {
+        revokeIncarnation: async (_env, inst) => void order.push(`incarnation ${inst.provider}`),
+        owedRevocations: async () => [{ operationId: "op-1", deadline: new Date() }],
+        acknowledgeRevocation: async (id) => void order.push(`ack ${id}`),
       },
-      signal(),
-    );
-    expect(order).toEqual(["fn after 1 kill-all"]);
-    expect(await left).toMatchObject({ exitCode: null, timedOut: false });
-    // later uses of the running instance do not killAll again
+    });
     await use(s);
-    expect(await ops("kill-all")).toHaveLength(1);
+    expect(await s.suspendIdle(later(DAY))).toBe(1);
+    await s.withSandbox(at(), async () => void order.push("fn"), signal());
+    expect(order).toEqual(["incarnation sandbox-fake", "revoke op-1", "ack op-1", "fn"]);
+    expect(await ops("kill-all")).toHaveLength(0);
+    // later uses of the running instance revoke nothing more
+    order.length = 0;
+    await use(s);
+    expect(order).toEqual([]);
+  });
+
+  it("a resume whose revocation cannot be recorded fails closed and stays suspended", async () => {
+    const s = service(undefined, undefined, {
+      operationIntents: {
+        revokeIncarnation: async () => {
+          throw new Error("database unavailable");
+        },
+      },
+    });
+    await use(s);
+    expect(await s.suspendIdle(later(DAY))).toBe(1);
+    await expect(s.withSandbox(at(), async () => "ran", signal())).rejects.toThrow(
+      "database unavailable",
+    );
+    expect((await row())?.status).toBe("suspended");
+    expect(await ops("kill-all")).toHaveLength(0);
   });
 });

@@ -7,8 +7,10 @@ import { type FullAccessPermission, readDevicesFullAccess } from "./platform-ful
 /**
  * Device modes (auto mode spec §4.1–§4.3): who may choose auto mode, and the network each mode
  * gets. One pure function, {@link effectiveDevicePolicy}, combines the platform's switch
- * (`devices.fullAccess`), the org's (`fullAccess`, `cloudNetwork`) and the device's own choice (a local
- * machine's reported mode; null follows the platform and the org).
+ * (`devices.fullAccess`), the org's (`fullAccess`, `cloudNetwork`) and the device's owner ceiling (a
+ * local machine's owner report, a cloud device's B1 snapshot; null follows the platform and the org).
+ * It is a ceiling only: no device-chosen default mode selects how an operation runs (permission
+ * runtime cutover 8.6); the conversation's permission profile does, within this ceiling.
  */
 
 /** A device mode. Not `DeviceMode`, which is the program's os | docker run mode. */
@@ -102,12 +104,10 @@ export type OrgDeviceSettings = Pick<OrgSettings, "fullAccess" | "cloudNetwork">
 
 /** The effective device policy of one device (or of a new device, with no choice of its own). */
 export interface EffectiveDevicePolicy {
-  /** min(the device's choice, {@link allowedMode}); `auto` unless the device chose sandbox. */
+  /** min(the device's owner ceiling, {@link allowedMode}); `auto` unless that ceiling is sandbox. */
   mode: SandboxMode;
   /** `auto` only when the platform's and the org's `fullAccess` both allow it. */
   allowedMode: SandboxMode;
-  /** Which layer decided {@link mode}. */
-  modeSource: "device" | "org" | "platform";
   /** The cloud network (auto mode's open network, the org's allowlist, or the kill switch). */
   network: DeviceNetwork;
   /**
@@ -169,9 +169,10 @@ export function deviceNetwork(
 }
 
 /**
- * The effective device policy. `deviceMode` is the device's own choice (a local machine's
- * reported mode; null = follow the platform and the org). A stored mode the ceiling forbids is cut,
- * never honoured; the network follows the resulting mode.
+ * The effective device policy. `deviceMode` is the device's owner ceiling (a local machine's owner
+ * report, a cloud device's B1 snapshot or narrowing switch; null = follow the platform and the
+ * org). A stored mode the platform or org forbids is cut, never honoured; the network follows the
+ * resulting mode.
  */
 export function effectiveDevicePolicy(
   deployment: DeploymentDevicePolicy,
@@ -182,22 +183,9 @@ export function effectiveDevicePolicy(
 ): EffectiveDevicePolicy {
   const allowedMode = allowedDeviceMode(deployment.fullAccess, org.fullAccess);
   const mode: SandboxMode = allowedMode === "sandbox" ? "sandbox" : (deviceMode ?? "auto");
-  const modeSource: EffectiveDevicePolicy["modeSource"] =
-    mode === "sandbox"
-      ? deviceMode === "sandbox" && allowedMode === "auto"
-        ? "device"
-        : deployment.fullAccess === "allowed"
-          ? "org"
-          : "platform"
-      : deviceMode === "auto"
-        ? "device"
-        : org.fullAccess === "allowed"
-          ? "org"
-          : "platform";
   return {
     mode,
     allowedMode,
-    modeSource,
     network:
       outer === null
         ? deviceNetwork(deployment, org, mode)

@@ -13,3 +13,8 @@ another member triggers in an owner's conversation runs without the owner's devi
 `GenerateImage` call with `file_path` takes the same permission review as `Write`: an outside
 directory is asked about (or reviewed) and granted for that call only. The testing helpers run on
 the activated kernel.
+
+The kernel never kills device work broadly any more: a crashed holder's operations are revoked
+exactly (owed in the outbox before its record is forgotten, so a failed revoke is retried), and a
+resumed, failed-update or quarantined instance revokes its started-or-unknown operations instead of
+`killAll`; no stored background session id is signalled after a resume or a rebuild.

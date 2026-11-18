@@ -272,7 +272,7 @@ describe("SandboxLeases", () => {
     ).toBe("OK");
   });
 
-  it("claimDeadHolders returns only tags without live leases, once", async () => {
+  it("deadHolders returns only tokens without live leases and keeps them until forgotten", async () => {
     const a = leasesA();
     const b = leasesB();
     const live = await a.acquireShared("e1", 4, never(), 1000);
@@ -280,18 +280,22 @@ describe("SandboxLeases", () => {
     // holders whose leases are gone (their replica crashed)
     await b.registerHolder("e1", "dead-1", 60_000);
     await b.registerHolder("e1", "dead-2", 60_000);
-    expect((await b.claimDeadHolders("e1")).sort()).toEqual(["dead-1", "dead-2"]);
-    expect(await b.claimDeadHolders("e1")).toEqual([]);
+    expect((await b.deadHolders("e1")).sort()).toEqual(["dead-1", "dead-2"]);
+    // read again until the caller owed their revocation and forgot them (B-1)
+    expect((await a.deadHolders("e1")).sort()).toEqual(["dead-1", "dead-2"]);
+    await b.forgetHolders("e1", ["dead-1", "dead-2"]);
+    expect(await b.deadHolders("e1")).toEqual([]);
     expect(await redisA.hkeys("capk:sandbox-holders:e1")).toEqual([live.token]);
     await a.unregisterHolder("e1", live.token);
     expect(await redisA.exists("capk:sandbox-holders:e1")).toBe(0);
     await live.release();
 
-    // the exclusive holder's own record is live; a dead one beside it is claimed
+    // the exclusive holder's own record is live; a dead one beside it is returned
     const e = await b.acquireExclusive("e2", never(), 1000);
     await b.registerHolder("e2", e.token, 60_000);
     await a.registerHolder("e2", "dead", 60_000);
-    expect(await a.claimDeadHolders("e2")).toEqual(["dead"]);
+    expect(await a.deadHolders("e2")).toEqual(["dead"]);
+    await a.forgetHolders("e2", ["dead"]);
     expect(await redisA.hkeys("capk:sandbox-holders:e2")).toEqual([e.token]);
     await b.unregisterHolder("e2", e.token);
     await e.release();
@@ -301,7 +305,7 @@ describe("SandboxLeases", () => {
     const a = leasesA();
     await a.registerHolder("e1", "old", 50);
     await sleep(120);
-    expect(await a.claimDeadHolders("e1")).toEqual([]);
+    expect(await a.deadHolders("e1")).toEqual([]);
     expect(await redisA.exists("capk:sandbox-holders:e1")).toBe(0);
   });
 
@@ -404,7 +408,7 @@ describe("SandboxLeases", () => {
     await expectAllKeysExpire();
     const p = await a.pathLease("c1", "/workspace/x", never(), 100);
     await expectAllKeysExpire();
-    await b.claimDeadHolders("c1");
+    await b.deadHolders("c1");
     await expectAllKeysExpire();
     await p.release();
     await d.release();

@@ -31,7 +31,12 @@ import {
   setFakeSandboxRefuseOpenEgress,
 } from "../fixtures/plugins/sandbox-fake/index.js";
 import { truncateTables } from "../helpers/db.js";
-import { sandboxLeasesFor, sandboxServiceFor, seedDevice } from "../helpers/sandbox.js";
+import {
+  type SandboxServiceDeps,
+  sandboxLeasesFor,
+  sandboxServiceFor,
+  seedDevice,
+} from "../helpers/sandbox.js";
 
 /**
  * Device modes and limits on cloud devices (auto mode spec §4.2, §4.3): an instance records the
@@ -107,7 +112,11 @@ beforeEach(async () => {
   deviceId = await seedDevice(raw, orgId);
 });
 
-const service = (p: () => SandboxProvider = () => provider, lockTtlMs?: number) =>
+const service = (
+  p: () => SandboxProvider = () => provider,
+  lockTtlMs?: number,
+  extra: Partial<SandboxServiceDeps> = {},
+) =>
   sandboxServiceFor({
     db,
     redis,
@@ -116,6 +125,7 @@ const service = (p: () => SandboxProvider = () => provider, lockTtlMs?: number) 
     log,
     lockPollMs: 20,
     ...(lockTtlMs !== undefined && { lockTtlMs }),
+    ...extra,
   });
 
 /**
@@ -511,6 +521,51 @@ describe("a failed limits change", () => {
     expect(await ops("update")).toHaveLength(2);
     expect(await status()).toBe("suspended");
     expect(await ops("create")).toHaveLength(1);
+  });
+
+  it("a failed limits change on a resumed instance revokes its generation exactly, never killAll (B-1)", async () => {
+    provider = fake({ updateMode: "throw", limitsApplyAt: "fileSystem" });
+    const revoked: string[] = [];
+    const s = service(undefined, undefined, {
+      operationIntents: {
+        revokeIncarnation: async (_env, inst, dead) =>
+          void revoked.push(`${inst.provider}@${inst.generation}:${dead.length}`),
+      },
+    });
+    const first = await use(s);
+    const generation = String((await s.currentInstance(deviceId))?.createdAt.getTime());
+    await setAutoMode("off");
+    // the failed update suspends it (the provider could suspend: nothing to revoke while paused)
+    await use(s).catch(() => undefined);
+    expect(revoked).toEqual([]);
+    // the next use resumes it; the update fails again: what the pause brought back is revoked
+    await use(s).catch(() => undefined);
+    expect(await ops("resume")).toHaveLength(1);
+    expect(revoked).toEqual([`sandbox-fake@${generation}:0`]);
+    expect(await ops("kill-all")).toEqual([]);
+    expect(await ops("kill-tagged")).toEqual([]);
+    expect(await fakeSandboxState(root, first.h.id)).toBe("suspended");
+  });
+
+  it("a quarantine that cannot suspend revokes the generation exactly, never killAll (B-1)", async () => {
+    const p = fake({ updateMode: "throw", limitsApplyAt: "fileSystem" });
+    p.suspend = async () => {
+      throw new Error("suspend failed");
+    };
+    provider = p;
+    const revoked: string[] = [];
+    const s = service(undefined, undefined, {
+      operationIntents: {
+        revokeIncarnation: async (_env, inst) => void revoked.push(inst.generation),
+      },
+    });
+    await use(s);
+    const generation = String((await s.currentInstance(deviceId))?.createdAt.getTime());
+    await setAutoMode("off");
+    await use(s).catch(() => undefined);
+    expect(revoked).toEqual([generation]);
+    expect(await ops("kill-all")).toEqual([]);
+    expect(await status()).toBe("suspended");
   });
 
   it("a lease lost during update records nothing and stops the instance", async () => {

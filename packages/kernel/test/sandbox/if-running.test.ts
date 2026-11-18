@@ -8,14 +8,10 @@ import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara
 import { Redis } from "ioredis";
 import { sql } from "kysely";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import type { BackgroundLaunchLock } from "../../src/background/launch-lock.js";
-import { BackgroundTaskStore } from "../../src/background/store.js";
 import { type KernelConfig, KernelConfigSchema } from "../../src/config/schema.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
-import { KernelDb } from "../../src/infra/database/kernel-db.js";
-import type { TransactionHost } from "../../src/infra/database/transaction-host.js";
 import type { SandboxService } from "../../src/sandbox/sandbox.service.js";
 import {
   createFakeSandbox,
@@ -62,40 +58,18 @@ function spied(impl: SandboxProvider): SandboxProvider {
     execs.push(args.command);
     return impl.exec(h, args);
   };
+  w.killAll = (h, s) => {
+    calls.push("killAll");
+    return impl.killAll(h, s);
+  };
+  w.killTagged = (h, t, s) => {
+    calls.push("killTagged");
+    return impl.killTagged(h, t, s);
+  };
   return w;
 }
 
 let provider: SandboxProvider;
-/** Device ids the service asked for pending kills. */
-let killsAskedFor: string[];
-
-/**
- * The background store with `pendingKills` read by device id. Task 9 moves the store query
- * itself to `device_id`; until then this stand-in reads that column.
- */
-function backgroundByDevice(): Pick<BackgroundTaskStore, "pendingKills" | "clearKill"> {
-  const store = new BackgroundTaskStore(
-    Object.create(KernelDb.prototype, { db: { value: db } }) as KernelDb,
-    {} as TransactionHost,
-    {} as BackgroundLaunchLock,
-  );
-  return {
-    pendingKills: async (deviceId) => {
-      killsAskedFor.push(deviceId);
-      const ids = await db
-        .selectFrom("background_tasks")
-        .select("id")
-        .where("device_id", "=", deviceId)
-        .where("kill_pending", "=", true)
-        .orderBy("started_at", "asc")
-        .execute();
-      const rows = await Promise.all(ids.map((r) => store.get(r.id)));
-      return rows.filter((r) => r !== undefined);
-    },
-    clearKill: (ids) => store.clearKill(ids),
-  };
-}
-
 const service = (): SandboxService =>
   sandboxServiceFor({
     db,
@@ -104,7 +78,6 @@ const service = (): SandboxService =>
     config: () => config,
     log: {},
     lockPollMs: 20,
-    background: backgroundByDevice(),
   });
 
 beforeAll(async () => {
@@ -135,7 +108,6 @@ beforeEach(async () => {
   root = await mkdtemp(join(tmpdir(), "cap-if-running-"));
   calls = [];
   execs = [];
-  killsAskedFor = [];
   provider = spied(createFakeSandbox(root));
   config = KernelConfigSchema.parse({
     db: { url: pgc.url },
@@ -324,72 +296,28 @@ describe("ifRunning with a signal", () => {
   });
 });
 
-describe("kills of lost tasks after a resume", () => {
-  // 4242 / 777 have no session record in the fake, so its pkill matches nothing on the host
-  it("runs one kill exec naming the sid of this instance's task and clears every flag", async () => {
+describe("no SID cleanup after a resume or a rebuild (permission runtime cutover B-1)", () => {
+  it("a resume signals no stored session id, runs no kill and leaves the flags to retirement", async () => {
     const s = service();
     await use(s);
     const instance = (await s.currentInstance(env())) as { createdAt: Date };
     const mine = await lostTask("4242", instance.createdAt);
-    const older = await lostTask("777", new Date(instance.createdAt.getTime() - 60_000));
     expect(await s.suspendIdle(new Date(Date.now() + DAY))).toBe(1);
     execs = [];
     await use(s);
     expect(calls).toContain("resume");
-    const kills = execs.filter((c) => c.includes("tk_kill KILL"));
-    expect(kills).toHaveLength(1);
-    expect(kills[0]).toMatch(/\b4242\b/);
-    expect(kills[0]).not.toMatch(/\b777\b/);
-    expect(await killPending(mine)).toBe(false);
-    expect(await killPending(older)).toBe(false);
-    expect(new Set(killsAskedFor)).toEqual(new Set([env()]));
+    expect(calls).not.toContain("killAll");
+    expect(execs.filter((c) => /tk_kill|pkill/.test(c))).toEqual([]);
+    // a stored SID is no authority: the flag is the retirement obligation's, never cleared here
+    expect(await killPending(mine)).toBe(true);
   });
 
-  it("kills a session that is still alive after the resume", async () => {
-    // a provider whose suspension keeps processes (E2B's pause): the fake's suspend kills them,
-    // so the session is started after the resume, standing in for one that survived
-    const s = service();
-    await use(s);
-    const instance = (await s.currentInstance(env())) as { createdAt: Date };
-    expect(await s.suspendIdle(new Date(Date.now() + DAY))).toBe(1);
-    const h = await use(s);
-    const started = await provider.exec(h, {
-      command: "setsid sh -c 'sleep 30' > /dev/null 2>&1 & echo $!",
-      timeoutMs: 5000,
-      maxOutputBytes: 100,
-      signal: signal(),
-      tag: "test",
-      actor: actor(),
-    });
-    const sid = started.stdout.trim();
-    const id = await lostTask(sid, instance.createdAt);
-    const alive = () =>
-      provider.exec(h, {
-        command: `pgrep -s ${sid}`,
-        timeoutMs: 5000,
-        maxOutputBytes: 1000,
-        signal: signal(),
-        tag: "test",
-        actor: actor(),
-      });
-    expect((await alive()).exitCode).toBe(0);
-    // the next resume: mark the row suspended without the fake killing anything
-    await db
-      .updateTable("device_instances")
-      .set({ status: "suspended" })
-      .where("device_id", "=", env())
-      .execute();
-    await use(s);
-    expect((await alive()).exitCode).toBe(1);
-    expect(await killPending(id)).toBe(false);
-  });
-
-  it("clears the flags of a rebuilt sandbox's tasks without an exec", async () => {
+  it("a rebuild runs no kill exec either", async () => {
     const s = service();
     const id = await lostTask("4242", new Date(Date.now() - DAY));
     await use(s);
     expect(calls).toEqual(["create"]);
-    expect(execs.filter((c) => c.includes("pkill"))).toEqual([]);
-    expect(await killPending(id)).toBe(false);
+    expect(execs.filter((c) => /tk_kill|pkill/.test(c))).toEqual([]);
+    expect(await killPending(id)).toBe(true);
   });
 });

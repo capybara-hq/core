@@ -146,31 +146,6 @@ const until = (what: string, check: () => Promise<boolean>) =>
     { timeout: 10_000 },
   );
 
-/**
- * A crashed holder of instance `id`: its tagged `sleep 30` is running (waited for: the fake starts
- * a command only after a few file reads, and a kill sent before that finds nothing), its holder
- * record is left behind, it has no lease. `left` is the command's result.
- */
-const crashedHolder = async (id: string, dead: string) => {
-  const left = provider.exec(
-    { id },
-    {
-      command: "sleep 30",
-      timeoutMs: 60_000,
-      maxOutputBytes: 10,
-      signal: signal(),
-      tag: dead,
-      actor: ctx().actor,
-    },
-  );
-  await until("the dead holder's command", async () =>
-    (await fakeSandboxRunningTags(root, id)).includes(dead),
-  );
-  await redis.hset(`capk:sandbox-holders:${envId}`, dead, Date.now() + 600_000);
-  await redis.pexpire(`capk:sandbox-holders:${envId}`, 600_000);
-  return { left };
-};
-
 /** Runs one command in the sandbox through the service. */
 const run = (s: SandboxService, command: string) =>
   s.withSandbox(
@@ -380,7 +355,8 @@ describe("concurrent commands (fake sandbox)", () => {
       expect(o.r.exitCode).toBe(0);
     }
     expect(await ops("resume")).toHaveLength(1);
-    expect(await ops("kill-all")).toHaveLength(1);
+    // the resume revokes exactly, never by a broad kill (B-1)
+    expect(await ops("kill-all")).toHaveLength(0);
     const xs = (await execIntervals()).slice(1);
     expect(allOverlap(xs)).toBe(true);
   });
@@ -429,64 +405,106 @@ describe("concurrent commands (fake sandbox)", () => {
     for (const [k, ttl] of keys) expect(ttl, k).toBeGreaterThan(0);
   });
 
-  it("a dead holder's tag is killed by the next shared acquirer, a live sibling is not", async () => {
+  it("a dead holder's operations are revoked by the next shared acquirer, never killed; a live sibling is untouched", async () => {
     withCap(3);
-    const s = service();
+    const owed: string[][] = [];
+    const revoked: string[][] = [];
+    const s = service(undefined, {
+      operationIntents: {
+        oweHolderRevocations: async (_env, tokens) => void owed.push([...tokens]),
+        revokeHolders: async (_env, tokens) => void revoked.push([...tokens]),
+      },
+    });
     const { info } = await run(s, "true");
     expect(info.fresh).toBe(true);
     const id = (await ops("create"))[0]?.[1] as string;
     const dead = randomUUID();
-    const { left } = await crashedHolder(id, dead);
-    // the sibling enters first (it is the acquirer that kills the dead tag) and is still running
-    // its command, under a live lease, when the next acquirer enters
+    await redis.hset(`capk:sandbox-holders:${envId}`, dead, Date.now() + 600_000);
+    await redis.pexpire(`capk:sandbox-holders:${envId}`, 600_000);
+    // the sibling enters first (it is the acquirer that revokes the dead holder) and is still
+    // running its command, under a live lease, when the next acquirer enters
     const sibling = run(s, "sleep 2");
     await until("the sibling's command", async () =>
       (await fakeSandboxRunningTags(root, id)).some((t) => t !== dead && t !== ""),
     );
     const r = await run(s, "echo ok");
     expect(r.r.stdout).toBe("ok\n");
-    expect(await left).toMatchObject({ exitCode: null });
     expect((await sibling).r.exitCode).toBe(0);
-    const kills = await ops("kill-tagged");
-    expect(kills).toEqual([["kill-tagged", id, dead]]);
+    // owed durably, then forgotten, then revoked once: the next acquirer finds nothing
+    expect(owed).toEqual([[dead]]);
+    expect(revoked).toEqual([[dead]]);
+    expect(await redis.hkeys(`capk:sandbox-holders:${envId}`)).toEqual([]);
+    expect(await ops("kill-tagged")).toHaveLength(0);
     expect(await ops("kill-all")).toHaveLength(0);
   });
 
-  it("with cap 1 a dead holder is killed by tag, never killAll", async () => {
+  it("a dead holder whose revocation cannot be owed keeps its record for the next acquirer", async () => {
     withCap(1);
-    const s = service();
+    let fail = true;
+    const owed: string[][] = [];
+    const revoked: string[][] = [];
+    const s = service(undefined, {
+      operationIntents: {
+        oweHolderRevocations: async (_env, tokens) => {
+          if (fail) {
+            fail = false;
+            throw new Error("database unavailable");
+          }
+          owed.push([...tokens]);
+        },
+        revokeHolders: async (_env, tokens) => void revoked.push([...tokens]),
+      },
+    });
     await run(s, "true");
-    const id = (await ops("create"))[0]?.[1] as string;
     const dead = randomUUID();
     await redis.hset(`capk:sandbox-holders:${envId}`, dead, Date.now() + 600_000);
     await redis.pexpire(`capk:sandbox-holders:${envId}`, 600_000);
     await run(s, "true");
-    expect(await ops("kill-tagged")).toEqual([["kill-tagged", id, dead]]);
+    expect(revoked).toEqual([]);
+    expect(await redis.hkeys(`capk:sandbox-holders:${envId}`)).toEqual([dead]);
+    await run(s, "true");
+    expect(owed).toEqual([[dead]]);
+    expect(revoked).toEqual([[dead]]);
+    expect(await redis.hkeys(`capk:sandbox-holders:${envId}`)).toEqual([]);
+    expect(await ops("kill-tagged")).toHaveLength(0);
     expect(await ops("kill-all")).toHaveLength(0);
   });
 
-  it("resume from suspended kills leftovers once", async () => {
+  it("resume from suspended revokes the incarnation and the dead holder once, never killAll", async () => {
     withCap(3);
-    const s = service();
+    const incarnations: string[] = [];
+    const revoked: string[][] = [];
+    const s = service(undefined, {
+      operationIntents: {
+        revokeIncarnation: async (_env, inst, dead) =>
+          void incarnations.push(`${inst.provider}@${inst.generation}:${dead.join(",")}`),
+        revokeHolders: async (_env, tokens) => void revoked.push([...tokens]),
+      },
+    });
     await run(s, "true");
-    const id = (await ops("create"))[0]?.[1] as string;
+    const created = (
+      await sql<{ ms: string }>`SELECT (extract(epoch FROM created_at) * 1000)::bigint::text AS ms
+      FROM capybara.device_instances WHERE device_id = ${envId}`.execute(raw)
+    ).rows[0]?.ms;
     const dead = randomUUID();
-    const { left } = await crashedHolder(id, dead);
+    await redis.hset(`capk:sandbox-holders:${envId}`, dead, Date.now() + 600_000);
+    await redis.pexpire(`capk:sandbox-holders:${envId}`, 600_000);
     // the sweep gets the exclusive lease (no live lease) and suspends
     expect(await s.suspendIdle(later(11 * MIN))).toBe(1);
-    // three holders arrive at once: one resumes under the exclusive lease and kills everything
-    // before it downgrades; the dead holder's record is claimed then, so nobody kills it by tag
+    // three holders arrive at once: one resumes under the exclusive lease and revokes before it
+    // downgrades; the dead holder's record is owed and forgotten then, so nobody revokes it again
     const out = await Promise.all([0, 1, 2].map(() => run(s, "echo ok")));
     for (const o of out) expect(o.r.stdout).toBe("ok\n");
     expect(await ops("resume")).toHaveLength(1);
-    expect(await ops("kill-all")).toEqual([["kill-all", id]]);
+    expect(incarnations).toEqual([`sandbox-fake@${created}:`]);
+    expect(revoked).toEqual([[dead]]);
+    expect(await ops("kill-all")).toHaveLength(0);
     expect(await ops("kill-tagged")).toHaveLength(0);
-    expect(await left).toMatchObject({ exitCode: null });
     expect(await redis.hkeys(`capk:sandbox-holders:${envId}`)).toEqual([]);
-    // later uses of the running instance kill nothing more
+    // later uses of the running instance revoke nothing more
     await run(s, "true");
-    expect(await ops("kill-all")).toHaveLength(1);
-    expect(await ops("kill-tagged")).toHaveLength(0);
+    expect(incarnations).toHaveLength(1);
+    expect(revoked).toHaveLength(1);
   });
 
   it("every tagged exec refreshes the holder's record", async () => {

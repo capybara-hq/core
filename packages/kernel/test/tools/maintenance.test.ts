@@ -176,6 +176,7 @@ describe("MaintenanceProcessor (the one consumer)", () => {
       {
         destroyDevice: async (id) => void calls.push(["sandbox", id]),
         resetFileSystem: async (id) => void calls.push(["reset", id]),
+        revokeDeadHolder: async (id, token) => void calls.push(["revoke-holder", id, token]),
       },
       {
         check: async (...a) => {
@@ -215,6 +216,7 @@ describe("MaintenanceProcessor (the one consumer)", () => {
     await processor.process(job("wait-timeout", { waitId: "w" }), "tok");
     await processor.process(job("sandbox-destroy-for", { deviceIds: ["c1"] }));
     await processor.process(job("sandbox-reset-files", { deviceId: "e1" }));
+    await processor.process(job("sandbox-holder-revoke", { deviceId: "e1", token: "t1" }));
     await processor.process(
       job("drift-connector", { orgId: "o", connectorId: "k", trigger: "schedule" }),
     );
@@ -237,6 +239,7 @@ describe("MaintenanceProcessor (the one consumer)", () => {
       ["wait", { waitId: "w" }, "tok"],
       ["sandbox", "c1"],
       ["reset", "e1"],
+      ["revoke-holder", "e1", "t1"],
       ["drift", "o", "k", "schedule"],
       ["directory", { orgId: "o" }],
       ["run-stop", { conversationId: "c4", runId: "r4" }],

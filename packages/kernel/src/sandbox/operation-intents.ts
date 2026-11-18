@@ -8,10 +8,10 @@ import {
   SandboxScopeDeniedError,
 } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
-import type { Selectable } from "kysely";
+import type { Expression, ExpressionBuilder, Selectable, SqlBool } from "kysely";
 import { sql } from "kysely";
 import { STOP_CLAIM_TTL_MS } from "../background/store.js";
-import type { SandboxOperationIntentsTable } from "../db/kernel-schema.js";
+import type { KernelDatabase, SandboxOperationIntentsTable } from "../db/kernel-schema.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
@@ -35,6 +35,16 @@ export class PermissionAdmissionStale extends Error {}
 
 export const OPERATION_RECONCILE = "sandbox-operation-reconcile";
 export const OPERATION_REVOKE = "sandbox-operation-revoke";
+/**
+ * The owed revocation of one crashed holder's intents (`revokeHolders`), written before its holder
+ * record is forgotten, under the job id `sandbox-holder-revoke-<deviceId>-<token>`.
+ */
+export const HOLDER_REVOKE = "sandbox-holder-revoke";
+/** The instance whose operations an exact cleanup covers: its provider and generation. */
+export interface RevokedIncarnation {
+  provider: string;
+  generation: string;
+}
 export type OperationIntent = Selectable<SandboxOperationIntentsTable>;
 /** Supplied only by the executing tool worker, never tool/model arguments. */
 export interface OperationInvocation {
@@ -1338,10 +1348,71 @@ export class SandboxOperationIntents {
       .executeTakeFirst();
     if (expired) await this.payloads.expire(id);
   }
+  /**
+   * Owes the revocation of crashed holders' intents durably (permission runtime cutover B-1): one
+   * outbox row per token under a deterministic job id, committed before the caller forgets the
+   * holder records, so a revocation that then fails inline is retried by a worker. Two acquirers
+   * that saw the same dead token owe one job.
+   */
+  @Transactional({ propagation: "requires_new" })
+  async oweHolderRevocations(deviceId: string, tokens: readonly string[]): Promise<void> {
+    for (const token of tokens)
+      await this.outbox.add({
+        queue: "cap-kernel-maintenance",
+        name: HOLDER_REVOKE,
+        jobId: `${HOLDER_REVOKE}-${deviceId}-${token}`,
+        data: { deviceId, token },
+      });
+  }
   /** Cleanup association only: a claimed dead holder can never authorize dispatch. */
   @Transactional({ propagation: "requires_new" })
   async revokeHolders(deviceId: string, tokens: readonly string[]): Promise<void> {
     if (!tokens.length) return;
+    await this.revokeMatching(deviceId, (eb) =>
+      eb.and([
+        eb("holder_token", "in", [...tokens]),
+        eb("state", "in", ["admitted", "dispatching", "started-or-unknown"]),
+      ]),
+    );
+  }
+  /**
+   * The exact cleanup of an incarnation nobody else holds (the caller has its exclusive lifecycle
+   * lease: a resume from `suspended`, a failed limits change, a quarantine), replacing the broad
+   * `killAll`: every started-or-unknown intent of that instance generation (whose holder is gone
+   * by construction) plus the crashed holders' admitted, dispatching and started-or-unknown ones.
+   * An acknowledged background task (`background-running`) keeps its starting grant.
+   */
+  @Transactional({ propagation: "requires_new" })
+  async revokeIncarnation(
+    deviceId: string,
+    instance: RevokedIncarnation,
+    dead: readonly string[],
+  ): Promise<void> {
+    await this.revokeMatching(deviceId, (eb) =>
+      eb.or([
+        eb.and([
+          eb("provider", "=", instance.provider),
+          eb("instance_generation", "=", instance.generation),
+          eb("state", "=", "started-or-unknown"),
+        ]),
+        ...(dead.length
+          ? [
+              eb.and([
+                eb("holder_token", "in", [...dead]),
+                eb("state", "in", ["admitted", "dispatching", "started-or-unknown"]),
+              ]),
+            ]
+          : []),
+      ]),
+    );
+  }
+  /** Revokes the device's intents `where` selects and owes each its exact revoke job. */
+  private async revokeMatching(
+    deviceId: string,
+    where: (
+      eb: ExpressionBuilder<KernelDatabase, "sandbox_operation_intents">,
+    ) => Expression<SqlBool>,
+  ): Promise<void> {
     const device = await this.db
       .selectFrom("devices")
       .select("org_id")
@@ -1353,8 +1424,7 @@ export class SandboxOperationIntents {
       .updateTable("sandbox_operation_intents")
       .set({ state: "revoked", outcome_unknown: true, updated_at: new Date() })
       .where("device_id", "=", deviceId)
-      .where("holder_token", "in", [...tokens])
-      .where("state", "in", ["admitted", "dispatching", "started-or-unknown"])
+      .where(where)
       .returning("operation_id")
       .execute();
     for (const row of rows)
@@ -1364,6 +1434,32 @@ export class SandboxOperationIntents {
         jobId: `${OPERATION_REVOKE}-${row.operation_id}`,
         data: { operationId: row.operation_id },
       });
+  }
+  /**
+   * The revoked, unacknowledged operation revokes owed on one instance generation (oldest first,
+   * at most `limit`), which a lifecycle holder delivers before anything else runs there. A
+   * launched background start is left to its exact stop by the revoke job.
+   */
+  async owedRevocations(
+    deviceId: string,
+    instance: RevokedIncarnation,
+    limit: number,
+  ): Promise<{ operationId: string; deadline: Date }[]> {
+    const rows = await this.db
+      .selectFrom("sandbox_operation_intents")
+      .select(["operation_id", "deadline"])
+      .where("device_id", "=", deviceId)
+      .where("provider", "=", instance.provider)
+      .where("instance_generation", "=", instance.generation)
+      .where("state", "=", "revoked")
+      .where("revoke_acknowledged", "=", false)
+      .where((eb) =>
+        eb.or([eb("method", "!=", "backgroundStart"), eb("execution_ref", "is", null)]),
+      )
+      .orderBy("created_at")
+      .limit(limit)
+      .execute();
+    return rows.map((r) => ({ operationId: r.operation_id, deadline: r.deadline }));
   }
   /**
    * A disconnected or still-pending revoke remains owed; every retry is a new deterministic

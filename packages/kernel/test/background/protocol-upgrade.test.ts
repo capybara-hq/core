@@ -990,8 +990,8 @@ describe("a suspended cloud instance with a revoked managed start (B-22)", () =>
       `cloud stop ${revoked} ${first.id}`,
       `cloud resume ${first.id}`,
       `cloud stop ${revoked} ${first.id}`,
-      `cloud killAll ${first.id}`,
     ]);
+    // the resume's cleanup is exact (B-1): no broad kill reaches the sibling
     expect(calls.some((c) => c.includes(sibling))).toBe(false);
     // the sibling execution keeps running; only the revoked one was stopped
     expect([...running]).toEqual([sibling]);

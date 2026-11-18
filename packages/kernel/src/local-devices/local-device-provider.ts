@@ -150,15 +150,12 @@ export class LocalDeviceProvider implements SandboxProvider {
    * missing operation support never falls back to them.
    *
    * A v3 machine has no `killAll` / `killTagged` (permission runtime cutover B-1), so both are
-   * no-ops that queue nothing. What reaches the machine instead is only what the kernel revokes
-   * exactly (`revokeOperation` per intent): `SandboxService` calls `OperationIntents.revokeHolders`
-   * with the crashed holders' tokens before `killTagged` and before `killLeftovers`' `killAll`, and
-   * that revokes those holders' admitted, dispatching and started-or-unknown intents only. Not
-   * covered today: the `killAll` after a failed limits change on a resumed instance and the one
-   * in `quarantine` (unreachable for `@local`) revoke nothing first; `killLeftovers` revokes only
-   * the dead tokens, not the started-or-unknown intents of live holders of the instance; and
-   * tokens `claimDeadHolders` already deleted are lost when `revokeHolders` then throws. Revoking
-   * every started-or-unknown intent of the generation on a v3 resume is W5-P3a's kernel change.
+   * no-ops that queue nothing; the kernel never calls them anyway. What reaches the machine is
+   * only what the kernel revokes exactly (`revokeOperation` per intent): `SandboxService` owes a
+   * crashed holder's revocation in an outbox row before it forgets the holder record, revokes that
+   * holder's admitted, dispatching and started-or-unknown intents, and, under the exclusive lease
+   * on an incarnation nobody else holds (a resume, a failed limits change, a quarantine), every
+   * started-or-unknown intent of that generation; the owed revokes are delivered by operation id.
    */
   staged(transport: StagedDeviceTransport): SandboxProvider {
     const ops = this.stagedOperations(transport);
