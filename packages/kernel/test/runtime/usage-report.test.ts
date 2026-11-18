@@ -1054,6 +1054,9 @@ describe("usage.report for model usage outside conversations (spec B §5.4)", ()
         provider: "model-fake",
         model: "fake-image",
         input_tokens: 5,
+        output_tokens: 30,
+        cache_read_tokens: 3,
+        cache_write_tokens: 4,
         output_images: 2,
       })
       .returning(["id", "occurred_at"])
@@ -1076,9 +1079,9 @@ describe("usage.report for model usage outside conversations (spec B §5.4)", ()
       model: "fake-image",
       usage: {
         inputTokens: 5,
-        outputTokens: 0,
-        cacheReadTokens: 0,
-        cacheWriteTokens: 0,
+        outputTokens: 30,
+        cacheReadTokens: 3,
+        cacheWriteTokens: 4,
         outputImages: 2,
       },
       occurredAt: new Date(row.occurred_at).toISOString(),

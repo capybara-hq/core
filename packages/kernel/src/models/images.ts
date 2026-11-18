@@ -237,8 +237,8 @@ export class ModelImages {
   }
 
   /**
-   * One `model_usage` row of an extension call (`kind = 'image_generation'`, the result's input
-   * tokens and images) with its owed `usage.report` delivery, in one transaction.
+   * One `model_usage` row of an extension call (`kind = 'image_generation'`, the result's tokens
+   * and images) with its owed `usage.report` delivery, in one transaction.
    */
   @Transactional()
   private async recordExtensionUsage(
@@ -258,6 +258,9 @@ export class ModelImages {
         provider: ref.provider,
         model: ref.model,
         input_tokens: countOf(res.usage?.inputTokens) ?? 0,
+        output_tokens: countOf(res.usage?.outputTokens) ?? 0,
+        cache_read_tokens: countOf(res.usage?.cacheReadTokens) ?? 0,
+        cache_write_tokens: countOf(res.usage?.cacheWriteTokens) ?? 0,
         output_images: countOf(res.usage?.outputImages) ?? res.images.length,
       })
       .returning("id")

@@ -261,9 +261,9 @@ export class UsageReporter {
 
   /**
    * The payload of one `model_usage` row (spec B §5.4, image generation spec §9): purpose `image`
-   * for an image generation call (`kind = 'image_generation'`, with `usage.outputImages` when it
-   * produced any), else `embedding`; the calling extension, no conversation fields; `eventId` is
-   * the row id. Null when the row no longer exists.
+   * for an image generation call (`kind = 'image_generation'`, with its output and cache tokens
+   * and `usage.outputImages` when it produced any), else `embedding`; the calling extension, no
+   * conversation fields; `eventId` is the row id. Null when the row no longer exists.
    */
   private async payloadOfUsage(id: string): Promise<UsageReportPayload | null> {
     const row = await this.db
@@ -276,6 +276,9 @@ export class UsageReporter {
         "provider",
         "model",
         "input_tokens",
+        "output_tokens",
+        "cache_read_tokens",
+        "cache_write_tokens",
         "output_images",
         "occurred_at",
       ])
@@ -291,9 +294,10 @@ export class UsageReporter {
       model: row.model,
       usage: {
         inputTokens: row.input_tokens,
-        outputTokens: 0,
-        cacheReadTokens: 0,
-        cacheWriteTokens: 0,
+        // an embedding row's are 0: only an image answer carries output and cache tokens
+        outputTokens: row.output_tokens,
+        cacheReadTokens: row.cache_read_tokens,
+        cacheWriteTokens: row.cache_write_tokens,
         ...(row.output_images > 0 && { outputImages: row.output_images }),
       },
       occurredAt: new Date(row.occurred_at).toISOString(),

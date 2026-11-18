@@ -1565,6 +1565,12 @@ export interface ModelUsageTable {
   kind: Generated<"embedding" | "image_generation">;
   /** 0160: images the call produced (0 for an embedding call). */
   output_images: Generated<number>;
+  /** 0160: the answer's output tokens (0 for an embedding call). */
+  output_tokens: Generated<number>;
+  /** 0160: the answer's cache read tokens (0 for an embedding call). */
+  cache_read_tokens: Generated<number>;
+  /** 0160: the answer's cache write tokens (0 for an embedding call). */
+  cache_write_tokens: Generated<number>;
   occurred_at: Ts;
   reported_at: TsNullable;
   /** Set when the row's `usage.report` job gave up after its last attempt. */
