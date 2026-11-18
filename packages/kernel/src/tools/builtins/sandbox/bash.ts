@@ -79,17 +79,15 @@ const SPEC: ToolSpec = {
     "You can use the run_in_background parameter to run the command in the background, which " +
     "allows you to continue working while the command runs: use it for what must keep running " +
     "(a dev server, a watcher) or for a long job whose result you do not need yet while you do " +
-    "other work. If you need the result before you can go on (installing a package you are about " +
-    "to use, a build you must check), run it in the foreground with a larger timeout instead: " +
-    "starting it in the background and then waiting on it with TaskOutput gains nothing. The call " +
+    "other work. If you need the result before you can go on, run it in the foreground with a " +
+    "larger timeout instead: starting it in the background and then waiting on it with TaskOutput " +
+    "gains nothing. The call " +
     "returns at once with a task id and the command's output goes to a file under .capybara/tasks " +
     "in the workspace directory; you will be told when it finishes, so keep working meanwhile. " +
     "Read its new output with TaskOutput (block false to check a server's or watcher's log) and " +
     "stop it with TaskStop. TaskList lists this conversation's background tasks and their ids, " +
-    "running ones first. Write a background command so its output streams to that file: do not " +
-    "pipe it through tail or head (they print only when the command ends, so its output stays " +
-    "empty until then) and do not add nohup or '&' (the task ends when its command exits, and " +
-    "processes it left running are stopped). A command that waits for a person (an interactive " +
+    "running ones first. TaskOutput shows what the command has written to that file so far. A " +
+    "command that waits for a person (an interactive " +
     "login, a prompt) should run in the background so its output, such as a one-time code to " +
     "enter, can be read with TaskOutput while it waits. In the background, timeout defaults to the " +
     "deployment's background maximum (7200000 by default). A background task ends when its " +

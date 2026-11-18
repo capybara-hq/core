@@ -82,15 +82,17 @@ A deployment conversation (a 68-page scanned PDF needing OCR) spent 23 minutes m
 2, 3, 5, 10 and 10 minutes; it piped the command through `tail -20`, so 15 minutes of
 `TaskOutput` returned no output; and once it nested `nohup … &` inside a background task, whose
 task "completed" after 27 s while the install went on unseen. The tools' words now say when the
-background is the right place and how to read it; no behaviour changes:
+background is the right place and how to read it, as general rules rather than fixes for the
+slips seen; no behaviour changes:
 
 - **When to background.** `Bash` and its `run_in_background` field: only for what must keep running
   (a dev server, a watcher) or a long job whose result is not needed yet while other work goes on.
   A command whose result is needed next runs in the foreground with a larger `timeout` (the
   deployment maximum allows hours); starting it in the background and waiting on it gains nothing.
-- **Streaming output.** A background command is not piped through `tail` / `head` (they print only
-  at the end) and adds no `nohup` / `&` (the task ends when its command exits; what it left running
-  is stopped).
+- **What `TaskOutput` shows.** The words state the mechanism (what the command has written to its
+  file so far; the task ends when its command exits and what it left running is stopped) and name
+  no particular command or pipe: the context the kernel injects stays neutral and is never a patch
+  for one observed slip (maintainer rule, 2026-11-19).
 - **`TaskOutput` is for reading logs.** With `block: false` for a server or watcher (a task that
   never finishes always takes the whole timeout), or to collect a finished task's output after the
   notification; never right after a launch just to wait. `block` keeps its default `true`, as
