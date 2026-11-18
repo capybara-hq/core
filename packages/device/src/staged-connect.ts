@@ -1,3 +1,4 @@
+import type { IncomingMessage } from "node:http";
 import { DEVICE_PROTOCOL_VERSION } from "@capybara-hq/plugin-sdk";
 import WebSocket from "ws";
 import { currentBootId } from "./boot-id.js";
@@ -6,7 +7,7 @@ import {
   type Connection,
   DELETED_MESSAGE,
   DISCONNECTED_MESSAGE,
-  OUTDATED_MESSAGE,
+  outdatedMessage,
   REPLACED_MESSAGE,
 } from "./client.js";
 import { policySummary } from "./server-ops.js";
@@ -264,10 +265,17 @@ export function connectStaged(device: StagedDevice, opts: StagedConnectOptions =
       sock.on("unexpected-response", (_req, res) => {
         answered = true;
         const status = res.statusCode ?? 0;
+        if (status === 426) {
+          // the refusal's body names the kernel's protocol: which side is outdated
+          void refusalBody(res).then((body) => {
+            sock.terminate();
+            endSession({ exit: 1, message: outdatedMessage(body) });
+          });
+          return;
+        }
         res.resume();
         sock.terminate();
         if (status === 401) return endSession({ exit: 0, message: DISCONNECTED_MESSAGE });
-        if (status === 426) return endSession({ exit: 1, message: OUTDATED_MESSAGE });
         reportFailure(`Connecting to ${cred.connectUrl} failed: HTTP ${status}.`);
         endSession({ reconnect: true });
       });
@@ -353,4 +361,27 @@ function report_(device: StagedDevice) {
     policy: policySummary(device.owner.store.current(), { mode: device.mode }),
     ownerCeiling: device.owner.report(),
   };
+}
+
+/** A refusal's body, bounded (4 KiB, 5 s): whatever arrived by then, never an error. */
+function refusalBody(res: IncomingMessage): Promise<string> {
+  return new Promise((resolve) => {
+    const chunks: Buffer[] = [];
+    let size = 0;
+    const done = () => {
+      clearTimeout(timer);
+      res.removeAllListeners("data");
+      res.resume();
+      resolve(Buffer.concat(chunks).toString("utf8"));
+    };
+    const timer = setTimeout(done, 5000);
+    res.on("data", (chunk: Buffer) => {
+      if (size < 4096) chunks.push(chunk.subarray(0, 4096 - size));
+      size += chunk.length;
+      if (size >= 4096) done();
+    });
+    res.once("end", done);
+    res.once("error", done);
+    res.once("close", done);
+  });
 }

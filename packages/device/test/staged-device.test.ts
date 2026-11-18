@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   type BindInstanceResult,
+  DEVICE_PROTOCOL_VERSION,
   FileSystemGoneError,
   type KernelRequest,
   parseDeviceFrame,
@@ -10,7 +11,11 @@ import {
   SandboxPermissionUnsupportedError,
 } from "@capybara-hq/plugin-sdk";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { DISCONNECTED_MESSAGE } from "../src/client.js";
+import {
+  DISCONNECTED_MESSAGE,
+  deploymentOutdatedMessage,
+  OUTDATED_MESSAGE,
+} from "../src/client.js";
 import type { OperationContainerHost } from "../src/exec/docker-operations.js";
 import type { LinuxProbe } from "../src/exec/linux-runtime.js";
 import type { MacSelfCheckInput } from "../src/exec/mac-self-check.js";
@@ -647,6 +652,32 @@ describe("staged connection (W3-M)", () => {
       expect(await conn.done).toBe(0);
       expect(s.cancelled.sort()).toEqual(["exec-1", "task-1"]);
       await running;
+    });
+  }
+
+  // A 426 names the kernel's protocol: an older deployment is to be upgraded, not this program.
+  for (const [kernelProtocol, expected] of [
+    [DEVICE_PROTOCOL_VERSION + 1, OUTDATED_MESSAGE],
+    [DEVICE_PROTOCOL_VERSION - 1, deploymentOutdatedMessage(DEVICE_PROTOCOL_VERSION - 1)],
+    [undefined, OUTDATED_MESSAGE],
+  ] as const) {
+    it(`a 426 from a kernel on protocol ${kernelProtocol ?? "(unreadable)"} says which side to upgrade`, async () => {
+      const k = await kernel();
+      k.rejectWith = 426;
+      k.rejectBody =
+        kernelProtocol === undefined
+          ? undefined
+          : {
+              error: {
+                code: "device.program_outdated",
+                message: `This kernel speaks device protocol ${kernelProtocol}. Update capybara-device.`,
+              },
+            };
+      const s = staged({ cred: credential({ connectUrl: k.url }) });
+      const errs: string[] = [];
+      const conn = connectStaged(s.device, { err: (l) => errs.push(l), bootId: null });
+      expect(await conn.done).toBe(1);
+      expect(errs).toContain(expected);
     });
   }
 

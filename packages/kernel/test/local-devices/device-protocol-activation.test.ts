@@ -141,6 +141,7 @@ describe("the production route speaks protocol 3 only", () => {
       });
       expect(r?.status).toBe(426);
       expect(codeOf(r?.body ?? "")).toBe("device.program_outdated");
+      // a newer capybara-device reads the kernel's protocol from this text (`outdatedMessage`)
       expect(r?.body).toContain("device protocol 3");
     }
   });

@@ -13,6 +13,8 @@ export class FakeKernel {
   readonly frames: Array<{ conn: number; frame: any }> = [];
   /** When set, the next upgrade is answered with this HTTP status. */
   rejectWith: number | undefined;
+  /** The JSON body sent with {@link rejectWith} (none when unset). */
+  rejectBody: unknown;
   url = "";
 
   async start(): Promise<void> {
@@ -23,8 +25,9 @@ export class FakeKernel {
       // an unhandled ECONNRESET in whatever test runs then.
       socket.on("error", () => socket.destroy());
       if (this.rejectWith !== undefined) {
+        const body = this.rejectBody === undefined ? "" : JSON.stringify(this.rejectBody);
         socket.end(
-          `HTTP/1.1 ${this.rejectWith} X\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`,
+          `HTTP/1.1 ${this.rejectWith} X\r\nConnection: close\r\nContent-Type: application/json\r\nContent-Length: ${Buffer.byteLength(body)}\r\n\r\n${body}`,
         );
         return;
       }
