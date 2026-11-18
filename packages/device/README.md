@@ -111,9 +111,12 @@ credentials, `~/.netrc`, `~/.gnupg`, browser profiles, this program's state dire
 unreadable even inside those, and the network reaches only hosts in the local `allowedDomains` that
 the organization's allowlist also admits (plus a run's or a task's grants, within that allowlist),
 through a proxy that refuses loopback, private addresses and internal names. Restricted work also
-follows one write policy (below). When the restricted runtime is unavailable here, the device
-reports it to the deployment and refuses restricted work with the reason; nothing falls back to
-running unconfined.
+follows one write policy (below). On macOS each restricted command also gets its own empty temporary
+directory (`TMPDIR`, `TMP`, `TEMP`), removed when the command ends; `mktemp` without a template
+writes to the user's shared temporary directory instead, which stays closed, so give it one (`mktemp
+"$TMPDIR/x.XXXXXX"`). On Linux `TMPDIR` is the first write root. When the restricted runtime is
+unavailable here, the device reports it to the deployment and refuses restricted work with the
+reason; nothing falls back to running unconfined.
 
 A change to the ceiling or the policy applies at the next operation without a restart, and running
 work the narrower ceiling no longer allows is stopped. `add` and `remove` work on `allowedDomains`

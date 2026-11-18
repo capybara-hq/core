@@ -1,9 +1,9 @@
 import { type ChildProcess, fork, spawn, spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { constants, realpathSync } from "node:fs";
-import { type FileHandle, open, realpath, stat } from "node:fs/promises";
-import { homedir } from "node:os";
-import { basename, dirname } from "node:path";
+import { type FileHandle, mkdtemp, open, readdir, realpath, rm, stat } from "node:fs/promises";
+import { homedir, tmpdir } from "node:os";
+import { basename, dirname, join } from "node:path";
 import {
   type ExecResult,
   SANDBOX_GIT_DENIED_INTERNALS,
@@ -320,6 +320,28 @@ function macUserTempDir(): string | undefined {
   }
   return userTempDir;
 }
+const PRIVATE_TMP_PREFIX = "capybara-op-";
+/**
+ * Removes the private temporary directories of device processes that are gone (named with the
+ * owning process id; this process removes its own when each operation ends). Best effort.
+ */
+async function sweepPrivateTemps(base: string): Promise<void> {
+  try {
+    for (const name of await readdir(base)) {
+      const pid = Number(/^capybara-op-(\d+)-[^/]+$/.exec(name)?.[1]);
+      if (!pid || pid === process.pid) continue;
+      try {
+        process.kill(pid, 0);
+        continue;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ESRCH") continue;
+      }
+      await rm(join(base, name), { recursive: true, force: true });
+    }
+  } catch {
+    // a failed sweep only leaves empty scratch directories behind
+  }
+}
 /** A separate process owns each immutable SRT manager; Full never enters that process. */
 export async function startMacOperationWorker(
   request: MacWorkerRequest,
@@ -381,6 +403,7 @@ export async function startMacOperationWorker(
   signal.addEventListener("abort", abort, { once: true });
   if (signal.aborted) abort();
   let sealed: SealedRuntime | undefined;
+  let privateTmp: string | undefined;
   const completion = (async () => {
     try {
       // Restricted workers import only the sealed private copy of the verified runtime closure
@@ -446,6 +469,16 @@ export async function startMacOperationWorker(
               request.grant.deniedReadRoots,
             )
           : undefined;
+      // A restricted command's own temporary directory (TMPDIR, TMP, TEMP): created empty for
+      // this operation alone, private (0700) under the user's temporary directory, writable and
+      // readable only inside the sandbox's grant, and removed once the operation's processes are
+      // gone (a crashed device leaves it behind: the next launch removes it). The runtime's default (`/tmp/claude`) is shared by every command, so it is denied
+      // (implicitWritePaths), and the user's temporary directory itself stays out of reach.
+      if (request.kind === "exec" && !request.grant.full) {
+        const base = macUserTempDir() ?? (await realpath(tmpdir()));
+        await sweepPrivateTemps(base);
+        privateTmp = await mkdtemp(join(base, `${PRIVATE_TMP_PREFIX}${process.pid}-`));
+      }
       let wrap = async (script: string) => script;
       {
         const source = await stagePrivateSource(request.stateDir, "mac-worker.mjs", WORKER);
@@ -470,7 +503,11 @@ export async function startMacOperationWorker(
           return dirs;
         });
         const reads = macReadAllows({
-          roots: [...runtimeRoots, ...(toolHomes?.readRoots ?? [])],
+          roots: [
+            ...runtimeRoots,
+            ...(privateTmp ? [privateTmp] : []),
+            ...(toolHomes?.readRoots ?? []),
+          ],
           exact: [
             ...pinnedComponents,
             ...(helper ? [helper] : []),
@@ -483,7 +520,7 @@ export async function startMacOperationWorker(
         const writeRoots =
           request.kind === "native"
             ? roots.filter((r) => r.access === "write").map((r) => r.path)
-            : [...request.grant.writeRoots];
+            : [...request.grant.writeRoots, ...(privateTmp ? [privateTmp] : [])];
         // Only the fixed native helper may establish missing ancestor directories. Its
         // descriptor prelude creates exact components and passes only the final narrow
         // root to NativeFiles. SRT needs this transient subtree write exception because
@@ -628,13 +665,17 @@ export async function startMacOperationWorker(
         PATH: process.env.PATH,
         LANG: process.env.LANG,
         HOME: args.cwd ?? "/",
-        TMPDIR: request.grant.writeRoots[0] ?? "/tmp",
+        TMPDIR: privateTmp ?? request.grant.writeRoots[0] ?? "/tmp",
       };
+      // the runtime's wrapper sets its own TMPDIR after this environment: set ours inside it
+      const temp = privateTmp
+        ? `export TMPDIR=${shellQuote(privateTmp)} TMP=${shellQuote(privateTmp)} TEMP=${shellQuote(privateTmp)}; `
+        : "";
       const exports = Object.entries(args.env ?? {})
         .map(([key, value]) => `export ${key}=${shellQuote(value)}`)
         .join("; ");
       const script = await wrap(
-        `${!request.grant.full && exports ? `${exports}; ` : ""}exec /bin/bash -c ${shellQuote(args.command)}${request.managedOutput ? " 2>&1" : ""}`,
+        `${temp}${!request.grant.full && exports ? `${exports}; ` : ""}exec /bin/bash -c ${shellQuote(args.command)}${request.managedOutput ? " 2>&1" : ""}`,
       );
       await request.beforeLaunch();
       controller.signal.throwIfAborted();
@@ -755,6 +796,10 @@ export async function startMacOperationWorker(
       // by the command; once the command is gone, the trusted worker removes it where empty
       if (request.kind === "exec" && !request.grant.full && execStarted)
         removeEmptySequencers(request.grant.writeRoots, request.pythonPath, request.onDiagnostic);
+      if (privateTmp)
+        await rm(privateTmp, { recursive: true, force: true }).catch((error) =>
+          request.onDiagnostic?.(`Private temporary directory: ${(error as Error).message}`),
+        );
     }
   })();
   void completion.catch(() => {});
