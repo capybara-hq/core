@@ -297,6 +297,11 @@ the same transaction as the business rows.
   absolute path on a local device in auto mode (`checkToolPath`).
 - `Deliver` puts a file into object storage (`kernel/<orgId>/artifacts/<conversation>/<id>`, limit `sandbox.deliverMaxBytes`),
   appends an `artifact_created` event, and the web "Artifacts" tab is rebuilt from the log.
+- Delivery scope: `storeArtifacts` delivers the same bytes once per run since the person last spoke (`user_message`, answered /
+  skipped question); a repeat creates no artifact and returns the repeat text; version-aware by `sourcePath`. Spec
+  `docs/superpowers/specs/2026-11-19-truthful-delivery-design.md` §2: `EventLog.readDeliveryScope`, pure `findRepeat`, `sha256` in
+  `artifact_created`, idemKey `artifact:<runId>:<boundary>:<sha256>:<lastOfSource>` for parallel calls, and one cleanup rule (an
+  upload whose returned event is not the one generated is deleted and becomes a repeat). No process state, no new lock.
 
 **Background tasks** (spec `docs/superpowers/specs/2026-11-05-background-bash-design.md`; code `packages/kernel/src/background/*`,
 `tools/builtins/sandbox/{bash,task-output,task-stop,task-list}.ts`):

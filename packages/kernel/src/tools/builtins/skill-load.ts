@@ -148,7 +148,7 @@ const integrityText = (name: string): string =>
 /** 依赖：沙箱工具的依赖，加上读技能行用的库与读快照用的日志。 */
 export interface SkillLoadDeps extends SandboxToolDeps {
   db: KernelSchemaDb;
-  eventLog: Pick<EventLog, "append" | "latestOfType" | "latestFileState">;
+  eventLog: Pick<EventLog, "append" | "latestOfType" | "latestFileState" | "readDeliveryScope">;
 }
 
 /** A skill version's record in its marker file. */

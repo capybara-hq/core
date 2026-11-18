@@ -1,7 +1,13 @@
 import { MEDIA_NAME_MAX_CHARS, ToolError, type ToolSpec } from "@capybara-hq/plugin-sdk";
 import { isValidArtifactName } from "../../../conversations/events.js";
 import type { BuiltinTool } from "../../registry.js";
-import { NO_STORAGE, NO_STORAGE_REASON, storeArtifacts } from "../artifacts.js";
+import {
+  NO_STORAGE,
+  NO_STORAGE_REASON,
+  REPEAT_TEXT,
+  type StoredArtifact,
+  storeArtifacts,
+} from "../artifacts.js";
 import {
   checkPath,
   checkPathShape,
@@ -157,7 +163,16 @@ export function sandboxDeliverTool(deps: SandboxToolDeps): BuiltinTool {
       const [stored] = await storeArtifacts(deps, ctx, [
         { name, contentType, data, sourcePath: path },
       ]);
-      const artifactId = (stored as { artifactId: string }).artifactId;
+      const { artifactId, repeatOf } = stored as StoredArtifact;
+      if (repeatOf !== undefined) {
+        return {
+          content: [{ type: "text", text: withNotices(notices, REPEAT_TEXT(name, repeatOf)) }],
+          display: display(
+            `已交付过（内容相同）${clip(name, 160)}`,
+            `Already delivered (same content): ${clip(name, 160)}`,
+          ),
+        };
+      }
       const text = `Delivered ${name} (${data.byteLength} bytes, ${contentType}) to the user as artifact ${artifactId}; the user can download it from the conversation.`;
       return {
         content: [{ type: "text", text: withNotices(notices, text) }],

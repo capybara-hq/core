@@ -217,7 +217,8 @@ export interface GenerateImageDeps {
   purposes: Pick<ModelPurposesService, "resolve">;
   providers: Pick<ProviderRegistry, "resolve">;
   storage: Pick<StorageService, "kernel" | "available">;
-  eventLog: Pick<EventLog, "append" | "notify"> & Partial<Pick<EventLog, "publishChanged">>;
+  eventLog: Pick<EventLog, "append" | "notify" | "readDeliveryScope"> &
+    Partial<Pick<EventLog, "publishChanged">>;
   stepLog: Pick<StepLog, "appendCounted" | "appendReported" | "appendAudited">;
   config: Pick<KernelConfigService, "get">;
   log: Pick<Logger, "warn">;

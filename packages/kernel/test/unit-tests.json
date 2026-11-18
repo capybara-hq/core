@@ -115,6 +115,7 @@
   "themes/render-css.test.ts",
   "tools/builtin-names.test.ts",
   "tools/current-time.test.ts",
+  "tools/delivery-scope.unit.test.ts",
   "tools/display-title.test.ts",
   "tools/elicitation.test.ts",
   "tools/endpoint.test.ts",

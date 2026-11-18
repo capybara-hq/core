@@ -8,11 +8,13 @@ import { Transactional } from "../infra/database/transactional.decorator.js";
 import { OutboxService } from "../infra/outbox/outbox.service.js";
 import { KERNEL_BUS, KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
+import type { DeliveryScope, ScopeArtifact } from "../tools/builtins/delivery-scope.js";
 import {
   type ConversationEvent,
   type ConversationEventBody,
   ConversationEventSchema,
   type ConversationEventType,
+  type EventPayload,
 } from "./events.js";
 
 /** 事件日志依赖的总线：内核 bus（命名空间 `kernel`）。 */
@@ -349,6 +351,58 @@ export class EventLog {
       .limit(limit)
       .execute();
     return rows.map(toEvent);
+  }
+
+  /**
+   * The delivery scope of `runId` in the conversation (truthful delivery spec §2 step 2): the run's
+   * `run_started` seq `S` through the run index (0 when the run has none), then one range read of
+   * the `user_message`, `question_answered` and `artifact_created` events from `S` on (a
+   * `user_message` carries no run id, so the run index cannot find it). The boundary is the highest
+   * seq of a `user_message` or of a `question_answered` answered / skipped, else `S`; the artifacts
+   * are the `artifact_created` events after it.
+   */
+  async readDeliveryScope(conversationId: string, runId: string): Promise<DeliveryScope> {
+    const start = await this.db
+      .selectFrom("conversation_events")
+      .select("seq")
+      .where("conversation_id", "=", conversationId)
+      .where("run_id", "=", runId)
+      .where("type", "=", "run_started")
+      .orderBy("seq")
+      .limit(1)
+      .executeTakeFirst();
+    const s = start === undefined ? 0 : Number(start.seq);
+    const rows = await this.db
+      .selectFrom("conversation_events")
+      .select(["seq", "type", "payload"])
+      .where("conversation_id", "=", conversationId)
+      .where("seq", ">=", String(s))
+      .where("type", "in", ["user_message", "question_answered", "artifact_created"])
+      .orderBy("seq")
+      .execute();
+    let boundary = s;
+    for (const r of rows) {
+      const seq = Number(r.seq);
+      if (r.type === "user_message") boundary = Math.max(boundary, seq);
+      else if (r.type === "question_answered") {
+        const outcome = (r.payload as { outcome?: unknown }).outcome;
+        if (outcome === "answered" || outcome === "skipped") boundary = Math.max(boundary, seq);
+      }
+    }
+    const artifacts: ScopeArtifact[] = [];
+    for (const r of rows) {
+      const seq = Number(r.seq);
+      if (r.type !== "artifact_created" || seq <= boundary) continue;
+      const p = r.payload as EventPayload<"artifact_created">;
+      artifacts.push({
+        seq,
+        artifactId: p.artifactId,
+        name: p.name,
+        ...(p.sha256 !== undefined && { sha256: p.sha256 }),
+        sourcePath: p.sourcePath,
+      });
+    }
+    return { boundary, artifacts };
   }
 
   /** 按幂等键取事件；没有 → undefined。 */
