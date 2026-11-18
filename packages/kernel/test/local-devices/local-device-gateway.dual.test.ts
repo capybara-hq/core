@@ -9,7 +9,7 @@ import type { KernelConfigService } from "../../src/infra/config/kernel-config.s
 import { LockService } from "../../src/infra/lock/lock.service.js";
 import { deviceLeaseKey } from "../../src/local-devices/keys.js";
 import { LocalDeviceRelay } from "../../src/local-devices/relay.js";
-import type { DeviceTargets } from "../../src/local-devices/targets.js";
+import { DeviceTargets } from "../../src/local-devices/targets.js";
 import { createLogger } from "../../src/log.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
@@ -24,12 +24,24 @@ import { FakeMachine } from "./fake-machine-v3.js";
 
 const GRACE_SECONDS = 5;
 const EXEC_RESULT = { exitCode: 0, stdout: "hi\n", stderr: "", truncated: false, timedOut: false };
-const execArgs = {
+/** A protocol 3 exec request: the command under an admitted scope on `deviceId`. */
+const execArgs = (deviceId: string) => ({
+  scope: {
+    operationId: "op-1",
+    admitBeforeMs: Date.now() + 60_000,
+    deviceId,
+    rootConversationId: "c",
+    profileRevision: 1,
+    ceilingRevision: "r",
+    profile: "approve-for-me",
+    actor: { accountId: "a", conversationId: "c" },
+    tag: "t1",
+    filesystem: { kind: "scoped", readRoots: ["/work"], writeRoots: ["/work"] },
+    network: { kind: "none" },
+  },
   command: "echo hi",
   timeoutMs: 1000,
   maxOutputBytes: 1000,
-  tag: "t1",
-  actor: { accountId: "a", conversationId: "c" },
   limits: {
     cpu: 1,
     memoryMb: 512,
@@ -37,7 +49,7 @@ const execArgs = {
     mode: "sandbox" as const,
     network: { kind: "allowlist" as const, hosts: [] },
   },
-};
+});
 
 let h: Harness | undefined;
 const cleanups: (() => Promise<unknown> | unknown)[] = [];
@@ -157,18 +169,21 @@ describe("device connections on gateway replicas (dual replica)", () => {
     cleanups.push(() => sub.close());
     const bus: ExtensionContext["bus"] = createBus(redis, sub, "kernel");
     const log = createLogger("error", { write: () => {} });
+    const locks = new LockService(redis, log);
+    // the holder's published transport (its connection id and capacity), read from the shared Redis
+    const targets = new DeviceTargets({} as never, redis, locks);
     const relay = new LocalDeviceRelay(
       redis,
       bus,
-      new LockService(redis, log),
+      locks,
       {
         get: () => ({ devices: { local: { reconnectGraceSeconds: GRACE_SECONDS } } }),
       } as unknown as KernelConfigService,
       log,
-      { state: async () => "active" } as Pick<DeviceTargets, "state"> as DeviceTargets,
+      Object.assign(targets, { state: async () => "active" }) as DeviceTargets,
     );
     expect(
-      await relay.call(deviceId, "exec", execArgs, {
+      await relay.callV3(deviceId, "exec", execArgs(deviceId), {
         deadlineMs: 6000,
         signal: AbortSignal.timeout(20_000),
       }),

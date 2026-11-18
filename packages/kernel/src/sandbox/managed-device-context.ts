@@ -7,6 +7,7 @@ import {
   ManagedDevicePathsV1Schema,
 } from "../conversations/events.js";
 import { PermissionProfileStore } from "../conversations/permission-profile-store.js";
+import { deviceNotFound, machineRevoked } from "../devices/errors.js";
 import { ApiError } from "../errors.js";
 import { afterCommit } from "../infra/database/after-commit.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
@@ -170,8 +171,58 @@ export class ManagedDeviceContextRecorder {
         () => this.appendLocked(input, subject, held, signal),
       );
     } catch (error) {
-      throw this.mapped(error, input, signal);
+      const mapped = this.mapped(error, input, signal);
+      // R27: a deleted device or a disconnected machine never comes back, so the call says so
+      // (actionable, nothing to retry) instead of the stale context's "retry"
+      if (mapped instanceof ManagedDeviceContextStale)
+        throw (await this.goneInstead(input, held.deviceId)) ?? mapped;
+      throw mapped;
     }
+  }
+
+  /**
+   * The gone error to answer instead of a stale context: only while the conversation's root still
+   * works on the held device (a conversation moved to another device keeps the stale "retry", the
+   * retry runs on the new one). Any failure of these reads keeps the stale answer.
+   */
+  private async goneInstead(
+    input: PermissionContextSubject,
+    deviceId: string,
+  ): Promise<ApiError | undefined> {
+    try {
+      const root = await this.profiles.readRoot(input.orgId, input.conversationId);
+      if (root.device_id !== deviceId) return undefined;
+      return await this.goneError(input.orgId, deviceId);
+    } catch (error) {
+      this.log.warn("managed device context: the device check failed", {
+        conversationId: input.conversationId,
+        cause: error instanceof Error ? `${error.name}: ${error.message}`.slice(0, 500) : "",
+      });
+      return undefined;
+    }
+  }
+
+  /**
+   * The error of a device state that never comes back: the device (or its org) deleted, or a
+   * local device without an active machine (revoked, signed out). Undefined while it is live; a
+   * cloud device has no machine.
+   */
+  private async goneError(orgId: string, deviceId: string): Promise<ApiError | undefined> {
+    const row = await this.db
+      .selectFrom("devices as e")
+      .innerJoin("orgs as o", "o.id", "e.org_id")
+      .leftJoin("device_machines as m", (j) =>
+        j.onRef("m.device_id", "=", "e.id").on("m.revoked_at", "is", null),
+      )
+      .select(["e.source", "m.id as machine_id"])
+      .where("e.id", "=", deviceId)
+      .where("e.org_id", "=", orgId)
+      .where("e.deleted_at", "is", null)
+      .where("o.deleted_at", "is", null)
+      .executeTakeFirst();
+    if (row === undefined) return deviceNotFound();
+    if (row.source === "local" && row.machine_id === null) return machineRevoked();
+    return undefined;
   }
 
   private mapped(error: unknown, input: PermissionContextSubject, signal: AbortSignal): unknown {

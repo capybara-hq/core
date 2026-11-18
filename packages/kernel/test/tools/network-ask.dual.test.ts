@@ -9,7 +9,7 @@ import { onlyBuiltins } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { enableExtensions, eventsOf, PW, waitFor } from "../helpers/runs.js";
-import { FakeMachine, HELLO } from "../local-devices/fake-machine-v3.js";
+import { FakeMachine, HELLO, policyAnswer } from "../local-devices/fake-machine-v3.js";
 
 /**
  * A network ask across replicas (network ask-to-allow spec §10.3, Review Focus 4): the command
@@ -107,7 +107,7 @@ describe("network ask (dual replica)", () => {
           if (req.op === "create") return { ok: true, result: { roots: { ...HELLO.roots } } };
           if (req.op === "policy") {
             const add = (req.args as { add?: string[] }).add ?? [];
-            return { ok: true, result: { policy: { ...POLICY, allowedDomains: add } } };
+            return policyAnswer({ ...POLICY, allowedDomains: add });
           }
           if (req.op !== "exec") return { ok: true, result: null };
           const granted = (req.args as DeviceExecArgs).grants?.hosts ?? [];

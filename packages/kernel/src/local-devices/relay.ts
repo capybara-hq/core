@@ -22,6 +22,7 @@ import {
 } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
 import type { Redis } from "ioredis";
+import { machineRevoked } from "../devices/errors.js";
 import { ApiError } from "../errors.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { LockService } from "../infra/lock/lock.service.js";
@@ -45,16 +46,7 @@ export const deviceOffline = (): ApiError =>
     "The machine of this local device is offline. Start capybara-device on that machine, or pick another device.",
   );
 
-/**
- * The device's machine was disconnected (revoked, signed out): 403 `device.forbidden`
- * with `details: [{ reason: "machine_revoked" }]`, so the tools tell the model what to ask for.
- */
-export const machineRevoked = (): ApiError =>
-  new ApiError(
-    "device.forbidden",
-    "The machine of this local device was disconnected. Run capybara-device logout, then capybara-device login on it, or pick another device.",
-    [{ reason: "machine_revoked" }],
-  );
+export { machineRevoked } from "../devices/errors.js";
 
 /** The text a machine's `policy` refusal reaches the model with. */
 export const POLICY_REFUSAL_PREFIX = "Refused by the machine's local policy: ";
@@ -298,7 +290,10 @@ export class LocalDeviceRelay {
     return this.callWithCodec(deviceId, op, args, opts, false) as Promise<DeviceOpResults[Op]>;
   }
 
-  /** Development staging: the active gateway continues rejecting protocol 3 until coordinated cutover. */
+  /**
+   * Runs a protocol 3 operation on the device's machine over its current staged connection and
+   * returns its validated result; the request is checked against the protocol 3 codec first.
+   */
   async callV3(
     deviceId: string,
     op: DeviceOperation,

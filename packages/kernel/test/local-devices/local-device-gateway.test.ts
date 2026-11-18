@@ -8,7 +8,6 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { DevicesService } from "../../src/devices/devices.service.js";
-import { ApiError } from "../../src/errors.js";
 import { TransactionHost } from "../../src/infra/database/transaction-host.js";
 import {
   deviceLeaseKey,
@@ -18,7 +17,6 @@ import {
   deviceTakenKey,
 } from "../../src/local-devices/keys.js";
 import { LocalDeviceGateway } from "../../src/local-devices/local-device-gateway.js";
-import { LocalDeviceProvider } from "../../src/local-devices/local-device-provider.js";
 import { MachinesService } from "../../src/local-devices/machines.js";
 import { NetworkGrants } from "../../src/local-devices/network-grants.js";
 import { LocalDeviceRelay } from "../../src/local-devices/relay.js";
@@ -38,7 +36,14 @@ import {
   waitFor,
 } from "../helpers/runs.js";
 import { seedConversation } from "../helpers/tool-fixtures.js";
-import { DEVICE_PROTOCOL_HEADER_VALUE, FakeMachine, HELLO, refusal } from "./fake-machine-v3.js";
+import {
+  DEVICE_PROTOCOL_HEADER_VALUE,
+  FakeMachine,
+  FakeMachineV3,
+  HELLO,
+  ownerReportFor,
+  refusal,
+} from "./fake-machine-v3.js";
 
 /**
  * The gateway holds the WebSocket connections of connected machines (environments spec §13.4):
@@ -55,14 +60,26 @@ const LIMITS = {
   mode: "sandbox" as const,
   network: { kind: "allowlist" as const, hosts: [] },
 };
-const execArgs = {
+/** A protocol 3 exec request: the command under an admitted scope on `deviceId`. */
+const execArgs = (deviceId: string) => ({
+  scope: {
+    operationId: "op-1",
+    admitBeforeMs: Date.now() + 60_000,
+    deviceId,
+    rootConversationId: "c",
+    profileRevision: 1,
+    ceilingRevision: "r",
+    profile: "approve-for-me",
+    actor: { accountId: "a", conversationId: "c" },
+    tag: "t1",
+    filesystem: { kind: "scoped", readRoots: ["/work"], writeRoots: ["/work"] },
+    network: { kind: "none" },
+  },
   command: "echo hi",
   timeoutMs: 1000,
   maxOutputBytes: 1000,
-  tag: "t1",
-  actor: { accountId: "a", conversationId: "c" },
   limits: LIMITS,
-};
+});
 
 let pgc: TestContainer;
 let rd: TestContainer;
@@ -443,37 +460,50 @@ describe("the hello's policy summary and the reported mode", () => {
     machine.close();
   });
 
-  it("a policy frame after the hello replaces the stored summary, in order", async () => {
+  it("a policy frame after the hello replaces the stored summary and owner report, in order", async () => {
     const { m, machine } = await helloWith({
       programVersion: "0.9.0",
       features: ["networkReport", "policyOp", "mode"],
       policy: SUMMARY,
+      ownerCeiling: ownerReportFor(SUMMARY, { fullAccess: true }),
     });
-    machine.send({ type: "policy", policy: { ...SUMMARY, mode: "sandbox" } });
+    expect(await k.app.get(NetworkGrants).reportedMode(m.deviceId)).toBe("auto");
+    // the owner turns Full off on the machine (`capybara-device ceiling set`)
+    const narrowed = { ...SUMMARY, mode: "sandbox" as const };
+    machine.send({
+      type: "policy",
+      policy: narrowed,
+      ownerCeiling: ownerReportFor(narrowed, { fullAccess: false }),
+    });
     await waitFor(
       async () => (await machines.activeFor(m.deviceId))?.localPolicy?.mode === "sandbox",
       10_000,
       "policy recorded",
     );
-    expect((await machines.activeFor(m.deviceId))?.localPolicy).toEqual({
-      ...SUMMARY,
-      mode: "sandbox",
-    });
+    expect((await machines.activeFor(m.deviceId))?.localPolicy).toEqual(narrowed);
     expect(await k.app.get(NetworkGrants).reportedMode(m.deviceId)).toBe("sandbox");
-    // the frame's change is listed as made on the machine
+    // the frame's change is listed as made on the machine, once, as the owner report's
     expect(
       await db
         .selectFrom("audit_events")
         .select(["action", "detail"])
         .where("target", "=", m.deviceId)
-        .where("action", "in", ["device.mode_changed", "device.policy_changed"])
+        .where("action", "in", [
+          "device.mode_changed",
+          "device.policy_changed",
+          "device.owner_ceiling_changed",
+        ])
         .orderBy("at")
         .orderBy("id")
         .execute(),
     ).toEqual([
       {
-        action: "device.mode_changed",
-        detail: expect.objectContaining({ from: "auto", to: "sandbox", via: "device" }),
+        action: "device.owner_ceiling_changed",
+        detail: expect.objectContaining({
+          from: expect.objectContaining({ fullAccess: true }),
+          to: expect.objectContaining({ fullAccess: false }),
+          via: "device",
+        }),
       },
     ]);
     // the connection stays up
@@ -481,64 +511,24 @@ describe("the hello's policy summary and the reported mode", () => {
     machine.close();
   });
 
-  it("a valid summary reports its mode; a mode program without one reports none; an older program reports sandbox", async () => {
-    const ok = await helloWith({
+  it("the reported mode follows the owner report's Full ceiling", async () => {
+    const full = await helloWith({
       programVersion: "0.9.0",
       features: ["networkReport", "policyOp", "mode"],
-      policy: { ...SUMMARY, mode: "auto" },
+      policy: SUMMARY,
+      ownerCeiling: ownerReportFor(SUMMARY, { fullAccess: true }),
     });
-    expect(await k.app.get(NetworkGrants).reportedMode(ok.m.deviceId)).toBe("auto");
-    ok.machine.close();
-    const none = await helloWith({ programVersion: "0.9.0", features: ["mode"] });
-    expect(await k.app.get(NetworkGrants).reportedMode(none.m.deviceId)).toBe("sandbox");
-    none.machine.close();
-    // a program without the mode feature behaves as an allowlisted sandbox
-    const old = await helloWith({ programVersion: "0.9.0" });
-    expect(await k.app.get(NetworkGrants).reportedMode(old.m.deviceId)).toBe("sandbox");
-    old.machine.close();
-  });
-
-  it("an old unsandboxed program is refused when the org forbids auto mode", async () => {
-    const { m, machine } = await helloWith({
+    expect(await k.app.get(NetworkGrants).reportedMode(full.m.deviceId)).toBe("auto");
+    full.machine.close();
+    // fail closed: a restricted owner ceiling is sandbox, whatever its summary says
+    const restricted = await helloWith({
       programVersion: "0.9.0",
-      features: [],
-      policy: {
-        tier: "open",
-        effectiveTier: "open",
-        isolation: "none",
-        localhost: "on",
-        unixSockets: "roots",
-        allowedDomains: [],
-        remoteGrants: "owner",
-      },
+      features: ["networkReport", "policyOp", "mode"],
+      policy: SUMMARY,
+      ownerCeiling: ownerReportFor(SUMMARY, { fullAccess: false }),
     });
-    await db
-      .updateTable("orgs")
-      .set({ settings: JSON.stringify({ fullAccess: "off" }) })
-      .where("id", "=", orgId)
-      .execute();
-    try {
-      // the gate: reportedMode is auto (the legacy summary ran unsandboxed), the ceiling sandbox
-      const err = await k.app
-        .get(LocalDeviceProvider)
-        .exec(
-          { id: m.deviceId, roots: HELLO.roots },
-          {
-            command: "true",
-            timeoutMs: 1000,
-            maxOutputBytes: 100,
-            tag: "t",
-            actor: { accountId: m.accountId, conversationId: randomUUID() },
-            signal: AbortSignal.timeout(10_000),
-          },
-        )
-        .catch((e: unknown) => e);
-      expect(err).toBeInstanceOf(ApiError);
-      expect((err as ApiError).code).toBe("device.auto_mode_not_allowed");
-    } finally {
-      await db.updateTable("orgs").set({ settings: "{}" }).where("id", "=", orgId).execute();
-      machine.close();
-    }
+    expect(await k.app.get(NetworkGrants).reportedMode(restricted.m.deviceId)).toBe("sandbox");
+    restricted.machine.close();
   });
 });
 
@@ -573,12 +563,15 @@ describe("GET /device/connect", () => {
     );
     await machine.opened;
     expect(await held(m.deviceId)).toBeTruthy();
-    const r = await relay.call(m.deviceId, "exec", execArgs, {
+    const r = await relay.callV3(m.deviceId, "exec", execArgs(m.deviceId), {
       deadlineMs: 6000,
       signal: AbortSignal.timeout(20_000),
     });
     expect(r).toEqual(EXEC_RESULT);
-    expect(machine.frames[0]).toMatchObject({ type: "req", op: "exec", args: execArgs });
+    expect(machine.frames.find((f) => f.type === "req" && f.op === "exec")).toMatchObject({
+      type: "req",
+      args: { command: "echo hi", scope: { deviceId: m.deviceId, tag: "t1" } },
+    });
     // the hello was recorded: the claim (and so `held`) comes before the record, so wait for
     // what only the record writes (roots) instead of reading at once
     const row = await waitFor(
@@ -611,7 +604,7 @@ describe("GET /device/connect", () => {
     await held(m.deviceId);
     const ac = new AbortController();
     const call = relay
-      .call(m.deviceId, "exec", execArgs, { deadlineMs: 8000, signal: ac.signal })
+      .callV3(m.deviceId, "exec", execArgs(m.deviceId), { deadlineMs: 8000, signal: ac.signal })
       .catch((e: unknown) => e);
     const req = (await machine.next((f) => f.type === "req")) as KernelReq;
     ac.abort(new Error("stop"));
@@ -682,7 +675,7 @@ describe("GET /device/connect", () => {
       return t !== null && t !== firstToken;
     });
     expect(
-      await relay.call(m.deviceId, "exec", execArgs, {
+      await relay.callV3(m.deviceId, "exec", execArgs(m.deviceId), {
         deadlineMs: 6000,
         signal: AbortSignal.timeout(20_000),
       }),
@@ -729,7 +722,7 @@ describe("GET /device/connect", () => {
     const first = new FakeMachine(url, m.credential);
     await first.opened;
     await held(m.deviceId);
-    const call = relay.call(m.deviceId, "exec", execArgs, {
+    const call = relay.callV3(m.deviceId, "exec", execArgs(m.deviceId), {
       deadlineMs: 20_000,
       signal: AbortSignal.timeout(30_000),
     });
@@ -738,9 +731,10 @@ describe("GET /device/connect", () => {
     first.close();
     await first.closed;
     await waitFor(async () => (await redis.get(deviceLeaseKey(m.deviceId))) === null);
-    // the program flushes what finished while it was away right after its hello
-    const second = new FakeMachine(url, m.credential);
-    await second.opened;
+    // the program flushes what finished while it was away once the kernel is ready (protocol 3:
+    // a result before `ready` is a protocol error)
+    const second = new FakeMachineV3(url, m.credential);
+    await second.ready;
     second.respond(req.id, { ok: true, result: EXEC_RESULT });
     expect(await call).toEqual(EXEC_RESULT);
     second.close();

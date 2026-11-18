@@ -388,7 +388,7 @@ export class LocalDeviceProvider implements SandboxProvider {
             const authority = await execArgs(h.id, scope, "exec", rest);
             const combined = AbortSignal.any([signal, callSignal]);
             combined.throwIfAborted();
-            return parseOperationResult(
+            const result = parseOperationResult(
               "exec",
               await transport.call(
                 h.id,
@@ -397,6 +397,13 @@ export class LocalDeviceProvider implements SandboxProvider {
                 { deadlineMs: args.timeoutMs + EXEC_DEADLINE_MARGIN_MS, signal: combined },
               ),
             ) as ExecResult;
+            // the kernel's own layer for the machine's report, as on protocol 2: a host the org
+            // does not allow is `org` (only an admin can lift it), never a question to the owner
+            if (result.network?.blocked === undefined) return result;
+            return {
+              ...result,
+              network: { blocked: relayer(result.network.blocked, authority.limits) },
+            };
           },
         };
       },
