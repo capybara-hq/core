@@ -4,6 +4,7 @@ import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara
 import { Queue } from "bullmq";
 import { Redis } from "ioredis";
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from "vitest";
+import { BackgroundTaskStore } from "../../src/background/store.js";
 import { KernelConfigSchema } from "../../src/config/schema.js";
 import { PermissionProfilesService } from "../../src/conversations/permission-profiles.service.js";
 import { kernelDb } from "../../src/db/kernel-schema.js";
@@ -32,6 +33,7 @@ import { barrier, managedTaskFixture } from "../helpers/managed-background.js";
 import { MODEL_PLUGINS_CONFIG } from "../helpers/model-plugins.js";
 import { drainOutbox } from "../helpers/outbox.js";
 import { startKernel, type TestKernel, waitFor } from "../helpers/runs.js";
+import { seedDevice } from "../helpers/sandbox.js";
 import { seedConversation } from "../helpers/tool-fixtures.js";
 import { stagedHello } from "../local-devices/fake-machine-v3.js";
 
@@ -518,43 +520,209 @@ async function localDevice() {
   return { ...seed, deviceId, ctx, frames };
 }
 
-/** The admitted Bash a crashed replica held on the device's current instance. */
-async function admittedBash(
-  f: Awaited<ReturnType<typeof localDevice>>,
-  holder: string,
-  generation: string,
+/** One operation intent of `f`'s device, as an admission (or a crashed holder) left it. */
+async function seedIntent(
+  f: { orgId: string; accountId: string; conversationId: string; deviceId: string },
+  o: {
+    holder?: string;
+    generation: string;
+    state: "admitted" | "dispatching" | "started-or-unknown" | "background-running" | "completed";
+    method?: "exec" | "backgroundStart";
+    provider?: string;
+    deviceId?: string;
+  },
 ): Promise<string> {
   const operationId = randomUUID();
+  const method = o.method ?? "exec";
   await db()
     .insertInto("sandbox_operation_intents")
     .values({
       operation_id: operationId,
       org_id: f.orgId,
       account_id: f.accountId,
-      device_id: f.deviceId,
+      device_id: o.deviceId ?? f.deviceId,
       root_conversation_id: f.conversationId,
       conversation_id: f.conversationId,
       run_id: null,
       call_id: null,
       ordinal: 0,
-      method: "exec",
+      method,
       input_hash: "a".repeat(64),
       admission_hash: "b".repeat(64),
       input: "{}",
       scope: "{}",
       epochs: JSON.stringify({ platform: 0, org: 0, device: 0, root: 0 }),
-      provider: LOCAL_PROVIDER,
+      provider: o.provider ?? LOCAL_PROVIDER,
       provider_version: "test",
-      instance_generation: generation,
+      instance_generation: o.generation,
       deadline: new Date(Date.now() + 60_000),
       retain_until: new Date(Date.now() + 120_000),
-      state: "admitted",
+      state: o.state,
       execution_id: randomUUID(),
-      holder_token: holder,
+      holder_token: o.holder ?? randomUUID(),
+      ...(o.state === "background-running" && {
+        execution_ref: JSON.stringify({
+          operationId,
+          executionId: "x",
+          instanceId: o.deviceId ?? f.deviceId,
+          instanceGeneration: o.generation,
+        }),
+      }),
     })
     .execute();
   return operationId;
 }
+
+/** The admitted Bash a crashed replica held on the device's current instance. */
+const admittedBash = (
+  f: Awaited<ReturnType<typeof localDevice>>,
+  holder: string,
+  generation: string,
+): Promise<string> => seedIntent(f, { holder, generation, state: "admitted" });
+
+/** A managed background task reserved for `operationId` (dispatched, no exact ref yet). */
+async function launchingTask(
+  f: { orgId: string; accountId: string; conversationId: string; deviceId: string },
+  operationId: string,
+  launchState: "pending" | "dispatched",
+): Promise<string> {
+  const id = `bt_${randomUUID()
+    .replace(/[^a-z2-7]/g, "")
+    .slice(0, 6)
+    .padEnd(6, "a")}`;
+  await db()
+    .insertInto("background_tasks")
+    .values({
+      id,
+      org_id: f.orgId,
+      conversation_id: f.conversationId,
+      sandbox_conversation_id: f.conversationId,
+      device_id: f.deviceId,
+      run_id: randomUUID(),
+      call_id: `call-${id}`,
+      trigger_account_id: f.accountId,
+      description: "d",
+      command: "sleep 600",
+      sid: null,
+      output_path: `/workspace/.capybara/tasks/${id}.out`,
+      status: "running",
+      deadline_at: new Date(Date.now() + 3_600_000),
+      sandbox_created_at: null,
+      launch_state: launchState,
+      operation_id: operationId,
+      working_root: "/workspace",
+      retain_until: new Date(Date.now() + 86_400_000),
+      ...(launchState === "dispatched" && {
+        input_digest: "d".repeat(64),
+        run_execution_id: randomUUID(),
+        task_tag: randomUUID(),
+        instance_id: f.deviceId,
+        instance_provider: LOCAL_PROVIDER,
+        instance_provider_version: "test",
+        instance_generation: "1",
+        profile_revision: 0,
+        ceiling_revision: "c",
+      }),
+    })
+    .execute();
+  return id;
+}
+
+/** A cloud device of a fresh org (the intents tests need no instance). */
+async function intentDevice() {
+  const seed = await seedConversation(raw);
+  const deviceId = await seedDevice(raw, seed.orgId, seed.accountId);
+  return { ...seed, deviceId };
+}
+
+const stateOf = async (operationId: string) =>
+  (
+    await db()
+      .selectFrom("sandbox_operation_intents")
+      .select("state")
+      .where("operation_id", "=", operationId)
+      .executeTakeFirstOrThrow()
+  ).state;
+
+it("revokeIncarnation revokes the generation's admitted, dispatching and started-or-unknown intents only", async () => {
+  const f = await intentDevice();
+  const other = await seedDevice(raw, f.orgId, f.accountId);
+  const g = "1700000000001";
+  const ids = {
+    admitted: await seedIntent(f, { generation: g, state: "admitted" }),
+    dispatching: await seedIntent(f, { generation: g, state: "dispatching" }),
+    unknown: await seedIntent(f, { generation: g, state: "started-or-unknown" }),
+    running: await seedIntent(f, {
+      generation: g,
+      state: "background-running",
+      method: "backgroundStart",
+    }),
+    completed: await seedIntent(f, { generation: g, state: "completed" }),
+    olderGeneration: await seedIntent(f, { generation: "1600000000000", state: "admitted" }),
+    otherProvider: await seedIntent(f, { generation: g, state: "dispatching", provider: "x" }),
+    otherDevice: await seedIntent(f, {
+      generation: g,
+      state: "started-or-unknown",
+      deviceId: other,
+    }),
+  };
+  await k.app
+    .get(SandboxOperationIntents)
+    .revokeIncarnation(f.deviceId, { provider: LOCAL_PROVIDER, generation: g });
+  expect({
+    admitted: await stateOf(ids.admitted),
+    dispatching: await stateOf(ids.dispatching),
+    unknown: await stateOf(ids.unknown),
+    running: await stateOf(ids.running),
+    completed: await stateOf(ids.completed),
+    olderGeneration: await stateOf(ids.olderGeneration),
+    otherProvider: await stateOf(ids.otherProvider),
+    otherDevice: await stateOf(ids.otherDevice),
+  }).toEqual({
+    admitted: "revoked",
+    dispatching: "revoked",
+    unknown: "revoked",
+    running: "background-running",
+    completed: "completed",
+    olderGeneration: "admitted",
+    otherProvider: "dispatching",
+    otherDevice: "started-or-unknown",
+  });
+});
+
+it("a revoked launch without an exact ref ends its task and frees its maxTasks slot", async () => {
+  const f = await intentDevice();
+  const intents = k.app.get(SandboxOperationIntents);
+  const store = k.app.get(BackgroundTaskStore);
+  const dead = randomUUID();
+  // a crashed holder's dispatched start, and an admitted one of a resumed generation
+  const dispatched = await seedIntent(f, {
+    holder: dead,
+    generation: "1",
+    state: "dispatching",
+    method: "backgroundStart",
+  });
+  const admitted = await seedIntent(f, {
+    generation: "2",
+    state: "admitted",
+    method: "backgroundStart",
+  });
+  const t1 = await launchingTask(f, dispatched, "dispatched");
+  const t2 = await launchingTask(f, admitted, "pending");
+  expect(await store.countRunning(f.conversationId)).toBe(2);
+  await intents.revokeHolders(f.deviceId, [dead]);
+  await intents.revokeIncarnation(f.deviceId, { provider: LOCAL_PROVIDER, generation: "2" });
+  // the exact revokes are acknowledged (the device confirmed): the tasks stay ended
+  await intents.acknowledgeRevocation(dispatched);
+  await intents.acknowledgeRevocation(admitted);
+  expect(await store.countRunning(f.conversationId)).toBe(0);
+  for (const id of [t1, t2]) {
+    const task = await store.get(id);
+    expect(task).toMatchObject({ status: "lost", launchState: "terminal" });
+    expect(task?.lostReason).toMatch(/revoked/);
+    expect(task?.finishedAt).toBeInstanceOf(Date);
+  }
+});
 
 it("a crashed holder's revocation survives a failed inline revoke: the owed job revokes its admitted Bash and the device gets the exact revoke", async () => {
   const original = k.app.get(SandboxProviders).forName(LOCAL_PROVIDER);

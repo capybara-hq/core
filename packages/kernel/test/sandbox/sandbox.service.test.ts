@@ -1559,12 +1559,43 @@ describe("a resume revokes exactly, never killAll (B-1)", () => {
         },
       },
     });
-    await use(s);
+    const { h } = await use(s);
     expect(await s.suspendIdle(later(DAY))).toBe(1);
     await expect(s.withSandbox(at(), async () => "ran", signal())).rejects.toThrow(
       "database unavailable",
     );
     expect((await row())?.status).toBe("suspended");
+    // the instance the resume started is suspended again, as its row says
+    expect(await ops("resume")).toHaveLength(1);
+    expect(await ops("suspend")).toHaveLength(2);
+    expect(await fakeSandboxState(root, h.id)).toBe("suspended");
     expect(await ops("kill-all")).toHaveLength(0);
+  });
+
+  it("a suspend that also fails is only warned; the revocation's error is thrown", async () => {
+    const base = createFakeSandbox(root);
+    let suspends = 0;
+    const flaky: SandboxProvider = {
+      ...base,
+      suspend: async (h, sig) => {
+        // the sweep's suspend works, the one after the failed revocation does not
+        if (++suspends > 1) throw new Error("suspend failed");
+        return base.suspend(h, sig);
+      },
+    };
+    const s = service(() => flaky, undefined, {
+      operationIntents: {
+        revokeIncarnation: async () => {
+          throw new Error("database unavailable");
+        },
+      },
+    });
+    await use(s);
+    expect(await s.suspendIdle(later(DAY))).toBe(1);
+    await expect(s.withSandbox(at(), async () => "ran", signal())).rejects.toThrow(
+      "database unavailable",
+    );
+    expect(warned).toContain("cannot suspend the instance again after a failed revocation");
+    expect((await row())?.status).toBe("suspended");
   });
 });

@@ -476,8 +476,8 @@ describe("concurrent commands (fake sandbox)", () => {
     const revoked: string[][] = [];
     const s = service(undefined, {
       operationIntents: {
-        revokeIncarnation: async (_env, inst, dead) =>
-          void incarnations.push(`${inst.provider}@${inst.generation}:${dead.join(",")}`),
+        revokeIncarnation: async (_env, inst) =>
+          void incarnations.push(`${inst.provider}@${inst.generation}`),
         revokeHolders: async (_env, tokens) => void revoked.push([...tokens]),
       },
     });
@@ -496,7 +496,7 @@ describe("concurrent commands (fake sandbox)", () => {
     const out = await Promise.all([0, 1, 2].map(() => run(s, "echo ok")));
     for (const o of out) expect(o.r.stdout).toBe("ok\n");
     expect(await ops("resume")).toHaveLength(1);
-    expect(incarnations).toEqual([`sandbox-fake@${created}:`]);
+    expect(incarnations).toEqual([`sandbox-fake@${created}`]);
     expect(revoked).toEqual([[dead]]);
     expect(await ops("kill-all")).toHaveLength(0);
     expect(await ops("kill-tagged")).toHaveLength(0);

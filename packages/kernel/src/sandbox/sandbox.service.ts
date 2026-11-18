@@ -2408,7 +2408,7 @@ export class SandboxService {
     strict: boolean,
   ): Promise<void> {
     try {
-      await runOutsideTransaction(() => this.operationIntents.revokeIncarnation(env, instance, []));
+      await runOutsideTransaction(() => this.operationIntents.revokeIncarnation(env, instance));
     } catch (err) {
       if (strict || signal.aborted) throw err;
       this.log.warn("cannot revoke the sandbox instance's leftover operations", {
@@ -2423,8 +2423,11 @@ export class SandboxService {
   /**
    * Delivers the owed operation revokes of one instance generation inline, by operation id
    * (`revokeOperation`), acknowledging each: what the revoke jobs would deliver, sent before this
-   * holder runs anything. Without `revokeOperation` the jobs keep them owed. Gone and abort are
-   * thrown (the use rebuilds / ends); any other failure is warned and stays owed.
+   * holder runs anything. Best effort, as the broad `killAll` it replaces was: at most
+   * {@link INLINE_REVOKE_LIMIT} per call, nothing for a provider without `revokeOperation`, and any
+   * failure only warned. Durability does not depend on it: every revocation wrote its
+   * `sandbox-operation-revoke-<operationId>` outbox job in the same transaction, and those jobs
+   * deliver until acknowledged. Gone and abort are thrown (the use rebuilds / ends).
    */
   private async deliverRevocations(
     env: string,
@@ -3526,12 +3529,21 @@ export class SandboxService {
               return { ...created, fsResets, info: { fresh: true, restarted: true }, fence };
             }
           }
-          // the work a pause brought back (every started-or-unknown operation of this generation)
-          // is revoked before the row says running: a failure leaves it suspended, so the next
-          // use resumes and revokes again; the revokes are delivered before the downgrade
-          await runOutsideTransaction(() =>
-            this.operationIntents.revokeIncarnation(id, incarnation, []),
-          );
+          // the work a pause brought back (every admitted, dispatching and started-or-unknown
+          // operation of this generation) is revoked before the row says running; the revokes are
+          // delivered before the downgrade. A failure fails the use closed: the instance is
+          // suspended again (best effort, its failure only warned), the row still says
+          // suspended, and the next use resumes and revokes again
+          try {
+            await runOutsideTransaction(() =>
+              this.operationIntents.revokeIncarnation(id, incarnation),
+            );
+          } catch (err) {
+            await this.bestEffort(id, "suspend the instance again after a failed revocation", (s) =>
+              p.impl.suspend(handle, s),
+            );
+            throw err;
+          }
           await this.fenced(held, id, fence, {
             status: "running",
             running_since: sql<Date>`now()`,

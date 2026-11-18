@@ -93,8 +93,8 @@ Every provider must follow these; the kernel's behaviour below assumes them. How
   `timeout -s KILL <timeoutMs + a few seconds>`. When a kernel replica crashes, the provider-side timer disappears with it, and disconnecting does not end the command;
   this limit guarantees it cannot run indefinitely in parallel with the next lock holder's commands.
 - **killAll**: kill every command started through `exec` that is still running (SIGKILL by process group and session); processes moved to the background in a new session are not guaranteed.
-  The kernel calls it only where no other holder (any session of the device) can be running a command (see "Takeover per holder" below): under the exclusive lease,
-  before the downgrade, right after recovering from `suspended` (an E2B pause preserves processes too). Crashed holders are killed by tag, never with `killAll`. When the exec that kills processes cannot even start (process table exhausted),
+  The kernel no longer calls it (permission runtime cutover B-1): a resumed, failed-update or quarantined instance and a crashed holder are cleaned up by exact
+  operation revokes (`revokeOperation`, see "Takeover per holder" below). The method stays in the `sandbox@2` signature. When the exec that kills processes cannot even start (process table exhausted),
   Docker falls back to `restart?t=0` and E2B falls back to pause + a `connect {memory: false}` cold start, which also end live siblings' commands; both log a
   warn and the call returns normally.
 - **Concurrent use (`concurrentExec`, `killTagged`, `tag`; both required)**: all sessions of a device and their sub-agents share one instance, so the kernel calls
@@ -134,8 +134,8 @@ Every provider must follow these; the kernel's behaviour below assumes them. How
   `pgrep -s` and `base64` (a provider without them fails the launch with a readable error), and `exec` must return once its own process and stdio end,
   without waiting for a detached session. The exec wrapper's abort, timeout, `killTagged` and `killAll` don't reach a task, and a task holds
   no lease while it runs. Tasks don't survive a Docker suspend or a rebuild (the poll marks them `lost`); a task marked lost while its
-  process may live on (an E2B pause keeps processes) is `kill_pending`, and `SandboxService` kills those sessions right after resuming that
-  instance, under the exclusive lease next to its `killAll`. The poll and `TaskOutput` / `TaskStop` use `SandboxService.ifRunning`: a shared
+  process may live on (an E2B pause keeps processes) is `kill_pending`; a stored SID is no authority, so `SandboxService` signals nothing
+  after a resume or a rebuild (the retirement obligations own those marks). The poll and `TaskOutput` / `TaskStop` use `SandboxService.ifRunning`: a shared
   lease only on a `running` row of the task's instance, never creating or resuming one. sandbox-fake puts node shims for `setsid`,
   `timeout`, `pkill -s` and `pgrep -s` first on its PATH (macOS has none) and kills an instance's processes on `suspend` and `destroy`.
 - **Cloud installed evidence** (B-15, `sandbox/permission-runtime-reports.ts`): a cloud device has no installed binding.
@@ -211,7 +211,7 @@ Every provider must follow these; the kernel's behaviour below assumes them. How
     `device.restart_required`. With no boot recorded it never resolves and answers `device.replace_required`: delete the device
     and connect the computer as a new one.
   - **What never clears an obligation.** A local destroy, a service restart, a new generation, a timeout or a SID.
-  - **After the freeze.** `killPendingTasks` neither signals nor clears kill marks.
+  - **After the freeze.** Nothing in `SandboxService` signals a SID or clears kill marks (the old `killPendingTasks` is gone).
   - **`ifRunning`.** It refuses legacy SID polls, stops and reads and staged browse on such a device (`RetirementPendingError`).
     Only exact-ref managed drains pass `exactRef: true`.
   - **Freeze state.** `freeze()` returns once its own enumeration settled (`scanUntilStable`) and records `enumerated_at`
@@ -375,7 +375,7 @@ The kernel owns it; the extension implements only primitives. **Do not do schedu
 - **Leases** (phase C, `packages/kernel/src/sandbox/leases.ts`, spec `docs/superpowers/specs/2026-10-26-subagents-design.md` §10): using a sandbox recorded
   `running` takes a **shared** lease (up to `sandbox.maxConcurrentCommands`, default 6, hot, shared by all sessions of the device):
   every sandbox tool, attachment sync, `Skill` copies. Every lifecycle change (create instance, first use, rebuild after `gone`, `resume`, provider switch,
-  `suspend`, `destroy`, `killAll` after resume) takes the **exclusive** lease, alone. Keys: `capk:sandbox:<env>` (the lock key: an exclusive token or the literal `shared`), `capk:sandbox-users:<env>` (zset of shared tokens by expiry), `capk:sandbox-intent:<env>`
+  `suspend`, `destroy`, the exact revocation after a resume) takes the **exclusive** lease, alone. Keys: `capk:sandbox:<env>` (the lock key: an exclusive token or the literal `shared`), `capk:sandbox-users:<env>` (zset of shared tokens by expiry), `capk:sandbox-intent:<env>`
   (an exclusive waiter's intent: new shared leases wait, writer preference), `capk:sandbox-holders:<env>` (holder records), `capk:sandbox-path:<env>:<sha256>`.
   Every key carries a TTL, never shortened by a holder for a TTL another holder set: the lease keys (`capk:sandbox:<env>`, `capk:sandbox-users:<env>`)
   60 s (`SANDBOX_LOCK_TTL_MS`; the lease is a `LockService` shared lease, `tryShared` / `tryExclusive` in `infra/lock`, renewed every TTL/3 and lost at
@@ -392,11 +392,24 @@ The kernel owns it; the extension implements only primitives. **Do not do schedu
   An instance is named by its handle **and** the row's `created_at` (set by the fenced write after each `create`): sandbox-docker's handle is the instance
   name, the same after a rebuild, so the handle alone would make every holder rebuild in turn and wipe the instance the previous one had just built.
 - **Takeover per holder**: each holder records itself in `capk:sandbox-holders:<env>` (TTL `maxCommandSeconds` + 10 min) before its provider calls,
-  refreshes the record before every `exec`, and deletes it **before** releasing its lease. Every acquirer claims records without a live lease (crashed
-  holders) atomically and kills only their commands with `killTagged` (every provider has it; other conversations of the device may be running commands).
-  `killAll` runs only under the exclusive lease, before the downgrade, on an instance that acquirer just resumed from `suspended`: nobody else can hold
-  it, and that one call also covers the crashed holders' records it claims. A newly created instance has nothing to kill (records found then are only
-  claimed). The claim removes the records before the kill: an acquirer that crashes in between leaves those commands to the in-sandbox time limit.
+  refreshes the record before every `exec`, and deletes it **before** releasing its lease. The operations a holder admits carry its lease token as
+  their holder. Nothing is ever `killAll`ed or `killTagged` (permission runtime cutover B-1); cleanup is exact, by operation id:
+  - **Crashed holder.** Every acquirer reads the records without a live lease (`SandboxLeases.deadHolders`, which leaves them in place), owes each
+    token's revocation in an outbox row (`SandboxOperationIntents.oweHolderRevocations`, job `sandbox-holder-revoke-<deviceId>-<token>`), and only then
+    forgets the records (`forgetHolders`). It then revokes the holder's admitted, dispatching and started-or-unknown intents inline (`revokeHolders`);
+    if that fails, the maintenance worker's job retries it. If the outbox write itself fails, the record stays for the next acquirer. A record whose
+    TTL lapses before anyone reads it is dropped unowed (its operations are past their device-enforced deadline).
+  - **Incarnation nobody else holds.** Under the exclusive lease, on an instance just resumed from `suspended`, after a failed limits change on it,
+    in the `reconcileLimits` resume and in a `quarantine` that cannot suspend, `revokeIncarnation` revokes every admitted, dispatching and
+    started-or-unknown intent of that provider and instance generation (no live dispatcher can exist). On a resume it runs before the row says
+    `running`; if it fails, the instance is suspended again (best effort) and the use fails, so the next resume revokes again.
+    `background-running` intents keep their starting grant.
+  - **Revoked launches.** A revoked `backgroundStart` with no exact ref ends its task in the same transaction (`lost`, a model-readable reason),
+    freeing its `maxTasks` slot; the exact revoke stays owed.
+  - **Delivery.** Each revocation writes `sandbox-operation-revoke-<operationId>` outbox jobs, which deliver `revokeOperation` until acknowledged.
+    The holder also delivers the owed revokes of the instance inline before it runs anything (after a resume, or when it found crashed holders).
+    That inline delivery is best effort, as the old `killAll` was: at most 100 per call, nothing without `revokeOperation`, and a failure only
+    warned. The owed jobs keep every revoke durable.
   There is no single-holder path and no single "sandbox in use" marker (the `capk:sandbox-busy:<env>` key of earlier kernels is neither read nor written);
   the cap is always `sandbox.maxConcurrentCommands`.
 - **Kernel file writes per path**: `Write`, `Edit`, attachment sync (its marker) and `Skill` copies (the skill's marker) take a per-path

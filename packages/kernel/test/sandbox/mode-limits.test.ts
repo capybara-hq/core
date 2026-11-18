@@ -528,8 +528,8 @@ describe("a failed limits change", () => {
     const revoked: string[] = [];
     const s = service(undefined, undefined, {
       operationIntents: {
-        revokeIncarnation: async (_env, inst, dead) =>
-          void revoked.push(`${inst.provider}@${inst.generation}:${dead.length}`),
+        revokeIncarnation: async (_env, inst) =>
+          void revoked.push(`${inst.provider}@${inst.generation}`),
       },
     });
     const first = await use(s);
@@ -541,7 +541,7 @@ describe("a failed limits change", () => {
     // the next use resumes it; the update fails again: what the pause brought back is revoked
     await use(s).catch(() => undefined);
     expect(await ops("resume")).toHaveLength(1);
-    expect(revoked).toEqual([`sandbox-fake@${generation}:0`]);
+    expect(revoked).toEqual([`sandbox-fake@${generation}`]);
     expect(await ops("kill-all")).toEqual([]);
     expect(await ops("kill-tagged")).toEqual([]);
     expect(await fakeSandboxState(root, first.h.id)).toBe("suspended");

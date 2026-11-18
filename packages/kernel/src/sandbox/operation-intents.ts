@@ -40,6 +40,12 @@ export const OPERATION_REVOKE = "sandbox-operation-revoke";
  * record is forgotten, under the job id `sandbox-holder-revoke-<deviceId>-<token>`.
  */
 export const HOLDER_REVOKE = "sandbox-holder-revoke";
+/**
+ * Why a revoked background launch ended (model-visible, `lostReasonText` passes it through): the
+ * kernel replica that was starting it stopped, so its launch was revoked.
+ */
+export const REVOKED_LAUNCH_REASON =
+  "its launch was revoked because the server that started it stopped; run the command again if it is still needed";
 /** The instance whose operations an exact cleanup covers: its provider and generation. */
 export interface RevokedIncarnation {
   provider: string;
@@ -1378,31 +1384,18 @@ export class SandboxOperationIntents {
   /**
    * The exact cleanup of an incarnation nobody else holds (the caller has its exclusive lifecycle
    * lease: a resume from `suspended`, a failed limits change, a quarantine), replacing the broad
-   * `killAll`: every started-or-unknown intent of that instance generation (whose holder is gone
-   * by construction) plus the crashed holders' admitted, dispatching and started-or-unknown ones.
+   * `killAll`: every admitted, dispatching and started-or-unknown intent of that instance
+   * generation. Under the exclusive lease none of them has a live dispatcher (a shared holder can
+   * not exist), including a crashed replica's whose holder record expired or was never written.
    * An acknowledged background task (`background-running`) keeps its starting grant.
    */
   @Transactional({ propagation: "requires_new" })
-  async revokeIncarnation(
-    deviceId: string,
-    instance: RevokedIncarnation,
-    dead: readonly string[],
-  ): Promise<void> {
+  async revokeIncarnation(deviceId: string, instance: RevokedIncarnation): Promise<void> {
     await this.revokeMatching(deviceId, (eb) =>
-      eb.or([
-        eb.and([
-          eb("provider", "=", instance.provider),
-          eb("instance_generation", "=", instance.generation),
-          eb("state", "=", "started-or-unknown"),
-        ]),
-        ...(dead.length
-          ? [
-              eb.and([
-                eb("holder_token", "in", [...dead]),
-                eb("state", "in", ["admitted", "dispatching", "started-or-unknown"]),
-              ]),
-            ]
-          : []),
+      eb.and([
+        eb("provider", "=", instance.provider),
+        eb("instance_generation", "=", instance.generation),
+        eb("state", "in", ["admitted", "dispatching", "started-or-unknown"]),
       ]),
     );
   }
@@ -1425,8 +1418,27 @@ export class SandboxOperationIntents {
       .set({ state: "revoked", outcome_unknown: true, updated_at: new Date() })
       .where("device_id", "=", deviceId)
       .where(where)
-      .returning("operation_id")
+      .returning(["operation_id", "method"])
       .execute();
+    // A revoked start never gets its exact ref: its task would keep running and hold its
+    // `maxTasks` slot forever. It ends now, in the revocation's transaction; the exact revoke (the
+    // operation tombstone) stays owed below, so the possibly launched process is still cancelled.
+    const starts = rows.filter((r) => r.method === "backgroundStart").map((r) => r.operation_id);
+    if (starts.length > 0)
+      await this.db
+        .updateTable("background_tasks")
+        .set({
+          status: "lost",
+          launch_state: "terminal",
+          finished_at: new Date(),
+          lost_reason: REVOKED_LAUNCH_REASON,
+          stopping_at: null,
+        })
+        .where("operation_id", "in", starts)
+        .where("status", "=", "running")
+        .where("execution_ref", "is", null)
+        .where("launch_state", "in", ["pending", "dispatched", "cancel-pending"])
+        .execute();
     for (const row of rows)
       await this.outbox.add({
         queue: "cap-kernel-maintenance",
