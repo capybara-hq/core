@@ -294,6 +294,7 @@ it("exact binding is required for expansion and exact evidence retries are immut
     expect(await grants.findForAdmission(c.binding)).toEqual({
       id: first.id,
       expansion: c.permissionScope,
+      source: "review-model",
     });
     for (const key of Object.keys(c.binding)) {
       const value = c.binding[key as keyof typeof c.binding];
