@@ -257,6 +257,26 @@ export class ModelPurposesService {
   }
 
   /**
+   * Whether each purpose (kernel and extension-declared) resolves to a usable model for the org
+   * now, as {@link resolve} decides, without naming the model (the agent form's gate for
+   * `GenerateImage`, readable by every member).
+   */
+  async availability(orgId: string): Promise<{ purpose: string; available: boolean }[]> {
+    const out: { purpose: string; available: boolean }[] = [];
+    for (const d of this.declared()) {
+      const available = await this.resolve(orgId, d.purpose).then(
+        () => true,
+        (e: unknown) => {
+          if (e instanceof ApiError && e.code === "model.unconfigured") return false;
+          throw e;
+        },
+      );
+      out.push({ purpose: d.purpose, available });
+    }
+    return out;
+  }
+
+  /**
    * 校验目标：模型可解析且启用（an org's override for the org, a deployment default in the
    * platform view）、its kind is the purpose's `kind`、参数按它的声明严格通过。
    */

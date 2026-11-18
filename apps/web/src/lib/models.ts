@@ -112,6 +112,12 @@ export const putAdminPurpose = (purpose: string, target: PurposeTarget | null) =
 export const listOrgPurposes = (orgId: string) =>
   apiFetch<{ purposes: PurposeView[] }>(`/api/v1/orgs/${enc(orgId)}/model-purposes`);
 
+/** Whether each purpose has a usable model in the org now (any member; no model names). */
+export const listPurposeAvailability = (orgId: string) =>
+  apiFetch<{ purposes: { purpose: string; available: boolean }[] }>(
+    `/api/v1/orgs/${enc(orgId)}/model-purposes/available`,
+  );
+
 export const putOrgPurpose = (orgId: string, purpose: string, target: PurposeTarget | null) =>
   apiFetch<{ purpose: PurposeView }>(
     `/api/v1/orgs/${enc(orgId)}/model-purposes/${enc(purpose)}`,

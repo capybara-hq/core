@@ -16,7 +16,7 @@ import { connectorQuery, connectorsQuery, modelsQuery } from "./conversation";
 import { defineQuery } from "./define";
 import { keys } from "./keys";
 import { membersQuery } from "./members";
-import { orgPurposesQuery } from "./settings";
+import { purposeAvailabilityQuery } from "./settings";
 import { skillsQuery } from "./skills";
 
 /** The org's agents list. */
@@ -124,7 +124,7 @@ export const agentFormQueries = (
     : [
         any(agentSkillsQuery(orgId, agentId)),
         any(availableExtensionPointsQuery(orgId)),
-        any(orgPurposesQuery(orgId)),
+        any(purposeAvailabilityQuery(orgId)),
         any(extensionToolsQuery(orgId)),
       ]),
 ];

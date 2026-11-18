@@ -589,3 +589,33 @@ describe("权限", () => {
     expect((await k.http.inject({ method: "GET", url: adminUrl() })).statusCode).toBe(401);
   });
 });
+
+describe("purpose availability for a member", () => {
+  const availUrl = () => `/api/v1/orgs/${orgId}/model-purposes/available`;
+  const FAKE_IMAGE = { model: { provider: "model-fake", model: "fake-image" }, params: {} };
+  const imageAvailable = async (req: Req) => {
+    const res = await req({ method: "GET", url: availUrl() });
+    expect(res.statusCode, res.body).toBe(200);
+    const { purposes } = res.json() as { purposes: { purpose: string; available: boolean }[] };
+    expect(Object.keys(purposes[0] ?? {}).sort()).toEqual(["available", "purpose"]);
+    return purposes.find((p) => p.purpose === "image")?.available;
+  };
+
+  it("a plain member reads false unmapped, true once mapped, false once the target is disabled", async () => {
+    // not an org.models.manage action: the full list refuses the member
+    expect((await alice({ method: "GET", url: orgUrl() })).statusCode).toBe(403);
+    expect(await imageAvailable(alice)).toBe(false);
+    await put(admin, orgUrl("image"), FAKE_IMAGE);
+    expect(await imageAvailable(alice)).toBe(true);
+    expect(
+      (
+        await admin({
+          method: "PATCH",
+          url: `/api/v1/orgs/${orgId}/models/model-fake/disabled`,
+          payload: { disable: ["fake-image"] },
+        })
+      ).statusCode,
+    ).toBe(200);
+    expect(await imageAvailable(alice)).toBe(false);
+  });
+});

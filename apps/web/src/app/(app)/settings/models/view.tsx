@@ -228,7 +228,11 @@ function ModelsBody({
   const disabling = useModelDisabling({
     scope: { orgId },
     purposes,
-    invalidates: () => [keys.org(orgId).models(), keys.org(orgId).modelsCatalog()],
+    invalidates: () => [
+      keys.org(orgId).models(),
+      keys.org(orgId).modelsCatalog(),
+      keys.org(orgId).purposeAvailability(),
+    ],
   });
   const key = orgPurposesQuery(orgId).queryKey;
   // The answer is the saved purpose: it replaces that purpose in the cache (a functional update:
@@ -236,7 +240,7 @@ function ModelsBody({
   const put = useAppMutation({
     fn: (v: { purpose: string; target: PurposeTarget | null }) =>
       putOrgPurpose(orgId, v.purpose, v.target),
-    invalidates: () => [],
+    invalidates: () => [keys.org(orgId).purposeAvailability()],
   });
   const replace = (v: PurposeView) =>
     qc.setQueryData<{ purposes: PurposeView[] }>(key, (d) =>

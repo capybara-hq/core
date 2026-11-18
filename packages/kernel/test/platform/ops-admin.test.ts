@@ -188,6 +188,7 @@ describe("registration and who may call", () => {
       "models.platform-list",
       "models.platform-purposes",
       "models.prices",
+      "models.purpose-availability",
       "models.purposes",
       "models.set-disabled",
       "models.set-platform-disabled",

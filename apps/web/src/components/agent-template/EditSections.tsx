@@ -49,7 +49,7 @@ import {
 import { retryOnMountOf } from "../../lib/query/client";
 import { orgComponentsQuery } from "../../lib/query/components";
 import { modelsQuery } from "../../lib/query/conversation";
-import { orgPurposesQuery } from "../../lib/query/settings";
+import { purposeAvailabilityQuery } from "../../lib/query/settings";
 import { skillsQuery } from "../../lib/query/skills";
 import {
   canonicalOff,
@@ -430,10 +430,10 @@ export function ToolsEdit() {
   const ext = useQuery({ ...extQ, retryOnMount: retryOnMountOf(extQ.queryKey) });
   const pointsQ = availableExtensionPointsQuery(orgId);
   const points = useQuery({ ...pointsQ, retryOnMount: retryOnMountOf(pointsQ.queryKey) });
-  const purposesQ = orgPurposesQuery(orgId);
-  const purposes = useQuery({ ...purposesQ, retryOnMount: retryOnMountOf(purposesQ.queryKey) });
+  const availQ = purposeAvailabilityQuery(orgId);
+  const avail = useQuery({ ...availQ, retryOnMount: retryOnMountOf(availQ.queryKey) });
   const imageMapped =
-    purposes.data?.purposes.find((p) => p.purpose === IMAGE_TOOL_PURPOSE)?.effective != null;
+    avail.data?.purposes.find((p) => p.purpose === IMAGE_TOOL_PURPOSE)?.available === true;
   const saved = {
     off: definition.disallowedTools ?? [],
     policies: definition.toolPolicies ?? {},

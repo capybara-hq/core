@@ -287,6 +287,8 @@ export const keys = {
       invitations: (): readonly unknown[] => [...all, "invitations"],
       /** The org's model purposes and what each maps to. */
       orgPurposes: (): readonly unknown[] => [...all, "orgPurposes"],
+      /** Whether each model purpose has a usable model (readable by every member). */
+      purposeAvailability: (): readonly unknown[] => [...all, "purposeAvailability"],
       /** The org's file previewers (which extension previews which files). */
       orgFilePreviewers: (): readonly unknown[] => [...all, "orgFilePreviewers"],
       /** The org's service tokens. */
