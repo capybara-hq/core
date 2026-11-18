@@ -1232,7 +1232,7 @@ describe("exact background revocation through the outbox and the worker", () => 
     };
     expect((await intentOf(task)).scope).toMatchObject({
       profile: "approve-for-me",
-      filesystem: { kind: "scoped", readRoots: [outside], writeRoots: [outside] },
+      filesystem: { kind: "scoped", readRoots: [outside, "/skills"], writeRoots: [outside] },
     });
     await f.db.updateTable("runs").set({ status: "completed" }).where("id", "=", f.runId).execute();
     await k.app.get(OrgSettingsService).update(f.orgId, { fullAccess: "off" }, ownerAccount().id);
@@ -1303,11 +1303,11 @@ describe("exact background revocation through the outbox and the worker", () => 
     };
     expect((await intentOf(task)).scope).toMatchObject({
       profile: "approve-for-me",
-      filesystem: { kind: "scoped", readRoots: [outside] },
+      filesystem: { kind: "scoped", readRoots: [outside, "/skills"] },
       network: { kind: "allowlist", hosts: [HOST] },
     });
     expect((await intentOf(sibling)).scope).toMatchObject({
-      filesystem: { kind: "scoped", readRoots: [outside] },
+      filesystem: { kind: "scoped", readRoots: [outside, "/skills"] },
       network: { kind: "none" },
     });
     await f.db.updateTable("runs").set({ status: "completed" }).where("id", "=", f.runId).execute();

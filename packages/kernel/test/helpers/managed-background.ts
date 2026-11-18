@@ -343,7 +343,8 @@ export async function managedTaskFixture(opts: {
       os: "darwin",
       arch: "arm64",
       features: ["mode", "projects"],
-      roots: JSON.stringify({ workspace: "/work" }),
+      // the machine reports every root the instance mounts (its handle's below)
+      roots: JSON.stringify({ ...DEFAULT_SANDBOX_ROOTS, workspace: "/work" }),
       home: "/home/owner",
       local_policy: JSON.stringify({ mode: "auto", allowedDomains: [] }),
     })
