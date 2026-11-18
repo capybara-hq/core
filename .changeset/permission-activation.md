@@ -13,3 +13,11 @@ another member triggers in an owner's conversation runs without the owner's devi
 `GenerateImage` call with `file_path` takes the same permission review as `Write`: an outside
 directory is asked about (or reviewed) and granted for that call only. The testing helpers run on
 the activated kernel.
+
+The old public permission inputs are gone. The config key `devices.autoMode` and
+`CAPYBARA_DEVICES__AUTO_MODE` now fail validation with a message that names `devices.fullAccess`
+and `capybara config migrate-permissions`. The admin settings no longer read or write
+`devicesAutoMode`, and the org settings no longer read or write `autoMode` (including
+`deployment.autoMode`); use `devicesFullAccess` and `fullAccess`. The refusals are renamed
+`org.full_access_not_allowed` and `deployment.full_access_not_allowed`. Stored old keys are still
+converted by the permission configuration publication.

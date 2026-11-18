@@ -28,18 +28,14 @@ import {
 } from "../sandbox/permission-ceiling-writes.js";
 import {
   applyDevicesFullAccessPatch,
-  DEVICES_AUTO_MODE_PATCH,
   DEVICES_FULL_ACCESS_DEFAULT,
   DEVICES_FULL_ACCESS_PATCH,
   DEVICES_FULL_ACCESS_SETTING,
-  type DevicesAutoModeView,
   type DevicesFullAccessPatch,
   type DevicesFullAccessStored,
   type DevicesFullAccessView,
   type FullAccessPermission,
-  fullAccessPatchOfLegacy,
   LEGACY_DEVICES_AUTO_MODE_SETTING,
-  legacyAutoModeView,
   legacyDevicesAutoModeStored,
   readDevicesFullAccess,
   readStoredDevicesFullAccess,
@@ -277,15 +273,13 @@ export type DeploymentSettings = z.infer<typeof DEPLOYMENT_SETTINGS>;
 const DEFAULTS: DeploymentSettings = DEPLOYMENT_SETTINGS.parse({});
 
 /**
- * What `GET /api/v1/admin/settings` answers: the stored settings, the platform's auto-mode switch
- * as it is in effect with where it comes from (`env` / `file` / `nacos`: the startup config,
+ * What `GET /api/v1/admin/settings` answers: the stored settings, the platform's Full permission
+ * switch as it is in effect with where it comes from (`env` / `file` / `nacos`: the startup config,
  * read-only here; `db`: chosen in the admin console; `default`), and the platform's effective
  * attribution defaults with their sources the same way.
  */
 export type DeploymentSettingsView = DeploymentSettings & {
   devicesFullAccess: DevicesFullAccessView;
-  /** The same switch under its old public name, until the old public readers are removed. */
-  devicesAutoMode: DevicesAutoModeView;
   attribution: PlatformAttributionView;
 };
 
@@ -347,11 +341,6 @@ export const DEPLOYMENT_SETTINGS_PATCH = z
      * `deployment.full_access_not_allowed`).
      */
     devicesFullAccess: DEVICES_FULL_ACCESS_PATCH.optional(),
-    /**
-     * The old name of `devicesFullAccess` (`{ mode }`), still accepted with the same values; never
-     * together with it.
-     */
-    devicesAutoMode: DEVICES_AUTO_MODE_PATCH.optional(),
     /**
      * The platform's attribution defaults for agent-created git commits and pull requests (spec
      * 2026-11-14-agent-attribution): each given field replaces the stored one, null clears it
@@ -552,25 +541,6 @@ function mergeByOrg<T>(
   return merged;
 }
 
-/**
- * A patch with the old `devicesAutoMode` moved to `devicesFullAccess`; both together is a
- * validation error (never pick one silently).
- */
-export function normalizeDeploymentSettingsPatch(
-  patch: DeploymentSettingsPatch,
-): DeploymentSettingsPatch {
-  if (patch.devicesAutoMode === undefined) return patch;
-  if (patch.devicesFullAccess !== undefined)
-    throw new ApiError("validation_failed", "Invalid deployment settings", [
-      {
-        path: "devicesAutoMode",
-        message: "give devicesFullAccess only: devicesAutoMode is its old name",
-      },
-    ]);
-  const { devicesAutoMode, ...rest } = patch;
-  return { ...rest, devicesFullAccess: fullAccessPatchOfLegacy(devicesAutoMode) };
-}
-
 /** Deployment settings: one row per key, defaults for missing keys. */
 @Injectable()
 export class SettingsService {
@@ -595,7 +565,6 @@ export class SettingsService {
     return {
       ...settings,
       devicesFullAccess,
-      devicesAutoMode: legacyAutoModeView(devicesFullAccess),
       attribution: this.attributionView(attribution),
     };
   }
@@ -708,13 +677,13 @@ export class SettingsService {
         check.error.issues.map((i) => ({ path: i.path.join("."), message: i.message })),
       );
     }
-    const normalized = normalizeDeploymentSettingsPatch(check.data);
+    const valid = check.data;
     // the super admin lock, then (for a Full switch change) the platform permission authority
     // lock: the ordered prelude, so inside a run's fence (the Platform tool's
     // `admin.update-settings`) they precede the conversation rows; the patch decides the lock
     await withOrderedLocks(
-      () => this.lockFor(normalized, actorAccountId),
-      () => this.write(normalized, actorAccountId, actorTokenId, auditDetail, opts),
+      () => this.lockFor(valid, actorAccountId),
+      () => this.write(valid, actorAccountId, actorTokenId, auditDetail, opts),
     );
     return this.view();
   }
@@ -820,8 +789,8 @@ export class SettingsService {
         after: r.next.permission ?? DEVICES_FULL_ACCESS_DEFAULT,
       };
       writes.push([DEVICES_FULL_ACCESS_SETTING, r.next]);
-      // until 8.6: an unconverted (or re-written by an old replica) old key is kept in step, so
-      // neither side reads a value the super admin did not choose
+      // an old key the publication conversion has not reached yet (a mismatch window before
+      // activation) is kept in step, so the narrowed read shows the value the super admin chose
       if (await legacyDevicesAutoModeStored(this.db.db))
         writes.push([
           LEGACY_DEVICES_AUTO_MODE_SETTING,

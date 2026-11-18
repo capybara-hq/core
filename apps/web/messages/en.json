@@ -356,7 +356,7 @@
       "credential_invalid": "This computer's connection credential is no longer valid. Connect again on the computer.",
       "policy_refused": "This device does not accept this change from the platform. Change it on the machine.",
       "policy_unsupported": "This device can't change its network settings from the platform. Upgrade the device program on the machine.",
-      "auto_mode_not_allowed": "This device's machine runs in auto mode, which your organization does not allow. Run capybara-device mode sandbox on that machine to switch it to sandbox mode.",
+      "auto_mode_not_allowed": "This device's machine allows Full access, which your organization or the platform does not allow. On that machine, run capybara-device ceiling set --full-access deny --project-reach workspace to turn it off.",
       "mode_on_device": "This device's owner ceiling is kept on its connected computer: narrow it from the device page, or run capybara-device ceiling set on that computer.",
       "mode_requires_session": "A device's mode is changed by its owner on the device page, not with an API token.",
       "project_name_invalid": "This project name is not allowed: use 1-64 characters, not . or .., without / or control characters, and without spaces at either end.",
@@ -2654,13 +2654,13 @@
       "ask": "Ask first",
       "askHint": "Every call except the read-only tools needs the user's approval."
     },
-    "autoMode": {
-      "title": "Auto mode",
-      "description": "In auto mode the organization's devices run commands with the environment's own capability, guarded by command review; in sandbox mode they are limited to the workspace and an allowlist.",
-      "allowed": "Allow auto mode",
-      "allowedHint": "Devices may run in auto mode; each owner still chooses on the machine.",
-      "off": "Turn auto mode off",
-      "offHint": "Local devices run in sandbox mode; their owners cannot turn it back on from the machine.",
+    "fullAccess": {
+      "title": "Full access",
+      "description": "With Full access allowed, the organization's devices run commands with the environment's own capability, guarded by command review; with it off, they run restricted: writes stay in the workspace and temporary directories, and the network follows the allowlist.",
+      "allowed": "Allow Full access",
+      "allowedHint": "Devices may run with Full access; each device owner still allows it on the device.",
+      "off": "Turn Full access off",
+      "offHint": "The organization's devices run restricted; their owners cannot turn Full access back on from the device.",
       "platformClosed": "Not enabled by the platform"
     },
     "cloudNetwork": {
@@ -4434,14 +4434,14 @@
         "allowHint": "Organizations can create and import skills themselves or install them from the catalog.",
         "denyHint": "Organizations can only install skills from the catalog."
       },
-      "autoMode": {
-        "title": "Auto mode",
-        "description": "Whether devices on the platform may run in auto mode: commands run with the environment's own capability, guarded by command review.",
-        "label": "Auto mode",
+      "fullAccess": {
+        "title": "Full access",
+        "description": "Whether devices on the platform may run with Full access: a conversation may then run with Full access on a device whose owner allows it, with the environment's own capability, guarded by command review.",
+        "label": "Full access",
         "allowed": "Allowed",
-        "allowedHint": "Organizations may allow auto mode; each device owner still chooses on the machine.",
+        "allowedHint": "Organizations may allow Full access; each device owner still allows it on the device.",
         "off": "Off",
-        "offHint": "Off forces local devices to sandbox mode; cloud devices keep the container and follow the organization's cloud network (open by default). Turning it back on needs a super admin in this console.",
+        "offHint": "Off runs every device restricted: local devices on their allowlist, cloud devices on their organization's cloud network. Allowing it again needs a super admin here.",
         "source": "Source: {source}",
         "sources": {
           "env": "From an environment variable (read-only)",

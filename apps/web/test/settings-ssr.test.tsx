@@ -85,7 +85,7 @@ const ROUTES: Routes = {
     json(200, {
       settings: { toolSearch: "off", locale: "en", sandboxToolPolicy: "ask" },
       deployment: {
-        autoMode: { mode: "allowed", source: "default" },
+        fullAccess: { permission: "allowed", source: "default" },
         cloudNetwork: { allowHosts: [], orgHosts: "extend", off: false },
       },
       sandboxLimits: { cpu: 2, memoryMb: 4096, source: "deployment" },

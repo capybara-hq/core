@@ -388,8 +388,8 @@ export const ERROR_CODES = {
   "device.policy_unsupported": 409,
   /**
    * The device's machine reports auto mode while the organization (or the platform) allows only
-   * sandbox mode (auto mode spec §4.3); checked at each command. The message names
-   * `capybara-device mode sandbox`.
+   * sandbox mode (auto mode spec §4.3); checked at each command. The owner narrows the machine
+   * with `capybara-device ceiling set`.
    */
   "device.auto_mode_not_allowed": 403,
   /**
@@ -413,7 +413,8 @@ export const ERROR_CODES = {
   "device.full_access_not_allowed": 409,
   /**
    * A device's mode is not a stored setting: a local device's mode lives on its machine
-   * (`capybara-device mode` or the device page's policy op), and a cloud device has none to choose.
+   * (`capybara-device ceiling set` or the device page's policy op), and a cloud device has none to
+   * choose.
    */
   "device.mode_on_device": 409,
   /**

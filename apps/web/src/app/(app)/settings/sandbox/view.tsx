@@ -43,7 +43,7 @@ import NotFound from "../../not-found";
 
 /**
  * `/settings/sandbox`: the organization's sandbox settings (SettingsPage): the default policy of the
- * sandbox tools (run directly / ask for approval), the org's auto-mode switch (auto mode spec §4.3:
+ * sandbox tools (run directly / ask for approval), the org's Full permission switch (`fullAccess`:
  * the org may follow the platform or turn it off; 「平台未开放」 when the platform turned it off)
  * and its sandbox network (egress ceiling spec §D4): the cloud mode (开放挡内网 / allowlist) and the
  * host editor, shown in both modes because the hosts are also the ceiling of every local device in
@@ -82,16 +82,16 @@ function SandboxSettings({ orgId, allowHosts }: { orgId: string; allowHosts: str
   const read = usePageQuery(orgSettingsQuery(orgId));
   const [draft, setDraft] = useState<{
     sandboxToolPolicy?: NonNullable<OrgSettings["sandboxToolPolicy"]>;
-    autoMode?: "allowed" | "off";
+    fullAccess?: "allowed" | "off";
     cloudMode?: NonNullable<CloudNetworkSetting["mode"]>;
     hostsText?: string;
   }>({});
   // The answer is the new settings; the read-only parts it leaves out keep their cached values.
   const update = useAppMutation({
     fn: (patch: OrgSettingsPatch) => updateOrgSettings(orgId, patch),
-    // auto mode and cloud network change every device's allowed and effective mode and its network
+    // Full access and the cloud network change every device's effective Full access and network
     invalidates: (patch) =>
-      patch.autoMode !== undefined || patch.cloudNetwork !== undefined
+      patch.fullAccess !== undefined || patch.cloudNetwork !== undefined
         ? [keys.org(orgId).devices(), keys.org(orgId).deviceAll()]
         : [],
     onSuccess: (res) =>
@@ -138,7 +138,7 @@ function SandboxSettings({ orgId, allowHosts }: { orgId: string; allowHosts: str
         nav={nav}
         activeNav="sandbox"
         // The static sections: the tool policy (two cards, and the read-only note for a member),
-        // auto mode (two cards), the cloud network (two cards and the host list) and the resources
+        // Full access (two cards), the cloud network (two cards and the host list) and the resources
         // (three rows and the same note).
         loading={{
           sections: [
@@ -149,8 +149,8 @@ function SandboxSettings({ orgId, allowHosts }: { orgId: string; allowHosts: str
             },
             {
               fields: [{ control: "radio-cards", options: 2 }],
-              title: t("autoMode.title"),
-              description: t("autoMode.description"),
+              title: t("fullAccess.title"),
+              description: t("fullAccess.description"),
             },
             {
               fields: [
@@ -184,14 +184,14 @@ function SandboxSettings({ orgId, allowHosts }: { orgId: string; allowHosts: str
   }
   const { sandboxLimits } = data;
   const sandboxPolicy = draft.sandboxToolPolicy ?? saved?.sandboxToolPolicy ?? "allow";
-  // The auto-mode switch: the platform's answer wins; the org may narrow it, never widen it
-  const platformOff = deployment.autoMode.mode === "off";
-  const savedAutoMode: "allowed" | "off" = platformOff
+  // The Full permission switch: the platform's answer wins; the org may narrow it, never widen it
+  const platformOff = deployment.fullAccess.permission === "off";
+  const savedFullAccess: "allowed" | "off" = platformOff
     ? "off"
-    : (saved.autoMode ?? deployment.autoMode.mode);
-  const autoMode = platformOff ? "off" : (draft.autoMode ?? savedAutoMode);
-  const autoChanged =
-    !platformOff && draft.autoMode !== undefined && draft.autoMode !== savedAutoMode;
+    : (saved.fullAccess ?? deployment.fullAccess.permission);
+  const fullAccess = platformOff ? "off" : (draft.fullAccess ?? savedFullAccess);
+  const fullChanged =
+    !platformOff && draft.fullAccess !== undefined && draft.fullAccess !== savedFullAccess;
   // The sandbox network (egress ceiling spec §D4): the page shows the effective mode and hosts. The
   // kill switch (`off`) makes it read-only and it is never sent; the ceiling (`within`) forces the
   // allowlist, so the open choice is disabled. A host outside the ceiling is the kernel's to refuse.
@@ -222,7 +222,7 @@ function SandboxSettings({ orgId, allowHosts }: { orgId: string; allowHosts: str
     (cloudValue.excludedHosts?.length ?? 0) > 200;
   // Only the changed fields
   const patch: OrgSettingsPatch = {
-    ...(autoChanged && draft.autoMode !== undefined ? { autoMode: draft.autoMode } : {}),
+    ...(fullChanged && draft.fullAccess !== undefined ? { fullAccess: draft.fullAccess } : {}),
     ...(cloudChanged ? { cloudNetwork: cloudValue } : {}),
     ...(sandboxPolicy !== (saved.sandboxToolPolicy ?? "allow")
       ? { sandboxToolPolicy: sandboxPolicy }
@@ -326,23 +326,23 @@ function SandboxSettings({ orgId, allowHosts }: { orgId: string; allowHosts: str
         </Stack>
       </FormSection>
       <FormSection
-        id="auto-mode"
-        title={t("autoMode.title")}
-        description={t("autoMode.description")}
+        id="full-access"
+        title={t("fullAccess.title")}
+        description={t("fullAccess.description")}
       >
         <Stack gap={8}>
           <RadioGroup
-            label={t("autoMode.title")}
+            label={t("fullAccess.title")}
             variant="card"
-            value={autoMode}
+            value={fullAccess}
             disabled={!manage || platformOff}
-            onChange={(v) => setDraft((d) => ({ ...d, autoMode: v as "allowed" | "off" }))}
+            onChange={(v) => setDraft((d) => ({ ...d, fullAccess: v as "allowed" | "off" }))}
             options={(["allowed", "off"] as const).map((v) => {
               const closed = v === "allowed" && platformOff;
               return {
                 value: v,
-                label: t(`autoMode.${v}`),
-                description: closed ? t("autoMode.platformClosed") : t(`autoMode.${v}Hint`),
+                label: t(`fullAccess.${v}`),
+                description: closed ? t("fullAccess.platformClosed") : t(`fullAccess.${v}Hint`),
                 ...(closed ? { disabled: true } : {}),
               };
             })}

@@ -258,17 +258,20 @@ describe("org settings", () => {
     expect(pre).toEqual({ ok: true });
   });
 
-  it("autoMode may only be turned off through the tool; a person turns it on", async () => {
+  it("fullAccess may only be turned off through the tool; a person allows it", async () => {
     const o = op("org-settings.update");
     const pre = (input: unknown) => o.precheck?.(o.input.parse(input), ctxOf(ownerId));
-    // the platform allows auto mode: turning it off narrows
-    expect(await pre({ autoMode: "off" })).toEqual({ ok: true });
-    const r = (await run("org-settings.update", { autoMode: "off" })) as {
-      settings: { autoMode?: unknown };
+    // the old name is no longer an input
+    expect(o.input.safeParse({ autoMode: "off" }).success).toBe(false);
+    // the platform allows Full: turning it off narrows
+    expect(await pre({ fullAccess: "off" })).toEqual({ ok: true });
+    const r = (await run("org-settings.update", { fullAccess: "off" })) as {
+      settings: { fullAccess?: unknown };
     };
-    expect(r.settings.autoMode).toBe("off");
+    expect(r.settings.fullAccess).toBe("off");
+    expect(r.settings).not.toHaveProperty("autoMode");
     // back on, or clearing it back to the (allowed) deployment, widens: a person does that
-    for (const input of [{ autoMode: "allowed" }, { autoMode: null }]) {
+    for (const input of [{ fullAccess: "allowed" }, { fullAccess: null }]) {
       expect(await pre(input), JSON.stringify(input)).toMatchObject({
         ok: false,
         code: "org.full_access_not_allowed",
@@ -282,10 +285,10 @@ describe("org settings", () => {
     const back = await owner({
       method: "PATCH",
       url: `/api/v1/orgs/${orgId}/settings`,
-      payload: { autoMode: "allowed" },
+      payload: { fullAccess: "allowed" },
     });
     expect(back.statusCode, back.body).toBe(200);
-    expect(back.json().settings.autoMode).toBe("allowed");
+    expect(back.json().settings.fullAccess).toBe("allowed");
   });
 
   it("cloudNetwork may only narrow through the tool; a person widens it", async () => {
@@ -351,9 +354,9 @@ describe("org settings", () => {
         headers: { authorization: `Bearer ${token}` },
         payload: payload as object,
       });
-    const off = await viaToken({ autoMode: "off" });
+    const off = await viaToken({ fullAccess: "off" });
     expect(off.statusCode, off.body).toBe(200);
-    const on = await viaToken({ autoMode: "allowed" });
+    const on = await viaToken({ fullAccess: "allowed" });
     expect(on.statusCode).toBe(400);
     expect(on.json().error.code).toBe("org.full_access_not_allowed");
     // an extra host widens under either mode (the hosts are the local ceiling whatever the mode)
@@ -382,7 +385,7 @@ describe("org settings", () => {
     const bySession = await owner({
       method: "PATCH",
       url: `/api/v1/orgs/${orgId}/settings`,
-      payload: { autoMode: "allowed", cloudNetwork: { mode: "open" } },
+      payload: { fullAccess: "allowed", cloudNetwork: { mode: "open" } },
     });
     expect(bySession.statusCode, bySession.body).toBe(200);
     expect(

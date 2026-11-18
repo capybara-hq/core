@@ -456,7 +456,6 @@ describe("组织设置与 ToolSearch 启用条件", () => {
           maxOutputTokens: 20000,
         },
         fullAccess: { permission: "allowed", source: "default" },
-        autoMode: { mode: "allowed", source: "default" },
         cloudNetwork: {
           allowHosts: baseCfg.sandbox.limits.allowHosts,
           orgHosts: "extend",
@@ -570,7 +569,7 @@ describe("组织设置与 ToolSearch 启用条件", () => {
     expect((await req({ method: "GET", url: settingsUrl() })).statusCode).toBe(200);
   });
 
-  it("autoMode and cloudNetwork: validated, null clears, the platform switch is the ceiling", async () => {
+  it("fullAccess and cloudNetwork: validated, null clears, the platform switch is the ceiling", async () => {
     const patch = (payload: Record<string, unknown>) =>
       req({ method: "PATCH", url: settingsUrl(), payload });
     for (const bad of [
@@ -591,7 +590,9 @@ describe("组织设置与 ToolSearch 启用条件", () => {
         },
       },
       { cloudNetwork: { mode: "allowlist", extra: 1 } },
-      { autoMode: "maybe" },
+      { fullAccess: "maybe" },
+      // the old name is no longer an input
+      { autoMode: "off" },
     ]) {
       const r = await patch(bad);
       expect(r.statusCode, JSON.stringify(bad)).toBe(400);
@@ -609,12 +610,13 @@ describe("组织设置与 ToolSearch 启用条件", () => {
       mode: "allowlist",
       hosts: ["registry.npmjs.org"],
     });
-    const narrowed = await patch({ autoMode: "off" });
+    const narrowed = await patch({ fullAccess: "off" });
     expect(narrowed.statusCode, narrowed.body).toBe(200);
-    expect(narrowed.json().settings.autoMode).toBe("off");
-    const cleared = await patch({ autoMode: null, cloudNetwork: null });
+    expect(narrowed.json().settings.fullAccess).toBe("off");
+    expect(narrowed.json().settings).not.toHaveProperty("autoMode");
+    const cleared = await patch({ fullAccess: null, cloudNetwork: null });
     expect(cleared.statusCode).toBe(200);
-    expect(cleared.json().settings).not.toHaveProperty("autoMode");
+    expect(cleared.json().settings).not.toHaveProperty("fullAccess");
     expect(cleared.json().settings).not.toHaveProperty("cloudNetwork");
 
     // a stored value this version cannot read narrows to off, never widens
@@ -623,8 +625,10 @@ describe("组织设置与 ToolSearch 启用条件", () => {
       .set({ settings: JSON.stringify({ fullAccess: "everything" }) })
       .where("id", "=", orgId)
       .execute();
-    expect((await req({ method: "GET", url: settingsUrl() })).json().settings.autoMode).toBe("off");
-    await patch({ autoMode: null });
+    expect((await req({ method: "GET", url: settingsUrl() })).json().settings.fullAccess).toBe(
+      "off",
+    );
+    await patch({ fullAccess: null });
   });
 
   it("阈值切换：工具数或定义估算超过阈值才启用并自动加入 ToolSearch；组织关闭后全部直接加载", async () => {

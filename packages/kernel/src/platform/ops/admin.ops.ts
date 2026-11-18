@@ -10,11 +10,7 @@ import { AdminUsageService } from "../../admin/usage.service.js";
 import { ApiError } from "../../errors.js";
 import { ExtensionDisplayNames } from "../../extensions/display-name.js";
 import { ExtensionRegistry } from "../../extensions/registry.js";
-import {
-  DEPLOYMENT_SETTINGS_PATCH,
-  normalizeDeploymentSettingsPatch,
-  SettingsService,
-} from "../../identity/settings.js";
+import { DEPLOYMENT_SETTINGS_PATCH, SettingsService } from "../../identity/settings.js";
 import { ModelDisabledPatch, ModelProviderParams } from "../../models/enablement.controller.js";
 import { ModelEnablement } from "../../models/enablement.js";
 import { MODEL_PRICE_PUT, PricesService } from "../../models/prices.js";
@@ -41,7 +37,6 @@ const SettingsInput = DEPLOYMENT_SETTINGS_PATCH.pick({
   uiArrangement: true,
   clientExtensions: true,
   devicesFullAccess: true,
-  devicesAutoMode: true,
   attribution: true,
 }).strict();
 
@@ -205,7 +200,7 @@ export class AdminOperations implements OnModuleInit {
       defineOperation({
         id: "admin.settings",
         description:
-          "Read the deployment settings (super admin): who may create orgs (orgCreation), the price currency, whether orgs may create their own connectors and skills, whether org admins may browse the marketplaces, the per-org limit overrides keyed by org id (orgs.get reads one org's), the platform's Full permission switch in effect (devicesFullAccess: permission allowed or off; devicesAutoMode is its old name with mode), and the platform's attribution defaults for agent-created git commits and pull requests (attribution: commit, pr, sessionUrl); each with sources: env, file or nacos are set in the startup config and read-only, db chosen in the admin console, default.",
+          "Read the deployment settings (super admin): who may create orgs (orgCreation), the price currency, whether orgs may create their own connectors and skills, whether org admins may browse the marketplaces, the per-org limit overrides keyed by org id (orgs.get reads one org's), the platform's Full permission switch in effect (devicesFullAccess: permission allowed or off), and the platform's attribution defaults for agent-created git commits and pull requests (attribution: commit, pr, sessionUrl); each with sources: env, file or nacos are set in the startup config and read-only, db chosen in the admin console, default.",
         input: z.object({}).strict(),
         example: {},
         authz: { superAdmin: true },
@@ -216,7 +211,7 @@ export class AdminOperations implements OnModuleInit {
       defineOperation({
         id: "admin.update-settings",
         description:
-          "Change deployment settings (super admin); give only the keys to change: orgCreation (anyone or super_admin), priceCurrency (ISO 4217 code), customConnectors / customSkills (allow or deny: whether orgs may create their own instead of installing from the catalog), orgMarketplaceBrowse (true or false), uiTheme ({ id }: the platform default theme, a platform theme whose scope is all, or null for the built-in theme; it is what every org falls back to and what the sign-in pages show), uiArrangement ({ <slot>: { hidden, order } } for a list slot, { <slot>: { use } } for a single slot: the platform default arrangement of UI slots, with contribution keys <extension>/<contribution>; hidden ones are not listed but still open by URL; use names the contribution that replaces the built-in, null for the built-in; null for a slot removes its entry), clientExtensions ({ enabled?, disabled? }: the kill switch of plugin client code; enabled false stops every plugin's interface code in every browser, disabled is the whole list of plugins whose interface code alone is stopped while their tools keep working; read the current list from admin.settings first), devicesFullAccess ({ permission }: the platform's Full permission switch, allowed or off; null clears it back to the default, allowed; through this tool it may only be turned off, never allowed, and a value set in the startup config is read-only; devicesAutoMode ({ mode }) is its old name, never both), attribution ({ commit?, pr?, sessionUrl? }: the platform's defaults for agent-created git commits and pull requests; null clears a field back to its default, an empty string turns that line off, and fields set in the startup config are read-only). Per-org limits are orgs.set-limits.",
+          "Change deployment settings (super admin); give only the keys to change: orgCreation (anyone or super_admin), priceCurrency (ISO 4217 code), customConnectors / customSkills (allow or deny: whether orgs may create their own instead of installing from the catalog), orgMarketplaceBrowse (true or false), uiTheme ({ id }: the platform default theme, a platform theme whose scope is all, or null for the built-in theme; it is what every org falls back to and what the sign-in pages show), uiArrangement ({ <slot>: { hidden, order } } for a list slot, { <slot>: { use } } for a single slot: the platform default arrangement of UI slots, with contribution keys <extension>/<contribution>; hidden ones are not listed but still open by URL; use names the contribution that replaces the built-in, null for the built-in; null for a slot removes its entry), clientExtensions ({ enabled?, disabled? }: the kill switch of plugin client code; enabled false stops every plugin's interface code in every browser, disabled is the whole list of plugins whose interface code alone is stopped while their tools keep working; read the current list from admin.settings first), devicesFullAccess ({ permission }: the platform's Full permission switch, allowed or off; null clears it back to the default, allowed; through this tool it may only be turned off, never allowed, and a value set in the startup config is read-only), attribution ({ commit?, pr?, sessionUrl? }: the platform's defaults for agent-created git commits and pull requests; null clears a field back to its default, an empty string turns that line off, and fields set in the startup config are read-only). Per-org limits are orgs.set-limits.",
         input: SettingsInput.refine((b) => Object.keys(b).length > 0, {
           message: "at least one setting is required",
         }),
@@ -260,7 +255,7 @@ export class AdminOperations implements OnModuleInit {
             };
           }
           return precheckBy(async () => {
-            const full = normalizeDeploymentSettingsPatch(i).devicesFullAccess;
+            const full = i.devicesFullAccess;
             if (full !== undefined)
               await this.settings.checkDevicesFullAccess(full, { onlyNarrows: true });
           });
@@ -271,14 +266,12 @@ export class AdminOperations implements OnModuleInit {
             uiArrangement,
             clientExtensions,
             devicesFullAccess,
-            devicesAutoMode,
             attribution,
             ...rest
           } = i;
           const parts = Object.entries(rest).map(([k, v]) => `${k}=${String(v)}`);
-          const full = devicesFullAccess?.permission ?? devicesAutoMode?.mode;
-          if (devicesFullAccess !== undefined || devicesAutoMode !== undefined) {
-            parts.push(`devicesFullAccess=${String(full)}`);
+          if (devicesFullAccess !== undefined) {
+            parts.push(`devicesFullAccess=${String(devicesFullAccess.permission)}`);
           }
           const zh = [...parts];
           const en = [...parts];

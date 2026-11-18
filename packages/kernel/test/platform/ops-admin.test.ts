@@ -561,26 +561,33 @@ describe("admin and models", () => {
     expect(http.json()).toEqual(all);
   });
 
-  it("admin.update-settings turns the platform's auto mode off but never on", async () => {
+  it("admin.update-settings turns the platform's Full access off but never on; the old name is refused", async () => {
     expect(await run("admin.settings", {})).toMatchObject({
-      devicesAutoMode: { mode: "allowed", source: "default" },
+      devicesFullAccess: { permission: "allowed", source: "default" },
     });
+    expect(await run("admin.settings", {})).not.toHaveProperty("devicesAutoMode");
+    // the old name is no longer an input
+    expect(
+      op("admin.update-settings").input.safeParse({ devicesAutoMode: { mode: "off" } }).success,
+    ).toBe(false);
     // an agent may turn it off
-    expect(await precheck("admin.update-settings", { devicesAutoMode: { mode: "off" } })).toEqual({
+    expect(
+      await precheck("admin.update-settings", { devicesFullAccess: { permission: "off" } }),
+    ).toEqual({
       ok: true,
     });
-    const out = await run("admin.update-settings", { devicesAutoMode: { mode: "off" } });
-    expect(out).toMatchObject({ devicesAutoMode: { mode: "off", source: "db" } });
+    const out = await run("admin.update-settings", { devicesFullAccess: { permission: "off" } });
+    expect(out).toMatchObject({ devicesFullAccess: { permission: "off", source: "db" } });
     // but never on again, nor cleared back to the default (allowed)
-    for (const devicesAutoMode of [{ mode: "allowed" }, { mode: null }]) {
+    for (const devicesFullAccess of [{ permission: "allowed" }, { permission: null }]) {
       expect(
-        await precheck("admin.update-settings", { devicesAutoMode }),
-        JSON.stringify(devicesAutoMode),
+        await precheck("admin.update-settings", { devicesFullAccess }),
+        JSON.stringify(devicesFullAccess),
       ).toMatchObject({
         ok: false,
         code: "deployment.full_access_not_allowed",
       });
-      await expect(run("admin.update-settings", { devicesAutoMode })).rejects.toThrow(
+      await expect(run("admin.update-settings", { devicesFullAccess })).rejects.toThrow(
         /only turn it off/,
       );
     }
@@ -596,7 +603,7 @@ describe("admin and models", () => {
       method: "PUT",
       url: "/api/v1/admin/settings",
       headers: { authorization: `Bearer ${token}` },
-      payload: { devicesAutoMode: { mode: "allowed" } },
+      payload: { devicesFullAccess: { permission: "allowed" } },
     });
     expect(viaToken.statusCode).toBe(400);
     expect(viaToken.json().error.code).toBe("deployment.full_access_not_allowed");
@@ -604,19 +611,22 @@ describe("admin and models", () => {
     const back = await root({
       method: "PUT",
       url: "/api/v1/admin/settings",
-      payload: { devicesAutoMode: { mode: "allowed" } },
+      payload: { devicesFullAccess: { permission: "allowed" } },
     });
     expect(back.statusCode, back.body).toBe(200);
-    expect(back.json().devicesAutoMode).toMatchObject({ mode: "allowed", source: "db" });
-    await run("admin.update-settings", { devicesAutoMode: { mode: "off" } });
+    expect(back.json().devicesFullAccess).toMatchObject({ permission: "allowed", source: "db" });
+    await run("admin.update-settings", { devicesFullAccess: { permission: "off" } });
     // a person may also clear the stored choice, back to the default
     const cleared = await root({
       method: "PUT",
       url: "/api/v1/admin/settings",
-      payload: { devicesAutoMode: { mode: null } },
+      payload: { devicesFullAccess: { permission: null } },
     });
     expect(cleared.statusCode, cleared.body).toBe(200);
-    expect(cleared.json().devicesAutoMode).toMatchObject({ mode: "allowed", source: "default" });
+    expect(cleared.json().devicesFullAccess).toMatchObject({
+      permission: "allowed",
+      source: "default",
+    });
   });
 
   it("admin.update-settings: theme.not_available says the default must be on in every org", () => {
