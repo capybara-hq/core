@@ -59,6 +59,18 @@ const DeploymentConfig = z.object({
             .positive()
             .optional()
             .meta(label("单次最大输入数", "Max inputs per call")),
+          maxImages: z
+            .number()
+            .int()
+            .positive()
+            .optional()
+            .meta(label("单次最大出图数", "Max images per call")),
+          maxReferenceImages: z
+            .number()
+            .int()
+            .min(0)
+            .optional()
+            .meta(label("最大参考图数", "Max reference images")),
         }),
       )
       .optional()
@@ -70,6 +82,7 @@ const DeploymentConfig = z.object({
 /**
  * 确定性脚本化模型供应商，用于运行时测试、e2e 与无密钥演示。
  * 行为由最后一条 user 消息的英文前缀指令决定（echo / media / slow / slowfail / stall / fail / tool / slowtool / long）。
+ * 图片生成模型（kind image_generation）按提示词首词：refuse（拒绝）/ stall（等到中止）/ fail <kind> / short（少一张）/ url（返回 URL），否则返回 n 张 1×1 PNG。
  * 提供 model-provider@2：声明三档 effort 与 `model-fake.style`（`shout` 时回复转大写）。
  * 无进程内状态：缓存命中记录放 ctx.kv（TTL 300 秒）。
  */

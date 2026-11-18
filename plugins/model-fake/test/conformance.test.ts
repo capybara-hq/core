@@ -13,13 +13,18 @@ describeModelProviderConformance("model-fake", async () => {
     plugin: "model-fake",
     provider: createFakeProvider({
       kv,
-      models: [{ id: "fake-1" }, { id: "emb-1", kind: "embedding" }],
+      models: [
+        { id: "fake-1" },
+        { id: "emb-1", kind: "embedding" },
+        { id: "img-1", kind: "image_generation" },
+      ],
     }),
     model: "fake-1",
     expect: {
       thinking: false,
       caching: true,
       embedding: { model: "emb-1", dimensions: 8 },
+      imageGeneration: { model: "img-1" },
     },
     teardown: async () => {},
   };
