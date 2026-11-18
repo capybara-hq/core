@@ -47,8 +47,8 @@ prompt cache serves almost all of its input.
   log; the suggestion is not in it, see §5).
 - Recording that a sent message came from a suggestion. A sent suggestion is an ordinary
   `user_message` typed by the person.
-- A per-member switch. The org and the platform switch are the only controls (open question 3
-  covers a member-level one).
+- A per-member switch. The org and the platform switch are the only controls (decided question 3
+  defers a member-level one).
 - Retrying a failed suggestion. Any failure means no suggestion for that run.
 
 ## Facts this design builds on (origin/main, 2026-11-19)
@@ -233,7 +233,7 @@ like any other.
 
 API-created conversations (`POST /conversations` from an external app) have `source: "web"` too
 (`conversations.controller.ts`). They qualify; the cost is bounded by the guards, and the result
-is never in the log. Open question 2 asks whether to exclude them.
+is never in the log. Decided question 2 keeps them.
 
 ### 3. Where it runs
 
@@ -323,7 +323,7 @@ passes it from the conversation's state. The design package does the rendering a
   "Use suggestion" (`corner-down-left` 14) at the end of the control row before send, shown only
   while a suggestion is shown; tapping it fills the draft (and does not pop the keyboard,
   consistent with `refocusText`). Its accessible name includes the text ("使用建议：<text>").
-  Open question 1.
+  Decided question 1.
 - **Web.** `useConversation` keeps `suggestion` from the SSE `onSuggestion` handler and applies
   the reader's rule of §4 against its event list; `ConversationView` passes it to `ComposerBar`,
   which passes it to `ComposerBox` and tracks the per-run dismissal. Sub-agent composers and the
@@ -343,7 +343,7 @@ passes it from the conversation's state. The design package does the rendering a
   absent = `on`. `DEPLOYMENT_SETTINGS_PATCH.promptSuggestions: z.enum(["on","off"]).nullable()
   .optional()` (null clears to the default). An invalid stored value reads as `off` with a
   warning (a cost switch fails toward no extra calls). Read live per job and per SSE open. No
-  startup config field (open question 3).
+  startup config field (decided question 3).
 - **Org** (org admin): `OrgSettingsSchema.promptSuggestions: z.enum(["on","off"]).optional()
   .catch("off")`, absent = `on`; `OrgSettingsPatchSchema.promptSuggestions:
   z.enum(["on","off"]).nullable().optional()` (null clears it, back to on).
@@ -489,20 +489,20 @@ On by default after merge; release notes say so and name both switches. Deployme
 providers do not cache, or whose cache hit is poor, can switch it off on the platform. No
 migration (settings are jsonb and `deployment_settings` rows; the purpose is a jsonb value).
 
-## Open questions (with recommendations)
+## Decided questions (2026-11-19, maintainer delegation)
 
-1. **Touch devices.** Phones have no Tab key. *Recommendation:* the small "使用建议" button in the
-   control row while a suggestion shows (§5); the alternative, placeholder only, gives phones a
-   suggestion they cannot use without retyping it.
-2. **External apps.** API-created conversations are `source: "web"` and get side calls no one
-   sees (the suggestion is not in the log, and the kernel does not record whether a message came
-   from the web page or from an app token). *Recommendation:* accept the bounded cost for now
-   (one cached call per completed run, the guards of §1.5, the org switch) and revisit with the
-   `purpose: "suggestion"` usage numbers; recording the message's client would be a separate
-   change.
-3. **More switches.** A startup config field for the platform switch (env / file / Nacos, like
-   `sharing.external`) and a per-member switch. *Recommendation:* neither now; PG settings at both
-   levels match the decision, and both can be added without a format change.
+The maintainer delegated these to the recommendations:
+
+1. **Touch devices.** Phones get the small "使用建议" / "Use suggestion" button in the control row
+   while a suggestion shows (§5); placeholder only would give phones a suggestion they cannot use
+   without retyping it.
+2. **External apps.** API-created conversations (`source: "web"`) keep getting suggestions: the
+   cost is bounded (one cached call per completed run, the guards of §1.5, the org switch);
+   revisit with the `purpose: "suggestion"` usage numbers. Recording a message's client is a
+   separate change.
+3. **More switches.** No startup config field for the platform switch and no per-member switch
+   now; PG settings at both levels match the decision, and both can be added later without a
+   format change.
 
 ## AGENTS.md rules touched
 

@@ -23,8 +23,8 @@ default on.
 (apps/web), plain CSS in `packages/design`, Vitest (unit, integration with test containers,
 jsdom).
 
-**Spec:** `docs/superpowers/specs/2026-11-19-prompt-suggestions-design.md`. Open questions decided
-as recommended unless the maintainer rules otherwise: the touch button ships; API-created `web`
+**Spec:** `docs/superpowers/specs/2026-11-19-prompt-suggestions-design.md`. Questions decided
+as recommended (maintainer delegation, 2026-11-19): the touch button ships; API-created `web`
 conversations are not excluded; no startup config field and no member switch.
 
 ## Global Constraints
