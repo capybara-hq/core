@@ -10,7 +10,7 @@ import { Inject, Injectable } from "@nestjs/common";
 import { sql } from "kysely";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
-import { enabledExtensionsQuery } from "../extensions/enabled.js";
+import { alwaysOnExtensionsQuery, enabledExtensionsQuery } from "../extensions/enabled.js";
 import { STALE_RECONCILE_PERIODS } from "../extensions/lifecycle-topics.js";
 import {
   CLIENT_EXTENSIONS_SETTING,
@@ -263,8 +263,8 @@ export class ClientAccess {
           .select("value")
           .where("key", "=", CLIENT_EXTENSIONS_SETTING)
           .as("kill"),
-        // enabled.ts's two sources, per account: a required bootstrap install is on in every org,
-        // otherwise the org's own switch row
+        // enabled.ts's two sources, per account: an always-on extension (required, or its plugin
+        // is builtin) is on in every org, otherwise the org's own switch row
         eb
           .exists(
             eb
@@ -275,7 +275,7 @@ export class ClientAccess {
               .where("o.deleted_at", "is", null)
               .where((w) =>
                 w.or([
-                  w("i.required", "=", true),
+                  w("i.name", "in", alwaysOnExtensionsQuery(db)),
                   w.exists(
                     w
                       .selectFrom("extension_org_configs as c")

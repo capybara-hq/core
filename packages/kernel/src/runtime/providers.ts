@@ -222,7 +222,7 @@ type Target =
  * Org-bound (spec B §5.5, A §6): every list and call is made for an org with the provider's
  * effective config there (`EffectiveConfigs.get`), passed as `{ orgId, config }`. A provider is on
  * in an org only when the org enabled it, like every other extension (`enabledExtensionsQuery`: the
- * org's switch on, or a required bootstrap plugin); one not enabled there, or whose effective
+ * org's switch on, or always on: required or builtin); one not enabled there, or whose effective
  * config is not valid there, offers no models there. The admin view (no org) lists with the
  * platform config.
  *
