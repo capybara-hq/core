@@ -313,11 +313,29 @@ describe("proxy: sign-in gate", () => {
   });
 
   it("public paths pass without cookies and without asking the kernel", async () => {
-    for (const path of ["/login", "/setup", "/invite/abc", "/bind/lark?x=1"]) {
+    for (const path of ["/login", "/setup", "/invite/abc", "/bind/lark?x=1", "/s/AbCdEfGh12"]) {
       const res = await proxy(page(path));
       expect(res.headers.get("x-middleware-next"), path).toBe("1");
     }
     expect(calls).toHaveLength(0);
+  });
+});
+
+describe("proxy: share pages", () => {
+  it("a share page is not indexed and sends no referrer (file sharing design §6)", async () => {
+    for (const cookie of [undefined, "cap_at=x"]) {
+      const res = await proxy(page("/s/AbCdEfGh12", cookie));
+      expect(res.headers.get("referrer-policy")).toBe("no-referrer");
+      expect(res.headers.get("x-robots-tag")).toBe("noindex");
+    }
+  });
+
+  it("other pages keep the default referrer and robots", async () => {
+    for (const path of ["/login", "/shares", "/sx"]) {
+      const res = await proxy(page(path, "cap_at=x"));
+      expect(res.headers.get("referrer-policy"), path).toBeNull();
+      expect(res.headers.get("x-robots-tag"), path).toBeNull();
+    }
   });
 });
 

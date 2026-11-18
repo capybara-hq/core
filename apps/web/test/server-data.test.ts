@@ -379,10 +379,11 @@ describe("getShell", () => {
 
 describe("routes", () => {
   it("classifies public and admin paths", () => {
-    for (const p of ["/login", "/login/sso", "/setup", "/invite/abc", "/bind"]) {
+    for (const p of ["/login", "/login/sso", "/setup", "/invite/abc", "/bind", "/s/AbCdEfGh12"]) {
       expect(isPublicPath(p)).toBe(true);
     }
-    for (const p of ["/", "/loginx", "/agents", "/admin"]) expect(isPublicPath(p)).toBe(false);
+    for (const p of ["/", "/loginx", "/agents", "/admin", "/settings", "/shares"])
+      expect(isPublicPath(p)).toBe(false);
     expect(isAdminPath("/admin")).toBe(true);
     expect(isAdminPath("/admin/accounts")).toBe(true);
     expect(isAdminPath("/administer")).toBe(false);

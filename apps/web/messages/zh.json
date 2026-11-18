@@ -6832,7 +6832,8 @@
       "download": "下载",
       "invalidTitle": "链接无效或已过期",
       "invalidBody": "请向分享者索取新的链接。",
-      "signIn": "登录后打开这个文件"
+      "signIn": "登录后打开这个文件",
+      "sharedFile": "分享的文件"
     },
     "list": {
       "title": "分享",

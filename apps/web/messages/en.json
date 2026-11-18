@@ -6844,7 +6844,8 @@
       "download": "Download",
       "invalidTitle": "This link is invalid or has expired",
       "invalidBody": "Ask the person who shared it for a new link.",
-      "signIn": "Sign in to open this file"
+      "signIn": "Sign in to open this file",
+      "sharedFile": "Shared file"
     },
     "list": {
       "title": "Shares",

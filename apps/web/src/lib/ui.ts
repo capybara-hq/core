@@ -274,6 +274,19 @@ export const requestEmbedToken = (
     }),
   });
 
+/** A share-scoped embed token (file sharing design §7): only the share's `file.preview` embeds. */
+export type ShareEmbedToken = Pick<EmbedToken, "token" | "src" | "expiresIn">;
+
+/**
+ * Mints an embed token for an embed previewer on the public share page
+ * (`POST /api/v1/s/:code/embed-token/:plugin/:previewerId`): no session, the link is the authority.
+ */
+export const requestShareEmbedToken = (code: string, plugin: string, previewerId: string) =>
+  apiFetch<ShareEmbedToken>(
+    `/api/v1/s/${encodeURIComponent(code)}/embed-token/${target(plugin, previewerId)}`,
+    { method: "POST" },
+  );
+
 /** 组织级刷新流的 URL（SSE，经同源代理）。 */
 export const uiStreamUrl = (orgId: string | null) => `${base(orgId)}/stream`;
 

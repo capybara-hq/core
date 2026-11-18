@@ -120,7 +120,7 @@ import {
 } from "./settings";
 import { memberGuideQuery, setupGuideQuery } from "./setup";
 import { setupCheckStatesQuery } from "./setup-checks";
-import { orgSharesQuery } from "./shares";
+import { orgSharesQuery, shareMetaQuery } from "./shares";
 import { conversationGroupsQuery, maybeMeQuery, readinessQuery } from "./shell";
 import { skillQuery, skillsQuery } from "./skills";
 import { orgThemesQuery, platformThemeQuery } from "./themes";
@@ -1099,6 +1099,12 @@ export const ROUTES: readonly RouteEntry[] = [
       if (orgId === null || params.itemId === undefined || !atLeast(me, "admin")) return;
       await prefetchFirstTemplateGuide(qc, orgId, params.itemId, locale, "templates");
     },
+  },
+  {
+    pattern: "/s/[code]",
+    // A share link (public, file sharing design §6): its metadata only, never workspace data. An
+    // internal link without a session answers 401 and the page sends the visitor to sign in.
+    queries: ({ params }) => (params.code === undefined ? [] : [q(shareMetaQuery(params.code))]),
   },
   {
     pattern: "/settings/members",

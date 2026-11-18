@@ -1,5 +1,11 @@
-/** Pages reachable without signing in. */
-export const PUBLIC_PREFIXES = ["/login", "/setup", "/invite", "/bind"] as const;
+/**
+ * Pages reachable without signing in. `/s` is a share link (file sharing design §6): the page
+ * itself sends a visitor of an internal link to sign in.
+ */
+export const PUBLIC_PREFIXES = ["/login", "/setup", "/invite", "/bind", "/s"] as const;
+
+/** Whether a page path (no query) is a share page `/s/<code>`. */
+export const isSharePath = (path: string): boolean => path.startsWith("/s/");
 
 const under = (path: string, prefix: string) => path === prefix || path.startsWith(`${prefix}/`);
 

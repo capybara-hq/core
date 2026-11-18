@@ -38,6 +38,7 @@ const { default: AuthLayout } = await import("../src/app/(auth)/layout");
 const { default: LoginLayout } = await import("../src/app/(auth)/login/layout");
 const { default: BindLayout } = await import("../src/app/(auth)/bind/[token]/layout");
 const { default: DeviceLayout } = await import("../src/app/(auth)/devices/link/layout");
+const { default: ShareLayout } = await import("../src/app/(auth)/s/[code]/layout");
 
 const layoutAt = (path: string) => {
   req.headers = new Headers({ "x-cap-path": path });
@@ -223,6 +224,38 @@ describe("the bind layout's decision before anything renders", () => {
       error: { status: 401 },
     });
     expect(calls).toHaveLength(1);
+  });
+});
+
+describe("the share layout's decision before anything renders (file sharing design §6)", () => {
+  const META = "/api/v1/s/AbCdEfGh12";
+  const shareAt = (code: string) =>
+    ShareLayout({ children: <p>page body</p>, params: Promise.resolve({ code }) });
+
+  it("an internal link without a session goes to sign-in and back here", async () => {
+    serverRoutes({
+      [`GET ${META}`]: () =>
+        json(401, { error: { code: "share.sign_in_required", message: "sign in" } }),
+    });
+    await expect(shareAt("AbCdEfGh12")).rejects.toThrow(
+      `REDIRECT /login?returnTo=${encodeURIComponent("/s/AbCdEfGh12")}`,
+    );
+  });
+
+  it("a live link, or a dead one, is the page's", async () => {
+    serverRoutes({ [`GET ${META}`]: () => json(200, { name: "a.txt" }) });
+    await expect(shareAt("AbCdEfGh12")).resolves.toBeTruthy();
+    serverRoutes({
+      [`GET ${META}`]: () => json(404, { error: { code: "share.not_found", message: "x" } }),
+    });
+    await expect(shareAt("AbCdEfGh12")).resolves.toBeTruthy();
+  });
+
+  it("the (auth) layout prefetches the share's metadata and nothing of a workspace", async () => {
+    const calls = serverRoutes({ [`GET ${META}`]: () => json(200, { name: "a.txt" }) });
+    const state = stateOf(await layoutAt("/s/AbCdEfGh12"));
+    expect(dataOf(state, "share")?.status).toBe("success");
+    expect(calls.map((c) => c.url).sort()).toEqual([META, PLATFORM_THEME].sort());
   });
 });
 
