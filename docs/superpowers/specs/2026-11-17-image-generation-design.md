@@ -443,3 +443,29 @@ Still later, outside this design: showing a vision model the images it generated
   智能体 / 平台).
 - **SDK public API:** new types, the optional method, union members and the validator regenerate the
   API report (`pnpm gen:sdk-api`) with a `@capybara-hq/plugin-sdk` changeset.
+
+## As built
+
+Files: SDK `packages/plugin-sdk/src/model.ts` (`ModelImageGenerationInfo`, `ImageGenerateRequest` /
+`ImageGenerateResult`, `generateImage`, `pickImageSize`, `validateImageGenerateResult`, error kind
+`refusal`), `hooks.ts` (`ImageRequestHookPayload`, `ImageResponseHookPayload`), `ctx.ts`
+(`ExtensionModels.generateImage`); kernel `packages/kernel/src/models/images.ts`,
+`packages/kernel/src/tools/builtins/image/{index,generate,paths}.ts`,
+`packages/kernel/src/tools/builtins/artifacts.ts`, `packages/kernel/src/sandbox/review/review.service.ts`,
+migration `0146_model_usage_image_kind.sql`, `usage-report.ts`; `plugins/model-fake/src/index.ts`;
+`packages/testing/src/model-conformance.ts` (`expect.imageGeneration`); zero-drift fixtures in
+`packages/kernel/test/evals/reconstruct.test.ts`.
+
+Deviations decided during implementation:
+
+- `model_usage` gained `kind` as well as `output_images` (as §9 says).
+- Usage of a `GenerateImage` call is recorded as soon as the provider returns a valid result
+  (before storage, abort, size check and device copy); an invalid result records none; an extension
+  call that fails validation records none.
+- `model.response` carries `errorCode` `model.<kind>` (the chat / `web_fetch` convention).
+- Reference indices in error texts are 0-based.
+- An over-limit generated image fails as a tool error with the spec's failure text, not a `ModelError`.
+- The command review judges every path a call writes (suffixed `-1`, `-2` when `n > 1`); the worst
+  outcome decides.
+- Generated artifacts use sourcePath `generated/<callId>/<name>`.
+- Tool error texts carry actionable suffixes where `check:tool-design` required them.
