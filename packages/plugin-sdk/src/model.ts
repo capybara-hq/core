@@ -543,7 +543,9 @@ export function isValidImageGenerationInfo(x: unknown): x is ModelImageGeneratio
 
 /**
  * Checks an image generation result against its request and the model's facts. Returns null when
- * valid, else the reason: wrong image count, an undeclared media type, or data that is not base64.
+ * valid, else the reason: wrong image count, an undeclared media type, data that is not base64,
+ * or a `usage` that is not an object whose token counts (and `outputImages`, when present) are
+ * non-negative integers (a caller records usage from it, so it is checked before anything is).
  */
 export function validateImageGenerateResult(
   req: ImageGenerateRequest,
@@ -562,6 +564,17 @@ export function validateImageGenerateResult(
     if (typeof img?.data !== "string" || !BASE64.test(img.data)) {
       return `image ${i} data is not base64`;
     }
+  }
+  const usage = (res as { usage?: unknown }).usage;
+  if (typeof usage !== "object" || usage === null) return "result has no usage object";
+  const u = usage as Record<string, unknown>;
+  const count = (v: unknown) => typeof v === "number" && Number.isInteger(v) && v >= 0;
+  for (const field of ["inputTokens", "outputTokens", "cacheReadTokens", "cacheWriteTokens"]) {
+    if (!count(u[field]))
+      return `usage.${field} is ${String(u[field])}, not a non-negative integer`;
+  }
+  if (u.outputImages !== undefined && !count(u.outputImages)) {
+    return `usage.outputImages is ${String(u.outputImages)}, not a non-negative integer`;
   }
   return null;
 }

@@ -257,11 +257,12 @@ export class ModelImages {
         kind: "image_generation",
         provider: ref.provider,
         model: ref.model,
-        input_tokens: countOf(res.usage?.inputTokens) ?? 0,
-        output_tokens: countOf(res.usage?.outputTokens) ?? 0,
-        cache_read_tokens: countOf(res.usage?.cacheReadTokens) ?? 0,
-        cache_write_tokens: countOf(res.usage?.cacheWriteTokens) ?? 0,
-        output_images: countOf(res.usage?.outputImages) ?? res.images.length,
+        // `run` validated the answer's usage (validateImageGenerateResult): whole counts
+        input_tokens: res.usage.inputTokens,
+        output_tokens: res.usage.outputTokens,
+        cache_read_tokens: res.usage.cacheReadTokens,
+        cache_write_tokens: res.usage.cacheWriteTokens,
+        output_images: billedImages(res),
       })
       .returning("id")
       .executeTakeFirstOrThrow();
@@ -500,9 +501,13 @@ function identityFields(
   };
 }
 
-/** A usable usage count: a finite non-negative number, rounded; otherwise undefined. */
-function countOf(n: unknown): number | undefined {
-  return typeof n === "number" && Number.isFinite(n) && n >= 0 ? Math.round(n) : undefined;
+/**
+ * The images a validated answer is billed for: the answer's own `usage.outputImages`, else the
+ * images it carries, never more than it carries (a vendor count above them is not trusted). The
+ * one rule of the tool's `usage` event and an extension call's `model_usage` row.
+ */
+export function billedImages(res: Pick<ImageGenerateResult, "images" | "usage">): number {
+  return Math.min(res.usage.outputImages ?? res.images.length, res.images.length);
 }
 
 /**

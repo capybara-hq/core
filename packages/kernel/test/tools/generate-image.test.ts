@@ -263,6 +263,24 @@ function providerCalls(after?: () => void): ImageGenerateRequest[] {
   return seen;
 }
 
+/** Makes the provider's image answers carry `usage` instead of their own. */
+function providerUsage(usage: unknown): void {
+  const registry = k.app.get(ProviderRegistry);
+  const original = registry.resolve.bind(registry);
+  vi.spyOn(registry, "resolve").mockImplementation(async (...args) => {
+    const r = await original(...args);
+    const gen = r.provider.generateImage;
+    if (!gen) return r;
+    return {
+      ...r,
+      provider: {
+        ...r.provider,
+        generateImage: async (req, opts) => ({ ...(await gen(req, opts)), usage }) as never,
+      },
+    };
+  });
+}
+
 /** Wraps the kernel's object store: records puts and deletes, and can fail the `failPut`th put. */
 function trackStore(failPut?: number) {
   const storage = k.app.get(StorageService);
@@ -601,6 +619,32 @@ describe("GenerateImage calls", () => {
       "this model takes no reference images; fix the argument and retry.",
     );
     expect(seen).toEqual([]);
+  });
+
+  it("the usage event's image count is capped at the images delivered", async () => {
+    const conv = await createConv(owner, orgId, agentId);
+    providerUsage({
+      inputTokens: 1,
+      outputTokens: 7,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+      outputImages: 9,
+    });
+    await direct(conv, { prompt: "a fox", n: 2 });
+    const usage = imageUsage(await eventsOf(db, conv));
+    expect(usage.map((u) => u.payload)).toMatchObject([{ outputImages: 2, outputTokens: 7 }]);
+  });
+
+  it("an answer with invalid usage fails the call before any usage or image is recorded", async () => {
+    const conv = await createConv(owner, orgId, agentId);
+    providerUsage({ inputTokens: -1, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 });
+    const err = await rejection(direct(conv, { prompt: "a fox" }));
+    expect((err as ToolError).message).toMatch(
+      /^Image generation failed: Model model-fake\/fake-image returned an invalid image result: usage\.inputTokens is -1, not a non-negative integer\. Retry once/,
+    );
+    const events = await eventsOf(db, conv);
+    expect(imageUsage(events)).toEqual([]);
+    expect(ofType(events, "artifact_created")).toEqual([]);
   });
 
   it("a blank name has its own text", async () => {

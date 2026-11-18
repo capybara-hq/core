@@ -94,6 +94,30 @@ describe("image generation contract", () => {
     expect(validateImageGenerateResult(req, info, "nope")).not.toBeNull();
   });
 
+  test("validateImageGenerateResult checks usage", () => {
+    const req = { model: "m", prompt: "p", size: info.defaultSize, n: 1, params: {} };
+    const images = [{ mediaType: "image/png" as const, data: "iVBORw0KGgo=" }];
+    const usage = { inputTokens: 3, outputTokens: 4, cacheReadTokens: 0, cacheWriteTokens: 0 };
+    const check = (u: unknown) => validateImageGenerateResult(req, info, { images, usage: u });
+    // outputImages is optional
+    expect(check(usage)).toBeNull();
+    expect(check({ ...usage, outputImages: 0 })).toBeNull();
+    expect(check({ ...usage, outputImages: undefined })).toBeNull();
+    expect(check({ ...usage, outputImages: 1 })).toBeNull();
+    expect(validateImageGenerateResult(req, info, { images })).toMatch(/usage/);
+    expect(check(null)).toMatch(/usage/);
+    for (const field of ["inputTokens", "outputTokens", "cacheReadTokens", "cacheWriteTokens"]) {
+      for (const bad of [undefined, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY, "3"]) {
+        expect(check({ ...usage, [field]: bad }), `${field}=${String(bad)}`).toMatch(
+          new RegExp(`usage\\.${field}`),
+        );
+      }
+    }
+    for (const bad of [-1, 1.5, Number.NaN, "1", null]) {
+      expect(check({ ...usage, outputImages: bad }), String(bad)).toMatch(/usage\.outputImages/);
+    }
+  });
+
   test("isValidImageGenerationInfo", () => {
     expect(isValidImageGenerationInfo(info)).toBe(true);
     expect(isValidImageGenerationInfo({ ...info, defaultSize: { width: 1, height: 1 } })).toBe(

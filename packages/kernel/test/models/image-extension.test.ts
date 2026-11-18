@@ -2,12 +2,13 @@ import { fileURLToPath } from "node:url";
 import type { ExtensionContext, UsageReportPayload } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { sql } from "kysely";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { ApiError } from "../../src/errors.js";
 import { OUTBOX_DISPATCH_FAILS } from "../../src/infra/outbox/outbox.dispatcher.js";
 import { ModelImages } from "../../src/models/images.js";
+import { ProviderRegistry } from "../../src/runtime/providers.js";
 import { modelUsageJobId, USAGE_REPORT_QUEUE } from "../../src/runtime/usage-report.js";
 import { imageConsumer } from "../fixtures/plugins/image-consumer/index.js";
 import { truncateTables } from "../helpers/db.js";
@@ -89,6 +90,7 @@ afterAll(async () => {
 });
 
 beforeEach(async () => {
+  vi.restoreAllMocks();
   failUsage = false;
   await truncateTables(
     raw,
@@ -142,6 +144,24 @@ async function probeUsage(id: string): Promise<{ calls: number; last: UsageRepor
 }
 
 const usageRows = () => db.selectFrom("model_usage").selectAll().execute();
+
+/** Makes model-fake's image answers carry `usage` instead of their own (through the registry). */
+function providerUsage(usage: unknown): void {
+  const registry = k.app.get(ProviderRegistry);
+  const original = registry.resolve.bind(registry);
+  vi.spyOn(registry, "resolve").mockImplementation(async (...args) => {
+    const r = await original(...args);
+    const gen = r.provider.generateImage;
+    if (!gen) return r;
+    return {
+      ...r,
+      provider: {
+        ...r.provider,
+        generateImage: async (req, opts) => ({ ...(await gen(req, opts)), usage }) as never,
+      },
+    };
+  });
+}
 
 const deniedRows = () =>
   db
@@ -360,6 +380,81 @@ describe("ctx.models.generateImage: calls and usage", () => {
       provider: "model-fake",
       model: "fake-image",
     });
+  });
+
+  it("records the answer's output and cache tokens on the row and reports them", async () => {
+    await map(ART, FAKE_IMAGE);
+    providerUsage({
+      inputTokens: 11,
+      outputTokens: 30,
+      cacheReadTokens: 3,
+      cacheWriteTokens: 4,
+      outputImages: 1,
+    });
+    await ctx().models.generateImage({ orgId, purpose: ART, prompt: PROMPT, n: 2 });
+    const row = await db.selectFrom("model_usage").selectAll().executeTakeFirstOrThrow();
+    expect(row).toMatchObject({
+      input_tokens: 11,
+      output_tokens: 30,
+      cache_read_tokens: 3,
+      cache_write_tokens: 4,
+      // fewer billed images than delivered: the answer's own count
+      output_images: 1,
+    });
+    const got = await waitFor(
+      async () => {
+        const d = await probeUsage(row.id);
+        return d.calls === 1 && d.last != null ? d.last : null;
+      },
+      15_000,
+      "usage delivered",
+    );
+    expect(got.usage).toEqual({
+      inputTokens: 11,
+      outputTokens: 30,
+      cacheReadTokens: 3,
+      cacheWriteTokens: 4,
+      outputImages: 1,
+    });
+  });
+
+  it("an image count above the images delivered is capped at the images delivered", async () => {
+    await map(ART, FAKE_IMAGE);
+    providerUsage({
+      inputTokens: 1,
+      outputTokens: 0,
+      cacheReadTokens: 0,
+      cacheWriteTokens: 0,
+      outputImages: 9,
+    });
+    await ctx().models.generateImage({ orgId, purpose: ART, prompt: PROMPT, n: 2 });
+    const row = await db.selectFrom("model_usage").selectAll().executeTakeFirstOrThrow();
+    expect(row.output_images).toBe(2);
+  });
+
+  it.each([
+    ["no usage", undefined],
+    [
+      "a negative token count",
+      { inputTokens: -1, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0 },
+    ],
+    [
+      "a fractional image count",
+      {
+        inputTokens: 1,
+        outputTokens: 0,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+        outputImages: 1.5,
+      },
+    ],
+  ])("an answer with %s is a server failure and records no usage", async (_name, usage) => {
+    await map(ART, FAKE_IMAGE);
+    providerUsage(usage);
+    const e = await rejection(ctx().models.generateImage({ orgId, purpose: ART, prompt: PROMPT }));
+    expect((e as { kind?: string }).kind).toBe("server");
+    expect((e as Error).message).toMatch(/returned an invalid image result: .*usage/);
+    expect(await usageRows()).toEqual([]);
   });
 
   it("a provider failure records no usage and reaches the extension", async () => {

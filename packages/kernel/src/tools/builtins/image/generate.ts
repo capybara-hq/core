@@ -17,6 +17,7 @@ import type { KernelSchemaDb } from "../../../db/kernel-schema.js";
 import { ApiError } from "../../../errors.js";
 import type { KernelConfigService } from "../../../infra/config/kernel-config.service.js";
 import {
+  billedImages,
   ImageCallDenied,
   type ImageCallInput,
   type ModelImages,
@@ -495,7 +496,7 @@ async function logUsage(
       outputTokens: result.usage.outputTokens,
       cacheReadTokens: result.usage.cacheReadTokens,
       cacheWriteTokens: result.usage.cacheWriteTokens,
-      outputImages: result.usage.outputImages ?? result.images.length,
+      outputImages: billedImages(result),
       purpose: PURPOSE,
       callId: ctx.callId,
     },
