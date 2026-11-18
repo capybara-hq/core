@@ -430,7 +430,7 @@ describe("project knowledge at run start", () => {
       },
       {
         // gate off: the raw route only
-        withOperations: () => Promise.reject(new Error("no operation while the gate is off")),
+        withKernelRead: () => Promise.reject(new Error("no kernel read while the gate is off")),
         withSandbox: (async (_opts: unknown, fn: (...a: unknown[]) => unknown) =>
           fn(
             {},
@@ -671,7 +671,7 @@ describe("project knowledge at run start", () => {
           asked++;
           throw new Error("the device must not be asked");
         },
-        withOperations: async () => {
+        withKernelRead: async () => {
           asked++;
           throw new Error("the device must not be asked");
         },

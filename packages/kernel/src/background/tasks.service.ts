@@ -206,13 +206,8 @@ export class BackgroundTasks {
     auditDetail?: Record<string, unknown>,
   ): Promise<BackgroundTaskView> {
     const task = await this.owned(orgId, conversationId, accountId, taskId);
-    // once activated a running legacy task is the retirement gate's: no SID signal is sent
-    if (
-      !isManagedTask(task) &&
-      task.status === "running" &&
-      !legacyBackgroundAllowed(this.activation)
-    )
-      throw retirementPending();
+    // once activated, the stopper refuses a legacy task's stop with the retirement refusal
+    // exactly when it would signal its session (BackgroundTaskStopper's paired gate)
     const after = await this.stopper.stop(task, "person");
     await audit(this.db.db, {
       actorAccountId: accountId,
@@ -296,10 +291,12 @@ export class BackgroundTasks {
     tail: number,
   ): Promise<LiveRead> {
     if (isManagedTask(task)) return this.readManaged(orgId, task, tail);
-    // once activated a legacy task's output is never read by a raw exec: a finished one still
-    // answers with its finish summary
-    if (!legacyBackgroundAllowed(this.activation))
+    // once activated a legacy task's output is never read by a raw exec: a running one is the
+    // retirement gate's (its actionable refusal), a finished one answers with its finish summary
+    if (!legacyBackgroundAllowed(this.activation)) {
+      if (task.status === "running") throw retirementPending();
       return { kind: "unavailable", reason: "read_failed" };
+    }
     if (task.sid === null || task.sandboxCreatedAt === null || task.deviceId === null) {
       // a reservation the launch has not finished, or a launch that failed
       return {

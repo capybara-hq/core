@@ -28,6 +28,7 @@ import {
   projectSkillOf,
 } from "../runtime/context/project-root.js";
 import { isGeneralAlias, resolveSkillForkType } from "../runtime/subagents/roster.js";
+import { PROJECT_SKILLS_DIR } from "../sandbox/kernel-read.js";
 import {
   PERMISSION_CONTEXT_ACTIVATION,
   permissionContextActive,
@@ -262,6 +263,53 @@ export const forkLeadText = (name: string, agentType: string, args: string): str
     `The user ran the skill "${name}" in a sub-agent (${agentType}) with /${name}${args === "" ? "" : ` ${args}`}. The sub-agent gets the skill's instructions as its task; its report follows. Do not do the task yourself.`,
   );
 
+/**
+ * A person's `/project:<name>` invocation once the activation gate is on (permission activation
+ * L2, Hook 2): no device read at send time (a person's send has no run, so nothing could admit
+ * it). The message is a stub rendered from the conversation's latest `project_root` (the skill's
+ * name, its recorded digest, its directory in the project and the person's arguments) telling the
+ * agent to load `project:<name>` with its `Skill` tool, which reads it under the run's admission.
+ * Model-visible, so English; tags in the arguments stay inert. Always inline, as before.
+ */
+export function projectSkillStub(
+  a: { name: string; args: string },
+  latest: ProjectRootPayload,
+  bare: string,
+): RenderedInvocation {
+  const skill = latest.skills.find((s) => s.name === bare);
+  if (skill === undefined) throw notInvocable("not_found", a.name);
+  const args = a.args.trim();
+  if ([...args].length > SKILL_INVOCATION_LIMITS.argumentsMaxChars) {
+    throw new ApiError("validation_failed", "Request validation failed", [
+      {
+        path: "text",
+        message: `skill arguments must be at most ${SKILL_INVOCATION_LIMITS.argumentsMaxChars} characters; shorten the arguments`,
+      },
+    ]);
+  }
+  const root =
+    latest.root.length > 1 && latest.root.endsWith("/") ? latest.root.slice(0, -1) : latest.root;
+  const dir = `${root === "/" ? "" : root}/${PROJECT_SKILLS_DIR}/${bare}`;
+  const text = escapeSkillInvocationTags(
+    [
+      `The user invoked the project skill "${a.name}" with /${a.name}${args === "" ? "" : ` ${args}`}.`,
+      `Its instructions are not included in this message: call ${BUILTIN.Skill} with the name "${a.name}" to load them from the project (its directory is ${dir}; the SKILL.md recorded at the run start has the digest ${skill.digest}), then follow them${args === "" ? "." : " with the user's arguments:"}`,
+      ...(args === "" ? [] : [args]),
+    ].join("\n\n"),
+  );
+  return {
+    text,
+    skill: {
+      id: a.name,
+      version: 0,
+      source: "project",
+      name: a.name,
+      arguments: args,
+      mode: "inline",
+    },
+  };
+}
+
 /** The warning recorded when a forked skill's `agent` does not resolve (spec §6.2). */
 export const forkAgentUnknownText = (name: string, agent: string): string =>
   `Skill "${name}" asked for sub-agent type "${agent}", which this agent does not have; it ran as general-purpose.`;
@@ -445,7 +493,9 @@ export class SkillInvoker {
    * `skill.not_invocable` `not_found` (no conversation yet, no project, a name it does not list),
    * `skill.project_unavailable` with its reason (the latest project is unavailable, or its file
    * cannot be used), the device's own refusals as they are (`device.offline`, ...),
-   * `device.projects_unavailable` when the device cannot be asked.
+   * `device.projects_unavailable` when the device cannot be asked. Once the activation gate is on
+   * the device is not read at send time: the invocation is the recorded stub
+   * ({@link projectSkillStub}) and only the first two refusals remain.
    */
   private async prepareProject(
     a: {
@@ -470,6 +520,8 @@ export class SkillInvoker {
     if (projectSkillBlocked(latest, a.name) !== null || latest === undefined) {
       throw notInvocable("not_found", a.name);
     }
+    // once activated: no device read at send time, the agent loads the skill with Skill
+    if (permissionContextActive(this.activation)) return projectSkillStub(a, latest, bare);
     const file = await this.readProjectFile({ ...a, conversationId }, latest.root, bare);
     const args = a.args.trim();
     // the renderer's skills-root directory becomes the skill's directory in the project (a closing
@@ -522,23 +574,15 @@ export class SkillInvoker {
   }
 
   /**
-   * {@link readProjectSkill} in a silent use of the conversation's device, as its owner. Once the
-   * activation gate is on this is refused before any device call: a person's invocation has no
-   * run, so no operation can admit the read, and the owner browse never reads file contents
-   * (operation contract §Native operations); the raw use is never taken. The owner-authenticated
-   * project read this needs is not in `SandboxService` yet (permission activation W3-L).
+   * {@link readProjectSkill} in a silent use of the conversation's device, as its owner (gate off
+   * only: once activated a person's invocation renders {@link projectSkillStub} and never reads
+   * the device at send time).
    */
   private async readProjectFile(
     a: { orgId: string; accountId: string; conversationId: string; name: string },
     root: string,
     bare: string,
   ) {
-    if (permissionContextActive(this.activation)) {
-      throw new ApiError(
-        "device.projects_unavailable",
-        `The project skill ${a.name} cannot be read from the device for a person's invocation yet; send the request without the command and ask the agent to use the skill`,
-      );
-    }
     try {
       const deviceId = await this.devices.forTool(a.orgId, a.conversationId);
       // a person invokes in a root conversation: it is its own sandbox conversation

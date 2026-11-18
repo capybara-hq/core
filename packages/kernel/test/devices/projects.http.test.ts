@@ -715,6 +715,8 @@ describe("device projects", () => {
       {
         // gate off: the raw route only
         withBrowse: () => Promise.reject(new Error("no owner browse while the gate is off")),
+        ensureRunningForOwner: () =>
+          Promise.reject(new Error("no owner start while the gate is off")),
         withSandbox: (_ctx, fn, signal) =>
           fn(
             { id },

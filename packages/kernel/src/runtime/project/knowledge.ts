@@ -8,6 +8,7 @@ import {
 } from "@capybara-hq/plugin-sdk";
 import type { EventPayload } from "../../conversations/events.js";
 import { POLICY_REFUSAL_PREFIX } from "../../local-devices/relay.js";
+import { PROJECT_SKILLS_DIR } from "../../sandbox/kernel-read.js";
 import type { SandboxMode } from "../../sandbox/modes.js";
 
 /**
@@ -27,8 +28,8 @@ export const AGENTS_MD_MAX_BYTES = 64 * 1024;
 export const AGENTS_MD_TRUNCATED_MARKER =
   "\n\n[AGENTS.md is longer than 64 KiB; the rest was cut here]";
 
-/** The directory of a project's skills, relative to its root. */
-export const PROJECT_SKILLS_DIR = ".agents/skills";
+/** The directory of a project's skills, relative to its root (the kernel read's own constant). */
+export { PROJECT_SKILLS_DIR } from "../../sandbox/kernel-read.js";
 
 /** How many `SKILL.md` files one run start reads at once. */
 const SKILL_READ_CONCURRENCY = 8;

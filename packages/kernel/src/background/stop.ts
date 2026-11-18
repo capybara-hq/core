@@ -1,8 +1,9 @@
 import { rootsOf } from "@capybara-hq/plugin-sdk";
-import { Inject, Injectable } from "@nestjs/common";
+import { Inject, Injectable, Optional } from "@nestjs/common";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
+import { PERMISSION_CONTEXT_ACTIVATION } from "../sandbox/permission-context-types.js";
 import { type IfRunningResult, SandboxService } from "../sandbox/sandbox.service.js";
 import {
   type BackgroundFinish,
@@ -95,6 +96,12 @@ export class BackgroundTaskStopper {
     @Inject(SandboxService) private readonly sandbox: Pick<SandboxService, "ifRunning">,
     @Inject(KernelDb) private readonly db: KernelDb,
     @Inject(KERNEL_LOGGER) private readonly log: Pick<KernelLogger, "warn">,
+    /**
+     * The paired activation gate: once on, a legacy (SID) task's stop refuses with the retirement
+     * refusal exactly when it would run an exec (its instance runs); one whose instance is gone
+     * or replaced still finishes without one. A managed task always stops by its exact ref.
+     */
+    @Optional() @Inject(PERMISSION_CONTEXT_ACTIVATION) private readonly activation?: boolean,
   ) {}
 
   /**
@@ -250,7 +257,8 @@ export class BackgroundTaskStopper {
       cur.deviceId,
       { createdAt: cur.sandboxCreatedAt },
       async (tp, h, sig) => {
-        const p = actingAs(tp, taskActor(cur));
+        // once activated this refuses before the provider (the retirement gate owns the task)
+        const p = actingAs(tp, taskActor(cur), this.activation);
         const term = await p.exec(h, {
           command: termScript(cur.id, sid),
           cwd: rootsOf(h).workspace,
@@ -263,7 +271,7 @@ export class BackgroundTaskStopper {
           throw new Error(`the stop of background task ${cur.id} failed (${term.exitCode})`);
         }
         // also after an exit: processes the command left running are stopped with the task
-        if (!(await killSession(p, h, sid))) {
+        if (!(await killSession(p, h, sid, this.activation))) {
           throw new Error(`background task ${cur.id} could not be confirmed stopped`);
         }
         const tail = await p.exec(h, {

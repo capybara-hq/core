@@ -22,7 +22,7 @@ import { KILL_SESSION_TIMEOUT_MS, killSession, SID_RE } from "../../../backgroun
 import type { BackgroundTaskRow } from "../../../background/store.js";
 import { runOutsideTransaction } from "../../../infra/database/transaction-host.js";
 import { isDeviceRequestNotSent } from "../../../local-devices/relay.js";
-import { operationIdFor } from "../../../sandbox/operation-intents.js";
+import { launchRefusedText, operationIdFor } from "../../../sandbox/operation-intents.js";
 import type { BuiltinCallContext, BuiltinResult, BuiltinTool } from "../../registry.js";
 import {
   clip,
@@ -650,13 +650,15 @@ export async function runInBackgroundManaged(
 
 /** Why a managed start was refused, in the kernel's own words (never the provider's message). */
 function launchRefusedWhy(e: unknown): string {
-  if (isDeviceRequestNotSent(e))
-    return "the device's machine reconnected before the start was sent; retry the call";
-  if (isSandboxScopeDeniedError(e))
-    return "the command or its output file is outside what this conversation may use on the device; choose a working directory this conversation may write to";
-  if (isSandboxPermissionUnsupportedError(e))
-    return "this device cannot run background tasks with this conversation's permissions; ask the user to choose another permission profile or device";
-  return "the device refused the start";
+  return launchRefusedText(
+    isDeviceRequestNotSent(e)
+      ? "not_sent"
+      : isSandboxScopeDeniedError(e)
+        ? "denied"
+        : isSandboxPermissionUnsupportedError(e)
+          ? "unsupported"
+          : undefined,
+  );
 }
 
 /** A typed refusal: the provider or admission proved the start had no effect. */

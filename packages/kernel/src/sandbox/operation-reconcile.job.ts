@@ -8,12 +8,14 @@ import {
   SandboxPermissionUnsupportedError,
   type SandboxProvider,
 } from "@capybara-hq/plugin-sdk";
-import { Inject, Injectable } from "@nestjs/common";
+import { Inject, Injectable, Optional } from "@nestjs/common";
 import { MANAGED_STOP_GRACE_MS, ManagedInstanceMismatchError } from "../background/managed.js";
 import { BackgroundTaskStopper } from "../background/stop.js";
 import { BackgroundTaskStore } from "../background/store.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
+import { KERNEL_LOGGER } from "../infra/tokens.js";
 import { isDeviceRequestNotSent } from "../local-devices/relay.js";
+import type { KernelLogger } from "../log.js";
 import { checkManagedStart, type ManagedStartArgs } from "./held-operations.js";
 import { type OperationIntent, SandboxOperationIntents } from "./operation-intents.js";
 import { SandboxProviders } from "./providers.js";
@@ -29,6 +31,8 @@ export class SandboxOperationReconcileJob {
     @Inject(BackgroundTaskStore)
     private readonly tasks: Pick<BackgroundTaskStore, "byOperation" | "settleOwedCancel">,
     @Inject(BackgroundTaskStopper) private readonly stopper: Pick<BackgroundTaskStopper, "stop">,
+    /** Where a recovered start's refusal keeps the provider's own message (never the task's). */
+    @Optional() @Inject(KERNEL_LOGGER) private readonly log?: Pick<KernelLogger, "warn">,
   ) {}
   async reconcile(operationId: string): Promise<void> {
     await this.intents.expirePayload(operationId);
@@ -138,6 +142,8 @@ export class SandboxOperationReconcileJob {
         at.phase === "start" &&
         (isSandboxScopeDeniedError(error) || isSandboxPermissionUnsupportedError(error))
       ) {
+        // the task keeps the kernel's reason; the provider's message stays here
+        this.log?.warn("a recovered background start was refused", { operationId, err: error });
         await this.intents.settleBackgroundRefusal(operationId, claimed.execution_id, {
           // a not-sent refusal was deferred above; kept distinct should it ever reach here
           kind: isDeviceRequestNotSent(error)

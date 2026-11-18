@@ -102,6 +102,11 @@ import {
   type CloudSnapshotOutcome,
 } from "./cloud-permission-snapshot.js";
 import {
+  isKernelReadMethod,
+  type KernelReadInvocation,
+  KernelReadNotAdmitted,
+} from "./kernel-read.js";
+import {
   type SandboxLease,
   SandboxLeases,
   SandboxLockLostError,
@@ -485,6 +490,20 @@ const otherProvider = (provider: string): ApiError =>
     "device.unavailable",
     `This device's files are kept by the sandbox provider ${provider}, which is not the current provider; it can be used again once ${provider} is the deployment's sandbox provider`,
   );
+
+/**
+ * An owner browse found no running instance of the device (409): the picker starts the device
+ * for its owner first ({@link SandboxService.ensureRunningForOwner}), so this is an instance that
+ * stopped in between (idle suspension) or one that could not be started; retrying starts it.
+ */
+export const deviceNotRunning = (): ApiError =>
+  new ApiError(
+    "device.not_running",
+    "The device is not running right now; try again, and the device is started first",
+  );
+
+/** The holder name of {@link SandboxService.ensureRunningForOwner}: no conversation holds it. */
+const OWNER_START_HOLDER = "device-owner";
 
 /**
  * The device's old instance incarnation may still run legacy work that was never retired (503):
@@ -1146,10 +1165,7 @@ export class SandboxService {
   ): Promise<T> {
     await this.authority.resolveBrowse(ctx, signal);
     const row = await this.readRow(ctx);
-    if (!row)
-      throw new SandboxPermissionUnsupportedError(
-        "Start the device before using staged owner browsing",
-      );
+    if (!row) throw deviceNotRunning();
     const entry = await this.require(ctx.deviceId, ctx.orgId);
     const result = await this.ifRunningAs(
       ctx.deviceId,
@@ -1210,9 +1226,65 @@ export class SandboxService {
       signal,
       true,
     );
-    if (result.kind !== "ran")
-      throw new SandboxPermissionUnsupportedError("The device instance is not running");
+    if (result.kind !== "ran") throw deviceNotRunning();
     return result.value;
+  }
+
+  /**
+   * Makes the device's instance run for its owner (permission activation L2, Hook 3), before an
+   * owner browse ({@link withBrowse}) of a device that may be stopped: the owner, membership and
+   * browsing ceiling checks of the browse first (`resolveBrowse`), then the lifecycle `enter` a
+   * use takes (the exclusive lease creates or resumes the instance through the retirement gate,
+   * the B-11 reconcile marker, the B-8 binding, `maxRunningSandboxes` and fencing), and the lease
+   * is left at once. No conversation holds it and nothing runs in it; what the start caused is
+   * not marked seen, so each conversation's next use still learns of it.
+   */
+  async ensureRunningForOwner(
+    ctx: { orgId: string; deviceId: string; accountId: string },
+    signal: AbortSignal,
+  ): Promise<void> {
+    await this.authority.resolveBrowse(ctx, signal);
+    const p = await this.require(ctx.deviceId, ctx.orgId);
+    const use: SandboxUseContext = {
+      orgId: ctx.orgId,
+      deviceId: ctx.deviceId,
+      holderConversationId: OWNER_START_HOLDER,
+      actor: { accountId: ctx.accountId, conversationId: OWNER_START_HOLDER },
+    };
+    const e = await this.enter(use, p, signal, null, () => this.wantedLimits(use, p));
+    await this.leave(ctx.deviceId, e);
+  }
+
+  /**
+   * A run start's kernel read of the bound project (permission activation L2, Hook 1): the use
+   * a tool call's would be (the instance made or resumed, the read silent for the holder), whose
+   * provider stats, reads and lists only, each call a kernel read admitted and claimed on its own
+   * (`SandboxOperationIntents.admitKernelRead`: the run's current claim with its run still
+   * `queued`, a random operation id, the profile scope narrowed to the root, its `AGENTS.md` and
+   * its `.agents/skills`). Any other method is refused before admission. Only
+   * `ProjectKnowledgeService` calls this: no tool context, Platform operation or route has it.
+   */
+  async withKernelRead<T>(
+    ctx: SandboxUseContext,
+    read: KernelReadInvocation,
+    fn: (
+      h: SandboxHandle,
+      p: HeldProvider,
+      info: SandboxUseInfo,
+      signal: AbortSignal,
+    ) => Promise<T>,
+    signal: AbortSignal,
+  ): Promise<T> {
+    const c = read.claim;
+    if (
+      read.purpose !== "project_root" ||
+      c.orgId !== ctx.orgId ||
+      c.conversationId !== ctx.holderConversationId ||
+      c.runId !== ctx.actor.runId ||
+      ctx.actor.conversationId !== ctx.holderConversationId
+    )
+      throw new SandboxScopeDeniedError("The kernel read does not match its run start");
+    return this.withSandboxUse(ctx, fn, signal, undefined, undefined, read);
   }
 
   async withOperations<T>(
@@ -1257,6 +1329,7 @@ export class SandboxService {
       info: SandboxUseInfo,
       signal: AbortSignal,
     ) => Promise<T>,
+    kernelRead?: KernelReadInvocation,
   ): Promise<T> {
     const p = await this.require(ctx.deviceId, ctx.orgId);
     const env = ctx.deviceId;
@@ -1269,7 +1342,7 @@ export class SandboxService {
     let e = await seen(await this.enter(ctx, p, signal, null, want));
     try {
       try {
-        return await this.runAs(e, ctx, p, fn, signal, invocation, trusted);
+        return await this.runAs(e, ctx, p, fn, signal, invocation, trusted, kernelRead);
       } catch (err) {
         if (isFileSystemGoneError(err)) throw await this.filesGone(env, p, e);
         if (!isSandboxGoneError(err)) throw err;
@@ -1283,7 +1356,16 @@ export class SandboxService {
           ? { fresh: true, restarted: false, filesReset: true }
           : { fresh: true, restarted: true };
         try {
-          return await this.runAs({ ...e, info }, ctx, p, fn, signal, invocation, trusted);
+          return await this.runAs(
+            { ...e, info },
+            ctx,
+            p,
+            fn,
+            signal,
+            invocation,
+            trusted,
+            kernelRead,
+          );
         } catch (err2) {
           if (isFileSystemGoneError(err2)) throw await this.filesGone(env, p, e);
           throw err2;
@@ -1445,10 +1527,18 @@ export class SandboxService {
       info: SandboxUseInfo,
       signal: AbortSignal,
     ) => Promise<T>,
+    kernelRead?: KernelReadInvocation,
   ): Promise<T> {
     const sig = AbortSignal.any([signal, e.lease.signal]);
     if (trusted) return trusted(e.handle, p.impl, { ...e.info, roots: rootsOf(e.handle) }, sig);
     const env = ctx.deviceId;
+    if (kernelRead)
+      return fn(
+        e.handle,
+        this.kernelReadProvider(e, ctx, p, kernelRead, sig),
+        { ...e.info, roots: rootsOf(e.handle) },
+        sig,
+      );
     let ordinal = 0;
     const impl = invocation
       ? createHeldOperations(p.impl, e.handle, sig, async (method, input, invoke, preflight) => {
@@ -1648,6 +1738,67 @@ export class SandboxService {
         sig,
       );
     return fn(e.handle, impl, info, sig);
+  }
+
+  /**
+   * The held provider of a kernel read ({@link withKernelRead}): every call admitted and claimed
+   * as its own kernel read, then dispatched inline under the held lease, as an owner browse's
+   * call is ({@link withBrowse}). Exec, writes and scans are refused before any admission.
+   */
+  private kernelReadProvider(
+    e: Entered,
+    ctx: SandboxUseContext,
+    p: SandboxProviderEntry,
+    read: KernelReadInvocation,
+    sig: AbortSignal,
+  ): HeldProvider {
+    const env = ctx.deviceId;
+    return createHeldOperations(p.impl, e.handle, sig, async (method, input, invoke) => {
+      const path = (input as { path?: unknown }).path;
+      if (!isKernelReadMethod(method) || typeof path !== "string")
+        throw new SandboxScopeDeniedError("A kernel read only stats, reads and lists files");
+      const given = input as { path: string };
+      sig.throwIfAborted();
+      await this.register(env, e.lease.token);
+      let admitted: Awaited<ReturnType<SandboxOperationIntents["claimKernelRead"]>>;
+      try {
+        const intent = await runOutsideTransaction(() =>
+          this.operationIntents.admitKernelRead(
+            ctx,
+            read,
+            {
+              provider: p.plugin,
+              providerVersion: p.version ?? "internal-v2",
+              generation: String(e.createdAt),
+            },
+            method,
+            given,
+            e.lease.token,
+            sig,
+          ),
+        );
+        admitted = await runOutsideTransaction(() =>
+          this.operationIntents.claimKernelRead(ctx, read, intent.operation_id, method, given),
+        );
+      } catch (error) {
+        // a refusal before dispatch: nothing reached the device
+        if (sig.aborted) throw error;
+        throw new KernelReadNotAdmitted(error);
+      }
+      sig.throwIfAborted();
+      try {
+        const value = await invoke(parseSandboxOperationScope(admitted.scope), sig);
+        await runOutsideTransaction(() =>
+          this.operationIntents.complete(admitted.operation_id, admitted.execution_id, value),
+        );
+        return value;
+      } catch (error) {
+        await runOutsideTransaction(() =>
+          this.operationIntents.unknown(admitted.operation_id, admitted.execution_id),
+        );
+        throw error;
+      }
+    });
   }
 
   /**

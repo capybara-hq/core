@@ -19,6 +19,7 @@ import {
   PermissionProfileStore,
   type PermissionRoot,
 } from "../conversations/permission-profile-store.js";
+import { canonicalRoot, workingRootOf as reviewWorkingRootOf } from "../devices/working-root.js";
 import { ApiError } from "../errors.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import {
@@ -27,7 +28,8 @@ import {
 } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { NetworkGrants } from "../local-devices/network-grants.js";
-import { coversHost } from "./modes.js";
+import { type KernelReadInvocation, type KernelReadMethod, kernelReadRoot } from "./kernel-read.js";
+import { coversHost, type EffectiveDevicePolicy } from "./modes.js";
 import { isExecutionMethod, parseStartingExecutionGrants } from "./operation-authority-types.js";
 import { PermissionAuthorityEpochStore } from "./permission-authority-epochs.js";
 import { assertAuthorityHeld, PermissionAuthorityLock } from "./permission-authority-lock.js";
@@ -106,6 +108,21 @@ function withheldScope(input: {
       reason: "This device's runtime cannot enforce the restricted permission profiles",
     };
   return null;
+}
+/**
+ * How far restricted work may root outside the workspace now, as the command review reads it
+ * (`DevicesService.projectReach`, B2): a local device follows its owner's reach within a device
+ * ceiling that allows auto; a cloud device reaches beyond its workspace only in auto mode.
+ */
+function reachOf(
+  source: string,
+  policy: Pick<EffectiveDevicePolicy, "mode" | "allowedMode">,
+  owner: { restrictedProjectReach?: string } | null,
+): "workspace" | "os-user" {
+  if (source !== "local") return policy.mode === "auto" ? "os-user" : "workspace";
+  return policy.allowedMode === "auto" && owner?.restrictedProjectReach === "os-user"
+    ? "os-user"
+    : "workspace";
 }
 /** Only server-resolved facts enter this constructor; callers never submit roots or profile. */
 export function intersectPermissionScope(f: PermissionScopeFacts): SandboxOperationScope {
@@ -368,6 +385,67 @@ export class SandboxOperationAuthority {
     return { scope, permissionGrantId: grant?.id ?? null, grantedHosts: hosts, executionGrants };
   }
 
+  /**
+   * The scope of one kernel read (permission activation L2, Hook 1): the conversation's profile
+   * scope from the same authority snapshot admission reads, with the bound project as the working
+   * root it becomes once read (the review's fallbacks apply: a root outside the mode or above the
+   * home is refused), intersected with the one path the read may reach
+   * ({@link kernelReadRoot}: the root's `stat`, `AGENTS.md`, `.agents/skills/**`). No write roots,
+   * no hosts, and never a per-call grant. Called under the run start's claim only (the intents
+   * check that its run is still `queued`).
+   */
+  @Transactional()
+  async resolveKernelRead(
+    ctx: SandboxUseContext,
+    read: Pick<KernelReadInvocation, "purpose" | "root">,
+    method: KernelReadMethod,
+    path: string,
+    signal: AbortSignal,
+  ): Promise<SandboxOperationScope> {
+    if (read.purpose !== "project_root")
+      throw new ApiError("forbidden", "Unknown kernel read purpose");
+    const covering = kernelReadRoot(read.root, method, path);
+    if (covering === null)
+      throw new ApiError(
+        "forbidden",
+        "A kernel read reaches only the project's root, its AGENTS.md and its .agents/skills",
+      );
+    const f = await this.snapshot(
+      ctx,
+      { runId: ctx.actor.runId ?? "", callId: "" },
+      signal,
+      undefined,
+      { projectUsable: true },
+    );
+    const bound = await this.profiles.readOwnedRoot(
+      ctx.orgId,
+      ctx.holderConversationId,
+      ctx.actor.accountId,
+    );
+    if (
+      bound.project_path === null ||
+      canonicalRoot(bound.project_path) !== canonicalRoot(read.root) ||
+      canonicalRoot(f.workingRoot) !== canonicalRoot(read.root)
+    )
+      throw new ApiError(
+        "forbidden",
+        "The kernel read's root is not the conversation's usable project root",
+      );
+    const profile = this.scopeOf(ctx, method, f);
+    if (
+      profile.filesystem.kind === "scoped" &&
+      !profile.filesystem.readRoots.some(
+        (r) => covering === r || covering.startsWith(r === "/" ? "/" : `${r}/`),
+      )
+    )
+      throw new ApiError("forbidden", "The kernel read is outside the conversation's profile");
+    return parseSandboxOperationScope({
+      ...profile,
+      filesystem: { kind: "scoped", readRoots: [covering], writeRoots: [] },
+      network: { kind: "none" },
+    });
+  }
+
   private scopeOf(
     ctx: SandboxUseContext,
     operation: SandboxAuthorityOperation,
@@ -406,6 +484,7 @@ export class SandboxOperationAuthority {
     call: PermissionCallRef,
     signal: AbortSignal,
     captureGrant?: (grant: DeviceExecGrants | undefined) => void,
+    opts: { projectUsable?: true } = {},
   ): Promise<PermissionReviewSnapshot> {
     signal.throwIfAborted();
     if (ctx.actor.runId && call.runId !== ctx.actor.runId)
@@ -461,8 +540,9 @@ export class SandboxOperationAuthority {
       root,
       holderConversationId: ctx.holderConversationId,
       runId: ctx.actor.runId,
+      ...opts,
     });
-    const { policy, device, workingRoot, grant } = base;
+    const { policy, device, workingRoot, projectRoot, grant } = base;
     const applied = await this.facts.readAppliedEnvironmentLocked({
       orgId: ctx.orgId,
       deviceId: ctx.deviceId,
@@ -487,7 +567,7 @@ export class SandboxOperationAuthority {
       effectiveProfile,
       location: device.source === "local" ? "local" : "cloud",
       workingRoot,
-      projectPath: root.project_path,
+      projectPath: projectRoot,
       applied,
     });
     const vector = await this.epochs.readLocked(subject);
@@ -564,6 +644,8 @@ export class SandboxOperationAuthority {
     root: PermissionRoot;
     holderConversationId: string;
     runId: string | undefined;
+    /** A kernel read of the bound project: its root as the working root it becomes once read. */
+    projectUsable?: true;
   }) {
     const { orgId, deviceId } = input;
     const { policy, owner } = await this.facts.readDevice(orgId, deviceId);
@@ -572,7 +654,11 @@ export class SandboxOperationAuthority {
       .select("source")
       .where("id", "=", deviceId)
       .executeTakeFirstOrThrow();
-    const workingRoot = await this.workingRootOf(input);
+    const { workingRoot, projectRoot } = await this.workingRootOf({
+      ...input,
+      reach: reachOf(device.source, policy, owner),
+      mode: policy.mode,
+    });
     const grant = input.runId
       ? await this.grants.forExec({ orgId, deviceId, runId: input.runId })
       : undefined;
@@ -585,20 +671,31 @@ export class SandboxOperationAuthority {
         (policy.network.kind === "open-public" ||
           policy.network.hosts.some((pattern) => coversHost(pattern, host))),
     );
-    return { policy, device, workingRoot, grant, allowedHosts };
+    return { policy, device, workingRoot, projectRoot, grant, allowedHosts };
   }
 
   /**
-   * The working root of the base authority (B1): the validated project binding, else the recorded
-   * or reported workspace. Admission, the recorded permission context and the managed device
-   * context evidence all resolve it here, so none of them can name a wider root than admission.
+   * The working root of the base authority (B1), decided exactly as the command review decides it
+   * (`devices/working-root.ts` `workingRootOf`, permission activation L2): the bound project's
+   * root when the root conversation's latest `project_root` snapshot is usable and names that
+   * root, else the recorded or reported workspace. A bound project before its first snapshot, an
+   * unavailable one, one outside the workspace without the os-user reach and one above the
+   * owner's home all work in the workspace, so a call the review judged against the workspace is
+   * not stale at admission. Narrowing only: no root other than the binding's or the workspace is
+   * ever named. `projectUsable` (a kernel read of the bound project) takes the binding as its
+   * snapshot. `projectRoot` is the bound project path when it is the working root, else null.
+   * Admission, the recorded permission context and the managed device context evidence all
+   * resolve it here, so none of them can name a wider root than admission.
    */
   private async workingRootOf(input: {
     orgId: string;
     deviceId: string;
     root: PermissionRoot;
     holderConversationId: string;
-  }): Promise<string> {
+    reach: "workspace" | "os-user";
+    mode: EffectiveDevicePolicy["mode"];
+    projectUsable?: true;
+  }): Promise<{ workingRoot: string; projectRoot: string | null }> {
     const { orgId, deviceId, root } = input;
     const working = await this.facts.readWorkingFacts({
       orgId,
@@ -612,7 +709,25 @@ export class SandboxOperationAuthority {
       !(await this.facts.projectMatches(deviceId, root.project_name, root.project_path))
     )
       throw new ApiError("conflict", "The conversation project binding changed");
-    return root.project_path ?? working.workspace;
+    if (!root.project_path) return { workingRoot: working.workspace, projectRoot: null };
+    const bound = root.project_path;
+    const snapshot = input.projectUsable ? { root: bound, unavailable: false } : working.project;
+    // a snapshot of another root than the binding (an older binding's) never names the root
+    const usable =
+      snapshot != null &&
+      !snapshot.unavailable &&
+      canonicalRoot(snapshot.root) === canonicalRoot(bound)
+        ? { root: bound, unavailable: false }
+        : null;
+    const workingRoot = reviewWorkingRootOf(usable, {
+      mode: input.mode,
+      reach: input.reach,
+      workspace: working.workspace,
+      home: working.home,
+    });
+    const projectRoot =
+      usable !== null && canonicalRoot(workingRoot) === canonicalRoot(bound) ? bound : null;
+    return { workingRoot, projectRoot };
   }
 
   /**
@@ -627,12 +742,22 @@ export class SandboxOperationAuthority {
     conversationId: string;
   }): Promise<string> {
     const root = await this.profiles.readRoot(input.orgId, input.conversationId);
-    return this.workingRootOf({
-      orgId: input.orgId,
-      deviceId: input.deviceId,
-      root,
-      holderConversationId: input.conversationId,
-    });
+    const { policy, owner } = await this.facts.readDevice(input.orgId, input.deviceId);
+    const device = await this.db
+      .selectFrom("devices")
+      .select("source")
+      .where("id", "=", input.deviceId)
+      .executeTakeFirstOrThrow();
+    return (
+      await this.workingRootOf({
+        orgId: input.orgId,
+        deviceId: input.deviceId,
+        root,
+        holderConversationId: input.conversationId,
+        reach: reachOf(device.source, policy, owner),
+        mode: policy.mode,
+      })
+    ).workingRoot;
   }
 
   /**
@@ -792,7 +917,7 @@ export class SandboxOperationAuthority {
       effectiveProfile,
       location,
       workingRoot: base.workingRoot,
-      projectPath: root.project_path,
+      projectPath: base.projectRoot,
       applied,
     });
     if (withheld) return without(withheld.state, withheld.reason);

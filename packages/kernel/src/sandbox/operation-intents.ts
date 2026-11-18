@@ -17,6 +17,7 @@ import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { OutboxService } from "../infra/outbox/outbox.service.js";
 import type { ExecutionClaim } from "../runtime/run-execution.js";
+import type { KernelReadInvocation, KernelReadMethod } from "./kernel-read.js";
 import type { SandboxAuthorityOperation } from "./operation-authority.js";
 import { SandboxOperationAuthority } from "./operation-authority.js";
 import {
@@ -87,6 +88,24 @@ export type OperationFailureKind = "denied" | "unsupported" | "not_sent";
 export interface OperationFailure {
   kind: OperationFailureKind;
   message: string;
+}
+/**
+ * Why a managed background start was refused, as `background_tasks.lost_reason` keeps it after
+ * `launch refused: ` (TaskOutput, TaskList, the HTTP task view and the Platform tool show it):
+ * kernel text by the failure's kind only, never the provider's own message, which stays in the
+ * operation's recorded result and the dispatcher's log.
+ */
+export function launchRefusedText(kind: OperationFailureKind | undefined): string {
+  switch (kind) {
+    case "not_sent":
+      return "the device's machine reconnected before the start was sent; retry the call";
+    case "denied":
+      return "the command or its output file is outside what this conversation may use on the device; choose a working directory this conversation may write to";
+    case "unsupported":
+      return "this device cannot run background tasks with this conversation's permissions; ask the user to choose another permission profile or device";
+    default:
+      return "the device refused the start";
+  }
 }
 export function operationResult(value: unknown): unknown {
   if (value && typeof value === "object" && "$expired" in value)
@@ -356,6 +375,166 @@ export class SandboxOperationIntents {
     await this.payloads.save(row.operation_id, "input", input, described);
     await this.scheduleExpiry(row);
     return row;
+  }
+  /**
+   * The run start's kernel read (permission activation L2, Hook 1): the run must still be the
+   * claim's execution, triggered by the actor and `queued` (a run start reads before its run is
+   * running), checked in PG under the authority locks the caller already holds.
+   */
+  private async assertKernelReadRun(ctx: SandboxUseContext, c: ExecutionClaim): Promise<void> {
+    const run = await this.db
+      .selectFrom("runs")
+      .select(["execution_id", "trigger_account_id", "status"])
+      .where("id", "=", c.runId)
+      .where("conversation_id", "=", c.conversationId)
+      .forShare()
+      .executeTakeFirst();
+    if (
+      !run ||
+      run.execution_id !== c.executionId ||
+      run.trigger_account_id !== ctx.actor.accountId ||
+      run.status !== "queued"
+    )
+      denied("The run start's execution claim is no longer current");
+  }
+  /**
+   * Admits one kernel read (Hook 1), modelled on {@link admitBrowse}: a random operation id per
+   * read, so nothing is a consumed identity and a retried run start reads again; the run is
+   * recorded for audit (`run_id`, no `call_id`). The scope is the profile scope narrowed to the
+   * one path the read may reach (`SandboxOperationAuthority.resolveKernelRead`); the claim is
+   * re-checked under the admit lock ({@link assertKernelReadRun}). The read's `holderTag` is its
+   * lease token, so a dead holder's read is revoked with the holder.
+   */
+  @Transactional({ propagation: "requires_new" })
+  async admitKernelRead(
+    ctx: SandboxUseContext,
+    read: KernelReadInvocation,
+    instance: OperationInstance,
+    method: KernelReadMethod,
+    input: { path: string },
+    holderTag: string,
+    signal: AbortSignal,
+  ): Promise<OperationIntent> {
+    signal.throwIfAborted();
+    const c = read.claim;
+    if (
+      c.orgId !== ctx.orgId ||
+      c.conversationId !== ctx.holderConversationId ||
+      c.runId !== ctx.actor.runId
+    )
+      denied("The kernel read does not match its run start");
+    // resolve takes the authority locks of the root subject and holds them through the insert
+    const scope = await this.authority.resolveKernelRead(ctx, read, method, input.path, signal);
+    if (scope.rootConversationId !== c.rootId)
+      denied("The kernel read's root no longer matches the execution claim");
+    await this.assertKernelReadRun(ctx, c);
+    const described = describeOperationPayload(input);
+    const payload = payloadReference("input", described);
+    const vector = await this.epochs.readLocked({
+      orgId: ctx.orgId,
+      deviceId: ctx.deviceId,
+      rootConversationId: scope.rootConversationId,
+    });
+    const row = await this.db
+      .insertInto("sandbox_operation_intents")
+      .values({
+        operation_id: scope.operationId,
+        org_id: ctx.orgId,
+        account_id: ctx.actor.accountId,
+        device_id: ctx.deviceId,
+        root_conversation_id: scope.rootConversationId,
+        conversation_id: ctx.holderConversationId,
+        run_id: c.runId,
+        call_id: null,
+        ordinal: 0,
+        method,
+        input_hash: permissionScopeHash({ method, inputDigest: described.digest }),
+        admission_hash: permissionScopeHash({ method, inputDigest: described.digest, scope }),
+        input: payload,
+        scope: JSON.stringify(scope),
+        epochs: JSON.stringify(vector),
+        provider: instance.provider,
+        provider_version: instance.providerVersion,
+        instance_generation: instance.generation,
+        deadline: new Date(scope.admitBeforeMs),
+        retain_until: new Date(scope.admitBeforeMs + 86_400_000),
+        state: "admitted",
+        execution_id: c.executionId,
+        holder_token: holderTag,
+      })
+      .returningAll()
+      .executeTakeFirstOrThrow();
+    await this.outbox.add({
+      queue: "cap-kernel-maintenance",
+      name: OPERATION_RECONCILE,
+      jobId: `${OPERATION_RECONCILE}-${row.operation_id}`,
+      data: { operationId: row.operation_id },
+      orgId: ctx.orgId,
+      runAt: row.deadline,
+    });
+    await this.payloads.save(row.operation_id, "input", input, described);
+    await this.scheduleExpiry(row);
+    return row;
+  }
+  /**
+   * Claims an admitted kernel read for dispatch: under the admit lock, the run claim is checked
+   * again, the row must be this read's (same actor, conversation, run and execution, no tool
+   * call) and still admitted before its deadline, and the authority is resolved again: a scope
+   * that changed since admission refuses.
+   */
+  @Transactional({ propagation: "requires_new" })
+  async claimKernelRead(
+    ctx: SandboxUseContext,
+    read: KernelReadInvocation,
+    id: string,
+    method: KernelReadMethod,
+    input: { path: string },
+  ): Promise<OperationIntent> {
+    const initial = await this.read(id);
+    await this.locks.acquire(subjectOf(initial), { kind: "admit" });
+    const c = read.claim;
+    await this.assertKernelReadRun(ctx, c);
+    const row = await this.db
+      .selectFrom("sandbox_operation_intents")
+      .selectAll()
+      .where("operation_id", "=", id)
+      .forUpdate()
+      .executeTakeFirstOrThrow();
+    if (
+      row.org_id !== ctx.orgId ||
+      row.device_id !== ctx.deviceId ||
+      row.account_id !== ctx.actor.accountId ||
+      row.conversation_id !== ctx.holderConversationId ||
+      row.run_id !== c.runId ||
+      row.call_id !== null ||
+      row.execution_id !== c.executionId ||
+      row.method !== method ||
+      row.input_hash !==
+        permissionScopeHash({ method, inputDigest: describeOperationPayload(input).digest })
+    )
+      denied("The kernel read admission does not match this read");
+    if (row.state !== "admitted" || row.deadline.getTime() <= Date.now())
+      denied("Kernel read admission was revoked or expired");
+    const fresh = await this.authority.resolveKernelRead(
+      ctx,
+      read,
+      method,
+      input.path,
+      new AbortController().signal,
+    );
+    const admitted = parseSandboxOperationScope(row.scope);
+    if (
+      permissionScopeHash(fresh.filesystem) !== permissionScopeHash(admitted.filesystem) ||
+      fresh.profileRevision !== admitted.profileRevision ||
+      fresh.ceilingRevision !== admitted.ceilingRevision
+    )
+      denied("Authority changed before the kernel read was dispatched");
+    await this.db
+      .updateTable("sandbox_operation_intents")
+      .set({ state: "dispatching", updated_at: new Date() })
+      .where("operation_id", "=", id)
+      .execute();
+    return { ...row, state: "dispatching" };
   }
   @Transactional({ propagation: "requires_new" })
   async claimBrowse(
@@ -877,7 +1056,7 @@ export class SandboxOperationIntents {
         status: "failed",
         launch_state: "terminal",
         finished_at: new Date(),
-        lost_reason: `launch refused: ${failure.message}`.slice(0, 1000),
+        lost_reason: `launch refused: ${launchRefusedText(failure.kind)}`,
         stopping_at: null,
       })
       .where("operation_id", "=", r.operation_id)
@@ -994,12 +1173,13 @@ export class SandboxOperationIntents {
   async complete(id: string, executionId: string, result: unknown): Promise<void> {
     const initial = await this.read(id);
     if (initial.run_id !== null) {
+      // a kernel read (no tool call) serves a run start, which reads while its run is queued
       const run = await this.db
         .selectFrom("runs")
         .select("id")
         .where("id", "=", initial.run_id)
         .where("execution_id", "=", executionId)
-        .where("status", "=", "running")
+        .where("status", "=", initial.call_id === null ? "queued" : "running")
         .forShare()
         .executeTakeFirst();
       if (!run) return;
@@ -1015,7 +1195,7 @@ export class SandboxOperationIntents {
     if (!row) return;
     const failure =
       result && typeof result === "object" && "$failure" in result
-        ? (result as { $failure: { message: string } }).$failure
+        ? (result as { $failure: { kind?: OperationFailureKind; message: string } }).$failure
         : null;
     if (row.method === "backgroundStart") {
       // A start's success is acknowledged as live authority, never completed like foreground.
@@ -1026,7 +1206,7 @@ export class SandboxOperationIntents {
           status: "failed",
           launch_state: "terminal",
           finished_at: new Date(),
-          lost_reason: `launch refused: ${failure.message}`.slice(0, 1000),
+          lost_reason: `launch refused: ${launchRefusedText(failure.kind)}`,
           stopping_at: null,
         })
         .where("operation_id", "=", id)

@@ -425,6 +425,11 @@ export const ERROR_CODES = {
   "device.projects_unsupported": 409,
   /** The device could not be asked about its directories now; the message says why. */
   "device.projects_unavailable": 503,
+  /**
+   * An owner browse found the device's instance not running (it stopped after being started for
+   * the owner, or could not be started): retrying starts it first.
+   */
+  "device.not_running": 409,
   /** Not a valid project name (1-64 characters, no `/`, no control characters, not `.` / `..`). */
   "device.project_name_invalid": 422,
   /** The device already has a project with this name. */

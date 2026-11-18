@@ -173,7 +173,10 @@ export class DeviceProjectsService {
     @Inject(KernelDb) private readonly db: KernelDb,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
     @Inject(SandboxService)
-    private readonly sandbox: Pick<SandboxService, "withSandbox" | "withBrowse">,
+    private readonly sandbox: Pick<
+      SandboxService,
+      "withSandbox" | "withBrowse" | "ensureRunningForOwner"
+    >,
     @Inject(DeviceAccess) private readonly access: Pick<DeviceAccess, "usable">,
     @Inject(PermissionFacts)
     private readonly facts: Pick<
@@ -511,9 +514,10 @@ export class DeviceProjectsService {
   /**
    * Runs `fn` on the device with a {@link ProjectReader}. While the activation gate is off:
    * `SandboxService.withSandbox` (its instance made or resumed as for a tool call) with the
-   * workspace root its instance reports. Once it is on: the owner browse
-   * (`SandboxService.withBrowse`, as the device's owner, on the instance that runs: never made or
-   * resumed) with the last known workspace. Kernel refusals (offline, files lost, busy,
+   * workspace root its instance reports. Once it is on: the device started for its owner
+   * (`SandboxService.ensureRunningForOwner`), then the owner browse (`SandboxService.withBrowse`,
+   * as the device's owner, on the instance that runs) with the last known workspace; an instance
+   * that stopped in between is `device.not_running`. Kernel refusals (offline, files lost, busy,
    * unavailable) stay as they are; anything else becomes a readable
    * `device.projects_unavailable`, never a 500.
    */
@@ -526,12 +530,15 @@ export class DeviceProjectsService {
     fn: (reader: ProjectReader, signal: AbortSignal) => Promise<T>,
   ): Promise<T> {
     try {
-      if (permissionContextActive(this.activation))
+      if (permissionContextActive(this.activation)) {
+        // a stopped device is started for its owner first, as the raw route's use did
+        await this.sandbox.ensureRunningForOwner({ orgId, deviceId, accountId }, signal);
         return await this.sandbox.withBrowse(
           { orgId, deviceId, accountId },
           (b, sig) => fn(browseReader(b, scope.workspace), sig),
           signal,
         );
+      }
       return await this.sandbox.withSandbox(
         {
           orgId,

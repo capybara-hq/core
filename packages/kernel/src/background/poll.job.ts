@@ -1,16 +1,19 @@
 import { rootsOf, type SandboxHandle } from "@capybara-hq/plugin-sdk";
-import { Inject, Injectable } from "@nestjs/common";
+import { Inject, Injectable, Optional } from "@nestjs/common";
+import type { Redis } from "ioredis";
 import type { KernelConfig } from "../config/schema.js";
 import { EventLog } from "../conversations/event-log.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { LockService } from "../infra/lock/lock.service.js";
 import { LockedCron } from "../infra/schedule/locked-cron.decorator.js";
 import { LockedInterval } from "../infra/schedule/locked-interval.js";
-import { KERNEL_LOGGER } from "../infra/tokens.js";
+import { KERNEL_LOGGER, REDIS } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
+import { PERMISSION_CONTEXT_ACTIVATION } from "../sandbox/permission-context-types.js";
 import {
   type HeldProvider,
   type IfRunningResult,
+  RetirementPendingError,
   SandboxService,
 } from "../sandbox/sandbox.service.js";
 import { sandboxBaseTimeoutMs } from "../tools/builtins/sandbox/common.js";
@@ -86,6 +89,13 @@ export class BackgroundTaskPollJob {
     @Inject(KERNEL_LOGGER) readonly log: KernelLogger,
     @Inject(BackgroundTaskStopper)
     private readonly stopper: Pick<BackgroundTaskStopper, "stop">,
+    /**
+     * The paired activation gate: once on, a legacy (SID) task is never polled by a raw exec;
+     * its instance's poll is refused for the retirement gate ({@link pollSandbox}).
+     */
+    @Optional() @Inject(PERMISSION_CONTEXT_ACTIVATION) private readonly activation?: boolean,
+    /** The marker that logs a refused legacy poll once per instance across the replicas. */
+    @Optional() @Inject(REDIS) private readonly redis?: Pick<Redis, "set">,
   ) {}
 
   @LockedInterval(BACKGROUND_POLL_JOB, (cfg) => cfg.sandbox.background.pollSeconds * 1000)
@@ -260,15 +270,25 @@ export class BackgroundTaskPollJob {
   private async pollSandbox(tasks: BackgroundTaskRow[], signal: AbortSignal): Promise<number> {
     const [first] = tasks as [BackgroundTaskRow];
     // a task from before devices has no instance any more
-    const r: IfRunningResult<Map<string, TaskReport>> =
-      first.deviceId === null
-        ? { kind: "not_running", status: "gone" }
-        : await this.sandbox.ifRunning(
-            first.deviceId,
-            { createdAt: first.sandboxCreatedAt as Date },
-            (p, h, sig) => this.pollExec(actingAs(p, taskActor(first)), h, tasks, sig),
-            signal,
-          );
+    let r: IfRunningResult<Map<string, TaskReport>>;
+    try {
+      r =
+        first.deviceId === null
+          ? { kind: "not_running", status: "gone" }
+          : await this.sandbox.ifRunning(
+              first.deviceId,
+              { createdAt: first.sandboxCreatedAt as Date },
+              (p, h, sig) =>
+                this.pollExec(actingAs(p, taskActor(first), this.activation), h, tasks, sig),
+              signal,
+            );
+    } catch (err) {
+      // once activated, a running legacy instance is the retirement gate's: its tasks stay as
+      // they are until it retires them; said once per instance, not as a warning every tick
+      if (!(err instanceof RetirementPendingError)) throw err;
+      await this.noteRetirementOnce(first);
+      return 0;
+    }
     const now = new Date();
     let n = 0;
     for (const t of tasks) {
@@ -289,6 +309,27 @@ export class BackgroundTaskPollJob {
       if (to && (await this.finisher.finish(t, to, lastLines, false, { unclaimed: true }))) n++;
     }
     return n;
+  }
+
+  /**
+   * Logs at `info`, once per legacy instance across the replicas (a Redis marker; every time
+   * without one), that its tasks are left to the retirement gate. A Redis failure logs anyway.
+   */
+  private async noteRetirementOnce(first: BackgroundTaskRow): Promise<void> {
+    const instance = `${first.deviceId}:${first.sandboxCreatedAt?.getTime() ?? 0}`;
+    // a log marker, not a lock: the previous value says whether this instance was logged (two
+    // replicas racing may both log, which is harmless)
+    const firstTime =
+      this.redis === undefined ||
+      (await this.redis
+        .set(`capk:bg-legacy-retirement-noted:${instance}`, "1", "EX", 86_400, "GET")
+        .then((prev) => prev === null)
+        .catch(() => true));
+    if (firstTime)
+      this.log.info("legacy background tasks left to the retirement gate; not polled", {
+        deviceId: first.deviceId,
+        instanceGeneration: first.sandboxCreatedAt?.getTime(),
+      });
   }
 
   /** The poll exec of one instance: each task's report by id. */

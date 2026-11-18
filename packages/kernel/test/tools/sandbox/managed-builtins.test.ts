@@ -568,6 +568,15 @@ describe("builtin tools on the managed route with the activation gate on", () =>
     expect(err).toBeInstanceOf(ToolError);
     expect((err as ToolError).message).toMatch(/^The background task was not started: /);
     expect((err as ToolError).message).not.toContain("provider secret");
+    // the task's reason (TaskOutput, TaskList, the HTTP view) is kernel text too
+    const task = await f.db
+      .selectFrom("background_tasks")
+      .select(["status", "lost_reason"])
+      .where("conversation_id", "=", f.conversationId)
+      .executeTakeFirstOrThrow();
+    expect(task.status).toBe("failed");
+    expect(task.lost_reason).toMatch(/^launch refused: /);
+    expect(task.lost_reason).not.toContain("provider secret");
   });
 
   it("FetchAttachment copies into its directory through the managed preparation after the marked paths", async () => {
@@ -647,26 +656,47 @@ describe("a call reviewed against another root than the held evidence's", () => 
     expect(await markedPaths(f)).toEqual([]);
     legacy.mockRestore();
   }
+  /**
+   * The same call reviewed against the workspace in a conversation whose admission falls back to
+   * the workspace as the review did (permission activation L2): it is not stale, the managed
+   * writer records its marked paths and the call reaches the provider.
+   */
+  async function expectNotStale(
+    f: Fixture,
+    name: string,
+    input: Record<string, unknown>,
+    against: string,
+  ): Promise<void> {
+    const err = await runTool(f, name, input, { over: { reviewedAgainstRoot: against } }).then(
+      () => undefined,
+      (e: unknown) => e,
+    );
+    if (err !== undefined)
+      expect((err as Error).message).not.toBe(MANAGED_DEVICE_CONTEXT_STALE_TEXT);
+    const [paths] = await markedPaths(f);
+    expect(paths).toMatchObject({ workingRoot: ROOTS.workspace });
+  }
   const BASH = { command: "rm -rf ./build", description: "Clean" };
 
-  it("a workspace review of a project bound after the review (no snapshot yet)", async () => {
+  it("a workspace review of a project bound after the review (no snapshot yet) runs", async () => {
     const f = await seed();
     const against = await reviewedRoot(f);
     expect(against).toBe(ROOTS.workspace);
     await bindProject(f, OUTSIDE);
-    await expectStale(f, "Bash", BASH, against as string);
+    expect(await reviewedRoot(f)).toBe(ROOTS.workspace);
+    await expectNotStale(f, "Bash", BASH, against as string);
   });
 
-  it("a workspace review because the project snapshot is unavailable", async () => {
+  it("a workspace review because the project snapshot is unavailable runs", async () => {
     const f = await seed();
     await bindProject(f, OUTSIDE);
     await projectRoot(f, OUTSIDE, { reason: "gone", message: "The project's root is gone." });
     const against = await reviewedRoot(f);
     expect(against).toBe(ROOTS.workspace);
-    await expectStale(f, "Bash", BASH, against as string);
+    await expectNotStale(f, "Bash", BASH, against as string);
   });
 
-  it("a workspace review of a project outside the workspace without the wider reach", async () => {
+  it("a workspace review of a project outside the workspace without the wider reach runs", async () => {
     const f = await seed();
     // the device narrowed to sandbox mode: a cloud device then has only the workspace reach
     await f.db
@@ -678,16 +708,16 @@ describe("a call reviewed against another root than the held evidence's", () => 
     await projectRoot(f, OUTSIDE);
     const against = await reviewedRoot(f);
     expect(against).toBe(ROOTS.workspace);
-    await expectStale(f, "Write", { file_path: "out.txt", content: "x" }, against as string);
+    await expectNotStale(f, "Write", { file_path: "out.txt", content: "x" }, against as string);
   });
 
-  it("a workspace review of a project above the owner's home", async () => {
+  it("a workspace review of a project above the owner's home runs", async () => {
     const f = await seed();
     await bindProject(f, "/home");
     await projectRoot(f, "/home");
     const against = await reviewedRoot(f);
     expect(against).toBe(ROOTS.workspace);
-    await expectStale(
+    await expectNotStale(
       f,
       "Edit",
       { file_path: "a.txt", old_string: "a", new_string: "b" },
@@ -697,14 +727,17 @@ describe("a call reviewed against another root than the held evidence's", () => 
 
   it("an approved ask's root, carried after a mode change dropped its working root", async () => {
     const f = await seed();
+    // admission works in the usable project now; the person approved against the workspace
     await bindProject(f, OUTSIDE);
-    // the person approved the call against the workspace; the tool gets only that root
+    await projectRoot(f, OUTSIDE);
+    expect(await reviewedRoot(f)).toBe(OUTSIDE);
     await expectStale(f, "Bash", BASH, ROOTS.workspace);
   });
 
   it("the background start", async () => {
     const f = await seed();
     await bindProject(f, OUTSIDE);
+    await projectRoot(f, OUTSIDE);
     await expectStale(f, "Bash", { ...BASH, run_in_background: true }, ROOTS.workspace);
     const tasks = await f.db
       .selectFrom("background_tasks")

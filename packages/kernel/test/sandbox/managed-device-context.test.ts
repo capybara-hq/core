@@ -236,6 +236,14 @@ async function seed(opts: { project?: string } = {}) {
     // fixture setup writes the otherwise immutable project binding
     await sql`UPDATE capybara.conversations SET project_name = 'app',
       project_path = ${opts.project} WHERE id = ${s.conversationId}`.execute(raw);
+    // the run start's usable snapshot: the binding is the working root only once it is read
+    await k.app.get(EventLog).append(s.conversationId, [
+      {
+        type: "project_root",
+        idemKey: `test_project_root:${s.conversationId}`,
+        payload: { project: "app", root: opts.project, skills: [] },
+      },
+    ]);
   }
   const run = await startRun(k, raw, s.conversationId, s.accountId);
   return { ...s, db, deviceId, generation, bindingId, ...run };

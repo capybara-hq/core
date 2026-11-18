@@ -460,10 +460,7 @@ describe("the exclusive holder binds before it downgrades (B-8, staged path)", (
     );
     await expect(
       sandbox.withBrowse({ ...f.ctx, accountId: f.accountId }, fn, signal()),
-    ).rejects.toMatchObject({
-      name: "SandboxPermissionUnsupportedError",
-      message: "The device instance is not running",
-    });
+    ).rejects.toMatchObject({ code: "device.not_running" });
     expect(fn).not.toHaveBeenCalled();
     expect(f.events).not.toContain("browse");
     expect(device.sent).toHaveLength(1);
