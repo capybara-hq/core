@@ -143,7 +143,8 @@ export type ProjectUnavailableReason =
   | "unreadable"
   | "unparsable"
   | "unsupported"
-  | "removed";
+  | "removed"
+  | "skill_tool_off";
 
 /** A project skill the project lists but cannot be used now: the person is told why. */
 const projectUnavailable = (reason: ProjectUnavailableReason, message: string) =>
@@ -371,6 +372,9 @@ export class SkillInvoker {
       ...(conversationId !== undefined && { conversationId }),
     });
     if (conversationId === undefined) return skills;
+    // once activated a project skill is loaded by the agent's Skill tool: none without it
+    if (permissionContextActive(this.activation) && !hasBuiltin(agent.definition, BUILTIN.Skill))
+      return skills;
     const latest = await this.eventLog.latestOfType(conversationId, "project_root");
     return [...skills, ...projectInvocables(latest?.payload)];
   }
@@ -495,7 +499,8 @@ export class SkillInvoker {
    * cannot be used), the device's own refusals as they are (`device.offline`, ...),
    * `device.projects_unavailable` when the device cannot be asked. Once the activation gate is on
    * the device is not read at send time: the invocation is the recorded stub
-   * ({@link projectSkillStub}) and only the first two refusals remain.
+   * ({@link projectSkillStub}) and only the first two refusals remain, plus
+   * `skill.project_unavailable` `skill_tool_off` for an agent without the `Skill` tool.
    */
   private async prepareProject(
     a: {
@@ -521,7 +526,14 @@ export class SkillInvoker {
       throw notInvocable("not_found", a.name);
     }
     // once activated: no device read at send time, the agent loads the skill with Skill
-    if (permissionContextActive(this.activation)) return projectSkillStub(a, latest, bare);
+    if (permissionContextActive(this.activation)) {
+      if (!hasBuiltin(a.agent, BUILTIN.Skill))
+        throw projectUnavailable(
+          "skill_tool_off",
+          `Skill "${a.name}" cannot be invoked: this agent cannot load project skills; turn on its ${BUILTIN.Skill} tool`,
+        );
+      return projectSkillStub(a, latest, bare);
+    }
     const file = await this.readProjectFile({ ...a, conversationId }, latest.root, bare);
     const args = a.args.trim();
     // the renderer's skills-root directory becomes the skill's directory in the project (a closing

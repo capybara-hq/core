@@ -29,7 +29,7 @@ import {
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { NetworkGrants } from "../local-devices/network-grants.js";
 import { type KernelReadInvocation, type KernelReadMethod, kernelReadRoot } from "./kernel-read.js";
-import { coversHost, type EffectiveDevicePolicy } from "./modes.js";
+import { coversHost, type EffectiveDevicePolicy, projectReachOf } from "./modes.js";
 import { isExecutionMethod, parseStartingExecutionGrants } from "./operation-authority-types.js";
 import { PermissionAuthorityEpochStore } from "./permission-authority-epochs.js";
 import { assertAuthorityHeld, PermissionAuthorityLock } from "./permission-authority-lock.js";
@@ -110,20 +110,10 @@ function withheldScope(input: {
   return null;
 }
 /**
- * How far restricted work may root outside the workspace now, as the command review reads it
- * (`DevicesService.projectReach`, B2): a local device follows its owner's reach within a device
- * ceiling that allows auto; a cloud device reaches beyond its workspace only in auto mode.
+ * The profile every kernel read is sent with: a restricted one, so the runtime enforces its single
+ * read root (a symlink out of the project is refused) whatever the conversation selected.
  */
-function reachOf(
-  source: string,
-  policy: Pick<EffectiveDevicePolicy, "mode" | "allowedMode">,
-  owner: { restrictedProjectReach?: string } | null,
-): "workspace" | "os-user" {
-  if (source !== "local") return policy.mode === "auto" ? "os-user" : "workspace";
-  return policy.allowedMode === "auto" && owner?.restrictedProjectReach === "os-user"
-    ? "os-user"
-    : "workspace";
-}
+const KERNEL_READ_PROFILE: PermissionProfile = "request-approval";
 /** Only server-resolved facts enter this constructor; callers never submit roots or profile. */
 export function intersectPermissionScope(f: PermissionScopeFacts): SandboxOperationScope {
   if (f.profile === "full-access" && (!f.fullConsent || !f.fullAccessCeiling))
@@ -390,8 +380,9 @@ export class SandboxOperationAuthority {
    * scope from the same authority snapshot admission reads, with the bound project as the working
    * root it becomes once read (the review's fallbacks apply: a root outside the mode or above the
    * home is refused), intersected with the one path the read may reach
-   * ({@link kernelReadRoot}: the root's `stat`, `AGENTS.md`, `.agents/skills/**`). No write roots,
-   * no hosts, and never a per-call grant. Called under the run start's claim only (the intents
+   * ({@link kernelReadRoot}: the root's `stat`, `AGENTS.md`, `.agents/skills/**`). Always the
+   * restricted {@link KERNEL_READ_PROFILE} (never Full access or its consent, so the runtime
+   * enforces the read root, symlinks included), no write roots, no hosts, never a per-call grant. Called under the run start's claim only (the intents
    * check that its run is still `queued`).
    */
   @Transactional()
@@ -439,8 +430,12 @@ export class SandboxOperationAuthority {
       )
     )
       throw new ApiError("forbidden", "The kernel read is outside the conversation's profile");
+    // always a restricted read-only scope, whatever the conversation's profile: a runtime keyed
+    // on Full access may follow a symlinked AGENTS.md or SKILL.md out of the project, and a
+    // kernel read has no tool call or review to show for it
     return parseSandboxOperationScope({
       ...profile,
+      profile: KERNEL_READ_PROFILE,
       filesystem: { kind: "scoped", readRoots: [covering], writeRoots: [] },
       network: { kind: "none" },
     });
@@ -656,7 +651,7 @@ export class SandboxOperationAuthority {
       .executeTakeFirstOrThrow();
     const { workingRoot, projectRoot } = await this.workingRootOf({
       ...input,
-      reach: reachOf(device.source, policy, owner),
+      reach: projectReachOf(device.source, policy, owner?.restrictedProjectReach),
       mode: policy.mode,
     });
     const grant = input.runId
@@ -754,7 +749,7 @@ export class SandboxOperationAuthority {
         deviceId: input.deviceId,
         root,
         holderConversationId: input.conversationId,
-        reach: reachOf(device.source, policy, owner),
+        reach: projectReachOf(device.source, policy, owner?.restrictedProjectReach),
         mode: policy.mode,
       })
     ).workingRoot;

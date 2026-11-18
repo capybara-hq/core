@@ -118,6 +118,21 @@ export interface EffectiveDevicePolicy {
   localAllowedDomains: string[];
 }
 
+/**
+ * How far restricted work may root outside the workspace now (B2), the one rule the command
+ * review (`DevicesService.projectReach`) and admission's working root both read: a local device
+ * follows its owner's reported reach within a device ceiling that allows auto; a cloud device
+ * reaches beyond its workspace only in auto mode.
+ */
+export function projectReachOf(
+  source: string,
+  policy: Pick<EffectiveDevicePolicy, "mode" | "allowedMode">,
+  ownerReach: string | null | undefined,
+): "workspace" | "os-user" {
+  if (source !== "local") return policy.mode === "auto" ? "os-user" : "workspace";
+  return policy.allowedMode === "auto" && ownerReach === "os-user" ? "os-user" : "workspace";
+}
+
 /** The mode the platform and the org allow: `auto` only when neither turns it off. */
 export function allowedDeviceMode(
   platform: FullAccessPermission,

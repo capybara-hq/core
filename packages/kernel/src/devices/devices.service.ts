@@ -36,6 +36,7 @@ import {
   intersectNetworks,
   type NetworkKind,
   type OrgDeviceSettings,
+  projectReachOf,
   readDeploymentDevicePolicy,
   type SandboxMode,
 } from "../sandbox/modes.js";
@@ -762,10 +763,11 @@ export class DevicesService {
       .executeTakeFirst();
     if (row === undefined) return "workspace";
     const policy = await this.sandbox.devicePolicy({ orgId, deviceId });
-    if (row.source !== "local") return policy.mode === "auto" ? "os-user" : "workspace";
-    return policy.allowedMode === "auto" && ownerFactsOf(row).restrictedProjectReach === "os-user"
-      ? "os-user"
-      : "workspace";
+    return projectReachOf(
+      row.source,
+      policy,
+      row.source === "local" ? ownerFactsOf(row).restrictedProjectReach : null,
+    );
   }
 
   /**

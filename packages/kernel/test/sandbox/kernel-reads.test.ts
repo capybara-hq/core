@@ -12,13 +12,19 @@ import {
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { sql } from "kysely";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { BackgroundTaskStopper } from "../../src/background/stop.js";
+import { BackgroundTaskStore } from "../../src/background/store.js";
 import { EventLog } from "../../src/conversations/event-log.js";
 import { kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
+import { KernelDb } from "../../src/infra/database/kernel-db.js";
 import { ProjectKnowledgeService } from "../../src/runtime/project/knowledge.service.js";
 import { type ExecutionClaim, RunExecution } from "../../src/runtime/run-execution.js";
 import { SandboxOperationAuthority } from "../../src/sandbox/operation-authority.js";
+import { SandboxOperationIntents } from "../../src/sandbox/operation-intents.js";
+import { SandboxOperationReconcileJob } from "../../src/sandbox/operation-reconcile.job.js";
 import { PERMISSION_CONTEXT_ACTIVATION } from "../../src/sandbox/permission-context-types.js";
+import { PermissionFacts } from "../../src/sandbox/permission-facts.js";
 import { SandboxProviders } from "../../src/sandbox/providers.js";
 import { SandboxService } from "../../src/sandbox/sandbox.service.js";
 import { SandboxFileReader } from "../../src/sandbox/sandbox-file-reader.js";
@@ -56,6 +62,8 @@ let root: string;
 
 /** The device's files (the fixture keeps lifecycle only): a path → its text. */
 const files = new Map<string, string>();
+/** Symbolic links: a path → the file it points at. */
+const links = new Map<string, string>();
 /** Every provider entry reached: the route, the method, the path and the operation's scope. */
 const seen: {
   route: "operation" | "browse" | "raw";
@@ -72,7 +80,7 @@ const statOf = (path: string) => {
   return null;
 };
 const readOf = (path: string) => {
-  const text = files.get(path);
+  const text = files.get(links.get(path) ?? path);
   return text === undefined ? null : { data: enc.encode(text), truncated: false };
 };
 const listOf = (path: string, limit: number) => {
@@ -154,6 +162,15 @@ beforeAll(async () => {
         },
         readFile: async (path) => {
           record("operation", "readFile", path, s);
+          // a restricted runtime resolves a link before its scope check; a Full access one
+          // (scope.profile "full-access") follows it wherever it points
+          const target = links.get(path);
+          if (
+            target !== undefined &&
+            scope.profile !== "full-access" &&
+            !within(target, s.readRoots)
+          )
+            throw new SandboxScopeDeniedError(`${path} links outside the scope`);
           return readOf(path);
         },
         writeFile: async (path) => {
@@ -202,6 +219,7 @@ afterAll(async () => {
 beforeEach(async () => {
   seen.length = 0;
   files.clear();
+  links.clear();
   files.set(`${APP}/AGENTS.md`, "Be kind to the build.");
   files.set(
     `${APP}/.agents/skills/fix/SKILL.md`,
@@ -369,6 +387,75 @@ describe("a run start's project knowledge read (withKernelRead)", () => {
     expect(all.filter((id) => first.has(id))).toHaveLength(first.size);
   });
 
+  it("sends a restricted read scope under Full access: a symlinked AGENTS.md is not followed", async () => {
+    const f = await seed();
+    await bindProject(f);
+    const consent = await k.app.get(PermissionFacts).scope(f.orgId, f.deviceId, APP, "app");
+    await f.db
+      .updateTable("conversations")
+      .set({
+        permission_profile: "full-access",
+        permission_consent: JSON.stringify({
+          deviceId: f.deviceId,
+          scopeRevision: consent.scopeRevision,
+        }),
+      })
+      .where("id", "=", f.conversationId)
+      .execute();
+    files.set("/root/.ssh/id_ed25519", "SECRET KEY");
+    links.set(`${APP}/AGENTS.md`, "/root/.ssh/id_ed25519");
+    const run = await claimRun(f);
+    expect(await recordKnowledge(f, run)).toBe(true);
+    const latest = await latestProjectRoot(f.conversationId);
+    expect(latest).toMatchObject({ project: "app", root: APP });
+    expect(JSON.stringify(latest)).not.toContain("SECRET");
+    const intents = await intentsOf(f);
+    expect(intents.length).toBeGreaterThan(0);
+    for (const r of intents)
+      expect((r.scope as unknown as SandboxOperationScope).profile).not.toBe("full-access");
+  });
+
+  it("a kernel read left dispatching by a crash is reconciled as an unknown read, never a tool's", async () => {
+    const f = await seed();
+    await bindProject(f);
+    const run = await claimRun(f);
+    await recordKnowledge(f, run);
+    const [row] = await intentsOf(f);
+    if (!row) throw new Error("no kernel read recorded");
+    // the dispatcher died between its claim and its completion
+    await f.db
+      .updateTable("sandbox_operation_intents")
+      .set({ state: "dispatching" })
+      .where("operation_id", "=", row.operation_id)
+      .execute();
+    // the reconcile job as the maintenance consumer builds it
+    await new SandboxOperationReconcileJob(
+      k.app.get(SandboxOperationIntents),
+      k.app.get(KernelDb),
+      k.app.get(SandboxProviders),
+      k.app.get(SandboxService),
+      k.app.get(BackgroundTaskStore),
+      k.app.get(BackgroundTaskStopper),
+    ).reconcile(row.operation_id);
+    expect(
+      await f.db
+        .selectFrom("sandbox_operation_intents")
+        .select(["state", "outcome_unknown", "call_id", "run_id"])
+        .where("operation_id", "=", row.operation_id)
+        .executeTakeFirstOrThrow(),
+    ).toEqual({
+      state: "started-or-unknown",
+      outcome_unknown: true,
+      call_id: null,
+      run_id: run.runId,
+    });
+    // a retried run start is not blocked by it: new identities, read again
+    const again = await k.app.get(RunExecution).claim(f.conversationId, run.runId, randomUUID());
+    seen.length = 0;
+    await recordKnowledge(f, { runId: run.runId, claim: again as ExecutionClaim });
+    expect(seen.filter((x) => x.route === "operation").length).toBeGreaterThan(0);
+  });
+
   it("admits nothing once the run is running (the run start's reads are queued-only)", async () => {
     const f = await seed();
     await bindProject(f);
@@ -450,7 +537,7 @@ describe("a run start's project knowledge read (withKernelRead)", () => {
     ).toMatchObject({ truncated: false });
   });
 
-  it("is reachable only from the knowledge service (no tool, Platform or HTTP caller)", async () => {
+  it("is reachable only from the knowledge service; the owner start only from the projects service", async () => {
     const { readFile: read } = await import("node:fs/promises");
     const { execSync } = await import("node:child_process");
     const src = join(import.meta.dirname, "../../src");
@@ -460,6 +547,12 @@ describe("a run start's project knowledge read (withKernelRead)", () => {
       .map((p) => p.slice(src.length + 1))
       .sort();
     expect(callers).toEqual(["runtime/project/knowledge.service.ts", "sandbox/sandbox.service.ts"]);
+    const starters = execSync(`grep -rl "ensureRunningForOwner" ${src}`, { encoding: "utf8" })
+      .trim()
+      .split("\n")
+      .map((p) => p.slice(src.length + 1))
+      .sort();
+    expect(starters).toEqual(["devices/device-projects.service.ts", "sandbox/sandbox.service.ts"]);
     expect(await read(join(src, "tools/builtins/sandbox/common.ts"), "utf8")).not.toContain(
       "withKernelRead",
     );

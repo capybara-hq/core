@@ -370,7 +370,7 @@
       "project_not_found": "This device has no project with this name.",
       "projects_unsupported": "This device does not support projects.",
       "projects_unavailable": "The device could not be asked about this directory right now. Try again in a moment.",
-      "not_running": "The device is not running right now. Try again, and it is started first.",
+      "not_running": "The device stopped before it could be read. Try again; it will be started first.",
       "permission_reconcile_required": "This device's sandbox limits must be established again before it runs anything. Rebuild its files on its device page, then try again.",
       "permission_not_migrated": "This device's permissions have not been migrated yet, so its Full access ceiling can't be set now. Turning Full access off still works; try allowing it again once the migration has run. Rebuilding the files does not change this.",
       "owner_report_stale": "This computer sent an outdated permission report, so new work is paused. Run capybara-device login again on the computer.",
@@ -399,6 +399,7 @@
         "unparsable": "This project skill cannot be invoked: its SKILL.md is not valid; fix it in the project.",
         "unsupported": "This project skill cannot be invoked: this device does not support projects.",
         "removed": "This project skill cannot be invoked: the project was removed from the device's projects.",
+        "skill_tool_off": "This project skill cannot be invoked: this agent cannot load project skills; turn on its Skill tool.",
         "default": "This project skill cannot be invoked now."
       },
       "name_exists": "A skill with this name already exists in the organization. Choose another name.",

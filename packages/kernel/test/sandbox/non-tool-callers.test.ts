@@ -332,6 +332,42 @@ describe("a person's project skill invocation", () => {
     ).rejects.toMatchObject({ code: "skill.not_invocable" });
   });
 
+  it("gate on: an agent without the Skill tool is refused, and its menu lists no project skill", async () => {
+    const noSkill = { disabledTools: [{ kind: "builtin", name: "Skill" }] };
+    await expect(
+      invoker(true).prepare({
+        orgId: ORG,
+        agentId: "a",
+        accountId: ACC,
+        conversationId: CONV,
+        agent: noSkill as never,
+        name: "project:fix",
+        args: "",
+      }),
+    ).rejects.toMatchObject({
+      code: "skill.project_unavailable",
+      details: [{ reason: "skill_tool_off" }],
+    });
+    const listing = (activation?: boolean, definition: unknown = noSkill) =>
+      new SkillInvoker(
+        fakeDb({ id: CONV }, []),
+        {} as never,
+        { get: async () => ({ definition }) } as never,
+        log,
+        { latestOfType: async () => ({ payload: latest }) } as never,
+        sb as never,
+        {} as never,
+        activation,
+      ).listFor(ORG, "a", ACC, CONV);
+    expect((await listing(true)).map((s) => s.name)).toEqual([]);
+    expect((await listing(true, { disabledTools: [] })).map((s) => s.name)).toEqual([
+      "project:fix",
+    ]);
+    // gate off: the send-time read needs no Skill tool, the menu is unchanged
+    expect((await listing()).map((s) => s.name)).toEqual(["project:fix"]);
+    expect(raw()).toBe(0);
+  });
+
   it("gate off: the raw route, unchanged", async () => {
     await prepare(invoker()).catch(() => undefined);
     expect(raw()).toBe(1);

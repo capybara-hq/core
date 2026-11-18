@@ -100,6 +100,8 @@ function projectSkillPhrase(err: ApiError): ChannelPhrase {
       return "projectSkillUnsupported";
     case "removed":
       return "projectSkillRemoved";
+    case "skill_tool_off":
+      return "projectSkillToolOff";
     default:
       return "projectSkillUnreadable";
   }

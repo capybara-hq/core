@@ -499,7 +499,7 @@ const otherProvider = (provider: string): ApiError =>
 export const deviceNotRunning = (): ApiError =>
   new ApiError(
     "device.not_running",
-    "The device is not running right now; try again, and the device is started first",
+    "The device stopped before it could be read. Try again; it will be started first.",
   );
 
 /** The holder name of {@link SandboxService.ensureRunningForOwner}: no conversation holds it. */
