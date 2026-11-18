@@ -11,8 +11,9 @@ import {
   type TestContainer,
 } from "@capybara-hq/testing";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
-import type { AppendEvent } from "../../src/conversations/event-log.js";
+import { type AppendEvent, EventLog } from "../../src/conversations/event-log.js";
 import type { ConversationEvent, EventPayload } from "../../src/conversations/events.js";
+import { PermissionProfilesService } from "../../src/conversations/permission-profiles.service.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { ConversationDevices } from "../../src/devices/conversation-devices.js";
@@ -22,6 +23,8 @@ import type { CaseSnapshot } from "../../src/evals/snapshot.js";
 import { ModelImages } from "../../src/models/images.js";
 import { assistantIdemKey } from "../../src/runtime/model-call.js";
 import { ProviderListError, ProviderRegistry } from "../../src/runtime/providers.js";
+import { RunQueue } from "../../src/runtime/run-queue.js";
+import { PermissionFacts } from "../../src/sandbox/permission-facts.js";
 import { StorageService } from "../../src/storage/storage.service.js";
 import { NO_STORAGE_REASON } from "../../src/tools/builtins/artifacts.js";
 import { BuiltinTools } from "../../src/tools/builtins/builtin-tools.js";
@@ -33,10 +36,12 @@ import {
   NO_IMAGE_MODEL_TEXT,
   suffixedPath,
 } from "../../src/tools/builtins/image/index.js";
+import { DEVICE_OF_ANOTHER_ACCOUNT_TEXT } from "../../src/tools/builtins/sandbox/common.js";
 import type { BuiltinCallContext, BuiltinTool } from "../../src/tools/registry.js";
 import { truncateTables } from "../helpers/db.js";
 import { onlyBuiltins } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
+import { testMembers } from "../helpers/members.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
   createConv,
@@ -84,6 +89,7 @@ let k: TestKernel;
 let root: string;
 let owner: Req;
 let ownerId: string;
+let otherId: string;
 let orgId: string;
 let agentId: string;
 
@@ -117,6 +123,9 @@ beforeAll(async () => {
     .id;
   owner = await session(k, "owner");
   orgId = await createOrgWithProviders(k, owner);
+  otherId = (await accountsFor(db).createLocal({ login: "other", password: PW, displayName: "X" }))
+    .id;
+  await testMembers(db).add(orgId, otherId, "member", ownerId);
   const enabled = await owner({
     method: "PUT",
     url: `/api/v1/orgs/${orgId}/extensions/hooks-probe`,
@@ -327,6 +336,43 @@ async function readThrough(conv: string, filePath: string, n: number) {
   expect(r.payload.toolKey).toBe("Read");
   expect(r.payload.isError, r.payload.content).toBe(false);
 }
+
+/** The pending `command` ask of `conv` (the permission review's ask once activated). */
+const pendingAsk = (conv: string) =>
+  waitFor(
+    async () =>
+      db
+        .selectFrom("approvals")
+        .select(["id", "detail", "scopes", "tool_key"])
+        .where("conversation_id", "=", conv)
+        .where("kind", "=", "command")
+        .where("status", "=", "pending")
+        .executeTakeFirst(),
+    30_000,
+    "the command ask",
+  );
+
+/** Approves the ask `id` once, as the owner. */
+async function approve(id: string): Promise<void> {
+  const decided = await owner({
+    method: "POST",
+    url: `/api/v1/orgs/${orgId}/approvals/${id}/decision`,
+    payload: { decision: "approve", scope: "once" },
+  });
+  expect(decided.statusCode, decided.body).toBe(200);
+}
+
+/** The call grants of `conv`. */
+const grantsOf = (conv: string) =>
+  db.selectFrom("permission_call_grants").selectAll().where("conversation_id", "=", conv).execute();
+
+/** The admitted device operations of `conv`, with the grant each ran under. */
+const intentsOf = (conv: string) =>
+  db
+    .selectFrom("sandbox_operation_intents")
+    .select(["method", "permission_grant_id"])
+    .where("conversation_id", "=", conv)
+    .execute();
 
 /** The host directory of the device's `out/`, learned from a first copy (which starts the device). */
 async function outDir(conv: string): Promise<string> {
@@ -706,7 +752,7 @@ describe("GenerateImage file_path", () => {
     expect(ofType(await eventsOf(db, conv), "artifact_created")).toHaveLength(1);
   });
 
-  it("file_path outside the workspace in auto mode goes through the command review", async () => {
+  it("Request approval: an outside file_path asks with the directory proposal; approved, the grant lets it copy", async () => {
     const conv = await createConv(owner, orgId, agentId);
     const dir = `/etc/capybara-img-${randomUUID().slice(0, 6)}`;
     const seen = providerCalls();
@@ -716,46 +762,31 @@ describe("GenerateImage file_path", () => {
       conv,
       `tool:GenerateImage:${JSON.stringify({ prompt: "a fox", file_path: `${dir}/fox.png` })}`,
     );
-    const ask = await waitFor(
-      async () =>
-        db
-          .selectFrom("approvals")
-          .select(["id", "detail", "tool_key"])
-          .where("conversation_id", "=", conv)
-          .where("kind", "=", "command")
-          .where("status", "=", "pending")
-          .executeTakeFirst(),
-      30_000,
-      "the command ask",
-    );
-    // a write ask is recorded under Write, whatever tool writes (as for Edit)
-    expect(ask.tool_key).toBe("Write");
+    const ask = await pendingAsk(conv);
+    // the permission review's ask: the proposed directory, for this one call only
+    expect(ask.scopes).toEqual(["once"]);
     expect(ask.detail as Record<string, unknown>).toMatchObject({
       kind: "write",
       command: "GenerateImage",
+      targetPath: `${dir}/fox.png`,
       path: `${dir}/fox.png`,
-      rule: "ask.outside-write",
-      mode: "auto",
+      permissionScope: { readDirectories: [dir], writeDirectories: [dir], hosts: [] },
     });
     // the call waits: no image was generated yet
     expect(seen).toEqual([]);
     expect((await eventsOf(db, conv)).some((e) => e.type === "tool_call_started")).toBe(false);
-    const decided = await owner({
-      method: "POST",
-      url: `/api/v1/orgs/${orgId}/approvals/${ask.id}/decision`,
-      payload: { decision: "approve", scope: "once" },
-    });
-    expect(decided.statusCode, decided.body).toBe(200);
+    await approve(ask.id);
     await waitForTerminal(db, conv, 1, 30_000);
     const r = ofType(await eventsOf(db, conv), "tool_result").at(-1) as ToolResultEvent;
     expect(r.payload.isError, r.payload.content).toBe(false);
     expect(r.payload.content.split("\n").at(-1)).toBe(`Written to the device: ${dir}/fox.png`);
-    expect(r.payload.review).toMatchObject({
-      decision: "allow",
-      by: "person",
-      rule: "ask.outside-write",
-    });
+    expect(r.payload.review).toMatchObject({ decision: "allow", by: "person" });
     expect(seen).toHaveLength(1);
+    // the person's approval issued this call's grant, and the device write was admitted under it
+    const [grant] = await grantsOf(conv);
+    expect(grant).toMatchObject({ source: "human", tool_key: "GenerateImage" });
+    const write = (await intentsOf(conv)).find((i) => i.method === "writeFile");
+    expect(write?.permission_grant_id).toBe((grant as { id: string }).id);
   });
 });
 
@@ -826,7 +857,7 @@ describe("GenerateImage file_path: several paths", () => {
     expect(await deviceFiles(`${name}.jpg`)).toEqual([PNG]);
   });
 
-  it("n=2 outside the workspace: the review sees both suffixed paths", async () => {
+  it("n=2 outside the workspace: the proposal and the approved target name both suffixed paths", async () => {
     const conv = await createConv(owner, orgId, agentId);
     const dir = `/etc/capybara-img-${randomUUID().slice(0, 6)}`;
     await postMessage(
@@ -835,34 +866,94 @@ describe("GenerateImage file_path: several paths", () => {
       conv,
       `tool:GenerateImage:${JSON.stringify({ prompt: "two foxes", n: 2, file_path: `${dir}/fox.png` })}`,
     );
-    const ask = await waitFor(
-      async () =>
-        db
-          .selectFrom("approvals")
-          .select(["id", "detail"])
-          .where("conversation_id", "=", conv)
-          .where("kind", "=", "command")
-          .where("status", "=", "pending")
-          .executeTakeFirst(),
-      30_000,
-      "the command ask",
-    );
+    const ask = await pendingAsk(conv);
     expect(ask.detail as Record<string, unknown>).toMatchObject({
       kind: "write",
+      targetPath: `${dir}/fox-1.png, ${dir}/fox-2.png`,
       path: `${dir}/fox-1.png, ${dir}/fox-2.png`,
-      rule: "ask.outside-write",
+      permissionScope: { writeDirectories: [dir] },
     });
-    const decided = await owner({
-      method: "POST",
-      url: `/api/v1/orgs/${orgId}/approvals/${ask.id}/decision`,
-      payload: { decision: "approve", scope: "once" },
-    });
-    expect(decided.statusCode, decided.body).toBe(200);
+    await approve(ask.id);
     await waitForTerminal(db, conv, 1, 30_000);
     const r = ofType(await eventsOf(db, conv), "tool_result").at(-1) as ToolResultEvent;
     expect(r.payload.content.split("\n").at(-1)).toBe(
       `Written to the device: ${dir}/fox-1.png, ${dir}/fox-2.png`,
     );
+  });
+});
+
+/**
+ * Image generation spec §5.3 on the activated permission review (permission call grants spec):
+ * a `GenerateImage` call with `file_path` takes the managed route as `Write` does (the run
+ * account's device guard, the permission review in its order, the call grant admission reads);
+ * one without `file_path` never touches the device and takes neither.
+ */
+describe("GenerateImage on the activated permission review", () => {
+  const setProfile = async (conv: string, profile: "request-approval" | "full-access") => {
+    const current = await db
+      .selectFrom("conversations")
+      .select(["permission_revision", "device_id"])
+      .where("id", "=", conv)
+      .executeTakeFirstOrThrow();
+    const consent =
+      profile === "full-access"
+        ? (await k.app.get(PermissionFacts).scope(orgId, current.device_id as string, null, null))
+            .scopeRevision
+        : undefined;
+    await k.app.get(PermissionProfilesService).set(orgId, conv, ownerId, {
+      profile,
+      ...(consent ? { consentScopeRevision: consent } : {}),
+      expectedRevision: current.permission_revision,
+    });
+  };
+
+  it("Full access copies an outside file_path with no ask", async () => {
+    const conv = await createConv(owner, orgId, agentId);
+    // the first copy binds the device the profile is set for
+    await outDir(conv);
+    await setProfile(conv, "full-access");
+    const dir = `/etc/capybara-img-${randomUUID().slice(0, 6)}`;
+    const r = await call(conv, { prompt: "a fox", file_path: `${dir}/fox.png` }, 2);
+    expect(r.payload.isError, r.payload.content).toBe(false);
+    expect(r.payload.content.split("\n").at(-1)).toBe(`Written to the device: ${dir}/fox.png`);
+    expect(r.payload.review).toMatchObject({ decision: "allow", decisionSource: "full-access" });
+    expect(
+      await db.selectFrom("approvals").select("id").where("conversation_id", "=", conv).execute(),
+    ).toEqual([]);
+    expect(await grantsOf(conv)).toEqual([]);
+  });
+
+  it("another member's run is refused before any image is generated; without file_path it generates", async () => {
+    const conv = await createConv(owner, orgId, agentId);
+    await outDir(conv);
+    const seen = providerCalls();
+    let n = 1;
+    const asMember = async (input: Record<string, unknown>) => {
+      await k.app.get(EventLog).append(conv, [
+        {
+          type: "user_message",
+          payload: {
+            content: [{ type: "text", text: `tool:GenerateImage:${JSON.stringify(input)}` }],
+            authorAccountId: otherId,
+          },
+        },
+      ]);
+      await k.app.get(RunQueue).ensureRun(conv);
+      await waitForTerminal(db, conv, ++n, 30_000);
+      return ofType(await eventsOf(db, conv), "tool_result").at(-1) as ToolResultEvent;
+    };
+    const name = `member${randomUUID().slice(0, 6)}.png`;
+    const refused = await asMember({ prompt: "a fox", file_path: `out/${name}` });
+    expect(refused.payload.toolKey).toBe("GenerateImage");
+    expect(refused.payload.isError).toBe(true);
+    expect(refused.payload.content).toBe(DEVICE_OF_ANOTHER_ACCOUNT_TEXT);
+    expect(refused.payload.review).toMatchObject({ decision: "deny", by: "rule", rule: null });
+    expect(seen).toEqual([]);
+    expect(await deviceFiles(name)).toEqual([]);
+    // no device write: the images are generated and delivered as for anyone in the conversation
+    const delivered = await asMember({ prompt: "a fox" });
+    expect(delivered.payload.isError, delivered.payload.content).toBe(false);
+    expect(seen).toHaveLength(1);
   });
 });
 

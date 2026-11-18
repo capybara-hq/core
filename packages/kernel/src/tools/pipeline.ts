@@ -565,6 +565,7 @@ const REVIEWED_ON_FACTS: ReadonlySet<string> = new Set([
   BUILTIN.Read,
   BUILTIN.Write,
   BUILTIN.Edit,
+  BUILTIN.GenerateImage,
 ]);
 /** The refusals of a permission review that end the call (fail closed), not the run. */
 const FAIL_CLOSED_CODES: ReadonlySet<string> = new Set([
@@ -586,7 +587,15 @@ const MANAGED_OPERATION_TOOLS: ReadonlySet<string> = new Set([
   BUILTIN.Deliver,
   BUILTIN.FetchAttachment,
   BUILTIN.Skill,
+  BUILTIN.GenerateImage,
 ]);
+/**
+ * Whether a managed builtin's call enters the device: every call of the device tools, a
+ * `GenerateImage` call only with `file_path` (one without writes nothing into the device, so it
+ * takes neither the device-owner guard nor the permission review: image generation spec §5.3).
+ */
+const entersDevice = (toolKey: string, input: unknown): boolean =>
+  toolKey !== BUILTIN.GenerateImage || generateImagePaths(input).length > 0;
 
 /** Whether the review holds a shell command or a file write, for the texts and the ask's detail. */
 const reviewKindOf = (toolKey: string): "command" | "write" =>
@@ -1438,7 +1447,7 @@ export class ToolPipeline {
           callId: call.id,
           toolKey: tool.key,
           specHash: tool.specHash,
-          ...(this.operationScoped(tool)
+          ...(this.operationScoped(tool, input)
             ? {
                 permissionInput: {
                   callInputHash: permissionScopeHash(call.input),
@@ -1662,13 +1671,13 @@ export class ToolPipeline {
   ): Promise<ReviewOutcome> {
     // a device tool of a run another account triggered never uses the owner's device: refused
     // here, with no review and no review model call (the tools refuse it the same way)
-    if (this.operationScoped(tool) && ctx.ownerAccountId !== ctx.accountId)
+    if (this.operationScoped(tool, input) && ctx.ownerAccountId !== ctx.accountId)
       return {
         kind: "result",
         content: DEVICE_OF_ANOTHER_ACCOUNT_TEXT,
         review: denyRecord("rule", null, "The run's account is not the conversation's owner"),
       };
-    if (this.operationScoped(tool)) {
+    if (this.operationScoped(tool, input)) {
       let scoped: ReviewOutcome | null;
       try {
         scoped = await this.reviewPermissionCall(ctx, call, tool, input);
@@ -1831,8 +1840,16 @@ export class ToolPipeline {
     return { kind: "wait", wait: approvalWait(ask) };
   }
 
-  private operationScoped(tool: ResolvedTool): boolean {
-    return tool.source.kind === "builtin" && this.deps.permissionOperations?.has(tool.key) === true;
+  /**
+   * Whether this call takes the managed route's permission review: a managed builtin once
+   * activated ({@link MANAGED_OPERATION_TOOLS}) whose call enters the device ({@link entersDevice}).
+   */
+  private operationScoped(tool: ResolvedTool, input: unknown): boolean {
+    return (
+      tool.source.kind === "builtin" &&
+      this.deps.permissionOperations?.has(tool.key) === true &&
+      entersDevice(tool.key, input)
+    );
   }
   /** This branch is unreachable for production legacy handlers until the caller cutover. */
   private async reviewPermissionCall(
@@ -2088,7 +2105,8 @@ export class ToolPipeline {
     // an ask: the sensitive-command consent (no proposed reach: approved, the call runs under the
     // base scope) or the displayed expansion (approved, the call's grant is issued)
     const kind = reviewKindOf(tool.key);
-    const filePath = textField(input, "file_path");
+    // every path the call writes (a GenerateImage call's suffixed paths, comma-separated)
+    const filePaths = kind === "write" ? writePathsOf(tool.key, input).filter(Boolean) : [];
     const ask = await this.deps.approvals.requestCommand({
       orgId: ctx.orgId,
       conversationId: ctx.conversationId,
@@ -2116,8 +2134,13 @@ export class ToolPipeline {
                 ? { targetPath: candidate.targetPath, path: candidate.targetPath }
                 : {}),
             }
-          : kind === "write" && filePath
-            ? { path: clipText(pathAgainstWorkingRoot(filePath, facts.workingRoot), 4096) }
+          : filePaths.length > 0
+            ? {
+                path: clipText(
+                  filePaths.map((p) => pathAgainstWorkingRoot(p, facts.workingRoot)).join(", "),
+                  4096,
+                ),
+              }
             : {}),
       },
     });

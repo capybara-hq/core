@@ -9,5 +9,7 @@ every builtin enters a device through the managed operation route, and each run 
 permission context. A restricted profile also reads the instance's staged skills root
 (read-only); the working root comes from the held instance's committed roots; an instance gone
 after a dispatched operation keeps the outcome unknown and is rebuilt for the next call; a run
-another member triggers in an owner's conversation runs without the owner's device. The testing
-helpers run on the activated kernel.
+another member triggers in an owner's conversation runs without the owner's device. A
+`GenerateImage` call with `file_path` takes the same permission review as `Write`: an outside
+directory is asked about (or reviewed) and granted for that call only. The testing helpers run on
+the activated kernel.
