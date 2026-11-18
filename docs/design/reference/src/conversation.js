@@ -479,7 +479,7 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
       : `<button class="r-icon-btn r-send" aria-label="${esc(K.send)}"${value || skill ? "" : " disabled"}>${icon("arrow-up", 16)}</button>`;
     const textarea = `<textarea class="r-composer-input" id="msg" rows="1" placeholder="${esc(placeholder)}"${suggestion ? ' aria-describedby="msg-suggestion"' : ""}>${esc(value)}</textarea>`;
     // a prompt suggestion: the visually hidden Tab hint, and on a touch device the ghost dense
-    // "使用建议" button before send (drawn here so the state shows it)
+    // "Use suggestion" button before send (drawn here so the state shows it)
     const suggestionHint = suggestion ? `<span class="r-sr" id="msg-suggestion">${esc(suggestion.hint)}</span>` : "";
     const useSuggestion = suggestion
       ? `<button class="r-btn" data-variant="ghost" data-step="dense" data-part="composer-suggestion-use" aria-label="${esc(suggestion.useNamed)}">${icon("corner-down-left", 14)}${esc(suggestion.use)}</button>`

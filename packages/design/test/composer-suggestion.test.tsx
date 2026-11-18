@@ -344,6 +344,28 @@ describe("ComposerBox suggestion: the touch button", () => {
     expect(document.querySelector('[data-part="composer-suggestion-use"]')).toBeNull();
   });
 
+  it("names the text literally, never expanding replacement patterns", () => {
+    touchPointer();
+    wrap(
+      <ComposerBox {...props({ suggestion: { text: "Use $& and $1 here", onDismiss: noop } })} />,
+    );
+    expect(screen.getByRole("button", { name: "Use suggestion: Use $& and $1 here" })).toBeTruthy();
+  });
+
+  it("a paste or attach click without a shown suggestion does not dismiss", async () => {
+    const user = userEvent.setup();
+    const onDismiss = vi.fn();
+    wrap(
+      <ComposerBox
+        {...props({ value: "hi", hint: "running", suggestion: { text: TEXT, onDismiss } })}
+      />,
+    );
+    // the paste event alone (a file changes no text); a text change has its own rule
+    fireEvent.paste(input(), { clipboardData: { getData: () => "" } });
+    await user.click(screen.getByRole("button", { name: "Attach files" }));
+    expect(onDismiss).not.toHaveBeenCalled();
+  });
+
   it("names the text in zh", () => {
     touchPointer();
     wrap(<ComposerBox {...props({ suggestion: { text: "导出", onDismiss: noop } })} />, "zh");

@@ -486,7 +486,7 @@ export function ComposerBox({
           setWarn(true);
         }
         // a paste counts as typing, a pasted file too (it changes no text)
-        suggestion?.onDismiss();
+        suggested?.onDismiss();
         onPaste?.(e);
       }}
     />
@@ -564,7 +564,7 @@ export function ComposerBox({
           disabled={attachDisabled}
           onClick={() => {
             // attaching a file counts as typing
-            suggestion?.onDismiss();
+            suggested?.onDismiss();
             onAttach();
           }}
         />
@@ -591,7 +591,7 @@ export function ComposerBox({
             density="dense"
             part="composer-suggestion-use"
             className="cb-composer-suggestion-use"
-            aria-label={t("composer.suggestion.useNamed").replace("{text}", suggested.text)}
+            aria-label={t("composer.suggestion.useNamed").replace("{text}", () => suggested.text)}
             // fills the draft without focusing it: a tap never pops the keyboard
             onClick={() => takeSuggestion(suggested.text, false)}
           >
