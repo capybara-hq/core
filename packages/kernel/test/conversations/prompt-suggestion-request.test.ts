@@ -1,4 +1,4 @@
-import type { ModelInfo, ModelRequest } from "@capybara-hq/plugin-sdk";
+import type { ModelInfo, ModelRequest, ParamValue } from "@capybara-hq/plugin-sdk";
 import { describe, expect, it } from "vitest";
 import type { AgentDefinition } from "../../src/agents/definition.js";
 import {
@@ -58,6 +58,26 @@ const AGENT: AgentDefinition = {
   toolPolicies: {},
 };
 
+const TOOL_SEARCH: RequestTool = {
+  key: "ToolSearch",
+  specHash: "hash-tool-search",
+  spec: {
+    name: "ToolSearch",
+    description: "Load tools by query.",
+    inputSchema: { type: "object", properties: { query: { type: "string" } } },
+  },
+};
+
+const LEDGER: RequestTool = {
+  key: "Ledger",
+  specHash: "hash-ledger",
+  spec: {
+    name: "Ledger",
+    description: "Read ledger entries.",
+    inputSchema: { type: "object", properties: {} },
+  },
+};
+
 const LOOKUP: RequestTool = {
   key: "Lookup",
   specHash: "hash-lookup",
@@ -78,6 +98,7 @@ class Recorder {
   constructor(
     readonly runId = RUN,
     readonly tools: RequestTool[] = [LOOKUP],
+    readonly setup: { model?: ModelInfo; agent?: AgentDefinition; toolSearch?: boolean } = {},
   ) {}
 
   add(type: string, payload: unknown, runId: string | null = this.runId): number {
@@ -106,7 +127,14 @@ class Recorder {
   /** A model call built from the log so far, recorded with the meta the request carried. */
   call(
     step: number,
-    opts: { toolChoice?: "none"; maxOutputTokens?: number; fit?: unknown } = {},
+    opts: {
+      toolChoice?: "none";
+      maxOutputTokens?: number;
+      fit?: unknown;
+      params?: Record<string, ParamValue>;
+      /** The cap as the hard fit guard clamped it (recorded instead of the computed one). */
+      clampedCap?: number;
+    } = {},
   ): number {
     const events = toEvents(this.snapshot());
     const absorbed = Math.max(
@@ -115,14 +143,14 @@ class Recorder {
     );
     const { request, meta } = assembleModelRequest({
       events,
-      agent: AGENT,
+      agent: this.setup.agent ?? AGENT,
       agentVersion: 1,
-      model: MODEL,
+      model: this.setup.model ?? MODEL,
       step,
       absorbedUpToSeq: absorbed,
-      params: {},
+      params: opts.params ?? {},
       tools: this.tools,
-      toolSearch: false,
+      toolSearch: this.setup.toolSearch ?? false,
       ...(opts.toolChoice !== undefined && { toolChoice: opts.toolChoice }),
       defaultMaxOutputTokens: opts.maxOutputTokens ?? DEFAULT_CAP,
     });
@@ -134,7 +162,7 @@ class Recorder {
       fallback: false,
       request: {
         ...meta,
-        maxOutputTokens: request.maxOutputTokens,
+        maxOutputTokens: opts.clampedCap ?? request.maxOutputTokens,
         ...(opts.fit !== undefined && { fit: opts.fit }),
       },
     });
@@ -198,7 +226,7 @@ class Recorder {
       agentVersion: 1,
       source: "web",
       events: structuredClone(this.events),
-      definitions: { "1": AGENT },
+      definitions: { "1": this.setup.agent ?? AGENT },
       toolSpecs: Object.fromEntries(this.tools.map((t) => [t.specHash, t.spec])),
     };
   }
@@ -271,6 +299,87 @@ describe("buildSuggestionRequest", () => {
     expect(out.estimate).toBeGreaterThan(0);
   });
 
+  it("carries the recorded params, catalog, loaded tool and clamped cap, and the reply's opaque blocks", () => {
+    const model: ModelInfo = {
+      ...MODEL,
+      parameters: [
+        {
+          key: "effort",
+          standard: "effort",
+          schema: { type: "string", enum: ["low", "medium", "high"] },
+          label: { zh: "effort", en: "Effort" },
+        },
+        {
+          key: "maxOutputTokens",
+          standard: "maxOutputTokens",
+          schema: { type: "integer", minimum: 1, maximum: 8192 },
+          label: { zh: "max", en: "Max output" },
+        },
+      ],
+    };
+    // the agent's saved knobs differ from what the call recorded: the side request must follow
+    // the record, never the definition
+    const agent: AgentDefinition = {
+      ...AGENT,
+      modelParams: { effort: "low", maxOutputTokens: 7000 },
+    };
+    const recorded = { effort: "high", maxOutputTokens: 6000 };
+    const r = new Recorder(RUN, [TOOL_SEARCH, LOOKUP, LEDGER], { model, agent, toolSearch: true });
+    r.user("What is my cash balance?");
+    r.started();
+    r.call(1, { params: recorded, clampedCap: 1500 });
+    r.assistant(
+      1,
+      [{ type: "tool_call", id: "call-1", name: "ToolSearch", input: { query: "balance" } }],
+      "tool_use",
+    );
+    r.usage(1);
+    r.add("tool_result", {
+      step: 1,
+      callId: "call-1",
+      toolKey: "ToolSearch",
+      content: "Loaded Lookup.",
+      isError: false,
+      loadedTools: ["Lookup"],
+    });
+    r.call(2, { params: recorded, clampedCap: 1500 });
+    r.toolCall(2, "call-2");
+    r.usage(2);
+    r.toolResult(2, "call-2", "120 EUR");
+    r.call(3, { params: recorded, clampedCap: 1500 });
+    const opaque = {
+      provider: "model-fake",
+      model: "fake-1",
+      data: { signature: "sig-1", n: [1] },
+    };
+    const finalBlocks = [
+      { type: "thinking", text: "The balance is known.", opaque },
+      { type: "text", text: "Cash is 120 EUR.", opaque: { ...opaque, data: { id: "msg-1" } } },
+    ];
+    r.assistant(3, finalBlocks);
+    r.usage(3);
+    r.finished();
+    const snap = r.snapshot();
+    const ref = reference(snap, model);
+    expect(ref.tools.map((t) => t.name)).toEqual(["ToolSearch", "Lookup"]);
+    expect(ref.system).toHaveLength(2);
+    expect(ref.system[1]?.text).toContain("Ledger");
+    const out = built(snap, model);
+    expectSidePrefix(out.request, ref);
+    expect(out.request.params).toEqual(recorded);
+    expect(out.request.tools.map((t) => t.name)).toEqual(["ToolSearch", "Lookup"]);
+    expect(out.request.maxOutputTokens).toBe(1500);
+    expect(out.request.messages[ref.messages.length]).toEqual({
+      role: "assistant",
+      content: finalBlocks,
+    });
+  });
+
+  it("skips when the resolved model is not the last call's model", () => {
+    const snap = twoStepRun().snapshot();
+    expect(build(snap, { ...MODEL, id: "fake-2" })).toEqual({ skip: "model_mismatch" });
+  });
+
   it("keeps a recorded cap below 2048", () => {
     const r = new Recorder();
     r.user("hi");
@@ -324,6 +433,16 @@ describe("buildSuggestionRequest", () => {
     const out = built(snap);
     expectSidePrefix(out.request, reference(snap));
     expect(out.finalText).toBe("Savings are 900 EUR.");
+    // the run's side request rendered the final reply exactly as the next run's first call did
+    const firstSide = built(first.snapshot());
+    const n = reference(first.snapshot()).messages.length;
+    const nextCall = toEvents(snap).find((e) => e.type === "model_call" && e.runId === r.runId);
+    if (!nextCall) throw new Error("no model_call");
+    const next = reconstructRequest(snap, nextCall.seq, { model: MODEL });
+    expect(next.drift).toEqual([]);
+    expect(next.request.messages.slice(0, n + 1)).toEqual(
+      firstSide.request.messages.slice(0, n + 1),
+    );
   });
 
   it("skips without a model call", () => {
@@ -389,6 +508,45 @@ describe("buildSuggestionRequest", () => {
     const snap = r.snapshot();
     reference(snap);
     expect(build(snap)).toEqual({ skip: "prefix_mismatch" });
+  });
+
+  it("skips when a model-visible event follows the final reply", () => {
+    const r = new Recorder();
+    r.user("hi");
+    r.started();
+    r.call(1);
+    r.assistant(1, [{ type: "text", text: "Hello." }]);
+    r.usage(1);
+    r.add("reminder", { step: 1, text: "Late reminder." });
+    r.finished();
+    expect(build(r.snapshot())).toEqual({ skip: "prefix_mismatch" });
+  });
+
+  it("a message logged after the final reply stays out (not absorbed)", () => {
+    const plain = new Recorder();
+    plain.user("hi");
+    plain.started();
+    plain.call(1);
+    plain.assistant(1, [{ type: "text", text: "Hello." }]);
+    plain.usage(1);
+    const late = new Recorder();
+    late.events.push(...structuredClone(plain.events));
+    late.user("one more thing");
+    late.finished();
+    plain.finished();
+    expect(built(late.snapshot()).request).toEqual(built(plain.snapshot()).request);
+  });
+
+  it("skips a snapshot with a corrupt permission context instead of throwing", () => {
+    const snap = twoStepRun().snapshot();
+    snap.events.splice(1, 0, {
+      seq: 1.5,
+      type: "permission_context",
+      payload: { version: 1, broken: true },
+      runId: RUN,
+      createdAt: AT,
+    });
+    expect(build(snap)).toEqual({ skip: "drift" });
   });
 
   it("skips uncached large input", () => {
@@ -489,7 +647,9 @@ describe("cleanSuggestion", () => {
     expect(cleanSuggestion('user: "Show savings too"', final)).toBe("Show savings too");
     expect(cleanSuggestion("用户：看看储蓄", final)).toBe("看看储蓄");
     expect(cleanSuggestion("用户: 看看储蓄", final)).toBe("看看储蓄");
-    // a quote inside the text stays
+    // a quote inside the text stays, and two quotations are not one wrapped text
+    expect(cleanSuggestion('"a" and "b"', final)).toBe('"a" and "b"');
+    expect(cleanSuggestion("“yes” or “no”", final)).toBe("“yes” or “no”");
     expect(cleanSuggestion('Rename it to "cash"', final)).toBe('Rename it to "cash"');
   });
 

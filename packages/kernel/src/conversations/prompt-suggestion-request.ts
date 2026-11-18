@@ -1,7 +1,8 @@
 import { isDeepStrictEqual } from "node:util";
 import type { ConversationSource, ModelInfo, ModelRequest } from "@capybara-hq/plugin-sdk";
 import type { ConversationKind } from "../db/kernel-schema.js";
-import { reconstructInputs, reconstructRequest } from "../evals/reconstruct.js";
+import { ApiError } from "../errors.js";
+import { reconstructFromInputs, reconstructInputs } from "../evals/reconstruct.js";
 import { type CaseSnapshot, toEvents } from "../evals/snapshot.js";
 import type { MediaBytes, MediaInfo } from "../runtime/context/build.js";
 import { estimateTokens } from "../runtime/context/tokens.js";
@@ -39,6 +40,8 @@ export const PROMPT_SUGGESTION_MAX_CHARS = 200;
 /** Why no side request is built for a run. */
 export type SuggestionSkip =
   | "no_model_call"
+  /** The resolved `model` is not the model of the run's last call. */
+  | "model_mismatch"
   | "no_final_reply"
   | "final_reply_has_tool_call"
   | "drift"
@@ -82,12 +85,17 @@ function lastOfRun<T extends ConversationEvent>(
  * call's provider and model as the caller resolved it for the org; `mediaInfo` / `media` come from
  * `loadSnapshotMedia` for that call; `reserveTokens` is the org's compaction reserve.
  *
- * Checks, in order: a last `model_call` of the run; no recorded fit plan; a final
- * `assistant_message` after that call with text and no `tool_call`; the run's last step usage
- * shows cache activity or a small input; the baseline reconstruction has no drift; the extension
- * (the same inputs with the events up to the final reply) keeps `system`, `tools`, `toolChoice`,
- * `params` and the messages as a prefix, followed by exactly one assistant message; the estimate
- * plus the cap fits `contextWindow - reserveTokens`.
+ * Checks, in order: the run has a `model_call` (`no_model_call`); `model` is that call's model
+ * (`model_mismatch`); the call carries no fit plan (`fit`); a final `assistant_message` follows
+ * the call (`no_final_reply`) without a `tool_call` block (`final_reply_has_tool_call`) and with
+ * text (`no_final_reply`); the run's last step usage shows cache activity or at most
+ * {@link PROMPT_SUGGESTION_UNCACHED_INPUT_MAX} input tokens (`uncached`); the baseline
+ * reconstruction of the call has no drift and the snapshot is valid (`drift`); the extension, the
+ * same inputs with every snapshot event up to the run's terminal event, keeps `model`, `system`,
+ * `tools`, `toolChoice`, `params` and the messages as a prefix, followed by exactly one assistant
+ * message, so only usage and the terminal event follow the final reply (`prefix_mismatch`); the
+ * estimate plus the cap fits `contextWindow - reserveTokens` (`too_large`). Never throws for a
+ * snapshot's content.
  */
 export function buildSuggestionRequest(input: {
   snapshot: CaseSnapshot;
@@ -105,14 +113,10 @@ export function buildSuggestionRequest(input: {
   | { skip: SuggestionSkip } {
   const { snapshot, model } = input;
   const runId = snapshot.runId;
-  const opts = {
-    model,
-    ...(input.mediaInfo !== undefined && { mediaInfo: input.mediaInfo }),
-    ...(input.media !== undefined && { media: input.media }),
-  };
   const events = toEvents(snapshot);
   const call = lastModelCallOf(events, runId);
   if (call === undefined) return { skip: "no_model_call" };
+  if (model.id !== call.payload.model) return { skip: "model_mismatch" };
   if (call.payload.request.fit !== undefined) return { skip: "fit" };
 
   const final = lastOfRun(
@@ -121,13 +125,13 @@ export function buildSuggestionRequest(input: {
     (e): e is AssistantEvent => e.type === "assistant_message",
   );
   if (final === undefined || final.seq < call.seq) return { skip: "no_final_reply" };
+  if (final.payload.content.some((b) => b.type === "tool_call")) {
+    return { skip: "final_reply_has_tool_call" };
+  }
   const finalText = final.payload.content
     .flatMap((b) => (b.type === "text" ? [b.text] : []))
     .join("\n")
     .trim();
-  if (final.payload.content.some((b) => b.type === "tool_call")) {
-    return { skip: "final_reply_has_tool_call" };
-  }
   if (finalText === "") return { skip: "no_final_reply" };
 
   const usage = lastOfRun(
@@ -143,22 +147,35 @@ export function buildSuggestionRequest(input: {
     return { skip: "uncached" };
   }
 
-  const ref = reconstructRequest(snapshot, call.seq, opts);
-  if (ref.drift.length > 0) return { skip: "drift" };
-  const reference = ref.request;
-
-  const { input: assembleInput } = reconstructInputs(snapshot, call.seq, opts);
-  const { request, mediaTokens } = assembleModelRequest({
-    ...assembleInput,
-    events: events.filter((e) => e.seq <= final.seq),
-  });
+  const opts = {
+    model,
+    ...(input.mediaInfo !== undefined && { mediaInfo: input.mediaInfo }),
+    ...(input.media !== undefined && { media: input.media }),
+  };
+  let reference: ModelRequest;
+  let extended: ReturnType<typeof assembleModelRequest>;
+  try {
+    const gathered = reconstructInputs(snapshot, call.seq, opts);
+    const ref = reconstructFromInputs(snapshot, gathered, opts);
+    if (ref.drift.length > 0) return { skip: "drift" };
+    reference = ref.request;
+    // every event of the snapshot (it ends at the run's terminal event): absorbable events past
+    // the recorded absorbedUpToSeq stay out, anything else model-visible after the final reply
+    // breaks the check below
+    extended = assembleModelRequest({ ...gathered.input, events });
+  } catch (err) {
+    // a corrupt recorded permission context (`eval.snapshot_invalid`)
+    if (err instanceof ApiError) return { skip: "drift" };
+    throw err;
+  }
+  const { request, mediaTokens } = extended;
   const n = reference.messages.length;
   if (
+    request.model !== reference.model ||
     !isDeepStrictEqual(request.system, reference.system) ||
     !isDeepStrictEqual(request.tools, reference.tools) ||
     !isDeepStrictEqual(request.toolChoice, reference.toolChoice) ||
     !isDeepStrictEqual(request.params, reference.params) ||
-    request.model !== reference.model ||
     request.messages.length !== n + 1 ||
     request.messages[n]?.role !== "assistant" ||
     !isDeepStrictEqual(request.messages.slice(0, n), reference.messages)
@@ -238,14 +255,17 @@ function unquote(s: string): string {
       ([open, close]) => out.length >= 2 && out.startsWith(open) && out.endsWith(close),
     );
     if (pair === undefined) return out;
-    out = out.slice(pair[0].length, out.length - pair[1].length).trim();
+    const inner = out.slice(pair[0].length, out.length - pair[1].length);
+    // only one balanced pair wraps the text: `"a" and "b"` is two quotations, kept as is
+    if (inner.includes(pair[0]) || inner.includes(pair[1])) return out;
+    out = inner.trim();
   }
 }
 
 /**
  * The suggestion from the model's reply text (spec §1.7), or null for none: the first non-empty
- * line with control and hidden format characters removed, a leading `User:` / `用户：` label and
- * wrapping quotes stripped, trimmed, cut to {@link PROMPT_SUGGESTION_MAX_CHARS} code points.
+ * line with control and hidden format characters removed, a leading user label (`User:`, or the
+ * Chinese word for user with a full-width colon, `LABEL_RE`) and balanced wrapping quotes stripped, trimmed, cut to {@link PROMPT_SUGGESTION_MAX_CHARS} code points.
  * `NONE` (any case), an empty result or an echo of the final reply (`finalText`) is null.
  */
 export function cleanSuggestion(reply: string, finalText: string): string | null {

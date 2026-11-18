@@ -417,7 +417,21 @@ export function reconstructRequest(
   modelCallSeq: number,
   opts: ReconstructOptions,
 ): ReconstructResult {
-  const { input, drift, baseline, call, events: all } = reconstructInputs(s, modelCallSeq, opts);
+  return reconstructFromInputs(s, reconstructInputs(s, modelCallSeq, opts), opts);
+}
+
+/**
+ * {@link reconstructRequest} from inputs {@link reconstructInputs} already gathered (with the same
+ * `s` and `opts`): assembles the request and judges the remaining drift. Leaves `gathered.input`
+ * as it was, so a caller may assemble from it again.
+ */
+export function reconstructFromInputs(
+  s: CaseSnapshot,
+  gathered: ReconstructInputs,
+  opts: ReconstructOptions,
+): ReconstructResult {
+  const { input, baseline, call, events: all } = gathered;
+  const drift = new Set(gathered.drift);
   const rec: Recorded = call.payload.request;
   const kept = (list: Recorded["tools"]) =>
     list.filter((t) => s.toolSpecs[t.specHash] !== undefined);
