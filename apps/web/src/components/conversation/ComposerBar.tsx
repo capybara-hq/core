@@ -52,6 +52,7 @@ import {
   parseSlashCommand,
   skillChipLabel,
 } from "../../lib/skills";
+import type { PromptSuggestion } from "../../lib/stream";
 import { useErrorMessage } from "../../lib/use-error-message";
 import { useRunStateValue } from "../client-ext/run-state";
 import { ExtensionSlot } from "../extension-ui/ExtensionSlot";
@@ -219,6 +220,7 @@ export function ComposerBar({
   onBlocked,
   onCompact,
   control,
+  suggestion,
 }: {
   orgId: string;
   /** The conversation's agent (the `/` menu lists its skills); undefined while loading. */
@@ -269,6 +271,12 @@ export function ComposerBar({
   onCompact?(): Promise<void>;
   /** Filled with {@link ComposerControl} while this composer is mounted. */
   control?: Ref<ComposerControl>;
+  /**
+   * The prompt suggestion to offer (prompt suggestions spec §5), already past the reader's rule; a
+   * root conversation's only (never the new conversation page or a sub-agent's composer). Once
+   * dismissed it stays away for that run.
+   */
+  suggestion?: Pick<PromptSuggestion, "runId" | "text"> | undefined;
 }) {
   const t = useTranslations("chat");
   const tc = useTranslations("common");
@@ -298,6 +306,20 @@ export function ComposerBar({
   const files = drafts.files;
   const previews = useObjectUrls(files);
   const fileInput = useRef<HTMLInputElement>(null);
+  /** The run whose suggestion was dismissed (Esc, Tab, an edit, a file): it sticks for that run. */
+  const [dismissedRun, setDismissedRun] = useState<string | null>(null);
+  const offered = suggestion !== undefined && suggestion.runId !== dismissedRun ? suggestion : null;
+  const offeredRun = useRef<string | null>(null);
+  offeredRun.current = offered?.runId ?? null;
+  const dismissSuggestion = useCallback(() => {
+    const run = offeredRun.current;
+    if (run !== null) setDismissedRun(run);
+  }, []);
+  /** Files attached any way (a drop, a paste, the picker) count as typing. */
+  const addFiles = (list: File[]) => {
+    dismissSuggestion();
+    drafts.add(list);
+  };
 
   const [palette, setPalette] = useState<Palette>(null);
   const [argsFor, setArgsFor] = useState<ConnectorPrompt | null>(null);
@@ -750,6 +772,8 @@ export function ComposerBar({
       fill(next: string) {
         const before = textNow.current;
         undoFill.current = before === next ? null : { before, text: next };
+        // a fill (a quick action) is an edit: the suggestion goes for this run
+        dismissSuggestion();
         textNow.current = next;
         setText(next);
         // a value set from outside puts the caret after the text; on a touch device the text is
@@ -760,7 +784,7 @@ export function ComposerBar({
         focusText();
       },
     }),
-    [focusText],
+    [focusText, dismissSuggestion],
   );
 
   // The built-in composer: framed, the frame slot's default; bare (`frame={false}`), the inputs a
@@ -770,7 +794,11 @@ export function ComposerBar({
     <ComposerBox
       frame={frame}
       value={text}
-      onChange={(v) => onChange(v, textEl.current)}
+      onChange={(v) => {
+        // any edit ends the suggestion for this run, also one that empties the draft
+        dismissSuggestion();
+        onChange(v, textEl.current);
+      }}
       onKeyDown={onKeyDown}
       placeholder={placeholder}
       {...(hint !== undefined ? { hint } : {})}
@@ -814,12 +842,15 @@ export function ComposerBar({
       // the token warning's 仍然发送 sends as ↵ does, also while the button is Stop
       onSend={() => void submit()}
       textareaRef={textEl}
+      {...(offered !== null
+        ? { suggestion: { text: offered.text, onDismiss: dismissSuggestion } }
+        : {})}
     />
   );
 
   return (
     <>
-      <FileDrop label={t("dropFiles")} onFiles={drafts.add} disabled={!drafts.limits.available}>
+      <FileDrop label={t("dropFiles")} onFiles={addFiles} disabled={!drafts.limits.available}>
         {/* a plugin may draw the frame around the composer (client extensions spec §6.2) */}
         <ExtensionSlot
           slot="conversation.composer.frame"
@@ -843,7 +874,7 @@ export function ComposerBar({
         onChange={(e: ChangeEvent<HTMLInputElement>) => {
           const picked = Array.from(e.target.files ?? []);
           e.target.value = "";
-          if (picked.length > 0) drafts.add(picked);
+          if (picked.length > 0) addFiles(picked);
         }}
       />
       <CommandPalette

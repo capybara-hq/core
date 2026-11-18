@@ -83,6 +83,11 @@ export interface OrgSettings {
    * §8); absent = off. Turning it on needs the platform to allow it.
    */
   externalSharing?: "on" | "off";
+  /**
+   * Prompt suggestions after a completed run (prompt suggestions spec §6); absent = on (following
+   * the platform). The org cannot turn on what the platform turned off.
+   */
+  promptSuggestions?: "on" | "off";
 }
 
 /** The org level of the themes (`orgs.settings.theme`). */
@@ -120,6 +125,8 @@ export interface OrgSettingsDeployment {
   };
   /** The longest expiry a share may take, in days. */
   shareMaxExpiryDays?: number;
+  /** The platform's prompt suggestion switch (`off`: the org's switch is off and locked). */
+  promptSuggestions?: "on" | "off";
 }
 
 /** 组织实际生效的沙箱 cpu / 内存（只读：超级管理员在部署设置里按组织覆盖；旧内核不返回）。 */
@@ -141,7 +148,13 @@ export interface OrgSettingsResponse {
 export type OrgSettingsPatch = Partial<
   Omit<
     OrgSettings,
-    "autoMode" | "cloudNetwork" | "timeZone" | "theme" | "scheduledTasks" | "compaction"
+    | "autoMode"
+    | "cloudNetwork"
+    | "timeZone"
+    | "theme"
+    | "scheduledTasks"
+    | "compaction"
+    | "promptSuggestions"
   >
 > & {
   /** The scheduled-task fields to change; the rest keep their value. */
@@ -158,6 +171,8 @@ export type OrgSettingsPatch = Partial<
   uiArrangement?: Record<string, UiArrangementEntry | null>;
   /** The fields to override; null clears the whole override (follow the platform again). */
   compaction?: CompactionSettingsPatch | null;
+  /** null clears it (on again, following the platform). */
+  promptSuggestions?: "on" | "off" | null;
 };
 
 const path = (orgId: string) => `/api/v1/orgs/${encodeURIComponent(orgId)}/settings`;

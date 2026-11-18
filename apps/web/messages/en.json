@@ -2738,6 +2738,11 @@
     "loadFailed": "The internal endpoints could not be read.",
     "retry": "Retry"
   },
+  "promptSuggestions": {
+    "title": "Prompt suggestions",
+    "description": "After the agent replies, the input box suggests the next message you might send. Each suggestion is one extra call to the same model, mostly served from the prompt cache.",
+    "platformOff": "Turned off by the platform"
+  },
   "compaction": {
     "title": "Conversation compaction",
     "description": "Long conversations are summarized before they fill the model's context window, so a long-running conversation keeps going with the recent turns in full.",
@@ -3990,6 +3995,7 @@
           "maintenance": "Maintenance",
           "pluginScope": "Plugin scope sync",
           "titles": "Titles",
+          "suggestions": "Prompt suggestions",
           "usageReport": "Usage reports",
           "evals": "Evals",
           "lifecycle": "Lifecycle notices"

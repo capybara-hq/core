@@ -249,9 +249,10 @@ type EventBody =
         /**
          * Set when the usage is not the step's call: `compaction`, `title`, `web_fetch` (a
          * `WebFetch` extraction call, with that call's `callId`) or `review` (the command-review
-         * classifier, also with the reviewed call's `callId`).
+         * classifier, also with the reviewed call's `callId`) or `suggestion` (a prompt suggestion
+         * after a completed run).
          */
-        purpose?: "compaction" | "title" | "web_fetch" | "review";
+        purpose?: "compaction" | "title" | "web_fetch" | "review" | "suggestion";
         /** A chunked compaction call's 1-based chunk and the calls the compaction attempted. */
         chunk?: number;
         chunks?: number;

@@ -71,6 +71,7 @@ import {
   PROSE_FIXTURE,
   SKILL_FIXTURE,
   SUBAGENT_FIXTURE,
+  SUGGESTION_FIXTURE,
   TOOL_FIXTURES,
 } from "@capybara-hq/design/fixtures";
 import { type ReactNode, useState } from "react";
@@ -607,6 +608,14 @@ function composerBlocks(): ReactNode {
           <ComposerBox {...composerProps(s)} />
         </Block>
       ))}
+      {/* the prompt suggestion as the placeholder, with the touch button drawn (spec §6.16.2) */}
+      <Block id="composer-suggestion">
+        <ComposerBox
+          {...composerProps("idle")}
+          suggestion={{ text: SUGGESTION_FIXTURE.text, onDismiss: noop }}
+          referenceTouch
+        />
+      </Block>
     </>
   );
 }
