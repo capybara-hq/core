@@ -39,6 +39,10 @@ const EMBED_CONSUMER = fileURLToPath(
   new URL("../fixtures/plugins/embed-consumer/index.ts", import.meta.url),
 );
 
+const MODEL_IMAGE = fileURLToPath(
+  new URL("../fixtures/plugins/model-image/index.ts", import.meta.url),
+);
+
 let pgc: TestContainer;
 let rd: TestContainer;
 let raw: ReturnType<typeof createDb>;
@@ -56,7 +60,7 @@ beforeAll(async () => {
       { pg: pgc.url, redis: rd.url },
       {
         roles: ["api"],
-        extensions: [MODEL_FAKE, MODEL_EVAL, EMBED_CONSUMER],
+        extensions: [MODEL_FAKE, MODEL_EVAL, EMBED_CONSUMER, MODEL_IMAGE],
         extensionConfig: {
           "model-fake": {
             models: [{ id: "fake-1" }, { id: "fake-embed", kind: "embedding", dimensions: [4] }],
@@ -149,6 +153,7 @@ const KERNEL = [
   "subagent_fast",
   "subagent_standard",
   "subagent_capable",
+  "image",
 ];
 
 describe("purpose list", () => {
@@ -172,6 +177,11 @@ describe("purpose list", () => {
         purpose: "subagent_capable",
         kind: "chat",
         label: { zh: "子智能体：最强", en: "Sub-agent: capable" },
+      },
+      {
+        purpose: "image",
+        kind: "image_generation",
+        label: { zh: "图片生成", en: "Image generation" },
       },
     ]);
     const views = await list(ent, adminUrl());
@@ -370,6 +380,36 @@ describe("kinds and disabled models (spec B §5.3)", () => {
     expect(await k.app.get(ModelPurposesService).resolve(orgId, "embed-consumer.memory")).toEqual(
       EMBED,
     );
+  });
+
+  it("image purpose maps to an image model", async () => {
+    const IMG = { model: { provider: "model-image", model: "img-1" }, params: {} };
+    expect(await put(ent, adminUrl("image"), IMG)).toMatchObject({
+      kind: "image_generation",
+      effective: IMG,
+    });
+    expect(await k.app.get(ModelPurposesService).resolve(orgId, "image")).toEqual(IMG);
+  });
+
+  it("image purpose refuses a chat model", async () => {
+    for (const [req, url] of [
+      [ent, adminUrl("image")],
+      [admin, orgUrl("image")],
+    ] as const) {
+      const res = await req({ method: "PUT", url, payload: { target: FAKE_1 } });
+      expect(res.statusCode, res.body).toBe(400);
+      expect(errCode(res)).toBe("validation_failed");
+      expect(res.body).toContain("this purpose needs an image_generation model, not chat");
+    }
+  });
+
+  it("unmapped image purpose resolves to model.unconfigured", async () => {
+    const err = await k.app
+      .get(ModelPurposesService)
+      .resolve(orgId, "image")
+      .catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ApiError);
+    expect((err as ApiError).code).toBe("model.unconfigured");
   });
 
   it("an org override on a model disabled in the org is refused", async () => {

@@ -35,6 +35,9 @@ import { ProviderListError, ProviderRegistry } from "../runtime/providers.js";
  * - 每次都查 PG，不在进程内缓存（多副本下改映射立即生效）。`ctx.models` 仍预留，插件暂不能调用。
  */
 
+/** The kinds a purpose can need: the callable model kinds. */
+export type PurposeKind = "chat" | "embedding" | "image_generation";
+
 /**
  * Purposes the kernel declares: the eval judge, and the three sub-agent model tiers (phase C,
  * spec §5.4: `fast` / `standard` / `capable` → `subagent_<tier>`; an unmapped tier runs on the
@@ -69,6 +72,8 @@ export const KERNEL_PURPOSES = [
     kind: "chat",
     label: { zh: "子智能体：最强", en: "Sub-agent: capable" },
   },
+  /** The `GenerateImage` tool's model; no fallback: unmapped → `model.unconfigured`. */
+  { purpose: "image", kind: "image_generation", label: { zh: "图片生成", en: "Image generation" } },
 ] as const;
 
 /** 一个用途映射到的模型与参数。 */
@@ -79,7 +84,7 @@ export interface PurposeTarget {
 
 export interface PurposeView {
   purpose: string;
-  kind: "chat" | "embedding";
+  kind: PurposeKind;
   label: { zh: string; en: string };
   /** `kernel` 或声明它的插件名。 */
   declaredBy: string;
@@ -143,7 +148,7 @@ export class PurposeAttemptError extends Error {
 
 interface Declared {
   purpose: string;
-  kind: "chat" | "embedding";
+  kind: PurposeKind;
   label: { zh: string; en: string };
   declaredBy: string;
 }
@@ -202,8 +207,7 @@ export class ModelPurposesService {
         seen.add(p.purpose);
         out.push({
           purpose: p.purpose,
-          // image_generation joins the registry's kinds in the image generation plan (task 2)
-          kind: p.kind as "chat" | "embedding",
+          kind: p.kind,
           label: { zh: p.label.zh, en: p.label.en },
           declaredBy: m.name,
         });
@@ -259,7 +263,7 @@ export class ModelPurposesService {
   private async check(
     orgId: string | null,
     target: PurposeTarget,
-    kind: "chat" | "embedding",
+    kind: PurposeKind,
   ): Promise<void> {
     let info: Awaited<ReturnType<ProviderRegistry["resolve"]>>["info"];
     try {
@@ -278,7 +282,7 @@ export class ModelPurposesService {
       throw invalid([
         {
           path: "target.model",
-          message: `this purpose needs ${kind === "embedding" ? "an" : "a"} ${kind} model, not ${info.kind}`,
+          message: `this purpose needs ${/^[aeiou]/.test(kind) ? "an" : "a"} ${kind} model, not ${info.kind}`,
         },
       ]);
     }
