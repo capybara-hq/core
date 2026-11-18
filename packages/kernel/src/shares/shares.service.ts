@@ -28,7 +28,7 @@ import {
   readShareMaxExpiry,
 } from "./settings.js";
 import { newShareCode } from "./share-code.js";
-import { oweShareObjectDelete, shareObjectKey } from "./share-objects.js";
+import { oweShareObjectDelete, shareObjectKey, shareRefreshLockKey } from "./share-objects.js";
 
 /**
  * Shares of conversation files (file sharing spec §1, §2): a share is a frozen snapshot of one
@@ -301,7 +301,7 @@ export class SharesService {
   ): Promise<ShareView> {
     if (!UUID_RE.test(shareId)) throw notFound();
     await this.locks.run(
-      `share-refresh-${shareId}`,
+      shareRefreshLockKey(shareId),
       { ttlMs: REFRESH_LOCK_TTL_MS, waitMs: REFRESH_LOCK_WAIT_MS },
       async () => {
         const s = await this.db

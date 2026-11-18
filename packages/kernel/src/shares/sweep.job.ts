@@ -12,7 +12,12 @@ import type { KernelLogger } from "../log.js";
 import { StorageService } from "../storage/storage.service.js";
 import { creatorStillHasAccess } from "./liveness.js";
 import { revokeSharesIn } from "./revoke.js";
-import { type ShareObjectDeleteData, ShareObjects, shareObjectKey } from "./share-objects.js";
+import {
+  type ShareObjectDeleteData,
+  ShareObjects,
+  shareObjectKey,
+  shareRefreshLockKey,
+} from "./share-objects.js";
 
 /** The daily share sweep's name (scheduler key and lock; no `:`). */
 export const SHARE_SWEEP_JOB = "share-sweep";
@@ -25,7 +30,12 @@ const RETAIN_DAYS = 7;
 const ORPHAN_AGE_MS = 60 * 60 * 1000;
 /** The objects listed per page when looking for orphans. */
 const LIST_PAGE = 1000;
-/** `shares/<shareId>/<generation>`, the only key shape the shares module writes. */
+/** The sweep's hold on a share's refresh lock (tried once; a refresh holding it skips the key). */
+const REFRESH_LOCK_TTL_MS = 30_000;
+/**
+ * `shares/<shareId>/<generation>`, the only key shape the shares module writes. Only the shares
+ * module writes under `shares/`, so a key of any other shape is no snapshot and is deleted directly.
+ */
 const SHARE_KEY_RE =
   /^shares\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/(\d+)$/;
 
@@ -54,7 +64,9 @@ export interface ShareSweepResult {
  * 3. per organization not deleted, lists `shares/` and deletes every object older than one hour
  *    that is not the `object_key` of its row (no row: an insert that failed after its copy; another
  *    generation: a refresh that died between its copy and its commit). An object whose age the
- *    store does not report is kept.
+ *    store does not report is kept. Its age is read again (`head`) just before the delete, and a
+ *    non-current generation of an existing share is deleted only under that share's refresh lock
+ *    (tried once), so a retried refresh writing the same key again is never undone.
  *
  * Steps 2 and 3 go through {@link ShareObjects.deleteObject}, which re-reads the row and never
  * deletes the snapshot a share that is neither revoked nor expired currently names. Deleted
@@ -219,8 +231,7 @@ export class ShareSweepJob {
         ...(cursor !== undefined && { cursor }),
       });
       cursor = page.cursor;
-      // read once per page, so a refresh that commits after the read is checked again by
-      // `deleteObject` (and its fresh object is younger than the age limit anyway)
+      // the rows are read once per page; `deleteObject` reads its row again before deleting
       const cutoff = Date.now() - ORPHAN_AGE_MS;
       const old = page.items.filter((i) => {
         const at = i.lastModified === undefined ? Number.NaN : Date.parse(i.lastModified);
@@ -240,24 +251,62 @@ export class ShareSweepJob {
       }
       for (const p of parsed) {
         if (signal?.aborted) return deleted;
-        if (!p.m) {
-          // not a key the shares module writes: nothing can name it
-          await store.delete(p.key);
-          deleted++;
+        const shareId = p.m?.[1];
+        const generation = Number(p.m?.[2]);
+        const snapshot =
+          shareId !== undefined &&
+          Number.isSafeInteger(generation) &&
+          shareObjectKey(shareId, generation) === p.key;
+        if (!snapshot || shareId === undefined) {
+          if (await this.stillOld(store, p.key, cutoff)) {
+            await store.delete(p.key);
+            deleted++;
+          }
           continue;
         }
-        const shareId = p.m[1] as string;
         if (named.get(shareId) === p.key) continue; // its row's snapshot: step 2's, not an orphan
-        const generation = Number(p.m[2]);
-        if (!Number.isSafeInteger(generation) || shareObjectKey(shareId, generation) !== p.key) {
-          await store.delete(p.key);
-          deleted++;
+        const data: ShareObjectDeleteData = { orgId, shareId, generation, objectKey: p.key };
+        if (!named.has(shareId)) {
+          // no row (an insert that failed after its copy): a new create uses a new id
+          if ((await this.stillOld(store, p.key, cutoff)) && (await this.deleteGuarded(data))) {
+            deleted++;
+          }
           continue;
         }
-        if (await this.deleteGuarded({ orgId, shareId, generation, objectKey: p.key })) deleted++;
+        // another generation of an existing share: a retried refresh may be writing this very key
+        // again, its commit about to name it. Held, the refresh lock means no refresh is between its
+        // copy and its commit, so the row `deleteObject` reads is the last word; a refresh holding
+        // it now skips the key (the next run sees it again)
+        const lock = await this.lockService.acquire(shareRefreshLockKey(shareId), {
+          ttlMs: REFRESH_LOCK_TTL_MS,
+          waitMs: 0,
+        });
+        if (!lock) continue;
+        try {
+          if ((await this.stillOld(store, p.key, cutoff)) && (await this.deleteGuarded(data))) {
+            deleted++;
+          }
+        } finally {
+          await lock.release();
+        }
       }
     } while (cursor !== undefined && !signal?.aborted);
     return deleted;
+  }
+
+  /**
+   * Whether `key` is still older than `cutoff` now: the listing may be stale (an upload that started
+   * long ago, or a key written again since), so its age is read again just before deleting it.
+   */
+  private async stillOld(
+    store: ReturnType<StorageService["kernel"]>,
+    key: string,
+    cutoff: number,
+  ): Promise<boolean> {
+    const head = await store.head(key);
+    if (!head?.lastModified) return false;
+    const at = Date.parse(head.lastModified);
+    return Number.isFinite(at) && at < cutoff;
   }
 
   /** {@link ShareObjects.deleteObject}, logging instead of throwing (one bad object stops nothing). */

@@ -19,6 +19,12 @@ import { StorageService } from "../storage/storage.service.js";
 export const shareObjectKey = (shareId: string, generation: number): string =>
   `shares/${shareId}/${generation}`;
 
+/**
+ * The lock (`LockService`) a refresh of one share holds while it copies and commits its next
+ * generation; the daily sweep takes it before deleting a non-current generation of an existing share.
+ */
+export const shareRefreshLockKey = (shareId: string): string => `share-refresh-${shareId}`;
+
 /** The maintenance job that deletes one share snapshot. */
 export const SHARE_OBJECT_DELETE_JOB = "share-object-delete";
 

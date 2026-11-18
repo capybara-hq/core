@@ -13,9 +13,11 @@ import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { EventLog } from "../../src/conversations/event-log.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
+import { LockService } from "../../src/infra/lock/lock.service.js";
 import { createLogger } from "../../src/log.js";
 import { ShareLiveness } from "../../src/shares/liveness.js";
-import { ShareObjects } from "../../src/shares/share-objects.js";
+import { ShareObjects, shareRefreshLockKey } from "../../src/shares/share-objects.js";
+import { SharesService } from "../../src/shares/shares.service.js";
 import { ShareSweepJob } from "../../src/shares/sweep.job.js";
 import { StorageService } from "../../src/storage/storage.service.js";
 import { accountsFor } from "../helpers/identity.js";
@@ -49,6 +51,7 @@ let a: TestKernel;
 let b: TestKernel;
 let ownerA: Req;
 let ownerB: Req;
+let ownerId: string;
 let orgId: string;
 let conv: string;
 
@@ -76,7 +79,8 @@ beforeAll(async () => {
   const quiet = { logger: createLogger("error", { write: () => {} }) };
   a = await startKernel(cfg, quiet);
   b = await startKernel(cfg, quiet);
-  await accountsFor(db).createLocal({ login: "owner", password: PW, displayName: "O" });
+  ownerId = (await accountsFor(db).createLocal({ login: "owner", password: PW, displayName: "O" }))
+    .id;
   ownerA = await session(a, "owner");
   ownerB = await session(b, "owner");
   orgId = await createOrgWithProviders(a, ownerA);
@@ -298,7 +302,19 @@ describe("shares on two replicas", () => {
  * Makes every replica's object listing report `ages` (ms before now) for the given keys: S3 sets
  * an object's time when it is written, so an old object is simulated in the listing the sweep reads.
  */
-function listedAges(ages: Map<string, number>) {
+function listedAges(
+  ages: Map<string, number>,
+  opts: {
+    /** `head` reports the same ages (a key not written again since the listing). */
+    head?: boolean;
+    /** Runs after each listing, before the sweep sees it (a write racing the sweep). */
+    afterList?: (store: ObjectStore) => Promise<void>;
+  } = {},
+) {
+  const aged = <T extends { key: string; lastModified?: string }>(i: T): T => {
+    const age = ages.get(i.key);
+    return age === undefined ? i : { ...i, lastModified: new Date(Date.now() - age).toISOString() };
+  };
   return [a, b].map((k) => {
     const storage = k.app.get(StorageService);
     const kernel = storage.kernel.bind(storage);
@@ -306,18 +322,17 @@ function listedAges(ages: Map<string, number>) {
       const s = kernel(org);
       return {
         ...s,
-        list: async (prefix, opts) => {
-          const page = await s.list(prefix, opts);
-          return {
-            ...page,
-            items: page.items.map((i) => {
-              const age = ages.get(i.key);
-              return age === undefined
-                ? i
-                : { ...i, lastModified: new Date(Date.now() - age).toISOString() };
-            }),
-          };
+        list: async (prefix, o) => {
+          const page = await s.list(prefix, o);
+          await opts.afterList?.(s);
+          return { ...page, items: page.items.map(aged) };
         },
+        ...(opts.head && {
+          head: async (key: string) => {
+            const h = await s.head(key);
+            return h && aged(h);
+          },
+        }),
       };
     });
   });
@@ -365,6 +380,7 @@ describe("the daily share sweep on two replicas", () => {
         [`shares/${live}/1`, 120 * MINUTE],
         [`shares/${recent}/1`, 120 * MINUTE],
       ]),
+      { head: true },
     );
     const runs = [a, b].map((k) => vi.spyOn(k.app.get(ShareSweepJob), "runOnce"));
     try {
@@ -390,5 +406,61 @@ describe("the daily share sweep on two replicas", () => {
     expect(await shareRow(revoked)).toMatchObject({ object_key: null, revoke_reason: "creator" });
     expect(await exists(`shares/${expired}/1`)).toBe(false);
     expect(await shareRow(expired)).toMatchObject({ object_key: null, revoked_at: null });
+  });
+
+  it("never undoes a retried refresh writing the same generation again; a held refresh lock skips the key", async () => {
+    const id = await shareOf("r1");
+    const newer = await deliver("r2-newer");
+    const next = `shares/${id}/2`;
+    const ages = new Map([[next, 120 * MINUTE]]);
+    const sweep = () => b.app.get(ShareSweepJob).runOnce();
+
+    // a refresh whose copy failed left generation 2 behind and owes nothing
+    await put(next);
+    // a refresh holding the lock (mid-copy): the key is skipped, the next run sees it
+    const held = await a.app.get(LockService).acquire(shareRefreshLockKey(id), {
+      ttlMs: 30_000,
+      waitMs: 0,
+    });
+    expect(held).toBeDefined();
+    let spies = listedAges(ages, { head: true });
+    try {
+      await sweep();
+      expect(await exists(next)).toBe(true);
+      await held?.release();
+      await sweep();
+      expect(await exists(next)).toBe(false);
+    } finally {
+      for (const x of spies) x.mockRestore();
+    }
+
+    // again; this time the retried refresh writes the key anew between the listing and the delete
+    await put(next);
+    spies = listedAges(ages, {
+      afterList: async (s) => {
+        await s.put(next, Buffer.from("r2-newer"), { contentType: "text/plain", size: 8 });
+      },
+    });
+    try {
+      await sweep();
+    } finally {
+      for (const x of spies) x.mockRestore();
+    }
+    expect(await exists(next)).toBe(true);
+    // the refresh commits: the share serves generation 2, whose object is there
+    const moved = await a.app
+      .get(SharesService)
+      .commitRefresh(
+        { orgId, accountId: ownerId, shareId: id, from: 1 },
+        { fileId: newer, name: "r.txt", contentType: "text/plain", size: 8, objectKey: next },
+        {},
+      );
+    expect(moved).toBe(true);
+    const live = await a.app.get(ShareLiveness).byId(id);
+    expect(live).toMatchObject({ generation: 2, objectKey: next });
+    const got = await store(a).get(next);
+    expect(got && Buffer.from(await new Response(got.body).arrayBuffer()).toString()).toBe(
+      "r2-newer",
+    );
   });
 });
