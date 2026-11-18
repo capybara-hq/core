@@ -448,6 +448,24 @@ describe("share view previewers", () => {
     expect(errCode(unknown)).toBe("share.not_found");
   });
 
+  it("an HTML snapshot never reaches an extension previewer: view and embed-token 404", async () => {
+    const s = await share(await deliver("a.html", "<p>x</p>", "text/html"));
+    const meta = (await k.http.inject({ method: "GET", url: base(s.code) })).json() as {
+      render: string;
+      previewers: unknown[];
+    };
+    expect(meta).toMatchObject({ render: "html", previewers: [] });
+    const view = await k.http.inject({
+      method: "GET",
+      url: `${base(s.code)}/previews/preview-fake/html`,
+    });
+    expect(view.statusCode, view.body).toBe(404);
+    expect(errCode(view)).toBe("ui.not_found");
+    const minted = await mint(s.code, "html-page");
+    expect(minted.statusCode, minted.body).toBe(404);
+    expect(errCode(minted)).toBe("ui.not_found");
+  });
+
   it("an internal share's preview needs a member's session", async () => {
     const s = await share(await deliver("a.docx", "PK", DOCX), "internal");
     const url = `${base(s.code)}/previews/preview-fake/docx`;

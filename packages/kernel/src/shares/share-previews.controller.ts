@@ -4,6 +4,7 @@ import type { FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
 import { ApiError } from "../errors.js";
 import { PreviewerRegistry } from "../files/previewers.js";
+import { isHtmlType } from "../html/html-type.js";
 import { Public } from "../identity/principal.js";
 import { createZodDto } from "../infra/validation/create-zod-dto.js";
 import { ZQuery } from "../infra/validation/zod-params.js";
@@ -42,7 +43,8 @@ const previewerNotFound = () => new ApiError("ui.not_found", "Previewer not foun
  *   the snapshot (`source: "share"`); errors as the panel's preview route (404 `ui.not_found`,
  *   502 `ui.render_failed`, 502 `ui.invalid_view`, 504 `ui.timeout`).
  * The plugin and previewer ids are matched, not validated, so a malformed one is a 404 after the
- * open like an unknown one.
+ * open like an unknown one. An HTML snapshot never reaches an extension previewer (the built-in
+ * wins, spec §5): both routes answer 404 `ui.not_found` for it, as its metadata lists none.
  */
 @Controller("api/v1/s/:code")
 export class SharePreviewsController {
@@ -64,6 +66,7 @@ export class SharePreviewsController {
     @Res({ passthrough: true }) reply: FastifyReply,
   ): Promise<ShareEmbedTokenResponse> {
     const { share } = await this.shares.open(code, req, reply);
+    if (isHtmlType(share.name, share.contentType)) throw previewerNotFound();
     const target = await this.previewers.shareEmbed(share.orgId, share, plugin, previewerId);
     if (target === null) throw previewerNotFound();
     const path = this.views.shareEmbedPath(plugin, target.contribution);
@@ -89,6 +92,7 @@ export class SharePreviewsController {
     @Res({ passthrough: true }) reply: FastifyReply,
   ): Promise<{ view: UiView }> {
     const { share } = await this.shares.open(code, req, reply);
+    if (isHtmlType(share.name, share.contentType)) throw previewerNotFound();
     const view = await this.previewers.renderShare({
       orgId: share.orgId,
       shareId: share.id,

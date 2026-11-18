@@ -55,7 +55,7 @@ const LOGIN_MSG = "Too many failed login attempts; try again later";
  * | `POST /api/v1/setup` | `setup-token`, `setup-ip` |
  * | `POST /api/v1/invitations/:token/accept` | `invitation`, `invitation-ip` |
  * | `GET /api/v1/device/pending/:userCode`, `POST /api/v1/device/confirm`, `POST /api/v1/device/deny` | `device-code-account` |
- * | `GET /api/v1/s/:code`, `…/content`, `…/text`, `…/inline`, `…/html` | `share-open` |
+ * | `GET /api/v1/s/:code`, `…/content`, `…/text`, `…/inline`, `…/html`, `POST …/embed-token/:plugin/:previewerId`, `GET …/previews/:plugin/:previewerId` | `share-open` |
  *
  * `POST /api/v1/orgs/:orgId/ui/client/reports` and `POST /api/v1/admin/ui/client/reports` opt in to
  * `client-reports` with `@Throttled` (20 per minute per account: a crash loop in a browser must

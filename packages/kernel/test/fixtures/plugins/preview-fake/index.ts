@@ -31,6 +31,8 @@ const t = (zh: string, en: string) => ({ zh, en });
  * - `hang`: a view previewer for `.hang` that waits until the kernel aborts it;
  * - `decline`: a view previewer for `.decl` that needs the conversation, so it declines a share
  *   (throws on `source: "share"`);
+ * - `html` (view) and `html-page` (embed, `docx-embed`) for `.html`: a share of an HTML snapshot
+ *   never reaches them (the built-in wins);
  * - routes for the share embed tests: `GET /ui/claims` (`embed`: echoes the resolved caller) and
  *   `GET /ui/verify` (`public`: `ctx.ui.verifyEmbedToken` of the `x-token` header), and a
  *   `conversation.panel` embed (`panel-embed`) a share token must never verify for.
@@ -113,6 +115,22 @@ export default defineExtension({
             if (args.source === "share") throw new Error("this previewer needs the conversation");
             return { blocks: [{ type: "text", markdown: args.conversationId }] };
           },
+        },
+        {
+          id: "html",
+          title: t("网页（视图）", "Web page (view)"),
+          accepts: { extensions: [".html"] },
+          maxBytes: 1024,
+          async render(): Promise<UiView> {
+            return { blocks: [{ type: "text", markdown: "html view" }] };
+          },
+        },
+        {
+          id: "html-page",
+          title: t("网页（页面）", "Web page (page)"),
+          accepts: { extensions: [".html"] },
+          maxBytes: 1024,
+          embed: "docx-embed",
         },
       ],
     };
