@@ -100,16 +100,20 @@ capybara-device policy remove allowedDomains files.slack.com
 capybara-device policy show
 ```
 
-**Restricted work** runs each operation in its own sandbox: macOS uses `@anthropic-ai/sandbox-runtime`
-(Seatbelt); Linux and Docker mode use the SDK's restricted Linux runtime (Landlock plus a seccomp
-broker). Writes stay in the scope's roots,
-secret paths (`~/.ssh`, cloud CLI credentials, `~/.netrc`, `~/.gnupg`, browser profiles, this
-program's state directory) stay unreadable, and the network reaches only hosts in the local
-`allowedDomains` that the organization's allowlist also admits (plus a run's or a task's grants,
-within that allowlist), through a proxy that refuses loopback, private addresses and internal
-names. Restricted work also follows one write policy (below). When the restricted runtime is
-unavailable here, the device reports it to the deployment and refuses restricted work with the
-reason; nothing falls back to running unconfined.
+**Restricted work** runs each operation in its own sandbox: macOS uses
+`@anthropic-ai/sandbox-runtime` (Seatbelt); Linux and Docker mode use the SDK's restricted Linux
+runtime (Landlock plus a seccomp broker). Writes stay in the scope's roots; reads stay in them too,
+plus the system and developer tool directories (on macOS `/System`, `/usr`, `/bin`, `/sbin`,
+`/private/etc`, Homebrew, Xcode and the Command Line Tools, `/Library/Apple`, `/Library/Frameworks`,
+installed JDKs) and the data of the version managers your home uses, read only; other files of the
+machine, such as the rest of your home, are not readable. Secret paths (`~/.ssh`, cloud CLI
+credentials, `~/.netrc`, `~/.gnupg`, browser profiles, this program's state directory) stay
+unreadable even inside those, and the network reaches only hosts in the local `allowedDomains` that
+the organization's allowlist also admits (plus a run's or a task's grants, within that allowlist),
+through a proxy that refuses loopback, private addresses and internal names. Restricted work also
+follows one write policy (below). When the restricted runtime is unavailable here, the device
+reports it to the deployment and refuses restricted work with the reason; nothing falls back to
+running unconfined.
 
 A change to the ceiling or the policy applies at the next operation without a restart, and running
 work the narrower ceiling no longer allows is stopped. `add` and `remove` work on `allowedDomains`
@@ -211,10 +215,11 @@ times. On Linux, installing again restarts the unit so the new file applies.
 
 ## Operation backend
 
-The program speaks device protocol 3 only. It binds each instance generation the deployment
-creates to a verified, sealed runtime and reports restricted support only once a self-check on
-that runtime passed (macOS) or the runtime's probe passed (Linux, Docker); there is no Full
-fallback for restricted work.
+The program speaks device protocol 3 only. It binds each instance generation the deployment creates
+to a verified, sealed runtime and reports restricted support only once a self-check on that runtime
+passed (macOS: a write in its root goes through, while a write outside it, reads of a denied secret
+and of an ordinary file it was never granted, and a local connection are refused) or the runtime's
+probe passed (Linux, Docker); there is no Full fallback for restricted work.
 
 Each restricted operation has its own immutable sandbox-runtime process and proxy lifetime.
 Native methods use the SDK's hash-checked Python helper and pinned directory descriptors, with a
