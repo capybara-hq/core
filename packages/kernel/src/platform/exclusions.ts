@@ -458,6 +458,32 @@ export const PLATFORM_EXCLUSIONS: readonly {
     category: "transport",
     reason: "Serves a sandboxed HTML document",
   },
+  // public share links (file sharing spec §3, §10): the link's code is the authority
+  {
+    route: "GET /api/v1/s/:code",
+    category: "transport",
+    reason: "Public share link: the shared file's metadata for the share page",
+  },
+  {
+    route: "GET /api/v1/s/:code/content",
+    category: "transport",
+    reason: "Public share link: streams the shared snapshot's bytes",
+  },
+  {
+    route: "GET /api/v1/s/:code/text",
+    category: "transport",
+    reason: "Public share link: the shared text for the share page's preview",
+  },
+  {
+    route: "GET /api/v1/s/:code/inline",
+    category: "transport",
+    reason: "Public share link: the shared image shown in place",
+  },
+  {
+    route: "GET /api/v1/s/:code/html",
+    category: "transport",
+    reason: "Public share link: redirects to the sandboxed HTML document",
+  },
   // identity
   {
     route: "POST /api/v1/orgs/:orgId/approvals/:approvalId/initial-password",

@@ -45,6 +45,13 @@ const PUBLIC_ROUTES = new Set([
   "POST /git/v1/*",
   // File sharing spec §4: the HTML document; its short-lived signed token is the authority
   "GET /api/v1/html/*",
+  // File sharing spec §3: public share links; the 10-character code is the authority, misses
+  // are rate limited per address (`share-open`), internal shares check the member's session
+  "GET /api/v1/s/:code",
+  "GET /api/v1/s/:code/content",
+  "GET /api/v1/s/:code/text",
+  "GET /api/v1/s/:code/inline",
+  "GET /api/v1/s/:code/html",
 ]);
 
 const ZERO_UUID = "00000000-0000-0000-0000-000000000000";

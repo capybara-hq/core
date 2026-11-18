@@ -83,11 +83,12 @@ type Entry =
 const before = (a: Entry, b: Entry): boolean =>
   a.at.getTime() !== b.at.getTime() ? a.at.getTime() > b.at.getTime() : a.id > b.id;
 
-const previewKind = (contentType: string): FileOutput["previewable"] =>
+/** The built-in preview kind of a content type (the files list's `previewable`; share metadata too). */
+export const previewKind = (contentType: string): FileOutput["previewable"] =>
   isInlineArtifactType(contentType) ? "image" : isTextArtifactType(contentType) ? "text" : null;
 
 /** Drops an incomplete UTF-8 sequence at the end of a cut buffer. */
-function trimUtf8(b: Buffer): Buffer {
+export function trimUtf8(b: Buffer): Buffer {
   let i = b.length - 1;
   let cont = 0;
   while (i >= 0 && cont < 3 && ((b[i] as number) & 0xc0) === 0x80) {
@@ -100,7 +101,8 @@ function trimUtf8(b: Buffer): Buffer {
   return need > cont ? b.subarray(0, i) : b;
 }
 
-async function readPrefix(body: ReadableStream<Uint8Array>, max: number): Promise<Buffer> {
+/** Reads at most `max` bytes of a stream, then cancels it. */
+export async function readPrefix(body: ReadableStream<Uint8Array>, max: number): Promise<Buffer> {
   const reader = body.getReader();
   const chunks: Uint8Array[] = [];
   let n = 0;
