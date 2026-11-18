@@ -44,6 +44,7 @@ import { KERNEL_LOGGER, KEYRING, REDIS, REDIS_SUBSCRIBER } from "../infra/tokens
 import { KERNEL_APP_OPTIONS } from "../lifecycle/tokens.js";
 import type { KernelLogger } from "../log.js";
 import { ModelEmbeddings } from "../models/embeddings.js";
+import { ModelImages } from "../models/images.js";
 import { OrgNetworkAllowances } from "../orgs/network-allowances.service.js";
 import { packagePath } from "../packages/tgz.js";
 import { EmbedTokens } from "../ui/embed-token.js";
@@ -682,7 +683,9 @@ export class ExtensionHost {
      */
     @Inject(EffectiveConfigs) private readonly effective: Pick<EffectiveConfigs, "get">,
     /** `ctx.models`: the embeddings broker (spec B §5.4). */
-    @Inject(ModelEmbeddings) models: Pick<ModelEmbeddings, "embed" | "describe">,
+    @Inject(ModelEmbeddings) embeddings: Pick<ModelEmbeddings, "embed" | "describe">,
+    /** `ctx.models.generateImage`: the image generation calls (image generation spec §5.5). */
+    @Inject(ModelImages) images: Pick<ModelImages, "generateForExtension" | "describeForExtension">,
     /** `ctx.net`: the internal endpoints each org's extension requests may reach (read per call). */
     @Inject(OrgNetworkAllowances) allowances: OrgNetworkAllowances,
     /** Tests only: `ctx.net`'s DNS and dispatcher seams (`EXTENSION_NET_SEAMS`). */
@@ -708,8 +711,8 @@ export class ExtensionHost {
       redisUrl: c.redis.url,
       keyring,
       embedTokens,
-      models,
-      // ctx.models.embed fires model.request through the same registry (spec B §5.4)
+      models: { embeddings, images },
+      // ctx.models.embed and generateImage fire model.request through the same registry
       hooks: this.hooks,
       net: { config, allowances, ...(netSeams !== undefined && { seams: netSeams }) },
       locks,

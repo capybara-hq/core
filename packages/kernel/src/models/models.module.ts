@@ -13,7 +13,7 @@ import { ModelPurposesService } from "./purposes.js";
 /**
  * Model prices, model purposes, the model disabled lists, the `ctx.models` embeddings broker and
  * the image generation calls ({@link ModelImages}).
- * Below the extension host (the host injects {@link ModelEmbeddings} for `ctx.models`): it must not
+ * Below the extension host (the host injects both brokers for `ctx.models`): it must not
  * import `ExtensionsModule`.
  */
 @Module({
@@ -23,7 +23,7 @@ import { ModelPurposesService } from "./purposes.js";
     OrgLockModule,
     ProvidersModule,
     ModelEnablementModule,
-    // an embed call's `usage.report` delivery, owed with its `model_usage` row (no queue)
+    // an extension model call's `usage.report` delivery, owed with its `model_usage` row (no queue)
     UsageReportJobsModule,
   ],
   providers: [PricesService, ModelPurposesService, ModelEmbeddings, ModelImages],

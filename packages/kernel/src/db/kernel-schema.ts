@@ -1379,6 +1379,10 @@ export interface ModelUsageTable {
   provider: string;
   model: string;
   input_tokens: number;
+  /** 0146: the call's kind: `embedding` (default) or `image_generation`. */
+  kind: Generated<"embedding" | "image_generation">;
+  /** 0146: images the call produced (0 for an embedding call). */
+  output_images: Generated<number>;
   occurred_at: Ts;
   reported_at: TsNullable;
   /** Set when the row's `usage.report` job gave up after its last attempt. */

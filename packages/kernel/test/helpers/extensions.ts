@@ -139,7 +139,8 @@ export function testHost(
     loggerOf(deps.log, opts.onSecrets),
     opts.resolveFrom !== undefined ? { resolveFrom: opts.resolveFrom } : {},
     { get: effectiveConfig },
-    // no ctx.models broker in a hand-built host: ctx.models calls reject
+    // no ctx.models brokers in a hand-built host: ctx.models calls fail
+    undefined as never,
     undefined as never,
     new OrgNetworkAllowances(h.db, h.txHost, orgLockFor(deps.db)),
   );
