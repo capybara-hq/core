@@ -28,9 +28,9 @@ export interface ArtifactFile {
   data: Uint8Array;
   /**
    * Where the file came from, which groups deliveries into versions in the conversation's files:
-   * the device path for `Deliver`; absent for a generated file, which then groups by its name.
+   * the device path for `Deliver`, `generated/<callId>/<name>` for a generated file.
    */
-  sourcePath?: string;
+  sourcePath: string;
 }
 
 /** A stored artifact as the tool result names it. */
@@ -81,7 +81,7 @@ export async function storeArtifacts(
           contentType: f.contentType,
           size: f.data.byteLength,
           objectKey,
-          sourcePath: f.sourcePath ?? f.name,
+          sourcePath: f.sourcePath,
           callId: ctx.callId,
         },
       });

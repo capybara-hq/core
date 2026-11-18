@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { type ImageGenerateRequest, ToolError } from "@capybara-hq/plugin-sdk";
 import {
@@ -19,6 +19,7 @@ import { ConversationDevices } from "../../src/devices/conversation-devices.js";
 import { ApiError } from "../../src/errors.js";
 import { RecordedToolPipeline, recordedCalls } from "../../src/evals/recorded-tools.js";
 import type { CaseSnapshot } from "../../src/evals/snapshot.js";
+import { ModelImages } from "../../src/models/images.js";
 import { assistantIdemKey } from "../../src/runtime/model-call.js";
 import { ProviderRegistry } from "../../src/runtime/providers.js";
 import { StorageService } from "../../src/storage/storage.service.js";
@@ -26,6 +27,7 @@ import { NO_STORAGE_REASON } from "../../src/tools/builtins/artifacts.js";
 import { BuiltinTools } from "../../src/tools/builtins/builtin-tools.js";
 import {
   GENERATE_IMAGE_DENIED_TEXT,
+  generateImagePaths,
   NO_DEVICE_LINE,
   NO_IMAGE_MODEL_REASON,
   NO_IMAGE_MODEL_TEXT,
@@ -102,6 +104,7 @@ beforeAll(async () => {
               { id: "fake-1" },
               { id: "fake-image", kind: "image_generation" },
               { id: "fake-image-b", kind: "image_generation" },
+              { id: "fake-image-noref", kind: "image_generation", maxReferenceImages: 0 },
             ],
           },
           "sandbox-fake": { root },
@@ -366,6 +369,8 @@ describe("GenerateImage calls", () => {
         callId: r.payload.callId,
       });
       expect(a.payload.objectKey).toBe(`artifacts/${conv}/${a.payload.artifactId}`);
+      // each call's images are their own files, never versions of another call's
+      expect(a.payload.sourcePath).toBe(`generated/${r.payload.callId}/${a.payload.name}`);
       expect(a.runId).toBe(r.runId);
     }
     expect(artifacts.map((a) => a.payload.name)).toEqual(["fox-1.png", "fox-2.png"]);
@@ -460,13 +465,22 @@ describe("GenerateImage calls", () => {
     expect(store.deletes).toEqual([store.puts[0]]);
     const events = await eventsOf(db, conv);
     expect(ofType(events, "artifact_created")).toEqual([]);
-    expect(imageUsage(events)).toEqual([]);
+    // the provider answered: the call is billed (ruling R11)
+    expect(imageUsage(events)).toHaveLength(1);
   });
 
   it("abort after the provider answered stores nothing", async () => {
     const conv = await createConv(owner, orgId, agentId);
     const ac = new AbortController();
-    const seen = providerCalls(() => ac.abort(new Error("stopped")));
+    const seen = providerCalls();
+    // the run is stopped right after the image call returned its images
+    const images = k.app.get(ModelImages);
+    const run = images.run.bind(images);
+    vi.spyOn(images, "run").mockImplementation(async (...args) => {
+      const out = await run(...args);
+      ac.abort(new Error("stopped"));
+      return out;
+    });
     const store = trackStore();
     const err = await rejection(direct(conv, { prompt: "a fox", n: 2 }, { signal: ac.signal }));
     expect((err as Error).message).toBe("stopped");
@@ -474,7 +488,8 @@ describe("GenerateImage calls", () => {
     expect(store.puts).toEqual([]);
     const events = await eventsOf(db, conv);
     expect(ofType(events, "artifact_created")).toEqual([]);
-    expect(imageUsage(events)).toEqual([]);
+    // billed: the provider answered before the abort
+    expect(imageUsage(events)).toHaveLength(1);
   });
 
   it("a policy denial: hook_denied event, no provider call, no usage, the denial text", async () => {
@@ -549,11 +564,41 @@ describe("GenerateImage calls", () => {
       `Image generation failed: the model returned an image of ${PNG.byteLength} bytes, over the artifact limit of ${PNG.byteLength - 1} bytes. Retry once, or continue without the image.`,
     );
     expect(store.puts).toEqual([]);
+    expect(imageUsage(await eventsOf(db, conv))).toHaveLength(1);
+  });
+
+  it("too many references are refused before any is read", async () => {
+    await map("fake-image-noref");
+    const conv = await createConv(owner, orgId, agentId);
+    const seen = providerCalls();
+    // an id that resolves to nothing: the count check comes first, so it is never looked up
+    const err = await rejection(
+      direct(conv, { prompt: "a cat", reference_images: [randomUUID()] }),
+    );
+    expect((err as ToolError).message).toBe(
+      "this model takes no reference images; fix the argument and retry.",
+    );
+    expect(seen).toEqual([]);
+  });
+
+  it("a blank name has its own text", async () => {
+    const conv = await createConv(owner, orgId, agentId);
+    const err = await rejection(direct(conv, { prompt: "a cat", name: "   " }));
+    expect((err as ToolError).message).toBe(
+      'name must not be blank; pass a short file name such as "poster", or omit it.',
+    );
   });
 });
 
 describe("GenerateImage file_path", () => {
   it("suffixes go before the extension of the file name", () => {
+    expect(generateImagePaths({ prompt: "x" })).toEqual([]);
+    expect(generateImagePaths({ file_path: "/w/a.png" })).toEqual(["/w/a.png"]);
+    expect(generateImagePaths({ file_path: "/w/a.png", n: 1 })).toEqual(["/w/a.png"]);
+    expect(generateImagePaths({ file_path: "/w/a.png", n: 2 })).toEqual([
+      "/w/a-1.png",
+      "/w/a-2.png",
+    ]);
     expect(suffixedPath("out/poster.png", 1)).toBe("out/poster-1.png");
     expect(suffixedPath("/a.b/poster", 2)).toBe("/a.b/poster-2");
     expect(suffixedPath("/w/.hidden", 1)).toBe("/w/.hidden-1");
@@ -635,6 +680,69 @@ describe("GenerateImage file_path", () => {
       rule: "ask.outside-write",
     });
     expect(seen).toHaveLength(1);
+  });
+});
+
+describe("GenerateImage file_path: several paths", () => {
+  it("a partial copy reports the paths written and the failure", async () => {
+    const conv = await createConv(owner, orgId, agentId);
+    // the first call starts the device; its file shows where the workspace lives on the host
+    const first = `seed${randomUUID().slice(0, 6)}`;
+    await call(conv, { prompt: "a seed", file_path: `out/${first}.png` });
+    const all = (await readdir(root, { recursive: true })) as string[];
+    const seed = all.find((p) => p.endsWith(`/out/${first}.png`)) as string;
+    // a directory where the second image goes: its write fails on the device
+    const name = `part${randomUUID().slice(0, 6)}`;
+    await mkdir(join(root, dirname(seed), `${name}-2.png`), { recursive: true });
+    const r = await call(conv, { prompt: "two", n: 2, file_path: `out/${name}.png` }, 2);
+    expect(r.payload.isError, r.payload.content).toBe(false);
+    const lines = r.payload.content.split("\n");
+    expect(lines.at(-2)).toMatch(new RegExp(`^Written to the device: \\S+/out/${name}-1\\.png$`));
+    expect(lines.at(-1)).toMatch(
+      new RegExp(
+        `^Not written to the device: the device could not write \\S+/out/${name}-2\\.png; check that the path is not a directory and retry\\.$`,
+      ),
+    );
+    expect(await deviceFiles(`${name}-1.png`)).toEqual([PNG]);
+  });
+
+  it("n=2 outside the workspace: the review sees both suffixed paths", async () => {
+    const conv = await createConv(owner, orgId, agentId);
+    const dir = `/etc/capybara-img-${randomUUID().slice(0, 6)}`;
+    await postMessage(
+      owner,
+      orgId,
+      conv,
+      `tool:GenerateImage:${JSON.stringify({ prompt: "two foxes", n: 2, file_path: `${dir}/fox.png` })}`,
+    );
+    const ask = await waitFor(
+      async () =>
+        db
+          .selectFrom("approvals")
+          .select(["id", "detail"])
+          .where("conversation_id", "=", conv)
+          .where("kind", "=", "command")
+          .where("status", "=", "pending")
+          .executeTakeFirst(),
+      30_000,
+      "the command ask",
+    );
+    expect(ask.detail as Record<string, unknown>).toMatchObject({
+      kind: "write",
+      path: `${dir}/fox-1.png, ${dir}/fox-2.png`,
+      rule: "ask.outside-write",
+    });
+    const decided = await owner({
+      method: "POST",
+      url: `/api/v1/orgs/${orgId}/approvals/${ask.id}/decision`,
+      payload: { decision: "approve", scope: "once" },
+    });
+    expect(decided.statusCode, decided.body).toBe(200);
+    await waitForTerminal(db, conv, 1, 30_000);
+    const r = ofType(await eventsOf(db, conv), "tool_result").at(-1) as ToolResultEvent;
+    expect(r.payload.content.split("\n").at(-1)).toBe(
+      `Written to the device: ${dir}/fox-1.png, ${dir}/fox-2.png`,
+    );
   });
 });
 

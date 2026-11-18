@@ -53,6 +53,7 @@ import {
   withNotices,
   withPathLease,
 } from "../sandbox/common.js";
+import { generateImagePaths } from "./paths.js";
 
 /** The model purpose the tool calls (image generation spec §5.4; no fallback). */
 const PURPOSE = "image";
@@ -150,6 +151,17 @@ const badReferenceText = (k: number): string =>
   } MB; pass another image, or call without it.`;
 const BAD_NAME =
   "name must not contain control characters, / or \\; pass a plain base name such as poster.";
+const BLANK_NAME = 'name must not be blank; pass a short file name such as "poster", or omit it.';
+/** The request building's refusal of too many references (checked before any is read). */
+const tooManyReferencesText = (max: number): string =>
+  invalidText(
+    max === 0
+      ? "this model takes no reference images"
+      : `this model takes at most ${max} reference images`,
+  );
+/** Why a device write failed for a reason the device did not explain (its error stays in the log). */
+const copyFailedText = (path: string): string =>
+  `the device could not write ${clip(path, 200)}; check that the path is not a directory and retry.`;
 /** The device line of a call whose conversation has no device to write to. */
 export const NO_DEVICE_LINE = "Not written to the device: this conversation has no device.";
 
@@ -220,6 +232,7 @@ export function generateImageTool(deps: GenerateImageDeps): BuiltinTool {
       const input = raw as GenerateImageInput;
       if (!deps.storage.available) throw new ToolError(NO_STORAGE);
       const base = input.name?.trim();
+      if (base === "") throw new ToolError(BLANK_NAME);
       if (base !== undefined && (!isValidArtifactName(base) || /[/\\]/.test(base))) {
         throw new ToolError(BAD_NAME);
       }
@@ -232,11 +245,17 @@ export function generateImageTool(deps: GenerateImageDeps): BuiltinTool {
       // the cheap checks (prompt, count, size, the model) before any reference is read
       let prepared = await prepare(deps, ctx, call);
       const refs = input.reference_images ?? [];
+      if (refs.length > prepared.info.maxReferenceImages) {
+        throw new ToolError(tooManyReferencesText(prepared.info.maxReferenceImages));
+      }
       if (refs.length > 0) {
+        // the bytes are checked (type, size) and sent by the request building
         const referenceImages = await resolveReferences(deps, ctx, refs);
         prepared = await prepare(deps, ctx, { ...call, referenceImages });
       }
       const result = await generate(deps, ctx, prepared);
+      // a valid answer is billed whatever happens to its images afterwards (ruling R11)
+      await logUsage(deps, ctx, prepared, result);
       // images a late answer carries after an abort are dropped: nothing is stored
       ctx.signal.throwIfAborted();
       const max = deps.config.get().sandbox.deliverMaxBytes;
@@ -258,8 +277,12 @@ export function generateImageTool(deps: GenerateImageDeps): BuiltinTool {
           data: new Uint8Array(data.buffer, data.byteOffset, data.byteLength),
         };
       });
-      const stored = await storeArtifacts(deps, ctx, files);
-      await logUsage(deps, ctx, prepared, result);
+      // each call's images are their own files, never versions of an earlier call's (R13)
+      const stored = await storeArtifacts(
+        deps,
+        ctx,
+        files.map((f) => ({ ...f, sourcePath: `generated/${ctx.callId}/${f.name}` })),
+      );
       let deviceLine: string | null = null;
       let notices: string[] = [];
       if (input.file_path !== undefined) {
@@ -514,20 +537,12 @@ async function recordDenial(
   }
 }
 
-/** `path` with `-<i>` before the extension of its last segment (or at its end without one). */
-export function suffixedPath(path: string, i: number): string {
-  const slash = path.lastIndexOf("/");
-  const dot = path.lastIndexOf(".");
-  // a dot that starts the file name (`.env`) is not an extension
-  if (dot <= slash + 1) return `${path}-${i}`;
-  return `${path.slice(0, dot)}-${i}${path.slice(dot)}`;
-}
-
 /**
  * Writes the images into the call's device at `filePath` (several: `-1`, `-2`… before the
- * extension), each path checked as `Write` checks it and written under its path lease. The
- * images are already delivered, so a copy that cannot be made is a line of the result, not a
- * tool error: no device, or the reason the device gave. An abort still ends the call.
+ * extension, {@link generateImagePaths}), each path checked as `Write` checks it and written under
+ * its path lease. The images are already delivered, so a copy that cannot be made is a line of the
+ * result, not a tool error: no device, or the reason the device gave, after the paths written
+ * before it failed. An abort still ends the call.
  */
 async function copyToDevice(
   deps: GenerateImageDeps,
@@ -538,25 +553,43 @@ async function copyToDevice(
   const sb = deps.sandbox;
   const conv = sandboxConversationOf(ctx);
   if (!(await hasDevice(sb, ctx.orgId, conv))) return { line: NO_DEVICE_LINE, notices: [] };
+  const targets = generateImagePaths({ file_path: filePath, n: files.length });
+  // the paths written so far (a rebuilt instance runs the copy again from the start)
+  let written: string[] = [];
+  let current = targets[0] as string;
   try {
-    const { value: paths, notices } = await inSandbox(sb, ctx, async (s) => {
-      const written: string[] = [];
+    const { notices } = await inSandbox(sb, ctx, async (s) => {
+      written = [];
       for (const [i, f] of files.entries()) {
-        const path = checkToolWritable(
-          files.length === 1 ? filePath : suffixedPath(filePath, i + 1),
-          s,
-        );
+        current = targets[i] as string;
+        const path = checkToolWritable(current, s);
+        current = path;
         await withPathLease(sb, { deviceId: s.deviceId }, path, s.signal, (signal) =>
           s.p.writeFile(s.h, path, f.data, signal),
         );
         written.push(path);
       }
-      return written;
     });
-    return { line: `Written to the device: ${paths.join(", ")}`, notices };
+    return { line: `Written to the device: ${written.join(", ")}`, notices };
   } catch (e) {
-    if (ctx.signal.aborted || !(e instanceof ToolError)) throw e;
-    return { line: `Not written to the device: ${e.message}`, notices: [] };
+    if (ctx.signal.aborted) throw e;
+    // a device's own error is not shown to the model (it may name provider internals)
+    if (!(e instanceof ToolError)) {
+      deps.log.warn("GenerateImage device copy failed", {
+        conversationId: ctx.conversationId,
+        callId: ctx.callId,
+        err: e,
+      });
+    }
+    const failed = `Not written to the device: ${
+      e instanceof ToolError ? e.message : copyFailedText(current)
+    }`;
+    // a partial copy says which files are there before the failure
+    return {
+      line:
+        written.length === 0 ? failed : `Written to the device: ${written.join(", ")}\n${failed}`,
+      notices: [],
+    };
   }
 }
 

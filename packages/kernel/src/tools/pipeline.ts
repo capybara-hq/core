@@ -87,6 +87,7 @@ import { Breaker, breakerOpenMessage } from "./breaker.js";
 import { SEND_MESSAGE, SUBAGENT_HANDBACK, TOOL_SEARCH } from "./builtin-names.js";
 import { AGENT_TOOL, AgentToolInput } from "./builtins/agent.js";
 import { HandbackInput } from "./builtins/handback.js";
+import { generateImagePaths } from "./builtins/image/paths.js";
 import {
   DEVICE_CODE_PATTERN,
   deviceCodeIdemKey,
@@ -511,8 +512,11 @@ const REVIEWED_TOOL_KEYS: ReadonlySet<string> = new Set(["Bash", "Write", "Edit"
 /** Whether the review covers this call ({@link REVIEWED_TOOL_KEYS}; `GenerateImage` with a path). */
 const isReviewedCall = (toolKey: string, input: unknown): boolean =>
   REVIEWED_TOOL_KEYS.has(toolKey) &&
-  (toolKey !== "GenerateImage" ||
-    typeof (input as { file_path?: unknown } | null)?.file_path === "string");
+  (toolKey !== "GenerateImage" || generateImagePaths(input).length > 0);
+
+/** The paths a reviewed write writes: `file_path`, or every path of a `GenerateImage` call. */
+const writePathsOf = (toolKey: string, input: unknown): string[] =>
+  toolKey === "GenerateImage" ? generateImagePaths(input) : [textField(input, "file_path")];
 
 /** Whether the review holds a shell command or a file write, for the texts and the ask's detail. */
 const reviewKindOf = (toolKey: string): "command" | "write" =>
@@ -1646,11 +1650,14 @@ export class ToolPipeline {
       // the whole command the approval covers (the event keeps a clamped copy for display)
       command,
       // a relative path as it will be written: resolved against the working root
+      // (every path a GenerateImage call writes, comma-separated)
       ...(kind === "write" && {
         path: clipText(
-          facts.workingRoot === undefined
-            ? textField(input, "file_path")
-            : pathAgainstWorkingRoot(textField(input, "file_path"), facts.workingRoot),
+          writePathsOf(tool.key, input)
+            .map((p) =>
+              facts.workingRoot === undefined ? p : pathAgainstWorkingRoot(p, facts.workingRoot),
+            )
+            .join(", "),
           4096,
         ),
       }),
