@@ -1,5 +1,17 @@
 # @capybara-hq/plugin-sdk
 
+## 0.1.0-rc.34
+
+### Minor Changes
+
+- 40d039f: `channel@1` gains the optional `sendFile` and `features.files` (one conversation artifact per message, `ChannelSendFileArgs`, `ChannelFile`); `asCode` is exported.
+
+### Patch Changes
+
+- 45ff51f: New UI part `image-placeholder` (`aria-busy`): the placeholder the conversation draws while an
+  image is being generated. The design package adds `ImagePlaceholder` and an `ImageOutput.ratio`
+  pre-load hint.
+
 ## 0.1.0-rc.33
 
 ### Minor Changes

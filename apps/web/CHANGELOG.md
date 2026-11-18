@@ -1,5 +1,15 @@
 # @capybara-hq/web
 
+## 0.1.0-rc.55
+
+### Patch Changes
+
+- adb0b31: While GenerateImage runs, the conversation shows one placeholder per requested image, shaped by
+  the requested aspect ratio, and the images replace them in place.
+- Updated dependencies [d3fe7c3]
+- Updated dependencies [45ff51f]
+  - @capybara-hq/design@0.2.0-rc.18
+
 ## 0.1.0-rc.54
 
 ### Patch Changes
