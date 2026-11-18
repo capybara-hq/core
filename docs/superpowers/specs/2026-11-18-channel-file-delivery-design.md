@@ -1,7 +1,8 @@
 # Channel file delivery: conversation artifacts reach the IM user
 
 - Date: 2026-11-18.
-- Status: draft for maintainer review.
+- Status: approved by the maintainer; Part A (core) implemented in PR #377, Part B (plugins) follows
+  the core release gate.
 - Scope agreed with the maintainer: everything that writes `artifact_created` reaches the IM
   conversation (the `Deliver` tool, `GenerateImage` images, any later producer), not a special
   case for one tool. Images show as images where the platform allows it.

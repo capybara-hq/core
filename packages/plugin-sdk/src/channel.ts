@@ -270,7 +270,9 @@ export interface Channel {
    * Optional file delivery: one message per file; the kernel picks `kind`; an extension may send an
    * `image` as a file when the platform refuses it as an image, never the reverse; `messageId`
    * when the platform returns it; failures as {@link ChannelSendError} (`send`); never put an
-   * upload URL in an error.
+   * upload URL in an error. Throw a missing upload permission or scope as a non-retryable
+   * {@link ChannelSendError} with `reason: "rejected"`, never `auth`: `auth` stops the whole
+   * delivery of the conversation, text included, while `rejected` only turns this file into a link.
    */
   sendFile?(args: ChannelSendFileArgs): Promise<{ messageId?: string }>;
   /**
