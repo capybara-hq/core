@@ -1,5 +1,13 @@
 # @capybara-hq/plugin-client
 
+## 0.1.0-rc.6
+
+### Patch Changes
+
+- 45ff51f: New UI part `image-placeholder` (`aria-busy`): the placeholder the conversation draws while an
+  image is being generated. The design package adds `ImagePlaceholder` and an `ImageOutput.ratio`
+  pre-load hint.
+
 ## 0.1.0-rc.5
 
 ### Patch Changes

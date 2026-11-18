@@ -1,5 +1,16 @@
 # @capybara-hq/design
 
+## 0.2.0-rc.18
+
+### Patch Changes
+
+- d3fe7c3: TaskOutput and TaskList calls get their own tool kind: a group waiting on a background task says
+  "Waiting on a background task" instead of "Reading file", and done ones count as background task
+  checks, not file reads.
+- 45ff51f: New UI part `image-placeholder` (`aria-busy`): the placeholder the conversation draws while an
+  image is being generated. The design package adds `ImagePlaceholder` and an `ImageOutput.ratio`
+  pre-load hint.
+
 ## 0.2.0-rc.17
 
 ### Patch Changes
