@@ -11,6 +11,8 @@ import {
 import { Inject, Injectable } from "@nestjs/common";
 import { sql } from "kysely";
 import {
+  ACTOR_DEVICE_ACCESS_REASON,
+  ACTOR_NOT_DEVICE_OWNER_REASON,
   type PermissionContextV1,
   PermissionContextV1Schema,
   permissionCodePointCompare,
@@ -167,7 +169,7 @@ export function restrictedReadRoots(
 ): string[] {
   const skills = applied?.roots.skills;
   const roots =
-    skills && skills.startsWith("/") && !withinDirectory(skills, workingRoot)
+    skills?.startsWith("/") && !withinDirectory(skills, workingRoot)
       ? [workingRoot, skills]
       : [workingRoot];
   return [...new Set(roots)].sort(permissionCodePointCompare);
@@ -829,11 +831,22 @@ export class SandboxOperationAuthority {
     signal: AbortSignal,
   ): Promise<PermissionContextV1> {
     signal.throwIfAborted();
-    const root = await this.profiles.readOwnedRoot(
-      input.orgId,
-      input.conversationId,
-      input.accountId,
-    );
+    // a run whose trigger account is not the conversation's owner (a group-chat sender, a wake
+    // attributed to another member) is not refused: its context is unavailable and it runs without
+    // the device, which is never used by another account. A removed or disabled actor keeps the
+    // actor refusal (B-19), and the run must be this account's run of this conversation
+    let foreign = false;
+    let root: PermissionRoot;
+    try {
+      root = await this.profiles.readOwnedRoot(input.orgId, input.conversationId, input.accountId);
+    } catch (error) {
+      if (!(error instanceof ApiError) || error.code !== "conversation.not_found") throw error;
+      if (!(await this.isActiveMember(input.orgId, input.accountId)))
+        throw new ApiError("forbidden", "This run's actor is no longer authorized");
+      root = await this.profiles.readRoot(input.orgId, input.conversationId);
+      await this.runScheduledLocked(input.conversationId, input.accountId, input.runId);
+      foreign = true;
+    }
     const held = (kind: "platform" | "org" | "device" | "root", id: string) => {
       try {
         assertAuthorityHeld(kind, id);
@@ -865,6 +878,22 @@ export class SandboxOperationAuthority {
       signal.throwIfAborted();
       return PermissionContextV1Schema.parse(payload);
     };
+    if (foreign && root.device_id !== null)
+      return parse({
+        ...header,
+        profileRevision: null,
+        selectedProfile: null,
+        effectiveProfile: null,
+        deviceId: null,
+        scopeRevision: null,
+        authorityRevision: null,
+        availability: {
+          state: "unavailable",
+          cause: "actor-device-access",
+          reason: ACTOR_NOT_DEVICE_OWNER_REASON,
+        },
+        scope: null,
+      });
     const { view, access } = await this.facts.viewWithAccess(input.orgId, input.accountId, root);
     if (root.device_id === null || access === "no-device")
       return parse({
@@ -894,7 +923,7 @@ export class SandboxOperationAuthority {
         availability: {
           state: "unavailable",
           cause: "actor-device-access",
-          reason: "This run's actor cannot use the selected device",
+          reason: ACTOR_DEVICE_ACCESS_REASON,
         },
         scope: null,
       });

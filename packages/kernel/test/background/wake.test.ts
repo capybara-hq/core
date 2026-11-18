@@ -16,7 +16,11 @@ import { BackgroundTaskStopper } from "../../src/background/stop.js";
 import { BackgroundTaskStore } from "../../src/background/store.js";
 import { bgWakeJobId, WAKE_WINDOW_MS } from "../../src/background/wake-rules.js";
 import { EventLog } from "../../src/conversations/event-log.js";
-import type { ConversationEvent, EventPayload } from "../../src/conversations/events.js";
+import {
+  ACTOR_NOT_DEVICE_OWNER_REASON,
+  type ConversationEvent,
+  type EventPayload,
+} from "../../src/conversations/events.js";
 import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { reconstructRequest } from "../../src/evals/reconstruct.js";
@@ -483,6 +487,21 @@ describe("waking an idle conversation", () => {
     expect(wake.trigger_account_id).toBe(bobId);
     const started = await runStarted(conv, wake.id);
     expect(started.payload).toMatchObject({ triggerAccountId: bobId, trigger: "background_task" });
+    // the wake's account is not the conversation's owner: its context is unavailable and the
+    // run goes on without the owner's device (never used by another account)
+    const contexts = (await eventsOf(db, conv)).filter(
+      (e) => e.type === "permission_context" && e.runId === wake.id,
+    );
+    expect(contexts.at(-1)?.payload).toMatchObject({
+      deviceId: null,
+      selectedProfile: null,
+      scope: null,
+      availability: {
+        state: "unavailable",
+        cause: "actor-device-access",
+        reason: ACTOR_NOT_DEVICE_OWNER_REASON,
+      },
+    });
     const sent = requestsWith("SCENARIO idle");
     // the last message but the context the wake run's start records for its new trigger account
     // (the run context update and the permission context)

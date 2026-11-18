@@ -88,6 +88,18 @@ const PermissionDirectories = z
       ),
     "Directories must be unique and sorted by Unicode code point",
   );
+/**
+ * The fixed reasons of an `actor-device-access` context: the actor cannot use the selected device
+ * at all, or the run's account is not the conversation's owner (a group-chat sender, a wake for
+ * another member), whose device is never used by another account.
+ */
+export const ACTOR_DEVICE_ACCESS_REASON = "This run's actor cannot use the selected device";
+export const ACTOR_NOT_DEVICE_OWNER_REASON =
+  "The selected device belongs to the conversation's owner, and this run's account is not its owner, so this run continues without the device";
+const ACTOR_DEVICE_ACCESS_REASONS: readonly string[] = [
+  ACTOR_DEVICE_ACCESS_REASON,
+  ACTOR_NOT_DEVICE_OWNER_REASON,
+];
 const PermissionRevision = z.string().min(1).max(256);
 const PermissionReason = z
   .string()
@@ -166,7 +178,7 @@ export const PermissionContextV1Schema = z
       if (p.availability.cause === "actor-device-access") {
         if (p.selectedProfile !== null || p.profileRevision !== null)
           reject("Device access refusal must redact the owner's profile");
-        if (p.availability.reason !== "This run's actor cannot use the selected device")
+        if (!ACTOR_DEVICE_ACCESS_REASONS.includes(p.availability.reason))
           reject("Invalid device access reason");
       } else if (p.availability.reason !== "Choose a device to run device operations")
         reject("Invalid no-device reason");
