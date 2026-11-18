@@ -32,6 +32,11 @@ import { modelDeniedText } from "../runtime/model-call.js";
 import { ProviderRegistry } from "../runtime/providers.js";
 import { ModelPurposesService } from "./purposes.js";
 
+/** Standard padded base64 (the check `validateImageGenerateResult` applies to results). */
+const BASE64 = /^[A-Za-z0-9+/]+={0,2}$/;
+/** `MEDIA_LIMITS.imageBytes` in MB, for the reference-image error text. */
+const IMAGE_LIMIT_MB = MEDIA_LIMITS.imageBytes / 1_048_576;
+
 /** What a caller asks for (the tool or `ctx.models.generateImage`); references are bytes already. */
 export interface ImageCallInput {
   prompt: string;
@@ -131,9 +136,9 @@ export class ModelImages {
     }
     refs.forEach((r, i) => {
       const okType = (IMAGE_MEDIA_TYPES as readonly string[]).includes(r?.mediaType);
-      const okData = typeof r?.data === "string" && r.data !== "";
+      const okData = typeof r?.data === "string" && BASE64.test(r.data);
       if (!okType || !okData || base64Bytes(r.data) > MEDIA_LIMITS.imageBytes) {
-        bad(`reference image ${i} must be PNG, JPEG, GIF or WebP up to 5 MB`);
+        bad(`reference image ${i} must be PNG, JPEG, GIF or WebP up to ${IMAGE_LIMIT_MB} MB`);
       }
     });
 

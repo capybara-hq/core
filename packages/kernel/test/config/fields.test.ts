@@ -50,6 +50,9 @@ describe("configFields", () => {
       "evals.orgConcurrency",
       "models.listTimeoutMs",
       "models.embedTimeoutMs",
+      "models.imageTimeoutMs",
+      "models.imageMaxPerCall",
+      "models.imagePromptMaxChars",
       "hooks.timeoutMs",
       "log.level",
     ]);

@@ -2078,7 +2078,7 @@ export const KernelConfigSchema = z.strictObject({
         .number()
         .int()
         .positive()
-        .max(1_800_000)
+        .max(600_000)
         .default(300_000)
         .meta(
           meta({
@@ -2091,7 +2091,7 @@ export const KernelConfigSchema = z.strictObject({
         .number()
         .int()
         .positive()
-        .max(16)
+        .max(10)
         .default(4)
         .meta(
           meta({
@@ -2104,7 +2104,7 @@ export const KernelConfigSchema = z.strictObject({
         .number()
         .int()
         .positive()
-        .max(100_000)
+        .max(32_000)
         .default(4_000)
         .meta(
           meta({

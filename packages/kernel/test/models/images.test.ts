@@ -219,6 +219,15 @@ describe("ModelImages.prepare", () => {
         referenceImages: [{ mediaType: "image/bmp" as never, data: PNG_1X1 }],
       }),
     ).toBe("reference image 0 must be PNG, JPEG, GIF or WebP up to 5 MB");
+    for (const data of ["not base64!", "", "https://example.invalid/x.png"]) {
+      expect(
+        await invalid({ prompt: "a", referenceImages: [ref, { mediaType: "image/png", data }] }),
+      ).toBe("reference image 1 must be PNG, JPEG, GIF or WebP up to 5 MB");
+    }
+    const big = "A".repeat(Math.ceil((5_242_880 + 1) / 3) * 4);
+    expect(
+      await invalid({ prompt: "a", referenceImages: [{ mediaType: "image/png", data: big }] }),
+    ).toBe("reference image 0 must be PNG, JPEG, GIF or WebP up to 5 MB");
     await map("fake-image-noref");
     expect(await invalid({ prompt: "a", referenceImages: [ref] })).toBe(
       "this model takes no reference images",
@@ -339,7 +348,7 @@ describe("ModelImages.run", () => {
     expect(JSON.stringify(res)).not.toContain(out.images[0]?.data);
   });
 
-  it("rejects an invalid provider result and stores nothing", async () => {
+  it("rejects an invalid provider result as ModelError server and reports it failed", async () => {
     for (const prompt of ["short", "url"]) {
       const hooks = fakeHooks();
       const err = await rejection(generate(prompt, EXT, hooks.runner));
