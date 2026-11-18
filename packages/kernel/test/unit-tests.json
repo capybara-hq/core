@@ -32,6 +32,7 @@
   "config/runtime-limits.test.ts",
   "config/tools.test.ts",
   "conversations/events.test.ts",
+  "conversations/prompt-suggestion-request.test.ts",
   "devices/label.test.ts",
   "devices/sandbox-state.test.ts",
   "evals/diff.test.ts",

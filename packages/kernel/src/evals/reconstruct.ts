@@ -45,7 +45,11 @@ import {
   RecordedPermissionContextError,
 } from "../runtime/context/permission-profile.js";
 import { estimateTokens } from "../runtime/context/tokens.js";
-import { assembleModelRequest, type MediaSourceDeps } from "../runtime/model-call.js";
+import {
+  type AssembleModelRequestInput,
+  assembleModelRequest,
+  type MediaSourceDeps,
+} from "../runtime/model-call.js";
 import { CHILD_REMOVED_TOOLS } from "../runtime/subagents/definition.js";
 import { AGENT_TOOL } from "../tools/builtin-names.js";
 import { canonicalJson } from "./recorded-tools.js";
@@ -266,11 +270,30 @@ const sameList = (
   (a ?? []).length === (b ?? []).length &&
   (a ?? []).every((x, i) => x.key === b?.[i]?.key && x.specHash === b?.[i]?.specHash);
 
-export function reconstructRequest(
+/** What {@link reconstructInputs} gathered for one recorded call. */
+export interface ReconstructInputs {
+  /** The {@link assembleModelRequest} input that rebuilds the call (its own input events). */
+  input: AssembleModelRequestInput;
+  /** Drift found while gathering the inputs; the rest is judged after assembling. */
+  drift: Set<DriftReason>;
+  /** No candidate definition, params, version or template: a zero-drift baseline. */
+  baseline: boolean;
+  /** The recorded call. */
+  call: ModelCallEvent;
+  /** The snapshot's events. */
+  events: ConversationEvent[];
+}
+
+/**
+ * The inputs {@link reconstructRequest} hands {@link assembleModelRequest} for the `model_call` at
+ * `modelCallSeq`, with the drift found on the way. One path: `reconstructRequest` builds from it,
+ * and the prompt suggestion side request extends the same input with later events.
+ */
+export function reconstructInputs(
   s: CaseSnapshot,
   modelCallSeq: number,
   opts: ReconstructOptions,
-): ReconstructResult {
+): ReconstructInputs {
   const all = toEvents(s);
   const call = findCall(all, modelCallSeq);
   const rec: Recorded = call.payload.request;
@@ -335,8 +358,6 @@ export function reconstructRequest(
   // 工具：按记录的顺序从快照取定义；取不到的从请求里去掉（基线与候选一样）
   const tools: RequestTool[] = [];
   const seen = new Set<string>();
-  const kept = (list: Recorded["tools"]) =>
-    list.filter((t) => s.toolSpecs[t.specHash] !== undefined);
   for (const t of [...rec.tools, ...(rec.catalog ?? [])]) {
     if (seen.has(t.key)) continue;
     seen.add(t.key);
@@ -366,7 +387,7 @@ export function reconstructRequest(
   }
   const budget = opts.mediaBudgetBytes ?? rec.mediaBudgetBytes;
 
-  const built = assembleModelRequest({
+  const input: AssembleModelRequestInput = {
     events: inputEvents(all, call),
     agent,
     agentVersion: version,
@@ -387,8 +408,20 @@ export function reconstructRequest(
     ...(baseline && { recordedMaxOutputTokens: rec.maxOutputTokens }),
     // the baseline replays the recorded trim (no reserve needed); a candidate below recomputes it
     ...(baseline && rec.fit !== undefined ? { fit: rec.fit } : {}),
-  });
-  const { request, meta, mediaTokens } = built;
+  };
+  return { input, drift, baseline, call, events: all };
+}
+
+export function reconstructRequest(
+  s: CaseSnapshot,
+  modelCallSeq: number,
+  opts: ReconstructOptions,
+): ReconstructResult {
+  const { input, drift, baseline, call, events: all } = reconstructInputs(s, modelCallSeq, opts);
+  const rec: Recorded = call.payload.request;
+  const kept = (list: Recorded["tools"]) =>
+    list.filter((t) => s.toolSpecs[t.specHash] !== undefined);
+  const { request, meta, mediaTokens } = assembleModelRequest(input);
 
   if (!baseline) {
     // The hard fit guard against the candidate's window (spec §4.9), as the runtime runs it: plan
