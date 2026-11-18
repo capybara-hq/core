@@ -758,7 +758,7 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
         `<figure class="r-img"><div class="r-img-gen" role="img" aria-busy="true" aria-label="${esc(label)}" data-ratio="${ratio}">${icon("image", 16)}</div><figcaption class="r-tline"><span class="r-tlabel"><span class="r-em">${esc(label.split("，")[0])}</span><span class="r-faint"> · ${ratio}</span></span></figcaption></figure>`;
       if (o.state === "generating") return gen(G.ratio, "正在生成图片，" + G.ratio);
       if (o.state === "generating-several")
-        return gen(G.several.ratio, `正在生成图片 1/${G.several.count}，${G.several.ratio}`);
+        return `<div class="r-col-gap">${[1, 2].map((i) => gen(G.several.ratio, `正在生成图片 ${i}/${G.several.count}，${G.several.ratio}`)).join("")}</div>`;
       const I = FI.image;
       const delivered = `<figure class="r-img"><div class="r-img-frame">${chart()}</div><figcaption class="r-tline"><span class="r-tlabel"><span class="r-em">${esc(I.name)}</span><span class="r-faint"> · ${esc(I.dimensions)} · ${esc(I.size)}</span></span></figcaption></figure>`;
       return `<div class="r-col-gap">${gen(G.wide.ratio, "正在生成图片，" + G.wide.ratio)}${delivered}</div>`;

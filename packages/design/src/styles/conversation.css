@@ -1448,6 +1448,7 @@ button.cb-file-card:focus-visible {
   overflow: hidden;
   border-radius: var(--cb-radius-md);
   background: var(--cb-panel);
+  color: var(--cb-faint);
 }
 .cb-image-placeholder::before {
   content: "";

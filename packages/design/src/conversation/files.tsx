@@ -226,13 +226,11 @@ export function ImagePlaceholder({
         aria-label={full}
         data-ratio={ratio ?? "1:1"}
       >
-        <span className="cb-faint" aria-hidden="true">
-          <Icon name="image" size={16} />
-        </span>
+        <Icon name="image" size={16} />
       </div>
       <figcaption className="cb-tool-line" data-part="tool-line" aria-hidden="true">
         <span className="cb-tool-label">
-          <span className="cb-muted">{label}</span>
+          <span className="cb-ink">{label}</span>
           {ratio ? <span className="cb-faint">{` · ${ratio}`}</span> : null}
         </span>
       </figcaption>

@@ -3030,7 +3030,7 @@ textarea {
 .r-col-gap {
   display: flex;
   flex-direction: column;
-  gap: var(--cb-space-3);
+  gap: var(--cb-space-2);
 }
 .r-imgtools {
   position: absolute;
