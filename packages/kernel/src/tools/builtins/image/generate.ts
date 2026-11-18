@@ -46,13 +46,15 @@ import {
   checkToolWritable,
   clip,
   display,
-  inSandbox,
+  inToolSandbox,
   type SandboxToolDeps,
   sandboxConversationOf,
   sandboxUsable,
   withNotices,
   withPathLease,
 } from "../sandbox/common.js";
+import { assertReadAndUnchanged, FileGuardError, fileStateOf } from "../sandbox/file-state.js";
+import { READ_MAX_BYTES } from "../sandbox/read.js";
 import { generateImagePaths } from "./paths.js";
 
 /** The model purpose the tool calls (image generation spec §5.4; no fallback). */
@@ -161,7 +163,16 @@ const tooManyReferencesText = (max: number): string =>
   );
 /** Why a device write failed for a reason the device did not explain (its error stays in the log). */
 const copyFailedText = (path: string): string =>
-  `the device could not write ${clip(path, 200)}; check that the path is not a directory and retry.`;
+  `the device could not write ${clip(path, 200)}; retry the call, or pass another file_path.`;
+/** `Write`'s refusals of a target, worded for `file_path` (the images are already delivered). */
+const isDirectoryText = (path: string): string =>
+  `${clip(path, 200)} is a directory; pass the path of a file inside it as file_path.`;
+const notReadText = (path: string): string =>
+  `${clip(path, 200)} already exists and this conversation has not read it; Read it first to replace it, or pass another file_path.`;
+const modifiedText = (path: string): string =>
+  `${clip(path, 200)} has changed since this conversation read it; Read it again to replace it, or pass another file_path.`;
+const vanishedText = (path: string): string =>
+  `${clip(path, 200)} disappeared while it was being written; retry the call.`;
 /** The device line of a call whose conversation has no device to write to. */
 export const NO_DEVICE_LINE = "Not written to the device: this conversation has no device.";
 
@@ -539,16 +550,20 @@ async function recordDenial(
 
 /**
  * Writes the images into the call's device at `filePath` (several: `-1`, `-2`… before the
- * extension, {@link generateImagePaths}), each path checked as `Write` checks it and written under
- * its path lease. The images are already delivered, so a copy that cannot be made is a line of the
- * result, not a tool error: no device, or the reason the device gave, after the paths written
- * before it failed. An abort still ends the call.
+ * extension, {@link generateImagePaths}) with `Write`'s checks (spec §5.3): the device entry every
+ * builtin takes ({@link inToolSandbox}: the managed route and its marked device paths once
+ * activated), each path checked as `Write` checks it, and under its path lease a directory refused
+ * and an existing file replaced only when this conversation read it and it is unchanged
+ * ({@link assertReadAndUnchanged}). The images are already delivered, so a copy that cannot be made
+ * is a line of the result, not a tool error: no device, or the reason the copy stopped, after the
+ * paths written before it. A path whose extension does not match the image's media type names the
+ * type ({@link deviceEntry}). An abort still ends the call.
  */
 async function copyToDevice(
   deps: GenerateImageDeps,
   ctx: BuiltinCallContext,
   filePath: string,
-  files: readonly { data: Uint8Array }[],
+  files: readonly { data: Uint8Array; contentType: ImageMediaType }[],
 ): Promise<{ line: string; notices: string[] }> {
   const sb = deps.sandbox;
   const conv = sandboxConversationOf(ctx);
@@ -558,16 +573,34 @@ async function copyToDevice(
   let written: string[] = [];
   let current = targets[0] as string;
   try {
-    const { notices } = await inSandbox(sb, ctx, async (s) => {
+    const { notices } = await inToolSandbox(sb, ctx, async (s) => {
       written = [];
       for (const [i, f] of files.entries()) {
         current = targets[i] as string;
         const path = checkToolWritable(current, s);
         current = path;
-        await withPathLease(sb, { deviceId: s.deviceId }, path, s.signal, (signal) =>
-          s.p.writeFile(s.h, path, f.data, signal),
-        );
-        written.push(path);
+        // stat, read the existing file, write: one holder at a time per file (as `Write`)
+        await withPathLease(sb, { deviceId: s.deviceId }, path, s.signal, async (signal) => {
+          const st = await s.p.stat(s.h, path, signal);
+          if (st?.isDir) throw new ToolError(isDirectoryText(path));
+          if (st !== null) {
+            const got = await s.p.readFile(s.h, path, { maxBytes: READ_MAX_BYTES, signal });
+            if (got === null) throw new ToolError(vanishedText(path));
+            try {
+              await assertReadAndUnchanged(
+                sb,
+                ctx.conversationId,
+                path,
+                fileStateOf(got.data, st.size),
+              );
+            } catch (e) {
+              if (!(e instanceof FileGuardError)) throw e;
+              throw new ToolError(e.reason === "not_read" ? notReadText(path) : modifiedText(path));
+            }
+          }
+          await s.p.writeFile(s.h, path, f.data, signal);
+        });
+        written.push(deviceEntry(path, f.contentType));
       }
     });
     return { line: `Written to the device: ${written.join(", ")}`, notices };
@@ -592,6 +625,26 @@ async function copyToDevice(
     };
   }
 }
+
+/**
+ * A written path as the device line names it: the path, followed by the image's media type when
+ * the path's extension is not one of that type's (`out/a.jpg (image/png)`), so the model knows
+ * what the file holds whatever it was called.
+ */
+export function deviceEntry(path: string, mediaType: ImageMediaType): string {
+  const name = path.slice(path.lastIndexOf("/") + 1);
+  const dot = name.lastIndexOf(".");
+  const ext = dot > 0 ? name.slice(dot + 1).toLowerCase() : "";
+  return MEDIA_EXTENSIONS[mediaType].includes(ext) ? path : `${path} (${mediaType})`;
+}
+
+/** The extensions that name each image media type ({@link deviceEntry}). */
+const MEDIA_EXTENSIONS: Record<ImageMediaType, readonly string[]> = {
+  "image/png": ["png"],
+  "image/jpeg": ["jpg", "jpeg"],
+  "image/gif": ["gif"],
+  "image/webp": ["webp"],
+};
 
 /**
  * Whether the conversation tree has a device to write to: a provider it can run on, and a device

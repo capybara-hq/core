@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdir, mkdtemp, readdir, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -131,7 +131,11 @@ beforeAll(async () => {
         name: "Painter",
         instructions: "Draw what is asked.",
         model: { provider: "model-fake", model: "fake-1" },
-        disabledTools: onlyBuiltins([{ kind: "builtin", name: "GenerateImage" }]),
+        // Read: the read-before-write guard of the device copy (spec §5.3)
+        disabledTools: onlyBuiltins([
+          { kind: "builtin", name: "GenerateImage" },
+          { kind: "builtin", name: "Read" },
+        ]),
       },
       visibility: "org",
     },
@@ -295,6 +299,24 @@ async function call(conv: string, input: Record<string, unknown>, n = 1) {
   const r = ofType(await eventsOf(db, conv), "tool_result").at(-1) as ToolResultEvent;
   expect(r.payload.toolKey).toBe("GenerateImage");
   return r;
+}
+
+/** Posts a `Read` of `filePath` through a run and waits for its `n`th terminal event. */
+async function readThrough(conv: string, filePath: string, n: number) {
+  await postMessage(owner, orgId, conv, `tool:Read:${JSON.stringify({ file_path: filePath })}`);
+  await waitForTerminal(db, conv, n, 30_000);
+  const r = ofType(await eventsOf(db, conv), "tool_result").at(-1) as ToolResultEvent;
+  expect(r.payload.toolKey).toBe("Read");
+  expect(r.payload.isError, r.payload.content).toBe(false);
+}
+
+/** The host directory of the device's `out/`, learned from a first copy (which starts the device). */
+async function outDir(conv: string): Promise<string> {
+  const first = `seed${randomUUID().slice(0, 6)}`;
+  await call(conv, { prompt: "a seed", file_path: `out/${first}.png` });
+  const all = (await readdir(root, { recursive: true })) as string[];
+  const seed = all.find((p) => p.endsWith(`/out/${first}.png`)) as string;
+  return join(root, dirname(seed));
 }
 
 /** Files under the fake sandbox's root whose name is `name`, with their bytes. */
@@ -700,10 +722,54 @@ describe("GenerateImage file_path: several paths", () => {
     expect(lines.at(-2)).toMatch(new RegExp(`^Written to the device: \\S+/out/${name}-1\\.png$`));
     expect(lines.at(-1)).toMatch(
       new RegExp(
-        `^Not written to the device: the device could not write \\S+/out/${name}-2\\.png; check that the path is not a directory and retry\\.$`,
+        `^Not written to the device: \\S+/out/${name}-2\\.png is a directory; pass the path of a file inside it as file_path\\.$`,
       ),
     );
     expect(await deviceFiles(`${name}-1.png`)).toEqual([PNG]);
+  });
+
+  it("an existing file is replaced only after this conversation read it, and only while unchanged", async () => {
+    const conv = await createConv(owner, orgId, agentId);
+    const dir = await outDir(conv);
+    const name = `exist${randomUUID().slice(0, 6)}.png`;
+    const host = join(dir, name);
+    await writeFile(host, "old bytes");
+    const lastLine = (r: ToolResultEvent) => r.payload.content.split("\n").at(-1);
+    // never read: refused, the images still delivered, the file untouched
+    const unread = await call(conv, { prompt: "a fox", file_path: `out/${name}` }, 2);
+    expect(unread.payload.isError).toBe(false);
+    expect(lastLine(unread)).toMatch(
+      new RegExp(
+        `^Not written to the device: \\S+/out/${name.replace(".", "\\.")} already exists and this conversation has not read it; Read it first to replace it, or pass another file_path\\.$`,
+      ),
+    );
+    expect(await readFile(host, "utf8")).toBe("old bytes");
+    expect(
+      ofType(await eventsOf(db, conv), "artifact_created").filter(
+        (a) => a.payload.callId === unread.payload.callId,
+      ),
+    ).toHaveLength(1);
+    // read, then changed by someone else: refused as changed
+    await readThrough(conv, `out/${name}`, 3);
+    await writeFile(host, "changed bytes");
+    const changed = await call(conv, { prompt: "a fox", file_path: `out/${name}` }, 4);
+    expect(lastLine(changed)).toMatch(/has changed since this conversation read it; Read it again/);
+    expect(await readFile(host, "utf8")).toBe("changed bytes");
+    // read again: replaced
+    await readThrough(conv, `out/${name}`, 5);
+    const replaced = await call(conv, { prompt: "a fox", file_path: `out/${name}` }, 6);
+    expect(lastLine(replaced)).toMatch(new RegExp(`^Written to the device: \\S+/out/${name}$`));
+    expect(await readFile(host)).toEqual(PNG);
+  });
+
+  it("a path whose extension is not the image's type names the media type", async () => {
+    const conv = await createConv(owner, orgId, agentId);
+    const name = `typed${randomUUID().slice(0, 6)}`;
+    const r = await call(conv, { prompt: "a fox", file_path: `out/${name}.jpg` });
+    expect(r.payload.content.split("\n").at(-1)).toMatch(
+      new RegExp(`^Written to the device: \\S+/out/${name}\\.jpg \\(image/png\\)$`),
+    );
+    expect(await deviceFiles(`${name}.jpg`)).toEqual([PNG]);
   });
 
   it("n=2 outside the workspace: the review sees both suffixed paths", async () => {

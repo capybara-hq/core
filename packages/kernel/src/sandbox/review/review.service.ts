@@ -64,7 +64,7 @@ export interface ReviewInput {
   conversationId: string;
   runId: string;
   accountId: string;
-  /** `Bash` / `Write` / `Edit`; any other tool is not reviewed. */
+  /** `Bash` / `Write` / `Edit` / `GenerateImage` with `file_path`; others are not reviewed. */
   toolKey: string;
   /** The validated tool input (the command for `Bash`, the path for a file write). */
   input: unknown;
