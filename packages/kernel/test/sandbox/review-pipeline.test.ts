@@ -624,10 +624,10 @@ describe("the command review in the pipeline", () => {
     }
   });
 
-  it("an unsure command runs under the enforced scope with no ask; a stored catch-all grant adds nothing", async () => {
+  it("an unsure line asks the person (Approve for me, no review model); approved, it runs under the base scope", async () => {
     const conv = await createConv(owner, orgId, agentId);
     // a session grant keyed to the `unsure.*` catch-all can no longer be created; an old row must
-    // never widen anything: an in-scope call is not a discretionary review on the activated tree
+    // never suppress the ask (it would whitelist every parser-unreadable command)
     await db
       .insertInto("conversation_tool_grants")
       .values({
@@ -637,19 +637,18 @@ describe("the command review in the pipeline", () => {
         connector_id: null,
       })
       .execute();
-    const unsure = { command: "some-unknown-binary --flag", description: "Run it" };
-    const r = await call(conv, "Bash", unsure, 1);
-    expect(r.payload.review).toMatchObject({
-      decision: "allow",
-      rule: null,
-      decisionSource: "scope",
-    });
-    const asks = await db
-      .selectFrom("approvals")
-      .select("id")
-      .where("conversation_id", "=", conv)
-      .execute();
-    expect(asks).toEqual([]);
+    const inline = {
+      command: `python3 -c "import os; os.system('git push --force origin main')"`,
+      description: "Run it",
+    };
+    await postMessage(owner, orgId, conv, `tool:Bash:${JSON.stringify(inline)}`);
+    const ask = await pendingCommandAsk(conv);
+    await waitRunWaiting(conv);
+    // the catch-all is no grantable class: `once` only
+    expect(ask.scopes).toEqual(["once"]);
+    expect(ask.detail as Record<string, unknown>).not.toHaveProperty("permissionScope");
+    expect((await decide(ask.id, { decision: "approve", scope: "once" })).statusCode).toBe(200);
+    await waitForTerminal(db, conv, 1, 30_000);
     const exec = await db
       .selectFrom("sandbox_operation_intents")
       .select(["scope", "permission_grant_id"])
@@ -1037,9 +1036,72 @@ describe("runs of accounts that own no device here", () => {
     ) as Extract<ConversationEvent, { type: "tool_result" }> | undefined;
     expect(result?.payload.isError).toBe(true);
     expect(result?.payload.content).toBe(DEVICE_OF_ANOTHER_ACCOUNT_TEXT);
+    // refused before any review: no review model, no command review record of an allow
+    expect(result?.payload.review).toMatchObject({ decision: "deny", by: "rule", rule: null });
     const ops = JSON.stringify(await readFakeSandboxOps(root));
     expect(ops).not.toContain(otherId);
     expect(ops).not.toContain("from-member");
+  });
+
+  it("another member's run never reads, stops or launches background tasks on the owner's device", async () => {
+    const conv = await createConv(owner, orgId, agentId);
+    const launched = await call(
+      conv,
+      "Bash",
+      { command: "sleep 300", description: "Wait", run_in_background: true },
+      1,
+    );
+    const taskId = /Started background task (bt_[A-Za-z0-9_-]+)/.exec(
+      launched.payload.content,
+    )?.[1] as string;
+    expect(taskId, launched.payload.content).toBeDefined();
+    const opsBefore = (await readFakeSandboxOps(root)).length;
+    const tasksBefore = await db
+      .selectFrom("background_tasks")
+      .select("id")
+      .where("conversation_id", "=", conv)
+      .execute();
+    let n = 1;
+    const asMember = async (key: string, input: unknown) => {
+      await k.app.get(EventLog).append(conv, [
+        {
+          type: "user_message",
+          payload: {
+            content: [{ type: "text", text: `tool:${key}:${JSON.stringify(input)}` }],
+            authorAccountId: otherId,
+          },
+        },
+      ]);
+      await k.app.get(RunQueue).ensureRun(conv);
+      await waitForTerminal(db, conv, ++n, 30_000);
+      return (await results(conv)).at(-1) as ToolResult;
+    };
+    for (const [key, input] of [
+      ["TaskOutput", { task_id: taskId, block: false }],
+      ["TaskStop", { task_id: taskId }],
+      ["Bash", { command: "sleep 301", description: "Wait", run_in_background: true }],
+    ] as const) {
+      const r = await asMember(key, input);
+      expect(r.payload.toolKey).toBe(key);
+      expect(r.payload.isError, key).toBe(true);
+      expect(r.payload.content, key).toBe(DEVICE_OF_ANOTHER_ACCOUNT_TEXT);
+    }
+    // nothing reached the device and no reservation was written; the owner's task still runs
+    expect((await readFakeSandboxOps(root)).slice(opsBefore)).toEqual([]);
+    expect(
+      await db
+        .selectFrom("background_tasks")
+        .select("id")
+        .where("conversation_id", "=", conv)
+        .execute(),
+    ).toEqual(tasksBefore);
+    const task = await db
+      .selectFrom("background_tasks")
+      .select("status")
+      .where("id", "=", taskId)
+      .executeTakeFirstOrThrow();
+    expect(task.status).toBe("running");
+    await call(conv, "TaskStop", { task_id: taskId }, ++n);
   });
 });
 

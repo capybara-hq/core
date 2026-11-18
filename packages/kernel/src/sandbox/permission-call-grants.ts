@@ -309,7 +309,11 @@ export class PermissionCallGrants {
   @Transactional({ propagation: "mandatory" })
   async findForAdmission(
     binding: PermissionCallBinding,
-  ): Promise<{ id: string; expansion: PermissionCandidate["permissionScope"] } | null> {
+  ): Promise<{
+    id: string;
+    expansion: PermissionCandidate["permissionScope"];
+    source: "human" | "review-model";
+  } | null> {
     const hash = permissionScopeHash(binding);
     const row = await this.db
       .selectFrom("permission_call_grants")
@@ -334,7 +338,7 @@ export class PermissionCallGrants {
         ? { source: "human", approvalId: row.approval_id ?? "", decidedBy: row.decided_by ?? "" }
         : { source: "review-model", reviewEventSeq: row.review_event_seq ?? -1, decidedBy: null },
     );
-    return { id: row.id, expansion: row.expansion };
+    return { id: row.id, expansion: row.expansion, source: row.source };
   }
   /** Starting authority belongs to this admitted exec, never to another call or native method. */
   async forExecution(

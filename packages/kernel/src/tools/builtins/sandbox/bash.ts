@@ -43,6 +43,7 @@ import {
   withNotices,
 } from "./common.js";
 import { parseDeviceCode } from "./device-code.js";
+import { assertDeviceOfRunAccount } from "./device-owner.js";
 
 /** The command timeout in seconds when `timeout` is not given, at most `sandbox.limits.maxCommandSeconds`. */
 export const BASH_DEFAULT_TIMEOUT_SECONDS = 120;
@@ -231,6 +232,8 @@ async function runInBackground(
       "Background tasks can only be started from an agent run; call Bash without run_in_background.",
     );
   }
+  // another account's run never launches on the owner's device: refused before the reservation
+  assertDeviceOfRunAccount(deps.managedDeviceContextRequired, ctx);
   const currentInstance = sandbox.currentInstance.bind(sandbox);
   const cfg = deps.config.get();
   const maxMs = backgroundMaxSeconds(cfg) * 1000;

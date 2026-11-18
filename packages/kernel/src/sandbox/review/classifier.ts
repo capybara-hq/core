@@ -91,8 +91,8 @@ export function newReviewTag(): string {
 export interface ReviewClassifierInput {
   permissionCandidate?: PermissionCandidate;
   mode: "auto" | "sandbox";
-  /** The command for `Bash`, the path for a file write. */
-  kind: "command" | "write";
+  /** The command for `Bash`, the path for a file write or a file read. */
+  kind: "command" | "write" | "read";
   text: string;
   /** The directory the command runs in (the workspace for a file write). */
   cwd: string;
@@ -108,7 +108,8 @@ export interface ReviewClassifierInput {
  * findings and the person's recent messages, all inside the call's tag.
  */
 export function classifierMessage(input: ReviewClassifierInput): string {
-  const heading = input.kind === "write" ? "File write path" : "Command";
+  const heading =
+    input.kind === "write" ? "File write path" : input.kind === "read" ? "File read path" : "Command";
   const rules =
     input.ruleHits.length === 0
       ? "(none)"

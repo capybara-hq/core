@@ -52,6 +52,7 @@ import {
   unavailableWhenNoSandbox,
 } from "./common.js";
 import { type DeviceCode, parseDeviceCode } from "./device-code.js";
+import { assertDeviceOfRunAccount } from "./device-owner.js";
 
 /** How long `TaskOutput` waits with `block` when `timeout` is not given (ms). */
 export const TASK_OUTPUT_DEFAULT_TIMEOUT_MS = 30_000;
@@ -464,6 +465,8 @@ export function taskOutputTool(deps: SandboxToolDeps): BuiltinTool {
     },
     async run(input, ctx) {
       const { task_id, block = true, timeout } = input as TaskOutputInput;
+      // another account's run never reads or stops on the owner's device (activated)
+      assertDeviceOfRunAccount(deps.managedDeviceContextRequired, ctx);
       const env = await taskEnv(deps, ctx);
       // A sub-agent's agentId is answered, not refused: where its report arrives is the answer
       // (acceptance 2026-11-13: guidance the model is expected to follow is not a failed call).

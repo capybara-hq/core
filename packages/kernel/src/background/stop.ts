@@ -175,14 +175,28 @@ export class BackgroundTaskStopper {
    * running (never resumed) or was replaced leaves the cancellation owed. Who asked is recorded,
    * so a later finish keeps their wake rule.
    */
-  /** `conversation_deleted` when the task's conversation is deleted, else null. */
+  /**
+   * `conversation_deleted` when the task's conversation, its tree's root (the device's
+   * conversation, a sub-agent's root) or its org is deleted or gone, else null.
+   */
   private async deletedConversationStop(cur: BackgroundTaskRow): Promise<CancelRequester | null> {
-    const row = await this.db.db
-      .selectFrom("conversations")
-      .select("deleted_at")
-      .where("id", "=", cur.conversationId)
-      .executeTakeFirst();
-    return row === undefined || row.deleted_at !== null ? "conversation_deleted" : null;
+    const ids = [...new Set([cur.conversationId, cur.sandboxConversationId])];
+    const [conversations, org] = await Promise.all([
+      this.db.db
+        .selectFrom("conversations")
+        .select(["id", "deleted_at"])
+        .where("id", "in", ids)
+        .execute(),
+      this.db.db
+        .selectFrom("orgs")
+        .select("deleted_at")
+        .where("id", "=", cur.orgId)
+        .executeTakeFirst(),
+    ]);
+    const live = conversations.filter((c) => c.deleted_at === null).length;
+    return live < ids.length || org === undefined || org.deleted_at !== null
+      ? "conversation_deleted"
+      : null;
   }
 
   private async stopManaged(

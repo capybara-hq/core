@@ -90,8 +90,9 @@ export function buildPermissionCandidate(
     if (["Read", "Write", "Edit"].includes(call.toolKey) && typeof input?.file_path === "string") {
       if (input.file_path.length > 4096 || /[\0*?[\]{}]/.test(input.file_path))
         throw new Error("Invalid target path");
-      // a path with `.` or `..` segments proposes nothing: the tool refuses that shape itself
-      if (input.file_path.split("/").some((segment) => segment === "." || segment === ".."))
+      // a `..` segment proposes nothing: the file tools refuse that path shape themselves. A `.`
+      // segment is normalized lexically like any other spelling (`/outside/./x` is `/outside/x`)
+      if (input.file_path.split("/").some((segment) => segment === ".."))
         return { kind: "in-scope" };
       targetPath = path.posix.resolve(facts.workingRoot, input.file_path);
       const write = call.toolKey !== "Read",

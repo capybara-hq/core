@@ -36,6 +36,8 @@ import {
  * route the enforced scope and a proposed expansion decide them.
  */
 const SCOPE_ASK_RULES: ReadonlySet<string> = new Set(["ask.outside-write", "ask.outside-link"]);
+/** The consent a file read keeps: reading a credential file or SSH keys. */
+const CREDENTIAL_READ_RULES: ReadonlySet<string> = new Set(["ask.secret-file", "ask.ssh"]);
 /** What an ask about a proposed expansion tells the person. */
 const EXPANSION_ASK_REASON =
   "Approve the exact proposed directory and host access for this call. File-only grants are not supported: directory approval covers its descendants; otherwise choose an in-project path.";
@@ -218,7 +220,7 @@ export class CommandReviewService implements CommandReview {
     input: ReviewInput & ReviewCall,
     result: ReviewResult,
     facts: {
-      kind: "write" | "command";
+      kind: "write" | "command" | "read";
       target: string;
       workspace: string;
       rootOf: () => Promise<string>;
@@ -226,8 +228,27 @@ export class CommandReviewService implements CommandReview {
   ): Promise<ReviewVerdict> {
     if (input.permissionProfile === "full-access")
       return allow("Current Full access covers discretionary review.", null);
-    const consentHits = result.hits.filter(
-      (h) => h.outcome === "ask" && !SCOPE_ASK_RULES.has(h.id),
+    // a command writing or linking outside the working directory with no proposal (only a
+    // literal `cd <dir>` proposes a command's directory): no approval could let the enforced scope
+    // run it, so it is refused now with what works instead
+    const commandScopeHit =
+      facts.kind === "command" && !input.permissionCandidate
+        ? result.hits.find((h) => h.outcome === "ask" && SCOPE_ASK_RULES.has(h.id))
+        : undefined;
+    if (commandScopeHit)
+      return {
+        decision: "deny",
+        by: "rule",
+        rule: commandScopeHit.id,
+        reason: `${commandScopeHit.reason.replace(/[.;]?\s*this needs approval\.?$/i, "")}, which this conversation's permission profile does not reach, and a command's own outside write cannot be approved; write the file with Write or Edit (its directory can be approved), run the command after a literal \`cd\` into that directory, or keep it inside ${facts.workspace}`,
+      };
+    // the consent cases: the fixed asks and the unsure findings (an interpreter's inline code, an
+    // unparsed or uncovered line), which keep the profile's review. A read keeps only the
+    // credential reads: the write rules (persistence, shell config) are no consent for a read
+    const consentHits = result.hits.filter((h) =>
+      facts.kind === "read"
+        ? h.outcome === "ask" && CREDENTIAL_READ_RULES.has(h.id)
+        : (h.outcome === "ask" && !SCOPE_ASK_RULES.has(h.id)) || h.outcome === "unsure",
     );
     let consent: RuleHit | undefined;
     let granted: RuleHit | undefined;
@@ -240,7 +261,7 @@ export class CommandReviewService implements CommandReview {
       const after = applySessionGrants({ outcome: "ask", hits: consentHits }, (rule) =>
         grants.has(rule),
       );
-      if (after.outcome === "ask") consent = after.hit;
+      if (after.outcome === "ask" || after.outcome === "unsure") consent = after.hit;
       else granted = after.hit;
     }
     const candidate = input.permissionCandidate;
@@ -252,7 +273,10 @@ export class CommandReviewService implements CommandReview {
         ? allow(allowed.reason, allowed.id)
         : allow("The enforced operation scope covers this call without expansion.", null);
     }
-    const scopeHit = result.hits.find((h) => h.outcome === "ask" && SCOPE_ASK_RULES.has(h.id));
+    const scopeHit =
+      facts.kind === "read"
+        ? undefined
+        : result.hits.find((h) => h.outcome === "ask" && SCOPE_ASK_RULES.has(h.id));
     const rule = consent?.id ?? (candidate ? (scopeHit?.id ?? null) : null);
     const reason =
       consent?.reason ??
@@ -359,7 +383,7 @@ export class CommandReviewService implements CommandReview {
     // the activated permission review has its own order after the fixed denies
     if (input.permissionProfile)
       return this.decidePermission(input, result, {
-        kind: isWrite ? "write" : "command",
+        kind: input.toolKey === "Read" ? "read" : isWrite ? "write" : "command",
         target,
         workspace,
         rootOf,

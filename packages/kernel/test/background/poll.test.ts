@@ -897,6 +897,51 @@ describe("stopping", () => {
       ]);
     });
 
+    it.each(["root", "org"] as const)(
+      "a revocation winning against the %s's deletion stop still marks the stop the deletion's",
+      async (deleted) => {
+        const conv = await createConv(owner, orgId, agentId);
+        used.push(conv);
+        const owned = await db
+          .selectFrom("conversations")
+          .select("account_id")
+          .where("id", "=", conv)
+          .executeTakeFirstOrThrow();
+        const t = await launchIdle(conv, owned.account_id, "sleep 320");
+        const root = await createConv(owner, orgId, agentId);
+        used.push(root);
+        // the task is a sub-agent's: its tree's root is another conversation
+        await sql`UPDATE capybara.background_tasks SET sandbox_conversation_id = ${root}
+          WHERE id = ${t.id}`.execute(raw);
+        const runsBefore = await db
+          .selectFrom("runs")
+          .select("id")
+          .where("conversation_id", "=", conv)
+          .execute();
+        if (deleted === "root")
+          await sql`UPDATE capybara.conversations SET deleted_at = now() WHERE id = ${root}`.execute(
+            raw,
+          );
+        else
+          await sql`UPDATE capybara.orgs SET deleted_at = now() WHERE id = ${orgId}`.execute(raw);
+        try {
+          const task = (await store.get(t.id)) as BackgroundTaskRow;
+          const stopped = await k.app.get(BackgroundTaskStopper).stop(task, "revoked");
+          expect(stopped.status).toBe("stopped");
+        } finally {
+          if (deleted === "org")
+            await sql`UPDATE capybara.orgs SET deleted_at = NULL WHERE id = ${orgId}`.execute(raw);
+        }
+        expect((await finishedEvents(conv, t.id)).map((e) => e.payload)).toMatchObject([
+          { status: "stopped", reported: false, stoppedBy: "deletion" },
+        ]);
+        // nothing woke: no run beyond the launching one
+        expect(
+          await db.selectFrom("runs").select("id").where("conversation_id", "=", conv).execute(),
+        ).toEqual(runsBefore);
+      },
+    );
+
     it("deleting an idle conversation with a running task wakes no run (I1)", async () => {
       const conv = await createConv(owner, orgId, agentId);
       used.push(conv);

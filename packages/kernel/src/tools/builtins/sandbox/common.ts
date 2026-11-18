@@ -63,6 +63,7 @@ import {
 } from "../../../sandbox/unreachable.js";
 import type { StorageService } from "../../../storage/storage.service.js";
 import type { BuiltinCallContext, ToolListingScope } from "../../registry.js";
+import { assertDeviceOfRunAccount } from "./device-owner.js";
 
 /** 沙箱工具的依赖（都按调用时取，多副本下无进程内状态）。 */
 export interface SandboxToolDeps {
@@ -564,18 +565,9 @@ function unreachableCause(
   return failure ? { failure, err: cause } : undefined;
 }
 
-/** The run's account is not the conversation's owner, whose device it never uses. */
-class DeviceOfAnotherAccount extends Error {
-  override readonly name = "DeviceOfAnotherAccount";
-  constructor() {
-    super("The run's account is not the conversation's owner");
-  }
-}
-export const DEVICE_OF_ANOTHER_ACCOUNT_TEXT =
-  "This conversation's device belongs to its owner, and this run was started by another member, so nothing ran on the device. Continue without the device, or ask the conversation's owner to run this.";
+export { DEVICE_OF_ANOTHER_ACCOUNT_TEXT } from "./device-owner.js";
 
 export function mapSandboxError(e: unknown, log: Pick<Logger, "warn"> | undefined): unknown {
-  if (e instanceof DeviceOfAnotherAccount) return new ToolError(DEVICE_OF_ANOTHER_ACCOUNT_TEXT);
   if (e instanceof ManagedDeviceContextStale)
     return new ToolError(MANAGED_DEVICE_CONTEXT_STALE_TEXT, { kind: "unavailable" });
   if (e instanceof ManagedDeviceContextUnavailable)
@@ -749,6 +741,8 @@ async function inSandboxWith<T>(
     run: (s: PreparationSession) => Promise<void>;
   },
 ): Promise<{ value: T; notices: string[] }> {
+  // a run another account triggered never uses the owner's device (activated): refused first
+  assertDeviceOfRunAccount(deps.managedDeviceContextRequired, ctx);
   try {
     // once activated, only the managed route runs: a legacy route refuses before entering, so v1
     // permission context never sits next to old-mode device_paths; a managed route never runs
@@ -756,10 +750,6 @@ async function inSandboxWith<T>(
     if (!operations && deps.managedDeviceContextRequired)
       throw new ManagedDeviceContextFailed("refused");
     const managed = operations ? managedWriter(deps) : undefined;
-    // a run another account triggered in this conversation (a wake attributed to another member)
-    // never uses the owner's device: refused before the device is resolved
-    if (ctx.ownerAccountId !== undefined && ctx.ownerAccountId !== ctx.accountId)
-      throw new DeviceOfAnotherAccount();
     const deviceId = await deps.devices.forTool(ctx.orgId, sandboxConversationOf(ctx));
     // the mode once per call: the path checks follow it and the device_paths event records it;
     // the working facts (workspace, home, project snapshot) are read as the review reads them

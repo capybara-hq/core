@@ -15,6 +15,7 @@ import {
   sandboxBaseTimeoutMs,
   unavailableWhenNoSandbox,
 } from "./common.js";
+import { assertDeviceOfRunAccount } from "./device-owner.js";
 import {
   onTaskInstance,
   ownedTask,
@@ -149,6 +150,8 @@ export function taskStopTool(deps: SandboxToolDeps): BuiltinTool {
     timeoutMs: () => sandboxBaseTimeoutMs(deps.config.get()),
     async run(input, ctx) {
       const { task_id } = input as TaskStopInput;
+      // another account's run never reads or stops on the owner's device (activated)
+      assertDeviceOfRunAccount(deps.managedDeviceContextRequired, ctx);
       const env = await taskEnv(deps, ctx);
       const task = await ownedTask(env, ctx, task_id);
       await recheckDevice(env, ctx);

@@ -948,3 +948,125 @@ it("a proposed host outside the applied cloud outer allowlist is cut like admiss
   expect(hostsOf(build({ kind: "allowlist", hosts: ["a.example"] }))).toEqual(["a.example"]);
   expect(hostsOf(build({ kind: "none" }))).toBe("in-scope");
 });
+
+describe("the permission review of a managed call", () => {
+  const INLINE_PUSH = `python3 -c "import os; os.system('git push --force origin main')"`;
+  const NESTED_SUDO = `sh -c "sh -c 'sudo ls /root'"`;
+  const READ_PACKAGE = `python3 -c "import json; print(json.load(open('package.json'))['name'])"`;
+
+  it.each([INLINE_PUSH, NESTED_SUDO])(
+    "Request approval asks the person about an unsure line, with no review model call: %s",
+    async (command) => {
+      const verdict = await call({ input: { command }, permissionProfile: "request-approval" });
+      expect(verdict.decision).toBe("ask");
+      expect(reviewChats()).toEqual([]);
+    },
+  );
+
+  it.each([INLINE_PUSH, NESTED_SUDO])(
+    "Approve for me sends an unsure line to the review model, whose deny stays a deny: %s",
+    async (command) => {
+      answer("deny", "Not what the person asked for.");
+      const verdict = await call({ input: { command }, permissionProfile: "approve-for-me" });
+      expect(verdict).toMatchObject({ decision: "deny", by: "classifier" });
+      expect(reviewChats()).toHaveLength(1);
+    },
+  );
+
+  it("Approve for me: the package.json-reading Python is allowed by the review model", async () => {
+    answer("allow", "Reads the project's own manifest.");
+    const verdict = await call({
+      input: { command: READ_PACKAGE },
+      permissionProfile: "approve-for-me",
+    });
+    expect(verdict).toMatchObject({ decision: "allow", by: "classifier" });
+  });
+
+  it("Approve for me without a review model asks; Full access runs the line unreviewed", async () => {
+    await db.deleteFrom("model_purpose_mappings").where("purpose", "=", "review").execute();
+    expect(
+      await call({ input: { command: INLINE_PUSH }, permissionProfile: "approve-for-me" }),
+    ).toMatchObject({ decision: "ask" });
+    expect(
+      await call({ input: { command: INLINE_PUSH }, permissionProfile: "full-access" }),
+    ).toMatchObject({ decision: "allow" });
+    expect(reviewChats()).toEqual([]);
+  });
+
+  it("a Read gets no write-rule consent: a git hook reads with no ask, a credential read asks", async () => {
+    const hook = await call({
+      toolKey: "Read",
+      input: { file_path: `${WORKSPACE}/.git/hooks/pre-commit` },
+      home: "/home/dev",
+      permissionProfile: "request-approval",
+    });
+    expect(hook.decision).toBe("allow");
+    const key = await call({
+      toolKey: "Read",
+      input: { file_path: "/home/dev/.ssh/id_ed25519" },
+      home: "/home/dev",
+      permissionProfile: "request-approval",
+    });
+    expect(key).toMatchObject({ decision: "ask", rule: "ask.ssh" });
+    // the review model is told it is a read
+    answer("allow");
+    await call({
+      toolKey: "Read",
+      input: { file_path: "/home/dev/.ssh/id_ed25519" },
+      home: "/home/dev",
+      permissionProfile: "approve-for-me",
+    });
+    expect(JSON.stringify(reviewRequest().messages)).toContain("File read path");
+  });
+
+  it("a command's own outside write cannot be approved: refused with what works instead", async () => {
+    const verdict = await call({
+      input: { command: "touch /etc/capybara-outside.txt" },
+      permissionProfile: "request-approval",
+    });
+    expect(verdict).toMatchObject({ decision: "deny", rule: "ask.outside-write" });
+    expect(verdict.reason).toContain("Write or Edit");
+    expect(verdict.reason).toContain(`keep it inside ${WORKSPACE}`);
+  });
+
+  it("a `.` segment is normalized before extraction: /outside/./x proposes /outside", () => {
+    const input = { file_path: "/outside/./report.txt" };
+    const facts: PermissionReviewSnapshot = {
+      orgId,
+      rootConversationId: conv,
+      conversationId: conv,
+      deviceId: "review-fixture",
+      accountId: ownerId,
+      runId,
+      callId: "dot-segment",
+      profile: "request-approval",
+      profileRevision: 0,
+      scopeRevision: "scope",
+      authorityRevision: "authority",
+      baseReadDirectories: [WORKSPACE],
+      baseWriteDirectories: [WORKSPACE],
+      baseHosts: [],
+      workingRoot: WORKSPACE,
+      fullAccessCeiling: true,
+      broadProjectReach: true,
+      fullConsent: false,
+      unattended: false,
+      availability: { state: "supported" },
+      policy: {
+        mode: "auto",
+        allowedMode: "auto",
+        modeSource: "device",
+        localAllowedDomains: [],
+        network: { kind: "open-public", hosts: [] },
+      },
+    };
+    const built = buildPermissionCandidate(
+      { toolKey: "Write", specHash: "write-spec", rawInput: input, validatedInput: input },
+      facts,
+    );
+    expect(built.kind === "proposal" && built.candidate.permissionScope.writeDirectories).toEqual([
+      "/outside",
+    ]);
+    expect(built.kind === "proposal" && built.candidate.targetPath).toBe("/outside/report.txt");
+  });
+});

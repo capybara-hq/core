@@ -107,6 +107,7 @@ import {
   deviceCodeIdemKey,
   GITHUB_DEVICE_LOGIN_URL,
 } from "./builtins/sandbox/device-code.js";
+import { DEVICE_OF_ANOTHER_ACCOUNT_TEXT } from "./builtins/sandbox/device-owner.js";
 import { SendMessageInput } from "./builtins/send-message.js";
 import { isAlwaysLoaded, notLoadedText } from "./builtins/tool-search.js";
 import { canonicalJson } from "./canonical-json.js";
@@ -554,6 +555,15 @@ const REVIEWED_ON_FACTS: ReadonlySet<string> = new Set([
   BUILTIN.Write,
   BUILTIN.Edit,
 ]);
+/** The refusals of a permission review that end the call (fail closed), not the run. */
+const FAIL_CLOSED_CODES: ReadonlySet<string> = new Set([
+  "forbidden",
+  "conflict",
+  "conversation.not_found",
+]);
+/** What the model gets when the permission check of its call refused (fail closed). */
+export const permissionCheckFailedText = (why: string): string =>
+  `The permission check for this call could not be completed (${why.replace(/\.$/, "")}), so it did not run. Retry the call once; if it fails again, ask the user to check the conversation's permission profile or to approve the call again.`;
 /** The builtins whose device entry is the managed operation route once activated. */
 const MANAGED_OPERATION_TOOLS: ReadonlySet<string> = new Set([
   BUILTIN.Bash,
@@ -1639,8 +1649,31 @@ export class ToolPipeline {
     tool: ResolvedTool,
     input: unknown,
   ): Promise<ReviewOutcome> {
+    // a device tool of a run another account triggered never uses the owner's device: refused
+    // here, with no review and no review model call (the tools refuse it the same way)
+    if (this.operationScoped(tool) && ctx.ownerAccountId !== ctx.accountId)
+      return {
+        kind: "result",
+        content: DEVICE_OF_ANOTHER_ACCOUNT_TEXT,
+        review: denyRecord("rule", null, "The run's account is not the conversation's owner"),
+      };
     if (this.operationScoped(tool)) {
-      const scoped = await this.reviewPermissionCall(ctx, call, tool, input);
+      let scoped: ReviewOutcome | null;
+      try {
+        scoped = await this.reviewPermissionCall(ctx, call, tool, input);
+      } catch (error) {
+        // fail closed: a permission evidence conflict or an owner check that refuses while the
+        // call is asked about, reviewed or matched to its grant is a refusal of this call, never a
+        // run error and never a run of it
+        if (!(error instanceof ApiError) || !FAIL_CLOSED_CODES.has(error.code)) throw error;
+        this.deps.log.warn("permission review refused the call", {
+          conversationId: ctx.conversationId,
+          callId: call.id,
+          err: error,
+        });
+        const content = permissionCheckFailedText(error.message);
+        return { kind: "result", content, review: denyRecord("rule", null, error.message) };
+      }
       if (scoped) return scoped;
     }
     const review = this.deps.review;
@@ -1961,15 +1994,16 @@ export class ToolPipeline {
           kind: "continue",
           workingRoot: carriedRoot(device),
           reviewedAgainst: facts.workingRoot,
+          // the evidence's real source: the person's approval or the review model's allow
           review: {
             decision: "allow",
-            by: "classifier",
+            by: existingGrant.source === "human" ? "person" : "classifier",
             rule: null,
             reason: "The exact current call already has approved permission evidence.",
             profile: facts.profile,
             profileRevision: facts.profileRevision,
             scopeRevision: facts.scopeRevision,
-            decisionSource: "review-model",
+            decisionSource: existingGrant.source === "human" ? "human" : "review-model",
           },
         };
       }
