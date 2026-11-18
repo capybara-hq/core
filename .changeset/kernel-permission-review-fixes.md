@@ -7,3 +7,7 @@ longer says the task was not started and that nothing runs: the process may have
 call says so, that any process it started is being stopped, and to check its effects before
 calling `Bash` again. `TaskList`, `TaskOutput` and the finished-task message show such a task's
 reason (`launch_unknown`, `launch_revoked`) as text, not as a raw code.
+
+The `permission_reviewed` record of an Approve for me review names who decided: `review-model`
+only for the review model's own verdicts, `rule` for a fixed rule's deny, a rule ask and the
+fail-closed ask.

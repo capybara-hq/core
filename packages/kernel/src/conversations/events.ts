@@ -695,7 +695,8 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
       candidateHash: z.string(),
       outcome: z.enum(["allow", "ask", "deny"]),
       reason: z.string(),
-      decisionSource: z.literal("review-model"),
+      /** Who decided: the review model, or the fixed rules (a deny, an ask, the fail-closed ask). */
+      decisionSource: z.enum(["review-model", "rule"]),
     }),
   ),
   ev(

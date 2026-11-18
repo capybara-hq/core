@@ -473,6 +473,40 @@ it.each(["allow", "ask", "deny"] as const)(
   },
 );
 
+// The recorded review names who decided: the review model only for its own verdicts; a fixed
+// rule's deny, a rule ask (the review model unmapped) and the fail-closed ask are the rules'.
+it.each([
+  ["allow", "classifier", "review-model"],
+  ["ask", "classifier", "review-model"],
+  ["deny", "classifier", "review-model"],
+  ["ask", "rule", "rule"],
+  ["deny", "rule", "rule"],
+] as const)(
+  "a reviewed candidate's %s by %s records decision source %s",
+  async (decision, by, source) => {
+    const f = await fixture("Write", { file_path: "/outside/reports/report.txt" }, true);
+    vi.spyOn(k.app.get(CommandReviewService), "review").mockResolvedValue({
+      decision,
+      by,
+      reason: "Reviewed",
+      rule: by === "rule" ? "fixed.rule" : null,
+    });
+    await k.app.get(RunExecution).withClaim(
+      f.claim,
+      () => true,
+      () => k.app.get(ToolPipeline).runStep(f.ctx),
+    );
+    const events = await f.db
+      .selectFrom("conversation_events")
+      .select("payload")
+      .where("type", "=", "permission_reviewed")
+      .where("run_id", "=", f.runId)
+      .execute();
+    expect(events).toHaveLength(1);
+    expect(events[0]?.payload).toMatchObject({ outcome: decision, decisionSource: source });
+  },
+);
+
 it("owner refuses a directory proposal for file-only intent without lending parent authority", async () => {
   const f = await fixture("Write", { file_path: "/outside/reports/report.txt" }, true);
   await f.db

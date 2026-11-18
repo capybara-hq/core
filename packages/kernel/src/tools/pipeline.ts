@@ -2154,7 +2154,7 @@ export class ToolPipeline {
   @Transactional()
   private async recordPermissionReview(
     candidate: PermissionCandidate,
-    verdict: { decision: "allow" | "ask" | "deny"; reason: string },
+    verdict: { decision: "allow" | "ask" | "deny"; by: "rule" | "classifier"; reason: string },
   ): Promise<void> {
     if (!this.permissionGrants) throw new Error("Permission grants are unavailable");
     await this.permissionGrants.assertCurrent(candidate.binding);
@@ -2166,13 +2166,15 @@ export class ToolPipeline {
           ...candidate,
           outcome: verdict.decision,
           reason: verdict.reason,
-          decisionSource: "review-model",
+          // the review model only for its own verdict: a fixed rule's deny, a rule ask (the review
+          // model unmapped or not consulted) and the fail-closed ask are the rules'
+          decisionSource: verdict.by === "classifier" ? "review-model" : "rule",
         },
       },
     ]);
     const event = events[0];
     if (!event) throw new Error("The review event was not recorded");
-    if (verdict.decision === "allow")
+    if (verdict.decision === "allow" && verdict.by === "classifier")
       await this.permissionGrants.issueLocked(candidate, {
         source: "review-model",
         reviewEventSeq: event.seq,
