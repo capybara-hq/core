@@ -3,6 +3,13 @@ import { OnWorkerEvent, WorkerHost } from "@nestjs/bullmq";
 import { type DynamicModule, Inject, Injectable, Module } from "@nestjs/common";
 import type { Job, Worker } from "bullmq";
 import type { KernelConfig } from "../config/schema.js";
+import {
+  PROMPT_SUGGESTION_CONCURRENCY,
+  PROMPT_SUGGESTION_QUEUE,
+  type PromptSuggestionJob,
+  PromptSuggestionQueue,
+  PromptSuggestionsModule,
+} from "../conversations/prompt-suggestions.js";
 import { TITLE_QUEUE, TitleQueue, TitlesModule } from "../conversations/titles.js";
 import { configuredProcessor } from "../infra/queue/configured-processor.js";
 import { runJob } from "../infra/queue/run-job.js";
@@ -128,12 +135,29 @@ export class TitleProcessor extends WorkerHost<
   }
 }
 
+/** The consumer of `cap-kernel-suggestions`: {@link PromptSuggestionQueue}. */
+@Injectable()
+export class PromptSuggestionProcessor extends WorkerHost<Worker<PromptSuggestionJob>> {
+  constructor(@Inject(PromptSuggestionQueue) private readonly suggestions: PromptSuggestionQueue) {
+    super();
+  }
+
+  process(job: Job<PromptSuggestionJob>): Promise<void> {
+    return runJob(PROMPT_SUGGESTION_QUEUE, job, () => this.suggestions.process(job));
+  }
+
+  @OnWorkerEvent("error")
+  error(err: Error): void {
+    this.suggestions.onError(err);
+  }
+}
+
 /**
- * The runtime's queue consumers: the run worker on both run queues, `usage.report` deliveries and
- * conversation titles. Imported only by the worker role (`WorkerModule`), so other roles get no
+ * The runtime's queue consumers: the run worker on both run queues, `usage.report` deliveries,
+ * conversation titles and prompt suggestions. Imported only by the worker role (`WorkerModule`), so other roles get no
  * processor and no BullMQ worker. Their worker options come from the startup config (concurrency
  * per queue, the run queues' job lock and stalled detection, which the usage and title workers
- * follow). The workers never start by themselves: the worker role (`WorkerRole`) starts them after
+ * follow, as do the suggestion workers). The workers never start by themselves: the worker role (`WorkerRole`) starts them after
  * the extensions loaded, and pauses them on stop.
  */
 @Module({})
@@ -151,7 +175,7 @@ export class RuntimeWorkersModule {
     };
     return {
       module: RuntimeWorkersModule,
-      imports: [RuntimeModule, TitlesModule, UsageReportModule],
+      imports: [RuntimeModule, TitlesModule, PromptSuggestionsModule, UsageReportModule],
       providers: [
         configuredProcessor(RunsProcessor, RUN_QUEUE_NAME, runs),
         configuredProcessor(SubagentRunsProcessor, SUBAGENT_RUN_QUEUE_NAME, runs),
@@ -167,8 +191,20 @@ export class RuntimeWorkersModule {
           stalledInterval: stalledIntervalMs,
           maxStalledCount: 1,
         }),
+        configuredProcessor(PromptSuggestionProcessor, PROMPT_SUGGESTION_QUEUE, {
+          concurrency: PROMPT_SUGGESTION_CONCURRENCY,
+          lockDuration: jobLockMs,
+          stalledInterval: stalledIntervalMs,
+          maxStalledCount: 1,
+        }),
       ],
-      exports: [RunsProcessor, SubagentRunsProcessor, UsageReportProcessor, TitleProcessor],
+      exports: [
+        RunsProcessor,
+        SubagentRunsProcessor,
+        UsageReportProcessor,
+        TitleProcessor,
+        PromptSuggestionProcessor,
+      ],
     };
   }
 }

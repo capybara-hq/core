@@ -13,6 +13,7 @@ import type { KernelConfig } from "../config/schema.js";
 import { AttachmentsModule } from "../conversations/attachments.module.js";
 import { AttachmentCleanupJob } from "../conversations/attachments.service.js";
 import { EventLogModule } from "../conversations/event-log.js";
+import { PromptSuggestionsModule } from "../conversations/prompt-suggestions.js";
 import { TitlesModule } from "../conversations/titles.js";
 import { LegacySandboxCleanupJob } from "../devices/legacy-cleanup.job.js";
 import { EvalWorkersModule } from "../evals/evals.module.js";
@@ -74,6 +75,7 @@ export class WorkerModule {
         RunJobsModule,
         UsageReportModule,
         TitlesModule,
+        PromptSuggestionsModule,
         AttachmentsModule,
         StorageModule,
         SandboxModule,

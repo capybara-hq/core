@@ -356,6 +356,14 @@ export const KC_EXCEPTIONS: readonly KcException[] = [
   },
   {
     rule: "kc-enqueue-via-outbox",
+    path: "packages/kernel/src/conversations/prompt-suggestions.ts",
+    within: "maybeEnqueue",
+    reason:
+      "a hint after the run's commit: a lost suggestion job costs one composer suggestion, " +
+      "nothing is wrong meanwhile (prompt suggestions spec §3)",
+  },
+  {
+    rule: "kc-enqueue-via-outbox",
     path: "packages/kernel/src/orgs/directory-sync.ts",
     within: "addJob",
     reason:
