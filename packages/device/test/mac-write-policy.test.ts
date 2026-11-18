@@ -11,17 +11,27 @@ describe("macOS write root spellings", () => {
     try {
       await mkdir(join(base, "Target"));
       symlinkSync(join(base, "Target"), join(base, "link"));
-      expect(macWriteRootSpellings(join(base, "link", "missing"))).toEqual([
+      // the test's base is already canonical; on Linux it may sit under /tmp, which macOS alone
+      // maps to /private, so compare as the host platform sees it
+      expect(macWriteRootSpellings(join(base, "link", "missing"), "linux")).toEqual([
         join(base, "link", "missing"),
         join(base, "Target", "missing"),
       ]);
       // on-disk case for a differently cased spelling (case-insensitive file systems)
-      const cased = macWriteRootSpellings(join(base, "target"));
+      const cased = macWriteRootSpellings(join(base, "target"), "linux");
       expect(cased).toEqual([join(base, "target")]);
-      expect(macWriteRootSpellings("/tmp/x")).toEqual(
-        process.platform === "darwin" ? ["/tmp/x", "/private/tmp/x"] : ["/tmp/x", "/private/tmp/x"],
+      // the /private form is macOS's own link; no other platform has it
+      expect(macWriteRootSpellings("/nonexistent-root/x", "darwin")).toEqual([
+        "/nonexistent-root/x",
+      ]);
+      expect(macWriteRootSpellings("/tmp/cap-no-such-dir/x", "darwin")).toContain(
+        "/private/tmp/cap-no-such-dir/x",
       );
-      expect(() => macWriteRootSpellings("/a\nb")).toThrow(/control character/);
+      expect(macWriteRootSpellings("/nonexistent-root/x", "linux")).toEqual([
+        "/nonexistent-root/x",
+      ]);
+      for (const platform of ["darwin", "linux"] as const)
+        expect(() => macWriteRootSpellings("/a\nb", platform)).toThrow(/control character/);
     } finally {
       await rm(base, { recursive: true, force: true });
     }
