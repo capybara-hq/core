@@ -69,6 +69,7 @@ export const ICON_NAMES = [
   "zoom-in",
   "zoom-out",
   "corner-down-right",
+  "corner-down-left",
   "chevrons-up-down",
   "arrow-up-right",
   "arrow-left",
@@ -460,6 +461,10 @@ export const ICON_NODES: Record<IconName, readonly IconNode[]> = {
   "corner-down-right": [
     ["path", { d: "m15 10 5 5-5 5" }],
     ["path", { d: "M4 4v7a4 4 0 0 0 4 4h12" }],
+  ],
+  "corner-down-left": [
+    ["path", { d: "M20 4v7a4 4 0 0 1-4 4H4" }],
+    ["path", { d: "m9 10-5 5 5 5" }],
   ],
   "chevrons-up-down": [
     ["path", { d: "m7 15 5 5 5-5" }],

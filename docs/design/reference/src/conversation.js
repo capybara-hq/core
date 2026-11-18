@@ -462,8 +462,11 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
       o.state === "no-effort" ? "" : picker(C.effortLabels[C.selected.effort], { open: o.menu === "effort" });
     const strip = o.state === "attachments" ? `<div class="r-astrip">${FI.attachments.slice(0, 2).map(attachmentChip).join("")}</div>` : "";
     const skill = o.state === "skill" ? F.SKILL_FIXTURE.chip : null;
+    const suggestion = o.state === "suggestion" ? F.SUGGESTION_FIXTURE : null;
     const placeholder = skill
       ? skill.hint
+      : suggestion
+        ? suggestion.text
       : isNew
         ? K.newPlaceholder.replace("研究助手", C.agent.name)
         : running
@@ -474,7 +477,13 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
     const action = running
       ? `<button class="r-icon-btn r-stop" aria-label="${esc(K.stop)}">${icon("square", 14)}</button>`
       : `<button class="r-icon-btn r-send" aria-label="${esc(K.send)}"${value || skill ? "" : " disabled"}>${icon("arrow-up", 16)}</button>`;
-    const textarea = `<textarea class="r-composer-input" id="msg" rows="1" placeholder="${esc(placeholder)}">${esc(value)}</textarea>`;
+    const textarea = `<textarea class="r-composer-input" id="msg" rows="1" placeholder="${esc(placeholder)}"${suggestion ? ' aria-describedby="msg-suggestion"' : ""}>${esc(value)}</textarea>`;
+    // a prompt suggestion: the visually hidden Tab hint, and on a touch device the ghost dense
+    // "使用建议" button before send (drawn here so the state shows it)
+    const suggestionHint = suggestion ? `<span class="r-sr" id="msg-suggestion">${esc(suggestion.hint)}</span>` : "";
+    const useSuggestion = suggestion
+      ? `<button class="r-btn" data-variant="ghost" data-step="dense" data-part="composer-suggestion-use" aria-label="${esc(suggestion.useNamed)}">${icon("corner-down-left", 14)}${esc(suggestion.use)}</button>`
+      : "";
     // phase D: the skill chip sits before the text on its first line
     const line = skill
       ? `<div class="r-composer-line"><span class="r-composer-token"><span>${esc(skill.label)}</span><button class="r-composer-token-remove" aria-label="移除 ${esc(skill.label)}">${icon("x", 12)}</button></span>${textarea}</div>`
@@ -486,7 +495,7 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
     // the agent map's entry (§6.16.29, AC3): "N 个智能体" after the effort picker and the quick
     // actions, led by the status dot while a sub-agent runs or waits
     const agents = o.agents ? agentsChip(o.agents) : "";
-    return `<div class="r-composer"${o.state === "focus" ? ' data-state="focus"' : ""}>${strip}<label class="r-sr" for="msg">消息</label>${line}<div class="r-composer-bar">${iconBtn("plus", K.attach)}${o.noAgent || !isNew ? "" : picker(C.agent.name, { open: o.menu === "agent" })}${o.device ? devicePicker(o) : ""}${o.permission ? picker(F.PERMISSION_FIXTURE.items.find((i) => i.id === F.PERMISSION_FIXTURE.selected).label, { open: o.menu === "permission" }) : ""}${picker(o.modelValue ?? modelLabel(model.provider, model.model), { open: o.menu === "model" })}${effort}${quick}${agents}<span class="r-grow"></span>${action}</div></div>`;
+    return `<div class="r-composer"${o.state === "focus" ? ' data-state="focus"' : ""}>${strip}<label class="r-sr" for="msg">消息</label>${line}${suggestionHint}<div class="r-composer-bar">${iconBtn("plus", K.attach)}${o.noAgent || !isNew ? "" : picker(C.agent.name, { open: o.menu === "agent" })}${o.device ? devicePicker(o) : ""}${o.permission ? picker(F.PERMISSION_FIXTURE.items.find((i) => i.id === F.PERMISSION_FIXTURE.selected).label, { open: o.menu === "permission" }) : ""}${picker(o.modelValue ?? modelLabel(model.provider, model.model), { open: o.menu === "model" })}${effort}${quick}${agents}<span class="r-grow"></span>${useSuggestion}${action}</div></div>`;
   }
 
   /**
