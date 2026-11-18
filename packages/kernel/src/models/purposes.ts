@@ -26,7 +26,7 @@ import { estimateTokens } from "../runtime/context/tokens.js";
 import { consumeModelStream } from "../runtime/model-call.js";
 import { ProviderListError, ProviderRegistry } from "../runtime/providers.js";
 import { StorageService } from "../storage/storage.service.js";
-import { IMAGE_PURPOSE, imagePurposeUsable } from "./image-usable.js";
+import { IMAGE_PURPOSE, imagePurposeState } from "./image-usable.js";
 
 /**
  * 模型用途映射（C9）：内核与插件按「用途」取模型，不在代码里写死模型。
@@ -267,18 +267,24 @@ export class ModelPurposesService {
    * Whether each purpose (kernel and extension-declared) resolves to a usable model for the org
    * now, as {@link resolve} decides, without naming the model (the agent form's gate for
    * `GenerateImage`, readable by every member). The `image` purpose reads `GenerateImage`'s own
-   * predicate ({@link imagePurposeUsable}: an image model callable now and an object store).
+   * predicate ({@link imagePurposeState}: an image model callable now and an object store).
    */
   async availability(orgId: string): Promise<{ purpose: string; available: boolean }[]> {
     const out: { purpose: string; available: boolean }[] = [];
     for (const d of this.declared()) {
       if (d.purpose === IMAGE_PURPOSE) {
         // `GenerateImage`'s own predicate: the form offers the tool exactly when it is listed
-        const usable = await imagePurposeUsable(
-          { purposes: this, providers: this.providers, storage: this.storage, log: this.log },
+        const state = await imagePurposeState(
+          {
+            purposes: this,
+            providers: this.providers,
+            storage: this.storage,
+            log: this.log,
+            config: this.config,
+          },
           orgId,
         );
-        out.push({ purpose: d.purpose, available: usable === "usable" });
+        out.push({ purpose: d.purpose, available: state.usable === "usable" });
         continue;
       }
       const available = await this.resolve(orgId, d.purpose).then(

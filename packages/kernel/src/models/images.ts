@@ -42,6 +42,7 @@ import { modelDeniedText } from "../runtime/model-call.js";
 import { ProviderRegistry } from "../runtime/providers.js";
 import { UsageReportJobs } from "../runtime/usage-report-jobs.js";
 import type { DeclaredModelPurposes } from "./embeddings.js";
+import { imageInputCaps } from "./image-usable.js";
 import { ModelPurposesService } from "./purposes.js";
 
 /** Standard padded base64 (the check `validateImageGenerateResult` applies to results). */
@@ -294,17 +295,18 @@ export class ModelImages {
       );
     }
 
-    const cap = Math.min(limits.imageMaxPerCall, gen.maxImages);
+    const caps = imageInputCaps(limits, gen);
+    const cap = caps.maxImages;
     const n = input.n ?? 1;
     if (!Number.isInteger(n) || n < 1) bad(`n must be a whole number from 1 to ${cap}`);
     if (n > cap) bad(`n must be at most ${cap} for this model`);
 
     const refs = input.referenceImages ?? [];
-    if (refs.length > gen.maxReferenceImages) {
+    if (refs.length > caps.maxReferenceImages) {
       bad(
-        gen.maxReferenceImages === 0
+        caps.maxReferenceImages === 0
           ? "this model takes no reference images"
-          : `this model takes at most ${gen.maxReferenceImages} reference images`,
+          : `this model takes at most ${caps.maxReferenceImages} reference images`,
       );
     }
     refs.forEach((r, i) => {

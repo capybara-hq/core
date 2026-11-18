@@ -1,5 +1,5 @@
-import { describe, expect, it } from "vitest";
-import { type BuiltinTool, ToolRegistry } from "../../src/tools/registry.js";
+import { describe, expect, it, vi } from "vitest";
+import { type BuiltinTool, specHash, ToolRegistry } from "../../src/tools/registry.js";
 import { noRowsDb } from "../helpers/disabled-tools.js";
 
 const ORG_A = "org-a";
@@ -56,5 +56,27 @@ describe("BuiltinTool.unavailable", () => {
     expect((await registry.forAgent(ORG_A, { ...def, source: "web" })).hidden).toEqual([
       { ref: "CurrentTime", reason: "nope" },
     ]);
+  });
+});
+
+describe("BuiltinTool.specFor", () => {
+  const spec = {
+    name: "CurrentTime",
+    description: "An org-specific probe.",
+    inputSchema: { type: "object" },
+  };
+
+  it("lists the spec it returns, hashed as that spec", async () => {
+    const registry = registryOf({ ...probe(undefined), specFor: async () => spec });
+    const { tools } = await registry.forAgent(ORG_A, { ...def, source: "web" });
+    expect(tools.map((t) => t.spec.description)).toEqual(["An org-specific probe."]);
+    expect(tools[0]?.specHash).toBe(specHash(spec));
+  });
+
+  it("is not called for an unavailable tool", async () => {
+    const specFor = vi.fn(() => spec);
+    const registry = registryOf({ ...probe(() => "nope"), specFor });
+    await registry.forAgent(ORG_A, { ...def, source: "web" });
+    expect(specFor).not.toHaveBeenCalled();
   });
 });

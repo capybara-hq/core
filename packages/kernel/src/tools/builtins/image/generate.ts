@@ -16,7 +16,11 @@ import { type EventPayload, isValidArtifactName } from "../../../conversations/e
 import type { KernelSchemaDb } from "../../../db/kernel-schema.js";
 import { ApiError } from "../../../errors.js";
 import type { KernelConfigService } from "../../../infra/config/kernel-config.service.js";
-import { IMAGE_PURPOSE, imagePurposeUsable } from "../../../models/image-usable.js";
+import {
+  IMAGE_PURPOSE,
+  type ImageInputCaps,
+  imagePurposeState,
+} from "../../../models/image-usable.js";
 import {
   billedImages,
   ImageCallDenied,
@@ -68,6 +72,23 @@ const MAX_REFERENCES = 4;
 const MAX_IMAGES = 4;
 /** The longest base name (`name`). */
 const NAME_MAX_CHARS = 100;
+
+/** The listed spec for an org whose image model accepts `caps` (pure; `n` and references drop or cap). */
+export function generateImageSpec(caps: ImageInputCaps): ToolSpec {
+  const base = GENERATE_IMAGE_SPEC;
+  const { n, reference_images, ...rest } = (
+    base.inputSchema as { properties: Record<string, unknown> }
+  ).properties;
+  const properties: Record<string, unknown> = { ...rest };
+  if (caps.maxImages > 1) properties.n = { ...(n as object), maximum: caps.maxImages };
+  if (caps.maxReferenceImages > 0) {
+    properties.reference_images = {
+      ...(reference_images as object),
+      maxItems: Math.min(MAX_REFERENCES, caps.maxReferenceImages),
+    };
+  }
+  return { ...base, inputSchema: { ...base.inputSchema, properties } };
+}
 
 export const GENERATE_IMAGE_SPEC: ToolSpec = {
   name: "GenerateImage",
@@ -227,9 +248,14 @@ export function generateImageTool(deps: GenerateImageDeps): BuiltinTool {
     defaultPolicy: "allow",
     // the predicate the agent form's purpose availability reads too (one rule, no drift)
     unavailable: async (scope) => {
-      const usable = await imagePurposeUsable(deps, scope.orgId);
-      if (usable === "no-model") return NO_IMAGE_MODEL_REASON;
-      return usable === "no-storage" ? NO_STORAGE_REASON : null;
+      const state = await imagePurposeState(deps, scope.orgId, scope.memo);
+      if (state.usable === "no-model") return NO_IMAGE_MODEL_REASON;
+      return state.usable === "no-storage" ? NO_STORAGE_REASON : null;
+    },
+    // the counts the org's image model accepts (on a race to unusable: the static spec)
+    specFor: async (scope) => {
+      const state = await imagePurposeState(deps, scope.orgId, scope.memo);
+      return state.usable === "usable" ? generateImageSpec(state) : GENERATE_IMAGE_SPEC;
     },
     timeoutMs: () => deps.config.get().models.imageTimeoutMs + 60_000,
     async run(raw, ctx) {
