@@ -365,6 +365,7 @@ class Connection implements StreamHandle {
     }
     if (m.kind === PROMPT_SUGGESTION_BUS_KIND) {
       // a new prompt suggestion for this conversation: display-only, never in the log
+      // (the switch is checked by the job at write time; a frame racing a switch-off is harmless)
       this.enqueue(() => this.write(suggestionFrame(m)));
       return;
     }

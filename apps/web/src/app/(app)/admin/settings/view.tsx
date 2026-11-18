@@ -298,7 +298,9 @@ function AdminSettings({
   if (compactionPatch !== null) patch.compaction = compactionPatch;
   const savedSuggestions = saved.promptSuggestions ?? "on";
   const promptSuggestions = suggestionsDraft ?? savedSuggestions;
-  if (promptSuggestions !== savedSuggestions) patch.promptSuggestions = promptSuggestions;
+  // "on" is the default: clear the key instead of storing it (spec §6)
+  if (promptSuggestions !== savedSuggestions)
+    patch.promptSuggestions = promptSuggestions === "on" ? null : "off";
   const sharing = sharingOf(saved, sharingDraft);
   Object.assign(patch, sharing.patch);
   const unsaved = Object.keys(patch).length;

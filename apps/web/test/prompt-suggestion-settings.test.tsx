@@ -11,7 +11,7 @@ import { renderRouteWithCache } from "./support/query";
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
 
 /**
- * 输入建议 on both settings pages (prompt suggestions spec §6): the platform switch on
+ * Prompt suggestions on both settings pages (prompt suggestions spec §6): the platform switch on
  * /admin/settings, and the organization's switch on /settings/organization, disabled with
  * "Turned off by the platform" while the platform has it off.
  */
