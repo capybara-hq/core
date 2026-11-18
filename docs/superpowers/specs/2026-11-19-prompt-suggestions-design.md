@@ -531,3 +531,48 @@ The maintainer delegated these to the recommendations:
 - **Tests.** New unit test file joins `unit-tests.json`; integration is one app per file; no
   container test (reason in Testing).
 - No new AGENTS.md rule.
+
+## Implementation notes (2026-11-19)
+
+Where the implementation differs from the text above, the smallest change that keeps the intent:
+
+1. **Eligibility types.** `suggestionEligible` takes the real `run_finished.reason` and
+   `run_started.trigger` unions; trigger `message` (or absent) qualifies like any non-excluded one.
+2. **Model check.** `buildSuggestionRequest` skips (`model_mismatch`) when the resolved `ModelInfo`
+   is not the last call's model, so a wrong resolution can never produce a different prefix.
+3. **Events after the final reply.** The extension is built from every event up to the terminal
+   event, not cut at the final reply: a model-visible event after the reply fails the
+   "exactly one appended assistant message" check (§2 row "only its usage and run_finished
+   follow"); user messages past `absorbedUpToSeq` stay out as in the next real step.
+4. **Never throws on a bad snapshot.** An `ApiError` from reconstruction (e.g. a corrupt
+   permission record) is a `drift` skip. `reconstructRequest` is split into `reconstructInputs`
+   and `reconstructFromInputs`, one path, unchanged behaviour (zero-drift tests 42/42).
+5. **`cleanSuggestion`.** Cuts at 200 code points; `NONE` with trailing punctuation (`.`, `!`,
+   `。`, `！`) is none; one balanced pair of wrapping quotes from a fixed set is removed.
+6. **Double runs.** `removeOnComplete` frees the job id, so `maybeEnqueue` and the job also skip
+   when the run's `usage_suggestion:<runId>` event already exists (no second paid call).
+7. **Freshness** requires the latest run's status `completed` (every `run_finished` sets it; failed
+   and aborted runs never qualify anyway).
+8. **Compaction reserve and media.** The job uses a pure `resolveCompactionSettings` shared with
+   `CompactionSettingsService` and loads media through `AttachmentsService` as `RunSteps` does
+   (importing those services' modules would be a module cycle).
+9. **Usage on a failed call** (differs from "as titles do"): no usage is logged when the
+   `ModelError` kind shows the vendor refused before processing (`rate_limited`, `overloaded`,
+   `auth`, `invalid_request`, `context_overflow`): a suggestion's estimate is the whole
+   conversation at full price and would overstate cost. Other failures log the input estimate
+   plus streamed characters / 4 as output, like the purpose calls.
+10. **`model.response` on a timeout.** Observe hooks run on the worker's lifecycle signal, not the
+    call's 60 s signal, so a timed-out call still fires `model.response` (outcome failed); a
+    shutdown fires none. The same latent bug in the title call is fixed with it. A test seam
+    `PROMPT_SUGGESTION_TIMEOUT` lowers the timeout in tests.
+11. **Design.** A new `corner-down-left` icon; a reference-only `referenceTouch` prop draws the
+    touch button in the reference set and the `/dev/ui` catalog (desktop renderers have no touch
+    pointer). Any paste or ＋ attach click while the suggestion shows dismisses it.
+12. **Web.** The reader's rule matches the latest `run_finished`'s run id (and hides on any
+    `user_message` / `run_started` above `afterSeq`); any draft edit while a suggestion is offered
+    dismisses it for that run; each settings page has its own section next to compaction (neither
+    page has a shared conversation group). Switching back on writes `null` (follow the default).
+13. **Tests.** The integration-test cases are split between `prompt-suggestion-job.test.ts` (the
+    job: hooks, fail-closed policy, usage, timeout, billing) and `prompt-suggestions.test.ts`
+    (end to end through HTTP and SSE: exclusions, freshness race, NONE / tool / failure replies);
+    the channel case sets `conversations.source` directly since eligibility reads only that.
