@@ -590,12 +590,9 @@ export function mapSandboxError(e: unknown, log: Pick<Logger, "warn"> | undefine
     const unreachable = unreachableCause((e as { cause?: unknown }).cause);
     if (unreachable) {
       log?.warn("sandbox provider unreachable", { ...unreachable, outcome: "unknown" });
-      return new ToolError(
-        unreachable.failure === "connect"
-          ? SANDBOX_UNREACHABLE_TEXT
-          : SANDBOX_CONNECTION_DROPPED_TEXT,
-        { kind: "unavailable" },
-      );
+      if (unreachable.failure === "connect")
+        return new ToolError(SANDBOX_UNREACHABLE_TEXT, { kind: "unavailable" });
+      return new ToolError(SANDBOX_CONNECTION_DROPPED_TEXT, { kind: "unavailable" });
     }
     log?.warn("sandbox operation outcome unknown", { err: e });
     return new ToolError(OUTCOME_UNKNOWN_TOOL_TEXT, { kind: "unavailable" });

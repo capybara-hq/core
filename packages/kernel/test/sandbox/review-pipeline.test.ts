@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import {
   fakeDm as dm,
   type FakeChannelServer,
+  fakeGroupMessage as group,
   startFakeChannelServer,
   startTestPostgres,
   startTestRedis,
@@ -14,21 +15,26 @@ import {
 import { SchedulerRegistry } from "@nestjs/schedule";
 import { sql } from "kysely";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { EventLog } from "../../src/conversations/event-log.js";
 import {
+  ACTOR_NOT_DEVICE_OWNER_REASON,
   COMMAND_ASK_TEXT_MAX_CHARS,
   type ConversationEvent,
 } from "../../src/conversations/events.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { ConversationDevices } from "../../src/devices/conversation-devices.js";
+import { RunQueue } from "../../src/runtime/run-queue.js";
 import { Waits } from "../../src/runtime/waits.js";
 import { REVIEW_SYSTEM_PROMPT } from "../../src/sandbox/review/index.js";
 import { ScheduledTaskFirer } from "../../src/schedules/fire.js";
 import { SCHED_SCAN_JOB } from "../../src/schedules/job-ids.js";
 import { type ScheduledTaskInsert, ScheduledTaskStore } from "../../src/schedules/store.js";
 import type { TaskRun } from "../../src/schedules/types.js";
+import { DEVICE_OF_ANOTHER_ACCOUNT_TEXT } from "../../src/tools/builtins/sandbox/common.js";
 import { ToolPipeline } from "../../src/tools/pipeline.js";
 import { scriptRules } from "../fixtures/plugins/model-script/index.js";
+import { readFakeSandboxOps } from "../fixtures/plugins/sandbox-fake/index.js";
 import { onlyBuiltins } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
@@ -887,5 +893,128 @@ describe("the command review in the pipeline", () => {
       url: `/plugins/hooks-probe/config`,
       payload: { orgId },
     });
+  });
+});
+
+/**
+ * Gate-on runs of accounts that own no device here (activation plan B-20 and the non-owner trigger
+ * ruling): an anonymous guest's channel run records `unavailable / no-device` and replies; a run
+ * another member triggers in a conversation bound to its owner's device (a wake attributed to that
+ * member, say) records `unavailable / actor-device-access` and runs without that device, which is
+ * never used by another account.
+ */
+describe("runs of accounts that own no device here", () => {
+  const bashBy = (who: string) =>
+    JSON.stringify({ command: `echo from-${who}`, description: "Say who" });
+  const contextsOf = async (conv: string, runId?: string) =>
+    (await eventsOf(db, conv)).filter(
+      (e): e is Extract<ConversationEvent, { type: "permission_context" }> =>
+        e.type === "permission_context" && (runId === undefined || e.runId === runId),
+    );
+
+  it("an anonymous guest's channel run records an unavailable / no-device context and replies (B-20)", async () => {
+    const chat = "grp-guest";
+    const guest = await owner({
+      method: "POST",
+      url: `/api/v1/orgs/${orgId}/channels`,
+      payload: {
+        plugin: "chan-mini",
+        name: "Guests",
+        agentId,
+        unboundPolicy: "anonymous",
+        config: { platformUrl: im.url, appId: "cli_guest", appSecret: "app-secret-1234567" },
+      },
+    });
+    expect(guest.statusCode, guest.body).toBe(201);
+    const guestConn = (guest.json() as { channel: { id: string } }).channel.id;
+    await waitFor(async () => im.active(guestConn).length === 1, 10_000, "guest long connection");
+    im.push(guestConn, group("g1", "u-guest", "echo:hello guest", { chatId: chat }));
+    const conv = await waitFor(
+      async () =>
+        (
+          await db
+            .selectFrom("channel_threads")
+            .select("conversation_id")
+            .where("connection_id", "=", guestConn)
+            .where("chat_id", "=", chat)
+            .where("archived_at", "is", null)
+            .executeTakeFirst()
+        )?.conversation_id,
+      10_000,
+      "the guest conversation",
+    );
+    await waitForTerminal(db, conv, 1, 30_000);
+    expect((await eventsOf(db, conv)).some((e) => e.type === "run_failed")).toBe(false);
+    await waitFor(
+      async () => im.sent.find((s) => s.appId === "cli_guest" && s.target.chatId === chat),
+      20_000,
+      "the guest reply",
+    );
+    const [context] = await contextsOf(conv);
+    expect(context?.payload).toMatchObject({
+      version: 1,
+      deviceId: null,
+      scope: null,
+      availability: { state: "unavailable", cause: "no-device" },
+    });
+  });
+
+  it("a run another member triggers in the owner's conversation runs without the owner's device", async () => {
+    // the owner's conversation on their device, used once by the owner
+    const conv = await createConv(owner, orgId, agentId);
+    await postMessage(owner, orgId, conv, `tool:Bash:${bashBy("owner")}`);
+    await waitForTerminal(db, conv, 1, 30_000);
+    const bound = await db
+      .selectFrom("conversations")
+      .select(["account_id", "device_id"])
+      .where("id", "=", conv)
+      .executeTakeFirstOrThrow();
+    expect(bound.account_id).toBe(ownerId);
+    expect(bound.device_id).not.toBeNull();
+    expect(JSON.stringify(await readFakeSandboxOps(root))).toContain(ownerId);
+
+    // a member's already-authorized message (as a wake or a shared thread attributes a run to
+    // another member; the HTTP entrance itself checks ownership)
+    await k.app.get(EventLog).append(conv, [
+      {
+        type: "user_message",
+        payload: {
+          content: [{ type: "text", text: `tool:Bash:${bashBy("member")}` }],
+          authorAccountId: otherId,
+        },
+      },
+    ]);
+    await k.app.get(RunQueue).ensureRun(conv);
+    await waitForTerminal(db, conv, 2, 30_000);
+    const run = await db
+      .selectFrom("runs")
+      .select(["id", "status", "trigger_account_id"])
+      .where("conversation_id", "=", conv)
+      .orderBy("created_at", "desc")
+      .executeTakeFirstOrThrow();
+    expect(run.trigger_account_id).toBe(otherId);
+    // the run is not refused for its actor: it finishes
+    expect(run.status).toBe("completed");
+    const [context] = await contextsOf(conv, run.id);
+    expect(context?.payload).toMatchObject({
+      deviceId: null,
+      selectedProfile: null,
+      effectiveProfile: null,
+      scope: null,
+      availability: {
+        state: "unavailable",
+        cause: "actor-device-access",
+        reason: ACTOR_NOT_DEVICE_OWNER_REASON,
+      },
+    });
+    // the device tool is refused; the owner's device never ran anything for the member
+    const result = (await eventsOf(db, conv)).findLast(
+      (e) => e.type === "tool_result" && e.runId === run.id,
+    ) as Extract<ConversationEvent, { type: "tool_result" }> | undefined;
+    expect(result?.payload.isError).toBe(true);
+    expect(result?.payload.content).toBe(DEVICE_OF_ANOTHER_ACCOUNT_TEXT);
+    const ops = JSON.stringify(await readFakeSandboxOps(root));
+    expect(ops).not.toContain(otherId);
+    expect(ops).not.toContain("from-member");
   });
 });
