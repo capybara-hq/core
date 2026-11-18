@@ -40,6 +40,7 @@ export function EmbedTab({
   conversationId,
   agentId,
   file,
+  fill = false,
   failed,
 }: {
   /** `null`: a platform page (the admin routes, no org). */
@@ -52,6 +53,11 @@ export function EmbedTab({
   agentId?: string;
   /** A `file-preview` embed: the file it previews, posted once after `init`. */
   file?: { id: string; read(): Promise<EmbedFile>; maxBytes: number };
+  /**
+   * Fill the pane it sits in (the file preview body) instead of the embed's own height: a file
+   * previewer sends no resize, its renderers scroll inside the frame.
+   */
+  fill?: boolean;
   /** Renders a failure in place of the built-in one (the conversation page's frames). */
   failed?(o: { message: string; onRetry(): void }): ReactNode;
 }) {
@@ -201,13 +207,30 @@ export function EmbedTab({
       </Stack>
     );
   }
+  const warning = refreshFailed && (
+    <Text variant="small" tone="warn">
+      {t("ui.embedRefreshFailed")}
+    </Text>
+  );
+  if (fill) {
+    // Direct children of the pane's flex column: the frame takes the height the warning leaves.
+    return (
+      <>
+        {warning}
+        <EmbedFrame
+          key={frameKey}
+          src={state.src}
+          title={title}
+          fill
+          onMessage={onMessage}
+          frameRef={setFrame}
+        />
+      </>
+    );
+  }
   return (
     <Stack gap={8}>
-      {refreshFailed && (
-        <Text variant="small" tone="warn">
-          {t("ui.embedRefreshFailed")}
-        </Text>
-      )}
+      {warning}
       <EmbedFrame
         key={frameKey}
         src={state.src}

@@ -753,6 +753,7 @@ function FilePreviewSlot({
         title={host.title}
         conversationId={args.conversationId}
         file={{ id: args.fileId, maxBytes: host.maxBytes, read: host.read }}
+        fill
         failed={host.failed}
       />
     </BlockBoundary>

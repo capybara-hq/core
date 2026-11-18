@@ -372,6 +372,30 @@ describe("full-height panes and the narrow properties sheet", () => {
     expect(nested()).toEqual([]);
   });
 
+  it("a filling EmbedFrame in a FilePreviewFrame draws no frame: the pane is the one box", () => {
+    zh(
+      <BoxScope kind="properties-sheet">
+        <FilePreviewFrame
+          header={{
+            badge: "XLSX",
+            name: "q3.xlsx",
+            onDownload: noop,
+            onFullscreen: noop,
+            onClose: noop,
+          }}
+          state="ready"
+        >
+          <EmbedFrame src="about:blank" title="sheet" fill onMessage={noop} />
+        </FilePreviewFrame>
+      </BoxScope>,
+    );
+    const frame = document.querySelector(".cb-embed");
+    expect(frame?.getAttribute("data-fill")).toBe("true");
+    expect(frame?.getAttribute("data-framed")).toBe("false");
+    expect(frame?.parentElement?.classList.contains("cb-rpanel-body")).toBe(true);
+    expect(nested()).toEqual([]);
+  });
+
   it("the sheet splits every child of the panel, an extension section in its wrapper too", () => {
     // jsdom does not resolve `var()` borders, so the hairline rules are read from the stylesheet
     // and matched against the rendered panel's children.
