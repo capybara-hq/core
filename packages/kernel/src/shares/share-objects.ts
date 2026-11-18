@@ -1,7 +1,10 @@
 import { Inject, Injectable, Module } from "@nestjs/common";
+import { sql } from "kysely";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
+import type { OutboxService } from "../infra/outbox/outbox.service.js";
+import { MAINTENANCE_QUEUE_NAME } from "../runtime/maintenance-queue.js";
 import { StorageModule } from "../storage/storage.module.js";
 import { StorageService } from "../storage/storage.service.js";
 
@@ -31,12 +34,36 @@ export interface ShareObjectDeleteData {
   objectKey: string;
 }
 
+/** Owes the deletion of one share generation's snapshot, in the caller's transaction. */
+export async function oweShareObjectDelete(
+  outbox: Pick<OutboxService, "add">,
+  orgId: string,
+  shareId: string,
+  generation: number,
+): Promise<void> {
+  const data: ShareObjectDeleteData = {
+    orgId,
+    shareId,
+    generation,
+    objectKey: shareObjectKey(shareId, generation),
+  };
+  await outbox.add({
+    queue: MAINTENANCE_QUEUE_NAME,
+    name: SHARE_OBJECT_DELETE_JOB,
+    jobId: shareObjectDeleteJobId(shareId, generation),
+    data,
+    orgId,
+  });
+}
+
 /**
  * Runs a {@link SHARE_OBJECT_DELETE_JOB} (the maintenance processor dispatches it here). Delivered
- * twice, it is harmless: deleting a missing object is a no-op. A snapshot a share still serves
- * (the row is not revoked and names the key) is never deleted, whatever the job says; a revoked
- * row whose snapshot is gone gets its `object_key` cleared (the row stays for the audit trail and
- * the lists' recent section).
+ * twice, it is harmless: deleting a missing object is a no-op. A snapshot a share may still serve
+ * (the row is neither revoked nor expired and names the key) is never deleted, whatever the job
+ * says; a revoked or expired row whose snapshot is gone gets its `object_key` cleared (the row stays
+ * for the audit trail and the lists' recent section). Expiry is final (no route moves
+ * `expires_at`), so an expired row never serves again. The daily sweep (`ShareSweepJob`) calls
+ * {@link deleteObject} directly for expired shares and orphan snapshots.
  */
 @Injectable()
 export class ShareObjects {
@@ -54,17 +81,21 @@ export class ShareObjects {
     }
     const row = await this.db
       .selectFrom("file_shares")
-      .select(["object_key", "revoked_at"])
+      .select([
+        "object_key",
+        "revoked_at",
+        sql<boolean>`expires_at IS NOT NULL AND expires_at <= now()`.as("expired"),
+      ])
       .where("id", "=", data.shareId)
       .where("org_id", "=", data.orgId)
       .executeTakeFirst();
-    if (row && row.revoked_at === null && row.object_key === data.objectKey) return;
+    if (row && row.revoked_at === null && !row.expired && row.object_key === data.objectKey) return;
     const store = this.storage.kernel(data.orgId);
     if (await store.head(data.objectKey)) await store.delete(data.objectKey);
     await this.cleared(data);
   }
 
-  /** Clears a revoked row's `object_key` once its snapshot is gone. */
+  /** Clears a revoked or expired row's `object_key` once its snapshot is gone. */
   @Transactional()
   async cleared(data: ShareObjectDeleteData): Promise<void> {
     await this.db
@@ -73,7 +104,12 @@ export class ShareObjects {
       .where("id", "=", data.shareId)
       .where("org_id", "=", data.orgId)
       .where("object_key", "=", data.objectKey)
-      .where("revoked_at", "is not", null)
+      .where((eb) =>
+        eb.or([
+          eb("revoked_at", "is not", null),
+          eb.and([eb("expires_at", "is not", null), eb("expires_at", "<=", sql<Date>`now()`)]),
+        ]),
+      )
       .execute();
   }
 }

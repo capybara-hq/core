@@ -21,6 +21,7 @@ import { MAINTENANCE_QUEUE_NAME } from "../../src/runtime/maintenance.js";
 import { ShareLiveness } from "../../src/shares/liveness.js";
 import { SHARE_CODE_RE } from "../../src/shares/share-code.js";
 import { shareObjectDeleteJobId } from "../../src/shares/share-objects.js";
+import { ShareSweepJob } from "../../src/shares/sweep.job.js";
 import { StorageService } from "../../src/storage/storage.service.js";
 import { truncateTables } from "../helpers/db.js";
 import { asUser, cookieJar } from "../helpers/http.js";
@@ -42,7 +43,9 @@ import {
 
 /**
  * File sharing spec §1, §2, §9, §10: creating, refreshing, revoking and listing shares of a
- * conversation file (a snapshot copied under `shares/<id>/<generation>`).
+ * conversation file (a snapshot copied under `shares/<id>/<generation>`), and their lifecycle:
+ * deleting the conversation or offboarding the creator revokes them in the same transaction; the
+ * other causes stop them through the live check until the daily sweep revokes them.
  */
 
 const OBJECT_STORE = fakeExtensionEntry("fake-object-store");
@@ -101,6 +104,7 @@ let bob: Req;
 let ownerId: string;
 let aliceId: string;
 let orgId: string;
+let agentId: string;
 let conv: string;
 
 beforeEach(async () => {
@@ -125,7 +129,7 @@ beforeEach(async () => {
   await testMembers(db).add(orgId, bobId, "member", ownerId);
   alice = await session(k, "alice");
   bob = await session(k, "bob");
-  const agentId = await createAgent(owner, orgId);
+  agentId = await createAgent(owner, orgId);
   conv = await createConv(alice, orgId, agentId);
 });
 
@@ -138,12 +142,12 @@ async function readObject(key: string): Promise<string | null> {
 }
 
 /** Stores an object and logs its `artifact_created` (as `Deliver` would). */
-async function deliver(name: string, text: string, sourcePath = `/workspace/${name}`) {
+async function deliver(name: string, text: string, sourcePath = `/workspace/${name}`, c = conv) {
   const artifactId = randomUUID();
-  const objectKey = `artifacts/${conv}/${artifactId}`;
+  const objectKey = `artifacts/${c}/${artifactId}`;
   const bytes = Buffer.from(text);
   await store().put(objectKey, bytes, { contentType: "text/html", size: bytes.byteLength });
-  await k.app.get(EventLog).append(conv, [
+  await k.app.get(EventLog).append(c, [
     {
       type: "artifact_created",
       payload: {
@@ -732,5 +736,167 @@ describe("Platform operations (spec §10)", () => {
     await expect(
       run("conversations.revoke-share", { shareId: other.id }, ctxOf(bobId)),
     ).rejects.toThrow(/Share not found/);
+  });
+});
+
+/** A share made by `as` (internal never expiring, or external for 7 days). */
+async function shareAs(
+  as: Req,
+  fileId: string,
+  opts: { conv?: string; audience?: "internal" | "external" } = {},
+): Promise<ShareView> {
+  const audience = opts.audience ?? "internal";
+  const r = await as({
+    method: "POST",
+    url: sharesUrl(fileId, opts.conv ?? conv),
+    payload: { audience, expiresInDays: audience === "external" ? 7 : null },
+  });
+  expect(r.statusCode, r.body).toBe(201);
+  return (r.json() as { share: ShareView }).share;
+}
+
+/** Whether the share opens now (the check every open route makes). */
+const opens = async (code: string) => (await k.app.get(ShareLiveness).byCode(code)) !== null;
+
+/** Delivers the owed snapshot deletions and waits for the share's snapshot to be gone. */
+async function freed(s: ShareView): Promise<void> {
+  failMaintenance = false;
+  await sql`UPDATE capybara.outbox SET next_attempt_at = now()`.execute(raw);
+  await drainOutbox(k.app, { jobId: shareObjectDeleteJobId(s.id, s.generation) });
+  await expect
+    .poll(() => readObject(`shares/${s.id}/${s.generation}`), { timeout: 20_000 })
+    .toBeNull();
+  await expect.poll(async () => (await shareRow(s.id)).object_key, { timeout: 20_000 }).toBeNull();
+}
+
+describe("revokes that come with a lifecycle event", () => {
+  it("deleting the conversation revokes its shares in the same transaction and owes their snapshots", async () => {
+    const s = await shareAs(alice, (await deliver("a.html", "one")).artifactId);
+    expect(await opens(s.code)).toBe(true);
+
+    // the revoke fails: the deletion fails with it (one transaction)
+    await sql`CREATE FUNCTION capybara.test_refuse_share_update() RETURNS trigger LANGUAGE plpgsql AS
+      $$ BEGIN RAISE EXCEPTION 'refused by the test'; END $$`.execute(raw);
+    await sql`CREATE TRIGGER test_refuse_share_update BEFORE UPDATE ON capybara.file_shares
+      FOR EACH ROW EXECUTE FUNCTION capybara.test_refuse_share_update()`.execute(raw);
+    try {
+      const r = await alice({
+        method: "DELETE",
+        url: `/api/v1/orgs/${orgId}/conversations/${conv}`,
+      });
+      expect(r.statusCode).toBe(500);
+    } finally {
+      await sql`DROP TRIGGER test_refuse_share_update ON capybara.file_shares`.execute(raw);
+      await sql`DROP FUNCTION capybara.test_refuse_share_update()`.execute(raw);
+    }
+    const kept = await db
+      .selectFrom("conversations")
+      .select("deleted_at")
+      .where("id", "=", conv)
+      .executeTakeFirstOrThrow();
+    expect(kept.deleted_at).toBeNull();
+    expect(await opens(s.code)).toBe(true);
+
+    failMaintenance = true;
+    const r = await alice({ method: "DELETE", url: `/api/v1/orgs/${orgId}/conversations/${conv}` });
+    expect(r.statusCode, r.body).toBe(204);
+    expect(await opens(s.code)).toBe(false);
+    const row = await shareRow(s.id);
+    expect(row).toMatchObject({ revoke_reason: "conversation_deleted", revoked_by: null });
+    expect(row.revoked_at).not.toBeNull();
+    expect(await owedDeletes(shareObjectDeleteJobId(s.id, 1))).toHaveLength(1);
+    await freed(s);
+  });
+
+  it("removing a member revokes their shares, not another member's", async () => {
+    const mine = await shareAs(alice, (await deliver("a.html", "one")).artifactId);
+    const bobConv = await createConv(bob, orgId, agentId);
+    const theirs = await shareAs(
+      bob,
+      (await deliver("b.html", "two", undefined, bobConv)).artifactId,
+      {
+        conv: bobConv,
+      },
+    );
+    failMaintenance = true;
+    const r = await owner({ method: "DELETE", url: `/api/v1/orgs/${orgId}/members/${aliceId}` });
+    expect(r.statusCode, r.body).toBe(204);
+    expect(await opens(mine.code)).toBe(false);
+    expect(await shareRow(mine.id)).toMatchObject({ revoke_reason: "member_offboarded" });
+    expect(await owedDeletes(shareObjectDeleteJobId(mine.id, 1))).toHaveLength(1);
+    const offboarded = await db
+      .selectFrom("audit_events")
+      .select("detail")
+      .where("action", "=", "org.member.offboarded")
+      .executeTakeFirstOrThrow();
+    expect(offboarded.detail).toMatchObject({ sharesRevoked: 1 });
+    // bob's share is untouched
+    expect(await opens(theirs.code)).toBe(true);
+    expect(await shareRow(theirs.id)).toMatchObject({ revoked_at: null, revoke_reason: null });
+    expect(await owedDeletes(shareObjectDeleteJobId(theirs.id, 1))).toEqual([]);
+    await freed(mine);
+    expect(await readObject(`shares/${theirs.id}/1`)).toBe("two");
+  });
+});
+
+describe("causes the live check covers", () => {
+  it("a disabled creator's share stops at once without a revoke, and opens again when re-enabled", async () => {
+    const s = await shareAs(alice, (await deliver("a.html", "one")).artifactId);
+    await sql`UPDATE capybara.accounts SET status = 'disabled' WHERE id = ${aliceId}`.execute(raw);
+    expect(await opens(s.code)).toBe(false);
+    expect((await shareRow(s.id)).revoked_at).toBeNull();
+    await sql`UPDATE capybara.accounts SET status = 'active' WHERE id = ${aliceId}`.execute(raw);
+    expect(await opens(s.code)).toBe(true);
+  });
+
+  it("an external share stops while the org switch is off and opens again when it is on", async () => {
+    await platformSharing("allow");
+    await orgSharing("on");
+    const s = await shareAs(alice, (await deliver("a.html", "one")).artifactId, {
+      audience: "external",
+    });
+    expect(await opens(s.code)).toBe(true);
+    await orgSharing("off");
+    expect(await opens(s.code)).toBe(false);
+    // the switch is no lost access: the sweep leaves it alone
+    await k.app.get(ShareSweepJob).runOnce();
+    expect((await shareRow(s.id)).revoked_at).toBeNull();
+    await orgSharing("on");
+    expect(await opens(s.code)).toBe(true);
+  });
+});
+
+describe("the daily sweep", () => {
+  it("revokes a share whose agent was deleted (creator_lost_access) and owes its snapshot; live shares stay", async () => {
+    const lost = await shareAs(alice, (await deliver("a.html", "one")).artifactId);
+    const otherAgent = await createAgent(owner, orgId);
+    const bobConv = await createConv(bob, orgId, otherAgent);
+    const live = await shareAs(
+      bob,
+      (await deliver("b.html", "two", undefined, bobConv)).artifactId,
+      {
+        conv: bobConv,
+      },
+    );
+    const r = await owner({ method: "DELETE", url: `/api/v1/orgs/${orgId}/agents/${agentId}` });
+    expect(r.statusCode, r.body).toBeLessThan(300);
+    // stopped at once by the live check, still unrevoked until the sweep
+    expect(await opens(lost.code)).toBe(false);
+    expect((await shareRow(lost.id)).revoked_at).toBeNull();
+
+    failMaintenance = true;
+    const swept = await k.app.get(ShareSweepJob).runOnce();
+    expect(swept.revoked).toBe(1);
+    expect(await shareRow(lost.id)).toMatchObject({
+      revoke_reason: "creator_lost_access",
+      revoked_by: null,
+    });
+    expect(await owedDeletes(shareObjectDeleteJobId(lost.id, 1))).toHaveLength(1);
+    expect(await opens(live.code)).toBe(true);
+    expect((await shareRow(live.id)).revoked_at).toBeNull();
+    await freed(lost);
+    expect(await readObject(`shares/${live.id}/1`)).toBe("two");
+    // a second run finds nothing to do
+    expect((await k.app.get(ShareSweepJob).runOnce()).revoked).toBe(0);
   });
 });

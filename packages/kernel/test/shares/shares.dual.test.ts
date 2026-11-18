@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import type { ObjectStore } from "@capybara-hq/plugin-sdk";
 import {
   fakeExtensionEntry,
   startTestPostgres,
@@ -15,6 +16,7 @@ import { createDb } from "../../src/db/pool.js";
 import { createLogger } from "../../src/log.js";
 import { ShareLiveness } from "../../src/shares/liveness.js";
 import { ShareObjects } from "../../src/shares/share-objects.js";
+import { ShareSweepJob } from "../../src/shares/sweep.job.js";
 import { StorageService } from "../../src/storage/storage.service.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
@@ -33,7 +35,7 @@ import {
 /**
  * File sharing spec §2, two replicas: a snapshot is written before its row (intent first), a
  * snapshot deletion delivered twice is harmless, and a share created on one replica is revoked on
- * the other.
+ * the other. §9: the daily share sweep runs once per tick across replicas.
  */
 
 const OBJECT_STORE = fakeExtensionEntry("fake-object-store");
@@ -289,5 +291,104 @@ describe("shares on two replicas", () => {
     const del = await ownerA({ method: "DELETE", url: `/api/v1/orgs/${orgId}/shares/${first.id}` });
     expect(del.statusCode).toBe(204);
     expect(await b.app.get(ShareLiveness).byCode(first.code)).toBeNull();
+  });
+});
+
+/**
+ * Makes every replica's object listing report `ages` (ms before now) for the given keys: S3 sets
+ * an object's time when it is written, so an old object is simulated in the listing the sweep reads.
+ */
+function listedAges(ages: Map<string, number>) {
+  return [a, b].map((k) => {
+    const storage = k.app.get(StorageService);
+    const kernel = storage.kernel.bind(storage);
+    return vi.spyOn(storage, "kernel").mockImplementation((org: string): ObjectStore => {
+      const s = kernel(org);
+      return {
+        ...s,
+        list: async (prefix, opts) => {
+          const page = await s.list(prefix, opts);
+          return {
+            ...page,
+            items: page.items.map((i) => {
+              const age = ages.get(i.key);
+              return age === undefined
+                ? i
+                : { ...i, lastModified: new Date(Date.now() - age).toISOString() };
+            }),
+          };
+        },
+      };
+    });
+  });
+}
+
+describe("the daily share sweep on two replicas", () => {
+  const MINUTE = 60_000;
+  const exists = async (key: string) => (await store(a).head(key)) !== null;
+  const put = (key: string) =>
+    store(a).put(key, Buffer.from("x"), { contentType: "text/plain", size: 1 });
+  const shareRow = (id: string) =>
+    db.selectFrom("file_shares").selectAll().where("id", "=", id).executeTakeFirstOrThrow();
+  const shareOf = async (text: string) => {
+    const r = await create(ownerA, await deliver(text));
+    expect(r.statusCode, r.body).toBe(201);
+    return (r.json() as { share: { id: string } }).share.id;
+  };
+
+  it("runs once per tick; frees orphans older than an hour and old snapshots, keeps the rest", async () => {
+    const live = await shareOf("live");
+    const revoked = await shareOf("revoked");
+    const expired = await shareOf("expired");
+    const recent = await shareOf("recent");
+    // revoked eight days ago, its owed deletion lost: the sweep is the backstop
+    await sql`UPDATE capybara.file_shares SET revoked_at = now() - interval '8 days',
+      revoke_reason = 'creator' WHERE id = ${revoked}`.execute(raw);
+    // expired eight days ago (an expiry owes nothing: the sweep frees it)
+    await sql`UPDATE capybara.file_shares SET expires_at = now() - interval '8 days'
+      WHERE id = ${expired}`.execute(raw);
+    // expired two days ago: still within the week its snapshot is kept
+    await sql`UPDATE capybara.file_shares SET expires_at = now() - interval '2 days'
+      WHERE id = ${recent}`.execute(raw);
+
+    const oldOrphan = `shares/${randomUUID()}/1`;
+    const youngOrphan = `shares/${randomUUID()}/1`;
+    // a refresh that died between its copy and its commit: the row still names generation 1
+    const deadRefresh = `shares/${live}/2`;
+    await Promise.all([put(oldOrphan), put(youngOrphan), put(deadRefresh)]);
+    const spies = listedAges(
+      new Map([
+        [oldOrphan, 120 * MINUTE],
+        [youngOrphan, 10 * MINUTE],
+        [deadRefresh, 120 * MINUTE],
+        // as old as the orphans: only its row keeps it
+        [`shares/${live}/1`, 120 * MINUTE],
+        [`shares/${recent}/1`, 120 * MINUTE],
+      ]),
+    );
+    const runs = [a, b].map((k) => vi.spyOn(k.app.get(ShareSweepJob), "runOnce"));
+    try {
+      // both replicas' schedulers fire the same tick: one runs it
+      await Promise.all([a.app.get(ShareSweepJob).sweep(), b.app.get(ShareSweepJob).sweep()]);
+      expect(runs.reduce((n, x) => n + x.mock.calls.length, 0)).toBe(1);
+    } finally {
+      for (const x of [...spies, ...runs]) x.mockRestore();
+    }
+
+    expect(await exists(oldOrphan)).toBe(false);
+    expect(await exists(deadRefresh)).toBe(false);
+    expect(await exists(youngOrphan)).toBe(true);
+    expect(await exists(`shares/${live}/1`)).toBe(true);
+    expect(await shareRow(live)).toMatchObject({
+      object_key: `shares/${live}/1`,
+      revoked_at: null,
+    });
+    expect(await exists(`shares/${recent}/1`)).toBe(true);
+    expect((await shareRow(recent)).object_key).toBe(`shares/${recent}/1`);
+
+    expect(await exists(`shares/${revoked}/1`)).toBe(false);
+    expect(await shareRow(revoked)).toMatchObject({ object_key: null, revoke_reason: "creator" });
+    expect(await exists(`shares/${expired}/1`)).toBe(false);
+    expect(await shareRow(expired)).toMatchObject({ object_key: null, revoked_at: null });
   });
 });

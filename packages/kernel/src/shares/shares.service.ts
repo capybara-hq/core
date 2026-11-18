@@ -18,7 +18,6 @@ import type { KernelLogger } from "../log.js";
 import { OrgLock } from "../orgs/org-lock.js";
 import { can } from "../orgs/roles.js";
 import { parseOrgSettings, readStoredOrgSettings } from "../orgs/settings.service.js";
-import { MAINTENANCE_QUEUE_NAME } from "../runtime/maintenance-queue.js";
 import { StorageService } from "../storage/storage.service.js";
 import { UUID_RE } from "../ui/registry.js";
 import { creatorStillHasAccess } from "./liveness.js";
@@ -29,12 +28,7 @@ import {
   readShareMaxExpiry,
 } from "./settings.js";
 import { newShareCode } from "./share-code.js";
-import {
-  SHARE_OBJECT_DELETE_JOB,
-  type ShareObjectDeleteData,
-  shareObjectDeleteJobId,
-  shareObjectKey,
-} from "./share-objects.js";
+import { oweShareObjectDelete, shareObjectKey } from "./share-objects.js";
 
 /**
  * Shares of conversation files (file sharing spec §1, §2): a share is a frozen snapshot of one
@@ -683,18 +677,6 @@ export class SharesService {
 
   /** Owes the deletion of one share generation's snapshot (in the caller's transaction). */
   private async oweDelete(orgId: string, shareId: string, generation: number): Promise<void> {
-    const data: ShareObjectDeleteData = {
-      orgId,
-      shareId,
-      generation,
-      objectKey: shareObjectKey(shareId, generation),
-    };
-    await this.outbox.add({
-      queue: MAINTENANCE_QUEUE_NAME,
-      name: SHARE_OBJECT_DELETE_JOB,
-      jobId: shareObjectDeleteJobId(shareId, generation),
-      data,
-      orgId,
-    });
+    await oweShareObjectDelete(this.outbox, orgId, shareId, generation);
   }
 }
