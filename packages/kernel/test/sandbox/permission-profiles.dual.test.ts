@@ -261,117 +261,128 @@ const scopedTo = (root: string) =>
     readRoots: expect.arrayContaining([root]),
   });
 
-describe("profile × operation matrix through the owner API on two replicas", () => {
-  it.each(["request-approval", "approve-for-me", "full-access"] as const)(
-    "%s: Bash, Read, Write, Edit and a background start run with the profile's scope; outside work follows the profile",
-    async (profile) => {
-      const deviceId = await cloudDevice();
-      const conv = await conversation(deviceId);
-      // the first call starts the device under the default profile
-      const bound = await call(conv, "Bash", { command: "echo bound", description: "Bind" }, 1);
-      expect(bound.payload.isError, bound.payload.content).toBe(false);
-      if (profile !== "approve-for-me") await setProfile(conv, profile);
-      const before = (await intentsOf(conv)).length;
-      const file = `/workspace/matrix-${profile}.txt`;
-      let n = 1;
+/**
+ * One profile through the matrix: in-project Bash, Read, Write, Edit and a background start and
+ * stop run with the profile's scope and ask no one; an outside write follows the profile.
+ */
+async function matrix(profile: Profile): Promise<void> {
+  const deviceId = await cloudDevice();
+  const conv = await conversation(deviceId);
+  // the first call starts the device under the default profile
+  const bound = await call(conv, "Bash", { command: "echo bound", description: "Bind" }, 1);
+  expect(bound.payload.isError, bound.payload.content).toBe(false);
+  if (profile !== "approve-for-me") await setProfile(conv, profile);
+  const before = (await intentsOf(conv)).length;
+  const file = `/workspace/matrix-${profile}.txt`;
+  let n = 1;
 
-      const write = await call(conv, "Write", { file_path: file, content: "alpha\n" }, ++n);
-      expect(write.payload.isError, write.payload.content).toBe(false);
-      const read = await call(conv, "Read", { file_path: file }, ++n);
-      expect(read.payload.isError, read.payload.content).toBe(false);
-      expect(read.payload.content).toContain("alpha");
-      const edit = await call(
-        conv,
-        "Edit",
-        { file_path: file, old_string: "alpha", new_string: "beta" },
-        ++n,
-      );
-      expect(edit.payload.isError, edit.payload.content).toBe(false);
-      const bash = await call(conv, "Bash", { command: `cat ${file}`, description: "Show" }, ++n);
-      expect(bash.payload.isError, bash.payload.content).toBe(false);
-      expect(bash.payload.content).toContain("beta");
-      const started = await call(
-        conv,
-        "Bash",
-        { command: "sleep 120", description: "Wait", run_in_background: true },
-        ++n,
-      );
-      expect(started.payload.isError, started.payload.content).toBe(false);
-      const task = await waitFor(
-        async () =>
-          db
-            .selectFrom("background_tasks")
-            .select(["id", "status", "operation_id", "profile_revision"])
-            .where("conversation_id", "=", conv)
-            .where("status", "=", "running")
-            .executeTakeFirst(),
-        30_000,
-        "the running background task",
-      );
-      const stopped = await call(conv, "TaskStop", { task_id: task.id }, ++n);
-      expect(stopped.payload.isError, stopped.payload.content).toBe(false);
-      await waitFor(
-        async () =>
-          (
-            await db
-              .selectFrom("background_tasks")
-              .select("status")
-              .where("id", "=", task.id)
-              .executeTakeFirstOrThrow()
-          ).status === "stopped",
-        30_000,
-        "the task stopped by its ref",
-      );
-
-      // none of the in-project work asked anyone, under any profile
-      expect(await approvalsOf(conv)).toEqual([]);
-      const ran = (await intentsOf(conv)).slice(before);
-      expect(new Set(ran.map((i) => i.method))).toEqual(
-        new Set(["writeFile", "readFile", "exec", "backgroundStart", "stat"]),
-      );
-      for (const i of ran) {
-        expect(i.scope.profile, i.method).toBe(profile);
-        if (profile === "full-access") {
-          expect(i.scope.filesystem, i.method).toEqual({ kind: "device" });
-          expect(i.scope.network, i.method).toEqual({ kind: "environment" });
-        } else expect(i.scope.filesystem, i.method).toEqual(scopedTo("/workspace"));
-        expect(i.permission_grant_id, i.method).toBeNull();
-      }
-
-      // outside the project: Request approval asks the person; Approve for me has no review model
-      // here, so it asks too; Full access writes with the device's authority and asks no one
-      const writesBefore = (await intentsOf(conv)).filter((i) => i.method === "writeFile").length;
-      const outside = `/etc/capybara-matrix-${profile}/note.txt`;
-      await postMessage(
-        ownerA,
-        orgId,
-        conv,
-        `tool:Write:${JSON.stringify({ file_path: outside, content: "x" })}`,
-      );
-      if (profile === "full-access") {
-        await waitForTerminal(db, conv, ++n, 60_000);
-        const r = (await results(conv)).at(-1) as ToolResult;
-        expect(r.payload.isError, r.payload.content).toBe(false);
-        expect(r.payload.content).toContain(`Created ${outside}`);
-        expect(r.payload.review).toMatchObject({ decisionSource: "full-access" });
-        expect(await approvalsOf(conv)).toEqual([]);
-      } else {
-        const ask = await pendingAsk(conv);
-        expect(ask.detail as Record<string, unknown>).toMatchObject({
-          kind: "write",
-          targetPath: outside,
-          permissionScope: { writeDirectories: [`/etc/capybara-matrix-${profile}`] },
-        });
-        const denied = await denyThrough(conv, ask.id, ++n);
-        expect(denied.payload.isError).toBe(true);
-        expect(denied.payload.review).toMatchObject({ decision: "deny", by: "person" });
-        // the refused write never reached the provider
-        expect((await intentsOf(conv)).filter((i) => i.method === "writeFile")).toHaveLength(
-          writesBefore,
-        );
-      }
-    },
+  const write = await call(conv, "Write", { file_path: file, content: "alpha\n" }, ++n);
+  expect(write.payload.isError, write.payload.content).toBe(false);
+  const read = await call(conv, "Read", { file_path: file }, ++n);
+  expect(read.payload.isError, read.payload.content).toBe(false);
+  expect(read.payload.content).toContain("alpha");
+  const edit = await call(
+    conv,
+    "Edit",
+    { file_path: file, old_string: "alpha", new_string: "beta" },
+    ++n,
   );
+  expect(edit.payload.isError, edit.payload.content).toBe(false);
+  const bash = await call(conv, "Bash", { command: `cat ${file}`, description: "Show" }, ++n);
+  expect(bash.payload.isError, bash.payload.content).toBe(false);
+  expect(bash.payload.content).toContain("beta");
+  const started = await call(
+    conv,
+    "Bash",
+    { command: "sleep 120", description: "Wait", run_in_background: true },
+    ++n,
+  );
+  expect(started.payload.isError, started.payload.content).toBe(false);
+  const task = await waitFor(
+    async () =>
+      db
+        .selectFrom("background_tasks")
+        .select(["id", "status", "operation_id", "profile_revision"])
+        .where("conversation_id", "=", conv)
+        .where("status", "=", "running")
+        .executeTakeFirst(),
+    30_000,
+    "the running background task",
+  );
+  const stopped = await call(conv, "TaskStop", { task_id: task.id }, ++n);
+  expect(stopped.payload.isError, stopped.payload.content).toBe(false);
+  await waitFor(
+    async () =>
+      (
+        await db
+          .selectFrom("background_tasks")
+          .select("status")
+          .where("id", "=", task.id)
+          .executeTakeFirstOrThrow()
+      ).status === "stopped",
+    30_000,
+    "the task stopped by its ref",
+  );
+
+  // none of the in-project work asked anyone, under any profile
+  expect(await approvalsOf(conv)).toEqual([]);
+  const ran = (await intentsOf(conv)).slice(before);
+  expect(new Set(ran.map((i) => i.method))).toEqual(
+    new Set(["writeFile", "readFile", "exec", "backgroundStart", "stat"]),
+  );
+  for (const i of ran) {
+    expect(i.scope.profile, i.method).toBe(profile);
+    if (profile === "full-access") {
+      expect(i.scope.filesystem, i.method).toEqual({ kind: "device" });
+      expect(i.scope.network, i.method).toEqual({ kind: "environment" });
+    } else expect(i.scope.filesystem, i.method).toEqual(scopedTo("/workspace"));
+    expect(i.permission_grant_id, i.method).toBeNull();
+  }
+
+  // outside the project: Request approval asks the person; Approve for me has no review model
+  // here, so it asks too; Full access writes with the device's authority and asks no one
+  const writesBefore = (await intentsOf(conv)).filter((i) => i.method === "writeFile").length;
+  const outside = `/etc/capybara-matrix-${profile}/note.txt`;
+  await postMessage(
+    ownerA,
+    orgId,
+    conv,
+    `tool:Write:${JSON.stringify({ file_path: outside, content: "x" })}`,
+  );
+  if (profile === "full-access") {
+    await waitForTerminal(db, conv, ++n, 60_000);
+    const r = (await results(conv)).at(-1) as ToolResult;
+    expect(r.payload.isError, r.payload.content).toBe(false);
+    expect(r.payload.content).toContain(`Created ${outside}`);
+    expect(r.payload.review).toMatchObject({ decisionSource: "full-access" });
+    expect(await approvalsOf(conv)).toEqual([]);
+  } else {
+    const ask = await pendingAsk(conv);
+    expect(ask.detail as Record<string, unknown>).toMatchObject({
+      kind: "write",
+      targetPath: outside,
+      permissionScope: { writeDirectories: [`/etc/capybara-matrix-${profile}`] },
+    });
+    const denied = await denyThrough(conv, ask.id, ++n);
+    expect(denied.payload.isError).toBe(true);
+    expect(denied.payload.review).toMatchObject({ decision: "deny", by: "person" });
+    // the refused write never reached the provider
+    expect((await intentsOf(conv)).filter((i) => i.method === "writeFile")).toHaveLength(
+      writesBefore,
+    );
+  }
+}
+
+describe("profile × operation matrix through the owner API on two replicas", () => {
+  it("Request approval: in-project work runs with its scope; outside work follows the profile", async () => {
+    await matrix("request-approval");
+  });
+  it("Approve for me: in-project work runs with its scope; outside work follows the profile", async () => {
+    await matrix("approve-for-me");
+  });
+  it("Full access: in-project work runs with its scope; outside work follows the profile", async () => {
+    await matrix("full-access");
+  });
 });
 
 describe("a profile change applies to following operations only", () => {
@@ -515,7 +526,10 @@ describe("a local device's project outside its fixed workspace", () => {
           return a.path === `${PROJECT}/README.md`
             ? {
                 ok: true,
-                result: { dataB64: Buffer.from("hello app\n").toString("base64"), truncated: false },
+                result: {
+                  dataB64: Buffer.from("hello app\n").toString("base64"),
+                  truncated: false,
+                },
               }
             : { ok: true, result: null };
         default:
@@ -580,7 +594,7 @@ describe("a local device's project outside its fixed workspace", () => {
         String((f.args as { path?: string }).path).startsWith(PROJECT),
     );
     expect(first).toBeDefined();
-    const scope = (first?.args as { scope: Scope }).scope;
+    const scope = ((first as KernelReq).args as { scope: Scope }).scope;
     expect(scope).toMatchObject({ profile: "request-approval", rootConversationId: conv });
     expect(scope.filesystem).toEqual(readsWithin(PROJECT));
     expect(
@@ -600,7 +614,10 @@ describe("a local device's project outside its fixed workspace", () => {
         String(f.op) === "writeFile" &&
         (f.args as { path?: string }).path === `${PROJECT}/NEW.md`,
     );
-    expect((write?.args as { scope: Scope }).scope.filesystem).toEqual(scopedTo(PROJECT));
+    expect(write).toBeDefined();
+    expect(((write as KernelReq).args as { scope: Scope }).scope.filesystem).toEqual(
+      scopedTo(PROJECT),
+    );
   });
 });
 
