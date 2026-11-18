@@ -330,10 +330,18 @@ function notePolicy(log: CommandLog | undefined, req: KernelReq, detail: string)
 function operationEntry(
   op: string,
   args: Record<string, unknown>,
-  scope: { profile: string; tag: string; actor: { accountId: string; conversationId: string } },
+  scope: {
+    profile: string;
+    tag: string;
+    actor: { accountId: string; conversationId: string };
+    filesystem?: { kind: string };
+    network?: { kind: string };
+  },
   exitCode: number | null,
   failure?: string,
 ): Omit<CommandLogEntry, "time"> {
+  // full execution is decided by the scope's reach, as the operation grant decides it
+  const full = scope.filesystem?.kind === "device" && scope.network?.kind === "environment";
   const grants = args.grants as DeviceExecGrants | undefined;
   const limits = args.limits as Pick<SandboxLimits, "network"> | undefined;
   const hosts = grants && limits ? grantedHosts(limits, grants) : [];
@@ -352,7 +360,9 @@ function operationEntry(
       conversationId: clean(scope.actor.conversationId, 100),
     },
     exitCode,
-    isolation: scope.profile === "full-access" ? "full" : "restricted",
+    isolation: full ? "full" : "restricted",
+    // full execution under a restricted profile is only ever one approved escalated call
+    ...(full && scope.profile !== "full-access" && { grantSource: "call approval" as const }),
     ...(detail !== undefined && { detail }),
   };
 }

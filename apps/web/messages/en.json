@@ -2071,6 +2071,11 @@
       "hosts": "Network hosts",
       "target": "Target file (for reference)"
     },
+    "escalation": {
+      "intro": "Approving runs this command outside the sandbox for this call only, with full access to this device's files and network. The next call runs in the sandbox again.",
+      "cwd": "Runs in",
+      "justification": "Why the agent asks"
+    },
     "superseded": {
       "user": "A permission change replaced this request before anyone decided it. Nothing was approved; if still needed, a new request appears.",
       "authorityChanged": "A device or organization permission change replaced this request before anyone decided it. Nothing was approved.",

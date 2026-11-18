@@ -48,7 +48,11 @@ import { RunResume } from "../runtime/run-jobs.js";
 import { rootConversationOf } from "../runtime/subagents/child.js";
 import { PermissionAuthorityLock } from "../sandbox/permission-authority-lock.js";
 import { PermissionCallGrants } from "../sandbox/permission-call-grants.js";
-import type { PermissionCandidate, PermissionExpansion } from "../sandbox/permission-call-types.js";
+import type {
+  PermissionCandidate,
+  PermissionEscalation,
+  PermissionExpansion,
+} from "../sandbox/permission-call-types.js";
 import { isSessionGrantableRule } from "../sandbox/review/types.js";
 import { deviceNotFound, SandboxService } from "../sandbox/sandbox.service.js";
 import { readScheduleSettings } from "../schedules/effective-settings.js";
@@ -185,6 +189,11 @@ export interface CommandAskDetail {
   permissionScope?: PermissionExpansion;
   targetPath?: string;
   candidateHash?: string;
+  /**
+   * The command asks to run outside the OS sandbox for this call only (per-call escalation): the
+   * model's justification. An approval grants full execution for exactly this call.
+   */
+  escalation?: PermissionEscalation;
   deviceId: string;
   deviceName: string;
   mode: "auto" | "sandbox";
@@ -954,6 +963,7 @@ export class ApprovalsService {
             ...(candidate.targetPath
               ? { targetPath: candidate.targetPath, path: candidate.targetPath }
               : {}),
+            ...(candidate.escalation ? { escalation: candidate.escalation } : {}),
           }
         : {}),
     };
@@ -1000,6 +1010,15 @@ export class ApprovalsService {
                   candidateHash: detail.permissionCandidate.candidateHash,
                   ...(detail.permissionCandidate.targetPath
                     ? { targetPath: detail.permissionCandidate.targetPath }
+                    : {}),
+                  // an escalation shows its justification and the directory the command runs in
+                  ...(detail.permissionCandidate.escalation
+                    ? {
+                        escalation: detail.permissionCandidate.escalation,
+                        ...(detail.workingRoot !== undefined && {
+                          workingRoot: detail.workingRoot,
+                        }),
+                      }
                     : {}),
                 }
               : {}),

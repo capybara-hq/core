@@ -28,17 +28,32 @@ export type PermissionCallBinding = Readonly<{
 export type PermissionGrantDecision =
   | { source: "human"; approvalId: string; decidedBy: string }
   | { source: "review-model"; reviewEventSeq: number; decidedBy: null };
+/**
+ * What a call grant authorizes: an exact directory and host expansion of the restricted scope, or
+ * one Bash call run outside the OS sandbox (per-call sandbox escalation: full execution for that
+ * call only, within the device's Full access ceiling).
+ */
+export type PermissionScopeKind = "directories-and-hosts" | "sandbox-escalation";
+/** The model's stated reason for one escalated call, shown to the person and the review model. */
+export type PermissionEscalation = Readonly<{ justification: string }>;
 export type PermissionCandidate = Readonly<{
   binding: PermissionCallBinding;
+  /** Empty for an escalation: the call runs with full execution, no expansion is named. */
   permissionScope: PermissionExpansion;
   targetPath?: string;
-  scopeKind: "directories-and-hosts";
+  scopeKind: PermissionScopeKind;
+  /** Present exactly when `scopeKind` is `sandbox-escalation`. */
+  escalation?: PermissionEscalation;
   candidateHash: string;
 }>;
 export type PermissionCandidateResult =
   | { kind: "in-scope" }
   | { kind: "proposal"; candidate: PermissionCandidate }
-  | { kind: "unsupported"; code: "unbounded-scope"; message: string };
+  | {
+      kind: "unsupported";
+      code: "unbounded-scope" | "escalation-unavailable";
+      message: string;
+    };
 export type PermissionReviewSnapshot = Readonly<
   Omit<PermissionCallBinding, "toolKey" | "specHash" | "callInputHash" | "resolvedInputHash"> & {
     baseReadDirectories: readonly string[];
@@ -63,5 +78,11 @@ export type PermissionReviewSnapshot = Readonly<
      */
     outerNetwork?: AppliedOuterNetwork | null;
     policy: EffectiveDevicePolicy;
+    /**
+     * Why this call could not run outside the sandbox (per-call escalation): an unattended run, a
+     * device, org or platform Full access ceiling that forbids it, or a runtime that cannot run
+     * Full access now. Null or absent when an escalation may be reviewed.
+     */
+    escalationRefusal?: string | null;
   }
 >;

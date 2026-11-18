@@ -1,4 +1,17 @@
-import { type DeviceExecGrants, validateAllowHost } from "@capybara-hq/plugin-sdk";
+import {
+  type DeviceExecGrants,
+  type SandboxBrowseScope,
+  type SandboxOperationScope,
+  validateAllowHost,
+} from "@capybara-hq/plugin-sdk";
+/**
+ * Whether an operation scope runs with full execution (no OS sandbox): a Full access operation, or
+ * a per-call sandbox escalation under a restricted profile. Decided by the scope's filesystem and
+ * network, as the device decides it, never by the profile name alone: an escalated call keeps its
+ * conversation's restricted profile.
+ */
+export const isFullExecutionScope = (scope: SandboxOperationScope | SandboxBrowseScope): boolean =>
+  "profile" in scope && scope.filesystem.kind === "device" && scope.network.kind === "environment";
 
 export const isExecutionMethod = (method: string): method is "exec" | "backgroundStart" =>
   method === "exec" || method === "backgroundStart";

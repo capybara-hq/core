@@ -3,6 +3,7 @@ import path from "node:path";
 import {
   DEVICE_DEFAULT_STATE_PATH,
   DEVICE_DENIED_SECRET_PATHS,
+  type PermissionProfile,
   validateAllowHost,
 } from "@capybara-hq/plugin-sdk";
 import { ApiError } from "../../errors.js";
@@ -75,6 +76,49 @@ export function permissionCandidateHash(
 ): string {
   return permissionScopeHash(candidate);
 }
+/** The `Bash` `sandbox` value that asks to run this one call outside the OS sandbox. */
+export const SANDBOX_ESCALATED = "escalated";
+/** The longest justification an escalated call may give (the tool schema says the same). */
+export const ESCALATION_JUSTIFICATION_MAX_CHARS = 500;
+/** Whether a validated call asks to run outside the OS sandbox (only `Bash` can). */
+export const isEscalatedCall = (toolKey: string, input: unknown): boolean =>
+  toolKey === "Bash" &&
+  (input as { sandbox?: unknown } | null | undefined)?.sandbox === SANDBOX_ESCALATED;
+/** An escalated call without a usable justification: refused before any review. */
+export const ESCALATION_JUSTIFICATION_MISSING_TEXT =
+  'This Bash call asked to run outside the sandbox (sandbox: "escalated") without a justification, so it did not run. Retry with justification: one sentence saying why this command must run outside the sandbox, or call Bash without sandbox to run it in the sandbox.';
+/** Why an escalation cannot be reviewed: an unattended run (no one can approve it). */
+export const ESCALATION_UNATTENDED_WHY =
+  "this is an unattended run (a scheduled task) where no one can approve running outside the sandbox";
+/** Why an escalation cannot be reviewed: the device, org or platform forbids Full access. */
+export const ESCALATION_CEILING_WHY =
+  "running commands outside the sandbox is not allowed on this device (its owner, the organization or the platform has not allowed Full access)";
+/** Why an escalation cannot be reviewed: the runtime cannot run Full access now. */
+export const escalationRuntimeWhy = (reason: string): string =>
+  `this device cannot run commands outside its sandbox now (${reason.replace(/\.$/, "")})`;
+/** What the model gets when its escalated call cannot be reviewed, with what works instead. */
+export const escalationRefusedText = (why: string, workingRoot: string): string =>
+  `This Bash call asked to run outside the sandbox, but ${why}, so it did not run. Call Bash without sandbox: "escalated" to run the command inside the sandbox (inside ${workingRoot} and the directories already granted), or ask the user to run it themselves or to allow Full access on this device.`;
+/**
+ * Appended to a refusal of a restricted `Bash` call (the sandbox or the restricted scope stopped
+ * it) when this device and org allow running outside the sandbox: the model may retry the same
+ * call escalated, and the profile's approver decides.
+ */
+export const ESCALATION_RETRY_HINT =
+  ' If this command must reach outside the sandbox, retry the same Bash call with sandbox: "escalated" and justification: one sentence saying why; the user or the review model decides whether it may run outside the sandbox for this call only.';
+/**
+ * Who decides a boundary crossing (a per-call escalation, a directory or host proposal) under a
+ * profile (2026-11-19 maintainer decision: the profiles are approval policy only): Request approval
+ * asks the person, Approve for me asks the review model, Full access asks nobody and grants it
+ * for that call within the device's ceiling for running outside the sandbox.
+ */
+export type PermissionApprover = "person" | "review-model" | "none";
+export const approverForProfile = (profile: PermissionProfile): PermissionApprover =>
+  profile === "request-approval"
+    ? "person"
+    : profile === "approve-for-me"
+      ? "review-model"
+      : "none";
 /** The paths a local device never opens to restricted work, relative to `~`. */
 const OWNER_DENIED_PATHS = [...DEVICE_DENIED_SECRET_PATHS, DEVICE_DEFAULT_STATE_PATH];
 /**
@@ -89,6 +133,29 @@ function ownerDeniedPath(target: string, homes: readonly string[]): string | und
 }
 const ownerDeniedText = (denied: string, target: string) =>
   `${target} is under ${denied}, which the device never opens to this conversation's permission profile (a credential location or the device's own state), so this call cannot be approved and did not run. Ask the user to provide what is needed from it, or to choose Full access for this conversation if it must be used there.`;
+/** The exact call binding of a candidate: server identity from the facts, the call's own digests. */
+function bindingOf(
+  call: { toolKey: string; specHash: string; rawInput: unknown; validatedInput: unknown },
+  facts: PermissionReviewSnapshot,
+): PermissionCandidate["binding"] {
+  return {
+    orgId: facts.orgId,
+    rootConversationId: facts.rootConversationId,
+    conversationId: facts.conversationId,
+    deviceId: facts.deviceId,
+    accountId: facts.accountId,
+    runId: facts.runId,
+    callId: facts.callId,
+    profile: facts.profile,
+    profileRevision: facts.profileRevision,
+    scopeRevision: facts.scopeRevision,
+    authorityRevision: facts.authorityRevision,
+    toolKey: call.toolKey,
+    specHash: call.specHash,
+    callInputHash: permissionScopeHash(call.rawInput),
+    resolvedInputHash: permissionScopeHash(call.validatedInput),
+  };
+}
 /**
  * Extract proposals from the actual validated call. Parsing proposes reach; it never grants it.
  * `homes` are the owner's home candidates (the machine's home, the workspace's home prefix): a
@@ -112,6 +179,51 @@ export function buildPermissionCandidate(
     if (denied) throw new Error(ownerDeniedText(denied, target));
   };
   const input = call.validatedInput as { file_path?: unknown; command?: unknown } | null;
+  // a per-call sandbox escalation: one Bash call with full execution, never a directory or host
+  // expansion; Full access already runs every call that way, so there it asks for nothing more
+  if (isEscalatedCall(call.toolKey, input)) {
+    // no approver (Full access): granted for this call within the ceiling, never past it. Full
+    // access runs every call outside the sandbox today, so there is no grant to issue (until the
+    // profile-semantics refactor keeps the sandbox under every profile)
+    if (approverForProfile(facts.profile) === "none")
+      return facts.escalationRefusal
+        ? {
+            kind: "unsupported",
+            code: "escalation-unavailable",
+            message: escalationRefusedText(facts.escalationRefusal, facts.workingRoot),
+          }
+        : { kind: "in-scope" };
+    const justification = (input as { justification?: unknown }).justification;
+    if (
+      typeof justification !== "string" ||
+      justification.trim() === "" ||
+      justification.length > ESCALATION_JUSTIFICATION_MAX_CHARS
+    )
+      return {
+        kind: "unsupported",
+        code: "escalation-unavailable",
+        message: ESCALATION_JUSTIFICATION_MISSING_TEXT,
+      };
+    if (facts.unattended || facts.escalationRefusal)
+      return {
+        kind: "unsupported",
+        code: "escalation-unavailable",
+        message: escalationRefusedText(
+          facts.unattended ? ESCALATION_UNATTENDED_WHY : (facts.escalationRefusal as string),
+          facts.workingRoot,
+        ),
+      };
+    const candidate = {
+      binding: bindingOf(call, facts),
+      permissionScope: { readDirectories: [], writeDirectories: [], hosts: [] },
+      scopeKind: "sandbox-escalation" as const,
+      escalation: { justification },
+    };
+    return {
+      kind: "proposal",
+      candidate: Object.freeze({ ...candidate, candidateHash: permissionCandidateHash(candidate) }),
+    };
+  }
   let targetPath: string | undefined;
   const reads: string[] = [],
     writes: string[] = [],
@@ -201,37 +313,8 @@ export function buildPermissionCandidate(
           ", ",
         )}), which the device owner's or the organization's limits do not allow, so it did not run. Keep the call inside ${facts.workingRoot}, or ask the user to have the device's limits widened.`,
       );
-    const {
-      orgId,
-      rootConversationId,
-      conversationId,
-      deviceId,
-      accountId,
-      runId,
-      callId,
-      profile,
-      profileRevision,
-      scopeRevision,
-      authorityRevision,
-    } = facts;
     const candidate = {
-      binding: {
-        orgId,
-        rootConversationId,
-        conversationId,
-        deviceId,
-        accountId,
-        runId,
-        callId,
-        profile,
-        profileRevision,
-        scopeRevision,
-        authorityRevision,
-        toolKey: call.toolKey,
-        specHash: call.specHash,
-        callInputHash: permissionScopeHash(call.rawInput),
-        resolvedInputHash: permissionScopeHash(call.validatedInput),
-      },
+      binding: bindingOf(call, facts),
       permissionScope,
       ...(targetPath ? { targetPath } : {}),
       scopeKind: "directories-and-hosts" as const,

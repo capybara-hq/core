@@ -140,6 +140,20 @@ fails closed.
   `ask.secret-file`, `ask.credential-link`, `ask.dynamic-arg` and `ask.sudo`
   (`isSessionGrantableRule`). Grants allow a line only when every ask hit is granted and nothing is
   unsure (`applySessionGrants`), and only in attended runs.
+- **Per-call sandbox escalation** (approval profiles design, "Per-call sandbox escalation",
+  2026-11-19). `Bash` takes `sandbox: "escalated"` plus a `justification` (1–500 characters),
+  foreground or background. `buildPermissionCandidate` makes it one `sandbox-escalation`
+  candidate (empty expansion, the justification, the exact call binding); the approver comes from
+  the profile (`approverForProfile`: Request approval the person, Approve for me the review model,
+  Full access none, within the Full access ceiling). Fixed denies and mandatory asks stay first; a
+  sensitive line keeps its consent in the same single ask (the reason states both); only `once`.
+  An approval issues a call grant bound to that call (never a session grant), admission gives that
+  command full execution under the restricted profile, and the next call is sandboxed again. No
+  ceiling, an unattended run or no justification is an actionable refusal before any review. A
+  restricted `Bash` refusal or sandbox denial tells the model it may retry escalated only where
+  it is possible (`BuiltinCallContext.sandboxEscalation`). The record: `approval_requested.command.
+  escalation` / `workingRoot`, `permission_reviewed` with `scopeKind: "sandbox-escalation"`,
+  `tool_result.review.sandbox: "escalated"`; the schema change needs no `DriftReason`.
 - **Code it cannot read.** Inline interpreter code, stdin or URL scripts, fetched packages and files
   the conversation wrote are `unsure.interpreter`; `review-guarantees.test.ts` (acts × spellings that
   must never be `allow`) is the authority over the ordered-hit corpus.

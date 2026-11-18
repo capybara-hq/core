@@ -5,7 +5,7 @@ import {
   type SandboxOperationScope,
 } from "@capybara-hq/plugin-sdk";
 import { coversHost } from "../sandbox/modes.js";
-import { isExecutionMethod } from "../sandbox/operation-authority-types.js";
+import { isExecutionMethod, isFullExecutionScope } from "../sandbox/operation-authority-types.js";
 import { localModeOf, localPolicyOf } from "./policy-summary.js";
 
 /** How far restricted (non-Full) operations and project browsing may reach on a machine. */
@@ -169,7 +169,7 @@ export function ownerReportRevokes(
     return (
       next.restrictedProjectReach === "workspace" && scope.readRoots.some((r) => !inMachine(r))
     );
-  if (scope.profile === "full-access") return !next.fullAccess;
+  if (isFullExecutionScope(scope)) return !next.fullAccess;
   if (next.restrictedProjectReach === "workspace" && outsideMachineRoots(scope, machineRoots))
     return true;
   if (!isExecutionMethod(method) || scope.network.kind !== "allowlist") return false;
