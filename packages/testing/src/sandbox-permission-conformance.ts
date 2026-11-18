@@ -69,6 +69,14 @@ export interface SandboxPermissionFixture {
      * Either way the device needs no name resolution of its own for endpoint names.
      */
     readonly access: "direct" | "proxy";
+    /**
+     * "unavailable" where the fixture cannot make the allowlisted name lead to `granted` without
+     * changing the host (macOS: no hosts-file entry, and the runtime's proxy refuses a name that
+     * resolves to loopback, by design). The by-name positives are then skipped and `granted`
+     * must see no connection at all; every negative still runs. The positive allowlist reach is
+     * then the provider's own test's evidence (state it next to the fixture). Default "available".
+     */
+    readonly namedReach?: "available" | "unavailable";
   };
   /**
    * Set to "refused" when the provider refuses a restricted filesystem with the `environment`
@@ -77,6 +85,31 @@ export interface SandboxPermissionFixture {
    * otherwise probe a restricted operation on the environment network. Default: "supported".
    */
   readonly restrictedEnvironment?: "supported" | "refused";
+  /**
+   * How restricted commands meet the mandatory write denies in other spellings of a protected
+   * name. "nfkc" (default): every spelling whose NFKC case fold is protected is refused, as the
+   * shared SDK policy compares names. "filesystem": the runtime enforces paths as the filesystem
+   * resolves them (macOS Seatbelt on case-insensitive APFS: ASCII case and the Unicode case folds
+   * APFS applies, such as the Kelvin sign for `k`, reach the protected file and are refused, while
+   * compatibility forms such as fullwidth letters are distinct files there); the harness then
+   * proves that a fullwidth spelling created a distinct file and never the protected one.
+   */
+  readonly foldedNames?: "nfkc" | "filesystem";
+  /**
+   * Whether restricted none/allowlist operations may listen on loopback. "allowed" (default):
+   * loopback only, every wildcard address refused, and a UNIX socket inside the root works.
+   * "refused": the runtime refuses every listener, loopback and UNIX sockets inside the root
+   * included (the macOS worker runs its runtime with local binding off).
+   */
+  readonly restrictedLoopbackListen?: "allowed" | "refused";
+  /**
+   * Whether cancellation must also end a descendant that left the command's process group
+   * (fork + setpgid). "ended" (default): it must, as Linux PID namespaces and cgroups provide.
+   * "not-promised": the runtime ends the owned process group and what stays in it, and does not
+   * promise to rediscover a regrouped descendant (macOS, permission operation contract "Explicit
+   * background supervision"); the harness then leaves that case out.
+   */
+  readonly regroupedDescendants?: "ended" | "not-promised";
   /** The provider's own runtime report; the harness never infers support from a fixture. */
   support(): Promise<SandboxPermissionSupport>;
   /** A fresh operation (new operation ID) for the grant, through the provider's factory. */
@@ -119,6 +152,9 @@ def flipper(buffer, good, bad):
 ok = 0
 if mode == "connect":
     def sockaddr(host, port):
+        if sys.platform == "darwin":
+            # BSD sockaddr_in: a length byte, then a one-byte family
+            return struct.pack("BBH4s8x", 16, socket.AF_INET, socket.htons(port), socket.inet_aton(host))
         return struct.pack("HH4s8x", socket.AF_INET, socket.htons(port), socket.inet_aton(host))
     if sys.argv[3] == "proxy":
         # The allowed target is the operation's own HTTP proxy, taken from its environment.
@@ -181,7 +217,8 @@ print(" ".join(out))
 
 /** A Full-access UNIX service (stream, seqpacket, datagram) counting every client it sees. */
 const UNIX_SERVER = `
-import os, socket, sys, threading
+import errno, os, socket, sys, threading
+UNSUPPORTED = (errno.EPROTONOSUPPORT, errno.ESOCKTNOSUPPORT, errno.EPROTOTYPE, errno.EOPNOTSUPP)
 path, counter = sys.argv[1], sys.argv[2]
 lock = threading.Lock()
 count = [0]
@@ -192,7 +229,14 @@ def seen():
             handle.write(str(count[0]))
         os.replace(counter + ".tmp", counter)
 def serve(kind, suffix):
-    s = socket.socket(socket.AF_UNIX, kind)
+    try:
+        s = socket.socket(socket.AF_UNIX, kind)
+    except OSError as error:
+        if error.errno not in UNSUPPORTED:
+            raise
+        # this OS has no such UNIX socket type (macOS: SOCK_SEQPACKET): mark it and stop
+        open(path + suffix, "w").close()
+        return
     s.bind(path + suffix)
     if kind == socket.SOCK_DGRAM:
         while True:
@@ -216,22 +260,41 @@ threading.Event().wait()
 
 /** Tries every way to reach the outside UNIX service; prints ok/denied per attempt. */
 const UNIX_CLIENT = `
-import socket, sys
+import errno, socket, sys
+UNSUPPORTED = (errno.EPROTONOSUPPORT, errno.ESOCKTNOSUPPORT, errno.EPROTOTYPE, errno.EOPNOTSUPP)
 path, link = sys.argv[1], sys.argv[2]
+class Unsupported(Exception):
+    pass
+def make(create):
+    # the OS has no such UNIX socket type at all (macOS: SOCK_SEQPACKET, SOCK_RAW)
+    try:
+        return create()
+    except OSError as error:
+        if error.errno in UNSUPPORTED:
+            raise Unsupported()
+        raise
 def attempt(name, action):
     try:
         action()
         return name + "=ok"
+    except Unsupported:
+        return name + "=unsupported"
     except OSError:
         return name + "=denied"
 def connect(kind, target):
-    socket.socket(socket.AF_UNIX, kind).connect(target)
+    make(lambda: socket.socket(socket.AF_UNIX, kind)).connect(target)
 def send(kind):
-    socket.socket(socket.AF_UNIX, kind).sendto(b"x", path + ".dgram")
+    make(lambda: socket.socket(socket.AF_UNIX, kind)).sendto(b"x", path + ".dgram")
 def pair(kind):
     # An explicit address on a socketpair datagram socket is honoured by the kernel.
-    first, _ = socket.socketpair(socket.AF_UNIX, kind)
-    first.sendto(b"x", path + ".dgram")
+    first, _ = make(lambda: socket.socketpair(socket.AF_UNIX, kind))
+    try:
+        first.sendto(b"x", path + ".dgram")
+    except OSError as error:
+        # the OS ignores no explicit address on a connected socket (macOS): no such vector there
+        if error.errno == errno.EISCONN:
+            raise Unsupported()
+        raise
 print(" ".join([
     attempt("stream", lambda: connect(socket.SOCK_STREAM, path)),
     attempt("seqpacket", lambda: connect(socket.SOCK_SEQPACKET, path + ".seq")),
@@ -265,8 +328,12 @@ os.makedirs(base + "/dir")
 os.symlink(outside, base + "/link")
 open(base + "/swapping", "w").close()
 swaps = 0
+def exchange(a, b):
+    if sys.platform == "darwin":
+        return libc.renamex_np(a, b, 2)  # RENAME_SWAP
+    return libc.renameat2(-100, a, -100, b, 2)  # RENAME_EXCHANGE
 while not os.path.exists(stop):
-    if libc.renameat2(-100, (base + "/dir").encode(), -100, (base + "/link").encode(), 2) == 0:
+    if exchange((base + "/dir").encode(), (base + "/link").encode()) == 0:
         swaps += 1
 print("swaps=%d" % swaps)
 `;
@@ -462,7 +529,7 @@ export async function runSandboxPermissionConformance(
     const shell = await exec(
       restricted(),
       "cat inroot.txt && printf shell > shell.txt && mkdir -p d/e && printf x > d/e/f && " +
-        "chmod 755 d/e/f && touch -d 2001-01-01 d/e/f && ln -s shell.txt alias && cat alias",
+        "chmod 755 d/e/f && touch -t 200101010000 d/e/f && ln -s shell.txt alias && cat alias",
     );
     assert.equal(shell.exitCode, 0, `restricted shell work must succeed: ${shell.stderr}`);
     assert.equal(shell.stdout, "inrootshell");
@@ -662,10 +729,14 @@ export async function runSandboxPermissionConformance(
       ".envrc",
       ".npmrc",
       "deep/.npmrc",
-      ".ＢＡＳＨＲＣ",
-      ".ｅｎｖｒｃ",
+      ...(fixture.foldedNames === "filesystem" ? [".bashrc"] : [".ＢＡＳＨＲＣ", ".ｅｎｖｒｃ"]),
     ])
       assert.equal(await fixture.inspect.readFile(at(root, path)), null, `mandatory deny: ${path}`);
+    if (fixture.foldedNames === "filesystem") {
+      // fullwidth spellings are their own files on such a filesystem, never the protected ones
+      for (const path of [".ＢＡＳＨＲＣ", ".ｅｎｖｒｃ"])
+        assert.equal(text(await fixture.inspect.readFile(at(root, path))), "x", `distinct ${path}`);
+    }
     await denied(
       (await native(restricted())).writeFile(
         at(root, "repo/.git/modules/sub/config"),
@@ -752,7 +823,7 @@ export async function runSandboxPermissionConformance(
       restricted(),
       `printf pwn > ${quote(at(sibling, "w1"))}; printf pwn > linked/w2; printf pwn > escape; ` +
         `chmod 777 ${quote(at(sibling, "secret"))}; chmod 777 escape; ` +
-        `touch -d 2001-01-01 ${quote(at(sibling, "secret"))}; true`,
+        `touch -t 200101010000 ${quote(at(sibling, "secret"))}; true`,
     );
     assert.equal(await fixture.inspect.readFile(at(sibling, "w1")), null, "sibling write");
     assert.equal(await fixture.inspect.readFile(at(sibling, "w2")), null, "symlinked dir write");
@@ -784,13 +855,16 @@ export async function runSandboxPermissionConformance(
 
     // Network: only the granted endpoint, and only while allowlisted.
     const base = await receipts();
-    const positives = proxied
-      ? [byName(granted), urlopen(granted)]
-      : [
-          connect(granted),
-          `curl -fsS -m 10 -o /dev/null http://${granted.address}:${granted.port}/`,
-          `node -e ${quote(`require("net").connect(${granted.port}, ${JSON.stringify(granted.address)}).on("connect", function () { this.end() })`)}`,
-        ];
+    const namedReach = fixture.endpoints.namedReach !== "unavailable";
+    const positives = !namedReach
+      ? []
+      : proxied
+        ? [byName(granted), urlopen(granted)]
+        : [
+            connect(granted),
+            `curl -fsS -m 10 -o /dev/null http://${granted.address}:${granted.port}/`,
+            `node -e ${quote(`require("net").connect(${granted.port}, ${JSON.stringify(granted.address)}).on("connect", function () { this.end() })`)}`,
+          ];
     for (const command of positives) {
       const result = await exec(restricted(allowlisted), command);
       assert.equal(result.exitCode, 0, `granted endpoint must work: ${command}: ${result.stderr}`);
@@ -829,7 +903,9 @@ export async function runSandboxPermissionConformance(
       const binds = await exec(restricted(network), `python3 -c ${quote(BIND_PROGRAM)}`);
       assert.equal(
         binds.stdout.trim(),
-        "127.0.0.1=ok ::1=ok 0.0.0.0=denied ::=denied unspec=denied",
+        fixture.restrictedLoopbackListen === "refused"
+          ? "127.0.0.1=denied ::1=denied 0.0.0.0=denied ::=denied unspec=denied"
+          : "127.0.0.1=ok ::1=ok 0.0.0.0=denied ::=denied unspec=denied",
         `restricted ${network.kind} binds loopback only: ${binds.stderr}`,
       );
     }
@@ -855,6 +931,30 @@ export async function runSandboxPermissionConformance(
         );
         assert.equal(await fixture.inspect.readFile(at(root, "env-ran")), null);
       }
+      // The OS's own UNIX socket types, probed outside every restriction (unsupported types are
+      // reported as such by Full access and expected the same in restricted operations)
+      const types = await exec(
+        full,
+        `python3 -c ${quote(UNIX_CLIENT)} ${quote(at(sibling, "missing.sock"))} missing-link.sock`,
+      );
+      const kinds = types.stdout
+        .trim()
+        .split(" ")
+        .map((entry) => entry.split("=") as [string, string]);
+      for (const name of ["stream", "dgram", "link"])
+        assert.notEqual(
+          kinds.find(([kind]) => kind === name)?.[1],
+          "unsupported",
+          `UNIX ${name} sockets are required: ${types.stdout} ${types.stderr}`,
+        );
+      const expectWhen = (reachable: boolean) =>
+        kinds
+          .map(([kind, state]) =>
+            state === "unsupported"
+              ? `${kind}=unsupported`
+              : `${kind}=${reachable ? "ok" : "denied"}`,
+          )
+          .join(" ");
       for (const network of [
         { kind: "none" } as const,
         allowlisted,
@@ -865,15 +965,33 @@ export async function runSandboxPermissionConformance(
           `python3 -c ${quote(UNIX_CLIENT)} ${quote(at(sibling, "srv.sock"))} srv-link.sock`,
         );
         assert.equal(
-          probe.stdout.trim(),
-          "stream=denied seqpacket=denied dgram=denied raw=denied link=denied pair-dgram=denied pair-raw=denied",
+          // a type the OS lacks may also be refused before the OS says so: both reach nothing
+          probe.stdout
+            .trim()
+            .split(" ")
+            .map((entry) =>
+              entry.endsWith("=denied") &&
+              kinds.some(([kind, state]) => `${kind}=denied` === entry && state === "unsupported")
+                ? entry.replace("=denied", "=unsupported")
+                : entry,
+            )
+            .join(" "),
+          expectWhen(false),
           `restricted ${network.kind} must not reach a UNIX service outside the roots: ${probe.stderr}`,
         );
         const inside = await exec(
           restricted(network),
           `python3 -c ${quote(UNIX_ROUNDTRIP)} ${quote(at(root, `own-${network.kind}.sock`))}`,
         );
-        assert.equal(inside.stdout.trim(), "roundtrip=ok", `in-root UNIX socket: ${inside.stderr}`);
+        if (fixture.restrictedLoopbackListen === "refused")
+          // no listener at all: binding a UNIX socket fails before any roundtrip
+          assert.notEqual(inside.stdout.trim(), "roundtrip=ok", "no restricted UNIX listener");
+        else
+          assert.equal(
+            inside.stdout.trim(),
+            "roundtrip=ok",
+            `in-root UNIX socket: ${inside.stderr}`,
+          );
       }
       assert.equal(
         text(await fixture.inspect.readFile(at(sibling, "srv.count"))),
@@ -885,15 +1003,12 @@ export async function runSandboxPermissionConformance(
         full,
         `python3 -c ${quote(UNIX_CLIENT)} ${quote(at(sibling, "srv.sock"))} srv-link.sock`,
       );
-      assert.equal(
-        control.stdout.trim(),
-        "stream=ok seqpacket=ok dgram=ok raw=ok link=ok pair-dgram=ok pair-raw=ok",
-        `Full UNIX control: ${control.stderr}`,
-      );
+      assert.equal(control.stdout.trim(), expectWhen(true), `Full UNIX control: ${control.stderr}`);
+      const reached = String(kinds.filter(([, state]) => state !== "unsupported").length);
       await waitForFile(
         async (path) => {
           const data = await fixture.inspect.readFile(path);
-          return text(data) === "7" ? data : null;
+          return text(data) === reached ? data : null;
         },
         at(sibling, "srv.count"),
         outside,
@@ -992,7 +1107,12 @@ export async function runSandboxPermissionConformance(
       );
       const swapped = await live;
       assert(!swapped.stdout.includes(secret), "a live operation must not follow a root swap");
-      assert.equal(text(await fixture.inspect.readFile(at(moved, "in-place"))), "ok");
+      // an inode-pinned runtime (Landlock) keeps writing in the moved root; a path-based one
+      // (Seatbelt) refuses the moved path: either way nothing follows the swap
+      assert(
+        [null, "ok"].includes(text(await fixture.inspect.readFile(at(moved, "in-place")))),
+        "a live operation writes in place or nowhere",
+      );
       await denied(
         (async () => (await native(restricted())).writeFile(at(root, "fresh"), bytes, signal))(),
         "a fresh native operation must reject a swapped root",
@@ -1091,17 +1211,21 @@ export async function runSandboxPermissionConformance(
     );
     await waitFor(at(root, "ready-keep"), keepAlive);
     const abort = new AbortController();
+    const regrouped = fixture.regroupedDescendants !== "not-promised";
     const cancelled = exec(
       restricted(),
       `(sleep 1000 & echo $! > p1); nohup sh -c 'sleep 1001' > /dev/null 2>&1 & echo $! > p2; ` +
         `setsid sleep 1002 > /dev/null 2>&1 & ` +
-        `python3 -c ${quote("import os, time\nif os.fork() == 0:\n    os.setpgid(0, 0)\n    open('p3.tmp', 'w').write(str(os.getpid()))\n    os.rename('p3.tmp', 'p3')\n    time.sleep(1003)")} & ` +
-        `until [ -e p3 ]; do sleep 0.01; done; printf r > ready-cancel; sleep 1004`,
+        (regrouped
+          ? `python3 -c ${quote("import os, time\nif os.fork() == 0:\n    os.setpgid(0, 0)\n    open('p3.tmp', 'w').write(str(os.getpid()))\n    os.rename('p3.tmp', 'p3')\n    time.sleep(1003)")} & ` +
+            `until [ -e p3 ]; do sleep 0.01; done; `
+          : "") +
+        `printf r > ready-cancel; sleep 1004`,
       abort.signal,
     );
     await waitFor(at(root, "ready-cancel"), cancelled);
     const pids = await Promise.all(
-      ["p1", "p2", "p3"].map(async (name) =>
+      (regrouped ? ["p1", "p2", "p3"] : ["p1", "p2"]).map(async (name) =>
         Number(text(await fixture.inspect.readFile(at(root, name)))),
       ),
     );
