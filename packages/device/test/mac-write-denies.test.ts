@@ -380,3 +380,35 @@ async function restrictedRunDenied(
   );
   return (await worker.completion) as ExecResult;
 }
+
+// APFS compares names case-insensitively with Unicode case folding: the Kelvin sign (U+212A)
+// names `k` and the long s (U+017F) names `s`. A spelling that differs from a protected name only
+// by such a letter opens the protected file itself, so the mandatory denies must hold for it too.
+it.runIf(process.platform === "darwin")(
+  "a Unicode case-fold alias of a protected name reaches nothing it protects",
+  async () => {
+    const project = join(root, "fold");
+    await mkdir(project);
+    git(root, "init", "-q", "-b", "main", project);
+    writeFileSync(join(project, ".zshrc"), "rc");
+    writeFileSync(join(project, ".bash_profile"), "rc");
+    const kelvin = "K";
+    const longS = "ſ";
+    const result = await restrictedRun(
+      project,
+      [
+        `printf x > .git/hoo${kelvin}s/pre-commit`,
+        `printf x >> .z${longS}hrc`,
+        `printf x >> .ba${longS}h_profile`,
+        `mkdir -p .v${longS}code; printf x > .v${longS}code/tasks.json`,
+        "printf ok > plain.txt; true",
+      ].join("; "),
+    );
+    expect(result.exitCode, result.stderr).toBe(0);
+    expect(existsSync(join(project, "plain.txt"))).toBe(true);
+    expect(existsSync(join(project, ".git/hooks/pre-commit"))).toBe(false);
+    expect(readFileSync(join(project, ".zshrc"), "utf8")).toBe("rc");
+    expect(readFileSync(join(project, ".bash_profile"), "utf8")).toBe("rc");
+    expect(existsSync(join(project, ".vscode/tasks.json"))).toBe(false);
+  },
+);

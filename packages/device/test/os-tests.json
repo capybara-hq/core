@@ -3,6 +3,7 @@
   "exec-docker.test.ts",
   "linux-operation-backend.test.ts",
   "linux-operation-worker.test.ts",
+  "mac-abort-escape.test.ts",
   "mac-operation-backend.test.ts",
   "mac-read-scope.test.ts",
   "mac-self-check.test.ts",
