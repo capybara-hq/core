@@ -106,7 +106,7 @@ the rule correct if that ever changes. A call that has its images shows them wha
 
 The ratio is the input `aspect_ratio` when it is one of `IMAGE_ASPECT_RATIOS`, else `null` (the
 model's default size, unknown to the web), drawn as 1:1. `ImageRatio` is a design type
-(`INLINE_IMAGE_RATIOS` in `packages/design/src/conversation/files.tsx`), a copy of the SDK list,
+(`INLINE_IMAGE_RATIOS` in `packages/design/src/conversation/image-ratios.ts`, re-exported by `files.tsx`), a copy of the SDK list,
 since neither the design package nor the web may import the SDK; a `tools/checks` test keeps the
 two lists equal.
 
@@ -169,7 +169,7 @@ from the conversation index), spec §6.16.20 "Generating image":
   `ink` at about 8 %, each `color-mix(in oklab, <token> N%, var(--cb-panel))` and fading to
   transparent. The layer drifts slowly (translate and rotate only, compositor-friendly; one loop
   per `motion.flow`, a new design motion token of 6000 ms, `ease-in-out`, `alternate`), so the
-  colours flow without strobing. Centred on top, an `image` icon (20) in `faint`.
+  colours flow without strobing. Centred on top, an `image` icon (16) in `faint`.
 - Light and dark both come from the tokens; a theme that changes `accent` or `panel` restyles it
   with no extra work.
 - **Reduced motion:** the keyframes start and end on the same rest pose, so the global rule
