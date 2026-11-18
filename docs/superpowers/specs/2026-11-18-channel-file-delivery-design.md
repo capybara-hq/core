@@ -230,7 +230,9 @@ every present and future producer is covered by writing the event. The case, for
   the file in the chat.
 - **Scheduled group run whose first post is a file** (`threadPending`, `outbound.ts:1001-1005`):
   the thread must be bound to a message id, which `sendFile` may not return. The kernel first sends
-  a one-line text root (`phrase("fileDelivered")`, the name in inline code) with the key
+  a one-line text root (`phrase("fileRoot")`, en "File `chart.png`:", neutral about the outcome
+  because the platform may still refuse the file and the link line then follows it; the name in
+  inline code) with the key
   `key(seq, "-root")` through the ordinary `send` (which binds the thread), then the file into the
   thread. If `sendFile` returns a `messageId` and the thread is still pending (never true after the
   root), nothing more happens.

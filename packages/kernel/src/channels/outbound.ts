@@ -1222,16 +1222,27 @@ class Delivery {
     a: ArtifactPayload,
     plan: Extract<FileDeliveryPlan, { mode: "native" }>,
   ): Promise<boolean> {
+    // the replica stopped while this delivery waited for its slot: hand the job back untouched
+    if (this.stopping.aborted) throw new DeliveryShutdownError();
     if (this.lease.lost) throw new DeliveryLostError();
     const sendFile = this.s.sendFile;
     const files = this.s.features.files;
+    // cannot happen: the plan is `native` only when both exist (narrows the types)
     if (sendFile === undefined || files === undefined) return false;
-    const read = await readArtifactCapped(
-      this.d.storage.kernel(this.s.row.orgId),
-      a.objectKey,
-      plan.cap,
-      AbortSignal.timeout(FILE_CALL_TIMEOUT_MS),
-    );
+    let read: Awaited<ReturnType<typeof readArtifactCapped>>;
+    try {
+      // the read stops with the replica: nothing has reached the platform yet
+      read = await readArtifactCapped(
+        this.d.storage.kernel(this.s.row.orgId),
+        a.objectKey,
+        plan.cap,
+        AbortSignal.any([this.stopping, AbortSignal.timeout(FILE_CALL_TIMEOUT_MS)]),
+      );
+    } catch (err) {
+      if (this.stopping.aborted) throw new DeliveryShutdownError();
+      throw err;
+    }
+    if (this.stopping.aborted) throw new DeliveryShutdownError();
     if (read.kind !== "ok") {
       const meta = { conversationId: this.conversationId, seq, reason: read.kind };
       if (read.kind === "too_large")
@@ -1248,7 +1259,15 @@ class Delivery {
       kind: fileKind(a.contentType, read.data.byteLength, files),
       data: read.data,
     };
+    // As before a card send (recordCard): a read of up to 120 s can outlast the lease; a new holder
+    // then delivers this event, so do not post the file a second time
+    if (this.lease.lost) throw new DeliveryLostError();
     try {
+      // Not aborted on shutdown: an upload cut off midway may already have reached the platform,
+      // and the retry posts it again on platforms without idempotent uploads (Slack, Telegram).
+      // It finishes or times out (FILE_CALL_TIMEOUT_MS); one longer than the stop budget is
+      // abandoned with the process and comes back by stalled detection, the window spec §4.6
+      // accepts for a crash between send and advance.
       await sendFile(this.target, file, this.key(seq), this.locale);
     } catch (err) {
       if (!isChannelSendError(err) || err.retryable) throw err;

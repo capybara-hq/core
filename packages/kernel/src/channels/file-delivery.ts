@@ -85,7 +85,7 @@ export function fileLinkText(input: {
 
 /** The root message text of a native file delivery. */
 export function fileRootText(name: string, locale: ChannelLocale): string {
-  return fill(phrase("fileDelivered", locale), { name: asCode(name), size: "", url: "" });
+  return fill(phrase("fileRoot", locale), { name: asCode(name), size: "", url: "" });
 }
 
 export type CappedRead =

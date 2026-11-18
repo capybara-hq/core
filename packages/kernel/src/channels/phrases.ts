@@ -182,8 +182,12 @@ export const CHANNEL_PHRASES = {
     zh: "{name}（{size}）已交付，请在网页上打开 Capybara 中的这个会话获取。",
     en: "{name} ({size}) was delivered; open the conversation in Capybara on the web to get it.",
   },
-  /** The root message of a native file delivery; `{name}` is already code. */
-  fileDelivered: { zh: "已交付文件 {name}。", en: "Delivered {name}." },
+  /**
+   * The root message of a native file delivery (a scheduled group run's first post); `{name}` is
+   * already code. Neutral about the outcome: the platform may still refuse the file, and then the
+   * link line follows it.
+   */
+  fileRoot: { zh: "文件 {name}：", en: "File {name}:" },
   /** 运行被中止（收尾挂着的草稿时附在已有文本之后）。 */
   runStopped: { zh: "已停止。", en: "Stopped." },
   /** 运行失败。 */

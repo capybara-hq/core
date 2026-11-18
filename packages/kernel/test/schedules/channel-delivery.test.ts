@@ -455,7 +455,7 @@ describe("scheduled task channel delivery (spec §8)", () => {
     const posts = im.sent.slice(sentBefore).filter((s) => s.target.chatId === "grp-files");
     const root = posts.find((s) => s.idempotencyKey === idempotencyKey(`${conv}-${seq}-root`));
     if (!root) throw new Error("no thread root");
-    expect(root.message.text).toBe("Delivered `chart.png`.");
+    expect(root.message.text).toBe("File `chart.png`:");
     expect(root.target.threadId).toBeUndefined();
     expect(file.target.threadId).toBe(root.messageId);
     expect(file.kind).toBe("image");

@@ -591,7 +591,8 @@ the web conversation (a link when `http.publicUrl` is set).
 - `channels.fileConcurrency` (default 4): uploads at once per process. A worker replica holds at most
   `fileConcurrency x fileMaxBytes` of file bytes in memory (80 MiB by default); size the worker for it before
   raising either value.
-- Both are read at job start (not hot) and apply to every org.
+- Neither is hot, and both apply to every org: `fileConcurrency` is read once per process at startup,
+  `fileMaxBytes` for each file as it is delivered.
 
 ## IM channels: inbound modes
 

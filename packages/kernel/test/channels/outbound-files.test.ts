@@ -62,6 +62,13 @@ let miniId: string;
 let noEditId: string;
 let events: QueueEvents;
 let queue: Queue<{ conversationId?: string }>;
+/** The clients handed to `events` / `queue` (BullMQ never closes a client it was given). */
+const clients: Redis[] = [];
+const client = (url: string) => {
+  const c = new Redis(url, { maxRetriesPerRequest: null });
+  clients.push(c);
+  return c;
+};
 /** Ids of completed channel jobs (BullMQ removes them on completion). */
 const completed = new Set<string>();
 
@@ -87,11 +94,11 @@ beforeAll(async () => {
   raw = createDb(pgc.url, 3);
   db = kernelDb(raw);
   events = new QueueEvents(CHANNEL_QUEUE_NAME, {
-    connection: new Redis(rd.url, { maxRetriesPerRequest: null }),
+    connection: client(rd.url),
   });
   events.on("completed", ({ jobId }) => completed.add(jobId));
   await events.waitUntilReady();
-  queue = new Queue(CHANNEL_QUEUE_NAME, { connection: new Redis(rd.url) });
+  queue = new Queue(CHANNEL_QUEUE_NAME, { connection: client(rd.url) });
   const ownerId = (
     await accountsFor(db).createLocal({ login: "owner", password: PW, displayName: "Owner" })
   ).id;
@@ -153,6 +160,7 @@ beforeAll(async () => {
 afterAll(async () => {
   await events?.close();
   await queue?.close();
+  await Promise.all(clients.map((c) => c.quit().catch(() => undefined)));
   await k?.close();
   await im?.stop();
   await raw?.destroy();

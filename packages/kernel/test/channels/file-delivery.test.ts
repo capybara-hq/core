@@ -118,9 +118,12 @@ describe("fileLinkText / fileRootText", () => {
       for (const base of ["https://cap.example", undefined]) {
         expect(fileLinkText({ ...input, name, base, locale: "en" })).toContain(asCode(name));
       }
-      expect(fileRootText(name, "en")).toBe(`Delivered ${asCode(name)}.`);
+      expect(fileRootText(name, "en")).toBe(`File ${asCode(name)}:`);
     }
-    expect(fileRootText("chart.png", "en")).toBe("Delivered `chart.png`.");
+  });
+  it("the root text does not claim the upload succeeded (the link line may follow it)", () => {
+    expect(fileRootText("chart.png", "en")).toBe("File `chart.png`:");
+    expect(fileRootText("chart.png", "zh")).toBe("文件 `chart.png`：");
   });
 });
 
