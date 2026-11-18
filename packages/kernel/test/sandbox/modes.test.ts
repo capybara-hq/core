@@ -18,10 +18,10 @@ import {
 const L = ["registry.npmjs.org", "example.com"];
 
 const deployment = (
-  autoMode: DeploymentDevicePolicy["autoMode"] = "allowed",
+  fullAccess: DeploymentDevicePolicy["fullAccess"] = "allowed",
   egress: "none" | "allowlist" = "allowlist",
   orgHosts: "extend" | "within" = "extend",
-): DeploymentDevicePolicy => ({ autoMode, limits: { egress, allowHosts: L, orgHosts } });
+): DeploymentDevicePolicy => ({ fullAccess, limits: { egress, allowHosts: L, orgHosts } });
 
 const NO_ORG: OrgDeviceSettings = {};
 
@@ -61,7 +61,7 @@ describe("effectiveDevicePolicy", () => {
     [
       "the org turned auto mode off",
       deployment(),
-      { autoMode: "off" },
+      { fullAccess: "off" },
       "auto",
       {
         mode: "sandbox",
@@ -74,7 +74,7 @@ describe("effectiveDevicePolicy", () => {
     [
       "the org has auto mode explicitly allowed",
       deployment(),
-      { autoMode: "allowed" },
+      { fullAccess: "allowed" },
       null,
       {
         mode: "auto",
@@ -100,7 +100,7 @@ describe("effectiveDevicePolicy", () => {
     [
       "the device reports auto mode while the org allows only sandbox",
       deployment(),
-      { autoMode: "off" },
+      { fullAccess: "off" },
       "auto",
       {
         mode: "sandbox",
@@ -195,7 +195,7 @@ describe("effectiveDevicePolicy", () => {
       ),
     ).toEqual({ kind: "open-public", hosts: [] });
     // the platform ceiling makes sandbox mode's cloud network the allowlist, whatever the org says;
-    // auto mode stays the open public network (devices.autoMode governs it)
+    // auto mode stays the open public network (devices.fullAccess governs it)
     expect(deviceNetwork(deployment("allowed", "allowlist", "within"), NO_ORG, "sandbox")).toEqual({
       kind: "allowlist",
       hosts: L,

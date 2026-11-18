@@ -41,6 +41,20 @@ describe("checkTestPortfolio", () => {
     ]);
   });
 
+  it("permits multiple replica boots only for explicit container membership", () => {
+    const root = fixture("replicas");
+    const got = checkTestPortfolio({ root });
+    expect(
+      got
+        .filter((f) => f.rule === "test-double-boot")
+        .map((f) => relative(root, f.file).split(sep).join("/")),
+    ).toEqual(["packages/kernel/test/integration.test.ts", "packages/kernel/test/unit.test.ts"]);
+    expect(
+      got.filter((f) => f.file.endsWith("unsafe-container.test.ts")).map((f) => f.rule),
+    ).toEqual(["test-timeout-override", "test-fixed-sleep", "test-small-app-file"]);
+    expect(got.some((f) => f.file.endsWith("/container.test.ts"))).toBe(false);
+  });
+
   it("skips a file listed in the grandfather list", () => {
     expect(
       checkTestPortfolio({
@@ -111,6 +125,17 @@ describe("checkTestPortfolio", () => {
     ]);
     expect(got[0]?.file).toBe(list);
     expect(got[2]?.message).toContain("container-tests.json");
+  });
+
+  it("enforces the device package's checked-in real-OS list", () => {
+    const root = fixture("device-os");
+    const got = checkTestPortfolio({ root });
+    expect(got.map((f) => [f.rule, relative(root, f.file).split(sep).join("/"), f.line])).toEqual([
+      ["test-portfolio-missing-file", "packages/device/test/os-tests.json", 3],
+      ["test-portfolio-list-overlap", "packages/device/test/os-tests.json", 4],
+      ["test-portfolio-os-unlisted", "packages/device/test/unlisted.test.ts", 1],
+    ]);
+    expect(got[2]?.message).toContain("os-tests.json");
   });
 
   it("treats a base that does not resolve as skipped and a resolvable one as an empty diff", () => {

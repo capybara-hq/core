@@ -2,9 +2,15 @@ import {
   DEFAULT_SANDBOX_ROOTS,
   DeviceProtocolError,
   isFileSystemGoneError,
+  isSandboxOperationOutcomeUnknownError,
+  isSandboxPermissionUnsupportedError,
+  isSandboxScopeDeniedError,
   type Logger,
   type SandboxHandle,
+  type SandboxPreparation,
+  type SandboxPreparationScope,
   type SandboxRoots,
+  SandboxScopeDeniedError,
   ToolError,
   validateSandboxPath,
   validateSandboxPathShape,
@@ -21,13 +27,31 @@ import {
   type ConversationDevices,
   type WorkingFacts,
 } from "../../../devices/conversation-devices.js";
-import { workingRootOf } from "../../../devices/working-root.js";
+import { canonicalRoot, workingRootOf } from "../../../devices/working-root.js";
 import { ApiError } from "../../../errors.js";
 import type { KernelConfigService } from "../../../infra/config/kernel-config.service.js";
+import { InstanceBindingError } from "../../../local-devices/instance-bindings.js";
 import { AUTO_MODE_NOT_ALLOWED_TEXT } from "../../../local-devices/local-device-provider.js";
+import { isDeviceRequestNotSent } from "../../../local-devices/relay.js";
 import { type DeviceModeLevel, devicePathsChange } from "../../../runtime/context/device-paths.js";
+import {
+  ATTACHMENTS_ROOT,
+  attachmentsDir,
+  attachmentsRoot,
+} from "../../../sandbox/attachments-path.js";
 import { SandboxPathBusyError } from "../../../sandbox/leases.js";
+import type { LegacyRetirementStore } from "../../../sandbox/legacy-retirement.js";
+import {
+  MANAGED_DEVICE_CONTEXT_FAILED_TEXT,
+  MANAGED_DEVICE_CONTEXT_STALE_TEXT,
+  MANAGED_DEVICE_CONTEXT_UNAVAILABLE_TEXT,
+  ManagedDeviceContextFailed,
+  type ManagedDeviceContextPort,
+  ManagedDeviceContextStale,
+  ManagedDeviceContextUnavailable,
+} from "../../../sandbox/managed-device-context.js";
 import type { SandboxMode } from "../../../sandbox/modes.js";
+import type { HeldDeviceContextEvidence } from "../../../sandbox/permission-context-types.js";
 import {
   type HeldProvider,
   SandboxLockLostError,
@@ -45,7 +69,7 @@ export interface SandboxToolDeps {
    * `ifRunning`, which `TaskOutput` reads a task through.
    */
   sandbox: Pick<SandboxService, "cloudAvailable" | "availableFor" | "withSandbox"> &
-    Partial<Pick<SandboxService, "pathLease" | "currentInstance" | "ifRunning">>;
+    Partial<Pick<SandboxService, "pathLease" | "currentInstance" | "ifRunning" | "withOperations">>;
   /**
    * The device a call enters: the root conversation's, checked for its owner every call.
    * `usableNow` (absent in test stubs: only the cloud provider counts) tells a listing whether a
@@ -53,7 +77,7 @@ export interface SandboxToolDeps {
    * in test stubs: free mode) gives what decides the working root, read as the review reads it.
    */
   devices: Pick<ConversationDevices, "forTool"> &
-    Partial<Pick<ConversationDevices, "usableNow" | "modeLevel" | "workingFacts">>;
+    Partial<Pick<ConversationDevices, "usableNow" | "modeLevel" | "workingFacts" | "projectReach">>;
   /** Background `Bash` tasks; absent in test stubs, where `run_in_background` is refused. */
   background?: Pick<
     BackgroundTaskStore,
@@ -66,7 +90,13 @@ export interface SandboxToolDeps {
     | "advanceOffset"
     | "runningOwnedBy"
     | "finishedOwnedBy"
-  >;
+  > &
+    Partial<Pick<BackgroundTaskStore, "reserveManaged" | "failManagedPreEffect">>;
+  /**
+   * The legacy-launch freeze check (permission runtime cutover 8.5) every legacy background launch
+   * makes immediately before it dispatches; always wired in the kernel, absent in test stubs.
+   */
+  legacyLaunch?: Pick<LegacyRetirementStore, "admitLegacyDispatch">;
   /**
    * Whether `id` is a sub-agent conversation in the tree under `rootConversationId` (TaskOutput /
    * TaskStop tell a sub-agent's agentId apart from an unknown task id), and the sub-agents a
@@ -91,10 +121,21 @@ export interface SandboxToolDeps {
    * conversation's latest `device_paths` (absent in test stubs, which record none).
    */
   eventLog: Pick<EventLog, "append" | "latestFileState"> &
-    Partial<Pick<EventLog, "publishChanged" | "latestOfType">>;
+    Partial<Pick<EventLog, "publishChanged" | "latestOfType" | "findByIdem">>;
   config: Pick<KernelConfigService, "get">;
   /** Where a mapped provider failure keeps its raw error (warn); absent in test stubs. */
   log?: Pick<Logger, "warn">;
+  /**
+   * The managed device context writer (permission context replay spec B3): on the managed route it
+   * records the marked device paths before any preparation or user callback, instead of the legacy
+   * `device_paths` writer. Absent while dormant (the legacy writer stays on unactivated routes).
+   */
+  managedDeviceContext?: ManagedDeviceContextPort;
+  /**
+   * The paired activation (`PERMISSION_CONTEXT_ACTIVATION`): the managed route then requires
+   * {@link managedDeviceContext} and refuses before entering without it.
+   */
+  managedDeviceContextRequired?: boolean;
 }
 
 /**
@@ -204,16 +245,7 @@ export const SANDBOX_CREATE_FAILED_TEXT =
 const LOCK_LOST_TEXT =
   "The sandbox operation was interrupted because the sandbox lock was lost; check the sandbox state and retry.";
 
-/** The directory of attachments in the device (each conversation has a subdirectory). */
-export const attachmentsRoot = (roots: SandboxRoots): string => `${roots.workspace}/attachments`;
-/** {@link attachmentsRoot} of an instance with the default roots. */
-export const ATTACHMENTS_ROOT = attachmentsRoot(DEFAULT_SANDBOX_ROOTS);
-/**
- * One conversation's attachment directory: the first 12 hex digits of the root conversation's
- * UUID, so conversations sharing a device do not overwrite each other's files.
- */
-export const attachmentsDir = (roots: SandboxRoots, rootConversationId: string): string =>
-  `${attachmentsRoot(roots)}/${rootConversationId.replaceAll("-", "").slice(0, 12)}`;
+export { ATTACHMENTS_ROOT, attachmentsDir, attachmentsRoot };
 /** 附件文件名的上限（UTF-8 字节，常见文件系统单个文件名上限 255 字节，留出 `-N` 后缀的余量）。 */
 export const ATTACHMENT_NAME_MAX_BYTES = 200;
 
@@ -443,11 +475,69 @@ export function assignAttachmentNames(
   return out;
 }
 
+/** A trusted copy's session: the three preparation methods, scoped to the declared roots. */
+export interface PreparationSession {
+  deviceId: string;
+  roots: SandboxRoots;
+  signal: AbortSignal;
+  p: SandboxPreparation;
+}
+/** Temporary protocol-2 binding; removed with the active caller cutover in Task8. */
+function legacyPreparationSession(s: SandboxSession): PreparationSession {
+  return {
+    deviceId: s.deviceId,
+    roots: s.roots,
+    signal: s.signal,
+    p: {
+      readFile: (path, opts) => s.p.readFile(s.h, path, opts),
+      writeFile: (path, data, signal) => s.p.writeFile(s.h, path, data, signal),
+      stat: (path, signal) => s.p.stat(s.h, path, signal),
+    },
+  };
+}
+
 /**
  * A machine that reports auto mode while the organization allows only sandbox mode (auto mode
  * spec §4.3): the kernel's refusal text plus what the model can do.
  */
 const AUTO_MODE_TOOL_TEXT = `${AUTO_MODE_NOT_ALLOWED_TEXT} Ask the user to switch it on the machine, or to start a new conversation on another device.`;
+/**
+ * Full access refused by policy (B-13: `org.*` / `deployment.*`, old and renamed codes): the
+ * organization or the platform has it off. The kernel's own message is never shown.
+ */
+export const FULL_ACCESS_OFF_BY_POLICY_TOOL_TEXT =
+  "Full access is turned off by your organization's or the platform's policy, so nothing ran. Continue with the Request approval or Approve for me permission profile, or ask an org admin (or a super admin) to allow Full access.";
+/**
+ * The device's owner ceiling does not allow Full access (`device.full_access_not_allowed`).
+ */
+export const FULL_ACCESS_CEILING_TOOL_TEXT =
+  "This device's owner ceiling does not allow Full access, so nothing ran. Ask the device's owner to raise it with `capybara-device ceiling set` on that machine, or continue with the Request approval or Approve for me permission profile.";
+/**
+ * The full-access refusal codes off by policy: the renamed ones (W5-P3b) and the old organization
+ * and platform names until that rename lands; `device.auto_mode_not_allowed` keeps its machine
+ * text ({@link AUTO_MODE_TOOL_TEXT}).
+ */
+const FULL_ACCESS_OFF_BY_POLICY_CODES: ReadonlySet<string> = new Set([
+  "org.full_access_not_allowed",
+  "deployment.full_access_not_allowed",
+  "org.auto_mode_not_allowed",
+  "deployment.auto_mode_not_allowed",
+]);
+/**
+ * A managed operation outside the admitted scope (`SandboxScopeDeniedError`): fixed text, never
+ * the refusal's own message (a provider may write it).
+ */
+export const SCOPE_DENIED_TOOL_TEXT =
+  "This operation reaches outside what this conversation's permission profile allows on the device (a path outside the directories it may read or write, or a host it may not reach), so it did not run. Keep the call inside the working directory and the directories already granted, or ask the user to grant the directory or choose a broader permission profile, then retry.";
+/** A staged request the machine never got: it reconnected before the request was sent. */
+export const DEVICE_REQUEST_NOT_SENT_TOOL_TEXT =
+  "The device's machine reconnected before this operation was sent, so nothing ran. Retry the tool call.";
+/** The device cannot enforce the conversation's profile (`SandboxPermissionUnsupportedError`). */
+export const PERMISSION_UNSUPPORTED_TOOL_TEXT =
+  "This device cannot enforce this conversation's permission profile, so nothing ran. Ask the user to choose another permission profile for the conversation, or to start a new conversation on a device that supports it.";
+/** A managed operation whose outcome could not be confirmed (`SandboxOperationOutcomeUnknownError`). */
+export const OUTCOME_UNKNOWN_TOOL_TEXT =
+  "The device may or may not have run this operation: its outcome could not be confirmed. Check the device's state (for example with Read, Glob or TaskList) before retrying, and do not repeat an operation that must not run twice.";
 
 /**
  * Sandbox service errors → actionable text for the model; anything else is returned unchanged
@@ -456,7 +546,34 @@ const AUTO_MODE_TOOL_TEXT = `${AUTO_MODE_NOT_ALLOWED_TEXT} Ask the user to switc
  * error is logged to `log` as a warning (the pipeline logs only errors it did not get as a
  * `ToolError`).
  */
+const RECONCILE_REQUIRED_TEXT =
+  "This device's sandbox limits must be established again before it runs anything, so nothing ran. Ask the person to reset the device's files on the devices page, then retry, or to start a new conversation on another device.";
+const INSTANCE_BINDING_TEXT =
+  "The device's machine has not confirmed its current instance, so nothing ran. Ask the person to restart capybara-device on that machine (updating it if it is outdated), then retry, or to start a new conversation on another device.";
+
 export function mapSandboxError(e: unknown, log: Pick<Logger, "warn"> | undefined): unknown {
+  if (e instanceof ManagedDeviceContextStale)
+    return new ToolError(MANAGED_DEVICE_CONTEXT_STALE_TEXT, { kind: "unavailable" });
+  if (e instanceof ManagedDeviceContextUnavailable)
+    return new ToolError(MANAGED_DEVICE_CONTEXT_UNAVAILABLE_TEXT, { kind: "unavailable" });
+  if (e instanceof ManagedDeviceContextFailed)
+    return new ToolError(MANAGED_DEVICE_CONTEXT_FAILED_TEXT, { kind: "unavailable" });
+  // the managed route's typed refusals (unknown first: it never proves the operation had no effect)
+  if (isSandboxOperationOutcomeUnknownError(e)) {
+    log?.warn("sandbox operation outcome unknown", { err: e });
+    return new ToolError(OUTCOME_UNKNOWN_TOOL_TEXT, { kind: "unavailable" });
+  }
+  // kernel-typed, before the scope refusal it extends: nothing was sent, a retry is safe
+  if (isDeviceRequestNotSent(e))
+    return new ToolError(DEVICE_REQUEST_NOT_SENT_TOOL_TEXT, { kind: "unavailable" });
+  if (isSandboxScopeDeniedError(e)) {
+    log?.warn("sandbox operation outside its scope", { err: e });
+    return new ToolError(SCOPE_DENIED_TOOL_TEXT);
+  }
+  if (isSandboxPermissionUnsupportedError(e)) {
+    log?.warn("sandbox permission profile unsupported", { err: e });
+    return new ToolError(PERMISSION_UNSUPPORTED_TOOL_TEXT);
+  }
   if (e instanceof SandboxProviderUnreachableError) {
     log?.warn("sandbox provider unreachable", { failure: e.failure, err: e.cause });
     if (e.failure === "connect") {
@@ -485,6 +602,13 @@ export function mapSandboxError(e: unknown, log: Pick<Logger, "warn"> | undefine
     if (e.code === "device.offline") return new ToolError(DEVICE_OFFLINE_TEXT);
     if (e.code === "device.program_outdated") return new ToolError(DEVICE_OUTDATED_TEXT);
     if (e.code === "device.auto_mode_not_allowed") return new ToolError(AUTO_MODE_TOOL_TEXT);
+    if (e.code === "device.full_access_not_allowed")
+      return new ToolError(FULL_ACCESS_CEILING_TOOL_TEXT);
+    if (FULL_ACCESS_OFF_BY_POLICY_CODES.has(e.code))
+      return new ToolError(FULL_ACCESS_OFF_BY_POLICY_TOOL_TEXT);
+    if (e.code === "device.permission_reconcile_required") {
+      return new ToolError(RECONCILE_REQUIRED_TEXT, { kind: "unavailable" });
+    }
     if (e.code === "sandbox.open_network_refused") {
       return new ToolError(SANDBOX_OPEN_NETWORK_REFUSED_TEXT);
     }
@@ -493,6 +617,10 @@ export function mapSandboxError(e: unknown, log: Pick<Logger, "warn"> | undefine
   // an operation outside withSandbox's own mapping (it records lost files itself)
   if (isFileSystemGoneError(e)) return new ToolError(FILES_GONE_TEXT);
   if (e instanceof DeviceProtocolError) return new ToolError(deviceProtocolText(e.message));
+  if (e instanceof InstanceBindingError) {
+    log?.warn("device instance binding failed", { err: e });
+    return new ToolError(INSTANCE_BINDING_TEXT, { kind: "unavailable" });
+  }
   if (e instanceof SandboxLockLostError) return new ToolError(LOCK_LOST_TEXT);
   if (e instanceof SandboxPathBusyError) return new ToolError(PATH_BUSY_TEXT);
   return e;
@@ -514,14 +642,94 @@ export async function inSandbox<T>(
   ctx: BuiltinCallContext,
   fn: (s: SandboxSession) => Promise<T>,
 ): Promise<{ value: T; notices: string[] }> {
+  return inSandboxWith(deps, ctx, fn, false);
+}
+/**
+ * The device entry of every builtin tool (B-17): once the one activation gate is on (the managed
+ * writer required, {@link SandboxToolDeps.managedDeviceContextRequired}) the managed operation
+ * route ({@link inSandboxOperations}: the marked device paths recorded before the callback, every
+ * provider call a managed operation); otherwise the legacy route ({@link inSandbox}), unchanged.
+ */
+export async function inToolSandbox<T>(
+  deps: SandboxToolDeps,
+  ctx: BuiltinCallContext,
+  fn: (s: SandboxSession) => Promise<T>,
+): Promise<{ value: T; notices: string[] }> {
+  return deps.managedDeviceContextRequired
+    ? inSandboxOperations(deps, ctx, fn)
+    : inSandbox(deps, ctx, fn);
+}
+export async function inSandboxOperations<T>(
+  deps: SandboxToolDeps,
+  ctx: BuiltinCallContext,
+  fn: (s: SandboxSession) => Promise<T>,
+  stage?: {
+    purpose: SandboxPreparationScope["purpose"];
+    roots: (roots: SandboxRoots) => readonly string[];
+    run: (s: PreparationSession) => Promise<void>;
+  },
+): Promise<{ value: T; notices: string[] }> {
+  return inSandboxWith(deps, ctx, fn, true, stage);
+}
+/**
+ * Trusted copy callbacks only receive preparation's three methods. Once the activation gate is on
+ * the copy is a trusted preparation on the managed route ({@link inSandboxOperationPreparation},
+ * scoped to `roots`, after the marked device paths); otherwise the protocol-2 binding.
+ */
+export async function inSandboxPreparation<T>(
+  deps: SandboxToolDeps,
+  ctx: BuiltinCallContext,
+  purpose: SandboxPreparationScope["purpose"],
+  roots: (roots: SandboxRoots) => readonly string[],
+  fn: (s: PreparationSession) => Promise<T>,
+): Promise<{ value: T; notices: string[] }> {
+  if (deps.managedDeviceContextRequired)
+    return inSandboxOperationPreparation(deps, ctx, purpose, roots, fn);
+  return inSandbox(deps, ctx, (s) => fn(legacyPreparationSession(s)));
+}
+/** The trusted-copy entry on the managed route ({@link inSandboxPreparation} once activated). */
+export async function inSandboxOperationPreparation<T>(
+  deps: SandboxToolDeps,
+  ctx: BuiltinCallContext,
+  purpose: SandboxPreparationScope["purpose"],
+  roots: (roots: SandboxRoots) => readonly string[],
+  fn: (s: PreparationSession) => Promise<T>,
+): Promise<{ value: T; notices: string[] }> {
+  let value: T;
+  return inSandboxOperations(deps, ctx, async () => value, {
+    purpose,
+    roots,
+    run: async (s) => {
+      value = await fn(s);
+    },
+  });
+}
+async function inSandboxWith<T>(
+  deps: SandboxToolDeps,
+  ctx: BuiltinCallContext,
+  fn: (s: SandboxSession) => Promise<T>,
+  operations: boolean,
+  stage?: {
+    purpose: SandboxPreparationScope["purpose"];
+    roots: (roots: SandboxRoots) => readonly string[];
+    run: (s: PreparationSession) => Promise<void>;
+  },
+): Promise<{ value: T; notices: string[] }> {
   try {
+    // once activated, only the managed route runs: a legacy route refuses before entering, so v1
+    // permission context never sits next to old-mode device_paths; a managed route never runs
+    // without its writer, so no preparation or user callback can run unrecorded
+    if (!operations && deps.managedDeviceContextRequired)
+      throw new ManagedDeviceContextFailed("refused");
+    const managed = operations ? managedWriter(deps) : undefined;
     const deviceId = await deps.devices.forTool(ctx.orgId, sandboxConversationOf(ctx));
     // the mode once per call: the path checks follow it and the device_paths event records it;
     // the working facts (workspace, home, project snapshot) are read as the review reads them
     // a call the review covered runs in the working root it was reviewed against: never read again
     const reviewed = ctx.reviewedWorkingRoot;
-    const [level, working] = await Promise.all([
+    const [level, reach, working] = await Promise.all([
       deps.devices.modeLevel?.(ctx.orgId, deviceId) ?? null,
+      deps.devices.projectReach?.(ctx.orgId, deviceId),
       reviewed !== undefined
         ? null
         : (deps.devices.workingFacts?.(
@@ -531,7 +739,52 @@ export async function inSandbox<T>(
             deviceId,
           ) ?? null),
     ]);
-    return await deps.sandbox.withSandbox(
+    const enter: SandboxService["withSandbox"] = operations
+      ? (use, call, signal) => {
+          const claim = ctx.executionClaim;
+          if (!claim || !ctx.runId || claim.runId !== ctx.runId || !deps.sandbox.withOperations)
+            throw new SandboxScopeDeniedError("The tool has no current server execution claim");
+          return deps.sandbox.withOperations(
+            use,
+            {
+              claim,
+              callId: ctx.callId,
+              deadlineMs: Math.min(ctx.runDeadline ?? Infinity, Date.now() + 30000),
+              ...(managed && { contextEvidence: true as const }),
+              beforeUser: async (staging, info, sig) => {
+                // the held instance's device paths, recorded before any preparation or user callback
+                if (managed) {
+                  // no installed binding to describe the held instance: unavailable, not stale
+                  if (!info.contextEvidence) throw new ManagedDeviceContextUnavailable();
+                  // B-18: the review judged the call against a root (the workspace included);
+                  // held evidence of another root is stale, refused before anything is recorded
+                  // or run
+                  const against = ctx.reviewedAgainstRoot ?? reviewed;
+                  if (
+                    against !== undefined &&
+                    canonicalRoot(against) !== canonicalRoot(info.contextEvidence.workingRoot)
+                  )
+                    throw new ManagedDeviceContextStale();
+                  await recordManagedDevicePaths(
+                    { managedDeviceContext: managed },
+                    ctx,
+                    info.contextEvidence,
+                    sig,
+                  );
+                }
+                if (stage)
+                  await staging.prepare(stage.purpose, stage.roots(info.roots), (p, signal) =>
+                    stage.run({ deviceId, roots: info.roots, p, signal }),
+                  );
+                sig.throwIfAborted();
+              },
+            },
+            call,
+            signal,
+          );
+        }
+      : deps.sandbox.withSandbox.bind(deps.sandbox);
+    return await enter(
       {
         orgId: ctx.orgId,
         deviceId,
@@ -552,11 +805,17 @@ export async function inSandbox<T>(
           mode,
           h,
           roots: info.roots,
-          workingRoot: reviewed ?? sessionWorkingRoot(working, mode, info.roots.workspace),
+          // a managed call runs in the working root its device context recorded (admission's),
+          // which a reviewed call's root equals (checked before the callback, B-18)
+          workingRoot:
+            (managed ? info.contextEvidence?.workingRoot : undefined) ??
+            reviewed ??
+            sessionWorkingRoot(working, mode, info.roots.workspace, reach),
           p,
           signal,
         };
-        await recordDevicePaths(deps, ctx, info.roots, level ?? null);
+        // the legacy writer only on unactivated routes: a managed call recorded before preparation
+        if (!managed) await recordDevicePaths(deps, ctx, info.roots, level ?? null);
         const notices: string[] = [];
         if (info.filesReset) notices.push(sandboxFilesResetNotice(info.roots));
         else if (info.restarted) notices.push(SANDBOX_RESTARTED_NOTICE);
@@ -568,6 +827,40 @@ export async function inSandbox<T>(
   } catch (e) {
     throw mapSandboxError(e, deps.log);
   }
+}
+
+/**
+ * The managed writer of an operations route: the injected one, or none while dormant. Once the
+ * paired activation requires it, a missing writer refuses the call before anything is entered.
+ */
+function managedWriter(deps: SandboxToolDeps): ManagedDeviceContextPort | undefined {
+  if (deps.managedDeviceContext) return deps.managedDeviceContext;
+  if (deps.managedDeviceContextRequired) throw new ManagedDeviceContextFailed("refused");
+  return undefined;
+}
+
+/**
+ * Records the managed device paths of the held instance `held` into the calling conversation (a
+ * sub-agent: its own log) for this call's run and actor: a thin delegator to the managed writer,
+ * which owns the transaction and all validation (permission context replay spec B3).
+ */
+export async function recordManagedDevicePaths(
+  deps: { managedDeviceContext: ManagedDeviceContextPort },
+  ctx: BuiltinCallContext,
+  held: Readonly<HeldDeviceContextEvidence>,
+  signal: AbortSignal,
+): Promise<void> {
+  if (ctx.runId === undefined) throw new ManagedDeviceContextFailed("refused");
+  await deps.managedDeviceContext.record(
+    {
+      orgId: ctx.orgId,
+      conversationId: ctx.conversationId,
+      runId: ctx.runId,
+      accountId: ctx.accountId,
+    },
+    held,
+    signal,
+  );
 }
 
 /**
@@ -600,9 +893,10 @@ export function sessionWorkingRoot(
   working: WorkingFacts | null,
   mode: SandboxMode,
   workspace: string,
+  reach?: "workspace" | "os-user",
 ): string {
   if (working === null) return workspace;
-  const root = workingRootOf(working.project, { mode, ...working });
+  const root = workingRootOf(working.project, { mode, reach, ...working });
   return root === working.workspace ? workspace : root;
 }
 

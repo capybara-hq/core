@@ -1,5 +1,6 @@
 import { homedir } from "node:os";
 import { parseCommandLine, USAGE, UsageError } from "./args.js";
+import { ceilingCommand } from "./commands/ceiling.js";
 import { drain, drainAndWait } from "./commands/drain.js";
 import { login } from "./commands/login.js";
 import { logout } from "./commands/logout.js";
@@ -13,6 +14,7 @@ import type { Executor } from "./exec/types.js";
 import type { ProcessLookup } from "./pid.js";
 import type { PolicyStore } from "./policy-store.js";
 import type { RunSystem } from "./service/manager.js";
+import type { StagedDevice } from "./staged-device.js";
 import { type Credential, stateDir } from "./state.js";
 
 export interface CliEnv {
@@ -25,6 +27,8 @@ export interface CliEnv {
   out?: (line: string) => void;
   err?: (line: string) => void;
   createExecutor?: (cred: Credential, policy: PolicyStore) => Promise<Executor> | Executor;
+  /** Builds the staged (protocol 3) program's parts; used only when the protocol selects it. */
+  createStaged?: (cred: Credential, policy: PolicyStore) => Promise<StagedDevice> | StagedDevice;
   kill?: typeof process.kill;
   /** Runs a system command for `service` and `stop` and returns its output (default: execFileSync). */
   runSystem?: RunSystem;
@@ -36,6 +40,8 @@ export interface CliEnv {
   sandboxAvailable?: () => { ok: true } | { ok: false; reason: string };
   /** Asks one question on the terminal and resolves the answer (default: node:readline). */
   ask?: (question: string) => Promise<string>;
+  /** Test seam for `ceiling set`: runs between its read and its locked write. */
+  beforeCeilingWrite?: () => void;
 }
 
 /** Asks one question on the process's terminal. */
@@ -93,6 +99,34 @@ function defaultCreateExecutor(stateDir: string, home: string, err: (line: strin
   };
 }
 
+/**
+ * The staged (protocol 3) program's parts (permission activation W3-M): the binder with one
+ * operation backend per bound generation, built for this host (macOS, Linux) or the device's
+ * container (docker mode). Loaded on demand like the executors.
+ */
+function defaultCreateStaged(stateDir: string, home: string) {
+  return async (cred: Credential, store: PolicyStore): Promise<StagedDevice> => {
+    const { createStagedDevice } = await import("./staged-device.js");
+    if (cred.mode === "docker") {
+      const { createDockerExecutor } = await import("./exec/docker.js");
+      const container = await createDockerExecutor({
+        dir: cred.dir,
+        deviceId: cred.deviceId,
+        policy: () => store.current(),
+      });
+      return createStagedDevice({
+        cred,
+        stateDir,
+        policy: store,
+        home,
+        container,
+        dispose: () => container.dispose(),
+      });
+    }
+    return createStagedDevice({ cred, stateDir, policy: store, home });
+  };
+}
+
 /** Runs one command line and returns the exit code. */
 export async function runCli(argv: string[], io: CliEnv = {}): Promise<number> {
   const out = io.out ?? ((l: string) => console.log(l));
@@ -144,6 +178,7 @@ export async function runCli(argv: string[], io: CliEnv = {}): Promise<number> {
         out,
         err,
         createExecutor: io.createExecutor ?? defaultCreateExecutor(dir, home, err),
+        createStaged: io.createStaged ?? defaultCreateStaged(dir, home),
         ...(io.env && { env: io.env }),
         ...(io.kill && { kill: io.kill }),
         ...(io.ps && { ps: io.ps }),
@@ -177,6 +212,15 @@ export async function runCli(argv: string[], io: CliEnv = {}): Promise<number> {
         err,
         ...(io.sandboxAvailable && { sandboxAvailable: io.sandboxAvailable }),
         ...((io.stdinIsTTY ?? process.stdin.isTTY === true) && { ask: io.ask ?? askOnTerminal }),
+      });
+    case "ceiling":
+      return ceilingCommand(cmd, {
+        stateDir: dir,
+        home,
+        out,
+        err,
+        ...((io.stdinIsTTY ?? process.stdin.isTTY === true) && { ask: io.ask ?? askOnTerminal }),
+        ...(io.beforeCeilingWrite && { beforeWrite: io.beforeCeilingWrite }),
       });
     case "service":
       return serviceCommand(cmd.action, {

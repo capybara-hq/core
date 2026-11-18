@@ -306,3 +306,168 @@ describe("ApprovalCard: a command review ask (auto mode §5.4)", () => {
     expect(screen.queryByText(zh.approval.command.otherApprover)).toBeNull();
   });
 });
+
+/** An outside write's exact reach (permission profiles Task 7 wire): long paths, several hosts. */
+const LONG = `/outside/${"very-long-directory-name-".repeat(12)}end`;
+const SCOPE = {
+  readDirectories: ["/outside/reports", LONG],
+  writeDirectories: ["/outside/reports"],
+  hosts: ["api.example.com", "files.example.org", "registry.npmjs.org"],
+};
+const scopeOf = (container: HTMLElement) => {
+  const box = container.querySelector('[data-role="permission-scope"]');
+  const values = (k: string) =>
+    [...(box?.querySelectorAll(`[data-scope="${k}"] [data-pre="true"]`) ?? [])].map(
+      (e) => e.textContent,
+    );
+  return {
+    write: values("write"),
+    read: values("read"),
+    hosts: values("hosts"),
+    target: values("target"),
+  };
+};
+
+describe("ApprovalCard: exact permission scope and supersession (Task 10D)", () => {
+  it("shows every directory and host whole, the target file apart, from the event before the read", async () => {
+    stubApi({
+      // the read never answers here: the log's own fields draw the same scope
+      "GET /api/v1/orgs/o1/approvals/ap1": () => new Promise<Response>(() => {}),
+    });
+    const { container } = renderPage(
+      <ApprovalCard
+        orgId="o1"
+        item={item({
+          toolKey: "Write",
+          command: eventCommand({
+            kind: "write",
+            path: "/outside/reports/report.txt",
+            permissionScope: SCOPE,
+            targetPath: "/outside/reports/report.txt",
+          }),
+        })}
+      />,
+      { locale: "en" },
+    );
+    expect(scopeOf(container)).toEqual({
+      write: ["/outside/reports"],
+      read: ["/outside/reports", LONG],
+      hosts: ["api.example.com", "files.example.org", "registry.npmjs.org"],
+      target: ["/outside/reports/report.txt"],
+    });
+    expect(
+      screen.getByText(
+        "Approving grants this access for this operation only. Each directory includes everything inside it.",
+      ),
+    ).toBeTruthy();
+    // nothing clipped, nothing inferred (no parent, no root), nothing a link
+    expect(container.textContent).toContain(LONG);
+    expect(container.querySelector('[data-role="permission-scope"] a')).toBeNull();
+    expect(scopeOf(container).read).not.toContain("/outside");
+  });
+
+  it("the approval read's scope agrees with the event's", async () => {
+    stubApi({
+      "GET /api/v1/orgs/o1/approvals/ap1": () =>
+        json(200, {
+          approval: APPROVAL_COMMAND({
+            scopes: ["once"],
+            command: {
+              ...DETAIL,
+              permissionScope: SCOPE,
+              targetPath: "/outside/reports/report.txt",
+            },
+          }),
+        }),
+    });
+    const { container } = renderPage(<ApprovalCard orgId="o1" item={item()} />, {
+      locale: "zh",
+    });
+    expect(await screen.findByRole("button", { name: "允许一次" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "本会话允许同类" })).toBeNull();
+    expect(scopeOf(container).hosts).toEqual(SCOPE.hosts);
+    expect(scopeOf(container).target).toEqual(["/outside/reports/report.txt"]);
+    expect(screen.getByText(zh.approval.permissionScope.write)).toBeTruthy();
+  });
+
+  it("superseded in the log is final before any read: no approve, deny or scope controls", async () => {
+    const calls = stubApi({});
+    const { container } = renderPage(
+      <ApprovalCard
+        orgId="o1"
+        item={item({
+          command: eventCommand({ permissionScope: SCOPE }),
+          decided: {
+            approvalId: "ap1",
+            callId: "call_1",
+            decision: "superseded",
+            byAccountId: null,
+            reason: "user",
+            revision: 7,
+          },
+          decidedAt: EXPIRES,
+        })}
+      />,
+      { locale: "en" },
+    );
+    expect(container.querySelector('[data-state="superseded"]')).toBeTruthy();
+    expect(screen.getByText("Superseded")).toBeTruthy();
+    expect(
+      screen.getByText(
+        "A permission change replaced this request before anyone decided it. Nothing was approved; if still needed, a new request appears.",
+      ),
+    ).toBeTruthy();
+    expect(screen.getByText("Permissions revision 7")).toBeTruthy();
+    expect(screen.queryAllByRole("button")).toEqual([]);
+    expect(screen.queryByRole("radiogroup")).toBeNull();
+    expect(scopeOf(container).hosts).toEqual(SCOPE.hosts);
+    // decided in the log: nothing is read, nothing is posted
+    expect(calls).toEqual([]);
+  });
+
+  it("a sub-agent's card read from the API maps supersededRevision/Reason (authority change)", async () => {
+    stubApi({
+      "GET /api/v1/orgs/o1/approvals/ap1": () =>
+        json(200, {
+          approval: APPROVAL_COMMAND({
+            status: "superseded",
+            supersededRevision: 3,
+            supersededReason: "authority-changed",
+          }),
+        }),
+    });
+    renderPage(<ApprovalCard orgId="o1" item={item()} fromRead />, { locale: "zh" });
+    expect(await screen.findByText(zh.approval.superseded.authorityChanged)).toBeTruthy();
+    expect(screen.getByText("已被取代")).toBeTruthy();
+    expect(screen.getByText("权限版本 3")).toBeTruthy();
+    expect(screen.queryAllByRole("button")).toEqual([]);
+  });
+
+  it("a late click on a card superseded meanwhile reads it again, drops the actions and never retries", async () => {
+    let read = 0;
+    const calls = stubApi({
+      "GET /api/v1/orgs/o1/approvals/ap1": () =>
+        json(200, {
+          approval:
+            ++read === 1
+              ? APPROVAL_COMMAND()
+              : APPROVAL_COMMAND({
+                  status: "superseded",
+                  supersededRevision: 4,
+                  supersededReason: "user",
+                }),
+        }),
+      "POST /api/v1/orgs/o1/approvals/ap1/decision": () =>
+        json(409, {
+          error: { code: "approval.already_decided", message: "Approval already decided" },
+        }),
+      "GET /api/v1/orgs/o1/inbox": () => json(200, { items: [] }),
+      "GET /api/v1/orgs/o1/inbox/count": () => json(200, { count: 0 }),
+    });
+    renderPage(<ApprovalCard orgId="o1" item={item()} />, { locale: "en" });
+    await userEvent.setup().click(await screen.findByRole("button", { name: "Allow once" }));
+    expect(await screen.findByText("Superseded")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Allow once" })).toBeNull();
+    expect(calls.filter((c) => c.method === "POST")).toHaveLength(1);
+  });
+});

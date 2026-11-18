@@ -8,6 +8,7 @@ import { KernelDb } from "../../src/infra/database/kernel-db.js";
 import {
   TransactionHost,
   withTransactionFence,
+  withTransactionFencePrelude,
 } from "../../src/infra/database/transaction-host.js";
 import { Transactional } from "../../src/infra/database/transactional.decorator.js";
 import { createLogger } from "../../src/log.js";
@@ -270,4 +271,72 @@ describe("TransactionHost and @Transactional", () => {
     expect(records.join("\n")).toContain("sync hook failed");
     new TransactionHost(pool, createLogger("error"));
   });
+});
+
+it("ordered authority preludes run inside inherited fences, join nested writes and reject new nested transactions", async () => {
+  const order: string[] = [];
+  await withTransactionFence(
+    async ({ shared, prelude }) => {
+      expect(shared).toBe(false);
+      // the org-level admission, then the authority prelude, then the conversation rows
+      order.push("fence:org");
+      await prelude?.();
+      order.push("fence:conversations");
+      await sql`select 1`.execute(kdb.db);
+    },
+    () =>
+      withTransactionFencePrelude(
+        async () => {
+          order.push("authority");
+          await sql`select 1`.execute(kdb.db);
+        },
+        () =>
+          host.run(async () => {
+            order.push("body");
+            await host.run(async () => {
+              order.push("joined");
+            });
+            await expect(
+              host.run(
+                async () => {
+                  throw new Error("must not run");
+                },
+                { propagation: "requires_new" },
+              ),
+            ).rejects.toThrow("only one new transaction");
+          }),
+      ),
+  );
+  expect(order).toEqual(["fence:org", "authority", "fence:conversations", "body", "joined"]);
+  // a fence that skips the prelude never admits the transaction without the authority locks
+  await expect(
+    withTransactionFence(
+      async () => {},
+      () =>
+        withTransactionFencePrelude(
+          async () => {},
+          () => host.run(async () => "ran"),
+        ),
+    ),
+  ).rejects.toThrow("did not run the ordered authority prelude");
+  // without an inherited fence the prelude runs first in the new transaction
+  const alone: string[] = [];
+  await withTransactionFencePrelude(
+    async () => {
+      alone.push("authority");
+    },
+    () =>
+      host.run(async () => {
+        alone.push("body");
+      }),
+  );
+  expect(alone).toEqual(["authority", "body"]);
+  await expect(
+    host.run(() =>
+      withTransactionFencePrelude(
+        async () => {},
+        async () => {},
+      ),
+    ),
+  ).rejects.toThrow("before opening a transaction");
 });

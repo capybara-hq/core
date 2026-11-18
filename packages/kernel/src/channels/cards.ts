@@ -353,7 +353,7 @@ export async function approvalCard(
       ),
     }),
     expiresAt: v.expiresAt,
-    state: v.status,
+    state: v.status === "superseded" ? "cancelled" : v.status,
     ...(decidedBy !== undefined && { decidedBy }),
     // a denial's reason, as the web shows it (UI refresh B); redacted like the input
     ...(v.status === "denied" &&

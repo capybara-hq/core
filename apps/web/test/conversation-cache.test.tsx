@@ -13,6 +13,7 @@ import type { ConversationEvent } from "../src/lib/conversations";
 import {
   appendEvents,
   CONVERSATION_SIDE_KEYS,
+  conversationFollowUps,
   type EventWindow,
   eventsQuery,
   renameWithRow,
@@ -25,6 +26,7 @@ import {
   CONV,
   ev,
   FakeEventSource,
+  permissionsView,
   renderChatRoute,
   snapshotDefaults,
   userMsg,
@@ -32,6 +34,7 @@ import {
 import { resetNavigation } from "./support/navigation";
 import { renderRouteEmptyCache, testQueryClient } from "./support/query";
 import { pageElement } from "./support/render";
+import { expectNoFirstPaintFetch } from "./support/server";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
 
@@ -494,7 +497,8 @@ describe("the conversation page from the cache", () => {
     expect(await screen.findByText("while away")).toBeTruthy();
     await vi.waitFor(() =>
       expect(gets(calls).sort()).toEqual(
-        [BASE, `${BASE}/files`, `${BASE}/queue`, `${BASE}/device`].sort(),
+        // the owner's permissions too: a profile change while away
+        [BASE, `${BASE}/files`, `${BASE}/queue`, `${BASE}/device`, `${BASE}/permissions`].sort(),
       ),
     );
     window.history.replaceState(null, "", "/");
@@ -580,5 +584,131 @@ describe("renameWithRow (the optimistic rename both the title bar and the sideba
     const qc = testQueryClient();
     await renameWithRow(qc, "o1", "c1", "New");
     expect(qc.getQueryData(rowKey)).toBeUndefined();
+  });
+});
+
+describe("owner permission prefetch", () => {
+  const base = "/api/v1/orgs/o1/conversations/c1";
+  it("hydrates the authoritative owner view before first paint", async () => {
+    const browser = expectNoFirstPaintFetch();
+    const permission = permissionsView();
+    const result = await renderChatRoute({
+      routes: {
+        [`GET ${base}`]: () => json(200, CONV()),
+        [`GET ${base}/events`]: () => json(200, { events: [] }),
+        [`GET ${base}/permissions`]: () => json(200, permission),
+      },
+    });
+    expect(result.calls.filter((c) => c.url === `${base}/permissions`)).toHaveLength(1);
+    expect(result.client.getQueryData(["org", "o1", "conversation", "c1", "permissions"])).toEqual(
+      permission,
+    );
+    expect(browser).toEqual([]);
+  });
+
+  it("hydrates a refused owner read as an error without first-paint retries or invented data", async () => {
+    const browser = expectNoFirstPaintFetch();
+    const result = await renderChatRoute({
+      routes: {
+        [`GET ${base}`]: () => json(200, CONV()),
+        [`GET ${base}/events`]: () => json(200, { events: [] }),
+        [`GET ${base}/permissions`]: () =>
+          json(403, { error: { code: "forbidden", message: "No access" } }),
+      },
+    });
+    const state = result.client.getQueryState(["org", "o1", "conversation", "c1", "permissions"]);
+    expect(state?.status).toBe("error");
+    expect(state?.error).toMatchObject({ status: 403, code: "forbidden" });
+    expect(state?.data).toBeUndefined();
+    expect(result.calls.filter((c) => c.url.endsWith("/permissions"))).toHaveLength(1);
+    expect(browser).toEqual([]);
+  });
+
+  it.each([
+    ["viewer", "a2", "a1"],
+    ["unknown owner", undefined, "a1"],
+    ["unknown session", "a1", undefined],
+    ["both unknown", undefined, undefined],
+  ])("%s never schedules an owner permission read", (_name, owner, session) => {
+    const reads = conversationFollowUps(
+      "o1",
+      "c1",
+      [],
+      CONV("c1", { accountId: owner }).conversation,
+      session,
+    );
+    expect(reads.map((r) => r.queryKey)).not.toContainEqual([
+      "org",
+      "o1",
+      "conversation",
+      "c1",
+      "permissions",
+    ]);
+  });
+});
+
+describe("owner permission read boundaries through the actual route", () => {
+  const base = "/api/v1/orgs/o1/conversations/c1";
+  it.each([
+    { label: "viewer", accountId: "a2" },
+    { label: "unknown owner", accountId: undefined },
+  ])("$label makes zero owner permission requests", async ({ accountId }) => {
+    const browser = expectNoFirstPaintFetch();
+    const result = await renderChatRoute({
+      routes: {
+        [`GET ${base}`]: () => json(200, CONV("c1", { accountId })),
+        [`GET ${base}/events`]: () => json(200, { events: [] }),
+        [`GET ${base}/permissions`]: () => {
+          throw new Error("Forbidden owner read");
+        },
+      },
+    });
+    expect(result.calls.filter((c) => c.url.endsWith("/permissions"))).toEqual([]);
+    expect(
+      result.client.getQueryData(["org", "o1", "conversation", "c1", "permissions"]),
+    ).toBeUndefined();
+    expect(browser).toEqual([]);
+  });
+
+  it("an owned child hydrates the root's direct inherited view", async () => {
+    const browser = expectNoFirstPaintFetch();
+    const permission = permissionsView({ rootConversationId: "root", revision: 7 });
+    const result = await renderChatRoute({
+      routes: {
+        [`GET ${base}`]: () => json(200, CONV("c1", { parentConversationId: "root" })),
+        [`GET ${base}/events`]: () => json(200, { events: [] }),
+        [`GET ${base}/permissions`]: () => json(200, permission),
+      },
+    });
+    expect(result.calls.filter((c) => c.url.endsWith("/permissions")).map((c) => c.url)).toEqual([
+      `${base}/permissions`,
+    ]);
+    expect(result.client.getQueryData(["org", "o1", "conversation", "c1", "permissions"])).toEqual(
+      permission,
+    );
+    expect(result.calls.some((c) => c.url.includes("/conversations/root"))).toBe(false);
+    // after the first paint, the owner child's root subscription reads only the root's row (its
+    // cursor; Task 10D), never the root's log
+    expect(browser.map((c) => c.url)).toEqual(["/api/v1/orgs/o1/conversations/root"]);
+  });
+
+  it("an owned scheduled conversation still schedules its supported owner GET", async () => {
+    const client = testQueryClient();
+    const permission = permissionsView();
+    const calls = stubApi({ [`GET ${base}/permissions`]: () => json(200, permission) });
+    const queries = conversationFollowUps(
+      "o1",
+      "c1",
+      [],
+      CONV("c1", { scheduledTaskId: "schedule-1" }).conversation,
+      "a1",
+    );
+    const read = queries.find((q) => q.queryKey?.at(-1) === "permissions");
+    expect(read).toBeDefined();
+    if (read) await client.fetchQuery(read);
+    expect(calls.map((c) => [c.method, c.url])).toEqual([["GET", `${base}/permissions`]]);
+    expect(client.getQueryData(["org", "o1", "conversation", "c1", "permissions"])).toEqual(
+      permission,
+    );
   });
 });

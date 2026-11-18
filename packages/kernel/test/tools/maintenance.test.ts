@@ -16,6 +16,7 @@ import { WorkerModule } from "../../src/roles/worker.module.js";
 import { MaintenanceModule, MaintenanceProcessor } from "../../src/runtime/maintenance.js";
 import { MAINTENANCE_QUEUE_NAME } from "../../src/runtime/maintenance-queue.js";
 import { SANDBOX_SUSPEND_JOB } from "../../src/sandbox/jobs.js";
+import { SandboxOperationReconcileJob } from "../../src/sandbox/operation-reconcile.job.js";
 import { SandboxService } from "../../src/sandbox/sandbox.service.js";
 import { OUTPUT_CLEANUP_JOB } from "../../src/tools/job-ids.js";
 import { ToolJobs } from "../../src/tools/jobs.js";
@@ -141,9 +142,9 @@ describe("output-cleanup", () => {
     expect(WorkerModule.forRoot(config(["worker"])).imports).toContain(MaintenanceModule);
     expect(
       (Reflect.getMetadata("providers", MaintenanceModule) as { provide: unknown }[]).map(
-        (p) => p.provide,
+        (p) => p.provide ?? p,
       ),
-    ).toEqual([MaintenanceProcessor]);
+    ).toEqual([SandboxOperationReconcileJob, MaintenanceProcessor]);
   });
 });
 
@@ -152,6 +153,7 @@ describe("MaintenanceProcessor (the one consumer)", () => {
     const calls: unknown[][] = [];
     const warned: unknown[][] = [];
     const processor = new MaintenanceProcessor(
+      { recheck: async (data) => void calls.push(["permission-recheck", data]) },
       {
         processTimeout: async (job, token) => void calls.push(["wait", job.data, token]),
         childFinished: async (id) => {
@@ -207,6 +209,7 @@ describe("MaintenanceProcessor (the one consumer)", () => {
         },
       },
       { error: () => {}, warn: (...a: unknown[]) => void warned.push(a) },
+      { reconcile: async () => {}, revoke: async () => {} },
     );
     const job = (name: string, data: unknown) => ({ name, data, id: `${name}-1` }) as never;
     await processor.process(job("wait-timeout", { waitId: "w" }), "tok");

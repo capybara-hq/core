@@ -7,6 +7,10 @@ import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
+import {
+  PERMISSION_CONTEXT_ACTIVATION,
+  permissionContextActive,
+} from "../sandbox/permission-context-types.js";
 import { ToolPipeline } from "../tools/pipeline.js";
 import { ToolRegistry } from "../tools/registry.js";
 import { KyselyCheckpointSaver } from "./checkpointer.js";
@@ -14,6 +18,7 @@ import { CompactionProgressService } from "./compaction-progress.js";
 import { CompactionSettingsService } from "./compaction-settings.service.js";
 import { LangGraphLoop, type LoopDeps } from "./langgraph-loop.js";
 import type { AgentLoop } from "./loop.js";
+import { PermissionContextRecorder } from "./permission-context.service.js";
 import { ProviderRegistry } from "./providers.js";
 import { StepLog } from "./step-log.js";
 import { SubagentsService } from "./subagents/subagents.service.js";
@@ -45,8 +50,9 @@ export class AgentLoops {
 
 /**
  * What a run's steps use (`LoopDeps`: one model step plus the tool pipeline), over the injected
- * services. `deps` is a plain object (eval replays copy it without the hooks, the progress and the
- * fork dispatch).
+ * services. `deps` is a plain object (eval replays copy it without the hooks, the progress, the
+ * fork dispatch and the live permission recorder). The live permission context recorder is wired
+ * only when the paired activation gate is on ({@link PERMISSION_CONTEXT_ACTIVATION}).
  */
 @Injectable()
 export class RunSteps {
@@ -66,6 +72,8 @@ export class RunSteps {
     @Inject(AttachmentsService) attachments: AttachmentsService,
     @Inject(CompactionSettingsService) compactionSettings: CompactionSettingsService,
     @Inject(CompactionProgressService) compactionProgress: CompactionProgressService,
+    @Inject(PermissionContextRecorder) permissionContext: PermissionContextRecorder,
+    @Optional() @Inject(PERMISSION_CONTEXT_ACTIVATION) activation?: boolean,
   ) {
     this.deps = {
       get db(): KernelSchemaDb {
@@ -92,6 +100,27 @@ export class RunSteps {
         fetch: (orgId, conversationId, ids, caps) =>
           attachments.fetchMedia(orgId, conversationId, ids, caps),
       },
+      // the request boundary of the recorded permission context (spec B2); dormant until the
+      // paired activation (Task 8 phase 8.6) turns the gate on
+      ...livePermissionContext(permissionContext, activation),
     };
   }
+}
+
+/**
+ * The live request boundary of a run's steps (spec B2): every agent-history request construction
+ * records the root's current permission context first. Present only when the one activation gate
+ * is on ({@link PERMISSION_CONTEXT_ACTIVATION}); otherwise no key at all.
+ */
+export function livePermissionContext(
+  recorder: Pick<PermissionContextRecorder, "record">,
+  activation: boolean | undefined,
+): Pick<LoopDeps, "permissionContext"> {
+  if (!permissionContextActive(activation)) return {};
+  return {
+    permissionContext: {
+      beforeRequest: ({ orgId, conversationId, runId, accountId, signal }) =>
+        recorder.record({ orgId, conversationId, runId, accountId }, signal),
+    },
+  };
 }

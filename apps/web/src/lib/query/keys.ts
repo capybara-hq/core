@@ -55,6 +55,21 @@ export const keys = {
       devices: (): readonly unknown[] => [...all, "devices"],
       /** One of the person's devices. */
       device: (id: string): readonly unknown[] => [...all, "device", id],
+      /** All permission previews for one device (including every selected project). */
+      permissionPreviewAll: (id: string): readonly unknown[] => [
+        ...all,
+        "device",
+        id,
+        "permissionPreview",
+      ],
+      /** A selected device/project's permission metadata, under the device invalidation prefix. */
+      permissionPreview: (id: string, project?: string): readonly unknown[] => [
+        ...all,
+        "device",
+        id,
+        "permissionPreview",
+        project ?? null,
+      ],
       /** Every device detail read (an invalidation prefix). */
       deviceAll: (): readonly unknown[] => [...all, "device"],
       /**
@@ -407,6 +422,8 @@ export const keys = {
         contribution: string,
         rest: string,
       ): readonly unknown[] => [...all, "uiView", scope, plugin, contribution, rest],
+      /** Every conversation's pieces of the org (a prefix: e.g. the owner views naming a root). */
+      conversationsAll: (): readonly unknown[] => [...all, "conversation"],
       /** One conversation's pieces (its row, events and what lives outside the log). */
       conversation(id: string) {
         const c = [...all, "conversation", id] as const;
@@ -417,6 +434,8 @@ export const keys = {
           queue: (): readonly unknown[] => [...c, "queue"],
           files: (): readonly unknown[] => [...c, "files"],
           device: (): readonly unknown[] => [...c, "device"],
+          /** The owner's authoritative effective permission profile (inherited for children). */
+          permissions: (): readonly unknown[] => [...c, "permissions"],
           subagents: (): readonly unknown[] => [...c, "subagents"],
           /** The agent tree of a root conversation (the agent map). */
           agentTree: (): readonly unknown[] => [...c, "agentTree"],

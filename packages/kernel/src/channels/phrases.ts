@@ -168,6 +168,10 @@ export const CHANNEL_PHRASES = {
     zh: "项目技能没有运行：这个项目已从设备的项目中移除。你的消息没有发送。",
     en: "The project skill was not run: the project was removed from the device's projects. Your message was not sent.",
   },
+  projectSkillToolOff: {
+    zh: "项目技能没有运行：这个智能体不能加载项目技能，请为它打开 Skill 工具。你的消息没有发送。",
+    en: "The project skill was not run: this agent cannot load project skills; turn on its Skill tool. Your message was not sent.",
+  },
   /** 运行被中止（收尾挂着的草稿时附在已有文本之后）。 */
   runStopped: { zh: "已停止。", en: "Stopped." },
   /** 运行失败。 */

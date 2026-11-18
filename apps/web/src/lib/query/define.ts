@@ -11,10 +11,16 @@ export function defineQuery<T>(o: {
   /** Receives TanStack's query function context; `signal` aborts when the read is cancelled. */
   fn: (ctx: { signal: AbortSignal }) => Promise<T>;
   freshness: Freshness;
+  /**
+   * Replaces TanStack's structural sharing (`replaceEqualDeep`): what the cache keeps when a read
+   * answers (e.g. a newer cached revision over a slow older answer).
+   */
+  keep?: (old: unknown, next: unknown) => unknown;
 }): UseQueryOptions<T, ApiClientError> {
   return queryOptions<T, ApiClientError>({
     queryKey: o.key,
     queryFn: o.fn,
     staleTime: FRESHNESS[o.freshness],
+    ...(o.keep !== undefined ? { structuralSharing: o.keep } : {}),
   }) as UseQueryOptions<T, ApiClientError>;
 }

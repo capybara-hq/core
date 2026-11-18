@@ -6,7 +6,7 @@ import { backoffMs, type Connection, type ConnectOptions, connect } from "../src
 import { CommandLog } from "../src/command-log.js";
 import { PolicyStore } from "../src/policy-store.js";
 import type { Credential } from "../src/state.js";
-import { DEFAULT_POLICY, writePolicy } from "../src/state.js";
+import { DEFAULT_POLICY, ownerCeilingOfMode, writePolicy } from "../src/state.js";
 import { execArgs, FakeExecutor, FakeKernel, OK_EXEC, ROOTS, req } from "./fake-kernel.js";
 
 let kernel: FakeKernel;
@@ -93,6 +93,17 @@ describe("client", () => {
     expect(again.home).toBeUndefined();
   });
 
+  it("reports the host's boot identity in the hello, and none when it is unreadable", async () => {
+    start({ bootId: "0f2a9c1e-7b1d-4b8e-9d5e-1c2b3a4d5e6f" });
+    const hello = await kernel.waitFor("hello", () => kernel.of("hello")[0]);
+    expect(hello.bootId).toBe("0f2a9c1e-7b1d-4b8e-9d5e-1c2b3a4d5e6f");
+    conn?.stop();
+    await conn?.done;
+    start({ bootId: null });
+    const again = await kernel.waitFor("second hello", () => kernel.of("hello")[1]);
+    expect(again.bootId).toBeUndefined();
+  });
+
   it("answers the file operations and create", async () => {
     start();
     await kernel.waitFor("hello", () => kernel.of("hello")[0]);
@@ -163,7 +174,7 @@ describe("client", () => {
   });
 
   it("a mode changed on the machine is pushed while connected, once per change", async () => {
-    writePolicy(dir, { ...DEFAULT_POLICY, mode: "sandbox" });
+    writePolicy(dir, { ...DEFAULT_POLICY, ownerCeiling: ownerCeilingOfMode("sandbox") });
     start({ policy: new PolicyStore(dir), policyCheckMs: 20 });
     const hello = await kernel.waitFor("hello", () => kernel.of("hello")[0]);
     expect(hello.policy.mode).toBe("sandbox");
@@ -172,7 +183,7 @@ describe("client", () => {
     expect(kernel.of("policy")).toEqual([]);
 
     // `capybara-device mode auto` while the service runs
-    writePolicy(dir, { ...DEFAULT_POLICY, mode: "auto" });
+    writePolicy(dir, { ...DEFAULT_POLICY, ownerCeiling: ownerCeilingOfMode("auto") });
     const pushed = await kernel.waitFor("policy frame", () => kernel.of("policy")[0]);
     expect(pushed.policy).toEqual({ ...hello.policy, mode: "auto" });
     await new Promise((r) => setTimeout(r, 100));

@@ -1,7 +1,7 @@
 import { validateAllowHost } from "@capybara-hq/plugin-sdk";
 import type { Command } from "../args.js";
 import { PolicyStore } from "../policy-store.js";
-import { type Policy, policyPath, readCredential } from "../state.js";
+import { type Policy, policyMode, policyPath, readCredential } from "../state.js";
 
 export interface PolicyDeps {
   stateDir: string;
@@ -91,7 +91,7 @@ function edit(
 
 /** What `policy show` says the mode gives on this machine (English, one line each). */
 export function describeMode(policy: Policy, runMode: "os" | "docker" = "os"): string[] {
-  if (policy.mode === "auto") {
+  if (policyMode(policy) === "auto") {
     if (runMode === "docker") {
       return [
         "Mode: auto. Commands run in the device's container on its default bridge, and the " +
@@ -215,7 +215,7 @@ export async function policyCommand(
     out(
       docker
         ? DOCKER_DOMAIN_NOTE
-        : next.mode === "auto"
+        : policyMode(next) === "auto"
           ? "Allowed domains apply in sandbox mode only; switch with: capybara-device mode sandbox"
           : "Sandboxed commands may reach these domains when the organization allows them too.",
     );

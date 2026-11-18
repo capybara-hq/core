@@ -5,8 +5,10 @@ import { SetupLock, SetupLockModule } from "../admin/setup-lock.js";
 import type { AccountsTable } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
-import { TransactionHost } from "../infra/database/transaction-host.js";
+import { TransactionHost, withOrderedLocks } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
+import { PermissionCeilingWritesModule } from "../sandbox/permission-authority.module.js";
+import { PermissionCeilingWrites } from "../sandbox/permission-ceiling-writes.js";
 import { assertThemeOnForAccount } from "../themes/theme-state.js";
 import { audit } from "./audit.js";
 import { MAX_PASSWORD_LENGTH, normalizeLogin, validatePassword } from "./login.js";
@@ -126,6 +128,7 @@ export class AccountsService {
     @Inject(TransactionHost) readonly txHost: TransactionHost,
     @Inject(SuperAdminLock) private readonly adminLock: SuperAdminLock,
     @Inject(SetupLock) private readonly setupLock: SetupLock,
+    @Inject(PermissionCeilingWrites) private readonly ceilings: PermissionCeilingWrites,
   ) {}
 
   /** Checks the password length and hashes it (scrypt, slow): for callers that hash before their transaction opens. */
@@ -433,8 +436,12 @@ export class AccountsService {
    * account's sessions (`sessions.revoked_at`) and personal tokens in **the same PG transaction**,
    * all or nothing; returns the revoked session ids, whose Redis markers the caller writes after
    * the commit (the fast path; a failure is only a warning: auth reads PG).
+   *
+   * The super admin lock and, for a status change, the platform permission authority lock are the
+   * transaction's ordered prelude (`withOrderedLocks`): inside a run's fence (the Platform tool's
+   * `accounts.disable` / `accounts.enable`) they follow the org row and precede the conversation
+   * rows.
    */
-  @Transactional()
   async updateAccount(
     id: string,
     patch: AccountPatch,
@@ -442,9 +449,51 @@ export class AccountsService {
     actorTokenId?: string,
     opts: { auditDetail?: Record<string, unknown> } = {},
   ): Promise<{ account: Account; revokedSessionIds: string[] }> {
+    // filled by the prelude, which runs once the body's transaction opens (after the call)
+    const locked = { platform: false };
+    return withOrderedLocks(
+      async () => {
+        locked.platform = await this.lockForUpdate(id, patch, actorAccountId);
+      },
+      () => this.updateAccountIn(id, patch, actorAccountId, actorTokenId, opts, locked),
+    );
+  }
+
+  /**
+   * The prelude of {@link updateAccount}: the super admin lock (re-checking the actor), then the
+   * platform permission authority lock when the status changes; whether it locked it.
+   */
+  @Transactional({ propagation: "mandatory" })
+  private async lockForUpdate(
+    id: string,
+    patch: AccountPatch,
+    actorAccountId: string,
+  ): Promise<boolean> {
     // Every super admin write is serialized by one lock and re-checks the actor under it: two
     // admins revoking each other concurrently cannot leave none, and a just-revoked admin's
     // request in flight fails
+    await this.adminLock.lockAndAuthorize(actorAccountId);
+    if (patch.status === undefined) return false;
+    const row = await this.db
+      .selectFrom("accounts")
+      .select("status")
+      .where("id", "=", id)
+      .executeTakeFirst();
+    if (row === undefined || row.status === patch.status) return false;
+    await this.ceilings.lock({}, "platform");
+    return true;
+  }
+
+  @Transactional()
+  private async updateAccountIn(
+    id: string,
+    patch: AccountPatch,
+    actorAccountId: string,
+    actorTokenId: string | undefined,
+    opts: { auditDetail?: Record<string, unknown> },
+    locked: { readonly platform: boolean },
+  ): Promise<{ account: Account; revokedSessionIds: string[] }> {
+    // held since the prelude; taking it again re-checks the actor
     await this.adminLock.lockAndAuthorize(actorAccountId);
     const before = await this.db
       .selectFrom("accounts")
@@ -452,6 +501,9 @@ export class AccountsService {
       .where("id", "=", id)
       .executeTakeFirst();
     if (!before) throw new ApiError("account.not_found", "Account not found");
+    // a status that changed since the prelude read it would need the platform lock it did not take
+    if (patch.status !== undefined && patch.status !== before.status && !locked.platform)
+      throw new ApiError("conflict", "The account's status changed; retry the change");
     return this.applyUpdate(before, patch, {
       actorAccountId,
       ...(actorTokenId !== undefined && { actorTokenId }),
@@ -598,6 +650,24 @@ export class AccountsService {
     const id = before.id;
     const values: Updateable<AccountsTable> = { updated_at: new Date() };
     if (patch.displayName !== undefined) values.display_name = patch.displayName;
+    if (patch.status !== undefined && patch.status !== before.status) {
+      await this.ceilings.lock({}, "platform");
+      await this.ceilings.publishLocked(
+        {},
+        "platform",
+        patch.status === "disabled" ? (_scope, row) => row.account_id === id : false,
+      );
+      await this.db
+        .updateTable("conversations")
+        .set((eb) => ({
+          permission_profile: "approve-for-me",
+          permission_consent: null,
+          permission_revision: eb("permission_revision", "+", 1),
+        }))
+        .where("account_id", "=", id)
+        .where("permission_profile", "=", "full-access")
+        .execute();
+    }
     if (patch.status !== undefined) values.status = patch.status;
     if (patch.isSuperAdmin !== undefined) values.is_super_admin = patch.isSuperAdmin;
     const row = await this.db
@@ -656,7 +726,7 @@ export interface SuperAdminInput {
  * `createLocalAccount` import it alone.
  */
 @Module({
-  imports: [SetupLockModule, SuperAdminLockModule],
+  imports: [SetupLockModule, SuperAdminLockModule, PermissionCeilingWritesModule],
   providers: [AccountsService],
   exports: [AccountsService],
 })

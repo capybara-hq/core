@@ -2,7 +2,11 @@ import { DeviceProtocolError } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable, Optional } from "@nestjs/common";
 import { EventLog } from "../../conversations/event-log.js";
 import { ConversationDevices } from "../../devices/conversation-devices.js";
-import { DeviceProjectsService, withinMode } from "../../devices/device-projects.service.js";
+import {
+  DeviceProjectsService,
+  readModeOf,
+  withinMode,
+} from "../../devices/device-projects.service.js";
 import { aboveHome } from "../../devices/working-root.js";
 import { ApiError } from "../../errors.js";
 import { KernelDb } from "../../infra/database/kernel-db.js";
@@ -10,10 +14,16 @@ import { TransactionHost } from "../../infra/database/transaction-host.js";
 import { Transactional } from "../../infra/database/transactional.decorator.js";
 import { KERNEL_LOGGER } from "../../infra/tokens.js";
 import type { KernelLogger } from "../../log.js";
+import { KernelReadNotAdmitted, KernelReadUnsupported } from "../../sandbox/kernel-read.js";
 import { SandboxLockLostError, SandboxPathBusyError } from "../../sandbox/leases.js";
+import {
+  PERMISSION_CONTEXT_ACTIVATION,
+  permissionContextActive,
+} from "../../sandbox/permission-context-types.js";
 import { homeOf } from "../../sandbox/review/rules.js";
-import { SandboxService } from "../../sandbox/sandbox.service.js";
+import { SandboxService, type SandboxUseContext } from "../../sandbox/sandbox.service.js";
 import { providerConnectionFailure } from "../../sandbox/unreachable.js";
+import { currentExecutionClaim } from "../run-execution.js";
 import { runEndedIn } from "../run-status.js";
 import {
   type ProjectFiles,
@@ -37,14 +47,25 @@ export const PROJECT_KNOWLEDGE_TIMEOUT_MS = 30_000;
  */
 export const PROJECT_KNOWLEDGE_TIMEOUT = Symbol("PROJECT_KNOWLEDGE_TIMEOUT");
 
+/** The run start has no current execution claim of its own run: nothing is admitted. */
+class KnowledgeClaimMissing extends Error {
+  constructor() {
+    super("The run start has no current execution claim of its run");
+    this.name = "KnowledgeClaimMissing";
+  }
+}
+
 /**
  * An error that says the device could not be asked, not that the project is unreadable: the
  * provider unreachable, a kernel refusal (the device offline, gone or busy, a relay given up), a
- * malformed device answer, a lost lease.
+ * malformed device answer, a lost lease, a kernel read that was not admitted (gate on: nothing
+ * was sent to the device).
  */
 function isDeviceFailure(e: unknown): boolean {
   return (
     providerConnectionFailure(e) !== undefined ||
+    e instanceof KernelReadNotAdmitted ||
+    e instanceof KernelReadUnsupported ||
     e instanceof ApiError ||
     e instanceof DeviceProtocolError ||
     e instanceof SandboxLockLostError ||
@@ -81,7 +102,11 @@ export interface ProjectKnowledgeInput {
  *
  * Reads in the device's effective mode (`DeviceProjectsService.scopeFor`, the same scope the
  * binding was checked against) and through `SandboxService.withSandbox`, as a tool call does, so
- * a bound conversation starts its device eagerly (the accepted cost, spec §4.4). A project the
+ * a bound conversation starts its device eagerly (the accepted cost, spec §4.4). Once the
+ * activation gate is on the read goes through `SandboxService.withKernelRead` instead: every
+ * stat / readFile / list a kernel read under the run's current execution claim while the run is
+ * still queued, acting for the run's trigger, its scope narrowed to the root, `AGENTS.md` and
+ * `.agents/skills` (permission activation L2). A project the
  * run cannot use is recorded as `unavailable` with its reason: a project the device no longer
  * keeps under the bound name and path (`removed`, not asked), a root that is gone, out of the mode
  * (or above the owner's home) or unreadable, or a machine that does not announce projects
@@ -98,11 +123,14 @@ export class ProjectKnowledgeService {
     @Inject(ConversationDevices) private readonly devices: Pick<ConversationDevices, "forTool">,
     @Inject(DeviceProjectsService)
     private readonly projects: Pick<DeviceProjectsService, "scopeFor" | "keeps">,
-    @Inject(SandboxService) private readonly sandbox: Pick<SandboxService, "withSandbox">,
+    @Inject(SandboxService)
+    private readonly sandbox: Pick<SandboxService, "withSandbox" | "withKernelRead">,
     @Inject(KERNEL_LOGGER) private readonly log: KernelLogger,
     @Optional()
     @Inject(PROJECT_KNOWLEDGE_TIMEOUT)
     private readonly timeoutMs: () => number = () => PROJECT_KNOWLEDGE_TIMEOUT_MS,
+    /** The paired activation gate: once on, the read is a set of kernel reads. */
+    @Optional() @Inject(PERMISSION_CONTEXT_ACTIVATION) private readonly activation?: boolean,
   ) {}
 
   /**
@@ -204,7 +232,8 @@ export class ProjectKnowledgeService {
           projectUnavailable.widerMode(bound.root),
         );
       }
-      return await this.sandbox.withSandbox(
+      const enter = await this.entry(input, bound.accountId, bound.root);
+      return await enter(
         {
           orgId: input.orgId,
           deviceId,
@@ -213,7 +242,7 @@ export class ProjectKnowledgeService {
           // started, restarted or had its files reset
           silent: true,
           actor: {
-            accountId: bound.accountId,
+            accountId: enter.accountId,
             conversationId: input.conversationId,
             runId: input.runId,
           },
@@ -238,13 +267,31 @@ export class ProjectKnowledgeService {
             readFile: (path, maxBytes) => p.readFile(h, path, { maxBytes, signal: sig }),
             ...(list !== undefined && {
               list: (path: string, limit: number) =>
-                list.call(p, h, path, { limit, limits: { mode: scope.mode }, signal: sig }),
+                list.call(p, h, path, { limit, limits: { mode: readModeOf(scope) }, signal: sig }),
             }),
           };
-          return readProjectKnowledge(files, target, {
-            log: (msg, detail) => this.log.info(msg, { ...where, ...detail }),
-            isDeviceFailure: (e) => sig.aborted || isDeviceFailure(e),
-          });
+          try {
+            return await readProjectKnowledge(files, target, {
+              log: (msg, detail) => this.log.info(msg, { ...where, ...detail }),
+              isDeviceFailure: (e) => sig.aborted || isDeviceFailure(e),
+            });
+          } catch (e) {
+            // gate on: a host runtime without restricted enforcement gets no kernel read; the
+            // project is recorded unreadable with the reason and the run goes on
+            if (!(e instanceof KernelReadUnsupported)) throw e;
+            this.log.warn(
+              "project knowledge not read: the device cannot enforce a read-only read",
+              {
+                ...where,
+                deviceId,
+              },
+            );
+            return unavailableProject(
+              bound.project,
+              bound.root,
+              projectUnavailable.notEnforceable(bound.root),
+            );
+          }
         },
         signal,
       );
@@ -256,6 +303,40 @@ export class ProjectKnowledgeService {
       });
       return null;
     }
+  }
+
+  /**
+   * How the read enters the device. Gate off: the raw `withSandbox`, acting for the conversation's
+   * owner (unchanged). Gate on: `withKernelRead` under the run's current execution claim (the run
+   * start runs inside it; another run's claim or none admits nothing), acting for the run's
+   * trigger, reading the bound root only.
+   */
+  private async entry(
+    input: ProjectKnowledgeInput,
+    owner: string,
+    root: string,
+  ): Promise<SandboxService["withSandbox"] & { accountId: string }> {
+    if (!permissionContextActive(this.activation))
+      return Object.assign(this.sandbox.withSandbox.bind(this.sandbox), { accountId: owner });
+    const claim = currentExecutionClaim();
+    if (
+      !claim ||
+      claim.runId !== input.runId ||
+      claim.conversationId !== input.conversationId ||
+      claim.orgId !== input.orgId
+    )
+      throw new KnowledgeClaimMissing();
+    const run = await this.db.db
+      .selectFrom("runs")
+      .select("trigger_account_id")
+      .where("id", "=", input.runId)
+      .where("conversation_id", "=", input.conversationId)
+      .executeTakeFirst();
+    if (!run) throw new KnowledgeClaimMissing();
+    const read = { claim, purpose: "project_root" as const, root };
+    const enter: SandboxService["withSandbox"] = (ctx: SandboxUseContext, fn, signal) =>
+      this.sandbox.withKernelRead(ctx, read, fn, signal);
+    return Object.assign(enter, { accountId: run.trigger_account_id });
   }
 
   /**

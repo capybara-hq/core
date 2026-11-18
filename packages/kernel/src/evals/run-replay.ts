@@ -44,6 +44,10 @@ import {
   TOO_MANY_ERRORS,
   usageTokens,
 } from "./budget.js";
+import {
+  recordedPermissionContext,
+  recordedRunPermissionDrift,
+} from "./recorded-permission-context.js";
 import { RecordedToolPipeline, recordedCalls } from "./recorded-tools.js";
 import { type CaseSnapshot, type SnapshotEvent, toEvents } from "./snapshot.js";
 import type { ResolvedCandidate } from "./step-replay.js";
@@ -75,10 +79,19 @@ export interface RunReplayResult {
   usage: ModelUsage;
   steps: number;
   unmatched: number;
+  /**
+   * Set when an original request of the run cannot reproduce its recorded permission context from
+   * the snapshot (permission context replay spec B4: original-coordinate diagnostics); the result
+   * reports `permission_profile_changed`.
+   */
+  permissionContextDrift?: true;
 }
 
 /** 原运行（基线）的同形摘要。 */
-export type RunBaseline = Omit<RunReplayResult, "conversationId" | "outcome" | "unmatched">;
+export type RunBaseline = Omit<
+  RunReplayResult,
+  "conversationId" | "outcome" | "unmatched" | "permissionContextDrift"
+>;
 
 /** 测试钩子。 */
 export interface EvalReplayHooks {
@@ -110,7 +123,9 @@ export interface RunReplayDeps {
   /**
    * 构建评测用的 loop：与运行时同一个 `LangGraphLoop`（同一工厂），只换掉工具管线、模型注册表（计费）与附件来源。
    */
-  loop(d: Pick<LoopDeps, "toolPipeline" | "registry" | "media" | "skillForks">): AgentLoop;
+  loop(
+    d: Pick<LoopDeps, "toolPipeline" | "registry" | "media" | "skillForks" | "permissionContext">,
+  ): AgentLoop;
   /** 本次执行是否仍持有结果的认领（失去认领 → 不再发请求）；不给 = 不检查。 */
   stillClaimed?: () => Promise<boolean>;
   /**
@@ -529,6 +544,14 @@ export async function replayRun(
 
   const conversationId = randomUUID();
   const runId = randomUUID();
+  // recorded permission context (spec B4), both before anything is seeded so an invalid recording
+  // fails as `eval.snapshot_invalid` without an eval conversation: the original-coordinate
+  // diagnostics, and the recorded-only feeder (undefined for a recording without markers)
+  const permissionContextDrift = recordedRunPermissionDrift(s);
+  const permissionContext = recordedPermissionContext(s, eventLog, { conversationId, runId });
+  // the recorded tool results (reviews validated here) are read before the seed too, so an
+  // invalid recording leaves no eval conversation either
+  const recordings = recordedCalls(s);
   await d.seeder.seed(
     {
       evalRunId,
@@ -647,7 +670,7 @@ export async function replayRun(
   };
   const pipeline = new RecordedToolPipeline({
     eventLog,
-    recordings: recordedCalls(s),
+    recordings,
     // 出错直接抛出：tools 节点的异常让 loop 抛出，按崩溃处理
     beforeStep: async () => {
       if (await allowed()) return "continue";
@@ -731,7 +754,13 @@ export async function replayRun(
     eventLog,
     s.events.filter((e) => e.runId === s.runId),
   );
-  const loop = d.loop({ toolPipeline: pipeline, registry, skillForks, ...(media && { media }) });
+  const loop = d.loop({
+    toolPipeline: pipeline,
+    registry,
+    skillForks,
+    ...(media && { media }),
+    ...(permissionContext !== undefined && { permissionContext }),
+  });
   // a replay never executes a tool, so the role only completes the context
   const membership = await db
     .selectFrom("memberships")
@@ -828,5 +857,6 @@ export async function replayRun(
     outcome: outcome.kind,
     ...summary,
     unmatched: pipeline.unmatched(),
+    ...(permissionContextDrift && { permissionContextDrift: true as const }),
   };
 }

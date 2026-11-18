@@ -24,7 +24,7 @@ import { effectiveMode, grantedHosts } from "./policy.js";
 import type { PolicyOpRecord } from "./policy-ops.js";
 import type { PolicyStore } from "./policy-store.js";
 import { publicSuffixWildcard } from "./public-suffix.js";
-import { DEFAULT_POLICY, type Policy } from "./state.js";
+import { DEFAULT_POLICY, ownerCeilingOfMode, type Policy, policyMode } from "./state.js";
 
 /** What this program has seen across requests (one per program run, kept over reconnects). */
 export interface SeenState {
@@ -86,7 +86,7 @@ export interface SummaryFacts {
  */
 export function policySummary(p: Policy, _facts: SummaryFacts): DeviceLocalPolicySummary {
   return {
-    mode: p.mode,
+    mode: policyMode(p),
     allowedDomains: [...p.allowedDomains],
   };
 }
@@ -169,6 +169,8 @@ function applyPolicyOp(
   if (add.length > 0) parts.push(`add ${add.join(", ")}`);
   if (remove.length > 0) parts.push(`remove ${remove.join(", ")}`);
   if (rawMode !== undefined) parts.push(`mode ${clean(String(rawMode), 40)}`);
+  const ceilingArg: unknown = (args as { ownerCeiling?: unknown }).ownerCeiling;
+  if (ceilingArg !== undefined) parts.push(`ownerCeiling ${clean(JSON.stringify(ceilingArg), 80)}`);
   const by =
     `by ${clean(source.accountName, 100)} (${clean(source.accountId, 100)}) ` +
     `via ${clean(source.via, 10)}`;
@@ -179,6 +181,28 @@ function applyPolicyOp(
     // Turning auto mode on is decided on the machine only (spec §4.1).
     throw new PolicyRefused(MODE_ON_DEVICE_MESSAGE, refused);
   }
+  // Staged (v3) owner-ceiling narrowing: only `fullAccess: false` and `workspace` reach are ever
+  // applied; the deployment can never widen the owner's ceiling (B2).
+  const rawCeiling: unknown = (args as { ownerCeiling?: unknown }).ownerCeiling;
+  let narrowFull = false;
+  let narrowReach = false;
+  if (rawCeiling !== undefined) {
+    const o = rawCeiling as Record<string, unknown> | null;
+    if (
+      typeof o !== "object" ||
+      o === null ||
+      Array.isArray(o) ||
+      Object.keys(o).some((k) => k !== "fullAccess" && k !== "restrictedProjectReach") ||
+      (o.fullAccess !== undefined && o.fullAccess !== false) ||
+      (o.restrictedProjectReach !== undefined && o.restrictedProjectReach !== "workspace")
+    )
+      throw new PolicyRefused(
+        "The owner ceiling is widened on the machine only (capybara-device ceiling set)",
+        refused,
+      );
+    narrowFull = o.fullAccess === false;
+    narrowReach = o.restrictedProjectReach === "workspace";
+  }
   const both = add.find((h) => remove.includes(h));
   if (both !== undefined) {
     throw new DeviceOpError("policy", `${both} is both added and removed`);
@@ -188,7 +212,15 @@ function applyPolicyOp(
     const present = new Set(kept.map((d) => d.toLowerCase()));
     return {
       ...p,
-      mode: rawMode === "sandbox" ? "sandbox" : p.mode,
+      ownerCeiling:
+        rawMode === "sandbox"
+          ? ownerCeilingOfMode("sandbox")
+          : {
+              fullAccess: p.ownerCeiling.fullAccess && !narrowFull,
+              restrictedProjectReach: narrowReach
+                ? "workspace"
+                : p.ownerCeiling.restrictedProjectReach,
+            },
       allowedDomains: [...kept, ...add.filter((h) => !present.has(h))],
     };
   };
@@ -526,4 +558,237 @@ export async function runOp(
   ctx: OpContext = {},
 ): Promise<DeviceRes> {
   return (await serveOp(executor, req, signal, ctx)).res;
+}
+
+/** What a staged program needs to serve `policy` / `policyStatus` with owner reports (B2). */
+export interface StagedOwnerPolicy {
+  store: PolicyStore;
+  /** The strict owner report now (`issueOwnerReport`), issued after the write. */
+  report: () => import("@capybara-hq/plugin-sdk").DeviceOwnerCeilingV3;
+  /** Reconciles live owners against the fresh strict ceiling (`reconcileOwnerCeiling`). */
+  reconcile: (signal: AbortSignal) => Promise<void>;
+}
+
+/**
+ * A staged `policy` / `policyStatus` op: the protocol 2 logic (op log, idempotence, narrowing
+ * only), then, after a successful write, live owners are reconciled at once and the answer carries
+ * the owner report issued for the written revision. An applied status carries the current report.
+ */
+async function serveOwnerPolicyV3(
+  owner: StagedOwnerPolicy,
+  req: KernelReq,
+  signal: AbortSignal,
+): Promise<import("@capybara-hq/plugin-sdk").DeviceResponseV3> {
+  const sdk = await import("@capybara-hq/plugin-sdk");
+  const facts: SummaryFacts = { mode: "os" };
+  try {
+    if (req.op === "policyStatus") {
+      const status = policyStatus(owner.store, req.args, facts);
+      return {
+        type: "res",
+        id: req.id,
+        ok: true,
+        result: sdk.parseOperationResultV3("policyStatus", {
+          ...status,
+          ...(status.outcome === "applied" && { ownerCeiling: owner.report() }),
+        }),
+      };
+    }
+    const { res } = servePolicyOp(req, owner.store, facts);
+    if (!res.ok) return { type: "res", id: req.id, ok: false, error: res.error };
+    // successful local policy writes reconcile live owners immediately (cutover 8.4)
+    await owner.reconcile(signal);
+    return {
+      type: "res",
+      id: req.id,
+      ok: true,
+      result: sdk.parseOperationResultV3("policy", {
+        ...(res.result as object),
+        ownerCeiling: owner.report(),
+      }),
+    };
+  } catch (e) {
+    return {
+      type: "res",
+      id: req.id,
+      ok: false,
+      error: {
+        kind: e instanceof DeviceOpError && e.kind === "policy" ? "policy" : "error",
+        message: e instanceof Error ? e.message : String(e),
+      },
+    };
+  }
+}
+
+/** Dormant protocol-v3 operation adapter. Active serveOp/hello remain protocol 2 until Task 8. */
+export async function serveOperationV3(
+  backend: import("./exec/mac-operation-backend.js").MacOperationBackend,
+  handle: import("@capybara-hq/plugin-sdk").SandboxHandle,
+  request: import("@capybara-hq/plugin-sdk").KernelRequestV3,
+  signal: AbortSignal,
+  binder?: Pick<import("./exec/instance-binding.js").InstanceBinder, "bind">,
+  owner?: StagedOwnerPolicy,
+): Promise<import("@capybara-hq/plugin-sdk").DeviceResponseV3> {
+  const sdk = await import("@capybara-hq/plugin-sdk");
+  try {
+    const parsed = sdk.parseDeviceFrameV3(JSON.stringify(request), "kernel");
+    if (parsed.type !== "req") throw new sdk.DeviceProtocolError("Expected an operation request");
+    const a = parsed.args;
+    signal.throwIfAborted();
+    let result: unknown;
+    if (parsed.op === "policy" || parsed.op === "policyStatus") {
+      if (!owner)
+        throw new sdk.SandboxPermissionUnsupportedError("This program cannot change its policy");
+      return await serveOwnerPolicyV3(owner, parsed as unknown as KernelReq, signal);
+    }
+    if (parsed.op === "bindInstance") {
+      // the private post-commit lifecycle binding (B4); never an implicit side effect of an operation
+      if (!binder)
+        throw new sdk.SandboxPermissionUnsupportedError(
+          "This program cannot bind instances; update capybara-device",
+        );
+      const bind = a as unknown as import("@capybara-hq/plugin-sdk").BindInstanceRequestV3;
+      return {
+        type: "res",
+        id: request.id,
+        ok: true,
+        result: sdk.parseOperationResultV3("bindInstance", await binder.bind(bind, signal), bind),
+      };
+    }
+    if (parsed.op === "revokeOperation") {
+      await backend.revokeOperation(handle, sdk.parseSandboxOperationRef(a.ref), signal);
+      result = null;
+    } else if (
+      ["backgroundStatus", "backgroundTail", "backgroundReadOutput", "backgroundStop"].includes(
+        parsed.op,
+      )
+    ) {
+      const ref = sdk.parseSandboxExecutionRef(a.ref);
+      result =
+        parsed.op === "backgroundStatus"
+          ? await backend.background.status(handle, ref, signal)
+          : parsed.op === "backgroundReadOutput"
+            ? await backend.background.readOutput(handle, ref, {
+                offset: a.offset as number,
+                maxBytes: a.maxBytes as number,
+                signal,
+              })
+            : parsed.op === "backgroundTail"
+              ? await backend.background.tail(handle, ref, {
+                  maxBytes: a.maxBytes as number,
+                  signal,
+                })
+              : await backend.background.stop(handle, ref, {
+                  graceMs: a.graceMs as number,
+                  signal,
+                });
+    } else {
+      const prep = parsed.op.startsWith("prepare"),
+        browse = parsed.op.startsWith("browse");
+      if (parsed.op === "exec" || parsed.op === "backgroundStart") {
+        const scope = sdk.parseSandboxOperationScope(a.scope);
+        const limits = a.limits as SandboxLimits;
+        // These fields came only from the authenticated kernel transport and its current grant lookup.
+        const execution = backend.forExecution({
+          operationId: scope.operationId,
+          orgNetwork: limits.network,
+          ...(a.grants === undefined
+            ? {}
+            : { grants: a.grants as import("@capybara-hq/plugin-sdk").DeviceExecGrants }),
+        });
+        const args = {
+          command: a.command as string,
+          timeoutMs: a.timeoutMs as number,
+          maxOutputBytes: a.maxOutputBytes as number,
+          signal,
+          ...(a.cwd === undefined ? {} : { cwd: a.cwd as string }),
+          ...(a.env === undefined ? {} : { env: a.env as Record<string, string> }),
+        };
+        result =
+          parsed.op === "exec"
+            ? await (await execution.operation(handle, scope, signal)).exec(args)
+            : await execution.background.start(handle, scope, {
+                ...args,
+                taskId: a.taskId as string,
+                outputPath: a.outputPath as string,
+                retainUntilMs: a.retainUntilMs as number,
+              });
+      } else {
+        const operation = prep
+          ? await backend.prepare(handle, sdk.parseSandboxPreparationScope(a.scope), signal)
+          : browse
+            ? await backend.browse(handle, sdk.parseSandboxBrowseScope(a.scope), signal)
+            : await backend.operation(handle, sdk.parseSandboxOperationScope(a.scope), signal);
+        const suffix = prep ? parsed.op.slice(7) : browse ? parsed.op.slice(6) : parsed.op;
+        const method = suffix.charAt(0).toLowerCase() + suffix.slice(1);
+        if (method === "stat") result = await operation.stat(a.path as string, signal);
+        else if (method === "readFile" && "readFile" in operation)
+          result = await operation.readFile(a.path as string, {
+            maxBytes: a.maxBytes as number,
+            signal,
+          });
+        else if (method === "writeFile" && "writeFile" in operation) {
+          await operation.writeFile(
+            a.path as string,
+            new Uint8Array(Buffer.from(a.dataB64 as string, "base64")),
+            signal,
+          );
+          result = null;
+        } else if (method === "list" && "list" in operation && operation.list)
+          result = await operation.list(a.path as string, { limit: a.limit as number, signal });
+        else if (method === "scan" && "scan" in operation && operation.scan)
+          result = await operation.scan(a.base as string, { signal });
+        else
+          throw new sdk.SandboxPermissionUnsupportedError(
+            "Operation is unavailable on this capability",
+          );
+      }
+    }
+    if (
+      result !== null &&
+      typeof result === "object" &&
+      "data" in result &&
+      result.data instanceof Uint8Array
+    )
+      result = {
+        dataB64: Buffer.from(result.data).toString("base64"),
+        ...(parsed.op === "backgroundReadOutput"
+          ? {
+              offset: (result as unknown as { offset: number }).offset,
+              nextOffset: (result as unknown as { nextOffset: number }).nextOffset,
+              totalBytes: (result as unknown as { totalBytes: number }).totalBytes,
+            }
+          : { truncated: "truncated" in result && result.truncated }),
+      };
+    return {
+      type: "res",
+      id: request.id,
+      ok: true,
+      result: sdk.parseOperationResultV3(
+        parsed.op,
+        result,
+        parsed.op === "backgroundReadOutput"
+          ? { offset: a.offset as number, maxBytes: a.maxBytes as number }
+          : undefined,
+      ),
+    };
+  } catch (error) {
+    const kind = sdk.isSandboxScopeDeniedError(error)
+      ? "denied"
+      : sdk.isSandboxPermissionUnsupportedError(error)
+        ? "unsupported"
+        : sdk.isSandboxOperationOutcomeUnknownError(error)
+          ? "unknown"
+          : sdk.isSandboxGoneError(error)
+            ? "gone"
+            : sdk.isFileSystemGoneError(error)
+              ? "fs_gone"
+              : "error";
+    return {
+      type: "res",
+      id: request.id,
+      ok: false,
+      error: { kind, message: error instanceof Error ? error.message : String(error) },
+    };
+  }
 }

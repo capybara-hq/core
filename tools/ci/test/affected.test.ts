@@ -402,3 +402,30 @@ describe("the real workspace", () => {
     expect(run(["--all", "push to main"], "")).toContain("reason=push to main");
   });
 });
+
+describe("planFromFiles: tests-only edges", () => {
+  // The kernel's devDependency on the device (its cross-side tests drive device sources) is
+  // followed one step only: a device change runs the kernel's tests, not everything built on the
+  // kernel, and never the images or e2e.
+  const withDevice: Workspace = {
+    ...ws,
+    packages: [
+      ...ws.packages.filter((p) => p.dir !== "packages/kernel"),
+      pkg("packages/kernel", ["packages/sdk", "packages/testing", "packages/device"]),
+      pkg("packages/device", ["packages/sdk"]),
+    ],
+  };
+  it("a device change runs the device and kernel tests only", () => {
+    const p = planFromFiles(["packages/device/src/exec/runtime-manifest.ts"], withDevice);
+    expect(p.testDirs).toEqual(["packages/device", "packages/kernel", "tools/checks"]);
+    expect(p).toMatchObject({ web: false, visual: false, e2e: false, docker: false });
+    expect(p.shards).toBe(FULL_SHARDS);
+  });
+  it("a kernel change still runs its dependents and not the device", () => {
+    const p = planFromFiles(["packages/kernel/src/main.ts"], withDevice);
+    expect(p.testDirs).toContain("apps/capybara");
+    expect(p.testDirs).toContain("packages/testing");
+    expect(p.testDirs).not.toContain("packages/device");
+    expect(p.docker).toBe(true);
+  });
+});

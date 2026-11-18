@@ -1,6 +1,9 @@
 import {
   isFileSystemGoneError,
   isSandboxGoneError,
+  isSandboxOperationOutcomeUnknownError,
+  isSandboxPermissionUnsupportedError,
+  isSandboxScopeDeniedError,
   ToolError,
   type ToolSpec,
 } from "@capybara-hq/plugin-sdk";
@@ -11,7 +14,7 @@ import {
   attachmentsDir,
   clip,
   display,
-  inSandbox,
+  inSandboxPreparation,
   type SandboxToolDeps,
   sandboxBaseTimeoutMs,
   sandboxConversationOf,
@@ -123,27 +126,46 @@ export function sandboxFetchAttachmentTool(deps: SandboxToolDeps): BuiltinTool {
       // list changed under this call: write nothing and answer as for an unknown file.
       const name = assigned.get(attachment.id);
       if (name === undefined) throw new ToolError(unknownFileText(file, list));
-      const { value, notices } = await inSandbox(deps, ctx, async ({ h, roots, p, signal }) => {
-        const path = `${attachmentsDir(roots, conv)}/${name}`;
-        let bytes: Uint8Array;
-        try {
-          const opened = await deps.attachments.openForConversation(ctx.orgId, conv, attachment.id);
-          if (opened === null) throw new ToolError(goneText(name));
-          bytes = new Uint8Array(await new Response(opened.body).arrayBuffer());
-          await p.writeFile(h, path, bytes, signal);
-        } catch (e) {
-          // an abort (timeout / lost lock / stopped run) and a gone device or instance go to
-          // withSandbox and mapSandboxError; never the provider's own words (they may name its
-          // internal address)
-          if (signal.aborted || isSandboxGoneError(e) || isFileSystemGoneError(e)) throw e;
-          if (e instanceof ToolError) throw e;
-          if (e instanceof ApiError && e.code === "storage.unavailable") {
-            throw new ToolError(storageText(name));
+      // a trusted copy: the preparation entry (scoped to the attachments directory), so the
+      // managed route stages it like a skill copy once the permission runtime is active
+      const { value, notices } = await inSandboxPreparation(
+        deps,
+        ctx,
+        "attachments",
+        (roots) => [attachmentsDir(roots, conv)],
+        async ({ roots, p, signal }) => {
+          const path = `${attachmentsDir(roots, conv)}/${name}`;
+          let bytes: Uint8Array;
+          try {
+            const opened = await deps.attachments.openForConversation(
+              ctx.orgId,
+              conv,
+              attachment.id,
+            );
+            if (opened === null) throw new ToolError(goneText(name));
+            bytes = new Uint8Array(await new Response(opened.body).arrayBuffer());
+            await p.writeFile(path, bytes, signal);
+          } catch (e) {
+            // an abort (timeout / lost lock / stopped run) and a gone device or instance go to
+            // withSandbox and mapSandboxError; never the provider's own words (they may name its
+            // internal address)
+            if (signal.aborted || isSandboxGoneError(e) || isFileSystemGoneError(e)) throw e;
+            // a managed route's typed refusal too: mapSandboxError gives its fixed text
+            if (
+              isSandboxScopeDeniedError(e) ||
+              isSandboxPermissionUnsupportedError(e) ||
+              isSandboxOperationOutcomeUnknownError(e)
+            )
+              throw e;
+            if (e instanceof ToolError) throw e;
+            if (e instanceof ApiError && e.code === "storage.unavailable") {
+              throw new ToolError(storageText(name));
+            }
+            throw new ToolError(copyFailedText(name));
           }
-          throw new ToolError(copyFailedText(name));
-        }
-        return { path, size: bytes.byteLength };
-      });
+          return { path, size: bytes.byteLength };
+        },
+      );
       return {
         content: [{ type: "text", text: withNotices(notices, `Copied ${name} to ${value.path}.`) }],
         // the row names the file and its size; the path is in the result's text

@@ -6,7 +6,7 @@ export type Role = (typeof ROLES)[number];
 
 /** 解析后的命令行。 */
 export type Command =
-  | { command: "start"; roles?: Role[] }
+  | { command: "start"; roles?: Role[]; activatePermissionConfig?: string }
   | { command: "migrate" }
   | { command: "bootstrap"; dir?: string; manifest?: string }
   | {
@@ -27,12 +27,26 @@ export type Command =
   | { command: "extensions-state"; name: string; action: "enable" | "disable" | "uninstall" }
   | { command: "plugins-list" }
   | { command: "plugins-import"; target: string; yes: boolean }
+  | { command: "config-migrate-permissions"; input: string; output: string }
   | { command: "secrets-rewrap" }
+  | {
+      command: "permissions-cutover";
+      action: (typeof CUTOVER_ACTIONS)[number];
+      /** Print JSON instead of the human-readable form. */
+      json: boolean;
+      /** `snapshot` only: how long to wait for each device's lifecycle lease (ms). */
+      leaseWaitMs?: number;
+    }
   | { command: "help" };
+
+/** The actions of `capybara permissions cutover`, in runbook order. */
+export const CUTOVER_ACTIONS = ["report", "freeze", "snapshot"] as const;
 
 export const USAGE = `Usage:
   capybara start [--role api,worker,gateway]   Start the kernel (roles override config "roles");
                                                runs the bootstrap step first unless it is done
+                         [--activate-permission-config <expected-active-hash>]
+                                               Intentionally activate resolved permission config
   capybara migrate                             Run kernel and plugin migrations, then exit
   capybara bootstrap [--dir <path>] [--manifest <path>]
                                                Install the plugins bootstrap.json pins: a .tgz in
@@ -84,11 +98,45 @@ export const USAGE = `Usage:
                                                git: reads a folder of an https repository (or
                                                owner/repo on GitHub) at a branch, tag or commit,
                                                under the marketplaces.* network rules
+  capybara config migrate-permissions --in <file> --out <file>
+                                               Convert a config file (or a Nacos data id's
+                                               content saved to a file) to the new permission
+                                               keys (devices.autoMode -> devices.fullAccess),
+                                               keeping every other key and comment; writes a
+                                               new --out file and names the environment
+                                               variables to rename. Publish a Nacos result
+                                               through your reviewed config change. YAML or
+                                               JSON only (a properties-format Nacos data id is
+                                               not converted), and a key reached through a YAML
+                                               alias or merge key is not renamed
   capybara secrets rewrap                      After a master key rotation, rewrap every org data
                                                key and pending initial password sealed with a
                                                key in masterKeyPrevious with masterKey (in
                                                batches; a re-run does nothing); prints counts,
                                                never a key. See docs/deploy/README.md
+  capybara permissions cutover report [--json] Show where the permission cutover stands: the
+                                               pre-checks (local devices without a boot
+                                               identity, cloud devices with unknown
+                                               incarnations), live replicas on another version
+                                               and legacy rows only an old, unfenced replica
+                                               writes, the legacy freeze, retirement
+                                               obligations and the cloud snapshot; PostgreSQL
+                                               only (replicas read from Redis when it answers)
+  capybara permissions cutover freeze [--json] Publish the legacy-launch freeze (never undone) and
+                                               enumerate the legacy work until stable before
+                                               returning; a re-run completes an interrupted
+                                               enumeration. PostgreSQL only. Stop every old
+                                               replica first
+  capybara permissions cutover snapshot [--json] [--lease-wait-ms <ms>]
+                                               Snapshot every cloud device's permission authority
+                                               under its lifecycle lease (needs Redis); refuses
+                                               before the freeze or when this config is not the
+                                               published one; a re-run publishes nothing and
+                                               resumes an interrupted run (Ctrl-C stops between
+                                               devices); --lease-wait-ms bounds the wait for
+                                               each device's lease (default 120000). Run it
+                                               again right before R2: new cloud devices start
+                                               without a snapshot
   capybara help                                Show this help
 
 Every command first loads .env from the working directory when it exists (variables already set
@@ -121,8 +169,93 @@ export function parseCli(argv: string[]): Command {
   }
   const [command, ...rest] = parsed.positionals;
   const v = parsed.values;
+  const activatePermissionConfig = v["activate-permission-config"];
+  if (activatePermissionConfig !== undefined) {
+    if (command !== "start")
+      throw new UsageError("--activate-permission-config is only valid for start");
+    if (
+      parsed.tokens.filter(
+        (token) => token.kind === "option" && token.name === "activate-permission-config",
+      ).length !== 1
+    )
+      throw new UsageError("--activate-permission-config may not be repeated");
+    if (!/^[a-f0-9]{64}$/.test(activatePermissionConfig))
+      throw new UsageError("--activate-permission-config requires a lowercase 64-hex active hash");
+  }
+  const activation = activatePermissionConfig === undefined ? {} : { activatePermissionConfig };
   if (command === undefined || command === "help" || v.help) {
     return { command: "help" };
+  }
+  if (command !== "permissions" && v.json !== undefined)
+    throw new UsageError("--json is only valid for permissions cutover");
+  if (command !== "permissions" && v["lease-wait-ms"] !== undefined)
+    throw new UsageError("--lease-wait-ms is only valid for permissions cutover snapshot");
+  if (command === "permissions") {
+    const [group, action, ...extra] = rest;
+    if (group !== "cutover")
+      throw new UsageError(
+        group === undefined
+          ? "missing permissions command (expected cutover)"
+          : `unknown permissions command "${group}"`,
+      );
+    if (action === undefined)
+      throw new UsageError(
+        `missing cutover action (expected one of ${CUTOVER_ACTIONS.join(", ")})`,
+      );
+    if (!(CUTOVER_ACTIONS as readonly string[]).includes(action))
+      throw new UsageError(`unknown cutover action "${action}"`);
+    if (extra.length > 0) throw new UsageError(`unexpected argument "${extra[0]}"`);
+    for (const opt of [
+      "role",
+      "yes",
+      "dir",
+      "manifest",
+      "in",
+      "out",
+      ...ADMIN_CREATE_OPTIONS,
+    ] as const) {
+      if (v[opt] !== undefined) throw new UsageError(`--${opt} is not valid for permissions`);
+    }
+    const wait = v["lease-wait-ms"];
+    if (wait !== undefined && action !== "snapshot")
+      throw new UsageError("--lease-wait-ms is only valid for permissions cutover snapshot");
+    if (wait !== undefined && !/^[1-9][0-9]{0,8}$/.test(wait))
+      throw new UsageError("--lease-wait-ms needs a positive number of milliseconds");
+    return {
+      command: "permissions-cutover",
+      action: action as (typeof CUTOVER_ACTIONS)[number],
+      json: v.json === true,
+      ...(wait !== undefined && { leaseWaitMs: Number(wait) }),
+    };
+  }
+  if (command !== "config") {
+    for (const opt of ["in", "out"] as const) {
+      if (v[opt] !== undefined)
+        throw new UsageError(`--${opt} is only valid for config migrate-permissions`);
+    }
+  }
+  if (command === "config") {
+    const [sub, ...extra] = rest;
+    if (sub !== "migrate-permissions")
+      throw new UsageError(
+        sub === undefined
+          ? "missing config command (expected migrate-permissions)"
+          : `unknown config command "${sub}"`,
+      );
+    if (extra.length > 0) throw new UsageError(`unexpected argument "${extra[0]}"`);
+    for (const opt of ["role", "yes", "dir", "manifest", ...ADMIN_CREATE_OPTIONS] as const) {
+      if (v[opt] !== undefined) throw new UsageError(`--${opt} is not valid for config`);
+    }
+    for (const opt of ["in", "out"] as const) {
+      const value = v[opt];
+      if (value === undefined || value.trim() === "")
+        throw new UsageError(`config migrate-permissions needs --${opt} <file>`);
+    }
+    return {
+      command: "config-migrate-permissions",
+      input: v.in as string,
+      output: v.out as string,
+    };
   }
   if (command !== "extensions" && command !== "plugins" && v.yes !== undefined) {
     throw new UsageError(
@@ -262,7 +395,7 @@ export function parseCli(argv: string[]): Command {
   }
   if (command === "start") {
     const raw = parsed.values.role;
-    if (raw === undefined) return { command: "start" };
+    if (raw === undefined) return { command: "start", ...activation };
     const roles = raw
       .split(",")
       .map((r) => r.trim())
@@ -273,7 +406,7 @@ export function parseCli(argv: string[]): Command {
         throw new UsageError(`unknown role "${r}" (expected ${ROLES.join(", ")})`);
       }
     }
-    return { command: "start", roles: [...new Set(roles)] as Role[] };
+    return { command: "start", roles: [...new Set(roles)] as Role[], ...activation };
   }
   throw new UsageError(`unknown command "${command}"`);
 }
@@ -283,10 +416,12 @@ function parse(argv: string[]) {
     args: argv,
     allowPositionals: true,
     strict: true,
+    tokens: true,
     // Deliberately no --password: the password comes from stdin or --password-file, never argv
     // (it would land in shell history and the process list).
     options: {
       role: { type: "string" },
+      "activate-permission-config": { type: "string" },
       login: { type: "string" },
       "display-name": { type: "string" },
       email: { type: "string" },
@@ -295,6 +430,10 @@ function parse(argv: string[]) {
       yes: { type: "boolean", short: "y" },
       dir: { type: "string" },
       manifest: { type: "string" },
+      in: { type: "string" },
+      out: { type: "string" },
+      json: { type: "boolean" },
+      "lease-wait-ms": { type: "string" },
       help: { type: "boolean", short: "h" },
     },
   });

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ConversationEvent } from "../src/lib/conversations";
+import { openWaitReads } from "../src/lib/query/conversation";
 import { buildTimeline, type TimelineEntry, type Waiter } from "../src/lib/timeline";
 
 /**
@@ -143,5 +144,39 @@ describe("who a waiting call waits for", () => {
       kind: "account",
       accountId: "acc_zhang",
     });
+  });
+});
+
+describe("a superseded approval (permission change, Task 10D)", () => {
+  const superseded = ev(5, "approval_decided", {
+    approvalId: "ap1",
+    callId: "a",
+    decision: "superseded",
+    byAccountId: null,
+    reason: "user",
+    revision: 3,
+  });
+
+  it("ends the wait and is final on the card, with its revision and reason", () => {
+    const out = build([
+      start(ME),
+      call("a", "Bash"),
+      approval({ requestedFor: ME, approverRole: null }),
+      superseded,
+    ]);
+    expect(row(out)?.waiting).toBeUndefined();
+    const card = out.find((e) => e.kind === "approval");
+    expect(card?.kind === "approval" ? card.item.decided : null).toMatchObject({
+      decision: "superseded",
+      byAccountId: null,
+      reason: "user",
+      revision: 3,
+    });
+  });
+
+  it("needs no read before the first paint (the log carries the outcome)", () => {
+    const events = [start(ME), call("a", "Bash"), approval({ requestedFor: ME }), superseded];
+    expect(openWaitReads(events).approvals).toEqual([]);
+    expect(openWaitReads(events.slice(0, 3)).approvals).toEqual(["ap1"]);
   });
 });

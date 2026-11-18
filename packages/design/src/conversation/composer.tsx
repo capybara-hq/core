@@ -16,6 +16,7 @@ import {
 import { Button, IconButton } from "../controls/button";
 import { Callout } from "../display/callout";
 import { Icon } from "../icons/icon";
+import type { IconName } from "../icons/paths";
 import { BoxScope } from "../layout/box";
 import { useDesignT } from "../provider";
 import { isTouchPointer } from "../shell/pointer";
@@ -84,6 +85,13 @@ export type PickerItem = {
   badge?: string;
   /** The badge's tone: `fail` for a danger mark; default `warn`. */
   badgeTone?: "default" | "warn" | "fail";
+  /** An icon before the label, in the item's own neutral color (a permission profile's). */
+  icon?: IconName;
+  /**
+   * A sentence under the label explaining the choice (a permission profile's); the item's
+   * accessible description, its name staying the label and tag.
+   */
+  description?: string;
 };
 
 export type PickerProps = {
@@ -100,6 +108,11 @@ export type PickerProps = {
   groups: { label?: string; items: PickerItem[] }[];
   /** The note that closes the menu ("从下一条消息起生效"). */
   note?: string;
+  /**
+   * One plain action after the items, not a choice ("Set the review model" for an org admin): a menu item
+   * that closes the menu, a ghost button in the phone sheet.
+   */
+  action?: { label: string; icon?: IconName; onSelect(): void };
   onPick(id: string): void;
   /** The reference set only: the menu drawn open in place. */
   referenceOpen?: boolean;
@@ -121,6 +134,7 @@ export function Picker({
   disabled,
   groups,
   note,
+  action,
   onPick,
   referenceOpen,
 }: PickerProps): JSX.Element {
@@ -163,12 +177,25 @@ export function Picker({
         ...(it.tag ? { tag: it.tag } : {}),
         ...(it.badge ? { badge: it.badge } : {}),
         ...(it.badgeTone ? { badgeTone: it.badgeTone } : {}),
+        ...(it.icon ? { icon: it.icon } : {}),
+        ...(it.description ? { description: it.description } : {}),
         checked: it.checked === true,
         ...(it.disabled ? { disabled: true } : {}),
         onSelect: () => onPick(it.id),
       });
     }
   }
+  if (action)
+    entries.push(
+      { kind: "separator" },
+      {
+        kind: "item",
+        id: "picker-action",
+        label: action.label,
+        ...(action.icon ? { icon: action.icon } : {}),
+        onSelect: action.onSelect,
+      },
+    );
   if (note) entries.push({ kind: "note", text: note });
   return (
     <ConvMenu
@@ -217,12 +244,13 @@ export type ComposerBoxProps = {
   /**
    * The pickers. `agent` is absent on the new conversation page, whose agents row chooses the
    * agent (agent profile design §4.2); the model and effort pickers stay. `device` sits
-   * between the agent and the model (a conversation picks its device before the model) and is
-   * `locked` after the first message.
+   * after the agent and is `locked` after the first message. Optional `permission` follows
+   * the device, before the model and effort.
    */
   pickers: {
     agent?: PickerProps;
     device?: PickerProps;
+    permission?: PickerProps;
     model: PickerProps;
     effort?: PickerProps;
   };
@@ -484,14 +512,16 @@ export function ComposerBox({
           onClick={onAttach}
         />
         {pickers.agent ? <Picker {...pickers.agent} /> : null}
-        {/* 640 and up: the three pickers; a phone: one options button and its bottom sheet (CSS) */}
+        {/* 640 and up: individual pickers; phones: one options button and its bottom sheet (CSS). */}
         <span className="cb-composer-pickers" data-part="composer-pickers">
           {pickers.device ? <Picker {...pickers.device} /> : null}
+          {pickers.permission ? <Picker {...pickers.permission} /> : null}
           <Picker {...pickers.model} />
           {pickers.effort ? <Picker {...pickers.effort} /> : null}
         </span>
         <ComposerOptions
           {...(pickers.device ? { device: pickers.device } : {})}
+          {...(pickers.permission ? { permission: pickers.permission } : {})}
           model={pickers.model}
           {...(pickers.effort ? { effort: pickers.effort } : {})}
         />

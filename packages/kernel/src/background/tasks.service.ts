@@ -1,5 +1,12 @@
-import { isSandboxGoneError, rootsOf } from "@capybara-hq/plugin-sdk";
-import { Inject, Injectable } from "@nestjs/common";
+import {
+  DeviceProtocolError,
+  isSandboxGoneError,
+  isSandboxPermissionUnsupportedError,
+  isSandboxScopeDeniedError,
+  rootsOf,
+  ToolError,
+} from "@capybara-hq/plugin-sdk";
+import { Inject, Injectable, Optional } from "@nestjs/common";
 import { ConversationAccess } from "../conversations/access.js";
 import { EventLog } from "../conversations/event-log.js";
 import { conversationTree } from "../conversations/tree.js";
@@ -8,13 +15,30 @@ import { ApiError } from "../errors.js";
 import { audit } from "../identity/audit.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { rootConversationOf } from "../runtime/subagents/child.js";
-import { SandboxService } from "../sandbox/sandbox.service.js";
+import { PERMISSION_CONTEXT_ACTIVATION } from "../sandbox/permission-context-types.js";
+import { retirementPending, SandboxService } from "../sandbox/sandbox.service.js";
 import { UUID_RE } from "../ui/registry.js";
 import { finishedEventKey } from "./finish.js";
 import { TASK_ID_RE, TASKS_DIR } from "./launch.js";
-import { actingAs } from "./session.js";
+import {
+  ManagedInstanceMismatchError,
+  ManagedRefError,
+  onManagedInstance,
+  readerOf,
+} from "./managed.js";
+import {
+  assembleOutputSuffix,
+  ManagedOutputCapacityError,
+  ManagedOutputUnavailableError,
+} from "./managed-output.js";
+import { actingAs, legacyBackgroundAllowed } from "./session.js";
 import { BackgroundTaskStopper } from "./stop.js";
-import { type BackgroundTaskRow, type BackgroundTaskStatus, BackgroundTaskStore } from "./store.js";
+import {
+  type BackgroundTaskRow,
+  type BackgroundTaskStatus,
+  BackgroundTaskStore,
+  isManagedTask,
+} from "./store.js";
 
 /** The most bytes of output one read returns. */
 export const OUTPUT_TAIL_MAX_BYTES = 65_536;
@@ -104,6 +128,11 @@ export class BackgroundTasks {
     @Inject(KernelDb) private readonly db: KernelDb,
     @Inject(ConversationDevices)
     private readonly devices: Pick<ConversationDevices, "forTool">,
+    /**
+     * The paired activation gate: once on, a legacy (SID) task is never read or stopped by a raw
+     * exec (the retirement gate owns it); a managed task always goes by its exact ref.
+     */
+    @Optional() @Inject(PERMISSION_CONTEXT_ACTIVATION) private readonly activation?: boolean,
   ) {}
 
   /**
@@ -133,7 +162,10 @@ export class BackgroundTasks {
       lostReason: task.lostReason,
       startedAt: task.startedAt.toISOString(),
       finishedAt: task.finishedAt === null ? null : task.finishedAt.toISOString(),
-      stopping: task.status === "running" && task.stoppingAt !== null,
+      // a managed task's owed cancellation is a stop in progress too
+      stopping:
+        task.status === "running" &&
+        (task.stoppingAt !== null || task.launchState === "cancel-pending"),
     };
   }
 
@@ -174,6 +206,8 @@ export class BackgroundTasks {
     auditDetail?: Record<string, unknown>,
   ): Promise<BackgroundTaskView> {
     const task = await this.owned(orgId, conversationId, accountId, taskId);
+    // once activated, the stopper refuses a legacy task's stop with the retirement refusal
+    // exactly when it would signal its session (BackgroundTaskStopper's paired gate)
     const after = await this.stopper.stop(task, "person");
     await audit(this.db.db, {
       actorAccountId: accountId,
@@ -256,6 +290,13 @@ export class BackgroundTasks {
     task: BackgroundTaskRow,
     tail: number,
   ): Promise<LiveRead> {
+    if (isManagedTask(task)) return this.readManaged(orgId, task, tail);
+    // once activated a legacy task's output is never read by a raw exec: a running one is the
+    // retirement gate's (its actionable refusal), a finished one answers with its finish summary
+    if (!legacyBackgroundAllowed(this.activation)) {
+      if (task.status === "running") throw retirementPending();
+      return { kind: "unavailable", reason: "read_failed" };
+    }
     if (task.sid === null || task.sandboxCreatedAt === null || task.deviceId === null) {
       // a reservation the launch has not finished, or a launch that failed
       return {
@@ -277,7 +318,7 @@ export class BackgroundTasks {
         task.deviceId,
         { createdAt },
         async (p, h, signal) => {
-          const res = await actingAs(p, actor).exec(h, {
+          const res = await actingAs(p, actor, this.activation).exec(h, {
             command: tailScript(task.id, tail),
             cwd: rootsOf(h).workspace,
             timeoutMs: OUTPUT_READ_TIMEOUT_MS,
@@ -304,6 +345,76 @@ export class BackgroundTasks {
           kind: "unavailable",
           reason: e.code === "device.offline" ? "device_offline" : "no_access",
         };
+      }
+      throw e;
+    }
+  }
+
+  /**
+   * A managed task's live suffix (permission runtime cutover phase 8.3): by its exact ref on its
+   * exact instance only (never resumed, no exec, no path), the metadata total N first, then every
+   * byte of the last `tail` bytes before N through bounded reads; N stays the end however the
+   * output grows meanwhile. The task's ref is loaded from its authorized row, never supplied.
+   */
+  private async readManaged(
+    orgId: string,
+    task: BackgroundTaskRow,
+    tail: number,
+  ): Promise<LiveRead> {
+    if (task.executionRef === null || task.deviceId === null) {
+      return {
+        kind: "unavailable",
+        reason: task.status === "running" ? "starting" : "not_started",
+      };
+    }
+    if (!(await this.sandbox.availableFor(task.deviceId))) {
+      return { kind: "unavailable", reason: "unavailable" };
+    }
+    if (!(await this.deviceUsable(orgId, task.conversationId))) {
+      return { kind: "unavailable", reason: "no_access" };
+    }
+    try {
+      const r = await onManagedInstance(
+        this.sandbox.ifRunning.bind(this.sandbox),
+        task,
+        async (bg, h, ref, signal) => {
+          try {
+            return await assembleOutputSuffix(readerOf(bg, h, ref, signal), tail, signal);
+          } catch (e) {
+            if (e instanceof ManagedOutputUnavailableError) return null;
+            throw e;
+          }
+        },
+        AbortSignal.timeout(OUTPUT_READ_TIMEOUT_MS),
+      );
+      if (r.kind === "other_instance") return { kind: "unavailable", reason: "rebuilt" };
+      if (r.kind === "not_running") {
+        return { kind: "unavailable", reason: r.status === "suspended" ? "suspended" : "rebuilt" };
+      }
+      if (r.value === null) return { kind: "unavailable", reason: "output_missing" };
+      return { kind: "ok", value: { text: r.value.text, truncated: r.value.truncated } };
+    } catch (e) {
+      if (isSandboxGoneError(e)) return { kind: "unavailable", reason: "rebuilt" };
+      if (e instanceof ApiError && e.code.startsWith("device.")) {
+        return {
+          kind: "unavailable",
+          reason: e.code === "device.offline" ? "device_offline" : "no_access",
+        };
+      }
+      // a provider's typed refusal is no access; the kernel's own instance check, a missing
+      // background capability, a protocol or transport failure, a bad ref, capacity or a timeout
+      // is a failed read: never a 500, and a finished task still gets its finish summary
+      if (isSandboxScopeDeniedError(e)) return { kind: "unavailable", reason: "no_access" };
+      if (
+        e instanceof ManagedRefError ||
+        e instanceof ManagedInstanceMismatchError ||
+        e instanceof ManagedOutputCapacityError ||
+        isSandboxPermissionUnsupportedError(e) ||
+        e instanceof DeviceProtocolError ||
+        e instanceof ToolError ||
+        (e instanceof Error && (e.name === "TimeoutError" || e.name === "AbortError"))
+      ) {
+        return { kind: "unavailable", reason: "read_failed" };
       }
       throw e;
     }

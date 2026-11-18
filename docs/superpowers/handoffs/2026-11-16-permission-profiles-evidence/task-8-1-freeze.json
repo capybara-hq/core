@@ -1,0 +1,38 @@
+{
+  "status": "frozen-for-root-independent-review",
+  "head": "3b27b4637c9f3f19d7e743575e91348259c05178",
+  "branch": "codex/permission-output-transport",
+  "mergeHead": "1f380b4566135e3fa0147d6601e77f9b9e864a9c",
+  "sourceEditsComplete": true,
+  "laterPhasesStarted": false,
+  "createdAtUtc": "2026-11-16T11:04:16.111692+00:00",
+  "artifacts": {
+    "task-8-1-new-code.patch": "b8f136f538a7f0ccd3bc0667bf540d3b5c91b6b6ef699a8aade4e8c73574dd90",
+    "task-8-1-new-code-manifest.json": "8a10533ec75b7f40aac7a05679e21479c488a659d97cfeadf8c19030dad9e373",
+    "task-8-1-full-head-integration.patch": "314a491c6ec917f2b107052dc1a6adbe9cf26ec3eb93d20f4a44ba3f14b71b1d",
+    "task-8-1-full-head-manifest.json": "9b5dc2c9cbd2de0bde11bad188016b4d8eff1e0d89d9cd4ac774cdf477d94d4c",
+    "task-8-1-component-preservation.json": "d863de9252038fef3a0182d18e59e526d9e50f8ba080dc1acd962cccf6083791",
+    "task-8-1-report.md": "0bdb146ebef601df91c15a931bd72198f7054bf80ec68f9b2df4e97d223db665"
+  },
+  "logs": {
+    "task-8-1-api-generation.log": "fd104ffd449fc8ee7e25813f6736a9ed81e0761a729a5fa842c45ec97858f97e",
+    "task-8-1-applied-migrations-check.log": "f71e21137574ec77fd756c587af5c64ce79127e583f6d78227e34d03e783621a",
+    "task-8-1-authority-tests.log": "f7d4dc44f794e24d0a2add28cd1d2ee901cb0e344d9bd59ab4b6f8e49c450358",
+    "task-8-1-baseline-types.log": "13e59732d9a661734506881d9d2e23184cce2be4062a3bac06e2fd0010f8dc94",
+    "task-8-1-biome.log": "27f709fda10cc6ff5be6a8f70acce9b5c9f418c077dd084e9d9e54e7607769b7",
+    "task-8-1-codec-red.log": "8c42c95d3bb4f3a6844e8dd2cb2862567426b96cfca11801ebf3ff86d6eeea82",
+    "task-8-1-device-session-tests.log": "49be4e723704aa56ef393f590cdf6c0f778d31fb61377e17465d0d4b87ac63b7",
+    "task-8-1-device-types.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "task-8-1-final-authority-tests.log": "641beb776d6efbddffd0989190ddda3d74593ba7c73ca1cfb4d8ea451fa6bd97",
+    "task-8-1-final-transport-tests.log": "1d04f33e6abbccf5fd1585b6f0005311adfa920e55f3678a65a9b4d2eea00331",
+    "task-8-1-focused-tests.log": "fcdec104ab1e7104a9463e0f810de92e2e08490c1e209bb167d58e6f31ddeeec",
+    "task-8-1-kernel-tests.log": "14fb456f5073f9650987adac522f94789e37dcc37b89cb817c85edee690a6331",
+    "task-8-1-kernel-types.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "task-8-1-retained-tests.log": "8c1bdd9e2bdb2aad752ac01e4cd24b41d8265210faef620ac7663963c47cfb4a",
+    "task-8-1-sdk-api-check.log": "cac4864313504e003fa9980366aeac6aa9794217979697ed3ef37c8056df7849",
+    "task-8-1-sdk-changeset-check.log": "1fbdc497f5c1b10d54bbc08ef0935366832b4c22bd27495beda2c6ff3d0ba54e",
+    "task-8-1-structural-checks.log": "16b9ab25d5227c24561985949e6a634aa935fe4dc224b6c50f642a0ad8e220a3",
+    "task-8-1-test-types.log": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "task-8-1-transport-tests.log": "0587c995cc718221f7c01872efdd0d9ca6f16116933abfdabea51e0b6c3d57bd"
+  }
+}

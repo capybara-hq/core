@@ -420,6 +420,7 @@ describe("project knowledge at run start", () => {
         scopeFor: async () => ({
           source: "local" as const,
           mode: "auto" as const,
+          reach: "os-user" as const,
           workspace: "/Users/u/capybara-device/d/workspace",
           home: "/Users/u",
           supported: true,
@@ -428,6 +429,8 @@ describe("project knowledge at run start", () => {
         keeps: (...args: Parameters<DeviceProjectsService["keeps"]>) => projects.keeps(...args),
       },
       {
+        // gate off: the raw route only
+        withKernelRead: () => Promise.reject(new Error("no kernel read while the gate is off")),
         withSandbox: (async (_opts: unknown, fn: (...a: unknown[]) => unknown) =>
           fn(
             {},
@@ -613,7 +616,7 @@ describe("project knowledge at run start", () => {
       .executeTakeFirstOrThrow();
     await db
       .updateTable("orgs")
-      .set({ settings: JSON.stringify({ ...(settings as object), autoMode: "off" }) })
+      .set({ settings: JSON.stringify({ ...(settings as object), fullAccess: "off" }) })
       .where("id", "=", orgId)
       .execute();
     let roots: ProjectRootEvent[];
@@ -665,6 +668,10 @@ describe("project knowledge at run start", () => {
       },
       {
         withSandbox: async () => {
+          asked++;
+          throw new Error("the device must not be asked");
+        },
+        withKernelRead: async () => {
           asked++;
           throw new Error("the device must not be asked");
         },

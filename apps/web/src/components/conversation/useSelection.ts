@@ -11,7 +11,6 @@ import {
   type Device,
   type DeviceList,
   deviceChoiceShown,
-  deviceModeMark,
   deviceState,
 } from "../../lib/devices";
 import { extensionLabel } from "../../lib/extension-label";
@@ -208,8 +207,9 @@ export type DeviceChoice = {
   project: string | undefined;
   /**
    * Without a cloud sandbox, when none of the local devices can be used now (their
-   * machines are offline): sending must wait, and this says why. Never set while the platform has
-   * a cloud sandbox (the kernel then makes or uses the personal device).
+   * machines are offline): the first send goes without a device (a restricted permission profile;
+   * Full access needs one), and this says why. Never set while the platform has a cloud sandbox
+   * (the kernel then makes or uses the personal device).
    */
   unavailable?: string;
   /**
@@ -229,8 +229,8 @@ const PROJECT_ITEM = "project:";
  * connected one that is online says 在线. It starts on the last used device, else the
  * default, else the first usable one ({@link chosenDeviceId}). It shows when the platform has a
  * cloud sandbox or the person has a local device. Without a cloud sandbox and with every local
- * device offline, nothing is chosen and `unavailable` holds the reason the composer shows instead
- * of sending with no device.
+ * device offline, nothing is chosen and `unavailable` holds the reason the composer shows; the
+ * first send then goes without a device.
  *
  * The same menu binds the conversation to a project (project root §4.3: one entry point): under
  * 项目, 自由模式 (the default) and the chosen device's projects its current mode can read. A
@@ -263,11 +263,6 @@ export function useDeviceChoice(orgId: string, list: DeviceList | undefined): De
     offered.some((p) => p.name === pickedProject.name)
       ? pickedProject.name
       : undefined;
-  // 自动 (warn) / 沙箱, or a cloud device's 开放（挡内网） (warn) / 白名单, after the tag
-  const markOf = (e: Device) => {
-    const mark = deviceModeMark(e);
-    return { badge: te(`mark.${mark.kind}`), badgeTone: mark.tone };
-  };
   const tagOf = (e: Device) => {
     const state = deviceState(e);
     if (state === "unavailable" || state === "filesLost" || state === "offline")
@@ -288,8 +283,8 @@ export function useDeviceChoice(orgId: string, list: DeviceList | undefined): De
             id: e.id,
             label: nameOf(e),
             checked: e.id === id,
+            // no daily mode mark: the conversation's permission picker says what may run
             ...tagOf(e),
-            ...markOf(e),
           })),
         },
         ...(id !== undefined && offered.length > 0

@@ -9,6 +9,7 @@ import { HOME_PATH } from "../routes";
 import type { Workspace } from "../server/session";
 import type { Me } from "../session";
 import { isSignedOut } from "../signed-out";
+import { clearPermissionWatermarks } from "./permission-state";
 import { meQuery, readinessQuery } from "./shell";
 
 /**
@@ -73,6 +74,8 @@ export function useAdmin():
 export async function resetSession(qc: QueryClient, then: () => void): Promise<void> {
   await qc.cancelQueries();
   qc.clear();
+  // the session's tab-local confirmation metadata goes with its cache
+  clearPermissionWatermarks(qc);
   then();
 }
 

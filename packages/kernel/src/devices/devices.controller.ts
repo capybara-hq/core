@@ -122,7 +122,7 @@ export class DevicesController {
     const tokenId = patTokenId(p);
     // a person changes their device's mode in a web session, narrowing or widening (auto mode
     // spec §4.3, hardening D2): never an API token
-    if (body.mode !== undefined && tokenId !== undefined) {
+    if ((body.mode !== undefined || body.ownerCeiling !== undefined) && tokenId !== undefined) {
       throw new ApiError(
         "device.mode_requires_session",
         "A device's mode is changed by its owner on the device page, not with an API token",
@@ -136,6 +136,8 @@ export class DevicesController {
         {
           ...(body.name !== undefined && { name: body.name }),
           ...(body.mode !== undefined && { mode: body.mode }),
+          ...(body.ownerCeiling !== undefined && { ownerCeiling: body.ownerCeiling }),
+          ...(body.confirmWidening === true && { confirmWidening: true as const }),
         },
         tokenId,
       ),

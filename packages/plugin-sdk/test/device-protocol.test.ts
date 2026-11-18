@@ -7,6 +7,7 @@ import {
   type DevicePolicyStatus,
   DeviceProtocolError,
   isBackgroundLaunch,
+  isDeviceBootId,
   isDeviceProjectName,
   MAX_DEVICE_LIST_ENTRIES,
   MAX_DEVICE_PROJECT_NAME_LENGTH,
@@ -410,6 +411,20 @@ describe("device protocol", () => {
         const h = parseHello({ ...hello, home });
         expect(h.home, JSON.stringify(home)).toBeUndefined();
         expect(h.type).toBe("hello");
+      }
+    });
+  });
+
+  describe("the hello's boot identity", () => {
+    const parseHello = (o: unknown) => parseDeviceFrame(JSON.stringify(o), "device") as DeviceHello;
+
+    it("keeps a well-formed boot identity and drops a malformed one", () => {
+      for (const bootId of ["0f2a9c1e-7b1d-4b8e-9d5e-1c2b3a4d5e6f", "boottime-1763370000.123456"])
+        expect(parseHello({ ...hello, bootId }).bootId).toBe(bootId);
+      expect(parseHello(hello).bootId).toBeUndefined();
+      for (const bootId of ["", "-x", "a b", "a\nb", "x".repeat(129), 1, null]) {
+        expect(parseHello({ ...hello, bootId }).bootId, JSON.stringify(bootId)).toBeUndefined();
+        expect(isDeviceBootId(bootId)).toBe(false);
       }
     });
   });

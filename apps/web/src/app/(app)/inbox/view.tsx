@@ -23,13 +23,14 @@ import {
   useToast,
   versionLabel,
 } from "@capybara-hq/design";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
 import { type ReactNode, useEffect, useState } from "react";
 import { ApprovalInput, ScopePicker, useDecide } from "../../../components/ApprovalCard";
 import { PendingConnectorDialog } from "../../../components/agent/PendingConnectorDialog";
 import { ErrorFrame } from "../../../components/ErrorFrame";
 import { NoAccess } from "../../../components/NoAccess";
+import { PermissionScopeDetail } from "../../../components/PermissionScopeDetail";
 import {
   requesterOf,
   SkillChangeReview,
@@ -59,6 +60,7 @@ import {
 } from "../../../lib/inbox";
 import { networkGrantHost } from "../../../lib/network-hosts";
 import { entryOfRequest } from "../../../lib/pending-connectors";
+import { approvalQuery } from "../../../lib/query/conversation";
 import { inboxChangeKeys, inboxQuery } from "../../../lib/query/inbox";
 import { keys } from "../../../lib/query/keys";
 import { useAppMutation } from "../../../lib/query/mutation";
@@ -164,6 +166,17 @@ function Inbox({
       ...inboxChangeKeys(orgId),
     ],
   });
+  // What this tab already knows of the selected approval (a conversation's card, a decision, a
+  // supersession event read it): a cached inbox item that is no longer pending offers no actions.
+  // Only the cache is read here: no request.
+  const approvalQ = approvalQuery(
+    orgId,
+    active?.type === "tool_approval" ? active.approval.id : "",
+  );
+  const cachedApproval = useQuery({
+    ...approvalQ,
+    enabled: false,
+  }).data;
   // Nothing while the inbox loads (not "0 pending").
   useStatusBar(inbox === null ? null : `· ${t("pendingCount", { n: rows.length })}`);
 
@@ -380,7 +393,7 @@ function Inbox({
                         })
                       : active.type === "tool_approval"
                         ? toolApprovalDetail({
-                            approval: active.approval,
+                            approval: knownApproval(active.approval, cachedApproval),
                             scope,
                             setScope,
                             pending: approvals.pending,
@@ -703,6 +716,16 @@ function scheduleDetail({
   };
 }
 
+/**
+ * The inbox's approval with what the cache knows of it since: a cached detail that is no longer
+ * pending (decided, superseded) wins over the listed copy.
+ */
+function knownApproval(listed: Approval, cached: Approval | undefined): Approval {
+  return cached !== undefined && cached.id === listed.id && cached.status !== "pending"
+    ? { ...listed, ...cached }
+    : listed;
+}
+
 /** 选中项的三块：内容区、Inspector、ActionRow。 */
 interface Detail {
   content: ReactNode;
@@ -740,6 +763,8 @@ function toolApprovalDetail({
   const write = command?.kind === "write";
   const shown =
     command === null ? null : write ? (command.path ?? command.command) : command.command;
+  // decided or superseded meanwhile (a cached item): final, without approve, deny or a scope
+  const final = approval.status !== "pending";
   return {
     inspector: (
       <Stack gap={16}>
@@ -757,20 +782,22 @@ function toolApprovalDetail({
         </Stack>
       </Stack>
     ),
-    actionRow: {
-      secondary: {
-        label: ta("deny"),
-        onSelect: () => onDecide("deny"),
-        loading: pending === "deny",
-        disabled: pending !== undefined,
-      },
-      primary: {
-        label: ta("approve"),
-        onSelect: () => onDecide("approve"),
-        loading: pending === "approve",
-        disabled: pending !== undefined,
-      },
-    },
+    actionRow: final
+      ? { primary: { label: t("openConversation"), onSelect: openConversation } }
+      : {
+          secondary: {
+            label: ta("deny"),
+            onSelect: () => onDecide("deny"),
+            loading: pending === "deny",
+            disabled: pending !== undefined,
+          },
+          primary: {
+            label: ta("approve"),
+            onSelect: () => onDecide("approve"),
+            loading: pending === "approve",
+            disabled: pending !== undefined,
+          },
+        },
     content: (
       <div data-approval-id={approval.id}>
         <Card
@@ -779,7 +806,24 @@ function toolApprovalDetail({
               ? toolLabelText(approvalToolLabel(approval, locale))
               : ta(write ? "command.titleWrite" : "command.title")
           }
-          actions={<StatusMark status="waiting" label={ta("waiting")} />}
+          actions={
+            final ? (
+              <StatusMark
+                status={
+                  approval.status === "approved"
+                    ? "success"
+                    : approval.status === "denied"
+                      ? "failed"
+                      : "cancelled" // as ApprovalCard: expired, cancelled, skipped, superseded
+                }
+                label={ta(
+                  `decision.${approval.status as Exclude<typeof approval.status, "pending">}`,
+                )}
+              />
+            ) : (
+              <StatusMark status="waiting" label={ta("waiting")} />
+            )
+          }
         >
           <Stack gap={12}>
             <KeyValue
@@ -809,12 +853,29 @@ function toolApprovalDetail({
                 {...(write ? { title: ta("command.path") } : {})}
               />
             )}
-            <ScopePicker
-              approval={approval}
-              value={scope}
-              onChange={setScope}
-              disabled={pending !== undefined}
-            />
+            {command?.permissionScope !== undefined && (
+              <PermissionScopeDetail
+                scope={command.permissionScope}
+                targetPath={command.targetPath}
+              />
+            )}
+            {approval.status === "superseded" ? (
+              <Text variant="prose" tone="muted">
+                {ta(
+                  approval.supersededReason === "authority-changed"
+                    ? "superseded.authorityChanged"
+                    : "superseded.user",
+                )}
+              </Text>
+            ) : null}
+            {!final && (
+              <ScopePicker
+                approval={approval}
+                value={scope}
+                onChange={setScope}
+                disabled={pending !== undefined}
+              />
+            )}
           </Stack>
         </Card>
       </div>

@@ -6,6 +6,7 @@ import type {
 } from "@capybara-hq/plugin-sdk";
 import { effectiveMode } from "../policy.js";
 import type { Policy, SandboxMode } from "../state.js";
+import { policyMode } from "../state.js";
 import { DeviceOpError, type ExecMode, type Executor } from "./types.js";
 
 export type { ExecMode } from "./types.js";
@@ -81,7 +82,7 @@ export class SwitchingExecutor implements Executor {
    * auto-mode commands. Returns whether the policy says auto mode now.
    */
   async sync(policy: Policy = this.policy()): Promise<boolean> {
-    const auto = policy.mode === "auto";
+    const auto = policyMode(policy) === "auto";
     if (auto === this.auto) return auto;
     if (auto) {
       this.auto = true;
@@ -98,7 +99,7 @@ export class SwitchingExecutor implements Executor {
       return auto;
     }
     // The policy may have changed again while the kill ran: the next sync judges that.
-    if (!this.auto || this.policy().mode === "auto") return auto;
+    if (!this.auto || policyMode(this.policy()) === "auto") return auto;
     this.auto = false;
     if (this.watch !== undefined) clearInterval(this.watch);
     this.watch = undefined;
@@ -127,7 +128,7 @@ export class SwitchingExecutor implements Executor {
   private async writeFiles(): Promise<Executor> {
     const policy = this.policy();
     await this.sync(policy);
-    if (policy.mode === "sandbox") return this.sandboxed;
+    if (policyMode(policy) === "sandbox") return this.sandboxed;
     if (
       this.lastLimits === undefined ||
       Date.now() - this.lastLimitsAt > FILE_OPS_DECISION_TTL_MS
@@ -161,7 +162,8 @@ export class SwitchingExecutor implements Executor {
     await this.sync(policy);
     if (how.mode !== "auto") return this.sandboxed.exec(args, signal);
     const beforeSpawn = (): void => {
-      if (this.policy().mode === "sandbox") throw new DeviceOpError("policy", SANDBOX_BACK_ON);
+      if (policyMode(this.policy()) === "sandbox")
+        throw new DeviceOpError("policy", SANDBOX_BACK_ON);
     };
     return this.host.exec(args, signal, { beforeSpawn });
   }
@@ -189,7 +191,7 @@ export class SwitchingExecutor implements Executor {
   private async readerFor(mode: SandboxMode): Promise<{ ex: Executor; mode: SandboxMode }> {
     const policy = this.policy();
     await this.sync(policy);
-    const auto = mode === "auto" && policy.mode === "auto";
+    const auto = mode === "auto" && policyMode(policy) === "auto";
     if (!auto && !this.sandboxReady)
       throw new DeviceOpError(
         "policy",

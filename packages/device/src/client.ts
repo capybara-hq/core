@@ -9,6 +9,7 @@ import {
   validateSandboxPathShape,
 } from "@capybara-hq/plugin-sdk";
 import WebSocket from "ws";
+import { currentBootId } from "./boot-id.js";
 import type { CommandLog } from "./command-log.js";
 import type { Executor } from "./exec/types.js";
 import type { PolicyStore } from "./policy-store.js";
@@ -42,6 +43,8 @@ const BACKOFF_BASE_MS = 1000;
 const BACKOFF_MAX_MS = 60_000;
 
 export interface ConnectOptions {
+  /** Staged backend lifecycle only; never announces protocol 3 or changes v2 dispatch. */
+  operations?: import("./exec/mac-operation-backend.js").MacOperationBackend;
   log?: CommandLog;
   /**
    * The local policy the executor reads: its summary goes in each hello, and the `policy` op
@@ -59,6 +62,11 @@ export interface ConnectOptions {
    * by a docker-mode device (it offers its container's workspace only).
    */
   home?: string;
+  /**
+   * The host's OS boot identity reported in each hello (`bootId`; default: read once from the
+   * OS); null leaves it out.
+   */
+  bootId?: string | null;
   /** A connection must stay up this long before the backoff resets (default 10 s). */
   stableMs?: number;
   /** Terminate a socket that heard nothing from the server for this long (default 60 s). */
@@ -171,7 +179,9 @@ export function connect(
    * it the deployment would learn the change only at the next connect. An exec's ceiling changes
    * nothing here: the summary reports the owner's mode, which the kernel cuts itself.
    */
-  const pushPolicy = (): void => {
+  const pushPolicy = async (): Promise<void> => {
+    // Reconcile every file-generation check, even when the visible summary is unchanged.
+    await opts.operations?.reconcileOwnerCeiling(AbortSignal.timeout(30_000));
     if (!isOpen()) return;
     const summary = summaryNow();
     if (summary === undefined) return;
@@ -257,7 +267,9 @@ export function connect(
     }
     const ctl = new AbortController();
     running.set(req.id, ctl);
-    void serveOp(executor, req, ctl.signal, ctx).then(({ res, detail, run }) => {
+    void serveOp(executor, req, ctl.signal, ctx).then(async ({ res, detail, run }) => {
+      if (req.op === "policy")
+        await opts.operations?.reconcileOwnerCeiling(AbortSignal.timeout(30_000));
       running.delete(req.id);
       opts.log?.append(logEntryFor(req, res, new Date(now()), detail, run));
       if (cancelled.has(req.id)) {
@@ -331,6 +343,8 @@ export function connect(
     executor.mode === "os" && validateSandboxPathShape(ownerHome).length === 0
       ? ownerHome
       : undefined;
+  // the deployment's evidence that the host restarted (legacy retirement, cutover 8.5)
+  const bootId = opts.bootId === undefined ? currentBootId() : (opts.bootId ?? undefined);
   const hello = (): DeviceHello => {
     const summary = summaryNow();
     sentPolicy = summary === undefined ? undefined : JSON.stringify(summary);
@@ -352,6 +366,7 @@ export function connect(
       sessionIsolation: false,
       features,
       ...(home !== undefined && { home }),
+      ...(bootId !== undefined && { bootId }),
       ...(summary !== undefined && { policy: summary }),
       // what became of the latest policy ops, so an answer lost with a connection is not lost
       ...(opts.policy !== undefined && { recentOps: opts.policy.ops.recent() }),
@@ -414,7 +429,12 @@ export function connect(
           lastReportText = undefined;
         }, stableMs);
         sock.send(JSON.stringify(hello()));
-        if (opts.policy !== undefined) policyCheck = setInterval(pushPolicy, policyCheckMs);
+        if (opts.policy !== undefined)
+          policyCheck = setInterval(() => {
+            void pushPolicy().catch((error: unknown) =>
+              err(`Owner ceiling reconciliation failed: ${String(error)}`),
+            );
+          }, policyCheckMs);
         prune();
         for (const [id, p] of pending) {
           pending.delete(id);
@@ -500,3 +520,11 @@ export function connect(
     },
   };
 }
+
+// Explicit dormant seam only; connect() never selects it or advertises v3.
+export {
+  createStagedSessionState,
+  drainStagedSession,
+  type StagedDrainReport,
+  serveStagedSession,
+} from "./staged-session.js";

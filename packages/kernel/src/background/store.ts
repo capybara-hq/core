@@ -1,7 +1,8 @@
+import type { SandboxExecutionRef } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
 import type { Selectable } from "kysely";
 import { sql } from "kysely";
-import type { BackgroundTasksTable } from "../db/kernel-schema.js";
+import type { BackgroundLaunchState, BackgroundTasksTable } from "../db/kernel-schema.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
@@ -64,11 +65,79 @@ export interface BackgroundTaskRow {
   readOffset: number;
   /** When a stop claimed the task ({@link BackgroundTaskStore.claimStop}); null otherwise. */
   stoppingAt: Date | null;
+  /** `legacy` for SID-launched rows; a managed launch's durable state otherwise (0152). */
+  launchState: BackgroundLaunchState;
+  /** A managed task's stable start operation (null for legacy rows). */
+  operationId: string | null;
+  /** A managed task's trusted working root, persisted before dispatch. */
+  workingRoot: string | null;
+  /** A managed task's output retention deadline, part of its start input. */
+  retainUntil: Date | null;
+  /** The exact typed start result; never inferred from a SID, PID or path. */
+  executionRef: SandboxExecutionRef | null;
+  /** A managed task's held instance (its handle id), bound at dispatch. */
+  instanceId: string | null;
+  /** A managed task's exact instance generation (its `created_at` in ms), bound at dispatch. */
+  instanceGeneration: string | null;
+  /** When a managed task's cancellation was asked for (a stop or a revocation). */
+  cancelRequestedAt: Date | null;
+  /** Who asked for it by a stop (0153); null for a revocation's cancellation or none. */
+  cancelRequestedBy: CancelRequester | null;
 }
+
+/** Who asked for a managed task's stop: their wake rule holds for its later finish. */
+export type CancelRequester = "tool" | "person" | "conversation_deleted" | "subagent_end";
+
+/** Whether `task` is a managed (exact-ref) task rather than a legacy SID one. */
+export const isManagedTask = (task: Pick<BackgroundTaskRow, "launchState">): boolean =>
+  task.launchState !== "legacy";
+
+/** A managed launch's reservation: everything known before the start is dispatched. */
+export interface ManagedTaskReservation {
+  id: string;
+  orgId: string;
+  conversationId: string;
+  sandboxConversationId: string;
+  deviceId: string;
+  runId: string;
+  callId: string;
+  triggerAccountId: string;
+  description: string;
+  command: string;
+  operationId: string;
+  workingRoot: string;
+  /** Absolute: `${workingRoot}/.capybara/tasks/${id}.out`. */
+  outputPath: string;
+  startedAt: Date;
+  deadlineAt: Date;
+  retainUntil: Date;
+}
+
+/** {@link BackgroundTaskStore.reserveManaged}'s answer. */
+export type ManagedReservation =
+  | { kind: "reserved"; row: BackgroundTaskRow }
+  /** The same run call reserved before (a retry): its persisted identity is reused as it is. */
+  | { kind: "existing"; row: BackgroundTaskRow }
+  | { kind: "full" };
 
 export type BackgroundTaskInsert = Omit<
   BackgroundTaskRow,
-  "status" | "finishedAt" | "exitCode" | "lostReason" | "killPending" | "readOffset" | "stoppingAt"
+  | "status"
+  | "finishedAt"
+  | "exitCode"
+  | "lostReason"
+  | "killPending"
+  | "readOffset"
+  | "stoppingAt"
+  | "launchState"
+  | "operationId"
+  | "workingRoot"
+  | "retainUntil"
+  | "executionRef"
+  | "instanceId"
+  | "instanceGeneration"
+  | "cancelRequestedAt"
+  | "cancelRequestedBy"
 >;
 
 /** A launch's reservation: the row before the command started (no `sid`, no instance yet). */
@@ -97,6 +166,15 @@ const toRow = (r: Selectable<BackgroundTasksTable>): BackgroundTaskRow => ({
   killPending: r.kill_pending,
   readOffset: Number(r.read_offset),
   stoppingAt: r.stopping_at === null ? null : new Date(r.stopping_at),
+  launchState: r.launch_state,
+  operationId: r.operation_id,
+  workingRoot: r.working_root,
+  retainUntil: r.retain_until === null ? null : new Date(r.retain_until),
+  executionRef: r.execution_ref,
+  instanceId: r.instance_id,
+  instanceGeneration: r.instance_generation,
+  cancelRequestedAt: r.cancel_requested_at === null ? null : new Date(r.cancel_requested_at),
+  cancelRequestedBy: r.cancel_requested_by,
 });
 
 /**
@@ -138,8 +216,87 @@ export class BackgroundTaskStore {
   async reserve(row: BackgroundTaskReservation, maxTasks: number): Promise<boolean> {
     await this.launchLock.lock(row.sandboxConversationId);
     if ((await this.countRunning(row.sandboxConversationId)) >= maxTasks) return false;
-    await this.insert({ ...row, sid: null, sandboxCreatedAt: null });
+    // not admitted for dispatch yet (0157): the launch's freeze check marks it `dispatched`
+    await this.insert({ ...row, sid: null, sandboxCreatedAt: null }, "reserved");
     return true;
+  }
+
+  /**
+   * Reserves a managed launch (permission runtime cutover phase 8.2) under the root conversation's
+   * launch lock, before anything is dispatched: the task id, its stable operation id, the
+   * working root, the absolute artifact path, the deadline and the retention deadline. A retry of
+   * the same run call (same `runId` / `callId`) gets the row it reserved before, unchanged, so the
+   * start input and its hash stay the same; it never takes a second slot of `maxTasks`.
+   */
+  @Transactional()
+  async reserveManaged(row: ManagedTaskReservation, maxTasks: number): Promise<ManagedReservation> {
+    await this.launchLock.lock(row.sandboxConversationId);
+    const previous = await this.db
+      .selectFrom("background_tasks")
+      .selectAll()
+      .where("run_id", "=", row.runId)
+      .where("call_id", "=", row.callId)
+      .where("launch_state", "<>", "legacy")
+      .executeTakeFirst();
+    if (previous) return { kind: "existing", row: toRow(previous) };
+    if ((await this.countRunning(row.sandboxConversationId)) >= maxTasks) return { kind: "full" };
+    const inserted = await this.db
+      .insertInto("background_tasks")
+      .values({
+        id: row.id,
+        org_id: row.orgId,
+        conversation_id: row.conversationId,
+        sandbox_conversation_id: row.sandboxConversationId,
+        device_id: row.deviceId,
+        run_id: row.runId,
+        call_id: row.callId,
+        trigger_account_id: row.triggerAccountId,
+        description: row.description,
+        command: row.command,
+        sid: null,
+        output_path: row.outputPath,
+        started_at: row.startedAt,
+        deadline_at: row.deadlineAt,
+        sandbox_created_at: null,
+        launch_state: "pending",
+        operation_id: row.operationId,
+        working_root: row.workingRoot,
+        retain_until: row.retainUntil,
+      })
+      .returningAll()
+      .executeTakeFirstOrThrow();
+    return { kind: "reserved", row: toRow(inserted) };
+  }
+
+  /**
+   * Fails a managed reservation that provably never dispatched (`pending`): `failed`, `terminal`,
+   * when `executionId` is still the run's current execution claim.
+   * A dispatched row is never failed here: a null reference is no proof that nothing launched.
+   */
+  async failManagedPreEffect(id: string, reason: string, executionId: string): Promise<boolean> {
+    const r = await this.db
+      .updateTable("background_tasks")
+      .set({
+        status: "failed",
+        launch_state: "terminal",
+        finished_at: sql<Date>`now()`,
+        lost_reason: reason,
+        stopping_at: null,
+      })
+      .where("id", "=", id)
+      .where("status", "=", "running")
+      .where("launch_state", "=", "pending")
+      // only the run's current execution claim settles it: a stale one never fails the retry
+      .where(({ exists, selectFrom }) =>
+        exists(
+          selectFrom("runs")
+            .select("runs.id")
+            .whereRef("runs.id", "=", "background_tasks.run_id")
+            .where("runs.execution_id", "=", executionId),
+        ),
+      )
+      .executeTakeFirst();
+    return Number(r.numUpdatedRows) > 0;
   }
 
   /**
@@ -161,6 +318,7 @@ export class BackgroundTaskStore {
       .where("id", "=", id)
       .where("status", "=", "running")
       .where("sid", "is", null)
+      .where("launch_state", "=", "legacy")
       .returning("stopping_at")
       .executeTakeFirst();
     if (!r) return false;
@@ -224,6 +382,8 @@ export class BackgroundTaskStore {
       .where("status", "=", "running")
       // only a reservation that never started: a row with its sid is tracked by the poller
       .where("sid", "is", null)
+      // a managed row settles through its durable launch state only
+      .where("launch_state", "=", "legacy")
       .execute();
   }
 
@@ -247,9 +407,14 @@ export class BackgroundTaskStore {
         finished_at: sql<Date>`now()`,
         lost_reason: "launch_abandoned",
         stopping_at: null,
+        // a managed reservation that never dispatched settles; dispatch is conditional on
+        // `pending`, so a launch racing this update either wins or is refused before effects
+        launch_state: sql<BackgroundLaunchState>`CASE WHEN launch_state = 'pending' THEN 'terminal' ELSE launch_state END`,
       })
       .where("status", "=", "running")
       .where("sid", "is", null)
+      // never a dispatched, acknowledged or cancel-pending managed task
+      .where("launch_state", "in", ["legacy", "pending"])
       .where(unclaimed)
       .where("started_at", "<", before)
       .returning(["id", "conversation_id", "sandbox_conversation_id"])
@@ -261,10 +426,18 @@ export class BackgroundTaskStore {
     }));
   }
 
-  async insert(row: BackgroundTaskInsert): Promise<void> {
+  /**
+   * Inserts a legacy row. `legacyDispatch` (0157) defaults to `unknown`: a row is "never
+   * dispatched" only when its reservation says so.
+   */
+  async insert(
+    row: BackgroundTaskInsert,
+    legacyDispatch: "unknown" | "reserved" = "unknown",
+  ): Promise<void> {
     await this.db
       .insertInto("background_tasks")
       .values({
+        legacy_dispatch: legacyDispatch,
         id: row.id,
         org_id: row.orgId,
         conversation_id: row.conversationId,
@@ -281,6 +454,30 @@ export class BackgroundTaskStore {
         deadline_at: row.deadlineAt,
         sandbox_created_at: row.sandboxCreatedAt,
       })
+      .execute();
+  }
+
+  /** The managed task launched by start operation `operationId`, if its row still exists. */
+  async byOperation(operationId: string): Promise<BackgroundTaskRow | undefined> {
+    const r = await this.db
+      .selectFrom("background_tasks")
+      .selectAll()
+      .where("operation_id", "=", operationId)
+      .executeTakeFirst();
+    return r === undefined ? undefined : toRow(r);
+  }
+
+  /**
+   * A finished managed task whose owed cancellation was later established by its exact ref (the
+   * revoke worker): its record becomes `terminal`. Its finish and event stay as they were.
+   */
+  async settleOwedCancel(id: string): Promise<void> {
+    await this.db
+      .updateTable("background_tasks")
+      .set({ launch_state: "terminal" })
+      .where("id", "=", id)
+      .where("status", "<>", "running")
+      .where("launch_state", "=", "cancel-pending")
       .execute();
   }
 
@@ -322,6 +519,83 @@ export class BackgroundTaskStore {
       .orderBy("id", "asc")
       .execute();
     return rows.map(toRow);
+  }
+
+  /**
+   * Every running acknowledged managed task with no live stop claim, oldest first: what the
+   * poller checks by exact status.
+   */
+  async runningManaged(): Promise<BackgroundTaskRow[]> {
+    const rows = await this.db
+      .selectFrom("background_tasks")
+      .selectAll()
+      .where("status", "=", "running")
+      .where("launch_state", "=", "acknowledged")
+      .where("execution_ref", "is not", null)
+      .where(unclaimed)
+      .orderBy("started_at", "asc")
+      .orderBy("id", "asc")
+      .execute();
+    return rows.map(toRow);
+  }
+
+  /**
+   * The running managed tasks that owe an exact stop (`cancel-pending` with a ref, no live stop
+   * claim), least recently attempted first. A task whose recorded instance is suspended is left
+   * out: a stop never resumes it, so it cannot progress there.
+   */
+  async owedCancels(): Promise<BackgroundTaskRow[]> {
+    const rows = await this.db
+      .selectFrom("background_tasks")
+      .selectAll("background_tasks")
+      .leftJoin("device_instances", "device_instances.device_id", "background_tasks.device_id")
+      .where("background_tasks.status", "=", "running")
+      .where("background_tasks.launch_state", "=", "cancel-pending")
+      .where("background_tasks.execution_ref", "is not", null)
+      .where(
+        sql<boolean>`(background_tasks.stopping_at IS NULL OR background_tasks.stopping_at < now() - ${STOP_CLAIM_TTL_MS}::integer * interval '1 millisecond')`,
+      )
+      .where(
+        sql<boolean>`NOT (device_instances.status IS NOT DISTINCT FROM 'suspended' AND floor(extract(epoch from device_instances.created_at) * 1000)::bigint::text = background_tasks.instance_generation)`,
+      )
+      .orderBy(sql`background_tasks.cancel_attempted_at ASC NULLS FIRST`)
+      .orderBy("background_tasks.started_at", "asc")
+      .orderBy("background_tasks.id", "asc")
+      .execute();
+    return rows.map(toRow);
+  }
+
+  /** Records that an exact stop of the task is being attempted now (its owed-stop turn moves back). */
+  async noteCancelAttempt(id: string): Promise<void> {
+    await this.db
+      .updateTable("background_tasks")
+      .set({ cancel_attempted_at: sql<Date>`now()` })
+      .where("id", "=", id)
+      .execute();
+  }
+
+  /**
+   * Records who asked for a running managed task's stop (the first asker is kept) and when. With
+   * `release` (the stop could not settle now: the provider recorded a pending cancellation, or the
+   * instance is not reachable) an acknowledged task becomes `cancel-pending` and the stop's claim
+   * is given up, so the poller owes the exact stop; without, the claim stays (a task without its
+   * ref yet: the dispatch binding or the acknowledgement turns the claim into the owed cancel).
+   */
+  async requestCancel(id: string, by: CancelRequester | null, release: boolean): Promise<void> {
+    await this.db
+      .updateTable("background_tasks")
+      .set({
+        cancel_requested_by: sql<CancelRequester | null>`COALESCE(cancel_requested_by, ${by}::text)`,
+        cancel_requested_at: sql<Date>`COALESCE(cancel_requested_at, now())`,
+        ...(release && {
+          stopping_at: null,
+          launch_state: sql<BackgroundLaunchState>`CASE WHEN launch_state = 'acknowledged' THEN 'cancel-pending' ELSE launch_state END`,
+        }),
+      })
+      .where("id", "=", id)
+      .where("status", "=", "running")
+      .where("launch_state", "<>", "legacy")
+      .execute();
   }
 
   /** The running tasks one conversation owns (not those of its sub-agents), oldest first. */
@@ -403,7 +677,7 @@ export class BackgroundTaskStore {
       lostReason?: string;
       killPending?: boolean;
     },
-    opts: { unclaimed?: boolean } = {},
+    opts: { unclaimed?: boolean; managed?: "terminal" | "cancel-pending" } = {},
   ): Promise<boolean> {
     let q = this.db
       .updateTable("background_tasks")
@@ -414,6 +688,11 @@ export class BackgroundTaskStore {
         lost_reason: to.lostReason ?? null,
         stopping_at: null,
         ...(to.killPending !== undefined && { kill_pending: to.killPending }),
+        // a managed task's settlement: `terminal` only on verified evidence; an uncertain end
+        // (lost) keeps its owed cancellation record
+        ...(opts.managed !== undefined && {
+          launch_state: sql<BackgroundLaunchState>`CASE WHEN launch_state = 'legacy' THEN 'legacy' ELSE ${opts.managed} END`,
+        }),
       })
       .where("id", "=", id)
       .where("status", "=", "running");
@@ -456,11 +735,16 @@ export class BackgroundTaskStore {
       .execute();
   }
 
-  /** Deletes finished tasks that ended before `before`; a running one is never deleted. */
+  /**
+   * Deletes finished tasks that ended before `before`; a running one is never deleted, nor a
+   * managed record whose launch or cancellation is still uncertain (only `legacy` and settled
+   * `terminal` rows go).
+   */
   async pruneFinished(before: Date): Promise<number> {
     const r = await this.db
       .deleteFrom("background_tasks")
       .where("status", "<>", "running")
+      .where("launch_state", "in", ["legacy", "terminal"])
       .where("finished_at", "<", before)
       .executeTakeFirst();
     return Number(r.numDeletedRows);

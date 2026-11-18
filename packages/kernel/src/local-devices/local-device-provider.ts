@@ -6,11 +6,28 @@ import type {
   SandboxProvider,
   SandboxRoots,
 } from "@capybara-hq/plugin-sdk";
-import { Inject, Injectable } from "@nestjs/common";
+import {
+  type BackgroundReadOutputResultV3,
+  type DeviceOperationV3,
+  parseDeviceFrameV3,
+  parseOperationResultV3,
+  parseSandboxBrowseScope,
+  parseSandboxOperationScope,
+  parseSandboxPreparationScope,
+  type SandboxBackground,
+  type SandboxBrowse,
+  type SandboxOperation,
+  type SandboxPermissionSupport,
+  SandboxPermissionUnsupportedError,
+  type SandboxPreparation,
+} from "@capybara-hq/plugin-sdk";
+import { Inject, Injectable, Optional } from "@nestjs/common";
+import { projectsUnsupported } from "../devices/errors.js";
 import { ApiError } from "../errors.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
+import { PermissionCallGrants } from "../sandbox/permission-call-grants.js";
 import { deviceNotFound, SandboxService } from "../sandbox/sandbox.service.js";
 import { grantsWithin, NetworkGrants, relayer } from "./network-grants.js";
 import { deviceOffline, LocalDeviceRelay } from "./relay.js";
@@ -28,23 +45,13 @@ export const OP_DEADLINE_MS = 30_000;
  */
 export const FRAME_ENVELOPE_BYTES = 64 * 1024;
 
+export { projectsUnsupported } from "../devices/errors.js";
+
 /** The most raw bytes whose base64 plus {@link FRAME_ENVELOPE_BYTES} fit in `maxFrameBytes`. */
 export const maxReadBytes = (maxFrameBytes: number): number =>
   Math.max(0, Math.floor((maxFrameBytes - FRAME_ENVELOPE_BYTES) / 4) * 3);
 
 const NAME_PREFIX = "cap-device-";
-
-/**
- * The device offers no projects (project root §4.1): a local machine whose `capybara-device`
- * does not announce `projects`, or a cloud provider without `list` / `scan`.
- */
-export const projectsUnsupported = (local: boolean): ApiError =>
-  new ApiError(
-    "device.projects_unsupported",
-    local
-      ? "This device's capybara-device does not support projects; update capybara-device on that machine and reconnect it."
-      : "This device's sandbox provider does not support projects; its conversations work without one.",
-  );
 
 /**
  * The refusal of a command on a machine whose local policy is auto mode while the organization (or
@@ -53,6 +60,33 @@ export const projectsUnsupported = (local: boolean): ApiError =>
  */
 export const AUTO_MODE_NOT_ALLOWED_TEXT =
   "This device's machine runs in auto mode, which your organization does not allow. Run `capybara-device mode sandbox` on that machine to switch it to sandbox mode.";
+
+/**
+ * A raw protocol 2 method on the staged provider: refused before anything is queued (a v3
+ * machine runs work only under an admitted operation scope; there is no raw fallback).
+ */
+const refuseRaw =
+  (method: string) =>
+  async (..._args: unknown[]): Promise<never> => {
+    throw new SandboxPermissionUnsupportedError(
+      `${method} without an operation scope is not available on a protocol 3 device; run it through an admitted operation scope`,
+    );
+  };
+
+/** What the staged provider sends through: the relay's protocol 3 call and the attested support. */
+export interface StagedDeviceTransport {
+  call(
+    deviceId: string,
+    op: DeviceOperationV3,
+    args: Record<string, unknown>,
+    opts: {
+      deadlineMs: number;
+      signal: AbortSignal;
+      connection?: { connectionId: string; maxFrameBytes: number };
+    },
+  ): Promise<unknown>;
+  permissionSupport(deviceId: string, signal: AbortSignal): Promise<SandboxPermissionSupport>;
+}
 
 /**
  * The handle of an instance on a machine: the device id (ruling R1: the relay is keyed by
@@ -101,7 +135,294 @@ export class LocalDeviceProvider implements SandboxProvider {
     @Inject(NetworkGrants)
     private readonly grants: Pick<NetworkGrants, "forExec" | "reportedMode">,
     @Inject(KERNEL_LOGGER) private readonly log: Pick<KernelLogger, "warn">,
+    @Optional() @Inject(PermissionCallGrants) private readonly callGrants?: PermissionCallGrants,
   ) {}
+
+  /**
+   * The `@local` provider as the staged (protocol 3) registration hands it out
+   * (`LocalDevicesModule`): the protocol 2 lifecycle methods that send no frame (file system,
+   * resume, suspend, destroy), the v3 operation adapter ({@link stagedOperations}), `create` as a
+   * protocol 3 request, no raw protocol 2 call and no broad kill. Dormant until the protocol gate
+   * selects it.
+   *
+   * The raw methods (`exec`, `readFile`, `writeFile`, `stat`, `list`, `scan`) refuse before
+   * anything is queued: a v3 machine runs work only under an admitted operation scope, and
+   * missing operation support never falls back to them.
+   *
+   * A v3 machine has no `killAll` / `killTagged` (permission runtime cutover B-1), so both are
+   * no-ops that queue nothing. What reaches the machine instead is only what the kernel revokes
+   * exactly (`revokeOperation` per intent): `SandboxService` calls `OperationIntents.revokeHolders`
+   * with the crashed holders' tokens before `killTagged` and before `killLeftovers`' `killAll`, and
+   * that revokes those holders' admitted, dispatching and started-or-unknown intents only. Not
+   * covered today: the `killAll` after a failed limits change on a resumed instance and the one
+   * in `quarantine` (unreachable for `@local`) revoke nothing first; `killLeftovers` revokes only
+   * the dead tokens, not the started-or-unknown intents of live holders of the instance; and
+   * tokens `claimDeadHolders` already deleted are lost when `revokeHolders` then throws. Revoking
+   * every started-or-unknown intent of the generation on a v3 resume is W5-P3a's kernel change.
+   */
+  staged(transport: StagedDeviceTransport): SandboxProvider {
+    const ops = this.stagedOperations(transport);
+    const overrides: Partial<SandboxProvider> = {
+      ...ops,
+      create: async (args) => {
+        const id = args.fileSystem.id;
+        const r = parseOperationResultV3(
+          "create",
+          await transport.call(
+            id,
+            "create",
+            { limits: args.limits },
+            { deadlineMs: OP_DEADLINE_MS, signal: args.signal },
+          ),
+        ) as { roots: SandboxRoots };
+        return { id, roots: r.roots, limits: args.limits } satisfies LocalDeviceHandle;
+      },
+      exec: refuseRaw("exec"),
+      readFile: refuseRaw("readFile"),
+      writeFile: refuseRaw("writeFile"),
+      stat: refuseRaw("stat"),
+      list: refuseRaw("list"),
+      scan: refuseRaw("scan"),
+      killAll: async (_h, signal) => {
+        signal.throwIfAborted();
+      },
+      killTagged: async (_h, _tags, signal) => {
+        signal.throwIfAborted();
+      },
+    };
+    // the shared lifecycle methods keep this provider as their receiver (relay, targets, config)
+    return Object.assign(Object.create(this) as SandboxProvider, overrides);
+  }
+
+  /** Dormant v3 adapter. It is not installed on the active v2 registered provider. */
+  stagedOperations(
+    transport: StagedDeviceTransport,
+  ): Required<
+    Pick<
+      SandboxProvider,
+      "operation" | "prepare" | "browse" | "permissionSupport" | "revokeOperation" | "background"
+    >
+  > {
+    const native = (
+      h: SandboxHandle,
+      scope: unknown,
+      prefix: "" | "prepare" | "browse",
+      factorySignal: AbortSignal,
+    ): Required<SandboxOperation> => {
+      const send = async (
+        op: string,
+        args: Record<string, unknown>,
+        signal: AbortSignal,
+      ): Promise<unknown> => {
+        const name = (
+          prefix ? prefix + op.charAt(0).toUpperCase() + op.slice(1) : op
+        ) as DeviceOperationV3;
+        const result = await transport.call(
+          h.id,
+          name,
+          { scope, ...args },
+          { deadlineMs: OP_DEADLINE_MS, signal: AbortSignal.any([factorySignal, signal]) },
+        );
+        return parseOperationResultV3(name, result);
+      };
+      return {
+        exec: async () => {
+          throw new Error("Execution requires its request-bound authority adapter");
+        },
+        readFile: async (path, opts) => {
+          const r = (await send(
+            "readFile",
+            {
+              path,
+              maxBytes: Math.min(
+                opts.maxBytes,
+                maxReadBytes(this.config.get().devices.local.maxFrameBytes),
+              ),
+            },
+            opts.signal,
+          )) as { dataB64: string; truncated: boolean } | null;
+          return r === null ? null : { data: bytesOf(r.dataB64), truncated: r.truncated };
+        },
+        writeFile: async (path, data, signal) => {
+          await send("writeFile", { path, dataB64: Buffer.from(data).toString("base64") }, signal);
+        },
+        stat: async (path, signal) =>
+          (await send("stat", { path }, signal)) as Awaited<ReturnType<SandboxOperation["stat"]>>,
+        list: async (path, opts) =>
+          (await send("list", { path, limit: opts.limit }, opts.signal)) as Awaited<
+            ReturnType<NonNullable<SandboxOperation["list"]>>
+          >,
+        scan: async (base, opts) =>
+          (await send("scan", { base }, opts.signal)) as Awaited<
+            ReturnType<NonNullable<SandboxOperation["scan"]>>
+          >,
+      };
+    };
+    const execArgs = async (
+      deviceId: string,
+      scope: import("@capybara-hq/plugin-sdk").SandboxOperationScope,
+      method: "exec" | "backgroundStart",
+      input: unknown,
+    ) => {
+      const orgId = await this.targets.orgOf(deviceId);
+      if (orgId === null) throw deviceNotFound();
+      const policy = await this.sandbox.devicePolicy({ orgId, deviceId });
+      const limits = await this.sandbox.deviceLimits(
+        { orgId, deviceId },
+        { policy, source: "local" },
+      );
+      if (!this.callGrants)
+        throw new Error(
+          "Admitted execution authority is unavailable; check the device operation configuration",
+        );
+      const original = await this.callGrants.forExecution(
+        scope.operationId,
+        deviceId,
+        method,
+        scope,
+        input,
+      );
+      const grants = grantsWithin(original, limits);
+      if (original?.hosts.some((host) => !grants?.hosts.includes(host)))
+        throw new Error(
+          "Current organization limits refuse the admitted explicit hosts; review the operation again",
+        );
+      return { limits, ...(grants === undefined ? {} : { grants }) };
+    };
+    const background: SandboxBackground = {
+      start: async (h, input, args) => {
+        const scope = parseSandboxOperationScope(input);
+        const { signal, ...rest } = args;
+        const authority = await execArgs(h.id, scope, "backgroundStart", rest);
+        signal.throwIfAborted();
+        return parseOperationResultV3(
+          "backgroundStart",
+          await transport.call(
+            h.id,
+            "backgroundStart",
+            { scope, ...rest, ...authority },
+            { deadlineMs: args.timeoutMs + EXEC_DEADLINE_MARGIN_MS, signal },
+          ),
+        ) as Awaited<ReturnType<SandboxBackground["start"]>>;
+      },
+      status: async (h, ref, signal) =>
+        parseOperationResultV3(
+          "backgroundStatus",
+          await transport.call(
+            h.id,
+            "backgroundStatus",
+            { ref },
+            { deadlineMs: OP_DEADLINE_MS, signal },
+          ),
+        ) as Awaited<ReturnType<SandboxBackground["status"]>>,
+      readOutput: async (h, ref, opts) => {
+        opts.signal.throwIfAborted();
+        parseDeviceFrameV3(
+          JSON.stringify({
+            type: "req",
+            id: "validate",
+            op: "backgroundReadOutput",
+            args: { ref, offset: opts.offset, maxBytes: opts.maxBytes },
+            deadlineMs: OP_DEADLINE_MS,
+          }),
+          "kernel",
+        );
+        // liveness first (R27): a deleted or revoked device keeps its typed error
+        const connection = await this.relay.connection(h.id);
+        const capacity = Math.min(65536, maxReadBytes(connection.maxFrameBytes));
+        const request = { ref, offset: opts.offset, maxBytes: Math.min(opts.maxBytes, capacity) };
+        const result = parseOperationResultV3(
+          "backgroundReadOutput",
+          await transport.call(h.id, "backgroundReadOutput", request, {
+            deadlineMs: OP_DEADLINE_MS,
+            signal: opts.signal,
+            connection,
+          }),
+          request,
+        ) as BackgroundReadOutputResultV3;
+        if ("unavailable" in result) return result;
+        // A zero-capacity probe can establish EOF, but never reports unread bytes as EOF.
+        if (opts.maxBytes > 0 && capacity === 0 && result.totalBytes > opts.offset)
+          throw new Error(
+            "Managed output cannot fit the negotiated transport capacity; increase device and deployment frame limits and retry the same offset",
+          );
+        return {
+          data: bytesOf(result.dataB64),
+          offset: result.offset,
+          nextOffset: result.nextOffset,
+          totalBytes: result.totalBytes,
+        };
+      },
+      tail: async (h, ref, opts) => {
+        const r = parseOperationResultV3(
+          "backgroundTail",
+          await transport.call(
+            h.id,
+            "backgroundTail",
+            { ref, maxBytes: opts.maxBytes },
+            { deadlineMs: OP_DEADLINE_MS, signal: opts.signal },
+          ),
+        ) as { dataB64: string; truncated: boolean } | { unavailable: "lost" | "expired" };
+        return "unavailable" in r ? r : { data: bytesOf(r.dataB64), truncated: r.truncated };
+      },
+      stop: async (h, ref, opts) =>
+        parseOperationResultV3(
+          "backgroundStop",
+          await transport.call(
+            h.id,
+            "backgroundStop",
+            { ref, graceMs: opts.graceMs },
+            { deadlineMs: OP_DEADLINE_MS, signal: opts.signal },
+          ),
+        ) as Awaited<ReturnType<SandboxBackground["stop"]>>,
+    };
+    return {
+      permissionSupport: (h, signal) => transport.permissionSupport(h.id, signal),
+      operation: async (h, input, signal) => {
+        const scope = parseSandboxOperationScope(input);
+        const methods = native(h, scope, "", signal);
+        return {
+          ...methods,
+          exec: async (args) => {
+            const { signal: callSignal, ...rest } = args;
+            const authority = await execArgs(h.id, scope, "exec", rest);
+            const combined = AbortSignal.any([signal, callSignal]);
+            combined.throwIfAborted();
+            return parseOperationResultV3(
+              "exec",
+              await transport.call(
+                h.id,
+                "exec",
+                { scope, ...rest, ...authority },
+                { deadlineMs: args.timeoutMs + EXEC_DEADLINE_MARGIN_MS, signal: combined },
+              ),
+            ) as ExecResult;
+          },
+        };
+      },
+      prepare: async (h, input, signal) => {
+        const n = native(h, parseSandboxPreparationScope(input), "prepare", signal);
+        return {
+          readFile: n.readFile,
+          writeFile: n.writeFile,
+          stat: n.stat,
+        } satisfies SandboxPreparation;
+      },
+      browse: async (h, input, signal) => {
+        const n = native(h, parseSandboxBrowseScope(input), "browse", signal);
+        return { stat: n.stat, list: n.list, scan: n.scan } satisfies SandboxBrowse;
+      },
+      revokeOperation: async (h, ref, signal) => {
+        await transport.call(
+          h.id,
+          "revokeOperation",
+          { ref },
+          { deadlineMs: OP_DEADLINE_MS, signal },
+        );
+      },
+      background,
+    };
+  }
 
   async createFileSystem(args: {
     name: string;

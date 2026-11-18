@@ -21,7 +21,7 @@ import type {
   SubagentView,
   ToolInfo,
 } from "../../lib/conversations";
-import { deviceModeMark, deviceState } from "../../lib/devices";
+import { deviceCeilingMark, deviceState } from "../../lib/devices";
 import type { FileOutput } from "../../lib/files";
 import { myRole, roleAtLeast } from "../../lib/members";
 import { retryOnMountOf } from "../../lib/query/client";
@@ -189,14 +189,15 @@ export function ContextSection({
             name: nameOf(device.data),
             state: te(`state.${deviceState(device.data)}`),
           });
-  const mark = device.data != null ? deviceModeMark(device.data) : null;
+  // whether Full access is available on the device, neutral like every permission choice
+  const mark = device.data != null ? deviceCeilingMark(device.data) : null;
   return (
     <ContextBlock
       ratio={contextPct ?? 0}
       model={model === null ? "—" : model.model}
       {...(deviceText !== undefined ? { sandbox: deviceText } : {})}
       {...(mark !== null
-        ? { sandboxBadge: te(`mark.${mark.kind}`), sandboxBadgeTone: mark.tone }
+        ? { sandboxBadge: te(`ceiling.mark.${mark}`), sandboxBadgeTone: "default" as const }
         : {})}
       connectors={connectorsUsed(events, nameOfSlug)}
       {...(lastRun !== undefined ? { lastRun } : {})}

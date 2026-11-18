@@ -28,6 +28,7 @@ import {
   type SubagentMessagesHooks,
 } from "./runtime/subagents/messages.js";
 import { SANDBOX_LEASE_TIMINGS, type SandboxLeaseTimings } from "./sandbox/leases.js";
+import { PERMISSION_CONTEXT_ACTIVATION } from "./sandbox/permission-context-types.js";
 import { SETUP_CHECK_TIMEOUT } from "./setup/setup-checks.service.js";
 import { TOOL_PIPELINE_HOOKS, type ToolPipelineHooks } from "./tools/pipeline.js";
 import { EMBED_TOKEN_CLOCK } from "./ui/embed-token.js";
@@ -64,7 +65,10 @@ import { EMBED_TOKEN_CLOCK } from "./ui/embed-token.js";
  * - `SCOPE_ORG_CHUNK_SIZE`: fewer orgs per plugin scope sync chunk job (several chunks in a test);
  * - `EXTENSION_NET_SEAMS`: `ctx.net`'s DNS and dispatcher (a hostname resolving to a private address
  *   served by a loopback fake);
- * - `APP_INTERCEPTOR`: one more global interceptor (a probe of the matched routes).
+ * - `APP_INTERCEPTOR`: one more global interceptor (a probe of the matched routes);
+ * - `PERMISSION_CONTEXT_ACTIVATION`: turns the dormant recorded permission context producers on
+ *   (the request boundary and the managed device context writer) before their paired activation
+ *   flips the production default.
  */
 interface KernelSeams {
   [AGENT_LOOP_FACTORY]: AgentLoopFactory;
@@ -94,6 +98,7 @@ interface KernelSeams {
   [DEVICE_POLICY_AFTER_CALL]: (opId: string) => void;
   [EXTENSION_NET_SEAMS]: ExtensionNetSeams;
   [APP_INTERCEPTOR]: NestInterceptor;
+  [PERMISSION_CONTEXT_ACTIVATION]: boolean;
 }
 
 /**
@@ -134,6 +139,7 @@ const SEAM_TOKENS = [
   DEVICE_POLICY_AFTER_CALL,
   EXTENSION_NET_SEAMS,
   APP_INTERCEPTOR,
+  PERMISSION_CONTEXT_ACTIVATION,
 ] as const satisfies readonly (keyof KernelSeams)[];
 
 /** Compiles only while {@link SEAM_TOKENS} lists every key of {@link KernelSeams}. */

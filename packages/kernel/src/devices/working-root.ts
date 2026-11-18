@@ -45,7 +45,12 @@ const isInside = (path: string, dir: string): boolean =>
  */
 export function workingRootOf(
   project: WorkingProject | null | undefined,
-  device: { mode: SandboxMode; workspace: string; home?: string | null },
+  device: {
+    mode: SandboxMode;
+    workspace: string;
+    home?: string | null;
+    reach?: "workspace" | "os-user" | undefined;
+  },
 ): string {
   if (project == null || project.unavailable) return device.workspace;
   const root =
@@ -53,9 +58,21 @@ export function workingRootOf(
       ? project.root.slice(0, -1)
       : project.root;
   if (validateSandboxPathShape(root).length > 0) return device.workspace;
-  if (device.mode !== "auto" && !isInside(root, device.workspace)) return device.workspace;
+  // B2: a root outside the workspace needs the wider restricted reach (`reach`, given apart from
+  // the Full mode); without it, the protocol 2 encoding (`mode: auto` was that reach)
+  const wide = device.reach !== undefined ? device.reach === "os-user" : device.mode === "auto";
+  if (!wide && !isInside(root, device.workspace)) return device.workspace;
   if (aboveHome(root, device.home)) return device.workspace;
   return root;
+}
+
+/**
+ * A root in the one form two roots are compared in (B-18): POSIX-normalized (`.` and doubled `/`
+ * segments dropped) and without a trailing slash, `/` itself kept.
+ */
+export function canonicalRoot(root: string): string {
+  const n = posix.normalize(root);
+  return n.length > 1 && n.endsWith("/") ? n.slice(0, -1) : n;
 }
 
 /**

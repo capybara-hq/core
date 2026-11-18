@@ -6,13 +6,22 @@ import type { BackgroundLaunchLock } from "../../src/background/launch-lock.js";
 import { BackgroundTaskStore } from "../../src/background/store.js";
 import type { KernelConfig } from "../../src/config/schema.js";
 import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
+import { DeviceAccess } from "../../src/devices/access.js";
+import type { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
 import { KernelDb } from "../../src/infra/database/kernel-db.js";
 import type { TransactionHost } from "../../src/infra/database/transaction-host.js";
 import { LockService } from "../../src/infra/lock/lock.service.js";
 import type { KernelLogger } from "../../src/log.js";
+import type { CloudPermissionSnapshots } from "../../src/sandbox/cloud-permission-snapshot.js";
 import { SandboxLeases } from "../../src/sandbox/leases.js";
+import type { LegacyRetirementStore } from "../../src/sandbox/legacy-retirement.js";
+import type { SandboxOperationAuthority } from "../../src/sandbox/operation-authority.js";
+import type { SandboxOperationIntents } from "../../src/sandbox/operation-intents.js";
+import { PermissionFacts } from "../../src/sandbox/permission-facts.js";
+import type { SandboxProviders } from "../../src/sandbox/providers.js";
 import { LOCAL_PROVIDER, type SandboxProviderEntry } from "../../src/sandbox/providers.js";
 import { SandboxService } from "../../src/sandbox/sandbox.service.js";
+import { instanceWritesFor, retirementFor } from "./identity.js";
 
 /** A kernel logger over a test's partial logger (the missing levels are dropped). */
 function kernelLog(log: Partial<Pick<Logger, "info" | "warn" | "error">>): KernelLogger {
@@ -69,6 +78,10 @@ export interface SandboxServiceDeps {
   leases?: SandboxLeases;
   /** The background task store (default: one over `db`; the sandbox service opens no transaction). */
   background?: Pick<BackgroundTaskStore, "pendingKills" | "clearKill">;
+  /** The retirement obligations (8.5; default: the real store over `db`). */
+  retirement?: LegacyRetirementStore;
+  /** The cloud snapshot reconcile (B-12; default: every device already reconciled). */
+  snapshots?: Pick<CloudPermissionSnapshots, "reconcileHeld">;
 }
 
 /** A {@link SandboxService} over a test's own database, Redis and provider. */
@@ -81,26 +94,29 @@ export function sandboxServiceFor(d: SandboxServiceDeps): SandboxService {
       ...(d.lockTtlMs !== undefined && { ttlMs: d.lockTtlMs }),
       ...(d.lockPollMs !== undefined && { pollMs: d.lockPollMs }),
     });
+  const db = kernelDbOver(d.db);
+  const providers: Pick<SandboxProviders, "cloud" | "forName"> = {
+    cloud: d.provider,
+    forName: (plugin) => {
+      const own = d.internal?.find((e) => e.plugin === plugin);
+      if (own) return own;
+      const impl = d.lookup?.(plugin);
+      return impl ? { plugin, impl } : undefined;
+    },
+  };
+  const config: Pick<KernelConfigService, "get" | "fieldSource"> = {
+    get: () => d.config() as KernelConfig,
+    fieldSource: (path: string) =>
+      path === "devices.fullAccess" && d.config().devices.fullAccess !== undefined
+        ? ("file" as const)
+        : undefined,
+  };
   return new SandboxService(
     kernelDbOver(d.db),
     d.redis,
     leases,
-    {
-      cloud: d.provider,
-      forName: (plugin) => {
-        const own = d.internal?.find((e) => e.plugin === plugin);
-        if (own) return own;
-        const impl = d.lookup?.(plugin);
-        return impl ? { plugin, impl } : undefined;
-      },
-    },
-    {
-      get: () => d.config() as KernelConfig,
-      fieldSource: (path: string) =>
-        path === "devices.autoMode" && d.config().devices.autoMode !== undefined
-          ? ("file" as const)
-          : undefined,
-    },
+    providers,
+    config,
     kernelLog(d.log),
     d.background ??
       new BackgroundTaskStore(
@@ -109,6 +125,12 @@ export function sandboxServiceFor(d: SandboxServiceDeps): SandboxService {
         // the sandbox service never reserves a launch
         {} as BackgroundLaunchLock,
       ),
+    new PermissionFacts(db, config, providers, new DeviceAccess(db, providers)),
+    { revokeHolders: async () => {} } as unknown as SandboxOperationIntents,
+    {} as SandboxOperationAuthority,
+    instanceWritesFor(d.db),
+    d.retirement ?? retirementFor(d.db),
+    d.snapshots ?? { reconcileHeld: async () => ({ state: "existing" }) },
   );
 }
 

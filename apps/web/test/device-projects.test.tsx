@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import zh from "../messages/zh.json";
+import { keys } from "../src/lib/query/keys";
 import { bodyOf, type Call, json, lastStubRoutes, stubApi } from "./support/api";
 import { resetNavigation } from "./support/navigation";
 import { renderRouteEmptyCache, renderRouteWithCache } from "./support/query";
@@ -32,6 +33,8 @@ const mode = (over: Record<string, unknown> = {}) => ({
   network: { kind: "open-public", hosts: [], source: "org" },
   local: null,
   sandboxNetwork: { kind: "open-public", hosts: [] },
+  fullNetwork: { kind: "open-public", hosts: [] },
+  outerNetwork: null,
   pendingNextUse: false,
   pendingFilesReset: false,
   recent: [],
@@ -424,6 +427,45 @@ describe("the settings tab's projects", () => {
     await vi.waitFor(() =>
       expect(within(screen.getByRole("region", { name: P.title })).queryByText("api")).toBeNull(),
     );
+  });
+
+  it("adding and removing invalidate the device's permission previews, never the suggestions", async () => {
+    const calls = stubApi({
+      ...routes(cloud()),
+      [`GET ${PROJECTS}/candidates`]: () =>
+        json(200, { candidates: [], mode: "sandbox", base: "/workspace", supported: true }),
+      [`POST ${PROJECTS}`]: () => json(201, { project: project("app", "/workspace/src/app") }),
+      [`DELETE ${PROJECTS}/api`]: () => new Response(null, { status: 204 }),
+    });
+    const { client } = await renderDetail();
+    const k = keys.org("o1");
+    // a preview of each project and of the device itself, cached by the composer
+    const previews = [k.permissionPreview("e1", "api"), k.permissionPreview("e1")];
+    const other = k.permissionPreview("e2", "api");
+    for (const key of [...previews, other]) client.setQueryData(key, { cached: true });
+    const user = await openSettings();
+    await user.click(
+      within(await projectsSection()).getByRole("button", { name: "Remove project api" }),
+    );
+    const dialog = await screen.findByRole("dialog", { name: "Remove project api?" });
+    await user.click(within(dialog).getByRole("button", { name: P.removeSubmit }));
+    await vi.waitFor(() => expect(calls.some((c) => c.method === "DELETE")).toBe(true));
+    await vi.waitFor(() =>
+      expect(previews.map((key) => client.getQueryState(key)?.isInvalidated)).toEqual([true, true]),
+    );
+    expect(client.getQueryState(other)?.isInvalidated).toBe(false);
+    // the add does the same; the candidates were read once, by the form, never by the add
+    for (const key of previews) client.setQueryData(key, { cached: true });
+    await user.click(within(await projectsSection()).getByRole("button", { name: P.add }));
+    const form = await screen.findByRole("dialog", { name: P.addTitle });
+    await user.type(within(form).getByRole("textbox", { name: P.pathLabel }), "src/app");
+    await user.click(within(form).getByRole("button", { name: P.addSubmit }));
+    await vi.waitFor(() => expect(calls.some((c) => c.method === "POST")).toBe(true));
+    await vi.waitFor(() =>
+      expect(previews.map((key) => client.getQueryState(key)?.isInvalidated)).toEqual([true, true]),
+    );
+    await settle();
+    expect(gets(calls, `${PROJECTS}/candidates`)).toBe(1);
   });
 
   it("a projects read the kernel refuses draws nothing of the section", async () => {

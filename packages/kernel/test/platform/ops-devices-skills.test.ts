@@ -203,7 +203,10 @@ describe("devices", () => {
     for (const mode of [null, "sandbox", "auto"]) {
       expect(rename.safeParse({ deviceId, name: "X", mode }).success).toBe(false);
     }
-    expect(op("devices.rename").omits).toEqual(["mode"]);
+    // B2: nor its owner ceiling (session-only)
+    for (const ownerCeiling of [{ fullAccess: true }, { fullAccess: false }])
+      expect(rename.safeParse({ deviceId, name: "X", ownerCeiling }).success).toBe(false);
+    expect(op("devices.rename").omits).toEqual(["mode", "ownerCeiling", "confirmWidening"]);
   });
 
   it("creates and renames with a card naming the objects, lists and reads, and audits the agent", async () => {
@@ -265,6 +268,30 @@ describe("devices", () => {
       allowedBy: "platform",
       network: { kind: "open-public", source: "platform" },
     });
+  });
+
+  it("a device whose sandbox limits must be established again says why and to rebuild its files", async () => {
+    const ctx = ctxOf(ownerId);
+    const created = (await run("devices.create", { name: "Marked" }, ctx)) as {
+      device: { id: string };
+    };
+    await db
+      .updateTable("devices")
+      .set({ permission_reconcile_required: true })
+      .where("id", "=", created.device.id)
+      .execute();
+    const list = (await run("devices.list", {}, ctx)) as {
+      items: { id: string; state: string; reason?: string; next?: string }[];
+    };
+    const row = list.items.find((e) => e.id === created.device.id);
+    expect(row).toMatchObject({ state: "reconcile_required" });
+    expect(row?.reason).toMatch(/sandbox limits/);
+    expect(row?.next).toMatch(/devices\.reset-files/);
+    const got = (await run("devices.get", { deviceId: created.device.id }, ctx)) as {
+      device: { state: string; next?: string; reconcileRequired: boolean };
+    };
+    expect(got.device).toMatchObject({ state: "reconcile_required", reconcileRequired: true });
+    expect(got.device.next).toMatch(/devices\.reset-files/);
   });
 
   it("denies known failures before the card: taken name, the limit, another person's device", async () => {

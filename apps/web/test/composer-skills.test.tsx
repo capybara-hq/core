@@ -710,7 +710,7 @@ describe("a new conversation", () => {
     resetNavigation("/");
     const calls = api({
       [`GET ${ORG}/conversations/groups`]: () => json(200, { groups: [] }),
-      [`POST ${ORG}/conversations`]: () =>
+      [`POST ${ORG}/conversations/first-message`]: () =>
         json(201, { conversation: CONV().conversation, event: invocation(1) }),
     });
     await renderRouteWithCache("/", {
@@ -726,9 +726,12 @@ describe("a new conversation", () => {
     await user.type(input(), "/");
     await user.click(await screen.findByRole("option", { name: /^\/fix-issue/ }));
     await user.type(input(), "123{Enter}");
-    await vi.waitFor(() => expect(posts(calls, `${ORG}/conversations`)).toHaveLength(1));
+    await vi.waitFor(() =>
+      expect(posts(calls, `${ORG}/conversations/first-message`)).toHaveLength(1),
+    );
     expect(
-      (bodyOf(posts(calls, `${ORG}/conversations`)[0]) as { message: unknown }).message,
+      (bodyOf(posts(calls, `${ORG}/conversations/first-message`)[0]) as { message: unknown })
+        .message,
     ).toMatchObject({ text: "123", skill: { name: "fix-issue" } });
     expect(calls.some((c) => c.url === INVOCABLE)).toBe(true);
     act(() => {});
@@ -743,7 +746,7 @@ describe("a new conversation", () => {
         new Promise<Response>((r) => {
           answer = r;
         }),
-      [`POST ${ORG}/conversations`]: () => new Promise<Response>(() => {}),
+      [`POST ${ORG}/conversations/first-message`]: () => new Promise<Response>(() => {}),
     });
     await renderRouteWithCache("/", {
       [`GET ${ORG}/agents`]: () => json(200, AGENTS),
@@ -766,7 +769,7 @@ describe("a new conversation", () => {
     expect(input()).toHaveProperty("value", "");
     const pending = document.querySelector("[data-pending]") as HTMLElement;
     expect(pending.querySelector('[data-part="bubble-skill"]')?.textContent).toBe("/fix-issue");
-    expect(posts(calls, `${ORG}/conversations`)).toHaveLength(1);
+    expect(posts(calls, `${ORG}/conversations/first-message`)).toHaveLength(1);
   });
 });
 

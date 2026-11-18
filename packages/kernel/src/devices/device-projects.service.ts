@@ -1,44 +1,118 @@
 import { posix } from "node:path";
 import {
-  DEFAULT_SANDBOX_ROOTS,
   DeviceProtocolError,
   isDeviceProjectName,
   isFileSystemGoneError,
   isSandboxGoneError,
+  isSandboxScopeDeniedError,
   MAX_DEVICE_SCAN_RESULTS,
-  rootsOf,
+  type SandboxBrowse,
   type SandboxHandle,
   type SandboxProvider,
   ToolError,
   validateSandboxPathShape,
 } from "@capybara-hq/plugin-sdk";
-import { Inject, Injectable } from "@nestjs/common";
+import { Inject, Injectable, Optional } from "@nestjs/common";
 import { sql } from "kysely";
 import { ApiError } from "../errors.js";
 import { audit } from "../identity/audit.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
-import { TransactionHost } from "../infra/database/transaction-host.js";
+import { TransactionHost, withOrderedLocks } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { projectsUnsupported } from "../local-devices/local-device-provider.js";
-import { deviceFeaturesOf, localModeOf } from "../local-devices/policy-summary.js";
 import { POLICY_REFUSAL_PREFIX } from "../local-devices/relay.js";
 import type { SandboxMode } from "../sandbox/modes.js";
-import { providerForDevice, SandboxProviders } from "../sandbox/providers.js";
+import { PermissionCeilingWrites } from "../sandbox/permission-ceiling-writes.js";
+import {
+  PERMISSION_CONTEXT_ACTIVATION,
+  permissionContextActive,
+} from "../sandbox/permission-context-types.js";
+import { PermissionFacts } from "../sandbox/permission-facts.js";
 import { deviceNotFound, type HeldProvider, SandboxService } from "../sandbox/sandbox.service.js";
 import { SandboxProviderUnreachableError } from "../sandbox/unreachable.js";
 import { DeviceAccess } from "./access.js";
+import {
+  baseOf,
+  clipped,
+  type DeviceProjectScope,
+  homeUnknown,
+  nameInvalid,
+  nameTaken,
+  outsideMode,
+  readModeOf,
+  tooBroad,
+  withinMode,
+} from "./project-rules.js";
 // a path above the owner's home is never stored as a project: the working root would fall back for
 // it anyway (project root §4.3), so both use the one rule; the home itself may be one
 import { aboveHome } from "./working-root.js";
+
+export { type DeviceProjectScope, readModeOf, withinMode } from "./project-rules.js";
 
 /** The most projects one device keeps (project root §4.1). */
 export const MAX_DEVICE_PROJECTS = 100;
 
 /**
  * The holder name the projects service enters a device's sandbox under (`SandboxService`
- * `withSandbox`): it only lists directories, never runs a command, so no conversation holds it.
+ * `withSandbox`) while the activation gate is off: it only lists directories, never runs a
+ * command, so no conversation holds it. Once the gate is on the owner browse route has no holder.
  */
 const PROJECTS_HOLDER = "device-projects";
+
+/**
+ * What the projects service asks a device: list, scan and stat, never file contents. While the
+ * activation gate is off, the held provider of a raw use (the protocol 2 read mode on each list /
+ * scan); once it is on, the owner browse scope (`SandboxService.withBrowse`: owner-authenticated,
+ * no conversation, no Full consent, its roots from the owner's browsing ceiling).
+ */
+interface ProjectReader {
+  /** The workspace root: the held instance's (raw route), the last known one (owner browse). */
+  workspace: string;
+  /** The owner browse route: a scope denial there is the device refusing the path. */
+  browse: boolean;
+  list?: (
+    path: string,
+    limit: number,
+    signal: AbortSignal,
+  ) => ReturnType<NonNullable<SandboxBrowse["list"]>>;
+  scan?: (base: string, signal: AbortSignal) => ReturnType<NonNullable<SandboxBrowse["scan"]>>;
+  stat: (path: string, signal: AbortSignal) => ReturnType<SandboxBrowse["stat"]>;
+}
+
+/** The raw route's reader over a held provider (gate off): the protocol 2 calls, unchanged. */
+function heldReader(
+  scope: DeviceProjectScope,
+  h: SandboxHandle,
+  p: HeldProvider,
+  workspace: string,
+): ProjectReader {
+  const list = p.list;
+  const scan = p.scan;
+  return {
+    workspace,
+    browse: false,
+    ...(list !== undefined && {
+      list: (path: string, limit: number, signal: AbortSignal) =>
+        list.call(p, h, path, { limit, limits: { mode: readModeOf(scope) }, signal }),
+    }),
+    ...(scan !== undefined && {
+      scan: (base: string, signal: AbortSignal) =>
+        scan.call(p, h, base, { limits: { mode: readModeOf(scope) }, signal }),
+    }),
+    stat: (path, signal) => p.stat(h, path, signal),
+  };
+}
+
+/** The owner browse route's reader (gate on): the browse scope's stat / list / scan only. */
+function browseReader(b: SandboxBrowse, workspace: string): ProjectReader {
+  return {
+    workspace,
+    browse: true,
+    list: (path, limit, signal) => b.list(path, { limit, signal }),
+    scan: (base, signal) => b.scan(base, { signal }),
+    stat: (path, signal) => b.stat(path, signal),
+  };
+}
 
 /** A project as the web and the Platform tool see it. */
 export interface DeviceProjectView {
@@ -82,79 +156,7 @@ export interface DeviceProjectCandidates {
   supported: boolean;
 }
 
-/** What a project's scope is read from: the device's mode now and the bases it gives. */
-export interface DeviceProjectScope {
-  source: "cloud" | "local";
-  mode: SandboxMode;
-  /** The workspace root as last known (a machine's hello, a cloud instance's handle). */
-  workspace: string;
-  /** The owner's home a local machine reported; null when unknown (and for a cloud device). */
-  home: string | null;
-  supported: boolean;
-  /**
-   * A machine whose own policy is auto mode while the organization allows only sandbox mode: exec
-   * refuses it (`device.auto_mode_not_allowed`), and the kernel reads nothing on it unasked.
-   */
-  widerThanAllowed: boolean;
-}
-
 type Scope = DeviceProjectScope;
-
-/** Only the owner's home bounds nothing: auto mode on a machine reads what its owner can. */
-const homeBased = (s: Pick<Scope, "source" | "mode">): boolean =>
-  s.source === "local" && s.mode === "auto";
-
-/** The base a relative path is resolved against in the scope's mode (project root §4.2). */
-const baseOf = (s: Scope, workspace: string = s.workspace): string | null =>
-  homeBased(s) ? s.home : workspace;
-
-/**
- * `path` lies inside what the scope's mode may read (sandbox mode and cloud: the workspace, as the
- * held instance reports it when given).
- */
-export const withinMode = (s: Scope, path: string, workspace: string = s.workspace): boolean =>
-  homeBased(s) || path === workspace || path.startsWith(workspace === "/" ? "/" : `${workspace}/`);
-
-/** `path` relative to `base` ("" for the base itself); `path` must lie under it. */
-const relativeTo = (base: string, path: string): string =>
-  path === base ? "" : posix.relative(base, path);
-
-const nameInvalid = (name: string): ApiError =>
-  new ApiError(
-    "device.project_name_invalid",
-    `"${clipped(name)}" is not a valid project name: use 1-64 characters, not . or .., without / or control characters, and without leading or trailing spaces`,
-  );
-const nameTaken = (name: string): ApiError =>
-  new ApiError(
-    "device.project_name_taken",
-    `This device already has a project named "${clipped(name)}"; pick another name`,
-  );
-const projectNotFound = (name: string): ApiError =>
-  new ApiError("device.project_not_found", `This device has no project named "${clipped(name)}"`);
-const outsideMode = (path: string, mode: SandboxMode): ApiError =>
-  new ApiError(
-    "device.project_outside_mode",
-    mode === "sandbox"
-      ? `${clipped(path)} is outside the device's workspace, the only directory it can read in sandbox mode`
-      : `${clipped(path)} is outside the device's workspace, the only directory a cloud device can read`,
-  );
-const tooBroad = (path: string): ApiError =>
-  new ApiError(
-    "device.project_path_too_broad",
-    `${clipped(path)} holds the owner's home directory (or other people's): pick the project's own directory, the home or below it`,
-  );
-
-const homeUnknown = (): ApiError =>
-  new ApiError(
-    "device.project_home_unknown",
-    "In auto mode a project's path is relative to the owner's home directory, which this device has not reported; update capybara-device on that machine and reconnect it",
-  );
-
-/** A device-supplied or person-supplied string inside a message, bounded. */
-function clipped(s: string, max = 200): string {
-  return s.length <= max ? s : `${s.slice(0, max)}…`;
-}
-
 /**
  * A device's projects (project root design §4.1, §4.2, §6): kept in `device_projects`, keyed by the
  * device's id, written only here. Only the device's owner reads or changes them (anyone else gets
@@ -170,11 +172,20 @@ export class DeviceProjectsService {
   constructor(
     @Inject(KernelDb) private readonly db: KernelDb,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
-    @Inject(SandboxProviders)
-    private readonly providers: Pick<SandboxProviders, "cloud" | "forName">,
     @Inject(SandboxService)
-    private readonly sandbox: Pick<SandboxService, "withSandbox" | "devicePolicy">,
+    private readonly sandbox: Pick<
+      SandboxService,
+      "withSandbox" | "withBrowse" | "ensureRunningForOwner"
+    >,
     @Inject(DeviceAccess) private readonly access: Pick<DeviceAccess, "usable">,
+    @Inject(PermissionFacts)
+    private readonly facts: Pick<
+      PermissionFacts,
+      "resolveProjectForBinding" | "projectMatches" | "projectScope"
+    >,
+    @Inject(PermissionCeilingWrites) private readonly ceilings: PermissionCeilingWrites,
+    /** The paired activation gate: once on, every device read is an owner browse. */
+    @Optional() @Inject(PERMISSION_CONTEXT_ACTIVATION) private readonly activation?: boolean,
   ) {}
 
   /** The projects the device's current mode can read; see {@link DeviceProjectList}. */
@@ -217,13 +228,14 @@ export class DeviceProjectsService {
       return { candidates: [], mode: scope.mode, base: baseOf(scope), supported: false };
     }
     if (baseOf(scope) === null) throw homeUnknown();
-    return this.onDevice(orgId, accountId, deviceId, signal, async (h, p, workspace, sig) => {
+    return this.onDevice(orgId, accountId, deviceId, scope, signal, async (r, sig) => {
+      const workspace = r.workspace;
       const base = baseOf(scope, workspace) as string;
-      const scan = p.scan;
+      const scan = r.scan;
       if (scan === undefined) throw projectsUnsupported(false);
       let found: { path: string; suggestedName: string }[];
       try {
-        found = await scan.call(p, h, base, { limits: { mode: scope.mode }, signal: sig });
+        found = await scan(base, sig);
       } catch (e) {
         // the base is the device's own workspace or home: a refusal there is not the person's path
         throw passThrough(e) ?? unavailable(e);
@@ -315,28 +327,40 @@ export class DeviceProjectsService {
       orgId,
       accountId,
       deviceId,
+      scope,
       signal,
-      async (h, p, workspace, sig) => {
-        const path = resolve(scope, workspace, input.path);
+      async (r, sig) => {
+        const path = resolve(scope, r.workspace, input.path);
         const name = input.name ?? posix.basename(path);
         if (!isDeviceProjectName(name)) throw nameInvalid(name);
-        const list = p.list;
+        const list = r.list;
         if (list === undefined) throw projectsUnsupported(false);
         let answer: Awaited<ReturnType<NonNullable<SandboxProvider["list"]>>>;
         try {
-          answer = await list.call(p, h, path, {
-            limit: 1,
-            limits: { mode: scope.mode },
-            signal: sig,
-          });
+          answer = await list(path, 1, sig);
         } catch (e) {
-          throw await listFailure(e, p, h, path, scope.mode, sig);
+          throw await listFailure(e, r, path, scope.mode, sig);
         }
         if (answer === null) throw pathMissing(path);
         return { path, name };
       },
     );
-    return this.insert(orgId, accountId, deviceId, resolved, actorTokenId, auditDetail);
+    return withOrderedLocks(
+      () => this.lockSubject(orgId, accountId, deviceId),
+      () => this.insert(orgId, accountId, deviceId, resolved, actorTokenId, auditDetail),
+    );
+  }
+
+  /**
+   * The owner's live device row, then its permission authority lock: the ordered prelude of the
+   * project writes (`withOrderedLocks`), so inside a run's fence (the Platform tool's
+   * `devices.add-project` / `devices.remove-project`) they follow the org row and precede the
+   * conversation rows. The writes name both again (already held: a re-check).
+   */
+  @Transactional({ propagation: "mandatory" })
+  private async lockSubject(orgId: string, accountId: string, deviceId: string): Promise<void> {
+    await this.lockOwn(orgId, accountId, deviceId);
+    await this.ceilings.lock({ orgId, deviceId }, "device");
   }
 
   /** The insert of {@link add}: the owner's live device locked, the count and the name checked. */
@@ -350,6 +374,7 @@ export class DeviceProjectsService {
     auditDetail: Record<string, unknown> | undefined,
   ): Promise<DeviceProjectView> {
     await this.lockOwn(orgId, accountId, deviceId);
+    await this.ceilings.lock({ orgId, deviceId }, "device");
     const count = await this.db
       .selectFrom("device_projects")
       .select(sql<number>`count(*)::int`.as("n"))
@@ -363,6 +388,7 @@ export class DeviceProjectsService {
       .returning(["name", "path", "created_at"])
       .executeTakeFirst();
     if (row === undefined) throw nameTaken(p.name);
+    await this.ceilings.publishLocked({ orgId, deviceId }, "device", false);
     await audit(this.db.db, {
       actorAccountId: accountId,
       ...(actorTokenId !== undefined && { actorTokenId }),
@@ -375,7 +401,6 @@ export class DeviceProjectsService {
   }
 
   /** Removes a project of the owner's device; removing one that is not there succeeds. */
-  @Transactional()
   async remove(
     orgId: string,
     accountId: string,
@@ -384,7 +409,23 @@ export class DeviceProjectsService {
     actorTokenId?: string,
     auditDetail?: Record<string, unknown>,
   ): Promise<void> {
+    await withOrderedLocks(
+      () => this.lockSubject(orgId, accountId, deviceId),
+      () => this.removeIn(orgId, accountId, deviceId, name, actorTokenId, auditDetail),
+    );
+  }
+
+  @Transactional()
+  private async removeIn(
+    orgId: string,
+    accountId: string,
+    deviceId: string,
+    name: string,
+    actorTokenId: string | undefined,
+    auditDetail: Record<string, unknown> | undefined,
+  ): Promise<void> {
     await this.lockOwn(orgId, accountId, deviceId);
+    await this.ceilings.lock({ orgId, deviceId }, "device");
     const gone = await this.db
       .deleteFrom("device_projects")
       .where("device_id", "=", deviceId)
@@ -392,6 +433,30 @@ export class DeviceProjectsService {
       .returning("path")
       .executeTakeFirst();
     if (gone === undefined) return;
+    const roots = await this.db
+      .selectFrom("conversations")
+      .select("id")
+      .where("device_id", "=", deviceId)
+      .where("project_name", "=", name)
+      .where("project_path", "=", gone.path)
+      .execute();
+    const affected = new Set(roots.map((r) => r.id));
+    await this.ceilings.publishLocked(
+      { orgId, deviceId },
+      "device",
+      (_scope, row) => row.root_conversation_id !== null && affected.has(row.root_conversation_id),
+    );
+    if (affected.size)
+      await this.db
+        .updateTable("conversations")
+        .set((eb) => ({
+          permission_profile: "approve-for-me",
+          permission_consent: null,
+          permission_revision: eb("permission_revision", "+", 1),
+        }))
+        .where("id", "in", [...affected])
+        .where("permission_profile", "=", "full-access")
+        .execute();
     await audit(this.db.db, {
       actorAccountId: accountId,
       ...(actorTokenId !== undefined && { actorTokenId }),
@@ -415,20 +480,7 @@ export class DeviceProjectsService {
     accountId: string,
     name: string,
   ): Promise<{ name: string; path: string }> {
-    const scope = await this.scope(orgId, accountId, deviceId);
-    if (!scope.supported) throw projectsUnsupported(scope.source === "local");
-    const row = await this.db
-      .selectFrom("device_projects")
-      .select(["name", "path"])
-      .where("device_id", "=", deviceId)
-      .where("name", "=", name)
-      .executeTakeFirst();
-    if (row === undefined) throw projectNotFound(name);
-    if (!withinMode(scope, row.path)) throw outsideMode(row.path, scope.mode);
-    // a home reported after the project was added can put it above the home: the working root
-    // would fall back for it, so it is not bound (the add rule, project root §4.3)
-    if (aboveHome(row.path, scope.home)) throw tooBroad(row.path);
-    return { name: row.name, path: row.path };
+    return this.facts.resolveProjectForBinding(orgId, deviceId, accountId, name);
   }
 
   /**
@@ -437,14 +489,7 @@ export class DeviceProjectsService {
    * longer serves the conversations bound to it. Reads only.
    */
   async keeps(deviceId: string, name: string, path: string): Promise<boolean> {
-    const row = await this.db
-      .selectFrom("device_projects")
-      .select("name")
-      .where("device_id", "=", deviceId)
-      .where("name", "=", name)
-      .where("path", "=", path)
-      .executeTakeFirst();
-    return row !== undefined;
+    return this.facts.projectMatches(deviceId, name, path);
   }
 
   /**
@@ -463,69 +508,37 @@ export class DeviceProjectsService {
    * offers projects. Anyone else's device (or a missing one) → `device.not_found`.
    */
   private async scope(orgId: string, accountId: string, deviceId: string): Promise<Scope> {
-    const row = await this.db
-      .selectFrom("devices as e")
-      .leftJoin("device_machines as m", (j) =>
-        j.onRef("m.device_id", "=", "e.id").on("m.revoked_at", "is", null),
-      )
-      .leftJoin("device_instances as i", "i.device_id", "e.id")
-      .select([
-        "e.source",
-        "e.provider",
-        "m.features",
-        "m.local_policy",
-        "m.home",
-        sql<string | null>`m.roots->>'workspace'`.as("machine_workspace"),
-        "i.handle",
-      ])
-      .where("e.id", "=", deviceId)
-      .where("e.org_id", "=", orgId)
-      .where("e.owner_kind", "=", "personal")
-      .where("e.owner_account_id", "=", accountId)
-      .where("e.deleted_at", "is", null)
-      .executeTakeFirst();
-    if (row === undefined) throw deviceNotFound();
-    // `devicePolicy`, not `modeLevel` as the command review reads: a cloud device with a pending
-    // files reset is scoped by the narrower mode it will run at, never the wider one its instance
-    // still has, on purpose (projects are offered for what the device will read; no effect today)
-    const { mode, allowedMode } = await this.sandbox.devicePolicy({ orgId, deviceId });
-    if (row.source === "local") {
-      return {
-        source: "local",
-        mode,
-        widerThanAllowed:
-          allowedMode === "sandbox" && localModeOf(row.features, row.local_policy) === "auto",
-        workspace: row.machine_workspace ?? DEFAULT_SANDBOX_ROOTS.workspace,
-        home: row.home,
-        supported: deviceFeaturesOf(row.features).includes("projects"),
-      };
-    }
-    const impl = providerForDevice(this.providers, row.provider)?.impl;
-    const handle = row.handle as SandboxHandle | null;
-    return {
-      source: "cloud",
-      mode,
-      widerThanAllowed: false,
-      workspace: handle === null ? DEFAULT_SANDBOX_ROOTS.workspace : rootsOf(handle).workspace,
-      home: null,
-      supported: typeof impl?.list === "function" && typeof impl.scan === "function",
-    };
+    return this.facts.projectScope(orgId, accountId, deviceId);
   }
 
   /**
-   * Runs `fn` on the device (`SandboxService.withSandbox`: its instance made or resumed as for a
-   * tool call) with the workspace root its instance reports. Kernel refusals (offline, files lost,
-   * busy, unavailable) stay as they are; anything else becomes a readable
+   * Runs `fn` on the device with a {@link ProjectReader}. While the activation gate is off:
+   * `SandboxService.withSandbox` (its instance made or resumed as for a tool call) with the
+   * workspace root its instance reports. Once it is on: the device started for its owner
+   * (`SandboxService.ensureRunningForOwner`), then the owner browse (`SandboxService.withBrowse`,
+   * as the device's owner, on the instance that runs) with the last known workspace; an instance
+   * that stopped in between is `device.not_running`. Kernel refusals (offline, files lost, busy,
+   * unavailable) stay as they are; anything else becomes a readable
    * `device.projects_unavailable`, never a 500.
    */
   private async onDevice<T>(
     orgId: string,
     accountId: string,
     deviceId: string,
+    scope: DeviceProjectScope,
     signal: AbortSignal,
-    fn: (h: SandboxHandle, p: HeldProvider, workspace: string, signal: AbortSignal) => Promise<T>,
+    fn: (reader: ProjectReader, signal: AbortSignal) => Promise<T>,
   ): Promise<T> {
     try {
+      if (permissionContextActive(this.activation)) {
+        // a stopped device is started for its owner first, as the raw route's use did
+        await this.sandbox.ensureRunningForOwner({ orgId, deviceId, accountId }, signal);
+        return await this.sandbox.withBrowse(
+          { orgId, deviceId, accountId },
+          (b, sig) => fn(browseReader(b, scope.workspace), sig),
+          signal,
+        );
+      }
       return await this.sandbox.withSandbox(
         {
           orgId,
@@ -533,7 +546,7 @@ export class DeviceProjectsService {
           holderConversationId: PROJECTS_HOLDER,
           actor: { accountId, conversationId: PROJECTS_HOLDER },
         },
-        (h, p, info, sig) => fn(h, p, info.roots.workspace, sig),
+        (h, p, info, sig) => fn(heldReader(scope, h, p, info.roots.workspace), sig),
         signal,
       );
     } catch (e) {
@@ -643,8 +656,7 @@ const pathMissing = (path: string): ApiError =>
  */
 async function listFailure(
   e: unknown,
-  p: HeldProvider,
-  h: SandboxHandle,
+  r: ProjectReader,
   path: string,
   mode: SandboxMode,
   signal: AbortSignal,
@@ -652,7 +664,11 @@ async function listFailure(
   const passed = passThrough(e);
   if (passed !== undefined) return passed;
   const why = e instanceof ToolError ? ` (${clipped(e.message)})` : "";
-  if (e instanceof ToolError && e.message.startsWith(POLICY_REFUSAL_PREFIX)) {
+  // the owner browse scope refusing the path is the device refusing it (gate on only)
+  if (
+    (e instanceof ToolError && e.message.startsWith(POLICY_REFUSAL_PREFIX)) ||
+    (r.browse && isSandboxScopeDeniedError(e))
+  ) {
     return new ApiError(
       "device.project_outside_mode",
       `The device refused ${clipped(path)} in ${mode} mode${why}`,
@@ -660,7 +676,7 @@ async function listFailure(
   }
   let st: { size: number; isDir: boolean } | null;
   try {
-    st = await p.stat(h, path, signal);
+    st = await r.stat(path, signal);
   } catch (e2) {
     return passThrough(e2) ?? unavailable(e);
   }
@@ -672,3 +688,6 @@ async function listFailure(
       : `${clipped(path)} is a file, not a directory`,
   );
 }
+
+const relativeTo = (base: string, path: string): string =>
+  path === base ? "" : posix.relative(base, path);

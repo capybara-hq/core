@@ -98,17 +98,17 @@ describe("0089 model kinds and usage", () => {
   });
 });
 
-/** 0146_model_usage_image_kind.sql: the row's call kind and its image count (0145 -> 0146). */
-const FILE_0146 = "0146_model_usage_image_kind.sql";
+/** 0160_model_usage_image_kind.sql: the row's call kind and its image count (0159 -> 0160). */
+const FILE_0160 = "0160_model_usage_image_kind.sql";
 
-describe("0146 model usage kind and output images", () => {
+describe("0160 model usage kind and output images", () => {
   it("existing rows read kind embedding and 0 output images; a rerun is a no-op", async () => {
-    await migrate(pg.url, { schema: "capybara", dir: copyMigrations((f) => f < FILE_0146) });
+    await migrate(pg.url, { schema: "capybara", dir: copyMigrations((f) => f < FILE_0160) });
     await sql`insert into capybara.orgs (id, slug, name) values ('o2', 'o2', 'O')`.execute(db);
     await sql`insert into capybara.model_usage
       (org_id, extension, purpose, provider, model, input_tokens)
       values ('o2', 'memory', 'memory_embed', 'p', 'e', 7)`.execute(db);
-    const upTo = copyMigrations((f) => f <= FILE_0146);
+    const upTo = copyMigrations((f) => f <= FILE_0160);
     await migrate(pg.url, { schema: "capybara", dir: upTo });
     const rows = () =>
       q("select input_tokens, kind, output_images from capybara.model_usage order by input_tokens");
@@ -116,7 +116,7 @@ describe("0146 model usage kind and output images", () => {
     await sql`insert into capybara.model_usage
       (org_id, extension, purpose, provider, model, input_tokens, kind, output_images)
       values ('o2', 'art', 'art.cover', 'p', 'i', 9, 'image_generation', 2)`.execute(db);
-    const text = readFileSync(join(upTo, FILE_0146), "utf8");
+    const text = readFileSync(join(upTo, FILE_0160), "utf8");
     await sql`set search_path to capybara, public`.execute(db);
     await sql.raw(text).execute(db);
     expect(await rows()).toEqual([

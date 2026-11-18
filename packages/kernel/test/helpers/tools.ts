@@ -110,6 +110,9 @@ export function approvalsFor(
       settleIn: async () => {
         throw new Error("DevicePolicyService is not available in this test");
       },
+      lockMachineDevice: async () => {
+        throw new Error("DevicePolicyService is not available in this test");
+      },
       summary: async () => null,
     },
     undefined as never,

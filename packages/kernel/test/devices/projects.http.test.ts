@@ -21,10 +21,13 @@ import {
 } from "../../src/devices/device-projects.service.js";
 import { DevicesService } from "../../src/devices/devices.service.js";
 import { ApiError } from "../../src/errors.js";
+import { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
 import { KernelDb } from "../../src/infra/database/kernel-db.js";
 import { TransactionHost } from "../../src/infra/database/transaction-host.js";
 import { deviceLeaseKey } from "../../src/local-devices/keys.js";
 import { MachinesService } from "../../src/local-devices/machines.js";
+import { PermissionCeilingWrites } from "../../src/sandbox/permission-ceiling-writes.js";
+import { PermissionFacts } from "../../src/sandbox/permission-facts.js";
 import { SandboxProviders } from "../../src/sandbox/providers.js";
 import { SandboxService } from "../../src/sandbox/sandbox.service.js";
 import { legacyDbFor } from "../helpers/conversations.js";
@@ -40,7 +43,7 @@ import {
   type TestKernel,
   waitFor,
 } from "../helpers/runs.js";
-import { FakeMachine, HELLO } from "../local-devices/fake-machine.js";
+import { FakeMachine } from "../local-devices/fake-machine-v3.js";
 import type { Answer } from "../local-devices/test-holder.js";
 
 /**
@@ -212,7 +215,7 @@ async function connect(
   const machine = new FakeMachine(url, d.credential, answer, { hello: false });
   open.push(machine);
   await machine.opened;
-  machine.send({ ...HELLO, ...hello });
+  machine.hello({ ...hello });
   await waitFor(
     async () => (await redis.get(deviceLeaseKey(d.deviceId))) !== null,
     10_000,
@@ -706,16 +709,14 @@ describe("device projects", () => {
       },
     } as unknown as SandboxProvider;
     const real = k.app.get(SandboxProviders);
-    const sandbox = k.app.get(SandboxService);
     const service = new DeviceProjectsService(
       k.app.get(KernelDb),
       txHost,
       {
-        cloud: () => ({ plugin: real.cloud()?.plugin as string, impl }),
-        forName: () => ({ plugin: real.cloud()?.plugin as string, impl }),
-      },
-      {
-        devicePolicy: (dev) => sandbox.devicePolicy(dev),
+        // gate off: the raw route only
+        withBrowse: () => Promise.reject(new Error("no owner browse while the gate is off")),
+        ensureRunningForOwner: () =>
+          Promise.reject(new Error("no owner start while the gate is off")),
         withSandbox: (_ctx, fn, signal) =>
           fn(
             { id },
@@ -725,6 +726,16 @@ describe("device projects", () => {
           ),
       },
       k.app.get(DeviceAccess),
+      new PermissionFacts(
+        k.app.get(KernelDb),
+        k.app.get(KernelConfigService),
+        {
+          cloud: () => ({ plugin: real.cloud()?.plugin as string, impl }),
+          forName: () => ({ plugin: real.cloud()?.plugin as string, impl }),
+        },
+        k.app.get(DeviceAccess),
+      ),
+      k.app.get(PermissionCeilingWrites),
     );
     // its files were made in auto mode with the open network, then the device was narrowed to
     // sandbox mode: the provider fixes limits at its file system, so a files reset is pending and

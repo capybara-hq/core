@@ -76,10 +76,12 @@ import {
   newClientMessageId,
 } from "./ComposerBar";
 import { LeftoverBubbles, PendingBubbles, usePendingSends } from "./PendingBubbles";
+import { useConversationPermission } from "./PermissionPicker";
 import { useDeviceRefresh } from "./PropertiesSections";
 import { useRightAreaSlot } from "./RightArea";
 import { Thread, type ThreadProps } from "./Thread";
 import { type SendResult, useConversation } from "./useConversation";
+import { useRootPermissionSubscription } from "./useRootPermissionSubscription";
 import { lockedDevicePicker, useSelection } from "./useSelection";
 
 /**
@@ -261,6 +263,24 @@ export function useConversationPage(
       onInspect: inspectProject,
     };
   }
+  // The permission profile (owner only; a shared viewer reads and sees nothing): editable on an
+  // interactive root once confirmed, locked on a child (inherited) or a scheduled task's.
+  const permission = useConversationPermission({
+    orgId,
+    conversationId,
+    row: conv.conversation,
+    events: conv.events,
+    // unknown while the bound device is read (Full waits for it)
+    deviceLabel: device.data ? deviceName(device.data) : undefined,
+  });
+  const permissionPicker = permission.picker;
+  // an owner's child follows its root's profile live through the root's stream
+  useRootPermissionSubscription({
+    orgId,
+    accountId: session.me.account.id,
+    viewedId: conversationId,
+    rootId: permission.inheritedRootId,
+  });
   const keys = useMemo(() => toolKeysOf(conv.events), [conv.events]);
   const info = useToolInfo(orgId, conversationId, keys);
   useDeviceRefresh(orgId, conversationId, conv.events);
@@ -536,6 +556,7 @@ export function useConversationPage(
     composer: ({ sendDisabled }) => (
       <Stack gap={8}>
         {conv.error !== undefined && <FormError message={conv.error} />}
+        {permission.notice}
         <ComposerBar
           orgId={orgId}
           sendDisabled={sendDisabled}
@@ -557,6 +578,7 @@ export function useConversationPage(
           // no agent here: the title bar's path names it (issue U)
           pickers={{
             ...(devicePicker ? { device: devicePicker } : {}),
+            ...(permissionPicker ? { permission: permissionPicker } : {}),
             model: selection.modelPicker,
             ...(selection.effortPicker ? { effort: selection.effortPicker } : {}),
           }}
@@ -630,6 +652,7 @@ export function useConversationPage(
         />
       ) : null}
       {slot.agentMap}
+      {permission.dialog}
     </>
   );
   return { page, dialogs };

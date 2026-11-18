@@ -1,3 +1,63 @@
+import { posix } from "node:path";
+import {
+  DEFAULT_SANDBOX_ROOTS,
+  isSandboxPermissionUnsupportedError,
+  isSandboxScopeDeniedError,
+  parseSandboxBrowseScope,
+  parseSandboxExecutionRef,
+  parseSandboxOperationScope,
+  parseSandboxPreparationScope,
+  type SandboxBrowse,
+  type SandboxExecutionRef,
+  SandboxOperationOutcomeUnknownError,
+  SandboxPermissionUnsupportedError,
+  type SandboxPreparation,
+  type SandboxPreparationScope,
+  SandboxScopeDeniedError,
+} from "@capybara-hq/plugin-sdk";
+import { runOutsideTransaction } from "../infra/database/transaction-host.js";
+import {
+  createHeldOperations,
+  createLegacyHeldProvider,
+  type HeldProvider,
+  type ManagedStartArgs,
+} from "./held-operations.js";
+import { SandboxOperationAuthority } from "./operation-authority.js";
+import {
+  type BackgroundDispatchBinding,
+  type OperationFailureKind,
+  type OperationInvocation,
+  PermissionAdmissionStale,
+  SandboxOperationIntents,
+} from "./operation-intents.js";
+import { type CloudSupportReport, PermissionInstanceWrites } from "./permission-instance-writes.js";
+
+export type { HeldProvider } from "./held-operations.js";
+
+/**
+ * The recorded kind of a definite pre-effect refusal: `not_sent` for a request refused before it
+ * was sent (`isDeviceRequestNotSent`; checked before `denied`, which it subclasses), else
+ * `denied` or `unsupported`.
+ */
+const failureKindOf = (error: Error): OperationFailureKind =>
+  isDeviceRequestNotSent(error)
+    ? "not_sent"
+    : isSandboxScopeDeniedError(error)
+      ? "denied"
+      : "unsupported";
+
+/** The reservation fields a managed start's dispatch must match (its stable input). */
+const backgroundBinding = (
+  args: ManagedStartArgs,
+  instanceId: string,
+): BackgroundDispatchBinding => ({
+  taskId: args.taskId,
+  workingRoot: args.cwd,
+  outputPath: args.outputPath,
+  retainUntilMs: args.retainUntilMs,
+  instanceId,
+});
+
 import { randomUUID } from "node:crypto";
 import {
   type ExecResult,
@@ -22,18 +82,31 @@ import {
   type UpdateObject,
 } from "kysely";
 import { SESSION_MODE_SCRIPT } from "../background/launch.js";
+import { MANAGED_STOP_GRACE_MS } from "../background/managed.js";
 import { BackgroundTaskStore } from "../background/store.js";
 import type { KernelConfig } from "../config/schema.js";
 import type { DeviceInstancesTable, KernelDatabase } from "../db/kernel-schema.js";
+import { deviceNotFound } from "../devices/errors.js";
 import { ApiError } from "../errors.js";
 import { readSandboxLimitOverride } from "../identity/settings.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { KERNEL_LOGGER, REDIS } from "../infra/tokens.js";
-import { localModeOf } from "../local-devices/policy-summary.js";
 import type { KernelLogger } from "../log.js";
-import { effectiveSandboxLimits, readOrgSettings } from "../orgs/settings.service.js";
+import { effectiveSandboxLimits } from "../orgs/settings.service.js";
+import { isStorageError } from "../runtime/permission-context-errors.js";
 import { canonicalJson } from "../tools/canonical-json.js";
+import { attachmentsDir } from "./attachments-path.js";
+import {
+  CloudPermissionSnapshots,
+  type CloudSnapshotOutcome,
+} from "./cloud-permission-snapshot.js";
+import {
+  isKernelReadMethod,
+  type KernelReadInvocation,
+  KernelReadNotAdmitted,
+  KernelReadUnsupported,
+} from "./kernel-read.js";
 import {
   type SandboxLease,
   SandboxLeases,
@@ -41,17 +114,23 @@ import {
   type SandboxPathLease,
   sandboxBusy,
 } from "./leases.js";
+import { isCloudProvider, LegacyRetirementStore } from "./legacy-retirement.js";
+import { ManagedDeviceContextFailed } from "./managed-device-context.js";
 import {
   type AppliedLimits,
   appliedOf,
+  appliedWider,
   type DeviceNetwork,
   type EffectiveDevicePolicy,
-  effectiveDevicePolicy,
   instanceLimitsJson,
-  readDeploymentDevicePolicy,
   readInstanceLimits,
   sameApplied,
+  sameAppliedExact,
+  sameAppliedExactly,
 } from "./modes.js";
+import type { HeldDeviceContextEvidence } from "./permission-context-types.js";
+import { PermissionFacts } from "./permission-facts.js";
+import { cloudReportOwed, cloudSupportOf } from "./permission-runtime-reports.js";
 import {
   isInternalProvider,
   LOCAL_PROVIDER,
@@ -59,8 +138,11 @@ import {
   type SandboxProviderEntry,
   SandboxProviders,
 } from "./providers.js";
+import { isDeviceRequestNotSent } from "./request-not-sent.js";
 import { SandboxProviderUnreachableError } from "./unreachable.js";
+import type { SandboxUseContext } from "./use-context.js";
 
+export { deviceNotFound } from "../devices/errors.js";
 // Moved to leases.ts (phase C); re-exported for existing importers
 export {
   SANDBOX_LOCK_PREFIX,
@@ -68,6 +150,7 @@ export {
   SandboxLockLostError,
   sandboxBusy,
 } from "./leases.js";
+export type { SandboxUseContext } from "./use-context.js";
 
 /** Margin (ms) of a holder record's TTL beyond the longest command: by then the in-sandbox limit has ended its commands. */
 const HOLDER_TTL_MARGIN_MS = 10 * 60_000;
@@ -75,6 +158,12 @@ const HOLDER_TTL_MARGIN_MS = 10 * 60_000;
 const PATH_LEASE_WAIT_MS = 30_000;
 /** Time limit of one provider call in maintenance (suspend, destroy). */
 const SWEEP_OP_TIMEOUT_MS = 120_000;
+/** How long a cloud device's lifecycle reconcile waits before the sweep tries it again (B-12). */
+const RECONCILE_RETRY_SECONDS = 600;
+/** Where the reconcile sweep goes on from (the last device id it visited; B-12). */
+const RECONCILE_CURSOR_KEY = "capk:cloud-reconcile-cursor";
+/** The bound on one cloud `permissionSupport` read under a lifecycle lease (B-15). */
+const PERMISSION_SUPPORT_TIMEOUT_MS = 30_000;
 /** How long the suspension sweep holds the intent on a sandbox past `maxRunningMinutes` (ms). */
 const SWEEP_INTENT_WAIT_MS = 1000;
 /** Rows one sweep handles at most, and the provider calls it runs at once. */
@@ -136,27 +225,17 @@ export interface SandboxUseInfo {
    * them (environments spec §13.1; a connected machine's real paths).
    */
   roots: SandboxRoots;
+  /**
+   * Kernel-private: what this managed entry holds for the device's model-facing context (the
+   * entered provider, the held instance id and generation, its installed binding, its roots and the
+   * base working root), present only when the invocation asked for it and the held instance has
+   * an installed binding. Never an SDK field, never read from model or tool input.
+   */
+  contextEvidence?: HeldDeviceContextEvidence;
 }
 
 /** {@link SandboxUseInfo} before the roots are read from the handle. */
-type EnteredInfo = Omit<SandboxUseInfo, "roots">;
-
-/** Who uses the sandbox in {@link SandboxService.withSandbox}. */
-export interface SandboxUseContext {
-  orgId: string;
-  deviceId: string;
-  /** The agent conversation using it (a sub-agent's own for a child): what it last saw is tracked. */
-  holderConversationId: string;
-  /** Passed with every `exec` (audit and attribution). */
-  actor: SandboxActor;
-  /**
-   * A use that tells the model nothing (the run-start read of a bound project): it does not mark
-   * the holder as having seen the instance, so the holder's next ordinary use still learns that
-   * the instance started, restarted or had its files reset ({@link SandboxUseInfo}); what this use
-   * itself caused (a creation, a rebuild) is kept for that next use.
-   */
-  silent?: true;
-}
+type EnteredInfo = Omit<SandboxUseInfo, "roots" | "contextEvidence">;
 
 export type { SandboxProviderEntry } from "./providers.js";
 
@@ -182,9 +261,6 @@ interface Instance {
  * The provider {@link SandboxService.withSandbox} passes to its callback: every `exec` carries the
  * holder's tag and the caller's actor, so the callback passes neither.
  */
-export type HeldProvider = Omit<SandboxProvider, "exec"> & {
-  exec(h: SandboxHandle, args: Omit<ExecArgs, "tag" | "actor">): Promise<ExecResult>;
-};
 
 /**
  * The provider {@link SandboxService.ifRunning} passes to its callback: every `exec` carries the
@@ -233,10 +309,6 @@ const opSignal = (lease: SandboxLease): AbortSignal =>
 
 /** The provider-side name of a device's file system and instance. */
 export const deviceResourceName = (deviceId: string): string => `cap-device-${deviceId}`;
-
-/** The device is missing, deleted, or not in the caller's org (404; ids cannot be probed). */
-export const deviceNotFound = (): ApiError =>
-  new ApiError("device.not_found", "This device does not exist or was deleted.");
 
 /**
  * The device's file system is gone at the provider (409); never replaced silently. On a
@@ -377,19 +449,19 @@ export function sandboxConfigWarnings(
     if (pc?.refuseOpenNetwork === true) {
       out.push({
         level: "warn",
-        message: `extensionConfig."${providerPlugin}".refuseOpenNetwork is true: the ${providerPlugin} plugin refuses cloud devices on the open public network, which every device in auto mode and every sandbox-mode device of an organization whose cloudNetwork is open (the default) uses; set refuseOpenNetwork to false, or turn auto mode off (devices.autoMode) and have every organization switch its cloudNetwork to the allowlist`,
+        message: `extensionConfig."${providerPlugin}".refuseOpenNetwork is true: the ${providerPlugin} plugin refuses cloud devices on the open public network, which every device in auto mode and every sandbox-mode device of an organization whose cloudNetwork is open (the default) uses; set refuseOpenNetwork to false, or turn Full permission off (devices.fullAccess) and have every organization switch its cloudNetwork to the allowlist`,
       });
     }
   }
   if (
     cfg.sandbox.limits.orgHosts === "within" &&
     cfg.sandbox.limits.egress !== "none" &&
-    cfg.devices?.autoMode !== "off"
+    cfg.devices?.fullAccess !== "off"
   ) {
     out.push({
       level: "warn",
       message:
-        "sandbox.limits.orgHosts is within but devices.autoMode is not off: the platform allowlist limits sandbox mode only; devices in auto mode (the default) still reach the open public network. Set devices.autoMode to off (or turn auto mode off in the admin console) for a hard ceiling",
+        "sandbox.limits.orgHosts is within but devices.fullAccess is not off: the platform allowlist limits restricted execution only; devices on Full permission (allowed by default) still reach the open public network. Set devices.fullAccess to off (or turn Full permission off in the admin console) for a hard ceiling",
     });
   }
   const run = cfg.runtime.maxRunSeconds;
@@ -419,6 +491,64 @@ const otherProvider = (provider: string): ApiError =>
     "device.unavailable",
     `This device's files are kept by the sandbox provider ${provider}, which is not the current provider; it can be used again once ${provider} is the deployment's sandbox provider`,
   );
+
+/**
+ * An owner browse found no running instance of the device (409): the picker starts the device
+ * for its owner first ({@link SandboxService.ensureRunningForOwner}), so this is an instance that
+ * stopped in between (idle suspension) or one that could not be started; retrying starts it.
+ */
+export const deviceNotRunning = (): ApiError =>
+  new ApiError(
+    "device.not_running",
+    "The device stopped before it could be read. Try again; it will be started first.",
+  );
+
+/** The holder name of {@link SandboxService.ensureRunningForOwner}: no conversation holds it. */
+const OWNER_START_HOLDER = "device-owner";
+
+/**
+ * The device's old instance incarnation may still run legacy work that was never retired (503):
+ * the device stays unavailable until the provider confirms that incarnation destroyed, or for
+ * good when it is quarantined (permission runtime cutover 8.5). Never a retirement claim.
+ */
+export class RetirementPendingError extends ApiError {
+  override name = "RetirementPendingError";
+}
+export const retirementPending = (): ApiError =>
+  new RetirementPendingError(
+    "device.unavailable",
+    "This device is unavailable: background work started by an earlier version may still run on its previous instance, and that instance has not been confirmed destroyed. A cloud device becomes usable once its provider confirms the old instance destroyed.",
+  );
+/**
+ * A local machine's old instance may still run legacy work, and a later boot of that machine is
+ * the evidence that ends it (503, 8.5): the person restarts the computer.
+ */
+export const restartRequired = (): ApiError =>
+  new RetirementPendingError(
+    "device.restart_required",
+    "Background work started by an earlier version may still be running on this computer. Restart this computer to finish the upgrade, then try again.",
+  );
+/**
+ * A cloud device's earlier instance may still run legacy work and no evidence the kernel can get
+ * will ever cover it (an incarnation replaced without a recorded confirmed destruction, or an
+ * unknown one it cannot clear) (503, 8.5): the owner deletes the device and creates it again.
+ */
+export const recreateRequired = (): ApiError =>
+  new RetirementPendingError(
+    "device.recreate_required",
+    "Background work started by an earlier version may still be running on an earlier instance of this device, and that instance can no longer be verified as destroyed. Delete this device and create it again.",
+  );
+/**
+ * A local machine's old instance may still run legacy work, and the computer never reported a
+ * boot identity, so not even a restart can prove it ended (503, 8.5): the owner replaces the
+ * device. A deleted device's obligations never block a new one.
+ */
+export const replaceRequired = (): ApiError =>
+  new RetirementPendingError(
+    "device.replace_required",
+    "Background work started by an earlier version may still be running on this computer, and it cannot prove a restart. Delete this device and connect the computer again as a new device.",
+  );
+const isRetirementPending = (err: unknown): boolean => err instanceof RetirementPendingError;
 
 const abortReason = (signal: AbortSignal): unknown =>
   signal.reason ?? new DOMException("This operation was aborted", "AbortError");
@@ -512,12 +642,30 @@ async function inPool<T>(items: T[], limit: number, fn: (x: T) => Promise<void>)
  * {@link availableFor} is false and uses throw `sandbox.unavailable` (503). No in-process state:
  * replicas share it through PG and Redis.
  */
+/** Available only to kernel staging callbacks, never to a held user-operation callback. */
+export interface SandboxStaging {
+  prepare<T>(
+    purpose: SandboxPreparationScope["purpose"],
+    roots: readonly string[],
+    fn: (p: SandboxPreparation, signal: AbortSignal) => Promise<T>,
+  ): Promise<T>;
+}
+export type OperationSessionInvocation = Omit<OperationInvocation, "ordinal"> & {
+  /** Read the held {@link SandboxUseInfo.contextEvidence} once after entry (managed route). */
+  contextEvidence?: true;
+  beforeUser?: (
+    staging: SandboxStaging,
+    info: SandboxUseInfo,
+    signal: AbortSignal,
+  ) => Promise<void>;
+};
+
 @Injectable()
 export class SandboxService {
   constructor(
     @Inject(KernelDb) private readonly db: KernelDb,
     /** The record of the instance each holder last used (`capk:sandbox-seen:…`). */
-    @Inject(REDIS) private readonly redis: Pick<Redis, "set" | "getdel">,
+    @Inject(REDIS) private readonly redis: Pick<Redis, "get" | "set" | "getdel">,
     @Inject(SandboxLeases) private readonly leases: SandboxLeases,
     /** The providers (read at every call: providers are ready after the extension load). */
     @Inject(SandboxProviders)
@@ -528,6 +676,35 @@ export class SandboxService {
     /** Background tasks lost while their process may live on (killed after a resume). */
     @Inject(BackgroundTaskStore)
     private readonly background: Pick<BackgroundTaskStore, "pendingKills" | "clearKill">,
+    @Inject(PermissionFacts)
+    private readonly facts: Pick<
+      PermissionFacts,
+      "devicePolicy" | "assertCloudReconciled" | "readHeldEnvironment"
+    >,
+    @Inject(SandboxOperationIntents) private readonly operationIntents: SandboxOperationIntents,
+    @Inject(SandboxOperationAuthority) private readonly authority: SandboxOperationAuthority,
+    @Inject(PermissionInstanceWrites) private readonly instanceWrites: PermissionInstanceWrites,
+    /** The retirement obligations every lifecycle acquisition is gated on (8.5). */
+    @Inject(LegacyRetirementStore)
+    private readonly retirement: Pick<
+      LegacyRetirementStore,
+      | "unresolved"
+      | "hasUnresolved"
+      | "settleRebooted"
+      | "scanUntilStable"
+      | "frozen"
+      | "frozenAt"
+      | "quarantine"
+      | "noteFailure"
+      | "resolveDestroyed"
+      | "resolveCancelled"
+      | "membersOf"
+      | "recordDestruction"
+      | "destructionRecorded"
+    >,
+    /** The cloud snapshot writer's reconcile, for the lifecycle reconcile of marked devices (B-12). */
+    @Inject(CloudPermissionSnapshots)
+    private readonly snapshots: Pick<CloudPermissionSnapshots, "reconcileHeld">,
   ) {}
 
   /** Poll interval while waiting for a lease (the leases' own). */
@@ -585,37 +762,7 @@ export class SandboxService {
    * device and a missing one have none). Without `deviceId`: an org-level policy with no choice.
    */
   async devicePolicy(device: { orgId: string; deviceId?: string }): Promise<EffectiveDevicePolicy> {
-    const [deployment, settings, mode] = await Promise.all([
-      readDeploymentDevicePolicy(this.db.db, this.config),
-      readOrgSettings(this.db.db, device.orgId),
-      device.deviceId === undefined ? null : this.deviceChosenMode(device.orgId, device.deviceId),
-    ]);
-    return effectiveDevicePolicy(deployment, settings, mode);
-  }
-
-  /**
-   * The mode a device chose: a local device's derived one (`localModeOf`, which never returns null
-   * — a machine with no summary or no mode feature is sandbox); a cloud device's narrowing switch
-   * (`devices.mode`, `sandbox` only), or null for a cloud device that follows the platform and the
-   * org.
-   */
-  private async deviceChosenMode(
-    orgId: string,
-    deviceId: string,
-  ): Promise<EffectiveDevicePolicy["mode"] | null> {
-    const row = await this.db
-      .selectFrom("devices as e")
-      .leftJoin("device_machines as m", (j) =>
-        j.onRef("m.device_id", "=", "e.id").on("m.revoked_at", "is", null),
-      )
-      .select(["e.source", "e.mode", "m.features", "m.local_policy"])
-      .where("e.id", "=", deviceId)
-      .where("e.org_id", "=", orgId)
-      .where("e.deleted_at", "is", null)
-      .executeTakeFirst();
-    if (row === undefined) return null;
-    if (row.source === "local") return localModeOf(row.features, row.local_policy);
-    return row.mode === "sandbox" ? "sandbox" : null;
+    return this.facts.devicePolicy(device);
   }
 
   /** The device's source (`local` for a connected machine, else `cloud`); cloud when unknown. */
@@ -752,15 +899,22 @@ export class SandboxService {
 
   /**
    * Whether the running instance of `row` must get `want` before use (auto mode spec §4.2): a
-   * cloud instance whose recorded mode or network kind differs, unless only a file reset could
-   * apply it ({@link fsBound}). `want` null: a local device (the mode travels with each command).
+   * cloud instance whose recorded mode or network kind differs, or whose recorded limits are more
+   * permissive than `want` in any dimension (a host-only narrowing too, spec §124; a host-only
+   * widening still reaches instances created afterwards), unless only a file reset could apply it
+   * ({@link fsBound}). A provider bound to its file system still goes through the exclusive lease
+   * once for a narrowing, so `applyLimits` records it as `unapplied` (the device is then unprobed
+   * until the reset, never silently supported). `want` null: a local device (the mode travels
+   * with each command).
    */
   private mustApply(row: Row, p: SandboxProviderEntry, want: SandboxLimits | null): boolean {
     if (want === null) return false;
     const rec = readInstanceLimits(row.instance_limits);
     const target = appliedOf(want);
-    if (sameApplied(rec.applied, target)) return false;
-    return !this.fsBound(p, rec, target);
+    const wider = appliedWider(rec.applied, target);
+    if (sameApplied(rec.applied, target) && !wider) return false;
+    if (!this.fsBound(p, rec, target)) return true;
+    return wider && !sameAppliedExact(rec.unapplied, target);
   }
 
   /**
@@ -787,15 +941,17 @@ export class SandboxService {
    * suspended; null otherwise. Read without a lease: a caller inside `withSandbox` reads the
    * instance its own lease keeps.
    */
-  async currentInstance(deviceId: string): Promise<{ createdAt: Date } | null> {
+  async currentInstance(
+    deviceId: string,
+  ): Promise<{ createdAt: Date; provider: string | null } | null> {
     const row = await this.db
       .selectFrom("device_instances")
-      .select(["status", "handle", "created_at"])
+      .select(["status", "handle", "created_at", "provider"])
       .where("device_id", "=", deviceId)
       .executeTakeFirst();
     if (!row || row.handle === null) return null;
     if (row.status !== "running" && row.status !== "suspended") return null;
-    return { createdAt: row.created_at };
+    return { createdAt: row.created_at, provider: row.provider };
   }
 
   /**
@@ -812,9 +968,28 @@ export class SandboxService {
    */
   async ifRunning<T>(
     deviceId: string,
-    instance: { createdAt: Date },
+    /**
+     * `exactRef`: an exact-ref managed drain (status, stop, the revoke worker), allowed on an
+     * incarnation under a retirement obligation; every other caller (legacy SID polls, stops and
+     * reads, staged browse) is refused there with a {@link RetirementPendingError} (8.5).
+     */
+    instance: { createdAt: Date; exactRef?: boolean },
     fn: (p: TaggedProvider, h: SandboxHandle, signal: AbortSignal) => Promise<T>,
     signal: AbortSignal = new AbortController().signal,
+  ): Promise<IfRunningResult<T>> {
+    return this.ifRunningAs(deviceId, instance, fn, signal, false);
+  }
+
+  /**
+   * {@link ifRunning}; `use` (staged owner browse) also refuses a device carrying the B1
+   * reconcile marker under the shared lease, before any provider call (B-11).
+   */
+  private async ifRunningAs<T>(
+    deviceId: string,
+    instance: { createdAt: Date; exactRef?: boolean },
+    fn: (p: TaggedProvider, h: SandboxHandle, signal: AbortSignal) => Promise<T>,
+    signal: AbortSignal,
+    use: boolean,
   ): Promise<IfRunningResult<T>> {
     const p = await this.require(deviceId);
     const env = deviceId;
@@ -832,6 +1007,13 @@ export class SandboxService {
         return { kind: "other_instance" };
       }
       if (!this.usable(row, p, null)) return { kind: "not_running", status: row.status };
+      // an incarnation that may still run unretired legacy work: no SID signal, no new exec or
+      // admission there; only exact-ref managed drains go on (I1)
+      if (!instance.exactRef && (await this.retirement.hasUnresolved(env)))
+        throw retirementPending();
+      // staged owner browse never reaches an instance whose binding is not installed (B-8): the
+      // device admits nothing there, and only a use's exclusive holder binds it
+      if (use && !(await this.bound(p, env))) return { kind: "not_running", status: row.status };
       // the instance this check saw: its handle plus `created_at` (never `generation`, which
       // every lease bumps)
       const want: Instance = { handle: row.handle, createdAt: row.created_at.getTime() };
@@ -844,6 +1026,8 @@ export class SandboxService {
           (r): r is Row & { handle: SandboxHandle } =>
             this.usable(r, p, null) && isInstance(r, want),
           signal,
+          !instance.exactRef,
+          use ? "reconciled" : "none",
         );
         if (e) {
           try {
@@ -895,6 +1079,228 @@ export class SandboxService {
    * - When `ctx.holderConversationId` last used another instance (another holder rebuilt it
    *   meanwhile), `info.restarted` is true, so it learns its processes are gone (final review m5).
    */
+  /** Trusted staging only. The callback receives no exec, browsing or lifecycle methods. */
+  async withPreparation<T>(
+    ctx: SandboxUseContext,
+    purpose: SandboxPreparationScope["purpose"],
+    roots: readonly string[],
+    fn: (p: SandboxPreparation, signal: AbortSignal) => Promise<T>,
+    signal: AbortSignal,
+  ): Promise<T> {
+    return this.withSandboxUse(
+      ctx,
+      async () => {
+        throw new Error("Preparation callback was not installed");
+      },
+      signal,
+      undefined,
+      (h, provider, info, sig) => this.prepareFor(ctx, h, provider, info, purpose, roots, fn, sig),
+    );
+  }
+  private async prepareFor<T>(
+    ctx: SandboxUseContext,
+    h: SandboxHandle,
+    provider: SandboxProvider,
+    info: SandboxUseInfo,
+    purpose: SandboxPreparationScope["purpose"],
+    roots: readonly string[],
+    fn: (p: SandboxPreparation, signal: AbortSignal) => Promise<T>,
+    sig: AbortSignal,
+  ): Promise<T> {
+    if (!provider.prepare)
+      throw new SandboxPermissionUnsupportedError(
+        "Trusted preparation is unavailable on this provider",
+      );
+    const prepare = provider.prepare.bind(provider);
+    const operation = async () => {
+      const authority = await runOutsideTransaction(() => this.authority.resolve(ctx, "stat", sig));
+      // attachments: exactly the one directory FetchAttachment writes for the call's root
+      // conversation, derived by the same helper, nothing else under the attachments root
+      const base =
+        purpose === "skills"
+          ? info.roots.skills
+          : attachmentsDir(info.roots, authority.rootConversationId);
+      if (
+        roots.length === 0 ||
+        roots.some(
+          (root) =>
+            posix.normalize(root) !== root || (root !== base && !root.startsWith(`${base}/`)),
+        )
+      )
+        throw new SandboxScopeDeniedError(
+          "Preparation roots must stay inside the trusted purpose directory",
+        );
+      const operationId = randomUUID();
+      return prepare(
+        h,
+        parseSandboxPreparationScope({
+          operationId,
+          deviceId: ctx.deviceId,
+          purpose,
+          writeRoots: [...roots],
+          tag: operationId,
+        }),
+        sig,
+      );
+    };
+    return fn(
+      {
+        readFile: async (path, opts) =>
+          (await operation()).readFile(path, {
+            ...opts,
+            signal: AbortSignal.any([sig, opts.signal]),
+          }),
+        writeFile: async (path, data, signal) =>
+          (await operation()).writeFile(path, data, AbortSignal.any([sig, signal])),
+        stat: async (path, signal) =>
+          (await operation()).stat(path, AbortSignal.any([sig, signal])),
+      },
+      sig,
+    );
+  }
+  /** Owner browse scopes never manufacture a conversation or Full consent. */
+  async withBrowse<T>(
+    ctx: { orgId: string; deviceId: string; accountId: string },
+    fn: (p: SandboxBrowse, signal: AbortSignal) => Promise<T>,
+    signal: AbortSignal,
+  ): Promise<T> {
+    await this.authority.resolveBrowse(ctx, signal);
+    const row = await this.readRow(ctx);
+    if (!row) throw deviceNotRunning();
+    const entry = await this.require(ctx.deviceId, ctx.orgId);
+    const result = await this.ifRunningAs(
+      ctx.deviceId,
+      { createdAt: row.created_at },
+      async (provider, h, sig) => {
+        if (!provider.browse)
+          throw new SandboxPermissionUnsupportedError(
+            "Owner browsing is unavailable on this provider",
+          );
+        const browse = provider.browse.bind(provider);
+        const call = async <R>(
+          method: "stat" | "list" | "scan",
+          input: unknown,
+          s: AbortSignal,
+          invoke: (p: SandboxBrowse, s: AbortSignal) => Promise<R>,
+        ): Promise<R> => {
+          const combined = AbortSignal.any([sig, s]);
+          const intent = await this.operationIntents.admitBrowse(
+            ctx,
+            {
+              provider: entry.plugin,
+              providerVersion: entry.version ?? "internal-v2",
+              generation: String(row.created_at.getTime()),
+            },
+            method,
+            input,
+            combined,
+          );
+          const admitted = await this.operationIntents.claimBrowse(ctx, intent.operation_id);
+          combined.throwIfAborted();
+          try {
+            const operation = await browse(h, parseSandboxBrowseScope(admitted.scope), combined);
+            const value = await invoke(operation, combined);
+            await runOutsideTransaction(() =>
+              this.operationIntents.complete(admitted.operation_id, admitted.execution_id, value),
+            );
+            return value;
+          } catch (error) {
+            await runOutsideTransaction(() =>
+              this.operationIntents.unknown(admitted.operation_id, admitted.execution_id),
+            );
+            throw error;
+          }
+        };
+        return fn(
+          {
+            stat: (path, s) => call("stat", { path }, s, (p, signal) => p.stat(path, signal)),
+            list: (path, opts) =>
+              call("list", { path, limit: opts.limit }, opts.signal, (p, signal) =>
+                p.list(path, { limit: opts.limit, signal }),
+              ),
+            scan: (base, opts) =>
+              call("scan", { base }, opts.signal, (p, signal) => p.scan(base, { signal })),
+          },
+          sig,
+        );
+      },
+      signal,
+      true,
+    );
+    if (result.kind !== "ran") throw deviceNotRunning();
+    return result.value;
+  }
+
+  /**
+   * Makes the device's instance run for its owner (permission activation L2, Hook 3), before an
+   * owner browse ({@link withBrowse}) of a device that may be stopped: the owner, membership and
+   * browsing ceiling checks of the browse first (`resolveBrowse`), then the lifecycle `enter` a
+   * use takes (the exclusive lease creates or resumes the instance through the retirement gate,
+   * the B-11 reconcile marker, the B-8 binding, `maxRunningSandboxes` and fencing), and the lease
+   * is left at once. No conversation holds it and nothing runs in it; what the start caused is
+   * not marked seen, so each conversation's next use still learns of it.
+   */
+  async ensureRunningForOwner(
+    ctx: { orgId: string; deviceId: string; accountId: string },
+    signal: AbortSignal,
+  ): Promise<void> {
+    await this.authority.resolveBrowse(ctx, signal);
+    const p = await this.require(ctx.deviceId, ctx.orgId);
+    const use: SandboxUseContext = {
+      orgId: ctx.orgId,
+      deviceId: ctx.deviceId,
+      holderConversationId: OWNER_START_HOLDER,
+      actor: { accountId: ctx.accountId, conversationId: OWNER_START_HOLDER },
+    };
+    const e = await this.enter(use, p, signal, null, () => this.wantedLimits(use, p));
+    await this.leave(ctx.deviceId, e);
+  }
+
+  /**
+   * A run start's kernel read of the bound project (permission activation L2, Hook 1): the use
+   * a tool call's would be (the instance made or resumed, the read silent for the holder), whose
+   * provider stats, reads and lists only, each call a kernel read admitted and claimed on its own
+   * (`SandboxOperationIntents.admitKernelRead`: the run's current claim with its run still
+   * `queued`, a random operation id, the profile scope narrowed to the root, its `AGENTS.md` and
+   * its `.agents/skills`). Any other method is refused before admission. Only
+   * `ProjectKnowledgeService` calls this: no tool context, Platform operation or route has it.
+   */
+  async withKernelRead<T>(
+    ctx: SandboxUseContext,
+    read: KernelReadInvocation,
+    fn: (
+      h: SandboxHandle,
+      p: HeldProvider,
+      info: SandboxUseInfo,
+      signal: AbortSignal,
+    ) => Promise<T>,
+    signal: AbortSignal,
+  ): Promise<T> {
+    const c = read.claim;
+    if (
+      read.purpose !== "project_root" ||
+      c.orgId !== ctx.orgId ||
+      c.conversationId !== ctx.holderConversationId ||
+      c.runId !== ctx.actor.runId ||
+      ctx.actor.conversationId !== ctx.holderConversationId
+    )
+      throw new SandboxScopeDeniedError("The kernel read does not match its run start");
+    return this.withSandboxUse(ctx, fn, signal, undefined, undefined, read);
+  }
+
+  async withOperations<T>(
+    ctx: SandboxUseContext,
+    invocation: OperationSessionInvocation,
+    fn: (
+      h: SandboxHandle,
+      p: HeldProvider,
+      info: SandboxUseInfo,
+      signal: AbortSignal,
+    ) => Promise<T>,
+    signal: AbortSignal,
+  ): Promise<T> {
+    return this.withSandboxUse(ctx, fn, signal, invocation);
+  }
   async withSandbox<T>(
     ctx: SandboxUseContext,
     fn: (
@@ -904,6 +1310,27 @@ export class SandboxService {
       signal: AbortSignal,
     ) => Promise<T>,
     signal: AbortSignal,
+  ): Promise<T> {
+    return this.withSandboxUse(ctx, fn, signal);
+  }
+
+  private async withSandboxUse<T>(
+    ctx: SandboxUseContext,
+    fn: (
+      h: SandboxHandle,
+      p: HeldProvider,
+      info: SandboxUseInfo,
+      signal: AbortSignal,
+    ) => Promise<T>,
+    signal: AbortSignal,
+    invocation?: OperationSessionInvocation,
+    trusted?: (
+      h: SandboxHandle,
+      p: SandboxProvider,
+      info: SandboxUseInfo,
+      signal: AbortSignal,
+    ) => Promise<T>,
+    kernelRead?: KernelReadInvocation,
   ): Promise<T> {
     const p = await this.require(ctx.deviceId, ctx.orgId);
     const env = ctx.deviceId;
@@ -916,7 +1343,7 @@ export class SandboxService {
     let e = await seen(await this.enter(ctx, p, signal, null, want));
     try {
       try {
-        return await this.runAs(e, ctx, p, fn, signal);
+        return await this.runAs(e, ctx, p, fn, signal, invocation, trusted, kernelRead);
       } catch (err) {
         if (isFileSystemGoneError(err)) throw await this.filesGone(env, p, e);
         if (!isSandboxGoneError(err)) throw err;
@@ -930,7 +1357,16 @@ export class SandboxService {
           ? { fresh: true, restarted: false, filesReset: true }
           : { fresh: true, restarted: true };
         try {
-          return await this.runAs({ ...e, info }, ctx, p, fn, signal);
+          return await this.runAs(
+            { ...e, info },
+            ctx,
+            p,
+            fn,
+            signal,
+            invocation,
+            trusted,
+            kernelRead,
+          );
         } catch (err2) {
           if (isFileSystemGoneError(err2)) throw await this.filesGone(env, p, e);
           throw err2;
@@ -1074,7 +1510,7 @@ export class SandboxService {
   }
 
   /** Runs `fn` as the holder `e`: its tag and the caller's actor on every exec, its lease's signal. */
-  private runAs<T>(
+  private async runAs<T>(
     e: Entered,
     ctx: SandboxUseContext,
     p: SandboxProviderEntry,
@@ -1085,13 +1521,362 @@ export class SandboxService {
       signal: AbortSignal,
     ) => Promise<T>,
     signal: AbortSignal,
+    invocation?: OperationSessionInvocation,
+    trusted?: (
+      h: SandboxHandle,
+      p: SandboxProvider,
+      info: SandboxUseInfo,
+      signal: AbortSignal,
+    ) => Promise<T>,
+    kernelRead?: KernelReadInvocation,
   ): Promise<T> {
     const sig = AbortSignal.any([signal, e.lease.signal]);
+    if (trusted) return trusted(e.handle, p.impl, { ...e.info, roots: rootsOf(e.handle) }, sig);
     const env = ctx.deviceId;
-    const impl = tagged<HeldProvider>(p.impl, e.lease.token, ctx.actor, () =>
-      this.register(env, e.lease.token),
-    );
-    return fn(e.handle, impl, { ...e.info, roots: rootsOf(e.handle) }, sig);
+    if (kernelRead)
+      return fn(
+        e.handle,
+        this.kernelReadProvider(e, ctx, p, kernelRead, sig),
+        { ...e.info, roots: rootsOf(e.handle) },
+        sig,
+      );
+    let ordinal = 0;
+    const impl = invocation
+      ? createHeldOperations(p.impl, e.handle, sig, async (method, input, invoke, preflight) => {
+          const identity = { ...invocation, ordinal: ordinal++ };
+          sig.throwIfAborted();
+          await this.register(env, e.lease.token);
+          const refreshPending = () =>
+            runOutsideTransaction(() =>
+              this.operationIntents.pending(
+                ctx,
+                identity,
+                {
+                  provider: p.plugin,
+                  providerVersion: p.version ?? "internal-v2",
+                  generation: String(e.createdAt),
+                },
+                method,
+                input,
+                e.lease.token,
+                sig,
+              ),
+            );
+          const pending = await refreshPending();
+          // An acknowledged start returns its recorded exact ref; it never dispatches again.
+          if (pending.state === "background-running" && pending.execution_ref)
+            return parseSandboxExecutionRef(pending.execution_ref) as Awaited<
+              ReturnType<typeof invoke>
+            >;
+          if (pending.state === "completed")
+            return (await this.operationIntents.result(pending)) as Awaited<
+              ReturnType<typeof invoke>
+            >;
+          let current: typeof pending;
+          try {
+            current = await runOutsideTransaction(() => this.operationIntents.admit(ctx, identity));
+          } catch (error) {
+            if (!(error instanceof PermissionAdmissionStale)) throw error;
+            await refreshPending();
+            current = await runOutsideTransaction(() => this.operationIntents.admit(ctx, identity));
+          }
+          // Kernel checks on the admitted scope come before any dispatch state is written.
+          if (
+            preflight &&
+            current.state !== "completed" &&
+            current.state !== "background-running"
+          ) {
+            try {
+              await preflight(parseSandboxOperationScope(current.scope), sig);
+            } catch (error) {
+              if (
+                current.state === "admitted" &&
+                (isSandboxScopeDeniedError(error) || isSandboxPermissionUnsupportedError(error))
+              ) {
+                const kind = failureKindOf(error);
+                await runOutsideTransaction(() =>
+                  this.operationIntents.refusePreDispatch(ctx, identity, {
+                    kind,
+                    message: error.message,
+                  }),
+                );
+              }
+              throw error;
+            }
+          }
+          const admitted = ["dispatching", "started-or-unknown"].includes(pending.state)
+            ? await runOutsideTransaction(() =>
+                this.operationIntents.claimReconciliation(
+                  ctx,
+                  identity,
+                  {
+                    provider: p.plugin,
+                    providerVersion: p.version ?? "internal-v2",
+                    generation: String(e.createdAt),
+                  },
+                  method,
+                  input,
+                  e.lease.token,
+                ),
+              )
+            : await runOutsideTransaction(() =>
+                this.operationIntents.claimDispatch(
+                  ctx,
+                  identity,
+                  e.lease.token,
+                  method === "backgroundStart"
+                    ? backgroundBinding(input as ManagedStartArgs, e.handle.id)
+                    : undefined,
+                ),
+              );
+          if (admitted.state === "revoked")
+            throw admitted.outcome_unknown
+              ? new SandboxOperationOutcomeUnknownError(
+                  "The background task was stopped before its start was confirmed; it is not started again and its cancellation is owed",
+                )
+              : new SandboxScopeDeniedError(
+                  "The background task was stopped or settled before it launched; nothing was started",
+                );
+          if (admitted.state === "background-running" && admitted.execution_ref)
+            return parseSandboxExecutionRef(admitted.execution_ref) as Awaited<
+              ReturnType<typeof invoke>
+            >;
+          if (admitted.state === "completed")
+            return (await this.operationIntents.result(admitted)) as Awaited<
+              ReturnType<typeof invoke>
+            >;
+          sig.throwIfAborted();
+          let result: Awaited<ReturnType<typeof invoke>>;
+          try {
+            result = await invoke(parseSandboxOperationScope(admitted.scope), sig);
+          } catch (error) {
+            if (isSandboxScopeDeniedError(error) || isSandboxPermissionUnsupportedError(error)) {
+              if (["dispatching", "started-or-unknown"].includes(pending.state)) {
+                await runOutsideTransaction(() =>
+                  this.operationIntents.unknown(admitted.operation_id, admitted.execution_id),
+                );
+                throw new SandboxOperationOutcomeUnknownError(
+                  "The recorded operation remains unknown; changed runtime authority cannot prove it had no effect",
+                  { cause: error },
+                );
+              }
+              const kind = failureKindOf(error);
+              await runOutsideTransaction(() =>
+                this.operationIntents.complete(admitted.operation_id, identity.claim.executionId, {
+                  $failure: { kind, message: error.message },
+                }),
+              );
+              throw error;
+            }
+            await runOutsideTransaction(() =>
+              this.operationIntents.unknown(admitted.operation_id, admitted.execution_id),
+            );
+            // A transport/gone error after durable dispatch cannot justify a new identity retry.
+            throw new SandboxOperationOutcomeUnknownError(
+              "The operation outcome must be reconciled with its recorded identity",
+              { cause: error },
+            );
+          }
+          // The provider has returned: storage/serialization errors cannot establish denial.
+          if (method === "backgroundStart") {
+            try {
+              await runOutsideTransaction(() =>
+                this.operationIntents.acknowledgeBackground(
+                  admitted.operation_id,
+                  admitted.execution_id,
+                  result as SandboxExecutionRef,
+                  e.handle.id,
+                ),
+              );
+            } catch (error) {
+              await runOutsideTransaction(() =>
+                this.operationIntents.unknown(admitted.operation_id, admitted.execution_id),
+              );
+              throw new SandboxOperationOutcomeUnknownError(
+                "The start returned but could not be acknowledged; reconcile the same identity",
+                { cause: error },
+              );
+            }
+            return result;
+          }
+          try {
+            await runOutsideTransaction(() =>
+              this.operationIntents.complete(
+                admitted.operation_id,
+                identity.claim.executionId,
+                result,
+              ),
+            );
+          } catch (error) {
+            await runOutsideTransaction(() =>
+              this.operationIntents.unknown(admitted.operation_id, admitted.execution_id),
+            );
+            throw new SandboxOperationOutcomeUnknownError(
+              "The operation returned but its result could not be retained; reconcile the same identity",
+              { cause: error },
+            );
+          }
+          return result;
+        })
+      : createLegacyHeldProvider(p.impl, e.lease.token, ctx.actor, () =>
+          this.register(env, e.lease.token),
+        );
+    const contextEvidence = invocation?.contextEvidence
+      ? await this.heldContextEvidence(ctx, p, e)
+      : undefined;
+    const info: SandboxUseInfo = {
+      ...e.info,
+      roots: rootsOf(e.handle),
+      ...(contextEvidence && { contextEvidence }),
+    };
+    if (invocation?.beforeUser)
+      await invocation.beforeUser(
+        {
+          prepare: (purpose, roots, stage) =>
+            this.prepareFor(ctx, e.handle, p.impl, info, purpose, roots, stage, sig),
+        },
+        info,
+        sig,
+      );
+    return fn(e.handle, impl, info, sig);
+  }
+
+  /**
+   * The held provider of a kernel read ({@link withKernelRead}): every call admitted and claimed
+   * as its own kernel read, then dispatched inline under the held lease, as an owner browse's
+   * call is ({@link withBrowse}). Exec, writes and scans are refused before any admission.
+   */
+  private kernelReadProvider(
+    e: Entered,
+    ctx: SandboxUseContext,
+    p: SandboxProviderEntry,
+    read: KernelReadInvocation,
+    sig: AbortSignal,
+  ): HeldProvider {
+    const env = ctx.deviceId;
+    return createHeldOperations(p.impl, e.handle, sig, async (method, input, invoke) => {
+      const path = (input as { path?: unknown }).path;
+      if (!isKernelReadMethod(method) || typeof path !== "string")
+        throw new SandboxScopeDeniedError("A kernel read only stats, reads and lists files");
+      const given = input as { path: string };
+      sig.throwIfAborted();
+      await this.register(env, e.lease.token);
+      let admitted: Awaited<ReturnType<SandboxOperationIntents["claimKernelRead"]>>;
+      try {
+        const intent = await runOutsideTransaction(() =>
+          this.operationIntents.admitKernelRead(
+            ctx,
+            read,
+            {
+              provider: p.plugin,
+              providerVersion: p.version ?? "internal-v2",
+              generation: String(e.createdAt),
+            },
+            method,
+            given,
+            e.lease.token,
+            sig,
+          ),
+        );
+        admitted = await runOutsideTransaction(() =>
+          this.operationIntents.claimKernelRead(ctx, read, intent.operation_id, method, given),
+        );
+      } catch (error) {
+        // a refusal before dispatch: nothing reached the device
+        if (sig.aborted || error instanceof KernelReadUnsupported) throw error;
+        throw new KernelReadNotAdmitted(error);
+      }
+      sig.throwIfAborted();
+      try {
+        const value = await invoke(parseSandboxOperationScope(admitted.scope), sig);
+        await runOutsideTransaction(() =>
+          this.operationIntents.complete(admitted.operation_id, admitted.execution_id, value),
+        );
+        return value;
+      } catch (error) {
+        await runOutsideTransaction(() =>
+          this.operationIntents.unknown(admitted.operation_id, admitted.execution_id),
+        );
+        throw error;
+      }
+    });
+  }
+
+  /**
+   * The held evidence of a managed entry (B3), read once under the shared lease the holder already
+   * has: the entered provider, the held handle's id and its generation (the row's `created_at`
+   * milliseconds), the installed binding of exactly that generation and provider, the handle's
+   * roots and the base working root admission resolves. Undefined without an installed binding or
+   * with a project binding that no longer matches: the managed writer then refuses the call. The
+   * writer validates every field again under the authority locks.
+   */
+  private async heldContextEvidence(
+    ctx: SandboxUseContext,
+    p: SandboxProviderEntry,
+    e: Entered,
+  ): Promise<HeldDeviceContextEvidence | undefined> {
+    try {
+      return await this.readHeldContextEvidence(ctx, p, e);
+    } catch (error) {
+      // a storage failure reading the evidence fails the managed call as unrecorded, before any
+      // callback, never as a provider error
+      if (isStorageError(error)) throw new ManagedDeviceContextFailed("unavailable");
+      throw error;
+    }
+  }
+
+  private async readHeldContextEvidence(
+    ctx: SandboxUseContext,
+    p: SandboxProviderEntry,
+    e: Entered,
+  ): Promise<HeldDeviceContextEvidence | undefined> {
+    const instanceGeneration = String(e.createdAt);
+    // a cloud instance is named by its installed environment as the managed writer reads it
+    // under the authority locks (B-15): current evidence, nothing unapplied, nothing wider than
+    // desired; otherwise the device is unavailable for managed work, not a stale retry
+    const cloud = (await this.deviceSource(ctx)) === "cloud";
+    const applied = cloud
+      ? await this.facts.readHeldEnvironment({ orgId: ctx.orgId, deviceId: ctx.deviceId })
+      : null;
+    if (
+      cloud &&
+      (applied === null ||
+        applied.provider !== p.plugin ||
+        applied.instanceGeneration !== instanceGeneration)
+    )
+      return undefined;
+    const binding = applied
+      ? { binding_id: applied.bindingId }
+      : await this.db
+          .selectFrom("device_instance_bindings")
+          .select("binding_id")
+          .where("device_id", "=", ctx.deviceId)
+          .where("instance_generation", "=", instanceGeneration)
+          .where("provider", "=", p.plugin)
+          .where("status", "=", "installed")
+          .executeTakeFirst();
+    if (!binding) return undefined;
+    let workingRoot: string;
+    try {
+      workingRoot = await this.authority.workingRootFor({
+        orgId: ctx.orgId,
+        deviceId: ctx.deviceId,
+        conversationId: ctx.holderConversationId,
+      });
+    } catch (error) {
+      if (error instanceof ApiError) return undefined;
+      throw error;
+    }
+    const roots = rootsOf(e.handle);
+    return {
+      deviceId: ctx.deviceId,
+      provider: p.plugin,
+      instanceId: e.handle.id,
+      instanceGeneration,
+      bindingId: binding.binding_id,
+      roots: { workspace: roots.workspace, skills: roots.skills, tmp: roots.tmp },
+      workingRoot,
+    };
   }
 
   /**
@@ -1122,7 +1907,14 @@ export class SandboxService {
         // an instance whose mode or network must change goes through the exclusive lease
         const ready = (r: Row | undefined): r is Row & { handle: SandboxHandle } =>
           this.usable(r, p, gone) && !this.mustApply(r, p, want);
-        if (ready(row)) {
+        // a device with an unresolved retirement obligation is only entered through the
+        // exclusive lease, whose gate retires the old incarnation or refuses (8.5); on the
+        // staged path, so is an instance whose committed binding is not installed yet (B-8)
+        if (
+          !(await this.retirement.hasUnresolved(env)) &&
+          ready(row) &&
+          (await this.bound(p, env))
+        ) {
           const lease = await this.leases.tryShared(env, this.cap, token);
           if (lease) {
             if (intent) await this.clearIntent(env, token);
@@ -1137,8 +1929,19 @@ export class SandboxService {
                 throw err;
               }
             }
-            const e = await this.asShared(ctx, p, lease, ready, signal);
-            if (e) return e;
+            // an obligation recorded while the shared lease was taken: null, back to the gate
+            const e = await this.asShared(ctx, p, lease, ready, signal, true, "use");
+            if (e) {
+              // B-15: cloud evidence gone stale while the instance ran (a provider upgrade)
+              await this.refreshCloudSupport(
+                ctx,
+                p,
+                e,
+                AbortSignal.any([signal, e.lease.signal]),
+                false,
+              );
+              return e;
+            }
           }
         } else {
           const lease = await this.leases.tryExclusive(env, { token, intent: true });
@@ -1152,6 +1955,126 @@ export class SandboxService {
       if (intent) await this.clearIntent(env, token);
       throw err;
     }
+  }
+
+  /**
+   * Whether this device's instances record cloud evidence (B-15): a cloud device whose provider
+   * (with a known version) reads its own permission support. A local device attests through its
+   * installed binding instead.
+   */
+  private async recordsCloudSupport(
+    ctx: { orgId: string; deviceId: string },
+    p: SandboxProviderEntry,
+  ): Promise<boolean> {
+    return (
+      p.plugin !== LOCAL_PROVIDER &&
+      !p.binder &&
+      p.version !== undefined &&
+      typeof p.impl.permissionSupport === "function" &&
+      (await this.deviceSource(ctx)) === "cloud"
+    );
+  }
+
+  /**
+   * The provider's permission support of the held instance `handle`, read under the caller's
+   * lifecycle lease within {@link PERMISSION_SUPPORT_TIMEOUT_MS}; undefined when it cannot be
+   * read in time or is not a version 1 report. Never throws: missing evidence keeps the device
+   * unprobed, it never fails the lifecycle step. A failure is logged once per instance generation
+   * (`warnOnce`: a Redis marker shared by the replicas; without it, every failure is logged).
+   */
+  private async cloudSupport(
+    deviceId: string,
+    p: SandboxProviderEntry,
+    handle: SandboxHandle,
+    signal: AbortSignal,
+    warnOnce?: string,
+  ): Promise<CloudSupportReport | undefined> {
+    const read = p.impl.permissionSupport?.bind(p.impl);
+    if (!read || p.version === undefined) return undefined;
+    let failure: { message: string; err?: unknown };
+    try {
+      const sig = AbortSignal.any([signal, AbortSignal.timeout(PERMISSION_SUPPORT_TIMEOUT_MS)]);
+      const report = cloudSupportOf(await read(handle, sig));
+      if (report) return { provider: p.plugin, version: p.version, report };
+      failure = { message: "cloud provider returned an invalid permission support report" };
+    } catch (err) {
+      if (signal.aborted) return undefined;
+      failure = {
+        message: "cannot read the cloud provider's permission support; device unprobed",
+        err,
+      };
+    }
+    // a log marker, not a lock: the previous value says whether this generation was logged (two
+    // replicas racing may both log, which is harmless)
+    const first =
+      warnOnce === undefined ||
+      (await this.redis
+        .set(`capk:cloud-support-warned:${deviceId}:${warnOnce}`, "1", "EX", 86_400, "GET")
+        .then((prev) => prev === null)
+        .catch(() => true));
+    if (first)
+      this.log.warn(failure.message, {
+        deviceId,
+        provider: p.plugin,
+        ...(failure.err !== undefined && { err: failure.err }),
+      });
+    return undefined;
+  }
+
+  /**
+   * Under a lifecycle lease on the running instance `e`: records its cloud evidence again when
+   * `force` (a resume) or when the recorded one is stale (another provider version, handle,
+   * generation or applied limits; `cloudReportOwed`). The record is written only while the row
+   * still holds the probed instance with the limits read before the probe, so a holder whose
+   * lease was lost never overwrites newer evidence. A forced read that fails clears the recorded
+   * identity (a resumed instance is unprobed until a read succeeds); any other failure leaves the
+   * evidence as it was. Never throws.
+   */
+  private async refreshCloudSupport(
+    ctx: { orgId: string; deviceId: string },
+    p: SandboxProviderEntry,
+    e: { handle: SandboxHandle; createdAt: number },
+    signal: AbortSignal,
+    force: boolean,
+  ): Promise<void> {
+    try {
+      if (!(await this.recordsCloudSupport(ctx, p))) return;
+      if (!force && !(await cloudReportOwed(this.db.db, ctx.deviceId, p.plugin, p.version))) return;
+      const row = await this.db
+        .selectFrom("device_instances")
+        .select("instance_limits")
+        .where("device_id", "=", ctx.deviceId)
+        .executeTakeFirst();
+      if (!row) return;
+      const held = { ...e, limits: row.instance_limits };
+      const support = await this.cloudSupport(
+        ctx.deviceId,
+        p,
+        e.handle,
+        signal,
+        String(e.createdAt),
+      );
+      if (support)
+        await runOutsideTransaction(() =>
+          this.instanceWrites.recordCloudSupport(ctx.orgId, ctx.deviceId, held, support, signal),
+        );
+      else if (force && !signal.aborted)
+        await runOutsideTransaction(() =>
+          this.instanceWrites.clearCloudSupport(ctx.orgId, ctx.deviceId, held, p.plugin),
+        );
+    } catch (err) {
+      if (!signal.aborted)
+        this.log.warn("cannot record the cloud instance's permission evidence", {
+          deviceId: ctx.deviceId,
+          provider: p.plugin,
+          err,
+        });
+    }
+  }
+
+  /** No binder (protocol 2), or the current generation's binding is installed (B-8). */
+  private async bound(p: SandboxProviderEntry, env: string): Promise<boolean> {
+    return !p.binder || (await p.binder.status(env)) === "installed";
   }
 
   private async clearIntent(env: string, token: string): Promise<void> {
@@ -1206,11 +2129,29 @@ export class SandboxService {
     lease: SandboxLease,
     accept: (row: Row | undefined) => row is Row & { handle: SandboxHandle },
     signal: AbortSignal,
+    /**
+     * Refused (null) while the device has an unresolved retirement obligation, checked under the
+     * lease and before anything is killed or bumped; false only for exact-ref managed drains.
+     */
+    gated: boolean,
+    /**
+     * Checked under the lease (which the B1 snapshot writer's exclusive lease excludes) before
+     * anything is killed or bumped: `reconciled` and `use` refuse a device carrying the
+     * reconcile marker (B-11); `use` (entering a holder) also returns null on the staged path
+     * while the instance's binding is not installed, so the caller binds it exclusively (B-8).
+     * `none` for background polls, stops and drains.
+     */
+    check: "use" | "reconciled" | "none" = "none",
   ): Promise<Entered | null> {
     const env = ctx.deviceId;
     try {
       const row = await this.readRow(ctx);
-      if (!accept(row)) {
+      if (!accept(row) || (gated && (await this.retirement.hasUnresolved(env)))) {
+        await lease.release();
+        return null;
+      }
+      if (check !== "none") await this.facts.assertCloudReconciled(ctx.orgId, env);
+      if (check === "use" && !(await this.bound(p, env))) {
         await lease.release();
         return null;
       }
@@ -1257,6 +2198,9 @@ export class SandboxService {
     const env = ctx.deviceId;
     const sig = AbortSignal.any([signal, lease.signal]);
     try {
+      // under the lease the B1 snapshot writer needs: a device carrying the reconcile marker gets
+      // no create, resume, rebuild, limits change, retirement destroy or kill (B-11)
+      await this.facts.assertCloudReconciled(ctx.orgId, env);
       const s = await this.ensure(ctx, p, lease, sig, gone);
       const dead = await this.claim(env);
       if (s.resumed) await this.killLeftovers(env, s.handle, p, sig, dead);
@@ -1264,6 +2208,16 @@ export class SandboxService {
       if (s.resumed || s.info.fresh) {
         await this.killPendingTasks(env, s.handle, s.createdAt, p, lease.token, ctx.actor, sig);
       }
+      // B-15: a resumed cloud instance reads its permission support again; any other instance
+      // whose recorded evidence is stale (a limits change, a provider version change) too
+      await this.refreshCloudSupport(ctx, p, s, sig, s.resumed === true);
+      // staged path (B-8): create → commit → legacy gate (ensure) → cleanup → bind → installed →
+      // downgrade. The cleanup a resume or create owes runs first: a retry after a failed bind
+      // finds the instance running and would not owe it again. The binder sends the committed
+      // binding id again on every retry, refuses while a legacy obligation is open and runs
+      // outside any transaction; a failure releases the lease.
+      const binder = p.binder;
+      if (binder) await runOutsideTransaction(() => binder.bind(env, sig));
       const shared = await lease.downgrade();
       await this.register(env, shared.token);
       return {
@@ -1333,6 +2287,7 @@ export class SandboxService {
     lease: SandboxLease,
   ): Promise<void> {
     if (tags.length === 0) return;
+    await runOutsideTransaction(() => this.operationIntents.revokeHolders(env, tags));
     const sig = AbortSignal.any([signal, lease.signal]);
     await this.kill(env, "takeover", () => p.impl.killTagged(handle, tags, sig), sig);
   }
@@ -1561,6 +2516,614 @@ export class SandboxService {
   }
 
   /**
+   * The worker's retirement of a device's old incarnations (8.5, `RetireLegacyTasksJob`): one try
+   * at the exclusive lifecycle lease, then the same gate as every acquisition. `busy`: a holder
+   * has the device (the inline gate runs on its next lifecycle acquisition anyway); `unavailable`:
+   * an obligation stays (quarantined, or a destroy that failed); `clear`: none left.
+   */
+  async retireLegacy(
+    deviceId: string,
+    /** The worker's signal (its stop, a lost run lock): ends a destroy in flight. */
+    signal?: AbortSignal,
+  ): Promise<"clear" | "unavailable" | "busy"> {
+    const lease = await this.leases.tryExclusive(deviceId);
+    if (!lease) return "busy";
+    try {
+      const row = await this.db
+        .selectFrom("device_instances")
+        .selectAll()
+        .where("device_id", "=", deviceId)
+        .executeTakeFirst();
+      const fence = row ? { gen: row.generation } : null;
+      if (row && fence) await this.fenced(lease, deviceId, fence, {});
+      await this.retireIncarnations(deviceId, lease, row, fence, signal);
+      return "clear";
+    } catch (err) {
+      if (isRetirementPending(err)) return "unavailable";
+      throw err;
+    } finally {
+      await lease.release();
+    }
+  }
+
+  /**
+   * The lifecycle reconcile of a cloud device carrying `permission_reconcile_required` (B-12),
+   * under one try at its exclusive lifecycle lease (`busy`: a holder has it). The snapshot
+   * writer's reconcile runs first ({@link CloudPermissionSnapshots.reconcileHeld}: it narrows the
+   * authority to what the instance is known to run, and may clear the marker by itself). A device
+   * with an unresolved retirement obligation stops there: its incarnation is the retirement
+   * gate's alone (never resumed here). When the
+   * marker stays on a live instance whose provider can `update`, the provider applies the
+   * reconcile target, which is never wider than the instance in any dimension, so this only
+   * narrows; a suspended instance is resumed for it (its leftover commands killed, nobody else
+   * holds it) and suspended again, as its row still says. `updated` records the target as
+   * applied (fenced) and the reconcile runs again, which clears the marker. No `update`, a
+   * `recreate` answer, a gone instance or a failure leave the marker and its file reset action.
+   */
+  async reconcileLimits(
+    deviceId: string,
+    signal: AbortSignal = AbortSignal.timeout(SWEEP_OP_TIMEOUT_MS),
+  ): Promise<CloudSnapshotOutcome | "busy"> {
+    const lease = await this.leases.tryExclusive(deviceId);
+    if (!lease) return "busy";
+    try {
+      const device = await this.db
+        .selectFrom("devices")
+        .select("org_id")
+        .where("id", "=", deviceId)
+        .executeTakeFirst();
+      if (!device) return { state: "skipped" };
+      const orgId = device.org_id;
+      const row = await this.db
+        .selectFrom("device_instances")
+        .selectAll()
+        .where("device_id", "=", deviceId)
+        .executeTakeFirst();
+      const fence = row ? { gen: row.generation } : null;
+      if (row && fence) await this.fenced(lease, deviceId, fence, {});
+      const before = await runOutsideTransaction(() =>
+        this.snapshots.reconcileHeld(orgId, deviceId),
+      );
+      // an incarnation under a retirement obligation is never resumed or updated here: only the
+      // retirement gate may touch it (C1); the marker stays until the gate cleared it
+      if (before.state === "reconcile-required" && (await this.retirement.hasUnresolved(deviceId)))
+        return before;
+      const p = row ? this.rowProvider(row) : undefined;
+      const update = p?.impl.update?.bind(p.impl);
+      if (
+        before.state !== "reconcile-required" ||
+        before.target === undefined ||
+        !row?.handle ||
+        !fence ||
+        !p ||
+        !update ||
+        p.plugin === LOCAL_PROVIDER ||
+        row.provider !== p.plugin ||
+        row.fs_status !== "ready" ||
+        (row.status !== "running" && row.status !== "suspended")
+      )
+        return before;
+      const handle = row.handle;
+      // the effective limits with their resources, read under the lease: exactly the target, or
+      // the authority moved since the reconcile (the next round sees it)
+      const want = await this.deviceLimits({ orgId, deviceId }, { source: "cloud" });
+      if (!sameAppliedExactly(appliedOf(want), before.target)) return before;
+      const sig = AbortSignal.any([signal, opSignal(lease)]);
+      const facts = { deviceId, provider: p.plugin, to: before.target };
+      const suspended = row.status === "suspended";
+      let answer: "updated" | "recreate" | "gone";
+      try {
+        if (suspended && (await p.impl.resume(handle, sig)) === "gone") answer = "gone";
+        else {
+          if (suspended)
+            await this.kill(deviceId, "resume", () => p.impl.killAll(handle, sig), sig);
+          answer = await update(handle, want, sig);
+        }
+      } catch (err) {
+        if (sig.aborted) throw err;
+        this.log.warn("cannot apply the reconcile limits to the sandbox instance", {
+          ...facts,
+          err,
+        });
+        answer = "recreate";
+      } finally {
+        if (suspended)
+          await this.bestEffort(deviceId, "suspend the instance again after a limits update", (s) =>
+            p.impl.suspend(handle, s),
+          );
+      }
+      if (answer !== "updated") return before;
+      if (!(await lease.renew())) throw new SandboxLockLostError(deviceId);
+      await this.fenced(lease, deviceId, fence, {
+        instance_limits: instanceLimitsJson(appliedOf(want)),
+      });
+      this.log.info("sandbox instance limits reconciled by the provider's update", facts);
+      const after = await runOutsideTransaction(() =>
+        this.snapshots.reconcileHeld(orgId, deviceId),
+      );
+      // a running instance records its evidence for the new limits now; a suspended one on its
+      // next use's resume
+      if (!suspended)
+        await this.refreshCloudSupport(
+          { orgId, deviceId },
+          p,
+          { handle, createdAt: row.created_at.getTime() },
+          sig,
+          false,
+        );
+      return after;
+    } finally {
+      await lease.release();
+    }
+  }
+
+  /**
+   * The worker's sweep of {@link reconcileLimits} (`sandbox-reconcile-limits`): up to `limit`
+   * live cloud devices of the loaded cloud provider carrying the marker on a live instance, in
+   * id order from a shared keyset cursor that wraps around (no starvation), each tried at most
+   * once per {@link RECONCILE_RETRY_SECONDS} across replicas (a Redis marker).
+   * Nothing without a cloud provider that can `update`. Returns how many it reconciled.
+   */
+  async reconcileMarked(limit = 10): Promise<number> {
+    const p = this.providers.cloud();
+    if (!p?.impl.update) return 0;
+    const page = (after: string, n: number) =>
+      this.db
+        .selectFrom("devices as d")
+        .innerJoin("device_instances as i", "i.device_id", "d.id")
+        .select("d.id")
+        .where("d.source", "=", "cloud")
+        .where("d.deleted_at", "is", null)
+        .where("d.permission_reconcile_required", "=", true)
+        .where("i.provider", "=", p.plugin)
+        .where("i.handle", "is not", null)
+        .where("i.status", "in", ["running", "suspended"])
+        .where(sql<boolean>`d.id COLLATE "C" > ${after}`)
+        .orderBy(sql`d.id COLLATE "C"`)
+        .limit(n)
+        .execute();
+    // a keyset cursor shared by the replicas (the cron runs once per tick): each tick goes on
+    // after the last device the previous one visited and wraps around, so devices that stay
+    // marked never starve the ones after them
+    const after = (await this.redis.get(RECONCILE_CURSOR_KEY).catch(() => null)) ?? "";
+    const rows = await page(after, limit);
+    if (rows.length < limit && after !== "") {
+      const seen = new Set(rows.map((r) => r.id));
+      for (const r of await page("", limit - rows.length))
+        if (!seen.has(r.id) && r.id <= after) rows.push(r);
+    }
+    const last = rows.at(-1)?.id;
+    await this.redis
+      .set(RECONCILE_CURSOR_KEY, last ?? "", "EX", 86_400)
+      .catch((err: unknown) => this.log.warn("cannot record the reconcile cursor", { err }));
+    let n = 0;
+    for (const { id } of rows) {
+      // a retry window shared by the replicas, not a lock: a second try within it waits
+      const first = await this.redis
+        .set(`capk:cloud-reconcile-tried:${id}`, "1", "EX", RECONCILE_RETRY_SECONDS, "GET")
+        .then((prev) => prev === null)
+        .catch(() => false);
+      if (!first) continue;
+      try {
+        const r = await this.reconcileLimits(id);
+        if (r !== "busy" && r.state === "bound") n++;
+      } catch (err) {
+        this.log.warn("cannot reconcile a cloud device's limits; will retry", {
+          deviceId: id,
+          err,
+        });
+      }
+    }
+    return n;
+  }
+
+  /**
+   * The retirement gate (permission runtime cutover 8.5), under the exclusive lifecycle lease and
+   * before the instance is used, resumed, rebuilt, switched to another provider, bound or
+   * downgraded to shared use: every unresolved obligation of the device is settled here or the
+   * device is unavailable ({@link retirementPending}).
+   * - The obligation names the **current** incarnation (provider and exact generation): a cloud
+   *   one is destroyed whole by its provider (never resumed, never `killAll`ed, the file system
+   *   kept), the confirmed destruction is recorded and the row reads `destroyed`, so the use
+   *   creates a fresh instance; a failed destroy keeps the obligation. A kernel-internal (local)
+   *   one is quarantined: its destroy is a no-op and a restart proves nothing.
+   * - B-22: a **suspended** current cloud incarnation whose members are all revoked managed starts
+   *   is not destroyed whole (its other tasks would be lost): each revoked ref gets its exact stop
+   *   (persisted while suspended), the instance is resumed, each stop is confirmed (`stopped` or
+   *   `already-exited`), and the obligation resolves as `exact-cancelled`. Any failure is noted on
+   *   the obligation and falls back to the whole-instance destroy above. `resumed` given (a use):
+   *   the resumed instance is left running for it (`resumed.resumed` set); otherwise (the worker),
+   *   or when the device stays refused, it is suspended again, as its row still says.
+   * - It names an incarnation that is **not current** (replaced, a reused handle with another
+   *   generation, unknown): resolved only by a recorded provider-confirmed destruction of exactly
+   *   it, else quarantined. A newer generation is never evidence.
+   * Returns the row as it is afterwards.
+   */
+  private async retireIncarnations(
+    id: string,
+    held: SandboxLease,
+    row: Row | undefined,
+    fence: Fence | null,
+    signal?: AbortSignal,
+    /** A use's holder: a gate that resumed the instance (B-22) leaves it running and says so. */
+    resumed?: { resumed: boolean },
+  ): Promise<Row | undefined> {
+    // the device's own candidates first: the gate never depends on the worker having scanned
+    // (C1); then a later boot an authenticated hello already reported settles local ones
+    await this.retirement.scanUntilStable(5, id);
+    await this.retirement.settleRebooted(id);
+    const open = await this.retirement.unresolved(id);
+    let now = row;
+    // every obligation is tried (one that stays never hides another that can resolve); the
+    // device is refused at the end while any stays, with the answer that tells what would help:
+    // a failed or impossible destroy now → unavailable (a retry may succeed); a cloud incarnation
+    // no evidence can ever cover → recreate the device; a local one whose computer never reported
+    // a boot → replace the device; else only a restart of the computer is missing
+    let pending = false;
+    let failed = false;
+    let cloudPermanent = false;
+    let unknownBoot = false;
+    const isLive = (r: Row | undefined): r is Row & { handle: SandboxHandle } =>
+      r !== undefined &&
+      r.handle !== null &&
+      (r.status === "running" || r.status === "suspended" || r.status === "creating");
+    /** The instance this gate resumed for an exact cancel and still runs (B-22). */
+    let resumedHere: { impl: SandboxProvider; handle: SandboxHandle } | null = null;
+    const bounded = () =>
+      AbortSignal.any([
+        opSignal(held),
+        AbortSignal.timeout(SWEEP_OP_TIMEOUT_MS),
+        ...(signal ? [signal] : []),
+      ]);
+    /**
+     * B-22: on a suspended current cloud incarnation whose members are all revoked managed
+     * starts, cancels each by its exact ref and resumes the instance in between. `skip`: the
+     * shape does not apply (the destroy follows); `failed`: a cancel could not be confirmed (the
+     * reason is noted, the destroy follows).
+     */
+    const cancelOnResume = async (
+      o: { id: string; provider: string; instanceGeneration: string },
+      live: Row & { handle: SandboxHandle },
+    ): Promise<{ cancelled: string[] } | "skip" | { failed: string }> => {
+      if (live.status !== "suspended" || !isCloudProvider(o.provider)) return "skip";
+      const impl = this.providers.forName(o.provider)?.impl;
+      const background = impl?.background;
+      if (!impl || !background) return "skip";
+      const members = await this.retirement.membersOf(o.id);
+      if (members.length === 0 || members.some((m) => m.kind !== "revoked-start")) return "skip";
+      const owed: SandboxExecutionRef[] = [];
+      for (const m of members) {
+        const intent = await this.db
+          .selectFrom("sandbox_operation_intents")
+          .select([
+            "method",
+            "state",
+            "revoke_acknowledged",
+            "provider",
+            "instance_generation",
+            "execution_ref",
+          ])
+          .where("operation_id", "=", m.refId)
+          .where("device_id", "=", id)
+          .executeTakeFirst();
+        if (intent?.revoke_acknowledged === true) continue;
+        if (
+          intent === undefined ||
+          intent.method !== "backgroundStart" ||
+          intent.state !== "revoked" ||
+          intent.provider !== o.provider ||
+          intent.instance_generation !== o.instanceGeneration
+        )
+          return { failed: `revoked start ${m.refId} cannot be named on this incarnation` };
+        let ref: SandboxExecutionRef;
+        try {
+          ref = parseSandboxExecutionRef(intent.execution_ref);
+        } catch {
+          return { failed: `revoked start ${m.refId} has no valid execution reference` };
+        }
+        if (
+          ref.operationId !== m.refId ||
+          ref.instanceGeneration !== o.instanceGeneration ||
+          ref.instanceId !== live.handle.id
+        )
+          return { failed: `revoked start ${m.refId} names another instance` };
+        owed.push(ref);
+      }
+      try {
+        // persisted while suspended: the provider applies a pending cancel before any work of
+        // the instance runs again; the answer is confirmed after the resume
+        for (const ref of owed) {
+          const r = await background.stop(live.handle, ref, {
+            graceMs: MANAGED_STOP_GRACE_MS,
+            signal: bounded(),
+          });
+          // anything but a recorded (or already settled) cancel: never resume into the work
+          if (
+            r.outcome !== "cancel-pending" &&
+            r.outcome !== "stopped" &&
+            r.outcome !== "already-exited"
+          )
+            return {
+              failed: `the exact stop of ${ref.operationId} answered ${r.outcome} while suspended`,
+            };
+        }
+        if ((await impl.resume(live.handle, bounded())) === "gone")
+          return { failed: "the instance is gone at the provider" };
+        resumedHere = { impl, handle: live.handle };
+        for (const ref of owed) {
+          const r = await background.stop(live.handle, ref, {
+            graceMs: MANAGED_STOP_GRACE_MS,
+            signal: bounded(),
+          });
+          if (r.outcome !== "stopped" && r.outcome !== "already-exited")
+            return { failed: `the exact stop of ${ref.operationId} answered ${r.outcome}` };
+        }
+      } catch (err) {
+        if (held.signal.aborted || signal?.aborted) throw err;
+        return { failed: err instanceof Error ? err.message : String(err) };
+      }
+      if (!(await held.renew())) throw new SandboxLockLostError(id);
+      this.log.info("revoked starts cancelled exactly on a resumed instance", {
+        deviceId: id,
+        operations: owed.map((r) => r.operationId),
+      });
+      // every member read is covered (an acknowledged one needed no stop)
+      return { cancelled: members.map((m) => m.refId) };
+    };
+    /**
+     * Destroys the live incarnation of `now` whole with its own provider (never resumed or
+     * killAll'ed, files kept), records the confirmed destruction and marks the row destroyed.
+     */
+    const destroyLive = async (
+      o: { id: string },
+      live: Row & { handle: SandboxHandle },
+    ): Promise<boolean> => {
+      const provider = live.provider ?? "unknown";
+      const impl = isCloudProvider(provider) ? this.providers.forName(provider)?.impl : undefined;
+      if (!impl) {
+        await this.retirement.noteFailure(o.id, `provider ${provider} is not loaded`);
+        return false;
+      }
+      try {
+        // bounded (M5): a hung provider never holds the lease or the worker's tick
+        await impl.destroy(
+          live.handle,
+          AbortSignal.any([
+            opSignal(held),
+            AbortSignal.timeout(SWEEP_OP_TIMEOUT_MS),
+            ...(signal ? [signal] : []),
+          ]),
+        );
+      } catch (err) {
+        if (held.signal.aborted || signal?.aborted) throw err;
+        await this.retirement.noteFailure(o.id, err);
+        this.log.warn("cannot destroy an instance that may run legacy work; device unavailable", {
+          deviceId: id,
+          err,
+        });
+        return false;
+      }
+      if (!(await held.renew())) throw new SandboxLockLostError(id);
+      resumedHere = null;
+      await this.retirement.recordDestruction(id, provider, String(live.created_at.getTime()));
+      if (fence)
+        await this.fenced(held, id, fence, {
+          status: "destroyed",
+          destroyed_at: sql<Date>`now()`,
+          running_since: null,
+          suspended_at: null,
+          sweep_failed_at: null,
+        });
+      this.log.info("instance that may run legacy work destroyed", { deviceId: id });
+      now = await this.db
+        .selectFrom("device_instances")
+        .selectAll()
+        .where("device_id", "=", id)
+        .executeTakeFirst();
+      return true;
+    };
+    /**
+     * R2-I1: the row is not live (destroyed before 0157 without a record, or a create that left
+     * `creating` with no handle). With no `prev_handle`, the row's own cloud provider holds at
+     * most one instance of the device's name (sandbox@2 same-name replacement), so its destroy by
+     * that name confirms every incarnation there; it is recorded as the destruction of the row's
+     * incarnation. A provider not loaded or a failed destroy keeps the obligation open.
+     */
+    const destroyNamed = async (o: { id: string }, row: Row): Promise<boolean> => {
+      const provider = row.provider ?? "unknown";
+      const impl = isCloudProvider(provider) ? this.providers.forName(provider)?.impl : undefined;
+      if (!impl) {
+        await this.retirement.noteFailure(o.id, `provider ${provider} is not loaded`);
+        return false;
+      }
+      try {
+        await impl.destroyByName(
+          deviceResourceName(id),
+          AbortSignal.any([
+            opSignal(held),
+            AbortSignal.timeout(SWEEP_OP_TIMEOUT_MS),
+            ...(signal ? [signal] : []),
+          ]),
+        );
+      } catch (err) {
+        if (held.signal.aborted || signal?.aborted) throw err;
+        await this.retirement.noteFailure(o.id, err);
+        this.log.warn("cannot destroy by name an instance that may run legacy work", {
+          deviceId: id,
+          err,
+        });
+        return false;
+      }
+      if (!(await held.renew())) throw new SandboxLockLostError(id);
+      await this.retirement.recordDestruction(id, provider, String(row.created_at.getTime()));
+      if (fence && row.status === "creating")
+        await this.fenced(held, id, fence, {
+          status: "destroyed",
+          destroyed_at: sql<Date>`now()`,
+          running_since: null,
+          suspended_at: null,
+          sweep_failed_at: null,
+        });
+      this.log.info("instance that may run legacy work destroyed by name", { deviceId: id });
+      now = await this.db
+        .selectFrom("device_instances")
+        .selectAll()
+        .where("device_id", "=", id)
+        .executeTakeFirst();
+      return true;
+    };
+    try {
+      for (const o of open) {
+        const gen = o.instanceGeneration;
+        const local = isInternalProvider(o.provider);
+        const current =
+          isLive(now) && now.provider === o.provider && String(now.created_at.getTime()) === gen;
+        if (current && isLive(now)) {
+          if (local) {
+            await this.retirement.quarantine(
+              o.id,
+              o.bootId === null
+                ? "local instance: no boot identity was reported, so no restart can prove its legacy work ended"
+                : "local instance: waiting for a restart of the computer (a later boot identity)",
+            );
+            if (o.bootId === null) unknownBoot = true;
+            pending = true;
+            continue;
+          }
+          let cancel = await cancelOnResume(o, now);
+          if (cancel !== "skip" && "cancelled" in cancel) {
+            // resolved only while no member outside the stopped refs exists (a concurrent scan's)
+            if (await this.retirement.resolveCancelled(o.id, cancel.cancelled)) continue;
+            cancel = { failed: "a revoked start was recorded while the cancel ran" };
+          }
+          if (cancel !== "skip") {
+            this.log.warn("cannot cancel revoked starts exactly; destroying the instance", {
+              deviceId: id,
+              reason: cancel.failed,
+            });
+            await this.retirement.noteFailure(o.id, cancel.failed);
+          }
+          if (await destroyLive(o, now)) await this.retirement.resolveDestroyed(o.id);
+          else {
+            pending = true;
+            failed = true;
+          }
+          continue;
+        }
+        // the existing whole-instance destroy left the row `destroyed` on exactly this incarnation
+        // with nothing kept for a later retry: the provider confirmed it
+        const destroyedHere =
+          now !== undefined &&
+          now.status === "destroyed" &&
+          now.provider === o.provider &&
+          String(now.created_at.getTime()) === gen &&
+          now.prev_handle === null &&
+          isCloudProvider(o.provider);
+        if (destroyedHere || (await this.retirement.destructionRecorded(id, o.provider, gen))) {
+          await this.retirement.resolveDestroyed(o.id);
+          continue;
+        }
+        if (!local && (gen === "unknown" || o.provider === "unknown")) {
+          // R1-I1 (b): a cloud incarnation the kernel cannot name. Every incarnation the device had
+          // stopped being current through a kernel destroy, a provider `gone` or a kept
+          // `prev_handle`; so once the device's current incarnation is destroyed with
+          // confirmation, nothing earlier is kept (`prev_handle`) and the obligation was recorded
+          // under the freeze (no dispatch after it), no instance of the device can run legacy work.
+          // This rests on sandbox@2 same-name replacement: every rebuild on the same provider goes
+          // through `create`, which first removes the old `cap-device-<id>` instance (so a `gone`
+          // answer, E2B's token-failure `gone` included, and `applyLimits`' swallowed destroy
+          // failure leave nothing behind), and E2B's incarnations are one sandbox (destroying the
+          // current one ends the earlier processes). A provider or kernel path that rebuilds
+          // without same-name replacement breaks this barrier.
+          const frozenAt = await this.retirement.frozenAt();
+          const reason =
+            frozenAt === null || o.createdAt < frozenAt
+              ? "an unknown cloud incarnation recorded before the freeze"
+              : now === undefined || !now.had_instance
+                ? // a row (re)inserted by this acquisition knows nothing of the earlier instances
+                  "an unknown cloud incarnation and no instance record to destroy"
+                : now.prev_handle !== null
+                  ? "an unknown cloud incarnation while an earlier provider's instance may still exist"
+                  : null;
+          if (reason === null && now !== undefined) {
+            if (isLive(now)) {
+              if (await destroyLive(o, now)) await this.retirement.resolveDestroyed(o.id);
+              else {
+                pending = true;
+                failed = true;
+              }
+              continue;
+            }
+            if (
+              now.status === "destroyed" &&
+              now.provider !== null &&
+              (await this.retirement.destructionRecorded(
+                id,
+                now.provider,
+                String(now.created_at.getTime()),
+              ))
+            ) {
+              await this.retirement.resolveDestroyed(o.id);
+              continue;
+            }
+            // not live and nothing recorded (R2-I1): confirm by name with the row's provider
+            if (await destroyNamed(o, now)) await this.retirement.resolveDestroyed(o.id);
+            else {
+              pending = true;
+              failed = true;
+            }
+            continue;
+          }
+          await this.retirement.quarantine(
+            o.id,
+            reason ??
+              "an unknown cloud incarnation and no confirmed destruction of the current one",
+          );
+          cloudPermanent = true;
+          pending = true;
+          continue;
+        }
+        await this.retirement.quarantine(
+          o.id,
+          local
+            ? o.bootId === null
+              ? "local instance: no boot identity was reported, so no restart can prove its legacy work ended"
+              : "local instance: waiting for a restart of the computer (a later boot identity)"
+            : "the old instance was replaced without a recorded confirmed destruction",
+        );
+        if (!local) cloudPermanent = true;
+        else if (o.bootId === null) unknownBoot = true;
+        pending = true;
+      }
+    } catch (err) {
+      // a throw after a resume (a lost lease, an abort, a failed write): the row still says
+      // suspended, so the instance is suspended again (best effort) before the error goes on
+      const left = resumedHere as { impl: SandboxProvider; handle: SandboxHandle } | null;
+      if (left !== null)
+        await this.bestEffort(id, "suspend the instance again after a failed retirement", (s) =>
+          left.impl.suspend(left.handle, s),
+        );
+      throw err;
+    }
+    // a use runs on the instance this gate resumed; anything else leaves it as its row says
+    const still = resumedHere as { impl: SandboxProvider; handle: SandboxHandle } | null;
+    if (still !== null && (pending || resumed === undefined)) {
+      await this.bestEffort(id, "suspend the instance again after an exact cancel", (s) =>
+        still.impl.suspend(still.handle, s),
+      );
+    } else if (still !== null && resumed !== undefined) resumed.resumed = true;
+    if (pending)
+      throw failed
+        ? retirementPending()
+        : cloudPermanent
+          ? recreateRequired()
+          : unknownBoot
+            ? replaceRequired()
+            : restartRequired();
+    return now;
+  }
+
+  /**
    * Under the exclusive lease (before the downgrade), on an instance just resumed from
    * `suspended`: kills every command left in it (`killAll`), crashed holders' (`dead`, already
    * claimed) included. Never on the shared path: other holders may be running commands. A gone
@@ -1574,6 +3137,7 @@ export class SandboxService {
     signal: AbortSignal,
     dead: string[],
   ): Promise<void> {
+    await runOutsideTransaction(() => this.operationIntents.revokeHolders(deviceId, dead));
     await this.kill(
       deviceId,
       dead.length > 0 ? "takeover" : "resume",
@@ -1598,6 +3162,9 @@ export class SandboxService {
     actor: SandboxActor,
     signal: AbortSignal,
   ): Promise<void> {
+    // after the legacy-launch freeze a SID is no authority and the kill marks belong to the
+    // retirement obligations: nothing is signalled or cleared (C1)
+    if (await this.retirement.frozen()) return;
     const rows = await this.background.pendingKills(deviceId);
     if (rows.length === 0) return;
     const mine = rows.filter(
@@ -1771,99 +3338,135 @@ export class SandboxService {
       .where("deleted_at", "is", null)
       .executeTakeFirst();
     if (!live) throw deviceNotFound();
-    const row = await this.db
+    const read = await this.db
       .selectFrom("device_instances")
       .selectAll()
       .where("device_id", "=", id)
       .executeTakeFirst();
-    if (!row) throw deviceNotFound();
-    if (row.org_id !== ctx.orgId) throw this.foreign(ctx);
-    const fence = { gen: row.generation };
+    if (!read) throw deviceNotFound();
+    if (read.org_id !== ctx.orgId) throw this.foreign(ctx);
+    const fence = { gen: read.generation };
     // Every acquisition first does a fenced increment: an old holder whose lease expired while it
     // kept running (a stalled sweep) then fails its next write.
     await this.fenced(held, id, fence, {});
-    if (row.fs_status === "lost") throw deviceFilesLost(p.plugin === LOCAL_PROVIDER);
-    if (
-      row.provider !== null &&
-      row.provider !== p.plugin &&
-      (row.fs_status !== "none" || row.handle !== null)
-    ) {
-      throw otherProvider(row.provider);
-    }
-    if (
-      row.provider !== null &&
-      row.provider !== p.plugin &&
-      row.fs_status === "none" &&
-      row.status === "creating"
-    ) {
-      // a create by the previous provider ended before its file system was recorded: that
-      // provider may have made it by name, and nothing else would ever destroy it
-      await this.dropUnrecordedFiles(id, row.provider, signal);
-    }
-    // read under the lease, after the fence moved: a value read before the wait may be stale
-    // (another replica may have changed the mode meanwhile)
-    const want = await this.wantedLimits(ctx, p, row);
-    const handle = row.handle;
-    const createdAt = row.created_at.getTime();
-    const fsResets = row.fs_resets;
-    if (handle && isInstance(row, gone) && row.status === "running") {
-      const created = await this.create(ctx, p, held, row, fence, signal, want);
-      return { ...created, fsResets, info: { fresh: true, restarted: true }, fence };
-    }
-    if (handle && row.status === "running") {
-      if (want !== null && this.mustApply(row, p, want)) {
-        const created = await this.applyLimits(ctx, p, held, row, handle, fence, signal, want);
-        if (created) return { ...created, fsResets, info: { fresh: true, restarted: true }, fence };
+    // the retirement gate (8.5), before any use, resume, rebuild, provider switch or bind: an
+    // old incarnation that may run legacy work is destroyed (cloud, confirmed) or refuses
+    signal.throwIfAborted();
+    const gate = { resumed: false, running: false };
+    const row = (await this.retireIncarnations(id, held, read, fence, undefined, gate)) ?? read;
+    try {
+      if (row.fs_status === "lost") throw deviceFilesLost(p.plugin === LOCAL_PROVIDER);
+      if (
+        row.provider !== null &&
+        row.provider !== p.plugin &&
+        (row.fs_status !== "none" || row.handle !== null)
+      ) {
+        throw otherProvider(row.provider);
       }
-      return { handle, createdAt, fsResets, info: { fresh: false, restarted: false }, fence };
-    }
-    if (handle && row.status === "suspended") {
-      const r = await p.impl.resume(handle, signal);
-      if (r === "resumed") {
-        // the new limits first: the row says running only once the instance runs with them
-        if (want !== null && this.mustApply(row, p, want)) {
-          let created: Instance | null;
-          try {
-            created = await this.applyLimits(ctx, p, held, row, handle, fence, signal, want);
-          } catch (err) {
-            // the row still says suspended; the next use resumes and kills what is left
-            await this.bestEffort(id, "kill the commands left after a failed limits change", (s) =>
-              p.impl.killAll(handle, s),
-            );
-            throw err;
-          }
-          if (created) {
-            return { ...created, fsResets, info: { fresh: true, restarted: true }, fence };
-          }
-        }
-        await this.fenced(held, id, fence, {
-          status: "running",
-          running_since: sql<Date>`now()`,
-          suspended_at: null,
-          sweep_failed_at: null,
+      if (
+        row.provider !== null &&
+        row.provider !== p.plugin &&
+        row.fs_status === "none" &&
+        row.status === "creating"
+      ) {
+        // a create by the previous provider ended before its file system was recorded: that
+        // provider may have made it by name, and nothing else would ever destroy it
+        await this.dropUnrecordedFiles(id, row.provider, signal);
+      }
+      // read under the lease, after the fence moved: a value read before the wait may be stale
+      // (another replica may have changed the mode meanwhile)
+      const want = await this.wantedLimits(ctx, p, row);
+      const handle = row.handle;
+      const createdAt = row.created_at.getTime();
+      const fsResets = row.fs_resets;
+      if (handle && isInstance(row, gone) && row.status === "running") {
+        const created = await this.create(ctx, p, held, row, fence, signal, want);
+        return { ...created, fsResets, info: { fresh: true, restarted: true }, fence };
+      }
+      // the staged path's activation (B-8): an instance committed before the binder existed has no
+      // binding for its generation and never can get one; past the retirement gate above, a new
+      // generation is created (and committed with its binding) in its place
+      if (
+        handle &&
+        p.binder &&
+        (row.status === "running" || row.status === "suspended") &&
+        (await p.binder.status(id)) === null
+      ) {
+        this.log.info("instance without a committed binding; creating a bound generation", {
+          deviceId: id,
         });
-        return {
-          handle,
-          createdAt,
-          fsResets,
-          info: { fresh: false, restarted: false },
-          fence,
-          resumed: true,
-        };
+        const created = await this.create(ctx, p, held, row, fence, signal, want);
+        return { ...created, fsResets, info: { fresh: true, restarted: true }, fence };
       }
-      this.log.info("sandbox instance is gone at the provider; recreating", {
-        deviceId: id,
-      });
+      if (handle && row.status === "running") {
+        if (want !== null && this.mustApply(row, p, want)) {
+          const created = await this.applyLimits(ctx, p, held, row, handle, fence, signal, want);
+          if (created)
+            return { ...created, fsResets, info: { fresh: true, restarted: true }, fence };
+        }
+        return { handle, createdAt, fsResets, info: { fresh: false, restarted: false }, fence };
+      }
+      if (handle && row.status === "suspended") {
+        // the retirement gate may have resumed it already, to cancel revoked starts exactly (B-22)
+        const r = gate.resumed ? "resumed" : await p.impl.resume(handle, signal);
+        if (r === "resumed") {
+          // the new limits first: the row says running only once the instance runs with them
+          if (want !== null && this.mustApply(row, p, want)) {
+            let created: Instance | null;
+            try {
+              created = await this.applyLimits(ctx, p, held, row, handle, fence, signal, want);
+            } catch (err) {
+              // the row still says suspended; the next use resumes and kills what is left
+              await this.bestEffort(
+                id,
+                "kill the commands left after a failed limits change",
+                (s) => p.impl.killAll(handle, s),
+              );
+              throw err;
+            }
+            if (created) {
+              return { ...created, fsResets, info: { fresh: true, restarted: true }, fence };
+            }
+          }
+          await this.fenced(held, id, fence, {
+            status: "running",
+            running_since: sql<Date>`now()`,
+            suspended_at: null,
+            sweep_failed_at: null,
+          });
+          gate.running = true;
+          return {
+            handle,
+            createdAt,
+            fsResets,
+            info: { fresh: false, restarted: false },
+            fence,
+            resumed: true,
+          };
+        }
+        this.log.info("sandbox instance is gone at the provider; recreating", {
+          deviceId: id,
+        });
+      }
+      const created = await this.create(ctx, p, held, row, fence, signal, want);
+      // had_instance only ever becomes true: any earlier instance (even if a rebuild failed since)
+      // makes this one a restart on the kept files
+      return {
+        ...created,
+        fsResets,
+        info: { fresh: true, restarted: row.had_instance && row.fs_status === "ready" },
+        fence,
+      };
+    } catch (err) {
+      // the gate resumed the instance for an exact cancel (B-22) and this use failed before its
+      // row said running: suspended again (best effort), as the row still says
+      const resumedHandle = row.handle;
+      if (gate.resumed && !gate.running && resumedHandle)
+        await this.bestEffort(id, "suspend the instance again after a failed use", (s) =>
+          p.impl.suspend(resumedHandle, s),
+        );
+      throw err;
     }
-    const created = await this.create(ctx, p, held, row, fence, signal, want);
-    // had_instance only ever becomes true: any earlier instance (even if a rebuild failed since)
-    // makes this one a restart on the kept files
-    return {
-      ...created,
-      fsResets,
-      info: { fresh: true, restarted: row.had_instance && row.fs_status === "ready" },
-      fence,
-    };
   }
 
   /**
@@ -1888,6 +3491,9 @@ export class SandboxService {
       org_id: ctx.orgId,
       provider: p.plugin,
       handle: null,
+      permission_roots: JSON.stringify(
+        row.permission_roots ?? (row.handle ? rootsOf(row.handle) : DEFAULT_SANDBOX_ROOTS),
+      ),
       status: "creating",
       last_used_at: sql<Date>`now()`,
       running_since: null,
@@ -1961,21 +3567,38 @@ export class SandboxService {
     }
     let createdAt: Date;
     try {
-      createdAt = await this.fenced(held, id, fence, {
-        status: "running",
-        handle: JSON.stringify(handle),
-        had_instance: true,
-        created_at: sql<Date>`now()`,
-        running_since: sql<Date>`now()`,
-        last_used_at: sql<Date>`now()`,
-        ...(!atFileSystem && { instance_limits: record }),
-      });
+      // B-15: a cloud instance's permission support, read from it under the lease and recorded
+      // with the handle commit (an unread report never fails the create: the instance stays
+      // unprobed until a later use records it)
+      const support = (await this.recordsCloudSupport(ctx, p))
+        ? await this.cloudSupport(id, p, handle, signal)
+        : undefined;
+      createdAt = await runOutsideTransaction(() =>
+        this.instanceWrites.commitHandle(
+          ctx.orgId,
+          id,
+          fence.gen,
+          rootsOf(handle),
+          {
+            status: "running",
+            handle: JSON.stringify(handle),
+            had_instance: true,
+            // created_at is the generation commitHandle allocates (never a reused millisecond)
+            running_since: sql<Date>`now()`,
+            last_used_at: sql<Date>`now()`,
+            ...(!atFileSystem && { instance_limits: record }),
+          },
+          held.signal,
+          support,
+        ),
+      );
+      fence.gen++;
     } catch (e) {
-      // Lease lost before the handle was recorded: destroy the new instance (best effort) so it
-      // does not leak. A provider that reuses instances by name (Ruling M10) may then hit the one
-      // the new holder just resumed or created; that heals: its next provider call throws
-      // SandboxGoneError (or resume returns gone) and withSandbox rebuilds in place. The file
-      // system is never touched here.
+      // Lease lost (or the device read failed) before the handle was recorded: destroy the new
+      // instance (best effort) so it does not leak. A provider that reuses instances by name
+      // (Ruling M10) may then hit the one the new holder just resumed or created; that heals:
+      // its next provider call throws SandboxGoneError (or resume returns gone) and withSandbox
+      // rebuilds in place. The file system is never touched here.
       await p.impl.destroy(handle, AbortSignal.timeout(SWEEP_OP_TIMEOUT_MS)).catch((err: unknown) =>
         this.log.warn("cannot destroy sandbox created after the lock was lost", {
           deviceId: id,
@@ -2158,6 +3781,8 @@ export class SandboxService {
     provider: string,
     handle: SandboxHandle,
     signal: AbortSignal,
+    /** The retired incarnation's generation when known: its confirmed destroy is recorded (M4). */
+    generation?: string,
   ): Promise<boolean> {
     const old = this.providers.forName(provider)?.impl;
     if (old) {
@@ -2166,6 +3791,8 @@ export class SandboxService {
           handle,
           AbortSignal.any([signal, AbortSignal.timeout(SWEEP_OP_TIMEOUT_MS)]),
         );
+        if (generation !== undefined && isCloudProvider(provider))
+          await this.retirement.recordDestruction(id, provider, generation);
         return false;
       } catch (err) {
         this.log.warn("cannot destroy sandbox instance of the previous provider", {
@@ -2199,7 +3826,7 @@ export class SandboxService {
     if (row.handle && owner === p.plugin) {
       await p.impl.destroy(row.handle, signal);
     } else if (row.handle && row.status !== "destroyed") {
-      if (await this.retire(id, owner, row.handle, signal)) {
+      if (await this.retire(id, owner, row.handle, signal, String(row.created_at.getTime()))) {
         prev = { prev_provider: owner, prev_handle: JSON.stringify(row.handle) };
       }
     } else if (!row.handle && row.status === "creating") {
@@ -2261,6 +3888,11 @@ export class SandboxService {
     const fence = { gen: row.generation };
     const signal = opSignal(held);
     const prev = await this.destroyInstance(row, p, signal);
+    // the provider's destroy resolved: confirmed destruction of exactly this cloud incarnation
+    // (8.5 evidence); a kernel-internal (local) destroy is a no-op and is never recorded
+    const owner = row.provider ?? p.plugin;
+    if (row.handle && owner === p.plugin && isCloudProvider(owner))
+      await this.retirement.recordDestruction(id, owner, String(row.created_at.getTime()));
     if (mode === "device") await this.destroyFiles(row, p, signal);
     if (!(await held.renew())) throw new SandboxLockLostError(id);
     if (mode === "instance") {

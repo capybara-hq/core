@@ -74,7 +74,7 @@ import {
   waitForTerminal,
 } from "../helpers/runs.js";
 import { onlySkills } from "../helpers/skills.js";
-import { FakeMachine, HELLO } from "../local-devices/fake-machine.js";
+import { FakeMachine, HELLO } from "../local-devices/fake-machine-v3.js";
 
 /**
  * M6 T2：由日志快照还原模型请求（零漂移基线）。真实内核 + model-fake / model-looper + SeaweedFS，
@@ -1924,8 +1924,7 @@ describe("reconstructRequest：基线零漂移", () => {
     );
     try {
       await machine.opened;
-      machine.send({
-        ...HELLO,
+      machine.hello({
         features: ["networkReport", "policyOp", "policyOpId"],
         policy: {
           effectiveTier: "strict",
@@ -2320,7 +2319,7 @@ describe("reconstructRequest: the device mode (auto mode spec §4.2)", () => {
     await postMessage(owner, orgId, conv, `tool:Bash:${JSON.stringify(again)}`);
     await waitForTerminal(db, conv, 2, 30_000);
     const modes = (await eventsOf(db, conv)).flatMap((e) =>
-      e.type === "device_paths" ? [e.payload.mode] : [],
+      e.type === "device_paths" && e.payload.permissionContextVersion !== 1 ? [e.payload.mode] : [],
     );
     expect(modes).toEqual(["auto", "sandbox"]);
     const last = JSON.stringify(sent.at(-1));
@@ -2486,6 +2485,56 @@ describe("reconstructRequest：漂移原因", () => {
   });
 
   const clone = () => structuredClone(snap);
+
+  it("permission_profile_changed reports altered recorded permission bytes, not ordinary transitions", () => {
+    const s = clone();
+    const call = s.events.find((e) => e.seq === seq) as CaseSnapshot["events"][number];
+    const payload = call.payload as EventPayload<"model_call">;
+    const contextSeq = payload.request.toSeq + 1;
+    for (const e of s.events) if (e.seq >= contextSeq) e.seq += 1;
+    s.events.push({
+      type: "permission_context",
+      seq: contextSeq,
+      runId: call.runId,
+      createdAt: call.createdAt,
+      payload: {
+        version: 1,
+        rootConversationId: s.conversationId,
+        profileRevision: 1,
+        selectedProfile: "request-approval",
+        effectiveProfile: null,
+        execution: "interactive",
+        inherited: false,
+        deviceId: null,
+        scopeRevision: null,
+        authorityRevision: null,
+        scope: null,
+        availability: {
+          state: "unavailable",
+          cause: "no-device",
+          reason: "Choose a device to run device operations",
+        },
+      },
+    });
+    payload.request.toSeq = contextSeq;
+    const before = reconstructRequest(s, call.seq, { model: info });
+    payload.request.permissionContext = before.meta.permissionContext;
+    expect(reconstructRequest(s, call.seq, { model: info }).drift).toEqual([]);
+    const context = s.events.find((e) => e.seq === contextSeq) as CaseSnapshot["events"][number];
+    context.payload = {
+      ...(context.payload as object),
+      profileRevision: null,
+      selectedProfile: null,
+      availability: {
+        state: "unavailable",
+        cause: "actor-device-access",
+        reason: "This run's actor cannot use the selected device",
+      },
+    };
+    expect(reconstructRequest(s, call.seq, { model: info }).drift).toEqual([
+      "permission_profile_changed",
+    ]);
+  });
 
   it("快照里没有这个 model_call → eval.call_not_found", () => {
     let err: unknown;

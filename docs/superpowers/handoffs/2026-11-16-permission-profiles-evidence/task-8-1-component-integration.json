@@ -1,0 +1,88 @@
+{
+  "sourceHead": "3b27b4637c9f3f19d7e743575e91348259c05178",
+  "mergeHead": "1f380b4566135e3fa0147d6601e77f9b9e864a9c",
+  "completeComponentRange": "2f8a39a369f2cad3dfb764bb236e6c72cdbe063b..1f380b4566135e3fa0147d6601e77f9b9e864a9c",
+  "componentFiles": [
+    {
+      "path": ".changeset/retained-background-output-sdk.md",
+      "sha256": "b0ca291896ee83a7b2264503c11d0ad29250e3b648ad0c3cb6033d071afae9e4",
+      "status": "byte-identical accepted component"
+    },
+    {
+      "path": ".changeset/retained-managed-background-output.md",
+      "sha256": "6ad76b26428a80a8edd0f36db715414cb6e6d9fc93b13b80485928909c672da1",
+      "status": "byte-identical accepted component"
+    },
+    {
+      "path": "docs/superpowers/plans/2026-11-16-retained-background-output.md",
+      "sha256": "ec0b1f68fd8c32d26e053d645198147225e4e4f5e3f34c8caffe82d7d0a02560",
+      "status": "byte-identical accepted component"
+    },
+    {
+      "path": "docs/superpowers/specs/2026-11-16-retained-background-output-design.md",
+      "sha256": "36caf65e064eb17268f8d4660ff5abde19466cf0b31e535095d2c4eb8c61079c",
+      "status": "byte-identical accepted component"
+    },
+    {
+      "path": "packages/device/src/exec/mac-operation-backend.ts",
+      "sha256": "b9c38e404f92fa3150345ecdc7057a3bec50fa6ad9164207b89fa5e75bdd9952",
+      "status": "byte-identical accepted component"
+    },
+    {
+      "path": "packages/device/src/exec/operation-supervisor.ts",
+      "sha256": "124bb2b5419deffcef44cf906c29482f893afa42887d5abe9ee9da3ba7929f75",
+      "status": "byte-identical accepted component"
+    },
+    {
+      "path": "packages/device/src/exec/operation-worker.ts",
+      "sha256": "0b8c7f95e6c81f1a91bd4400660ea4b218712c2728e24193244effd5860f40ca",
+      "status": "byte-identical accepted component"
+    },
+    {
+      "path": "packages/device/src/exec/output-spool-helper.ts",
+      "sha256": "097e20ac397ed2594eef71ce832ea3281a68dc3db5eea7af201054b6e1946395",
+      "status": "byte-identical accepted component"
+    },
+    {
+      "path": "packages/device/src/exec/output-spool.ts",
+      "sha256": "56cd8a4b06760ea2d925ade2b55af342ed67b133932b10ab2c0ca80791208aa8",
+      "status": "byte-identical accepted component"
+    },
+    {
+      "path": "packages/device/test/background-output.test.ts",
+      "sha256": "c0f9c51f4cd630a7c415cd69f8a8eeb3142daa5e15095fa1c8cff9aa69e46fa2",
+      "status": "byte-identical accepted component"
+    },
+    {
+      "path": "packages/device/test/mac-operation-backend.test.ts",
+      "sha256": "c86448beee5e4ee7af180357c9d5d481f0ec539caf959e6e18625f93b7d568bd",
+      "status": "byte-identical accepted component"
+    },
+    {
+      "path": "packages/device/test/operation-supervisor.test.ts",
+      "sha256": "b54d02fc316efa1f1c77687804300520e4b2ab6b49f57c6da338c5052367fd40",
+      "status": "byte-identical accepted component"
+    },
+    {
+      "path": "packages/device/test/output-spool.test.ts",
+      "sha256": "130fe535b9823c83ad758c4105b529fe55565c379fa485fea9675b2faf84a984",
+      "status": "byte-identical accepted component"
+    },
+    {
+      "path": "packages/plugin-sdk/api/plugin-sdk.api.md",
+      "sha256": "8080ad50506e9ce3a900766bbcb8358e9a0754d3b6c167c4429d19a86fff5bc3",
+      "status": "accepted6b staged V3 additions retained; required readOutput present; regenerate/check in8.1"
+    },
+    {
+      "path": "packages/plugin-sdk/src/sandbox-operation.ts",
+      "sha256": "d684e854918df8f5fd13dd8762a8766e8721417767237907f2d7e3291f2999ee",
+      "status": "byte-identical accepted component"
+    },
+    {
+      "path": "packages/plugin-sdk/test/sandbox-operation.test.ts",
+      "sha256": "7999d4ba55a38187d6719ecc18ab52ece0590e205c2b416b7461569a7347ab8e",
+      "status": "byte-identical accepted component"
+    }
+  ],
+  "conflictResolution": "Keep accepted primary main delivery plan, already includes8a/6c+later7/8 phases. SDK API auto-merges accepted6b staged additions+required8a readOutput; regenerate/check mandatory8.1."
+}

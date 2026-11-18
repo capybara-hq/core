@@ -135,15 +135,12 @@ async function nativeFixture() {
   return { fixture, helper, calls: () => calls, disposed: () => disposed };
 }
 
-// The conformance run spawns one `python3` per request (more than 25) — the shipped helper is a
-// one-shot program, so the wall time is process spawns, not the test's logic, and a machine running
-// the whole suite at once starves it past the 5 s default. The bound stays generous but finite.
 it("executes ordinary native semantics through the real Python helper and fresh operations", async () => {
   const { fixture, calls, disposed } = await nativeFixture();
   await runSandboxNativeConformance(fixture);
   expect(calls()).toBeGreaterThan(25);
   expect(disposed()).toBe(true);
-}, 30_000);
+});
 
 /** Instrument only the helper's ordinary Python calls; fail before any potentially blocking open
  * or oversized allocation. The unchanged shipped source is loaded from its fixture-owned file. */

@@ -1,18 +1,23 @@
-import { DEFAULT_SANDBOX_ROOTS } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
-import { sql } from "kysely";
 import { ApiError } from "../errors.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
-import { TransactionHost } from "../infra/database/transaction-host.js";
+import {
+  TransactionHost,
+  withTransactionFencePrelude,
+} from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import type { DeviceModeLevel } from "../runtime/context/device-paths.js";
 import type { SandboxMode } from "../sandbox/modes.js";
+import { PermissionCeilingWrites } from "../sandbox/permission-ceiling-writes.js";
+import { PermissionFacts, type WorkingFacts } from "../sandbox/permission-facts.js";
 import { isInternalProvider, SandboxProviders } from "../sandbox/providers.js";
 import { homeOf } from "../sandbox/review/rules.js";
 import { deviceNotFound, sandboxUnavailable } from "../sandbox/sandbox.service.js";
 import { DeviceAccess } from "./access.js";
 import { DevicesService } from "./devices.service.js";
 import { type WorkingProject, workingRootOf } from "./working-root.js";
+
+export type { WorkingFacts } from "../sandbox/permission-facts.js";
 
 /** `details[0].reason` of the error an anonymous IM conversation's sandbox call gets. */
 export const ANONYMOUS_NO_DEVICE = "anonymous";
@@ -68,22 +73,6 @@ export interface CommandReviewFacts {
 }
 
 /**
- * What decides the working root of a call (project root spec §4.3), read the same way for a
- * sandbox tool and for the command review, so both decide the same root.
- */
-export interface WorkingFacts {
-  /**
-   * The device's workspace: the latest `device_paths` roots recorded in the calling conversation,
-   * else the root's, else the machine's reported roots, else the default.
-   */
-  workspace: string;
-  /** The owner's home: the machine's reported home, else the workspace's home prefix; null: unknown. */
-  home: string | null;
-  /** The root conversation's latest project snapshot; null: free, or none recorded yet. */
-  project: WorkingProject | null;
-}
-
-/**
  * Which device a conversation works in (spec 2026-11-07-environments-design §4.1 items 1, 3;
  * §4.2 items 8, 9, 12). A conversation is bound once, to a device of its owner
  * (`conversations.account_id`): the one chosen at its first send, else the owner's IM default
@@ -101,7 +90,10 @@ export class ConversationDevices {
       Partial<Pick<SandboxProviders, "forName">>,
     @Inject(DeviceAccess) private readonly access: Pick<DeviceAccess, "usable">,
     @Inject(DevicesService)
-    private readonly devices: Pick<DevicesService, "ensureDefault" | "modeLevel">,
+    private readonly devices: Pick<DevicesService, "ensureDefault" | "modeLevel" | "projectReach">,
+    @Inject(PermissionFacts)
+    private readonly facts: Pick<PermissionFacts, "readWorkingFacts" | "workingProject">,
+    @Inject(PermissionCeilingWrites) private readonly ceilings: PermissionCeilingWrites,
   ) {}
 
   /**
@@ -110,6 +102,11 @@ export class ConversationDevices {
    */
   modeLevel(orgId: string, deviceId: string): Promise<DeviceModeLevel | null> {
     return this.devices.modeLevel(orgId, deviceId);
+  }
+
+  /** How far restricted work may root outside the workspace now (B2; {@link DevicesService.projectReach}). */
+  projectReach(orgId: string, deviceId: string): Promise<"workspace" | "os-user"> {
+    return this.devices.projectReach(orgId, deviceId);
   }
 
   /**
@@ -141,7 +138,7 @@ export class ConversationDevices {
       if (e instanceof ApiError) return null;
       throw e;
     }
-    const [device, level] = await Promise.all([
+    const [device, level, reach] = await Promise.all([
       this.db
         .selectFrom("devices")
         .select("name")
@@ -149,6 +146,7 @@ export class ConversationDevices {
         .where("org_id", "=", orgId)
         .executeTakeFirst(),
       this.modeLevel(orgId, deviceId),
+      this.projectReach(orgId, deviceId),
     ]);
     if (device === undefined) return null;
     const mode = level?.mode ?? "sandbox";
@@ -167,7 +165,7 @@ export class ConversationDevices {
       workspace,
       home,
       deviceHome: homeOf(workspace),
-      workingRoot: workingRootOf(project, { mode, workspace, home }),
+      workingRoot: workingRootOf(project, { mode, reach, workspace, home }),
     };
   }
 
@@ -182,76 +180,15 @@ export class ConversationDevices {
     conversationId: string,
     deviceId: string,
   ): Promise<WorkingFacts> {
-    const [recorded, recordedRoot, machine, project] = await Promise.all([
-      this.recordedWorkspace(conversationId),
-      conversationId === rootConversationId ? null : this.recordedWorkspace(rootConversationId),
-      this.machineRoots(deviceId),
-      this.workingProject(orgId, rootConversationId),
-    ]);
-    const workspace =
-      recorded ?? recordedRoot ?? machine?.workspace ?? DEFAULT_SANDBOX_ROOTS.workspace;
-    // never from a project root: the machine's home, else the device workspace's home prefix
-    const reported = machine?.home;
-    const home = reported?.startsWith("/") ? reported : homeOf(workspace);
-    return { workspace, home, project };
+    return this.facts.readWorkingFacts({
+      orgId,
+      rootConversationId,
+      holderConversationId: conversationId,
+      deviceId,
+    });
   }
-
-  /**
-   * The project snapshot that decides the working root of the conversation tree rooted at
-   * `rootConversationId` (project root spec §4.3): its latest `project_root` event, read only when
-   * the conversation is bound to a project (a free conversation reads one row by its key). Null:
-   * free, or bound with no snapshot recorded yet.
-   */
   async workingProject(orgId: string, rootConversationId: string): Promise<WorkingProject | null> {
-    const conv = await this.db
-      .selectFrom("conversations")
-      .select("project_path")
-      .where("id", "=", rootConversationId)
-      .where("org_id", "=", orgId)
-      .executeTakeFirst();
-    if (conv?.project_path == null) return null;
-    const row = await this.db
-      .selectFrom("conversation_events")
-      .select([
-        sql<string | null>`payload->>'root'`.as("root"),
-        sql<boolean>`payload ? 'unavailable'`.as("unavailable"),
-      ])
-      .where("conversation_id", "=", rootConversationId)
-      .where("type", "=", "project_root")
-      .orderBy("seq", "desc")
-      .limit(1)
-      .executeTakeFirst();
-    if (row === undefined || typeof row.root !== "string") return null;
-    return { root: row.root, unavailable: row.unavailable !== false };
-  }
-
-  /** The workspace root of a conversation's latest `device_paths` event, or null. */
-  private async recordedWorkspace(conversationId: string): Promise<string | null> {
-    const row = await this.db
-      .selectFrom("conversation_events")
-      .select(sql<string | null>`payload->'roots'->>'workspace'`.as("workspace"))
-      .where("conversation_id", "=", conversationId)
-      .where("type", "=", "device_paths")
-      .orderBy("seq", "desc")
-      .limit(1)
-      .executeTakeFirst();
-    return row?.workspace ?? null;
-  }
-
-  /**
-   * The workspace root and the owner's home the device's active machine last reported, or null
-   * (cloud: no machine).
-   */
-  private async machineRoots(
-    deviceId: string,
-  ): Promise<{ workspace: string | null; home: string | null } | null> {
-    const row = await this.db
-      .selectFrom("device_machines")
-      .select([sql<string | null>`roots->>'workspace'`.as("workspace"), "home"])
-      .where("device_id", "=", deviceId)
-      .where("revoked_at", "is", null)
-      .executeTakeFirst();
-    return row === undefined ? null : { workspace: row.workspace ?? null, home: row.home ?? null };
+    return this.facts.workingProject(orgId, rootConversationId);
   }
 
   /**
@@ -298,7 +235,10 @@ export class ConversationDevices {
       const im = await this.isImThread(rootConversationId);
       const chosen = await this.defaultFor(orgId, conv.account_id, im);
       if (chosen === null) throw sandboxUnavailable();
-      deviceId = await this.bind(rootConversationId, chosen);
+      deviceId = await withTransactionFencePrelude(
+        () => this.ceilings.lock({ orgId, deviceId: chosen, rootConversationId }, "root"),
+        () => this.bind(orgId, rootConversationId, chosen),
+      );
     }
     if (this.providers.cloud() === undefined && !(await this.isInternal(deviceId))) {
       throw sandboxUnavailable();
@@ -380,7 +320,16 @@ export class ConversationDevices {
 
   /** Binds an unbound conversation to `deviceId`; returns what it is bound to now. */
   @Transactional()
-  private async bind(conversationId: string, deviceId: string): Promise<string> {
+  private async bind(orgId: string, conversationId: string, deviceId: string): Promise<string> {
+    const subject = { orgId, deviceId, rootConversationId: conversationId };
+    await this.ceilings.lock(subject, "root");
+    const before = await this.db
+      .selectFrom("conversations")
+      .select("device_id")
+      .where("id", "=", conversationId)
+      .executeTakeFirstOrThrow();
+    if (before.device_id !== null) return before.device_id;
+    await this.ceilings.publishLocked(subject, "root", false, true);
     await this.db
       .updateTable("conversations")
       .set({ device_id: deviceId })

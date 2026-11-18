@@ -44,7 +44,7 @@ describe("configFields", () => {
       "sandbox.maxConcurrentCommands",
       "sandbox.review.timeoutMs",
       "sandbox.review.messageTokens",
-      "devices.autoMode",
+      "devices.fullAccess",
       "devices.maxPersonal",
       "devices.local.reconnectGraceSeconds",
       "evals.orgConcurrency",

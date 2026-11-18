@@ -9,12 +9,17 @@ import {
   type ExecResult,
   FileSystemGoneError,
   type FileSystemHandle,
+  parseSandboxOperationScope,
+  parseSandboxPreparationScope,
   SANDBOX_EXTENSION_POINT,
   SANDBOX_TAG_RE,
   SandboxGoneError,
   type SandboxHandle,
   type SandboxLimits,
+  SandboxOperationOutcomeUnknownError,
+  SandboxPermissionUnsupportedError,
   type SandboxProvider,
+  SandboxScopeDeniedError,
   validateSandboxPathShape,
 } from "@capybara-hq/plugin-sdk";
 import { z } from "zod";
@@ -962,3 +967,136 @@ export default defineExtension({
     );
   },
 });
+
+/** Dormant operation adapter for tests. This fixture has no restricted OS isolation. */
+export function fakeOperationFacade(root: string, provider: SandboxProvider): SandboxProvider {
+  const consume = async <T>(id: string, input: unknown, work: () => Promise<T>): Promise<T> => {
+    const { createHash } = await import("node:crypto");
+    const dir = join(root, "operation-records", createHash("sha256").update(id).digest("hex"));
+    await mkdir(dirname(dir), { recursive: true });
+    const hash = createHash("sha256").update(JSON.stringify(input)).digest("hex");
+    try {
+      await mkdir(dir);
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      const prior = JSON.parse(await readFile(join(dir, "request"), "utf8").catch(() => "{}")) as {
+        hash?: string;
+      };
+      if (prior.hash !== hash) throw new SandboxScopeDeniedError("Operation identity was reused");
+      const result = await readFile(join(dir, "result"), "utf8").catch(() => null);
+      if (result === null)
+        throw new SandboxOperationOutcomeUnknownError("The test operation outcome is unknown");
+      return JSON.parse(result, (_key, value) =>
+        value && typeof value === "object" && "$bytes" in value
+          ? new Uint8Array(Buffer.from(value.$bytes, "base64"))
+          : value,
+      ).value as T;
+    }
+    await writeFile(join(dir, "request"), JSON.stringify({ hash }));
+    const cancelled = join(
+      root,
+      "operation-revoked",
+      createHash("sha256").update(id).digest("hex"),
+    );
+    if (
+      await stat(cancelled).then(
+        () => true,
+        () => false,
+      )
+    )
+      throw new SandboxScopeDeniedError("Operation revoked");
+    const value = await work();
+    await writeFile(
+      join(dir, "result"),
+      JSON.stringify({ value }, (_key, value) =>
+        value instanceof Uint8Array ? { $bytes: Buffer.from(value).toString("base64") } : value,
+      ),
+    );
+    return value;
+  };
+  const pathAllowed = (path: string, roots: readonly string[]) => {
+    if (
+      validateSandboxPathShape(path).length ||
+      !roots.some((root) => path === root || path.startsWith(`${root}/`))
+    )
+      throw new SandboxScopeDeniedError("Outside preparation roots");
+  };
+  return {
+    ...provider,
+    async permissionSupport() {
+      return {
+        version: 1,
+        restricted: null,
+        fullAccess: true,
+        background: false,
+        unavailableReason: "Test fixture has no restricted OS isolation",
+      };
+    },
+    async revokeOperation(h, ref, signal) {
+      const { createHash } = await import("node:crypto");
+      const dir = join(root, "operation-revoked");
+      await mkdir(dir, { recursive: true });
+      await writeFile(join(dir, createHash("sha256").update(ref.operationId).digest("hex")), "");
+      await provider.killTagged?.(h, [ref.operationId], signal);
+    },
+    async operation(h, given, signal) {
+      const scope = parseSandboxOperationScope(given);
+      if (scope.profile !== "full-access")
+        throw new SandboxPermissionUnsupportedError("Test fixture has no restricted OS isolation");
+      return {
+        exec: (args) =>
+          consume(
+            scope.operationId,
+            { scope, method: "exec", args: { ...args, signal: undefined } },
+            () =>
+              provider.exec(h, {
+                ...args,
+                actor: scope.actor,
+                tag: scope.tag,
+                signal: AbortSignal.any([signal, args.signal]),
+              }),
+          ),
+        readFile: (path, opts) =>
+          consume(
+            scope.operationId,
+            { scope, method: "readFile", path, maxBytes: opts.maxBytes },
+            () =>
+              provider.readFile(h, path, {
+                ...opts,
+                signal: AbortSignal.any([signal, opts.signal]),
+              }),
+          ),
+        writeFile: (path, data, sig) =>
+          consume(
+            scope.operationId,
+            { scope, method: "writeFile", path, bytes: Buffer.from(data).toString("base64") },
+            () => provider.writeFile(h, path, data, AbortSignal.any([signal, sig])),
+          ),
+        stat: (path, sig) =>
+          consume(scope.operationId, { scope, method: "stat", path }, () =>
+            provider.stat(h, path, AbortSignal.any([signal, sig])),
+          ),
+      };
+    },
+    async prepare(h, given, signal) {
+      const scope = parseSandboxPreparationScope(given);
+      return {
+        readFile: (path, opts) => {
+          pathAllowed(path, scope.writeRoots);
+          return provider.readFile(h, path, {
+            ...opts,
+            signal: AbortSignal.any([signal, opts.signal]),
+          });
+        },
+        writeFile: (path, data, sig) => {
+          pathAllowed(path, scope.writeRoots);
+          return provider.writeFile(h, path, data, AbortSignal.any([signal, sig]));
+        },
+        stat: (path, sig) => {
+          pathAllowed(path, scope.writeRoots);
+          return provider.stat(h, path, AbortSignal.any([signal, sig]));
+        },
+      };
+    },
+  };
+}

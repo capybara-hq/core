@@ -16,8 +16,10 @@ import {
 } from "../src/server-ops.js";
 import {
   DEFAULT_POLICY,
+  ownerCeilingOfMode,
   type Policy,
   policyLockPath,
+  policyMode,
   policyPath,
   readPolicy,
   writePolicy,
@@ -107,8 +109,13 @@ describe("the policy op", () => {
   });
   afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
-  const seed = (over: Partial<Policy>) => {
-    writePolicy(dir, { ...DEFAULT_POLICY, ...over });
+  const seed = (over: Partial<Policy> & { mode?: "auto" | "sandbox" }) => {
+    const { mode, ...rest } = over;
+    writePolicy(dir, {
+      ...DEFAULT_POLICY,
+      ...rest,
+      ...(mode !== undefined && { ownerCeiling: ownerCeilingOfMode(mode) }),
+    });
   };
   const policyOp = (args: Record<string, unknown>) =>
     serveOp(new FakeExecutor(), r("policy", { source, ...args }), never, { policy: store });
@@ -154,7 +161,7 @@ describe("the policy op", () => {
       ok: true,
       result: { policy: { mode: "sandbox", allowedDomains: ["b.com"] } },
     });
-    expect(readPolicy(dir).mode).toBe("sandbox");
+    expect(policyMode(readPolicy(dir))).toBe("sandbox");
     expect(detail).toBe("policy remove a.com; mode sandbox by Ada (acc_1) via web, approval apr_1");
   });
 
@@ -175,7 +182,7 @@ describe("the policy op", () => {
     const both = await policyOp({ remove: ["a.com"], add: ["b.com"], mode: "auto" });
     expect(both.res).toMatchObject({ ok: false, error: { message: MODE_ON_DEVICE_MESSAGE } });
     expect(readFileSync(policyPath(dir), "utf8")).toBe(before);
-    expect(readPolicy(dir).mode).toBe("sandbox");
+    expect(policyMode(readPolicy(dir))).toBe("sandbox");
     expect(MODE_ON_DEVICE_MESSAGE).toBe(
       "The device's mode can only be changed on the machine: run `capybara-device mode auto`.",
     );
@@ -329,7 +336,7 @@ describe("exec grants in the command log", () => {
   });
 
   it("names the grants an exec was given and their source", async () => {
-    writePolicy(dir, { ...DEFAULT_POLICY, mode: "sandbox" });
+    writePolicy(dir, { ...DEFAULT_POLICY, ownerCeiling: ownerCeilingOfMode("sandbox") });
     const store = new PolicyStore(dir);
     const { detail } = await serveOp(
       new FakeExecutor(),
@@ -341,7 +348,7 @@ describe("exec grants in the command log", () => {
   });
 
   it("logs nothing when no grant applied", async () => {
-    writePolicy(dir, { ...DEFAULT_POLICY, mode: "sandbox" });
+    writePolicy(dir, { ...DEFAULT_POLICY, ownerCeiling: ownerCeilingOfMode("sandbox") });
     const store = new PolicyStore(dir);
     const none = await serveOp(
       new FakeExecutor(),
@@ -351,7 +358,7 @@ describe("exec grants in the command log", () => {
     );
     expect(none.detail).toBeUndefined();
     // auto mode ignores grants: the machine's own network
-    writePolicy(dir, { ...DEFAULT_POLICY, mode: "auto" });
+    writePolicy(dir, { ...DEFAULT_POLICY, ownerCeiling: ownerCeilingOfMode("auto") });
     const auto = await serveOp(
       new FakeExecutor(),
       r("exec", withGrants({ mode: "auto", network: { kind: "open-public", hosts: [] } })),
@@ -402,7 +409,11 @@ describe("modes in the summary and the command log", () => {
   });
 
   it("the summary keeps the owner's choice after an exec's ceiling", async () => {
-    writePolicy(dir, { ...DEFAULT_POLICY, mode: "auto", allowedDomains: ["a.com"] });
+    writePolicy(dir, {
+      ...DEFAULT_POLICY,
+      ownerCeiling: ownerCeilingOfMode("auto"),
+      allowedDomains: ["a.com"],
+    });
     const store = new PolicyStore(dir);
     const seen: SeenState = {};
     const ex = new FakeExecutor();
@@ -422,17 +433,27 @@ describe("modes in the summary and the command log", () => {
   });
 
   it("reports the owner's mode, before and after an exec's ceiling", () => {
-    expect(policySummary({ ...DEFAULT_POLICY, mode: "auto" }, { mode: "os" })).toEqual({
+    expect(
+      policySummary(
+        { ...DEFAULT_POLICY, ownerCeiling: ownerCeilingOfMode("auto") },
+        { mode: "os" },
+      ),
+    ).toEqual({
       mode: "auto",
       allowedDomains: [],
     });
-    expect(policySummary({ ...DEFAULT_POLICY, mode: "sandbox" }, { mode: "docker" })).toEqual({
+    expect(
+      policySummary(
+        { ...DEFAULT_POLICY, ownerCeiling: ownerCeilingOfMode("sandbox") },
+        { mode: "docker" },
+      ),
+    ).toEqual({
       mode: "sandbox",
       allowedDomains: [],
     });
     expect(
       policySummary(
-        { ...DEFAULT_POLICY, mode: "auto" },
+        { ...DEFAULT_POLICY, ownerCeiling: ownerCeilingOfMode("auto") },
         { mode: "os", limits: { mode: "sandbox" } },
       ),
       // The kernel takes min(allowed, reported): an org that later allows auto follows at once.
@@ -440,7 +461,7 @@ describe("modes in the summary and the command log", () => {
   });
 
   it("the executor runs the decision the log records", async () => {
-    writePolicy(dir, { ...DEFAULT_POLICY, mode: "auto" });
+    writePolicy(dir, { ...DEFAULT_POLICY, ownerCeiling: ownerCeilingOfMode("auto") });
     const store = new PolicyStore(dir);
     const ex = new FakeExecutor();
     const seenBy: unknown[] = [];
@@ -460,7 +481,7 @@ describe("modes in the summary and the command log", () => {
   });
 
   it("every exec is logged with its mode", async () => {
-    writePolicy(dir, { ...DEFAULT_POLICY, mode: "sandbox" });
+    writePolicy(dir, { ...DEFAULT_POLICY, ownerCeiling: ownerCeilingOfMode("sandbox") });
     const store = new PolicyStore(dir);
     const ex = new FakeExecutor();
     const req = r("exec", withMode("auto"));
@@ -473,7 +494,7 @@ describe("modes in the summary and the command log", () => {
       op: "exec",
       mode: "sandbox",
     });
-    writePolicy(dir, { ...DEFAULT_POLICY, mode: "auto" });
+    writePolicy(dir, { ...DEFAULT_POLICY, ownerCeiling: ownerCeilingOfMode("auto") });
     const auto = await serveOp(ex, r("exec", withMode("auto")), never, { policy: store });
     expect(auto.run).toEqual({ mode: "auto" });
     // The ceiling can only narrow.

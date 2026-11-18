@@ -159,6 +159,40 @@ export type AvailableHook = (typeof HOOKS_AVAILABLE)[number];
 export const BACKGROUND_LAUNCH_LINE = "# capybara: background task launch";
 
 // @public
+export interface BackgroundReadOutputRequestV3 {
+    maxBytes: number;
+    offset: number;
+}
+
+// @public
+export type BackgroundReadOutputResultV3 = {
+    dataB64: string;
+    offset: number;
+    nextOffset: number;
+    totalBytes: number;
+} | {
+    unavailable: "lost" | "expired";
+};
+
+// @public
+export interface BindInstanceRequestV3 {
+    bindingId: string;
+    expectedPreviousGeneration: string | null;
+    instanceGeneration: string;
+    instanceId: string;
+}
+
+// @public
+export interface BindInstanceResultV3 {
+    bindingId: string;
+    instanceGeneration: string;
+    instanceId: string;
+    ownerCeiling: DeviceOwnerCeilingV3;
+    permissionSupport: SandboxPermissionSupport;
+    runtimeIdentity: DeviceRuntimeIdentityV3;
+}
+
+// @public
 export const BOOTSTRAP_MANIFEST_SCHEMA_VERSION = 1;
 
 // @public
@@ -774,6 +808,9 @@ export const DEFAULT_SANDBOX_ROOTS: Readonly<SandboxRoots>;
 export function defineExtension(m: ExtensionManifest): ExtensionManifest;
 
 // @public
+export const DEVICE_BOOT_ID_RE: RegExp;
+
+// @public
 export const DEVICE_PROTOCOL_VERSION = 2;
 
 // @public
@@ -828,8 +865,12 @@ export type DeviceFeature = "networkReport" | "policyOp" | "policyOpId" | "mode"
 export type DeviceFrame = DeviceHello | DeviceRes | DevicePolicyChanged | KernelReq | KernelCancel;
 
 // @public
+export type DeviceFrameV3 = DeviceHelloV3 | KernelReadyV3 | KernelRequestV3 | KernelCancel | DeviceResponseV3 | DevicePolicyChangedV3;
+
+// @public
 export interface DeviceHello {
     arch: string;
+    bootId?: string;
     features?: DeviceFeature[];
     home?: string;
     mode: "os" | "docker";
@@ -841,6 +882,18 @@ export interface DeviceHello {
     roots: SandboxRoots;
     sessionIsolation: boolean;
     type: "hello";
+}
+
+// @public
+export interface DeviceHelloV3 extends DeviceHello {
+    instanceGeneration: string | null;
+    ownerCeiling: DeviceOwnerCeilingV3;
+    permissionSupport: SandboxPermissionSupport;
+    protocol: 3;
+    runtimeIdentity?: DeviceRuntimeIdentityV3;
+    transport: {
+        maxFrameBytes: number;
+    };
 }
 
 // @public
@@ -880,6 +933,9 @@ export interface DeviceLocalPolicySummary {
 export type DeviceOp = "create" | "exec" | "readFile" | "writeFile" | "stat" | "killTagged" | "killAll" | "stop" | "policy" | "policyStatus" | "list" | "scan";
 
 // @public
+export type DeviceOperationV3 = Exclude<DeviceOp, "killTagged" | "killAll"> | "prepareReadFile" | "prepareWriteFile" | "prepareStat" | "browseStat" | "browseList" | "browseScan" | "backgroundStart" | "backgroundStatus" | "backgroundTail" | "backgroundReadOutput" | "backgroundStop" | "revokeOperation" | "bindInstance";
+
+// @public
 export interface DeviceOpResults {
     create: DeviceCreateResult;
     exec: DeviceExecResult;
@@ -893,6 +949,22 @@ export interface DeviceOpResults {
     stat: DeviceStatResult;
     stop: null;
     writeFile: DeviceWriteFileResult;
+}
+
+// @public
+export interface DeviceOwnerCeilingNarrowingV3 {
+    readonly fullAccess?: false;
+    readonly restrictedProjectReach?: "workspace";
+}
+
+// @public
+export interface DeviceOwnerCeilingV3 {
+    readonly fullAccess: boolean;
+    readonly restrictedAllowedDomains: readonly string[];
+    readonly restrictedProjectReach: "workspace" | "os-user";
+    readonly revision: string;
+    readonly sequence: number;
+    readonly version: 2;
 }
 
 // @public
@@ -910,7 +982,19 @@ export interface DevicePolicyArgs {
 }
 
 // @public
+export interface DevicePolicyArgsV3 extends DevicePolicyArgs {
+    ownerCeiling?: DeviceOwnerCeilingNarrowingV3;
+}
+
+// @public
 export interface DevicePolicyChanged {
+    policy?: DeviceLocalPolicySummary;
+    type: "policy";
+}
+
+// @public
+export interface DevicePolicyChangedV3 {
+    ownerCeiling: DeviceOwnerCeilingV3;
     policy?: DeviceLocalPolicySummary;
     type: "policy";
 }
@@ -930,6 +1014,12 @@ export interface DevicePolicyResult {
 }
 
 // @public
+export interface DevicePolicyResultV3 {
+    ownerCeiling: DeviceOwnerCeilingV3;
+    policy: DeviceLocalPolicySummary;
+}
+
+// @public
 export interface DevicePolicyStatus {
     message?: string;
     outcome: DevicePolicyOpOutcome | "unknown";
@@ -939,6 +1029,11 @@ export interface DevicePolicyStatus {
 // @public
 export interface DevicePolicyStatusArgs {
     opId: string;
+}
+
+// @public
+export interface DevicePolicyStatusV3 extends DevicePolicyStatus {
+    ownerCeiling?: DeviceOwnerCeilingV3;
 }
 
 // @public
@@ -983,6 +1078,27 @@ export type DeviceRes = {
         message: string;
     };
 };
+
+// @public
+export type DeviceResponseV3 = Exclude<DeviceRes, {
+    ok: false;
+}> | {
+    type: "res";
+    id: string;
+    ok: false;
+    error: {
+        kind: "gone" | "fs_gone" | "policy" | "error" | "denied" | "unsupported" | "unknown";
+        message: string;
+    };
+};
+
+// @public
+export interface DeviceRuntimeIdentityV3 {
+    helperHash: string;
+    imageFingerprint: string;
+    instanceGeneration: string;
+    runtimeHash: string;
+}
 
 // @public
 export interface DeviceScanArgs {
@@ -1904,6 +2020,9 @@ export function isBackgroundLaunch(command: string): boolean;
 export function isChannelSendError(e: unknown): e is ChannelSendError;
 
 // @public
+export function isDeviceBootId(v: unknown): v is string;
+
+// @public
 export function isDeviceProjectName(v: unknown): v is string;
 
 // @public
@@ -1937,6 +2056,9 @@ export function isSafePackagePath(p: string): boolean;
 export function isSandboxGoneError(e: unknown): e is SandboxGoneError;
 
 // @public
+export function isSandboxMoveDenied(source: string, destination: string, sourceIsDirectory: boolean): boolean;
+
+// @public
 export function isSandboxOperationOutcomeUnknownError(e: unknown): e is SandboxOperationOutcomeUnknownError;
 
 // @public
@@ -1947,6 +2069,9 @@ export function isSandboxScopeDeniedError(e: unknown): e is SandboxScopeDeniedEr
 
 // @public
 export function isSandboxScopeValidationError(e: unknown): e is SandboxScopeValidationError;
+
+// @public
+export function isSandboxWriteDenied(path: string): boolean;
 
 // @public
 export function isSecret(schema: z.ZodTypeAny): boolean;
@@ -1978,11 +2103,27 @@ export interface KernelCancel {
 }
 
 // @public
+export interface KernelReadyV3 {
+    connectionId: string;
+    maxFrameBytes: number;
+    type: "ready";
+}
+
+// @public
 export interface KernelReq {
     args: unknown;
     deadlineMs: number;
     id: string;
     op: DeviceOp;
+    type: "req";
+}
+
+// @public
+export interface KernelRequestV3 {
+    args: Readonly<Record<string, unknown>>;
+    deadlineMs: number;
+    id: string;
+    op: DeviceOperationV3;
     type: "req";
 }
 
@@ -2516,6 +2657,9 @@ export function parseConnectorTemplateFile(json: unknown): ConnectorTemplateFile
 export function parseDeviceFrame(raw: string, from: "device" | "kernel"): DeviceFrame;
 
 // @public
+export function parseDeviceFrameV3(raw: string, from: "device" | "kernel", maxFrameBytes?: number): DeviceFrameV3;
+
+// @public
 export interface ParsedSetupGuide {
     checks: SetupGuideCheckLine[];
     codeBlocks: SetupGuideCodeBlock[];
@@ -2572,7 +2716,13 @@ export function parseMarketplaceManifest(json: unknown, opts?: MarketplaceParseO
 };
 
 // @public
+export function parseOperationResultV3(op: DeviceOperationV3, result: unknown, request?: BackgroundReadOutputRequestV3 | BindInstanceRequestV3): unknown;
+
+// @public
 export function parseOpResult<Op extends DeviceOp>(op: Op, result: unknown): DeviceOpResults[Op];
+
+// @public
+export function parseOwnerCeilingReportV3(value: unknown): DeviceOwnerCeilingV3;
 
 // @public
 export function parsePluginManifest(json: unknown): PluginManifest | {
@@ -2947,6 +3097,21 @@ export type RouteCaller = {
 export const SANDBOX_EXTENSION_POINT = "sandbox@2";
 
 // @public
+export const SANDBOX_GIT_ALLOWED_DIRECTORIES: readonly string[];
+
+// @public
+export const SANDBOX_GIT_ALLOWED_FILES: readonly string[];
+
+// @public
+export const SANDBOX_GIT_DENIED_INTERNALS: readonly string[];
+
+// @public
+export const SANDBOX_MANDATORY_WRITE_DENIES: readonly (readonly string[])[];
+
+// @public
+export const SANDBOX_PROTECTED_PATH_NAMES: readonly string[];
+
+// @public
 export const SANDBOX_ROOTS: readonly ["/workspace", "/skills", "/tmp"];
 
 // @public
@@ -3293,7 +3458,7 @@ export function sanitizeThemeSvg(bytes: Uint8Array): {
 };
 
 // @public
-export const SDK_VERSION = "0.1.0-rc.30";
+export const SDK_VERSION = "0.1.0-rc.31";
 
 // @public
 export function secret<T extends z.ZodTypeAny>(schema: T): T;
@@ -3520,6 +3685,9 @@ export function skillSandboxDir(name: string, digest: string, root?: string): st
 
 // @public
 export function skillSandboxPath(name: string, digest: string, path: string, root?: string): string;
+
+// @public
+export const STAGED_DEVICE_PROTOCOL_VERSION = 3;
 
 // @public
 export const STANDARD_KNOBS: readonly StandardKnob[];

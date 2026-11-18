@@ -25,7 +25,7 @@ import {
   formatInput,
   scopesFor,
 } from "../lib/approvals";
-import type { ToolInfo } from "../lib/conversations";
+import type { PermissionScope, ToolInfo } from "../lib/conversations";
 import { retryOnMountOf } from "../lib/query/client";
 import { approvalQuery } from "../lib/query/conversation";
 import { inboxChangeKeys } from "../lib/query/inbox";
@@ -37,14 +37,29 @@ import type { ApprovalDecision, ApprovalItem } from "../lib/timeline";
 import { lang, PLATFORM_PREFIX, toolLabel, toolLabelOfKey, toolLabelText } from "../lib/tool-label";
 import { useErrorMessage } from "../lib/use-error-message";
 import { InitialPasswordReveal } from "./InitialPasswordReveal";
+import { PermissionScopeDetail } from "./PermissionScopeDetail";
 import { useSession } from "./shell/session";
 
-/** 已处理的结果（来自 `approval_decided` 事件或审批详情）。 */
-export type Outcome = Pick<ApprovalDecision, "decision" | "scope" | "byAccountId" | "reason">;
+/**
+ * A decided approval's outcome (from its `approval_decided` event or its detail). A superseded
+ * one carries the root permission `revision` and the `reason` (`user` / `authority-changed`).
+ */
+export type Outcome = Pick<
+  ApprovalDecision,
+  "decision" | "scope" | "byAccountId" | "reason" | "revision"
+>;
 
-/** 审批详情里的状态 → 处理结果（pending 为 null）。 */
+/** An approval detail's status as its outcome (null while pending). */
 export function outcomeOf(a: Approval): Outcome | null {
   if (a.status === "pending") return null;
+  // the API names a supersession's facts apart from a decision's (no decider, no scope)
+  if (a.status === "superseded")
+    return {
+      decision: "superseded",
+      byAccountId: null,
+      ...(a.supersededReason != null ? { reason: a.supersededReason } : {}),
+      ...(a.supersededRevision != null ? { revision: a.supersededRevision } : {}),
+    };
   return {
     decision: a.status,
     ...(a.scope !== null ? { scope: a.scope } : {}),
@@ -104,7 +119,7 @@ export function ApprovalOutcome({ outcome }: { outcome: Outcome }) {
       ? "success"
       : outcome.decision === "denied"
         ? "failed"
-        : "cancelled"; // expired, cancelled and skipped alike
+        : "cancelled"; // expired, cancelled, skipped and superseded alike
   return (
     <Stack direction="row" gap={12} align="center" wrap>
       <StatusMark status={status} label={t(`decision.${outcome.decision}`)} />
@@ -169,6 +184,10 @@ export function useDecide(orgId: string) {
         return approval;
       } catch (e) {
         toast.error(errorMessage(e));
+        // most likely decided or superseded meanwhile: the card and the inbox read it again
+        // (never a second decision)
+        for (const queryKey of [keys.org(orgId).approval(id), ...inboxChangeKeys(orgId)])
+          void qc.invalidateQueries({ queryKey });
         return null;
       } finally {
         setPending(undefined);
@@ -177,7 +196,7 @@ export function useDecide(orgId: string) {
         session.refreshPending?.();
       }
     },
-    [toast, errorMessage, session, mutateAsync],
+    [toast, errorMessage, session, mutateAsync, qc, orgId],
   );
   return { decide, pending };
 }
@@ -284,7 +303,41 @@ export function ApprovalCard({
       (item.toolKey === "Platform" && input.operation === CREATE_ACCOUNT_OPERATION));
   const network = networkAskOf(item, view);
   const command = commandAskOf(item, view);
+  const scope = permissionScopeOf(item, view);
   const detail = view?.kind === "network" ? (view.detail ?? null) : null;
+  // A permission change replaced the ask before anyone decided it: a final line, never actions.
+  if (outcome?.decision === "superseded") {
+    return (
+      <div data-role="approval" data-approval-id={item.approvalId} data-state="superseded">
+        <Stack gap={8}>
+          <Stack direction="row" gap={12} align="center" wrap>
+            <Text variant="small">{tool}</Text>
+            <StatusMark status="cancelled" label={t("decision.superseded")} />
+            {outcome.at ? (
+              <Text variant="small" tone="muted">
+                {shortTime(outcome.at, locale, timeZone)}
+              </Text>
+            ) : null}
+          </Stack>
+          <Text variant="prose" tone="muted">
+            {t(
+              outcome.reason === "authority-changed"
+                ? "superseded.authorityChanged"
+                : "superseded.user",
+            )}
+          </Text>
+          {outcome.revision !== undefined && (
+            <Text variant="small" tone="muted">
+              {t("superseded.revision", { n: outcome.revision })}
+            </Text>
+          )}
+          {scope !== undefined && (
+            <PermissionScopeDetail scope={scope.permissionScope} targetPath={scope.targetPath} />
+          )}
+        </Stack>
+      </div>
+    );
+  }
   let state: ApprovalState;
   if (outcome !== null) {
     const fallback: NetworkFallback | undefined =
@@ -356,6 +409,9 @@ export function ApprovalCard({
         }
         onDeny={(reason) => void onDecide("deny", "once", reason)}
       />
+      {scope !== undefined && (
+        <PermissionScopeDetail scope={scope.permissionScope} targetPath={scope.targetPath} />
+      )}
       {state.kind === "pending" && detail?.attempt !== undefined && (
         <Text variant="small" tone="warn">
           {detail.attempt.outcome === "failed"
@@ -419,5 +475,23 @@ export function networkAskOf(
     hosts: item.network.hosts,
     command: stringField(item.input, "command") ?? "",
     ...(description ? { description } : {}),
+  };
+}
+
+/**
+ * The exact reach a permission ask grants: from its detail once read, else from the log's
+ * `approval_requested.command` (both carry the same untruncated arrays); undefined for an ask
+ * without one (an auto-mode command ask, other kinds).
+ */
+export function permissionScopeOf(
+  item: Pick<ApprovalItem, "command">,
+  view: Approval | null | undefined,
+): { permissionScope: PermissionScope; targetPath?: string } | undefined {
+  const detail = view?.kind === "command" ? view.command : null;
+  const from = detail?.permissionScope !== undefined ? detail : item.command;
+  if (from?.permissionScope === undefined) return undefined;
+  return {
+    permissionScope: from.permissionScope,
+    ...(from.targetPath !== undefined ? { targetPath: from.targetPath } : {}),
   };
 }

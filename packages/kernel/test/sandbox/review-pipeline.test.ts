@@ -13,19 +13,21 @@ import {
 } from "@capybara-hq/testing";
 import { SchedulerRegistry } from "@nestjs/schedule";
 import { sql } from "kysely";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   COMMAND_ASK_TEXT_MAX_CHARS,
   type ConversationEvent,
 } from "../../src/conversations/events.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
+import { ConversationDevices } from "../../src/devices/conversation-devices.js";
 import { Waits } from "../../src/runtime/waits.js";
 import { REVIEW_SYSTEM_PROMPT } from "../../src/sandbox/review/index.js";
 import { ScheduledTaskFirer } from "../../src/schedules/fire.js";
 import { SCHED_SCAN_JOB } from "../../src/schedules/job-ids.js";
 import { type ScheduledTaskInsert, ScheduledTaskStore } from "../../src/schedules/store.js";
 import type { TaskRun } from "../../src/schedules/types.js";
+import { ToolPipeline } from "../../src/tools/pipeline.js";
 import { scriptRules } from "../fixtures/plugins/model-script/index.js";
 import { onlyBuiltins } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
@@ -405,6 +407,48 @@ describe("the command review in the pipeline", () => {
     expect(
       audits.filter((a) => (a.detail as { conversationId?: string }).conversationId === conv),
     ).toHaveLength(1);
+  });
+
+  // B-18: the root a call was judged against reaches the tool always, the workspace included
+  it("an allowed call in free mode carries the workspace it was reviewed against", async () => {
+    const conv = await createConv(owner, orgId, agentId);
+    const execute = vi.spyOn(k.app.get(ToolPipeline), "execute");
+    try {
+      const r = await call(conv, "Bash", { command: "echo carried", description: "Greet" }, 1);
+      expect(r.payload.isError).toBe(false);
+      const facts = await k.app.get(ConversationDevices).reviewFacts(orgId, conv);
+      const bash = execute.mock.calls.find(([tool]) => tool.key === "Bash");
+      expect(bash?.[6]).toEqual({ workingRoot: undefined, against: facts?.workingRoot });
+      expect(facts?.workingRoot).toBe(facts?.workspace);
+    } finally {
+      execute.mockRestore();
+    }
+  });
+
+  it("an approved call whose working root a mode change dropped still carries the root approved", async () => {
+    const conv = await createConv(owner, orgId, agentId);
+    await postMessage(owner, orgId, conv, `tool:Bash:${JSON.stringify(PUSH)}`);
+    const ask = await pendingCommandAsk(conv);
+    await waitRunWaiting(conv);
+    const approvedRoot = (ask.detail as { workingRoot?: string }).workingRoot;
+    expect(approvedRoot).toBeDefined();
+    // the device switched modes between the ask and its approval
+    const devices = k.app.get(ConversationDevices);
+    const real = devices.reviewFacts.bind(devices);
+    const facts = vi.spyOn(devices, "reviewFacts").mockImplementation(async (...args) => {
+      const f = await real(...args);
+      return f && { ...f, mode: f.mode === "auto" ? "sandbox" : "auto" };
+    });
+    const execute = vi.spyOn(k.app.get(ToolPipeline), "execute");
+    try {
+      expect((await decide(ask.id, { decision: "approve", scope: "once" })).statusCode).toBe(200);
+      await waitForTerminal(db, conv, 1, 30_000);
+      const bash = execute.mock.calls.find(([tool]) => tool.key === "Bash");
+      expect(bash?.[6]).toEqual({ workingRoot: undefined, against: approvedRoot });
+    } finally {
+      execute.mockRestore();
+      facts.mockRestore();
+    }
   });
 
   it("the person declines the held command with a reason; the model gets P-D12's text", async () => {

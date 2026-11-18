@@ -1,6 +1,6 @@
 {
   "name": "@capybara-hq/device",
-  "version": "0.1.0-rc.13",
+  "version": "0.1.0-rc.14",
   "description": "capybara-device: connects a laptop or server to a Capybara deployment as a device",
   "license": "Apache-2.0",
   "repository": {
@@ -42,14 +42,20 @@
     "NOTICE"
   ],
   "scripts": {
-    "build": "tsc -b"
+    "build": "tsc -b",
+    "prepack": "node --experimental-strip-types tools/runtime-manifest.ts",
+    "postpack": "node --experimental-strip-types tools/runtime-manifest.ts --clean"
   },
-  "dependencies": {
+  "bundledRuntime": [
+    "@anthropic-ai/sandbox-runtime",
+    "@capybara-hq/plugin-sdk",
+    "ws"
+  ],
+  "devDependencies": {
     "@anthropic-ai/sandbox-runtime": "0.0.81",
     "@capybara-hq/plugin-sdk": "workspace:^",
+    "@types/ws": "^8.5.13",
+    "esbuild": "0.28.2",
     "ws": "^8.18.0"
-  },
-  "devDependencies": {
-    "@types/ws": "^8.5.13"
   }
 }

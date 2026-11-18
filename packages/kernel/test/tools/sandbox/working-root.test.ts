@@ -2,6 +2,7 @@ import type { SandboxRoots } from "@capybara-hq/plugin-sdk";
 import { describe, expect, it } from "vitest";
 import { KernelConfigSchema } from "../../../src/config/schema.js";
 import {
+  canonicalRoot,
   pathAgainstWorkingRoot,
   type WorkingProject,
   workingRootOf,
@@ -69,6 +70,15 @@ describe("workingRootOf", () => {
     expect(workingRootOf(usable("/var/lib/other"), varHome)).toBe("/var/lib/other");
     expect(workingRootOf(usable("/home/u/app"), auto)).toBe("/home/u/app");
     expect(workingRootOf(usable("/root/app"), auto)).toBe("/root/app");
+  });
+});
+
+describe("canonicalRoot", () => {
+  it("compares roots in one form: normalized, no trailing slash, / kept (B-18)", () => {
+    expect(canonicalRoot("/workspace/")).toBe("/workspace");
+    expect(canonicalRoot("/workspace//app/./")).toBe("/workspace/app");
+    expect(canonicalRoot("/")).toBe("/");
+    expect(canonicalRoot("/srv/app")).toBe("/srv/app");
   });
 });
 
@@ -214,7 +224,7 @@ describe("the sandbox tools in a bound conversation", () => {
       sandbox: {
         cloudAvailable: true,
         availableFor: async () => true,
-        currentInstance: async () => ({ createdAt: new Date(0) }),
+        currentInstance: async () => ({ createdAt: new Date(0), provider: "sandbox-fake" }),
         withSandbox: async (_c, fn, sig) => {
           entered++;
           return fn(

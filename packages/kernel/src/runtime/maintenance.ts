@@ -1,6 +1,7 @@
 import { OnWorkerEvent, WorkerHost } from "@nestjs/bullmq";
-import { Inject, Injectable, Module } from "@nestjs/common";
+import { Inject, Injectable, Module, Optional } from "@nestjs/common";
 import type { Job, Worker } from "bullmq";
+import { BackgroundModule } from "../background/background.module.js";
 import { BG_WAKE_JOB, type BgWakeJobData } from "../background/wake-rules.js";
 import { OWNED_PLUGIN_CLEANUP_JOB, type OwnedPluginCleanupData } from "../catalog/job-ids.js";
 import { OwnedPluginCleanup, OwnedPluginCleanupModule } from "../catalog/owned-plugin-cleanup.js";
@@ -18,12 +19,16 @@ import type { KernelLogger } from "../log.js";
 import { DIRECTORY_SYNC_JOB, DirectorySync, type SyncJobData } from "../orgs/directory-sync.js";
 import { Offboarding, RUN_STOP_JOB, type RunStopJobData } from "../orgs/offboarding.js";
 import { OrgsModule } from "../orgs/orgs.module.js";
+import { CloudPermissionSnapshots } from "../sandbox/cloud-permission-snapshot.js";
 import {
   runSandboxDestroyFor,
   runSandboxResetFiles,
   SANDBOX_DESTROY_FOR_JOB,
   SANDBOX_RESET_FILES_JOB,
 } from "../sandbox/jobs.js";
+import { OPERATION_RECONCILE, OPERATION_REVOKE } from "../sandbox/operation-intents.js";
+import { SandboxOperationReconcileJob } from "../sandbox/operation-reconcile.job.js";
+import { PERMISSION_APPROVAL_RECHECK } from "../sandbox/permission-transitions.js";
 import { SandboxModule } from "../sandbox/sandbox.module.js";
 import { SandboxService } from "../sandbox/sandbox.service.js";
 import { ScheduledTaskFireModule, ScheduledTaskFirer } from "../schedules/fire.js";
@@ -36,6 +41,10 @@ import {
 import { DeviceOpResolver } from "../tools/device-op-resolver.js";
 import { type DriftConnectorJobData, ToolDrift } from "../tools/drift.js";
 import { DRIFT_CONNECTOR_JOB } from "../tools/job-ids.js";
+import {
+  PermissionApprovalJobs,
+  type PermissionRecheckData,
+} from "../tools/permission-approval-jobs.js";
 import { ToolsModule } from "../tools/tools.module.js";
 import { MAINTENANCE_QUEUE_NAME } from "./maintenance-queue.js";
 import { RunDeletion, STOP_DELETED_ORG_JOB, type StopDeletedOrgData } from "./run-deletion.js";
@@ -73,6 +82,8 @@ export const MAINTENANCE_CONCURRENCY = 5;
 @Injectable()
 export class MaintenanceProcessor extends WorkerHost<Worker> {
   constructor(
+    @Inject(PermissionApprovalJobs)
+    private readonly permissionApprovals: Pick<PermissionApprovalJobs, "recheck">,
     @Inject(Waits)
     private readonly waits: Pick<
       Waits,
@@ -91,6 +102,11 @@ export class MaintenanceProcessor extends WorkerHost<Worker> {
     @Inject(DeviceOpResolver) private readonly deviceOps: Pick<DeviceOpResolver, "resolve">,
     @Inject(ScheduledRuns) private readonly scheduled: Pick<ScheduledRuns, "runNow">,
     @Inject(KERNEL_LOGGER) private readonly log: Pick<KernelLogger, "error" | "warn">,
+    @Inject(SandboxOperationReconcileJob)
+    private readonly operations: Pick<SandboxOperationReconcileJob, "reconcile" | "revoke">,
+    @Optional()
+    @Inject(CloudPermissionSnapshots)
+    private readonly snapshots?: Pick<CloudPermissionSnapshots, "reconcileDevice">,
   ) {
     super();
   }
@@ -106,6 +122,15 @@ export class MaintenanceProcessor extends WorkerHost<Worker> {
 
   private async dispatch(job: Job, token: string | undefined): Promise<void> {
     switch (job.name) {
+      case PERMISSION_APPROVAL_RECHECK:
+        await this.permissionApprovals.recheck(job.data as PermissionRecheckData);
+        return;
+      case OPERATION_RECONCILE:
+        await this.operations.reconcile((job.data as { operationId: string }).operationId);
+        return;
+      case OPERATION_REVOKE:
+        await this.operations.revoke((job.data as { operationId: string }).operationId);
+        return;
       case STOP_DELETED_ORG_JOB:
         await this.deletion.stopOrg(job.data as StopDeletedOrgData);
         return;
@@ -116,7 +141,7 @@ export class MaintenanceProcessor extends WorkerHost<Worker> {
         await runSandboxDestroyFor(this.sandbox, this.log, job);
         return;
       case SANDBOX_RESET_FILES_JOB:
-        await runSandboxResetFiles(this.sandbox, job);
+        await runSandboxResetFiles(this.sandbox, job, this.snapshots);
         return;
       case DRIFT_CONNECTOR_JOB: {
         const { orgId, connectorId, trigger } = job.data as DriftConnectorJobData;
@@ -206,6 +231,8 @@ export class MaintenanceProcessor extends WorkerHost<Worker> {
   imports: [
     // the periodic jobs' bodies (a periodic job's name enqueued here runs it once)
     KernelScheduleModule,
+    // the exact stop a revoked background start owes (SandboxOperationReconcileJob)
+    BackgroundModule,
     RuntimeModule,
     SandboxModule,
     ToolsModule,
@@ -217,6 +244,7 @@ export class MaintenanceProcessor extends WorkerHost<Worker> {
     QueueModule.registerQueue(MAINTENANCE_QUEUE_NAME),
   ],
   providers: [
+    SandboxOperationReconcileJob,
     configuredProcessor(MaintenanceProcessor, MAINTENANCE_QUEUE_NAME, {
       concurrency: MAINTENANCE_CONCURRENCY,
     }),

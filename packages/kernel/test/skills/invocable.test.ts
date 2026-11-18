@@ -185,6 +185,8 @@ function setup(s: Setup) {
     },
     {
       forTool: async () => "device-1",
+      projectReach: async (): Promise<"workspace" | "os-user"> =>
+        (s.mode ?? "auto") === "auto" ? "os-user" : "workspace",
       workingFacts: async (...args: unknown[]) => {
         factsAsked.push(args);
         return (

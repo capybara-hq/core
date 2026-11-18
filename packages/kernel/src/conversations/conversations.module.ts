@@ -4,6 +4,9 @@ import { BackgroundModule } from "../background/background.module.js";
 import { DevicesModule } from "../devices/devices.module.js";
 import { ProvidersModule } from "../runtime/providers.js";
 import { RuntimeModule } from "../runtime/runtime.module.js";
+import { OperationAuthorityModule } from "../sandbox/operation-authority.module.js";
+import { PermissionAuthorityModule } from "../sandbox/permission-authority.module.js";
+import { PermissionFactsModule } from "../sandbox/permission-facts.module.js";
 import { SkillsModule } from "../skills/skills.module.js";
 import { StorageModule } from "../storage/storage.module.js";
 import { ToolsModule } from "../tools/tools.module.js";
@@ -15,6 +18,8 @@ import { ConversationDeviceStatus } from "./device-status.js";
 import { EventLogModule } from "./event-log.js";
 import { ConversationFiles } from "./files.js";
 import { ConversationOutputs } from "./outputs-read.js";
+import { PermissionProfileStoreModule } from "./permission-profile-store.module.js";
+import { PermissionProfilesService } from "./permission-profiles.service.js";
 import { ConversationQueue } from "./queue.service.js";
 
 /**
@@ -25,6 +30,10 @@ import { ConversationQueue } from "./queue.service.js";
  */
 @Module({
   imports: [
+    OperationAuthorityModule,
+    PermissionFactsModule,
+    PermissionProfileStoreModule,
+    PermissionAuthorityModule,
     EventLogModule,
     ConversationAccessModule,
     AttachmentsModule,
@@ -41,6 +50,7 @@ import { ConversationQueue } from "./queue.service.js";
     BackgroundModule,
   ],
   providers: [
+    PermissionProfilesService,
     ConversationsService,
     ConversationQueue,
     ConversationOutputs,
@@ -49,6 +59,8 @@ import { ConversationQueue } from "./queue.service.js";
     ConversationDeviceStatus,
   ],
   exports: [
+    OperationAuthorityModule,
+    PermissionProfilesService,
     EventLogModule,
     ConversationAccessModule,
     AttachmentsModule,

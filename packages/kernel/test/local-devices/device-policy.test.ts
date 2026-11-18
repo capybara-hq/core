@@ -1,16 +1,35 @@
 import { randomUUID } from "node:crypto";
-import type { DeviceHello, DeviceLocalPolicySummary, KernelReq } from "@capybara-hq/plugin-sdk";
+import { once } from "node:events";
+import {
+  type DeviceHello,
+  type DeviceHelloV3,
+  type DeviceLocalPolicySummary,
+  type DeviceOwnerCeilingV3,
+  type KernelReadyV3,
+  type KernelReq,
+  parseDeviceFrameV3,
+} from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import WebSocket, { WebSocketServer } from "ws";
 import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { DevicesService } from "../../src/devices/devices.service.js";
 import { ApiError } from "../../src/errors.js";
 import { TransactionHost } from "../../src/infra/database/transaction-host.js";
 import { DevicePolicyService } from "../../src/local-devices/device-policy.service.js";
+import { LocalInstanceBindings } from "../../src/local-devices/instance-bindings.js";
 import { deviceLeaseKey } from "../../src/local-devices/keys.js";
+import { LocalDeviceGateway } from "../../src/local-devices/local-device-gateway.js";
+import { LocalDeviceProvider } from "../../src/local-devices/local-device-provider.js";
+import {
+  localProviderEntry,
+  stagedDeviceProtocolActive,
+} from "../../src/local-devices/local-devices.module.js";
 import { MachinesService } from "../../src/local-devices/machines.js";
+import { LocalDeviceRelay } from "../../src/local-devices/relay.js";
+import { LOCAL_PROVIDER, SandboxProviders } from "../../src/sandbox/providers.js";
 import { legacyDbFor } from "../helpers/conversations.js";
 import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
@@ -23,7 +42,7 @@ import {
   type TestKernel,
   waitFor,
 } from "../helpers/runs.js";
-import { FakeMachine, HELLO } from "./fake-machine.js";
+import { FakeMachine, HELLO } from "./fake-machine-v3.js";
 import type { Answer } from "./test-holder.js";
 
 /**
@@ -118,7 +137,7 @@ async function connect(
   const machine = new FakeMachine(url, d.credential, answer, { hello: false });
   open.push(machine);
   await machine.opened;
-  machine.send({ ...HELLO, ...hello });
+  machine.hello({ ...hello });
   await waitFor(
     async () => (await redis.get(deviceLeaseKey(d.deviceId))) !== null,
     10_000,
@@ -482,5 +501,310 @@ describe("DevicePolicyService.apply", () => {
         source: source(d.accountId),
       }),
     ).rejects.toThrow(/not an exact host/);
+  });
+});
+
+/**
+ * A staged (protocol 3) machine connected to the kernel's own gateway (its dormant staged seam;
+ * the HTTP route stays protocol 2 until the paired activation): records every request it gets and
+ * answers a `policy` op with the summary and the next owner report it issues for the change.
+ */
+async function stagedMachine(
+  d: { deviceId: string; machineId: string; credential: string },
+  owner: DeviceOwnerCeilingV3,
+  opts: {
+    /** Runs before the `policy` answer goes out (the machine's own report of it, say). */
+    beforeAnswer?: (next: DeviceOwnerCeilingV3, socket: WebSocket) => Promise<void>;
+  } = {},
+) {
+  // the protocol gate, opened for this test only (the deployment's stays at protocol 2)
+  const relay = k.app.get(LocalDeviceRelay);
+  relay.stagedProtocolActive = () => true;
+  stagedCleanups.push(async () => {
+    relay.stagedProtocolActive = stagedDeviceProtocolActive;
+  });
+  const server = new WebSocketServer({ port: 0, host: "127.0.0.1" });
+  await once(server, "listening");
+  const address = server.address();
+  if (typeof address === "string" || !address) throw Error("no address");
+  server.on("connection", (socket) => {
+    void k.app.get(LocalDeviceGateway).acceptStaged(socket, d.credential);
+  });
+  stagedCleanups.push(async () => {
+    for (const c of server.clients) c.terminate();
+    await new Promise<void>((r) => server.close(() => r()));
+  });
+  const socket = new WebSocket(`ws://127.0.0.1:${address.port}`);
+  await once(socket, "open");
+  const requests: { op: string; args: Record<string, unknown> }[] = [];
+  let ready: KernelReadyV3 | undefined;
+  let current = owner;
+  socket.on("message", async (data) => {
+    const frame = parseDeviceFrameV3(data.toString(), "kernel", 69632);
+    if (frame.type === "ready") {
+      ready = frame;
+      return;
+    }
+    if (frame.type !== "req") return;
+    const args = { ...frame.args } as Record<string, unknown>;
+    requests.push({ op: frame.op, args });
+    if (frame.op !== "policy") return;
+    const narrowing = (args.ownerCeiling ?? {}) as Partial<DeviceOwnerCeilingV3>;
+    current = {
+      ...current,
+      ...narrowing,
+      sequence: current.sequence + 1,
+      revision: `r${current.sequence + 1}`,
+    };
+    await opts.beforeAnswer?.(current, socket);
+    socket.send(
+      JSON.stringify({
+        type: "res",
+        id: frame.id,
+        ok: true,
+        result: {
+          policy: { mode: current.fullAccess ? "auto" : "sandbox", allowedDomains: [] },
+          ownerCeiling: current,
+        },
+      }),
+    );
+  });
+  const hello: DeviceHelloV3 = {
+    ...HELLO,
+    protocol: 3,
+    features: ["networkReport", "policyOp", "policyOpId"],
+    policy: { mode: owner.fullAccess ? "auto" : "sandbox", allowedDomains: [] },
+    transport: { maxFrameBytes: 69632 },
+    permissionSupport: {
+      version: 1,
+      restricted: null,
+      fullAccess: false,
+      background: false,
+      unavailableReason: "Not bound yet",
+    },
+    ownerCeiling: owner,
+    instanceGeneration: null,
+  };
+  socket.send(JSON.stringify(hello));
+  await waitFor(async () => ready !== undefined, 10_000, "staged ready");
+  await waitFor(
+    async () =>
+      (
+        await db
+          .selectFrom("device_machines")
+          .select("owner_report")
+          .where("id", "=", d.machineId)
+          .executeTakeFirst()
+      )?.owner_report != null,
+    10_000,
+    "staged hello recorded",
+  );
+  return { socket, requests, ready: () => ready as KernelReadyV3 };
+}
+
+const stagedCleanups: (() => Promise<unknown>)[] = [];
+afterEach(async () => {
+  for (const fn of stagedCleanups.splice(0).reverse()) await fn();
+});
+
+const OWNER_FULL: DeviceOwnerCeilingV3 = {
+  version: 2,
+  sequence: 1,
+  restrictedProjectReach: "os-user",
+  revision: "r1",
+  fullAccess: true,
+  restrictedAllowedDomains: [],
+};
+
+const ownerReportOf = async (machineId: string) =>
+  (
+    await db
+      .selectFrom("device_machines")
+      .select("owner_report")
+      .where("id", "=", machineId)
+      .executeTakeFirstOrThrow()
+  ).owner_report as { connectionId: string | null; via: string; report: DeviceOwnerCeilingV3 };
+
+const ceilingAudits = (deviceId: string) =>
+  db
+    .selectFrom("audit_events")
+    .select(["action", "actor_account_id", "detail"])
+    .where("target", "=", deviceId)
+    .where("action", "in", ["device.owner_ceiling_changed", "device.mode_changed"])
+    .execute();
+
+describe("staged (protocol 3) machines", () => {
+  it("B-25: the gateway records the staged hello's owner report with its connection id", async () => {
+    const d = await device();
+    const m = await stagedMachine(d, OWNER_FULL);
+    expect(await ownerReportOf(d.machineId)).toMatchObject({
+      connectionId: m.ready().connectionId,
+      via: "hello",
+      report: OWNER_FULL,
+    });
+  });
+
+  it("B-24: the local narrowing goes as a v3 policy op with an owner-ceiling narrowing, recorded with its connection, audited once", async () => {
+    const d = await device();
+    const m = await stagedMachine(d, OWNER_FULL);
+    await devices.changePolicy(orgId, { id: d.accountId, displayName: "Me" }, d.deviceId, {
+      ownerCeiling: { fullAccess: false },
+    });
+    const ops = m.requests.filter((r) => r.op === "policy");
+    expect(ops).toHaveLength(1);
+    expect(ops[0]?.args).toMatchObject({ ownerCeiling: { fullAccess: false } });
+    expect(ops[0]?.args).not.toHaveProperty("mode");
+    expect(await ownerReportOf(d.machineId)).toMatchObject({
+      connectionId: m.ready().connectionId,
+      via: "policy-result",
+      report: { sequence: 2, fullAccess: false },
+    });
+    // one row: the owner report's, as the web change made it (no derived mode_changed)
+    expect(await ceilingAudits(d.deviceId)).toEqual([
+      {
+        action: "device.owner_ceiling_changed",
+        actor_account_id: d.accountId,
+        detail: expect.objectContaining({
+          from: { fullAccess: true, restrictedProjectReach: "os-user" },
+          to: { fullAccess: false, restrictedProjectReach: "os-user" },
+          via: "web",
+          opId: expect.any(String),
+        }),
+      },
+    ]);
+  });
+
+  it("I1: the machine's own report of a web narrowing before the answer is audited once, as the op's", async () => {
+    const d = await device();
+    const m = await stagedMachine(d, OWNER_FULL, {
+      // the device pushes its policy frame first and it is recorded before the answer arrives
+      beforeAnswer: async (next, socket) => {
+        socket.send(
+          JSON.stringify({
+            type: "policy",
+            policy: { mode: "sandbox", allowedDomains: [] },
+            ownerCeiling: next,
+          }),
+        );
+        await waitFor(
+          async () => (await ownerReportOf(d.machineId)).report.sequence === next.sequence,
+          10_000,
+          "the machine's own report recorded",
+        );
+      },
+    });
+    // the org owner acts on the member's device: an actor other than the machine's owner
+    const out = await policies.apply({
+      orgId,
+      deviceId: d.deviceId,
+      change: { ownerCeiling: { fullAccess: false } },
+      source: { accountId: ownerId, accountName: "O", via: "web" },
+    });
+    expect(out).toMatchObject({ applied: true });
+    const opId = m.requests.find((r) => r.op === "policy")?.args.opId;
+    expect(typeof opId).toBe("string");
+    expect(await ownerReportOf(d.machineId)).toMatchObject({ via: "policy" });
+    expect(await ceilingAudits(d.deviceId)).toEqual([
+      {
+        action: "device.owner_ceiling_changed",
+        actor_account_id: ownerId,
+        detail: expect.objectContaining({ by: ownerId, via: "web", opId }),
+      },
+    ]);
+  });
+
+  it("B-24: protocol 2's sandbox switch reaches a staged machine as the narrowing it stands for, never wider", async () => {
+    const d = await device();
+    const m = await stagedMachine(d, OWNER_FULL);
+    await devices.changePolicy(orgId, { id: d.accountId, displayName: "Me" }, d.deviceId, {
+      mode: "sandbox",
+    });
+    const ops = m.requests.filter((r) => r.op === "policy");
+    expect(ops).toHaveLength(1);
+    expect(ops[0]?.args).toMatchObject({
+      ownerCeiling: { fullAccess: false, restrictedProjectReach: "workspace" },
+    });
+    expect(ops[0]?.args).not.toHaveProperty("mode");
+    expect((await ownerReportOf(d.machineId)).report).toMatchObject({
+      fullAccess: false,
+      restrictedProjectReach: "workspace",
+    });
+    // a widening is refused before anything is sent
+    await expect(
+      devices.changePolicy(orgId, { id: d.accountId, displayName: "Me" }, d.deviceId, {
+        ownerCeiling: { fullAccess: true as never },
+      }),
+    ).rejects.toMatchObject({ code: "validation_failed" });
+    expect(m.requests.filter((r) => r.op === "policy")).toHaveLength(1);
+  });
+
+  it("an owner-ceiling narrowing is never sent over protocol 2", async () => {
+    const d = await device();
+    const machine = await connect(d, applying(POLICY), FEATURES);
+    // even a machine whose earlier staged report is still on its row
+    await db
+      .updateTable("device_machines")
+      .set({
+        owner_report: JSON.stringify({
+          report: OWNER_FULL,
+          connectionId: "old",
+          observedAt: new Date().toISOString(),
+          via: "hello",
+        }),
+      })
+      .where("id", "=", d.machineId)
+      .execute();
+    const out = await policies.apply({
+      orgId,
+      deviceId: d.deviceId,
+      change: { ownerCeiling: { fullAccess: false } },
+      source: source(d.accountId),
+    });
+    expect(out).toMatchObject({ applied: false, reason: "unsupported" });
+    expect(machine.frames.filter((f) => f.type === "req" && f.op === "policy")).toEqual([]);
+  });
+
+  it("B-25: a staged policy frame changing Full is audited once, as the owner report", async () => {
+    const d = await device();
+    const m = await stagedMachine(d, OWNER_FULL);
+    m.socket.send(
+      JSON.stringify({
+        type: "policy",
+        policy: { mode: "sandbox", allowedDomains: [] },
+        ownerCeiling: { ...OWNER_FULL, sequence: 2, revision: "r2", fullAccess: false },
+      }),
+    );
+    await waitFor(
+      async () => (await ownerReportOf(d.machineId)).report.sequence === 2,
+      10_000,
+      "policy frame recorded",
+    );
+    expect(await ownerReportOf(d.machineId)).toMatchObject({
+      connectionId: m.ready().connectionId,
+      via: "policy",
+    });
+    expect((await ceilingAudits(d.deviceId)).map((a) => a.action)).toEqual([
+      "device.owner_ceiling_changed",
+    ]);
+  });
+
+  it("registration: the staged entry carries the instance binder; protocol 2 stays the active one", () => {
+    const deps = {
+      provider: k.app.get(LocalDeviceProvider),
+      relay: k.app.get(LocalDeviceRelay),
+      bindings: k.app.get(LocalInstanceBindings),
+    };
+    expect(stagedDeviceProtocolActive()).toBe(false);
+    const staged = localProviderEntry(true, deps);
+    expect(staged.binder).toBe(k.app.get(LocalInstanceBindings));
+    expect(staged.impl).not.toBe(deps.provider);
+    expect(typeof staged.impl.revokeOperation).toBe("function");
+    expect(localProviderEntry(false, deps)).toEqual({
+      plugin: LOCAL_PROVIDER,
+      impl: deps.provider,
+    });
+    const active = k.app.get(SandboxProviders).forName(LOCAL_PROVIDER);
+    expect(active?.binder).toBeUndefined();
+    expect(active?.impl).toBe(deps.provider);
   });
 });

@@ -72,10 +72,58 @@ export function deepMerge(base: unknown, override: unknown): unknown {
   return out;
 }
 
+/**
+ * The permission keys B1 replaced, each with its replacement. Until the old public inputs are
+ * removed, {@link translateLegacyPermissionKeys} reads the old key of a source as the new one.
+ */
+export const LEGACY_PERMISSION_KEYS = [
+  {
+    path: ["devices", "autoMode"],
+    replacement: ["devices", "fullAccess"],
+    env: "CAPYBARA_DEVICES__AUTO_MODE",
+    replacementEnv: "CAPYBARA_DEVICES__FULL_ACCESS",
+  },
+] as const;
+
+/**
+ * Translates the old permission keys of ONE config source (the file / Nacos document, or the
+ * environment overrides) to their replacements, before the sources are merged: the old key keeps
+ * its source's place in the precedence (env > file / Nacos), never its own. An old and a new key
+ * in the same source must agree, else the config fails (never pick the wider one). The value is
+ * not checked here: the schema refuses an invalid one under the new key.
+ */
+export function translateLegacyPermissionKeys(
+  source: Record<string, unknown>,
+  label: "file" | "env",
+): Record<string, unknown> {
+  let out = source;
+  for (const key of LEGACY_PERMISSION_KEYS) {
+    const [section, old] = key.path;
+    const [, next] = key.replacement;
+    const parent = out[section];
+    if (!isPlainObject(parent) || !(old in parent)) continue;
+    const { [old]: value, ...rest } = parent;
+    if (next in rest && rest[next] !== value) {
+      const [a, b] =
+        label === "env"
+          ? [key.env, key.replacementEnv]
+          : [key.path.join("."), key.replacement.join(".")];
+      throw new ConfigError(
+        `invalid configuration:\n  - ${a} and ${b} are both set and differ; remove ${a} (it is replaced by ${b})`,
+      );
+    }
+    out = { ...out, [section]: { ...rest, [next]: rest[next] ?? value } };
+  }
+  return out;
+}
+
 /** 原始配置深合并环境变量覆盖（优先级最高）后校验；热更新与启动共用。错误只列路径不列值。 */
 export function resolveConfig(raw: unknown, env: NodeJS.ProcessEnv): KernelConfig {
   if (!isPlainObject(raw)) throw new ConfigError("config file root must be a mapping");
-  const merged = deepMerge(raw, envOverrides(env));
+  const merged = deepMerge(
+    translateLegacyPermissionKeys(raw, "file"),
+    translateLegacyPermissionKeys(envOverrides(env), "env"),
+  );
   const result = KernelConfigSchema.safeParse(merged);
   if (!result.success) {
     // The schema is strict: an unknown key (a typo, or a removed setting) is an error that names

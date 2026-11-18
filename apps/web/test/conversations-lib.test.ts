@@ -4,11 +4,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   archiveConversation,
   type ConversationGroup,
-  createConversationWithMessage,
   deleteConversation,
   listConversationGroups,
   listConversations,
   postMessage,
+  serializeFirstMessage,
+  submitFirstMessage,
 } from "../src/lib/conversations";
 
 const json = (status: number, body: unknown): Response =>
@@ -137,16 +138,23 @@ describe("message sends carry the browser's time zone and UI language (run conte
     document.documentElement.lang = "";
   });
 
-  it("POST …/messages and the first message of POST /conversations", async () => {
+  it("POST …/messages and the first message of POST /conversations/first-message", async () => {
     document.documentElement.lang = "zh";
     const urls = stubFetch({ event: {}, conversation: {} }, 202);
     await postMessage("o1", "c1", { text: "hi", clientMessageId: "m1" });
-    await createConversationWithMessage("o1", "ag1", { text: "first", clientMessageId: "m2" });
+    await submitFirstMessage(
+      "o1",
+      serializeFirstMessage(
+        { agentId: "ag1", message: { text: "first" }, permission: { profile: "approve-for-me" } },
+        "m2",
+      ),
+    );
     const bodies = urls.map((u) => JSON.parse(u.slice(u.indexOf("{"))) as Record<string, unknown>);
     expect(bodies[0]).toEqual({ text: "hi", clientMessageId: "m1", timeZone: zone, locale: "zh" });
     expect(bodies[1]).toEqual({
       agentId: "ag1",
       message: { text: "first", clientMessageId: "m2", timeZone: zone, locale: "zh" },
+      permission: { profile: "approve-for-me" },
     });
   });
 
@@ -159,5 +167,66 @@ describe("message sends carry the browser's time zone and UI language (run conte
       unknown
     >;
     expect(body).toEqual({ text: "hi", clientMessageId: "m1", timeZone: zone });
+  });
+});
+
+describe("the first message: one serialized envelope, sent as stored (atomic first send)", () => {
+  afterEach(() => {
+    document.documentElement.lang = "";
+  });
+
+  it("serializes every field once and submits exactly those bytes, never the legacy create", async () => {
+    document.documentElement.lang = "en";
+    const body = serializeFirstMessage(
+      {
+        agentId: "ag 1",
+        message: {
+          text: "go",
+          attachments: [{ connectorId: "k1", uri: "doc://1" }],
+          files: ["f1"],
+          skill: { name: "triage" },
+          model: { provider: "p", model: "m" },
+          effort: "high",
+        },
+        permission: { profile: "full-access", consentScopeRevision: "scope-1" },
+        deviceId: "d1",
+        project: "core",
+      },
+      "m1",
+    );
+    expect(JSON.parse(body)).toEqual({
+      agentId: "ag 1",
+      message: {
+        text: "go",
+        clientMessageId: "m1",
+        attachments: [{ connectorId: "k1", uri: "doc://1" }],
+        files: ["f1"],
+        model: { provider: "p", model: "m" },
+        effort: "high",
+        skill: { name: "triage" },
+        timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+        locale: "en",
+      },
+      deviceId: "d1",
+      project: "core",
+      permission: { profile: "full-access", consentScopeRevision: "scope-1" },
+    });
+    // a later language change cannot alter what a retry sends: the bytes are stored
+    document.documentElement.lang = "zh";
+    const urls = stubFetch({ conversation: {}, event: {} }, 201);
+    await submitFirstMessage("o 1", body);
+    expect(urls).toEqual([`POST /api/v1/orgs/o%201/conversations/first-message ${body}`]);
+  });
+
+  it("a device-less restricted choice omits the device and project", () => {
+    const body = JSON.parse(
+      serializeFirstMessage(
+        { agentId: "ag1", message: { text: "go" }, permission: { profile: "request-approval" } },
+        "m1",
+      ),
+    ) as Record<string, unknown>;
+    expect(body).not.toHaveProperty("deviceId");
+    expect(body).not.toHaveProperty("project");
+    expect(body.permission).toEqual({ profile: "request-approval" });
   });
 });

@@ -711,7 +711,7 @@ describe("custom roots (environments phase 2, spec §13.1)", () => {
       sandbox: {
         cloudAvailable: true,
         availableFor: async () => true,
-        currentInstance: async () => ({ createdAt: new Date(0) }),
+        currentInstance: async () => ({ createdAt: new Date(0), provider: "sandbox-fake" }),
         withSandbox: async (_c, fn, sig) => {
           entered++;
           return fn(

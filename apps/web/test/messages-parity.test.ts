@@ -75,6 +75,7 @@ describe("eval drift labels (final review m5)", () => {
     "tool_spec_missing",
     "definition_missing",
     "subagent_changed",
+    "permission_profile_changed",
     "params_changed",
     "model_switched",
     "media_missing",

@@ -33,7 +33,7 @@ import {
   type TestKernel,
   waitFor,
 } from "../helpers/runs.js";
-import { FakeMachine, HELLO, refusal } from "./fake-machine.js";
+import { DEVICE_PROTOCOL_HEADER_VALUE, FakeMachine, refusal } from "./fake-machine-v3.js";
 import type { Answer } from "./test-holder.js";
 
 /**
@@ -172,7 +172,7 @@ async function signIn(
   const machine = new FakeMachine(url, issued.credential, answerer(dir, roots), { hello: false });
   open.push(machine);
   await machine.opened;
-  machine.send({ ...HELLO, roots });
+  machine.hello({ roots });
   await waitFor(
     async () => (await redis.get(deviceLeaseKey(deviceId))) !== null,
     10_000,
@@ -376,7 +376,7 @@ describe("local devices through the sandbox tools", () => {
     ).toMatch(/was disconnected/);
     const again = await refusal(url, {
       Authorization: `Bearer ${credential}`,
-      "X-Capybara-Device-Protocol": "2",
+      "X-Capybara-Device-Protocol": DEVICE_PROTOCOL_HEADER_VALUE,
     });
     expect(again?.status).toBe(401);
   });
@@ -398,7 +398,7 @@ describe("local devices through the sandbox tools", () => {
     expect(Date.now() - t0).toBeLessThan(HOLDER_POLL_MS + 5000);
     const again = await refusal(url, {
       Authorization: `Bearer ${credential}`,
-      "X-Capybara-Device-Protocol": "2",
+      "X-Capybara-Device-Protocol": DEVICE_PROTOCOL_HEADER_VALUE,
     });
     expect(again?.status).toBe(401);
   });

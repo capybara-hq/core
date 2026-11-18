@@ -1,7 +1,12 @@
 import { createHash } from "node:crypto";
 import type { SandboxRoots } from "@capybara-hq/plugin-sdk";
-import type { ConversationEvent } from "../../conversations/events.js";
+import type { ConversationEvent, ManagedDevicePathsV1 } from "../../conversations/events.js";
 import type { DeviceNetwork, SandboxMode } from "../../sandbox/modes.js";
+import {
+  managedDevicePathsHash,
+  managedDevicePathsIdemKey,
+  managedDevicePathsText,
+} from "./permission-profile.js";
 
 /**
  * The `device_paths` event (environments spec §13.1, ruling R22; auto mode spec §4.2): the first
@@ -23,7 +28,10 @@ export interface DeviceModeLevel {
 }
 
 /** The payload of a `device_paths` event; the mode fields are absent on events before auto mode. */
-export interface DevicePathsPayload {
+export type DevicePathsPayload = LegacyDevicePathsPayload | ManagedDevicePathsV1;
+
+export interface LegacyDevicePathsPayload {
+  permissionContextVersion?: undefined;
   roots: SandboxRoots;
   mode?: SandboxMode | undefined;
   allowedMode?: SandboxMode | undefined;
@@ -123,7 +131,7 @@ export function modeLevelText(level: DeviceModeLevel): string {
 }
 
 /** The old level a payload records; undefined for an event recorded after auto mode. */
-function legacyLevel(p: DevicePathsPayload): LegacyLevel | undefined {
+function legacyLevel(p: LegacyDevicePathsPayload): LegacyLevel | undefined {
   if (p.tier === undefined) return undefined;
   return {
     tier: p.tier,
@@ -140,6 +148,7 @@ export type DevicePathsLevel = DeviceModeLevel | LegacyLevel;
 
 /** The level a payload records, in either shape; undefined without one. */
 export function devicePathsLevel(p: DevicePathsPayload): DevicePathsLevel | undefined {
+  if (p.permissionContextVersion === 1) return undefined;
   if (
     p.mode !== undefined &&
     p.allowedMode !== undefined &&
@@ -158,6 +167,7 @@ export function devicePathsLevel(p: DevicePathsPayload): DevicePathsLevel | unde
 
 /** The system message of a `device_paths` event (model-visible, English). */
 export function devicePathsText(p: DevicePathsPayload): string {
+  if (p.permissionContextVersion === 1) return managedDevicePathsText(p);
   const roots = rootsText(p.roots);
   const level = devicePathsLevel(p);
   if (level === undefined) return roots;
@@ -247,4 +257,26 @@ export function devicePathsAt(
     if (e.type === "device_paths") found = e;
   }
   return found;
+}
+
+/** Full managed payload equality; historical payloads retain their existing comparisons and keys. */
+export function devicePathsChangeFromPayload(
+  latest: { seq: number; payload: DevicePathsPayload } | undefined,
+  payload: DevicePathsPayload,
+  runId?: string,
+): ReturnType<typeof devicePathsChange> {
+  if (payload.permissionContextVersion !== 1)
+    return devicePathsChange(latest, payload.roots, runId, devicePathsLevel(payload));
+  const currentHash = managedDevicePathsHash(payload);
+  if (
+    latest?.payload.permissionContextVersion === 1 &&
+    managedDevicePathsHash(latest.payload) === currentHash
+  )
+    return null;
+  return {
+    type: "device_paths",
+    ...(runId !== undefined && { runId }),
+    idemKey: managedDevicePathsIdemKey(payload, latest?.seq ?? 0),
+    payload: structuredClone(payload),
+  };
 }

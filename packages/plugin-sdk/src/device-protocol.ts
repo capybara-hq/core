@@ -158,6 +158,21 @@ export interface DeviceHello {
    * project's relative path). A malformed value is dropped by the parser.
    */
   home?: string;
+  /**
+   * The identity of the host's current OS boot (Linux `/proc/sys/kernel/random/boot_id`; macOS
+   * `kern.bootsessionuuid`): a value that differs from an earlier one of the
+   * same machine proves the host restarted since, so no process of that earlier boot can exist.
+   * A malformed value is dropped by the parser.
+   */
+  bootId?: string;
+}
+
+/** A hello's `bootId`: 1 to 128 characters of letters, digits, `.`, `_`, `:` and `-`. */
+export const DEVICE_BOOT_ID_RE = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
+
+/** Whether `v` is a well-formed {@link DeviceHello.bootId}. */
+export function isDeviceBootId(v: unknown): v is string {
+  return typeof v === "string" && DEVICE_BOOT_ID_RE.test(v);
 }
 
 /** Error kinds a device reports for a failed request. */
@@ -567,8 +582,8 @@ function parseRecentOps(v: unknown[]): DevicePolicyOpReport[] {
 /** Optional hello fields: malformed values are ignored so old and new peers interoperate. */
 function optionalHelloFields(
   o: Record<string, unknown>,
-): Pick<DeviceHello, "features" | "policy" | "recentOps" | "home"> {
-  const out: Pick<DeviceHello, "features" | "policy" | "recentOps" | "home"> = {};
+): Pick<DeviceHello, "features" | "policy" | "recentOps" | "home" | "bootId"> {
+  const out: Pick<DeviceHello, "features" | "policy" | "recentOps" | "home" | "bootId"> = {};
   if (Array.isArray(o.features)) {
     out.features = DEVICE_FEATURES.filter((f) => (o.features as unknown[]).includes(f));
   }
@@ -576,6 +591,7 @@ function optionalHelloFields(
   if (typeof o.home === "string" && validateSandboxPathShape(o.home).length === 0) {
     out.home = o.home;
   }
+  if (isDeviceBootId(o.bootId)) out.bootId = o.bootId;
   return { ...out, ...optionalPolicy(o.policy) };
 }
 

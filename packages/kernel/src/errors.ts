@@ -390,6 +390,25 @@ export const ERROR_CODES = {
    */
   "device.auto_mode_not_allowed": 403,
   /**
+   * B1: a cloud device's snapshot found applied limits it could not establish exactly; no operation
+   * is admitted until a lifecycle action (a file reset) establishes them.
+   */
+  "device.permission_reconcile_required": 409,
+  /**
+   * B1: a cloud device's owner ceiling PATCH before its snapshot exists (not migrated yet); the old
+   * sandbox switch still narrows it. A file reset does not change this.
+   */
+  "device.permission_not_migrated": 409,
+  "device.owner_report_stale": 409,
+  /** A local device's old instance may still run legacy work until the computer restarts (8.5). */
+  "device.restart_required": 503,
+  /** A local device's old instance may still run legacy work and no restart can prove it (8.5). */
+  "device.replace_required": 503,
+  /** A cloud device's earlier instance may run legacy work no evidence can cover (8.5). */
+  "device.recreate_required": 503,
+  "device.owner_ceiling_confirmation_required": 409,
+  "device.full_access_not_allowed": 409,
+  /**
    * A device's mode is not a stored setting: a local device's mode lives on its machine
    * (`capybara-device mode` or the device page's policy op), and a cloud device has none to choose.
    */
@@ -406,6 +425,11 @@ export const ERROR_CODES = {
   "device.projects_unsupported": 409,
   /** The device could not be asked about its directories now; the message says why. */
   "device.projects_unavailable": 503,
+  /**
+   * An owner browse found the device's instance not running (it stopped after being started for
+   * the owner, or could not be started): retrying starts it first.
+   */
+  "device.not_running": 409,
   /** Not a valid project name (1-64 characters, no `/`, no control characters, not `.` / `..`). */
   "device.project_name_invalid": 422,
   /** The device already has a project with this name. */
@@ -507,6 +531,13 @@ export const ERROR_CODES = {
   "eval.too_many_cases": 409,
   "eval.agent_mismatch": 409,
   "eval.compact_not_replayable": 422,
+  /**
+   * The case snapshot holds a recorded record replay cannot read (a permission context with an
+   * unsupported version or invalid payload, an invalid tool-result review, model calls out of
+   * step / attempt order): the case cannot be replayed, and the failure is the snapshot's, never
+   * the provider's.
+   */
+  "eval.snapshot_invalid": 422,
   "eval.run_not_found": 404,
   "eval.token_cap_invalid": 400,
   "eval.run_finished": 409,

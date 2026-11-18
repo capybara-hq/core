@@ -8,10 +8,11 @@ import type {
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
 import { sql } from "kysely";
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import type { ConversationEvent } from "../../src/conversations/events.js";
 import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
+import { DeviceProjectsService } from "../../src/devices/device-projects.service.js";
 import { DevicesService } from "../../src/devices/devices.service.js";
 import { TransactionHost } from "../../src/infra/database/transaction-host.js";
 import { OUTBOX_DISPATCH_FAILS } from "../../src/infra/outbox/outbox.dispatcher.js";
@@ -20,6 +21,7 @@ import { deviceLeaseKey } from "../../src/local-devices/keys.js";
 import { MachinesService } from "../../src/local-devices/machines.js";
 import type { DeviceOpResolveData } from "../../src/local-devices/policy-op-jobs.js";
 import { MAINTENANCE_QUEUE_NAME } from "../../src/runtime/maintenance-queue.js";
+import { RunExecution, withExclusiveAdmission } from "../../src/runtime/run-execution.js";
 import { RUN_QUEUE_NAME, resumeJobId } from "../../src/runtime/run-jobs.js";
 import { type ApprovalRecord, ApprovalsService } from "../../src/tools/approvals.service.js";
 import { DeviceOpResolver } from "../../src/tools/device-op-resolver.js";
@@ -39,7 +41,7 @@ import {
   type TestKernel,
   waitFor,
 } from "../helpers/runs.js";
-import { FakeMachine, HELLO } from "../local-devices/fake-machine.js";
+import { FakeMachine } from "../local-devices/fake-machine-v3.js";
 import type { Answer } from "../local-devices/test-holder.js";
 
 /**
@@ -200,7 +202,7 @@ async function connect(sim: Sim, hello: Partial<DeviceHello> = {}) {
   const machine = new FakeMachine(wsUrl, s.credential, sim.answer, { hello: false });
   open.push(machine);
   await machine.opened;
-  machine.send({ ...HELLO, features: FEATURES, policy: sim.policy, ...hello });
+  machine.hello({ features: FEATURES, policy: sim.policy, ...hello });
   await waitFor(
     async () => (await redis.get(deviceLeaseKey(s.deviceId))) !== null,
     10_000,
@@ -659,5 +661,138 @@ describe("network asks on the device policy intent", () => {
     expect(all[1]?.at).toEqual(all[2]?.at);
     expect(await entries()).toEqual([]);
     expect(await owed(resumeJobId(s.conversationId, a.id))).toBeUndefined();
+  });
+});
+
+// The settle transactions lock the ask's conversation, its approval and its run, then record the
+// op's outcome under the machine's device permission lock. A fenced device writer of the same tree
+// (a Platform device project write in a tool step) holds that lock in its prelude and then wants
+// the tree's root row: the settle takes the device lock first (its ordered prelude), else 40P01.
+describe("network ask settlements and fenced device writers of the same tree", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  const deferred = () => {
+    let resolve!: () => void;
+    const promise = new Promise<void>((r) => {
+      resolve = r;
+    });
+    return { promise, resolve };
+  };
+  const waitingLocks = async () =>
+    Number(
+      (
+        await sql<{ n: string }>`select count(*) n from pg_locks l
+          join pg_stat_activity a on a.pid = l.pid
+          where not l.granted and a.datname = current_database()`.execute(raw)
+      ).rows[0]?.n,
+    );
+
+  /** A pending op on the machine answering ask `approvalId`, reported never received. */
+  async function pendingOp(approvalId: string): Promise<string> {
+    const opId = randomUUID();
+    const now = Date.now();
+    await db
+      .updateTable("device_machines")
+      .set({
+        pending_policy_ops: JSON.stringify([
+          {
+            id: opId,
+            add: ["files.slack.com"],
+            remove: [],
+            source: { accountId: s.accountId, via: "web", approvalId },
+            status: "sent",
+            sentAt: now,
+            resolveAt: now,
+            until: now + 3_600_000,
+            reported: { outcome: "absent" },
+          },
+        ]),
+      })
+      .where("id", "=", s.machineId)
+      .execute();
+    return opId;
+  }
+
+  /**
+   * A claimed run in the ask's tree removes a device project (a tool step), paused once
+   * its prelude holds the device lock; `settle` then runs, and the writer goes on once it waits.
+   */
+  async function againstFencedDeviceWrite(settle: () => Promise<unknown>): Promise<void> {
+    // a sub-agent of the ask's conversation (the root: its one active run is the waiting one)
+    const child = randomUUID();
+    await sql`INSERT INTO capybara.conversations
+        (id, org_id, agent_id, account_id, parent_conversation_id, kind)
+      SELECT ${child}, org_id, agent_id, account_id, id, 'subagent'
+      FROM capybara.conversations WHERE id = ${s.conversationId}`.execute(raw);
+    const runId = randomUUID();
+    await sql`INSERT INTO capybara.runs (id, conversation_id, status, agent_version,
+        trigger_account_id, trigger_seq)
+      VALUES (${runId}, ${child}, 'running', 1, ${s.accountId}, 0)`.execute(raw);
+    const claim = await k.app.get(RunExecution).claim(child, runId, randomUUID());
+    if (!claim) throw new Error("the run could not be claimed");
+    const projects = k.app.get(DeviceProjectsService);
+    // biome-ignore lint/suspicious/noExplicitAny: a private method spied on as a test seam
+    const seam = projects as unknown as Record<string, (...a: any[]) => Promise<void>>;
+    const real = seam.lockSubject?.bind(projects);
+    if (!real) throw new Error("no prelude to pause");
+    const held = deferred();
+    const go = deferred();
+    vi.spyOn(seam, "lockSubject").mockImplementationOnce(async (...args: unknown[]) => {
+      await real(...args);
+      held.resolve();
+      await go.promise;
+    });
+    const writer = k.app.get(RunExecution).withClaim(
+      claim,
+      () => true,
+      () => withExclusiveAdmission(() => projects.remove(orgId, s.accountId, s.deviceId, "none")),
+    );
+    await held.promise;
+    let settled = false;
+    const other = settle().finally(() => {
+      settled = true;
+    });
+    await expect.poll(async () => settled || (await waitingLocks()) > 0).toBe(true);
+    go.resolve();
+    const [w, o] = await Promise.allSettled([writer, other]);
+    expect(w.status === "rejected" ? String(w.reason) : "fulfilled").toBe("fulfilled");
+    expect(o.status === "rejected" ? String(o.reason) : "fulfilled").toBe("fulfilled");
+  }
+
+  it("the device-op-resolve job's settle", async () => {
+    const a = await ask();
+    const opId = await pendingOp(a.id);
+    await againstFencedDeviceWrite(() => resolver().resolve({ machineId: s.machineId, opId }));
+    // recorded: the op is gone, the ask waits with the reason
+    expect(await entries()).toEqual([]);
+    expect((await row(a.id)).status).toBe("pending");
+  });
+
+  it("an always decision's settle of an ask that closed meanwhile", async () => {
+    const a = await ask();
+    const opId = await pendingOp(a.id);
+    await db
+      .updateTable("approvals")
+      .set({ status: "denied", decided_by: s.accountId, decided_at: new Date() })
+      .where("id", "=", a.id)
+      .execute();
+    const approvals = k.app.get(ApprovalsService);
+    // biome-ignore lint/suspicious/noExplicitAny: a private method called as a test seam
+    const seam = approvals as unknown as Record<string, (...a: any[]) => Promise<unknown>>;
+    let out: unknown;
+    await againstFencedDeviceWrite(async () => {
+      out = await seam.settleNetworkOpOrdered?.(
+        orgId,
+        a.id,
+        s.accountId,
+        { decision: "approve", scope: "always" },
+        { wanted: ["files.slack.com"], granted: [], outcome: "refused", via: "web" },
+        { machineId: s.machineId, opId, result: { outcome: "refused", message: "no" } },
+      );
+    });
+    expect(out).toMatchObject({ closed: { code: "approval.already_decided" }, late: false });
+    expect(await entries()).toEqual([]);
   });
 });

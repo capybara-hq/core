@@ -8,7 +8,7 @@ import { ErrorFrame } from "../../../components/ErrorFrame";
 import { NoAccess } from "../../../components/NoAccess";
 import { usePagePath } from "../../../components/shell/path";
 import { useDeviceName } from "../../../components/use-device-name";
-import { type Device, deviceModeMark, deviceState } from "../../../lib/devices";
+import { type Device, deviceCeilingMark, deviceState } from "../../../lib/devices";
 import { devicesQuery } from "../../../lib/query/devices";
 import { usePageQuery } from "../../../lib/query/page-query";
 import { useWorkspace } from "../../../lib/query/workspace";
@@ -87,7 +87,7 @@ function DeviceCard({ device: e }: { device: Device }) {
   const t = useTranslations("devices");
   const nameOf = useDeviceName();
   const state = deviceState(e);
-  const mark = deviceModeMark(e);
+  const mark = deviceCeilingMark(e);
   return (
     <ObjectCard
       avatar={{ icon: "cpu" }}
@@ -98,10 +98,8 @@ function DeviceCard({ device: e }: { device: Device }) {
         state === "filesLost" || state === "unavailable"
           ? { label: t(`state.${state}`), tone: "warn" as const }
           : t(`state.${state}`),
-        // 自动 (warn) or 沙箱; a cloud device 开放（挡内网） (warn) or 白名单 (auto mode spec §4)
-        ...(mark.tone === "warn"
-          ? [{ label: t(`mark.${mark.kind}`), tone: "warn" as const }]
-          : [t(`mark.${mark.kind}`)]),
+        // whether Full access is available there, neutral (no daily mode, no warn tone)
+        t(`ceiling.mark.${mark}`),
       ]}
     />
   );

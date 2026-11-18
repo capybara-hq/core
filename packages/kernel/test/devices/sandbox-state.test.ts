@@ -6,10 +6,10 @@ import { type DeploymentDevicePolicy, effectiveDevicePolicy } from "../../src/sa
 /** A device's mode view on its page (auto mode spec §4.3). */
 
 const deployment = (
-  autoMode: DeploymentDevicePolicy["autoMode"] = "allowed",
+  fullAccess: DeploymentDevicePolicy["fullAccess"] = "allowed",
   egress: "none" | "allowlist" = "allowlist",
 ): DeploymentDevicePolicy => ({
-  autoMode,
+  fullAccess,
   limits: { egress, allowHosts: ["pypi.org"], orgHosts: "extend" },
 });
 
@@ -20,7 +20,14 @@ const summary = (s: Partial<DeviceLocalPolicySummary> = {}): DeviceLocalPolicySu
 });
 
 const OPEN = { kind: "open-public" as const, hosts: [] };
-const extra = { pendingNextUse: false, pendingFilesReset: false, recent: [], sandboxNetwork: OPEN };
+const extra = {
+  pendingNextUse: false,
+  pendingFilesReset: false,
+  recent: [],
+  sandboxNetwork: OPEN,
+  fullNetwork: OPEN,
+  outerNetwork: null,
+};
 
 describe("deviceModeViewOf", () => {
   it("a cloud device: the allowed mode, the open network, no local settings", () => {
@@ -61,7 +68,7 @@ describe("deviceModeViewOf", () => {
   });
 
   it("the org turning auto mode off: allowedBy is null and no device may report auto", () => {
-    const org = { autoMode: "off" as const };
+    const org = { fullAccess: "off" as const };
     const policy = effectiveDevicePolicy(deployment(), org, "auto");
     expect(deviceModeViewOf(policy, org, true, summary(), extra)).toMatchObject({
       mode: "sandbox",
@@ -70,6 +77,8 @@ describe("deviceModeViewOf", () => {
       local: { reported: "auto", allowedDomains: [] },
       // a local device's sandbox network is its machine's allowlist, not the cloud network
       sandboxNetwork: null,
+      fullNetwork: null,
+      outerNetwork: null,
     });
   });
 
@@ -112,7 +121,7 @@ describe("deviceModeViewOf", () => {
   });
 
   it("a local device reports its own mode and allowlist; the org explicitly allowing auto names the org", () => {
-    const org = { autoMode: "allowed" as const };
+    const org = { fullAccess: "allowed" as const };
     const s = summary({ mode: "sandbox", allowedDomains: ["a.com"] });
     const policy = effectiveDevicePolicy(deployment(), org, s.mode);
     expect(deviceModeViewOf(policy, org, true, s, extra)).toMatchObject({

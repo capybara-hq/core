@@ -1,6 +1,6 @@
 {
   "name": "@capybara-hq/kernel",
-  "version": "0.1.0-rc.41",
+  "version": "0.1.0-rc.42",
   "description": "Capybara kernel: config, database, plugin host and HTTP API of the Capybara agent platform",
   "license": "Apache-2.0",
   "repository": {
@@ -81,6 +81,7 @@
     "zod": "^4.6.7"
   },
   "devDependencies": {
+    "@capybara-hq/device": "workspace:*",
     "@capybara-hq/testing": "workspace:*",
     "@langchain/langgraph-checkpoint-validation": "^1.2.0",
     "@types/pg": "^8.23.1",

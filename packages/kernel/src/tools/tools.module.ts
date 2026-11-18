@@ -15,6 +15,10 @@ import { ProvidersModule } from "../runtime/providers.js";
 import { RunJobsModule } from "../runtime/run-jobs.js";
 import { StepLogModule } from "../runtime/step-log.js";
 import { SubagentsModule } from "../runtime/subagents/subagents.service.js";
+import { ManagedDeviceContextModule } from "../sandbox/managed-device-context.module.js";
+import { OperationAuthorityModule } from "../sandbox/operation-authority.module.js";
+import { PermissionAuthorityModule } from "../sandbox/permission-authority.module.js";
+import { PermissionCallGrantsModule } from "../sandbox/permission-call-grants.module.js";
 import { SandboxModule } from "../sandbox/sandbox.module.js";
 import { ScheduledTaskStoreModule } from "../schedules/store.module.js";
 import { SkillsModule } from "../skills/skills.module.js";
@@ -35,6 +39,7 @@ import { ConversationToolInfo, OrgExtensionTools } from "./info.js";
 import { OAuthFlow } from "./oauth/flow.js";
 import { OrgToolSwitches } from "./org-tool-switches.js";
 import { ToolOutputs } from "./outputs.js";
+import { PermissionApprovalJobs } from "./permission-approval-jobs.js";
 import { ToolPipeline } from "./pipeline.js";
 import { QuestionsService } from "./questions.service.js";
 import { ToolRegistry } from "./registry.js";
@@ -49,6 +54,9 @@ import { ToolRegistry } from "./registry.js";
  */
 @Module({
   imports: [
+    PermissionCallGrantsModule,
+    PermissionAuthorityModule,
+    OperationAuthorityModule,
     EventLogModule,
     AttachmentsModule,
     ExtensionsModule,
@@ -59,6 +67,8 @@ import { ToolRegistry } from "./registry.js";
     SubagentsModule,
     // the builtin sandbox and skill tools run in the conversation's device
     SandboxModule,
+    // the managed sandbox route's device context writer (passed only once activated)
+    ManagedDeviceContextModule,
     DevicesModule,
     // 「这台设备一直允许」 changes the device's local policy (network asks)
     LocalDevicesModule,
@@ -82,6 +92,7 @@ import { ToolRegistry } from "./registry.js";
     CredentialsModule,
   ],
   providers: [
+    PermissionApprovalJobs,
     ToolOutputs,
     BuiltinTools,
     // `ScheduleUpdate`'s write in one transaction (scheduled tasks spec §11)
@@ -107,6 +118,7 @@ import { ToolRegistry } from "./registry.js";
     DeviceOpResolver,
   ],
   exports: [
+    PermissionApprovalJobs,
     ScheduleToolsPort,
     CredentialsModule,
     ToolOutputs,

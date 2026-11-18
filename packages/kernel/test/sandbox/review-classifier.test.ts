@@ -19,6 +19,7 @@ import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { ModelPurposesService } from "../../src/models/purposes.js";
 import { estimateTokens } from "../../src/runtime/context/tokens.js";
+import { assistantIdemKey } from "../../src/runtime/model-call.js";
 import {
   boundMessages,
   CommandReviewService,
@@ -81,6 +82,7 @@ const UNSURE_COMMAND = "some-unknown-binary --flag";
 let pgc: TestContainer;
 let rd: TestContainer;
 let db: KernelSchemaDb;
+let raw: ReturnType<typeof createDb>;
 let destroyDb: () => Promise<void>;
 let k: TestKernel;
 let review: CommandReviewService;
@@ -90,7 +92,7 @@ let chatSpy: MockInstance<ModelPurposesService["chat"]>;
 
 beforeAll(async () => {
   [pgc, rd] = await Promise.all([startTestPostgres(), startTestRedis()]);
-  const raw = createDb(pgc.url, 3);
+  raw = createDb(pgc.url, 3);
   db = legacyDbFor(raw);
   destroyDb = () => raw.destroy();
   k = await startKernel(
@@ -690,3 +692,259 @@ function userText(req: ModelRequest): string {
   const b = req.messages[0]?.content;
   return Array.isArray(b) ? (b[0]?.type === "text" ? b[0].text : "") : "";
 }
+
+import type { PermissionReviewSnapshot } from "../../src/sandbox/permission-call-types.js";
+import { buildPermissionCandidate } from "../../src/sandbox/review/permission-candidate.js";
+
+it.each(["allow", "ask", "deny", "malformed", "request"] as const)(
+  "independent review transport preserves the exact directory candidate for %s",
+  async (outcome) => {
+    const input = { file_path: "/outside/reports/report.txt" };
+    const facts: PermissionReviewSnapshot = {
+      orgId,
+      rootConversationId: conv,
+      conversationId: conv,
+      deviceId: "review-fixture",
+      accountId: ownerId,
+      runId,
+      callId: "exact-candidate",
+      profile: "approve-for-me",
+      profileRevision: 0,
+      scopeRevision: "scope",
+      authorityRevision: "authority",
+      baseReadDirectories: [WORKSPACE],
+      baseWriteDirectories: [WORKSPACE],
+      baseHosts: [],
+      workingRoot: WORKSPACE,
+      fullAccessCeiling: true,
+      broadProjectReach: true,
+      fullConsent: false,
+      unattended: false,
+      availability: { state: "supported" },
+      policy: {
+        mode: "auto",
+        allowedMode: "auto",
+        modeSource: "device",
+        localAllowedDomains: [],
+        network: { kind: "open-public", hosts: [] },
+      },
+    };
+    const built = buildPermissionCandidate(
+      { toolKey: "Write", specHash: "write-spec", rawInput: input, validatedInput: input },
+      facts,
+    );
+    if (built.kind !== "proposal") throw new Error("Expected exact proposal");
+    if (outcome === "malformed")
+      answerText(
+        JSON.stringify({
+          decision: "allow",
+          reason: "Replace scope",
+          permissionScope: { writeDirectories: ["/"] },
+        }),
+      );
+    else answer(outcome === "request" ? "allow" : outcome);
+    const verdict = await call({
+      toolKey: "Write",
+      input,
+      permissionProfile: outcome === "request" ? "request-approval" : "approve-for-me",
+      permissionCandidate: built.candidate,
+      callId: "exact-candidate",
+    });
+    expect(verdict.decision).toBe(
+      outcome === "malformed" || outcome === "request" ? "ask" : outcome,
+    );
+    if (outcome === "request") {
+      expect(reviewChats()).toEqual([]);
+      return;
+    }
+    const request = reviewRequest(),
+      tag = systemTag(request);
+    expect(userText(request)).toContain(`<${tag}>\n${JSON.stringify(built.candidate)}\n</${tag}>`);
+    expect(request.tools).toEqual([]);
+    expect(verdict).not.toHaveProperty("permissionScope");
+  },
+);
+
+import { ExtensionHost } from "../../src/extensions/host.js";
+import { RunExecution } from "../../src/runtime/run-execution.js";
+import { ToolPipeline } from "../../src/tools/pipeline.js";
+import { permissionFixture } from "../helpers/permission-policy.js";
+import { enableModelProviders } from "../helpers/runs.js";
+
+it("staged child classifier retains parent hooks and explicit budget accounting", async () => {
+  const input = { file_path: "/outside/reports/report.txt" };
+  const f = await permissionFixture(k, raw, "Write", input, true);
+  // a model provider is on only in the orgs that enabled it: the classifier's too
+  await enableModelProviders(k, f.orgId);
+  const childId = randomUUID(),
+    childRunId = randomUUID(),
+    budgetRunId = randomUUID(),
+    executionId = randomUUID();
+  await f.db
+    .insertInto("conversations")
+    .values({
+      id: childId,
+      org_id: f.orgId,
+      agent_id: f.agentId,
+      account_id: f.accountId,
+      title: null,
+      last_seq: 0,
+      consumed_seq: 0,
+      created_at: new Date(),
+      updated_at: new Date(),
+      kind: "subagent",
+      source: "subagent",
+      parent_conversation_id: f.conversationId,
+      subagent_depth: 1,
+    })
+    .execute();
+  await f.db
+    .insertInto("runs")
+    .values({
+      id: budgetRunId,
+      conversation_id: f.conversationId,
+      status: "completed",
+      agent_version: 1,
+      trigger_account_id: f.accountId,
+      trigger_seq: 0,
+    })
+    .execute();
+  await f.db
+    .insertInto("runs")
+    .values({
+      id: childRunId,
+      conversation_id: childId,
+      execution_id: executionId,
+      status: "running",
+      agent_version: 1,
+      trigger_account_id: f.accountId,
+      trigger_seq: 0,
+      budget_run_id: budgetRunId,
+    })
+    .execute();
+  await k.app.get(EventLog).append(childId, [
+    {
+      type: "assistant_message",
+      runId: childRunId,
+      idemKey: assistantIdemKey(childRunId, 1),
+      payload: {
+        step: 1,
+        stopReason: "tool_use",
+        content: [{ type: "tool_call", id: f.callId, name: "Write", input }],
+      },
+    },
+  ]);
+  const parent = {
+    conversationId: f.conversationId,
+    runId: f.runId,
+    callId: "dispatch-child",
+    depth: 0,
+    rootConversationId: f.conversationId,
+    budgetRunId,
+  };
+  const hooks = vi.spyOn(k.app.get(ExtensionHost).hooks, "run");
+  answer("ask", "Require the exact directory decision.");
+  try {
+    const result = await k.app.get(RunExecution).withClaim(
+      { ...f.claim, conversationId: childId, runId: childRunId, executionId },
+      () => true,
+      () =>
+        k.app.get(ToolPipeline).runStep({
+          ...f.ctx,
+          conversationId: childId,
+          runId: childRunId,
+          parent,
+          conversationKind: "subagent",
+          source: "subagent",
+          agent: { ...f.ctx.agent, model: SCRIPT_1 },
+        }),
+    );
+    expect(
+      result.kind,
+      JSON.stringify(
+        await f.db
+          .selectFrom("conversation_events")
+          .select(["type", "payload"])
+          .where("run_id", "=", childRunId)
+          .execute(),
+      ),
+    ).toBe("suspended");
+    const counters = await f.db
+      .selectFrom("runs")
+      .select(["id", "subagent_tokens_used"])
+      .where("id", "in", [f.runId, budgetRunId])
+      .execute();
+    expect(Number(counters.find((row) => row.id === budgetRunId)?.subagent_tokens_used)).toBe(
+      REVIEW_USAGE.inputTokens + REVIEW_USAGE.outputTokens,
+    );
+    expect(Number(counters.find((row) => row.id === f.runId)?.subagent_tokens_used)).toBe(0);
+    for (const mount of ["model.request", "model.response"]) {
+      const calls = hooks.mock.calls.filter(
+        ([name, payload]) =>
+          name === mount && (payload as { purpose?: string }).purpose === "review",
+      );
+      expect(calls).toHaveLength(1);
+      expect(calls[0]?.[1]).toMatchObject({
+        conversationId: f.conversationId,
+        runId: childRunId,
+        parent: { conversationId: f.conversationId, runId: f.runId, callId: "dispatch-child" },
+      });
+    }
+    expect(
+      await f.db
+        .selectFrom("conversation_events")
+        .select("seq")
+        .where("run_id", "=", childRunId)
+        .where("type", "=", "usage")
+        .execute(),
+    ).toHaveLength(1);
+    expect(f.effects()).toBe(0);
+  } finally {
+    hooks.mockRestore();
+  }
+});
+
+it("a proposed host outside the applied cloud outer allowlist is cut like admission cuts it (B-15)", () => {
+  type Outer = NonNullable<PermissionReviewSnapshot["outerNetwork"]>;
+  const facts = (outerNetwork: Outer): PermissionReviewSnapshot => ({
+    orgId,
+    rootConversationId: conv,
+    conversationId: conv,
+    deviceId: "review-fixture",
+    accountId: ownerId,
+    runId,
+    callId: "outer-cut",
+    profile: "approve-for-me",
+    profileRevision: 0,
+    scopeRevision: "scope",
+    authorityRevision: "authority",
+    baseReadDirectories: [WORKSPACE],
+    baseWriteDirectories: [WORKSPACE],
+    baseHosts: [],
+    workingRoot: WORKSPACE,
+    fullAccessCeiling: true,
+    broadProjectReach: true,
+    fullConsent: false,
+    unattended: false,
+    availability: { state: "supported" },
+    outerNetwork,
+    policy: {
+      mode: "auto",
+      allowedMode: "auto",
+      modeSource: "device",
+      localAllowedDomains: [],
+      network: { kind: "open-public", hosts: [] },
+    },
+  });
+  const input = { command: "curl https://b.example/data https://a.example/data" };
+  const build = (outer: Outer) =>
+    buildPermissionCandidate(
+      { toolKey: "Bash", specHash: "bash-spec", rawInput: input, validatedInput: input },
+      facts(outer),
+    );
+  const hostsOf = (r: ReturnType<typeof build>) =>
+    r.kind === "proposal" ? r.candidate.permissionScope.hosts : r.kind;
+  expect(hostsOf(build({ kind: "open-public" }))).toEqual(["a.example", "b.example"]);
+  expect(hostsOf(build({ kind: "allowlist", hosts: ["a.example"] }))).toEqual(["a.example"]);
+  expect(hostsOf(build({ kind: "none" }))).toBe("in-scope");
+});
