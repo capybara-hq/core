@@ -49,7 +49,6 @@ const AMBIGUOUS_REASON =
   "Several web search providers are enabled and none is the default; ask an org admin to choose one in the organization settings.";
 const AUTH_TEXT =
   "The web search provider rejected its credentials; ask an org admin to check the provider's configuration.";
-const CITE = "Cite the sources you use as markdown links in your answer.";
 
 let pgc: TestContainer;
 let rd: TestContainer;
@@ -177,7 +176,7 @@ describe("WebSearch: spec", () => {
       "Search the web and get a list of results with title, URL and a short snippet. Use it for " +
         "information newer than your training data, or to check whether something you know is still " +
         "current. Then use WebFetch to read the pages you need. Do not use it for questions you can " +
-        "answer reliably without the web. Cite the sources you use.",
+        "answer reliably without the web. Cite the sources you use as markdown links in your answer.",
     );
     expect(t.spec.description).not.toMatch(/\d{4}-\d{2}-\d{2}/);
     const schema = t.spec.inputSchema as {
@@ -195,12 +194,12 @@ describe("WebSearch: spec", () => {
 });
 
 describe("WebSearch: result", () => {
-  it("date line first, numbered entries with title, URL, date and snippet, cite line last", async () => {
+  it("date line first, numbered entries with title, URL, date and snippet, no trailing cite line", async () => {
     await enable(orgId, "fake-web");
     const text = textOf(await tool().run({ query: "hello" }, callCtx()));
     const lines = text.split("\n");
     expect(lines[0]).toBe("Search date: 2026-11-04 (UTC).");
-    expect(lines.at(-1)).toBe(CITE);
+    expect(text).not.toContain("Cite the sources");
     expect(text).toContain(
       "1. fake-web result 1\n   URL: https://docs.example.com/fake-web/1\n" +
         "   Published: 2026-11-01\n   fake-web snippet 1 for hello",

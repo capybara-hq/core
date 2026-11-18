@@ -343,13 +343,13 @@ describe("marketplaces", () => {
 });
 
 describe("plugins in the org", () => {
-  it("enabling a plugin that needs connector inputs is refused with the 插件 page pointer", async () => {
+  it("enabling a plugin that needs connector inputs is refused with the Plugins page pointer", async () => {
     const item = await importTemplate(env);
     const e = await failure(
       run("plugins.set-enabled", { itemId: item, enabled: true }, ctxOf(env.bossId)),
     );
     expect(e.message).toBe(NEEDS_INPUT);
-    expect(e.message).toContain("插件 page");
+    expect(e.message).toContain("the Plugins page");
     // known before the card
     expect(
       await precheck("plugins.set-enabled", { itemId: item, enabled: true }, ctxOf(env.bossId)),

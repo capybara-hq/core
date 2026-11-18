@@ -111,15 +111,15 @@ export const SEND_TARGETS_LISTED = 20;
 
 /** The result of a message to a sub-agent whose run was active (agent map spec §5.1). */
 export const sentToRunningText = (t: SendTarget): string =>
-  `Message delivered to sub-agent ${targetLine(t)}, which is working; it reads the message at its next step. Its reply or report arrives later as a notification; keep working or end your turn.`;
+  `Message delivered to sub-agent ${targetLine(t)}, which is working; it reads the message at its next step. Its reply or report arrives later as a notification.`;
 
 /** The result of a message that started an idle sub-agent again (agent map spec §5.1, §6). */
 export const sentToIdleText = (t: SendTarget): string =>
-  `Message delivered to sub-agent ${targetLine(t)}, which had finished; it is working again with its earlier context. Its reply or report arrives later as a notification; keep working or end your turn.`;
+  `Message delivered to sub-agent ${targetLine(t)}, which had finished; it is working again with its earlier context. Its reply or report arrives later as a notification.`;
 
 /** The result of a sub-agent's note to its parent (agent map spec §5.2). */
 export const SENT_TO_PARENT_TEXT =
-  "Message delivered to the agent that dispatched you. Keep working; its reply, if any, arrives as a message in this conversation.";
+  "Message delivered to the agent that dispatched you. Its reply, if any, arrives as a message in this conversation.";
 
 /**
  * The builtin. `defaultPolicy: "allow"` (agent map spec §4.2): it only moves text inside one tree

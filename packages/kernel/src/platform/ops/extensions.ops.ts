@@ -37,11 +37,12 @@ const SwitchConfirm = OrgToolSwitchPut.shape.confirm.unwrap();
 
 /** The next step of an extension that needs its org config (an org admin enters it on the web). */
 const NEEDS_ORG_CONFIG = {
-  orgAdmin: "An org admin fills in its org config on the 扩展 page, where secrets are entered.",
-  member: "Ask an org admin to fill in its org config on the 扩展 page.",
+  orgAdmin:
+    "An org admin fills in its org config on the Extensions page, where secrets are entered.",
+  member: "Ask an org admin to fill in its org config on the Extensions page.",
 };
 
-/** An extension's state in the org, as the 扩展 page shows it. */
+/** An extension's state in the org, as the Extensions page shows it. */
 function stateOf(v: OrgExtensionView): "on" | "off" | "needs_config" | "unavailable" {
   if (!v.available) return "unavailable";
   if (v.needsConfig) return "needs_config";

@@ -93,11 +93,10 @@ const SPEC: ToolSpec = {
     "deployment's background maximum (7200000 by default). A background task ends when its " +
     "command exits, and processes it left running are stopped. A background task is lost if the " +
     "sandbox is suspended (it is suspended after it has been running for a while, " +
-    "sandbox.limits.maxRunningMinutes), so keep its results in files under the workspace directory.\n\n" +
+    "sandbox.limits.maxRunningMinutes).\n\n" +
     "Network access goes through a proxy set in HTTP_PROXY / HTTPS_PROXY / ALL_PROXY; a tool " +
-    "that ignores them fails with 'Operation not permitted' or cannot resolve names. Such tools, " +
-    "browsers for example, need the proxy passed explicitly: for Chromium (also headless, as " +
-    "Playwright or Puppeteer launch it) pass --proxy-server=$HTTPS_PROXY. A blocked domain is " +
+    "that ignores them fails with 'Operation not permitted' or cannot resolve names; such a tool " +
+    "needs the proxy passed explicitly through its own proxy option. A blocked domain is " +
     "reported after the output.",
   inputSchema: {
     type: "object",

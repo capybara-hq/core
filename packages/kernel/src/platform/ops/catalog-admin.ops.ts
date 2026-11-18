@@ -462,7 +462,7 @@ export class CatalogAdminOperations implements OnModuleInit {
           },
           {
             code: "catalog.item_pending",
-            next: "The plugin's first version waits for the super admin's confirmation in the admin console (Plugins → 待确认); confirm or reject it there first.",
+            next: "The plugin's first version waits for the super admin's confirmation in the admin console (Plugins → Pending); confirm or reject it there first.",
           },
           {
             code: "plugin.skill_conflict",
@@ -627,7 +627,7 @@ export class CatalogAdminOperations implements OnModuleInit {
           },
           {
             code: "catalog.item_pending",
-            next: "The plugin's first version waits for the super admin's confirmation in the admin console (Plugins → 待确认); confirm or reject it there first.",
+            next: "The plugin's first version waits for the super admin's confirmation in the admin console (Plugins → Pending); confirm or reject it there first.",
           },
           {
             code: "catalog.org_owned",
@@ -710,7 +710,7 @@ export class CatalogAdminOperations implements OnModuleInit {
       defineOperation({
         id: "plugins.platform-apply-appearance",
         description:
-          "Apply a platform plugin's suggested appearance (super admin; the admin console's 应用此插件的外观): in one step, its theme becomes the platform default theme and each component it suggests replaces the built-in block of its slot (shell.brand, conversation.empty, conversation.composer.frame) in the platform arrangement; orgs that set their own keep theirs. The card shows exactly what changes; a theme that cannot be the platform default (scope not all, or off in an org) refuses the whole call, a component that is not available is skipped. Asked every time, never remembered.",
+          "Apply a platform plugin's suggested appearance (super admin; the admin console's \"Apply this plugin's appearance\" action): in one step, its theme becomes the platform default theme and each component it suggests replaces the built-in block of its slot (shell.brand, conversation.empty, conversation.composer.frame) in the platform arrangement; orgs that set their own keep theirs. The card shows exactly what changes; a theme that cannot be the platform default (scope not all, or off in an org) refuses the whole call, a component that is not available is skipped.",
         input: z.object({ itemId: ItemId }).strict(),
         example: { itemId: "3f1c2a9e-5b7d-4e21-9c0a-1d2e3f4a5b6c" },
         authz: { superAdmin: true },

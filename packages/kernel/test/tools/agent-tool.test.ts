@@ -38,8 +38,8 @@ const GENERAL: RosterEntry = {
 
 const HEAD =
   "Dispatch a sub-agent: a fresh agent with its own context that works on one task in the " +
-  "background. This tool returns at once with the sub-agent's agentId; keep working or end your " +
-  "turn, and do not wait for it. When the sub-agent hands back a report or finishes, its result " +
+  "background. This tool returns at once with the sub-agent's agentId, and you can keep working " +
+  "or end your turn while it runs. When the sub-agent hands back a report or finishes, its result " +
   "arrives in this conversation as a notification. The sub-agent sees only your prompt, not this " +
   "conversation, so include everything it needs and say what its report must contain. It shares " +
   "your sandbox files. To run several at once, call this tool several times (at most 4 of your " +
@@ -238,7 +238,7 @@ describe("agentStartedText (agent map spec §4.1)", () => {
     expect(agentStartedText("c-1")).toBe(
       "agentId: c-1 (running in the background)\n" +
         "The sub-agent is working on the task. Its result arrives in this conversation as a " +
-        "notification when it hands back a report or finishes; keep working or end your turn. To " +
+        "notification when it hands back a report or finishes. To " +
         "send it more instructions, use SendMessage with this agentId.",
     );
   });

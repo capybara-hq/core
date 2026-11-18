@@ -40,7 +40,7 @@ const SPEC: ToolSpec = {
     '"count" returns <path>:<number of matching lines> per file. -n (line numbers) and the context ' +
     "options apply only to content mode. head_limit caps the entries returned (default 250; " +
     "0 = up to 500); pass offset to skip entries and page through more. To find files by " +
-    "name, use Glob. In auto mode paths may be anywhere on the machine; writes outside the workspace need the user's approval.",
+    "name, use Glob. In auto mode paths may be anywhere on the machine.",
   inputSchema: {
     type: "object",
     properties: {

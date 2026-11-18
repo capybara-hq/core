@@ -69,7 +69,7 @@ export class BackgroundOperations implements OnModuleInit {
       defineOperation({
         id: "conversations.stop-background-task",
         description:
-          "Stop one background command of one of your conversations, as the stop button does: the command is killed. Takes the task id from conversations.background-tasks. A task already stopping or finished is returned as it is. The person confirms every stop; it is never remembered.",
+          "Stop one background command of one of your conversations, as the stop button does: the command is killed. Takes the task id from conversations.background-tasks. A task already stopping or finished is returned as it is.",
         input: z.object({ conversationId: ConversationId, taskId: TaskId }).strict(),
         example: {
           conversationId: "3f2b8a40-6c1d-4e0b-9a77-5d1e2c8b9f10",

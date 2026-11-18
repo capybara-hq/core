@@ -52,10 +52,15 @@ When a person cannot do something themselves (install a plugin that is not on in
 approve extension permissions), they file a **request**. Org admins or the super admin decide it
 on the web. Agents can file requests but never decide them.
 
-## Sandbox
+## Devices
 
-Agents run commands and keep files in a **sandbox**, one per conversation. Skills are mounted
-read-only under `/skills/<name>/`. Sandbox limits and network egress are set per org by admins.
+Agents run commands and keep files on a **device**: one instance plus a file system that is kept
+until the device is deleted. A device is a cloud sandbox (from the deployment's sandbox provider)
+or a machine connected with `capybara-device`, and the conversations that use it share its files.
+A device runs in one of two modes: auto (the environment's own capability) or sandbox (an OS
+sandbox with an allowlist network). Skill files are read-only in the device's skills directory;
+each conversation is told the device's directories, mode and network. Sandbox limits and the
+cloud network are set per org by admins.
 
 ## What agents may not do
 

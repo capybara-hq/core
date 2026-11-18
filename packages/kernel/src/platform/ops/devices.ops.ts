@@ -224,7 +224,7 @@ export class DevicesOperations implements OnModuleInit {
       defineOperation({
         id: "devices.delete",
         description:
-          "Delete one of your devices, the default one included: its instance and ALL its files are destroyed after the response and cannot be recovered. Conversations bound to it keep pointing at it and their sandbox tools then fail. The person confirms every delete; it is never remembered. The device this conversation works in cannot be deleted. Takes the id from devices.list.",
+          "Delete one of your devices, the default one included: its instance and ALL its files are destroyed after the response and cannot be recovered. Conversations bound to it keep pointing at it and their sandbox tools then fail. The device this conversation works in cannot be deleted. Takes the id from devices.list.",
         input: DeviceId,
         example: { deviceId: "4e8a0c1d-6b2f-4a37-8d19-3c5e7f9a1b20" },
         authz: { orgAction: "agents.use" },
@@ -272,7 +272,7 @@ export class DevicesOperations implements OnModuleInit {
       defineOperation({
         id: "devices.reset-files",
         description:
-          "Wipe one of your devices' files so it starts empty: ALL its files are destroyed (after running commands finish) and cannot be recovered; the next use creates a fresh workspace. Use it when a device reports its files are lost (not for a connected machine's device: its files are on the machine). The person confirms every reset; it is never remembered. The device this conversation works in cannot be wiped. Takes the id from devices.list.",
+          "Wipe one of your devices' files so it starts empty: ALL its files are destroyed (after running commands finish) and cannot be recovered; the next use creates a fresh workspace. Use it when a device reports its files are lost (not for a connected machine's device: its files are on the machine). The device this conversation works in cannot be wiped. Takes the id from devices.list.",
         input: DeviceId,
         example: { deviceId: "4e8a0c1d-6b2f-4a37-8d19-3c5e7f9a1b20" },
         authz: { orgAction: "agents.use" },
