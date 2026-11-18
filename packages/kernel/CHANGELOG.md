@@ -1,5 +1,17 @@
 # @capybara-hq/kernel
 
+## 0.1.0-rc.43
+
+### Patch Changes
+
+- ee9a4b5: The builtin tool `GenerateImage` generates images with the organization's `image` purpose model and delivers them as artifacts of the conversation (all or none), records a `usage` event with purpose `image` and `outputImages` (never more than the images delivered; an answer whose usage is invalid fails as a server error before anything is recorded), and with `file_path` also writes them into the device with `Write`'s checks (the builtins' device entry, no directory, no overwrite of a file the conversation has not read), reviewed by the command review and the permission profile as a `Write`. It is listed only while the purpose maps to a usable image model and an object store is configured.
+- ade6e20: `ctx.models.generateImage` generates images for extensions with the org's model of a declared `image_generation` purpose (policy hooks fire first; a denial is `model.hook_denied`), and `ctx.models.describe` reports an image purpose's `imageGeneration` facts. Each call writes a `model_usage` row (migration 0160 adds `kind`, `output_images`, `output_tokens`, `cache_read_tokens` and `cache_write_tokens`) whose `usage.report` delivery is owed in the same transaction and reported with purpose `image`, the answer's output and cache tokens and `usage.outputImages`; conversation `usage` events with purpose `image` pass `outputImages` through too.
+- 2c333b9: The agent form lists GenerateImage while the org's image purpose has a target, and the model purposes pages offer image models for the image purpose and hint when none is mapped.
+  
+  A new member-readable route, GET /api/v1/orgs/:orgId/model-purposes/available, says whether each purpose has a usable model in the org (the image purpose also needs an object store, exactly as GenerateImage does), so the agent form gates GenerateImage for every member.
+- Updated dependencies [089ee76]
+  - @capybara-hq/plugin-sdk@0.1.0-rc.32
+
 ## 0.1.0-rc.42
 
 ### Minor Changes
