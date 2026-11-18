@@ -2032,8 +2032,9 @@ export class ExtensionHost {
   }
 
   /**
-   * Extensions enabled in the org: `extension_org_configs.enabled` plus every required bootstrap
-   * plugin (see `enabled.ts`); queried every time, not cached.
+   * Extensions enabled in the org: `extension_org_configs.enabled` plus every always-on extension
+   * (required bootstrap plugins, builtin plugins' extensions; see `enabled.ts`); queried every
+   * time, not cached.
    * Cost (M-4): hooks call this on every run, so one PG query per model attempt and per tool call.
    * Acceptable for now; if a cache is ever added, give it a short TTL so an org disabling a plugin
    * takes effect quickly.

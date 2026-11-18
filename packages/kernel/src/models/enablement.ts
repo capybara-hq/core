@@ -105,7 +105,7 @@ export class ModelEnablement {
 
   /**
    * The extensions enabled in `orgId` ({@link enabledExtensionsQuery}: the org's own switch on, or
-   * a required bootstrap plugin): a model provider is on in an org only then, like every other
+   * always on: a required bootstrap plugin or a builtin plugin's extension): a model provider is on in an org only then, like every other
    * extension. Read from PG on every call (one small query; the switch has its own writers, nothing
    * to evict).
    */

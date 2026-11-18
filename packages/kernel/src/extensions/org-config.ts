@@ -28,7 +28,7 @@ import { OrgLock } from "../orgs/org-lock.js";
 import { type ConfigIssue, toIssues } from "./config-issues.js";
 import { configMessages, type JsonSchema, safeConfigFormSchema } from "./config-json-schema.js";
 import { EffectiveConfigs } from "./effective-config.js";
-import { enabledExtensionsQuery, requiredExtensions } from "./enabled.js";
+import { alwaysOnExtensions, enabledExtensionsQuery, requiredExtensions } from "./enabled.js";
 import { ExtensionHost } from "./host.js";
 import { ExtensionInstalls } from "./installs.js";
 import { fieldLevels } from "./org-levels.js";
@@ -86,7 +86,9 @@ export interface OrgExtensionView {
   reason?: ExtensionUnavailableReason;
   /**
    * A required bootstrap plugin: enabled in every org (`enabled` is always true) and cannot be
-   * disabled here (`extension.required`); its org config, when it has one, can still be set.
+   * disabled here (`extension.required`); its org config, when it has one, can still be set. An
+   * extension of a builtin plugin is enabled in every org as well (`enabled.ts`) without being
+   * required: it is locked by its plugin (`switchable` false, `plugin.scope_locked`).
    */
   required: boolean;
   /** The catalog plugin the extension ships in and its scope (builtin counts as `all`); null without one. */
@@ -336,8 +338,10 @@ export class OrgExtensionConfigs {
       .execute();
     await this.afterConfigRowRead?.();
     const setKeys = await this.setSecretKeys(t, orgId);
-    // Required bootstrap plugins are listed enabled (no org config row needed, spec §7)
+    // Required bootstrap plugins and builtin plugins' extensions are listed enabled (no org
+    // config row needed, spec §7; enabled.ts)
     const required = await requiredExtensions(t);
+    const on = await alwaysOnExtensions(t);
     const loaded = this.host.manifests();
     const items = await pluginItemsOf(t, [
       ...loaded.map((m) => m.name),
@@ -349,7 +353,7 @@ export class OrgExtensionConfigs {
     const seen = (name: string) =>
       offeredToOrg({
         required: required.has(name),
-        enabled: rows.find((r) => r.plugin === name)?.enabled ?? false,
+        enabled: on.has(name) || (rows.find((r) => r.plugin === name)?.enabled ?? false),
         items: items.get(name),
         listed,
       });
@@ -362,6 +366,7 @@ export class OrgExtensionConfigs {
           setKeys,
           required.has(m.name),
           items.get(m.name),
+          on.has(m.name),
         ),
       );
     const names = new Set(loaded.map((m) => m.name));
@@ -372,8 +377,7 @@ export class OrgExtensionConfigs {
         (i): OrgExtensionView => ({
           plugin: i.name,
           version: i.version,
-          enabled:
-            required.has(i.name) || (rows.find((r) => r.plugin === i.name)?.enabled ?? false),
+          enabled: on.has(i.name) || (rows.find((r) => r.plugin === i.name)?.enabled ?? false),
           configurable: false,
           config: null,
           secrets: [],
@@ -473,17 +477,20 @@ export class OrgExtensionConfigs {
       .where("org_id", "=", orgId)
       .executeTakeFirst();
     const required = (await requiredExtensions(t)).has(plugin);
+    // Always on (required, or its plugin is builtin): enabled in every org (enabled.ts)
+    const on = required || (await alwaysOnExtensions(t)).has(plugin);
     const item = (await pluginItemsOf(t, [plugin])).get(plugin);
     if (required && input.enabled === false) throw requiredError(plugin);
-    if (opts.ifDisabled && (row?.enabled === true || required)) {
+    if (on && input.enabled === false) throw scopeLockedError();
+    if (opts.ifDisabled && (row?.enabled === true || on)) {
       opts.ifDisabled.skipped = true;
-      return this.view(manifest, row, await this.setSecretKeys(t, orgId), required, item);
+      return this.view(manifest, row, await this.setSecretKeys(t, orgId), required, item, on);
     }
-    // A required plugin is enabled whatever the row said (it may predate `required`)
-    const enabled = required || (input.enabled ?? row?.enabled ?? false);
+    // An always-on extension is enabled whatever the row said (it may predate `required` / builtin)
+    const enabled = on || (input.enabled ?? row?.enabled ?? false);
     // validateOnly: the rules for (newly) enabling and disabling belong to the write that follows
     if (!opts.validateOnly) {
-      await this.assertSwitchRules(t, orgId, manifest, input, row, required, opts);
+      await this.assertSwitchRules(t, orgId, manifest, input, row, on, opts);
     }
     let plain: Obj | null = row?.config ?? null;
     let changed: string[] = [];
@@ -534,7 +541,7 @@ export class OrgExtensionConfigs {
     }
     // Also without an org config schema: nothing is written
     if (opts.validateOnly) {
-      return this.view(manifest, row, await this.setSecretKeys(t, orgId), required, item);
+      return this.view(manifest, row, await this.setSecretKeys(t, orgId), required, item, on);
     }
     // 当前 schema 中已不存在的密钥路径：同一事务内清掉遗留的密文行
     const live = new Set((schema ? secretPaths(schema) : []).map((p) => secretKey(plugin, p)));
@@ -580,7 +587,7 @@ export class OrgExtensionConfigs {
       .where("plugin", "=", plugin)
       .where("org_id", "=", orgId)
       .executeTakeFirst();
-    const view = this.view(manifest, saved, await this.setSecretKeys(t, orgId), required, item);
+    const view = this.view(manifest, saved, await this.setSecretKeys(t, orgId), required, item, on);
     // Only once the root transaction committed (an outer caller's too): a rolled-back write
     // registers no secrets and disconnects nothing
     afterCommit(async () => {
@@ -601,11 +608,11 @@ export class OrgExtensionConfigs {
     manifest: ExtensionManifest,
     input: OrgExtensionInput,
     row: { enabled: boolean } | undefined,
-    required: boolean,
+    alwaysOn: boolean,
     opts: OrgExtensionPutOptions,
   ): Promise<void> {
     const plugin = manifest.name;
-    if (input.enabled === true && row?.enabled !== true && !required) {
+    if (input.enabled === true && row?.enabled !== true && !alwaysOn) {
       // 插件自己的条目 disabled 是总开关，任何途径都不能新启用（裁决 M-5）
       const killed = await disabledPluginItems(t, [plugin]);
       if (killed.length > 0) throw pluginItemDisabled(killed);
@@ -622,7 +629,8 @@ export class OrgExtensionConfigs {
 
   /**
    * 读取并解密某插件在该组织下的完整配置（供运行时按组织构造插件实例）。
-   * A required bootstrap plugin is enabled without a row (its stored config, or `{}`, is validated).
+   * An always-on extension (a required bootstrap plugin, or its plugin is builtin: `enabled.ts`) is
+   * enabled without a row (its stored config, or `{}`, is validated).
    * 无记录 → undefined；插件无 `config.org` 或已停用（`enabled=false`，不校验、不读密钥）时 `config` 为 null。
    * 配置行与密钥在同一个 `REPEATABLE READ` 只读事务里读取。
    * A stored config that no longer matches the schema (e.g. after a plugin upgrade) throws
@@ -660,9 +668,9 @@ export class OrgExtensionConfigs {
       .where("org_id", "=", orgId)
       .executeTakeFirst();
     await this.afterConfigRowRead?.();
-    const required = (await requiredExtensions(t)).has(plugin);
-    if (!row && !required) return undefined;
-    const enabled = required || row?.enabled === true;
+    const on = (await alwaysOnExtensions(t)).has(plugin);
+    if (!row && !on) return undefined;
+    const enabled = on || row?.enabled === true;
     const schema = manifest.config?.org;
     // 已停用的插件不会被实例化：不校验（可能是升级前存下的旧配置），也不解密密钥
     if (!schema || !enabled) return { enabled, config: null };
@@ -728,8 +736,8 @@ export class OrgExtensionConfigs {
     reason: string,
   ): Promise<boolean> {
     const t = this.db;
-    // A required bootstrap plugin stays enabled in every org
-    if ((await requiredExtensions(t)).has(plugin)) return false;
+    // An always-on extension (required, or its plugin is builtin) stays enabled in every org
+    if ((await alwaysOnExtensions(t)).has(plugin)) return false;
     const r = await t
       .updateTable("extension_org_configs")
       .set({ enabled: false, updated_by: actorAccountId, updated_at: new Date() })
@@ -843,6 +851,8 @@ export class OrgExtensionConfigs {
     setKeys: ReadonlySet<string>,
     required: boolean,
     items: readonly ExtensionPluginItem[] | undefined,
+    /** Always on in every org (enabled.ts): required, or its plugin is builtin. */
+    alwaysOn: boolean,
   ): OrgExtensionView {
     const schema = m.config?.org;
     const paths = schema ? secretPaths(schema) : [];
@@ -854,7 +864,7 @@ export class OrgExtensionConfigs {
     return {
       plugin: m.name,
       version: m.version,
-      enabled: required || (row?.enabled ?? false),
+      enabled: alwaysOn || (row?.enabled ?? false),
       configurable: schema !== undefined,
       config,
       secrets: paths.map((p) => ({ path: p, set: setKeys.has(secretKey(m.name, p)) })),
@@ -948,6 +958,12 @@ function orgConfigIncomplete(
     (i) => !secrets.some((p) => i.path === p || i.path.startsWith(`${p}.`)),
   );
 }
+
+const scopeLockedError = () =>
+  new ApiError(
+    "plugin.scope_locked",
+    "This plugin is built in: it is on for every organization and cannot be switched off here",
+  );
 
 const requiredError = (plugin: string) =>
   new ApiError(

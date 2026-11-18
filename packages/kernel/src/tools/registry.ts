@@ -357,8 +357,8 @@ const builtinTool = (b: BuiltinTool, spec: ToolSpec): ResolvedTool => ({
  * - builtins: every {@link AGENT_BUILTIN_NAMES} entry registered here that can run (`unavailable`
  *   says why not), `TaskOutput` / `TaskStop` / `TaskList` with `Bash`, `Agent` while its roster is not empty;
  * - extension tools: every tool registered by an extension loaded on this replica and enabled in
- *   the org (`extension_org_configs.enabled`; required bootstrap plugins are enabled in every org,
- *   `enabled.ts`), whose effective config for the org is valid (layering spec A §6) and that the
+ *   the org (`extension_org_configs.enabled`; required bootstrap plugins and builtin plugins'
+ *   extensions are enabled in every org, `enabled.ts`), whose effective config for the org is valid (layering spec A §6) and that the
  *   org did not switch off (§7: the org's switch wins);
  * - connector tools: every enabled tool of every live, active connector of the org whose
  *   connector extension is installed, with a valid key.
