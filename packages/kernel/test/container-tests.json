@@ -42,6 +42,7 @@
   "sandbox/concurrent.dual.test.ts",
   "sandbox/mode-limits.dual.test.ts",
   "sandbox/operation-scopes.dual.test.ts",
+  "sandbox/permission-profiles.dual.test.ts",
   "sandbox/sandbox-artifacts.dual.test.ts",
   "sandbox/sandbox.dual.test.ts",
   "sandbox/sandbox.service-binding.dual.test.ts",
