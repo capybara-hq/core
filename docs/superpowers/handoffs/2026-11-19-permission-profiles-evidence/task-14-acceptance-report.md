@@ -36,6 +36,10 @@ only: no push, no PR. Plugins evidence ran in a fresh worktree
    timeout, destroying the stdio streams). But the bootstrap is a sealed runtime-manifest entry
    (its hash is frozen per release), so it is not a drive-by change. It needs its owner's
    decision, and a ruling on whether this is acceptable within the documented macOS limitation.
+   **Since fixed** (follow-up commit on this branch): a kill or timeout first stops and kills the
+   command's descendants found by parent pid, and once the owned group is gone the bootstrap closes
+   the pipes after a bounded grace; the test is a normal passing test now, with sibling and
+   timeout cases (contract, "Explicit background supervision", states the launchd limit).
 3. **Not a boundary failure: macOS refuses APFS case-fold aliases.** APFS resolves `.git/hooKs`
    (Kelvin sign) to `.git/hooks` and `.zſhrc` (long s) to `.zshrc`. The real worker refuses
    writes through those spellings: regression test in `mac-write-denies.test.ts`. Fullwidth

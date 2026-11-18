@@ -202,11 +202,18 @@ function removeEmptySequencers(
 }
 /** The JVM proxy agent the sandbox runtime points sandboxed JVMs at, inside its package. */
 export const JAVA_PROXY_AGENT_JAR = "vendor/java-proxy-agent/srt-proxy-agent.jar";
-/** The fixed private worker bootstrap (a runtime-manifest helper entry). */
+/**
+ * The fixed private worker bootstrap (a runtime-manifest helper entry). A kill (cancel, timeout,
+ * stop) first stops the launched command's descendant tree by parent pid (`stopTree`: top down,
+ * each process stopped before its children are read, so a pid is never reused under it), then
+ * kills that tree and the owned groups. Once the launched process has exited and its group is
+ * gone, `settle` closes the stdio pipes after a short bounded grace, so a process that escaped
+ * (one reparented to launchd before the walk) cannot hold the call or the worker open.
+ */
 export const WORKER = `import {pathToFileURL} from 'node:url';
-import {spawn} from 'node:child_process';
+import {spawn,spawnSync} from 'node:child_process';
 import {randomUUID} from 'node:crypto';
-let manager,initialized=false,wrapped=false,closing=false,full=false,child,childClosed,timer,timedOut=false,killed=false;
+let manager,initialized=false,wrapped=false,closing=false,full=false,child,childClosed,timer,timedOut=false,killed=false,exited=false,forced=false,settling=false,settleTimer;
 const owned=new Map(),signaled=new Set();
 let credit,sequence=0,outputFailed=false,outputDone=Promise.resolve();
 async function collect(stream){
@@ -218,15 +225,43 @@ async function collect(stream){
    send({event:'output-flow',frameBytes:data.length,bufferedBytes,producerLimit:262144});
    await new Promise((resolve,reject)=>{credit={seq,resolve,reject};send({event:'output',stream:'stdout',seq,data:data.toString('base64')});});
   }
- }}catch(error){const alreadyFailed=outputFailed;outputFailed=true;stream.resume();if(!alreadyFailed)send({event:'error',message:'Managed producer failed'});}
+ }}catch(error){if(forced)return;const alreadyFailed=outputFailed;outputFailed=true;stream.resume();if(!alreadyFailed)send({event:'error',message:'Managed producer failed'});}
 }
 const send=value=>{if(process.connected)process.send(value,()=>{});};
-function signalOwned(signal='SIGKILL'){for(const pid of owned.keys()){if(signaled.has(pid))continue;try{process.kill(-pid,signal);if(signal==='SIGKILL')signaled.add(pid);}catch(error){if(error.code==='ESRCH')signaled.add(pid);else throw error;}}}
+function stopTree(){
+ if(!child?.pid||child.exitCode!==null||child.signalCode!==null)return [];
+ try{process.kill(child.pid,'SIGSTOP');}catch{return [];}
+ const tree=new Set([child.pid]);
+ for(let round=0;round<64;round++){
+  const ps=spawnSync('/bin/ps',['-axo','pid=,ppid='],{encoding:'utf8',timeout:5000});
+  if(ps.status!==0){send({event:'diagnostic',text:'Descendant snapshot failed'});break;}
+  const found=[];
+  for(const line of ps.stdout.split('\\n')){const [pid,ppid]=line.trim().split(/\\s+/).map(Number);if(pid>1&&tree.has(ppid)&&!tree.has(pid))found.push(pid);}
+  if(!found.length)break;
+  for(const pid of found)try{process.kill(pid,'SIGSTOP');tree.add(pid);}catch{}
+ }
+ return [...tree];
+}
+function signalOwned(signal='SIGKILL'){if(signal==='SIGKILL')for(const pid of stopTree())try{process.kill(pid,'SIGKILL');}catch{}for(const pid of owned.keys()){if(signaled.has(pid))continue;try{process.kill(-pid,signal);if(signal==='SIGKILL')signaled.add(pid);}catch(error){if(error.code==='ESRCH')signaled.add(pid);else throw error;}}}
+function settle(){
+ if(!child||settling||!exited||!(killed||timedOut||closing))return;settling=true;
+ const started=Date.now();let goneAt=0;
+ const tick=()=>{
+  let gone=true;try{process.kill(-child.pid,0);gone=false;}catch(error){if(error.code!=='ESRCH')gone=false;}
+  const now=Date.now();if(gone&&!goneAt)goneAt=now;
+  if((goneAt&&now-goneAt>=250)||now-started>=5000){
+   forced=true;if(credit){const pending=credit;credit=undefined;pending.reject(Error('Owned output closed after cancellation'));}
+   child.stdout.destroy();child.stderr.destroy();return;
+  }
+  settleTimer=setTimeout(tick,50);
+ };
+ settleTimer=setTimeout(tick,50);
+}
 async function stop(){
  if(closing)return;closing=true;
  if(credit){outputFailed=true;const pending=credit;credit=undefined;pending.reject(Error('Owned output channel closed'));child?.stdout.resume();}
  try{signalOwned();}catch(error){closing=false;send({event:'error',message:'Owned cancellation remains pending: '+error.code});return;}
- await childClosed;owned.clear();await manager?.reset();process.disconnect?.();
+ settle();await childClosed;owned.clear();await manager?.reset();process.disconnect?.();
 }
 process.on('disconnect',stop);process.on('SIGTERM',stop);
 process.on('message',async message=>{try{
@@ -244,17 +279,17 @@ process.on('message',async message=>{try{
   child=spawn('/bin/bash',['-c',message.script],{cwd:message.cwd,env:message.env,detached:true,stdio:['ignore','pipe','pipe']});
   const identity={pid:child.pid,token:randomUUID()};if(!identity.pid)throw Error('Missing trusted launch identity');
   owned.set(identity.pid,identity.token);
-  childClosed=new Promise(resolve=>child.once('close',async code=>{clearTimeout(timer);await outputDone;send({event:'completed',code,timedOut,killed,outputFailed});resolve();}));
+  childClosed=new Promise(resolve=>child.once('close',async code=>{clearTimeout(timer);clearTimeout(settleTimer);await outputDone;send({event:'completed',code,timedOut,killed,outputFailed});resolve();}));
   child.once('error',error=>send({event:'error',message:String(error)}));
-  child.once('exit',code=>{send({event:'process-exit',code,timedOut,killed});try{signalOwned();}catch(error){send({event:'error',message:'Owned group cleanup pending: '+error.code});}});
+  child.once('exit',code=>{exited=true;send({event:'process-exit',code,timedOut,killed});try{signalOwned();}catch(error){send({event:'error',message:'Owned group cleanup pending: '+error.code});}settle();});
   if(message.managed){
     if(child.stdout.readableHighWaterMark>65536)throw Error('Unbounded managed producer buffer');
     outputDone=collect(child.stdout);let diagnosticBytes=0;child.stderr.on('data',bytes=>{diagnosticBytes+=bytes.length;if(diagnosticBytes<=65536)send({event:'diagnostic',text:bytes.toString()});});
   }else for(const stream of ['stdout','stderr'])child[stream].on('data',bytes=>{child[stream].pause();if(!process.connected){child[stream].resume();return;}process.send({event:'output',stream,data:bytes.toString('base64')},()=>child[stream].resume());});
-  timer=setTimeout(()=>{timedOut=true;try{signalOwned();}catch(error){send({event:'error',message:'Owned timeout cancellation pending: '+error.code});}},message.timeoutMs);
+  timer=setTimeout(()=>{timedOut=true;try{signalOwned();}catch(error){send({event:'error',message:'Owned timeout cancellation pending: '+error.code});}settle();},message.timeoutMs);
   send({event:'launched',...identity});
  }else if(message.type==='cancel'){
-  killed=true;try{if(message.graceMs>0&&child){signalOwned('SIGTERM');const force=setTimeout(()=>{try{signalOwned();}catch(error){send({event:'error',message:'Owned graceful cancellation pending: '+error.code});}},message.graceMs);childClosed.finally(()=>clearTimeout(force));}else signalOwned();send({event:'cancelled',ok:true});}catch(error){send({event:'cancelled',ok:false,message:'Owned cancellation pending: '+error.code});}
+  killed=true;try{if(message.graceMs>0&&child){signalOwned('SIGTERM');const force=setTimeout(()=>{try{signalOwned();}catch(error){send({event:'error',message:'Owned graceful cancellation pending: '+error.code});}},message.graceMs);childClosed.finally(()=>clearTimeout(force));}else signalOwned();send({event:'cancelled',ok:true});}catch(error){send({event:'cancelled',ok:false,message:'Owned cancellation pending: '+error.code});}settle();
  }else if(message.type==='register'){
   if(!Number.isSafeInteger(message.pid)||message.pid<=1||typeof message.token!=='string')throw Error('Invalid trusted launch identity');
   owned.set(message.pid,message.token);send({event:'registered'});

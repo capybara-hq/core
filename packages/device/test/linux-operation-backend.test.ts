@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { SandboxExecutionRef } from "@capybara-hq/plugin-sdk";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { shellQuote } from "../src/exec/shared.js";
 import {
   dockerUnavailable,
   inspect,
@@ -223,6 +224,38 @@ describe.skipIf(unavailable !== null)("Linux host operation backend", () => {
       await running;
       expect(await alive([child])).toEqual([]);
     }
+  });
+
+  // the macOS hang (mac-abort-escape.test.ts) has no Linux equivalent: a descendant that leaves
+  // the process group stays in the closed session, so the abort ends it with the session
+  it("an aborted restricted exec ends a descendant that left the process group", async () => {
+    const root = project("abort-pgid");
+    const abort = new AbortController();
+    const escaper = [
+      "import os, time",
+      "pid = os.fork()",
+      "if pid == 0:",
+      "    os.setpgid(0, 0)",
+      "    open('escaped', 'w').write(str(os.getpid()))",
+      "    time.sleep(1000)",
+      "os.waitpid(pid, 0)",
+    ].join("\n");
+    const scope = restricted(root);
+    const running = backend
+      .operation(scope, authorityFor(scope.operationId))
+      .exec({
+        command: `cd ${root} && (python3 -c ${shellQuote(escaper)} &); until [ -s escaped ]; do sleep 0.01; done; printf r > ready; sleep 1001`,
+        cwd: root,
+        timeoutMs: 600_000,
+        maxOutputBytes: 1024,
+        signal: abort.signal,
+      })
+      .catch((error: unknown) => error);
+    await exists(`${root}/ready`, running);
+    const [escaped] = (await pidsOf(root, ["escaped"])) as [number];
+    abort.abort();
+    await running;
+    expect(await alive([escaped])).toEqual([]);
   });
 
   it("a lost agent fails the operation and its recorded session is reaped", async () => {

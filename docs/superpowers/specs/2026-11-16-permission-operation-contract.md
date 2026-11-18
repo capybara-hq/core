@@ -280,6 +280,14 @@ This restriction applies to restricted execution. Full execution retains the OS 
 daemonization behavior. Managed foreground/background cancellation follows the existing device
 contract; it does not promise discovery of arbitrary unregistered malicious double-forks or PID
 namespace isolation on macOS. Trusted registered execution identities remain the basis of cleanup.
+On macOS, cancelling a restricted command (abort, timeout, worker stop) first stops (SIGSTOP)
+the command's descendants it finds by parent pid, top down from the launched process, each one
+stopped before its children are read so that no reused pid is signalled; that includes
+descendants that left the owned process group or session. It then kills them and the owned group.
+A process already reparented to launchd before that walk is not found and keeps running. Once the
+owned group is gone, the call completes after a short bounded grace even if such a process still
+holds the command's output pipes, and the worker, its proxy and the private temporary directory
+are cleaned up.
 
 ```ts
 export interface SandboxExecutionRef {
