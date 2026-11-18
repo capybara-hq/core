@@ -48,6 +48,14 @@ function stateOf(e: DeviceView): { state: string; reason?: string; next?: string
       next: "Wipe its files with devices.reset-files to use it again.",
     };
   }
+  if (e.reconcileRequired) {
+    return {
+      state: "reconcile_required",
+      reason:
+        "Its sandbox limits must be established again after the permission migration; nothing runs on it until then.",
+      next: "Rebuild its files with devices.reset-files (the workspace is wiped), or ask the person to do it on its device page.",
+    };
+  }
   return { state: e.instance?.status ?? "ready" };
 }
 
@@ -326,8 +334,9 @@ export class DevicesOperations implements OnModuleInit {
         authz: { orgAction: "agents.use" },
         mirrors: ["PATCH /api/v1/orgs/:orgId/devices/:id"],
         renames: { deviceId: "id" },
-        // a person changes their own machine's mode; enabling auto mode happens on the machine
-        omits: ["mode"],
+        // a person changes their own device's mode or owner ceiling in a web session; widening a
+        // machine's ceiling happens on the machine (B2)
+        omits: ["mode", "ownerCeiling", "confirmWidening"],
         confirm: "personal",
         errors: [
           {

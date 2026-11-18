@@ -1,0 +1,40 @@
+{
+  "base": "94bc2dddde2be5db2e702dc134728d980ff99527",
+  "files": [
+    {
+      "path": "packages/kernel/test/evals/fixtures/pre-background-subagents/README.md",
+      "sha256": "31c1897485ffb0a0fe1c5286b3ad0bd932de4881636c1d63efecf4c375b64c15",
+      "unchangedFromBase": true
+    },
+    {
+      "path": "packages/kernel/test/evals/fixtures/pre-background-subagents/conversation.json",
+      "sha256": "fb5c3d01865c23a5c4fe11fdaf36c1aa2b19f3045f0054278c912720f3274a92",
+      "unchangedFromBase": true
+    },
+    {
+      "path": "packages/kernel/test/evals/fixtures/pre-rename/mcp-conversation.json",
+      "sha256": "5bc274b7f87cd30c34f719ab8d6ba3851e9fcc208cbf44f4a5fb32d0ea67201a",
+      "unchangedFromBase": true
+    },
+    {
+      "path": "packages/kernel/test/evals/fixtures/pre-skills-default-on/README.md",
+      "sha256": "d0b2cbba0fa389875775a4a6dee74540f2f694dedadc7488941b428a843cc918",
+      "unchangedFromBase": true
+    },
+    {
+      "path": "packages/kernel/test/evals/fixtures/pre-skills-default-on/conversation.json",
+      "sha256": "d81fb76ea62e558b12c5108dbbec48e3c3b0ec9157076cdc1dec5ba89fa9ae03",
+      "unchangedFromBase": true
+    },
+    {
+      "path": "packages/kernel/test/evals/fixtures/pre-tool-rename/README.md",
+      "sha256": "5656b6fdd4f8ce6a03aedb947d18a57eea5c0144faacb5c5f98206ad7f8315ca",
+      "unchangedFromBase": true
+    },
+    {
+      "path": "packages/kernel/test/evals/fixtures/pre-tool-rename/conversation.json",
+      "sha256": "d9365205ba9ffbb1c51e3fc6aef9f78ead9ef45c56adab3a0d6e4cb0c0686100",
+      "unchangedFromBase": true
+    }
+  ]
+}

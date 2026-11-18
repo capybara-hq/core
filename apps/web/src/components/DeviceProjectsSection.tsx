@@ -139,7 +139,7 @@ export function DeviceProjectsOverview({
 }
 
 /**
- * 设置's projects, beside the run mode and the allowlist: the list with 移除 each (after a
+ * The Settings tab's projects, beside the access ceiling and the allowlist: the list with Remove each (after a
  * confirmation), and 添加项目 in a dialog taking the path relative to the base of the device's
  * current mode (§4.2), the base drawn as a fixed prefix. A device without project support says
  * why and offers no form.
@@ -263,7 +263,12 @@ function AddProjectDialog({
   const candidates = useQuery(deviceProjectCandidatesQuery(orgId, device.id));
   const add = useAppMutation({
     fn: (input: { path: string; name?: string }) => addDeviceProject(orgId, device.id, input),
-    invalidates: () => [keys.org(orgId).deviceProjects(device.id)],
+    // a project's roots decide a conversation's permission preview there: read those again too
+    // (never the suggestions, which would ask the device again)
+    invalidates: () => [
+      keys.org(orgId).deviceProjects(device.id),
+      keys.org(orgId).permissionPreviewAll(device.id),
+    ],
   });
   const prefix = projectBasePrefix(device.source, list.mode);
   const relative = normalizeProjectPath(path);
@@ -434,7 +439,10 @@ function RemoveProjectDialog({
   const [error, setError] = useState<string>();
   const remove = useAppMutation({
     fn: () => removeDeviceProject(orgId, deviceId, name),
-    invalidates: () => [keys.org(orgId).deviceProjects(deviceId)],
+    invalidates: () => [
+      keys.org(orgId).deviceProjects(deviceId),
+      keys.org(orgId).permissionPreviewAll(deviceId),
+    ],
   });
   const pending = remove.isPending;
   const submit = async () => {

@@ -124,7 +124,7 @@ const service = (p: () => SandboxProvider = () => provider, lockTtlMs?: number) 
  */
 const setAutoMode = (mode: "allowed" | "off") =>
   sql`UPDATE capybara.orgs SET settings = ${JSON.stringify({
-    autoMode: mode,
+    fullAccess: mode,
     cloudNetwork: { mode: mode === "off" ? "allowlist" : "open" },
   })}::jsonb
     WHERE id = ${orgId}`.execute(raw);
@@ -335,14 +335,14 @@ describe("a changed mode on use", () => {
     expect(await ops("create")).toHaveLength(2);
   });
 
-  it("a changed host list, cpu or memory alone never touches the running instance", async () => {
+  it("a widened host list, cpu or memory alone never touches the running instance", async () => {
     provider = fake({ updateMode: "updated" });
     const s = service();
     await setAutoMode("off");
     const first = await use(s);
     await setOrgSettings({
-      autoMode: "off",
-      cloudNetwork: { mode: "allowlist", allowHosts: ["example.com"] },
+      fullAccess: "off",
+      cloudNetwork: { mode: "allowlist", extraHosts: ["example.com"] },
     });
     await sql`INSERT INTO capybara.deployment_settings (key, value)
       VALUES ('sandboxLimitOverrides', ${JSON.stringify({ [orgId]: { cpu: 4 } })}::jsonb)
@@ -354,6 +354,23 @@ describe("a changed mode on use", () => {
     await sql`DELETE FROM capybara.deployment_settings WHERE key = 'sandboxLimitOverrides'`.execute(
       raw,
     );
+  });
+
+  it("a host-only narrowing reaches the running instance on its next use (spec §124)", async () => {
+    provider = fake({ updateMode: "updated" });
+    const s = service();
+    await setAutoMode("off");
+    const first = await use(s);
+    await setOrgSettings({
+      fullAccess: "off",
+      cloudNetwork: { mode: "allowlist", excludedHosts: ["pypi.org"] },
+    });
+    const again = await use(s);
+    expect(again.h).toEqual(first.h);
+    expect(await ops("update")).toHaveLength(1);
+    const network = (await record())?.network as { hosts?: string[] } | undefined;
+    expect(network?.hosts).toContain("github.com");
+    expect(network?.hosts).not.toContain("pypi.org");
   });
 });
 
@@ -558,5 +575,42 @@ describe("scheduled runs use the effective mode like any use", () => {
       .where("id", "=", taskRunId)
       .executeTakeFirstOrThrow();
     expect(row.missing_grants).toEqual([]);
+  });
+});
+
+describe("the lifecycle reconcile sweep (B-12)", () => {
+  it("visits every marked device across ticks: a stuck first page never starves the rest", async () => {
+    provider = fake({ updateMode: "updated" });
+    const tried: string[] = [];
+    const s = sandboxServiceFor({
+      db,
+      redis,
+      provider: () => ({ plugin: "sandbox-fake", impl: provider }),
+      config: () => config,
+      log,
+      lockPollMs: 20,
+      snapshots: {
+        reconcileHeld: async (_org, id) => {
+          tried.push(id);
+          // stuck: the marker stays and no target applies
+          return { state: "reconcile-required", action: "reset-files" };
+        },
+      },
+    });
+    const ids: string[] = [];
+    for (let i = 0; i < 12; i++) {
+      const id = await seedDevice(raw, orgId);
+      ids.push(id);
+      await sql`UPDATE capybara.devices SET permission_reconcile_required = true
+        WHERE id = ${id}`.execute(raw);
+      await sql`INSERT INTO capybara.device_instances (device_id, org_id, provider, status, handle,
+          fs_status, fs_handle)
+        VALUES (${id}, ${orgId}, 'sandbox-fake', 'running', ${JSON.stringify({ id: `fake-${i}` })}::jsonb,
+          'ready', ${JSON.stringify({ id: `fs-${i}` })}::jsonb)`.execute(raw);
+    }
+    await s.reconcileMarked();
+    expect(tried).toHaveLength(10);
+    await s.reconcileMarked();
+    expect([...new Set(tried)].sort()).toEqual([...ids].sort());
   });
 });

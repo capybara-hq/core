@@ -37,11 +37,12 @@ import { useRouter } from "../../../../i18n/navigation";
 import {
   type Device,
   deleteDevice,
-  deviceModeMark,
+  deviceCeilingMark,
   deviceState,
   isDeviceName,
   renameDevice,
   resetDeviceFiles,
+  resetPollInterval,
   revokeDeviceMachine,
 } from "../../../../lib/devices";
 import { extensionLabel, labelLocale } from "../../../../lib/extension-label";
@@ -55,14 +56,15 @@ import NotFound from "../../not-found";
 
 /**
  * `/devices/[id]`: one device (DetailPage, one centred column). Its head is the `DeviceNameplate`
- * band — name, origin, status light and mode mark on the left, program version, last seen and
- * creation time on the right — the page's one bright element, and the page's title: the PageHeader
- * is title-less, so the name is said once (`titleHidden`). Everything below is quiet and dense:
- * the cloud facts (提供方, 资源 and 网络, each said once), the files and suspension notes, the
- * `DeviceModeSection` (the compact 自动 / 沙箱 scale, its network section in sandbox mode only, and
- * the recent changes), and for a local device its machine block (系统 and 断开这台机器). A local
- * device's name is the machine's, and its mode is the nameplate's mark, so neither is repeated.
- * 重命名, 重建文件 (only when its files are lost, behind a confirmation; a job, so the page then
+ * band — name, origin, status light and the ceiling mark (Full access available or restricted) on
+ * the left, program version, last seen and creation time on the right — the page's one bright
+ * element, and the page's title: the PageHeader is title-less, so the name is said once
+ * (`titleHidden`). Everything below is quiet and dense: the owner ceiling (read only on Overview, with
+ * the narrowing the kernel allows on Settings; no daily mode), the cloud facts (Provider, Resources and Network,
+ * each said once), the files and suspension notes, the recent changes, and for a local device its
+ * allowlist and machine block (System and Disconnect this machine).
+ * Rename, Rebuild files (only when its files are lost, a change waits for a file reset or its sandbox
+ * limits must be established again, said up front in a callout; behind a confirmation; a job, so the page then
  * polls until the files are back) and 删除 (typing its name; the files are deleted with it, a
  * destructive item of the ⋯ menu; deleting 个人设备 says a new empty one is created the next time
  * one is needed). A local device never offers 重建文件 (the kernel refuses it): its files-lost note
@@ -80,16 +82,11 @@ export default function DeviceView({ id }: { id: string }) {
 function DevicePage({ orgId, id }: { orgId: string; id: string }) {
   const t = useTranslations("devices");
   const scope = usePagePath("org");
-  // 重建文件 is a job: after the request the page polls until the files are back
-  const [resetting, setResetting] = useState(false);
+  // Rebuild files is a job: after the request the page polls until the files are back, within a deadline
+  const [resetAt, setResetAt] = useState<number | null>(null);
   const read = usePageQuery({
     ...deviceQuery(orgId, id),
-    refetchInterval: (q) => {
-      const d = q.state.data?.device;
-      return resetting && d !== undefined && (d.filesLost || d.mode.pendingFilesReset)
-        ? RESET_POLL_MS
-        : false;
-    },
+    refetchInterval: (q) => resetPollInterval(q.state.data?.device, resetAt, Date.now()),
   });
   if (read.kind === "notFound") return <NotFound />;
   if (read.kind === "error") return <ErrorFrame reset={read.retry} />;
@@ -123,12 +120,13 @@ function DevicePage({ orgId, id }: { orgId: string; id: string }) {
     );
   }
   return (
-    <Detail orgId={orgId} device={read.data.device} onResetScheduled={() => setResetting(true)} />
+    <Detail
+      orgId={orgId}
+      device={read.data.device}
+      onResetScheduled={() => setResetAt(Date.now())}
+    />
   );
 }
-
-/** How often the page reads the device while a file reset it requested is pending. */
-const RESET_POLL_MS = 1500;
 
 type Dialogs = "rename" | "reset" | "delete" | "revoke" | null;
 
@@ -174,7 +172,7 @@ function Detail({
         : state === "online"
           ? "online"
           : "offline";
-  const mark = deviceModeMark(e);
+  const mark = deviceCeilingMark(e);
   return (
     <>
       <DetailPage
@@ -185,7 +183,9 @@ function Detail({
           titleHidden: true,
           actions: [
             { label: t("detail.rename"), variant: "default", onSelect: () => setOpen("rename") },
-            ...((e.filesLost || e.mode.pendingFilesReset) && e.available && !local
+            ...((e.filesLost || e.mode.pendingFilesReset || e.reconcileRequired) &&
+            e.available &&
+            !local
               ? [
                   {
                     label: t("detail.resetFiles"),
@@ -213,7 +213,7 @@ function Detail({
             version={local ? (e.machine?.programVersion ?? null) : null}
             lastSeen={local ? (e.machine?.lastSeenAt ?? null) : (e.instance?.lastUsedAt ?? null)}
             created={e.createdAt}
-            badge={<Badge tone={mark.tone}>{t(`mark.${mark.kind}`)}</Badge>}
+            badge={<Badge>{t(`ceiling.mark.${mark}`)}</Badge>}
             labels={{
               origin: { cloud: t("source.cloud"), local: t("source.local") },
               state: { [npState]: t(`state.${state}`) },
@@ -225,6 +225,9 @@ function Detail({
           <Callout tone="warn">
             {t(local ? "detail.localFilesLostNote" : "detail.filesLostNote")}
           </Callout>
+        )}
+        {e.reconcileRequired && !e.filesLost && (
+          <Callout tone="warn">{t("detail.reconcileNote")}</Callout>
         )}
         {e.demotedFrom !== null && (
           <Callout tone="info">

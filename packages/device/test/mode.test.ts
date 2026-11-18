@@ -9,7 +9,14 @@ import {
   MODE_AUTO_PROMPT,
   modeCommand,
 } from "../src/commands/mode.js";
-import { DEFAULT_POLICY, readPolicy, writeCredential, writePolicy } from "../src/state.js";
+import {
+  DEFAULT_POLICY,
+  ownerCeilingOfMode,
+  policyMode,
+  readPolicy,
+  writeCredential,
+  writePolicy,
+} from "../src/state.js";
 
 let dir: string;
 beforeEach(() => {
@@ -50,33 +57,33 @@ describe("capybara-device mode", () => {
   });
 
   it("sets sandbox mode without a question", async () => {
-    writePolicy(dir, { ...DEFAULT_POLICY, mode: "auto" });
+    writePolicy(dir, { ...DEFAULT_POLICY, ownerCeiling: ownerCeilingOfMode("auto") });
     const r = await run(["sandbox"], undefined, () => ({ ok: true }));
     expect(r.code).toBe(0);
-    expect(readPolicy(dir).mode).toBe("sandbox");
+    expect(policyMode(readPolicy(dir))).toBe("sandbox");
     expect(r.out).toMatch(/local policy is now sandbox mode \(from the next command\)/);
     expect((await run([])).out).toContain("Mode: sandbox.");
   });
 
   it("auto mode prints the risk text and needs --yes without a terminal", async () => {
-    writePolicy(dir, { ...DEFAULT_POLICY, mode: "sandbox" });
+    writePolicy(dir, { ...DEFAULT_POLICY, ownerCeiling: ownerCeilingOfMode("sandbox") });
     const r = await run(["auto"]);
     expect(r.code).toBe(2);
     expect(r.out).toBe(AUTO_MODE_RISK_TEXT);
     expect(r.err).toBe(MODE_AUTO_NEEDS_YES);
-    expect(readPolicy(dir).mode).toBe("sandbox");
+    expect(policyMode(readPolicy(dir))).toBe("sandbox");
   });
 
   it("auto mode with --yes prints the risk text once and sets it", async () => {
-    writePolicy(dir, { ...DEFAULT_POLICY, mode: "sandbox" });
+    writePolicy(dir, { ...DEFAULT_POLICY, ownerCeiling: ownerCeilingOfMode("sandbox") });
     const r = await run(["auto", "--yes"]);
     expect(r.code).toBe(0);
     expect(r.out).toContain(AUTO_MODE_RISK_TEXT);
-    expect(readPolicy(dir).mode).toBe("auto");
+    expect(policyMode(readPolicy(dir))).toBe("auto");
   });
 
   it("on a terminal asks once: y sets it, anything else changes nothing", async () => {
-    writePolicy(dir, { ...DEFAULT_POLICY, mode: "sandbox" });
+    writePolicy(dir, { ...DEFAULT_POLICY, ownerCeiling: ownerCeilingOfMode("sandbox") });
     const questions: string[] = [];
     const yes = await run(["auto"], async (q) => {
       questions.push(q);
@@ -85,13 +92,13 @@ describe("capybara-device mode", () => {
     expect(yes.code).toBe(0);
     expect(questions).toEqual([MODE_AUTO_PROMPT]);
     expect(yes.out).toContain(AUTO_MODE_RISK_TEXT);
-    expect(readPolicy(dir).mode).toBe("auto");
+    expect(policyMode(readPolicy(dir))).toBe("auto");
     const no = await run(["sandbox"], undefined, () => ({ ok: true }));
     expect(no.code).toBe(0);
     const refused = await run(["auto"], async () => "n");
     expect(refused.code).toBe(1);
     expect(refused.err).toBe("Nothing changed.");
-    expect(readPolicy(dir).mode).toBe("sandbox");
+    expect(policyMode(readPolicy(dir))).toBe("sandbox");
   });
 
   it("the CLI routes mode; without a terminal and --yes it exits 2", async () => {
@@ -130,7 +137,7 @@ describe("capybara-device mode", () => {
   });
 
   it("refuses mode sandbox when the OS sandbox is unavailable and leaves auto mode", async () => {
-    writePolicy(dir, { ...DEFAULT_POLICY, mode: "auto" });
+    writePolicy(dir, { ...DEFAULT_POLICY, ownerCeiling: ownerCeilingOfMode("auto") });
     const r = await run(["sandbox"], undefined, () => ({
       ok: false,
       reason: "the OS sandbox is missing dependencies: bwrap",
@@ -138,15 +145,15 @@ describe("capybara-device mode", () => {
     expect(r.code).toBe(1);
     expect(r.err).toMatch(/OS sandbox is unavailable.*bwrap/);
     expect(r.err).toMatch(/Stay in auto mode|mode auto/);
-    expect(readPolicy(dir).mode).toBe("auto");
+    expect(policyMode(readPolicy(dir))).toBe("auto");
   });
 
   it("switches to sandbox when available; Docker run mode skips the OS check", async () => {
-    writePolicy(dir, { ...DEFAULT_POLICY, mode: "auto" });
+    writePolicy(dir, { ...DEFAULT_POLICY, ownerCeiling: ownerCeilingOfMode("auto") });
     expect((await run(["sandbox"], undefined, () => ({ ok: true }))).code).toBe(0);
-    expect(readPolicy(dir).mode).toBe("sandbox");
+    expect(policyMode(readPolicy(dir))).toBe("sandbox");
     // In Docker mode the container, not the OS sandbox, is the boundary.
-    writePolicy(dir, { ...DEFAULT_POLICY, mode: "auto" });
+    writePolicy(dir, { ...DEFAULT_POLICY, ownerCeiling: ownerCeilingOfMode("auto") });
     writeCredential(dir, {
       url: "https://x.test",
       connectUrl: "wss://x.test/device/connect",
@@ -163,6 +170,6 @@ describe("capybara-device mode", () => {
       reason: "not checked in Docker mode",
     }));
     expect(docker.code).toBe(0);
-    expect(readPolicy(dir).mode).toBe("sandbox");
+    expect(policyMode(readPolicy(dir))).toBe("sandbox");
   });
 });

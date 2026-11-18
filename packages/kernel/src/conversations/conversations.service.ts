@@ -15,13 +15,18 @@ import { DeviceProjectsService } from "../devices/device-projects.service.js";
 import { ApiError } from "../errors.js";
 import { afterCommit } from "../infra/database/after-commit.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
-import { TransactionHost } from "../infra/database/transaction-host.js";
+import {
+  TransactionHost,
+  withTransactionFencePrelude,
+} from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { KernelEvents } from "../infra/events/kernel-events.js";
 import { ProviderRegistry } from "../runtime/providers.js";
 import { RunControl as RunControlService } from "../runtime/run-control.js";
 import { RunDeletion } from "../runtime/run-deletion.js";
 import { rootConversationOf } from "../runtime/subagents/child.js";
+import { PermissionCeilingWrites } from "../sandbox/permission-ceiling-writes.js";
+import { permissionScopeHash } from "../sandbox/permission-facts.js";
 import type { ScheduleMarker } from "../schedules/types.js";
 import { type RenderedInvocation, SkillInvoker } from "../skills/invoke.js";
 import { type ApprovalRecord, ApprovalsService } from "../tools/approvals.service.js";
@@ -38,6 +43,8 @@ import {
   type MessageContext,
   readMessageContext,
 } from "./message-context.js";
+import type { PermissionSelection } from "./permission-profiles.schemas.js";
+import { PermissionProfilesService } from "./permission-profiles.service.js";
 import {
   NO_SELECTION,
   planSelection,
@@ -389,6 +396,8 @@ export interface UserMessageInput {
  * source of the message's `timeZone` (`readMessageContext`).
  */
 export interface InternalMessageOptions {
+  initialPermission?: PermissionSelection;
+  createRequestHash?: string;
   schedule?: ScheduleMarker;
   timeZoneOverride?: string;
 }
@@ -434,6 +443,8 @@ const toUsage = (r: UsageRow): UsageTotals => ({
 @Injectable()
 export class ConversationsService {
   constructor(
+    @Inject(PermissionProfilesService)
+    private readonly permissions: Pick<PermissionProfilesService, "initialize" | "lockInitial">,
     @Inject(KernelDb) private readonly db: KernelDb,
     @Inject(EventLog) private readonly eventLog: EventLog,
     @Inject(AgentLookup) private readonly agents: Pick<AgentLookup, "get">,
@@ -467,6 +478,7 @@ export class ConversationsService {
     private readonly approvals: Pick<ApprovalsService, "skipNetworkIn">,
     @Inject(KernelEvents) private readonly events: Pick<KernelEvents, "emit">,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
+    @Inject(PermissionCeilingWrites) private readonly ceilings: PermissionCeilingWrites,
   ) {}
 
   /**
@@ -531,8 +543,20 @@ export class ConversationsService {
     events: ConversationEvent[];
     created: boolean;
   }> {
+    if (internal.initialPermission?.profile === "full-access" && !pick.deviceId)
+      throw new ApiError("conflict", "Full access requires an explicit device selection");
+    const requestHash = internal.initialPermission
+      ? permissionScopeHash({ agentId, input, pick, permission: internal.initialPermission })
+      : undefined;
+    if (requestHash) internal = { ...internal, createRequestHash: requestHash };
     const agent = await this.agents.get(orgId, agentId, accountId);
-    const prior = await this.findCreated(orgId, accountId, agentId, input.clientMessageId);
+    const prior = await this.findCreated(
+      orgId,
+      accountId,
+      agentId,
+      input.clientMessageId,
+      requestHash,
+    );
     if (prior) return prior;
     const deviceId = await this.devices.forNew(orgId, accountId, pick);
     const next = await this.planSwitch(orgId, agent.definition, NO_SELECTION, input);
@@ -560,13 +584,25 @@ export class ConversationsService {
       // a concurrent first send with this id created the conversation while this one resolved its
       // binding: a refusal here (the project just went away) answers with what the first created
       if (!(e instanceof ApiError)) throw e;
-      const raced = await this.findCreated(orgId, accountId, agentId, input.clientMessageId);
+      const raced = await this.findCreated(
+        orgId,
+        accountId,
+        agentId,
+        input.clientMessageId,
+        requestHash,
+      );
       if (!raced) throw e;
       return raced;
     }
     const written = all?.at(-1);
     if (!all || !written) {
-      const raced = await this.findCreated(orgId, accountId, agentId, input.clientMessageId);
+      const raced = await this.findCreated(
+        orgId,
+        accountId,
+        agentId,
+        input.clientMessageId,
+        requestHash,
+      );
       if (!raced) throw new ApiError("conflict", "The conversation is being created; retry");
       return raced;
     }
@@ -595,6 +631,7 @@ export class ConversationsService {
     internal: InternalMessageOptions & NewConversationOptions,
   ): Promise<ConversationEvent[] | undefined> {
     const { id, orgId, accountId } = conv;
+    if (internal.initialPermission) await this.permissions.lockInitial(orgId, id, conv.deviceId);
     const project = await this.bindingFor(orgId, accountId, conv.deviceId, conv.project);
     const row = await this.db
       .insertInto("conversations")
@@ -607,6 +644,7 @@ export class ConversationsService {
         project_name: project?.name ?? null,
         project_path: project?.path ?? null,
         create_request_id: input.clientMessageId,
+        create_request_hash: internal.createRequestHash ?? null,
         scheduled_task_id: internal.schedule?.taskId ?? null,
         source: internal.source,
       })
@@ -620,11 +658,31 @@ export class ConversationsService {
       .executeTakeFirst();
     // a concurrent retry committed first: answer with its conversation below
     if (!row) return undefined;
+    const initialEvents = internal.initialPermission
+      ? await this.permissions.initialize(
+          orgId,
+          id,
+          accountId,
+          conv.deviceId,
+          project?.path ?? null,
+          project?.name ?? null,
+          internal.initialPermission,
+        )
+      : [];
     const blocks = await this.bindIn(orgId, id, accountId, input.files ?? []);
     // a new conversation has no run yet, so nothing to skip
-    return (
-      await this.writeMessage(orgId, id, accountId, input, next, extra, blocks, invoked, internal)
-    ).events;
+    const written = await this.writeMessage(
+      orgId,
+      id,
+      accountId,
+      input,
+      next,
+      extra,
+      blocks,
+      invoked,
+      internal,
+    );
+    return [...initialEvents, ...written.events];
   }
 
   /**
@@ -661,6 +719,7 @@ export class ConversationsService {
     accountId: string,
     agentId: string,
     clientMessageId: string,
+    requestHash?: string,
   ): Promise<{
     conversation: ConversationView;
     event: ConversationEvent;
@@ -672,11 +731,15 @@ export class ConversationsService {
       .select(viewColumns())
       .where("org_id", "=", orgId)
       .where("account_id", "=", accountId)
+      .select("create_request_hash")
       .where("create_request_id", "=", clientMessageId)
       .where("kind", "=", "chat")
       .executeTakeFirst();
     if (!row) return null;
-    if (row.agent_id !== agentId) {
+    if (
+      row.agent_id !== agentId ||
+      (requestHash !== undefined && row.create_request_hash !== requestHash)
+    ) {
       throw new ApiError(
         "conflict",
         "This clientMessageId was already used for another conversation",
@@ -766,9 +829,53 @@ export class ConversationsService {
   async remove(orgId: string, conversationId: string, accountId: string): Promise<void> {
     await this.writable(orgId, conversationId, accountId);
     // Close entrances before the direct stop. The outbox owes the same claim-revoking cleanup.
-    await this.markDeleted(orgId, conversationId, accountId);
+    // The root authority lock is the transaction's ordered prelude: inside a run's fence (a
+    // Platform call) it follows the org row and precedes the conversation rows
+    const subject = await this.deletionSubject(orgId, conversationId);
+    await withTransactionFencePrelude(
+      () => this.ceilings.lock(subject, "root"),
+      () => this.markDeleted(orgId, conversationId, accountId, subject),
+    );
     await this.deletion.stopTree(conversationId, accountId);
     await this.eventLog.publishChanged(conversationId, "deleted");
+  }
+
+  /** The authority subject a deletion locks: the tree's root and its device, read without locks. */
+  private async deletionSubject(
+    orgId: string,
+    conversationId: string,
+  ): Promise<{ orgId: string; rootConversationId: string; deviceId?: string }> {
+    const binding = await this.db
+      .selectFrom("conversations")
+      .select(["device_id", "parent_conversation_id"])
+      .where("id", "=", conversationId)
+      .where("org_id", "=", orgId)
+      .executeTakeFirst();
+    if (!binding) throw notFound();
+    // Root deletion closes the whole tree; a child is fenced through its actual root's authority.
+    let rootId = conversationId,
+      parent = binding.parent_conversation_id;
+    for (let depth = 0; parent && depth < 16; depth++) {
+      const ancestor = await this.db
+        .selectFrom("conversations")
+        .select(["id", "parent_conversation_id"])
+        .where("id", "=", parent)
+        .where("org_id", "=", orgId)
+        .executeTakeFirstOrThrow();
+      rootId = ancestor.id;
+      parent = ancestor.parent_conversation_id;
+    }
+    if (parent) throw notFound();
+    const root = await this.db
+      .selectFrom("conversations")
+      .select("device_id")
+      .where("id", "=", rootId)
+      .executeTakeFirstOrThrow();
+    return {
+      orgId,
+      rootConversationId: rootId,
+      ...(root.device_id ? { deviceId: root.device_id } : {}),
+    };
   }
 
   // the publish happens after the commit, in the caller; the tree stop after it is owed here
@@ -778,7 +885,22 @@ export class ConversationsService {
     orgId: string,
     conversationId: string,
     accountId: string,
+    locked: { orgId: string; rootConversationId: string; deviceId?: string },
   ): Promise<void> {
+    // the prelude locked `locked`; a root or device that changed since is not covered by it
+    const subject = await this.deletionSubject(orgId, conversationId);
+    if (
+      subject.rootConversationId !== locked.rootConversationId ||
+      subject.deviceId !== locked.deviceId
+    )
+      throw new ApiError("conflict", "The conversation's device changed; retry the deletion");
+    await this.ceilings.lock(subject, "root");
+    await this.ceilings.publishLocked(
+      subject,
+      "root",
+      (_scope, intent) =>
+        conversationId === subject.rootConversationId || intent.conversation_id === conversationId,
+    );
     const row = await this.db
       .selectFrom("conversations")
       .select("id")

@@ -499,6 +499,11 @@ describe("the conversation's device (environments design §4.1 item 2)", () => {
     bound(null, null);
     const props = await open();
     expect(within(props).getByText(en.chatPanel.deviceNone, { exact: false })).toBeTruthy();
-    expect(document.querySelector('[data-part="picker"][data-locked="true"]')).toBeNull();
+    // no locked picker at all: the owner edits the permission profile in place
+    expect(
+      [...document.querySelectorAll('[data-part="picker"][data-locked="true"]')].map(
+        (e) => e.textContent,
+      ),
+    ).toEqual([]);
   });
 });

@@ -86,3 +86,15 @@ describe("loadEnvFile", () => {
     }
   });
 });
+
+it("env file extraction preserves both activation spellings", () => {
+  for (const flag of [
+    ["--activate-permission-config", "c".repeat(64)],
+    [`--activate-permission-config=${"c".repeat(64)}`],
+  ]) {
+    expect(takeEnvFileOption(["start", ...flag, "--env-file", "config.env"])).toEqual({
+      argv: ["start", ...flag],
+      file: "config.env",
+    });
+  }
+});

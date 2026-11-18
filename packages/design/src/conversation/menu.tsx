@@ -30,6 +30,11 @@ export type ConvMenuEntry =
       icon?: IconName | ReactNode;
       /** A tag after the label ("agent 默认"). */
       tag?: string;
+      /**
+       * A sentence under the label and tag (a permission profile's explanation): the item grows
+       * to two lines and takes it as its accessible description.
+       */
+      description?: string;
       /** An attention mark after the tag, as a `warn` Badge ("开放"). */
       badge?: string;
       /** The badge's tone: `fail` for a danger mark; default `warn`. */
@@ -191,6 +196,7 @@ function Entry({
         </div>
       );
     default:
+      if (e.description !== undefined) return <DescribedItem e={e} listbox={listbox} />;
       return (
         <RM.Item
           className="cb-cmenu-item"
@@ -226,6 +232,56 @@ function Entry({
         </RM.Item>
       );
   }
+}
+
+/**
+ * An item with a description under its label: named by its label and tag, described by the
+ * sentence; the same neutral colors as every other item.
+ */
+function DescribedItem({
+  e,
+  listbox,
+}: {
+  e: Extract<ConvMenuEntry, { kind: "item" }>;
+  listbox?: boolean | undefined;
+}): JSX.Element {
+  const id = useId();
+  return (
+    <RM.Item
+      className="cb-cmenu-item"
+      data-part="menu-item"
+      data-described="true"
+      data-tone={e.tone}
+      disabled={e.disabled}
+      onSelect={() => e.onSelect()}
+      aria-labelledby={e.tag ? `${id}-label ${id}-tag` : `${id}-label`}
+      aria-describedby={`${id}-desc`}
+      {...(listbox
+        ? { role: "option", "aria-selected": e.checked === true, "data-value": e.id }
+        : e.checked !== undefined
+          ? { role: "menuitemradio", "aria-checked": e.checked }
+          : {})}
+    >
+      {e.icon === undefined ? null : isIconName(e.icon) ? <Icon name={e.icon} size={14} /> : e.icon}
+      <span className="cb-cmenu-body">
+        <span className="cb-cmenu-head">
+          <span className="cb-cmenu-text" id={`${id}-label`}>
+            {e.label}
+          </span>
+          {e.tag ? (
+            <span className="cb-cmenu-tag" data-part="menu-tag" id={`${id}-tag`}>
+              {e.tag}
+            </span>
+          ) : null}
+          {e.badge ? <Badge tone={e.badgeTone ?? "warn"}>{e.badge}</Badge> : null}
+        </span>
+        <span className="cb-cmenu-desc" data-part="menu-desc" id={`${id}-desc`}>
+          {e.description}
+        </span>
+      </span>
+      {e.checked && e.checkMark !== false ? <Icon name="check" size={14} /> : null}
+    </RM.Item>
+  );
 }
 
 const entryKey = (e: ConvMenuEntry, i: number) =>

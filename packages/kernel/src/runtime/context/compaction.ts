@@ -380,6 +380,11 @@ function transcriptLine(e: ConversationEvent): string | null {
     case "run_finished":
     case "run_aborted":
     case "run_failed":
+    // permission_context, like device_paths, follows the summary (the latest covered ones again,
+    // build.ts); the profile change and the review record are not model-visible
+    case "permission_context":
+    case "permission_profile_changed":
+    case "permission_reviewed":
       return null;
     default: {
       const unrendered: never = e;

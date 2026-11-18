@@ -1,8 +1,22 @@
 diff --git a/dist/sandbox/macos-sandbox-utils.js b/dist/sandbox/macos-sandbox-utils.js
-index 0e598b612d84d24b09ec2ab0d7ccc9b009c9457b..a43f8f264bf4efa3bce1726089b629237ed56341 100644
+index 0e598b612d84d24b09ec2ab0d7ccc9b009c9457b..42f25ad99eb58d1024aa58f9b4a96d996b4afdad 100644
 --- a/dist/sandbox/macos-sandbox-utils.js
 +++ b/dist/sandbox/macos-sandbox-utils.js
-@@ -851,6 +851,8 @@ function generateSandboxProfile({ readConfig, libraryDenyEntries, writeConfig, h
+@@ -745,6 +745,13 @@ function generateWriteRules(config, logTag, allowGitConfig, writeRoots) {
+         }
+     }
+     rules.push(...renderRule('deny', ['file-write-unlink', 'file-write-create'], moveFilters, logTag));
++    // capybara patch: ordered raw regex rules, last, so each decides over everything before it
++    // (raw #"…" strings: SBPL string escapes would change the regex; a quote cannot occur)
++    for (const rule of config.regexRules ?? []) {
++        if (rule.regex.includes('"'))
++            throw new Error('A raw regex write rule cannot contain a double quote');
++        rules.push(...renderRule(rule.action, rule.operations, new Set([`(regex #"${rule.regex}")`]), logTag));
++    }
+     return rules;
+ }
+ /**
+@@ -851,6 +858,8 @@ function generateSandboxProfile({ readConfig, libraryDenyEntries, writeConfig, h
          '  (sysctl-name "hw.logicalcpu")',
          '  (sysctl-name "hw.logicalcpu_max")',
          '  (sysctl-name "hw.machine")',
@@ -11,3 +25,46 @@ index 0e598b612d84d24b09ec2ab0d7ccc9b009c9457b..a43f8f264bf4efa3bce1726089b62923
          '  (sysctl-name "hw.memsize")',
          '  (sysctl-name "hw.ncpu")',
          '  (sysctl-name "hw.nperflevels")',
+diff --git a/dist/sandbox/sandbox-config.js b/dist/sandbox/sandbox-config.js
+index 76b00b1dc82a2d42a451a9f58068cbbd5e68da75..784dac7f685068a85c3f95f9fe472dac0e1ba65b 100644
+--- a/dist/sandbox/sandbox-config.js
++++ b/dist/sandbox/sandbox-config.js
+@@ -832,6 +832,16 @@ export const FilesystemConfigSchema = z.object({
+         .boolean()
+         .optional()
+         .describe('Allow writes to .git/config files (default: false). Enables git remote URL updates while keeping .git/hooks protected.'),
++    // capybara patch: ordered raw SBPL regex write rules (macOS), emitted after every other
++    // write rule so they decide last (Seatbelt is last-match-wins for the same operations)
++    writeRegexRules: z
++        .array(z.object({
++        action: z.enum(['allow', 'deny']),
++        operations: z.array(z.enum(['file-write*', 'file-write-unlink', 'file-write-create'])).min(1),
++        regex: z.string().min(2),
++    }))
++        .optional()
++        .describe('macOS only: ordered raw SBPL regex write rules applied after all other write rules'),
+ });
+ /**
+  * Configuration schema for ignoring specific sandbox violations
+diff --git a/dist/sandbox/sandbox-manager.js b/dist/sandbox/sandbox-manager.js
+index d475e55977bf54a2fe00a0c6aba38313761d55aa..a9a1d4b42f983adabdbc3659b1910b3f36bb61c2 100644
+--- a/dist/sandbox/sandbox-manager.js
++++ b/dist/sandbox/sandbox-manager.js
+@@ -1516,6 +1516,8 @@ function getFsWriteConfig() {
+         allowOnly,
+         denyWithinAllow: denyPaths,
+         ...literalWriteLists(config.filesystem.allowWrite, config.filesystem.denyWrite),
++        // capybara patch: ordered raw regex write rules (macOS)
++        regexRules: config.filesystem.writeRegexRules ?? [],
+     };
+ }
+ /**
+@@ -1866,6 +1868,8 @@ async function wrapWithSandboxOnce(walkEnded, restarts, command, binShell, custo
+                 config?.filesystem.denyWrite ??
+                 []),
+             ...literalWriteLists(customConfig?.filesystem?.allowWrite ?? config?.filesystem.allowWrite, customConfig?.filesystem?.denyWrite ?? config?.filesystem.denyWrite),
++            // capybara patch: ordered raw regex write rules (macOS)
++            regexRules: customConfig?.filesystem?.writeRegexRules ?? config?.filesystem.writeRegexRules ?? [],
+         };
+         // For a caller that never reads checkDependencies(), the CLI among them.
+         if (!ownInstallLogged) {

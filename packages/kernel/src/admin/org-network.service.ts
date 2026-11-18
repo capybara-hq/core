@@ -9,6 +9,7 @@ import {
   type OrgNetworkAllowance,
   OrgNetworkAllowances,
 } from "../orgs/network-allowances.service.js";
+import { OrgLock } from "../orgs/org-lock.js";
 import { OrgsService } from "../orgs/orgs.service.js";
 
 /**
@@ -25,6 +26,7 @@ export class OrgNetworkAdmin {
     @Inject(OrgNetworkAllowances) private readonly allowances: OrgNetworkAllowances,
     @Inject(OrgsService) private readonly orgs: OrgsService,
     @Inject(SuperAdminLock) private readonly adminLock: SuperAdminLock,
+    @Inject(OrgLock) private readonly orgLock: OrgLock,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
   ) {}
 
@@ -62,6 +64,10 @@ export class OrgNetworkAdmin {
     auditDetail: Record<string, unknown> = {},
   ): Promise<OrgNetworkAllowance> {
     assertWidenAllowed(onlyNarrows);
+    // the target org's row before the super admin lock (the global order: a fenced super admin
+    // write in that org holds its org row when it takes the super admin lock); a missing org locks
+    // nothing here and is refused by the store after the actor check, as before
+    await this.orgLock.tryLock(orgId);
     await this.adminLock.lockAndAuthorize(actor.accountId);
     return this.allowances.add(orgId, entry, actor, auditDetail);
   }

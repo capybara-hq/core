@@ -21,6 +21,15 @@ import { PlatformOperations } from "../../platform/registry.js";
 import type { HookRunner } from "../../runtime/hook-calls.js";
 import { conversationTimeZone, RUN_CONTEXT_CLOCK } from "../../runtime/run-context.service.js";
 import { StepLog } from "../../runtime/step-log.js";
+import { LegacyRetirementStore } from "../../sandbox/legacy-retirement.js";
+import {
+  type ManagedDeviceContextPort,
+  ManagedDeviceContextRecorder,
+} from "../../sandbox/managed-device-context.js";
+import {
+  PERMISSION_CONTEXT_ACTIVATION,
+  permissionContextActive,
+} from "../../sandbox/permission-context-types.js";
 import { SandboxService } from "../../sandbox/sandbox.service.js";
 import { ScheduledTaskStore } from "../../schedules/store.js";
 import { StorageService } from "../../storage/storage.service.js";
@@ -69,6 +78,8 @@ export class BuiltinTools {
     @Inject(BackgroundTaskStore) background: BackgroundTaskStore,
     @Inject(BackgroundTaskFinisher) finisher: BackgroundTaskFinisher,
     @Inject(BackgroundTaskStopper) stopper: BackgroundTaskStopper,
+    /** The legacy-launch freeze every legacy background launch checks before dispatch (8.5). */
+    @Inject(LegacyRetirementStore) legacyLaunch: LegacyRetirementStore,
     @Inject(PlatformOperations) platformOps: PlatformOperations,
     @Inject(PlatformActor) platformActor: PlatformActor,
     @Inject(AgentDocs) agentDocs: AgentDocs,
@@ -79,12 +90,20 @@ export class BuiltinTools {
     /** The task service, bound by `SchedulesModule` at start (a registration port: no cycle). */
     @Inject(ScheduleToolsPort) schedulePort: ScheduleToolsPort,
     /** The clock `CurrentTime` reads (the run context's clock seam; `Date.now` by default). */
+    /** The managed sandbox route's device context writer (permission context replay spec B3). */
+    @Inject(ManagedDeviceContextRecorder) managedDeviceContext: ManagedDeviceContextRecorder,
     @Optional() @Inject(RUN_CONTEXT_CLOCK) now?: () => number,
+    /** The paired activation gate (one switch with the runtime's request boundary). */
+    @Optional() @Inject(PERMISSION_CONTEXT_ACTIVATION) activation?: boolean,
   ) {
+    // dormant: the builtins keep the legacy route until the paired activation turns the gate on;
+    // then every builtin entering a device (the skill tool too) takes the managed route
+    const managed = managedSandboxDeps(managedDeviceContext, activation);
     const sandboxDeps: SandboxToolDeps = {
       sandbox,
       devices,
       background,
+      legacyLaunch,
       tasks: { finisher, stopper },
       subagents: {
         inTree: async (root, id) =>
@@ -96,6 +115,7 @@ export class BuiltinTools {
       eventLog,
       config,
       log,
+      ...managed,
     };
     this.tools = [
       askUserTool({ config }),
@@ -117,6 +137,7 @@ export class BuiltinTools {
         attachments,
         eventLog,
         log,
+        ...managed,
         get db() {
           return db.db;
         },
@@ -166,4 +187,17 @@ export class BuiltinTools {
   list(): readonly BuiltinTool[] {
     return this.tools;
   }
+}
+
+/**
+ * The managed device context fields of the builtin sandbox tools' deps (spec B3): the injected
+ * writer, required, only when the one activation gate is on; otherwise no keys at all, and the
+ * legacy writer stays.
+ */
+export function managedSandboxDeps(
+  recorder: ManagedDeviceContextPort,
+  activation: boolean | undefined,
+): Pick<SandboxToolDeps, "managedDeviceContext" | "managedDeviceContextRequired"> {
+  if (!permissionContextActive(activation)) return {};
+  return { managedDeviceContext: recorder, managedDeviceContextRequired: true };
 }

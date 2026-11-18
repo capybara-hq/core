@@ -1,5 +1,10 @@
 import { rootsOf, type SandboxActor, type SandboxHandle } from "@capybara-hq/plugin-sdk";
-import type { HeldProvider, TaggedProvider } from "../sandbox/sandbox.service.js";
+import { permissionContextActive } from "../sandbox/permission-context-types.js";
+import {
+  type HeldProvider,
+  retirementPending,
+  type TaggedProvider,
+} from "../sandbox/sandbox.service.js";
 import { SESSION_MODE_SCRIPT, TASK_ID_RE, TASKS_DIR } from "./launch.js";
 
 /**
@@ -11,14 +16,31 @@ import { SESSION_MODE_SCRIPT, TASK_ID_RE, TASKS_DIR } from "./launch.js";
  */
 
 /**
- * `p` with every `exec` carrying `actor` (`SandboxService.ifRunning` tags execs but leaves the
- * actor to the caller): the provider then reads like a `withSandbox` holder's.
+ * Whether a legacy (SID) task may still be driven by a raw exec: only while the one activation
+ * gate is off (`activation`: the injected gate, else the production state). Once it is on, a
+ * legacy row is the retirement gate's (8.5): no SID poll, read or stop runs, and its device stays
+ * unavailable until the old incarnation is confirmed gone (permission activation W3-L).
  */
-export function actingAs(p: TaggedProvider, actor: SandboxActor): HeldProvider {
+export const legacyBackgroundAllowed = (activation?: boolean): boolean =>
+  !permissionContextActive(activation);
+
+/**
+ * `p` with every `exec` carrying `actor` (`SandboxService.ifRunning` tags execs but leaves the
+ * actor to the caller): the provider then reads like a `withSandbox` holder's. Once the
+ * activation gate is on ({@link legacyBackgroundAllowed}) every exec refuses before reaching the
+ * provider with the retirement refusal: a legacy task is never driven by a raw exec then.
+ */
+export function actingAs(
+  p: TaggedProvider,
+  actor: SandboxActor,
+  activation?: boolean,
+): HeldProvider {
   const wrapped = Object.create(p) as HeldProvider;
   Object.defineProperty(wrapped, "exec", {
-    value: (h: SandboxHandle, args: Parameters<HeldProvider["exec"]>[1]) =>
-      p.exec(h, { ...args, actor }),
+    value: async (h: SandboxHandle, args: Parameters<HeldProvider["exec"]>[1]) => {
+      if (!legacyBackgroundAllowed(activation)) throw retirementPending();
+      return p.exec(h, { ...args, actor });
+    },
   });
   return wrapped;
 }
@@ -58,14 +80,16 @@ export function killSessionScript(sid: string): string {
  * Kills every process of the session `sid` ({@link killSessionScript}) in an exec of its own. Any
  * pkill status other than 0 and 1 is a failure. Runs with a fresh signal of its own (a command
  * must be killed even when the caller was just aborted). True when the session was confirmed
- * empty; false when it could not be (an error is never thrown).
+ * empty; false when it could not be (an error is never thrown). Once the activation gate is on
+ * ({@link legacyBackgroundAllowed}) nothing runs and the session is not confirmed empty.
  */
 export async function killSession(
   p: Pick<HeldProvider, "exec">,
   h: SandboxHandle,
   sid: string,
+  activation?: boolean,
 ): Promise<boolean> {
-  if (!SID_RE.test(sid)) return false;
+  if (!SID_RE.test(sid) || !legacyBackgroundAllowed(activation)) return false;
   const r = await p
     .exec(h, {
       command: `${killSessionScript(sid)}; exit "$ks"`,

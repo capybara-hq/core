@@ -7,10 +7,17 @@ import { LockedCron } from "../infra/schedule/locked-cron.decorator.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
 import { MAINTENANCE_QUEUE_NAME } from "../runtime/maintenance-queue.js";
+import type { CloudPermissionSnapshots } from "./cloud-permission-snapshot.js";
 import { SandboxService } from "./sandbox.service.js";
 
 /** The idle suspension sweep (every minute, once per tick across replicas). */
 export const SANDBOX_SUSPEND_JOB = "sandbox-suspend-idle";
+
+/**
+ * The lifecycle reconcile of cloud devices carrying the reconcile marker through their provider's
+ * `update` (permission activation B-12; every minute, once per tick across replicas).
+ */
+export const SANDBOX_RECONCILE_JOB = "sandbox-reconcile-limits";
 
 /** The inactivity destruction sweep (hourly, once per tick across replicas). */
 export const SANDBOX_DESTROY_JOB = "sandbox-destroy-inactive";
@@ -101,10 +108,13 @@ export class SandboxJobs {
 export async function runSandboxResetFiles(
   sandbox: Pick<SandboxService, "resetFileSystem">,
   job: Pick<Job, "data">,
+  /** B1: a reset establishes the device's exact limits; clears its reconciliation marker. */
+  snapshots?: Pick<CloudPermissionSnapshots, "reconcileDevice">,
 ): Promise<void> {
   const id = (job.data as { deviceId?: unknown }).deviceId;
   if (typeof id !== "string") return;
   await sandbox.resetFileSystem(id);
+  await snapshots?.reconcileDevice(id);
 }
 
 /**
@@ -134,7 +144,9 @@ export async function runSandboxDestroyFor(
 /**
  * The sandbox sweeps (exactly once per tick across replicas): every minute the idle and overdue
  * running instances are suspended, every hour the inactive instances are destroyed (files kept)
- * and deleted devices, or those of deleted orgs, are destroyed with their files. Both do nothing without a sandbox provider. They replace the
+ * and deleted devices, or those of deleted orgs, are destroyed with their files. Every minute,
+ * too, cloud devices whose limits must be established again get them through their provider's
+ * `update` when it has one (B-12). All do nothing without a sandbox provider. They replace the
  * maintenance schedulers `sandbox-suspend-idle-every-minute` and `sandbox-destroy-inactive-hourly`
  * (retired at worker start).
  */
@@ -142,7 +154,10 @@ export async function runSandboxDestroyFor(
 export class SandboxSweepJobs {
   constructor(
     @Inject(SandboxService)
-    private readonly sandbox: Pick<SandboxService, "suspendIdle" | "destroyInactive">,
+    private readonly sandbox: Pick<
+      SandboxService,
+      "suspendIdle" | "destroyInactive" | "reconcileMarked"
+    >,
     @Inject(LockService) readonly lockService: LockService,
     @Inject(KERNEL_LOGGER) readonly log: KernelLogger,
   ) {}
@@ -151,6 +166,12 @@ export class SandboxSweepJobs {
   async suspendIdle(): Promise<void> {
     const n = await this.sandbox.suspendIdle(new Date());
     if (n > 0) this.log.info("idle sandboxes suspended", { count: n });
+  }
+
+  @LockedCron("* * * * *", { name: SANDBOX_RECONCILE_JOB })
+  async reconcileLimits(): Promise<void> {
+    const n = await this.sandbox.reconcileMarked();
+    if (n > 0) this.log.info("cloud device limits reconciled", { count: n });
   }
 
   @LockedCron("0 * * * *", { name: SANDBOX_DESTROY_JOB })

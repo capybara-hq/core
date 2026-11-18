@@ -1,0 +1,144 @@
+{
+  "status": "frozen dormant checkpoint; Gate9.2 acceptance pending",
+  "base": "94bc2dddde2be5db2e702dc134728d980ff99527",
+  "head": "94bc2dddde2be5db2e702dc134728d980ff99527",
+  "indexUnchanged": true,
+  "files": [
+    {
+      "path": "packages/kernel/src/conversations/events.ts",
+      "sha256": "0948eb0d18e4b7bf181bbd3751eb1f1f8683a6e4d1d8e4f68852c3f08da692da"
+    },
+    {
+      "path": "packages/kernel/src/runtime/context/permission-profile.ts",
+      "sha256": "03ddf6e75038af294303d6af80234f236212c731e1b47163821e69c37e5193a2"
+    },
+    {
+      "path": "packages/kernel/src/runtime/context/device-paths.ts",
+      "sha256": "b95bb54d9416e61bd34dcdf92dd7c4ed38802476618e2ef2dc5bcb3fcc59b9c9"
+    },
+    {
+      "path": "packages/kernel/src/runtime/context/build.ts",
+      "sha256": "89fc28fe3557b9baae20476833038e50dc7808b634d22c843a48af0b450119be"
+    },
+    {
+      "path": "packages/kernel/src/evals/reconstruct.ts",
+      "sha256": "15145685968cbeb7d8ac8497d508e1610d95d1f0edc4095c397581e72afa0afb"
+    },
+    {
+      "path": "packages/kernel/test/runtime/permission-context.test.ts",
+      "sha256": "2204fc7a76d736263e4272ac4f45c7e30fdc76f98aec18278f19b25114ed7b91"
+    },
+    {
+      "path": "packages/kernel/test/evals/reconstruct.test.ts",
+      "sha256": "1e2e3fe5391b6129c8a4e9e2faaf1d154055581063788f7f3eaa38e90fbc1c79"
+    },
+    {
+      "path": ".changeset/dormant-recorded-permission-context.md",
+      "sha256": "1f92304f7223aec51e66cc177276f73df9994b2adeee1118280cce8e45af7929"
+    },
+    {
+      "path": ".superpowers/sdd/2026-11-16-permission-profile-delivery/task-9-2-after-tests.log",
+      "sha256": "085627289c4ccf633a7a6f4c3b456fe1e04a340e0538c663004639fe0ba94e7d"
+    },
+    {
+      "path": ".superpowers/sdd/2026-11-16-permission-profile-delivery/task-9-2-baseline.log",
+      "sha256": "b3b34e0ddad9d9d359ed08fbb3535618ca9d63087b193f9ad255c66fe6a407ea"
+    },
+    {
+      "path": ".superpowers/sdd/2026-11-16-permission-profile-delivery/task-9-2-biome-first.log",
+      "sha256": "84770bb89073fa74cd197348ea2f347829202a62b9087cb67e72abf09407bc04"
+    },
+    {
+      "path": ".superpowers/sdd/2026-11-16-permission-profile-delivery/task-9-2-biome-format.log",
+      "sha256": "c75d7d83a6bcd1bf5f5d8414382e8aaa0723d27af56a1019eb5dfe4b37bffbc3"
+    },
+    {
+      "path": ".superpowers/sdd/2026-11-16-permission-profile-delivery/task-9-2-brief.md",
+      "sha256": "8a63832fd84a5740a596215c97593a8b6be311a62205c4572c8a707c94661330"
+    },
+    {
+      "path": ".superpowers/sdd/2026-11-16-permission-profile-delivery/task-9-2-conventions.log",
+      "sha256": "993a9c6cb6b572c89f0fd2be6947b4134ca93a2e267b4ae120c4fdf12bc7dd0e"
+    },
+    {
+      "path": ".superpowers/sdd/2026-11-16-permission-profile-delivery/task-9-2-deps.log",
+      "sha256": "8d89f6b5f5b0442ae08d8fd535844d00cd85e621e787173e763d9de7f26470c6"
+    },
+    {
+      "path": ".superpowers/sdd/2026-11-16-permission-profile-delivery/task-9-2-diff-check.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": ".superpowers/sdd/2026-11-16-permission-profile-delivery/task-9-2-exact-base.diff",
+      "sha256": "07ee248c731c20ce8a408697ab594759e1cf18e2db063f3ad58a90e19c527b8b"
+    },
+    {
+      "path": ".superpowers/sdd/2026-11-16-permission-profile-delivery/task-9-2-final-biome.log",
+      "sha256": "193ff12650a65377ace6577d540dbe5ea6d90b8818ed79cb78cd1bca0c4b8d3d"
+    },
+    {
+      "path": ".superpowers/sdd/2026-11-16-permission-profile-delivery/task-9-2-final-source-noemit.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": ".superpowers/sdd/2026-11-16-permission-profile-delivery/task-9-2-final-test-noemit.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": ".superpowers/sdd/2026-11-16-permission-profile-delivery/task-9-2-final-tests.log",
+      "sha256": "063461c3b3ea97709520777f492f4107f64cf1a5ff8685cbc862dec76d292e43"
+    },
+    {
+      "path": ".superpowers/sdd/2026-11-16-permission-profile-delivery/task-9-2-green-initial.log",
+      "sha256": "721163ead391f2f6cd6b736c8eb9f03b4a386442da8a240d418181e3ce1cf4c9"
+    },
+    {
+      "path": ".superpowers/sdd/2026-11-16-permission-profile-delivery/task-9-2-historical-fixtures.json",
+      "sha256": "3c4abafc273cda0bb50ab90931a2b980fe6ac929b3456289a83a4c8d69df5f38"
+    },
+    {
+      "path": ".superpowers/sdd/2026-11-16-permission-profile-delivery/task-9-2-index-check.log",
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    },
+    {
+      "path": ".superpowers/sdd/2026-11-16-permission-profile-delivery/task-9-2-matrix.log",
+      "sha256": "e1059e464fae3487d39f00ab69ba57ddfaf612545ba100e56855d703c7f4749c"
+    },
+    {
+      "path": ".superpowers/sdd/2026-11-16-permission-profile-delivery/task-9-2-portfolio.log",
+      "sha256": "0fc49bbe2cd99e4a1c33f52fdc493e091a7a00d0e059c4a525d22f8461c761aa"
+    },
+    {
+      "path": ".superpowers/sdd/2026-11-16-permission-profile-delivery/task-9-2-pure-recheck.log",
+      "sha256": "e7ece67c0dbe87e3fe81b95a499220e0f3e240069380b453128fb8d02caac0d4"
+    },
+    {
+      "path": ".superpowers/sdd/2026-11-16-permission-profile-delivery/task-9-2-red-drift.log",
+      "sha256": "a55d9c211a7df4e7510ad8224abc40181889747ed264ae0610ce4e9a6b90474e"
+    },
+    {
+      "path": ".superpowers/sdd/2026-11-16-permission-profile-delivery/task-9-2-red.log",
+      "sha256": "3795869ced5b19212f3b3403e1e0a7ba67c18e10a816f630f68d313a1b5059de"
+    },
+    {
+      "path": ".superpowers/sdd/2026-11-16-permission-profile-delivery/task-9-2-report.md",
+      "sha256": "4c5d59da239658dadcb2431eb1aef31f6c219072f9f1b49e4e510e5140b32726"
+    },
+    {
+      "path": ".superpowers/sdd/2026-11-16-permission-profile-delivery/task-9-2-source-noemit.log",
+      "sha256": "79ec3b4fac3c480469dcf40eb83eef3677e035ce11fed16c31b56dde0db96c8c"
+    },
+    {
+      "path": ".superpowers/sdd/2026-11-16-permission-profile-delivery/task-9-2-source-tsconfig.json",
+      "sha256": "2dff6b03244fa050cc4f4d194057a655f5b354a29a26ec5e132b52d9365c0ed4"
+    },
+    {
+      "path": ".superpowers/sdd/2026-11-16-permission-profile-delivery/task-9-2-test-noemit.log",
+      "sha256": "0aa78ded9ed9892712dded4f9553e6a20a0e25c7223d1d5419d997828c8a0b05"
+    },
+    {
+      "path": ".superpowers/sdd/2026-11-16-permission-profile-delivery/task-9-2-test-tsconfig.json",
+      "sha256": "f62421083ebb76492b3d98d67f956ef4d8462d1b8594f6792bf7c9e54ccaecc3"
+    }
+  ]
+}

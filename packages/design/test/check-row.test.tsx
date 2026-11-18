@@ -59,7 +59,8 @@ describe("CheckRow (design spec §6.9)", () => {
   });
 
   it("shows the checked-at time relative to now", () => {
-    const checkedAt = new Date(Date.now() - 5 * 60_000).toISOString();
+    // Half a minute of slack: useNow() may lag Date.now() by up to its one-second cache.
+    const checkedAt = new Date(Date.now() - 5 * 60_000 - 30_000).toISOString();
     const { container } = wrap(<CheckRow label="x" state={{ status: "ok", checkedAt }} />, "en");
     const time = container.querySelector('[data-part="check-row-time"]');
     expect(time?.getAttribute("dateTime")).toBe(checkedAt);

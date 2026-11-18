@@ -163,7 +163,7 @@ const MessageBody = MessageFields.strict().refine(...textRule);
  * (project root design §4.3; the device's owner only, refused when the device's current mode
  * cannot read it); without it the conversation runs in free mode.
  */
-const CreateBody = z
+export const CreateBody = z
   .object({
     agentId: z.string().min(1).max(100),
     deviceId: z.string().min(1).max(100).optional(),

@@ -112,6 +112,10 @@ const ICONS = {
   "grip-vertical": "grip-vertical",
   // The composer toolbar's quick actions (§6.16.27).
   zap: "zap",
+  // The composer's permission profiles (§6.16.3): request approval, approve for me, full access.
+  hand: "hand",
+  "shield-check": "shield-check",
+  "lock-open": "lock-open",
 };
 
 const entries = Object.entries(ICONS).map(([name, file]) => {

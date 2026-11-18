@@ -19,6 +19,7 @@ import type { KernelLogger } from "../log.js";
 import { MAINTENANCE_QUEUE_NAME } from "../runtime/maintenance-queue.js";
 import { RunControl } from "../runtime/run-control.js";
 import { oweDeviceDestroy } from "../sandbox/jobs.js";
+import { PermissionCeilingWrites } from "../sandbox/permission-ceiling-writes.js";
 import { ApprovalsService } from "../tools/approvals.service.js";
 import { Credentials } from "../tools/credentials.js";
 import { QuestionsService } from "../tools/questions.service.js";
@@ -124,6 +125,7 @@ export class Offboarding {
     @Inject(LifecycleHooks)
     private readonly lifecycle: Pick<LifecycleHooks, "recordIn">,
     @Inject(KERNEL_LOGGER) readonly log: KernelLogger,
+    @Inject(PermissionCeilingWrites) private readonly ceilings: PermissionCeilingWrites,
     @Inject(OrgLock) private readonly orgLock: Pick<OrgLock, "lockForRemoval">,
   ) {}
 
@@ -159,6 +161,12 @@ export class Offboarding {
     // the org admission lock exclusively (the callers take it first, before the org row; a no-op
     // then): it waits for the run writes the fence admitted shared and keeps new ones out
     await this.orgLock.lockForRemoval(orgId);
+    await this.ceilings.lock({ orgId }, "org");
+    await this.ceilings.publishLocked(
+      { orgId },
+      "org",
+      (_scope, row) => row.account_id === accountId,
+    );
     const deleted = await this.db
       .deleteFrom("memberships")
       .where("org_id", "=", orgId)

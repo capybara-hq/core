@@ -6,6 +6,12 @@ import type { AccessMode, IsolationLevel, Kysely, Transaction } from "kysely";
 import type { KernelLogger } from "../../log.js";
 import { KERNEL_LOGGER, KERNEL_POOL } from "../tokens.js";
 
+import {
+  runOwnedStartupActivation,
+  type StartupActivationOptions,
+  startupActivationGuard,
+} from "./startup-activation-transaction.js";
+
 type AfterCommitHook = () => void | Promise<void>;
 
 interface TransactionStore {
@@ -17,6 +23,8 @@ interface TransactionStore {
   hooks: AfterCommitHook[];
   /** Set once the transaction settled: continuations that outlive it must not use it. */
   done: boolean;
+  /** Transaction-local advisory lock claims; never authority cached across requests. */
+  permissionLocks?: Map<string, "shared" | "exclusive">;
   /**
    * How a fence admitted it (`withTransactionFence`), once the fence ran; undefined when no fence
    * admitted it (no fence in context, or read only).
@@ -31,6 +39,12 @@ const storage = new AsyncLocalStorage<TransactionStore>();
 export interface FenceAdmission {
   /** The transaction asked for shared admission (`admission: "shared"`). */
   shared: boolean;
+  /**
+   * The ordered authority prelude ({@link withTransactionFencePrelude}; never with `shared`): the
+   * fence runs it exactly once, after its org-level admission (the org row) and before any
+   * conversation row, the place of the permission authority locks in the global lock order.
+   */
+  prelude?: () => Promise<void>;
 }
 
 /** The mode a fence admitted a transaction in (a fence returning nothing admits exclusively). */
@@ -46,6 +60,85 @@ const fences = new AsyncLocalStorage<TransactionFence>();
 
 export function withTransactionFence<T>(fence: TransactionFence, fn: () => Promise<T>): Promise<T> {
   return fences.run(fence, fn);
+}
+
+/**
+ * Whether a fence is installed in this context (a claimed run's `RunExecution.withClaim`). A writer
+ * whose transaction must hold the org row before its permission authority locks requires it: only
+ * an inherited fence runs the ordered prelude after the org row.
+ */
+export function hasTransactionFence(): boolean {
+  return fences.getStore() !== undefined;
+}
+
+/**
+ * Install once before opening a transaction: the ordered authority (the permission authority
+ * locks) runs inside the inherited run fence, after its org row and before its conversation rows.
+ * The global lock order (`OrgLock`): org admission -> org row -> membership -> device row -> super
+ * admin lock -> permission authority locks (platform, org, device, root) -> root conversation ->
+ * conversation; a prelude may take the locks before the permission locks too. Offboarding and
+ * the org writers hold the org row when they take an org permission lock exclusively, so a
+ * prelude that took its shared permission locks before the fence's org row could deadlock with
+ * them.
+ * Existing transactions are rejected because their row locks cannot be retroactively reordered.
+ * The inherited fence remains intact; this does not expose an unfenced callback or dispatch API.
+ */
+export function withTransactionFencePrelude<T>(
+  prelude: () => Promise<void>,
+  fn: () => Promise<T>,
+): Promise<T> {
+  if (liveStore())
+    throw new Error("An ordered fence prelude must be installed before opening a transaction");
+  const inherited = fences.getStore();
+  let entered = false;
+  return withTransactionFence(async () => {
+    if (entered) throw new Error("An ordered fence prelude permits only one new transaction");
+    entered = true;
+    if (!inherited) {
+      await prelude();
+      return "exclusive";
+    }
+    let ran = false;
+    // the inherited fence admits exclusively: the prelude takes org-level locks, which a shared
+    // admission (no org row) must never take
+    const mode = await inherited({
+      shared: false,
+      prelude: async () => {
+        if (ran) throw new Error("The ordered fence prelude runs once");
+        ran = true;
+        await prelude();
+      },
+    });
+    if (!ran) throw new Error("The inherited fence did not run the ordered authority prelude");
+    return mode || "exclusive";
+  }, fn);
+}
+
+/**
+ * A writer whose permission authority locks (with the locks it takes before them: its org row, a
+ * membership, its device row, the super admin lock) are its `prelude`, and whose writes are `fn`,
+ * which opens at most one transaction. With no transaction open, {@link withTransactionFencePrelude}:
+ * inside a run's fence (a Platform operation in a tool step) the prelude runs after the fence's org
+ * row and before its conversation rows; with no fence (an HTTP request) it runs first in the
+ * transaction `fn` opens, the order the writer always had. Joining a caller's transaction the
+ * prelude runs inline at once: the caller owns that transaction's order, and a fenced caller's new
+ * permission lock is refused (`PermissionAuthorityLock`). `fn` re-checks under the locks what the
+ * prelude read without them, and may name the same, already held, locks again.
+ *
+ * With no fence the transaction is still admitted by the prelude's own fence: its body runs as a
+ * fenced transaction (`admission` exclusive, `inFencedTransaction()` true), so
+ * `OrgLock.lockForRemoval` refuses there and the permission lock guard applies to it: every
+ * permission lock its body needs belongs in the prelude.
+ */
+export async function withOrderedLocks<T>(
+  prelude: () => Promise<void>,
+  fn: () => Promise<T>,
+): Promise<T> {
+  if (liveStore()) {
+    await prelude();
+    return fn();
+  }
+  return withTransactionFencePrelude(prelude, fn);
 }
 
 export type Propagation = "required" | "requires_new" | "mandatory";
@@ -81,6 +174,7 @@ const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 /** Queues `fn` on the current live root transaction; with none open, runs it at once. */
 export function queueAfterCommit(fn: AfterCommitHook): void {
+  startupActivationGuard()?.check();
   const store = liveStore();
   if (store) {
     store.hooks.push(fn);
@@ -149,8 +243,48 @@ export class TransactionHost {
   /** The transaction of the current async context on this pool, if any. */
   // biome-ignore lint/suspicious/noExplicitAny: the pool carries no schema types
   current(): Transaction<any> | undefined {
+    const guard = startupActivationGuard();
+    guard?.check();
     const store = liveStore();
+    if (guard && store?.pool !== this.pool)
+      throw new Error("Startup activation cannot fall back to the shared pool");
     return store?.pool === this.pool ? store.trx : undefined;
+  }
+
+  /** Startup-only bounded owned session; all ordinary transaction/fence semantics are retained. */
+  async runStartupActivation<T>(
+    fn: () => Promise<T>,
+    options: StartupActivationOptions,
+  ): Promise<T> {
+    startupActivationGuard()?.check();
+    if (liveStore() || startupActivationGuard())
+      throw new Error("Startup activation refuses an existing transaction");
+    const hooks: AfterCommitHook[] = [];
+    let store: TransactionStore | undefined;
+    let result: T;
+    try {
+      result = await runOwnedStartupActivation(async (trx) => {
+        const own: TransactionStore = { pool: this.pool, trx, hooks, done: false };
+        store = own;
+        return storage.run(own, async () => {
+          const fence = fences.getStore();
+          if (fence) own.admission = (await fence({ shared: false })) || "exclusive";
+          return fn();
+        });
+      }, options);
+    } finally {
+      if (store) store.done = true;
+    }
+    for (const hook of hooks) {
+      try {
+        // This continuation belongs to the original caller, outside the helper's ALS guard.
+        // Late transaction descendants retain that guard permanently.
+        await runOutsideTransaction(hook);
+      } catch (e) {
+        this.log.error("afterCommit hook failed", { error: errMsg(e) });
+      }
+    }
+    return result;
   }
 
   /**
@@ -160,7 +294,11 @@ export class TransactionHost {
    * root's COMMIT, outside any transaction, and are dropped on rollback.
    */
   async run<T>(fn: () => Promise<T>, opts: TransactionOptions = {}): Promise<T> {
+    const guard = startupActivationGuard();
+    guard?.check();
     const propagation = opts.propagation ?? "required";
+    if (guard && propagation === "requires_new")
+      throw new Error("Nested requires_new is refused during startup activation");
     if (propagation === "mandatory") {
       if (!this.current()) {
         throw new Error(

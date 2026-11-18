@@ -18,6 +18,7 @@ import {
 } from "@capybara-hq/plugin-sdk";
 import { effectiveMode } from "../policy.js";
 import type { Policy, SandboxMode } from "../state.js";
+import { policyMode } from "../state.js";
 import { finishScan } from "./listing.js";
 import { EXEC_MARKER } from "./procs.js";
 import {
@@ -395,7 +396,7 @@ export class DockerExecutor implements Executor {
    * `effectiveMode(policy, limits)`.
    */
   private modeNow(policy: Policy = this.opts.policy()): SandboxMode {
-    if (policy.mode === "sandbox" || this.lastLimits === undefined) return "sandbox";
+    if (policyMode(policy) === "sandbox" || this.lastLimits === undefined) return "sandbox";
     if (Date.now() - this.lastLimitsAt > FILE_OPS_DECISION_TTL_MS) return "sandbox";
     return effectiveMode(policy, this.lastLimits);
   }
@@ -628,6 +629,28 @@ export class DockerExecutor implements Executor {
   private release(): void {
     this.inflight--;
     this.pump();
+  }
+
+  /**
+   * The container for one permission operation (protocol 3): running on its default bridge (Full
+   * access is the container user's own network; restricted operations are mediated by the
+   * launcher). The caller holds the container (it is not recreated) until it calls `release`,
+   * once; an abort while waiting for it rejects.
+   */
+  async operationContainer(
+    signal: AbortSignal,
+  ): Promise<{ name: string; user: string; release: () => void }> {
+    await this.acquire(true, signal);
+    let released = false;
+    return {
+      name: this.name,
+      user: containerUser(),
+      release: () => {
+        if (released) return;
+        released = true;
+        this.release();
+      },
+    };
   }
 
   /** A docker-level failure that means the container vanished: the next call recreates it. */

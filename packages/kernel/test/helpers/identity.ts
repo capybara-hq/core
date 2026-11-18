@@ -1,4 +1,13 @@
 // biome-ignore-all lint/suspicious/noExplicitAny: test handles over an untyped Kysely
+import { EventLog } from "../../src/conversations/event-log.js";
+import { XactLock } from "../../src/infra/database/xact-lock.js";
+import { LegacyRetirementStore } from "../../src/sandbox/legacy-retirement.js";
+import { PermissionAuthorityEpochStore } from "../../src/sandbox/permission-authority-epochs.js";
+import { PermissionAuthorityLock } from "../../src/sandbox/permission-authority-lock.js";
+import { PermissionCeilingWrites } from "../../src/sandbox/permission-ceiling-writes.js";
+import { PermissionInstanceWrites } from "../../src/sandbox/permission-instance-writes.js";
+import { PermissionRuntimeReports } from "../../src/sandbox/permission-runtime-reports.js";
+import { PermissionTransitions } from "../../src/sandbox/permission-transitions.js";
 /**
  * The identity / orgs / admin providers over a test's own Kysely, for tests without a running
  * kernel (unit tests that need a few providers). Every service built for
@@ -77,7 +86,7 @@ export function configOf(cfg: unknown): Pick<KernelConfigService, "get"> {
 
 export function accountsFor(db: Kysely<any>): AccountsService {
   const h = handlesFor(db);
-  return new AccountsService(h.db, h.txHost, h.adminLock, h.setupLock);
+  return new AccountsService(h.db, h.txHost, h.adminLock, h.setupLock, ceilingWritesFor(db));
 }
 
 export function orgLockFor(db: Kysely<any>): OrgLock {
@@ -101,10 +110,10 @@ export function settingsFor(
   const h = handlesFor(db);
   // no startup config sets the auto-mode switch or the attribution: the stored choice decides
   const config = {
-    get: () => ({ devices: { autoMode: undefined }, attribution: {} }) as unknown as KernelConfig,
+    get: () => ({ devices: { fullAccess: undefined }, attribution: {} }) as unknown as KernelConfig,
     fieldSource: () => undefined,
   };
-  return new SettingsService(h.db, h.txHost, adminLockFor(db), log, config);
+  return new SettingsService(h.db, h.txHost, adminLockFor(db), log, config, ceilingWritesFor(db));
 }
 
 export function orgsFor(
@@ -129,6 +138,7 @@ export function orgsFor(
     { onOrgDeleted: async () => ({ transferred: 0, removed: 0 }) },
     // no worker here: lifecycle hook deliveries are covered by test/extensions/lifecycle-hooks*
     { recordIn: async () => [] },
+    ceilingWritesFor(db),
   );
 }
 
@@ -223,6 +233,7 @@ export function testOffboarding(
     // no worker here: lifecycle hook deliveries are covered by test/extensions/lifecycle-hooks*
     { recordIn: async () => [] },
     (opts.log ?? quiet) as KernelLogger,
+    ceilingWritesFor(db),
     orgLockFor(db),
   );
 }
@@ -251,10 +262,23 @@ export function inTransaction<T>(db: Kysely<any>, fn: () => Promise<T>): Promise
 
 export function orgSettingsFor(db: Kysely<any>, config: () => unknown): OrgSettingsService {
   const h = handlesFor(db);
-  return new OrgSettingsService(h.db, h.txHost, orgLockFor(db), {
-    get: () => config() as never,
-    fieldSource: () => undefined,
-  });
+  return new OrgSettingsService(
+    h.db,
+    h.txHost,
+    orgLockFor(db),
+    {
+      get: () => config() as never,
+      // a field the test's config sets reads as set in the config file (it wins over PG)
+      fieldSource: (path: string) =>
+        path
+          .split(".")
+          .reduce<unknown>((o, k) => (o as Record<string, unknown> | undefined)?.[k], config()) ===
+        undefined
+          ? undefined
+          : "file",
+    },
+    ceilingWritesFor(db),
+  );
 }
 
 /** Runs `fn` in a transaction of a running kernel (for its `mandatory` providers). */
@@ -292,5 +316,45 @@ export function directorySyncFor(
     o.queue ?? get(getQueueToken(MAINTENANCE_QUEUE_NAME)),
     get(LockService),
     get(KERNEL_ROOT_LOGGER),
+  );
+}
+
+export function ceilingWritesFor(db: Kysely<any>): PermissionCeilingWrites {
+  return ceilingWritesOver(handlesFor(db));
+}
+export function ceilingWritesOver(
+  h: Pick<DatabaseHandles, "db" | "txHost">,
+): PermissionCeilingWrites {
+  const lock = new PermissionAuthorityLock(h.db, h.txHost, new XactLock(h.db, h.txHost));
+  const outbox = new OutboxService(h.txHost, h.db, async () => {});
+  const events = new EventLog(h.db, { publish: async () => {} }, quiet, outbox, h.txHost);
+  return new PermissionCeilingWrites(
+    new PermissionTransitions(h.db, h.txHost, lock, events, outbox),
+    h.db,
+    h.txHost,
+    lock,
+    new PermissionAuthorityEpochStore(h.db, h.txHost, lock),
+    new OutboxService(h.txHost, h.db, async () => {}),
+  );
+}
+
+/** The legacy retirement store (8.5) over `db`'s handles. */
+export function retirementFor(db: Kysely<any>): LegacyRetirementStore {
+  const h = handlesFor(db);
+  return new LegacyRetirementStore(
+    h.db,
+    h.txHost,
+    new PermissionAuthorityLock(h.db, h.txHost, new XactLock(h.db, h.txHost)),
+  );
+}
+
+export function instanceWritesFor(db: Kysely<any>): PermissionInstanceWrites {
+  const h = handlesFor(db);
+  const lock = new PermissionAuthorityLock(h.db, h.txHost, new XactLock(h.db, h.txHost));
+  return new PermissionInstanceWrites(
+    h.db,
+    h.txHost,
+    ceilingWritesOver(h),
+    new PermissionRuntimeReports(h.db, h.txHost, lock),
   );
 }

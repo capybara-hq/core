@@ -5,11 +5,14 @@ import { isAbsolute, resolve } from "node:path";
 import { ApiError, authorize, type FetchFn, programVersion, token } from "../api.js";
 import type { Command } from "../args.js";
 import { prepareDeviceDir } from "../exec/shared.js";
+import { resetOwnerReport } from "../owner-report.js";
 import { hasLoginService } from "../service/installed.js";
 import {
   DEFAULT_MAX_FRAME_BYTES,
   DEFAULT_POLICY,
   defaultWorkDir,
+  ownerCeilingOfMode,
+  policyMode,
   policyPath,
   readCredential,
   readPolicy,
@@ -73,7 +76,7 @@ function persistSandboxPolicy(stateDir: string): boolean {
   if (existsSync(file)) return false;
   return withPolicyLock(stateDir, () => {
     if (existsSync(file)) return false;
-    writePolicy(stateDir, { ...DEFAULT_POLICY, mode: "sandbox" });
+    writePolicy(stateDir, { ...DEFAULT_POLICY, ownerCeiling: ownerCeilingOfMode("sandbox") });
     return true;
   });
 }
@@ -170,17 +173,31 @@ export async function login(
             if (noSandbox === undefined) {
               mode = persistSandboxPolicy(deps.stateDir)
                 ? "sandbox"
-                : readPolicy(deps.stateDir).mode;
+                : policyMode(readPolicy(deps.stateDir));
             }
           } catch (e) {
             err(`Cannot set the local policy in ${deps.stateDir}: ${(e as Error).message}`);
           }
         } else {
           try {
-            mode = readPolicy(deps.stateDir).mode;
+            mode = policyMode(readPolicy(deps.stateDir));
           } catch (e) {
             err(`Cannot read the local policy in ${deps.stateDir}: ${(e as Error).message}`);
           }
+        }
+        // a new credential is a new machine at the deployment: its owner reports start a new
+        // sequence (also repairs a lost or corrupt sidecar)
+        // A failure (the policy lock held) never fails the login: the old sequence then continues
+        // under the new credential, which the deployment accepts as a new machine's first report
+        // (it keeps reports per machine credential); a corrupt sidecar still issues no report
+        // until a later login resets it
+        try {
+          resetOwnerReport(deps.stateDir);
+        } catch (e) {
+          err(
+            `Cannot reset the owner report sequence in ${deps.stateDir}: ${(e as Error).message}; ` +
+              "run capybara-device login again once no other capybara-device runs",
+          );
         }
         writeCredential(deps.stateDir, {
           url: baseUrl,

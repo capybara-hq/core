@@ -1,0 +1,24 @@
+{
+  "extends": "/Users/grant/Capybara/core/.claude/worktrees/fix-project-file-read-mode/tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "composite": false,
+    "rootDir": "/Users/grant/Capybara/core/.claude/worktrees/fix-project-file-read-mode",
+    "types": [
+      "node"
+    ],
+    "typeRoots": [
+      "/Users/grant/Capybara/core/.claude/worktrees/fix-project-file-read-mode/node_modules/@types"
+    ],
+    "paths": {
+      "@capybara-hq/plugin-sdk": [
+        "/Users/grant/Capybara/core/.claude/worktrees/fix-project-file-read-mode/packages/plugin-sdk/src/index.ts"
+      ]
+    },
+    "incremental": false
+  },
+  "include": [
+    "/Users/grant/Capybara/core/.claude/worktrees/fix-project-file-read-mode/packages/kernel/src",
+    "/Users/grant/Capybara/core/.claude/worktrees/fix-project-file-read-mode/packages/plugin-sdk/src"
+  ]
+}

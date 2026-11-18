@@ -84,10 +84,10 @@ describe("运行时限与命令超时（纯函数）", () => {
     const [w, ...rest] = sandboxConfigWarnings(within);
     expect(rest).toEqual([]);
     expect(w?.message).toMatch(
-      /^sandbox\.limits\.orgHosts is within but devices\.autoMode is not off/,
+      /^sandbox\.limits\.orgHosts is within but devices\.fullAccess is not off/,
     );
     expect(
-      sandboxConfigWarnings({ ...within, devices: { ...cfg.devices, autoMode: "off" } }),
+      sandboxConfigWarnings({ ...within, devices: { ...cfg.devices, fullAccess: "off" } }),
     ).toEqual([]);
     // the kill switch already cuts everything
     expect(
@@ -106,9 +106,9 @@ describe("运行时限与命令超时（纯函数）", () => {
       ...long,
       extensionConfig: { "sandbox-docker": { refuseOpenNetwork: true } },
     };
-    for (const autoMode of [undefined, "allowed", "off"] as const) {
-      // the whole config, whatever its devices.autoMode says
-      const whole = { ...refusing, devices: { ...refusing.devices, autoMode } };
+    for (const fullAccess of [undefined, "allowed", "off"] as const) {
+      // the whole config, whatever its devices.fullAccess says
+      const whole = { ...refusing, devices: { ...refusing.devices, fullAccess } };
       const [w, ...rest] = sandboxConfigWarnings(whole, "sandbox-docker");
       expect(rest).toEqual([]);
       expect(w?.level).toBe("warn");

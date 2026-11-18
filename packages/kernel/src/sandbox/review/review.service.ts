@@ -1,4 +1,9 @@
-import type { HookParentScope, Logger, ModelRequest } from "@capybara-hq/plugin-sdk";
+import type {
+  HookParentScope,
+  Logger,
+  ModelRequest,
+  PermissionProfile,
+} from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
 import type { ModelRef } from "../../agents/definition.js";
 import { EventLog } from "../../conversations/event-log.js";
@@ -9,6 +14,7 @@ import { KERNEL_LOGGER } from "../../infra/tokens.js";
 import { ModelPurposesService } from "../../models/purposes.js";
 import type { ConversationKindForHooks } from "../../runtime/hook-calls.js";
 import { StepLog } from "../../runtime/step-log.js";
+import type { PermissionCandidate } from "../permission-call-types.js";
 import {
   boundMessages,
   newReviewTag,
@@ -46,6 +52,8 @@ export interface ReviewVerdict {
 
 /** What the pipeline knows about one tool call it reviews. */
 export interface ReviewInput {
+  permissionProfile?: PermissionProfile;
+  permissionCandidate?: PermissionCandidate;
   orgId: string;
   /**
    * The root conversation of the run's tree: where the person's messages (the classifier's bounded
@@ -188,11 +196,14 @@ export class CommandReviewService implements CommandReview {
   private async decide(input: ReviewInput & ReviewCall): Promise<ReviewVerdict> {
     // not a reviewed tool, a sandbox-mode write (the tools stay root-confined), or no device: the
     // tool call proceeds and fails on its own if it cannot
-    if (!REVIEWED_TOOLS.has(input.toolKey)) {
+    if (!REVIEWED_TOOLS.has(input.toolKey) && !input.permissionProfile) {
       return allow(REVIEW_REASONS.notReviewed, null);
     }
-    const isWrite = input.toolKey === "Write" || input.toolKey === "Edit";
-    if (input.mode === "sandbox" && isWrite) {
+    const isWrite =
+      input.toolKey === "Write" ||
+      input.toolKey === "Edit" ||
+      (input.toolKey === "Read" && input.permissionProfile !== undefined);
+    if (input.mode === "sandbox" && isWrite && !input.permissionProfile) {
       return allow(REVIEW_REASONS.sandboxWrite, null);
     }
     const workspace = input.workspace;
@@ -233,10 +244,22 @@ export class CommandReviewService implements CommandReview {
         rule: hit?.id ?? null,
       };
     }
-    if (result.outcome === "allow") {
+    if (input.permissionProfile === "full-access")
+      return allow("Current Full access covers discretionary review.", null);
+    if (input.permissionProfile && !input.permissionCandidate)
+      return allow("The enforced operation scope covers this call without expansion.", null);
+    if (input.permissionProfile === "request-approval")
+      return {
+        decision: "ask",
+        by: "rule",
+        rule: null,
+        reason:
+          "Approve the exact proposed directory and host access for this call. File-only grants are not supported: directory approval covers its descendants; otherwise choose an in-project path.",
+      };
+    if (result.outcome === "allow" && !input.permissionCandidate) {
       return allow(hit?.reason ?? "The command review allows this command.", hit?.id ?? null);
     }
-    if (result.outcome === "ask") {
+    if (result.outcome === "ask" && !input.permissionCandidate) {
       // a session grant covers its own class only, and only while the person is there to have
       // given it (hardening spec R4, R6): every ask hit granted and nothing unsure left
       const granted = input.attended ? await this.grantedRules(await rootOf()) : new Set<string>();
@@ -302,6 +325,7 @@ export class CommandReviewService implements CommandReview {
           ruleHits: result.hits,
           personMessages: await this.personMessages(await rootOf()),
           tag: newReviewTag(),
+          ...(input.permissionCandidate ? { permissionCandidate: input.permissionCandidate } : {}),
         },
         beforeSend: input.beforeSend,
       },

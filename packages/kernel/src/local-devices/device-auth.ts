@@ -257,7 +257,7 @@ export class DeviceAuthService {
           reconnectGraceSeconds: local.reconnectGraceSeconds,
           maxFrameBytes: local.maxFrameBytes,
           autoMode:
-            allowedDeviceMode(deployment.autoMode, settings.autoMode) === "auto"
+            allowedDeviceMode(deployment.fullAccess, settings.fullAccess) === "auto"
               ? "allowed"
               : "off",
         };

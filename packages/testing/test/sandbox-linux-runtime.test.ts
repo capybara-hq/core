@@ -329,8 +329,9 @@ attempt("clone3", lambda: raw(435, 0, 0))
           "chmod-readonly-path": "EACCES",
           "write-readonly": "EACCES",
           "truncate-readonly": "EACCES",
-          "hardlink-readonly": "EXDEV",
-          "hardlink-sibling": "EXDEV",
+          // brokered: the broker refuses a link whose source is outside the write roots
+          "hardlink-readonly": "EACCES",
+          "hardlink-sibling": "EACCES",
           "rename-out": "EACCES",
           "rename-root": "EACCES",
           "fchmodat2-opath-sibling": "EACCES",
@@ -523,7 +524,7 @@ attempt("clone3", lambda: raw(435, 0, 0))
     });
 
     describe("detects deliberately broken launchers", () => {
-      it("without Landlock the sibling write lands", async (context) => {
+      it("without Landlock the sibling read lands (writes stay brokered)", async (context) => {
         requireSupport(context);
         const runtime = stageMutant(
           device,
@@ -534,11 +535,63 @@ attempt("clone3", lambda: raw(435, 0, 0))
         const mutant = new Agent(device, { runtime, candidateArch: true });
         await mutant.ready;
         try {
-          await run(restricted(), `printf pwn > ${sibling}/mutant-landlock`, {}, mutant);
-          expect(device.run(`cat ${sibling}/mutant-landlock`)).toBe("pwn");
+          const read = await run(restricted(), `cat ${sibling}/secret`, {}, mutant);
+          expect(decode(read.stdout)).toBe(SECRET);
+          // the broker still performs (and refuses) every write: Landlock is not the only wall
+          await run(restricted(), `printf pwn > ${sibling}/mutant-landlock; true`, {}, mutant);
+          expect(device.run(`cat ${sibling}/mutant-landlock 2>/dev/null; true`)).toBe("");
         } finally {
           mutant.close();
           device.run(`rm -f ${sibling}/mutant-landlock`);
+        }
+      });
+
+      it("without the mandatory denies a git hook lands", async (context) => {
+        requireSupport(context);
+        const head = "def write_denied(path):\n";
+        const runtime = stageMutant(device, "no-write-denies", head, `${head}    return False\n`);
+        const mutant = new Agent(device, { runtime, candidateArch: true });
+        await mutant.ready;
+        try {
+          await run(
+            restricted(),
+            `mkdir -p ${root}/hooked/.git/hooks && printf pwn > ${root}/hooked/.git/hooks/pre-commit`,
+            {},
+            mutant,
+          );
+          expect(device.run(`cat ${root}/hooked/.git/hooks/pre-commit`)).toBe("pwn");
+        } finally {
+          mutant.close();
+          device.run(`rm -rf ${root}/hooked`);
+        }
+      });
+
+      it("a launcher left dumpable is open to a same-uid outsider", async (context) => {
+        requireSupport(context);
+        const runtime = stageMutant(
+          device,
+          "dumpable",
+          "SELF_PROTECTION = protect_self()\n",
+          "SELF_PROTECTION = None\n",
+        );
+        const mutant = new Agent(device, { runtime, candidateArch: true });
+        await mutant.ready;
+        try {
+          const fixture = await dockerPermissionFixture(device, mutant, async () => {});
+          // The outsider case is what fails. Without Yama (ptrace_scope 0) the probe reads
+          // everything. Under Yama's restricted ptrace (scope 1, Ubuntu's default) a non-ancestor
+          // cannot attach or read mem even of a dumpable process, but environ needs only read
+          // access, which the dumpable flag alone guards: the mutant is still detected by it.
+          const scope = Number(
+            device.run("cat /proc/sys/kernel/yama/ptrace_scope 2>/dev/null || echo 0").trim(),
+          );
+          await expect(runSandboxPermissionConformance(fixture)).rejects.toThrow(
+            scope === 0
+              ? /a same-uid outsider must not ptrace.*"target": \{"mem": "ALLOWED", "environ": "ALLOWED", "attach": "ALLOWED"\}/
+              : /a same-uid outsider must not ptrace.*"target": \{"mem": "EACCES", "environ": "ALLOWED", "attach": "EPERM"\}/,
+          );
+        } finally {
+          mutant.close();
         }
       });
 

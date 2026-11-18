@@ -1,0 +1,66 @@
+[
+  {
+    "path": ".changeset/retained-background-output-sdk.md",
+    "unchanged": true
+  },
+  {
+    "path": ".changeset/retained-managed-background-output.md",
+    "unchanged": true
+  },
+  {
+    "path": "docs/superpowers/plans/2026-11-16-retained-background-output.md",
+    "unchanged": true
+  },
+  {
+    "path": "docs/superpowers/specs/2026-11-16-retained-background-output-design.md",
+    "unchanged": true
+  },
+  {
+    "path": "packages/device/src/exec/mac-operation-backend.ts",
+    "unchanged": true
+  },
+  {
+    "path": "packages/device/src/exec/operation-supervisor.ts",
+    "unchanged": true
+  },
+  {
+    "path": "packages/device/src/exec/operation-worker.ts",
+    "unchanged": true
+  },
+  {
+    "path": "packages/device/src/exec/output-spool-helper.ts",
+    "unchanged": true
+  },
+  {
+    "path": "packages/device/src/exec/output-spool.ts",
+    "unchanged": true
+  },
+  {
+    "path": "packages/device/test/background-output.test.ts",
+    "unchanged": true
+  },
+  {
+    "path": "packages/device/test/mac-operation-backend.test.ts",
+    "unchanged": true
+  },
+  {
+    "path": "packages/device/test/operation-supervisor.test.ts",
+    "unchanged": true
+  },
+  {
+    "path": "packages/device/test/output-spool.test.ts",
+    "unchanged": true
+  },
+  {
+    "path": "packages/plugin-sdk/api/plugin-sdk.api.md",
+    "unchanged": false
+  },
+  {
+    "path": "packages/plugin-sdk/src/sandbox-operation.ts",
+    "unchanged": true
+  },
+  {
+    "path": "packages/plugin-sdk/test/sandbox-operation.test.ts",
+    "unchanged": true
+  }
+]

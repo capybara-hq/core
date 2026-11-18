@@ -1,6 +1,6 @@
 import { Inject, Injectable } from "@nestjs/common";
 import { KernelDb } from "../infra/database/kernel-db.js";
-import { TransactionHost } from "../infra/database/transaction-host.js";
+import { TransactionHost, withOrderedLocks } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import {
   DevicePolicyService,
@@ -38,7 +38,10 @@ export class DeviceOpResolver {
     @Inject(KernelDb) private readonly db: KernelDb,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
     @Inject(DevicePolicyService)
-    private readonly policies: Pick<DevicePolicyService, "outcomeOf" | "settleIn">,
+    private readonly policies: Pick<
+      DevicePolicyService,
+      "outcomeOf" | "settleIn" | "lockMachineDevice"
+    >,
     @Inject(ApprovalsService)
     private readonly approvals: Pick<ApprovalsService, "settleFromResolver">,
   ) {}
@@ -55,7 +58,12 @@ export class DeviceOpResolver {
       op.reported !== undefined
         ? await this.reportedResult(row.device_id, op, op.reported.outcome)
         : statusResult(op, await this.policies.outcomeOf(row.device_id, op.id));
-    await this.settle(data, op.source.approvalId, result);
+    // the machine's device lock is the ordered prelude: the settle locks the ask's conversation,
+    // approval and run after it (the global order: permission locks before conversation rows)
+    await withOrderedLocks(
+      () => this.policies.lockMachineDevice(data.machineId),
+      () => this.settle(data, op.source.approvalId, result),
+    );
   }
 
   /**
@@ -97,7 +105,15 @@ const MAX_MESSAGE = 500;
 function statusResult(op: PendingPolicyOp, s: PolicyOpStatus): PolicyOpResult {
   switch (s.outcome) {
     case "applied":
-      return { outcome: "applied", ...(s.policy !== undefined && { policy: s.policy }) };
+      return {
+        outcome: "applied",
+        ...(s.policy !== undefined && { policy: s.policy }),
+        // a staged (v3) applied status carries the owner report (B2)
+        ...(s.ownerCeiling !== undefined && {
+          ownerCeiling: s.ownerCeiling,
+          connectionId: s.connectionId ?? null,
+        }),
+      };
     case "refused":
       return { outcome: "refused", message: (s.message ?? REFUSED_MESSAGE).slice(0, MAX_MESSAGE) };
     case "started":

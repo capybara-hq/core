@@ -18,7 +18,7 @@ import { startKernel, type TestKernel } from "../helpers/runs.js";
 
 /**
  * Two kernel replicas (two kernels in one process sharing PG, Redis and the fake provider's root)
- * and a device whose effective mode changes (auto mode spec §4.2, §4.3): the org's `autoMode` is
+ * and a device whose effective mode changes (auto mode spec §4.2, §4.3): the org's `fullAccess` is
  * read from PG at each use, and the replicas using the device at once apply it exactly once, under
  * the exclusive lease; the other waits and then uses the updated instance.
  */
@@ -75,7 +75,7 @@ async function seed() {
 
 const setAutoMode = (orgId: string, mode: "allowed" | "off") =>
   sql`UPDATE capybara.orgs SET settings = ${JSON.stringify({
-    autoMode: mode,
+    fullAccess: mode,
     cloudNetwork: { mode: mode === "off" ? "allowlist" : "open" },
   })}::jsonb
     WHERE id = ${orgId}`.execute(raw);

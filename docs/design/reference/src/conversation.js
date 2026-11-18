@@ -485,7 +485,7 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
     // the agent map's entry (§6.16.29, AC3): "N 个智能体" after the effort picker and the quick
     // actions, led by the status dot while a sub-agent runs or waits
     const agents = o.agents ? agentsChip(o.agents) : "";
-    return `<div class="r-composer"${o.state === "focus" ? ' data-state="focus"' : ""}>${strip}<label class="r-sr" for="msg">消息</label>${line}<div class="r-composer-bar">${iconBtn("plus", K.attach)}${o.noAgent || !isNew ? "" : picker(C.agent.name, { open: o.menu === "agent" })}${o.device ? devicePicker(o) : ""}${picker(o.modelValue ?? modelLabel(model.provider, model.model), { open: o.menu === "model" })}${effort}${quick}${agents}<span class="r-grow"></span>${action}</div></div>`;
+    return `<div class="r-composer"${o.state === "focus" ? ' data-state="focus"' : ""}>${strip}<label class="r-sr" for="msg">消息</label>${line}<div class="r-composer-bar">${iconBtn("plus", K.attach)}${o.noAgent || !isNew ? "" : picker(C.agent.name, { open: o.menu === "agent" })}${o.device ? devicePicker(o) : ""}${o.permission ? picker(F.PERMISSION_FIXTURE.items.find((i) => i.id === F.PERMISSION_FIXTURE.selected).label, { open: o.menu === "permission" }) : ""}${picker(o.modelValue ?? modelLabel(model.provider, model.model), { open: o.menu === "model" })}${effort}${quick}${agents}<span class="r-grow"></span>${action}</div></div>`;
   }
 
   /**
@@ -532,6 +532,20 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
         })
         .join("");
       body += `<div class="r-menu-note">${esc(K.modelHint)}</div>`;
+    } else if (o.menu === "permission") {
+      // §6.16.3 state permission: three described rows (icon, label, reason tag, sentence), one
+      // look for all of them, the checkmark on the chosen one; then the action and the note
+      const PM = F.PERMISSION_FIXTURE;
+      body = PM.items
+        .map((it) => {
+          const sel = it.id === PM.selected;
+          const tag = it.tag ? `<span class="r-tag">${esc(it.tag)}</span>` : "";
+          return `<div class="r-menu-item" data-described role="menuitemradio" aria-checked="${sel}"${it.disabled ? ' aria-disabled="true" data-disabled' : ""}>${icon(it.icon, 14)}<span class="r-menu-body"><span class="r-menu-head"><span>${esc(it.label)}</span>${tag}</span><span class="r-menu-desc">${esc(it.description)}</span></span>${sel ? icon("check", 14) : ""}</div>`;
+        })
+        .join("");
+      body += `<div class="r-menu-sep"></div><div class="r-menu-item" role="menuitem">${icon(PM.action.icon, 14)}<span>${esc(PM.action.label)}</span></div>`;
+      body += `<div class="r-menu-note">${esc(PM.note)}</div>`;
+      return `<div class="r-menu-stage" data-tall>${composer({ state: "idle", menu: "permission", permission: true })}<div class="r-menu r-anchored-menu" role="menu">${body}</div></div>`;
     } else if (o.menu === "long") {
       // 100 models (§6.16.3 state long): the filter on top, the list capped and scrolled to the
       // checked model (drawn as the rows in view), the note kept below

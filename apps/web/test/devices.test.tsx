@@ -42,6 +42,8 @@ const MODE = {
   network: { kind: "open-public", hosts: [], source: "org" },
   local: null,
   sandboxNetwork: { kind: "open-public", hosts: [] },
+  fullNetwork: { kind: "open-public", hosts: [] },
+  outerNetwork: null,
   pendingNextUse: false,
   pendingFilesReset: false,
   recent: [],
@@ -112,7 +114,7 @@ const routes = {
 };
 
 describe("devices list", () => {
-  it("lists cards: the default is 个人设备, with state and mode mark", async () => {
+  it("lists cards: the default is 个人设备, with state and its ceiling mark", async () => {
     stubApi(routes);
     const { container } = await renderList();
     expect(container.querySelector('[data-template="ListPage"]')).not.toBeNull();
@@ -122,7 +124,10 @@ describe("devices list", () => {
     expect(
       within(cards[0] as HTMLElement).getByText(E.state.running, { exact: false }),
     ).toBeTruthy();
-    expect(within(cards[0] as HTMLElement).getByText(E.mark.open)).toBeTruthy();
+    // whether Full access is available there, never a daily mode or network mark
+    expect(
+      within(cards[0] as HTMLElement).getByText(E.ceiling.mark.full, { exact: false }),
+    ).toBeTruthy();
     expect(within(cards[1] as HTMLElement).getByText("Build box")).toBeTruthy();
     expect(
       within(cards[1] as HTMLElement).getByText(E.state.filesLost, { exact: false }),
@@ -399,31 +404,45 @@ describe("device detail", () => {
     });
   });
 
-  it("a cloud mode switch invalidates the list and the device, only after its confirmation", async () => {
-    const sandboxed = {
-      ...MODE,
-      mode: "sandbox",
-      network: { ...MODE.network, source: "platform" },
+  it("a cloud ceiling change invalidates the list and the device, only after its confirmation", async () => {
+    const narrowed = {
+      state: "cloud",
+      revision: null,
+      sequence: null,
+      fullAccess: false,
+      effectiveFullAccess: false,
+      restrictedProjectReach: "workspace",
+      restrictedAllowedDomains: [],
+      observedAt: null,
+      stale: false,
     };
     const calls = stubApi({
       ...routes,
       ...NO_PROJECTS,
-      [`GET ${BASE}/e1`]: () => json(200, { device: env("e1", "Build box", { mode: sandboxed }) }),
+      [`GET ${BASE}/e1`]: () =>
+        json(200, { device: env("e1", "Build box", { ownerCeiling: narrowed }) }),
       [`PATCH ${BASE}/e1`]: () => json(200, { device: env("e1", "Build box") }),
     });
     const { client } = await renderDetail();
     client.setQueryData(["org", "o1", "devices"], list([env("e1", "Build box")]));
+    // the composer's cached permission preview of this device
+    client.setQueryData(["org", "o1", "device", "e1", "permissionPreview", null], { cached: 1 });
     const user = await openSettings();
-    const group = await screen.findByRole("radiogroup", { name: E.mode.title });
-    await user.click(within(group).getByRole("radio", { name: /^Auto/ }));
-    const dialog = await screen.findByRole("dialog", { name: E.mode.confirm.title.auto });
+    await user.click(await screen.findByRole("button", { name: E.ceiling.allowFull }));
+    const dialog = await screen.findByRole("dialog", { name: E.ceiling.confirm.title.widen });
     // nothing is sent before the person confirms
     expect(calls.some((c) => c.method === "PATCH")).toBe(false);
-    await user.click(within(dialog).getByRole("button", { name: E.mode.confirm.submit.auto }));
+    await user.click(within(dialog).getByRole("button", { name: E.ceiling.confirm.submit.widen }));
     await vi.waitFor(() =>
       expect(client.getQueryState(["org", "o1", "devices"])?.isInvalidated).toBe(true),
     );
-    expect(bodyOf(calls.find((c) => c.method === "PATCH"))).toEqual({ mode: null });
+    expect(
+      client.getQueryState(["org", "o1", "device", "e1", "permissionPreview", null])?.isInvalidated,
+    ).toBe(true);
+    expect(bodyOf(calls.find((c) => c.method === "PATCH"))).toEqual({
+      ownerCeiling: { fullAccess: true },
+      confirmWidening: true,
+    });
     await vi.waitFor(() => {
       const names = calls.map((c) => `${c.method} ${c.url}`);
       expect(names.slice(names.indexOf(`PATCH ${BASE}/e1`))).toContain(`GET ${BASE}/e1`);

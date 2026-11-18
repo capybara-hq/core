@@ -1,0 +1,59 @@
+{
+  "ok": true,
+  "checks": [
+    {
+      "id": "lint",
+      "title": "Lint",
+      "status": "pass",
+      "detail": "pnpm lint"
+    },
+    {
+      "id": "typecheck",
+      "title": "Typecheck",
+      "status": "pass",
+      "detail": "pnpm typecheck"
+    },
+    {
+      "id": "check",
+      "title": "Custom checks",
+      "status": "pass",
+      "detail": "pnpm check"
+    },
+    {
+      "id": "commitlint",
+      "title": "Commit messages",
+      "status": "pass",
+      "detail": "pnpm exec commitlint --from 62d1deea7c4406539fb8aaaaa2fcb7a8483a8227 --to HEAD"
+    },
+    {
+      "id": "test",
+      "title": "Tests",
+      "status": "pass",
+      "detail": "pnpm exec vitest run apps/web/ tools/checks/"
+    },
+    {
+      "id": "web",
+      "title": "web",
+      "status": "skip",
+      "detail": "CI runs this"
+    },
+    {
+      "id": "visual",
+      "title": "visual",
+      "status": "skip",
+      "detail": "CI runs this"
+    },
+    {
+      "id": "e2e",
+      "title": "e2e",
+      "status": "skip",
+      "detail": "CI runs this"
+    },
+    {
+      "id": "docker",
+      "title": "docker",
+      "status": "skip",
+      "detail": "CI runs this"
+    }
+  ]
+}

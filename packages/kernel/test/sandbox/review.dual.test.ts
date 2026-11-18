@@ -8,7 +8,7 @@ import { onlyBuiltins } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { enableExtensions, eventsOf, PW, waitFor } from "../helpers/runs.js";
-import { FakeMachine, HELLO } from "../local-devices/fake-machine.js";
+import { FakeMachine, HELLO } from "../local-devices/fake-machine-v3.js";
 
 /**
  * A command ask across replicas (auto mode spec §5.4, multi-replica): the run parks on the
@@ -131,7 +131,7 @@ async function openAskScene(): Promise<AskScene> {
   );
   cleanups.push(() => machine.close());
   await machine.opened;
-  machine.send({ ...HELLO, features: ["mode"], policy: POLICY });
+  machine.hello({ features: ["mode"], policy: POLICY });
   await waitFor(
     async () =>
       (
@@ -298,7 +298,7 @@ describe("command ask (dual replica)", () => {
     );
     cleanups.push(() => machine.close());
     await machine.opened;
-    machine.send({ ...HELLO, features: ["mode"], policy: POLICY });
+    machine.hello({ features: ["mode"], policy: POLICY });
     await waitFor(
       async () =>
         (

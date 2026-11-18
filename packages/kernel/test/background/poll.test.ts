@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -5,7 +6,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { sql } from "kysely";
-import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { BackgroundTaskFinisher } from "../../src/background/finish.js";
 import { launchScript, newTaskId, taskOutputPath } from "../../src/background/launch.js";
 import {
@@ -22,18 +23,27 @@ import {
 } from "../../src/background/store.js";
 import { EventLog } from "../../src/conversations/event-log.js";
 import type { ConversationEvent } from "../../src/conversations/events.js";
+import { PermissionProfilesService } from "../../src/conversations/permission-profiles.service.js";
 import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
+import { kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
+import type { Account } from "../../src/identity/accounts.js";
 import { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
+import { MachinesService } from "../../src/local-devices/machines.js";
+import { OrgSettingsService } from "../../src/orgs/settings.service.js";
 import { Waits } from "../../src/runtime/waits.js";
+import { PermissionFacts } from "../../src/sandbox/permission-facts.js";
 import { SandboxService } from "../../src/sandbox/sandbox.service.js";
+import { ApprovalsService } from "../../src/tools/approvals.service.js";
 import { sandboxBaseTimeoutMs } from "../../src/tools/builtins/sandbox/common.js";
 import type { ScriptRule } from "../fixtures/plugins/model-script/index.js";
 import { removeFakeSandbox } from "../fixtures/plugins/sandbox-fake/index.js";
 import { legacyDbFor } from "../helpers/conversations.js";
 import { onlyBuiltins } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
+import { managedTaskFixture } from "../helpers/managed-background.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
+import { drainOutbox } from "../helpers/outbox.js";
 import {
   createConv,
   createOrgWithProviders,
@@ -940,5 +950,458 @@ describe("pruning", () => {
     expect(await store.get(recent.id)).toBeDefined();
     expect(await store.get(running.id)).toBeDefined();
     expect(BACKGROUND_PRUNE_JOB).toBe("background-task-prune");
+  });
+});
+
+/**
+ * Exact background revocation end to end (permission runtime cutover 8.4, B3), on this worker-role
+ * kernel: tasks admitted through the real path, real owner and org writers, the owed revoke
+ * delivered through the outbox to the maintenance consumer, which stops only the affected task.
+ */
+describe("exact background revocation through the outbox and the worker", () => {
+  const OWNER_PW = "correct horse battery";
+  // a host the deployment's restricted allowlist covers, so the owner baseline may include it
+  const HOST = "github.com";
+  /** An authenticated staged `policy` frame carrying the machine's owner report (B2). */
+  const ownerFrame = (
+    sequence: number,
+    o: { fullAccess: boolean; domains: string[]; reach?: "workspace" | "os-user" },
+  ) => ({
+    type: "policy",
+    policy: { mode: o.fullAccess ? "auto" : "sandbox", allowedDomains: o.domains },
+    ownerCeiling: {
+      version: 2,
+      revision: `owner-${sequence}`,
+      sequence,
+      fullAccess: o.fullAccess,
+      restrictedProjectReach: o.reach ?? "os-user",
+      restrictedAllowedDomains: o.domains,
+    },
+  });
+  let current: { account: Account; login: string } | undefined;
+  const owner = () => {
+    if (!current) throw new Error("no owner yet");
+    return current;
+  };
+  const ownerAccount = () => owner().account;
+  const ownerLogin = () => owner().login;
+  beforeEach(async () => {
+    const login = `owner-${randomUUID().slice(0, 8)}`;
+    const account = await accountsFor(kernelDb(raw)).createLocal({
+      login,
+      password: OWNER_PW,
+      displayName: "Owner",
+    });
+    current = { account, login };
+  });
+
+  it("the real owner writer revokes only the baseline-host task; the outbox delivers the exact stop through the worker", async () => {
+    const f = await managedTaskFixture({
+      kernels: [k],
+      raw,
+      login: ownerLogin(),
+      password: OWNER_PW,
+      accountId: ownerAccount().id,
+      launch: false,
+    });
+    const machine = await f.db
+      .selectFrom("device_machines")
+      .select("id")
+      .where("device_id", "=", f.deviceId)
+      .executeTakeFirstOrThrow();
+    // the owner's restricted baseline allows the host when the first task is admitted: written
+    // by the machine's authenticated policy frame (B2 owner report), not by SQL
+    await k.app
+      .get(MachinesService)
+      .recordPolicyV3(
+        machine.id,
+        ownerFrame(1, { fullAccess: true, domains: [HOST] }),
+        "connection-1",
+      );
+    const baselineTask = await f.launchAnother();
+    // the person approves the host for this run through the real network ask and decision: an
+    // explicit grant independent of the baseline
+    const approvals = k.app.get(ApprovalsService);
+    const ask = await approvals.requestNetwork({
+      orgId: f.orgId,
+      conversationId: f.conversationId,
+      runId: f.runId,
+      step: 1,
+      callId: `c-${randomUUID().slice(0, 8)}`,
+      requestedFor: ownerAccount().id,
+      detail: {
+        deviceId: f.deviceId,
+        hosts: [{ host: HOST, port: 443 }],
+        command: `curl https://${HOST}/`,
+        description: "Fetch",
+        result: { content: "blocked", isError: true },
+      },
+      scopes: ["once"],
+    });
+    await approvals.decide(f.orgId, ask.id, ownerAccount().id, {
+      decision: "approve",
+      scope: "once",
+    });
+    const grantedTask = await f.launchAnother();
+    const intentOf = async (taskId: string) => {
+      const task = await f.db
+        .selectFrom("background_tasks")
+        .select("operation_id")
+        .where("id", "=", taskId)
+        .executeTakeFirstOrThrow();
+      return f.db
+        .selectFrom("sandbox_operation_intents")
+        .selectAll()
+        .where("operation_id", "=", task.operation_id as string)
+        .executeTakeFirstOrThrow();
+    };
+    const taskOf = (id: string) =>
+      f.db
+        .selectFrom("background_tasks")
+        .select(["status", "launch_state"])
+        .where("id", "=", id)
+        .executeTakeFirstOrThrow();
+    // the real admissions recorded the provenance: baseline only vs an explicit run grant
+    const a = await intentOf(baselineTask);
+    const b = await intentOf(grantedTask);
+    expect(a.scope).toMatchObject({ network: { kind: "allowlist", hosts: [HOST] } });
+    expect(a.granted_hosts).toEqual([]);
+    expect(b.scope).toMatchObject({ network: { kind: "allowlist" } });
+    expect(b.granted_hosts).toEqual([HOST]);
+    // the launching run completes; the started authority does not depend on it
+    await f.db.updateTable("runs").set({ status: "completed" }).where("id", "=", f.runId).execute();
+    // the owner removes the host from the baseline on the machine (a restricted-only change),
+    // reported by the next authenticated policy frame
+    await k.app
+      .get(MachinesService)
+      .recordPolicyV3(machine.id, ownerFrame(2, { fullAccess: true, domains: [] }), "connection-1");
+    expect((await intentOf(baselineTask)).state).toBe("revoked");
+    expect((await intentOf(grantedTask)).state).toBe("background-running");
+    await drainOutbox(k.app, { jobName: "sandbox-operation-revoke" });
+    // only the maintenance consumer acknowledges a revocation
+    await waitFor(
+      async () => (await intentOf(baselineTask)).revoke_acknowledged,
+      30_000,
+      "the worker's exact revoke",
+    );
+    expect(await taskOf(baselineTask)).toEqual({ status: "stopped", launch_state: "terminal" });
+    expect(f.provider.calls.stop).toHaveLength(1);
+    expect(await taskOf(grantedTask)).toEqual({ status: "running", launch_state: "acknowledged" });
+    expect((await intentOf(grantedTask)).state).toBe("background-running");
+  });
+
+  it("the B2 owner writer: a restricted-only change keeps Full work and consent; Full narrowing revokes only Full work", async () => {
+    const f = await managedTaskFixture({
+      kernels: [k],
+      raw,
+      login: ownerLogin(),
+      password: OWNER_PW,
+      accountId: ownerAccount().id,
+      launch: false,
+    });
+    const machine = await f.db
+      .selectFrom("device_machines")
+      .select("id")
+      .where("device_id", "=", f.deviceId)
+      .executeTakeFirstOrThrow();
+    const machines = k.app.get(MachinesService);
+    await machines.recordPolicyV3(
+      machine.id,
+      ownerFrame(1, { fullAccess: true, domains: [HOST] }),
+      "connection-1",
+    );
+    const profiles = k.app.get(PermissionProfilesService);
+    const facts = k.app.get(PermissionFacts);
+    const preview = await facts.scope(f.orgId, f.deviceId, null, null);
+    if (!preview.scopeRevision) throw new Error("the fixture device has no Full scope");
+    const { revision } = await profiles.set(f.orgId, f.conversationId, ownerAccount().id, {
+      profile: "full-access",
+      consentScopeRevision: preview.scopeRevision,
+      expectedRevision: 0,
+    });
+    const fullTask = await f.launchAnother();
+    await profiles.set(f.orgId, f.conversationId, ownerAccount().id, {
+      profile: "approve-for-me",
+      expectedRevision: revision,
+    });
+    const restrictedTask = await f.launchAnother();
+    const intentOf = async (taskId: string) => {
+      const task = await f.db
+        .selectFrom("background_tasks")
+        .select("operation_id")
+        .where("id", "=", taskId)
+        .executeTakeFirstOrThrow();
+      return f.db
+        .selectFrom("sandbox_operation_intents")
+        .selectAll()
+        .where("operation_id", "=", task.operation_id as string)
+        .executeTakeFirstOrThrow();
+    };
+    const taskOf = (id: string) =>
+      f.db
+        .selectFrom("background_tasks")
+        .select(["status", "launch_state"])
+        .where("id", "=", id)
+        .executeTakeFirstOrThrow();
+    expect((await intentOf(fullTask)).scope).toMatchObject({ profile: "full-access" });
+    expect((await intentOf(restrictedTask)).scope).toMatchObject({
+      profile: "approve-for-me",
+      network: { kind: "allowlist", hosts: [HOST] },
+    });
+    await f.db.updateTable("runs").set({ status: "completed" }).where("id", "=", f.runId).execute();
+    const consentAt = (await facts.scope(f.orgId, f.deviceId, null, null)).scopeRevision;
+    // restricted-only owner change (baseline host and reach): only restricted work it narrows
+    await machines.recordPolicyV3(
+      machine.id,
+      ownerFrame(2, { fullAccess: true, domains: [], reach: "workspace" }),
+      "connection-1",
+    );
+    expect((await intentOf(restrictedTask)).state).toBe("revoked");
+    expect((await intentOf(fullTask)).state).toBe("background-running");
+    // the Full consent scope is untouched by a restricted-only change
+    expect((await facts.scope(f.orgId, f.deviceId, null, null)).scopeRevision).toBe(consentAt);
+    await drainOutbox(k.app, { jobName: "sandbox-operation-revoke" });
+    await waitFor(
+      async () => (await intentOf(restrictedTask)).revoke_acknowledged,
+      30_000,
+      "the worker's exact revoke of the restricted task",
+    );
+    expect(await taskOf(restrictedTask)).toEqual({ status: "stopped", launch_state: "terminal" });
+    expect(await taskOf(fullTask)).toEqual({ status: "running", launch_state: "acknowledged" });
+    expect(f.provider.calls.stop).toHaveLength(1);
+    // the owner removes Full: only the Full task is revoked and stopped exactly
+    await machines.recordPolicyV3(
+      machine.id,
+      ownerFrame(3, { fullAccess: false, domains: [], reach: "workspace" }),
+      "connection-1",
+    );
+    expect((await intentOf(fullTask)).state).toBe("revoked");
+    expect((await facts.scope(f.orgId, f.deviceId, null, null)).scopeRevision).not.toBe(consentAt);
+    await drainOutbox(k.app, { jobName: "sandbox-operation-revoke" });
+    await waitFor(
+      async () => (await intentOf(fullTask)).revoke_acknowledged,
+      30_000,
+      "the worker's exact revoke of the Full task",
+    );
+    expect(await taskOf(fullTask)).toEqual({ status: "stopped", launch_state: "terminal" });
+    expect(f.provider.calls.stop).toHaveLength(2);
+  });
+
+  it("I5: org Full off revokes running restricted work on a selected project outside the workspace", async () => {
+    const f = await managedTaskFixture({
+      kernels: [k],
+      raw,
+      login: ownerLogin(),
+      password: OWNER_PW,
+      accountId: ownerAccount().id,
+      launch: false,
+    });
+    const machine = await f.db
+      .selectFrom("device_machines")
+      .select("id")
+      .where("device_id", "=", f.deviceId)
+      .executeTakeFirstOrThrow();
+    // the owner allows no Full but OS-user project reach (B2 report)
+    await k.app
+      .get(MachinesService)
+      .recordPolicyV3(
+        machine.id,
+        ownerFrame(1, { fullAccess: false, domains: [], reach: "os-user" }),
+        "connection-1",
+      );
+    // the instance already runs at the limits that ceiling gives (no recreation on launch)
+    // (the managed test provider is not `@local`, so the sandbox service treats it like a cloud one)
+    const limits = await k.app
+      .get(SandboxService)
+      .deviceLimits({ orgId: f.orgId, deviceId: f.deviceId }, { source: "cloud" });
+    await f.db
+      .updateTable("device_instances")
+      .set({ instance_limits: JSON.stringify({ mode: limits.mode, network: limits.network }) })
+      .where("device_id", "=", f.deviceId)
+      .execute();
+    const outside = "/home/owner/ext";
+    await f.db
+      .insertInto("device_projects")
+      .values({ device_id: f.deviceId, name: "ext", path: outside, created_by: ownerAccount().id })
+      .execute();
+    // the conversation is bound to that project (as creating it with the project binds it; the
+    // shared fixture creates the conversation before the device exists)
+    await sql`UPDATE capybara.conversations SET project_name = 'ext', project_path = ${outside}
+      WHERE id = ${f.conversationId}`.execute(f.db);
+    // the bound run start records the project's root: it becomes the working root
+    await k.app.get(EventLog).append(f.conversationId, [
+      {
+        type: "project_root",
+        idemKey: `test_project_root:${f.conversationId}`,
+        payload: { project: "ext", root: outside, skills: [] },
+      },
+    ]);
+    const task = await f.launchAnother();
+    const intentOf = async (taskId: string) => {
+      const t = await f.db
+        .selectFrom("background_tasks")
+        .select("operation_id")
+        .where("id", "=", taskId)
+        .executeTakeFirstOrThrow();
+      return f.db
+        .selectFrom("sandbox_operation_intents")
+        .selectAll()
+        .where("operation_id", "=", t.operation_id as string)
+        .executeTakeFirstOrThrow();
+    };
+    expect((await intentOf(task)).scope).toMatchObject({
+      profile: "approve-for-me",
+      filesystem: { kind: "scoped", readRoots: [outside], writeRoots: [outside] },
+    });
+    await f.db.updateTable("runs").set({ status: "completed" }).where("id", "=", f.runId).execute();
+    await k.app.get(OrgSettingsService).update(f.orgId, { fullAccess: "off" }, ownerAccount().id);
+    expect((await intentOf(task)).state).toBe("revoked");
+    await drainOutbox(k.app, { jobName: "sandbox-operation-revoke" });
+    await waitFor(
+      async () => (await intentOf(task)).revoke_acknowledged,
+      30_000,
+      "the worker's exact revoke of the outside-project task",
+    );
+    expect(f.provider.calls.stop).toHaveLength(1);
+  });
+
+  it("R1: with Full on, an org removing a host revokes the outside-project task using it, not its sibling", async () => {
+    const f = await managedTaskFixture({
+      kernels: [k],
+      raw,
+      login: ownerLogin(),
+      password: OWNER_PW,
+      accountId: ownerAccount().id,
+      launch: false,
+    });
+    const machine = await f.db
+      .selectFrom("device_machines")
+      .select("id")
+      .where("device_id", "=", f.deviceId)
+      .executeTakeFirstOrThrow();
+    const machines = k.app.get(MachinesService);
+    // Full allowed with OS-user reach (as a protocol 2 auto machine translates), no baseline host
+    await machines.recordPolicyV3(
+      machine.id,
+      ownerFrame(1, { fullAccess: true, domains: [], reach: "os-user" }),
+      "connection-1",
+    );
+    const outside = "/home/owner/ext";
+    await f.db
+      .insertInto("device_projects")
+      .values({ device_id: f.deviceId, name: "ext", path: outside, created_by: ownerAccount().id })
+      .execute();
+    await sql`UPDATE capybara.conversations SET project_name = 'ext', project_path = ${outside}
+      WHERE id = ${f.conversationId}`.execute(f.db);
+    await k.app.get(EventLog).append(f.conversationId, [
+      {
+        type: "project_root",
+        idemKey: `test_project_root:${f.conversationId}`,
+        payload: { project: "ext", root: outside, skills: [] },
+      },
+    ]);
+    const sibling = await f.launchAnother();
+    // the owner adds the host to the baseline (a restricted-only widening: nothing is revoked)
+    await machines.recordPolicyV3(
+      machine.id,
+      ownerFrame(2, { fullAccess: true, domains: [HOST], reach: "os-user" }),
+      "connection-1",
+    );
+    const task = await f.launchAnother();
+    const intentOf = async (taskId: string) => {
+      const t = await f.db
+        .selectFrom("background_tasks")
+        .select("operation_id")
+        .where("id", "=", taskId)
+        .executeTakeFirstOrThrow();
+      return f.db
+        .selectFrom("sandbox_operation_intents")
+        .selectAll()
+        .where("operation_id", "=", t.operation_id as string)
+        .executeTakeFirstOrThrow();
+    };
+    expect((await intentOf(task)).scope).toMatchObject({
+      profile: "approve-for-me",
+      filesystem: { kind: "scoped", readRoots: [outside] },
+      network: { kind: "allowlist", hosts: [HOST] },
+    });
+    expect((await intentOf(sibling)).scope).toMatchObject({
+      filesystem: { kind: "scoped", readRoots: [outside] },
+      network: { kind: "none" },
+    });
+    await f.db.updateTable("runs").set({ status: "completed" }).where("id", "=", f.runId).execute();
+    // Full stays on; the org removes the host from its network
+    await k.app
+      .get(OrgSettingsService)
+      .update(
+        f.orgId,
+        { cloudNetwork: { mode: "allowlist", excludedHosts: [HOST] } },
+        ownerAccount().id,
+      );
+    expect((await intentOf(task)).state).toBe("revoked");
+    expect((await intentOf(sibling)).state).toBe("background-running");
+  });
+
+  it("the real org writer turning Full off revokes only the task admitted under Full; the worker stops it exactly", async () => {
+    const f = await managedTaskFixture({
+      kernels: [k],
+      raw,
+      login: ownerLogin(),
+      password: OWNER_PW,
+      accountId: ownerAccount().id,
+      launch: false,
+    });
+    const profiles = k.app.get(PermissionProfilesService);
+    // the person selects Full with consent to the displayed scope; the first task starts under it
+    const preview = await k.app.get(PermissionFacts).scope(f.orgId, f.deviceId, null, null);
+    if (!preview.scopeRevision) throw new Error("the fixture device has no Full scope");
+    const { revision } = await profiles.set(f.orgId, f.conversationId, ownerAccount().id, {
+      profile: "full-access",
+      consentScopeRevision: preview.scopeRevision,
+      expectedRevision: 0,
+    });
+    const fullTask = await f.launchAnother();
+    // back to a restricted profile: started work keeps its starting scope, the next task is restricted
+    await profiles.set(f.orgId, f.conversationId, ownerAccount().id, {
+      profile: "approve-for-me",
+      expectedRevision: revision,
+    });
+    const restrictedTask = await f.launchAnother();
+    const intentOf = async (taskId: string) => {
+      const task = await f.db
+        .selectFrom("background_tasks")
+        .select("operation_id")
+        .where("id", "=", taskId)
+        .executeTakeFirstOrThrow();
+      return f.db
+        .selectFrom("sandbox_operation_intents")
+        .selectAll()
+        .where("operation_id", "=", task.operation_id as string)
+        .executeTakeFirstOrThrow();
+    };
+    expect((await intentOf(fullTask)).scope).toMatchObject({ profile: "full-access" });
+    expect((await intentOf(restrictedTask)).scope).toMatchObject({ profile: "approve-for-me" });
+    await f.db.updateTable("runs").set({ status: "completed" }).where("id", "=", f.runId).execute();
+    await k.app.get(OrgSettingsService).update(f.orgId, { fullAccess: "off" }, ownerAccount().id);
+    expect((await intentOf(fullTask)).state).toBe("revoked");
+    expect((await intentOf(restrictedTask)).state).toBe("background-running");
+    await drainOutbox(k.app, { jobName: "sandbox-operation-revoke" });
+    await waitFor(
+      async () => (await intentOf(fullTask)).revoke_acknowledged,
+      30_000,
+      "the worker's exact revoke",
+    );
+    const taskOf = (id: string) =>
+      f.db
+        .selectFrom("background_tasks")
+        .select(["status", "launch_state"])
+        .where("id", "=", id)
+        .executeTakeFirstOrThrow();
+    expect(await taskOf(fullTask)).toEqual({ status: "stopped", launch_state: "terminal" });
+    expect(f.provider.calls.stop).toHaveLength(1);
+    expect(await taskOf(restrictedTask)).toEqual({
+      status: "running",
+      launch_state: "acknowledged",
+    });
   });
 });

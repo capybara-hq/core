@@ -43,6 +43,27 @@ const SCOPE_JOB_OPTS = {
  * name without one does not type-check as an `OutboxJobName` (`add` does not check it at runtime).
  */
 export const OUTBOX_JOBS = {
+  "permission-approval-recheck": {
+    queue: "cap-kernel-maintenance",
+    idempotent:
+      "Reads the current revision and resumes only waiting runs without another pending wait; queued runs are unchanged.",
+    processedIn: "packages/kernel/src/runtime/maintenance.ts",
+    opts: { attempts: 5, backoff: { type: "exponential", delay: 5000 }, removeOnComplete: true },
+  },
+  "sandbox-operation-reconcile": {
+    queue: "cap-kernel-maintenance",
+    idempotent:
+      "records unknown outcomes and leaves execution to the current run/tool claim; never dispatches a native operation",
+    processedIn: "packages/kernel/src/runtime/maintenance.ts",
+    opts: { attempts: 5, backoff: { type: "exponential", delay: 5000 }, removeOnComplete: true },
+  },
+  "sandbox-operation-revoke": {
+    queue: "cap-kernel-maintenance",
+    idempotent:
+      "persists an operation tombstone and acknowledges only a successful idempotent provider revoke",
+    processedIn: "packages/kernel/src/runtime/maintenance.ts",
+    opts: { attempts: 10, backoff: { type: "exponential", delay: 5000 }, removeOnComplete: true },
+  },
   // `runtime/run-jobs.ts` RUN_JOB: one name on both run queues (a sub-agent's runs go to the
   // sub-agent queue), under the job ids `runJobId` builds and, for a waiting run's resume
   // (`RunResume.resumeIn`), `resumeJobId`

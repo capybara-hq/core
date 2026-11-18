@@ -1,12 +1,19 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import type { EventLog } from "../../src/conversations/event-log.js";
-import type { ConversationEvent, EventPayload } from "../../src/conversations/events.js";
+import type {
+  ConversationEvent,
+  EventPayload,
+  ManagedDevicePathsV1,
+  PermissionContextV1,
+  ReviewRecord,
+} from "../../src/conversations/events.js";
+import { PermissionProfileStore } from "../../src/conversations/permission-profile-store.js";
 import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { casePlans } from "../../src/evals/plan.js";
@@ -17,6 +24,18 @@ import type { EvalSetView } from "../../src/evals/sets.service.js";
 import { takeSnapshot } from "../../src/evals/snapshot.js";
 import type { TrajectoryDetail, TrajectoryListItem } from "../../src/evals/trajectory.service.js";
 import { EVAL_REPLAY_HOOKS } from "../../src/evals/worker.js";
+import { permissionContextHistory } from "../../src/runtime/context/permission-profile.js";
+import type { PermissionContextPort } from "../../src/runtime/model-call.js";
+import { PermissionContextRecorder } from "../../src/runtime/permission-context.service.js";
+import { RunSteps } from "../../src/runtime/run-steps.js";
+import { SandboxOperationAuthority } from "../../src/sandbox/operation-authority.js";
+import { SandboxOperationIntents } from "../../src/sandbox/operation-intents.js";
+import { PermissionCallGrants } from "../../src/sandbox/permission-call-grants.js";
+import { PermissionFacts } from "../../src/sandbox/permission-facts.js";
+import { PermissionRuntimeReports } from "../../src/sandbox/permission-runtime-reports.js";
+import { CommandReviewService } from "../../src/sandbox/review/review.service.js";
+import { SandboxService } from "../../src/sandbox/sandbox.service.js";
+import { ApprovalsService } from "../../src/tools/approvals.service.js";
 import { INPUT_SKIPPED_TEXT } from "../../src/tools/pipeline.js";
 import { readFakeSandboxOps } from "../fixtures/plugins/sandbox-fake/index.js";
 import { toolsCountState } from "../fixtures/plugins/tools-count/index.js";
@@ -187,6 +206,25 @@ afterAll(async () => {
   await Promise.all([pgc?.stop(), rd?.stop()]);
   if (root) await rm(root, { recursive: true, force: true });
 });
+
+/** Gate 9.5 fixtures: a managed device path and a recorded (denied) review. */
+const PERMISSION_DEVICE = "00000000-0000-4000-8000-0000000000d1";
+const PERMISSION_PATHS: ManagedDevicePathsV1 = {
+  permissionContextVersion: 1,
+  deviceId: PERMISSION_DEVICE,
+  roots: { workspace: "/workspace", skills: "/skills", tmp: "/tmp" },
+  workingRoot: "/project",
+};
+const PERMISSION_REVIEW: ReviewRecord = {
+  profile: "approve-for-me",
+  profileRevision: 2,
+  scopeRevision: "scope-2",
+  decisionSource: "review-model",
+  decision: "deny",
+  by: "classifier",
+  rule: null,
+  reason: "Sends data to an unknown host",
+};
 
 const setsUrl = () => `/api/v1/orgs/${orgId}/eval-sets`;
 const runsUrl = () => `/api/v1/orgs/${orgId}/eval-runs`;
@@ -949,6 +987,459 @@ describe("整轮回放", () => {
     const copied = (await evalEvents(r as EvalResultView)).filter((e) => e.type === "project_root");
     expect(copied.map((e) => e.payload)).toEqual([projectRoot]);
     expect(copied[0]?.runId).not.toBeNull();
+  });
+
+  /**
+   * Gate 9.5 (permission context replay spec B4): a recording with v1 permission markers, written
+   * by hand with consistent request metadata: an earlier run's context (a seed), the target run's
+   * context A before step 1, a managed `device_paths` and a reviewed (denied) result in step 1.
+   */
+  async function seedPermissionRun(
+    convId: string,
+    runId: string,
+  ): Promise<{ a: PermissionContextV1 }> {
+    const ctx = (revision: number): PermissionContextV1 => ({
+      version: 1,
+      rootConversationId: convId,
+      profileRevision: revision,
+      selectedProfile: "approve-for-me",
+      effectiveProfile: "approve-for-me",
+      execution: "interactive",
+      inherited: false,
+      deviceId: PERMISSION_DEVICE,
+      scopeRevision: `scope-${revision}`,
+      authorityRevision: `authority-${revision}`,
+      availability: { state: "supported" },
+      scope: {
+        location: "local",
+        workingRoot: "/project",
+        filesystem: {
+          kind: "scoped",
+          readDirectories: ["/project"],
+          writeDirectories: ["/project"],
+        },
+        network: { kind: "none" },
+        outerNetwork: { kind: "host-environment" },
+      },
+    });
+    const a = ctx(2);
+    const metaUpTo = async (upTo: number) =>
+      permissionContextHistory((await eventsOf(db, convId)).filter((e) => e.seq <= upTo)).meta;
+    const call = async (step: number, absorbedUpToSeq: number, run = runId) => {
+      const evs = await eventsOf(db, convId);
+      const seq = (evs.at(-1)?.seq ?? 0) + 1;
+      const meta = await metaUpTo(seq - 1);
+      return {
+        type: "model_call" as const,
+        runId: run,
+        payload: {
+          step,
+          attempt: 1,
+          provider: "model-fake",
+          model: "fake-1",
+          fallback: false,
+          request: {
+            fromSeq: 1,
+            toSeq: seq - 1,
+            summarySeq: null,
+            systemHash: "h",
+            reminderSeqs: [],
+            tools: [],
+            params: {},
+            absorbedUpToSeq,
+            maxOutputTokens: 1000,
+            ...(meta !== undefined && { permissionContext: meta }),
+          },
+        },
+      };
+    };
+    const usage = (step: number) => ({
+      type: "usage" as const,
+      runId,
+      payload: {
+        step,
+        provider: "model-fake",
+        model: "fake-1",
+        inputTokens: 10,
+        outputTokens: 1,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+      },
+    });
+    // the earlier run: a context and one request that saw it (copied as seeds)
+    const earlier = `${runId}-earlier`;
+    await db
+      .insertInto("runs")
+      .values(
+        [earlier, runId].map((id) => ({
+          id,
+          conversation_id: convId,
+          status: "completed" as const,
+          agent_version: 1,
+          trigger_account_id: adminId,
+          trigger_seq: 0,
+          started_at: new Date(),
+          finished_at: new Date(),
+        })),
+      )
+      .execute();
+    const [m0] = await eventLog.append(convId, [
+      {
+        type: "user_message",
+        payload: { content: [{ type: "text", text: "earlier" }], authorAccountId: adminId },
+      },
+    ]);
+    await eventLog.append(convId, [
+      {
+        type: "run_started",
+        runId: earlier,
+        payload: {
+          agentVersion: 1,
+          model: { provider: "model-fake", model: "fake-1" },
+          triggerAccountId: adminId,
+        },
+      },
+      { type: "permission_context", runId: earlier, payload: ctx(1) },
+    ]);
+    await eventLog.append(convId, [await call(1, m0?.seq ?? 0, earlier)]);
+    await eventLog.append(convId, [
+      {
+        type: "assistant_message",
+        runId: earlier,
+        payload: { step: 1, content: [{ type: "text", text: "ok" }], stopReason: "end_turn" },
+      },
+      {
+        type: "run_finished",
+        runId: earlier,
+        payload: { reason: "completed", consumedUpToSeq: m0?.seq ?? 0 },
+      },
+    ]);
+    const [msg] = await eventLog.append(convId, [
+      {
+        type: "user_message",
+        payload: {
+          content: [{ type: "text", text: 'tool:plugin__tools-count__count:{"n":1}' }],
+          authorAccountId: adminId,
+        },
+      },
+    ]);
+    const userSeq = msg?.seq ?? 0;
+    await eventLog.append(convId, [
+      {
+        type: "run_started",
+        runId,
+        payload: {
+          agentVersion: 1,
+          model: { provider: "model-fake", model: "fake-1" },
+          triggerAccountId: adminId,
+        },
+      },
+      { type: "permission_context", runId, payload: a },
+    ]);
+    await eventLog.append(convId, [await call(1, userSeq)]);
+    await eventLog.append(convId, [
+      {
+        type: "assistant_message",
+        runId,
+        payload: {
+          step: 1,
+          content: [
+            {
+              type: "tool_call",
+              id: `rec-${runId}`,
+              name: "plugin__tools-count__count",
+              input: { n: 1 },
+            },
+          ],
+          stopReason: "tool_use",
+        },
+      },
+      usage(1),
+      { type: "device_paths", runId, payload: PERMISSION_PATHS },
+      {
+        type: "tool_call_started",
+        runId,
+        payload: {
+          step: 1,
+          callId: `rec-${runId}`,
+          toolKey: "plugin__tools-count__count",
+          specHash: "s",
+        },
+      },
+      {
+        type: "tool_result",
+        runId,
+        payload: {
+          step: 1,
+          callId: `rec-${runId}`,
+          toolKey: "plugin__tools-count__count",
+          content: "recorded denial",
+          isError: true,
+          review: PERMISSION_REVIEW,
+        },
+      },
+    ]);
+    await eventLog.append(convId, [await call(2, userSeq)]);
+    await eventLog.append(convId, [
+      {
+        type: "assistant_message",
+        runId,
+        payload: {
+          step: 2,
+          content: [{ type: "text", text: "original end" }],
+          stopReason: "end_turn",
+        },
+      },
+      usage(2),
+      { type: "run_finished", runId, payload: { reason: "completed", consumedUpToSeq: userSeq } },
+    ]);
+    return { a };
+  }
+
+  /** Throwing spies on every live permission, review, admission, provision and device entrypoint. */
+  function throwOnLiveEffects(): { called: string[]; restore(): void } {
+    const called: string[] = [];
+    const targets: [object, string[]][] = [
+      [
+        k.app.get(SandboxOperationAuthority),
+        ["previewCall", "resolve", "resolveInvocation", "resolveBrowse", "subjectFor"],
+      ],
+      [k.app.get(SandboxOperationIntents), ["admit", "admitBrowse", "claimDispatch"]],
+      [k.app.get(CommandReviewService), ["review"]],
+      [
+        k.app.get(PermissionFacts),
+        [
+          "view",
+          "preview",
+          "scope",
+          "readDevice",
+          "devicePolicy",
+          "readWorkingFacts",
+          "projectScope",
+        ],
+      ],
+      [
+        k.app.get(SandboxService),
+        [
+          "withSandbox",
+          "withOperations",
+          "withPreparation",
+          "withBrowse",
+          "ifRunning",
+          "status",
+          "currentInstance",
+          "availableFor",
+          "pathLease",
+          "destroyDevice",
+          "resetFileSystem",
+        ],
+      ],
+      // the DB-current profile, grants, runtime reports and approvals a live request would read
+      [k.app.get(PermissionProfileStore), ["readRoot", "readOwnedRoot", "own"]],
+      [
+        k.app.get(PermissionCallGrants),
+        ["issueLocked", "findForAdmission", "forExecution", "assertCurrent"],
+      ],
+      [k.app.get(PermissionRuntimeReports), ["record"]],
+      [
+        k.app.get(ApprovalsService),
+        ["request", "requestNetwork", "requestGit", "requestCommand", "decide"],
+      ],
+      // the live recorder itself, whether or not a step deps object still carries it
+      [k.app.get(PermissionContextRecorder), ["record"]],
+    ];
+    const spies = targets.flatMap(([target, methods]) =>
+      methods.map((m) =>
+        vi.spyOn(target as Record<string, () => unknown>, m).mockImplementation(() => {
+          called.push(m);
+          throw new Error(`a replay called the live entrypoint ${m}`);
+        }),
+      ),
+    );
+    // the live permission recorder on the run's step deps (the activated wiring): a replay must
+    // strip it, so it can never run for an eval conversation
+    const deps = k.app.get(RunSteps).deps as { permissionContext?: PermissionContextPort };
+    deps.permissionContext = {
+      beforeRequest: async () => {
+        called.push("permissionContext.beforeRequest");
+        throw new Error("the live permission recorder ran in a replay");
+      },
+    };
+    return {
+      called,
+      restore() {
+        for (const s of spies) s.mockRestore();
+        delete deps.permissionContext;
+      },
+    };
+  }
+
+  it("a marked recording replays from recorded permission evidence only: seeds once, feeds the target run's context to its generated request, review and managed paths verbatim, no live effect (Gate 9.4/9.5)", async () => {
+    const setId = await createSet();
+    const conv = await createConv(admin, orgId, agentId);
+    await seedPermissionRun(conv, "perm-marked");
+    await addCase(setId, conv, "perm-marked");
+    // today's state changes after the snapshot (profile, consent, project binding): a replay
+    // never reads it
+    await db
+      .updateTable("conversations")
+      .set({
+        permission_profile: "full-access",
+        permission_revision: 99,
+        permission_consent: JSON.stringify({ deviceId: randomUUID(), scopeRevision: "today" }),
+        project_name: "today" as never,
+        project_path: "/today" as never,
+      })
+      .where("id", "=", conv)
+      .execute();
+    const live = throwOnLiveEffects();
+    const before = (await readFakeSandboxOps(root)).length;
+    const counted = toolsCountState().count;
+    try {
+      const run = await startRun(setId, {});
+      expect((await finished(run.id)).status).toBe("completed");
+      const [r] = await results(run.id);
+      expect(r?.status, JSON.stringify(r?.error)).toBe("done");
+      expect(r?.drift).toEqual([]);
+      const cand = r?.candidate as RunReplayResult;
+      expect(cand.permissionContextDrift).toBeUndefined();
+      expect(cand.unmatched).toBe(0);
+      const orig = await eventsOf(db, conv);
+      const evs = await evalEvents(r as EvalResultView);
+      // the earlier run's context is a seed: once, at its own seq, never appended again
+      const earlier = orig.find(
+        (e) => e.type === "permission_context" && e.runId === "perm-marked-earlier",
+      );
+      expect(
+        evs.filter((e) => e.type === "permission_context" && e.seq < (earlier?.seq ?? 0) + 1),
+      ).toEqual([expect.objectContaining({ seq: earlier?.seq, payload: earlier?.payload })]);
+      // the request boundary feeds the target run's own recorded context A once, before the
+      // generated first request, under its persistent replay identity
+      const a = orig.find((e) => e.type === "permission_context" && e.runId === "perm-marked");
+      expect(a).toBeDefined();
+      const fed = evs.filter((e) => e.type === "permission_context" && e.seq > (earlier?.seq ?? 0));
+      expect(fed.map((e) => e.payload)).toEqual([a?.payload]);
+      const generatedRunId = evs.find(
+        (e) => e.type === "run_started" && e.runId !== "perm-marked-earlier",
+      )?.runId as string;
+      expect(generatedRunId).not.toBe("perm-marked");
+      const idem = await db
+        .selectFrom("conversation_events")
+        .select("idem_key")
+        .where("conversation_id", "=", cand.conversationId)
+        .where("seq", "=", (fed[0]?.seq ?? -1) as never)
+        .executeTakeFirstOrThrow();
+      expect(idem.idem_key).toBe(`replay_permission_context:${generatedRunId}:${a?.seq}`);
+      // the generated request's metadata locates the generated seq, and its request carries A
+      const generated = evs.filter(
+        (e): e is Extract<ConversationEvent, { type: "model_call" }> =>
+          e.type === "model_call" && e.runId === generatedRunId,
+      );
+      expect(generated.length).toBeGreaterThan(0);
+      expect(generated[0]?.payload.request.permissionContext?.contextSeq).toBe(fed[0]?.seq);
+      expect(fed[0]?.seq ?? 0).toBeLessThan(generated[0]?.seq ?? 0);
+      expect(
+        generated.every((g) => g.payload.request.permissionContext?.contextSeq === fed[0]?.seq),
+      ).toBe(true);
+      // the matched result carries the recorded review verbatim (a denial stays a denial)
+      const result = evs.find((e) => e.type === "tool_result");
+      expect(result?.payload).toMatchObject({
+        content: "recorded denial",
+        isError: true,
+        review: PERMISSION_REVIEW,
+      });
+      // the managed path is copied whole, before the matched result
+      const paths = evs.filter((e) => e.type === "device_paths");
+      expect(paths.map((e) => e.payload)).toEqual([PERMISSION_PATHS]);
+      expect(paths[0]?.seq).toBeLessThan(result?.seq ?? 0);
+      // nothing live ran: no recorder, reviewer, preview, admission, provision or device operation
+      expect(live.called).toEqual([]);
+      expect((await readFakeSandboxOps(root)).length).toBe(before);
+      expect(toolsCountState().count).toBe(counted);
+      // no permission_reviewed or approval was invented
+      expect(
+        evs.filter((e) => e.type === "permission_reviewed" || e.type === "approval_requested"),
+      ).toEqual([]);
+    } finally {
+      live.restore();
+    }
+  });
+
+  it("a tampered recorded context reports permission_profile_changed; an unsupported version or an invalid review fails as eval.snapshot_invalid with no eval conversation (Gate 9.5)", async () => {
+    const tamper = async (
+      runId: string,
+      edit: (p: Record<string, unknown>) => void,
+      type = "permission_context",
+    ) => {
+      const setId = await createSet();
+      const conv = await createConv(admin, orgId, agentId);
+      await seedPermissionRun(conv, runId);
+      await addCase(setId, conv, runId);
+      const row = await db
+        .selectFrom("eval_cases")
+        .select(["id", "snapshot"])
+        .where("set_id", "=", setId)
+        .executeTakeFirstOrThrow();
+      const snap = row.snapshot as {
+        events: { type: string; runId: string | null; payload: Record<string, unknown> }[];
+      };
+      const target = snap.events.find((e) => e.type === type && e.runId === runId);
+      if (target === undefined) throw new Error("no recorded context");
+      edit(target.payload);
+      await db
+        .updateTable("eval_cases")
+        .set({ snapshot: JSON.stringify(snap) })
+        .where("id", "=", row.id)
+        .execute();
+      const run = await startRun(setId, {});
+      await finished(run.id);
+      const [r] = await results(run.id);
+      return r as EvalResultView;
+    };
+    const changed = await tamper("perm-tampered", (p) => {
+      p.selectedProfile = "request-approval";
+      p.effectiveProfile = "request-approval";
+    });
+    expect(changed.status, JSON.stringify(changed.error)).toBe("done");
+    expect(changed.drift).toEqual(["permission_profile_changed"]);
+    expect((changed.candidate as RunReplayResult).permissionContextDrift).toBe(true);
+    const corrupt = await tamper("perm-corrupt", (p) => {
+      p.version = 2;
+    });
+    expect(corrupt.status).toBe("error");
+    expect(corrupt.error).toMatchObject({ code: "eval.snapshot_invalid" });
+    expect(corrupt.evalConversationId).toBeNull();
+    // an invalid recorded review is the snapshot's failure too, found before anything is seeded
+    const badReview = await tamper(
+      "perm-bad-review",
+      (p) => {
+        p.review = { ...(p.review as object), decision: "maybe" };
+      },
+      "tool_result",
+    );
+    expect(badReview.status).toBe("error");
+    expect(badReview.error).toMatchObject({ code: "eval.snapshot_invalid" });
+    expect(badReview.evalConversationId).toBeNull();
+  });
+
+  it("an old recording replays with no permission lines, metadata or feeder writes (Gate 9.5)", async () => {
+    const setId = await createSet();
+    const conv = await createConv(admin, orgId, agentId);
+    await seedRun(conv, "perm-old", 'tool:plugin__tools-count__count:{"n":1}', [
+      { name: "plugin__tools-count__count", input: { n: 1 }, content: "recorded count" },
+    ]);
+    await addCase(setId, conv, "perm-old");
+    const run = await startRun(setId, {});
+    expect((await finished(run.id)).status).toBe("completed");
+    const [r] = await results(run.id);
+    expect(r?.status, JSON.stringify(r?.error)).toBe("done");
+    expect(r?.drift).toEqual([]);
+    const evs = await evalEvents(r as EvalResultView);
+    expect(evs.filter((e) => e.type === "permission_context" || e.type === "device_paths")).toEqual(
+      [],
+    );
+    for (const e of evs.filter((x) => x.type === "model_call"))
+      expect((e.payload as { request: object }).request).not.toHaveProperty("permissionContext");
   });
 
   /** A fork invocation's run (phase D) written by hand: dispatch, report (optional), one reply. */

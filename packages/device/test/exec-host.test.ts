@@ -20,7 +20,7 @@ import {
   SANDBOX_BACK_ON,
   SwitchingExecutor,
 } from "../src/exec/switch.js";
-import { DEFAULT_POLICY, type Policy, type SandboxMode } from "../src/state.js";
+import { DEFAULT_POLICY, ownerCeilingOfMode, type Policy, type SandboxMode } from "../src/state.js";
 import { FakeExecutor } from "./fake-kernel.js";
 
 const tmp = (prefix: string) => realpathSync(mkdtempSync(join(tmpdir(), prefix)));
@@ -301,7 +301,7 @@ describe("SwitchingExecutor", () => {
     await ex.exec(modeArgs("sandbox"), never);
     expect(sandboxed.started).toEqual(["now"]);
     // The machine's own sandbox mode wins over a ceiling that allows auto.
-    policy = { ...policy, mode: "sandbox" };
+    policy = { ...policy, ownerCeiling: ownerCeilingOfMode("sandbox") };
     await ex.exec(modeArgs("auto"), never);
     expect(sandboxed.started).toEqual(["now", "now"]);
     expect(host.started).toEqual(["now"]);
@@ -314,7 +314,7 @@ describe("SwitchingExecutor", () => {
     expect(switches).toEqual(["auto"]);
     await ex.exec(modeArgs("auto"), never);
     expect(await read()).toBe("host");
-    policy = { ...policy, mode: "sandbox" };
+    policy = { ...policy, ownerCeiling: ownerCeilingOfMode("sandbox") };
     expect(await read()).toBe("sandboxed");
     expect(switches).toEqual(["auto", "sandbox"]);
   });
@@ -323,7 +323,7 @@ describe("SwitchingExecutor", () => {
     setup();
     await ex.exec(modeArgs("auto"), never);
     expect(host.killed).toEqual([]);
-    policy = { ...policy, mode: "sandbox" };
+    policy = { ...policy, ownerCeiling: ownerCeilingOfMode("sandbox") };
     // The watch notices without another operation.
     const until = Date.now() + 3000;
     while (host.killed.length === 0 && Date.now() < until) await sleep(50);
@@ -343,7 +343,7 @@ describe("SwitchingExecutor", () => {
       host.killed.push(["*"]);
       if (fail) throw new Error("kill failed");
     };
-    policy = { ...policy, mode: "sandbox" };
+    policy = { ...policy, ownerCeiling: ownerCeilingOfMode("sandbox") };
     // Routing follows the policy at once, but the switch waits for a successful kill.
     expect(await ex.sync()).toBe(false);
     expect(switches).toEqual(["auto"]);
@@ -373,7 +373,7 @@ describe("SwitchingExecutor", () => {
     const running = ex.exec(modeArgs("auto"), never);
     await sleep(10);
     // the switch back lands while the command is starting: the kill finds nothing yet
-    policy = { ...policy, mode: "sandbox" };
+    policy = { ...policy, ownerCeiling: ownerCeilingOfMode("sandbox") };
     await ex.sync();
     expect(switches).toEqual(["auto", "sandbox"]);
     start();
@@ -388,7 +388,7 @@ describe("SwitchingExecutor", () => {
     expect(await read("auto")).toBe("host");
     await ex.exec(modeArgs("auto"), never);
     expect(await read("sandbox")).toBe("sandboxed");
-    policy = { ...policy, mode: "sandbox" };
+    policy = { ...policy, ownerCeiling: ownerCeilingOfMode("sandbox") };
     expect(await read("auto")).toBe("sandboxed");
   });
 

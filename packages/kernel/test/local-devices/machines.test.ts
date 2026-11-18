@@ -430,3 +430,105 @@ describe("MachinesService", () => {
     expect(await k.app.get(NetworkGrants).reportedMode(m.deviceId)).toBe("sandbox");
   });
 });
+
+it.each(["hello", "policy", "settle"] as const)(
+  "%s takes device authority before the machine row while credential revocation runs on another connection",
+  async (kind) => {
+    const { vi } = await import("vitest");
+    const { PermissionCeilingWrites } = await import(
+      "../../src/sandbox/permission-ceiling-writes.js"
+    );
+    const { KernelDb } = await import("../../src/infra/database/kernel-db.js");
+    const { DevicePolicyService } = await import(
+      "../../src/local-devices/device-policy.service.js"
+    );
+    const m = await connected(await member());
+    const policy = { mode: "sandbox" as const, allowedDomains: ["example.com"] };
+    const opId = randomUUID();
+    await db
+      .updateTable("device_machines")
+      .set({
+        pending_policy_ops: JSON.stringify([
+          {
+            id: opId,
+            add: ["example.com"],
+            remove: [],
+            source: { accountId: ownerId, via: "web", approvalId: null },
+            status: "sent",
+            sentAt: Date.now(),
+            resolveAt: Date.now() + 60000,
+            until: Date.now() + 3600000,
+          },
+        ]),
+      })
+      .where("id", "=", m.machineId)
+      .execute();
+    let signalReady!: () => void, release!: () => void;
+    const ready = new Promise<void>((r) => {
+        signalReady = r;
+      }),
+      allowed = new Promise<void>((r) => {
+        release = r;
+      });
+    const ceilings = k.app.get(PermissionCeilingWrites),
+      lock = ceilings.lock.bind(ceilings),
+      pids: number[] = [];
+    let n = 0;
+    const spy = vi.spyOn(ceilings, "lock").mockImplementation(async (subject, level) => {
+      pids.push(
+        (await sql<{ pid: number }>`select pg_backend_pid() as pid`.execute(k.app.get(KernelDb).db))
+          .rows[0]?.pid ?? 0,
+      );
+      if (++n === 1) {
+        signalReady();
+        await allowed;
+        return lock(subject, level);
+      }
+      await lock(subject, level);
+      release();
+    });
+    const write =
+      kind === "hello"
+        ? machines.recordHello(m.machineId, {
+            type: "hello",
+            protocol: 2,
+            programVersion: "test",
+            os: "linux",
+            arch: "x64",
+            mode: "os",
+            roots: { workspace: "/w", skills: "/s", tmp: "/t" },
+            sessionIsolation: false,
+            policy,
+          })
+        : kind === "policy"
+          ? machines.recordPolicy(m.machineId, policy)
+          : txHost.run(() =>
+              k.app
+                .get(DevicePolicyService)
+                .settleIn({ machineId: m.machineId, opId }, { outcome: "applied", policy }),
+            );
+    const writeResult = write.then(
+      () => null,
+      (e) => e,
+    );
+    try {
+      await ready;
+      const revoke = machines.revokeMachine(m.machineId);
+      const results = await Promise.all([writeResult, revoke]);
+      expect(results[0]).toBeNull();
+      expect(new Set(pids).size).toBe(2);
+      expect(
+        (
+          await db
+            .selectFrom("device_machines")
+            .select("revoked_at")
+            .where("id", "=", m.machineId)
+            .executeTakeFirstOrThrow()
+        ).revoked_at,
+      ).not.toBeNull();
+    } finally {
+      release();
+      spy.mockRestore();
+    }
+  },
+);

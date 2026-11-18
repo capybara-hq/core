@@ -15,6 +15,7 @@ const LOST_REASONS: Readonly<Record<string, string>> = {
   sandbox_recreated: "the sandbox was recreated",
   process_gone: "its processes ended without an exit code",
   launch_abandoned: "its launch was interrupted",
+  supervision_lost: "its supervision was lost",
 };
 
 /** Why a task was lost, as the model reads it (an unknown reason as is). */

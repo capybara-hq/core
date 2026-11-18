@@ -245,6 +245,8 @@ export function ComposerBar({
   pickers: {
     agent?: PickerProps;
     device?: PickerProps;
+    /** The conversation's permission profile, after the device (design slot order). */
+    permission?: PickerProps;
     model: PickerProps;
     effort?: PickerProps;
   };

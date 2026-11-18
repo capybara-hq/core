@@ -11,6 +11,7 @@ import { type Command, parseCli, USAGE, UsageError } from "./args.js";
 import { type PasswordInput, runAdminCreate } from "./commands/admin-create.js";
 import { runAdminGrant } from "./commands/admin-grant.js";
 import { runBootstrap } from "./commands/bootstrap.js";
+import { runConfigMigratePermissions } from "./commands/config.js";
 import {
   runExtensionsApprove,
   runExtensionsInstall,
@@ -19,6 +20,7 @@ import {
   runExtensionsState,
 } from "./commands/extensions.js";
 import { runMigrate } from "./commands/migrate.js";
+import { runPermissionsCutover } from "./commands/permissions.js";
 import { runPluginsImport, runPluginsList } from "./commands/plugins.js";
 import { runSecretsRewrap } from "./commands/secrets.js";
 import { runStart } from "./commands/start.js";
@@ -145,14 +147,32 @@ export async function main(
       return runExtensionsState({ name: cmd.name, action: cmd.action }, log, env, io);
     case "plugins-list":
       return runPluginsList(log, env, io);
+    case "config-migrate-permissions":
+      return runConfigMigratePermissions({ input: cmd.input, output: cmd.output }, env, io);
     case "plugins-import":
       return runPluginsImport({ target: cmd.target, yes: cmd.yes }, log, env, io);
     case "secrets-rewrap":
       return runSecretsRewrap(log, env, io);
+    case "permissions-cutover":
+      return runPermissionsCutover(
+        {
+          action: cmd.action,
+          json: cmd.json,
+          ...(cmd.leaseWaitMs !== undefined && { leaseWaitMs: cmd.leaseWaitMs }),
+        },
+        log,
+        env,
+        io,
+      );
     case "start":
       if (envFile !== undefined) log.info("loaded env file", { path: envFile });
       return runStart(
-        { ...(cmd.roles !== undefined && { roles: cmd.roles }) },
+        {
+          ...(cmd.roles !== undefined && { roles: cmd.roles }),
+          ...(cmd.activatePermissionConfig !== undefined && {
+            activatePermissionConfig: cmd.activatePermissionConfig,
+          }),
+        },
         log,
         env,
         exitAfterShutdown,

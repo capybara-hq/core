@@ -1,6 +1,11 @@
 import { rootsOf, ToolError, type ToolSpec } from "@capybara-hq/plugin-sdk";
+import {
+  LAST_LINES_UNAVAILABLE,
+  lastLinesByRef,
+  onManagedInstance,
+} from "../../../background/managed.js";
 import { decodeTail, tailCommand } from "../../../background/session.js";
-import type { BackgroundTaskRow } from "../../../background/store.js";
+import { type BackgroundTaskRow, isManagedTask } from "../../../background/store.js";
 import type { BuiltinResult, BuiltinTool } from "../../registry.js";
 import {
   clip,
@@ -56,6 +61,23 @@ async function lastLinesOf(
   signal: AbortSignal,
 ): Promise<string | null> {
   if (task.sandboxCreatedAt === null) return null;
+  if (isManagedTask(task)) {
+    // by the exact ref only: never an exec or a file read after a stop
+    if (task.executionRef === null) return null;
+    try {
+      const r = await onManagedInstance(
+        env.ifRunning,
+        task,
+        (bg, h, ref, sig) => lastLinesByRef(bg, h, ref, sig),
+        signal,
+      );
+      if (r.kind !== "ran") return null;
+      // retained output that cannot be read is labelled, never shown as no output
+      return r.value ?? LAST_LINES_UNAVAILABLE;
+    } catch {
+      return LAST_LINES_UNAVAILABLE;
+    }
+  }
   try {
     const r = await onTaskInstance(
       env,
@@ -92,9 +114,11 @@ async function ended(
       ? "[No output: the command never started.]"
       : lines === null
         ? "[Last lines unavailable: the sandbox that ran this task is not running.]"
-        : lines === ""
-          ? "[No output.]"
-          : `Last lines:\n${lines.replace(/\n$/, "")}`;
+        : lines === LAST_LINES_UNAVAILABLE
+          ? LAST_LINES_UNAVAILABLE
+          : lines === ""
+            ? "[No output.]"
+            : `Last lines:\n${lines.replace(/\n$/, "")}`;
   return text(
     task,
     `Background task ${task.id} ("${task.description}") ${what}.\n${statusLine(task)}\n${tail}`,
@@ -140,6 +164,12 @@ export function taskStopTool(deps: SandboxToolDeps): BuiltinTool {
         const why = e instanceof Error ? e.message : String(e);
         throw new ToolError(
           `Background task ${task.id} could not be stopped (${clip(why, 300)}); it keeps running. Retry TaskStop, or check the sandbox with Bash.`,
+        );
+      }
+      if (after.status === "running" && after.launchState === "cancel-pending") {
+        return text(
+          after,
+          `Background task ${after.id} ("${after.description}") stop requested: the device recorded the cancellation but has not applied it yet; it is applied when the device can. Call TaskOutput to see when it has ended.`,
         );
       }
       if (after.status === "running") {

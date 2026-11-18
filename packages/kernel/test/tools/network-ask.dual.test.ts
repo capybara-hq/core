@@ -9,7 +9,7 @@ import { onlyBuiltins } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { enableExtensions, eventsOf, PW, waitFor } from "../helpers/runs.js";
-import { FakeMachine, HELLO } from "../local-devices/fake-machine.js";
+import { FakeMachine, HELLO } from "../local-devices/fake-machine-v3.js";
 
 /**
  * A network ask across replicas (network ask-to-allow spec §10.3, Review Focus 4): the command
@@ -130,11 +130,7 @@ describe("network ask (dual replica)", () => {
       );
       cleanups.push(() => machine.close());
       await machine.opened;
-      machine.send({
-        ...HELLO,
-        features: ["networkReport", "policyOp", "policyOpId"],
-        policy: POLICY,
-      });
+      machine.hello({ features: ["networkReport", "policyOp", "policyOpId"], policy: POLICY });
       await waitFor(
         async () =>
           (

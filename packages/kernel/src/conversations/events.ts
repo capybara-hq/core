@@ -1,3 +1,4 @@
+import { posix } from "node:path";
 import {
   CONTEXT_LIMITS,
   type ContentBlock,
@@ -10,7 +11,10 @@ import {
   MEDIA_NAME_MAX_CHARS,
   type MediaSource,
   type ModelUsage,
+  type PermissionProfile,
   type StopReason,
+  validateAllowHost,
+  validateSandboxPathShape,
 } from "@capybara-hq/plugin-sdk";
 import { z } from "zod";
 import {
@@ -20,12 +24,226 @@ import {
   ModelRef,
 } from "../agents/definition.js";
 import { ORG_ROLES } from "../orgs/roles.js";
+import { coversHost } from "../sandbox/modes.js";
 import type { ScheduleMarker } from "../schedules/types.js";
 import {
   TOOL_VIEW_DIFF_MAX_LINES,
   TOOL_VIEW_LINE_MAX_CHARS,
   TOOL_VIEW_PATH_MAX_CHARS,
 } from "../tools/view.js";
+
+/** Code-point ordering is independent of the host locale and UTF-16 surrogate ordering. */
+export function permissionCodePointCompare(a: string, b: string): number {
+  const left = Array.from(a, (c) => c.codePointAt(0) as number);
+  const right = Array.from(b, (c) => c.codePointAt(0) as number);
+  for (let i = 0; i < Math.min(left.length, right.length); i++) {
+    const difference = (left[i] as number) - (right[i] as number);
+    if (difference) return difference;
+  }
+  return left.length - right.length;
+}
+const PermissionProfileSchema = z.custom<PermissionProfile>(
+  (value) => value === "request-approval" || value === "approve-for-me" || value === "full-access",
+);
+const PermissionPath = z
+  .string()
+  .min(1)
+  .max(4096)
+  .refine(
+    (value) => validateSandboxPathShape(value).length === 0,
+    "Expected an absolute bounded device path",
+  )
+  // the authority's exact spelling: no "." segments and no trailing slash, never repaired here
+  .refine(
+    (value) => posix.normalize(value) === value && (value === "/" || !value.endsWith("/")),
+    "Expected a normalized device path",
+  );
+const PermissionHosts = z
+  .array(
+    z
+      .string()
+      .max(253)
+      .refine(
+        (value) => validateAllowHost(value).length === 0,
+        "Expected a normalized authority host",
+      ),
+  )
+  .min(1)
+  .max(100)
+  .refine(
+    (values) =>
+      values.every(
+        (value, i) => i === 0 || permissionCodePointCompare(values[i - 1] as string, value) < 0,
+      ),
+    "Hosts must be unique and sorted by Unicode code point",
+  );
+const PermissionDirectories = z
+  .array(PermissionPath)
+  .min(1)
+  .max(64)
+  .refine(
+    (values) =>
+      values.every(
+        (value, i) => i === 0 || permissionCodePointCompare(values[i - 1] as string, value) < 0,
+      ),
+    "Directories must be unique and sorted by Unicode code point",
+  );
+const PermissionRevision = z.string().min(1).max(256);
+const PermissionReason = z
+  .string()
+  .min(1)
+  .max(1000)
+  .refine((value) => value.trim().length > 0);
+const PermissionId = z.string().uuid();
+const PermissionScopeSchema = z
+  .object({
+    location: z.enum(["local", "cloud"]),
+    workingRoot: PermissionPath,
+    filesystem: z.discriminatedUnion("kind", [
+      z.object({ kind: z.literal("device") }).strict(),
+      z
+        .object({
+          kind: z.literal("scoped"),
+          readDirectories: PermissionDirectories,
+          writeDirectories: PermissionDirectories,
+        })
+        .strict(),
+    ]),
+    network: z.discriminatedUnion("kind", [
+      z.object({ kind: z.literal("none") }).strict(),
+      z.object({ kind: z.literal("environment") }).strict(),
+      z.object({ kind: z.literal("allowlist"), hosts: PermissionHosts }).strict(),
+    ]),
+    outerNetwork: z.discriminatedUnion("kind", [
+      z.object({ kind: z.literal("host-environment") }).strict(),
+      z.object({ kind: z.literal("none") }).strict(),
+      z.object({ kind: z.literal("open-public") }).strict(),
+      z.object({ kind: z.literal("allowlist"), hosts: PermissionHosts }).strict(),
+    ]),
+  })
+  .strict();
+
+/** Complete recorded facts, never a grant or a requested-but-unverified scope. */
+export const PermissionContextV1Schema = z
+  .object({
+    version: z.literal(1),
+    rootConversationId: PermissionId,
+    profileRevision: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).nullable(),
+    selectedProfile: PermissionProfileSchema.nullable(),
+    effectiveProfile: PermissionProfileSchema.nullable(),
+    execution: z.enum(["interactive", "scheduled"]),
+    inherited: z.boolean(),
+    deviceId: PermissionId.nullable(),
+    scopeRevision: PermissionRevision.nullable(),
+    authorityRevision: PermissionRevision.nullable(),
+    availability: z.discriminatedUnion("state", [
+      z.object({ state: z.literal("supported") }).strict(),
+      z.object({ state: z.enum(["unsupported", "unprobed"]), reason: PermissionReason }).strict(),
+      z
+        .object({
+          state: z.literal("unavailable"),
+          cause: z.enum(["no-device", "actor-device-access"]),
+          reason: PermissionReason,
+        })
+        .strict(),
+    ]),
+    scope: PermissionScopeSchema.nullable(),
+  })
+  .strict()
+  .superRefine((p, ctx) => {
+    const reject = (message: string) => ctx.addIssue({ code: "custom", message });
+    if ((p.profileRevision === null) !== (p.selectedProfile === null))
+      reject("Profile and revision nullability must agree");
+    if (p.availability.state === "unavailable") {
+      if (
+        p.effectiveProfile !== null ||
+        p.deviceId !== null ||
+        p.scopeRevision !== null ||
+        p.authorityRevision !== null ||
+        p.scope !== null
+      )
+        reject("Unavailable context must not expose device authority");
+      if (p.availability.cause === "actor-device-access") {
+        if (p.selectedProfile !== null || p.profileRevision !== null)
+          reject("Device access refusal must redact the owner's profile");
+        if (p.availability.reason !== "This run's actor cannot use the selected device")
+          reject("Invalid device access reason");
+      } else if (p.availability.reason !== "Choose a device to run device operations")
+        reject("Invalid no-device reason");
+    } else if (
+      p.selectedProfile === null ||
+      p.effectiveProfile === null ||
+      p.profileRevision === null ||
+      p.deviceId === null ||
+      p.scopeRevision === null ||
+      p.authorityRevision === null
+    ) {
+      reject("Accessible device context requires complete profile and authority identities");
+    }
+    if ((p.scope !== null) !== (p.availability.state === "supported"))
+      reject("Only supported context carries scope");
+    if (p.effectiveProfile !== null) {
+      if (p.execution === "scheduled" && p.effectiveProfile !== "request-approval")
+        reject("Scheduled context requires Request approval");
+      if (
+        p.execution === "interactive" &&
+        (p.selectedProfile === "full-access"
+          ? p.effectiveProfile !== "full-access" && p.effectiveProfile !== "approve-for-me"
+          : p.selectedProfile !== p.effectiveProfile)
+      )
+        reject("Invalid effective profile transition");
+    }
+    const s = p.scope;
+    if (!s) return;
+    if (p.effectiveProfile === "full-access") {
+      if (s.filesystem.kind !== "device" || s.network.kind !== "environment")
+        reject("Full access requires device filesystem and environment networking");
+    } else if (s.filesystem.kind !== "scoped" || s.network.kind === "environment")
+      reject("Restricted profiles require scoped filesystem and restricted networking");
+    if (s.filesystem.kind === "scoped") {
+      const { readDirectories, writeDirectories } = s.filesystem;
+      if (
+        !readDirectories.includes(s.workingRoot) ||
+        !writeDirectories.includes(s.workingRoot) ||
+        writeDirectories.some((p) => !readDirectories.includes(p))
+      )
+        reject("Writable roots must be readable and both must include the working root");
+      if (new Set([...readDirectories, ...writeDirectories]).size > 64)
+        reject("At most 64 combined roots are allowed");
+    }
+    if ((s.location === "local") !== (s.outerNetwork.kind === "host-environment"))
+      reject("Outer boundary must match the device location");
+    if (s.location === "cloud" && s.network.kind === "allowlist") {
+      if (s.outerNetwork.kind === "none")
+        reject("Network hosts exceed the disabled outer boundary");
+      if (s.outerNetwork.kind === "allowlist") {
+        const outer = s.outerNetwork.hosts;
+        if (s.network.hosts.some((host) => !outer.some((pattern) => coversHost(pattern, host))))
+          reject("Network hosts exceed the applied outer allowlist");
+      }
+    }
+  });
+export type PermissionContextV1 = z.infer<typeof PermissionContextV1Schema>;
+
+export const ManagedDevicePathsV1Schema = z
+  .object({
+    permissionContextVersion: z.literal(1),
+    deviceId: PermissionId,
+    roots: z
+      .object({ workspace: PermissionPath, skills: PermissionPath, tmp: PermissionPath })
+      .strict(),
+    workingRoot: PermissionPath,
+  })
+  .strict();
+export type ManagedDevicePathsV1 = z.infer<typeof ManagedDevicePathsV1Schema>;
+export const PermissionContextMetaV1Schema = z
+  .object({
+    version: z.literal(1),
+    contextSeq: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).nullable(),
+    hash: z.string().regex(/^[a-f0-9]{64}$/),
+  })
+  .strict();
+export type PermissionContextMetaV1 = z.infer<typeof PermissionContextMetaV1Schema>;
 
 /** 供应商私有数据（`ProviderOpaque`）：原样保存、只回放给同一供应商。 */
 const ProviderOpaqueSchema = z.object({
@@ -85,8 +303,40 @@ export const COMMAND_ASK_MAX_CHARS = 32 * 1024;
  * `commandHash` is the SHA-256 of the command text the approval holds in full, so an audit can
  * match a record to what ran.
  */
-const ReviewRecordSchema = z
+export const PermissionExpansionSchema = z
   .object({
+    readDirectories: z.array(z.string().max(4096)).max(64),
+    writeDirectories: z.array(z.string().max(4096)).max(64),
+    hosts: z.array(z.string().max(253)).max(100),
+  })
+  .strict();
+export const PermissionCallBindingSchema = z
+  .object({
+    orgId: z.string(),
+    rootConversationId: z.string(),
+    conversationId: z.string(),
+    deviceId: z.string(),
+    accountId: z.string(),
+    runId: z.string(),
+    callId: z.string(),
+    toolKey: z.string(),
+    specHash: z.string(),
+    callInputHash: z.string(),
+    resolvedInputHash: z.string(),
+    profile: z.enum(["request-approval", "approve-for-me", "full-access"]),
+    profileRevision: z.number().int().nonnegative(),
+    scopeRevision: z.string(),
+    authorityRevision: z.string(),
+  })
+  .strict();
+export const ReviewRecordSchema = z
+  .object({
+    profile: z.enum(["request-approval", "approve-for-me", "full-access"]).optional(),
+    profileRevision: z.number().int().nonnegative().optional(),
+    scopeRevision: z.string().optional(),
+    decisionSource: z
+      .enum(["scope", "human", "review-model", "full-access", "task-grant"])
+      .optional(),
     decision: z.enum(["allow", "deny"]),
     by: z.enum(["rule", "classifier", "person"]),
     rule: z.string().nullable(),
@@ -102,6 +352,9 @@ const ReviewRecordSchema = z
 /** The display-only `approval_requested.command` facts of a `command` ask (auto mode spec §5.4). */
 export const CommandAskSchema = z
   .object({
+    permissionScope: PermissionExpansionSchema.optional(),
+    targetPath: z.string().max(4096).optional(),
+    candidateHash: z.string().optional(),
     /** A shell command or a file write. */
     kind: z.enum(["command", "write"]),
     /** The command text, or the tool key of the write. */
@@ -417,6 +670,32 @@ export const PluginContextSchema = z.object({
  * 读出时按写入时的形状原样返回。
  */
 export const ConversationEventSchema = z.discriminatedUnion("type", [
+  ev("permission_context", PermissionContextV1Schema),
+  ev(
+    "permission_reviewed",
+    z.object({
+      binding: PermissionCallBindingSchema,
+      permissionScope: PermissionExpansionSchema,
+      targetPath: z.string().max(4096).optional(),
+      scopeKind: z.literal("directories-and-hosts"),
+      candidateHash: z.string(),
+      outcome: z.enum(["allow", "ask", "deny"]),
+      reason: z.string(),
+      decisionSource: z.literal("review-model"),
+    }),
+  ),
+  ev(
+    "permission_profile_changed",
+    z.object({
+      oldProfile: z.enum(["request-approval", "approve-for-me", "full-access"]),
+      newProfile: z.enum(["request-approval", "approve-for-me", "full-access"]),
+      actorAccountId: z.string().nullable(),
+      reason: z.enum(["user", "authority-changed"]).optional(),
+      deviceId: z.string().nullable(),
+      scopeRevision: z.string().nullable(),
+      revision: z.number().int().nonnegative(),
+    }),
+  ),
   ev(
     "user_message",
     z.object({
@@ -576,6 +855,7 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
           toSeq: seqNo,
           summarySeq: seqNo.nullable(),
           systemHash: z.string(),
+          permissionContext: PermissionContextMetaV1Schema.optional(),
           reminderSeqs: z.array(seqNo),
           /**
            * The request's output cap: `min(model cap, maxOutputTokens knob ??
@@ -756,32 +1036,36 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
    */
   ev(
     "device_paths",
-    z.object({
-      roots: z.object({
-        workspace: z.string().min(1).max(4096),
-        skills: z.string().min(1).max(4096),
-        tmp: z.string().min(1).max(4096),
+    z.union([
+      ManagedDevicePathsV1Schema,
+      z.object({
+        permissionContextVersion: z.never().optional(),
+        roots: z.object({
+          workspace: z.string().min(1).max(4096),
+          skills: z.string().min(1).max(4096),
+          tmp: z.string().min(1).max(4096),
+        }),
+        tier: z.enum(["strict", "dev", "open"]).optional(),
+        isolation: z.enum(["sandbox", "none"]).optional(),
+        /** The current network (`none` on events recorded before auto mode). */
+        network: z
+          .union([
+            z.literal("none"),
+            z.object({
+              kind: z.enum(["open-public", "allowlist"]),
+              hosts: z.array(z.string()),
+            }),
+          ])
+          .optional(),
+        localhost: z.enum(["on", "off-proxy-detected", "off"]).optional(),
+        unixSockets: z.enum(["roots", "all-masked", "off"]).optional(),
+        unattended: z.literal(true).optional(),
+        /** Auto mode: the mode and its ceiling, and whether the device is a connected machine. */
+        mode: z.enum(["auto", "sandbox"]).optional(),
+        allowedMode: z.enum(["auto", "sandbox"]).optional(),
+        local: z.boolean().optional(),
       }),
-      tier: z.enum(["strict", "dev", "open"]).optional(),
-      isolation: z.enum(["sandbox", "none"]).optional(),
-      /** The current network (`none` on events recorded before auto mode). */
-      network: z
-        .union([
-          z.literal("none"),
-          z.object({
-            kind: z.enum(["open-public", "allowlist"]),
-            hosts: z.array(z.string()),
-          }),
-        ])
-        .optional(),
-      localhost: z.enum(["on", "off-proxy-detected", "off"]).optional(),
-      unixSockets: z.enum(["roots", "all-masked", "off"]).optional(),
-      unattended: z.literal(true).optional(),
-      /** Auto mode: the mode and its ceiling, and whether the device is a connected machine. */
-      mode: z.enum(["auto", "sandbox"]).optional(),
-      allowedMode: z.enum(["auto", "sandbox"]).optional(),
-      local: z.boolean().optional(),
-    }),
+    ]),
   ),
   /**
    * The project a bound conversation's run read at its start (project root spec §4.4): the
@@ -861,7 +1145,15 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
   /** 工具调用开始执行之前写入（续跑时「有开始无结果」的调用记为结果未知，不再执行）。 */
   ev(
     "tool_call_started",
-    z.object({ step: count, callId: z.string(), toolKey: z.string(), specHash: z.string() }),
+    z.object({
+      step: count,
+      callId: z.string(),
+      toolKey: z.string(),
+      specHash: z.string(),
+      permissionInput: z
+        .object({ callInputHash: z.string(), resolvedInputHash: z.string() })
+        .optional(),
+    }),
   ),
   /**
    * 工具调用的结果（模型看到的文本）。构建请求时还原为紧随该步 assistant 消息的 user 消息中的
@@ -971,7 +1263,8 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
     z.object({
       approvalId: z.string(),
       callId: z.string(),
-      decision: z.enum(["approved", "denied", "expired", "cancelled", "skipped"]),
+      decision: z.enum(["approved", "denied", "expired", "cancelled", "skipped", "superseded"]),
+      revision: z.number().int().nonnegative().optional(),
       scope: z.enum(["once", "session", "always"]).optional(),
       byAccountId: z.string().nullable(),
       /**

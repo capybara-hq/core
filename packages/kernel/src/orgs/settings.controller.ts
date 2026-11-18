@@ -16,6 +16,7 @@ import {
   OrgSettingsPatchSchema,
   OrgSettingsService,
   type OrgSettingsView,
+  orgSettingsView,
 } from "./settings.service.js";
 
 class OrgSettingsPatchBody extends createZodDto(OrgSettingsPatchSchema, "OrgSettingsPatch") {}
@@ -26,7 +27,10 @@ class OrgSettingsPatchBody extends createZodDto(OrgSettingsPatchSchema, "OrgSett
  * 以及只读的 `sandboxLimits`（组织实际生效的沙箱 cpu / 内存与来源，超级管理员在部署设置里覆盖，C19）。
  */
 type SettingsResponse = {
-  /** `scheduledTasks.forbiddenToolsUnreadable: true` when the stored list cannot be read. */
+  /**
+   * `scheduledTasks.forbiddenToolsUnreadable: true` when the stored list cannot be read; `autoMode`
+   * mirrors `fullAccess`.
+   */
   settings: OrgSettingsView;
   deployment: OrgSettingsDeployment;
   /** The org's effective sandbox-mode network (org egress ceiling spec §D4). */
@@ -43,7 +47,7 @@ export class OrgSettingsController {
   async get(@CurrentOrg() org: OrgContext): Promise<SettingsResponse> {
     const settings = await this.settings.get(org.orgId);
     return {
-      settings,
+      settings: orgSettingsView(settings),
       deployment: await this.settings.deployment(),
       effectiveNetwork: this.settings.effectiveNetwork(settings),
       sandboxLimits: await this.settings.sandboxLimits(org.orgId),
@@ -68,7 +72,7 @@ export class OrgSettingsController {
       { onlyNarrows: patTokenId(p) !== undefined },
     );
     return {
-      settings,
+      settings: orgSettingsView(settings),
       deployment: await this.settings.deployment(),
       effectiveNetwork: this.settings.effectiveNetwork(settings),
       sandboxLimits: await this.settings.sandboxLimits(org.orgId),

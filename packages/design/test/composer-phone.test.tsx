@@ -129,6 +129,167 @@ it("shows a project warning in phone options and closes the sheet before inspect
 });
 
 describe("the composer's options button (phones, §6.16.2)", () => {
+  function PermissionHarness({ readOnlyDisabled = false }: { readOnlyDisabled?: boolean }) {
+    const [selected, setSelected] = useState("Approve for me");
+    return box({
+      pickers: {
+        device: devicePicker(),
+        permission: {
+          label: "Permissions",
+          value: selected,
+          groups: [
+            {
+              items: ["Read only", "Approve for me", "Full access"].map((label) => ({
+                id: label,
+                label,
+                checked: selected === label,
+                ...(readOnlyDisabled && label === "Read only"
+                  ? { disabled: true, tag: "This device cannot enforce read-only access" }
+                  : {}),
+              })),
+            },
+          ],
+          onPick: setSelected,
+        },
+        model: modelPicker(),
+        effort: effortPicker(),
+      },
+    });
+  }
+
+  it.each([
+    ["zh", "权限"],
+    ["en", "Permissions"],
+  ] as const)(
+    "offers a localized permission group in %s and updates the selected profile without closing",
+    async (locale, title) => {
+      const user = userEvent.setup();
+      wrap(<PermissionHarness />, locale);
+      const trigger = document.querySelector('[data-part="composer-options"]') as HTMLElement;
+      expect(trigger.getAttribute("aria-label")).toContain("Approve for me");
+      await user.click(trigger);
+      const sheet = screen.getByRole("dialog");
+      expect(
+        [...sheet.querySelectorAll('[data-part="options-group"]')].map((group) =>
+          group.getAttribute("data-group"),
+        ),
+      ).toEqual(["device", "permission", "model", "effort"]);
+      const permissions = within(sheet).getByRole("radiogroup", { name: title });
+      for (const label of ["Read only", "Full access", "Approve for me"]) {
+        const radios = within(permissions).getAllByRole("radio");
+        expect(radios.map((radio) => radio.closest("label")?.className)).toEqual([
+          "cb-options-item",
+          "cb-options-item",
+          "cb-options-item",
+        ]);
+        expect(permissions.querySelector('[data-tone], [style], [data-part="badge"]')).toBeNull();
+        await user.click(within(permissions).getByRole("radio", { name: label }));
+        const chosen = within(permissions).getByRole("radio", { name: label }) as HTMLInputElement;
+        expect(chosen.checked).toBe(true);
+        expect(chosen.closest("label")?.querySelector('[data-icon="check"]')).not.toBeNull();
+        expect(permissions.querySelectorAll('[data-icon="check"]')).toHaveLength(1);
+        expect(screen.getByRole("dialog")).toBe(sheet);
+        expect(trigger.getAttribute("aria-label")).toContain(label);
+      }
+      expect(findNestedBoxes(document.body).map(describeNestedBox)).toEqual([]);
+    },
+  );
+
+  it("keeps unsupported permissions disabled with the capability reason visible", async () => {
+    const user = userEvent.setup();
+    wrap(<PermissionHarness readOnlyDisabled />);
+    await user.click(screen.getByRole("button", { name: /^会话选项/ }));
+    const permissions = screen.getByRole("radiogroup", { name: "权限" });
+    const readOnly = within(permissions).getByRole("radio", {
+      name: /^Read only/,
+    }) as HTMLInputElement;
+    expect(
+      within(permissions).getByText("This device cannot enforce read-only access"),
+    ).toBeTruthy();
+    expect(readOnly.disabled).toBe(true);
+    await user.click(readOnly);
+    expect(
+      (within(permissions).getByRole("radio", { name: "Approve for me" }) as HTMLInputElement)
+        .checked,
+    ).toBe(true);
+  });
+
+  it("mobile option groups retain order and checked state with icons and descriptions", async () => {
+    const user = userEvent.setup();
+    function Described() {
+      const [picked, setPicked] = useState("approve");
+      const rows = [
+        {
+          id: "request",
+          label: "Request approval",
+          icon: "hand" as const,
+          description: "Asks you.",
+        },
+        {
+          id: "approve",
+          label: "Approve for me",
+          icon: "shield-check" as const,
+          description: "Review.",
+        },
+        {
+          id: "full",
+          label: "Full access",
+          icon: "lock-open" as const,
+          description: "Device access.",
+        },
+      ];
+      return box({
+        pickers: {
+          device: devicePicker(),
+          permission: {
+            label: "Permissions",
+            value: rows.find((r) => r.id === picked)?.label ?? "",
+            groups: [
+              {
+                items: rows.map((r) => ({
+                  ...r,
+                  checked: r.id === picked,
+                  ...(r.id === "full" ? { disabled: true, tag: "Choose a device first" } : {}),
+                })),
+              },
+            ],
+            action: { label: "Set up the review model", onSelect: onAction },
+            onPick: setPicked,
+          },
+          model: modelPicker(),
+        },
+      });
+    }
+    const onAction = vi.fn();
+    wrap(<Described />, "en");
+    await user.click(document.querySelector('[data-part="composer-options"]') as HTMLElement);
+    const group = screen.getByRole("radiogroup", { name: "Permissions" });
+    const radios = within(group).getAllByRole("radio") as HTMLInputElement[];
+    expect(radios.map((r) => r.value)).toEqual(["request", "approve", "full"]);
+    expect(within(group).getByRole("radio", { name: "Request approval" })).toBe(radios[0]);
+    expect(within(group).getByRole("radio", { name: "Full access Choose a device first" })).toBe(
+      radios[2],
+    );
+    expect(
+      radios.map(
+        (r) => document.getElementById(r.getAttribute("aria-describedby") ?? "")?.textContent,
+      ),
+    ).toEqual(["Asks you.", "Review.", "Device access."]);
+    expect(radios[2]?.disabled).toBe(true);
+    for (const [i, icon] of ["hand", "shield-check", "lock-open"].entries())
+      expect(radios[i]?.closest("label")?.querySelector(`[data-icon="${icon}"]`)).not.toBeNull();
+    await user.click(radios[0] as HTMLInputElement);
+    expect(
+      (within(group).getByRole("radio", { name: "Request approval" }) as HTMLInputElement).checked,
+    ).toBe(true);
+    expect(group.querySelectorAll('[data-icon="check"]')).toHaveLength(1);
+    const sheet = screen.getByRole("dialog");
+    await user.click(within(sheet).getByRole("button", { name: "Set up the review model" }));
+    expect(onAction).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(findNestedBoxes(document.body).map(describeNestedBox)).toEqual([]);
+  });
+
   it("shows the current values, shortened, and the whole values in its name", () => {
     wrap(box());
     const button = document.querySelector('[data-part="composer-options"]') as HTMLElement;

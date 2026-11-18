@@ -14,6 +14,7 @@ import {
   FakeEventSource,
   LIMITS,
   MODELS,
+  permissionPreview,
   renderChatRoute,
   runStarted,
   userMsg,
@@ -71,6 +72,8 @@ const newRoutes = (projects: unknown = projectsOf()) => ({
   [`GET ${ORG}/models`]: () => json(200, MODELS),
   [`GET ${ORG}/devices`]: () => json(200, DEVICES),
   [`GET ${ORG}/devices/e1/projects`]: () => json(200, projects),
+  [`GET ${ORG}/conversation-permission-preview?deviceId=e1`]: () =>
+    json(200, permissionPreview({ deviceId: "e1" })),
   [`GET ${ORG}/conversations/groups`]: () => json(200, GROUPS),
 });
 
@@ -110,7 +113,7 @@ describe("binding a new conversation to a project (the device picker)", () => {
 
   it("a picked project is sent with the device and named on the picker", async () => {
     resetNavigation("/");
-    const calls = stubApi({ [`POST ${ORG}/conversations`]: createdAt });
+    const calls = stubApi({ [`POST ${ORG}/conversations/first-message`]: createdAt });
     await renderRouteWithCache("/", newRoutes());
     const user = userEvent.setup();
     await user.click(devicePicker());
@@ -126,7 +129,7 @@ describe("binding a new conversation to a project (the device picker)", () => {
 
   it("自由模式 (the default) sends no project", async () => {
     resetNavigation("/");
-    const calls = stubApi({ [`POST ${ORG}/conversations`]: createdAt });
+    const calls = stubApi({ [`POST ${ORG}/conversations/first-message`]: createdAt });
     await renderRouteWithCache("/", newRoutes());
     const user = userEvent.setup();
     await user.type(input(), "go{Enter}");
@@ -139,7 +142,7 @@ describe("binding a new conversation to a project (the device picker)", () => {
     const calls = stubApi({
       [`GET ${ORG}/devices/e2/projects`]: () =>
         json(200, projectsOf({ projects: [] as unknown[] })),
-      [`POST ${ORG}/conversations`]: createdAt,
+      [`POST ${ORG}/conversations/first-message`]: createdAt,
     });
     await renderRouteWithCache("/", newRoutes());
     const user = userEvent.setup();
@@ -163,7 +166,7 @@ describe("binding a new conversation to a project (the device picker)", () => {
     resetNavigation("/");
     const calls = stubApi({
       [`GET ${ORG}/devices/e2/projects`]: () => json(200, projectsOf()),
-      [`POST ${ORG}/conversations`]: createdAt,
+      [`POST ${ORG}/conversations/first-message`]: createdAt,
     });
     await renderRouteWithCache("/", newRoutes());
     const user = userEvent.setup();

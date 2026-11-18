@@ -455,6 +455,7 @@ describe("组织设置与 ToolSearch 启用条件", () => {
           reserveTokens: 8000,
           maxOutputTokens: 20000,
         },
+        fullAccess: { permission: "allowed", source: "default" },
         autoMode: { mode: "allowed", source: "default" },
         cloudNetwork: {
           allowHosts: baseCfg.sandbox.limits.allowHosts,
@@ -619,7 +620,7 @@ describe("组织设置与 ToolSearch 启用条件", () => {
     // a stored value this version cannot read narrows to off, never widens
     await db
       .updateTable("orgs")
-      .set({ settings: JSON.stringify({ autoMode: "everything" }) })
+      .set({ settings: JSON.stringify({ fullAccess: "everything" }) })
       .where("id", "=", orgId)
       .execute();
     expect((await req({ method: "GET", url: settingsUrl() })).json().settings.autoMode).toBe("off");

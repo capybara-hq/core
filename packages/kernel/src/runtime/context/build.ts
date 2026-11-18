@@ -15,11 +15,13 @@ import {
   type ConversationEvent,
   type EventPayload,
   isAbsorbable,
+  type PermissionContextMetaV1,
 } from "../../conversations/events.js";
 import { catalogText, isAlwaysLoaded } from "../../tools/builtins/tool-search.js";
 import type { ResolvedTool } from "../../tools/registry.js";
 import { renderSubagentDelivery } from "../subagents/render.js";
 import { devicePathsAt, devicePathsText } from "./device-paths.js";
+import { permissionContextHistory } from "./permission-profile.js";
 import { pluginContextsAfterSummary, pluginContextText } from "./plugin-context.js";
 import { latestProjectRoot, projectRootText } from "./project-root.js";
 import {
@@ -64,6 +66,8 @@ export interface ModelCallMeta {
   summarySeq: number | null;
   /** system 文本的 sha256（hex）。 */
   systemHash: string;
+  /** Recorded v1 history contributions only; absent for historical logs. */
+  permissionContext?: PermissionContextMetaV1;
   /** 被放进请求的 `reminder` 事件 seq。 */
   reminderSeqs: number[];
   /** 构建时的 `absorbedUpToSeq`（见 {@link BuildModelRequestInput}）；未提供则没有该字段。 */
@@ -723,6 +727,7 @@ export function buildModelRequest(input: BuildModelRequestInput): {
   const summary = latestSummary(events);
   const after = summary ? summary.payload.coversUpToSeq : Number.NEGATIVE_INFINITY;
 
+  const permissionHistory = permissionContextHistory(events, summary?.payload.coversUpToSeq);
   const messages: ModelMessage[] = [];
   const reminderSeqs: number[] = [];
   const absorbed = input.absorbedUpToSeq;
@@ -915,8 +920,11 @@ export function buildModelRequest(input: BuildModelRequestInput): {
     // environments spec §13.1: the instance's directories told before the boundary follow the
     // summary again (the model keeps using the real paths)
     const paths = devicePathsAt(events, after);
-    if (paths) {
+    if (paths && paths.payload.permissionContextVersion !== 1) {
       messages.push({ role: "system", content: devicePathsText(paths.payload) });
+    }
+    for (const contribution of permissionHistory.restored) {
+      messages.push({ role: "system", content: contribution.text });
     }
     // memory spec §6.1: each plugin's context in effect at the boundary follows the summary again
     for (const text of pluginContextsAfterSummary(events, after)) {
@@ -997,9 +1005,14 @@ export function buildModelRequest(input: BuildModelRequestInput): {
         break;
       // the instance's directories (environments spec §13.1): logged during a step's tool call,
       // so rendered after that step's tool results
-      case "device_paths":
-        messages.push({ role: "system", content: devicePathsText(e.payload) });
+      case "permission_context":
+      case "device_paths": {
+        const contribution = permissionHistory.ordered.get(e.seq);
+        if (contribution) messages.push({ role: "system", content: contribution.text });
+        else if (e.type === "device_paths")
+          messages.push({ role: "system", content: devicePathsText(e.payload) });
         break;
+      }
       // a context@1 provider's text (memory spec §6.1); empty text (nothing any more) renders nothing
       case "plugin_context": {
         const text = pluginContextText(e.payload);
@@ -1068,6 +1081,10 @@ export function buildModelRequest(input: BuildModelRequestInput): {
       case "run_finished":
       case "run_aborted":
       case "run_failed":
+      // the permission records are not model-visible: the profile reaches the model only through
+      // its recorded permission_context, the review only through the tool result
+      case "permission_profile_changed":
+      case "permission_reviewed":
         break;
       default: {
         const unrendered: never = e;
@@ -1133,6 +1150,7 @@ export function buildModelRequest(input: BuildModelRequestInput): {
     toSeq: last?.seq ?? 0,
     summarySeq: summary?.seq ?? null,
     systemHash: hashSystem(system),
+    ...(permissionHistory.meta !== undefined && { permissionContext: permissionHistory.meta }),
     reminderSeqs,
     ...(absorbed !== undefined && { absorbedUpToSeq: absorbed }),
     params: { ...request.params },

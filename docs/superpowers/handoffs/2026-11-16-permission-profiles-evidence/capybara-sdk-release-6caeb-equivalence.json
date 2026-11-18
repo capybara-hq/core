@@ -1,0 +1,11 @@
+{
+  "oldHead": "ea005ea9dd596f9ad9b2e09014dc1531376ea5f1",
+  "newHead": "6caebc1b70718f87b222b4054ec37eee73333bca",
+  "newBase": "62d1deea7c4406539fb8aaaaa2fcb7a8483a8227",
+  "metadataDiffByteIdentical": true,
+  "metadataDiffSha256": "1cdf345a6ef0964753bf197e01a2f0f3adb40c54e7d6c46c52f485c4f8f9fc83",
+  "sourceDelta": [
+    "apps/web/e2e/device-connect.spec.ts"
+  ],
+  "artifactEvidence": "/tmp/capybara-sdk-release-ea005-artifact-report.md"
+}

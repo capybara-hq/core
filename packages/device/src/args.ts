@@ -1,5 +1,5 @@
 import { type ParseArgsOptionsConfig, parseArgs } from "node:util";
-import type { SandboxMode } from "./state.js";
+import type { RestrictedProjectReach, SandboxMode } from "./state.js";
 
 export type DeviceMode = "os" | "docker";
 
@@ -31,6 +31,15 @@ export type Command =
       /** `--yes`: confirms `mode auto` without asking. */
       yes?: true;
     }
+  | { command: "ceiling"; action: "show" }
+  | {
+      command: "ceiling";
+      action: "set";
+      fullAccess: boolean;
+      projectReach: RestrictedProjectReach;
+      /** `--yes`: confirms a widening without asking. */
+      yes?: true;
+    }
   | {
       command: "service";
       action: "install" | "uninstall" | "start" | "stop" | "restart" | "status";
@@ -51,6 +60,9 @@ export const USAGE = `Usage:
                                   Show or choose how commands run: auto (as you on this
                                   machine, every command reviewed) or sandbox (applies at
                                   the next command; auto needs --yes or a y at the prompt)
+  capybara-device ceiling show    Show this machine's owner ceiling (Full access, project reach)
+  capybara-device ceiling set --full-access allow|deny --project-reach workspace|os-user [--yes]
+                                  Set the owner ceiling; widening needs --yes or a y at the prompt
   capybara-device policy [show]   Show the local policy
   capybara-device policy set <key> <value>
                                   Replace one field (cpu, memoryMb, allowCredentials)
@@ -167,6 +179,35 @@ export function parseCommandLine(argv: string[]): Command {
         command: "mode",
         ...(which !== undefined && { mode: which }),
         ...(yes && which !== undefined && { yes: true as const }),
+      };
+    }
+    case "ceiling": {
+      const { values, positionals } = parse(rest, {
+        "full-access": { type: "string" },
+        "project-reach": { type: "string" },
+        yes: { type: "boolean", short: "y" },
+      });
+      const [action, ...extra] = positionals;
+      const usage =
+        "usage: ceiling show | ceiling set --full-access allow|deny --project-reach workspace|os-user [--yes]";
+      if (extra.length > 0) throw new UsageError(usage);
+      if (action === "show" || action === undefined) {
+        if (values["full-access"] !== undefined || values["project-reach"] !== undefined)
+          throw new UsageError(usage);
+        return { command: "ceiling", action: "show" };
+      }
+      if (action !== "set") throw new UsageError(usage);
+      const full = values["full-access"];
+      const reach = values["project-reach"];
+      // both fields: one explicit atomic target
+      if (full !== "allow" && full !== "deny") throw new UsageError(usage);
+      if (reach !== "workspace" && reach !== "os-user") throw new UsageError(usage);
+      return {
+        command: "ceiling",
+        action: "set",
+        fullAccess: full === "allow",
+        projectReach: reach,
+        ...(values.yes === true && { yes: true as const }),
       };
     }
     case "service": {

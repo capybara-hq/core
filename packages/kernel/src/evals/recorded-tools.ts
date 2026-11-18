@@ -1,7 +1,9 @@
 import type { AppendEvent, EventLog } from "../conversations/event-log.js";
+import { type ReviewRecord, ReviewRecordSchema } from "../conversations/events.js";
+import { ApiError } from "../errors.js";
 import {
   type DevicePathsPayload,
-  devicePathsChange,
+  devicePathsChangeFromPayload,
   devicePathsLevel,
 } from "../runtime/context/device-paths.js";
 import { assistantIdemKey } from "../runtime/model-call.js";
@@ -36,9 +38,17 @@ export interface RecordedCall {
    * the original run had logged by this call's step (environments spec §13.1, ruling R22): set on
    * every recorded call from the step where an event was logged onward. A replay that matches the
    * call writes the event when the eval conversation's latest one differs, so a candidate whose
-   * first sandbox call lands in another step still gets the line, once.
+   * first sandbox call lands in another step still gets the line, once. A managed v1 payload
+   * (`permissionContextVersion: 1`) is kept whole (permission context replay spec B4); older ones
+   * keep their roots-and-level shape and change semantics.
    */
   devicePaths?: DevicePathsPayload;
+  /**
+   * The original result's command review record, copied exactly (spec B4): a matched replay result
+   * carries it verbatim, so a recorded allow, deny or ask stays that decision; absent when the
+   * original had none. Never part of matching, the content or any request.
+   */
+  review?: ReviewRecord;
 }
 
 /** 规范化 JSON：对象键递归按码点排序，数组保持顺序；`undefined` 按 JSON 规则省略。 */
@@ -87,13 +97,16 @@ export function recordedCalls(s: CaseSnapshot): RecordedCall[] {
       isError: boolean;
       loadedTools?: string[];
       contentTypes?: string[];
+      review?: unknown;
     }>
   >();
+  const resultSeq = new Map<string, number>();
   const started = new Map<string, string>();
   for (const e of own) {
     if (e.type === "tool_result") {
       const p = e.payload as Payload<{ callId: string; content: string; isError: boolean }>;
       results.set(p.callId, p);
+      resultSeq.set(p.callId, e.seq);
     } else if (e.type === "tool_call_started") {
       const p = e.payload as { callId: string; specHash: string };
       if (!started.has(p.callId)) started.set(p.callId, p.specHash);
@@ -111,7 +124,10 @@ export function recordedCalls(s: CaseSnapshot): RecordedCall[] {
       const e = own[next] as { seq: number; type: string; payload: unknown };
       if (e.type === "device_paths" && e.seq > a) {
         const p = e.payload as DevicePathsPayload;
-        current = { roots: p.roots, ...devicePathsLevel(p) };
+        current =
+          p.permissionContextVersion === 1
+            ? structuredClone(p)
+            : { roots: p.roots, ...devicePathsLevel(p) };
       }
     }
     if (current !== undefined) pathsOf.set(a, current);
@@ -135,10 +151,28 @@ export function recordedCalls(s: CaseSnapshot): RecordedCall[] {
         ...(r.contentTypes !== undefined && { contentTypes: r.contentTypes }),
         specHash: started.get(call.id) ?? "",
         ...(paths !== undefined && { devicePaths: paths }),
+        ...(r.review !== undefined && {
+          review: recordedReview(r.review, resultSeq.get(call.id) ?? 0),
+        }),
       });
     }
   }
   return out;
+}
+
+/**
+ * A recorded result's review, validated by the schema the log writes it with and copied, never
+ * defaulted or repaired: an invalid one makes the snapshot unreplayable (`eval.snapshot_invalid`).
+ */
+function recordedReview(review: unknown, seq: number): ReviewRecord {
+  const parsed = ReviewRecordSchema.safeParse(review);
+  if (!parsed.success) {
+    throw new ApiError(
+      "eval.snapshot_invalid",
+      `Recorded tool_result at seq ${seq} has an invalid review record`,
+    );
+  }
+  return structuredClone(review as ReviewRecord);
 }
 
 /** 与真实管线相同的幂等键（同一调用重入时不重复写）。 */
@@ -198,15 +232,15 @@ export class RecordedToolPipeline implements Pick<ToolPipeline, "runStep"> {
       if (!rec) this.misses++;
       // the original run had told the model the instance's directories by this call: so does the
       // replay, when the eval conversation's latest record differs (as the sandbox tools write it)
+      // (a managed v1 payload whole; older ones by their old roots-and-level comparison)
       const paths = rec?.devicePaths;
       const change =
         paths === undefined
           ? null
-          : devicePathsChange(
+          : devicePathsChangeFromPayload(
               await eventLog.latestOfType(ctx.conversationId, "device_paths"),
-              paths.roots,
+              paths,
               ctx.runId,
-              devicePathsLevel(paths),
             );
       await eventLog.append(ctx.conversationId, [
         ...(change ? [change] : []),
@@ -228,6 +262,8 @@ export class RecordedToolPipeline implements Pick<ToolPipeline, "runStep"> {
                 isError: rec.isError,
                 ...(rec.loadedTools !== undefined && { loadedTools: rec.loadedTools }),
                 ...(rec.contentTypes !== undefined && { contentTypes: rec.contentTypes }),
+                // the recorded decision, verbatim: nothing is reviewed or admitted again
+                ...(rec.review !== undefined && { review: structuredClone(rec.review) }),
               }
             : { content: REPLAY_NO_RECORDING, isError: true },
         ),

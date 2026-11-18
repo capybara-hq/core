@@ -103,6 +103,8 @@ export const AUDIT_ACTION_KEYS: Readonly<Record<string, string>> = {
   "device.project_added": "deviceProjectAdded",
   "device.project_removed": "deviceProjectRemoved",
   "device.renamed": "deviceRenamed",
+  "device.owner_ceiling_changed": "deviceOwnerCeilingChanged",
+  "conversation.permission_profile_changed": "conversationPermissionProfileChanged",
   "eval.case_added": "evalCaseAdded",
   "eval.case_removed": "evalCaseRemoved",
   "eval.result_labeled": "evalResultLabeled",

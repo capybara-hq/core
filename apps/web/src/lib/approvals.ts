@@ -1,4 +1,5 @@
 import { apiFetch } from "./api";
+import type { PermissionScope } from "./conversations";
 
 /**
  * 内核审批 API 的类型（`packages/kernel/src/tools/approvals.controller.ts` / `approvals.service.ts`；
@@ -12,7 +13,8 @@ export type ApprovalStatus =
   | "denied"
   | "expired"
   | "cancelled"
-  | "skipped";
+  | "skipped"
+  | "superseded";
 export type ApprovalScope = "once" | "session" | "always";
 
 export const APPROVAL_SCOPES = ["once", "session", "always"] as const satisfies ApprovalScope[];
@@ -46,6 +48,11 @@ export interface NetworkApprovalDetail {
  * timeline event keeps only a clipped copy).
  */
 export interface CommandAskDetail {
+  /** The exact reach this ask grants (absent on older asks). */
+  permissionScope?: PermissionScope;
+  /** The file the call targets, informational only. */
+  targetPath?: string;
+  candidateHash?: string;
   deviceId: string;
   deviceName: string;
   mode: "auto" | "sandbox";
@@ -86,6 +93,9 @@ export interface Approval {
   requestedFor: string | null;
   approverRole: string | null;
   status: ApprovalStatus;
+  /** A superseded ask: the root permission revision that replaced it, and why. */
+  supersededRevision?: number | null;
+  supersededReason?: string | null;
   scope: ApprovalScope | null;
   decidedBy: string | null;
   decidedAt: string | null;

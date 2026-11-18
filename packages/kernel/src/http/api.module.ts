@@ -53,6 +53,7 @@ import { ClientDeliveryController } from "../client/client-delivery.controller.j
 import { AttachmentsController } from "../conversations/attachments.controller.js";
 import { ConversationsController } from "../conversations/conversations.controller.js";
 import { ConversationsModule } from "../conversations/conversations.module.js";
+import { PermissionProfilesController } from "../conversations/permission-profiles.controller.js";
 import { DevicesController } from "../devices/devices.controller.js";
 import { DevicesModule } from "../devices/devices.module.js";
 import { EvalsModule } from "../evals/evals.module.js";
@@ -153,6 +154,7 @@ const CONTROLLERS: Type[] = [
   ModelEnablementController,
   ReadinessController,
   ConversationsController,
+  PermissionProfilesController,
   BackgroundController,
   DevicesController,
   SchedulesController,

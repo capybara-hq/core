@@ -12,6 +12,30 @@ export * from "./context.js";
 export * from "./ctx.js";
 export * from "./define-extension.js";
 export * from "./device-protocol.js";
+// Development staging: removed with the coordinated device protocol v3 activation.
+export {
+  type BackgroundReadOutputRequestV3,
+  type BackgroundReadOutputResultV3,
+  type BindInstanceRequestV3,
+  type BindInstanceResultV3,
+  type DeviceFrameV3,
+  type DeviceHelloV3,
+  type DeviceOperationV3,
+  type DeviceOwnerCeilingNarrowingV3,
+  type DeviceOwnerCeilingV3,
+  type DevicePolicyArgsV3,
+  type DevicePolicyChangedV3,
+  type DevicePolicyResultV3,
+  type DevicePolicyStatusV3,
+  type DeviceResponseV3,
+  type DeviceRuntimeIdentityV3,
+  type KernelReadyV3,
+  type KernelRequestV3,
+  parseDeviceFrameV3,
+  parseOperationResultV3,
+  parseOwnerCeilingReportV3,
+  STAGED_DEVICE_PROTOCOL_VERSION,
+} from "./device-protocol-v3.js";
 export * from "./directory.js";
 export * from "./extension-point.js";
 export * from "./file-preview.js";
@@ -30,6 +54,15 @@ export * from "./plugin-package.js";
 export * from "./sandbox.js";
 export * from "./sandbox-operation.js";
 export { SANDBOX_RUNTIME_SOURCE } from "./sandbox-runtime-source.js";
+export {
+  isSandboxMoveDenied,
+  isSandboxWriteDenied,
+  SANDBOX_GIT_ALLOWED_DIRECTORIES,
+  SANDBOX_GIT_ALLOWED_FILES,
+  SANDBOX_GIT_DENIED_INTERNALS,
+  SANDBOX_MANDATORY_WRITE_DENIES,
+  SANDBOX_PROTECTED_PATH_NAMES,
+} from "./sandbox-write-denies.js";
 export * from "./secret.js";
 export * from "./setup-check.js";
 export * from "./setup-guide.js";

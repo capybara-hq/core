@@ -210,7 +210,7 @@ describe("启动日志", () => {
 });
 
 describe("配置热更新", () => {
-  it("log.level 热生效；http.port 变化不生效并 warn；非法配置保持原配置", async () => {
+  it("applies log.level, warns about restart-only http.port, and retains config after invalid input", async () => {
     const { logger, lines } = capture("info");
     const src = manualSource();
     const k = await kernel(cfg(), { source: src.source, logger });
@@ -218,22 +218,29 @@ describe("配置热更新", () => {
     expect(k.app.get<KernelLogger>(KERNEL_ROOT_LOGGER).level).toBe("info");
 
     src.push(raw({ log: { level: "debug" } }));
-    expect(k.app.get<KernelLogger>(KERNEL_ROOT_LOGGER).level).toBe("debug");
-    expect(k.app.get(KernelConfigService).get().log.level).toBe("debug");
+    await vi.waitFor(() => {
+      expect(k.app.get<KernelLogger>(KERNEL_ROOT_LOGGER).level).toBe("debug");
+      expect(k.app.get(KernelConfigService).get().log.level).toBe("debug");
+    });
 
     src.push(raw({ log: { level: "debug" }, http: { port: 9999 } }));
+    await vi.waitFor(() => {
+      expect(lines.some((l) => l.level === "warn" && JSON.stringify(l).includes("http.port"))).toBe(
+        true,
+      );
+    });
     expect(k.app.get(KernelConfigService).get().http.port).toBe(0);
-    const warn = lines.find((l) => l.level === "warn" && JSON.stringify(l).includes("http.port"));
-    expect(warn).toBeDefined();
     expect(JSON.stringify(lines)).not.toContain(pgc.url);
 
     const before = k.app.get(KernelConfigService).get();
     src.push({ ...raw(), masterKey: "not-a-key", log: { level: "error" } });
+    await vi.waitFor(() => {
+      expect(
+        lines.some((l) => l.level === "error" && JSON.stringify(l).includes("masterKey")),
+      ).toBe(true);
+    });
     expect(k.app.get(KernelConfigService).get()).toEqual(before);
     expect(k.app.get<KernelLogger>(KERNEL_ROOT_LOGGER).level).toBe("debug");
-    expect(lines.some((l) => l.level === "error" && JSON.stringify(l).includes("masterKey"))).toBe(
-      true,
-    );
 
     await k.close();
     expect(src.stopped).toBe(true);

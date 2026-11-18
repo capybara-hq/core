@@ -13,11 +13,16 @@ import {
   type ModelRef,
   normalizeStoredDefinition,
 } from "../agents/definition.js";
-import type { ConversationEvent, EventPayload } from "../conversations/events.js";
+import {
+  type ConversationEvent,
+  type EventPayload,
+  PermissionContextMetaV1Schema,
+} from "../conversations/events.js";
 import { sameModel, selectionAt } from "../conversations/selection.js";
 import { ApiError } from "../errors.js";
 import { COMPACTION_SETTINGS } from "../identity/settings.js";
 import {
+  latestSummary,
   type MediaBytes,
   type MediaInfo,
   type ModelCallMeta,
@@ -34,6 +39,11 @@ import {
   planSqueezedFit,
   sentOutputCap,
 } from "../runtime/context/fit.js";
+import {
+  assertRecordedPermissionEvents,
+  permissionContextHistory,
+  RecordedPermissionContextError,
+} from "../runtime/context/permission-profile.js";
 import { estimateTokens } from "../runtime/context/tokens.js";
 import { assembleModelRequest, type MediaSourceDeps } from "../runtime/model-call.js";
 import { CHILD_REMOVED_TOOLS } from "../runtime/subagents/definition.js";
@@ -91,6 +101,8 @@ export type DriftReason =
   | "definition_missing"
   /** A child case's candidate has another effective definition than the logged one (phase C). */
   | "subagent_changed"
+  /** Original bounded permission contributions or their recorded locator/hash differ. */
+  | "permission_profile_changed"
   | "params_changed"
   /**
    * UI refresh B: a non-baseline reconstruction whose run used a person's mid-conversation model
@@ -114,6 +126,7 @@ const DRIFT_ORDER: readonly DriftReason[] = [
   "tool_spec_missing",
   "definition_missing",
   "subagent_changed",
+  "permission_profile_changed",
   "params_changed",
   "model_switched",
   "media_missing",
@@ -185,6 +198,49 @@ function inputEvents(events: readonly ConversationEvent[], call: ModelCallEvent)
   return events.filter((e) => e.seq <= upTo);
 }
 
+/**
+ * A corrupt recorded permission context is the snapshot's failure: a 4xx `eval.snapshot_invalid`
+ * (an `ApiError`, so the eval worker records it as a non-retryable replay error, never as
+ * `run.provider_error`), checked over the whole snapshot before anything renders.
+ */
+export function assertSnapshotPermissionEvents(events: readonly ConversationEvent[]): void {
+  try {
+    assertRecordedPermissionEvents(events);
+  } catch (err) {
+    if (err instanceof RecordedPermissionContextError)
+      throw new ApiError("eval.snapshot_invalid", err.message);
+    throw err;
+  }
+}
+
+/**
+ * Compare only the original request range, never live state or candidate-generated history.
+ * Throws `eval.snapshot_invalid` first when any recorded v1 event in the snapshot
+ * (inside or outside the range, covered by a summary or not) fails its strict schema.
+ */
+export function recordedPermissionContextDrift(
+  events: readonly ConversationEvent[],
+  call: ModelCallEvent,
+): DriftReason[] {
+  assertSnapshotPermissionEvents(events);
+  const bounded = inputEvents(events, call);
+  const rebuilt = permissionContextHistory(
+    bounded,
+    latestSummary(bounded)?.payload.coversUpToSeq,
+  ).meta;
+  const recorded = call.payload.request.permissionContext;
+  if (recorded === undefined && rebuilt === undefined) return [];
+  const parsed = PermissionContextMetaV1Schema.safeParse(recorded);
+  if (
+    !parsed.success ||
+    rebuilt === undefined ||
+    parsed.data.contextSeq !== rebuilt.contextSeq ||
+    parsed.data.hash !== rebuilt.hash
+  )
+    return ["permission_profile_changed"];
+  return [];
+}
+
 /** 该请求的 agent 版本：所属运行的 `run_started`；没有（不应出现）时用快照运行的版本。 */
 function recordedVersion(
   s: CaseSnapshot,
@@ -218,7 +274,7 @@ export function reconstructRequest(
   const all = toEvents(s);
   const call = findCall(all, modelCallSeq);
   const rec: Recorded = call.payload.request;
-  const drift = new Set<DriftReason>();
+  const drift = new Set<DriftReason>(recordedPermissionContextDrift(all, call));
 
   const origVersion = recordedVersion(s, all, call);
   const version = opts.agentVersion ?? origVersion;

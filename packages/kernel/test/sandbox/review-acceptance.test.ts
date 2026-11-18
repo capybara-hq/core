@@ -31,7 +31,7 @@ import {
   waitFor,
   waitForTerminal,
 } from "../helpers/runs.js";
-import { FakeMachine, HELLO } from "../local-devices/fake-machine.js";
+import { FakeMachine, HELLO } from "../local-devices/fake-machine-v3.js";
 import type { Answer } from "../local-devices/test-holder.js";
 
 /**
@@ -529,7 +529,7 @@ async function localDevice(): Promise<{ deviceId: string; machine: FakeMachine }
     { hello: false },
   );
   await machine.opened;
-  machine.send({ ...HELLO, features: ["mode"], policy: { mode: "auto", allowedDomains: [] } });
+  machine.hello({ features: ["mode"], policy: { mode: "auto", allowedDomains: [] } });
   // the policy frame is recorded before the conversation can use the device
   await waitFor(
     async () =>

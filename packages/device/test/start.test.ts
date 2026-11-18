@@ -2,14 +2,15 @@ import { EventEmitter } from "node:events";
 import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Connection } from "../src/client.js";
 import { drain, drainAndWait } from "../src/commands/drain.js";
 import { legacyPolicyNotice, start } from "../src/commands/start.js";
 import { stop } from "../src/commands/stop.js";
 import { type ProcessLookup, pidPath, readRunning, removePid, writePid } from "../src/pid.js";
 import type { PolicyStore } from "../src/policy-store.js";
-import { DEFAULT_POLICY, writeCredential, writePolicy } from "../src/state.js";
+import type { StagedDevice } from "../src/staged-device.js";
+import { DEFAULT_POLICY, ownerCeilingOfMode, writeCredential, writePolicy } from "../src/state.js";
 import { FakeExecutor } from "./fake-kernel.js";
 
 /** `ps` for a test: every pid is a capybara-device that started long ago. */
@@ -54,15 +55,15 @@ describe("start: legacy policy notice", () => {
     return out;
   };
 
-  it("says once that policy.json now uses mode, and which mode it runs in", async () => {
+  it("says once that policy.json was converted to version 2, and which mode it runs in", async () => {
     writeCredential(dir, cred);
     writeFileSync(join(dir, "policy.json"), JSON.stringify({ isolation: "none", tier: "open" }));
     const out = await run();
     const notice = legacyPolicyNotice("auto");
     expect(out.filter((l) => l === notice)).toHaveLength(1);
     expect(notice).toBe(
-      "policy.json now uses `mode`; this machine runs in auto mode; switch with " +
-        "`capybara-device mode`.",
+      "policy.json now uses the version 2 owner ceiling; this machine runs in auto mode; see " +
+        "`capybara-device ceiling show`.",
     );
     // An older file that did not ask for no sandbox migrates to sandbox.
     writeFileSync(join(dir, "policy.json"), JSON.stringify({ tier: "dev" }));
@@ -105,12 +106,12 @@ describe("start without the OS sandbox", () => {
 
   it("serves auto mode silently, and logs the reason for a sandbox policy", async () => {
     writeCredential(dir, cred);
-    writePolicy(dir, { ...DEFAULT_POLICY, mode: "auto" });
+    writePolicy(dir, { ...DEFAULT_POLICY, ownerCeiling: ownerCeilingOfMode("auto") });
     const auto = await run(fake(false));
     // The device starts and serves: no error, and the client is connected.
     expect(auto.code).toBe(0);
     expect(auto.errs).not.toContain("OS sandbox is unavailable");
-    writePolicy(dir, { ...DEFAULT_POLICY, mode: "sandbox" });
+    writePolicy(dir, { ...DEFAULT_POLICY, ownerCeiling: ownerCeilingOfMode("sandbox") });
     const sandbox = await run(fake(false));
     expect(sandbox.code).toBe(0);
     expect(sandbox.errs).toContain("OS sandbox is unavailable");
@@ -119,7 +120,7 @@ describe("start without the OS sandbox", () => {
 
   it("says nothing when the sandbox is available", async () => {
     writeCredential(dir, cred);
-    writePolicy(dir, { ...DEFAULT_POLICY, mode: "sandbox" });
+    writePolicy(dir, { ...DEFAULT_POLICY, ownerCeiling: ownerCeilingOfMode("sandbox") });
     const ok = await run(fake(true));
     expect(ok.code).toBe(0);
     expect(ok.errs).not.toContain("OS sandbox is unavailable");
@@ -384,5 +385,139 @@ describe("a login service", () => {
     removePid(dir, 1234);
     expect(existsSync(pidPath(dir))).toBe(false);
     rmSync(dir, { recursive: true, force: true });
+  });
+});
+
+describe("start: the staged protocol (W3-M)", () => {
+  /** A staged program's parts as start sees them: only the binder's recovery is called. */
+  const fakeStaged = (calls: string[]) =>
+    ({
+      binder: {
+        recover: async () => {
+          calls.push("recover");
+          return undefined;
+        },
+      },
+    }) as unknown as StagedDevice;
+
+  it("the default protocol constant keeps today's protocol 2 path", async () => {
+    writeCredential(dir, cred);
+    const calls: string[] = [];
+    const conn: Connection = { done: Promise.resolve(0), drain: () => {}, stop: () => {} };
+    const code = await start({
+      stateDir: dir,
+      out: () => {},
+      err: () => {},
+      proc: Object.assign(new EventEmitter(), { pid: 4260 }) as never,
+      createExecutor: () => {
+        calls.push("executor");
+        return new FakeExecutor();
+      },
+      connect: () => {
+        calls.push("connect");
+        return conn;
+      },
+      createStaged: () => {
+        calls.push("staged");
+        return fakeStaged(calls);
+      },
+      connectStaged: () => {
+        calls.push("connectStaged");
+        return conn;
+      },
+    });
+    expect(code).toBe(0);
+    expect(calls).toEqual(["executor", "connect"]);
+  });
+
+  it("protocol 3 builds the staged parts, recovers the binding and maps signals", async () => {
+    writeCredential(dir, cred);
+    const proc = Object.assign(new EventEmitter(), { pid: 4261 });
+    const calls: string[] = [];
+    let finish!: (code: number) => void;
+    const conn: Connection = {
+      done: new Promise<number>((r) => {
+        finish = r;
+      }),
+      drain: () => calls.push("drain"),
+      stop: () => {
+        calls.push("stop");
+        finish(0);
+      },
+    };
+    let store: PolicyStore | undefined;
+    const p = start({
+      stateDir: dir,
+      out: () => {},
+      err: () => {},
+      proc: proc as never,
+      protocol: 3,
+      createExecutor: () => {
+        throw new Error("protocol 2 executors are not built");
+      },
+      connect: () => {
+        throw new Error("protocol 2 connect is not used");
+      },
+      createStaged: (c, policy) => {
+        expect(c.deviceId).toBe("e1");
+        store = policy;
+        calls.push("staged");
+        return fakeStaged(calls);
+      },
+      connectStaged: (_device, opts) => {
+        calls.push("connectStaged");
+        // the credential is read again at each reconnect (a new login discards the old state)
+        expect(opts?.credential?.()?.credential).toBe("cap_dev_a");
+        return conn;
+      },
+    });
+    await vi.waitFor(() => expect(calls).toContain("connectStaged"));
+    expect(store?.current().ownerCeiling).toBeDefined();
+    proc.emit("SIGUSR2");
+    proc.emit("SIGTERM");
+    expect(await p).toBe(0);
+    expect(calls).toEqual(["staged", "recover", "connectStaged", "drain", "stop"]);
+    expect(existsSync(pidPath(dir))).toBe(false);
+  });
+
+  it("protocol 3 without staged parts in the build refuses to start", async () => {
+    writeCredential(dir, cred);
+    const err: string[] = [];
+    const code = await start({
+      stateDir: dir,
+      out: () => {},
+      err: (l) => err.push(l),
+      protocol: 3,
+      createExecutor: () => new FakeExecutor(),
+    });
+    expect(code).toBe(1);
+    expect(err[0]).toContain("no execution backend");
+  });
+
+  it("a stop before the staged program connected disposes what it built (M-5)", async () => {
+    writeCredential(dir, cred);
+    const proc = Object.assign(new EventEmitter(), { pid: 4262 });
+    const calls: string[] = [];
+    const code = await start({
+      stateDir: dir,
+      out: () => {},
+      err: () => {},
+      proc: proc as never,
+      protocol: 3,
+      createStaged: () => {
+        proc.emit("SIGTERM");
+        return {
+          ...fakeStaged(calls),
+          dispose: async () => {
+            calls.push("dispose");
+          },
+        } as unknown as StagedDevice;
+      },
+      connectStaged: () => {
+        throw new Error("must not connect");
+      },
+    });
+    expect(code).toBe(0);
+    expect(calls).toEqual(["recover", "dispose"]);
   });
 });

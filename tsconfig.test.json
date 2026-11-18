@@ -11,6 +11,7 @@
     "**/test/**/*.ts",
     "packages/testing/fixtures/**/*.ts",
     "tools/dev/export-review-corpus.ts",
+    "packages/device/tools/*.ts",
     "vitest.config.ts",
     "commitlint.config.ts"
   ],

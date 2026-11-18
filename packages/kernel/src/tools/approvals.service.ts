@@ -7,7 +7,7 @@ import {
   type ToolDisplay,
   validateAllowHost,
 } from "@capybara-hq/plugin-sdk";
-import { Inject, Injectable } from "@nestjs/common";
+import { Inject, Injectable, Optional } from "@nestjs/common";
 import { type Selectable, sql } from "kysely";
 import { normalizeStoredDefinition } from "../agents/definition.js";
 import { EventLog } from "../conversations/event-log.js";
@@ -29,7 +29,11 @@ import { sha256Hex } from "../identity/hash.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { afterCommit } from "../infra/database/after-commit.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
-import { TransactionHost } from "../infra/database/transaction-host.js";
+import {
+  TransactionHost,
+  withOrderedLocks,
+  withTransactionFencePrelude,
+} from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { KernelEvents } from "../infra/events/kernel-events.js";
 import { LockService } from "../infra/lock/lock.service.js";
@@ -42,6 +46,9 @@ import { type PendingPolicyOp, pendingPolicyOpsOf } from "../local-devices/polic
 import { ORG_ROLES, type OrgRole, roleAtLeast } from "../orgs/roles.js";
 import { RunResume } from "../runtime/run-jobs.js";
 import { rootConversationOf } from "../runtime/subagents/child.js";
+import { PermissionAuthorityLock } from "../sandbox/permission-authority-lock.js";
+import { PermissionCallGrants } from "../sandbox/permission-call-grants.js";
+import type { PermissionCandidate, PermissionExpansion } from "../sandbox/permission-call-types.js";
 import { isSessionGrantableRule } from "../sandbox/review/types.js";
 import { deviceNotFound, SandboxService } from "../sandbox/sandbox.service.js";
 import { readScheduleSettings } from "../schedules/effective-settings.js";
@@ -73,7 +80,8 @@ export type ApprovalStatus =
   | "denied"
   | "expired"
   | "cancelled"
-  | "skipped";
+  | "skipped"
+  | "superseded";
 export type ApprovalScope = "once" | "session" | "always";
 /**
  * What an approval asks: a tool call, the device owner about refused network hosts, the actor about
@@ -173,6 +181,10 @@ export type GitAskView = Omit<GitAskDetail, "result">;
  * gave. Display only; the run waits for the decision.
  */
 export interface CommandAskDetail {
+  permissionCandidate?: PermissionCandidate;
+  permissionScope?: PermissionExpansion;
+  targetPath?: string;
+  candidateHash?: string;
   deviceId: string;
   deviceName: string;
   mode: "auto" | "sandbox";
@@ -228,6 +240,8 @@ export interface ApprovalRecord {
   requestedFor: string | null;
   approverRole: OrgRole | null;
   status: ApprovalStatus;
+  supersededRevision?: number | null;
+  supersededReason?: string | null;
   scope: ApprovalScope | null;
   decidedBy: string | null;
   decidedAt: string | null;
@@ -477,6 +491,8 @@ function toRecord(r: Selectable<ApprovalsTable>): ApprovalRecord {
     requestedFor: r.requested_for,
     approverRole: isRole(r.approver_role) ? r.approver_role : null,
     status: r.status,
+    supersededRevision: r.superseded_revision,
+    supersededReason: r.superseded_reason,
     scope: r.scope,
     decidedBy: r.decided_by,
     decidedAt: r.decided_at === null ? null : iso(r.decided_at),
@@ -537,13 +553,22 @@ export class ApprovalsService {
      * its outcome with the decision.
      */
     @Inject(DevicePolicyService)
-    private readonly policies: Pick<DevicePolicyService, "begin" | "send" | "settleIn" | "summary">,
+    private readonly policies: Pick<
+      DevicePolicyService,
+      "begin" | "send" | "settleIn" | "summary" | "lockMachineDevice"
+    >,
     /** One decision of a network ask at a time, across replicas (the op is sent before the transaction). */
     @Inject(LockService) readonly lockService: LockService,
     /** A trial run's 「这次允许」 becomes a task grant only within the org's egress. */
     @Inject(SandboxService) private readonly sandbox: Pick<SandboxService, "ceilingLimits">,
     /** A decision resumes its waiting run in the decision's transaction. */
     @Inject(RunResume) private readonly resumes: Pick<RunResume, "resumeIn">,
+    @Optional()
+    @Inject(PermissionAuthorityLock)
+    private readonly permissionLocks?: PermissionAuthorityLock,
+    @Optional()
+    @Inject(PermissionCallGrants)
+    private readonly permissionGrants?: PermissionCallGrants,
   ) {}
 
   /**
@@ -654,7 +679,7 @@ export class ApprovalsService {
   ): Promise<{ record: ApprovalRecord; toSeq: number | null }> {
     const hours = this.config.get().tools.approvalTimeoutHours;
     const t = this.db.db;
-    // the conversation row first (as `requestIn`): it also serializes two asks of one call
+    // Authority precedes the conversation row (as `requestIn`): it also serializes two asks of one call
     await t
       .selectFrom("conversations")
       .select("id")
@@ -756,7 +781,7 @@ export class ApprovalsService {
   ): Promise<{ record: ApprovalRecord; toSeq: number | null }> {
     const hours = this.config.get().tools.approvalTimeoutHours;
     const t = this.db.db;
-    // the conversation row first (as `requestIn`): it also serializes two asks of one call
+    // Authority precedes the conversation row (as `requestIn`): it also serializes two asks of one call
     await t
       .selectFrom("conversations")
       .select("id")
@@ -851,7 +876,18 @@ export class ApprovalsService {
     if (d.command.length === 0 || d.reason.length === 0) {
       throw new Error("a command ask names the command and the review's reason");
     }
-    const { record, toSeq } = await this.requestCommandIn(input);
+    const subject = await this.commandSubject(
+      input.orgId,
+      input.conversationId,
+      input.detail.deviceId,
+    );
+    const permissionLocks = this.permissionLocks;
+    const { record, toSeq } = permissionLocks
+      ? await withTransactionFencePrelude(
+          () => permissionLocks.acquire(subject, { kind: "admit" }),
+          () => this.requestCommandIn(input),
+        )
+      : await this.requestCommandIn(input);
     if (toSeq !== null) await this.eventLog.notify(record.conversationId, toSeq);
     return record;
   }
@@ -860,9 +896,26 @@ export class ApprovalsService {
   private async requestCommandIn(
     input: CommandAskInput,
   ): Promise<{ record: ApprovalRecord; toSeq: number | null }> {
+    if (input.detail.permissionCandidate) {
+      const b = input.detail.permissionCandidate.binding;
+      if (
+        b.orgId !== input.orgId ||
+        b.conversationId !== input.conversationId ||
+        b.runId !== input.runId ||
+        b.callId !== input.callId ||
+        b.accountId !== input.requestedFor ||
+        b.deviceId !== input.detail.deviceId
+      )
+        throw new ApiError(
+          "forbidden",
+          "The approval does not match its exact permission candidate",
+        );
+      if (!this.permissionGrants) throw new Error("Permission grants are unavailable");
+      await this.permissionGrants.assertCurrent(b);
+    }
     const hours = this.config.get().tools.approvalTimeoutHours;
     const t = this.db.db;
-    // the conversation row first (as `requestIn`): it also serializes two asks of one call
+    // Authority precedes the conversation row (as `requestIn`): it also serializes two asks of one call
     await t
       .selectFrom("conversations")
       .select("id")
@@ -877,14 +930,33 @@ export class ApprovalsService {
       );
     }
     const existing = await this.commandForCall(input.runId, input.callId);
-    if (existing !== null) return { record: existing, toSeq: null };
+    if (
+      existing !== null &&
+      existing.status !== "superseded" &&
+      (!input.detail.permissionCandidate ||
+        existing.command?.permissionCandidate?.candidateHash ===
+          input.detail.permissionCandidate.candidateHash)
+    )
+      return { record: existing, toSeq: null };
     const last = await t
       .selectFrom("approvals")
       .select(sql<number | null>`max(attempt)`.as("attempt"))
       .where("run_id", "=", input.runId)
       .where("call_id", "=", input.callId)
       .executeTakeFirst();
-    const detail: CommandAskDetail = { ...input.detail };
+    const candidate = input.detail.permissionCandidate;
+    const detail: CommandAskDetail = {
+      ...input.detail,
+      ...(candidate
+        ? {
+            permissionScope: candidate.permissionScope,
+            candidateHash: candidate.candidateHash,
+            ...(candidate.targetPath
+              ? { targetPath: candidate.targetPath, path: candidate.targetPath }
+              : {}),
+          }
+        : {}),
+    };
     const row = await t
       .insertInto("approvals")
       .values({
@@ -922,6 +994,15 @@ export class ApprovalsService {
           toolKey: rec.toolKey,
           expiresAt: rec.expiresAt,
           command: {
+            ...(detail.permissionCandidate
+              ? {
+                  permissionScope: detail.permissionCandidate.permissionScope,
+                  candidateHash: detail.permissionCandidate.candidateHash,
+                  ...(detail.permissionCandidate.targetPath
+                    ? { targetPath: detail.permissionCandidate.targetPath }
+                    : {}),
+                }
+              : {}),
             kind: detail.kind,
             // the approval's detail holds the whole command; the event is display only and clamped
             command: clipText(detail.command, COMMAND_ASK_TEXT_MAX_CHARS),
@@ -1252,18 +1333,26 @@ export class ApprovalsService {
       }
       command = { scope, via };
     }
-    const decided = await this.decideIn(
-      orgId,
-      id,
-      accountId,
-      body,
-      actorTokenId,
-      undefined,
-      undefined,
-      command,
-    );
+    const decide = () =>
+      this.decideIn(orgId, id, accountId, body, actorTokenId, undefined, undefined, command);
+    const subject = await this.commandSubject(orgId, ask.conversationId, ask.command.deviceId);
+    const permissionLocks = this.permissionLocks;
+    const decided = permissionLocks
+      ? await withTransactionFencePrelude(
+          () => permissionLocks.acquire(subject, { kind: "admit" }),
+          decide,
+        )
+      : await decide();
     await this.announceDecided(decided.record, decided.toSeq);
     return decided.record;
+  }
+
+  private async commandSubject(orgId: string, conversationId: string, deviceId: string) {
+    return {
+      orgId,
+      deviceId,
+      rootConversationId: await rootConversationOf(this.db.db, conversationId),
+    };
   }
 
   /**
@@ -1328,7 +1417,7 @@ export class ApprovalsService {
           ? // the device's owner takes no remote grants: nothing is allowed, not even this run
             { wanted: granted, granted: [], outcome: "refused", fallback: "refused", via }
           : { wanted: granted, granted, outcome: "once_fallback", fallback: "offline", via };
-    const settled = await this.settleNetworkOp(orgId, ask.id, accountId, body, network, {
+    const settled = await this.settleNetworkOpOrdered(orgId, ask.id, accountId, body, network, {
       machineId: intent.machineId,
       opId: intent.opId,
       result: sent.result,
@@ -1377,6 +1466,25 @@ export class ApprovalsService {
     result: PolicyOpResult,
   ): Promise<void> {
     await this.policies.settleIn(op, result);
+  }
+
+  /**
+   * {@link settleNetworkOp} with the device's permission authority lock as its ordered prelude
+   * (`DevicePolicyService.lockMachineDevice`): the global order puts it before the ask's
+   * conversation row, as a fenced device writer of the same tree takes it (device project writes).
+   */
+  private settleNetworkOpOrdered(
+    orgId: string,
+    id: string,
+    accountId: string,
+    body: DecisionInput,
+    network: NetworkDecision,
+    op: { machineId: string; opId: string; result: PolicyOpResult },
+  ): ReturnType<ApprovalsService["settleNetworkOp"]> {
+    return withOrderedLocks(
+      () => this.policies.lockMachineDevice(op.machineId),
+      () => this.settleNetworkOp(orgId, id, accountId, body, network, op),
+    );
   }
 
   /**
@@ -1477,7 +1585,8 @@ export class ApprovalsService {
    * late) and the ask left pending with `applied_undecided`. Not applied (refused, never received,
    * interrupted) or still unknown → the op's outcome recorded and the ask left pending with the
    * reason (`detail.attempt`) and an `approval_updated` event so the card shows it: no person is
-   * there to fall back to a run grant (D2).
+   * there to fall back to a run grant (D2). The caller locked the machine's device first
+   * (`DevicePolicyService.lockMachineDevice`, before the ask's conversation row).
    */
   @Transactional({ propagation: "mandatory" })
   async settleFromResolver(
@@ -1680,6 +1789,10 @@ export class ApprovalsService {
     ) {
       throw new Error(`approval ${id} is of kind ${before.kind}`);
     }
+    if (before.command?.permissionCandidate) {
+      if (!this.permissionGrants) throw new Error("Permission grants are unavailable");
+      await this.permissionGrants.assertCurrent(before.command.permissionCandidate.binding);
+    }
     const approved = body.decision === "approve";
     const reason = approved ? undefined : body.reason?.trim() || undefined;
     const scope: ApprovalScope | null = !approved
@@ -1748,6 +1861,14 @@ export class ApprovalsService {
       .where("id", "=", id)
       .returningAll()
       .executeTakeFirstOrThrow();
+    if (approved && before.command?.permissionCandidate) {
+      if (!this.permissionGrants) throw new Error("Permission grants are unavailable");
+      await this.permissionGrants.issueLocked(before.command.permissionCandidate, {
+        source: "human",
+        approvalId: id,
+        decidedBy: accountId,
+      });
+    }
     // 授权绑定所批准的定义指纹与来源连接器（同 slug 重新安装的连接器 id 不同，不继承）
     const hash = before.specHash;
     const connectorId = before.connectorId;
@@ -1885,8 +2006,8 @@ export class ApprovalsService {
           ...(reason !== undefined && { reason }),
         },
       });
-      // the run resumes after the decision commits (auto mode spec §5.4, multi-replica)
-      afterCommit(() => this.resumeDecided(before.runId, id));
+      // The decision owes continuation in its own commit, even if this process dies immediately.
+      await this.resumes.resumeIn(before.runId, id);
       return { record: toRecord(updated), toSeq: Math.max(...written.map((e) => e.seq)) };
     }
     await audit(t, {
@@ -1919,16 +2040,6 @@ export class ApprovalsService {
     // its suspend's re-check
     await this.resumes.resumeIn(before.runId, id);
     return { record: toRecord(updated), toSeq: Math.max(...written.map((e) => e.seq)) };
-  }
-
-  /**
-   * Resumes the run of a decided command ask in its own transaction after the decision committed
-   * (`afterCommit` runs outside any transaction; `RunResume.resumeIn` requires one). Its outcome
-   * is the suspend's re-check if the run was still running.
-   */
-  @Transactional()
-  private async resumeDecided(runId: string, approvalId: string): Promise<void> {
-    await this.resumes.resumeIn(runId, approvalId);
   }
 
   /**

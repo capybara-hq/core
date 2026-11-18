@@ -6,8 +6,8 @@ import { Icon } from "../icons/icon";
 import { useDesignT } from "../provider";
 import type { PickerProps } from "./composer";
 
-// The composer's options button (spec §6.16.2, phones): below 640 the device, model and
-// effort pickers collapse into one compact button that opens a bottom sheet with the three groups.
+// The composer's options button (spec §6.16.2, phones): below 640 the device, permission, model
+// and effort pickers collapse into one compact button with a bottom sheet group per picker.
 
 /**
  * A model's name for the options button: without a vendor path ("deepseek/…") and a date or
@@ -29,26 +29,40 @@ export function shortDeviceLabel(label: string): string {
 
 export type ComposerOptionsProps = {
   device?: PickerProps;
+  permission?: PickerProps;
   model: PickerProps;
   effort?: PickerProps;
 };
 
 /**
- * One compact button (`DeepSeek · 高 · 个人`) for the device, model and effort pickers,
+ * One compact button (`DeepSeek · High · Personal`) for the device, permission, model and effort pickers,
  * opening a bottom sheet with one group each. The groups reuse the pickers' props: their items
  * (disabled ones with their reason), their notes, and a locked picker (a conversation's
  * device) shown read-only with its hint. Choosing an item calls the picker's `onPick` and
- * keeps the sheet open, so all three can be set in one go.
+ * keeps the sheet open, so all choices can be set in one go. The accessible summary also
+ * includes the full permission value when supplied.
  */
-export function ComposerOptions({ device, model, effort }: ComposerOptionsProps): JSX.Element {
+export function ComposerOptions({
+  device,
+  permission,
+  model,
+  effort,
+}: ComposerOptionsProps): JSX.Element {
   const t = useDesignT();
   const [open, setOpen] = useState(false);
-  const full = [model.value, effort?.value, device?.value, device?.locked?.warning?.label].filter(
-    (v): v is string => v !== undefined,
-  );
+  const full = [
+    model.value,
+    effort?.value,
+    device?.value,
+    permission?.value,
+    device?.locked?.warning?.label,
+  ].filter((v): v is string => v !== undefined);
   const name = t("composer.options");
   const groups: { key: string; title: string; picker: PickerProps }[] = [
     ...(device ? [{ key: "device", title: t("composer.options.device"), picker: device }] : []),
+    ...(permission
+      ? [{ key: "permission", title: t("composer.options.permission"), picker: permission }]
+      : []),
     { key: "model", title: t("composer.options.model"), picker: model },
     ...(effort ? [{ key: "effort", title: t("composer.options.effort"), picker: effort }] : []),
   ];
@@ -71,6 +85,10 @@ export function ComposerOptions({ device, model, effort }: ComposerOptionsProps)
             onInspect={() => {
               setOpen(false);
               g.picker.locked?.warning?.onInspect();
+            }}
+            onAction={(action) => {
+              setOpen(false);
+              action?.onSelect();
             }}
           />
         ))}
@@ -138,11 +156,14 @@ function OptionsGroup({
   title,
   picker,
   onInspect,
+  onAction,
 }: {
   group: string;
   title: string;
   picker: PickerProps;
   onInspect(): void;
+  /** The picker's action: the sheet closes first. */
+  onAction(action: PickerProps["action"]): void;
 }): JSX.Element {
   const id = useId();
   const titleId = `${id}-title`;
@@ -177,6 +198,22 @@ function OptionsGroup({
               {g.label ? <div className="cb-options-label">{g.label}</div> : null}
               {g.items.map((it) => {
                 const disabled = picker.disabled === true || it.disabled === true;
+                // a described item: named by its label and tag, its sentence the description
+                const itemId = `${id}-${it.id}`;
+                const described = it.description !== undefined;
+                const head = (
+                  <>
+                    <span className="cb-options-text" id={`${itemId}-label`}>
+                      {it.label}
+                    </span>
+                    {it.tag ? (
+                      <span className="cb-cmenu-tag" id={`${itemId}-tag`}>
+                        {it.tag}
+                      </span>
+                    ) : null}
+                    {it.badge ? <Badge tone={it.badgeTone ?? "warn"}>{it.badge}</Badge> : null}
+                  </>
+                );
                 return (
                   <label
                     key={it.id}
@@ -184,6 +221,7 @@ function OptionsGroup({
                     data-part="options-item"
                     data-checked={it.checked ? "true" : undefined}
                     data-disabled={disabled ? "true" : undefined}
+                    data-described={described ? "true" : undefined}
                   >
                     <input
                       type="radio"
@@ -193,10 +231,30 @@ function OptionsGroup({
                       checked={it.checked === true}
                       disabled={disabled}
                       onChange={() => picker.onPick(it.id)}
+                      {...(described
+                        ? {
+                            "aria-labelledby": it.tag
+                              ? `${itemId}-label ${itemId}-tag`
+                              : `${itemId}-label`,
+                            "aria-describedby": `${itemId}-desc`,
+                          }
+                        : {})}
                     />
-                    <span className="cb-options-text">{it.label}</span>
-                    {it.tag ? <span className="cb-cmenu-tag">{it.tag}</span> : null}
-                    {it.badge ? <Badge tone={it.badgeTone ?? "warn"}>{it.badge}</Badge> : null}
+                    {it.icon ? <Icon name={it.icon} size={14} /> : null}
+                    {described ? (
+                      <span className="cb-options-body">
+                        <span className="cb-options-head">{head}</span>
+                        <span
+                          className="cb-options-desc"
+                          data-part="options-desc"
+                          id={`${itemId}-desc`}
+                        >
+                          {it.description}
+                        </span>
+                      </span>
+                    ) : (
+                      head
+                    )}
                     <span className="cb-grow" />
                     {it.checked ? (
                       <span className="cb-options-check">
@@ -210,6 +268,17 @@ function OptionsGroup({
           ))}
         </div>
       )}
+      {picker.action && !picker.locked ? (
+        <Button
+          variant="ghost"
+          density="dense"
+          className="cb-options-action"
+          onClick={() => onAction(picker.action)}
+        >
+          {picker.action.icon ? <Icon name={picker.action.icon} size={14} /> : null}
+          {picker.action.label}
+        </Button>
+      ) : null}
       {picker.note && !picker.locked ? <p className="cb-options-note">{picker.note}</p> : null}
     </section>
   );

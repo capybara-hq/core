@@ -2,6 +2,7 @@ import { Module } from "@nestjs/common";
 import { SetupLockModule } from "../admin/setup-lock.js";
 import { ExtensionRegistryModule } from "../extensions/registry.js";
 import { OrgLockModule } from "../orgs/org-lock.js";
+import { PermissionAuthorityModule } from "../sandbox/permission-authority.module.js";
 import { AccountsModule } from "./accounts.js";
 import { ApiTokenService } from "./api-tokens.js";
 import { IdentityBinding } from "./binding.js";
@@ -19,6 +20,7 @@ import { SuperAdminLockModule } from "./super-admin.js";
  */
 @Module({
   imports: [
+    PermissionAuthorityModule,
     AccountsModule,
     OrgLockModule,
     SetupLockModule,

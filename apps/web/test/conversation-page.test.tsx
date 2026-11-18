@@ -133,7 +133,13 @@ describe("the conversation page (ConversationPage)", () => {
     await screen.findByRole("button", { name: `${en.chat.pickModel}: Fake 1` });
     const bar = container.querySelector('[data-part="composer"]') as HTMLElement;
     expect(bar).not.toBeNull();
-    expect(bar.querySelector('[data-locked="true"]')).toBeNull();
+    // no read-only value at all: the owner edits the permission profile, never an agent picker
+    expect([...bar.querySelectorAll('[data-locked="true"]')].map((e) => e.textContent)).toEqual([]);
+    expect(
+      within(bar).getByRole("button", {
+        name: `${en.chat.permission.label}: ${en.chat.permission.profile.approveForMe}`,
+      }),
+    ).toBeTruthy();
     expect(bar.textContent).not.toContain("Echo agent");
   });
 
@@ -1261,7 +1267,7 @@ describe("the conversation page's server gate", () => {
 });
 
 describe("the properties panel's device mark", () => {
-  it("a local auto-mode device carries the quiet 自动 mark in warn", async () => {
+  it("the device carries its neutral ceiling mark, never a daily mode", async () => {
     const mode = {
       mode: "auto",
       allowedMode: "auto",
@@ -1277,6 +1283,16 @@ describe("the properties panel's device mark", () => {
       provider: "@local",
       online: true,
       mode,
+      ownerCeiling: {
+        state: "report",
+        revision: "r1",
+        sequence: 1,
+        fullAccess: true,
+        restrictedProjectReach: "os-user",
+        restrictedAllowedDomains: [],
+        observedAt: "2026-11-07T08:00:00.000Z",
+        stale: false,
+      },
     });
     api({
       [`GET ${BASE}`]: () => json(200, CONV("c1", { deviceId: "e1" })),
@@ -1291,8 +1307,8 @@ describe("the properties panel's device mark", () => {
       if (b === null) throw new Error("no mark yet");
       return b;
     });
-    expect(badge.textContent).toBe(en.devices.mark.auto);
-    expect(badge.getAttribute("data-tone")).toBe("warn");
+    expect(badge.textContent).toBe(en.devices.ceiling.mark.full);
+    expect(badge.getAttribute("data-tone")).toBe("default");
     window.history.replaceState(null, "", "/");
   });
 });
@@ -1360,7 +1376,7 @@ describe("the first open after the server's snapshot (web query cache spec §6)"
     });
     await vi.waitFor(() =>
       expect(new Set(calls.map((c) => c.url.split("?")[0]))).toEqual(
-        new Set([BASE, `${BASE}/queue`, `${BASE}/files`, `${BASE}/device`]),
+        new Set([BASE, `${BASE}/queue`, `${BASE}/files`, `${BASE}/device`, `${BASE}/permissions`]),
       ),
     );
     expect(await screen.findByText("while away")).toBeTruthy();
@@ -1435,7 +1451,7 @@ describe("a new conversation (/)", () => {
   it("?agent= picks the agent; the first send creates the conversation and replaces the URL", async () => {
     resetNavigation("/");
     const calls = stubApi({
-      "POST /api/v1/orgs/o1/conversations": () =>
+      "POST /api/v1/orgs/o1/conversations/first-message": () =>
         json(201, {
           ...CONV("c9", { agentId: "ag2" }),
           event: userMsg(1, "start"),
@@ -1511,7 +1527,7 @@ describe("the first message from / (conversation send spec §2.1)", () => {
     let answer: (r: Response) => void = () => {};
     let cmid = "";
     const calls = stubApi({
-      "POST /api/v1/orgs/o1/conversations": (c) => {
+      "POST /api/v1/orgs/o1/conversations/first-message": (c) => {
         cmid = (bodyOf(c) as { message: { clientMessageId: string } }).message.clientMessageId;
         return new Promise<Response>((r) => {
           answer = r;

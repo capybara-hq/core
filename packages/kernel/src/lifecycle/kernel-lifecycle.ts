@@ -47,6 +47,7 @@ import type { KernelLogger } from "../log.js";
 import { GatewayRole } from "../roles/gateway-role.js";
 import { WorkerRole } from "../roles/worker-role.js";
 import { UsageReporter } from "../runtime/usage-report.js";
+import { PermissionConfigPublication } from "../sandbox/permission-config-publication.js";
 import { sandboxConfigWarnings } from "../sandbox/sandbox.service.js";
 import { KERNEL_APP_OPTIONS } from "./tokens.js";
 
@@ -116,6 +117,8 @@ export class KernelLifecycle
   private bootstrapPackages: ReadonlyMap<string, Uint8Array> | undefined;
 
   constructor(
+    @Inject(PermissionConfigPublication)
+    private readonly permissionConfig: PermissionConfigPublication,
     @Inject(AccountsService) private readonly accounts: AccountsService,
     @Inject(KernelConfigService) private readonly configService: KernelConfigService,
     @Inject(KERNEL_LOGGER) readonly log: KernelLogger,
@@ -205,6 +208,26 @@ export class KernelLifecycle
       ),
     );
     this.checkpoint();
+    const publication = await this.shutdown.trackInFlight(
+      this.permissionConfig.initialize({
+        ...(opts.permissionConfigActivation !== undefined && {
+          activation: opts.permissionConfigActivation,
+        }),
+        startup: { signal: this.shutdown.signal, remainingMs: () => this.shutdown.remainingMs() },
+      }),
+    );
+    if (publication.outcome === "activated" || publication.outcome === "already-active")
+      this.log.info("permission configuration activation committed", {
+        outcome: publication.outcome,
+        activeHash: publication.activeHash,
+      });
+    else if (publication.outcome === "mismatch")
+      this.log.warn("Permission configuration differs from the active deployment configuration", {
+        activeHash: publication.activeHash,
+        candidateHash: publication.candidateHash,
+        command: `capybara start --activate-permission-config ${publication.activeHash}`,
+      });
+    this.checkpoint();
     // official 清单来源按配置同步（幂等；每个副本启动时都做）
     await this.marketplaces.syncOfficialFromConfig();
     // The bootstrap plugins (spec §7), once per manifest across replicas (the Redis lock
@@ -277,8 +300,19 @@ export class KernelLifecycle
     }
     if (opts.source?.watch) {
       // 热更新：重新校验；只应用 hot 字段，其余变化 warn 并列出需重启的键；校验失败保持原配置
+      let reload = Promise.resolve();
       this.unwatchConfig = opts.source.watch(
-        (raw) => this.configService.apply(raw),
+        (raw) => {
+          reload = reload
+            .then(() =>
+              this.configService.apply(raw, (before, next) =>
+                this.permissionConfig.publish(before, next),
+              ),
+            )
+            .catch((error: unknown) =>
+              this.log.error("config reload failed", { error: errMsg(error) }),
+            );
+        },
         (err) => this.log.error("config watch error", { error: err.message }),
       );
     }

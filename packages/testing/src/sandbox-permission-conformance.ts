@@ -70,6 +70,13 @@ export interface SandboxPermissionFixture {
      */
     readonly access: "direct" | "proxy";
   };
+  /**
+   * Set to "refused" when the provider refuses a restricted filesystem with the `environment`
+   * network by policy (a local device whose owner ceiling ties the environment network to Full
+   * access). The harness then proves that refusal (a scope denial, nothing run) where it would
+   * otherwise probe a restricted operation on the environment network. Default: "supported".
+   */
+  readonly restrictedEnvironment?: "supported" | "refused";
   /** The provider's own runtime report; the harness never infers support from a fixture. */
   support(): Promise<SandboxPermissionSupport>;
   /** A fresh operation (new operation ID) for the grant, through the provider's factory. */
@@ -82,6 +89,15 @@ export interface SandboxPermissionFixture {
     mode(path: string): Promise<number | null>;
     /** The subset of `pids` still running on the device. */
     alive(pids: readonly number[]): Promise<number[]>;
+    /**
+     * Runs a Python 3 program (`python3 - ...args`, program on stdin) as the device user in a
+     * fresh process outside every operation and every restricted domain, standing in for another
+     * session's Full-access work, and returns its stdout. When present, the harness proves that
+     * such a process can neither ptrace nor read the memory or environment of the process that
+     * supervises a restricted command (its parent). Omit it only where no process outside an
+     * operation can run as the device user.
+     */
+    outside?(program: string, args: readonly string[]): Promise<string>;
   };
   /** Removes fixture-owned resources, including after an assertion failure. */
   dispose(): Promise<void>;
@@ -256,10 +272,60 @@ print("swaps=%d" % swaps)
 `;
 
 /**
+ * Run by a same-uid process outside every operation: tries `PTRACE_ATTACH` and opens `mem` and
+ * `environ` of a control child of its own (proving the probe sees real access) and of the target.
+ */
+const OUTSIDE_PROBE = `
+import ctypes, errno, json, os, signal, sys, time
+libc = ctypes.CDLL(None, use_errno=True)
+libc.ptrace.restype = ctypes.c_long
+libc.ptrace.argtypes = (ctypes.c_long, ctypes.c_long, ctypes.c_void_p, ctypes.c_void_p)
+PTRACE_ATTACH, PTRACE_DETACH, WALL = 16, 17, 0x40000000
+def name(code):
+    return errno.errorcode.get(code, str(code))
+def opened(pid, entry):
+    try:
+        fd = os.open("/proc/%d/%s" % (pid, entry), os.O_RDONLY)
+    except OSError as error:
+        return name(error.errno)
+    try:
+        if entry == "environ":
+            os.read(fd, 1)
+    finally:
+        os.close(fd)
+    return "ALLOWED"
+def attach(pid):
+    if libc.ptrace(PTRACE_ATTACH, pid, None, None) < 0:
+        return name(ctypes.get_errno())
+    # Undo at once (the attach stopped the target) so even a failing check leaves it running.
+    os.waitpid(pid, WALL)
+    libc.ptrace(PTRACE_DETACH, pid, None, None)
+    return "ALLOWED"
+def probe(pid):
+    return {"mem": opened(pid, "mem"), "environ": opened(pid, "environ"), "attach": attach(pid)}
+child = os.fork()
+if child == 0:
+    time.sleep(600)
+    os._exit(0)
+control = probe(child)
+os.kill(child, signal.SIGKILL)
+os.waitpid(child, 0)
+target = int(sys.argv[1])
+def identity(pid):
+    with open("/proc/%d/status" % pid) as handle:
+        uid = [int(line.split()[1]) for line in handle if line.startswith("Uid:")][0]
+    with open("/proc/%d/cmdline" % pid, "rb") as handle:
+        return {"uid": uid, "cmdline": handle.read().replace(b"\\0", b" ").decode().strip()}
+print(json.dumps({"uid": os.getuid(), "who": identity(target), "control": control,
+                  "target": probe(target)}))
+`;
+
+/**
  * Proves an actual provider's permission boundary on one shared device: positive controls, sibling,
  * symlink, protected-path and network denials, Full controls without restricted filters, both
  * overlap orders, component/root swaps and mutable syscall pointers during access, exact
- * cancellation and fresh narrowed scopes. Restricted network none/allowlist may bind and listen on
+ * cancellation, a supervisor closed to same-uid outsiders (when the fixture can run one) and fresh
+ * narrowed scopes. Restricted network none/allowlist may bind and listen on
  * loopback (127.0.0.1, ::1) only. Pathname UNIX services outside the roots stay unreachable under
  * every network kind, environment included. A provider that reports restricted unsupported must
  * refuse restricted operations (fail closed); nothing here substitutes a fixture flag for support.
@@ -434,6 +500,248 @@ export async function runSandboxPermissionConformance(
       { entries: [{ name: "n.bin", isDir: false }], truncated: false },
     );
 
+    // Mandatory write denies inside a granted root (the macOS set, shared through the SDK): git
+    // configuration and hooks (a later unsandboxed `git` there would run them), shell startup
+    // files and editor/agent configuration. Direct writes, creation, renames, hard and symbolic
+    // links, and the same paths in a repository the command creates itself all stay refused.
+    await fixture.seed([
+      { path: at(root, "repo/.git/config"), kind: "file", data: new TextEncoder().encode("cfg") },
+      {
+        path: at(root, "repo/.git/hooks/pre-commit.sample"),
+        kind: "file",
+        data: new TextEncoder().encode("s"),
+      },
+      { path: at(root, "repo/.git/HEAD"), kind: "file", data: new TextEncoder().encode("ref: x") },
+    ]);
+    const evil = '[core]\n\tfsmonitor = "touch escaped; false"\n';
+    const denies = await exec(
+      restricted(),
+      [
+        `cd repo`,
+        `printf ${quote(evil)} > .git/config`,
+        `printf x >> .git/config`,
+        `mkdir -p .git/hooks; printf '#!/bin/sh' > .git/hooks/pre-commit`,
+        `chmod 755 .git/hooks/pre-commit.sample`,
+        `printf x > staged-config; mv staged-config .git/config`,
+        `printf x > staged-hook; ln staged-hook .git/hooks/post-checkout`,
+        `ln -s ../staged-hook .git/hooks/pre-push`,
+        `ln -s .git/config cfg-link; printf x > cfg-link`,
+        `mkdir moved; printf x > moved/config; mkdir -p sub; mv moved sub/.git`,
+        `mkdir -p ../ptr && printf 'gitdir: /tmp' > ../ptr/.git`,
+        `cd ..; git init -q nested 2>/dev/null; mkdir -p nested/.git/hooks; printf x > nested/.git/hooks/pre-commit; printf x > nested/.git/config`,
+        `printf x > .bashrc; printf x > .zshrc; printf x > .profile; printf x > .gitconfig; printf x > .gitmodules; printf x > .mcp.json`,
+        `mkdir -p .vscode && printf x > .vscode/settings.json; mkdir -p .idea && printf x > .idea/x`,
+        `mkdir -p .claude/commands .claude/agents; printf x > .claude/commands/c.md; printf x > .claude/agents/a.md`,
+        `mkdir -p deep/er; printf x > deep/er/.bash_profile`,
+        `printf ok > allowed.txt`,
+        `true`,
+      ].join("; "),
+    );
+    assert.equal(denies.exitCode, 0, `the mandatory-deny probe must run: ${denies.stderr}`);
+    assert.equal(
+      text(await fixture.inspect.readFile(at(root, "allowed.txt"))),
+      "ok",
+      "ordinary writes",
+    );
+    assert.equal(
+      text(await fixture.inspect.readFile(at(root, "repo/.git/config"))),
+      "cfg",
+      ".git/config",
+    );
+    assert.equal(
+      (await fixture.inspect.mode(at(root, "repo/.git/hooks/pre-commit.sample"))) !== 0o755,
+      true,
+      "hook mode",
+    );
+    for (const path of [
+      "repo/.git/hooks/pre-commit",
+      "repo/.git/hooks/post-checkout",
+      "repo/.git/hooks/pre-push",
+      "repo/sub/.git/config",
+      "ptr/.git",
+      "nested/.git/hooks/pre-commit",
+      "nested/.git/config",
+      ".bashrc",
+      ".zshrc",
+      ".profile",
+      ".gitconfig",
+      ".gitmodules",
+      ".mcp.json",
+      ".vscode/settings.json",
+      ".idea/x",
+      ".claude/commands/c.md",
+      ".claude/agents/a.md",
+      "deep/er/.bash_profile",
+    ])
+      assert.equal(await fixture.inspect.readFile(at(root, path)), null, `mandatory deny: ${path}`);
+    assert.equal(
+      await fixture.inspect.mode(at(root, "repo/.git/hooks/pre-push")),
+      null,
+      "a symbolic link into the hooks is refused too",
+    );
+    await denied(
+      (await native(restricted())).writeFile(at(root, "repo/.git/config"), bytes, signal),
+      "native write of .git/config",
+    );
+    await denied(
+      (await native(restricted())).writeFile(at(root, "repo/.git/hooks/post-merge"), bytes, signal),
+      "native write of a git hook",
+    );
+    await denied(
+      (await native(restricted())).writeFile(at(root, ".vscode/tasks.json"), bytes, signal),
+      "native write of editor configuration",
+    );
+    assert.equal(text(await fixture.inspect.readFile(at(root, "repo/.git/config"))), "cfg");
+
+    // Inside a .git directory only git's ordinary internals are writable: the gitdirs of
+    // submodules and worktrees keep their configuration, hooks and pointers too. A bare-repository
+    // lookalike (a HEAD file outside .git) and moving .git away are refused as well, and the
+    // matching folds case and Unicode compatibility forms.
+    await fixture.seed([
+      {
+        path: at(root, "repo/.git/modules/sub/config"),
+        kind: "file",
+        data: new TextEncoder().encode("cfg"),
+      },
+      { path: at(root, "repo/.git/modules/sub/hooks"), kind: "directory" },
+      { path: at(root, "repo/.git/modules/sub/objects"), kind: "directory" },
+      {
+        path: at(root, "repo/.git/worktrees/wt/commondir"),
+        kind: "file",
+        data: new TextEncoder().encode("../.."),
+      },
+    ]);
+    const internals = await exec(
+      restricted(),
+      [
+        "cd repo",
+        "printf x >> .git/modules/sub/config",
+        "printf x > .git/modules/sub/hooks/pre-commit",
+        "printf x > .git/worktrees/wt/commondir",
+        "printf x > .git/worktrees/wt/config.worktree",
+        "printf x > .git/worktrees/wt/gitdir",
+        "printf x > .git/info-attributes-probe; mkdir -p .git/info; printf x > .git/info/attributes",
+        "printf x > .git/modules/sub/objects/ok-object",
+        "mkdir -p ../bare/objects ../bare/refs; printf 'ref: refs/heads/main' > ../bare/HEAD; printf x > ../bare/config",
+        "mv .git ../moved-git; printf x >> ../moved-git/config",
+        "cd ..",
+        "printf x > .envrc; printf x > .npmrc; mkdir -p deep; printf x > deep/.npmrc",
+        "printf x > .ＢＡＳＨＲＣ; printf x > .ｅｎｖｒｃ",
+        "true",
+      ].join("; "),
+    );
+    assert.equal(internals.exitCode, 0, `the git-internals probe must run: ${internals.stderr}`);
+    assert.equal(
+      text(await fixture.inspect.readFile(at(root, "repo/.git/modules/sub/config"))),
+      "cfg",
+      "submodule config",
+    );
+    assert.equal(
+      text(await fixture.inspect.readFile(at(root, "repo/.git/worktrees/wt/commondir"))),
+      "../..",
+      "worktree commondir",
+    );
+    assert.equal(
+      text(await fixture.inspect.readFile(at(root, "repo/.git/modules/sub/objects/ok-object"))),
+      "x",
+      "submodule objects stay writable",
+    );
+    assert.equal(
+      text(await fixture.inspect.readFile(at(root, "repo/.git/config"))),
+      "cfg",
+      "moving .git away",
+    );
+    for (const path of [
+      "repo/.git/modules/sub/hooks/pre-commit",
+      "repo/.git/worktrees/wt/config.worktree",
+      "repo/.git/worktrees/wt/gitdir",
+      "repo/.git/info-attributes-probe",
+      "repo/.git/info/attributes",
+      "bare/HEAD",
+      "moved-git/config",
+      ".envrc",
+      ".npmrc",
+      "deep/.npmrc",
+      ".ＢＡＳＨＲＣ",
+      ".ｅｎｖｒｃ",
+    ])
+      assert.equal(await fixture.inspect.readFile(at(root, path)), null, `mandatory deny: ${path}`);
+    await denied(
+      (await native(restricted())).writeFile(
+        at(root, "repo/.git/modules/sub/config"),
+        bytes,
+        signal,
+      ),
+      "native write of a submodule's config",
+    );
+    await denied(
+      (await native(restricted())).writeFile(at(root, "bare2/HEAD"), bytes, signal),
+      "native write of a bare-repository HEAD",
+    );
+    // No repository can be forged inside git's own allowlisted subtrees, and hook managers
+    // files stay out of reach.
+    const forged = await exec(
+      restricted(),
+      [
+        "cd repo/.git",
+        "mkdir -p objects/zz/.git/objects objects/zz/.git/refs",
+        "printf 'ref: refs/heads/main' > objects/zz/.git/HEAD",
+        "printf x > objects/zz/.git/config",
+        "mkdir -p objects/yy/objects objects/yy/refs; printf 'ref: refs/heads/main' > objects/yy/HEAD",
+        "mkdir -p logs/objects; printf ../.. > logs/commondir",
+        "mkdir -p refs/remotes/o/objects",
+        "cd ../..",
+        "mkdir -p .husky .lefthook .githooks .config",
+        "printf x > .husky/pre-commit; printf x > .pre-commit-config.yaml; printf x > lefthook.yml",
+        "printf x > .lefthook/x; printf x > .githooks/pre-commit; printf x > .config/lefthook.yml",
+        "true",
+      ].join("; "),
+    );
+    assert.equal(forged.exitCode, 0, `the forged-repository probe must run: ${forged.stderr}`);
+    for (const path of [
+      "repo/.git/objects/zz/.git/HEAD",
+      "repo/.git/objects/zz/.git/config",
+      "repo/.git/objects/yy/HEAD",
+      "repo/.git/logs/objects",
+      "repo/.git/logs/commondir",
+      "repo/.git/refs/remotes/o/objects",
+      ".husky/pre-commit",
+      ".pre-commit-config.yaml",
+      "lefthook.yml",
+      ".lefthook/x",
+      ".githooks/pre-commit",
+      ".config/lefthook.yml",
+    ])
+      assert.equal(await fixture.inspect.mode(at(root, path)), null, `mandatory deny: ${path}`);
+
+    if (support.fullAccess) {
+      // ordinary git work in a restricted repository keeps working under these rules
+      await exec(
+        full,
+        `cd ${quote(root)} && git init -q work && git -C work -c user.name=t -c user.email=t@t commit -q --allow-empty -m init`,
+      );
+      const git = await exec(
+        restricted(),
+        "cd work && printf a > f && git add f && git -c user.name=t -c user.email=t@t commit -qm m && " +
+          "git checkout -qb topic && git status --short && git log --oneline | wc -l",
+      );
+      assert.equal(git.exitCode, 0, `ordinary restricted git work: ${git.stderr}`);
+      assert.equal(git.stdout.trim(), "2", "the restricted commit landed");
+      // stash, pack-refs and gc write git internals of their own (index.stash.<n>,
+      // packed-refs.new, MERGE_AUTOSTASH) that the allowlist keeps writable
+      const housekeeping = await exec(
+        restricted(),
+        'cd work && g() { git -c user.name=t -c user.email=t@t -c gc.auto=0 "$@"; } && ' +
+          "printf b >> f && g stash -q && g stash pop -q && g commit -qam s && " +
+          "g pack-refs --all && g gc -q && git stash list | wc -l",
+      );
+      assert.equal(
+        housekeeping.exitCode,
+        0,
+        `restricted stash, pack-refs and gc: ${housekeeping.stderr}`,
+      );
+    }
+
     // Negative controls: sibling, symlink escapes and protected paths stay out of reach.
     const reads = await exec(
       restricted(),
@@ -539,10 +847,18 @@ export async function runSandboxPermissionConformance(
       await fixture.seed([
         { path: at(root, "srv-link.sock"), kind: "symlink", target: at(sibling, "srv.sock") },
       ]);
+      if (fixture.restrictedEnvironment === "refused") {
+        // the policy refusal is the result: a typed scope denial before anything runs
+        await denied(
+          exec(restricted({ kind: "environment" }), `printf ran > ${quote(at(root, "env-ran"))}`),
+          "a restricted environment-network operation must be refused by policy",
+        );
+        assert.equal(await fixture.inspect.readFile(at(root, "env-ran")), null);
+      }
       for (const network of [
         { kind: "none" } as const,
         allowlisted,
-        { kind: "environment" } as const,
+        ...(fixture.restrictedEnvironment === "refused" ? [] : [{ kind: "environment" } as const]),
       ]) {
         const probe = await exec(
           restricted(network),
@@ -726,6 +1042,46 @@ export async function runSandboxPermissionConformance(
       assert.equal(chmods.exitCode, 0, `chmod race program must run: ${chmods.stderr}`);
       assert.notEqual(chmods.stdout.trim(), "ok=0", "in-root chmods must succeed");
       await siblingIntact("a flipped path must not chmod the sibling");
+    }
+
+    // The supervisor of a restricted command (its parent) is closed to a same-uid process outside
+    // the operation: no ptrace attach, no mem or environ, while the command itself runs normally.
+    if (fixture.inspect.outside) {
+      const held = exec(
+        restricted(),
+        `echo $PPID > supervisor-pid; printf r > ready-held; ` +
+          `until [ -e release-held ]; do sleep 0.01; done; printf ran > held.txt`,
+      );
+      await waitFor(at(root, "ready-held"), held);
+      const supervisor = Number(text(await fixture.inspect.readFile(at(root, "supervisor-pid"))));
+      let probed: string;
+      try {
+        probed = await fixture.inspect.outside(OUTSIDE_PROBE, [String(supervisor)]);
+      } finally {
+        await exec(restricted(), "touch release-held");
+      }
+      assert.equal((await held).exitCode, 0, "the supervised command runs normally");
+      assert.equal(text(await fixture.inspect.readFile(at(root, "held.txt"))), "ran");
+      const { uid, who, control, target } = JSON.parse(probed) as {
+        uid: number;
+        who: { uid: number; cmdline: string };
+        control: Record<string, string>;
+        target: Record<string, string>;
+      };
+      // Not vacuous: the target is a live process of the outsider's own uid.
+      assert.equal(who?.uid, uid, `the supervisor must run as the outsider's uid: ${probed}`);
+      assert.notEqual(who?.cmdline ?? "", "", `the supervisor must still be running: ${probed}`);
+      assert.equal(control?.mem, "ALLOWED", `the probe must read a same-uid control: ${probed}`);
+      assert.equal(
+        control?.environ,
+        "ALLOWED",
+        `the probe must read a same-uid control: ${probed}`,
+      );
+      assert.deepEqual(
+        target,
+        { mem: "EACCES", environ: "EACCES", attach: "EPERM" },
+        `a same-uid outsider must not ptrace or read the supervisor ${supervisor}: ${probed}`,
+      );
     }
 
     // Exact cancellation: detached descendants end; a sibling operation keeps running.

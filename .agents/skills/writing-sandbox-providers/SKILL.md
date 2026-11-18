@@ -138,6 +138,125 @@ Every provider must follow these; the kernel's behaviour below assumes them. How
   instance, under the exclusive lease next to its `killAll`. The poll and `TaskOutput` / `TaskStop` use `SandboxService.ifRunning`: a shared
   lease only on a `running` row of the task's instance, never creating or resuming one. sandbox-fake puts node shims for `setsid`,
   `timeout`, `pkill -s` and `pgrep -s` first on its PATH (macOS has none) and kills an instance's processes on `suspend` and `destroy`.
+- **Cloud installed evidence** (B-15, `sandbox/permission-runtime-reports.ts`): a cloud device has no installed binding.
+  Under the lifecycle lease the kernel reads `permissionSupport(handle)` (bounded at 30 s) from a just-created instance
+  (recorded in the `commitHandle` transaction), after every resume, and whenever the recorded report is stale
+  (`cloudReportOwed`), and records it with a kernel-built identity (`cloudRuntimeIdentity`: provider plugin and version,
+  handle, generation, recorded applied limits, no image digest). A later record is written only while the row still
+  holds the probed handle, generation and limits. Any of these changing makes the context and admission unprobed alike,
+  and so do an `unapplied` record and applied limits more permissive than the effective desired ones (auto under a
+  sandbox device, open public under an allowlist, a host the desired allowlist does not cover; spec §124). Narrower
+  applied limits stand: the outer boundary is the applied network, and restricted hosts (base, accepted additions,
+  proposals) are cut to it. A narrowing, host-only too, goes through the exclusive lease on the next use: it is applied
+  (`update` or recreate) and recorded again, or, on a provider bound to its file system, recorded `unapplied` (unprobed
+  until a file reset). Readers never call the provider (a suspended instance reads as recorded). A failed read is logged
+  once per generation and never fails the lifecycle step; after a resume it clears the recorded identity (unprobed),
+  otherwise the evidence stays as it was. A cloud device without an instance is refused by admission but stays
+  provisionable: provisioning is the lease's job, and the first operation is admitted only after it recorded the evidence.
+  Full access needs the instance itself to hold the outer boundary (B-12, `cloudEnforceable`): an instance applied in the
+  `sandbox` mode reads `fullAccess: false` whatever its provider reports (restricted support stands).
+- **Cloud reconcile** (B-12, `CloudPermissionSnapshots.reconcile*`): reconciling a device that carries
+  `permission_reconcile_required` first narrows its authority to the applied limits the instance is known to run, by
+  intersection (Full only where it runs `auto`, the outer network cut to the applied one; a real narrowing is published
+  through the device ceiling writer), never the other way. The marker clears when the applied limits then are exactly the
+  effective ones with nothing `unapplied`; otherwise the outcome names the `target` (the effective limits, never wider than
+  the instance in any dimension). `SandboxService.reconcileLimits` (the worker's every-minute `sandbox-reconcile-limits`
+  cron, each device at most once per 10 minutes) applies that target through the provider's `update` under the exclusive
+  lease (a suspended instance is resumed, its leftovers killed, and suspended again), records it and reconciles again. No
+  `update`, `recreate`, a gone instance or a failure leave the marker and its file reset action.
+- **Legacy retirement** (permission runtime cutover 8.5, migration 0157, `sandbox/legacy-retirement.ts`):
+  - **Freeze.** `LegacyRetirementStore.freeze` writes the freeze row under the exclusive platform authority lock, then enumerates
+    before it returns. Every SID launch checks the freeze under the shared lock right before its dispatch, recording the exact
+    incarnation (provider and generation) it dispatches into.
+  - **Obligations.** One per device, provider and exact instance generation, for every legacy row whose processes may live on and
+    for each revoked managed start on an incarnation that no longer runs. A historical reservation without a recorded incarnation
+    is `unknown`, never the current instance.
+  - **Gate.** `SandboxService` enumerates the device itself and checks its obligations in `ensure`, under the exclusive lease,
+    before use, resume, rebuild or provider switch. A device with an unresolved obligation, or with a candidate not yet
+    enumerated, never takes the shared path. `LocalInstanceBindings.bind` refuses while one is unresolved.
+    `RetireLegacyTasksJob` is retryable and bounded; the gate never depends on it.
+  - **Retirement.** The current cloud incarnation is destroyed whole by its provider (never resumed or `killAll`ed; files kept),
+    and the confirmed destruction is recorded in `device_instance_destructions`. `retire()` and `destroyRow` record theirs too.
+    B-22: a **suspended** current cloud incarnation whose members are all revoked managed starts is not destroyed (its other
+    tasks would be lost): each revoked ref's exact `background.stop` is sent while suspended (the provider persists the
+    cancel), the instance is resumed, each stop is confirmed (`stopped` / `already-exited`) and the obligation resolves
+    `exact-cancelled` (migration 0159) and acknowledges exactly the stopped refs, under the obligation's row lock and only
+    while no other member exists; a use then goes on with the resumed instance, the worker suspends it again (a throw
+    after the resume suspends it too). A pre-resume answer other than `cancel-pending` / `stopped` / `already-exited`
+    destroys it while still suspended. A member recorded later (an unacknowledged revoked start or a legacy row) reopens
+    the obligation: in `addMember`, or on the next scan for a member an old replica added (never settled meanwhile). Any
+    failure is noted and falls back to the whole-instance destroy. The lifecycle reconcile (`reconcileLimits`) never
+    touches an instance while the device has an unresolved obligation.
+    A cloud incarnation the kernel cannot name (`unknown` provider or generation) resolves only once the device's current
+    incarnation is destroyed with confirmation (the gate destroys a live one), the row keeps no `prev_handle`, and the
+    obligation was recorded after the freeze. When the current row is not live (destroyed without a record, or `creating` with
+    no handle) but once had an instance, the gate calls the row's cloud provider's `destroyByName` for the device's instance
+    name and records that as the destruction of the row's incarnation; a failure keeps the obligation open. Any other
+    non-current cloud incarnation without a recorded destruction is quarantined for good (`device.recreate_required`), even
+    with a known provider and generation (kept fail-closed). A failed or impossible destroy stays retryable
+    (`device.unavailable`).
+  - **Same-name replacement carries the barrier.** The `unknown` rule holds only because every rebuild on one provider goes
+    through `create`, which first removes the old `cap-device-<id>` instance: a provider `gone` answer (E2B's token-failure
+    `gone` included) or `applyLimits`' swallowed destroy failure leaves nothing behind, and E2B's incarnations are one sandbox.
+    A provider or kernel path that rebuilds without same-name replacement breaks the barrier.
+  - **Deleted devices.** A device is gone when its row is missing, `deleted_at` is set, or its org is soft-deleted. The worker
+    (bounded per tick) leaves a cloud obligation alone while the device's instance row exists (its destroy is still owed and
+    records the destruction), then resolves an obligation by a recorded confirmed destruction, else moves it to `abandoned`. An
+    abandoned cloud obligation that later gains a matching recorded destruction resolves too. Abandonment is never evidence:
+    its members stay unsettled. `report()` keeps it out of `retired` and counts it in `abandoned` / `abandonedMembers`;
+    `cleanRetirement` also requires none.
+  - **Local machines.** A local obligation keeps the boot identity (`bootId`, from authenticated hellos; a hello without one clears
+    it) that the device's machine last reported. It resolves `host-rebooted` once any current machine of the device reports
+    another, not earlier, boot: the OS instance is the evidence, not the credential. Until then the device answers
+    `device.restart_required`. With no boot recorded it never resolves and answers `device.replace_required`: delete the device
+    and connect the computer as a new one.
+  - **What never clears an obligation.** A local destroy, a service restart, a new generation, a timeout or a SID.
+  - **After the freeze.** `killPendingTasks` neither signals nor clears kill marks.
+  - **`ifRunning`.** It refuses legacy SID polls, stops and reads and staged browse on such a device (`RetirementPendingError`).
+    Only exact-ref managed drains pass `exactRef: true`.
+  - **Freeze state.** `freeze()` returns once its own enumeration settled (`scanUntilStable`) and records `enumerated_at`
+    (migration 0158); a run whose enumeration keeps finding new legacy or revoked rows throws
+    `LegacyFreezeUnsettledError` and clears `enumerated_at`, leaving the freeze published but not enumerated.
+    `assertCutoverBarrier()` (the cutover barrier) refuses before the freeze, while `enumerated_at` is NULL, and while an
+    unmarked legacy row (`legacy_dispatch = 'unknown'`) started after `enumerated_at` exists (both stamped by the database
+    clock); rerunning the freeze once the old replica is stopped opens it.
+  - **Cutover runbook** (`capybara permissions cutover …`, `apps/capybara/src/commands/permissions.ts`; kernel side
+    `infra/cli/permission-cutover.ts`; `--json` on each). `report` and `freeze` use PostgreSQL only; `snapshot` needs
+    Redis (the lifecycle leases).
+    1. Release the boot-reporting device build and kernel (R1, protocol 2, dormant). Stop every old kernel replica before
+       the first new one starts: an old replica is not fenced by the freeze and B1 settings writes are not fenced either.
+       Drain the old workers too: an old retirement worker neither reopens an `exact-cancelled` obligation (B-22) nor
+       skips a member added to one after the cancel, so it could acknowledge a revoked start nobody stopped.
+    2. `report`. It lists `localWithoutBoot` (local devices with legacy rows whose machine has no recorded boot) and
+       `cloudUnknown` (cloud devices whose legacy rows name no incarnation; it reads the task rows and never empties by
+       itself: `prevHandle` / `noInstance` devices will answer `recreate_required`, `currentUnconfirmed` ones clear on
+       first use through `destroyByName` while their row's provider is loaded, unflagged ones clear on first use). Wait
+       until both are empty or accepted. Old replicas are detected where possible: live replicas (presence, Redis) whose
+       kernel version differs from the CLI's (an old replica, or the CLI is the different build; builds of one version
+       are not told apart), and `unfencedWriters` (legacy rows without the dispatch marker started after migration
+       0157; how many after the freeze, after its enumeration and in the last 15 minutes by the database clock: only a
+       replica without the 8.5 code writes them; `latestAt` never resets, so act on `recent` / `afterFreeze`). Replica presence reads `unknown`
+       when Redis does not answer; an old replica that never starts a legacy task is not detectable, so step 1 still
+       applies.
+    3. Convert the config (`capybara config migrate-permissions`) and start it with `--activate-permission-config`.
+    4. `freeze`: publishes the freeze, enumerates until stable before returning, fences pending producers (reserved
+       legacy launches are refused at dispatch: `fencedReservations`). Do this before managed starts are activated (a
+       revoked start recorded before the freeze with an unreadable generation stays `recreate_required`).
+    5. `snapshot`: `CloudPermissionSnapshots.snapshotAll` snapshots every live cloud device without a snapshot, each under
+       its exclusive lifecycle lease and in its own transaction. It refuses behind an open barrier (no freeze, or not
+       enumerated) and when this CLI's permission configuration is not the published one (`assertCurrent`, also checked
+       per device under the platform lock; that failure stops the run). A rerun visits nothing and publishes nothing; a
+       crash or a failed device (lease wait) leaves that device without a snapshot for the next run, never half written
+       or published twice. A narrowing goes through the device ceiling writer (epoch, Full consent reset, exact
+       revocation). Devices whose applied limits are not established keep `permission_reconcile_required` (listed)
+       until a file reset reconciles them. Exit 1 while any device failed or is pending. Ctrl-C stops between devices
+       (the device in flight commits or rolls back whole); `--lease-wait-ms` bounds each device's lease wait.
+    6. Right before R2, run `snapshot` again until `pending` is 0: cloud devices created after step 5 start with
+       `owner_full_access` NULL. Then R2, gated on `retired` (below). Deploying R2, again stop and drain every
+       replica of the previous release before the first R2 worker runs (its retirement worker must be the only one
+       settling `exact-cancelled` obligations, as in step 1).
+  - **Release gate.** It passes on `retired`. With `abandoned > 0` it also needs the operator to acknowledge: "N old incarnations
+    were abandoned with their devices; legacy processes may still run on those computers; no device can reuse them".
 
 ### Limits, modes and networks (`SandboxLimits`)
 
@@ -343,6 +462,20 @@ The kernel owns it; the extension implements only primitives. **Do not do schedu
   (rule `bootstrap-compose-ref` of `pnpm check:bootstrap`). The images themselves (container hardening, the egress proxy that blocks DNS rebinding by checking every resolved IP)
   are the plugin's; see its skill.
 - Logs and errors carry no secrets and no other orgs' ids.
+- **Restricted write policy** (`packages/plugin-sdk/src/sandbox-write-denies.ts`, one source for the
+  Linux broker, `native-files.py` with `denyWrites`, the device agent and the macOS runtime's ordered
+  regex rules through the pnpm patch of `@anthropic-ai/sandbox-runtime`): mandatory denies (shell,
+  git-global, `.envrc`, `.npmrc`, editor, agent and hook-manager files), the gitdir allowlist, no
+  forged repository inside it, no bare-repository `HEAD`, nothing moved out of `.git`. Known
+  limitations: a restricted command cannot `git init` or create submodules, worktrees or bare
+  repositories; it **can forge a rebase or cherry-pick in progress** (`rebase-merge/`,
+  `rebase-apply/`, `sequencer/` are writable for git's own use), and the owner's `git rebase
+  --continue` (or `cherry-pick --continue`) then runs the `exec` lines of the todo list it wrote;
+  `package.json` scripts and similar convention-run files are not covered; `git worktree prune`
+  and the config-section removal of `git branch -D` fail under restricted; on macOS a multi-commit
+  cherry-pick or revert reports it cannot remove `.git/sequencer` (the worker removes it when empty). On macOS a directory
+  renamed into git's subtrees keeps contents Seatbelt never saw; owners are advised to set
+  `git config --global safe.bareRepository explicit` (documented, never changed automatically).
 
 ## Local file-read ceiling
 

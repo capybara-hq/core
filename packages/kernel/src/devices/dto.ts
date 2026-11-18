@@ -21,10 +21,22 @@ export const DeviceParams = z.object({ id: z.string().min(1).max(100) });
  * `device.mode_requires_session`, and the Platform operation (`devices.rename`) omits it.
  */
 export const DevicePatchBody = z
-  .object({ name: DeviceName.optional(), mode: z.literal("sandbox").nullable().optional() })
+  .object({
+    name: DeviceName.optional(),
+    mode: z.literal("sandbox").nullable().optional(),
+    /**
+     * B2: a cloud device's explicit Full ceiling. `false` narrows; `true` widens and needs
+     * `confirmWidening: true` (a person in a web session only); it never opens the outer network.
+     */
+    ownerCeiling: z.object({ fullAccess: z.boolean() }).strict().optional(),
+    confirmWidening: z.literal(true).optional(),
+  })
   .strict()
-  .refine((b) => b.name !== undefined || b.mode !== undefined, {
-    message: "Give at least one of name or mode",
+  .refine((b) => b.name !== undefined || b.mode !== undefined || b.ownerCeiling !== undefined, {
+    message: "Give at least one of name, mode or ownerCeiling",
+  })
+  .refine((b) => b.mode === undefined || b.ownerCeiling === undefined, {
+    message: "Give either mode or ownerCeiling, not both",
   });
 
 /** One host of a device's network allowlist (`validateAllowHost`: lowercase, `*.` allowed). */
@@ -52,11 +64,31 @@ export const DevicePolicyBody = z
     add: z.array(AddHost).min(1).max(20).optional(),
     remove: z.array(PolicyHost).min(1).max(100).optional(),
     mode: z.literal("sandbox").optional(),
+    /**
+     * B2: narrow the machine's owner ceiling. Only `fullAccess: false` and `workspace` reach are
+     * accepted: the web never widens it (the owner does, on the machine, with `capybara-device
+     * ceiling set`).
+     */
+    ownerCeiling: z
+      .object({
+        fullAccess: z.literal(false).optional(),
+        restrictedProjectReach: z.literal("workspace").optional(),
+      })
+      .strict()
+      .refine((c) => c.fullAccess !== undefined || c.restrictedProjectReach !== undefined, {
+        message: "Give fullAccess: false or restrictedProjectReach: workspace",
+      })
+      .optional(),
   })
   .strict()
-  .refine((b) => b.add !== undefined || b.remove !== undefined || b.mode !== undefined, {
-    message: "Give at least one of add, remove or mode",
-  });
+  .refine(
+    (b) =>
+      b.add !== undefined ||
+      b.remove !== undefined ||
+      b.mode !== undefined ||
+      b.ownerCeiling !== undefined,
+    { message: "Give at least one of add, remove, mode or ownerCeiling" },
+  );
 
 /**
  * A project's name (project root §4.1, `isDeviceProjectName`): 1-64 UTF-16 code units, not `.` or

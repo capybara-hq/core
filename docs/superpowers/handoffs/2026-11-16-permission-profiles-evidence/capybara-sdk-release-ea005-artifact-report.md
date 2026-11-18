@@ -1,0 +1,15 @@
+# SDK prerelease artifact verification
+
+Reviewed release source: ea005ea9dd596f9ad9b2e09014dc1531376ea5f1 (PR316), base5408b24e83fae1559858f1811f9d2f0c60594016. Build checkout was clean before and after all source build/pack commands. No publication occurred.
+
+## Completed
+
+- `pnpm exec tsc -b packages/plugin-sdk packages/kernel packages/testing`: exit0, /tmp/capybara-sdk-release-build.log. Exact versioned SDK rc25, kernel rc35 and testing rc20 packed with pnpm from their package directories to /tmp/capybara-sdk-release-ea005-artifacts.
+- Actual tarballs inspected: no workspace ranges, no source export condition, publishConfig applied, expected built JS/declaration public entries present. SDK operation/runtime/native modules and testing native conformance present. Package/runtime SDK_VERSION matches rc25. SHA512 digests and actual dependency ranges recorded in artifacts/manifest-check.json.
+- Outside-repository consumer installed these three exact tarballs with normal dependencies and explicit Vitest5.0.5. It uses no workspace/source paths. Initial Vitest public-root check3/3PASS1.39s: actual SDK immutable helper bytes/hash/version, strict parser import, testing public entry/fixture files available while optional plugin-tools absent, and real resolved paths point into this consumer installed dist. TypeScript consumer compilation exit0 against public SandboxOperation/Browse/Background.readOutput, parsers/errors and fixture declarations. Logs /tmp/capybara-sdk-release-consumer-{install,test,types}.log. Consumer used TypeScript6.0.2; no claim it duplicated repository compiler7.
+- Existing npm plugin-tools rc15 was downloaded from the real registry, not locally repacked. Its full tarball SHA512 exactly matches registry integrity sha512-0DnP/utQL02HR7RcZc8IePhal1jbeaLZwY9/eLNDel1fOShyIdrvvWHVaPYtcpREJ8QGYEI+hsziHnsu216Yxg==. Its published kernel^rc32/SDK^rc23 ranges resolve and deduplicate to consumer kernel rc35/SDK rc25. Its built pack entry exists, contains no workspace refs.
+- Added that verified published tarball to same consumer: real public testing.packFixture(fake-tools-ui) produced a nonempty valid gzip tarball with matching returned bytes/SHA256, packer.test.ts1/1PASS781ms. npm ls dependency closure exit0: only SDKrc25/kernelrc35/testingrc20/plugin-toolsrc15/Vitest5.0.5, no unmet peers. Logs /tmp/capybara-sdk-release-consumer-{packer-install,packer-test,closure}.log.
+
+## Remaining gates
+
+Independent metadata review Ready, /tmp/capybara-sdk-release-ea005-review.md. PR316 exact head CI43840107911SUCCESS. However main5408 backstop CI43840012441 e2e3/5 failed device-connect settings/delete readiness; root is diagnosing/fixing it rather than rerunning blindly. Do not equate PR CI and pack tests with passing main backstop. Once ready, merge exact fresh release head (user authorized ready merges), observe automated prerelease publication to next, then perform real registry install/import verification before official plugins consume versions. No Linux restricted-runtime/provider-support or protocol3 claim from these packages.

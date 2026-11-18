@@ -65,7 +65,7 @@ const ROOTS = {
 };
 /** The deployment's switch and network (auto allowed, the allowlist unless a test changes it). */
 const DEPLOYMENT: DeploymentDevicePolicy = {
-  autoMode: "allowed",
+  fullAccess: "allowed",
   limits: { egress: "allowlist", allowHosts: ["example.com"], orgHosts: "extend" },
 };
 /** The limits every local exec carries by default: the allowed mode and the sandbox allowlist. */
@@ -88,6 +88,7 @@ let orgOfEnv: string | null;
 let maxFrameBytes: number;
 /** What `NetworkGrants.forExec` answers, and the calls it got. */
 let runGrants: DeviceExecGrants | undefined;
+let admittedGrants: DeviceExecGrants | undefined;
 let grantCalls: { orgId: string; runId: string; deviceId: string }[];
 /** What the machine's exec answers. */
 let execResult: Record<string, unknown>;
@@ -100,6 +101,7 @@ beforeEach(() => {
   orgOfEnv = "org-1";
   maxFrameBytes = 16 * 1024 * 1024;
   runGrants = undefined;
+  admittedGrants = undefined;
   grantCalls = [];
   execResult = EXEC_RESULT;
 });
@@ -199,6 +201,9 @@ beforeAll(async () => {
       reportedMode: async () => reportedMode,
     } as Pick<NetworkGrants, "forExec" | "reportedMode">,
     log,
+    {
+      forExecution: async () => admittedGrants,
+    } as unknown as import("../../src/sandbox/permission-call-grants.js").PermissionCallGrants,
   );
 });
 afterAll(async () => {
@@ -333,7 +338,7 @@ describe("LocalDeviceProvider", () => {
       const handle = { id: h.deviceId, roots: ROOTS, limits: LIMITS };
       await provider.stat(handle, ROOTS.workspace, signal());
       expect((h.frames.at(-1) as KernelReq).args).toMatchObject({ limits: { mode: "auto" } });
-      orgSettings = { autoMode: "off" };
+      orgSettings = { fullAccess: "off" };
       await provider.readFile(handle, "/nope", { maxBytes: 10, signal: signal() });
       expect((h.frames.at(-1) as KernelReq).args).toMatchObject({ limits: { mode: "sandbox" } });
     } finally {
@@ -678,7 +683,7 @@ describe("LocalDeviceProvider: modes (auto mode spec §4.2, §4.3)", () => {
   it("carries `mode: allowedMode` and the org's sandbox allowlist, even when the ceiling is auto", async () => {
     expect((await execOnce(attended)).args?.limits).toEqual(DEV_LIMITS);
     // the org allows only sandbox mode
-    orgSettings = { autoMode: "off" };
+    orgSettings = { fullAccess: "off" };
     expect((await execOnce(attended)).args?.limits).toMatchObject({
       mode: "sandbox",
       network: { kind: "allowlist", hosts: ["example.com"] },
@@ -701,13 +706,13 @@ describe("LocalDeviceProvider: modes (auto mode spec §4.2, §4.3)", () => {
 
   it("a scheduled run gets the same mode: no separate grant caps it", async () => {
     expect((await execOnce(scheduled)).args?.limits).toEqual(DEV_LIMITS);
-    orgSettings = { autoMode: "off" };
+    orgSettings = { fullAccess: "off" };
     expect((await execOnce(scheduled)).args?.limits).toMatchObject({ mode: "sandbox" });
   });
 
   it("refuses a machine that reports auto mode while the org allows only sandbox, at every exec", async () => {
     reportedMode = "sandbox";
-    orgSettings = { autoMode: "off" };
+    orgSettings = { fullAccess: "off" };
     expect((await execOnce(attended)).args?.limits).toMatchObject({ mode: "sandbox" });
     // the owner switches the machine to auto mode; the next exec is refused
     reportedMode = "auto";
@@ -728,7 +733,7 @@ describe("LocalDeviceProvider: modes (auto mode spec §4.2, §4.3)", () => {
   });
 
   it("serves a fresh login in an auto-forbidden org and refuses an explicit auto policy", async () => {
-    orgSettings = { autoMode: "off" };
+    orgSettings = { fullAccess: "off" };
     // `capybara-device login` writes `mode: "sandbox"` for a new device in this org, so the hello
     // reports sandbox and the gate serves the exec (packages/device/test/login.test.ts).
     reportedMode = "sandbox";
@@ -744,3 +749,74 @@ describe("LocalDeviceProvider: modes (auto mode spec §4.2, §4.3)", () => {
     expect((await execOnce(attended)).args?.limits).toMatchObject({ mode: "auto" });
   });
 });
+
+it.each(["exec", "backgroundStart"] as const)(
+  "staged %s reuses recorded grants on a consumed retry without reading current run grants",
+  async (method) => {
+    const sent: Record<string, unknown>[] = [];
+    const staged = provider.stagedOperations({
+      call: async (_device, op, args) => {
+        sent.push(args);
+        if (op === "backgroundStart")
+          return {
+            instanceId: "device",
+            instanceGeneration: "g",
+            operationId: "operation",
+            executionId: "execution",
+          };
+        return { exitCode: 0, stdout: "", stderr: "", truncated: false, timedOut: false };
+      },
+      permissionSupport: async () => ({
+        version: 1,
+        restricted: null,
+        fullAccess: false,
+        background: false,
+      }),
+    });
+    const signal = new AbortController().signal;
+    const scope = {
+      operationId: "operation",
+      admitBeforeMs: Date.now() + 30000,
+      deviceId: "device",
+      rootConversationId: "root",
+      profileRevision: 1,
+      ceilingRevision: "c",
+      profile: "approve-for-me" as const,
+      actor: { accountId: "owner", conversationId: "root", runId: "run" },
+      tag: "operation",
+      filesystem: { kind: "scoped" as const, readRoots: ["/work"], writeRoots: ["/work"] },
+      network: { kind: "allowlist" as const, hosts: ["example.com"] },
+    };
+    const operation = await staged.operation({ id: "device" }, scope, signal);
+    admittedGrants = {
+      hosts: ["example.com"],
+      source: { kind: "run", id: "run", accountId: "owner" },
+    };
+    const invoke = () =>
+      method === "exec"
+        ? operation.exec({ command: "true", timeoutMs: 100, maxOutputBytes: 100, signal })
+        : staged.background.start({ id: "device" }, scope, {
+            command: "true",
+            timeoutMs: 100,
+            maxOutputBytes: 100,
+            signal,
+            taskId: "task",
+            outputPath: "/work/task.out",
+            retainUntilMs: scope.admitBeforeMs + 1000,
+          });
+    await invoke();
+    runGrants = undefined;
+    await invoke();
+    expect(sent[0]?.grants).toEqual({
+      hosts: ["example.com"],
+      source: { kind: "run", id: "run", accountId: "owner" },
+    });
+    expect(sent[1]?.grants).toEqual(sent[0]?.grants);
+    expect(grantCalls).toHaveLength(0);
+    orgSettings = {
+      cloudNetwork: { mode: "allowlist", excludedHosts: ["example.com"], extraHosts: [] },
+    };
+    await expect(invoke()).rejects.toThrow("Current organization limits refuse");
+    expect(sent).toHaveLength(2);
+  },
+);

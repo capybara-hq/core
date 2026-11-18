@@ -11,9 +11,16 @@ import type { NestFastifyApplication } from "@nestjs/platform-fastify";
 import { Redis } from "ioredis";
 import pg from "pg";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import { createKernelApp, startKernelApp } from "../../src/app.js";
+import { buildKernelApp, closeKernelApp, createKernelApp, startKernelApp } from "../../src/app.js";
 import { type KernelConfig, KernelConfigSchema } from "../../src/config/schema.js";
+import { ExtensionHost } from "../../src/extensions/host.js";
+import { KernelDb } from "../../src/infra/database/kernel-db.js";
+import { KernelLifecycle } from "../../src/lifecycle/kernel-lifecycle.js";
 import { createLogger } from "../../src/log.js";
+import {
+  PermissionConfigPublication,
+  permissionConfigFingerprint,
+} from "../../src/sandbox/permission-config-publication.js";
 import { SLOW_GATES_KEY, type SlowGates } from "../fixtures/plugins/slow/index.js";
 import { lifePkg } from "../helpers/plugin-packages.js";
 
@@ -275,4 +282,72 @@ describe("start order", () => {
     ).rejects.toMatchObject({ code: "bootstrap.download_failed" });
     expect(await canConnect(port)).toBe(false);
   });
+});
+
+it("postcommit-bootstrap-failure-keeps-activation", async () => {
+  const initial = cfg({ roles: ["api"], extensions: [], devices: { fullAccess: "allowed" } });
+  const seed = await createKernelApp(initial, { env: {}, logger: silent() });
+  await seed.get(KernelDb).deleteFrom("permission_config_publication").execute();
+  await seed.get(PermissionConfigPublication).initialize();
+  await closeKernelApp(seed);
+  const next = structuredClone(initial);
+  next.devices.fullAccess = "off";
+  const registry = await gatedRegistry(Promise.resolve());
+  next.packages.npmRegistry = registry.url;
+  const records: string[] = [];
+  const logger = createLogger("info", { write: (line) => records.push(line) });
+  const activation = { expectedActiveHash: permissionConfigFingerprint(initial) };
+  const app = await buildKernelApp(next, {
+    env: {},
+    logger,
+    permissionConfigActivation: activation,
+    bootstrap: { dir: bootstrapDir },
+    bootstrapManifest: manifest(ABSENT),
+  });
+  apps.push(app);
+  await expect(app.init()).rejects.toMatchObject({ code: "bootstrap.download_failed" });
+  const db = app.get(KernelDb);
+  const before = await db.selectFrom("permission_authority_epochs").selectAll().execute();
+  expect(
+    (
+      await db
+        .selectFrom("permission_config_publication")
+        .select("fingerprint")
+        .executeTakeFirstOrThrow()
+    ).fingerprint,
+  ).toBe(permissionConfigFingerprint(next));
+  expect((await app.get(PermissionConfigPublication).initialize({ activation })).outcome).toBe(
+    "already-active",
+  );
+  expect(await db.selectFrom("permission_authority_epochs").selectAll().execute()).toEqual(before);
+  expect(records.join("\n")).toContain("permission configuration activation committed");
+  expect(records.join("\n")).not.toContain(pgc.url);
+  expect(app.get(KernelLifecycle).port).toBeUndefined();
+});
+
+it("explicit CAS conflict fails before extension or role startup", async () => {
+  const next = cfg({ roles: ["api"], extensions: [], devices: { fullAccess: "allowed" } });
+  const app = await buildKernelApp(next, {
+    env: {},
+    logger: silent(),
+    permissionConfigActivation: { expectedActiveHash: "0".repeat(64) },
+  });
+  apps.push(app);
+  const db = app.get(KernelDb);
+  await db
+    .updateTable("permission_config_publication")
+    .set({
+      fingerprint: permissionConfigFingerprint(cfg({ devices: { fullAccess: "off" } })),
+      projection: JSON.stringify(
+        (
+          await import("../../src/sandbox/permission-config-publication.js")
+        ).permissionConfigProjection(cfg({ devices: { fullAccess: "off" } })),
+      ),
+    })
+    .where("id", "=", "platform")
+    .execute();
+  const load = vi.spyOn(app.get(ExtensionHost), "load");
+  await expect(app.init()).rejects.toThrow(/active=/);
+  expect(load).not.toHaveBeenCalled();
+  expect(app.get(KernelLifecycle).port).toBeUndefined();
 });

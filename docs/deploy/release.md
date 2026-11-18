@@ -231,6 +231,20 @@ sync:image-tag`) for the Version Packages PR, so the PR rewrites both to the new
 version. `check:release-metadata` fails when they differ, for example after running `changeset
 version` by hand: run `pnpm sync:image-tag`.
 
+### The device package's bundled dependencies
+
+`@capybara-hq/device` declares no dependencies. Its `prepack` (`packages/device/tools/runtime-manifest.ts`)
+copies its whole runtime closure into `dist/node_modules`: the SDK, the patched
+`@anthropic-ai/sandbox-runtime` (with its Apache-2.0 modification notice) and `ws`, plus everything
+they depend on. It then writes the runtime manifest the device verifies before it attests anything.
+The published tarball therefore installs exactly those bytes, and they are frozen per release.
+
+`npm audit` on a user's machine does not see them. Advisories reach maintainers through the
+workspace lockfile instead, because the same packages are the device's devDependencies. A Dependabot
+alert on one of them means a device re-release: update it in the workspace and add a changeset on
+`@capybara-hq/device`. The bundler refuses optional dependencies and packages declaring `os`, `cpu`
+or `libc`, because the release runner would otherwise choose them for every platform.
+
 ### Git tags and GitHub releases
 
 The `release-tag` job runs after `images-publish`, only in the run that pushed images. It tags

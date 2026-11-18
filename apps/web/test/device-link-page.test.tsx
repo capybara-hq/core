@@ -108,6 +108,25 @@ describe("/devices/link", () => {
     },
   );
 
+  it("confirming grants no Full access: the body carries no ceiling, the page says so", async () => {
+    const calls = stubApi({
+      ...ROUTES,
+      "POST /api/v1/device/confirm": () => json(200, { deviceId: "d9" }),
+    });
+    await renderAuthRouteWithCache(PAGE, lastStubRoutes());
+    const note = await screen.findByRole("note");
+    expect(note.textContent).toContain("Confirming does not allow Full access");
+    // no control on this page widens the machine
+    for (const role of ["checkbox", "radio", "switch", "button"] as const) {
+      expect(screen.queryByRole(role, { name: /Full access/ })).toBeNull();
+    }
+    await userEvent.setup().click(screen.getByRole("button", { name: D.confirm }));
+    expect(await screen.findByText(D.doneTitle)).toBeTruthy();
+    for (const c of calls.filter((x) => x.method === "POST")) {
+      expect(String(c.body)).not.toMatch(/fullAccess|ownerCeiling|confirmWidening|mode/);
+    }
+  });
+
   it("confirms into an existing local device of the org", async () => {
     const calls = stubApi({
       ...ROUTES,

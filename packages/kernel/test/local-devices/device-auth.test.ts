@@ -333,7 +333,7 @@ describe("device authorization", () => {
   it("the token says the organization forbids auto mode (login's line)", async () => {
     await db
       .updateTable("orgs")
-      .set({ settings: JSON.stringify({ autoMode: "off" }) })
+      .set({ settings: JSON.stringify({ fullAccess: "off" }) })
       .where("id", "=", orgId)
       .execute();
     const m = await member();

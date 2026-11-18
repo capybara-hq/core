@@ -100,6 +100,11 @@ export class FakeMachine {
     });
   }
 
+  /** Sends the protocol 2 hello with `overrides` applied (the shape `fake-machine-v3.ts` shares). */
+  hello(overrides: Record<string, unknown> = {}): void {
+    this.send({ ...HELLO, ...overrides });
+  }
+
   send(frame: unknown): void {
     this.ws.send(JSON.stringify(frame));
   }
@@ -120,4 +125,36 @@ export class FakeMachine {
   close(): void {
     this.ws.terminate();
   }
+}
+
+/** Explicit test-only staged frames; the current fake's socket handshake remains protocol 2. */
+export const stagedHello = (
+  identity?: import("@capybara-hq/plugin-sdk").DeviceHelloV3["runtimeIdentity"],
+): import("@capybara-hq/plugin-sdk").DeviceHelloV3 => ({
+  ...HELLO,
+  protocol: 3,
+  transport: { maxFrameBytes: 69632 },
+  permissionSupport: {
+    version: 1,
+    restricted: null,
+    fullAccess: false,
+    background: false,
+    unavailableReason: "No per-instance enforcement proof",
+  },
+  ownerCeiling: {
+    version: 2,
+    sequence: 0,
+    restrictedProjectReach: "workspace",
+    revision: "test-owner-1",
+    fullAccess: false,
+    restrictedAllowedDomains: [],
+  },
+  instanceGeneration: identity?.instanceGeneration ?? "test-instance-1",
+  ...(identity && { runtimeIdentity: identity }),
+});
+export async function stagedRequest(raw: string) {
+  const { parseDeviceFrameV3 } = await import("@capybara-hq/plugin-sdk");
+  const frame = parseDeviceFrameV3(raw, "kernel");
+  if (frame.type !== "req") throw new Error("Expected staged kernel request");
+  return frame;
 }

@@ -19,6 +19,7 @@ import { TITLE_QUEUE } from "../../src/conversations/titles.js";
 import { EVAL_QUEUE_NAME } from "../../src/evals/jobs.js";
 import { LIFECYCLE_QUEUE } from "../../src/extensions/lifecycle-hooks.js";
 import { PLUGINS_RECONCILE_JOB } from "../../src/extensions/lifecycle-topics.js";
+import { KernelDb } from "../../src/infra/database/kernel-db.js";
 import { LockedIntervalScheduler } from "../../src/infra/schedule/locked-interval.js";
 import { LOCKED_JOB } from "../../src/infra/schedule/locked-tick.js";
 import { KernelLifecycle } from "../../src/lifecycle/kernel-lifecycle.js";
@@ -29,6 +30,10 @@ import { MAINTENANCE_QUEUE_NAME } from "../../src/runtime/maintenance-queue.js";
 import { RUN_QUEUE_NAME, SUBAGENT_RUN_QUEUE_NAME } from "../../src/runtime/run-jobs.js";
 import { RUN_ORPHAN_CHECK_JOB } from "../../src/runtime/run-orphan-check.job.js";
 import { USAGE_REPORT_QUEUE } from "../../src/runtime/usage-report.js";
+import {
+  PermissionConfigPublication,
+  permissionConfigFingerprint,
+} from "../../src/sandbox/permission-config-publication.js";
 import { ToolDrift } from "../../src/tools/drift.js";
 import { ToolJobs } from "../../src/tools/jobs.js";
 import { SLOW_GATES_KEY, type SlowGates } from "../fixtures/plugins/slow/index.js";
@@ -233,6 +238,7 @@ describe("role modules", () => {
       "LegacySandboxCleanupJob",
       "OutboxRelay",
       "PluginsReconcileJob",
+      "RetireLegacyTasksJob",
       "RunOrphanCheck",
       "SandboxSweepJobs",
       "ScheduledTaskScanJob",
@@ -246,7 +252,7 @@ describe("role modules", () => {
   it("all roles in one process: the same crons and consumers, once each", async () => {
     const a = await start(["api", "worker", "gateway"]);
     const { jobHosts, processors } = scan(a);
-    expect(jobHosts).toHaveLength(15);
+    expect(jobHosts).toHaveLength(16);
     // the same cron jobs and intervals as the worker-only process, each registered once
     expect(workerSchedules).toBeDefined();
     expect(schedulesOf(a)).toEqual(workerSchedules);
@@ -322,4 +328,59 @@ describe("role modules", () => {
       g[SLOW_GATES_KEY]?.delete(key);
     }
   });
+});
+
+it("activation precedes startup for api, gateway, worker and all roles", async () => {
+  const seedConfig = cfg(["api"], { devices: { fullAccess: "allowed" } });
+  const seed = await createKernelApp(seedConfig, {
+    env: {},
+    logger: createLogger("error", { write: () => {} }),
+  });
+  await seed.get(KernelDb).deleteFrom("permission_config_publication").execute();
+  await seed.get(PermissionConfigPublication).initialize();
+  await closeKernelApp(seed);
+  let previous = seedConfig;
+  for (const roles of [["api"], ["gateway"], ["worker"], ["api", "worker", "gateway"]]) {
+    const next = cfg(roles, {
+      devices: { fullAccess: previous.devices.fullAccess === "allowed" ? "off" : "allowed" },
+    });
+    app = await buildKernelApp(next, {
+      env: {},
+      logger: createLogger("error", { write: () => {} }),
+      permissionConfigActivation: { expectedActiveHash: permissionConfigFingerprint(previous) },
+    });
+    const publication = app.get(PermissionConfigPublication);
+    const original = publication.initialize.bind(publication);
+    let committed = false;
+    const initialize = vi.spyOn(publication, "initialize").mockImplementation(async (options) => {
+      const result = await original(options);
+      expect(result.outcome).toBe("activated");
+      committed = true;
+      return result;
+    });
+    const roleSpies = [];
+    for (const token of [WorkerRole, GatewayRole]) {
+      if (
+        (token === WorkerRole && !roles.includes("worker")) ||
+        (token === GatewayRole && !roles.includes("gateway"))
+      )
+        continue;
+      const role = app.get(token);
+      const start = role.start.bind(role);
+      roleSpies.push(
+        vi.spyOn(role, "start").mockImplementation(async (...args) => {
+          expect(committed).toBe(true);
+          return start(...args);
+        }),
+      );
+    }
+    await app.init();
+    expect(committed).toBe(true);
+    await publication.assertCurrent();
+    initialize.mockRestore();
+    for (const spy of roleSpies) spy.mockRestore();
+    await closeKernelApp(app);
+    app = undefined;
+    previous = next;
+  }
 });

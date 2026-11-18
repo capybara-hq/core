@@ -528,6 +528,16 @@ export async function dockerPermissionFixture(
         (await agent.request({ op: "inspect", what: "mode", path })).result as number | null,
       alive: async (pids) =>
         (await agent.request({ op: "inspect", what: "alive", pids })).result as number[],
+      // A separate docker exec as the device user: no operation, no Landlock domain, same uid.
+      outside: async (program, args) => {
+        const result = spawnSync(
+          "docker",
+          ["exec", "-i", "-u", "1000:1000", device.name, "python3", "-", ...args],
+          { input: program, encoding: "utf8" },
+        );
+        if (result.status !== 0) throw new Error(`outside program failed: ${result.stderr}`);
+        return result.stdout;
+      },
     },
     dispose,
   };

@@ -21,9 +21,12 @@ import { KernelLifecycle } from "./lifecycle/kernel-lifecycle.js";
 import type { KernelLogger } from "./log.js";
 import { createConfiguredLogger } from "./log-config.js";
 import type { KernelOverride } from "./overrides.js";
+import { validatePermissionConfigActivation } from "./sandbox/permission-config-publication.js";
 
 /** What {@link createKernelApp} takes besides the config. */
 export interface KernelAppOptions {
+  /** Explicit startup CAS intent; never a reloadable configuration value. */
+  permissionConfigActivation?: Readonly<{ expectedActiveHash: string }>;
   /** 配置来源；提供 `watch` 时启用热更新。 */
   source?: ConfigSource;
   /** 解析插件裸包名的目录，默认 `process.cwd()`；相对路径按当前 cwd 解析。 */
@@ -69,6 +72,7 @@ export async function buildKernelApp(
   config: KernelConfig,
   options: KernelAppOptions = {},
 ): Promise<NestFastifyApplication> {
+  validatePermissionConfigActivation(options.permissionConfigActivation);
   const logger = options.logger ?? createConfiguredLogger(config);
   const app = await NestFactory.create<NestFastifyApplication>(
     KernelModule.forRoot(config, { ...options, logger }),
