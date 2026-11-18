@@ -41,7 +41,7 @@ Amends:
   ```
   Started background task bt_k3f9a2 ("Start the dev server").
   Output: /workspace/.capybara/tasks/bt_k3f9a2.out
-  You will be told when it finishes: keep working meanwhile instead of waiting on it. Read its new output with TaskOutput (block false for a server or watcher) or Read, and stop it with TaskStop.
+  You will be told when it finishes. Read its output with TaskOutput (or Read), stop it with TaskStop.
   ```
 
 - The task's own `timeout` covers the command. The tool call ends as soon as the launch ends (one
@@ -95,10 +95,11 @@ slips seen; no behaviour changes:
   for one observed slip (maintainer rule, 2026-11-19).
 - **`TaskOutput` is for reading logs.** With `block: false` for a server or watcher (a task that
   never finishes always takes the whole timeout), or to collect a finished task's output after the
-  notification; never right after a launch just to wait. `block` keeps its default `true`, as
-  Claude Code's does (maintainer ruling 2026-11-19): the words steer, the default stays.
-- **The launch result** ends with the next step: keep working, you will be told; read with
-  `TaskOutput` (block false for a server) or `Read`; stop with `TaskStop`.
+  notification. `block` keeps its default `true`, as Claude Code's does (maintainer ruling
+  2026-11-19).
+- **Said once.** The when-to-background rule lives only in the `Bash` description; the
+  `run_in_background` field points to it, and neither `TaskOutput` nor the launch result repeats
+  it (no "do not poll" / "don't sleep" lines: the notification and `block` are the mechanism).
 
 Model-visible text only: tool definitions are fetched by specHash in replays and the launch text
 is in the log, so no `DriftReason` (replay-evals skill). The UI side of the same finding (a launch

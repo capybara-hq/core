@@ -72,13 +72,10 @@ const SPEC: ToolSpec = {
     "elapsed time, then the output the task wrote since the last TaskOutput call for it (a " +
     "bounded slice; the task's whole output file, whose path is in the Bash result, can also be " +
     "read with Read). Use it to check a server's or watcher's log (is it up, did it print an " +
-    "error) with block false, or to collect a task's output once you were told it finished. You " +
-    "are told when a task finishes, so do not poll, and do not call it right after starting a " +
-    "task just to wait for it: if you need a command's result before you can go on, run it in " +
-    "the foreground with Bash instead. With block (the default) it waits until the task " +
-    "finishes or timeout milliseconds pass, checking every 2 seconds; a task that never " +
-    "finishes (a server, a watcher) always takes the whole timeout, so pass block false for " +
-    "those. Prefer it over sleeping in Bash. A background task that waits for a person (an " +
+    "error) with block false, or to collect a task's output once you were told it finished. " +
+    "With block (the default) it waits until the task finishes or timeout milliseconds pass, " +
+    "checking every 2 seconds; a task that never finishes (a server, a watcher) always takes the " +
+    "whole timeout, so pass block false for those. A background task that waits for a person (an " +
     "interactive login, a prompt) prints its prompt here; read it while the task waits. Stop a " +
     "task you no longer need with TaskStop.",
   inputSchema: {
@@ -154,10 +151,10 @@ const notFound = (id: string): ToolError =>
 
 /**
  * A sub-agent's agentId passed as a task id (as Claude Code's TaskOutput allows for background
- * agents): its report arrives on its own, so polling or sleeping for it only wastes the run.
+ * agents): its report arrives on its own as a notification.
  */
 export const subagentNotTaskText = (id: string): string =>
-  `${clip(id, 40)} is a sub-agent, not a background task. Its report arrives in this conversation as a notification when it hands back or finishes. Don't poll or sleep for it: keep working or end your turn. Use SendMessage to give it more instructions.`;
+  `${clip(id, 40)} is a sub-agent, not a background task. Its report arrives in this conversation as a notification when it hands back or finishes. Use SendMessage to give it more instructions.`;
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 

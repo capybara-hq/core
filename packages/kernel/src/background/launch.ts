@@ -173,11 +173,10 @@ export function launchScript(id: string, command: string, seconds: number): stri
 }
 
 /**
- * The launch result's last line (background tool guidance note §2): how to read and stop the task,
- * and to keep working instead of waiting on it.
+ * The launch result's last line: how the task's end is reported and how to read and stop it.
  */
 export const LAUNCH_NEXT_STEP =
-  "You will be told when it finishes: keep working meanwhile instead of waiting on it. Read its new output with TaskOutput (block false for a server or watcher) or Read, and stop it with TaskStop.";
+  "You will be told when it finishes. Read its output with TaskOutput (or Read), stop it with TaskStop.";
 
 /** The model-visible result of a launch (spec §2.1); `workspace`: the instance's workspace root. */
 export function startedText(

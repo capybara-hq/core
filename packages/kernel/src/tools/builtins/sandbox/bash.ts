@@ -122,7 +122,7 @@ const SPEC: ToolSpec = {
       run_in_background: {
         type: "boolean",
         description:
-          "Set to true for a command that must keep running (a dev server, a watcher) or a long job whose result you do not need yet. Not for a command whose result you need next: run that in the foreground with a larger timeout.",
+          "Set to true to run this command in the background (see the description for when).",
       },
     },
     required: ["command", "description"],
