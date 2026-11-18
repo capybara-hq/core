@@ -9,7 +9,7 @@ import { usePagePath } from "../../../../components/shell/path";
 import { useWorkspace } from "../../../../lib/query/workspace";
 
 /**
- * `/settings/shares` (SettingsPage, group 组织; org admins): every shared file link of the org with
+ * `/settings/shares` (SettingsPage, group Organization; org admins): every shared file link of the org with
  * Revoke. From the query cache (the layout prefetched it on a first load).
  */
 export default function SharesSettingsView() {

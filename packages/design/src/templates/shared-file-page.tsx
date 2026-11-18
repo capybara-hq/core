@@ -11,7 +11,7 @@ export type SharedFilePageProps = {
   name: string;
   /** The type badge ("HTML"); empty while loading. */
   badge: string;
-  /** Already localized: "张三 分享 · 2026-11-25 过期" / "Shared by 张三 · expires 2026-11-25". */
+  /** Already localized, e.g. "Shared by Alice · expires 2026-11-25". */
   meta: string;
   /** Downloads the file; absent: no Download button. */
   onDownload?(): void;

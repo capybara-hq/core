@@ -850,7 +850,7 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
   };
 
   // Share (§6.16.22, file sharing design §5): an icon button before Download; a live share adds
-  // the `ok` marker and renames the button 已分享.
+  // the `ok` marker and renames the button Shared.
   const shareBtn = (shared) =>
     `<button class="r-icon-btn r-share-btn" data-share="true" aria-label="${shared ? "已分享" : "分享"}">${icon("share", 16)}${shared ? '<span class="r-share-marker" aria-hidden="true"></span>' : ""}</button>`;
 

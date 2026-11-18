@@ -501,7 +501,7 @@ function sharingOf(saved: DeploymentSettings, draft: SharingDraft) {
 }
 
 /**
- * 对外分享 (file sharing spec §8): the platform switch (off by default; orgs turn it on only where
+ * External sharing (file sharing spec §8): the platform switch (off by default; orgs turn it on only where
  * it is allowed), the longest link expiry and the CDN origins a rendered HTML file may load from.
  * The switch and the maximum read-only when the startup config sets them. Saved with the ActionRow.
  */

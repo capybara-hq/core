@@ -5,7 +5,7 @@ import { Icon } from "../icons/icon";
 import { useDesignT } from "../provider";
 
 export type CopyFieldProps = {
-  /** The field's label ("链接"). */
+  /** The field's label ("Link"). */
   label: string;
   /** The value to copy (a share link). */
   value: string;
@@ -15,7 +15,7 @@ export type CopyFieldProps = {
 
 /**
  * A value people copy and may see again (spec §6.44): a labelled read-only field and a copy button
- * that reads 已复制 for two seconds after copying. Unlike `SecretReveal` there is no "shown once"
+ * that reads Copied for two seconds after copying. Unlike `SecretReveal` there is no "shown once"
  * line. Without a usable clipboard (an insecure origin, a refused permission) the field is selected
  * instead and a muted line says to copy it by hand.
  */
