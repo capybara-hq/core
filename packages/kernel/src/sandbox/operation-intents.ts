@@ -104,7 +104,7 @@ export function launchRefusedText(kind: OperationFailureKind | undefined): strin
     case "unsupported":
       return "this device cannot run background tasks with this conversation's permissions; ask the user to choose another permission profile or device";
     default:
-      return "the device refused the start";
+      return "the device refused the start; check that the device is connected and its permission profile allows background tasks, then retry the call";
   }
 }
 export function operationResult(value: unknown): unknown {

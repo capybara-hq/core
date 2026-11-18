@@ -13,3 +13,9 @@ another member triggers in an owner's conversation runs without the owner's devi
 `GenerateImage` call with `file_path` takes the same permission review as `Write`: an outside
 directory is asked about (or reviewed) and granted for that call only. The testing helpers run on
 the activated kernel.
+
+Kernel: the old background launcher is gone. A background `Bash` task starts, is polled, stopped
+and read only by its exact device reference; no session-id script runs any more. Tasks left from
+the old launcher are handed to the legacy retirement and never signalled or read live. A refused
+background start, and an old task's failed launch, are reported in actionable words instead of
+the device's raw message.

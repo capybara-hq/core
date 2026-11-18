@@ -1055,8 +1055,11 @@ export interface BackgroundTasksTable {
   trigger_account_id: string;
   description: string;
   command: string;
-  /** NULL while the launch is reserved but not started (0071). */
-  sid: string | null;
+  /**
+   * A legacy row's session id (0071); NULL on every managed row. Never written after insert: no
+   * launch records a SID any more (permission activation W5-P2), so updates are refused by type.
+   */
+  sid: ColumnType<string | null, string | null | undefined, never>;
   output_path: string;
   status: ColumnType<
     "running" | "completed" | "failed" | "stopped" | "timed_out" | "lost",

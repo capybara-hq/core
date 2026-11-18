@@ -212,11 +212,6 @@ describe("the sandbox tools in a bound conversation", () => {
         },
       },
       background: {
-        reserve: async () => true,
-        markStarted: async () => "started",
-        failLaunch: async () => {},
-        finishStoppedLaunch: async () => {},
-        releaseStop: async () => {},
         get: async () => undefined,
         advanceOffset: async () => {},
         // biome-ignore lint/suspicious/noExplicitAny: test stub
@@ -298,28 +293,6 @@ describe("the sandbox tools in a bound conversation", () => {
     await d.tool("Bash").run(bash, { ...ctx, sandboxConversationId: "root-conv" });
     expect(d.asked).toEqual(["root-conv"]);
     expect(d.execs.map((e) => e.cwd)).toEqual([PROJECT]);
-  });
-
-  it("a background Bash starts its command in the project root; its task files stay in the workspace", async () => {
-    const d = device(usable(PROJECT));
-    const r = await d
-      .tool("Bash")
-      .run({ command: "make build", description: "Build", run_in_background: true }, ctx);
-    expect(text(r)).toContain(`Output: ${ROOTS.workspace}/.capybara/tasks/`);
-    expect(d.execs.map((e) => e.cwd)).toEqual([ROOTS.workspace]);
-    const b64 = /printf '%s' '([A-Za-z0-9+/=]+)' \| base64 -d/.exec(d.execs[0]?.command ?? "")?.[1];
-    expect(Buffer.from(b64 ?? "", "base64").toString("utf8")).toBe(
-      `cd -- '${PROJECT}' || exit 1\nmake build`,
-    );
-    // free mode: the script is the command alone, as before
-    const free = device(null);
-    await free
-      .tool("Bash")
-      .run({ command: "make build", description: "Build", run_in_background: true }, ctx);
-    const freeB64 = /printf '%s' '([A-Za-z0-9+/=]+)' \| base64 -d/.exec(
-      free.execs[0]?.command ?? "",
-    )?.[1];
-    expect(Buffer.from(freeB64 ?? "", "base64").toString("utf8")).toBe("make build");
   });
 
   it("Glob and Grep default to the project root", async () => {

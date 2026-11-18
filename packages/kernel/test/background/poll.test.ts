@@ -195,6 +195,41 @@ type Conv = ManagedLauncher & { deviceId: string };
  * A new conversation (seeded in the database) bound to a device of its own, its actor an org
  * member (a managed call's actor must be one), with a running claimed run.
  */
+/** A legacy row of `c` (no launch writes one any more: rows from before the cutover). */
+function legacyRow(c: Conv, id: string, startedAt: Date) {
+  return {
+    id,
+    orgId: c.orgId,
+    conversationId: c.conversationId,
+    sandboxConversationId: c.conversationId,
+    deviceId: c.deviceId,
+    runId: "run-x",
+    callId: "call-x",
+    triggerAccountId: c.accountId,
+    description: "d",
+    command: "true",
+    sid: null,
+    outputPath: taskOutputPath(id),
+    startedAt,
+    deadlineAt: new Date(startedAt.getTime() + 3_600_000),
+    sandboxCreatedAt: null,
+  };
+}
+
+/** A legacy reservation that never started (its launch died before the cutover). */
+async function legacyReservation(c: Conv, startedAt: Date): Promise<string> {
+  const id = newTaskId();
+  await store.insert(legacyRow(c, id, startedAt), "reserved");
+  return id;
+}
+
+/** Ends a row a test left running, so it holds no slot for the next test. */
+async function settleRow(id: string): Promise<void> {
+  await sql`UPDATE capybara.background_tasks
+    SET status = 'failed', finished_at = now(), stopping_at = NULL
+    WHERE id = ${id}`.execute(raw);
+}
+
 async function conversation(): Promise<Conv> {
   const s = await seedConversation(raw);
   const deviceId = await seedDevice(raw, s.orgId, s.accountId);
@@ -444,60 +479,19 @@ describe("polling", () => {
     expect((await status()).status).toBe("suspended");
   });
 
-  it("skips a reservation that has not started (no sid)", async () => {
+  it("skips a legacy reservation that never started", async () => {
     const c = await conversation();
-    const id = newTaskId();
-    expect(
-      await store.reserve(
-        {
-          id,
-          orgId: c.orgId,
-          conversationId: c.conversationId,
-          sandboxConversationId: c.conversationId,
-          deviceId: c.deviceId,
-          runId: "run-x",
-          callId: "call-x",
-          triggerAccountId: c.accountId,
-          description: "d",
-          command: "true",
-          outputPath: taskOutputPath(id),
-          startedAt: new Date(),
-          deadlineAt: new Date(Date.now() + 60_000),
-        },
-        4,
-      ),
-    ).toBe(true);
+    const id = await legacyReservation(c, new Date());
     expect(await job.pollOnce()).toBe(0);
     expect((await store.get(id))?.status).toBe("running");
-    await store.failLaunch(id, "test");
+    await settleRow(id);
   });
 
   it("fails a reservation abandoned by its launch after 2 minutes, never a younger or live-claimed one", async () => {
     const c = await conversation();
     // only an abandoned reservation of its own: its frame comes from the abandoned path alone
     const lone = await conversation();
-    const reserve = async (startedAt: Date, conv = c) => {
-      const id = newTaskId();
-      await store.reserve(
-        {
-          id,
-          orgId: conv.orgId,
-          conversationId: conv.conversationId,
-          sandboxConversationId: conv.conversationId,
-          deviceId: conv.deviceId,
-          runId: "run-x",
-          callId: "call-x",
-          triggerAccountId: conv.accountId,
-          description: "d",
-          command: "true",
-          outputPath: taskOutputPath(id),
-          startedAt,
-          deadlineAt: new Date(startedAt.getTime() + 3_600_000),
-        },
-        10,
-      );
-      return id;
-    };
+    const reserve = (startedAt: Date, conv = c) => legacyReservation(conv, startedAt);
     const limit = launchAbandonedAfterMs(k.app.get(KernelConfigService).get());
     // derived from config: twice the launch call's pipeline limit, so well over the lease wait
     const cfg = k.app.get(KernelConfigService).get();
@@ -515,11 +509,13 @@ describe("polling", () => {
     await sql`UPDATE capybara.background_tasks
       SET stopping_at = now() - ${STOP_CLAIM_TTL_MS + 1000}::integer * interval '1 millisecond'
       WHERE id = ${staleClaim}`.execute(raw);
-    // a launch that completed at that moment (its sid set) is no longer a reservation
-    const completing = await reserve(old);
-    expect(
-      await store.markStarted(completing, { sid: "424242", sandboxCreatedAt: new Date() }),
-    ).toBe("started");
+    // a legacy launch that had started (its sid and instance recorded) is no reservation
+    const completing = newTaskId();
+    await store.insert({
+      ...legacyRow(c, completing, old),
+      sid: "424242",
+      sandboxCreatedAt: new Date(),
+    });
 
     const publish = vi.spyOn(k.app.get(EventLog), "publishChanged");
     await job.pollOnce();
@@ -542,12 +538,10 @@ describe("polling", () => {
     expect(await finishedEvents(c.conversationId, staleClaim)).toEqual([]);
     expect((await store.get(young))?.status).toBe("running");
     expect((await store.get(claimed))?.status).toBe("running");
-    // the completed launch keeps its sid (the poll then checks it like any started task)
+    // the started legacy row keeps its sid and is never failed as abandoned
     expect((await store.get(completing))?.sid).toBe("424242");
     expect((await store.get(completing))?.lostReason).not.toBe("launch_abandoned");
-    // a failed launch clears a stop's claim with its status
-    for (const id of [young, claimed]) await store.failLaunch(id, "test");
-    expect(await store.get(claimed)).toMatchObject({ status: "failed", stoppingAt: null });
+    for (const id of [young, claimed]) await settleRow(id);
   });
 });
 
@@ -640,35 +634,13 @@ describe("stopping", () => {
     expect(await alive(c, t)).toBe(true);
   });
 
-  it("a stop of a reservation only claims it (its launch kills what it starts)", async () => {
+  it("a stop of a legacy reservation only claims it (the poller fails it as abandoned)", async () => {
     const c = await conversation();
-    const id = newTaskId();
-    await store.reserve(
-      {
-        id,
-        orgId: c.orgId,
-        conversationId: c.conversationId,
-        sandboxConversationId: c.conversationId,
-        deviceId: c.deviceId,
-        runId: "run-x",
-        callId: "call-x",
-        triggerAccountId: c.accountId,
-        description: "d",
-        command: "true",
-        outputPath: taskOutputPath(id),
-        startedAt: new Date(),
-        deadlineAt: new Date(Date.now() + 60_000),
-      },
-      4,
-    );
+    const id = await legacyReservation(c, new Date());
     const row = await stopper.stop((await store.get(id)) as BackgroundTaskRow, "person");
     expect(row.status).toBe("running");
     expect(row.stoppingAt).toBeInstanceOf(Date);
-    expect(await store.markStarted(id, { sid: "12345", sandboxCreatedAt: new Date() })).toBe(
-      "stopping",
-    );
-    await store.finishStoppedLaunch(id);
-    expect(await store.get(id)).toMatchObject({ status: "stopped", stoppingAt: null });
+    await settleRow(id);
   });
 
   it("a stop of a task that already exited finishes it as its exit says", async () => {

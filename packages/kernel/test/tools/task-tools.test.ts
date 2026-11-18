@@ -19,10 +19,7 @@ import type { ExecutionClaim } from "../../src/runtime/run-execution.js";
 import { SandboxService } from "../../src/sandbox/sandbox.service.js";
 import { BuiltinTools } from "../../src/tools/builtins/builtin-tools.js";
 import { TASK_LIST_FINISHED_LIMIT } from "../../src/tools/builtins/sandbox/task-list.js";
-import {
-  subagentNotTaskText,
-  taskReadScript,
-} from "../../src/tools/builtins/sandbox/task-output.js";
+import { subagentNotTaskText } from "../../src/tools/builtins/sandbox/task-output.js";
 import type { BuiltinCallContext, BuiltinTool } from "../../src/tools/registry.js";
 import { ToolRegistry } from "../../src/tools/registry.js";
 import { legacyDbFor } from "../helpers/conversations.js";
@@ -220,29 +217,32 @@ const finishedEvents = async (conversationId: string, taskId: string): Promise<F
     (e): e is Finished => e.type === "background_task_finished" && e.payload.taskId === taskId,
   );
 
-/** A reservation whose launch has not started the command (no sid), as `Bash` makes first. */
+/**
+ * A legacy reservation whose launch never started the command (no sid, no instance): no launch
+ * writes one any more, only rows from before the cutover remain.
+ */
 async function reservation(c: Conv, id: string): Promise<void> {
   const now = new Date();
-  expect(
-    await store.reserve(
-      {
-        id,
-        orgId: c.orgId,
-        conversationId: c.conversationId,
-        sandboxConversationId: c.conversationId,
-        deviceId: c.deviceId,
-        runId: "run-1",
-        callId: "call-1",
-        triggerAccountId: c.accountId,
-        description: "Launching",
-        command: "sleep 1",
-        outputPath: `.capybara/tasks/${id}.out`,
-        startedAt: now,
-        deadlineAt: new Date(now.getTime() + 60_000),
-      },
-      4,
-    ),
-  ).toBe(true);
+  await store.insert(
+    {
+      id,
+      orgId: c.orgId,
+      conversationId: c.conversationId,
+      sandboxConversationId: c.conversationId,
+      deviceId: c.deviceId,
+      runId: "run-1",
+      callId: "call-1",
+      triggerAccountId: c.accountId,
+      description: "Launching",
+      command: "sleep 1",
+      sid: null,
+      outputPath: `.capybara/tasks/${id}.out`,
+      startedAt: now,
+      deadlineAt: new Date(now.getTime() + 60_000),
+      sandboxCreatedAt: null,
+    },
+    "reserved",
+  );
 }
 
 describe("offered with Bash", () => {
@@ -374,17 +374,6 @@ describe("TaskOutput", () => {
     const next = textOf(await output(c, { task_id: t.id, block: false }));
     expect(next.match(/x{100,}/)?.[0]).toHaveLength(SPILL);
     expect((await store.get(t.id))?.readOffset).toBe(2 * SPILL);
-  });
-
-  it("the read exec takes a bounded slice: tail -c +<offset+1> | head -c <cap>", () => {
-    const s = taskReadScript({ id: "bt_abcdef", sid: "42", running: true }, 1000, SPILL);
-    expect(s).toContain(`tail -c +1001 .capybara/tasks/bt_abcdef.out`);
-    expect(s).toContain(`| head -c ${SPILL} |`);
-    expect(s).toContain("tk_alive 42");
-    // a finished task's read checks no liveness
-    expect(taskReadScript({ id: "bt_abcdef", sid: "42", running: false }, 0, 10)).not.toContain(
-      "tk_alive",
-    );
   });
 
   it("a multi-byte character cut by the cap is completed, never split across reads", async () => {
@@ -547,22 +536,28 @@ describe("TaskOutput: leases, reservations, reporting", () => {
     expect(textOf(await waiting)).toMatch(/^Status: running/);
   });
 
-  it("a reservation (no sid yet) is still starting, with and without block", async () => {
+  it("a legacy reservation (no sid) is still starting, answered at once with and without block", async () => {
     const c = await conversation();
     const id = "bt_yyyyyy";
     await reservation(c, id);
+    // no launch will ever start it (the poller fails it as abandoned): a wait would be for nothing
     for (const input of [{ block: false }, { timeout: 2500 }]) {
       const t0 = Date.now();
       const r = await output(c, { task_id: id, ...input });
       expect(textOf(r)).toMatch(
         /^Status: running \(\d+s\)\n\[The task is still starting; no output yet\.\]$/,
       );
-      if ("timeout" in input) expect(Date.now() - t0).toBeGreaterThanOrEqual(2400);
+      expect(Date.now() - t0).toBeLessThan(2400);
     }
-    // a launch that never started
-    await store.failLaunch(id, "launch failed: boom");
+    // a legacy launch that never started, its reason in the old launcher's raw words
+    await sql`UPDATE capybara.background_tasks
+      SET status = 'failed', finished_at = now(), lost_reason = 'launch failed: boom'
+      WHERE id = ${id}`.execute(raw);
     const r = await output(c, { task_id: id });
     expect(textOf(r)).toContain("[No output: the command never started.]");
+    // never the raw reason: the model is told what to do instead
+    expect(textOf(r)).not.toContain("boom");
+    expect(textOf(r)).toContain("call Bash with run_in_background again");
     const s = await stop(c, { task_id: id });
     expect(textOf(s)).toContain("had already finished");
     expect(textOf(s)).toContain("[No output: the command never started.]");
