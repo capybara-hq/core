@@ -1,4 +1,5 @@
 import type { Command } from "../args.js";
+import { noteCliPolicyChange } from "../command-log.js";
 import { readStrictOwnerCeilingSync } from "../exec/operation-types.js";
 import { PolicyStore } from "../policy-store.js";
 import { type OwnerCeilingPolicy, policyPath, readCredential } from "../state.js";
@@ -129,6 +130,11 @@ export async function ceilingCommand(
     err(`Cannot change ${policyPath(stateDir)}: ${(e as Error).message}`);
     return 1;
   }
+  noteCliPolicyChange(
+    stateDir,
+    `ceiling set fullAccess ${written.fullAccess ? "allow" : "deny"}, projectReach ` +
+      written.restrictedProjectReach,
+  );
   out("This machine's owner ceiling is now:");
   for (const line of describe(written)) out(line);
   if (written.restrictedProjectReach === "os-user")

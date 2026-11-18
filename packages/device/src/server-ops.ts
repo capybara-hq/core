@@ -15,9 +15,11 @@ import {
   type SandboxLimits,
   validateAllowHost,
 } from "@capybara-hq/plugin-sdk";
+import type { CommandLog, CommandLogEntry } from "./command-log.js";
 import type { InstanceBinder } from "./exec/instance-binding.js";
 import type { MacOperationBackend } from "./exec/mac-operation-backend.js";
 import { DeviceOpError } from "./exec/types.js";
+import { grantedHosts } from "./policy.js";
 import type { PolicyOpRecord } from "./policy-ops.js";
 import type { PolicyStore } from "./policy-store.js";
 import { publicSuffixWildcard } from "./public-suffix.js";
@@ -105,8 +107,20 @@ function applyPolicyOp(
 ): { result: { policy: DeviceLocalPolicySummary }; detail: string } {
   const source = (args.source ?? {}) as Partial<LegacyDevicePolicyArgs["source"]>;
   const fromApproval = source.approvalId !== undefined;
-  const add = [...new Set(opHosts(args.add, "add", fromApproval))];
-  const remove = [...new Set(opHosts(args.remove, "remove", fromApproval))];
+  const by =
+    `by ${clean(source.accountName, 100)} (${clean(source.accountId, 100)}) ` +
+    `via ${clean(source.via, 10)}`;
+  const approval = fromApproval ? `, approval ${clean(source.approvalId, 100)}` : "";
+  let add: string[];
+  let remove: string[];
+  try {
+    add = [...new Set(opHosts(args.add, "add", fromApproval))];
+    remove = [...new Set(opHosts(args.remove, "remove", fromApproval))];
+  } catch (e) {
+    // an invalid host is a refused change too, audited with who asked for it
+    const message = e instanceof Error ? e.message : String(e);
+    throw new PolicyRefused(message, `policy refused (${clean(message, 200)}) ${by}${approval}`);
+  }
   // Read as unknown: the frame parser may have been bypassed, so nothing is assumed of the shape.
   const rawMode: unknown = (args as { mode?: unknown }).mode;
   const parts: string[] = [];
@@ -115,10 +129,6 @@ function applyPolicyOp(
   if (rawMode !== undefined) parts.push(`mode ${clean(String(rawMode), 40)}`);
   const ceilingArg: unknown = (args as { ownerCeiling?: unknown }).ownerCeiling;
   if (ceilingArg !== undefined) parts.push(`ownerCeiling ${clean(JSON.stringify(ceilingArg), 80)}`);
-  const by =
-    `by ${clean(source.accountName, 100)} (${clean(source.accountId, 100)}) ` +
-    `via ${clean(source.via, 10)}`;
-  const approval = fromApproval ? `, approval ${clean(source.approvalId, 100)}` : "";
   const what = parts.length > 0 ? parts.join("; ") : "unchanged";
   const refused = `policy refused ${what} ${by}${approval}`;
   if (rawMode !== undefined && rawMode !== "sandbox") {
@@ -149,7 +159,7 @@ function applyPolicyOp(
   }
   const both = add.find((h) => remove.includes(h));
   if (both !== undefined) {
-    throw new DeviceOpError("policy", `${both} is both added and removed`);
+    throw new PolicyRefused(`${both} is both added and removed`, refused);
   }
   const change = (p: Policy): Policy => {
     const kept = p.allowedDomains.filter((d) => !remove.includes(d.toLowerCase()));
@@ -272,6 +282,62 @@ export interface StagedOwnerPolicy {
   report: () => DeviceOwnerCeiling;
   /** Reconciles live owners against the fresh strict ceiling (`reconcileOwnerCeiling`). */
   reconcile: (signal: AbortSignal) => Promise<void>;
+  /** The owner's local command log: operations and policy changes are recorded there. */
+  log?: CommandLog;
+}
+
+/** Appends one line to the local command log: best effort, never fails or delays an operation. */
+function note(log: CommandLog | undefined, entry: Omit<CommandLogEntry, "time">): void {
+  if (log === undefined) return;
+  try {
+    log.append({ time: new Date().toISOString(), ...entry });
+  } catch {
+    // the local log never fails an operation
+  }
+}
+
+/** The audit line of a policy change from the deployment, with the deciding account. */
+function notePolicy(log: CommandLog | undefined, req: KernelReq, detail: string): void {
+  const source = (req.args as { source?: { accountId?: unknown } } | null)?.source;
+  const accountId = clean(source?.accountId, 100);
+  note(log, {
+    op: "policy",
+    tag: null,
+    actor: accountId === "" ? null : { accountId },
+    exitCode: null,
+    detail,
+  });
+}
+
+/** The command-log line of an exec or a background start: isolation, actor, grants; no command. */
+function operationEntry(
+  op: string,
+  args: Record<string, unknown>,
+  scope: { profile: string; tag: string; actor: { accountId: string; conversationId: string } },
+  exitCode: number | null,
+  failure?: string,
+): Omit<CommandLogEntry, "time"> {
+  const grants = args.grants as DeviceExecGrants | undefined;
+  const limits = args.limits as Pick<SandboxLimits, "network"> | undefined;
+  const hosts = grants && limits ? grantedHosts(limits, grants) : [];
+  const detail =
+    failure !== undefined
+      ? `failed (${failure})`
+      : hosts.length > 0 && grants
+        ? `grants ${clean(grants.source.kind, 10)} ${clean(grants.source.id, 100)} by ` +
+          `${clean(grants.source.accountId, 100)}: ${hosts.join(", ")}`
+        : undefined;
+  return {
+    op,
+    tag: clean(scope.tag, 200),
+    actor: {
+      accountId: clean(scope.actor.accountId, 100),
+      conversationId: clean(scope.actor.conversationId, 100),
+    },
+    exitCode,
+    isolation: scope.profile === "full-access" ? "full" : "restricted",
+    ...(detail !== undefined && { detail }),
+  };
 }
 
 /**
@@ -298,7 +364,8 @@ async function serveOwnerPolicyV3(
         }),
       };
     }
-    const { res } = servePolicyOp(req, owner.store, facts);
+    const { res, detail } = servePolicyOp(req, owner.store, facts);
+    if (detail !== undefined) notePolicy(owner.log, req, detail);
     if (!res.ok) return { type: "res", id: req.id, ok: false, error: res.error };
     // successful local policy writes reconcile live owners immediately (cutover 8.4)
     await owner.reconcile(signal);
@@ -312,6 +379,8 @@ async function serveOwnerPolicyV3(
       }),
     };
   } catch (e) {
+    // a refused change is audited too, with who asked for it
+    if (e instanceof PolicyRefused) notePolicy(owner.log, req, e.detail);
     return {
       type: "res",
       id: req.id,
@@ -410,15 +479,23 @@ export async function serveOperationV3(
           ...(a.cwd === undefined ? {} : { cwd: a.cwd as string }),
           ...(a.env === undefined ? {} : { env: a.env as Record<string, string> }),
         };
-        result =
-          parsed.op === "exec"
-            ? await (await execution.operation(handle, scope, signal)).exec(args)
-            : await execution.background.start(handle, scope, {
-                ...args,
-                taskId: a.taskId as string,
-                outputPath: a.outputPath as string,
-                retainUntilMs: a.retainUntilMs as number,
-              });
+        try {
+          result =
+            parsed.op === "exec"
+              ? await (await execution.operation(handle, scope, signal)).exec(args)
+              : await execution.background.start(handle, scope, {
+                  ...args,
+                  taskId: a.taskId as string,
+                  outputPath: a.outputPath as string,
+                  retainUntilMs: a.retainUntilMs as number,
+                });
+        } catch (error) {
+          note(owner?.log, operationEntry(parsed.op, a, scope, null, errorKind(sdk, error)));
+          throw error;
+        }
+        const exitCode =
+          parsed.op === "exec" ? ((result as { exitCode?: number | null }).exitCode ?? null) : null;
+        note(owner?.log, operationEntry(parsed.op, a, scope, exitCode));
       } else {
         const operation = prep
           ? await backend.prepare(handle, sdk.parseSandboxPreparationScope(a.scope), signal)
@@ -479,17 +556,7 @@ export async function serveOperationV3(
       ),
     };
   } catch (error) {
-    const kind = sdk.isSandboxScopeDeniedError(error)
-      ? "denied"
-      : sdk.isSandboxPermissionUnsupportedError(error)
-        ? "unsupported"
-        : sdk.isSandboxOperationOutcomeUnknownError(error)
-          ? "unknown"
-          : sdk.isSandboxGoneError(error)
-            ? "gone"
-            : sdk.isFileSystemGoneError(error)
-              ? "fs_gone"
-              : "error";
+    const kind = errorKind(sdk, error);
     return {
       type: "res",
       id: request.id,
@@ -497,4 +564,22 @@ export async function serveOperationV3(
       error: { kind, message: error instanceof Error ? error.message : String(error) },
     };
   }
+}
+
+/** The protocol error kind of an operation's failure. */
+function errorKind(
+  sdk: typeof import("@capybara-hq/plugin-sdk"),
+  error: unknown,
+): "denied" | "unsupported" | "unknown" | "gone" | "fs_gone" | "error" {
+  return sdk.isSandboxScopeDeniedError(error)
+    ? "denied"
+    : sdk.isSandboxPermissionUnsupportedError(error)
+      ? "unsupported"
+      : sdk.isSandboxOperationOutcomeUnknownError(error)
+        ? "unknown"
+        : sdk.isSandboxGoneError(error)
+          ? "gone"
+          : sdk.isFileSystemGoneError(error)
+            ? "fs_gone"
+            : "error";
 }

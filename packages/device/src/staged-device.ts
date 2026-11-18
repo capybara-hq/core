@@ -12,6 +12,7 @@ import {
   type SandboxStopResult,
   validateSandboxPathShape,
 } from "@capybara-hq/plugin-sdk";
+import { CommandLog } from "./command-log.js";
 import type { OperationContainerHost } from "./exec/docker-operations.js";
 import { credentialIdentity, InstanceBinder, type StoredBinding } from "./exec/instance-binding.js";
 import type { LinuxBackendDependencies } from "./exec/linux-operation-backend.js";
@@ -267,6 +268,8 @@ export function createStagedDevice(o: StagedDeviceOptions): StagedDevice {
   });
   const owner: StagedOwnerPolicy = {
     store: policy,
+    // operations and policy changes are recorded in the owner's local command log
+    log: new CommandLog(stateDir),
     report: () => issueOwnerReport({ stateDir, deviceId: cred.deviceId, dir: cred.dir, home }),
     reconcile: async (signal) => {
       await binder.current()?.backend.reconcileOwnerCeiling(signal);

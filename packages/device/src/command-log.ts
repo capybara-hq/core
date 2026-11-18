@@ -1,6 +1,6 @@
 import { appendFileSync, mkdirSync, renameSync, statSync } from "node:fs";
+import { userInfo } from "node:os";
 import { join } from "node:path";
-import type { SandboxMode } from "./state.js";
 
 export const COMMAND_LOG_MAX_BYTES = 10 * 1024 * 1024;
 
@@ -8,13 +8,15 @@ export interface CommandLogEntry {
   time: string;
   op: string;
   tag: string | null;
-  actor: { accountId: string } | null;
+  /** Who asked: the account, and for an operation the conversation it ran for. */
+  actor: { accountId: string; conversationId?: string } | null;
   exitCode: number | null;
-  /** An exec's mode: auto (no OS sandbox) or sandbox. */
-  mode?: SandboxMode;
+  /** How an operation ran: restricted (the permission sandbox) or full (Full access). */
+  isolation?: "restricted" | "full";
   /**
    * An audit line: a policy change from the deployment (`policy add a.com by <name> (<id>) via
-   * web, approval <id>`) or the grants an exec was given (`grants run <id> by <id>: a.com`).
+   * web, approval <id>`) or the machine (`policy add allowedDomains a.com by <user> via cli`), the
+   * grants an exec was given (`grants run <id> by <id>: a.com`) or a failure's kind.
    */
   detail?: string;
 }
@@ -42,5 +44,31 @@ export class CommandLog {
     } catch {
       // The local log never fails an operation.
     }
+  }
+}
+
+/** The local user who ran a CLI command, for the audit line (empty when unknown). */
+function localUser(): string {
+  try {
+    return userInfo().username;
+  } catch {
+    return "";
+  }
+}
+
+/** Records a policy change made on the machine with the CLI: best effort, never fails it. */
+export function noteCliPolicyChange(stateDir: string, what: string): void {
+  const user = localUser();
+  try {
+    new CommandLog(stateDir).append({
+      time: new Date().toISOString(),
+      op: "policy",
+      tag: null,
+      actor: null,
+      exitCode: null,
+      detail: `${what}${user === "" ? "" : ` by ${user}`} via cli`,
+    });
+  } catch {
+    // the local log never fails a change
   }
 }

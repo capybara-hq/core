@@ -1,9 +1,10 @@
-import { mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   type BindInstanceResult,
   FileSystemGoneError,
+  type KernelRequest,
   parseDeviceFrame,
   type SandboxOperationScope,
   SandboxPermissionUnsupportedError,
@@ -16,6 +17,7 @@ import type { MacSelfCheckInput } from "../src/exec/mac-self-check.js";
 import type { MacWorkerRequest } from "../src/exec/operation-worker.js";
 import type { EnvironmentInputs } from "../src/exec/runtime-manifest.js";
 import { PolicyStore } from "../src/policy-store.js";
+import { serveOperationV3 } from "../src/server-ops.js";
 import { CREDENTIAL_CHANGED_MESSAGE, connectStaged } from "../src/staged-connect.js";
 import { createStagedDevice, UNBOUND_SUPPORT } from "../src/staged-device.js";
 import { type Credential, DEFAULT_POLICY, FULL_OWNER_CEILING, writePolicy } from "../src/state.js";
@@ -352,6 +354,35 @@ describe("staged device parts (W3-M)", () => {
     expect(s.cancelled.sort()).toEqual(["exec-1", "task-1"]);
     await running;
     await expect(s.startTask("task-2")).rejects.toBeInstanceOf(SandboxPermissionUnsupportedError);
+  });
+});
+
+describe("staged device: the local command log", () => {
+  it("the program's owner controls write commands.log in the state directory", async () => {
+    writePolicy(state, { ...DEFAULT_POLICY, ownerCeiling: { ...FULL_OWNER_CEILING } });
+    const s = staged();
+    const res = await serveOperationV3(
+      s.device.backend(),
+      s.device.handle,
+      {
+        type: "req",
+        id: "q",
+        op: "policy",
+        args: {
+          opId: "op_log",
+          add: ["files.slack.com"],
+          source: { accountId: "acc_1", accountName: "Ada", via: "web" },
+        },
+        deadlineMs: 1000,
+      } as KernelRequest,
+      signal(),
+      s.device.binder,
+      s.device.owner,
+    );
+    expect(res).toMatchObject({ ok: true });
+    expect(readFileSync(join(state, "commands.log"), "utf8")).toContain(
+      "policy add files.slack.com by Ada (acc_1) via web",
+    );
   });
 });
 

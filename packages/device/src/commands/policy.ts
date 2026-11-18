@@ -1,5 +1,6 @@
 import { validateAllowHost } from "@capybara-hq/plugin-sdk";
 import type { Command } from "../args.js";
+import { noteCliPolicyChange } from "../command-log.js";
 import { PolicyStore } from "../policy-store.js";
 import { type Policy, policyPath, readCredential } from "../state.js";
 
@@ -192,6 +193,8 @@ export async function policyCommand(
     err(`Cannot change ${policyPath(stateDir)}: ${(e as Error).message}`);
     return 1;
   }
+  // the audit line names the key and the values given, never more (no secret is a policy value)
+  noteCliPolicyChange(stateDir, `policy ${action} ${key} ${list(value).join(", ")}`);
   for (const l of lines) out(l);
   out(`Saved ${policyPath(stateDir)}. A running capybara-device applies it at the next operation.`);
   if (key === "allowedDomains") {
