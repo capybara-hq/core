@@ -1,5 +1,15 @@
 # @capybara-hq/web
 
+## 0.1.0-rc.51
+
+### Patch Changes
+
+- 0364c94: A file previewer embed (`file.preview`, such as the file-preview plugin's sheet, PDF and archive
+  viewers) fills the right panel below its header, frameless like the built-in previews, instead of
+  a 360 px framed iframe. `EmbedFrame` gains `fill`.
+- Updated dependencies [0364c94]
+  - @capybara-hq/design@0.2.0-rc.15
+
 ## 0.1.0-rc.50
 
 No changes in this release.
