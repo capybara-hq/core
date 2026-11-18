@@ -103,8 +103,9 @@ throws a safe startup error. Keep `publish(before,next)` and `assertCurrent()` c
   use bounded protocol CancelRequest through pg's existing encoding, never SQL PID signaling or
   PID/start-time lookup. No new pg_signal_backend privilege; never log the key. Sending cancellation
   is not completion: observe statement/rollback or server fallback and report uncertainty honestly.
-- [ ] Establish session-level statement/lock/idle-transaction defaults (at most 500 ms each) through
-  connection-start options before BEGIN/identity/setup/fence SQL; preserve them after abort/rollback.
+- [ ] Establish session-level statement/lock defaults (at most 500 ms each) and idle-transaction
+  default (at most 5 s) through connection-start options before BEGIN/identity/setup/fence SQL;
+  preserve them after abort/rollback.
   Independently bound connect/authentication and destroy unfinished handshakes on abort. SET LOCAL
   or timeout setup only before authority lock is insufficient. Later tightening is additional.
 - [ ] Fix absolute 30-second work and 1,500 ms cleanup deadlines, capped by remaining shutdown

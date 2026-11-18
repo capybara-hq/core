@@ -5,6 +5,7 @@ import { afterAll, beforeAll, beforeEach, expect, it, vi } from "vitest";
 import { createDb } from "../../src/db/pool.js";
 import { afterCommit } from "../../src/infra/database/after-commit.js";
 import { KernelDb } from "../../src/infra/database/kernel-db.js";
+import { StartupActivationError } from "../../src/infra/database/startup-activation-transaction.js";
 import {
   runOutsideTransaction,
   TransactionHost,
@@ -576,10 +577,10 @@ it.each(["options", "direct", "conflicting"])(
       expect(await outcome).toBeInstanceOf(Error);
       expect(performance.now() - start).toBeLessThan(2_000);
       expect(await rows()).toEqual([]);
-      expect(transactionDefaults).toEqual(["500ms", "500ms", "500ms"]);
+      expect(transactionDefaults).toEqual(["500ms", "500ms", "5s"]);
       expect(defaults).toEqual([
-        ["500ms", "500ms", "500ms"],
-        ["500ms", "500ms", "500ms"],
+        ["500ms", "500ms", "5s"],
+        ["500ms", "500ms", "5s"],
       ]);
       expect(dispatched.some((q) => /pg_(cancel|terminate)_backend/.test(q))).toBe(false);
       await vi.waitFor(async () => {
@@ -765,4 +766,49 @@ it("rollback failure disposes the owned backend and reports uncertainty without 
   } finally {
     spy.mockRestore();
   }
+});
+
+/** Blocks the event loop for `ms`, the way a descheduled or GC-paused process stalls. */
+function stall(ms: number): void {
+  const end = performance.now() + ms;
+  while (performance.now() < end) {
+    // busy wait: no timer, no I/O, nothing else runs
+  }
+}
+
+it("a client pause of 600 ms between statements still commits (idle bound above client pauses)", async () => {
+  await host.runStartupActivation(async () => {
+    await insert("before-pause");
+    stall(600);
+    await insert("after-pause");
+  }, options());
+  expect(await rows()).toEqual(["after-pause", "before-pause"]);
+});
+
+it("a client pause longer than the idle bound fails closed and leaves nothing behind", async () => {
+  let pid = 0;
+  const outcome = await host
+    .runStartupActivation(
+      async () => {
+        pid = required(
+          (await sql<{ pid: number }>`select pg_backend_pid() as pid`.execute(db.db)).rows[0],
+        ).pid;
+        await insert("stalled");
+        stall(300);
+        await insert("never");
+      },
+      { ...options(), idleInTransactionTimeoutMs: 100 },
+    )
+    .catch((e: unknown) => e);
+  expect(outcome).toBeInstanceOf(StartupActivationError);
+  expect(await rows()).toEqual([]);
+  await vi.waitFor(async () => {
+    expect(
+      (
+        await sql<{
+          n: number;
+        }>`select count(*)::int as n from pg_stat_activity where pid=${pid}`.execute(pool)
+      ).rows[0]?.n,
+    ).toBe(0);
+  });
 });
