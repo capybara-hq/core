@@ -152,3 +152,76 @@ describe("fake Slack Socket Mode routing", () => {
     expect(second.envelopes()[0]).toMatchObject({ envelope_id: next });
   });
 });
+
+describe("fake Slack external uploads", () => {
+  const call = async (s: FakeSlackServer, method: string, params: Record<string, string>) => {
+    const res = await fetch(`${s.apiUrl}${method}`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${s.botToken}` },
+      body: new URLSearchParams(params),
+    });
+    return (await res.json()) as Record<string, unknown>;
+  };
+
+  it("records an upload completed into a thread", async () => {
+    const s = await startFakeSlack();
+    try {
+      const got = await call(s, "files.getUploadURLExternal", { filename: "a.txt", length: "5" });
+      expect(got.ok).toBe(true);
+      const put = await fetch(String(got.upload_url), { method: "POST", body: "hello" });
+      expect(put.status).toBe(200);
+      const done = await call(s, "files.completeUploadExternal", {
+        files: JSON.stringify([{ id: got.file_id, title: "A" }]),
+        channel_id: "C1",
+        thread_ts: "1.000001",
+      });
+      expect(done).toEqual({ ok: true, files: [{ id: got.file_id, title: "A" }] });
+      expect(s.files).toHaveLength(1);
+      expect(s.files[0]).toMatchObject({
+        id: got.file_id,
+        filename: "a.txt",
+        title: "A",
+        channel: "C1",
+        threadTs: "1.000001",
+      });
+      expect(s.files[0]?.data.toString()).toBe("hello");
+    } finally {
+      await s.stop();
+    }
+  });
+
+  it("refuses a length mismatch and completing an unknown or empty upload", async () => {
+    const s = await startFakeSlack();
+    try {
+      const got = await call(s, "files.getUploadURLExternal", { filename: "a.txt", length: "9" });
+      const put = await fetch(String(got.upload_url), { method: "POST", body: "hello" });
+      expect(put.status).toBe(400);
+      const notUploaded = await call(s, "files.completeUploadExternal", {
+        files: JSON.stringify([{ id: got.file_id }]),
+        channel_id: "C1",
+      });
+      expect(notUploaded).toEqual({ ok: false, error: "invalid_arguments" });
+      const unknown = await call(s, "files.completeUploadExternal", {
+        files: JSON.stringify([{ id: "FNOPE" }]),
+        channel_id: "C1",
+      });
+      expect(unknown).toEqual({ ok: false, error: "invalid_arguments" });
+      expect(s.files).toHaveLength(0);
+    } finally {
+      await s.stop();
+    }
+  });
+
+  it("accepts a multipart file part", async () => {
+    const s = await startFakeSlack();
+    try {
+      const got = await call(s, "files.getUploadURLExternal", { filename: "a.txt", length: "5" });
+      const form = new FormData();
+      form.set("file", new Blob(["hello"]), "a.txt");
+      const put = await fetch(String(got.upload_url), { method: "POST", body: form });
+      expect(put.status).toBe(200);
+    } finally {
+      await s.stop();
+    }
+  });
+});

@@ -479,3 +479,52 @@ describe("Telegram update builders", () => {
     });
   });
 });
+
+describe("fake Telegram uploads", () => {
+  const upload = async (s: FakeTelegramServer, method: string, field: string, extra: object) => {
+    const form = new FormData();
+    for (const [k, v] of Object.entries(extra)) {
+      form.set(k, typeof v === "string" ? v : JSON.stringify(v));
+    }
+    form.set(field, new Blob([Buffer.from("PNGDATA")], { type: "image/png" }), "a.png");
+    const res = await fetch(`${s.apiUrl}/bot${s.bot.token}/${method}`, {
+      method: "POST",
+      body: form,
+    });
+    return { status: res.status, body: (await res.json()) as Envelope };
+  };
+
+  it("records sendPhoto and sendDocument files with the thread and reply", async () => {
+    tg = await startFakeTelegram();
+    const a = await upload(tg, "sendPhoto", "photo", {
+      chat_id: "-100",
+      message_thread_id: "7",
+      reply_parameters: { message_id: 5 },
+      caption: "cap",
+    });
+    expect(a.body.ok).toBe(true);
+    const b = await upload(tg, "sendDocument", "document", { chat_id: "-100" });
+    expect(b.body.ok).toBe(true);
+    expect(tg.messages).toHaveLength(2);
+    expect(tg.messages[0]).toMatchObject({
+      chatId: -100,
+      text: "cap",
+      messageThreadId: 7,
+      replyToMessageId: 5,
+      file: { kind: "photo", name: "a.png", contentType: "image/png" },
+    });
+    expect(tg.messages[0]?.file?.data.toString()).toBe("PNGDATA");
+    expect(tg.messages[1]?.file?.kind).toBe("document");
+  });
+
+  it("answers an injected failure on sendphoto with its envelope", async () => {
+    tg = await startFakeTelegram();
+    tg.failNext("sendphoto", { status: 400, description: "Bad Request: PHOTO_INVALID_DIMENSIONS" });
+    const r = await upload(tg, "sendPhoto", "photo", { chat_id: "1" });
+    expect(r).toMatchObject({
+      status: 400,
+      body: { ok: false, error_code: 400, description: "Bad Request: PHOTO_INVALID_DIMENSIONS" },
+    });
+    expect(tg.messages).toHaveLength(0);
+  });
+});
