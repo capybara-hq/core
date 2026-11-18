@@ -109,7 +109,11 @@ export interface ReviewClassifierInput {
  */
 export function classifierMessage(input: ReviewClassifierInput): string {
   const heading =
-    input.kind === "write" ? "File write path" : input.kind === "read" ? "File read path" : "Command";
+    input.kind === "write"
+      ? "File write path"
+      : input.kind === "read"
+        ? "File read path"
+        : "Command";
   const rules =
     input.ruleHits.length === 0
       ? "(none)"

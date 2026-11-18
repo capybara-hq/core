@@ -307,9 +307,7 @@ export class PermissionCallGrants {
       throw new ApiError("forbidden", "The approved directory and host proposal does not match");
   }
   @Transactional({ propagation: "mandatory" })
-  async findForAdmission(
-    binding: PermissionCallBinding,
-  ): Promise<{
+  async findForAdmission(binding: PermissionCallBinding): Promise<{
     id: string;
     expansion: PermissionCandidate["permissionScope"];
     source: "human" | "review-model";
