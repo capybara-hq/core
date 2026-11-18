@@ -40,3 +40,8 @@ Upgrading from a protocol 2 `capybara-device`: processes the old auto mode left 
 searched for; restart the machine or kill leftovers from before the upgrade. A Docker-mode
 device's old container is recreated at its first operation (a container format version), and a
 container found without its bridge is recreated, never reconnected.
+
+The kernel never kills device work broadly any more: a crashed holder's operations are revoked
+exactly (owed in the outbox before its record is forgotten, so a failed revoke is retried), and a
+resumed, failed-update or quarantined instance revokes its started-or-unknown operations instead of
+`killAll`; no stored background session id is signalled after a resume or a rebuild.

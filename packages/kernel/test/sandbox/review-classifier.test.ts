@@ -724,7 +724,6 @@ it.each(["allow", "ask", "deny", "malformed", "request"] as const)(
       policy: {
         mode: "auto",
         allowedMode: "auto",
-        modeSource: "device",
         localAllowedDomains: [],
         network: { kind: "open-public", hosts: [] },
       },
@@ -931,7 +930,6 @@ it("a proposed host outside the applied cloud outer allowlist is cut like admiss
     policy: {
       mode: "auto",
       allowedMode: "auto",
-      modeSource: "device",
       localAllowedDomains: [],
       network: { kind: "open-public", hosts: [] },
     },
@@ -1055,7 +1053,6 @@ describe("the permission review of a managed call", () => {
       policy: {
         mode: "auto",
         allowedMode: "auto",
-        modeSource: "device",
         localAllowedDomains: [],
         network: { kind: "open-public", hosts: [] },
       },
@@ -1101,7 +1098,6 @@ describe("GenerateImage under a permission profile", () => {
     policy: {
       mode: "auto",
       allowedMode: "auto",
-      modeSource: "device",
       localAllowedDomains: [],
       network: { kind: "open-public", hosts: [] },
     },

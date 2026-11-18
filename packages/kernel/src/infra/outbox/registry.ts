@@ -64,6 +64,15 @@ export const OUTBOX_JOBS = {
     processedIn: "packages/kernel/src/runtime/maintenance.ts",
     opts: { attempts: 10, backoff: { type: "exponential", delay: 5000 }, removeOnComplete: true },
   },
+  // `sandbox/operation-intents.ts` HOLDER_REVOKE: owed before a crashed sandbox holder's record is
+  // forgotten, under `sandbox-holder-revoke-<deviceId>-<token>`
+  "sandbox-holder-revoke": {
+    queue: "cap-kernel-maintenance",
+    idempotent:
+      "revokes only the holder's intents still admitted, dispatching or started-or-unknown; a revoked one is left as it is",
+    processedIn: "packages/kernel/src/runtime/maintenance.ts",
+    opts: { attempts: 10, backoff: { type: "exponential", delay: 5000 }, removeOnComplete: true },
+  },
   // `runtime/run-jobs.ts` RUN_JOB: one name on both run queues (a sub-agent's runs go to the
   // sub-agent queue), under the job ids `runJobId` builds and, for a waiting run's resume
   // (`RunResume.resumeIn`), `resumeJobId`

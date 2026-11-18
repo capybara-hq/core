@@ -26,7 +26,11 @@ import {
   SANDBOX_DESTROY_FOR_JOB,
   SANDBOX_RESET_FILES_JOB,
 } from "../sandbox/jobs.js";
-import { OPERATION_RECONCILE, OPERATION_REVOKE } from "../sandbox/operation-intents.js";
+import {
+  HOLDER_REVOKE,
+  OPERATION_RECONCILE,
+  OPERATION_REVOKE,
+} from "../sandbox/operation-intents.js";
 import { SandboxOperationReconcileJob } from "../sandbox/operation-reconcile.job.js";
 import { PERMISSION_APPROVAL_RECHECK } from "../sandbox/permission-transitions.js";
 import { SandboxModule } from "../sandbox/sandbox.module.js";
@@ -90,7 +94,10 @@ export class MaintenanceProcessor extends WorkerHost<Worker> {
       "processTimeout" | "childFinished" | "stopChildren" | "stopDescendantsOfStopped" | "stopTree"
     >,
     @Inject(SandboxService)
-    private readonly sandbox: Pick<SandboxService, "destroyDevice" | "resetFileSystem">,
+    private readonly sandbox: Pick<
+      SandboxService,
+      "destroyDevice" | "resetFileSystem" | "revokeDeadHolder"
+    >,
     @Inject(ToolDrift) private readonly drift: Pick<ToolDrift, "check">,
     @Inject(DirectorySync) private readonly directory: Pick<DirectorySync, "runSyncJob">,
     @Inject(RunDeletion) private readonly deletion: Pick<RunDeletion, "stopOrg" | "stopTree">,
@@ -131,6 +138,12 @@ export class MaintenanceProcessor extends WorkerHost<Worker> {
       case OPERATION_REVOKE:
         await this.operations.revoke((job.data as { operationId: string }).operationId);
         return;
+      // a crashed sandbox holder's intents, owed before its record was forgotten (B-1)
+      case HOLDER_REVOKE: {
+        const { deviceId, token } = job.data as { deviceId: string; token: string };
+        await this.sandbox.revokeDeadHolder(deviceId, token);
+        return;
+      }
       case STOP_DELETED_ORG_JOB:
         await this.deletion.stopOrg(job.data as StopDeletedOrgData);
         return;

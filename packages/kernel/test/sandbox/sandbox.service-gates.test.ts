@@ -19,6 +19,7 @@ import { LocalDeviceRelay } from "../../src/local-devices/relay.js";
 import { createLogger } from "../../src/log.js";
 import { SandboxLeases } from "../../src/sandbox/leases.js";
 import { SandboxOperationAuthority } from "../../src/sandbox/operation-authority.js";
+import { SandboxOperationIntents } from "../../src/sandbox/operation-intents.js";
 import {
   LOCAL_PROVIDER,
   type SandboxProviderEntry,
@@ -495,6 +496,12 @@ describe("the exclusive holder binds before it downgrades (B-8, staged path)", (
     const f = await localDevice();
     const device = deviceAnswers(f.events);
     const sandbox = k.app.get(SandboxService);
+    const intents = k.app.get(SandboxOperationIntents);
+    const revoke = intents.revokeIncarnation.bind(intents);
+    vi.spyOn(intents, "revokeIncarnation").mockImplementation(async (...args) => {
+      f.events.push("revokeIncarnation");
+      return revoke(...args);
+    });
     device.lose = true;
     await expect(sandbox.withSandbox(f.ctx, async () => "ran", signal())).rejects.toThrow("lost");
     await db()
@@ -508,9 +515,11 @@ describe("the exclusive holder binds before it downgrades (B-8, staged path)", (
     device.lose = false;
     expect(await sandbox.withSandbox(f.ctx, async () => "ran", signal())).toBe("ran");
     expect(f.events.filter((e) => e === "resume")).toHaveLength(1);
-    // the processes a resume may bring back were killed exactly once, before any bind
-    expect(f.events.filter((e) => e === "killAll")).toHaveLength(1);
-    expect(f.events.indexOf("killAll")).toBeLessThan(f.events.indexOf("bindInstance"));
+    // the work a resume may bring back was revoked exactly once, before any bind, and nothing
+    // was killed broadly (B-1)
+    expect(f.events.filter((e) => e === "revokeIncarnation")).toHaveLength(1);
+    expect(f.events.indexOf("revokeIncarnation")).toBeLessThan(f.events.indexOf("bindInstance"));
+    expect(f.events.filter((e) => e === "killAll" || e === "killTagged")).toEqual([]);
   });
 
   it("protocol 2 (no binder) never binds and keeps its behaviour", async () => {

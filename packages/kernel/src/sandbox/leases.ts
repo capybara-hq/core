@@ -110,19 +110,19 @@ if redis.call('PTTL', KEYS[1]) < ttl then redis.call('PEXPIRE', KEYS[1], ttl) en
 return 1`);
 
 /**
- * KEYS lock, users, holders. Removes and returns the holder fields without a live lease (expired
- * fields are dropped without being returned: the in-sandbox time limit ended their commands). The
- * caller's own token is live (a shared lease, or the exclusive token in the lock key), so it is
- * never returned. Returns the tags.
+ * KEYS lock, users, holders. Returns the holder fields without a live lease, leaving them in place
+ * (the caller forgets them only once their revocation is owed durably, {@link
+ * SandboxLeases.forgetHolders}); expired fields are dropped without being returned (their
+ * operations are past the deadline the device enforces). The caller's own token is live (a shared
+ * lease, or the exclusive token in the lock key), so it is never returned.
  */
-const CLAIM = sharedLeaseReadScript(`local out = {}
+const DEAD = sharedLeaseReadScript(`local out = {}
 local f = redis.call('HGETALL', KEYS[3])
 for i = 1, #f, 2 do
   local tok = f[i]
   if tonumber(f[i + 1]) <= now then
     redis.call('HDEL', KEYS[3], tok)
   elseif tok ~= cur and not redis.call('ZSCORE', KEYS[2], tok) then
-    redis.call('HDEL', KEYS[3], tok)
     table.insert(out, tok)
   end
 end
@@ -333,12 +333,18 @@ export class SandboxLeases {
   }
 
   /**
-   * Tags of holders without a live lease, atomically claimed (their fields removed) so only one
-   * caller kills them.
+   * Tokens of holders without a live lease (crashed holders), read without removing them: a token
+   * dies only once, so two readers may both see it and both owe its revocation under the same
+   * deterministic job id; {@link forgetHolders} removes them once that is durable.
    */
-  async claimDeadHolders(env: string): Promise<string[]> {
+  async deadHolders(env: string): Promise<string[]> {
     const { lock, users } = this.keys(env);
-    return (await this.redis.eval(CLAIM, 3, lock, users, `${HOLDERS_PREFIX}${env}`)) as string[];
+    return (await this.redis.eval(DEAD, 3, lock, users, `${HOLDERS_PREFIX}${env}`)) as string[];
+  }
+
+  /** Removes crashed holders' records whose revocation is owed durably ({@link deadHolders}). */
+  async forgetHolders(env: string, tokens: readonly string[]): Promise<void> {
+    if (tokens.length > 0) await this.redis.hdel(`${HOLDERS_PREFIX}${env}`, ...tokens);
   }
 
   /**

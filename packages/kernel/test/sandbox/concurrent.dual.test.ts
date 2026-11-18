@@ -143,7 +143,7 @@ const until = (cond: () => Promise<boolean>, ms = 20_000) =>
   );
 
 describe("concurrent sandbox holders (two replicas)", () => {
-  it("crashed holder in a shared device kills only its tags", async () => {
+  it("a crashed holder in a shared device is taken over without any kill; a live sibling runs on", async () => {
     const fake = createFakeSandbox(root);
     // A dies with its command still running: its provider never kills on abort
     const deaf: SandboxProvider = {
@@ -156,7 +156,7 @@ describe("concurrent sandbox holders (two replicas)", () => {
     const holders = `capk:sandbox-holders:${envId}`;
 
     // conversation A on replica A and conversation B on replica B share the device
-    const aCall = run(a.s, "sleep 30", conversationId);
+    const aCall = run(a.s, "sleep 5; echo a-done", conversationId);
     const bCall = run(b.s, "sleep 4; echo b-done", convB);
     await until(async () => (await b.redis.hlen(holders)) === 2);
     // both commands run at the same time under shared leases
@@ -168,20 +168,17 @@ describe("concurrent sandbox holders (two replicas)", () => {
     a.redis.disconnect();
     await new Promise((r) => setTimeout(r, 2000));
 
-    // B's next acquisition finds A's record without a lease and kills only A's tag
+    // B's next acquisition finds A's record without a lease: its revocation is owed and the
+    // record forgotten (exact revocation is the operation intents' job), nothing is killed
     const next = await run(b.s, "echo next", convB);
     expect(next.r.stdout).toBe("next\n");
-    expect((await aCall).r.exitCode).toBeNull();
-    // B's running command survived
+    expect(await b.redis.hlen(holders)).toBeLessThanOrEqual(1);
+    // B's running command survived, and so did A's (no broad kill, no tag kill)
     const bResult = await bCall;
     expect(bResult.r.exitCode).toBe(0);
     expect(bResult.r.stdout).toBe("b-done\n");
-    // exactly A's tag was killed: the tag of conversation A's exec, none of B's
-    const execs = await ops("exec");
-    const tagsOf = (conv: string) => execs.filter((o) => o[6] === conv).map((o) => o[2]);
-    expect(tagsOf(conversationId)).toHaveLength(1);
-    expect((await ops("kill-tagged")).map((o) => o[2])).toEqual(tagsOf(conversationId));
-    expect(tagsOf(convB)).not.toContain(tagsOf(conversationId)[0]);
+    expect((await aCall).r.stdout).toBe("a-done\n");
+    expect(await ops("kill-tagged")).toHaveLength(0);
     expect(await ops("kill-all")).toHaveLength(0);
   });
 
