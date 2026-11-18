@@ -5,6 +5,7 @@
  * sub-agents, files, right panel); every name is a placeholder (示例组织, 研究助手, Acme…).
  */
 
+import type { ImageRatio } from "../conversation/image-ratios";
 import type { PresetId } from "../display/avatar-presets";
 
 // ── Page, agent, models ─────────────────────────────────────────────────────
@@ -840,6 +841,15 @@ export const FILE_FIXTURE: {
   image: FixtureFile & { dimensions: string };
   text: FixtureFile & { head: string };
   removed: FixtureFile & { reason: string };
+  /**
+   * Generating image placeholders: a single one, two in a call that asked for several (index 1 of
+   * `count`), and a wide one shown above a delivered image.
+   */
+  generating: {
+    ratio: ImageRatio;
+    several: { ratio: "3:4"; count: 2 };
+    wide: { ratio: "16:9" };
+  };
   /** Paths mentioned in prose that name file outputs. */
   paths: string[];
   /** The markdown file's rendered preview and the plain-text preview. */
@@ -883,6 +893,7 @@ export const FILE_FIXTURE: {
     removed: true,
     reason: "文件已不可用",
   },
+  generating: { ratio: "1:1", several: { ratio: "3:4", count: 2 }, wide: { ratio: "16:9" } },
   paths: ["reports/9月差异明细.xlsx", "reports/对账报告.md"],
   markdownPreview: [
     "# 9 月对账报告",

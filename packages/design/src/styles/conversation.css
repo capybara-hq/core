@@ -1404,9 +1404,86 @@ button.cb-file-card:focus-visible {
   border-radius: var(--cb-radius-md);
   background: var(--cb-panel);
 }
-/* Until the image loads, keep a 16:9 box so the stream does not jump. */
+/* Until the image loads, keep a 16:9 box so the stream does not jump
+   (or the producing call's ratio when known, below). */
 .cb-image-frame:not([data-loaded="true"]) {
   aspect-ratio: 16 / 9;
+}
+.cb-image-frame:not([data-loaded="true"])[data-ratio="1:1"],
+.cb-image-placeholder[data-ratio="1:1"] {
+  aspect-ratio: 1 / 1;
+}
+.cb-image-frame:not([data-loaded="true"])[data-ratio="4:3"],
+.cb-image-placeholder[data-ratio="4:3"] {
+  aspect-ratio: 4 / 3;
+}
+.cb-image-frame:not([data-loaded="true"])[data-ratio="3:4"],
+.cb-image-placeholder[data-ratio="3:4"] {
+  aspect-ratio: 3 / 4;
+}
+.cb-image-frame:not([data-loaded="true"])[data-ratio="3:2"],
+.cb-image-placeholder[data-ratio="3:2"] {
+  aspect-ratio: 3 / 2;
+}
+.cb-image-frame:not([data-loaded="true"])[data-ratio="2:3"],
+.cb-image-placeholder[data-ratio="2:3"] {
+  aspect-ratio: 2 / 3;
+}
+.cb-image-frame:not([data-loaded="true"])[data-ratio="16:9"],
+.cb-image-placeholder[data-ratio="16:9"] {
+  aspect-ratio: 16 / 9;
+}
+.cb-image-frame:not([data-loaded="true"])[data-ratio="9:16"],
+.cb-image-placeholder[data-ratio="9:16"] {
+  aspect-ratio: 9 / 16;
+}
+/* The generating placeholder: a panel box with a slowly flowing colour field behind the icon. */
+.cb-image-placeholder {
+  position: relative;
+  display: grid;
+  place-items: center;
+  isolation: isolate;
+  width: var(--cb-layout-inline-image);
+  max-width: 100%;
+  overflow: hidden;
+  border-radius: var(--cb-radius-md);
+  background: var(--cb-panel);
+  color: var(--cb-faint);
+}
+.cb-image-placeholder::before {
+  content: "";
+  position: absolute;
+  inset: -50%;
+  z-index: -1;
+  background:
+    radial-gradient(
+      circle at 30% 35%,
+      color-mix(in oklab, var(--cb-accent) 35%, var(--cb-panel)),
+      transparent 55%
+    ),
+    radial-gradient(
+      circle at 70% 60%,
+      color-mix(in oklab, var(--cb-accent-hover) 25%, var(--cb-panel)),
+      transparent 50%
+    ),
+    radial-gradient(
+      circle at 45% 80%,
+      color-mix(in oklab, var(--cb-ink) 8%, var(--cb-panel)),
+      transparent 55%
+    );
+  animation: cb-image-flow var(--cb-motion-flow) ease-in-out infinite alternate;
+}
+@keyframes cb-image-flow {
+  0%,
+  100% {
+    transform: none;
+  }
+  35% {
+    transform: translate(8%, -6%) rotate(14deg);
+  }
+  70% {
+    transform: translate(-10%, 8%) rotate(-18deg);
+  }
 }
 .cb-image-open {
   display: block;

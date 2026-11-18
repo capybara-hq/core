@@ -4286,7 +4286,7 @@ export const UI_LIMITS: {
 };
 
 // @public
-export const UI_PART_NAMES: readonly ["shell", "sidebar", "sidebar.brand", "sidebar.item", "title-bar", "page-header", "thread", "message.user", "message.user.bubble", "message.assistant", "tool-row", "composer", "properties-panel", "section", "right-panel", "status-bar", "button", "button.primary", "card", "input", "dialog", "code-block", "menu", "segmented", "stat-card", "switch", "switch.knob", "org-avatar", "agent-chip"];
+export const UI_PART_NAMES: readonly ["shell", "sidebar", "sidebar.brand", "sidebar.item", "title-bar", "page-header", "thread", "message.user", "message.user.bubble", "message.assistant", "tool-row", "composer", "properties-panel", "section", "right-panel", "status-bar", "button", "button.primary", "card", "input", "dialog", "code-block", "menu", "segmented", "stat-card", "switch", "switch.knob", "org-avatar", "agent-chip", "image-placeholder"];
 
 // @public
 export const UI_PARTS: readonly UiPartSpec[];

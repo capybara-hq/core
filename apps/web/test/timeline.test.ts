@@ -324,7 +324,7 @@ describe("buildTimeline", () => {
     const out = buildTimeline(events, [], new Map(), "en");
     expect(kinds(out)).toEqual(["user", "tools", "files", "card", "prose"]);
     const files = out[2];
-    expect(files?.kind === "files" && files.files[0]).toMatchObject({ id: "f1", name: "out.csv" });
+    expect(files?.kind === "files" && files.others[0]).toMatchObject({ id: "f1", name: "out.csv" });
     expect(out[3]).toMatchObject({ plugin: "todo", view: "tasks-card", callId: "b" });
   });
 
@@ -1950,5 +1950,189 @@ describe("buildTimeline: the device-code card (auto mode spec §6, P-D13)", () =
     expect(tools(out)[0]?.rows[0]?.row.detail?.output).toBe(
       "! First copy your one-time code: 1A2B-C3D4",
     );
+  });
+});
+
+describe("image slots", () => {
+  const GEN = "GenerateImage";
+  const gen = (seq: number, id: string, input: Record<string, unknown>) =>
+    calls(seq, [{ id, name: GEN, input: { prompt: "p", ...input } }]);
+  const image = (seq: number, callId: string, id: string) =>
+    ev(seq, "artifact_created", {
+      artifactId: id,
+      name: `${id}.png`,
+      contentType: "image/png",
+      size: 9,
+      sourcePath: `/w/${id}.png`,
+      callId,
+    });
+  const filesOf = (events: ConversationEvent[]) =>
+    buildTimeline(events, [], new Map(), "en").filter(
+      (e): e is Extract<TimelineEntry, { kind: "files" }> => e.kind === "files",
+    );
+  const shape = (events: ConversationEvent[]) =>
+    filesOf(events)[0]?.images.map((s) =>
+      s.kind === "image" ? `${s.file.callId} image ${s.file.id}` : `${s.callId} gen ${s.index}`,
+    );
+  const k = (callId: string) => `r1\u0000${callId}`;
+
+  it("a pending GenerateImage call has no placeholder", () => {
+    expect(filesOf([user(1, "go"), gen(2, "a", { n: 2 })])).toEqual([]);
+  });
+
+  it("a running call gives one slot per requested image", () => {
+    const events = [
+      user(1, "go"),
+      gen(2, "a", { n: 3, aspect_ratio: "16:9" }),
+      started(3, "a", GEN),
+    ];
+    const [files] = filesOf(events);
+    expect(files?.others).toEqual([]);
+    expect(files?.images).toEqual(
+      [0, 1, 2].map((index) => ({
+        kind: "generating",
+        key: `${k("a")}:${index}`,
+        callId: "a",
+        ratio: "16:9",
+        index,
+        count: 3,
+      })),
+    );
+  });
+
+  it("a lone running call emits the entry", () => {
+    const events = [gen(1, "a", {}), started(2, "a", GEN)];
+    const out = buildTimeline(events, [], new Map(), "en");
+    expect(kinds(out)).toEqual(["tools", "files"]);
+    expect(out[1]?.key).toBe(`${out[0]?.key}:files`);
+  });
+
+  it("images replace their placeholders", () => {
+    const running = [
+      user(1, "go"),
+      gen(2, "a", { n: 3, aspect_ratio: "16:9" }),
+      started(3, "a", GEN),
+    ];
+    const before = filesOf(running)[0]?.key;
+    const done = [...running, image(4, "a", "i1"), image(5, "a", "i2"), image(6, "a", "i3")];
+    const [files] = filesOf(done);
+    expect(files?.key).toBe(before);
+    expect(files?.images).toEqual(
+      ["i1", "i2", "i3"].map((id) => ({
+        kind: "image",
+        file: expect.objectContaining({ id }),
+        ratio: "16:9",
+      })),
+    );
+  });
+
+  it("failed, hook-denied and aborted calls drop the placeholders", () => {
+    const running = [user(1, "go"), gen(2, "a", { n: 2 }), started(3, "a", GEN)];
+    expect(filesOf(running)).toHaveLength(1);
+    const failed = [...running, result(4, "a", GEN, { isError: true, content: "boom" })];
+    const denied = [
+      user(1, "go"),
+      gen(2, "a", { n: 2 }),
+      ev(3, "hook_denied", {
+        mount: "tool.preExecute",
+        plugin: "compliance",
+        reason: "no",
+        cause: "deny",
+        step: 0,
+        callId: "a",
+      }),
+    ];
+    const aborted = [...running, ev(4, "run_aborted", { byAccountId: "a1", reason: "user" })];
+    expect(filesOf(failed)).toEqual([]);
+    expect(filesOf(denied)).toEqual([]);
+    expect(filesOf(aborted)).toEqual([]);
+  });
+
+  it("invalid n and ratio fall back", () => {
+    for (const n of [2.5, "2", 0, 5, undefined]) {
+      const events = [gen(1, "a", { n }), started(2, "a", GEN)];
+      expect(filesOf(events)[0]?.images).toMatchObject([{ kind: "generating", count: 1 }]);
+    }
+    const odd = [gen(1, "a", { n: 1, aspect_ratio: "21:9" }), started(2, "a", GEN)];
+    expect(filesOf(odd)[0]?.images).toMatchObject([{ kind: "generating", ratio: null }]);
+  });
+
+  it("out-of-order calls keep call order", () => {
+    const running = [
+      user(1, "go"),
+      calls(2, [
+        { id: "a", name: GEN, input: { prompt: "p", n: 2 } },
+        { id: "b", name: GEN, input: { prompt: "q", n: 1 } },
+      ]),
+      started(3, "a", GEN),
+      started(4, "b", GEN),
+      image(5, "b", "b1"),
+    ];
+    expect(shape(running)).toEqual(["a gen 0", "a gen 1", "b image b1"]);
+    const done = [...running, image(6, "a", "a1"), image(7, "a", "a2")];
+    expect(shape(done)).toEqual(["a image a1", "a image a2", "b image b1"]);
+  });
+
+  it("a Deliver in the same group", () => {
+    const events = [
+      user(1, "go"),
+      calls(2, [
+        { id: "a", name: GEN, input: { prompt: "p", aspect_ratio: "1:1" } },
+        { id: "d", name: "Deliver", input: { path: "/w/x.png" } },
+        { id: "b", name: GEN, input: { prompt: "q", aspect_ratio: "9:16" } },
+      ]),
+      started(3, "a", GEN),
+      started(4, "d", "Deliver"),
+      started(5, "b", GEN),
+      ev(6, "artifact_created", {
+        artifactId: "csv",
+        name: "x.csv",
+        contentType: "text/csv",
+        size: 9,
+        sourcePath: "/w/x.csv",
+        callId: "d",
+      }),
+      image(7, "d", "x"),
+    ];
+    const [files] = filesOf(events);
+    expect(files?.images).toEqual([
+      expect.objectContaining({ kind: "generating", callId: "a", ratio: "1:1" }),
+      { kind: "image", file: expect.objectContaining({ id: "x" }), ratio: null },
+      expect.objectContaining({ kind: "generating", callId: "b", ratio: "9:16" }),
+    ]);
+    expect(files?.others.map((f) => f.id)).toEqual(["csv"]);
+  });
+
+  it("images survive a later tool error", () => {
+    const events = [
+      gen(1, "a", { n: 2 }),
+      started(2, "a", GEN),
+      image(3, "a", "i1"),
+      result(4, "a", GEN, { isError: true, content: "second failed" }),
+    ];
+    expect(shape(events)).toEqual(["a image i1"]);
+  });
+
+  it("a waiting call shows no placeholder", () => {
+    const events = [
+      gen(1, "a", { n: 2 }),
+      started(2, "a", GEN),
+      ev(3, "question_asked", {
+        step: 0,
+        callId: "a",
+        questionId: "qs1",
+        form: { fields: [] },
+        expiresAt: "x",
+      }),
+    ];
+    expect(filesOf(events)).toEqual([]);
+  });
+
+  it("a file of an unknown call stays a standalone entry", () => {
+    const [files] = filesOf([user(1, "go"), image(2, "zz", "i1")]);
+    expect(files?.images).toEqual([
+      { kind: "image", file: expect.objectContaining({ id: "i1" }), ratio: null },
+    ]);
+    expect(files?.others).toEqual([]);
   });
 });

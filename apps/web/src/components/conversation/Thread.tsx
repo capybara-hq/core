@@ -7,8 +7,8 @@ import {
   FileOutputs,
   formatBytes,
   ImageOutput,
+  ImagePlaceholder,
   ImageViewer,
-  isInlineImageType,
   Prose,
   RunDivider,
   RunRow,
@@ -39,7 +39,6 @@ import type { CompactionProgress } from "../../lib/stream";
 import { shortTime } from "../../lib/time";
 import {
   type FailedRun,
-  type FileRef,
   isCallKey,
   type TimelineEntry,
   type TimelineTool,
@@ -621,22 +620,33 @@ function EntryNode({ e, c }: { e: TimelineEntry; c: EntryContext }): ReactNode {
     );
   };
 
-  const files = (list: FileRef[]): ReactNode => {
-    const images = list.filter((f) => isInlineImageType(f.contentType));
-    const rest = list.filter((f) => !isInlineImageType(f.contentType));
+  const files = (e: Extract<TimelineEntry, { kind: "files" }>): ReactNode => {
+    const rest = e.others;
     const open = (id: string) => onOpenFile?.(id);
     return (
       <Stack gap={8}>
-        {images.map((f) => (
-          <ImageOutput
-            key={f.id}
-            src={artifactDownloadUrl(orgId, conversationId, f.id, { inline: true })}
-            name={f.name}
-            size={f.size}
-            onOpen={() => open(f.id)}
-            onDownload={() => openDownload(artifactDownloadUrl(orgId, conversationId, f.id))}
-          />
-        ))}
+        {e.images.map((slot) =>
+          slot.kind === "image" ? (
+            <ImageOutput
+              key={slot.file.id}
+              src={artifactDownloadUrl(orgId, conversationId, slot.file.id, { inline: true })}
+              name={slot.file.name}
+              size={slot.file.size}
+              {...(slot.ratio !== null ? { ratio: slot.ratio } : {})}
+              onOpen={() => open(slot.file.id)}
+              onDownload={() =>
+                openDownload(artifactDownloadUrl(orgId, conversationId, slot.file.id))
+              }
+            />
+          ) : (
+            <ImagePlaceholder
+              key={slot.key}
+              ratio={slot.ratio}
+              index={slot.index}
+              count={slot.count}
+            />
+          ),
+        )}
         {rest.length > 0 ? (
           <FileOutputs
             files={rest.map((f) => ({
@@ -872,7 +882,7 @@ function EntryNode({ e, c }: { e: TimelineEntry; c: EntryContext }): ReactNode {
       case "device-code":
         return <DeviceCodeCard url={e.url} code={e.code} />;
       case "files":
-        return files(e.files);
+        return files(e);
       case "divider":
         return divider(e);
       case "background":

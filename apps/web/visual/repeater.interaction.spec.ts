@@ -1,4 +1,5 @@
 import { expect, type Page, test } from "@playwright/test";
+import { openInteractive } from "./reference-page";
 
 /**
  * Repeater interaction (design spec §6.26): the preset menu, add and the new item's focus, remove
@@ -8,8 +9,7 @@ import { expect, type Page, test } from "@playwright/test";
 const block = (page: Page, id: string) => page.locator(`[data-ref-block="${id}"]`);
 
 async function open(page: Page) {
-  await page.goto("/dev/ui/reference/repeater");
-  await page.waitForLoadState("networkidle");
+  await openInteractive(page, "/dev/ui/reference/repeater");
 }
 
 /** The item groups' accessible names, in order. */

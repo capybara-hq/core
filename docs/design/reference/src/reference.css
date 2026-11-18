@@ -2990,6 +2990,48 @@ textarea {
   border-radius: var(--cb-radius-md);
   background: var(--cb-panel);
 }
+.r-img-gen {
+  position: relative;
+  display: grid;
+  place-items: center;
+  isolation: isolate;
+  width: var(--cb-layout-inline-image);
+  max-width: 100%;
+  overflow: hidden;
+  border-radius: var(--cb-radius-md);
+  background: var(--cb-panel);
+  color: var(--cb-faint);
+  aspect-ratio: 1 / 1;
+}
+.r-img-gen::before {
+  content: "";
+  position: absolute;
+  inset: -50%;
+  z-index: -1;
+  background:
+    radial-gradient(
+      circle at 30% 35%,
+      color-mix(in oklab, var(--cb-accent) 35%, var(--cb-panel)),
+      transparent 55%
+    ),
+    radial-gradient(
+      circle at 70% 60%,
+      color-mix(in oklab, var(--cb-accent-hover) 25%, var(--cb-panel)),
+      transparent 50%
+    ),
+    radial-gradient(
+      circle at 45% 80%,
+      color-mix(in oklab, var(--cb-ink) 8%, var(--cb-panel)),
+      transparent 55%
+    );
+}
+.r-img-gen[data-ratio="3:4"] { aspect-ratio: 3 / 4; }
+.r-img-gen[data-ratio="16:9"] { aspect-ratio: 16 / 9; }
+.r-col-gap {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cb-space-2);
+}
 .r-imgtools {
   position: absolute;
   top: var(--cb-space-2);
