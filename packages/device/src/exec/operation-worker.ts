@@ -1,6 +1,6 @@
 import { type ChildProcess, fork, spawn, spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { constants } from "node:fs";
+import { constants, realpathSync } from "node:fs";
 import { type FileHandle, open, realpath, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { basename, dirname } from "node:path";
@@ -16,6 +16,7 @@ import {
   SandboxScopeDeniedError,
 } from "@capybara-hq/plugin-sdk";
 import { implicitWritePaths } from "../policy.js";
+import { macReadAllows } from "./mac-read-policy.js";
 import { macWriteRegexRules, macWriteRootSpellings } from "./mac-write-policy.js";
 import {
   type NativeHelperRequest,
@@ -303,17 +304,21 @@ function message(child: ChildProcess, event: string): Promise<Record<string, unk
     child.once("error", error);
   });
 }
-function ancestors(paths: readonly string[]): { path: string; literal: true }[] {
-  const all = new Set<string>();
-  for (const path of paths) {
-    let p = dirname(path);
-    while (!all.has(p)) {
-      all.add(p);
-      if (p === "/") break;
-      p = dirname(p);
-    }
+let userTempDir: string | undefined | null = null;
+/** The canonical `DARWIN_USER_TEMP_DIR` of this user, looked up once; undefined when unknown. */
+function macUserTempDir(): string | undefined {
+  if (userTempDir !== null) return userTempDir;
+  try {
+    const out = spawnSync("/usr/bin/getconf", ["DARWIN_USER_TEMP_DIR"], {
+      encoding: "utf8",
+      timeout: 5000,
+    });
+    const dir = out.status === 0 ? out.stdout.trim() : "";
+    userTempDir = dir ? realpathSync(dir) : undefined;
+  } catch {
+    userTempDir = undefined;
   }
-  return [...all].map((path) => ({ path, literal: true }));
+  return userTempDir;
 }
 /** A separate process owns each immutable SRT manager; Full never enters that process. */
 export async function startMacOperationWorker(
@@ -452,25 +457,29 @@ export async function startMacOperationWorker(
         const runtimeRoots = roots.length
           ? roots.map((r) => r.path)
           : [...request.grant.readRoots, ...request.grant.writeRoots];
-        const readExceptions = [
-          "/System",
-          "/usr",
-          "/bin",
-          "/sbin",
-          "/opt/homebrew",
-          "/Applications/Xcode.app",
-          "/Library/Developer",
-          ...(helper ? [{ path: helper, literal: true }] : []),
-          ...(javaAgent ? [{ path: javaAgent, literal: true }] : []),
-          ...runtimeRoots,
-          ...(toolHomes?.readRoots ?? []),
-          ...(toolHomes?.readFiles ?? []).map((path) => ({ path, literal: true })),
-          ...ancestors([
-            ...runtimeRoots,
+        // Every read is denied from `/` down; only the grant, the system roots, the staged
+        // helper and agent and the tool homes come back (mac-read-policy.ts). Ancestors get no
+        // read rule: directory metadata is all traversal needs, and a subtree rule on one would
+        // expose everything beneath it.
+        // A native root pinned at an existing ancestor names the missing directories between
+        // them: the fixed helper opens each one it creates or meets, so those are read exactly.
+        const pinnedComponents = roots.flatMap((r) => {
+          const dirs: string[] = [];
+          for (let i = 1, p = dirname(r.path); i < (r.components?.length ?? 0); i++, p = dirname(p))
+            dirs.push(p);
+          return dirs;
+        });
+        const reads = macReadAllows({
+          roots: [...runtimeRoots, ...(toolHomes?.readRoots ?? [])],
+          exact: [
+            ...pinnedComponents,
             ...(helper ? [helper] : []),
             ...(javaAgent ? [javaAgent] : []),
-          ]),
-        ];
+            ...(toolHomes?.readFiles ?? []),
+          ],
+          deniedReadRoots: request.grant.deniedReadRoots,
+          userTempDir: macUserTempDir(),
+        });
         const writeRoots =
           request.kind === "native"
             ? roots.filter((r) => r.access === "write").map((r) => r.path)
@@ -502,7 +511,9 @@ export async function startMacOperationWorker(
         const config = {
           filesystem: {
             denyRead: ["/", ...request.grant.deniedReadRoots],
-            allowRead: readExceptions,
+            allowRead: reads.allowRead,
+            // patched runtime: exact `(literal …)` read allows, never the subtree below them
+            allowReadExact: reads.allowReadExact,
             allowWrite: [
               ...writeRoots,
               ...establishmentRoots.map((path) => ({ path, literal: true })),

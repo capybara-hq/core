@@ -4,6 +4,7 @@
   "linux-operation-backend.test.ts",
   "linux-operation-worker.test.ts",
   "mac-operation-backend.test.ts",
+  "mac-read-scope.test.ts",
   "mac-self-check.test.ts",
   "mac-tool-homes.test.ts",
   "mac-write-denies.test.ts",

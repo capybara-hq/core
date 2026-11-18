@@ -21,7 +21,8 @@ afterAll(async () => {
 
 // A restricted macOS command finds its version managers under the real home (a temp home here):
 // their data directory and asdf's global .tool-versions are readable, never writable, and an
-// owner-denied path of the home stays unreadable.
+// owner-denied path of the home, like a plain file of the home outside the tool homes, stays
+// unreadable.
 it.runIf(process.platform === "darwin")(
   "a restricted macOS command reads the version manager files of the home, read only",
   async () => {
@@ -35,6 +36,7 @@ it.runIf(process.platform === "darwin")(
     await writeFile(join(home, ".tool-versions"), "nodejs 22.12.0\n");
     await mkdir(join(home, ".ssh"));
     await writeFile(join(home, ".ssh/id_ed25519"), "private");
+    await writeFile(join(home, "outside.txt"), "plain");
     const h = JSON.stringify(home);
     const worker = await startMacOperationWorker(
       {
@@ -58,6 +60,7 @@ it.runIf(process.platform === "darwin")(
             '(printf y > "$H/.asdf/new") 2>/dev/null && printf w > wrote-new',
             '(printf y >> "$H/.tool-versions") 2>/dev/null && printf w > wrote-versions',
             'cat "$H/.ssh/id_ed25519" > got-secret 2>/dev/null || rm -f got-secret',
+            'cat "$H/outside.txt" > got-outside 2>/dev/null || rm -f got-outside',
             "true",
           ].join("; "),
           cwd: project,
@@ -81,7 +84,7 @@ it.runIf(process.platform === "darwin")(
     expect(got("env")).toBe(join(home, ".asdf"));
     expect(got("got-x"), result.stderr).toBe("shim");
     expect(got("got-versions"), result.stderr).toBe("nodejs 22.12.0\n");
-    for (const name of ["wrote-x", "wrote-new", "wrote-versions", "got-secret"])
+    for (const name of ["wrote-x", "wrote-new", "wrote-versions", "got-secret", "got-outside"])
       expect(got(name), name).toBeNull();
     expect(readFileSync(join(home, ".asdf/x"), "utf8")).toBe("shim");
     expect(readFileSync(join(home, ".tool-versions"), "utf8")).toBe("nodejs 22.12.0\n");
