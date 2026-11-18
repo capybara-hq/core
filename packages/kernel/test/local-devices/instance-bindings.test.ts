@@ -844,7 +844,7 @@ it("a re-login between commit and bind retargets the binding, so a lost answer c
   expect((await f.binding(g3))?.status).toBe("installed");
 });
 
-it("binds through the real relay and acceptStaged with a staged fake machine answering", async () => {
+it("binds through the real relay and the gateway with a staged fake machine answering", async () => {
   const f = await localDevice();
   const g = await f.create();
   // the real gateway's staged accept for this device; the machine table is a stub
@@ -855,8 +855,6 @@ it("binds through the real relay and acceptStaged with a staged fake machine ans
         c === credential
           ? { deviceId: f.deviceId, machineId: f.machineId, orgId: f.orgId, accountId: f.accountId }
           : null,
-      recordHello: async () => {},
-      recordPolicy: async () => {},
       recordHelloV3: async () => {},
       recordPolicyV3: async () => {},
       touch: async () => {},
@@ -872,7 +870,7 @@ it("binds through the real relay and acceptStaged with a staged fake machine ans
   const address = server.address();
   if (typeof address === "string" || !address) throw new Error("no address");
   server.on("connection", (socket) => {
-    void gateway.acceptStaged(socket, credential);
+    void gateway.accept(socket, credential);
   });
   // a machine whose hello is bound to nothing yet: bindInstance is answered with the evidence
   const machine = new FakeMachineV3(`ws://127.0.0.1:${address.port}`, credential);

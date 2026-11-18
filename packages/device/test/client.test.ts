@@ -6,9 +6,16 @@ import { backoffMs, type Connection, type ConnectOptions, connect } from "../src
 import { CommandLog } from "../src/command-log.js";
 import { PolicyStore } from "../src/policy-store.js";
 import type { Credential } from "../src/state.js";
-import { DEFAULT_POLICY, ownerCeilingOfMode, writePolicy } from "../src/state.js";
+import {
+  DEFAULT_POLICY,
+  FULL_OWNER_CEILING,
+  ownerCeilingOfMode,
+  writePolicy,
+} from "../src/state.js";
 import { execArgs, FakeExecutor, FakeKernel, OK_EXEC, ROOTS, req } from "./fake-kernel.js";
 
+/** The policy these tests were written against: the owner allows Full access (old auto). */
+const FULL_POLICY = { ...DEFAULT_POLICY, ownerCeiling: { ...FULL_OWNER_CEILING } };
 let kernel: FakeKernel;
 let exec: FakeExecutor;
 let dir: string;
@@ -129,7 +136,7 @@ describe("client", () => {
   });
 
   it("hello carries the features and the local policy; a policy op shows on the next hello", async () => {
-    writePolicy(dir, { ...DEFAULT_POLICY, allowedDomains: ["a.com"] });
+    writePolicy(dir, { ...FULL_POLICY, allowedDomains: ["a.com"] });
     start({ policy: new PolicyStore(dir), home: "/home/ada" });
     const hello = await kernel.waitFor("hello", () => kernel.of("hello")[0]);
     expect(hello.features).toEqual(["networkReport", "policyOp", "policyOpId", "mode", "projects"]);
@@ -158,7 +165,7 @@ describe("client", () => {
     });
     // A local edit meanwhile is reported too: the summary is read at each connect.
     writePolicy(dir, {
-      ...DEFAULT_POLICY,
+      ...FULL_POLICY,
       allowedDomains: ["a.com", "files.slack.com"],
     });
     // An exec meanwhile brings a sandbox ceiling: the next hello still reports the owner's mode
@@ -174,7 +181,7 @@ describe("client", () => {
   });
 
   it("a mode changed on the machine is pushed while connected, once per change", async () => {
-    writePolicy(dir, { ...DEFAULT_POLICY, ownerCeiling: ownerCeilingOfMode("sandbox") });
+    writePolicy(dir, { ...FULL_POLICY, ownerCeiling: ownerCeilingOfMode("sandbox") });
     start({ policy: new PolicyStore(dir), policyCheckMs: 20 });
     const hello = await kernel.waitFor("hello", () => kernel.of("hello")[0]);
     expect(hello.policy.mode).toBe("sandbox");
@@ -183,7 +190,7 @@ describe("client", () => {
     expect(kernel.of("policy")).toEqual([]);
 
     // `capybara-device mode auto` while the service runs
-    writePolicy(dir, { ...DEFAULT_POLICY, ownerCeiling: ownerCeilingOfMode("auto") });
+    writePolicy(dir, { ...FULL_POLICY, ownerCeiling: ownerCeilingOfMode("auto") });
     const pushed = await kernel.waitFor("policy frame", () => kernel.of("policy")[0]);
     expect(pushed.policy).toEqual({ ...hello.policy, mode: "auto" });
     await new Promise((r) => setTimeout(r, 100));
@@ -211,6 +218,7 @@ describe("client", () => {
 
   it("a docker-mode hello offers the policy op but no network report", async () => {
     (exec as { mode: string }).mode = "docker";
+    writePolicy(dir, FULL_POLICY);
     start({ policy: new PolicyStore(dir) });
     const hello = await kernel.waitFor("hello", () => kernel.of("hello")[0]);
     expect(hello.mode).toBe("docker");

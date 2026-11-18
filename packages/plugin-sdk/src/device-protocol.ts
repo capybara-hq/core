@@ -31,7 +31,13 @@ import {
 } from "./sandbox-operation.js";
 
 /** The protocol version carried in `X-Capybara-Device-Protocol` and the hello frame. */
-export const DEVICE_PROTOCOL_VERSION = 2;
+export const DEVICE_PROTOCOL_VERSION = 3;
+
+/**
+ * Protocol 2's version, which a deployment speaking {@link DEVICE_PROTOCOL_VERSION} refuses (426
+ * on the header, a protocol close on the hello). Kept only for the legacy device surface.
+ */
+export const LEGACY_DEVICE_PROTOCOL_VERSION = 2;
 
 /** The operations the kernel asks a device to run. */
 export type DeviceOp =
@@ -897,7 +903,10 @@ export function parseLegacyDeviceFrame(raw: string, from: "device" | "kernel"): 
 
 // ---- Protocol 3: scope-bearing operations ----
 
-export const STAGED_DEVICE_PROTOCOL_VERSION = 3;
+/**
+ * The operations the kernel asks a protocol 3 device to run: every user operation carries its
+ * admitted scope; there is no broad kill (`killTagged` / `killAll`).
+ */
 export type DeviceOperation =
   | Exclude<DeviceOp, "killTagged" | "killAll">
   | "prepareReadFile"

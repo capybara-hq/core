@@ -22,9 +22,9 @@ const scope = {
 };
 const frame = (op: string, args: unknown) =>
   JSON.stringify({ type: "req", id: "request", op, args, deadlineMs: 1000 });
-describe("staged v3", () => {
-  it("keeps current protocol v2 and requires fresh user scopes", () => {
-    expect(DEVICE_PROTOCOL_VERSION).toBe(2);
+describe("protocol 3 operations", () => {
+  it("speaks protocol 3 and requires fresh user scopes", () => {
+    expect(DEVICE_PROTOCOL_VERSION).toBe(3);
     for (const op of ["readFile", "writeFile", "stat", "list", "scan"]) {
       const args = {
         scope,

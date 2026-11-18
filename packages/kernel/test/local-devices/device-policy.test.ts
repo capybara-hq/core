@@ -25,7 +25,6 @@ import { LocalDeviceGateway } from "../../src/local-devices/local-device-gateway
 import { LocalDeviceProvider } from "../../src/local-devices/local-device-provider.js";
 import {
   localProviderEntry,
-  stagedDeviceProtocolActive,
 } from "../../src/local-devices/local-devices.module.js";
 import { MachinesService } from "../../src/local-devices/machines.js";
 import { LocalDeviceRelay } from "../../src/local-devices/relay.js";
@@ -517,18 +516,12 @@ async function stagedMachine(
     beforeAnswer?: (next: DeviceOwnerCeiling, socket: WebSocket) => Promise<void>;
   } = {},
 ) {
-  // the protocol gate, opened for this test only (the deployment's stays at protocol 2)
-  const relay = k.app.get(LocalDeviceRelay);
-  relay.stagedProtocolActive = () => true;
-  stagedCleanups.push(async () => {
-    relay.stagedProtocolActive = stagedDeviceProtocolActive;
-  });
   const server = new WebSocketServer({ port: 0, host: "127.0.0.1" });
   await once(server, "listening");
   const address = server.address();
   if (typeof address === "string" || !address) throw Error("no address");
   server.on("connection", (socket) => {
-    void k.app.get(LocalDeviceGateway).acceptStaged(socket, d.credential);
+    void k.app.get(LocalDeviceGateway).accept(socket, d.credential);
   });
   stagedCleanups.push(async () => {
     for (const c of server.clients) c.terminate();
@@ -788,23 +781,19 @@ describe("staged (protocol 3) machines", () => {
     ]);
   });
 
-  it("registration: the staged entry carries the instance binder; protocol 2 stays the active one", () => {
+  it("registration: the active @local entry is the protocol 3 provider with the instance binder", () => {
     const deps = {
       provider: k.app.get(LocalDeviceProvider),
       relay: k.app.get(LocalDeviceRelay),
       bindings: k.app.get(LocalInstanceBindings),
     };
-    expect(stagedDeviceProtocolActive()).toBe(false);
-    const staged = localProviderEntry(true, deps);
+    const staged = localProviderEntry(deps);
     expect(staged.binder).toBe(k.app.get(LocalInstanceBindings));
     expect(staged.impl).not.toBe(deps.provider);
     expect(typeof staged.impl.revokeOperation).toBe("function");
-    expect(localProviderEntry(false, deps)).toEqual({
-      plugin: LOCAL_PROVIDER,
-      impl: deps.provider,
-    });
     const active = k.app.get(SandboxProviders).forName(LOCAL_PROVIDER);
-    expect(active?.binder).toBeUndefined();
-    expect(active?.impl).toBe(deps.provider);
+    expect(active?.binder).toBe(k.app.get(LocalInstanceBindings));
+    expect(active?.impl).not.toBe(deps.provider);
+    expect(typeof active?.impl.revokeOperation).toBe("function");
   });
 });

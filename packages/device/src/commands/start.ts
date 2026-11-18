@@ -1,5 +1,5 @@
 import { homedir } from "node:os";
-import { DEVICE_PROTOCOL_VERSION, STAGED_DEVICE_PROTOCOL_VERSION } from "@capybara-hq/plugin-sdk";
+import { DEVICE_PROTOCOL_VERSION } from "@capybara-hq/plugin-sdk";
 import { type Connection, connect } from "../client.js";
 import { CommandLog } from "../command-log.js";
 import { sandboxUnavailableMessage } from "../exec/sandbox-messages.js";
@@ -74,7 +74,7 @@ export async function start(deps: StartDeps): Promise<number> {
     return 0;
   }
   // the staged (protocol 3) path is selected only by the protocol constant
-  const staged = (deps.protocol ?? DEVICE_PROTOCOL_VERSION) === STAGED_DEVICE_PROTOCOL_VERSION;
+  const staged = (deps.protocol ?? DEVICE_PROTOCOL_VERSION) === 3;
   if (staged ? deps.createStaged === undefined : deps.createExecutor === undefined) {
     err("capybara-device start: no execution backend is available in this build");
     return 1;

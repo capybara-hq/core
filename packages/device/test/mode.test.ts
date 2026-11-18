@@ -49,11 +49,10 @@ const parse = (argv: string[]) => {
 };
 
 describe("capybara-device mode", () => {
-  it("prints the current mode, auto by default", async () => {
+  it("prints the current mode, sandbox by default (the restricted default ceiling)", async () => {
     const r = await run([]);
     expect(r.code).toBe(0);
-    expect(r.out).toContain("Mode: auto.");
-    expect(r.out).toMatch(/reviews every command/);
+    expect(r.out).toContain("Mode: sandbox.");
   });
 
   it("sets sandbox mode without a question", async () => {

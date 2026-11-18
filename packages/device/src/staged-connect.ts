@@ -1,4 +1,4 @@
-import { STAGED_DEVICE_PROTOCOL_VERSION } from "@capybara-hq/plugin-sdk";
+import { DEVICE_PROTOCOL_VERSION } from "@capybara-hq/plugin-sdk";
 import WebSocket from "ws";
 import { currentBootId } from "./boot-id.js";
 import {
@@ -190,7 +190,7 @@ export function connectStaged(device: StagedDevice, opts: StagedConnectOptions =
       const sock = new WebSocket(cred.connectUrl, {
         headers: {
           Authorization: `Bearer ${cred.credential}`,
-          "X-Capybara-Device-Protocol": String(STAGED_DEVICE_PROTOCOL_VERSION),
+          "X-Capybara-Device-Protocol": String(DEVICE_PROTOCOL_VERSION),
         },
       });
       ws = sock;

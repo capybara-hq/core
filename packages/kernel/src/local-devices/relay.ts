@@ -1,7 +1,6 @@
 import { randomUUID } from "node:crypto";
 import {
   type BindInstanceRequest,
-  DEVICE_PROTOCOL_VERSION,
   type DeviceOp,
   type DeviceOperation,
   type DeviceOpResults,
@@ -19,7 +18,6 @@ import {
   SandboxOperationOutcomeUnknownError,
   SandboxPermissionUnsupportedError,
   SandboxScopeDeniedError,
-  STAGED_DEVICE_PROTOCOL_VERSION,
   ToolError,
 } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
@@ -104,13 +102,6 @@ const connectionFenced = (op: string): boolean => op === "backgroundReadOutput";
  * before the frame goes out; a frame for another machine is dropped).
  */
 export const STOP_MACHINE = "machineId" as const;
-
-/**
- * Whether the deployment speaks the staged device protocol: the single gate is the SDK's protocol
- * constant (flipped to 3 at the paired activation). Until then the active wire stays protocol 2.
- */
-export const stagedDeviceProtocolActive = (): boolean =>
-  (DEVICE_PROTOCOL_VERSION as number) === STAGED_DEVICE_PROTOCOL_VERSION;
 
 /** The longest one lease check of a waiting caller may take before it counts as "unknown". */
 export const LEASE_CHECK_TIMEOUT_MS = 2000;
@@ -242,22 +233,13 @@ export class LocalDeviceRelay {
   }
 
   /**
-   * Whether the protocol gate is open ({@link stagedDeviceProtocolActive}; a test seam opens it
-   * for one relay instance, the deployment never does).
-   */
-  stagedProtocolActive: () => boolean = stagedDeviceProtocolActive;
-
-  /**
-   * The negotiated transport of the device's connection when the platform's own controls (policy
-   * ops) must speak protocol 3 to it, else null (protocol 2). With the gate closed every
-   * connection is protocol 2: nothing is looked up (no lease or transport read per op). With it
-   * open every connection is staged, so this is {@link connection} (a missing or unready one
-   * throws its typed error).
+   * The negotiated transport of the device's connection for the platform's own controls (policy
+   * ops): every connection speaks protocol 3, so this is {@link connection} (a missing or unready
+   * one throws its typed error).
    */
   async stagedTransport(
     deviceId: string,
   ): Promise<{ connectionId: string; maxFrameBytes: number } | null> {
-    if (!this.stagedProtocolActive()) return null;
     return this.connection(deviceId);
   }
 

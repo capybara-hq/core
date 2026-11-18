@@ -1,5 +1,5 @@
 import type { Command } from "../args.js";
-import { SANDBOX_INSTALL_HINT, sandboxUnavailableSwitchRefusal } from "../exec/sandbox-messages.js";
+import { sandboxUnavailableSwitchRefusal } from "../exec/sandbox-messages.js";
 import { PolicyStore } from "../policy-store.js";
 import {
   ownerCeilingOfMode,
@@ -27,59 +27,6 @@ export const MODE_AUTO_NEEDS_YES =
 
 /** Printed before the question `capybara-device mode auto` asks on a terminal. */
 export const MODE_AUTO_PROMPT = "Run agent commands on this computer as you, in auto mode? [y/N] ";
-
-/**
- * The line `login` prints when the organization allows auto mode and this machine's policy is
- * auto (the default).
- */
-export const AUTO_MODE_LOGIN_LINE =
-  "New logins start in auto mode: agent commands run as you on this machine, and the deployment " +
-  "reviews every command. Switch with `capybara-device mode sandbox`.";
-
-/**
- * The line `login` prints when the organization allows auto mode but this machine's persisted
- * policy is sandbox mode (an earlier login in an auto-forbidden organization, or the owner's
- * switch): the line follows the machine, not the allowance.
- */
-export const SANDBOX_POLICY_LOGIN_LINE =
-  "This organization allows auto mode, but this machine's local policy is sandbox mode: agent " +
-  "commands run inside the OS sandbox here. Switch with `capybara-device mode auto`.";
-
-/** The line `login` prints when the organization forbids auto mode and the policy now says so. */
-export const SANDBOX_MODE_LOGIN_LINE =
-  "This organization does not allow auto mode, so this device runs in sandbox mode: agent " +
-  "commands run inside the OS sandbox on this machine.";
-
-/**
- * The line `login` prints when the organization forbids auto mode but the machine keeps its own
- * auto policy: the kernel refuses every command until the owner switches the machine.
- */
-export const AUTO_POLICY_REFUSED_LOGIN_LINE =
-  "This organization does not allow auto mode, but this machine's local policy is auto mode: the " +
-  "deployment refuses every command until you run `capybara-device mode sandbox`.";
-
-/** The line `login --mode docker` prints when the device runs in auto mode. */
-export const DOCKER_AUTO_MODE_LOGIN_LINE =
-  "New logins start in auto mode: agent commands run in this device's Docker container with its " +
-  "network, file operations reach any path in the container, and the deployment reviews every " +
-  "command. Switch with `capybara-device mode sandbox`.";
-
-/** The line `login --mode docker` prints when the local policy is sandbox mode. */
-export const DOCKER_SANDBOX_MODE_LOGIN_LINE =
-  "This device runs in sandbox mode: agent commands run in this device's Docker container " +
-  "without a network, and file operations stay in the device's directories.";
-
-/**
- * The line `login` prints when the organization forbids auto mode and the OS sandbox cannot run
- * here: no sandbox policy is written (it could not run a command either).
- */
-export function sandboxUnavailableLoginLine(reason: string): string {
-  return (
-    "This organization does not allow auto mode, and the OS sandbox is unavailable on this " +
-    `machine (${reason}), so no command can run here yet: ${SANDBOX_INSTALL_HINT}, then run ` +
-    "`capybara-device mode sandbox`; or log in again with --mode docker."
-  );
-}
 
 /** The OS sandbox check `login` and `mode` use (default: the runtime's, loaded on demand). */
 export type SandboxCheck = () => { ok: true } | { ok: false; reason: string };

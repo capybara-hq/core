@@ -3,14 +3,11 @@ import {
   DEVICE_PROTOCOL_VERSION,
   type DeviceFrame,
   type DeviceHello,
-  type DeviceRes,
   type DeviceResponse,
   type ExtensionContext,
   type KernelCancel,
-  type KernelReq,
   type KernelRequest,
   parseDeviceFrame,
-  parseLegacyDeviceFrame,
 } from "@capybara-hq/plugin-sdk";
 import type { WebSocket } from "@fastify/websocket";
 import { Inject, Injectable } from "@nestjs/common";
@@ -70,7 +67,7 @@ export const CLAIM_RETRY_MS = 250;
 /** Traffic marks the machine seen at most this often per connection (the row has its own gate). */
 const TOUCH_EVERY_MS = 30_000;
 /**
- * Consecutive failed capacity publications on ping after which a staged connection closes (its
+ * Consecutive failed capacity publications on ping after which a connection closes (its
  * transport key lives three pings, so two misses still leave it readable).
  */
 const MAX_PUBLISH_FAILURES = 3;
@@ -154,11 +151,10 @@ class DeviceConnection {
     private readonly socket: WebSocket,
     readonly identity: MachineIdentity,
     private readonly credential: string,
-    private readonly staged = false,
   ) {}
 
   /**
-   * The id a staged connection fences requests and results with (sent to the machine in `ready`).
+   * The id a connection fences requests and results with (sent to the machine in `ready`).
    * Random and separate from the lease token, which stays internal to the kernel.
    */
   readonly connectionId = randomUUID();
@@ -167,7 +163,7 @@ class DeviceConnection {
   /** Consecutive failed capacity publications on ping (this socket's own state). */
   private publishFailures = 0;
   private async publishCapacity(): Promise<void> {
-    if (!this.staged || this.effectiveCap === undefined || this.state !== "holding") return;
+    if (this.effectiveCap === undefined || this.state !== "holding") return;
     if (this.gw.maxFrameBytes() < this.effectiveCap) {
       await this.close(DEVICE_CLOSE.protocol, "Frame capacity changed; reconnect");
       return;
@@ -215,16 +211,12 @@ class DeviceConnection {
   }
 
   private async onFrame(text: string): Promise<void> {
-    let frame: ReturnType<typeof parseLegacyDeviceFrame> | DeviceFrame;
+    let frame: DeviceFrame;
     try {
-      frame = this.staged
-        ? parseDeviceFrame(text, "device", this.effectiveCap ?? this.gw.maxFrameBytes())
-        : parseLegacyDeviceFrame(text, "device");
-      if (
-        this.staged &&
-        this.effectiveCap !== undefined &&
-        this.gw.maxFrameBytes() < this.effectiveCap
-      )
+      // protocol 3 only: a protocol 2 hello (or any frame that is not protocol 3, such as a hello
+      // whose protocol differs from the upgrade header's) fails the strict parse and closes 4400
+      frame = parseDeviceFrame(text, "device", this.effectiveCap ?? this.gw.maxFrameBytes());
+      if (this.effectiveCap !== undefined && this.gw.maxFrameBytes() < this.effectiveCap)
         throw new Error("Frame capacity changed; reconnect");
     } catch (e) {
       this.gw.log.warn("device sent an invalid frame", {
@@ -239,42 +231,24 @@ class DeviceConnection {
         this.close(DEVICE_CLOSE.protocol, "hello sent twice");
         return;
       }
-      if (frame.protocol !== (this.staged ? 3 : DEVICE_PROTOCOL_VERSION)) {
+      if (frame.protocol !== DEVICE_PROTOCOL_VERSION) {
         this.close(DEVICE_CLOSE.protocol, "unsupported protocol");
         return;
       }
-      if (this.staged) {
-        if (!("transport" in frame)) {
-          this.close(DEVICE_CLOSE.protocol, "Expected staged hello");
-          return;
-        }
-        this.effectiveCap = Math.min(
-          (frame as import("@capybara-hq/plugin-sdk").DeviceHello).transport.maxFrameBytes,
-          this.gw.maxFrameBytes(),
-        );
-        if (this.effectiveCap < 1024 || Buffer.byteLength(text) > this.effectiveCap) {
-          this.close(DEVICE_CLOSE.protocol, "Check frame limits: hello cannot fit");
-          return;
-        }
+      this.effectiveCap = Math.min(frame.transport.maxFrameBytes, this.gw.maxFrameBytes());
+      if (this.effectiveCap < 1024 || Buffer.byteLength(text) > this.effectiveCap) {
+        this.close(DEVICE_CLOSE.protocol, "Check frame limits: hello cannot fit");
+        return;
       }
       clearTimeout(this.helloTimer);
       this.state = "claiming";
-      // the raw summary too: the frame parser drops one it cannot read whole, and its
-      // isolation must still reach the kernel
-      const rawPolicy = (JSON.parse(text) as { policy?: unknown }).policy;
       // set before the first await: a policy frame that follows is recorded after the hello
       this.recorded = (async () => {
         if (!(await this.claim())) return;
         try {
-          // a staged hello carries the authenticated owner report and runtime facts: recorded
-          // with the connection it opened (the id the machine gets in `ready`)
-          if (this.staged)
-            await this.gw.machines.recordHelloV3(
-              this.identity.machineId,
-              frame as DeviceHello,
-              this.connectionId,
-            );
-          else await this.gw.machines.recordHello(this.identity.machineId, frame, rawPolicy);
+          // the hello carries the authenticated owner report and runtime facts: recorded with
+          // the connection it opened (the id the machine gets in `ready`)
+          await this.gw.machines.recordHelloV3(this.identity.machineId, frame, this.connectionId);
         } catch (e) {
           this.gw.log.warn("could not record a device hello", {
             deviceId: this.deviceId,
@@ -287,24 +261,10 @@ class DeviceConnection {
     }
     if (frame.type === "policy" && this.state !== "hello") {
       // after the hello's record and the earlier policy frames, in the order they came
-      const rawPolicy = (JSON.parse(text) as { policy?: unknown }).policy;
       this.recorded = this.recorded.then(async () => {
         if (this.state === "closed") return;
         try {
-          if (this.staged)
-            await this.gw.machines.recordPolicyV3(
-              this.identity.machineId,
-              frame,
-              this.connectionId,
-            );
-          else
-            await this.gw.machines.recordPolicy(
-              this.identity.machineId,
-              frame.policy as
-                | import("@capybara-hq/plugin-sdk").DeviceLocalPolicySummary
-                | undefined,
-              rawPolicy,
-            );
+          await this.gw.machines.recordPolicyV3(this.identity.machineId, frame, this.connectionId);
         } catch (e) {
           this.gw.log.warn("could not record a device policy change", {
             deviceId: this.deviceId,
@@ -315,7 +275,7 @@ class DeviceConnection {
       await this.recorded;
       return;
     }
-    if (frame.type !== "res" || this.state === "hello" || (this.staged && !this.ready)) {
+    if (frame.type !== "res" || this.state === "hello" || !this.ready) {
       this.close(DEVICE_CLOSE.protocol, "hello expected");
       return;
     }
@@ -329,7 +289,7 @@ class DeviceConnection {
    * this device (ruling R20); anything else is dropped.
    */
   private async store(
-    res: DeviceRes | DeviceResponse,
+    res: DeviceResponse,
     /** The gateway's own refusal of a request it never sent (never a device's frame). */
     notSent = false,
   ): Promise<void> {
@@ -338,14 +298,12 @@ class DeviceConnection {
       // its strict parse. The device's frame was rebuilt by the strict parser; the marker is
       // dropped from it all the same, so only this gateway's own refusal can carry it
       const { [GATEWAY_NOT_SENT]: _never, ...frame } = res as typeof res & { notSent?: unknown };
-      const tagged = this.staged
-        ? {
-            ...frame,
-            connectionId: this.connectionId,
-            maxFrameBytes: this.effectiveCap,
-            ...(notSent && { [GATEWAY_NOT_SENT]: true }),
-          }
-        : res;
+      const tagged = {
+        ...frame,
+        connectionId: this.connectionId,
+        maxFrameBytes: this.effectiveCap,
+        ...(notSent && { [GATEWAY_NOT_SENT]: true }),
+      };
       const stored = await this.gw.redis.eval(
         ACCEPT,
         2,
@@ -429,21 +387,19 @@ class DeviceConnection {
         deviceId: env,
         machineId: this.identity.machineId,
       });
-      if (this.staged) {
-        const raw = JSON.stringify({
-          type: "ready",
-          connectionId: this.connectionId,
-          maxFrameBytes: this.effectiveCap,
-        });
-        if (this.effectiveCap === undefined || Buffer.byteLength(raw) > this.effectiveCap)
-          throw new Error("Check frame limits: ready cannot fit");
-        parseDeviceFrame(raw, "kernel", this.effectiveCap);
-        // published before ready: a reader that sees the machine ready also finds its capacity
-        await this.publishCapacity();
-        if (this.state !== "holding") return false;
-        this.socket.send(raw);
-        this.ready = true;
-      }
+      const raw = JSON.stringify({
+        type: "ready",
+        connectionId: this.connectionId,
+        maxFrameBytes: this.effectiveCap,
+      });
+      if (this.effectiveCap === undefined || Buffer.byteLength(raw) > this.effectiveCap)
+        throw new Error("Check frame limits: ready cannot fit");
+      parseDeviceFrame(raw, "kernel", this.effectiveCap);
+      // published before ready: a reader that sees the machine ready also finds its capacity
+      await this.publishCapacity();
+      if (this.state !== "holding") return false;
+      this.socket.send(raw);
+      this.ready = true;
       // what was queued while nobody held the machine
       this.drain();
       return true;
@@ -478,12 +434,8 @@ class DeviceConnection {
 
   private async drainOnce(): Promise<void> {
     const key = deviceReqKey(this.deviceId);
-    while (this.state === "holding" && (!this.staged || this.ready)) {
-      if (
-        this.staged &&
-        this.effectiveCap !== undefined &&
-        this.gw.maxFrameBytes() < this.effectiveCap
-      ) {
+    while (this.state === "holding" && this.ready) {
+      if (this.effectiveCap !== undefined && this.gw.maxFrameBytes() < this.effectiveCap) {
         await this.close(DEVICE_CLOSE.protocol, "Frame capacity changed; reconnect");
         return;
       }
@@ -499,7 +451,7 @@ class DeviceConnection {
         String(LIST_TTL_MARGIN_MS),
       )) as string | null;
       if (raw === null) return;
-      let frame: KernelReq | KernelRequest | KernelCancel;
+      let frame: KernelRequest | KernelCancel;
       let wire = raw;
       try {
         const {
@@ -516,40 +468,34 @@ class DeviceConnection {
           });
           continue;
         }
-        if (this.staged) {
-          // a cancel carries no capacity-sized payload and must reach the machine after a
-          // reconnect too (an operation keeps running across a socket blip, as in protocol 2);
-          // so does a machine's `stop`, fenced to the machine above instead of the socket
-          const unfenced =
-            request.type === "cancel" || (request.op === "stop" && stopFor !== undefined);
-          if (
-            !unfenced &&
-            (connectionId !== this.connectionId || maxFrameBytes !== this.effectiveCap)
-          ) {
-            if (request.type === "req" && typeof request.id === "string")
-              await this.store(
-                {
-                  type: "res",
-                  id: request.id,
-                  ok: false,
-                  error: {
-                    kind: "error",
-                    message: connectionChangedMessage(String(request.op)),
-                  },
+        // a cancel carries no capacity-sized payload and must reach the machine after a
+        // reconnect too (an operation keeps running across a socket blip, as in protocol 2);
+        // so does a machine's `stop`, fenced to the machine above instead of the socket
+        const unfenced =
+          request.type === "cancel" || (request.op === "stop" && stopFor !== undefined);
+        if (
+          !unfenced &&
+          (connectionId !== this.connectionId || maxFrameBytes !== this.effectiveCap)
+        ) {
+          if (request.type === "req" && typeof request.id === "string")
+            await this.store(
+              {
+                type: "res",
+                id: request.id,
+                ok: false,
+                error: {
+                  kind: "error",
+                  message: connectionChangedMessage(String(request.op)),
                 },
-                true,
-              );
-            continue;
-          }
-          wire = JSON.stringify(request);
-          frame = parseDeviceFrame(wire, "kernel", this.effectiveCap) as
-            | KernelRequest
-            | KernelCancel;
-        } else {
-          // protocol 2's wire stays byte for byte what the relay queued, minus the stop's fence
-          if (stopFor !== undefined) wire = JSON.stringify(request);
-          frame = parseLegacyDeviceFrame(wire, "kernel") as KernelReq | KernelCancel;
+              },
+              true,
+            );
+          continue;
         }
+        wire = JSON.stringify(request);
+        frame = parseDeviceFrame(wire, "kernel", this.effectiveCap) as
+          | KernelRequest
+          | KernelCancel;
       } catch (e) {
         this.gw.log.warn("dropping an invalid device request", {
           deviceId: this.deviceId,
@@ -603,8 +549,7 @@ class DeviceConnection {
     this.socket.ping();
     // a backstop for a lost nudge (the bus delivers at most once)
     if (this.state === "holding") {
-      if (this.staged)
-        void this.publishCapacity().then(
+      void this.publishCapacity().then(
           () => {
             this.publishFailures = 0;
           },
@@ -678,7 +623,7 @@ class DeviceConnection {
     const lease = this.lease;
     this.released = (async () => {
       try {
-        if (this.staged) await this.gw.redis.del(deviceTransportKey(this.deviceId, this.token));
+        await this.gw.redis.del(deviceTransportKey(this.deviceId, this.token));
         if (lease) {
           if (lease.lost.aborted) lease.abandon();
           else await lease.release();
@@ -727,7 +672,7 @@ export class LocalDeviceGateway {
     @Inject(MachinesService)
     readonly machines: Pick<
       MachinesService,
-      "authenticate" | "recordHello" | "recordPolicy" | "recordHelloV3" | "recordPolicyV3" | "touch"
+      "authenticate" | "recordHelloV3" | "recordPolicyV3" | "touch"
     >,
     @Inject(LockService) readonly locks: Pick<LockService, "hold">,
     @Inject(KERNEL_BUS) readonly bus: ExtensionContext["bus"],
@@ -753,31 +698,34 @@ export class LocalDeviceGateway {
     return this.machines.authenticate(credential);
   }
 
-  /** Serves one upgraded socket of an authenticated machine until it closes. */
-  accept(socket: WebSocket, identity: MachineIdentity, credential: string): void {
-    if (this.stopping) {
-      socket.close(DEVICE_CLOSE.shutdown, "shutting down");
-      return;
-    }
-    const conn = new DeviceConnection(this, socket, identity, credential);
-    this.connections.add(conn);
-    conn.start();
-  }
-
-  /** Dormant authenticated seam; the production HTTP route never calls this until full cutover. */
-  async acceptStaged(socket: WebSocket, credential: string): Promise<void> {
+  /**
+   * Serves one upgraded socket of a machine until it closes (protocol 3 only: the route refused any
+   * other header with 426, and a hello that is not protocol 3 closes 4400). The credential is
+   * checked again here, with the socket paused, so a credential revoked since the upgrade check
+   * never gets a connection.
+   */
+  async accept(socket: WebSocket, credential: string): Promise<void> {
     socket.pause();
     try {
+      if (this.stopping) {
+        socket.close(DEVICE_CLOSE.shutdown, "shutting down");
+        return;
+      }
       const identity = await this.authenticate(credential);
-      if (!identity || this.stopping || socket.readyState !== socket.OPEN) {
+      if (socket.readyState !== socket.OPEN) return;
+      if (this.stopping) {
+        socket.close(DEVICE_CLOSE.shutdown, "shutting down");
+        return;
+      }
+      if (!identity) {
         socket.close(DEVICE_CLOSE.revoked, "Reconnect with a current credential");
         return;
       }
-      const conn = new DeviceConnection(this, socket, identity, credential, true);
+      const conn = new DeviceConnection(this, socket, identity, credential);
       this.connections.add(conn);
       conn.start();
     } catch (error) {
-      this.log.warn("could not authenticate staged device connection", { error: errMsg(error) });
+      this.log.warn("could not authenticate a device connection", { error: errMsg(error) });
       socket.close(DEVICE_CLOSE.internal, "Authentication unavailable; reconnect");
     } finally {
       socket.resume();
@@ -807,9 +755,4 @@ export class LocalDeviceGateway {
       [...this.connections].map((c) => c.close(DEVICE_CLOSE.shutdown, "shutting down")),
     );
   }
-}
-
-/** Staged validation only; active connection acceptance above remains protocol 2. */
-export function validateDeviceOperationFrameV3(raw: string, from: "device" | "kernel") {
-  return parseDeviceFrame(raw, from);
 }

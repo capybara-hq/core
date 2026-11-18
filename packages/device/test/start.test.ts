@@ -37,6 +37,20 @@ const cred = {
   maxFrameBytes: 16 * 1024 * 1024,
 };
 
+/** A staged program's parts as start sees them: the binder's recovery and the disposal. */
+const stagedParts = (calls: string[] = []) =>
+  ({
+    binder: {
+      recover: async () => {
+        calls.push("recover");
+        return undefined;
+      },
+    },
+    dispose: async () => {
+      calls.push("dispose");
+    },
+  }) as unknown as StagedDevice;
+
 describe("start: legacy policy notice", () => {
   const run = async () => {
     const proc = Object.assign(new EventEmitter(), { pid: 4250 });
@@ -48,8 +62,8 @@ describe("start: legacy policy notice", () => {
         out: (l) => out.push(l),
         err: () => {},
         proc: proc as never,
-        createExecutor: () => new FakeExecutor(),
-        connect: () => conn,
+        createStaged: () => stagedParts(),
+        connectStaged: () => conn,
       }),
     ).toBe(0);
     return out;
@@ -93,11 +107,13 @@ describe("start without the OS sandbox", () => {
     const out: string[] = [];
     const errs: string[] = [];
     const conn: Connection = { done: Promise.resolve(0), drain: () => {}, stop: () => {} };
+    // the protocol 2 executors' own availability report (the legacy path, removed with it)
     const code = await start({
       stateDir: dir,
       out: (l) => out.push(l),
       err: (l) => errs.push(l),
       proc: proc as never,
+      protocol: 2,
       createExecutor: () => ex,
       connect: () => conn,
     });
@@ -149,8 +165,8 @@ describe("start, stop, drain", () => {
       out: (l) => out.push(l),
       err: () => {},
       proc: proc as never,
-      createExecutor: () => new FakeExecutor(),
-      connect: () => conn,
+      createStaged: () => stagedParts(),
+      connectStaged: () => conn,
     });
     await new Promise((r) => setTimeout(r, 20));
     expect(existsSync(pidPath(dir))).toBe(true);
@@ -162,7 +178,7 @@ describe("start, stop, drain", () => {
     expect(proc.listenerCount("SIGTERM")).toBe(0);
   });
 
-  it("a SIGTERM during executor creation stops without connecting", async () => {
+  it("a SIGTERM while the program is built stops without connecting", async () => {
     writeCredential(dir, cred);
     const proc = Object.assign(new EventEmitter(), { pid: 4243 });
     let connected = false;
@@ -171,11 +187,11 @@ describe("start, stop, drain", () => {
       out: () => {},
       err: () => {},
       proc: proc as never,
-      createExecutor: async () => {
+      createStaged: async () => {
         proc.emit("SIGTERM");
-        return new FakeExecutor();
+        return stagedParts();
       },
-      connect: () => {
+      connectStaged: () => {
         connected = true;
         throw new Error("must not connect");
       },
@@ -200,8 +216,8 @@ describe("start, stop, drain", () => {
         out: () => {},
         err: () => {},
         proc: Object.assign(new EventEmitter(), { pid: 4300 + exit }) as never,
-        createExecutor: () => new FakeExecutor(),
-        connect: () => ({ done: Promise.resolve(exit), drain: () => {}, stop: () => {} }),
+        createStaged: () => stagedParts(),
+        connectStaged: () => ({ done: Promise.resolve(exit), drain: () => {}, stop: () => {} }),
       });
       expect(code).toBe(exit);
     }
@@ -216,8 +232,8 @@ describe("start, stop, drain", () => {
       out: () => {},
       err: (l) => err.push(l),
       proc: Object.assign(new EventEmitter(), { pid: 4400 }) as never,
-      createExecutor: () => new FakeExecutor(),
-      connect: () => {
+      createStaged: () => stagedParts(),
+      connectStaged: () => {
         throw new Error("must not connect");
       },
     });
@@ -225,7 +241,7 @@ describe("start, stop, drain", () => {
     expect(err[0]).toMatch(/policy\.json is invalid: cpu must/);
   });
 
-  it("the executor gets a policy store that follows policy.json while serving", async () => {
+  it("the staged parts get a policy store that follows policy.json while serving", async () => {
     writeCredential(dir, cred);
     writePolicy(dir, { ...DEFAULT_POLICY, allowedDomains: ["a.com"] });
     let store: PolicyStore | undefined;
@@ -235,17 +251,17 @@ describe("start, stop, drain", () => {
       out: () => {},
       err: () => {},
       proc: Object.assign(new EventEmitter(), { pid: 4500 }) as never,
-      createExecutor: (_cred, s) => {
+      createStaged: (_cred, s) => {
         store = s;
-        return new FakeExecutor();
+        return { ...stagedParts(), policy: s } as unknown as StagedDevice;
       },
-      connect: (_cred, _ex, opts) => {
-        served = opts?.policy;
+      connectStaged: (device) => {
+        served = (device as unknown as { policy: PolicyStore }).policy;
         return { done: Promise.resolve(0), drain: () => {}, stop: () => {} };
       },
     });
     expect(code).toBe(0);
-    // The policy op and the hello work on the store the executor reads.
+    // The policy op and the hello work on the store the staged parts were built with.
     expect(served).toBe(store);
     expect(store?.current().allowedDomains).toEqual(["a.com"]);
     writePolicy(dir, { ...DEFAULT_POLICY, allowedDomains: ["b.com"] });
@@ -400,7 +416,7 @@ describe("start: the staged protocol (W3-M)", () => {
       },
     }) as unknown as StagedDevice;
 
-  it("the default protocol constant keeps today's protocol 2 path", async () => {
+  it("the default protocol constant (3) selects the staged program, never protocol 2's", async () => {
     writeCredential(dir, cred);
     const calls: string[] = [];
     const conn: Connection = { done: Promise.resolve(0), drain: () => {}, stop: () => {} };
@@ -427,7 +443,23 @@ describe("start: the staged protocol (W3-M)", () => {
       },
     });
     expect(code).toBe(0);
-    expect(calls).toEqual(["executor", "connect"]);
+    expect(calls).toEqual(["staged", "recover", "connectStaged"]);
+  });
+
+  it("without staged parts in the build, start refuses (no protocol 2 fallback)", async () => {
+    writeCredential(dir, cred);
+    const err: string[] = [];
+    const code = await start({
+      stateDir: dir,
+      out: () => {},
+      err: (l) => err.push(l),
+      createExecutor: () => new FakeExecutor(),
+      connect: () => {
+        throw new Error("protocol 2 connect is not used");
+      },
+    });
+    expect(code).toBe(1);
+    expect(err[0]).toContain("no execution backend");
   });
 
   it("protocol 3 builds the staged parts, recovers the binding and maps signals", async () => {

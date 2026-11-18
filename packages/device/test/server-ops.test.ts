@@ -16,6 +16,7 @@ import {
 } from "../src/server-ops.js";
 import {
   DEFAULT_POLICY,
+  FULL_OWNER_CEILING,
   ownerCeilingOfMode,
   type Policy,
   policyLockPath,
@@ -26,6 +27,8 @@ import {
 } from "../src/state.js";
 import { execArgs, FakeExecutor } from "./fake-kernel.js";
 
+/** The policy these tests were written against: the owner allows Full access (old auto). */
+const FULL_POLICY = { ...DEFAULT_POLICY, ownerCeiling: { ...FULL_OWNER_CEILING } };
 let opSeq = 0;
 /** A request; a `policy` op gets a fresh op id unless it names one (each is a new change). */
 const r = (op: KernelReq["op"], args: unknown): KernelReq => ({
@@ -112,7 +115,7 @@ describe("the policy op", () => {
   const seed = (over: Partial<Policy> & { mode?: "auto" | "sandbox" }) => {
     const { mode, ...rest } = over;
     writePolicy(dir, {
-      ...DEFAULT_POLICY,
+      ...FULL_POLICY,
       ...rest,
       ...(mode !== undefined && { ownerCeiling: ownerCeilingOfMode(mode) }),
     });
@@ -336,7 +339,7 @@ describe("exec grants in the command log", () => {
   });
 
   it("names the grants an exec was given and their source", async () => {
-    writePolicy(dir, { ...DEFAULT_POLICY, ownerCeiling: ownerCeilingOfMode("sandbox") });
+    writePolicy(dir, { ...FULL_POLICY, ownerCeiling: ownerCeilingOfMode("sandbox") });
     const store = new PolicyStore(dir);
     const { detail } = await serveOp(
       new FakeExecutor(),
@@ -348,7 +351,7 @@ describe("exec grants in the command log", () => {
   });
 
   it("logs nothing when no grant applied", async () => {
-    writePolicy(dir, { ...DEFAULT_POLICY, ownerCeiling: ownerCeilingOfMode("sandbox") });
+    writePolicy(dir, { ...FULL_POLICY, ownerCeiling: ownerCeilingOfMode("sandbox") });
     const store = new PolicyStore(dir);
     const none = await serveOp(
       new FakeExecutor(),
@@ -358,7 +361,7 @@ describe("exec grants in the command log", () => {
     );
     expect(none.detail).toBeUndefined();
     // auto mode ignores grants: the machine's own network
-    writePolicy(dir, { ...DEFAULT_POLICY, ownerCeiling: ownerCeilingOfMode("auto") });
+    writePolicy(dir, { ...FULL_POLICY, ownerCeiling: ownerCeilingOfMode("auto") });
     const auto = await serveOp(
       new FakeExecutor(),
       r("exec", withGrants({ mode: "auto", network: { kind: "open-public", hosts: [] } })),
@@ -410,7 +413,7 @@ describe("modes in the summary and the command log", () => {
 
   it("the summary keeps the owner's choice after an exec's ceiling", async () => {
     writePolicy(dir, {
-      ...DEFAULT_POLICY,
+      ...FULL_POLICY,
       ownerCeiling: ownerCeilingOfMode("auto"),
       allowedDomains: ["a.com"],
     });
@@ -434,17 +437,14 @@ describe("modes in the summary and the command log", () => {
 
   it("reports the owner's mode, before and after an exec's ceiling", () => {
     expect(
-      policySummary(
-        { ...DEFAULT_POLICY, ownerCeiling: ownerCeilingOfMode("auto") },
-        { mode: "os" },
-      ),
+      policySummary({ ...FULL_POLICY, ownerCeiling: ownerCeilingOfMode("auto") }, { mode: "os" }),
     ).toEqual({
       mode: "auto",
       allowedDomains: [],
     });
     expect(
       policySummary(
-        { ...DEFAULT_POLICY, ownerCeiling: ownerCeilingOfMode("sandbox") },
+        { ...FULL_POLICY, ownerCeiling: ownerCeilingOfMode("sandbox") },
         { mode: "docker" },
       ),
     ).toEqual({
@@ -453,7 +453,7 @@ describe("modes in the summary and the command log", () => {
     });
     expect(
       policySummary(
-        { ...DEFAULT_POLICY, ownerCeiling: ownerCeilingOfMode("auto") },
+        { ...FULL_POLICY, ownerCeiling: ownerCeilingOfMode("auto") },
         { mode: "os", limits: { mode: "sandbox" } },
       ),
       // The kernel takes min(allowed, reported): an org that later allows auto follows at once.
@@ -461,7 +461,7 @@ describe("modes in the summary and the command log", () => {
   });
 
   it("the executor runs the decision the log records", async () => {
-    writePolicy(dir, { ...DEFAULT_POLICY, ownerCeiling: ownerCeilingOfMode("auto") });
+    writePolicy(dir, { ...FULL_POLICY, ownerCeiling: ownerCeilingOfMode("auto") });
     const store = new PolicyStore(dir);
     const ex = new FakeExecutor();
     const seenBy: unknown[] = [];
@@ -481,7 +481,7 @@ describe("modes in the summary and the command log", () => {
   });
 
   it("every exec is logged with its mode", async () => {
-    writePolicy(dir, { ...DEFAULT_POLICY, ownerCeiling: ownerCeilingOfMode("sandbox") });
+    writePolicy(dir, { ...FULL_POLICY, ownerCeiling: ownerCeilingOfMode("sandbox") });
     const store = new PolicyStore(dir);
     const ex = new FakeExecutor();
     const req = r("exec", withMode("auto"));
@@ -494,7 +494,7 @@ describe("modes in the summary and the command log", () => {
       op: "exec",
       mode: "sandbox",
     });
-    writePolicy(dir, { ...DEFAULT_POLICY, ownerCeiling: ownerCeilingOfMode("auto") });
+    writePolicy(dir, { ...FULL_POLICY, ownerCeiling: ownerCeilingOfMode("auto") });
     const auto = await serveOp(ex, r("exec", withMode("auto")), never, { policy: store });
     expect(auto.run).toEqual({ mode: "auto" });
     // The ceiling can only narrow.

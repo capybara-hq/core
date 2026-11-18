@@ -18,16 +18,18 @@ import type { EnvironmentInputs } from "../src/exec/runtime-manifest.js";
 import { PolicyStore } from "../src/policy-store.js";
 import { CREDENTIAL_CHANGED_MESSAGE, connectStaged } from "../src/staged-connect.js";
 import { createStagedDevice, UNBOUND_SUPPORT } from "../src/staged-device.js";
-import { type Credential, DEFAULT_POLICY, writePolicy } from "../src/state.js";
+import { type Credential, DEFAULT_POLICY, FULL_OWNER_CEILING, writePolicy } from "../src/state.js";
 import { FakeKernel } from "./fake-kernel.js";
 
+/** The policy these tests were written against: the owner allows Full access (old auto). */
+const FULL_POLICY = { ...DEFAULT_POLICY, ownerCeiling: { ...FULL_OWNER_CEILING } };
 let root: string;
 let state: string;
 beforeEach(() => {
   root = realpathSync(mkdtempSync(join(tmpdir(), "device-staged-")));
   state = join(root, "state");
   mkdirSync(join(root, "device"), { recursive: true });
-  writePolicy(state, DEFAULT_POLICY);
+  writePolicy(state, FULL_POLICY);
 });
 const cleanups: (() => Promise<unknown> | unknown)[] = [];
 afterEach(async () => {

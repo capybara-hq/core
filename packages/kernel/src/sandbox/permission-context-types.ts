@@ -67,8 +67,8 @@ export class PermissionContextSubjectChanged extends Error {
  */
 export const PERMISSION_CONTEXT_ACTIVATION = Symbol("PERMISSION_CONTEXT_ACTIVATION");
 
-/** The production state of the gate: dormant until the paired cutover flips it. */
-export const PERMISSION_CONTEXT_ACTIVE = false;
+/** The production state of the gate: on since the paired activation (device protocol 3). */
+export const PERMISSION_CONTEXT_ACTIVE = true;
 
 /** Whether the live producers are on: an injected test value, else {@link PERMISSION_CONTEXT_ACTIVE}. */
 export function permissionContextActive(injected: boolean | undefined): boolean {

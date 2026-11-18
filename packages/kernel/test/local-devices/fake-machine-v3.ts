@@ -54,7 +54,7 @@ export const FAKE_OWNER_CEILING: DeviceOwnerCeiling = HELLO_V3.ownerCeiling;
 
 /**
  * A `capybara-device` stand-in speaking the staged (protocol 3) wire over a real WebSocket,
- * against `LocalDeviceGateway.acceptStaged` (or, after the paired activation, the HTTP route):
+ * against `LocalDeviceGateway.accept` (or, after the paired activation, the HTTP route):
  * it records the kernel's frames, keeps the `ready` frame apart (its connection id and capacity
  * are in {@link ready}), and answers requests with `answer` (undefined: the test answers with
  * {@link respond}). A `bindInstance` nobody answered is answered with the installed evidence of

@@ -112,8 +112,6 @@ async function fixture(clientCap = 69632, serverCap = 100000) {
         c === credential
           ? { deviceId, machineId: "machine", orgId: "org", accountId: "owner" }
           : null,
-      recordHello: async () => {},
-      recordPolicy: async () => {},
       recordHelloV3: async () => {},
       recordPolicyV3: async () => {},
       touch: async () => {},
@@ -152,7 +150,7 @@ async function fixture(clientCap = 69632, serverCap = 100000) {
   const address = server.address();
   if (typeof address === "string" || !address) throw Error();
   server.on("connection", (socket) => {
-    void gateway.acceptStaged(socket, credential);
+    void gateway.accept(socket, credential);
   });
   cleanups.push(async () => {
     for (const c of server.clients) c.terminate();

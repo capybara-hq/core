@@ -283,8 +283,6 @@ async function gatewayFor(
     {
       authenticate: async (c) =>
         c === device.credential ? { ...identity, machineId: "machine" } : null,
-      recordHello: async () => {},
-      recordPolicy: async () => {},
       recordHelloV3: async () => {},
       recordPolicyV3: async () => {},
       touch: async () => {},
@@ -300,7 +298,7 @@ async function gatewayFor(
   const address = server.address();
   if (typeof address === "string" || !address) throw new Error("no address");
   server.on("connection", (socket) => {
-    void gateway.acceptStaged(socket, device.credential);
+    void gateway.accept(socket, device.credential);
   });
   cleanups.push(async () => {
     for (const c of server.clients) c.terminate();

@@ -20,9 +20,17 @@ import {
   SANDBOX_BACK_ON,
   SwitchingExecutor,
 } from "../src/exec/switch.js";
-import { DEFAULT_POLICY, ownerCeilingOfMode, type Policy, type SandboxMode } from "../src/state.js";
+import {
+  DEFAULT_POLICY,
+  FULL_OWNER_CEILING,
+  ownerCeilingOfMode,
+  type Policy,
+  type SandboxMode,
+} from "../src/state.js";
 import { FakeExecutor } from "./fake-kernel.js";
 
+/** The policy these tests were written against: the owner allows Full access (old auto). */
+const FULL_POLICY = { ...DEFAULT_POLICY, ownerCeiling: { ...FULL_OWNER_CEILING } };
 const tmp = (prefix: string) => realpathSync(mkdtempSync(join(tmpdir(), prefix)));
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const never = new AbortController().signal;
@@ -277,7 +285,7 @@ describe("SwitchingExecutor", () => {
     Buffer.from((await ex.readFile("/f", 100, mode))?.data ?? []).toString();
 
   const setup = () => {
-    policy = { ...DEFAULT_POLICY };
+    policy = { ...FULL_POLICY };
     sandboxed = new FakeExecutor();
     host = new FakeExecutor();
     sandboxed.files.set("/f", Buffer.from("sandboxed"));

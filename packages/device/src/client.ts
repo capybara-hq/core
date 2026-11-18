@@ -1,9 +1,9 @@
 import { homedir } from "node:os";
 import {
-  DEVICE_PROTOCOL_VERSION,
   type DeviceFeature,
   type DeviceRes,
   type KernelReq,
+  LEGACY_DEVICE_PROTOCOL_VERSION,
   type LegacyDeviceHello,
   parseLegacyDeviceFrame,
   validateSandboxPathShape,
@@ -357,7 +357,7 @@ export function connect(
     if (opts.policy !== undefined) features.push("projects");
     return {
       type: "hello",
-      protocol: DEVICE_PROTOCOL_VERSION,
+      protocol: LEGACY_DEVICE_PROTOCOL_VERSION,
       programVersion: opts.programVersion ?? PROGRAM_VERSION,
       os: process.platform === "darwin" ? "darwin" : "linux",
       arch: process.arch,
@@ -403,7 +403,7 @@ export function connect(
       const sock = new WebSocket(cred.connectUrl, {
         headers: {
           Authorization: `Bearer ${cred.credential}`,
-          "X-Capybara-Device-Protocol": String(DEVICE_PROTOCOL_VERSION),
+          "X-Capybara-Device-Protocol": String(LEGACY_DEVICE_PROTOCOL_VERSION),
         },
       });
       ws = sock;

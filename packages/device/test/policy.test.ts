@@ -207,8 +207,10 @@ describe("policy command", () => {
   it("show prints the defaults when there is no file", async () => {
     const r = await run(["show"]);
     expect(r.code).toBe(0);
-    expect(r.out).toContain('"fullAccess": true');
-    expect(r.out).toContain("Mode: auto.");
+    // the restricted default ceiling of a new setup (B-14)
+    expect(r.out).toContain('"fullAccess": false');
+    expect(r.out).toContain('"restrictedProjectReach": "workspace"');
+    expect(r.out).toContain("Mode: sandbox.");
   });
 
   it("describeMode explains auto and sandbox, on the machine and in a container", () => {

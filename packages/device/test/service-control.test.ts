@@ -20,8 +20,8 @@ import {
 import { plistBinPath, plistContent, plistPath } from "../src/service/launchd.js";
 import { startedByServiceManager } from "../src/service/manager.js";
 import { unitBinPath, unitContent, unitPath } from "../src/service/systemd.js";
+import type { StagedDevice } from "../src/staged-device.js";
 import { writeCredential } from "../src/state.js";
-import { FakeExecutor } from "./fake-kernel.js";
 
 /** A `ps` that knows the given processes. */
 const psOf =
@@ -284,8 +284,9 @@ describe("stop under a service (DV2)", () => {
         env,
         service: { home, platform: "darwin" },
         proc: Object.assign(new EventEmitter(), { pid: 4600 }) as never,
-        createExecutor: () => new FakeExecutor(),
-        connect: () => conn,
+        createStaged: () =>
+          ({ binder: { recover: async () => undefined } }) as unknown as StagedDevice,
+        connectStaged: () => conn,
       });
       return printed.some((l) => l.includes("runs as a login service"));
     };

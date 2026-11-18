@@ -110,7 +110,8 @@ describe("state", () => {
       allowCredentials: [],
       cpu: null,
       memoryMb: null,
-      ownerCeiling: { fullAccess: true, restrictedProjectReach: "os-user" },
+      // the restricted default ceiling of a new setup (B-14)
+      ownerCeiling: { fullAccess: false, restrictedProjectReach: "workspace" },
     });
     writePolicy(dir, {
       allowedDomains: ["a.test"],

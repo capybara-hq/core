@@ -132,7 +132,7 @@ async function fixture() {
   const address = server.address();
   if (typeof address === "string" || !address) throw Error("no address");
   server.on("connection", (socket) => {
-    void gateway.acceptStaged(socket, credential);
+    void gateway.accept(socket, credential);
   });
   cleanups.push(async () => {
     for (const c of server.clients) c.terminate();
@@ -457,15 +457,8 @@ it("M2: the staged provider refuses every raw protocol 2 call before anything is
   expect(f.received).toEqual([]);
 });
 
-it("M4: with the protocol gate closed the policy codec lookup reads nothing", async () => {
+it("M4: the policy codec lookup finds the live protocol 3 connection", async () => {
   const f = await fixture();
-  const held = vi.spyOn(f.locks, "holderOf");
-  const transport = vi.spyOn(f.targets, "transport");
-  expect(await f.relay.stagedTransport(f.deviceId)).toBeNull();
-  expect(held).not.toHaveBeenCalled();
-  expect(transport).not.toHaveBeenCalled();
-  // opened (as the paired activation does), the live staged connection is found
-  f.relay.stagedProtocolActive = () => true;
   expect(await f.relay.stagedTransport(f.deviceId)).toEqual({
     connectionId: f.session.ready().connectionId,
     maxFrameBytes: 69632,
