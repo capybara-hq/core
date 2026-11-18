@@ -67,15 +67,20 @@ const SPEC: ToolSpec = {
   // Display only (the tool row; not in the fingerprint, never sent to the model).
   keyArgs: ["task_id"],
   description:
-    "Read the status and output of a background task started with Bash and run_in_background. " +
-    "The result has the status (running, completed, failed, stopped, timed out or lost), the " +
-    "exit code and the elapsed time, then the output the task wrote since the last TaskOutput " +
-    "call for it. With block (the default) it waits until the task finishes or timeout " +
-    "milliseconds pass, checking every 2 seconds; prefer this over sleeping in Bash. Each call " +
-    "returns a bounded slice of new output; the task's whole output file (its path is in the Bash " +
-    "result) can also be read with Read. A background task that waits for a person (an " +
-    "interactive login, a prompt) prints its prompt here; read it while the task waits. You are " +
-    "told when a task finishes, so there is no need to poll for that.",
+    "Read the status and new output of a background task started with Bash and run_in_background: " +
+    "the status (running, completed, failed, stopped, timed out or lost), the exit code and the " +
+    "elapsed time, then the output the task wrote since the last TaskOutput call for it (a " +
+    "bounded slice; the task's whole output file, whose path is in the Bash result, can also be " +
+    "read with Read). Use it to check a server's or watcher's log (is it up, did it print an " +
+    "error) with block false, or to collect a task's output once you were told it finished. You " +
+    "are told when a task finishes, so do not poll, and do not call it right after starting a " +
+    "task just to wait for it: if you need a command's result before you can go on, run it in " +
+    "the foreground with Bash instead. With block (the default) it waits until the task " +
+    "finishes or timeout milliseconds pass, checking every 2 seconds; a task that never " +
+    "finishes (a server, a watcher) always takes the whole timeout, so pass block false for " +
+    "those. Prefer it over sleeping in Bash. A background task that waits for a person (an " +
+    "interactive login, a prompt) prints its prompt here; read it while the task waits. Stop a " +
+    "task you no longer need with TaskStop.",
   inputSchema: {
     type: "object",
     properties: {

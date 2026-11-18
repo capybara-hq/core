@@ -172,6 +172,13 @@ export function launchScript(id: string, command: string, seconds: number): stri
   ].join("\n");
 }
 
+/**
+ * The launch result's last line (background tool guidance note §2): how to read and stop the task,
+ * and to keep working instead of waiting on it.
+ */
+export const LAUNCH_NEXT_STEP =
+  "You will be told when it finishes: keep working meanwhile instead of waiting on it. Read its new output with TaskOutput (block false for a server or watcher) or Read, and stop it with TaskStop.";
+
 /** The model-visible result of a launch (spec §2.1); `workspace`: the instance's workspace root. */
 export function startedText(
   id: string,
@@ -181,7 +188,7 @@ export function startedText(
   return [
     `Started background task ${id} ("${description}").`,
     `Output: ${workspace}/${taskOutputPath(id)}`,
-    "Read it with TaskOutput (or Read), stop it with TaskStop. You will be told when it finishes.",
+    LAUNCH_NEXT_STEP,
   ].join("\n");
 }
 
@@ -244,6 +251,6 @@ export function managedStartedText(id: string, description: string, outputPath: 
   return [
     `Started background task ${id} ("${description}").`,
     `Output: ${outputPath}`,
-    "Read it with TaskOutput (or Read), stop it with TaskStop. You will be told when it finishes.",
+    LAUNCH_NEXT_STEP,
   ].join("\n");
 }
