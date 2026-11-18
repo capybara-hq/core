@@ -1,5 +1,17 @@
 # @capybara-hq/capybara
 
+## 0.1.0-rc.49
+
+### Patch Changes
+
+- 2c333b9: The agent form lists GenerateImage while the org's image purpose has a target, and the model purposes pages offer image models for the image purpose and hint when none is mapped.
+  
+  A new member-readable route, GET /api/v1/orgs/:orgId/model-purposes/available, says whether each purpose has a usable model in the org (the image purpose also needs an object store, exactly as GenerateImage does), so the agent form gates GenerateImage for every member.
+- Updated dependencies [ee9a4b5]
+- Updated dependencies [ade6e20]
+- Updated dependencies [2c333b9]
+  - @capybara-hq/kernel@0.1.0-rc.43
+
 ## 0.1.0-rc.48
 
 ### Patch Changes

@@ -1,5 +1,18 @@
 # @capybara-hq/testing
 
+## 0.1.0-rc.25
+
+### Patch Changes
+
+- e21fe10: `model-fake` lists and answers scripted image generation models (`kind: "image_generation"`), and the model-provider conformance suite runs image cases (`expect.imageGeneration`); `@capybara-hq/testing` exports `FAKE_PNG_BASE64`.
+- Updated dependencies [ee9a4b5]
+- Updated dependencies [ade6e20]
+- Updated dependencies [089ee76]
+- Updated dependencies [2c333b9]
+  - @capybara-hq/kernel@0.1.0-rc.43
+  - @capybara-hq/plugin-sdk@0.1.0-rc.32
+  - @capybara-hq/plugin-tools@0.1.0-rc.17
+
 ## 0.1.0-rc.24
 
 ### Patch Changes

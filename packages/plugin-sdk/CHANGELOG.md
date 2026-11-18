@@ -1,5 +1,11 @@
 # @capybara-hq/plugin-sdk
 
+## 0.1.0-rc.32
+
+### Patch Changes
+
+- 089ee76: Image generation contract on `model-provider@2`: `ModelProvider.generateImage`, `ModelInfo.imageGeneration`, the `refusal` model error kind, `pickImageSize` / `validateImageGenerateResult` (which also checks the result's `usage`: whole non-negative token counts and `outputImages`), the `image` model call purpose with its request and response hook payloads, `ctx.models.generateImage`, and `kind: "image_generation"` in `permissions.models`.
+
 ## 0.1.0-rc.31
 
 ### Minor Changes
