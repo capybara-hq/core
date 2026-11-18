@@ -1,7 +1,9 @@
+import type { ShareEmbedClaims } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable, Module, Optional } from "@nestjs/common";
 import { type ExpressionBuilder, sql } from "kysely";
 import { accessibleTo } from "../conversations/access.js";
 import type { KernelDatabase } from "../db/kernel-schema.js";
+import { enabledExtensionsQuery } from "../extensions/enabled.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
@@ -78,10 +80,30 @@ export class ShareLiveness {
     return this.find({ id: shareId, ...(generation !== undefined && { generation }) });
   }
 
+  /**
+   * Whether a share-scoped embed token (file sharing spec §7) still holds, checked on every use:
+   * the share is live at the token's generation, in the token's org, and `plugin` is enabled in
+   * that org (`enabled.ts`: its switch, or always on). One query (plus the platform switch for an
+   * external share).
+   */
+  async embedLive(plugin: string, c: ShareEmbedClaims): Promise<boolean> {
+    if (!UUID_RE.test(c.shareId) || !UUID_RE.test(c.orgId)) return false;
+    const share = await this.find({
+      id: c.shareId,
+      generation: c.generation,
+      orgId: c.orgId,
+      plugin,
+    });
+    return share !== null;
+  }
+
   private async find(by: {
     code?: string;
     id?: string;
     generation?: number;
+    /** With `plugin`: the share is in this org and the extension is enabled there. */
+    orgId?: string;
+    plugin?: string;
   }): Promise<LiveShare | null> {
     let q = this.db
       .selectFrom("file_shares")
@@ -118,6 +140,18 @@ export class ShareLiveness {
     if (by.code !== undefined) q = q.where("file_shares.code", "=", by.code);
     if (by.id !== undefined) q = q.where("file_shares.id", "=", by.id);
     if (by.generation !== undefined) q = q.where("file_shares.generation", "=", by.generation);
+    if (by.orgId !== undefined) q = q.where("file_shares.org_id", "=", by.orgId);
+    const { orgId, plugin } = by;
+    if (orgId !== undefined && plugin !== undefined) {
+      q = q.where((eb) =>
+        eb.exists(
+          eb
+            .selectFrom(enabledExtensionsQuery(this.db.db, orgId).as("en"))
+            .select("en.plugin")
+            .where("en.plugin", "=", plugin),
+        ),
+      );
+    }
     const row = await q.executeTakeFirst();
     if (!row || row.object_key === null) return null;
     if (row.audience === "external") {

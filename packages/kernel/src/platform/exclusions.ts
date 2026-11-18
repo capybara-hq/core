@@ -484,6 +484,16 @@ export const PLATFORM_EXCLUSIONS: readonly {
     category: "transport",
     reason: "Public share link: redirects to the sandboxed HTML document",
   },
+  {
+    route: "POST /api/v1/s/:code/embed-token/:plugin/:previewerId",
+    category: "transport",
+    reason: "Public share link: a share-scoped embed token for the share page's embed previewer",
+  },
+  {
+    route: "GET /api/v1/s/:code/previews/:plugin/:previewerId",
+    category: "transport",
+    reason: "Public share link: a view previewer rendered for the shared snapshot",
+  },
   // identity
   {
     route: "POST /api/v1/orgs/:orgId/approvals/:approvalId/initial-password",

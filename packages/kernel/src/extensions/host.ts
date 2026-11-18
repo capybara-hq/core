@@ -47,6 +47,7 @@ import { ModelEmbeddings } from "../models/embeddings.js";
 import { ModelImages } from "../models/images.js";
 import { OrgNetworkAllowances } from "../orgs/network-allowances.service.js";
 import { packagePath } from "../packages/tgz.js";
+import { ShareLiveness } from "../shares/liveness.js";
 import { EmbedTokens } from "../ui/embed-token.js";
 import type { UiActionHandler, UiRender } from "../ui/registry.js";
 import {
@@ -674,6 +675,8 @@ export class ExtensionHost {
     @Inject(REDIS_SUBSCRIBER) busSubscriber: BusSubscriber,
     @Inject(KEYRING) keyring: Keyring,
     @Inject(EmbedTokens) embedTokens: EmbedTokens,
+    /** `ctx.ui.verifyEmbedToken`: the live check of a share-scoped token (file sharing spec §7). */
+    @Inject(ShareLiveness) shares: ShareLiveness,
     @Inject(LockService) locks: LockService,
     @Inject(KERNEL_LOGGER) private readonly log: KernelLogger,
     @Inject(KERNEL_APP_OPTIONS) options: Pick<KernelAppOptions, "resolveFrom">,
@@ -714,6 +717,7 @@ export class ExtensionHost {
       models: { embeddings, images },
       // ctx.models.embed and generateImage fire model.request through the same registry
       hooks: this.hooks,
+      shares,
       net: { config, allowances, ...(netSeams !== undefined && { seams: netSeams }) },
       locks,
       runWorkers: c.roles.includes("worker"),

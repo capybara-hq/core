@@ -1,5 +1,6 @@
 import { Module } from "@nestjs/common";
 import { ConversationsModule } from "../conversations/conversations.module.js";
+import { FilesModule } from "../files/files.module.js";
 import { HtmlTokensModule } from "../html/html-token.js";
 import { OrgLockModule } from "../orgs/org-lock.js";
 import { StorageModule } from "../storage/storage.module.js";
@@ -22,6 +23,8 @@ import { SharesService } from "./shares.service.js";
     ShareLivenessModule,
     ShareObjectsModule,
     HtmlTokensModule,
+    // the share page's extension previewers (file sharing spec §7)
+    FilesModule,
   ],
   providers: [SharesService, ShareOpenService],
   exports: [SharesService, ShareOpenService, ShareLivenessModule, ShareObjectsModule],

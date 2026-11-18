@@ -52,7 +52,8 @@ const authRequired = () => new ApiError("auth.required", "Authentication require
  *   with `retry-after`.
  * - `embed`: an embed token of this extension as `Authorization: Bearer` (not a `cap_` kernel
  *   token) or `?token=`, verified by the route's own `verifyEmbed` (signature, TTL, scope, live
- *   membership, slot role, extension enabled); missing or invalid -> 401 `auth.required`. An org
+ *   membership, slot role, extension enabled; a share token: a `file.preview` contribution of a
+ *   live share at its generation); missing or invalid -> 401 `auth.required`. An org or share
  *   token also needs a valid effective config (409 `extension.needs_config`; 503
  *   `extension.unavailable` when the extension is not running on this replica).
  * - `member` / `admin`: a personal API token only (`authenticatePersonalToken`; a cookie is no
@@ -126,8 +127,20 @@ export class PluginRouteAccess implements RouteAccessResolver {
         exp: claims.exp,
       };
     }
-    // A share token is never issued yet; a later change resolves it for the share routes.
-    if (claims.scope === "share") throw authRequired();
+    if (claims.scope === "share") {
+      // verifyEmbed held: a `file.preview` contribution of a live share whose org has the extension
+      // on; the handler sees an org call for the share's org with no account or role
+      const config = await this.config(claims.orgId, route.plugin);
+      return {
+        access: "embed",
+        scope: "share",
+        orgId: claims.orgId,
+        shareId: claims.shareId,
+        contribution: claims.contribution,
+        exp: claims.exp,
+        config,
+      };
+    }
     const config = await this.config(claims.orgId, route.plugin);
     return {
       access: "embed",

@@ -52,6 +52,9 @@ const PUBLIC_ROUTES = new Set([
   "GET /api/v1/s/:code/text",
   "GET /api/v1/s/:code/inline",
   "GET /api/v1/s/:code/html",
+  // File sharing spec §7: the share page's extension previewers, behind the same open checks
+  "POST /api/v1/s/:code/embed-token/:plugin/:previewerId",
+  "GET /api/v1/s/:code/previews/:plugin/:previewerId",
 ]);
 
 const ZERO_UUID = "00000000-0000-0000-0000-000000000000";

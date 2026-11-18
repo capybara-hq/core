@@ -14,7 +14,7 @@ import {
   trimUtf8,
 } from "../conversations/files.js";
 import { ApiError } from "../errors.js";
-import type { PreviewerItem } from "../files/previewers.js";
+import { type PreviewerItem, PreviewerRegistry } from "../files/previewers.js";
 import { HTML_TOKEN_TTL_SECONDS, HtmlTokens } from "../html/html-token.js";
 import { isHtmlType } from "../html/html-type.js";
 import { audit } from "../identity/audit.js";
@@ -115,7 +115,8 @@ export class ShareOpenService {
     @Inject(ShareLiveness) private readonly liveness: Pick<ShareLiveness, "byCode">,
     @Inject(StorageService) private readonly storage: Pick<StorageService, "kernel">,
     @Inject(HtmlTokens) private readonly tokens: Pick<HtmlTokens, "issue">,
-    @Inject(LockService) private readonly locks: Pick<LockService, "lease">,
+    @Inject(LockService) private readonly locks: Pick<LockService, "lease" | "releaseIf">,
+    @Inject(PreviewerRegistry) private readonly previewers: Pick<PreviewerRegistry, "forShare">,
     @Inject(CredentialThrottler)
     private readonly throttler: Pick<CredentialThrottler, "reserve" | "succeeded">,
   ) {}
@@ -147,8 +148,13 @@ export class ShareOpenService {
     const { share } = opened;
     await this.recordOpenOnce(opened, ip);
     const previewable = previewKind(share.contentType);
-    const html = isHtmlType(share.name, share.contentType) && share.size <= FILE_PREVIEW_MAX_BYTES;
+    // HTML is the web built-in's (it wins over extension previewers, spec §5); over
+    // FILE_PREVIEW_MAX_BYTES it is not rendered at all and the page offers the download (spec §4)
+    const html = isHtmlType(share.name, share.contentType);
     const previewers = html ? [] : await this.previewersFor(share);
+    let render: ShareMeta["render"];
+    if (html) render = share.size <= FILE_PREVIEW_MAX_BYTES ? "html" : "download";
+    else render = previewers.length > 0 || previewable !== null ? "previewers" : "download";
     return {
       name: share.name,
       contentType: share.contentType,
@@ -157,21 +163,17 @@ export class ShareOpenService {
       expiresAt: share.expiresAt,
       audience: share.audience,
       previewable,
-      render: html
-        ? "html"
-        : previewers.length > 0 || previewable !== null
-          ? "previewers"
-          : "download",
+      render,
       previewers,
     };
   }
 
   /**
-   * The extension previewers that take a share's snapshot, in the org's order. The seam the
-   * share-scoped previewers (file sharing spec §7) fill; none until then.
+   * The extension previewers that take a share's snapshot, in the org's order: the same rule as
+   * the right panel (enabled in the org, not disabled, a valid effective config; spec §7).
    */
-  async previewersFor(_share: LiveShare): Promise<PreviewerItem[]> {
-    return [];
+  async previewersFor(share: LiveShare): Promise<PreviewerItem[]> {
+    return this.previewers.forShare(share.orgId, share);
   }
 
   /** Streams the snapshot as `application/octet-stream` (spec §3); `download` adds the attachment name. */
@@ -263,16 +265,21 @@ export class ShareOpenService {
   /**
    * `share.opened` at most once per share and viewer (the session's account, else the client
    * address hashed) per {@link SHARE_OPENED_DEDUPE_MS}: the first open sets a Redis marker with
-   * that TTL (outside any transaction), then writes the audit and `last_opened_at`.
+   * that TTL (outside any transaction), then writes the audit and `last_opened_at`; when that write
+   * fails the marker is deleted, so the next open audits again.
    */
   private async recordOpenOnce(opened: OpenedShare, ip: string): Promise<void> {
     const viewer = opened.viewerAccountId ?? `ip-${sha256(ip)}`;
-    const first = await this.locks.lease(
-      `capk:share-opened:${opened.share.id}:${viewer}`,
-      "1",
-      SHARE_OPENED_DEDUPE_MS,
-    );
-    if (first) await this.recordOpen(opened);
+    const key = `capk:share-opened:${opened.share.id}:${viewer}`;
+    const first = await this.locks.lease(key, "1", SHARE_OPENED_DEDUPE_MS);
+    if (!first) return;
+    try {
+      await this.recordOpen(opened);
+    } catch (err) {
+      // a failed audit must not suppress the next one: give the marker back (best effort)
+      await this.locks.releaseIf(key, "1").catch(() => {});
+      throw err;
+    }
   }
 
   /** The audit of one open (the account for an internal share, none for an external one). */

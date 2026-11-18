@@ -544,6 +544,26 @@ export class UiViews {
     };
   }
 
+  /**
+   * The path of a loaded `file.preview` embed contribution (a share page's embed previewer, file
+   * sharing spec §7), else 404 `ui.not_found`. Whether the previewer takes the share's snapshot
+   * and its extension is on in the org is the caller's check (`PreviewerRegistry.shareEmbed`).
+   */
+  shareEmbedPath(plugin: string, contribution: string): string {
+    const entry = this.d.host
+      .uiContributions()
+      .find(
+        (c) =>
+          c.plugin === plugin &&
+          c.contribution.id === contribution &&
+          c.contribution.kind === "embed" &&
+          c.slot.id === "file.preview",
+      );
+    const path = entry?.contribution.path;
+    if (path === undefined) throw notFound();
+    return path;
+  }
+
   /** 取视图：调用插件 `render`，校验返回的视图。 */
   async render(t: UiTarget): Promise<UiView> {
     const { entry, args } = await this.resolve(t, "render");

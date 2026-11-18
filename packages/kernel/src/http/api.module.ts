@@ -97,6 +97,7 @@ import { SetupModule } from "../setup/setup.module.js";
 import { SetupChecksController } from "../setup/setup-checks.controller.js";
 import { SetupGuidesController } from "../setup/setup-guides.controller.js";
 import { ShareOpenController } from "../shares/share-open.controller.js";
+import { SharePreviewsController } from "../shares/share-previews.controller.js";
 import { SharesController } from "../shares/shares.controller.js";
 import { SharesModule } from "../shares/shares.module.js";
 import { AgentSkillsController } from "../skills/agent-skills.controller.js";
@@ -190,6 +191,7 @@ const CONTROLLERS: Type[] = [
   FilePreviewersController,
   SharesController,
   ShareOpenController,
+  SharePreviewsController,
   HtmlDocumentController,
   ExtensionPointDefaultsController,
   TrajectoryController,

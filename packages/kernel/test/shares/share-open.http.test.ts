@@ -15,6 +15,7 @@ import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { REDIS } from "../../src/infra/tokens.js";
 import { createLogger } from "../../src/log.js";
+import { ShareOpenService } from "../../src/shares/share-open.service.js";
 import { StorageService } from "../../src/storage/storage.service.js";
 import { truncateTables } from "../helpers/db.js";
 import { asUser, cookieJar } from "../helpers/http.js";
@@ -233,6 +234,18 @@ describe("metadata", () => {
     expect(m1).toMatchObject({ previewable: "image", render: "previewers" });
     const m2 = (await alice({ method: "GET", url: base(bin.code) })).json();
     expect(m2).toMatchObject({ previewable: null, render: "download", expiresAt: null });
+  });
+
+  it("HTML over 20 MiB is not rendered: render download", async () => {
+    const s = await share(await deliver("big.html", "<p>big</p>"), "internal");
+    await sql`UPDATE capybara.file_shares SET size = ${20 * MiB + 1} WHERE id = ${s.id}`.execute(
+      raw,
+    );
+    const m = (await alice({ method: "GET", url: base(s.code) })).json();
+    expect(m).toMatchObject({ render: "download", previewers: [] });
+    await sql`UPDATE capybara.file_shares SET size = ${20 * MiB} WHERE id = ${s.id}`.execute(raw);
+    const at = (await owner({ method: "GET", url: base(s.code) })).json();
+    expect(at).toMatchObject({ render: "html" });
   });
 
   it("unknown, malformed, revoked and expired codes: one 404 answer with identical bodies", async () => {
@@ -512,6 +525,16 @@ describe("share.opened", () => {
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({ actor_account_id: ownerId, target: s.id });
     expect(rows[0]?.detail).toEqual({ shareId: s.id, audience: "internal" });
+  });
+
+  it("a failed open audit gives the dedupe marker back: the next open is audited", async () => {
+    const s = await share(await deliver("a.html", "a"), "external");
+    const svc = k.app.get(ShareOpenService);
+    vi.spyOn(svc, "recordOpen").mockRejectedValueOnce(new Error("audit write failed"));
+    expect((await anon(base(s.code), "192.0.2.5")).statusCode).toBe(500);
+    expect(await opened()).toHaveLength(0);
+    expect((await anon(base(s.code), "192.0.2.5")).statusCode).toBe(200);
+    expect(await opened()).toHaveLength(1);
   });
 
   it("refused opens are not audited", async () => {
