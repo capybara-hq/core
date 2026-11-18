@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import {
+  FAKE_PNG_BASE64,
   type FakeChannelServer,
   type FakeTelegramServer,
   fakeGroupMessage,
@@ -13,6 +14,8 @@ import {
 import { SchedulerRegistry } from "@nestjs/schedule";
 import { sql } from "kysely";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { idempotencyKey } from "../../src/channels/outbound.js";
+import { EventLog } from "../../src/conversations/event-log.js";
 import type { ConversationEvent } from "../../src/conversations/events.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
@@ -20,7 +23,8 @@ import { ScheduledTaskFirer } from "../../src/schedules/fire.js";
 import { SCHED_SCAN_JOB } from "../../src/schedules/job-ids.js";
 import { type ScheduledTaskInsert, ScheduledTaskStore } from "../../src/schedules/store.js";
 import type { ScheduledTask, TaskRun } from "../../src/schedules/types.js";
-import { scriptRules } from "../fixtures/plugins/model-script/index.js";
+import { StorageService } from "../../src/storage/storage.service.js";
+import { openBarrier, scriptRules } from "../fixtures/plugins/model-script/index.js";
 import { builtinsOff } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
@@ -49,6 +53,7 @@ const MODEL_SCRIPT = fixture("model-script");
 const CHAN_MINI = fixture("chan-mini");
 const CHAN_PLAIN = fixture("chan-plain");
 const CHAN_TG = fixture("chan-tg");
+const MEM_STORE = fixture("mem-store");
 
 let pgc: TestContainer;
 let rd: TestContainer;
@@ -69,6 +74,15 @@ let tgId: string;
 const store = new ScheduledTaskStore();
 
 const ANSWER = "Your digest: all good";
+const CHART_ANSWER = "Here is your chart";
+const RULES = [
+  { when: { lastUserIncludes: "digest please" }, reply: { text: ANSWER } },
+  // held until the test logged the run's first output, an artifact (openBarrier("chart"))
+  {
+    when: { lastUserIncludes: "chart please" },
+    reply: { text: CHART_ANSWER, barrier: { name: "chart", count: 99, timeoutMs: 20_000 } },
+  },
+];
 
 async function enable(plugin: string): Promise<void> {
   const res = await owner({
@@ -100,7 +114,7 @@ beforeAll(async () => {
       { pg: pgc.url, redis: rd.url },
       {
         roles: ["api", "worker", "gateway"],
-        extensions: [MODEL_FAKE, MODEL_SCRIPT, CHAN_MINI, CHAN_PLAIN, CHAN_TG],
+        extensions: [MODEL_FAKE, MODEL_SCRIPT, MEM_STORE, CHAN_MINI, CHAN_PLAIN, CHAN_TG],
         http: { port: 0, publicUrl: "https://cap.example" },
         auth: { cookieSecure: false },
         // one replica, no takeover: a lease long enough that a stalled event loop does not
@@ -155,7 +169,7 @@ beforeAll(async () => {
     (${`chan-tg:${tg.bot.id}`}, '777', ${ownerId}),
     (${`chan-tg:${tg.bot.id}`}, '888', ${bobId})`.execute(raw);
   await waitFor(async () => im.active(miniId).length === 1, 10_000, "long connection");
-  scriptRules([{ when: { lastUserIncludes: "digest please" }, reply: { text: ANSWER } }]);
+  scriptRules(RULES);
 });
 
 afterAll(async () => {
@@ -383,6 +397,77 @@ describe("scheduled task channel delivery (spec §8)", () => {
     expect(done2.conversationId).not.toBe(conv);
     const thread2 = await threadOf(done2.conversationId as string);
     expect(thread2.thread_key).not.toBe(thread.thread_key);
+  });
+
+  it("a group run whose first post is a file roots its thread with a text line", async () => {
+    await ownerGroupThread("grp-files", "g-files-hello");
+    const t = await chatTask(
+      { connectionId: miniId, chatId: "grp-files", chatType: "group" },
+      { prompt: "chart please" },
+    );
+    const sentBefore = im.sent.length;
+    const filesBefore = im.sentFiles.length;
+    const r = await fireNow(t);
+    const conv = await waitFor(
+      async () => (await runOf(r.id)).conversationId ?? undefined,
+      20_000,
+      "the run's conversation",
+    );
+    // the run waits at the barrier: the artifact is its first logged output
+    const artifactId = randomUUID();
+    const objectKey = `artifacts/${conv}/${artifactId}`;
+    const png = Buffer.from(FAKE_PNG_BASE64, "base64");
+    await k.app
+      .get(StorageService)
+      .kernel(orgId)
+      .put(objectKey, png, {
+        contentType: "image/png",
+        size: png.byteLength,
+        signal: AbortSignal.timeout(10_000),
+      });
+    const [ev] = await k.app.get(EventLog).append(conv, [
+      {
+        type: "artifact_created",
+        payload: {
+          artifactId,
+          name: "chart.png",
+          contentType: "image/png",
+          size: png.byteLength,
+          objectKey,
+          sourcePath: "/workspace/chart.png",
+          callId: "call-chart",
+        },
+      },
+    ]);
+    const seq = (ev as { seq: number }).seq;
+    const file = await waitFor(
+      async () => im.sentFiles.slice(filesBefore).find((f) => f.target.chatId === "grp-files"),
+      20_000,
+      "the file in the group",
+    );
+    openBarrier("chart");
+    expect((await settled(r.id)).status).toBe("completed");
+    await waitFor(
+      async () => im.sent.slice(sentBefore).some((s) => im.finalText(s) === CHART_ANSWER),
+      20_000,
+      "the run's answer",
+    );
+    const posts = im.sent.slice(sentBefore).filter((s) => s.target.chatId === "grp-files");
+    const root = posts.find((s) => s.idempotencyKey === idempotencyKey(`${conv}-${seq}-root`));
+    if (!root) throw new Error("no thread root");
+    expect(root.message.text).toBe("Delivered `chart.png`.");
+    expect(root.target.threadId).toBeUndefined();
+    expect(file.target.threadId).toBe(root.messageId);
+    expect(file.kind).toBe("image");
+    expect(file.at).toBeGreaterThanOrEqual(root.at);
+    const answer = posts.find((s) => im.finalText(s) === CHART_ANSWER);
+    expect(answer?.target.threadId).toBe(root.messageId);
+    const delivery = await db
+      .selectFrom("channel_deliveries")
+      .select("pending_thread_account_id")
+      .where("conversation_id", "=", conv)
+      .executeTakeFirstOrThrow();
+    expect(delivery.pending_thread_account_id).toBeNull();
   });
 
   it("a group target on a channel without threads is skipped with unsupported_target", async () => {
