@@ -588,7 +588,8 @@ async function copyToDevice(
               );
             } catch (e) {
               if (!(e instanceof FileGuardError)) throw e;
-              throw new ToolError(e.reason === "not_read" ? notReadText(path) : modifiedText(path));
+              if (e.reason === "not_read") throw new ToolError(notReadText(path));
+              throw new ToolError(modifiedText(path));
             }
           }
           await s.p.writeFile(s.h, path, f.data, signal);
