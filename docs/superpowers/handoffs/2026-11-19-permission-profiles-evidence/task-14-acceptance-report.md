@@ -142,5 +142,7 @@ pnpm exec vitest run plugins/sandbox-docker/test/permission-scopes.test.ts      
 (set -a; . ~/.capybara-test.env; set +a; pnpm exec vitest run plugins/sandbox-e2b/test/live/sandbox-e2b.live.test.ts)        # 17/17
 ```
 
-Gates: see the hand-off message (lint, typecheck, check, English comments, container test,
-device tests, verify).
+Gates: `pnpm lint`, `pnpm typecheck`, `pnpm check` and `pnpm check:english-comments --base
+origin/main` pass. `CAPYBARA_TEST_WORKERS=2 pnpm verify` passes: the affected-package tests ran
+1136 files, 18412 tests passed, 1 expected fail (finding 2) and 66 skipped. Bootstrap against npm
+and commitlint passed too; commitlint gave one pre-existing footer warning on an older commit.
