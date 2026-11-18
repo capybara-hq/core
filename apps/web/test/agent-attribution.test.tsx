@@ -73,7 +73,7 @@ const routes = (
         json(200, {
           settings: { toolSearch: "on", locale: "en" },
           deployment: {
-            autoMode: { mode: "allowed", source: "default" },
+            fullAccess: { permission: "allowed", source: "default" },
             cloudNetwork: { allowHosts: [], orgHosts: "extend", off: false },
             attribution: {
               commit: PLATFORM_COMMIT,

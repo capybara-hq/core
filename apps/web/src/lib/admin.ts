@@ -2,7 +2,7 @@ import type { ExtensionStatus } from "./admin-extensions";
 import { apiFetch } from "./api";
 import type { LocalizedName } from "./catalog";
 import type { CompactionSettings, CompactionSettingsPatch } from "./compaction";
-import type { DevicesAutoModeView } from "./org-settings";
+import type { DevicesFullAccessView } from "./org-settings";
 import type { UiArrangementEntry } from "./ui";
 
 /**
@@ -308,11 +308,12 @@ export interface DeploymentSettings {
    */
   clientExtensions?: ClientExtensionsSetting;
   /**
-   * The platform's auto-mode switch in effect and where it comes from (kernel `DevicesAutoModeView`):
+   * The platform's Full permission switch in effect and where it comes from (kernel
+   * `DevicesFullAccessView`):
    * `env` / `file` / `nacos` are the startup config (read-only here), `db` the admin console's
    * choice, `default`.
    */
-  devicesAutoMode?: DevicesAutoModeView;
+  devicesFullAccess?: DevicesFullAccessView;
   /**
    * The platform's attribution defaults for agent-created git commits and pull requests (spec
    * 2026-11-14-agent-attribution), with where each comes from (`env` / `file` / `nacos` are the
@@ -360,9 +361,9 @@ export const ATTRIBUTION_DEFAULTS: Readonly<Omit<PlatformAttributionView, "sourc
     sessionUrl: false,
   });
 
-/** A change of the platform's auto-mode switch: `mode` replaced, null clears it (the default). */
-export interface DevicesAutoModePatch {
-  mode: "allowed" | "off" | null;
+/** A change of the platform's Full permission switch: `permission` replaced, null clears it. */
+export interface DevicesFullAccessPatch {
+  permission: "allowed" | "off" | null;
 }
 
 /** The kill switch as stored (kernel `ClientExtensionsSetting`). */
@@ -382,7 +383,7 @@ export type DeploymentSettingsPatch = Partial<
     | "sandboxLimitOverrides"
     | "subagentLimitOverrides"
     | "clientExtensions"
-    | "devicesAutoMode"
+    | "devicesFullAccess"
     | "attribution"
     | "compaction"
   >
@@ -396,8 +397,8 @@ export type DeploymentSettingsPatch = Partial<
   clientExtensions?: Partial<ClientExtensionsSetting>;
   /** Each given field replaces the stored one; null clears it (back to the default). */
   attribution?: AttributionPatch;
-  /** The platform's auto-mode switch: `mode` replaced, null clears it (the default). */
-  devicesAutoMode?: DevicesAutoModePatch;
+  /** The platform's Full permission switch: `permission` replaced, null clears it (the default). */
+  devicesFullAccess?: DevicesFullAccessPatch;
   /** Each given field replaces the stored one; fields left out keep their value. */
   compaction?: CompactionSettingsPatch;
 };

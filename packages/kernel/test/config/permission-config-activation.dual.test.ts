@@ -616,7 +616,7 @@ it("delegated DB writer serializes before frozen startup activation using curren
   });
   const setting = a.app
     .get(SettingsService)
-    .update({ devicesAutoMode: { mode: "off" } }, f.accountId);
+    .update({ devicesFullAccess: { permission: "off" } }, f.accountId);
   const settingResult = setting.catch((e: unknown) => e);
   try {
     await entered.promise;

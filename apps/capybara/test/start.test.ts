@@ -111,13 +111,13 @@ describe("activation forwarding", () => {
     const hash = "b".repeat(64);
     writeFileSync(
       join(dir, "startup.env"),
-      'CAPYBARA_DEVICES__AUTO_MODE=off\nCAPYBARA_ROLES=["worker"]\n',
+      'CAPYBARA_DEVICES__FULL_ACCESS=off\nCAPYBARA_ROLES=["worker"]\n',
     );
     const env = {
       CAPYBARA_DB__URL: "postgres://test:test@localhost/test",
       CAPYBARA_REDIS__URL: "redis://localhost:6379",
       CAPYBARA_MASTER_KEY: Buffer.alloc(32).toString("base64"),
-      CAPYBARA_DEVICES__AUTO_MODE: "allowed",
+      CAPYBARA_DEVICES__FULL_ACCESS: "allowed",
     };
     state.mode = "capture";
     state.captured = [];

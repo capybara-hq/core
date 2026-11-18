@@ -57,7 +57,7 @@ describe("devices.local config", () => {
         CAPYBARA_REDIS__URL: base.redis.url,
         CAPYBARA_MASTER_KEY: base.masterKey,
         CAPYBARA_DEVICES__LOCAL__RECONNECT_GRACE_SECONDS: "60",
-        CAPYBARA_DEVICES__AUTO_MODE: "off",
+        CAPYBARA_DEVICES__FULL_ACCESS: "off",
       },
     );
     expect(c.devices.local.reconnectGraceSeconds).toBe(60);

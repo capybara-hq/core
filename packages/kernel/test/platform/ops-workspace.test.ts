@@ -783,8 +783,8 @@ describe("platform", () => {
     ];
     try {
       for (const k of cases) {
-        await setDeployment(env, { devicesAutoMode: { mode: k.platform } });
-        await settings.update(env.orgId, { autoMode: k.org, cloudNetwork: k.net }, env.rootId);
+        await setDeployment(env, { devicesFullAccess: { permission: k.platform } });
+        await settings.update(env.orgId, { fullAccess: k.org, cloudNetwork: k.net }, env.rootId);
         const out = (await run("platform.me", {}, c)) as {
           sandbox: { enabled: boolean; mode: string; network: string };
         };
@@ -803,7 +803,7 @@ describe("platform", () => {
       }
     } finally {
       keys.mockRestore();
-      await settings.update(env.orgId, { autoMode: null, cloudNetwork: null }, env.rootId);
+      await settings.update(env.orgId, { fullAccess: null, cloudNetwork: null }, env.rootId);
     }
   });
 

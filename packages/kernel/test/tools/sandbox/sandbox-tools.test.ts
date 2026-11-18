@@ -649,7 +649,7 @@ describe("sandbox tools", () => {
     const off = await owner({
       method: "PATCH",
       url: `/api/v1/orgs/${orgId}/settings`,
-      payload: { autoMode: "off" },
+      payload: { fullAccess: "off" },
     });
     expect(off.statusCode, off.body).toBe(200);
     const conv = await sandboxConversation();

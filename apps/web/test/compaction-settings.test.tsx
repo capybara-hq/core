@@ -26,7 +26,7 @@ const PLATFORM = {
 };
 
 const DEPLOYMENT = {
-  autoMode: { mode: "allowed", source: "default" },
+  fullAccess: { permission: "allowed", source: "default" },
   cloudNetwork: { allowHosts: [] as string[], orgHosts: "extend" as const, off: false },
   compaction: PLATFORM,
 };

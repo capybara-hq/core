@@ -43,16 +43,6 @@ export type DevicesFullAccessStored = z.infer<typeof DevicesFullAccessStoredSche
 export const DEVICES_FULL_ACCESS_PATCH = z.object({ permission: Permission.nullable() }).strict();
 export type DevicesFullAccessPatch = z.infer<typeof DEVICES_FULL_ACCESS_PATCH>;
 
-/**
- * The old public patch (`devicesAutoMode: { mode }`), still accepted until the old public inputs
- * are removed; {@link fullAccessPatchOfLegacy} maps it exactly.
- */
-export const DEVICES_AUTO_MODE_PATCH = z.object({ mode: Permission.nullable() }).strict();
-export type DevicesAutoModePatch = z.infer<typeof DEVICES_AUTO_MODE_PATCH>;
-export const fullAccessPatchOfLegacy = (patch: DevicesAutoModePatch): DevicesFullAccessPatch => ({
-  permission: patch.mode,
-});
-
 /** Where the effective switch comes from. */
 export type DevicesFullAccessSource = "env" | "file" | "nacos" | "db" | "default";
 
@@ -61,16 +51,6 @@ export interface DevicesFullAccessView {
   permission: FullAccessPermission;
   source: DevicesFullAccessSource;
 }
-
-/** The old public view (`devicesAutoMode`, `deployment.autoMode`), kept until it is removed. */
-export interface DevicesAutoModeView {
-  mode: FullAccessPermission;
-  source: DevicesFullAccessSource;
-}
-export const legacyAutoModeView = (view: DevicesFullAccessView): DevicesAutoModeView => ({
-  mode: view.permission,
-  source: view.source,
-});
 
 /**
  * Parses a stored choice: missing -> `{}`; invalid -> `{ permission: "off" }` with a warning,
@@ -141,10 +121,10 @@ export const narrowerStoredFullAccess = (
   a.permission === "off" || b.permission === "off" ? { permission: "off" } : a;
 
 /**
- * The stored choice, read live (in the caller's transaction when there is one). Until the old
- * public inputs are removed (8.6) it reads both keys and takes the narrower (fail closed): before
- * the publication converts them, or after an old replica wrote its own key again, a stored
- * `devicesAutoMode` off is never lost.
+ * The stored choice, read live (in the caller's transaction when there is one). It reads both
+ * keys and takes the narrower (fail closed): until the permission configuration publication
+ * converts an old `devicesAutoMode` ({@link convertStoredPermissionKeys}; a mismatch window
+ * before activation keeps it), its off is never lost. The old key is no public input.
  */
 export async function readStoredDevicesFullAccess(
   db: KernelSchemaDb,
@@ -163,7 +143,7 @@ export async function readStoredDevicesFullAccess(
     : narrowerStoredFullAccess(stored, parseLegacyStoredDevicesAutoMode(legacy.value, log));
 }
 
-/** Whether the old key is still stored (a write then keeps it in step for old replicas). */
+/** Whether the old key is still stored (a write then keeps it in step until it is converted). */
 export async function legacyDevicesAutoModeStored(db: KernelSchemaDb): Promise<boolean> {
   const row = await db
     .selectFrom("deployment_settings")
@@ -174,9 +154,9 @@ export async function legacyDevicesAutoModeStored(db: KernelSchemaDb): Promise<b
 }
 
 /**
- * The org's stored Full switch read over both keys until 8.6 (fail closed): `fullAccess` and the
- * old `autoMode` (an invalid old value reads as off); the narrower wins, an absent old key leaves
- * `fullAccess` as it is.
+ * The org's stored Full switch read over both keys (fail closed): `fullAccess` and an old
+ * `autoMode` the publication has not converted yet (an invalid old value reads as off); the
+ * narrower wins, an absent old key leaves `fullAccess` as it is.
  */
 export function narrowedOrgFullAccess(
   fullAccess: FullAccessPermission | undefined,

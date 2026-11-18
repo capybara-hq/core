@@ -9,6 +9,7 @@ import type { ApiError } from "../../src/errors.js";
 import {
   COMPACTION_SETTINGS,
   DEPLOYMENT_SETTINGS,
+  type DeploymentSettingsPatch,
   parseClientExtensions,
   readClientExtensions,
   SettingsService,
@@ -342,11 +343,10 @@ describe("SettingsService devicesFullAccess (B1)", () => {
       const s = serviceWith("off", source);
       expect(await s.view()).toMatchObject({
         devicesFullAccess: { permission: "off", source },
-        devicesAutoMode: { mode: "off", source },
       });
       for (const patch of [
         { devicesFullAccess: { permission: "allowed" as const } },
-        { devicesAutoMode: { mode: null } },
+        { devicesFullAccess: { permission: null } },
       ]) {
         const err = await s.update(patch, admin.id).catch((e: unknown) => e);
         expect(err).toMatchObject({ code: "deployment.setting_readonly" });
@@ -371,12 +371,11 @@ describe("SettingsService devicesFullAccess (B1)", () => {
     for (const patch of [
       { devicesFullAccess: { permission: "allowed" as const } },
       { devicesFullAccess: { permission: null } },
-      { devicesAutoMode: { mode: "allowed" as const } },
     ]) {
       const widened = await s
         .update(patch, admin.id, "tok", undefined, { onlyNarrows: true })
         .catch((e: unknown) => e);
-      expect(widened).toMatchObject({ code: "deployment.auto_mode_not_allowed" });
+      expect(widened).toMatchObject({ code: "deployment.full_access_not_allowed" });
     }
     // a person in a session may allow it again; null clears back to the default
     expect(
@@ -393,27 +392,26 @@ describe("SettingsService devicesFullAccess (B1)", () => {
     expect(row).toEqual([{ key: "devicesFullAccess", value: {} }]);
   });
 
-  it("the old name devicesAutoMode is still accepted, stored under the new key, never both", async () => {
+  it("the old name devicesAutoMode is refused and never answered (W5-P3b)", async () => {
     await db.deleteFrom("deployment_settings").execute();
     const admin = await adminFor("full-access-legacy");
     const s = serviceWith(undefined, undefined);
-    expect(await s.update({ devicesAutoMode: { mode: "off" } }, admin.id)).toMatchObject({
-      devicesFullAccess: { permission: "off", source: "db" },
-      devicesAutoMode: { mode: "off", source: "db" },
-    });
+    for (const patch of [
+      { devicesAutoMode: { mode: "off" } },
+      { devicesAutoMode: { mode: "off" }, devicesFullAccess: { permission: "off" } },
+    ]) {
+      const err = await s
+        .update(patch as unknown as DeploymentSettingsPatch, admin.id)
+        .catch((e: unknown) => e);
+      expect(err).toMatchObject({ code: "validation_failed" });
+    }
     expect(
       await db
         .selectFrom("deployment_settings")
-        .select(["key", "value"])
+        .select("key")
         .where("key", "in", ["devicesFullAccess", "devicesAutoMode"])
         .execute(),
-    ).toEqual([{ key: "devicesFullAccess", value: { permission: "off" } }]);
-    const both = await s
-      .update(
-        { devicesAutoMode: { mode: "off" }, devicesFullAccess: { permission: "off" } },
-        admin.id,
-      )
-      .catch((e: unknown) => e);
-    expect(both).toMatchObject({ code: "validation_failed" });
+    ).toEqual([]);
+    expect(await s.view()).not.toHaveProperty("devicesAutoMode");
   });
 });
