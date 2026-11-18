@@ -17,8 +17,8 @@ export type NetDeniedCode =
 /**
  * The request was refused by the kernel's network rules; `message` is English and names `host`.
  * Detect it with {@link isNetDeniedError} (by `name`), never `instanceof`, which fails across
- * package copies. Map it to the plugin's own actionable error (a connector's `ToolError` of kind
- * `invalid_input`, a provider's `ModelError` of kind `invalid_request`).
+ * package copies. Map it to the plugin's own actionable error (a connector's `ToolError`, a
+ * provider's `ModelError` of kind `invalid_request`).
  */
 export class NetDeniedError extends Error {
   override readonly name = "NetDeniedError" as const;

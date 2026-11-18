@@ -158,6 +158,7 @@ export type RightAreaSlot = {
     | "onOpenOutput"
     | "selectedFile"
     | "removedFiles"
+    | "listedFiles"
     | "filePaths"
     | "renderCard"
     | "openSubagent"

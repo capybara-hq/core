@@ -1541,6 +1541,7 @@
     "agentMapFailed": "The agent map could not be loaded.",
     "stopFailed": "Couldn't stop: {reason}",
     "fullOutput": "Full output",
+    "fileUploaded": "Uploaded",
     "builtinPreviewer": "Built-in preview",
     "setup": {
       "title": "Before you start",

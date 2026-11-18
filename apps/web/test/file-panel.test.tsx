@@ -37,6 +37,7 @@ const file = (
   createdAt: "2026-10-26T06:00:00.000Z",
   status: "available",
   previewable: null,
+  origin: "delivered",
   ...extra,
 });
 
@@ -48,6 +49,18 @@ const DOCX = file(
 const CSV = file("f2", "diff.csv", "text/csv", { previewable: "text" });
 const PNG = file("f3", "chart.png", "image/png", { previewable: "image" });
 const GONE = file("f4", "old.txt", "text/plain", { previewable: "text", status: "removed" });
+/** A file a person sent with a message (an attachment). */
+const SENT = file("a1", "brief.docx", DOCX.contentType, {
+  origin: "uploaded",
+  sourcePath: "brief.docx",
+  callId: "",
+});
+const SENT_PNG = file("a2", "photo.png", "image/png", {
+  origin: "uploaded",
+  sourcePath: "photo.png",
+  callId: "",
+  previewable: "image",
+});
 
 function api(extra: Record<string, (c: Call) => Response> = {}) {
   return stubApi({
@@ -191,6 +204,124 @@ describe("the file panel", () => {
     openAt("#file=f4");
     const panel = await screen.findByRole("complementary", { name: "old.txt" });
     expect(within(panel).getByText("No longer available")).toBeTruthy();
+  });
+
+  it("an uploaded file is marked in the switcher and downloads through the attachment route", async () => {
+    const opened: { location: { href: string }; opener: unknown; close(): void }[] = [];
+    vi.stubGlobal(
+      "open",
+      vi.fn(() => {
+        const tab = { location: { href: "" }, opener: {} as unknown, close: () => {} };
+        opened.push(tab);
+        return tab;
+      }),
+    );
+    api({
+      [`GET ${BASE}/files`]: () => json(200, { files: [SENT, SENT_PNG, CSV], next: null }),
+      [`GET ${BASE}/files/a1/previewers`]: () => json(200, { previewers: [] }),
+      [`GET ${BASE}/files/a2/previewers`]: () => json(200, { previewers: [] }),
+    });
+    openAt("#file=a1");
+    const panel = await screen.findByRole("complementary", { name: "brief.docx" });
+    expect(await within(panel).findByText(/No preview available/)).toBeTruthy();
+    const user = userEvent.setup();
+    await user.click(within(panel).getAllByRole("button", { name: "Download" })[0] as HTMLElement);
+    await vi.waitFor(() =>
+      expect(opened[0]?.location.href).toMatch(new RegExp(`${ORG}/attachments/a1/download$`)),
+    );
+    await user.click(within(panel).getByRole("button", { name: /brief\.docx/ }));
+    const menu = await screen.findByRole("menu");
+    const items = within(menu).getAllByRole("menuitemradio");
+    expect(items.map((i) => i.textContent)).toEqual([
+      "brief.docxUploaded",
+      "photo.pngUploaded",
+      "diff.csv",
+    ]);
+    await user.click(within(menu).getByText("photo.png"));
+    const img = await screen.findByRole("img", { name: "photo.png" });
+    expect(img.getAttribute("src")).toBe(`${ORG}/attachments/a2/download`);
+  });
+
+  it("a click on the panel's image opens the viewer; new tab opens the inline URL", async () => {
+    const opened: { location: { href: string }; opener: unknown; close(): void }[] = [];
+    vi.stubGlobal(
+      "open",
+      vi.fn(() => {
+        const tab = { location: { href: "" }, opener: {} as unknown, close: () => {} };
+        opened.push(tab);
+        return tab;
+      }),
+    );
+    api();
+    openAt("#file=f3");
+    const panel = await screen.findByRole("complementary", { name: "chart.png" });
+    const user = userEvent.setup();
+    await within(panel).findByRole("img", { name: "chart.png" });
+    await user.click(panel.querySelector("button[data-part='preview-image']") as HTMLElement);
+    const viewer = await screen.findByRole("dialog");
+    expect(within(viewer).getByRole("img", { name: "chart.png" }).getAttribute("src")).toBe(
+      `${BASE}/artifacts/f3/download?inline=1`,
+    );
+    await user.click(within(viewer).getByRole("button", { name: "Open in new tab" }));
+    await vi.waitFor(() =>
+      expect(opened[0]?.location.href).toMatch(/\/artifacts\/f3\/download\?inline=1$/),
+    );
+    await user.keyboard("{Escape}");
+    await vi.waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+  });
+
+  it("a sent file opens in the panel once listed; one the list lacks yet downloads instead", async () => {
+    const opened: { location: { href: string }; opener: unknown; close(): void }[] = [];
+    vi.stubGlobal(
+      "open",
+      vi.fn(() => {
+        const tab = { location: { href: "" }, opener: {} as unknown, close: () => {} };
+        opened.push(tab);
+        return tab;
+      }),
+    );
+    api({
+      [`GET ${BASE}/events`]: () =>
+        json(200, {
+          events: [
+            userMsg(1, "see these", {
+              content: [
+                { type: "text", text: "see these" },
+                {
+                  type: "document",
+                  mediaType: "application/pdf",
+                  source: { kind: "ref", attachmentId: "a1" },
+                  name: "brief.pdf",
+                },
+                {
+                  type: "document",
+                  mediaType: "application/pdf",
+                  source: { kind: "ref", attachmentId: "a9" },
+                  name: "fresh.pdf",
+                },
+              ],
+            }),
+          ],
+        }),
+      [`GET ${BASE}/files`]: () =>
+        json(200, { files: [{ ...SENT, name: "brief.pdf" }, CSV], next: null }),
+      [`GET ${BASE}/files/a1/previewers`]: () => json(200, { previewers: [] }),
+    });
+    openAt("");
+    const user = userEvent.setup();
+    const log = await screen.findByRole("log");
+    // listed: the right panel opens it
+    await vi.waitFor(() => expect(window.location.hash).toBe(""));
+    await user.click(await within(log).findByRole("button", { name: /brief\.pdf/ }));
+    expect(await screen.findByRole("complementary", { name: "brief.pdf" })).toBeTruthy();
+    expect(window.location.hash).toBe("#file=a1");
+    expect(opened).toHaveLength(0);
+    // not listed (yet): the click downloads it, never doing nothing
+    await user.click(within(log).getByRole("button", { name: /fresh\.pdf/ }));
+    await vi.waitFor(() =>
+      expect(opened[0]?.location.href).toMatch(new RegExp(`${ORG}/attachments/a9/download$`)),
+    );
+    expect(window.location.hash).toBe("#file=a1");
   });
 
   it("a path in prose that names a file output is a chip opening the panel", async () => {

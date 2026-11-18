@@ -66,6 +66,7 @@ export const ICON_NAMES = [
   "list-checks",
   "link",
   "zoom-in",
+  "zoom-out",
   "corner-down-right",
   "chevrons-up-down",
   "arrow-up-right",
@@ -441,6 +442,11 @@ export const ICON_NODES: Record<IconName, readonly IconNode[]> = {
     ["circle", { cx: "11", cy: "11", r: "8" }],
     ["line", { x1: "21", x2: "16.65", y1: "21", y2: "16.65" }],
     ["line", { x1: "11", x2: "11", y1: "8", y2: "14" }],
+    ["line", { x1: "8", x2: "14", y1: "11", y2: "11" }],
+  ],
+  "zoom-out": [
+    ["circle", { cx: "11", cy: "11", r: "8" }],
+    ["line", { x1: "21", x2: "16.65", y1: "21", y2: "16.65" }],
     ["line", { x1: "8", x2: "14", y1: "11", y2: "11" }],
   ],
   "corner-down-right": [

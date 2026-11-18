@@ -25,7 +25,6 @@
     "packages/kernel/test/conversations/archive.http.test.ts": "setTimeout wait: a 2 s window after an aborted queued run proves no second run or queue row appears",
     "packages/kernel/test/conversations/compact.dual.test.ts": "small app file with a double boot (two replicas are the subject): a compact request to each replica is the only way to observe the single-claim under the conversation row lock, and its two-replica kernel fixture is not shared by a sibling",
     "packages/kernel/test/conversations/event-log.test.ts": "setTimeout wait: a 100 ms window proves a rolled-back append publishes nothing",
-    "packages/kernel/test/conversations/files.http.test.ts": "small app file kept on purpose: its file-output kernel (S3 + fake-object-store + sandbox-fake with a temp root, no model-script) is the subject; no sibling shares that fixture set",
     "packages/kernel/test/conversations/queue-skill.http.test.ts": "setTimeout wait: a 300 ms window after the pause event proves the queue state and items do not change again",
     "packages/kernel/test/conversations/queue.dual.test.ts": "small app file with a double boot (two replicas are the subject); fixed waits: a 20 ms pacing step in a 15 s hammering loop, and 300 ms / 200 ms windows proving no extra item, run or send",
     "packages/kernel/test/conversations/queue.http.test.ts": "setTimeout waits: 500 ms and 1 s windows prove a paused queue sends nothing while the run is blocked",

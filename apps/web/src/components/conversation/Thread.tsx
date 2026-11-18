@@ -7,7 +7,7 @@ import {
   FileOutputs,
   formatBytes,
   ImageOutput,
-  ImageZoom,
+  ImageViewer,
   isInlineImageType,
   Prose,
   RunDivider,
@@ -121,6 +121,11 @@ export type ThreadProps = {
   selectedFile?: string;
   /** Files whose object is gone (decision 8). */
   removedFiles?: ReadonlySet<string>;
+  /**
+   * Ids of the files the right panel can open (every listed file's id and version ids): a sent
+   * attachment opens there once listed, and downloads until then.
+   */
+  listedFiles?: ReadonlySet<string>;
   /** Paths (and names) of the conversation's files: prose chips for them. */
   filePaths?: ReadonlyMap<string, string>;
   /** Renders an inline card (Task 20's extension slot); rendered after the thread items. */
@@ -184,6 +189,7 @@ type EntryContext = {
   filePaths: ReadonlyMap<string, string> | undefined;
   selectedFile: string | undefined;
   removedFiles: ReadonlySet<string> | undefined;
+  listedFiles: ReadonlySet<string> | undefined;
   openSubagent: string | undefined;
   /** Member display names (another member who stopped a run). */
   names: ReadonlyMap<string, string>;
@@ -221,6 +227,7 @@ export function Thread({
   onOpenOutput,
   selectedFile,
   removedFiles,
+  listedFiles,
   filePaths,
   renderCard,
   openSubagent,
@@ -330,6 +337,7 @@ export function Thread({
       filePaths,
       selectedFile,
       removedFiles,
+      listedFiles,
       openSubagent,
       names,
       links: { trajectory, configureModels },
@@ -359,6 +367,7 @@ export function Thread({
       filePaths,
       selectedFile,
       removedFiles,
+      listedFiles,
       openSubagent,
       names,
       trajectory,
@@ -442,8 +451,9 @@ function EntryNode({ e, c }: { e: TimelineEntry; c: EntryContext }): ReactNode {
     filePaths,
     selectedFile,
     removedFiles,
+    listedFiles,
   } = c;
-  /** The image this entry's zoom shows (§5.6): a thumbnail click sets it, closing clears it. */
+  /** The image this entry's viewer shows (§5.6): a thumbnail click sets it, closing clears it. */
   const [zoomId, setZoomId] = useState<string | null>(null);
   // Callbacks go through the ref at call time: a memoized entry never calls a stale one.
   const cb = c.cb;
@@ -666,11 +676,14 @@ function EntryNode({ e, c }: { e: TimelineEntry; c: EntryContext }): ReactNode {
               id: `@${a.appId}:${a.uri}`,
               kind: "file",
               name: `@${a.name} · ${a.appName}`,
+              downloadable: false,
             }),
           ),
         ];
-        // The attachment the zoom is showing, if any (undefined while the dialog is closed)
-        const zoomed = e.files.find((f) => f.attachmentId === zoomId);
+        // The message's images, all navigable in the viewer; the one it shows is `zoomId`.
+        const pictures = e.files.filter((f) => f.kind === "image");
+        const zoomIndex = pictures.findIndex((f) => f.attachmentId === zoomId);
+        const shown = pictures[zoomIndex];
         const details =
           e.instructions !== undefined || e.waitsFor !== undefined || e.pending ? (
             <>
@@ -709,31 +722,52 @@ function EntryNode({ e, c }: { e: TimelineEntry; c: EntryContext }): ReactNode {
                         onImageError={onImageError}
                         onOpen={(id) => {
                           const file = e.files.find((f) => f.attachmentId === id);
-                          // An image zooms in the page; every other attachment downloads as before.
+                          // An image zooms in the page; another upload opens in the right panel
+                          // once the files list has it (downloads otherwise: before the list is
+                          // read again, past its cap, or with no panel); a resource mention does
+                          // nothing.
                           if (file?.kind === "image") setZoomId(id);
-                          else if (!id.startsWith("@"))
-                            openDownload(attachmentDownloadUrl(orgId, id));
+                          else if (!id.startsWith("@")) {
+                            if (onOpenFile && listedFiles?.has(id)) onOpenFile(id);
+                            else openDownload(attachmentDownloadUrl(orgId, id));
+                          }
+                        }}
+                        onDownload={(id) => {
+                          if (!id.startsWith("@")) openDownload(attachmentDownloadUrl(orgId, id));
                         }}
                       />
                     ),
                   }
                 : {})}
             />
-            {e.files.some((f) => f.kind === "image") ? (
-              <ImageZoom
-                open={zoomId !== null}
+            {pictures.length > 0 ? (
+              <ImageViewer
+                open={zoomIndex >= 0}
                 onOpenChange={(open) => {
                   if (!open) setZoomId(null);
                 }}
-                src={zoomed !== undefined ? srcOf(zoomed.attachmentId) : ""}
-                name={zoomed?.name ?? ""}
-                {...(zoomed?.size !== undefined ? { size: formatBytes(zoomed.size) } : {})}
-                onDownload={() => {
-                  if (zoomed !== undefined)
-                    openDownload(attachmentDownloadUrl(orgId, zoomed.attachmentId));
+                images={pictures.map((f) => ({
+                  src: srcOf(f.attachmentId),
+                  name: f.name,
+                  ...(f.size !== undefined ? { size: formatBytes(f.size) } : {}),
+                }))}
+                index={Math.max(zoomIndex, 0)}
+                onIndexChange={(i) => {
+                  const next = pictures[i];
+                  if (next) setZoomId(next.attachmentId);
                 }}
-                {...(zoomed !== undefined && !retried.has(zoomed.attachmentId)
-                  ? { onRetry: () => onImageError(zoomed.attachmentId) }
+                onDownload={(i) => {
+                  const p = pictures[i];
+                  if (p) openDownload(attachmentDownloadUrl(orgId, p.attachmentId));
+                }}
+                // The kernel serves an attachment's image inline at its download URL.
+                onOpenInNewTab={(i) => {
+                  const p = pictures[i];
+                  if (p) openDownload(attachmentDownloadUrl(orgId, p.attachmentId));
+                }}
+                // One retry per image (a session refresh, then its retry token): none left, no button
+                {...(shown !== undefined && !retried.has(shown.attachmentId)
+                  ? { onRetry: () => onImageError(shown.attachmentId) }
                   : {})}
               />
             ) : null}

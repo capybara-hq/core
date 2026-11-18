@@ -525,7 +525,7 @@ export class ConversationsController {
   }
 
   /**
-   * The conversation's file outputs, newest first, grouped by source path into versions (UI
+   * The conversation's file outputs and the attachments sent in it, newest first, grouped by source path into versions (UI
    * refresh B). `next` is the last file's id (passed back as `after`), null at the end.
    */
   @Get(":id/files")

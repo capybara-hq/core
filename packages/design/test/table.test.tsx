@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { cleanup, render, screen, within } from "@testing-library/react";
+import { act, cleanup, render, screen, within } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -51,6 +51,51 @@ const plain = (props: Props) =>
       />
     </DesignProvider>,
   );
+
+describe("DataTable sideways scroller", () => {
+  it("re-lays out its ancestors when its scrollbar comes or goes (WebKit), also after loading", () => {
+    // WebKit keeps a flex ancestor's height from before the classic scrollbar appeared, so it hung
+    // below the table over the next row; the scroller mounts only once rows are in
+    const reports: (() => void)[] = [];
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        constructor(cb: () => void) {
+          reports.push(cb);
+        }
+        observe() {}
+        disconnect() {}
+      },
+    );
+    try {
+      const { container, rerender } = plain({ state: "loading" });
+      expect(container.querySelector(".cb-table-scroll")).toBeNull();
+      rerender(
+        <DesignProvider locale="zh">
+          <DataTable<Row> columns={columns} rows={rows} rowKey={(r) => r.id} label="测试表" />
+        </DesignProvider>,
+      );
+      const scroll = container.querySelector(".cb-table-scroll") as HTMLDivElement;
+      expect(scroll).not.toBeNull();
+      let bar = 0;
+      Object.defineProperty(scroll, "offsetHeight", { get: () => 120 + bar });
+      Object.defineProperty(scroll, "clientHeight", { get: () => 120 });
+      const set = vi.spyOn(scroll.style, "setProperty");
+      const report = () =>
+        act(() => {
+          for (const r of reports) r();
+        });
+      report();
+      expect(set).not.toHaveBeenCalled();
+      bar = 15;
+      report();
+      expect(set).toHaveBeenCalledWith("min-height", "1px");
+      expect(scroll.getAttribute("style") ?? "").toBe("");
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+});
 
 describe("DataTable density and parts", () => {
   it("toolbar controls are default (28) and row menus dense; rowHeight is a data attribute", () => {

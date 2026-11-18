@@ -3,103 +3,103 @@
   "schemaVersion": 1,
   "marketplace": {
     "url": "https://github.com/capybara-hq/plugins.git",
-    "commit": "05d00a946d26e9e519a258583c2f2468f7b7fcb5"
+    "commit": "7b9ad17111bc253fbfcd70b2cdeb6aefb4d43497"
   },
   "plugins": [
     {
       "name": "openai-compatible",
       "source": "npm",
       "npm": "@capybara-hq/plugin-openai-compatible",
-      "version": "0.1.0-rc.10",
-      "integrity": "sha512-Xqvl9tDGZhuLzXEEuEAoz+pZdtRg3baoLz1fjs1DQvEropXVQeF9LwV3dkfj/XF2cpRLBTMyZdxdzqebczl67A==",
+      "version": "0.1.0-rc.11",
+      "integrity": "sha512-xhLYmzgzC6I8VAx/xzGSrW53On9hVT9aXrNJaeLYBMVr84lY765MZ6P6qt5hDhHIH13sxyfaCf+3FQ6muc4U/w==",
       "required": true
     },
     {
       "name": "object-store-s3",
       "source": "npm",
       "npm": "@capybara-hq/plugin-object-store-s3",
-      "version": "0.1.0-rc.10",
-      "integrity": "sha512-uzpvEixkXcngBr33iXSgsupTGG8wLkLTo9JeA134rCeknrUX1IhkfkJKw6L2mwpnefyuBwt9l/vb+eiSZrZXCw==",
+      "version": "0.1.0-rc.11",
+      "integrity": "sha512-1wwQSxvlGVYc7ZxtTBNN7VPHjtoa6rvzx4x3Qir2I39ILh/D9FxhlgEoSGXZ//Gt7L7Mos/hIvs7//QGf/vZPg==",
       "required": true
     },
     {
       "name": "anthropic",
       "source": "npm",
       "npm": "@capybara-hq/plugin-anthropic",
-      "version": "0.1.0-rc.8",
-      "integrity": "sha512-QWUE8TboL2zV5QVLSksb38Re+3bOoWy9zJUW/CxH2WZ7VQUhvt5hc+3cO5eVNkA7zopRh3W8xxnT8dxuPQPixA==",
+      "version": "0.1.0-rc.9",
+      "integrity": "sha512-tLrZk/37U/6OX4rFWFmqsAHpizWT6Q4lqeXtx8O0t1WmfiX9UR9osfuA+atwdGNTAlyIZx8bGEALrMEZPjtyBw==",
       "required": false
     },
     {
       "name": "openai",
       "source": "npm",
       "npm": "@capybara-hq/plugin-openai",
-      "version": "0.1.0-rc.9",
-      "integrity": "sha512-P0mCs/tQBRFfb9WrVo+AaFlGgu/LLpSajYbnaz6mXZpYL6cs7H0D+eFM3ogI3PUNXQHQuJ4NRI99ylYlkRd8PQ==",
+      "version": "0.1.0-rc.10",
+      "integrity": "sha512-0dO5a/89XrYy6BMsvbew5yLL2JhBP7mcTYasJARyVbJRfyv5R2ljiVlNiM9QyEXGIrLCn1TPRgylIEIGlMGjlw==",
       "required": false
     },
     {
       "name": "deepseek",
       "source": "npm",
       "npm": "@capybara-hq/plugin-deepseek",
-      "version": "0.1.0-rc.8",
-      "integrity": "sha512-ILqGaQ9P7OvNLTohBHNK6PlWf4vakVUOmdqJKBiWTskVTFD0XqBMiBGxcCaU7Fu1WeDfwIcQZv3lN4Y69KrMHQ==",
+      "version": "0.1.0-rc.10",
+      "integrity": "sha512-sTlLjNWdGLTCFKJXYX0H9803zHq6ANU9TS/HG56McUqYxyay+/iWxbXhmP6h/8H4ditzxKLTcuerYNJLh6hxRw==",
       "required": false
     },
     {
       "name": "bailian",
       "source": "npm",
       "npm": "@capybara-hq/plugin-bailian",
-      "version": "0.1.0-rc.8",
-      "integrity": "sha512-/z9Kf2UxN+8/qtfjijtXtVk0A2qbes8yaT7oyB5Mv5r4xATUACCczBa6ct2/dbY6avxNQMv8O53IZzsexSdpfg==",
+      "version": "0.1.0-rc.9",
+      "integrity": "sha512-DU9D5qiPtKLhyJDI0i3ZF6OI+QeJj9zOIFpzwuyGAay981JbJxe0YRPrIrANhDVxmGUyUmdb1NF7yHSoFgEoKA==",
       "required": false
     },
     {
       "name": "ark",
       "source": "npm",
       "npm": "@capybara-hq/plugin-ark",
-      "version": "0.1.0-rc.8",
-      "integrity": "sha512-pICTGWFpvX/1onDORPK3OtLGPsMCwbvbRAs3OnQzw+KBCGQC/LmNd9yWfDZ3T40IYMq+lXlLW0DUqFI5RzZ7LQ==",
+      "version": "0.1.0-rc.9",
+      "integrity": "sha512-5LtkgqeJsdU0jTKW5KmdeKoznkKu8jH86BrHJZnAqClhZxHqrErTtvOIAYsY98ia6V3C3X/si2ocMbcz0rAsDg==",
       "required": false
     },
     {
       "name": "connector-mcp",
       "source": "npm",
       "npm": "@capybara-hq/plugin-connector-mcp",
-      "version": "0.1.0-rc.9",
-      "integrity": "sha512-UU+QL78lXkFciPMJqXWdt7DygzGC+OaYe/tvkQwLs+kJH2F786htXQBr7hbZnpGy6VfppSQWLB/w3cRHoR+RiA==",
+      "version": "0.1.0-rc.11",
+      "integrity": "sha512-n1V9BMlU5JVQfTUFoWsOXOi0huE8XTsbU9MULLXSESCrEc0a5RjgvhvoSuk3SXE4jxJoVV4WB6g2BVin8E/dMg==",
       "required": false
     },
     {
       "name": "connector-openapi",
       "source": "npm",
       "npm": "@capybara-hq/plugin-connector-openapi",
-      "version": "0.1.0-rc.10",
-      "integrity": "sha512-SA3lpZdy+pFhtGC59cPx1IsQtadzXh6jwpxlz3dhMsmNpfXHMDxEJymyy11W1Np8vL6dD+COo9kvzrbhEKBlnw==",
+      "version": "0.1.0-rc.12",
+      "integrity": "sha512-qIYknFj7V6xSl4lbTYpSXpu8f+FFLAwWxOhJq9HzH3RSAAq80emp4WPdXbIoJ2nzfg2mXNs0lTkgCuR38oxhQw==",
       "required": false
     },
     {
       "name": "jina",
       "source": "npm",
       "npm": "@capybara-hq/plugin-jina",
-      "version": "0.1.0-rc.8",
-      "integrity": "sha512-Z6Qggs79OfE7PPvkCudLXD3RiiYFT/slLiLJeleZEpn5A56rmk35tDU2EEBVfREQrRuLqjteTG0eQRSNpH4L9Q==",
+      "version": "0.1.0-rc.9",
+      "integrity": "sha512-c0DFvKKQrO3qDkwAEBoBbFhDDfktucjWCIPyh+wRWGAbrXLwz69zX8C0f6MHI0YmlM68EW+NxVM3f1w8bDHOQg==",
       "required": false
     },
     {
       "name": "sandbox-docker",
       "source": "npm",
       "npm": "@capybara-hq/plugin-sandbox-docker",
-      "version": "0.1.0-rc.16",
-      "integrity": "sha512-6LQ9TA4wRbqYJ7cfzYXrD4A+ICBvwDck9QmREal7M9kneO/Bb25hoSPsBpCxJT8/d6K+Gg7gmUd3+8rsueHeKg==",
+      "version": "0.1.0-rc.18",
+      "integrity": "sha512-H954po34kPuuG8gmORWD1C7f5wKknP6TmoeQjXvmDMpIfI5EBQlkJVbM16/74q+wk4Na31d9MKo0Z9qsT0tCjw==",
       "required": false
     },
     {
       "name": "todo",
       "source": "npm",
       "npm": "@capybara-hq/plugin-todo",
-      "version": "0.1.0-rc.11",
-      "integrity": "sha512-9vS5wRiX4Rk255T51WWfFDNB3SjVsJx2DNikaZr3yUVnzowHRH+SQ90OHdh7GK4RuFzVZxNaafPaGMgJZ++mLw==",
+      "version": "0.1.0-rc.12",
+      "integrity": "sha512-tTQKRoBAlN3tz6eC0ZqFpfwwm0j/dte4ZJ6EOB8hSXzaQLagPIwutNsr3pTFA1xoFhFLKo13ZPdQbv8ONq06Ww==",
       "required": false
     },
     {
@@ -108,6 +108,15 @@
       "npm": "@capybara-hq/plugin-skills-core",
       "version": "0.1.0-rc.1",
       "integrity": "sha512-eIad/YOTGMAjOQPEVrN6jfq/WHhpJUn5FifbELnFmRij1yo+mI4b/5/72DZ0cjsRXFWhUODen2IPmhYH/YZqWQ==",
+      "required": false,
+      "builtin": true
+    },
+    {
+      "name": "file-preview",
+      "source": "npm",
+      "npm": "@capybara-hq/plugin-file-preview",
+      "version": "0.1.0-rc.0",
+      "integrity": "sha512-ClsZznUmoUO+Bc3uzp//i3BBw43nWybbtJhMfL073VGCP3i3eP70uymaC+hzMSurnAFk8As2fa/3WgGL23V5Ig==",
       "required": false,
       "builtin": true
     }

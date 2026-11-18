@@ -91,6 +91,8 @@ const ICONS = {
   "list-checks": "list-checks",
   link: "link",
   "zoom-in": "zoom-in",
+  // The image viewer (§6.16.20).
+  "zoom-out": "zoom-out",
   "corner-down-right": "corner-down-right",
   // Sidebar v3 (web order).
   "chevrons-up-down": "chevrons-up-down",

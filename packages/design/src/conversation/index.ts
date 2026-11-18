@@ -102,7 +102,7 @@ export {
   type QuestionState,
   safeHttpUrl,
 } from "./hitl";
-export { ImageZoom } from "./image-zoom";
+export { ImageViewer, type ImageViewerImage, type ImageViewerProps } from "./image-viewer";
 export {
   ConvMenu,
   type ConvMenuEntry,

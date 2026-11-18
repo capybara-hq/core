@@ -369,7 +369,7 @@ export class ConversationsOperations implements OnModuleInit {
       defineOperation({
         id: "conversations.files",
         description:
-          "List the files one of your conversations produced, newest first: id, name, state (available or removed), type, size and version. File contents are downloaded on the web. Pages by 50: pass the returned next as params.after.",
+          "List the files of one of your conversations, newest first: the files the agent delivered and the files sent with messages (origin delivered or uploaded), with id, name, state (available or removed), type, size and version. File contents are downloaded on the web. Pages by 50: pass the returned next as params.after.",
         input: FilesQuery.pick({ after: true }).extend({ conversationId: ConversationId }).strict(),
         example: { conversationId: "3f2b8a40-6c1d-4e0b-9a77-5d1e2c8b9f10" },
         authz: { orgAction: "agents.use" },
@@ -397,6 +397,7 @@ export class ConversationsOperations implements OnModuleInit {
               contentType: f.contentType,
               size: f.size,
               version: f.version,
+              origin: f.origin,
             })),
             next: out.next,
           };

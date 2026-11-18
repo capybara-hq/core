@@ -7,6 +7,7 @@ import {
   Grid,
   Icon,
   IconButton,
+  ImageViewer,
   Input,
   Menu,
   Popover,
@@ -258,6 +259,34 @@ function ToastDemo() {
   );
 }
 
+/** The viewer's pictures: the app's own icon, a same-origin path, three times. */
+const VIEWER_IMAGES = ["架构图.svg", "流程图.svg", "封面.svg"].map((name, i) => ({
+  src: "/icon.svg",
+  name,
+  size: `${i + 1}.${i + 2} MB`,
+}));
+
+function ImageViewerDemo() {
+  const [open, setOpen] = useState(true);
+  const [index, setIndex] = useState(0);
+  return (
+    <Backdrop
+      label="图片查看器 ImageViewer — 全屏遮罩；适应窗口、滚轮 / 双指缩放 10%–800%；拖动平移；← → 切换；Esc 关闭"
+      onOpen={() => setOpen(true)}
+    >
+      <ImageViewer
+        open={open}
+        onOpenChange={setOpen}
+        images={VIEWER_IMAGES}
+        index={index}
+        onIndexChange={setIndex}
+        onDownload={noop}
+        onOpenInNewTab={noop}
+      />
+    </Backdrop>
+  );
+}
+
 /** `/dev/ui/overlays/*`：每条路由打开一种浮层。 */
 export function OverlayCatalog({ route }: { route: OverlayRoute }) {
   switch (route) {
@@ -273,5 +302,7 @@ export function OverlayCatalog({ route }: { route: OverlayRoute }) {
       return <CommandDemo />;
     case "overlays/toast":
       return <ToastDemo />;
+    case "overlays/image-viewer":
+      return <ImageViewerDemo />;
   }
 }

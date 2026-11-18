@@ -154,7 +154,7 @@ function userBubbleBlocks(): ReactNode {
       <Block id="user-bubble-attachments">
         <UserBubble
           text="帮我对一下这几个文件"
-          attachments={<BubbleAttachments items={items} onOpen={noop} />}
+          attachments={<BubbleAttachments items={items} onOpen={noop} onDownload={noop} />}
         />
       </Block>
       <Block id="user-bubble-skill">

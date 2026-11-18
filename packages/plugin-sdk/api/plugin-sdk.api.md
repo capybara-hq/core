@@ -3314,7 +3314,7 @@ export function sanitizeThemeSvg(bytes: Uint8Array): {
 };
 
 // @public
-export const SDK_VERSION = "0.1.0-rc.28";
+export const SDK_VERSION = "0.1.0-rc.30";
 
 // @public
 export function secret<T extends z.ZodTypeAny>(schema: T): T;
@@ -3610,7 +3610,7 @@ export const THEME_LIMITS: {
 
 // @public
 export const THEME_OVERRIDABLE: {
-    readonly color: readonly ["bg", "panel", "panel-2", "sidebar", "sidebar-active", "raised", "selected", "hover", "line-soft", "line", "line-strong", "line-card", "scroll-thumb", "ink", "muted", "faint", "disabled", "accent", "accent-hover", "accent-press", "on-accent", "focus-ring", "ok", "fail", "warn", "scrim", "diff-add", "diff-del"];
+    readonly color: readonly ["bg", "panel", "panel-2", "sidebar", "sidebar-active", "raised", "selected", "hover", "line-soft", "line", "line-strong", "line-card", "scroll-thumb", "ink", "muted", "faint", "disabled", "accent", "accent-hover", "accent-press", "on-accent", "focus-ring", "ok", "fail", "warn", "scrim", "lightbox", "diff-add", "diff-del"];
     readonly shadow: readonly ["shadow-1", "shadow-2", "shadow-sheet", "shadow-float"];
     readonly radius: readonly ["sm", "md", "bubble"];
 };
@@ -3728,6 +3728,10 @@ export const THEME_TOKENS: {
         readonly scrim: {
             readonly dark: "rgba(0,0,0,.60)";
             readonly light: "rgba(10,10,10,.25)";
+        };
+        readonly lightbox: {
+            readonly dark: "rgba(0,0,0,.88)";
+            readonly light: "rgba(10,10,10,.80)";
         };
         readonly "diff-add": {
             readonly dark: "rgba(63,212,131,.08)";

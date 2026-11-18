@@ -1,5 +1,15 @@
-import { type JSX, type ReactNode, useId, useLayoutEffect, useRef, useState } from "react";
+import {
+  Fragment,
+  type JSX,
+  type ReactNode,
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+} from "react";
+import { IconButton } from "../controls/button";
 import { isSafeAttachmentHref } from "../display/attachments";
+import { Icon } from "../icons/icon";
 import { useDesignT } from "../provider";
 import { fillCopy } from "./tool-copy";
 
@@ -162,19 +172,28 @@ export type BubbleAttachment = {
   size?: string;
   /** Thumbnail source of an image (http(s) or same-origin path; anything else is not loaded). */
   src?: string;
+  /** `false`: no download button for this file (a resource mention, not an upload). */
+  downloadable?: boolean;
 };
 
-/** Attachments of a sent message: image thumbnails, then file chips, each opening on click. */
+/**
+ * Attachments of a sent message: image thumbnails, then file chips, each opening on click. With
+ * `onDownload`, each downloadable file chip has a download icon button after it (its own button:
+ * it never opens the file).
+ */
 export function BubbleAttachments({
   items,
   onOpen,
+  onDownload,
   onImageError,
 }: {
   items: BubbleAttachment[];
   onOpen?(id: string): void;
+  onDownload?(id: string): void;
   /** A thumbnail failed to load (the caller may refresh the session and change `src`). */
   onImageError?(id: string): void;
 }): JSX.Element {
+  const t = useDesignT();
   const images = items.filter((a) => a.kind === "image");
   const files = items.filter((a) => a.kind === "file");
   return (
@@ -203,19 +222,32 @@ export function BubbleAttachments({
           ))}
         </div>
       ) : null}
-      {files.map((a) => (
-        <button
-          key={a.id}
-          type="button"
-          className="cb-bubble-file"
-          data-part="attachment"
-          onClick={() => onOpen?.(a.id)}
-        >
-          {a.type ? <span className="cb-type-badge">{a.type}</span> : null}
-          <span className="cb-bubble-file-name">{a.name}</span>
-          {a.size ? <span className="cb-muted">{a.size}</span> : null}
-        </button>
-      ))}
+      {files.map((a) => {
+        const chip = (
+          <button
+            type="button"
+            className="cb-bubble-file"
+            data-part="attachment"
+            onClick={() => onOpen?.(a.id)}
+          >
+            {a.type ? <span className="cb-type-badge">{a.type}</span> : null}
+            <span className="cb-bubble-file-name">{a.name}</span>
+            {a.size ? <span className="cb-muted">{a.size}</span> : null}
+          </button>
+        );
+        if (!onDownload || a.downloadable === false) return <Fragment key={a.id}>{chip}</Fragment>;
+        return (
+          <div key={a.id} className="cb-bubble-file-row" data-part="attachment-row">
+            {chip}
+            <IconButton
+              density="dense"
+              icon={<Icon name="download" size={14} />}
+              label={t("files.download")}
+              onClick={() => onDownload(a.id)}
+            />
+          </div>
+        );
+      })}
     </div>
   );
 }

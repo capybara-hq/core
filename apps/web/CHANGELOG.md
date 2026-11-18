@@ -1,5 +1,34 @@
 # @capybara-hq/web
 
+## 0.1.0-rc.47
+
+No changes in this release.
+
+## 0.1.0-rc.46
+
+No changes in this release.
+
+## 0.1.0-rc.45
+
+### Patch Changes
+
+- Updated dependencies [11ec986]
+- Updated dependencies [ecc843e]
+- Updated dependencies [a6e5062]
+  - @capybara-hq/design@0.2.0-rc.13
+
+## 0.1.0-rc.44
+
+### Patch Changes
+
+- b55e386: Org network allowance routes: the super admin lists, adds and removes an org's internal endpoints
+  at `/api/v1/admin/orgs/:orgId/network-allowances` (404 `org.network_allowance_not_found` for an id
+  the org does not list; an add through a personal access token or the Platform tool is refused with
+  `org.network_allowance_widen_not_allowed`: only a person widens), org admins read their org's list
+  at `GET /api/v1/orgs/:orgId/network-allowances`; Platform operations `admin.org-network-allowances`, `admin.org-network-allowance-add`,
+  `admin.org-network-allowance-remove` and `orgs.network-allowances`. The audit logs label the two
+  allowance actions.
+
 ## 0.1.0-rc.43
 
 ### Patch Changes

@@ -499,6 +499,7 @@
 
 @media (prefers-reduced-motion: reduce) {
   .cb-scrim,
+  .cb-viewer,
   .cb-dialog,
   .cb-sheet,
   .cb-popover,
