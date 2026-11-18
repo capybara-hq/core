@@ -1,5 +1,278 @@
 # @capybara-hq/kernel
 
+## 0.1.0-rc.42
+
+### Minor Changes
+
+- 429e837: Stage durable permission operation admission, fresh native operation facades and validated protocol adapters. Protocol activation remains gated on the coordinated caller and background migration.
+- b3b3173: Persist authenticated device owner reports (migration 0156, `device_machines.owner_report`) through
+  one owner writer fed by the staged v3 hello, policy frame, applied policy answers and statuses and
+  the bind answer: a higher sequence is recorded, the same report is idempotent, a lower or
+  conflicting one blocks new authority (`device.owner_report_stale`) until a valid current report.
+  Full permission and restricted project reach are now independent: preview, browse admission,
+  selected-project binding and directory expansions use the reach within the platform and org
+  ceiling, Full execution uses Full permission. Restricted-only owner changes keep Full consent and
+  Full work; removing Full revokes only Full work and resets consent. The device read view gains
+  `ownerCeiling`; the local policy route accepts only an owner-ceiling narrowing (sent only to
+  programs that report owner facts); the cloud device PATCH takes `ownerCeiling: {fullAccess}` with
+  explicit confirmation for widening, session only. Protocol 2 summaries keep translating exactly.
+- 0f34c66: Persist owner-session conversation permission selections and device-bound Full consent, with atomic first-message idempotency and shared authority-lock/epoch foundations. Provider execution and device protocol behavior remain gated on the later admission and provider integration.
+
+### Patch Changes
+
+- 8a84219: Fix the device relay's staged result check for `bindInstance`: it now validates the answer against
+  the request it sent, so a bind against a protocol 3 machine no longer always fails.
+- c5d2996: The file-preview bootstrap pin moves to rc.1 (capybara-hq/plugins#121): its THIRD-PARTY-LICENSES.txt covers the whole production dependency closure of the prebuilt bundles. The marketplace pin and the sandbox-docker build contexts move to capybara-hq/plugins c9f2fc7, which only adds that release.
+- ce94b4d: Stage profile-aware per-call directory and host grants, revision-fenced operation admission, and durable approval continuation. Production tool routing remains on the existing review path until scoped callers are enabled.
+- ab911e3: The Redis-free CLI commands (`capybara admin create`, `admin grant`) and contexts over a borrowed pool
+  start again: accounts depend only on the permission revocation writers, the event log skips its
+  bus hint where there is no bus, and a borrowed-pool context has the outbox.
+- dbac47e: Cloud devices record installed permission evidence: after creating an instance (in the same
+  transaction as its handle), after a resume and whenever the recorded report went stale, the kernel
+  reads the cloud provider's `permissionSupport` under the lifecycle lease and records it with a
+  kernel-built identity (provider plugin and version, handle, generation, applied limits). The
+  recorded permission context and operation admission now read a cloud device the same way as a
+  local one: supported with its applied outer network once the evidence is current, unprobed while
+  it is missing, stale or waiting for a desired limits change. A cloud device without an instance
+  stays provisionable: its first managed call creates it and is then admitted.
+- 47926ef: Cloud permission limits and retirement (B-12, B-22): reconciling a cloud device that must have its
+  sandbox limits established again keeps any stricter boundary its instance is known to run (the
+  owner Full ceiling and outer network are narrowed to it, never the instance widened), and a new
+  every-minute worker sweep applies the remaining target through the provider's `update` under the
+  lifecycle lease, which clears the marker without a file reset. A cloud instance applied in the
+  OS sandbox mode reads Full access as unsupported. A suspended cloud instance whose retirement
+  obligation holds only revoked managed starts is resumed and those starts are cancelled by their
+  exact references instead of destroying the instance with its other tasks (migration 0159); a cancel
+  that cannot be confirmed falls back to the destroy.
+  
+  Trusted attachment preparation accepts exactly the directory FetchAttachment writes for the call's
+  root conversation (the shortened `attachmentsDir`), and a managed request refused before it was
+  sent (its device connection changed) is recorded as a distinct `not_sent` failure: definite, never
+  an unknown outcome, and replayed as the same typed refusal.
+  
+  The lifecycle reconcile never resumes an instance under an open retirement obligation and visits
+  marked devices round-robin; an exact cancel resolves only the refs it stopped (a member added
+  meanwhile, or by an older replica, reopens the obligation), a failed pre-resume cancel destroys the
+  instance while still suspended, and only limits in force narrow a device's authority.
+- 2ea4298: A cloud device can carry an explicit owner Full ceiling and outer network (migration 0154),
+  snapshotted once from its old effective auto-mode authority under its exclusive lifecycle lease
+  and device authority lock: old auto becomes Full on the open network (an empty allowlist under
+  `egress: none`), old sandbox keeps its exact network, and known applied limits only narrow it. A
+  snapshotted false stays explicit after a later widening, and the outer network caps the device's
+  network. Unknown, stale, wider or pending applied limits block every operation with
+  `device.permission_reconcile_required` until a file reset establishes them.
+- 2256b24: The device hello can carry the host's OS boot identity (`bootId`; SDK `DEVICE_BOOT_ID_RE`,
+  `isDeviceBootId`): `capybara-device` reports Linux's `boot_id` or macOS's boot session UUID (nothing
+  otherwise) on the active and the staged hello. The kernel records it per machine from
+  authenticated hellos only (a hello without one clears it); a local legacy retirement obligation keeps the boot its machine last
+  reported and resolves once a current machine of the device (a re-login counts) reports another boot
+  (the computer restarted). An obligation without a recorded boot never resolves by itself; the same
+  boot from a new credential, a stale or replayed boot and a revoked machine are no evidence. A local device waiting for that restart
+  answers `device.restart_required` ("Restart this computer to finish the upgrade").
+  One whose computer never reported a boot identity answers `device.replace_required` (delete the
+  device and connect the computer as a new one).
+- 124eb1f: Staged protocol 3: the device binds an instance generation only through the authenticated
+  `bindInstance` request. It checks its stored previous binding, verifies the installed manifest and
+  refuses while another generation's work is live or uncertain, then writes the binding durably
+  before enabling that generation's operation backend. An unbound session admits no operation; a
+  restart recovers the same generation's journal only when the installed runtime is unchanged. The
+  kernel names as previous binding only one the current machine acknowledged.
+- a4974d5: The device view reports a cloud device's reconcile marker (`reconcileRequired`), its outer network
+  and the exact networks Full access on and off give within it (`mode.outerNetwork`,
+  `mode.fullNetwork`, `mode.sandboxNetwork`), and the effective owner Full access
+  (`ownerCeiling.effectiveFullAccess`). A cloud ceiling PATCH before the migration is refused with
+  the new `device.permission_not_migrated`, and ceiling changes (`device.owner_ceiling_changed`) are
+  listed in the device's recent changes as `kind: "ceiling"` with their from and to.
+  A local device's effective Full follows the mode admission derives (an older program without a
+  report included). The Platform devices.list and devices.get report such a cloud device as
+  `reconcile_required` with the reason and the next step (devices.reset-files).
+- 09de26a: Add dormant versioned permission context schemas, pure history rendering and recorded-request drift diagnostics. Live permission producers and managed execution activation remain gated separately.
+- 6429c80: Stage durable managed background launches: the full launch reservation (operation, input digest,
+  run claim, task tag, instance generation, starting revisions, grant locator, network authority,
+  retention and the project-rooted artifact path) is persisted before dispatch, an acknowledged start
+  keeps its intent as revocable running authority with the exact typed reference, lost
+  acknowledgements are recovered under the same identity, and stop or ceiling races owe an exact
+  cancellation instead of a relaunch. The protocol-2 background launch remains the active path.
+- 3069b5d: Revoked background tasks are now cancelled by their exact execution reference: the revoke worker
+  stops the affected task with the five-second grace and acknowledges the revocation only after a
+  verified stop or exit. A pending cancellation, an unreachable instance or lost supervision keeps it
+  owed, with backoff. A task that finished lost now retires its running authority and owes that exact
+  cancellation, and the obligation survives the removal of the task row. A retried start of an
+  acknowledged operation reuses its recorded starting authority.
+- c9fde6f: Add explicit startup CAS activation of resolved permission configuration with bounded PostgreSQL
+  cancellation, idempotent retries and atomic semantic revocation. Ordinary stale restarts cannot replace
+  active deployment authority. Expose the start-only `--activate-permission-config` operator option.
+- 2655a98: Full permission replaces the auto-mode switch in the public platform and org configuration:
+  `devices.fullAccess` (`CAPYBARA_DEVICES__FULL_ACCESS`), the deployment setting `devicesFullAccess`
+  (`{ permission }`) and the org setting `fullAccess`. The old keys (`devices.autoMode`,
+  `devicesAutoMode: { mode }`, org `autoMode`) are still accepted with the same values and keep
+  their source's precedence; an old and a new key that differ are refused. The permission
+  configuration publication moves to projection version 2: the first start converts a released
+  version 1 publication and the stored settings keys in one transaction (format only, nothing is
+  reset or cancelled), and a semantic difference still needs `--activate-permission-config`. Until
+  the old inputs are removed, readers take the narrower of the old and new stored keys and org
+  writes carry the old key along, so nothing stored as off reads as allowed. Old replicas fail the
+  operation barrier after the conversion, but their settings writes are not fenced: stop every old
+  replica before the first new replica starts.
+- cdf5abd: Staged instance binding (fix round 1): one operation supervisor owns a device's journal at a time,
+  so binding a new generation drains the old backend, re-checks unsettled work after its last await
+  and disposes the old supervisor before the new one reads the journal. Bindings are stored per
+  device with the machine credential; the kernel names as previous the last binding it committed for
+  the machine, so a lost answer, a re-login or a shared state directory no longer deadlocks the
+  chain. Old binding records are pruned; the environment fingerprint covers every module the Python
+  helpers import.
+- e366658: Staged instance binding (fix round 2): a binding compares the environment fingerprint with the
+  device's latest installed binding, so an environment change across a generation whose answer was
+  lost still resets Full consent; a binding committed before a re-login follows the active machine
+  before it is sent. The bundled device runtime carries the Apache-2.0 modification notice of the
+  patched sandbox runtime and refuses optional or platform-specific packages.
+- c94c7c4: Dormant (the activation gate stays off): once the permission context is activated, a run start's
+  project knowledge read is a set of kernel reads under the run's claim while it is queued, each
+  narrowed to the project root, its `AGENTS.md` and its `.agents/skills`: with a restricted
+  read-only scope whenever the runtime enforces one, whatever the conversation's profile (a symlinked
+  `AGENTS.md`, skill directory or `SKILL.md` pointing outside the project is then no longer read);
+  under the conversation's Full access only on an isolated Full-only runtime (a cloud device, a local
+  machine in its Docker mode); and not at all on a host machine without restricted enforcement (the
+  project is recorded unreadable with the reason). A person's `/project:<skill>` renders a stub that
+  tells the agent to load the skill with `Skill` instead of reading the device at send time; an agent
+  without `Skill` lists no project skills and is refused (`skill_tool_off`). The device project
+  picker starts a stopped device for its owner before browsing it, and answers `device.not_running`
+  (409) when the instance stopped in between. Admission's working root falls back to the workspace
+  exactly as the command review does (no usable project snapshot, a root outside the reach or above
+  the home), with one shared project reach rule. A refused background start keeps the kernel's
+  reason in the task, never the provider's message. With the gate off nothing changes.
+- 22617f8: Legacy background retirement barrier (dormant until the paired activation): a durable legacy-launch
+  freeze, published under the platform authority writer, that every SID background launch checks
+  right before it dispatches; durable retirement obligations per device, provider and exact instance
+  generation for every legacy task row whose processes may still exist and for revoked managed starts
+  on an incarnation that no longer runs. Every sandbox lifecycle acquisition (use, resume, rebuild,
+  provider switch) and the local instance bind check them under the exclusive lease: a cloud
+  incarnation is retired only by its provider's confirmed whole-instance destroy (files kept), a local
+  or unverifiable one stays quarantined and the device unavailable. A worker job enumerates, retires
+  and settles them with backoff. Migration 0157.
+  The freeze enumerates before it returns and the gate enumerates each device it serves, so neither
+  depends on the worker; once frozen, lost-task kills by SID stop and their marks are kept. Legacy
+  polls, stops and reads by SID and staged browsing are refused on a device under an obligation (exact
+  managed drains go on). A launch records the exact incarnation its dispatch was admitted for.
+  A cloud obligation that names no incarnation resolves once the device's current instance is
+  destroyed with confirmation (no earlier provider's instance kept, recorded under the freeze); one no
+  evidence can cover answers `device.recreate_required`. Obligations of deleted devices become
+  `abandoned` (reported apart; `cleanRetirement` requires none).
+- 87886a2: Stage the consumers of managed background tasks: TaskOutput reads retained positional output by
+  the task's exact reference with a persisted byte cursor, a 4,096-byte parser history and bounded
+  multi-read assembly (whole characters on a live stream, replacement decoding at a verified end);
+  the HTTP output assembles the suffix ending at its probed total; TaskStop, the poller and the
+  finish use exact status, tail and stop with the five-second grace, keep already-exited, stopped,
+  cancel-pending and lost distinct, finish exactly once and retain uncertain records past pruning.
+  A same-call start retry no longer races scheduled recovery or starts a stopped task. Legacy
+  protocol-2 tasks are unchanged and the managed path stays unwired from Bash.
+- 243109f: Builtin tools are ready for the permission activation: once the one activation gate is on, Read,
+  Write, Edit, Glob, Grep, Deliver, foreground and background Bash, FetchAttachment and Skill enter
+  their device only on the managed route, recording the marked device paths before their callback
+  and running every provider call as a managed operation (a background command through the managed
+  launch). Every reviewed call carries the root it was judged against, the workspace included, and
+  fails as stale before anything runs when the held device context names another root. A refused
+  Full access (off by policy, or above the device owner's ceiling), an operation outside the admitted
+  scope, a profile the device cannot enforce and an operation of unknown outcome are actionable tool
+  errors in the kernel's own words, never the provider's. Managed operation results holding a NUL
+  or a lone surrogate (Glob and Grep output) are retained in chunks instead of failing in jsonb.
+  With the gate off nothing changes.
+- 587dbd0: Dormant (the activation gate stays off): once the permission context is activated, the kernel's
+  device callers outside the tools stop using the raw sandbox use. Adding a device project and its
+  suggestions go through the owner browse; the kernel's file read for `agents.register-skill` is a
+  managed operation of its tool call under the run's execution claim; and a background task launched
+  before activation is neither read, polled nor stopped by a raw command (its device waits for legacy
+  retirement, and reading a running one's output says so).
+  With the gate off nothing changes.
+- Complete dormant managed output transport with strict positional ranges, authenticated connection capacity negotiation, and original admitted execution grant provenance. Protocol 2 remains active pending the coordinated runtime cutover.
+- 28ff1e5: Owner report fixes: a late, lower-sequence report from a policy frame, answer, status or bind
+  answer is ignored instead of blocking the device (only a hello regression or a conflict blocks);
+  unblocking with the same Full permission resets no consent; every carrier records its connection.
+  The cloud owner-ceiling PATCH is refused until the device's permissions are migrated, and widening
+  also checks the provider. Platform, org and publication Full-off writers revoke running restricted
+  work outside the machine's roots; working roots outside the workspace follow the project reach.
+  `capybara-device login` resets the owner-report sequence; `ceiling set` decides widening under the
+  policy lock; `ceiling show` and `mode` explain the project reach on the current protocol.
+- 8f5af77: Permission admission on a local device now reads the same runtime report and applied environment
+  verdict as the recorded permission context: whenever the context withholds its scope (unprobed or
+  unsupported runtime, no installed binding, a stale identity, machine or roots), admission refuses
+  with the same reason. Cloud admission keeps its rule until installed cloud evidence exists. The
+  managed device context writer refuses an actor who is no longer an active member, with the
+  recorded context's predicate. An ordered authority prelude now runs inside the run fence, after
+  the org row and before the conversation rows, so a tool call's permission locks can no longer
+  deadlock with offboarding, org deletion or org settings writes, which hold the org row before
+  taking the org permission lock. The permission activation gate stays off.
+  
+  Permission configuration publication locks the org rows its key conversion writes before the
+  platform permission lock. The permission context and managed device context writers refuse
+  without the run's inherited fence, and permission read locks inside a fenced transaction are taken
+  only in its ordered prelude. Admission refuses an inactive actor like the context. Conversation
+  deletion takes its root permission lock as an ordered prelude.
+- 37da07e: Extract shared permission facts and authority modules without changing execution behavior. Initialize first-message root epochs only for the winning conversation insert.
+- 46c6a52: Ceiling writers a Platform operation reaches from a tool step (device deletion, device project add
+  and remove, org settings narrowing Full or the cloud network, account status changes, the platform
+  Full switch) take their permission authority write lock in the run's ordered prelude, after the org
+  row and before the conversation rows, so they no longer deadlock with a prelude-first reader of the
+  same tree. Inside a fenced transaction every new permission authority lock, read or write, taken
+  after the fence's rows now fails with a typed internal error (`PermissionLockOrderError`).
+  
+  A network ask's device change settlement (the always decision and the `device-op-resolve` job)
+  takes the machine's device lock before the ask's conversation; the cloud permission snapshot
+  locks the device row before the device lock; an admin network allowance add locks the target org's
+  row before the super admin lock.
+- 6454e51: Add the dormant recorder of the model-facing permission context: one authority projection shared with operation admission (`SandboxOperationAuthority.readContextLocked`, no call, grant expansion or provider effect), an applied-environment reader over the installed local instance binding and its current runtime attestation, and `PermissionContextRecorder`, which appends a `permission_context` snapshot only when the persisted log's latest one differs, under the ordered authority locks and the run's execution claim. Its failures are named run errors (`run.permission_context_*`, with zh and en copy); it refuses replay conversations. Nothing in production calls it until the request boundary and the managed tool path activate together.
+- e826cf6: Add the recorded permission context request boundary: every agent-history request construction (a retry, a fallback, the rebuild after a forced compaction, wrap-up) records the root's current permission context and builds from the complete log read after it; a revoked execution reaches the run worker unchanged and every other failure ends the run with a named `run.permission_context_*` error before anything is sent. Full-run replays now feed the target run's recorded context into generated requests. The managed device context writer records marked device paths before a managed operation's preparation and user callback, checked against the held instance, generation and installed binding. Both live producers stay dormant behind one activation gate until the paired runtime cutover. With the gate on, legacy sandbox routes refuse rather than write old-mode device paths, and a device without an installed runtime binding reports the managed path as unavailable. Independent of the gate, a revoked execution inside a model attempt now ends the step at once with the original error instead of being classified as a provider error, retried or sent to the fallback model.
+- 012f74e: `capybara permissions cutover report | freeze | snapshot` drive the permission runtime cutover. The
+  report shows the pre-checks (local devices without a boot identity, cloud devices with unknown
+  incarnations), live replicas on another version, legacy rows only an old unfenced replica writes, the
+  freeze, the retirement obligations and the cloud snapshot's progress. The freeze returns only once
+  its enumeration settled and records it (migration 0158); the snapshot runs the new cloud snapshot
+  driver behind that barrier, under each device's lifecycle lease, idempotently and resumably. The
+  report and the freeze need PostgreSQL only; `--json` prints machine-readable output.
+- af94040: Refuse unsupported recorded permission context markers the same way in request building and replay diagnostics, report a corrupt recorded permission context in a case snapshot as `eval.snapshot_invalid` instead of a provider error, and share the sandbox host coverage rule with the permission context schema.
+- dd6d426: Prepare recorded-only full-run replay of the permission context: a recorded feeder for the target run's permission context events (sparse request coordinates, persistent idempotency), the structural removal of any live permission recorder from replay loop dependencies, original-coordinate drift reported as `permission_profile_changed` (with zh and en labels), and verbatim copies of recorded command reviews and managed device paths. The request boundary that invokes the feeder stays dormant until the paired activation.
+- 0cdecf3: The sandbox service refuses every acquire of a device that carries the permission reconcile marker
+  (raw use, managed operations, trusted preparation and owner browsing) under its lease and before
+  any provider call. On the staged v3 path the exclusive lifecycle holder binds the committed
+  instance generation before it downgrades: shared use waits for an installed binding, a lost reply
+  is resent with the same binding id by the next use, an open legacy obligation means no bind, and
+  two replicas send one binding. Protocol 2 registers no binder and never binds.
+  A local instance committed before the binder existed gets a new bound generation, owner browsing
+  of an unbound instance fails closed, the cleanup a resume or create owes runs before the bind, and
+  the reconcile marker and a failed instance binding reach the model as actionable tool errors.
+- d41a57f: The staged (protocol 3) device path is wired on the kernel side, still dormant behind the protocol
+  gate: a staged hello and policy frame are recorded with their connection id, a revoked machine gets
+  a protocol 3 `stop` fenced to that machine and its operations a `revokeOperation`, the staged
+  `@local` provider queues no broad kill and registers its instance binder, a local narrowing goes as
+  a v3 `policy` op carrying an owner-ceiling narrowing (audited once), and only the gateway's own
+  marker says a request was not sent.
+- fe24223: Staged device protocol 3 gains the private `bindInstance` lifecycle request and its strict answer
+  parser (`BindInstanceRequestV3`, `BindInstanceResultV3`, `DeviceRuntimeIdentityV3`). The kernel
+  allocates each instance generation from a durable per-device high-water mark (no reuse after a
+  deleted row, a clock rollback or two creates in one millisecond), commits an awaiting binding for a
+  local instance and installs its runtime report only from the verified post-commit bind answer. A
+  bound hello re-reports only the installed identity; a changed identity stops admission, and a
+  changed environment resets Full consent. A reconnect no longer resets Full consent because stored
+  roots came back in another key order. Protocol 2 stays active.
+- 61ca73e: A staged (protocol 3) device request held under an operation identity that the gateway refused
+  because the machine's connection changed before it was sent is now a definite pre-effect failure
+  (`DeviceRequestNotSentError`, a scope refusal), never an unknown outcome: the operation is recorded
+  as failed, a background start settles as not started, and a retry of the same call keeps the same
+  operation identity without an unknown outcome. A recovery whose own request was not sent keeps the
+  start unknown and tries again later, since it proves nothing about the first dispatch.
+- bcb5d96: The permission configuration startup transaction's idle-in-transaction bound is 5 s (statement and
+  lock bounds stay 500 ms): a client pause of half a second (OS scheduling, GC, CPU throttling) no
+  longer fails the kernel start, while a stalled process still cannot hold the platform permission
+  lock for long.
+- Updated dependencies [2256b24]
+- Updated dependencies [429e837]
+- Updated dependencies
+- Updated dependencies [54efba6]
+- Updated dependencies [9777d14]
+- Updated dependencies [a9626ee]
+- Updated dependencies [fe24223]
+  - @capybara-hq/plugin-sdk@0.1.0-rc.31
+
 ## 0.1.0-rc.41
 
 ### Patch Changes

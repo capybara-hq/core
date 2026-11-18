@@ -1,5 +1,69 @@
 # @capybara-hq/capybara
 
+## 0.1.0-rc.48
+
+### Patch Changes
+
+- c5d2996: The file-preview bootstrap pin moves to rc.1 (capybara-hq/plugins#121): its THIRD-PARTY-LICENSES.txt covers the whole production dependency closure of the prebuilt bundles. The marketplace pin and the sandbox-docker build contexts move to capybara-hq/plugins c9f2fc7, which only adds that release.
+- c04a4d1: `capybara config migrate-permissions --in <file> --out <file>` converts a config file (or a saved
+  Nacos data id) to the new permission keys (`devices.autoMode` -> `devices.fullAccess`) in place,
+  keeping every other key and comment, refuses conflicting or invalid values, never overwrites the
+  output and names the environment variables to rename.
+- c9fde6f: Add explicit startup CAS activation of resolved permission configuration with bounded PostgreSQL
+  cancellation, idempotent retries and atomic semantic revocation. Ordinary stale restarts cannot replace
+  active deployment authority. Expose the start-only `--activate-permission-config` operator option.
+- 012f74e: `capybara permissions cutover report | freeze | snapshot` drive the permission runtime cutover. The
+  report shows the pre-checks (local devices without a boot identity, cloud devices with unknown
+  incarnations), live replicas on another version, legacy rows only an old unfenced replica writes, the
+  freeze, the retirement obligations and the cloud snapshot's progress. The freeze returns only once
+  its enumeration settled and records it (migration 0158); the snapshot runs the new cloud snapshot
+  driver behind that barrier, under each device's lifecycle lease, idempotently and resumably. The
+  report and the freeze need PostgreSQL only; `--json` prints machine-readable output.
+- Add owner-scoped conversation permission reads and selected-device permission previews to the web
+  query cache, preserving account isolation and direct permission API response shapes. Profile controls
+  and execution changes remain gated by the coordinated runtime cutover.
+- Updated dependencies [8a84219]
+- Updated dependencies [c5d2996]
+- Updated dependencies [ce94b4d]
+- Updated dependencies [ab911e3]
+- Updated dependencies [dbac47e]
+- Updated dependencies [47926ef]
+- Updated dependencies [2ea4298]
+- Updated dependencies [2256b24]
+- Updated dependencies [124eb1f]
+- Updated dependencies [a4974d5]
+- Updated dependencies [09de26a]
+- Updated dependencies [6429c80]
+- Updated dependencies [3069b5d]
+- Updated dependencies [c9fde6f]
+- Updated dependencies [429e837]
+- Updated dependencies [2655a98]
+- Updated dependencies [cdf5abd]
+- Updated dependencies [e366658]
+- Updated dependencies [c94c7c4]
+- Updated dependencies [22617f8]
+- Updated dependencies [87886a2]
+- Updated dependencies [243109f]
+- Updated dependencies [587dbd0]
+- Updated dependencies
+- Updated dependencies [28ff1e5]
+- Updated dependencies [b3b3173]
+- Updated dependencies [8f5af77]
+- Updated dependencies [37da07e]
+- Updated dependencies [46c6a52]
+- Updated dependencies [6454e51]
+- Updated dependencies [e826cf6]
+- Updated dependencies [012f74e]
+- Updated dependencies [af94040]
+- Updated dependencies [dd6d426]
+- Updated dependencies [0f34c66]
+- Updated dependencies [0cdecf3]
+- Updated dependencies [d41a57f]
+- Updated dependencies [fe24223]
+- Updated dependencies [61ca73e]
+- Updated dependencies [bcb5d96]
+  - @capybara-hq/kernel@0.1.0-rc.42
+
 ## 0.1.0-rc.47
 
 ### Patch Changes
