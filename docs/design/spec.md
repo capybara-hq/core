@@ -2459,7 +2459,8 @@ level or agent, `view`) it moves to the new head's back button, else its title.
   as the composer's agents chip (§6.16.29; AC3 ruling 4, 2026-11-07).
 - **Tree**: columns left to right by depth, `space.6` apart; a parent is vertically centred on its
   children; standard elbow connectors (1px `line-strong`) from each parent to the vertical centre of
-  each child; siblings `space.2` apart. No "main agent" or "level N" labels: position and lines
+  each child; siblings `space.2` apart, newest first (the agent dispatched last on top; the
+  page passes them in dispatch order, as the kernel's tree gives them). No "main agent" or "level N" labels: position and lines
   show the hierarchy. Four columns (three levels below the root) are wider than the dialog: the
   tree scrolls inside it.
 - **Node**: a button 320 wide and 62 high, the same for every node (padding 0 `space.3`, `panel-2`,
