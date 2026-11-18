@@ -57,7 +57,10 @@ import {
   SandboxLockLostError,
   type SandboxService,
 } from "../../../sandbox/sandbox.service.js";
-import { SandboxProviderUnreachableError } from "../../../sandbox/unreachable.js";
+import {
+  providerConnectionFailure,
+  SandboxProviderUnreachableError,
+} from "../../../sandbox/unreachable.js";
 import type { StorageService } from "../../../storage/storage.service.js";
 import type { BuiltinCallContext, ToolListingScope } from "../../registry.js";
 
@@ -551,6 +554,16 @@ const RECONCILE_REQUIRED_TEXT =
 const INSTANCE_BINDING_TEXT =
   "The device's machine has not confirmed its current instance, so nothing ran. Ask the person to restart capybara-device on that machine (updating it if it is outdated), then retry, or to start a new conversation on another device.";
 
+/** The provider connection failure behind an unknown outcome, with the raw error to log. */
+function unreachableCause(
+  cause: unknown,
+): { failure: "connect" | "dropped"; err: unknown } | undefined {
+  if (cause instanceof SandboxProviderUnreachableError)
+    return { failure: cause.failure, err: cause.cause };
+  const failure = providerConnectionFailure(cause);
+  return failure ? { failure, err: cause } : undefined;
+}
+
 export function mapSandboxError(e: unknown, log: Pick<Logger, "warn"> | undefined): unknown {
   if (e instanceof ManagedDeviceContextStale)
     return new ToolError(MANAGED_DEVICE_CONTEXT_STALE_TEXT, { kind: "unavailable" });
@@ -560,6 +573,19 @@ export function mapSandboxError(e: unknown, log: Pick<Logger, "warn"> | undefine
     return new ToolError(MANAGED_DEVICE_CONTEXT_FAILED_TEXT, { kind: "unavailable" });
   // the managed route's typed refusals (unknown first: it never proves the operation had no effect)
   if (isSandboxOperationOutcomeUnknownError(e)) {
+    // the provider could not be reached after the durable dispatch: the ledger keeps the outcome
+    // unknown, the model gets the actionable connection text (a connection never made did
+    // nothing; a broken one may have acted)
+    const unreachable = unreachableCause((e as { cause?: unknown }).cause);
+    if (unreachable) {
+      log?.warn("sandbox provider unreachable", { ...unreachable, outcome: "unknown" });
+      return new ToolError(
+        unreachable.failure === "connect"
+          ? SANDBOX_UNREACHABLE_TEXT
+          : SANDBOX_CONNECTION_DROPPED_TEXT,
+        { kind: "unavailable" },
+      );
+    }
     log?.warn("sandbox operation outcome unknown", { err: e });
     return new ToolError(OUTCOME_UNKNOWN_TOOL_TEXT, { kind: "unavailable" });
   }

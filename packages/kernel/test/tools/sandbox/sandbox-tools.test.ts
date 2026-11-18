@@ -21,6 +21,7 @@ import { createLogger } from "../../../src/log.js";
 import { SandboxService } from "../../../src/sandbox/sandbox.service.js";
 import { StorageService } from "../../../src/storage/storage.service.js";
 import {
+  OUTCOME_UNKNOWN_TOOL_TEXT,
   SANDBOX_CONNECTION_DROPPED_TEXT,
   SANDBOX_FILES_RESET_NOTICE,
   SANDBOX_OPEN_NETWORK_REFUSED_TEXT,
@@ -1040,11 +1041,21 @@ describe("sandbox tools", () => {
     // instance restarted, and the copied file is still there
     const row = await instanceOf(conv);
     await removeFakeSandbox(root, (row?.handle as { id: string } | undefined)?.id as string);
-    const r = await call(
+    // the call that finds it gone after its durable dispatch keeps an unknown outcome (never
+    // retried under a new identity); the instance is rebuilt for the next call, which is told
+    const lost = await call(
       conv,
       "Bash",
       { description: "Test step", command: `cat ${dir}/fruit.csv` },
       6,
+    );
+    expect(lost.isError).toBe(true);
+    expect(lost.content).toBe(OUTCOME_UNKNOWN_TOOL_TEXT);
+    const r = await call(
+      conv,
+      "Bash",
+      { description: "Test step", command: `cat ${dir}/fruit.csv` },
+      7,
     );
     expect(r.content).not.toContain("Attachments copied");
     expect(r.content).toContain("apple,3");
@@ -1099,11 +1110,19 @@ describe("sandbox tools", () => {
     );
     const row = await instanceOf(conv);
     await removeFakeSandbox(root, (row?.handle as { id: string } | undefined)?.id as string);
-    const r = await call(
+    // gone after the durable dispatch: unknown outcome, then the rebuilt instance's notice
+    const lost = await call(
       conv,
       "Bash",
       { description: "Test step", command: "cat /workspace/k.txt" },
       2,
+    );
+    expect(lost.content).toBe(OUTCOME_UNKNOWN_TOOL_TEXT);
+    const r = await call(
+      conv,
+      "Bash",
+      { description: "Test step", command: "cat /workspace/k.txt" },
+      3,
     );
     expect(r.content).toContain(SANDBOX_RESTARTED_NOTICE);
     expect(SANDBOX_RESTARTED_NOTICE).toContain("files are kept");

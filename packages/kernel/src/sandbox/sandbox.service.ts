@@ -65,6 +65,7 @@ import {
   type FileSystemHandle,
   isFileSystemGoneError,
   isSandboxGoneError,
+  isSandboxOperationOutcomeUnknownError,
   rootsOf,
   type SandboxActor,
   type SandboxHandle,
@@ -1342,11 +1343,37 @@ export class SandboxService {
     const seen = (x: Entered) =>
       ctx.silent ? this.deferNotice(env, holder, x) : this.seenBy(env, holder, x);
     let e = await seen(await this.enter(ctx, p, signal, null, want));
+    let left = false;
     try {
       try {
         return await this.runAs(e, ctx, p, fn, signal, invocation, trusted, kernelRead);
       } catch (err) {
         if (isFileSystemGoneError(err)) throw await this.filesGone(env, p, e);
+        if (
+          isSandboxOperationOutcomeUnknownError(err) &&
+          isSandboxGoneError((err as { cause?: unknown }).cause)
+        ) {
+          // gone after a durable dispatch: the outcome stays unknown and the call is never retried
+          // under a new identity, but the gone instance is rebuilt on the kept files now, so the
+          // holder's next call runs on it and is told of the restart (its seen record still names
+          // the gone instance)
+          this.log.info("sandbox instance is gone after a dispatched operation; recreating", {
+            deviceId: env,
+          });
+          const gone: Instance = { handle: e.handle, createdAt: e.createdAt };
+          await this.leave(env, e);
+          left = true;
+          try {
+            const rebuilt = await this.enter(ctx, p, signal, gone, want);
+            await this.leave(env, rebuilt);
+          } catch (rebuildErr) {
+            this.log.warn("cannot recreate the gone sandbox instance; the next use will", {
+              deviceId: env,
+              err: rebuildErr,
+            });
+          }
+          throw err;
+        }
         if (!isSandboxGoneError(err)) throw err;
         this.log.info("sandbox instance is gone during use; recreating", { deviceId: env });
         const gone: Instance = { handle: e.handle, createdAt: e.createdAt };
@@ -1374,7 +1401,7 @@ export class SandboxService {
         }
       }
     } finally {
-      await this.leave(env, e);
+      if (!left) await this.leave(env, e);
     }
   }
 
