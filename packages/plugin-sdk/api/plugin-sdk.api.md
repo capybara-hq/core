@@ -811,7 +811,7 @@ export function defineExtension(m: ExtensionManifest): ExtensionManifest;
 export const DEVICE_BOOT_ID_RE: RegExp;
 
 // @public
-export const DEVICE_PROTOCOL_VERSION = 2;
+export const DEVICE_PROTOCOL_VERSION = 3;
 
 // @public
 export const DEVICE_SCAN_SKIPPED_BASE_DIRS: readonly string[];
@@ -1964,6 +1964,9 @@ export interface Lease {
 }
 
 // @public
+export const LEGACY_DEVICE_PROTOCOL_VERSION = 2;
+
+// @public
 export type LegacyDeviceFrame = LegacyDeviceHello | DeviceRes | LegacyDevicePolicyChanged | KernelReq | KernelCancel;
 
 // @public
@@ -3008,6 +3011,7 @@ export interface SandboxBackground {
         taskId: string;
         outputPath: string;
         retainUntilMs: number;
+        instanceGeneration?: string;
     }): Promise<SandboxExecutionRef>;
     status(h: SandboxHandle, ref: SandboxExecutionRef, signal: AbortSignal): Promise<SandboxExecutionStatus>;
     stop(h: SandboxHandle, ref: SandboxExecutionRef, opts: {
@@ -3541,9 +3545,6 @@ export function skillSandboxDir(name: string, digest: string, root?: string): st
 
 // @public
 export function skillSandboxPath(name: string, digest: string, path: string, root?: string): string;
-
-// @public
-export const STAGED_DEVICE_PROTOCOL_VERSION = 3;
 
 // @public
 export const STANDARD_KNOBS: readonly StandardKnob[];

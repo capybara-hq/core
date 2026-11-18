@@ -33,10 +33,7 @@ import type { SandboxToolDeps } from "../../../src/tools/builtins/sandbox/common
 import { sandboxTools } from "../../../src/tools/builtins/sandbox/index.js";
 import { type SkillLoadDeps, skillLoadTool } from "../../../src/tools/builtins/skill-load.js";
 import type { BuiltinCallContext, BuiltinTool } from "../../../src/tools/registry.js";
-import {
-  createFakeSandbox,
-  fakeOperationFacade,
-} from "../../fixtures/plugins/sandbox-fake/index.js";
+import { createFakeSandbox } from "../../fixtures/plugins/sandbox-fake/index.js";
 import { truncateTables } from "../../helpers/db.js";
 import { MODEL_PLUGINS_CONFIG } from "../../helpers/model-plugins.js";
 import { startKernel, type TestKernel } from "../../helpers/runs.js";
@@ -98,7 +95,7 @@ beforeAll(async () => {
   raw = createDb(pg.url, 5);
   root = await mkdtemp(join(tmpdir(), "managed-builtins-"));
   const base = createFakeSandbox(root);
-  const facade = fakeOperationFacade(root, base);
+  const facade = base;
   const impl: SandboxProvider = {
     ...facade,
     async permissionSupport() {

@@ -292,7 +292,8 @@ export class LocalDeviceProvider implements SandboxProvider {
     const background: SandboxBackground = {
       start: async (h, input, args) => {
         const scope = parseSandboxOperationScope(input);
-        const { signal, ...rest } = args;
+        // the device knows its bound generation: a kernel generation never goes on the wire
+        const { signal, instanceGeneration: _generation, ...rest } = args;
         const authority = await execArgs(h.id, scope, "backgroundStart", rest);
         signal.throwIfAborted();
         return parseOperationResult(

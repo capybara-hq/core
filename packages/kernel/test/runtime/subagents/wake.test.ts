@@ -3,7 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { DEFAULT_SANDBOX_ROOTS, type ModelRequest } from "@capybara-hq/plugin-sdk";
+import type { ModelRequest } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { getQueueToken } from "@nestjs/bullmq";
 import type { Queue } from "bullmq";
@@ -18,7 +18,6 @@ import type { KernelSchemaDb } from "../../../src/db/kernel-schema.js";
 import { createDb } from "../../../src/db/pool.js";
 import { reconstructRequest } from "../../../src/evals/reconstruct.js";
 import { takeSnapshot, toEvents } from "../../../src/evals/snapshot.js";
-import { devicePathsText } from "../../../src/runtime/context/device-paths.js";
 import { MAINTENANCE_QUEUE_NAME } from "../../../src/runtime/maintenance-queue.js";
 import { ProviderRegistry } from "../../../src/runtime/providers.js";
 import { RunQueue } from "../../../src/runtime/run-queue.js";
@@ -32,6 +31,7 @@ import { onlyBuiltins } from "../../helpers/disabled-tools.js";
 import { accountsFor } from "../../helpers/identity.js";
 import { testMembers } from "../../helpers/members.js";
 import { MODEL_FAKE } from "../../helpers/model-plugins.js";
+import { isPermissionContextText } from "../../helpers/permission-context-text.js";
 import { captureProviderRequests } from "../../helpers/provider-capture.js";
 import { isRunContextText } from "../../helpers/run-context.js";
 import {
@@ -276,9 +276,19 @@ const runStarted = async (conversationId: string, runId: string) =>
   ) as Extract<ConversationEvent, { type: "run_started" }>;
 
 /** The request's system messages, run context snapshots left out (run context spec §4). */
+/**
+ * The managed device paths a step's first device call records on the activated tree (the fake
+ * cloud device, the default working root).
+ */
+const MANAGED_DEVICE_PATHS =
+  'Device directories: workspace "/workspace", skills "/skills", temporary files "/tmp".\n' +
+  'Selected working directory: "/workspace". These paths do not grant access; the current permission context governs new operations.';
 const systemTexts = (r: ModelRequest | undefined) =>
   (r?.messages ?? []).flatMap((m) =>
-    m.role === "system" && typeof m.content === "string" && !isRunContextText(m.content)
+    m.role === "system" &&
+    typeof m.content === "string" &&
+    !isRunContextText(m.content) &&
+    !isPermissionContextText(m.content)
       ? [m.content]
       : [],
   );
@@ -446,13 +456,7 @@ describe("waking on sub-agent deliveries", () => {
     // ruling R22: the step's first sandbox call recorded the device's directories
     expect(systemTexts(sent[2])).toEqual([
       renderSubagentDelivery(delivery.payload),
-      devicePathsText({
-        roots: DEFAULT_SANDBOX_ROOTS,
-        mode: "auto",
-        allowedMode: "auto",
-        network: { kind: "open-public", hosts: [] },
-        local: false,
-      }),
+      MANAGED_DEVICE_PATHS,
     ]);
     expect(
       ((end as ConversationEvent).payload as EventPayload<"run_finished">).consumedUpToSeq,
@@ -490,13 +494,7 @@ describe("waking on sub-agent deliveries", () => {
     expect(systemTexts(wakeRequests[1])).toEqual([
       ...all.map((d) => renderSubagentDelivery(d.payload)),
       // ruling R22: the wake run's first sandbox call recorded the device's directories
-      devicePathsText({
-        roots: DEFAULT_SANDBOX_ROOTS,
-        mode: "auto",
-        allowedMode: "auto",
-        network: { kind: "open-public", hosts: [] },
-        local: false,
-      }),
+      MANAGED_DEVICE_PATHS,
     ]);
     expect(await consumedSeq(db, conv)).toBeGreaterThanOrEqual(all[2]?.seq ?? 0);
     // everything consumed: no delayed wake waits for this conversation (its ensure-run backstops

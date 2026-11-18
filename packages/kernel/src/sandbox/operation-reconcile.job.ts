@@ -113,7 +113,15 @@ export class SandboxOperationReconcileJob {
           if (!background)
             throw new SandboxPermissionUnsupportedError("Managed background tasks are unavailable");
           at.phase = "start";
-          return { ref: await background.start(h, scope, { ...input, signal }), instanceId: h.id };
+          return {
+            ref: await background.start(h, scope, {
+              ...input,
+              // a bound (local) device knows its generation from its binding; a cloud one is told
+              ...(!entry.binder && { instanceGeneration: claimed.instance_generation }),
+              signal,
+            }),
+            instanceId: h.id,
+          };
         },
         AbortSignal.timeout(60_000),
       );

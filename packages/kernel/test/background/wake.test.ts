@@ -294,9 +294,27 @@ async function finishTask(
   ) as Finished;
 }
 
-/** The request's system messages, run context snapshots left out (run context spec §4). */
+/**
+ * Whether a system message is the recorded permission context (permission context replay spec
+ * B2): the activated tree writes one before a run's first request; tests about other request
+ * contents leave it out.
+ */
+const isPermissionContextText = (text: string): boolean =>
+  text.startsWith("Permission context for new operations:");
+
+/** The request's messages without the recorded permission context lines. */
+const turns = (r: ModelRequest | undefined) =>
+  (r?.messages ?? []).filter(
+    (m) =>
+      !(m.role === "system" && typeof m.content === "string" && isPermissionContextText(m.content)),
+  );
+
+/**
+ * The request's system messages, run context snapshots and the permission context left out
+ * (run context spec §4).
+ */
 const systemTexts = (r: ModelRequest | undefined) =>
-  (r?.messages ?? []).flatMap((m) =>
+  turns(r).flatMap((m) =>
     m.role === "system" && typeof m.content === "string" && !isRunContextText(m.content)
       ? [m.content]
       : [],
@@ -367,11 +385,11 @@ describe("a finish during a run", () => {
     expect(sent).toHaveLength(2);
     expect(systemTexts(sent[0])).toEqual([]);
     const step2 = sent[1] as ModelRequest;
-    expect(step2.messages.at(-1)).toEqual({
+    expect(turns(step2).at(-1)).toEqual({
       role: "system",
       content: renderBackgroundFinished(f.payload),
     });
-    expect(step2.messages.at(-2)?.content).toMatchObject([
+    expect(turns(step2).at(-2)?.content).toMatchObject([
       { type: "tool_result", content: "counted 1" },
     ]);
     expect(
@@ -403,7 +421,7 @@ describe("a finish during a run", () => {
     const sent = requestsWith("SCENARIO last");
     expect(sent).toHaveLength(2);
     expect(systemTexts(sent[0])).toEqual([]);
-    expect(sent[1]?.messages.at(-1)).toEqual({
+    expect(turns(sent[1]).at(-1)).toEqual({
       role: "system",
       content: renderBackgroundFinished(f.payload),
     });
@@ -444,11 +462,11 @@ describe("a finish during a run", () => {
     const sent = requestsWith("SCENARIO wait");
     expect(sent).toHaveLength(2);
     expect(systemTexts(sent[0])).toEqual([]);
-    expect(sent[1]?.messages.at(-1)).toEqual({
+    expect(turns(sent[1]).at(-1)).toEqual({
       role: "system",
       content: renderBackgroundFinished(f.payload),
     });
-    expect(sent[1]?.messages.at(-2)?.content).toMatchObject([
+    expect(turns(sent[1]).at(-2)?.content).toMatchObject([
       { type: "tool_result", content: "asked 2" },
     ]);
     await expectNoWake(conv, 1);
@@ -466,7 +484,13 @@ describe("waking an idle conversation", () => {
     const started = await runStarted(conv, wake.id);
     expect(started.payload).toMatchObject({ triggerAccountId: bobId, trigger: "background_task" });
     const sent = requestsWith("SCENARIO idle");
-    expect(sent.at(-1)?.messages.at(-1)).toEqual({
+    // the last message but the context the wake run's start records for its new trigger account
+    // (the run context update and the permission context)
+    expect(
+      turns(sent.at(-1))
+        .filter((m) => !(typeof m.content === "string" && isRunContextText(m.content)))
+        .at(-1),
+    ).toEqual({
       role: "system",
       content: renderBackgroundFinished(f.payload),
     });

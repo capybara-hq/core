@@ -92,6 +92,30 @@ export async function checkManagedStart(
   await assertPermissionSupport(provider, handle, scope, "backgroundStart", signal);
 }
 
+/**
+ * `provider` whose background starts carry `instanceGeneration`, the kernel's generation of the
+ * held instance (its `created_at` milliseconds): a cloud provider cannot know it otherwise (it is
+ * allocated after `create` returns), and the acknowledgement requires the ref to name it. A bound
+ * (local) device knows its generation from its binding and is not given one.
+ */
+export function withKernelGeneration(
+  provider: SandboxProvider,
+  generation: string,
+): SandboxProvider {
+  const background = provider.background;
+  if (!background) return provider;
+  const wrapped = Object.create(provider) as SandboxProvider;
+  wrapped.background = {
+    status: background.status.bind(background),
+    tail: background.tail.bind(background),
+    readOutput: background.readOutput.bind(background),
+    stop: background.stop.bind(background),
+    start: (h, scope, args) =>
+      background.start(h, scope, { ...args, instanceGeneration: generation }),
+  };
+  return wrapped;
+}
+
 export function createHeldOperations(
   provider: SandboxProvider,
   handle: SandboxHandle,

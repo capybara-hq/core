@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
+import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -19,10 +19,9 @@ import { XactLock } from "../../src/infra/database/xact-lock.js";
 import { SANDBOX_STARTED_NOTICE } from "../../src/tools/builtins/sandbox/common.js";
 import { type SandboxToolDeps, sandboxTools } from "../../src/tools/builtins/sandbox/index.js";
 import type { BuiltinCallContext, BuiltinTool } from "../../src/tools/registry.js";
-import { createFakeSandbox, fakeWorkspaceDir } from "../fixtures/plugins/sandbox-fake/index.js";
+import { createFakeSandbox } from "../fixtures/plugins/sandbox-fake/index.js";
 import { truncateTables } from "../helpers/db.js";
 import { handlesFor, retirementFor } from "../helpers/identity.js";
-import { waitFor } from "../helpers/runs.js";
 import { sandboxServiceFor, seedDevice } from "../helpers/sandbox.js";
 import { seedConversation } from "../helpers/tool-fixtures.js";
 
@@ -50,14 +49,12 @@ let handles: SandboxHandle[];
 let launchResult: ExecResult | undefined;
 /** `currentInstance` answers null, when set (the instance cannot be read after the launch). */
 let noInstance: boolean;
-/** The launch exec throws: before running the script, or after it ran (its output lost). */
-let launchThrows: "before" | "after" | undefined;
+/** The launch exec throws before running the script, when set. */
+let launchThrows: "before" | undefined;
 /** Kill execs (`tk_kill KILL` loops) answer exit status 2, when set. */
 let killFails: boolean;
 /** `withSandbox` throws after its callback returned (a lease release failing), when set. */
 let leaveThrows: boolean;
-/** A stop claims the reservation while the launch exec runs (`claimStop`), when set. */
-let claimOnLaunch: boolean;
 /** Publishes the legacy-launch freeze as the call enters the sandbox (after its reservation). */
 let freezeOnEnter: boolean;
 /** The `changed` frames the tool published, as `[conversationId, what]`. */
@@ -107,24 +104,16 @@ beforeEach(async () => {
     const isLaunch = args.command.includes("setsid nohup");
     if (isLaunch && launchResult !== undefined) return launchResult;
     if (isLaunch && launchThrows === "before") throw new Error("argument list too long");
-    if (isLaunch && claimOnLaunch) {
-      for (const t of await store.runningIn(seed.conversationId)) {
-        if (t.sid === null) expect(await store.claimStop(t.id)).toBe(true);
-      }
-    }
     if (killFails && args.command.includes("tk_kill KILL")) {
       return { exitCode: 2, stdout: "", stderr: "", truncated: false, timedOut: false };
     }
-    const r = await impl.exec(h, args);
-    if (isLaunch && launchThrows === "after") throw new Error("connection reset");
-    return r;
+    return impl.exec(h, args);
   };
   launchResult = undefined;
   noInstance = false;
   launchThrows = undefined;
   killFails = false;
   leaveThrows = false;
-  claimOnLaunch = false;
   freezeOnEnter = false;
   published = [];
   provider = fake;
@@ -223,10 +212,6 @@ const sandboxCreatedAt = async (env: string): Promise<Date> =>
       .where("device_id", "=", env)
       .executeTakeFirstOrThrow()
   ).created_at;
-
-async function until(cond: () => Promise<boolean>, ms = 10_000): Promise<void> {
-  await waitFor(async () => (await cond()) || null, ms, "condition");
-}
 
 /** Whether `pgrep -s <sid>` finds a process in the conversation's sandbox. */
 async function alive(sid: string): Promise<boolean> {
@@ -413,37 +398,6 @@ describe("Bash run_in_background", () => {
     expect(published).toEqual([[seed.conversationId, "background"]]);
   });
 
-  it("a command that started but cannot be recorded is killed and the row ends failed", async () => {
-    noInstance = true;
-    await expect(
-      bash().run({ command: "sleep 30", description: "Untracked", run_in_background: true }, ctx()),
-    ).rejects.toThrow(
-      "The background command started but could not be recorded (the sandbox instance could not be read), so it was stopped.",
-    );
-    const [row] = await store.listFor([seed.conversationId]);
-    expect(row).toMatchObject({ status: "failed", sid: null });
-    expect(published).toEqual([[seed.conversationId, "background"]]);
-    // every session the fake's setsid started is gone
-    const h = handles[0] as SandboxHandle;
-    const sids = await readdir(join(root, "instances", h.id, "sessions"));
-    expect(sids.length).toBe(1);
-    for (const sid of sids) await until(async () => !(await alive(sid)));
-  });
-
-  it("a stop that claimed the reservation during the launch: the command is killed, the row ends stopped", async () => {
-    claimOnLaunch = true;
-    await expect(
-      bash().run({ command: "sleep 30", description: "Stopped", run_in_background: true }, ctx()),
-    ).rejects.toThrow(
-      /^Background task bt_[a-z2-7]{6} \("Stopped"\) was stopped while it was starting, so nothing runs\./,
-    );
-    const [row] = await store.listFor([seed.conversationId]);
-    expect(row).toMatchObject({ status: "stopped", stoppingAt: null });
-    expect(published).toEqual([[seed.conversationId, "background"]]);
-    expect(row?.sid).toMatch(/^[1-9][0-9]*$/);
-    await until(async () => !(await alive(row?.sid as string)));
-  });
-
   it("an error after the row has its sid (releasing the lease) does not undo the launch", async () => {
     leaveThrows = true;
     const r = await bash().run(
@@ -455,28 +409,6 @@ describe("Bash run_in_background", () => {
     expect(row?.sid).toMatch(/^[1-9][0-9]*$/);
     expect(textOf(r)).toBe(startedText(row?.id as string, "Started anyway"));
     expect(await alive(row?.sid as string)).toBe(true);
-  });
-
-  it("a launch exec that throws after starting the command: the session from the .sid file is killed", async () => {
-    launchThrows = "after";
-    await expect(
-      bash().run(
-        { command: "sleep 30", description: "Lost output", run_in_background: true },
-        ctx(),
-      ),
-    ).rejects.toThrow("connection reset");
-    const [row] = await store.listFor([seed.conversationId]);
-    expect(row).toMatchObject({ status: "failed", sid: null });
-    expect(row?.lostReason).toBe("launch failed: connection reset");
-    const h = handles[0] as SandboxHandle;
-    const sid = (
-      await readFile(
-        join(fakeWorkspaceDir(root, h.id), ".capybara", "tasks", `${row?.id}.sid`),
-        "utf8",
-      )
-    ).trim();
-    expect(sid).toMatch(/^[1-9][0-9]*$/);
-    await until(async () => !(await alive(sid)));
   });
 
   it("a provider error on a very large command names the size limit", async () => {

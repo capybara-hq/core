@@ -377,7 +377,10 @@ describe("dispatch", () => {
       role: "user",
       content: [{ type: "text", text: "gp-task: do it" }],
     });
-    expect(first.messages).toHaveLength(2);
+    // and the run's recorded permission context (activated tree), one system line after it
+    expect(first.messages).toHaveLength(3);
+    expect(first.messages[2]?.role).toBe("system");
+    expect(first.messages[2]?.content).toMatch(/^Permission context for new operations: /);
     expect(first.messages[1]?.role).toBe("system");
     expect(first.messages[1]?.content).toMatch(
       /^Context from the platform:\n- You are "general-purpose", dispatched by the agent "Lead" working for O\.\n- Today is \d{4}-\d{2}-\d{2} \(\w+day\), time zone UTC\.\n- When you create a git commit, end the commit message with this trailer: .*\n- When you open a pull request, end the body with this line: .*\nA later context update replaces these facts\.$/,

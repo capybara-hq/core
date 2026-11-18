@@ -20,13 +20,11 @@ import { EventLog } from "../../src/conversations/event-log.js";
 import type { ConversationEvent } from "../../src/conversations/events.js";
 import { type KernelSchemaDb, kernelDb, type SkillManifest } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
-import { ConversationDevices } from "../../src/devices/conversation-devices.js";
 import { ApiError } from "../../src/errors.js";
 import { KernelDb } from "../../src/infra/database/kernel-db.js";
 import { TransactionHost } from "../../src/infra/database/transaction-host.js";
 import { KERNEL_ROOT_LOGGER } from "../../src/infra/tokens.js";
 import type { KernelLogger } from "../../src/log.js";
-import { SandboxService } from "../../src/sandbox/sandbox.service.js";
 import { parseSlashCommand, SkillInvoker } from "../../src/skills/invoke.js";
 import { StorageService } from "../../src/storage/storage.service.js";
 import { setFakeSandboxFault } from "../fixtures/plugins/sandbox-fake/index.js";
@@ -514,8 +512,8 @@ describe("GET …/agents/:agentId/invocable-skills", () => {
 });
 
 describe("POST …/messages with a project skill (project root spec §4.6)", () => {
-  /** Appends a usable project_root naming `fix-issue` at `root`, and writes its SKILL.md there. */
-  async function projectWith(conv: string, root: string, body: string | null) {
+  /** Appends a usable project_root naming `fix-issue` at `root`. */
+  async function projectWith(conv: string, root: string) {
     await k.app.get(EventLog).append(conv, [
       {
         type: "project_root",
@@ -526,30 +524,14 @@ describe("POST …/messages with a project skill (project root spec §4.6)", () 
         },
       },
     ]);
-    if (body === null) return;
-    const deviceId = await k.app.get(ConversationDevices).forTool(orgId, conv);
-    await k.app.get(SandboxService).withSandbox(
-      {
-        orgId,
-        deviceId,
-        holderConversationId: conv,
-        actor: { accountId: ownerId, conversationId: conv },
-      },
-      (h, p, _info, signal) =>
-        p.writeFile(
-          h,
-          `${root}/.agents/skills/fix-issue/SKILL.md`,
-          new TextEncoder().encode(skillMd("fix-issue", body)),
-          signal,
-        ),
-      new AbortController().signal,
-    );
   }
 
-  it("is read on the conversation's device and logged with source project", async () => {
+  // activated tree (permission activation L2): a person's send has no run to admit a device
+  // read, so the message is a stub the agent follows by loading the skill with its Skill tool
+  it("is logged with source project as a stub that names the skill, its digest and directory", async () => {
     const agentId = await createAgent([]);
     const conv = await createConv(owner, orgId, agentId);
-    await projectWith(conv, "/workspace/proj", "Fix issue $ARGUMENTS in ${CLAUDE_SKILL_DIR}.");
+    await projectWith(conv, "/workspace/proj");
     const sent = await send(conv, { text: "7", skill: { name: "project:fix-issue" } });
     expect(sent.statusCode, sent.body).toBe(202);
     const [m] = await userMessages(conv);
@@ -560,40 +542,25 @@ describe("POST …/messages with a project skill (project root spec §4.6)", () 
       arguments: "7",
       mode: "inline",
     });
-    expect(firstText(m as UserMessage)).toContain(
-      "Fix issue 7 in /workspace/proj/.agents/skills/fix-issue.",
-    );
+    const text = firstText(m as UserMessage);
+    expect(text).toContain('call Skill with the name "project:fix-issue"');
+    expect(text).toContain("its directory is /workspace/proj/.agents/skills/fix-issue");
+    expect(text).toContain(`the digest ${"a".repeat(64)}`);
+    expect(text.endsWith("\n\n7")).toBe(true);
   });
 
-  it("an unreachable device writes nothing and the refusal is readable", async () => {
+  it("reads nothing on the device at send time: an unreachable device still takes the stub", async () => {
     const agentId = await createAgent([]);
     const conv = await createConv(owner, orgId, agentId);
-    await projectWith(conv, "/workspace/proj", null);
+    await projectWith(conv, "/workspace/proj");
     await setFakeSandboxFault(root, { code: "ECONNREFUSED" });
     try {
       const sent = await send(conv, { text: "7", skill: { name: "project:fix-issue" } });
-      expect(sent.statusCode, sent.body).toBe(503);
-      expect(sent.json().error).toMatchObject({
-        code: "device.projects_unavailable",
-        message: expect.stringMatching(/sandbox provider cannot be reached/),
-      });
+      expect(sent.statusCode, sent.body).toBe(202);
     } finally {
       await setFakeSandboxFault(root, null);
     }
-    expect(await userMessages(conv)).toEqual([]);
-  });
-
-  it("a SKILL.md gone from the device: skill.project_unavailable (gone), nothing written", async () => {
-    const agentId = await createAgent([]);
-    const conv = await createConv(owner, orgId, agentId);
-    await projectWith(conv, "/workspace/none", null);
-    const sent = await send(conv, { text: "", skill: { name: "project:fix-issue" } });
-    expect(sent.statusCode, sent.body).toBe(422);
-    expect(sent.json().error).toMatchObject({
-      code: "skill.project_unavailable",
-      details: [{ reason: "gone" }],
-    });
-    expect(await userMessages(conv)).toEqual([]);
+    expect(await userMessages(conv)).toHaveLength(1);
   });
 });
 

@@ -1,5 +1,4 @@
 import { randomUUID } from "node:crypto";
-import { existsSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -7,17 +6,20 @@ import { fileURLToPath } from "node:url";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { sql } from "kysely";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
-import { launchScript, newTaskId, taskOutputPath } from "../../src/background/launch.js";
+import { newTaskId, taskOutputPath } from "../../src/background/launch.js";
 import { BackgroundTaskPollJob } from "../../src/background/poll.job.js";
 import { type BackgroundTaskRow, BackgroundTaskStore } from "../../src/background/store.js";
 import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { SandboxService } from "../../src/sandbox/sandbox.service.js";
 import type { ScriptRule } from "../fixtures/plugins/model-script/index.js";
+import { fakeWorkspaceDir } from "../fixtures/plugins/sandbox-fake/index.js";
+import { launchManaged } from "../helpers/background-fake.js";
 import { legacyDbFor } from "../helpers/conversations.js";
 import { onlyBuiltins } from "../helpers/disabled-tools.js";
 import { asUser, cookieJar } from "../helpers/http.js";
 import { accountsFor } from "../helpers/identity.js";
+import { startClaimedRun } from "../helpers/managed-calls.js";
 import { testMembers } from "../helpers/members.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
@@ -177,60 +179,38 @@ async function child(parent: string): Promise<string> {
   return id;
 }
 
-/** Starts `command` as a background task of `owning`, in the device of `c`, like `Bash` does. */
+/** The claimed run each conversation's managed launches belong to (one per conversation). */
+const runs = new Map<string, Awaited<ReturnType<typeof startClaimedRun>>>();
+
+/**
+ * Starts `command` as a managed background task of `owning` (a sub-agent's under `c`, or `c`
+ * itself), in the device of `c`, through the real `Bash` path.
+ */
 async function launch(
   c: { orgId: string; conversationId: string; accountId: string; deviceId: string },
   command: string,
   owning = c.conversationId,
   seconds = 300,
 ): Promise<BackgroundTaskRow> {
-  const id = newTaskId();
-  const startedAt = new Date();
-  const r = await sandbox.withSandbox(
+  let run = runs.get(owning);
+  if (!run) {
+    run = await startClaimedRun(k, raw, owning, c.accountId);
+    runs.set(owning, run);
+  }
+  return launchManaged(
+    k,
+    raw,
     {
       orgId: c.orgId,
-      deviceId: c.deviceId,
-      holderConversationId: c.conversationId,
-      actor: { accountId: c.accountId, conversationId: c.conversationId },
+      accountId: c.accountId,
+      agentId,
+      conversationId: owning,
+      ...(owning !== c.conversationId && { sandboxConversationId: c.conversationId }),
+      ...run,
     },
-    (h, p, _info, sig) =>
-      p.exec(h, {
-        command: launchScript(id, command, seconds),
-        cwd: "/workspace",
-        timeoutMs: 20_000,
-        maxOutputBytes: 64_000,
-        signal: sig,
-      }),
-    AbortSignal.timeout(30_000),
-  );
-  expect(r.exitCode).toBe(0);
-  const sid = r.stdout.trim();
-  const { handle } = await db
-    .selectFrom("device_instances")
-    .select("handle")
-    .where("device_id", "=", c.deviceId)
-    .executeTakeFirstOrThrow();
-  const record = join(root, "instances", (handle as { id: string }).id, "sessions", sid);
-  await waitFor(async () => existsSync(record), 10_000, "session record");
-  const instance = await sandbox.currentInstance(c.deviceId);
-  await store.insert({
-    id,
-    orgId: c.orgId,
-    conversationId: owning,
-    sandboxConversationId: c.conversationId,
-    deviceId: c.deviceId,
-    runId: "run-x",
-    callId: "call-x",
-    triggerAccountId: c.accountId,
-    description: `Run ${command}`.slice(0, 100),
     command,
-    sid,
-    outputPath: taskOutputPath(id),
-    startedAt,
-    deadlineAt: new Date(startedAt.getTime() + seconds * 1000),
-    sandboxCreatedAt: instance?.createdAt as Date,
-  });
-  return (await store.get(id)) as BackgroundTaskRow;
+    seconds,
+  );
 }
 
 interface View {
@@ -481,8 +461,12 @@ describe("background task routes", () => {
       deadlineAt: new Date(startedAt.getTime() + 60_000),
       sandboxCreatedAt: null,
     });
+    // a managed launch refused before it was dispatched: settled, never started
     await sql`UPDATE capybara.background_tasks SET status = 'failed', finished_at = now(),
-      lost_reason = 'setsid is missing' WHERE id = ${id}`.execute(raw);
+      launch_state = 'terminal', operation_id = ${`op-${id}`}, working_root = '/workspace',
+      retain_until = now() + interval '1 day', output_path = ${`/workspace/${taskOutputPath(id)}`},
+      lost_reason = 'launch refused: the device refused the start'
+      WHERE id = ${id}`.execute(raw);
     const no = await owner({ method: "GET", url: `${base(c.conversationId)}/${id}/output` });
     expect([no.statusCode, code(no)]).toEqual([409, "background_task.output_unavailable"]);
     expect(details(no)).toEqual([{ reason: "not_started", environment: "cloud" }]);
@@ -491,22 +475,12 @@ describe("background task routes", () => {
   it("a running instance without the task's output file answers 409 output_missing", async () => {
     const c = await conversation();
     const t = await launch(c, "sleep 326");
-    await sandbox.withSandbox(
-      {
-        orgId: c.orgId,
-        deviceId: c.deviceId,
-        holderConversationId: c.conversationId,
-        actor: { accountId: c.accountId, conversationId: c.conversationId },
-      },
-      (h, p, _info, sig) =>
-        p.exec(h, {
-          command: `rm -f ${taskOutputPath(t.id)}`,
-          cwd: "/workspace",
-          timeoutMs: 20_000,
-          maxOutputBytes: 4_000,
-          signal: sig,
-        }),
-      AbortSignal.timeout(30_000),
+    // the task's output file removed on the provider's side
+    await rm(
+      join(
+        fakeWorkspaceDir(root, t.instanceId as string),
+        t.outputPath.replace(/^\/workspace\//, ""),
+      ),
     );
     const no = await owner({ method: "GET", url: `${base(c.conversationId)}/${t.id}/output` });
     expect([no.statusCode, code(no)]).toEqual([409, "background_task.output_unavailable"]);

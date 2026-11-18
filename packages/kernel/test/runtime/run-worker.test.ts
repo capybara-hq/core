@@ -65,6 +65,8 @@ class SequentialLoop implements AgentLoop {
       step,
       agent: ctx.agent,
       agentVersion: ctx.agentVersion,
+      // the actor the permission context is recorded for (as the LangGraph loop passes it)
+      accountId: ctx.triggerAccountId,
       source: ctx.source,
       signal: ctx.signal,
       sink: ctx.sink,
@@ -197,6 +199,8 @@ describe.each(LOOPS)("RunWorker（%s）", (_name, loopFactory) => {
       "user_message",
       "run_started",
       "run_context",
+      // the activated tree records the run's permission context before its first request
+      "permission_context",
       "model_call",
       "assistant_message",
       "usage",
@@ -215,8 +219,8 @@ describe.each(LOOPS)("RunWorker（%s）", (_name, loopFactory) => {
       timeZone: expect.any(String),
       date: expect.stringMatching(/^\d{4}-\d{2}-\d{2}$/),
     });
-    expect(textOf(evs[4] as ConversationEvent)).toBe("hi");
-    expect(evs[6]?.payload).toEqual({ reason: "completed", consumedUpToSeq: seq });
+    expect(textOf(evs[5] as ConversationEvent)).toBe("hi");
+    expect(evs[7]?.payload).toEqual({ reason: "completed", consumedUpToSeq: seq });
     expect(await consumedSeq(db, convId)).toBe(seq);
     expect(await runsOf(db, convId)).toEqual([{ id: runId, status: "completed" }]);
     // 锁与配额已释放（终态事件写入后才释放，负载高时稍晚一点：等到释放再断言）

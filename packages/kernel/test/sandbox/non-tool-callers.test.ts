@@ -20,7 +20,8 @@ import { SkillInvoker } from "../../src/skills/invoke.js";
  * read through `withOperations` under the run's execution claim, a person's project skill
  * invocation renders a stub without any device call, and background reads, stops and polls of a
  * legacy (SID) task never run a raw exec. None of them calls the raw `withSandbox`. With the gate
- * off every caller keeps its raw route (the zero-drift state). Real admission of these routes is
+ * off (an explicit `false`, the test seam for the dormant state; production leaves it on) every
+ * caller keeps its raw route (the zero-drift state). Real admission of these routes is
  * covered by `kernel-reads.test.ts`.
  */
 
@@ -167,10 +168,16 @@ describe("device projects (owner browse)", () => {
     expect(raw()).toBe(0);
   });
 
-  it("gate off: the raw route, unchanged", async () => {
+  it("no injected value is the production default: the gate-on route", async () => {
     await projects().candidates(ORG, ACC, DEV);
+    expect(raw()).toBe(0);
+    expect(sb.withBrowse).toHaveBeenCalledTimes(1);
+  });
+
+  it("gate off: the raw route, unchanged", async () => {
+    // an explicit false is the test seam for the dormant state (production default: on)
     await projects(false).candidates(ORG, ACC, DEV);
-    expect(raw()).toBe(2);
+    expect(raw()).toBe(1);
     expect(sb.withBrowse).not.toHaveBeenCalled();
     expect(sb.held.scan).toHaveBeenCalledWith(
       H,
@@ -257,7 +264,7 @@ describe("project knowledge (run start)", () => {
   });
 
   it("gate off: the raw route, unchanged", async () => {
-    await read(knowledge());
+    await read(knowledge(false));
     expect(raw()).toBe(1);
     expect(sb.withKernelRead).not.toHaveBeenCalled();
   });
@@ -364,12 +371,12 @@ describe("a person's project skill invocation", () => {
       "project:fix",
     ]);
     // gate off: the send-time read needs no Skill tool, the menu is unchanged
-    expect((await listing()).map((s) => s.name)).toEqual(["project:fix"]);
+    expect((await listing(false)).map((s) => s.name)).toEqual(["project:fix"]);
     expect(raw()).toBe(0);
   });
 
   it("gate off: the raw route, unchanged", async () => {
-    await prepare(invoker()).catch(() => undefined);
+    await prepare(invoker(false)).catch(() => undefined);
     expect(raw()).toBe(1);
   });
 });
@@ -426,7 +433,7 @@ describe("the kernel's file read (agents.register-skill)", () => {
   });
 
   it("gate off: the raw route, unchanged", async () => {
-    await reader().read(input);
+    await reader(false).read(input);
     expect(raw()).toBe(1);
     expect(sb.withOperations).not.toHaveBeenCalled();
   });
@@ -528,7 +535,7 @@ describe("background tasks (HTTP output and stop)", () => {
   });
 
   it("gate off: a legacy task keeps its SID read and stop", async () => {
-    await tasks(base)
+    await tasks(base, false)
       .output(ORG, CONV, ACC, base.id, 100)
       .catch(() => undefined);
     expect(sb.ifRunning).toHaveBeenCalledWith(
@@ -537,7 +544,7 @@ describe("background tasks (HTTP output and stop)", () => {
       expect.any(Function),
       expect.anything(),
     );
-    await tasks(base)
+    await tasks(base, false)
       .stop(ORG, CONV, ACC, base.id)
       .catch(() => undefined);
     expect(stopper.stop).toHaveBeenCalledTimes(1);
@@ -558,9 +565,9 @@ describe("background session helpers", () => {
   it("gate off: both still run the exec", async () => {
     const p = { exec: vi.fn(async () => ({ exitCode: 0, stdout: "", stderr: "" })) };
     const actor = { accountId: ACC, conversationId: CONV };
-    await actingAs(p as never, actor).exec(H as never, { command: "true" } as never);
+    await actingAs(p as never, actor, false).exec(H as never, { command: "true" } as never);
     expect(p.exec).toHaveBeenCalledWith(H, { command: "true", actor });
-    expect(await killSession(p as never, H as never, "42")).toBe(true);
+    expect(await killSession(p as never, H as never, "42", false)).toBe(true);
   });
 });
 
