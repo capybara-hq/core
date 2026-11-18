@@ -11,6 +11,8 @@ export type ToolKind =
   | "search"
   | "connector"
   | "meta"
+  /** Reading background tasks (`TaskOutput`, `TaskList`): waiting on one is not reading a file. */
+  | "task"
   | "question"
   | "tool";
 
@@ -30,11 +32,16 @@ export type ToolNotice = "not_loaded";
 /** What a call waits for from a person (§6.16.9): an approval, an answer or a connection. */
 export type ToolWaiting = "approval" | "input" | "connect";
 
-/** The verb categories of the §7 table: search, meta, question and connector rows count with tools. */
-export type ToolVerbGroup = "command" | "read" | "edit" | "tool";
+/**
+ * The verb categories of the §7 table: search, meta, question and connector rows count with tools;
+ * background task reads (`task`) have their own.
+ */
+export type ToolVerbGroup = "command" | "task" | "read" | "edit" | "tool";
 
 export function verbGroup(kind: ToolKind): ToolVerbGroup {
-  return kind === "command" || kind === "read" || kind === "edit" ? kind : "tool";
+  return kind === "command" || kind === "task" || kind === "read" || kind === "edit"
+    ? kind
+    : "tool";
 }
 
 export type SummaryRow = {
@@ -66,7 +73,7 @@ const fmt = (tpl: string, vars: Record<string, string | number>) =>
 const lowerFirst = (s: string) => s.charAt(0).toLowerCase() + s.slice(1);
 
 /** The fixed order of the header's kinds, as reference set B draws it (§7). */
-const SUMMARY_ORDER: readonly ToolVerbGroup[] = ["command", "tool", "read", "edit"];
+const SUMMARY_ORDER: readonly ToolVerbGroup[] = ["command", "task", "tool", "read", "edit"];
 
 /**
  * The waiting word (§6.16.9): "等待你批准" for the viewer, "等待 张三 批准" when someone else (a

@@ -165,9 +165,9 @@ describe("tool kinds", () => {
       Deliver: "tool",
       // copies one attachment into the device: a plain tool row
       FetchAttachment: "tool",
-      TaskOutput: "read",
+      TaskOutput: "task",
       TaskStop: "command",
-      TaskList: "read",
+      TaskList: "task",
       ToolSearch: "meta",
       Skill: "meta",
       ReadToolOutput: "meta",

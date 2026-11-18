@@ -1082,7 +1082,7 @@ export const resumeQueue = (orgId: string, id: string) =>
 export interface ToolInfo {
   key: string;
   title: string | null;
-  kind: "command" | "read" | "edit" | "search" | "connector" | "meta" | "tool";
+  kind: "command" | "read" | "edit" | "search" | "connector" | "meta" | "task" | "tool";
   /** True exactly for the builtin tools that run in the conversation's sandbox. */
   sandbox: boolean;
   keyArgs: string[];
