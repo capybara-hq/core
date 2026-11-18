@@ -412,8 +412,13 @@ export function describeModelProviderConformance(
         expect(validateImageGenerateResult(req, info, res)).toBeNull();
       });
 
-      it("generates two images", async (ctx) => {
-        if (!t.expect.imageGeneration) return ctx.skip();
+      // A model that returns one image per call declares maxImages 1; the kernel never asks it
+      // for more, so the suite does not either.
+      it("generates two images when the model allows it", async (ctx) => {
+        const img = t.expect.imageGeneration;
+        if (!img) return ctx.skip();
+        const listed = (await t.provider.listModels()).find((m) => m.id === img.model);
+        if ((listed?.imageGeneration?.maxImages ?? 0) < 2) return ctx.skip();
         const { req, res, info } = await run(2);
         expect(res.images).toHaveLength(2);
         expect(validateImageGenerateResult(req, info, res)).toBeNull();
