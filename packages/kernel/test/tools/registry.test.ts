@@ -470,6 +470,7 @@ describe("组织设置与 ToolSearch 启用条件", () => {
         publicUrl: false,
         externalSharing: { value: "deny", source: "default" },
         shareMaxExpiryDays: 30,
+        promptSuggestions: "on",
       },
       // the org follows the platform: its sandbox mode gets the platform's list
       effectiveNetwork: { mode: "open", hosts: baseCfg.sandbox.limits.allowHosts },

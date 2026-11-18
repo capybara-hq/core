@@ -265,7 +265,8 @@ function unquote(s: string): string {
 /**
  * The suggestion from the model's reply text (spec §1.7), or null for none: the first non-empty
  * line with control and hidden format characters removed, a leading user label (`User:`, or the
- * Chinese word for user with a full-width colon, `LABEL_RE`) and balanced wrapping quotes stripped, trimmed, cut to {@link PROMPT_SUGGESTION_MAX_CHARS} code points.
+ * Chinese word for user with a full-width colon, `LABEL_RE`) and balanced wrapping quotes
+ * stripped, trimmed, cut to {@link PROMPT_SUGGESTION_MAX_CHARS} code points.
  * `NONE` (any case), an empty result or an echo of the final reply (`finalText`) is null.
  */
 export function cleanSuggestion(reply: string, finalText: string): string | null {
