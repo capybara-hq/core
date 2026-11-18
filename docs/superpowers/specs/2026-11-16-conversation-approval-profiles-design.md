@@ -1,5 +1,10 @@
 # Conversation permission profiles
 
+> **Amended 2026-11-19:** the profiles are approval policy only and the sandbox is a device setting
+> identical under all three; the Codex-style coupling of Full access to unsandboxed execution is
+> superseded. See [approval-only profiles](2026-11-19-approval-only-profiles-design.md), section
+> "Superseded parts of earlier designs".
+
 Status: product model and technical direction approved by the maintainer on 2026-11-16, including
 conversation-independent permissions, device/scope-bound Full access consent, and applying profile
 changes to subsequent operations while existing work retains its starting grant. The bounded
