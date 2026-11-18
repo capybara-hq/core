@@ -186,7 +186,7 @@ export interface FakeSlackServer {
    * step of the external upload flow: it answers `failure.status` (default 500) with a plain-text body.
    */
   failNext(method: string, failure: FakeSlackFailure, count?: number): void;
-  /** 之后该方法的每次调用先等 `ms` 毫秒再响应（0 取消）。 `"upload"` holds the upload POST. */
+  /** Every later call of the method waits `ms` milliseconds before answering (0 cancels); `"upload"` holds the upload POST. */
   delay(method: string, ms: number): void;
   /** 接下来 `count` 条 Socket Mode 连接在发出 hello 后立即被关闭（不发 disconnect 消息）。 */
   dropNextConnections(count: number): void;

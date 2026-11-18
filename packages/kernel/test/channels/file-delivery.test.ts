@@ -7,6 +7,7 @@ import {
   fileRootText,
   formatFileSize,
   planFileDelivery,
+  pluginFileName,
   readArtifactCapped,
 } from "../../src/channels/file-delivery.js";
 import { ConfigError, resolveConfig } from "../../src/config/load.js";
@@ -46,6 +47,18 @@ describe("planFileDelivery", () => {
     });
     expect(plan({ size: 100, contentType: "image/svg+xml" })).toMatchObject({ kind: "file" });
     expect(plan({ size: 100, contentType: "image/heic" })).toMatchObject({ kind: "file" });
+  });
+  it("an invalid features.files declaration is no native support; a bad imageMaxBytes falls back", () => {
+    const t = { size: 100, contentType: "image/png" };
+    for (const maxBytes of [Number.NaN, Number.POSITIVE_INFINITY, 0, -5, undefined]) {
+      const f = { ...features, files: { maxBytes } } as unknown as typeof features;
+      expect(plan(t, { features: f })).toEqual({ mode: "link", reason: "unsupported" });
+    }
+    for (const imageMaxBytes of [Number.NaN, 0, -1]) {
+      const f = { ...features, files: { maxBytes: 50, imageMaxBytes } };
+      expect(plan({ ...t, size: 40 }, { features: f })).toMatchObject({ kind: "image", cap: 50 });
+      expect(plan(t, { features: f })).toEqual({ mode: "link", reason: "too_large" });
+    }
   });
   it("link reasons", () => {
     const t = { contentType: "application/pdf" };
@@ -280,5 +293,15 @@ describe("channels file config", () => {
     expect(() => resolveConfig(base, { CAPYBARA_CHANNELS__FILE_CONCURRENCY: "0" })).toThrow(
       ConfigError,
     );
+  });
+});
+
+describe("pluginFileName", () => {
+  it("replaces control characters and path separators, caps the length, never returns empty", () => {
+    expect(pluginFileName("report.pdf")).toBe("report.pdf");
+    expect(pluginFileName("a\nb\r\tc\u0000d\u007fe")).toBe("a b c d e");
+    expect(pluginFileName("../etc\\passwd/x")).toBe(".._etc_passwd_x");
+    expect(pluginFileName("  \n ")).toBe("file");
+    expect(Array.from(pluginFileName("é".repeat(500)))).toHaveLength(200);
   });
 });

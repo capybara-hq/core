@@ -530,7 +530,10 @@ describe("fake Telegram uploads", () => {
 
   it("refuses a caption over 1024 characters and an empty file", async () => {
     tg = await startFakeTelegram();
-    const long = await upload(tg, "sendPhoto", "photo", { chat_id: "1", caption: "x".repeat(1025) });
+    const long = await upload(tg, "sendPhoto", "photo", {
+      chat_id: "1",
+      caption: "x".repeat(1025),
+    });
     expect(long).toMatchObject({ status: 400, body: { ok: false } });
     const form = new FormData();
     form.set("chat_id", "1");

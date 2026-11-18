@@ -29,11 +29,20 @@ export function planFileDelivery(input: {
   }
   if (artifact.size === 0) return { mode: "link", reason: "empty" };
   const files = features.files;
-  if (files === undefined || !input.canSendFile) return { mode: "link", reason: "unsupported" };
+  if (!input.canSendFile || !validFiles(files)) return { mode: "link", reason: "unsupported" };
   if (fileMaxBytes === 0) return { mode: "link", reason: "disabled" };
   const cap = Math.min(files.maxBytes, fileMaxBytes);
   if (artifact.size > cap) return { mode: "link", reason: "too_large" };
   return { mode: "native", kind: fileKind(artifact.contentType, artifact.size, files), cap };
+}
+
+function positive(n: unknown): n is number {
+  return typeof n === "number" && Number.isFinite(n) && n > 0;
+}
+
+/** A declaration with a finite positive `maxBytes`; anything else is no native file support. */
+function validFiles(files: Channel["features"]["files"]): files is NonNullable<typeof files> {
+  return files !== undefined && positive(files.maxBytes);
 }
 
 /** An image iff the content type is a supported raster type and the size fits the image limit. */
@@ -44,7 +53,27 @@ export function fileKind(
 ): "image" | "file" {
   const type = (contentType.split(";")[0] ?? "").trim().toLowerCase();
   const isImage = (IMAGE_MEDIA_TYPES as readonly string[]).includes(type);
-  return isImage && size <= (files.imageMaxBytes ?? files.maxBytes) ? "image" : "file";
+  return isImage && size <= (positive(files.imageMaxBytes) ? files.imageMaxBytes : files.maxBytes)
+    ? "image"
+    : "file";
+}
+
+const MAX_PLUGIN_FILE_NAME = 200;
+
+/**
+ * The name handed to a plugin: the model chooses file names, so control characters become spaces
+ * and path separators `_`, the length is capped, and an empty result is `file`. The link and root
+ * lines show the original name (through `asCode`).
+ */
+export function pluginFileName(name: string): string {
+  const clean = name
+    // biome-ignore lint/suspicious/noControlCharactersInRegex: stripping control characters is the point
+    .replace(/[\u0000-\u001f\u007f-\u009f]/g, " ")
+    .replace(/ {2,}/g, " ")
+    .replace(/[\\/]/g, "_")
+    .trim();
+  const capped = Array.from(clean).slice(0, MAX_PLUGIN_FILE_NAME).join("").trim();
+  return capped === "" ? "file" : capped;
 }
 
 /** `512 B`, `1.5 KB`, `2.3 MB`, `1.0 GB` (1024-based). */

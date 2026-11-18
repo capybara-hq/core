@@ -55,6 +55,7 @@ import {
   fileLinkText,
   fileRootText,
   planFileDelivery,
+  pluginFileName,
   readArtifactCapped,
 } from "./file-delivery.js";
 import { ChannelInbound } from "./inbound.js";
@@ -1254,7 +1255,7 @@ class Delivery {
       await this.send({ text: fileRootText(a.name, this.locale) }, this.key(seq, "-root"));
     }
     const file = {
-      name: a.name,
+      name: pluginFileName(a.name),
       contentType: a.contentType,
       kind: fileKind(a.contentType, read.data.byteLength, files),
       data: read.data,
