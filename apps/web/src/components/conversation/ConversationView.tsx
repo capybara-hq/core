@@ -585,6 +585,11 @@ export function useConversationPage(
           placeholder={t("placeholder")}
           control={composer}
           {...(canCompact ? { onCompact: compact } : {})}
+          // a prompt suggestion: a root conversation's composer only, hidden while a send is
+          // pending or a run is going (the reader's rule, prompt suggestions spec §4)
+          {...(isRoot && !active && conv.suggestion !== null
+            ? { suggestion: conv.suggestion }
+            : {})}
           // the agent's quick actions, as on a new conversation: a zap menu that fills the composer
           {...(quickActions.length > 0
             ? {

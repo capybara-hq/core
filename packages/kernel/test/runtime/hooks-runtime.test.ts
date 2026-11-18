@@ -233,10 +233,20 @@ describe("model hooks", () => {
 
   it("model.response: success carries the usage of the usage event; a provider error is failed with errorCode", async () => {
     await probe({});
-    const before = (await counts()).counts["model.response"] ?? 0;
-    const { events } = await turn("echo:usage please");
-    let c = await countReaches("model.response", before + 1);
-    const ok = c.last["model.response"] as ModelResponseHookPayload;
+    // the step's response in `conv` (a title or prompt suggestion call may follow it)
+    const stepResponse = (conv: string) =>
+      waitFor(
+        async () => {
+          const r = (await counts("step")).last["model.response"] as
+            | ModelResponseHookPayload
+            | undefined;
+          return r?.conversationId === conv ? r : null;
+        },
+        10_000,
+        "the step's model.response",
+      );
+    const { conv, events } = await turn("echo:usage please");
+    const ok = await stepResponse(conv);
     const [usage] = ofType(events, "usage");
     expect(ok.outcome).toBe("ok");
     expect(ok.usage).toEqual({
@@ -247,10 +257,9 @@ describe("model hooks", () => {
     });
     expect(ok.latencyMs).toBeGreaterThanOrEqual(0);
 
-    const { events: failedEvents } = await turn("fail:invalid_request");
+    const { conv: failedConv, events: failedEvents } = await turn("fail:invalid_request");
     expect(ofType(failedEvents, "run_failed")[0]?.payload.error.code).toBe("model.invalid_request");
-    c = await countReaches("model.response", before + 2);
-    const failed = c.last["model.response"] as ModelResponseHookPayload;
+    const failed = await stepResponse(failedConv);
     expect(failed).toMatchObject({
       outcome: "failed",
       errorCode: "model.invalid_request",

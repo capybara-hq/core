@@ -154,9 +154,10 @@ async function turn(text: string): Promise<{ conv: string; usage: ConversationEv
   const conv = await createConv(owner, orgId, agentId);
   await postMessage(owner, orgId, conv, text);
   await waitForTerminal(db, conv, 1, 20_000);
-  // the conversation title call's usage (UI refresh B) lands asynchronously: covered by its own case
+  // the conversation title and prompt suggestion calls' usage lands asynchronously: the step
+  // calls' usage only (absent purpose)
   const usage = (await eventsOf(db, conv)).filter(
-    (e) => e.type === "usage" && (e.payload as { purpose?: string }).purpose !== "title",
+    (e) => e.type === "usage" && (e.payload as { purpose?: string }).purpose === undefined,
   );
   return { conv, usage };
 }

@@ -310,6 +310,8 @@ export type DeploymentSettingsView = DeploymentSettings & {
   externalSharing: ExternalSharingView;
   /** The longest expiry a share may take, in days, and where it comes from. */
   shareMaxExpiryDays: ShareMaxExpiryView;
+  /** The platform's prompt suggestions switch (absent reads `on`). */
+  promptSuggestions: "on" | "off";
 };
 
 const autoModeWidenRefused = (): ApiError =>
@@ -317,6 +319,33 @@ const autoModeWidenRefused = (): ApiError =>
     "deployment.auto_mode_not_allowed",
     "Allowing Full permission at the platform level (devicesFullAccess) needs a super admin in the admin console; an API token or the Platform tool may only turn it off.",
   );
+
+/** The `deployment_settings` key of the platform's prompt suggestions switch (`"on" | "off"`). */
+export const PROMPT_SUGGESTIONS_SETTING = "promptSuggestions";
+
+const PromptSuggestionsValue = z.enum(["on", "off"]);
+
+/**
+ * The platform's prompt suggestions switch, read live from PG (in the caller's transaction when
+ * there is one): absent is `on`; an invalid stored value reads as `off` with a warning.
+ */
+export async function readPromptSuggestions(
+  db: KernelSchemaDb,
+  log?: Pick<KernelLogger, "warn">,
+): Promise<"on" | "off"> {
+  const row = await db
+    .selectFrom("deployment_settings")
+    .select("value")
+    .where("key", "=", PROMPT_SUGGESTIONS_SETTING)
+    .executeTakeFirst();
+  if (row === undefined) return "on";
+  const parsed = PromptSuggestionsValue.safeParse(row.value);
+  if (parsed.success) return parsed.data;
+  log?.warn("invalid deployment setting; it reads as prompt suggestions off", {
+    key: PROMPT_SUGGESTIONS_SETTING,
+  });
+  return "off";
+}
 
 const externalSharingWidenRefused = (): ApiError =>
   new ApiError(
@@ -408,6 +437,11 @@ export const DEPLOYMENT_SETTINGS_PATCH = z
      * value set in the startup config is read-only (409 `deployment.setting_readonly`).
      */
     shareMaxExpiryDays: ShareMaxExpiryDays.nullable().optional(),
+    /**
+     * Whether the composer suggests the person's next message after a completed run, for the whole
+     * platform; null clears it (back to the default, on). An org's own switch must be on too.
+     */
+    promptSuggestions: PromptSuggestionsValue.nullable().optional(),
     /** The CDN allowlist of rendered HTML files, replaced whole (stored without duplicates). */
     htmlRenderCdnAllowlist: HtmlCdnAllowlistSchema.optional(),
   })
@@ -633,14 +667,21 @@ export class SettingsService {
 
   /** The settings with the platform's Full switch and attribution defaults in effect. */
   async view(): Promise<DeploymentSettingsView> {
-    const [settings, devicesFullAccess, attribution, externalSharing, shareMaxExpiryDays] =
-      await Promise.all([
-        this.get(),
-        readDevicesFullAccess(this.db.db, this.config, this.log),
-        readStoredPlatformAttribution(this.db.db, this.log),
-        readExternalSharing(this.db.db, this.config, this.log),
-        readShareMaxExpiry(this.db.db, this.config, this.log),
-      ]);
+    const [
+      settings,
+      devicesFullAccess,
+      attribution,
+      externalSharing,
+      shareMaxExpiryDays,
+      promptSuggestions,
+    ] = await Promise.all([
+      this.get(),
+      readDevicesFullAccess(this.db.db, this.config, this.log),
+      readStoredPlatformAttribution(this.db.db, this.log),
+      readExternalSharing(this.db.db, this.config, this.log),
+      readShareMaxExpiry(this.db.db, this.config, this.log),
+      readPromptSuggestions(this.db.db, this.log),
+    ]);
     return {
       ...settings,
       devicesFullAccess,
@@ -648,6 +689,7 @@ export class SettingsService {
       attribution: this.attributionView(attribution),
       externalSharing,
       shareMaxExpiryDays,
+      promptSuggestions,
     };
   }
 
@@ -969,6 +1011,10 @@ export class SettingsService {
         if (value === null) deletes.push(key);
         else if (value !== undefined) writes.push([key, value]);
       }
+    }
+    if (patch.promptSuggestions === null) deletes.push(PROMPT_SUGGESTIONS_SETTING);
+    else if (patch.promptSuggestions !== undefined) {
+      writes.push([PROMPT_SUGGESTIONS_SETTING, patch.promptSuggestions]);
     }
     if (deletes.length > 0) {
       await this.db.deleteFrom("deployment_settings").where("key", "in", deletes).execute();

@@ -331,6 +331,11 @@ export interface DeploymentSettings {
   shareMaxExpiryDays?: SharingSetting<number>;
   /** The https:// origins a rendered HTML file may load scripts, styles, fonts and images from. */
   htmlRenderCdnAllowlist?: string[];
+  /**
+   * Prompt suggestions after a completed run, for every org (prompt suggestions spec §6); absent
+   * from a kernel before the setting (read as on).
+   */
+  promptSuggestions?: "on" | "off";
 }
 
 /** A sharing setting in effect with its source (`env` / `file` / `nacos` are read-only here). */
@@ -417,6 +422,7 @@ export type DeploymentSettingsPatch = Partial<
     | "compaction"
     | "externalSharing"
     | "shareMaxExpiryDays"
+    | "promptSuggestions"
   >
 > & {
   /** `allow` / `deny`; null clears the stored choice (back to deny). */
@@ -436,6 +442,8 @@ export type DeploymentSettingsPatch = Partial<
   devicesAutoMode?: DevicesAutoModePatch;
   /** Each given field replaces the stored one; fields left out keep their value. */
   compaction?: CompactionSettingsPatch;
+  /** `on` / `off`; null clears the stored choice (back to on). */
+  promptSuggestions?: "on" | "off" | null;
 };
 
 export interface NewAccountInput {

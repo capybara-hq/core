@@ -141,7 +141,8 @@ describe("usage.report across two replicas", () => {
     const usage: ConversationEvent[] = [];
     for (let i = 0; i < 5; i++) {
       const conv = await createConv(reqA, orgId, agentId);
-      // a manual title: no title call, so every usage event here is a step call's
+      // a manual title: no title call, so the usage events here are the two step calls' and the
+      // prompt suggestion call's (after run_finished)
       const renamed = await reqA({
         method: "PATCH",
         url: `/api/v1/orgs/${orgId}/conversations/${conv}`,
@@ -150,9 +151,19 @@ describe("usage.report across two replicas", () => {
       expect(renamed.statusCode).toBe(200);
       await postMessage(reqA, orgId, conv, `tool:${TOOL}:{"text":"${i}"}`);
       await waitForTerminal(db, conv, 1, 20_000);
-      usage.push(...(await eventsOf(db, conv)).filter((e) => e.type === "usage"));
+      const events = await waitFor(
+        async () => {
+          const evs = await eventsOf(db, conv);
+          return evs.some((e) => e.type === "usage" && e.payload.purpose === "suggestion")
+            ? evs
+            : null;
+        },
+        20_000,
+        "the prompt suggestion usage",
+      );
+      usage.push(...events.filter((e) => e.type === "usage"));
     }
-    expect(usage).toHaveLength(10);
+    expect(usage).toHaveLength(15);
     const ids = usage.map(idOf);
     await waitFor(
       async () => {
@@ -163,7 +174,7 @@ describe("usage.report across two replicas", () => {
       "all deliveries",
     );
     const [onA, onB] = [await who(reqA), await who(reqB)];
-    expect(onA.delivered + onB.delivered).toBe(10);
+    expect(onA.delivered + onB.delivered).toBe(15);
     expect(onA.delivered).toBeGreaterThan(0);
     expect(onB.delivered).toBeGreaterThan(0);
   });

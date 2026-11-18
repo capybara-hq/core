@@ -170,6 +170,17 @@ export const CONV_COPY = {
   open: "打开",
 } as const;
 
+/**
+ * The composer's prompt suggestion (spec §6.16.2 state `suggestion`): the placeholder text and the
+ * touch button's label and accessible name.
+ */
+export const SUGGESTION_FIXTURE = {
+  text: "把汇总表导出成 CSV",
+  hint: "按 Tab 使用建议",
+  use: "使用建议",
+  useNamed: "使用建议：把汇总表导出成 CSV",
+} as const;
+
 // ── Tool calls ──────────────────────────────────────────────────────────────
 
 export type FixtureDiffLine = {

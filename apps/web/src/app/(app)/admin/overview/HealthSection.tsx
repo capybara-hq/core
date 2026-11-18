@@ -41,6 +41,7 @@ type QueueLabel =
   | "maintenance"
   | "pluginScope"
   | "titles"
+  | "suggestions"
   | "usageReport"
   | "evals"
   | "lifecycle";
@@ -53,6 +54,7 @@ const QUEUE_LABELS: Record<string, QueueLabel> = {
   "cap-kernel-maintenance": "maintenance",
   "cap-kernel-plugin-scope": "pluginScope",
   "cap-kernel-titles": "titles",
+  "cap-kernel-suggestions": "suggestions",
   "cap-kernel-usage-report": "usageReport",
   "cap-kernel-evals": "evals",
   "cap-kernel-lifecycle": "lifecycle",

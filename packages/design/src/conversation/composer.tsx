@@ -285,6 +285,19 @@ export type ComposerBoxProps = {
    * calls `onRemove` and keeps the text.
    */
   token?: ComposerToken;
+  /**
+   * A prompt suggestion (state `suggestion`): the person's likely next message after a completed
+   * run. It is the placeholder while the draft is empty, no `token` is set and no `hint` shows;
+   * Tab (no modifier) fills the draft with it, and on a touch device a "Use suggestion" button
+   * before send does.
+   */
+  suggestion?: {
+    text: string;
+    /** Esc, typing, paste or attaching ended it for this run; the caller stops passing it. */
+    onDismiss(): void;
+  };
+  /** The reference set and catalog only: draw the suggestion's touch button with a fine pointer. */
+  referenceTouch?: boolean;
 };
 
 /** The order the warning names kinds in (the vendor ones before the entropy guess). */
@@ -358,9 +371,17 @@ export function ComposerBox({
   textareaRef,
   autoFocus,
   token,
+  suggestion,
+  referenceTouch,
   frame = true,
 }: ComposerBoxProps): JSX.Element {
   const t = useDesignT();
+  // The prompt suggestion shows only over an empty, idle draft without a skill chip.
+  const suggested = suggestion && value === "" && !token && !hint ? suggestion : undefined;
+  // A touch device has no Tab key: the suggestion gets a button. Read after mounting, never in
+  // render, so the server render and hydration agree.
+  const [touch, setTouch] = useState(false);
+  useEffect(() => setTouch(isTouchPointer()), []);
   // The token paste warning (setup guides v2 spec §12.1): raised by a paste holding token-like
   // text or by a send whose draft holds some; a guard against a slip, never a block. The draft is
   // scanned here in the browser only: nothing is logged or sent anywhere.
@@ -388,6 +409,7 @@ export function ComposerBox({
   };
   const id = useId();
   const tokenLabelId = `${id}-token`;
+  const suggestionHintId = `${id}-suggestion`;
   const inner = useRef<HTMLTextAreaElement | null>(null);
   // the caller's ref and ours on the same textarea
   const setRef = useCallback(
@@ -406,8 +428,27 @@ export function ComposerBox({
     refocus.current = false;
     inner.current?.focus();
   }, [token]);
+  /** Fills the draft with the suggestion and ends it for this run. */
+  const takeSuggestion = (text: string, caret: boolean) => {
+    onChange(text);
+    if (caret) {
+      // the caret goes to the end once the draft holds the text
+      requestAnimationFrame(() => inner.current?.setSelectionRange(text.length, text.length));
+    }
+    suggestion?.onDismiss();
+  };
   const keyDown = (e: KeyboardEvent<HTMLTextAreaElement>) => {
     const el = e.currentTarget;
+    if (suggested && !e.nativeEvent.isComposing) {
+      // Tab is taken only here (an empty draft showing a suggestion), so focus navigation is
+      // unchanged everywhere else; Shift+Tab and Tab with a modifier never are.
+      if (e.key === "Tab" && !e.shiftKey && !e.altKey && !e.ctrlKey && !e.metaKey) {
+        e.preventDefault();
+        takeSuggestion(suggested.text, true);
+        return;
+      }
+      if (e.key === "Escape") suggested.onDismiss();
+    }
     if (onKeyDown && e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing && !gate()) {
       e.preventDefault();
       return;
@@ -430,15 +471,22 @@ export function ComposerBox({
       id={id}
       ref={setRef}
       value={value}
-      placeholder={token?.hint ?? hint ?? placeholder}
+      placeholder={suggested ? suggested.text : (token?.hint ?? hint ?? placeholder)}
       {...(token ? { "aria-describedby": tokenLabelId } : {})}
+      {...(suggested ? { "aria-describedby": suggestionHintId, "data-suggestion": "true" } : {})}
       autoFocus={autoFocus}
-      onChange={(e) => onChange(e.target.value)}
-      {...(onKeyDown || token ? { onKeyDown: keyDown } : {})}
+      onChange={(e) => {
+        onChange(e.target.value);
+        // any edit that leaves text ends the suggestion for this run
+        if (suggestion && e.target.value !== "") suggestion.onDismiss();
+      }}
+      {...(onKeyDown || token || suggested ? { onKeyDown: keyDown } : {})}
       onPaste={(e) => {
         if (findTokenLikeSpans(e.clipboardData?.getData("text/plain") ?? "").length > 0) {
           setWarn(true);
         }
+        // a paste counts as typing, a pasted file too (it changes no text)
+        suggested?.onDismiss();
         onPaste?.(e);
       }}
     />
@@ -504,12 +552,21 @@ export function ComposerBox({
       ) : (
         input
       )}
+      {suggested ? (
+        <span id={suggestionHintId} className="cb-sr-only" data-part="composer-suggestion-hint">
+          {t("composer.suggestion.hint")}
+        </span>
+      ) : null}
       <div className="cb-composer-bar" data-part="composer-bar">
         <IconButton
           label={t("composer.attach")}
           icon={<Icon name="plus" size={16} />}
           disabled={attachDisabled}
-          onClick={onAttach}
+          onClick={() => {
+            // attaching a file counts as typing
+            suggested?.onDismiss();
+            onAttach();
+          }}
         />
         {pickers.agent ? <Picker {...pickers.agent} /> : null}
         {/* 640 and up: individual pickers; phones: one options button and its bottom sheet (CSS). */}
@@ -528,6 +585,20 @@ export function ComposerBox({
         {quickActions ?? null}
         {agents ?? null}
         <span className="cb-grow" />
+        {suggested && (touch || referenceTouch) ? (
+          <Button
+            variant="ghost"
+            density="dense"
+            part="composer-suggestion-use"
+            className="cb-composer-suggestion-use"
+            aria-label={t("composer.suggestion.useNamed").replace("{text}", () => suggested.text)}
+            // fills the draft without focusing it: a tap never pops the keyboard
+            onClick={() => takeSuggestion(suggested.text, false)}
+          >
+            <Icon name="corner-down-left" size={14} />
+            {t("composer.suggestion.use")}
+          </Button>
+        ) : null}
         {send.mode === "stop" ? (
           <IconButton
             className="cb-stop"

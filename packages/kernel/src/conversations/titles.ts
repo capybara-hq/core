@@ -299,7 +299,7 @@ export async function runTitleJob(
         .execute();
       return;
     }
-    if (sent && d.hooks) observeTitle(d, scope, sent, null, err, signal);
+    if (sent && d.hooks) observeTitle(d, scope, sent, null, err, lifecycleOf(d));
     // the replica is shutting down: give the attempt back unless something else took over
     if (d.signal?.aborted && !(err instanceof PurposeAttemptError)) {
       await giveBack(d.db, conversationId, attempt);
@@ -321,7 +321,7 @@ export async function runTitleJob(
     }
     return;
   }
-  if (sent && d.hooks) observeTitle(d, scope, sent, out, null, signal);
+  if (sent && d.hooks) observeTitle(d, scope, sent, out, null, lifecycleOf(d));
   const title = cleanTitle(textOf(out.content));
   if (title === null) {
     d.log.warn("conversation title call returned no title", {
@@ -438,14 +438,21 @@ const errorCodeOf = (err: unknown): string => {
   return isModelError(cause) ? `model.${cause.kind}` : "model.unknown";
 };
 
-/** `model.response` for a sent title call (observe only, not awaited). */
+/** The signal the observe hooks run on: the worker stopping, or one that never aborts. */
+const lifecycleOf = (d: TitleDeps): AbortSignal => d.signal ?? new AbortController().signal;
+
+/**
+ * `model.response` for a sent title call (observe only, not awaited). The hooks run on
+ * `lifecycle` (the worker stopping), never on the call's own signal: after the call's time limit
+ * that signal is aborted and the hooks would be skipped.
+ */
 function observeTitle(
   d: TitleDeps,
   scope: HookScope,
   sent: { provider: string; model: string; at: number },
   out: Awaited<ReturnType<ModelPurposesService["chat"]>> | null,
   err: unknown,
-  signal: AbortSignal,
+  lifecycle: AbortSignal,
 ): void {
   if (!d.hooks) return;
   fireObserve(
@@ -465,7 +472,7 @@ function observeTitle(
       latencyMs: Date.now() - sent.at,
       ...(out === null && { errorCode: errorCodeOf(err) }),
     },
-    signal,
+    lifecycle,
     d.log,
   );
 }

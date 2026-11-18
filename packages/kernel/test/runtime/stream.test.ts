@@ -43,15 +43,29 @@ const params = {
 
 /** The provider over test doubles (its constructor takes the injected dependencies). */
 const streamsWith = (
-  d: Omit<ConversationStreamsDeps, "config" | "eventLog" | "drafts"> & {
+  d: Omit<
+    ConversationStreamsDeps,
+    "config" | "eventLog" | "drafts" | "suggestions" | "suggestionsEnabled"
+  > & {
     eventLog: ConversationStreamsDeps["eventLog"];
     config: () => typeof config;
     drafts?: ConversationStreamsDeps["drafts"];
   },
 ) =>
-  new ConversationStreams(d.eventLog, d.bus, { isAccessible: d.access }, { get: d.config }, d.log, {
-    live: d.drafts ?? (async () => []),
-  });
+  new ConversationStreams(
+    d.eventLog,
+    d.bus,
+    { isAccessible: d.access },
+    { get: d.config },
+    d.log,
+    {
+      live: d.drafts ?? (async () => []),
+    },
+    { get: async () => null, delete: async () => {}, isFresh: async () => false },
+    {
+      promptSuggestionsEnabled: async () => true,
+    },
+  );
 
 describe("ConversationStreams", () => {
   it("订阅失败：抛出原错误，且不碰输出端（由 HTTP 层按普通错误返回）", async () => {

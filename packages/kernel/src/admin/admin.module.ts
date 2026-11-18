@@ -1,6 +1,7 @@
 import { Module } from "@nestjs/common";
 import { CatalogModule } from "../catalog/catalog.module.js";
 import { ChannelsModule } from "../channels/channels.module.js";
+import { PromptSuggestionsModule } from "../conversations/prompt-suggestions.js";
 import { TitlesModule } from "../conversations/titles.js";
 import { EvalsModule } from "../evals/evals.module.js";
 import { ExtensionsModule } from "../extensions/extensions.module.js";
@@ -41,6 +42,7 @@ import { AdminUsageService } from "./usage.service.js";
     RunJobsModule,
     ChannelsModule,
     TitlesModule,
+    PromptSuggestionsModule,
     UsageReportModule,
     EvalsModule,
     LifecycleHooksModule,

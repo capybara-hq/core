@@ -3,6 +3,7 @@ import { PluginScopeSyncProcessor } from "../catalog/scope-sync-workers.js";
 import { ChannelsProcessor } from "../channels/channels.module.js";
 import { ChannelOutbound } from "../channels/outbound.js";
 import type { KernelConfig } from "../config/schema.js";
+import { PromptSuggestionQueue } from "../conversations/prompt-suggestions.js";
 import { TitleQueue } from "../conversations/titles.js";
 import { EvalsProcessor } from "../evals/evals.module.js";
 import { EvalWorker } from "../evals/worker.js";
@@ -14,6 +15,7 @@ import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
 import { MaintenanceProcessor } from "../runtime/maintenance.js";
 import {
+  PromptSuggestionProcessor,
   RunsProcessor,
   SubagentRunsProcessor,
   TitleProcessor,
@@ -26,7 +28,7 @@ import { UsageReporter } from "../runtime/usage-report.js";
  * The worker role's parts, driven by `KernelLifecycle` at fixed points of its start order and stop
  * phases (so they stay ordered after the extension load and before the extension host closes): the
  * queue consumers (runs, sub-agent runs, evals, maintenance, the plugin scope sync, lifecycle
- * hook deliveries, channel deliveries, `usage.report`, titles) and the schedulers of the `@LockedCron` / `@LockedInterval` jobs. Provided only by
+ * hook deliveries, channel deliveries, `usage.report`, titles, prompt suggestions) and the schedulers of the `@LockedCron` / `@LockedInterval` jobs. Provided only by
  * `WorkerModule`, so a process without the worker role has none of them.
  */
 @Injectable()
@@ -47,11 +49,14 @@ export class WorkerRole {
     @Inject(EvalWorker) private readonly evalWorker: EvalWorker,
     @Inject(UsageReporter) private readonly usageReport: UsageReporter,
     @Inject(TitleQueue) private readonly titles: TitleQueue,
+    @Inject(PromptSuggestionQueue) private readonly suggestions: PromptSuggestionQueue,
     @Inject(ChannelOutbound) private readonly channelOutbound: ChannelOutbound,
     @Inject(RunsProcessor) private readonly runsProcessor: RunsProcessor,
     @Inject(SubagentRunsProcessor) private readonly subagentRunsProcessor: SubagentRunsProcessor,
     @Inject(UsageReportProcessor) private readonly usageProcessor: UsageReportProcessor,
     @Inject(TitleProcessor) private readonly titleProcessor: TitleProcessor,
+    @Inject(PromptSuggestionProcessor)
+    private readonly suggestionProcessor: PromptSuggestionProcessor,
     @Inject(ChannelsProcessor) private readonly channelsProcessor: ChannelsProcessor,
     @Inject(EvalsProcessor) private readonly evalsProcessor: EvalsProcessor,
     @Inject(MaintenanceProcessor) private readonly maintenanceProcessor: MaintenanceProcessor,
@@ -80,6 +85,7 @@ export class WorkerRole {
     this.channelOutbound.startWorker(this.channelsProcessor.worker);
     this.usageReport.startWorker(this.usageProcessor.worker);
     this.titles.startWorker(this.titleProcessor.worker);
+    this.suggestions.startWorker(this.suggestionProcessor.worker);
     if (!this.config.roles.includes("gateway")) {
       this.log.info(
         "this process runs the worker role without gateway; channel long connections are held only by processes with the gateway role",

@@ -72,7 +72,7 @@ export default function OrganizationSettingsView() {
  */
 type OrgDraft = Pick<
   Partial<OrgSettings>,
-  "toolSearch" | "locale" | "platformTool" | "timeZone" | "externalSharing"
+  "toolSearch" | "locale" | "platformTool" | "timeZone" | "externalSharing" | "promptSuggestions"
 > & { compaction?: CompactionSettingsPatch | null };
 
 function OrganizationSettings({ orgId }: { orgId: string }) {
@@ -80,6 +80,7 @@ function OrganizationSettings({ orgId }: { orgId: string }) {
   const t = useTranslations("orgSettings");
   const tc = useTranslations("common");
   const tcp = useTranslations("compaction");
+  const tps = useTranslations("promptSuggestions");
   const toast = useToast();
   const errorMessage = useErrorMessage();
   const nav = useOrgSettingsNav();
@@ -151,6 +152,12 @@ function OrganizationSettings({ orgId }: { orgId: string }) {
           loading={{ fields: [{ control: "switch" }] }}
         />
         <FormSection
+          id="prompt-suggestions"
+          title={tps("title")}
+          description={tps("description")}
+          loading={{ fields: [{ control: "switch" }] }}
+        />
+        <FormSection
           id="compaction"
           title={tcp("title")}
           description={tcp("description")}
@@ -180,6 +187,11 @@ function OrganizationSettings({ orgId }: { orgId: string }) {
   const platformDeniesSharing = read.data.deployment?.externalSharing?.value === "deny";
   const savedSharing = saved.externalSharing ?? "off";
   const externalSharing = draft.externalSharing ?? savedSharing;
+  // Prompt suggestions: on unless the org turned them off, and never on while the platform has
+  // them off (the switch is locked then)
+  const platformSuggestionsOff = read.data.deployment?.promptSuggestions === "off";
+  const savedSuggestions = saved.promptSuggestions ?? "on";
+  const promptSuggestions = draft.promptSuggestions ?? savedSuggestions;
   // The org's compaction override: absent follows the platform, null (an explicit choice) too.
   // The draft holds only the fields the admin set, merged over the stored override, so fields
   // left alone keep following the platform; the fields show the values the org actually gets.
@@ -210,6 +222,10 @@ function OrganizationSettings({ orgId }: { orgId: string }) {
       ? { timeZone: timeZone === "UTC" ? null : timeZone }
       : {}),
     ...(externalSharing !== savedSharing ? { externalSharing } : {}),
+    // on is the default: turning it back on clears the setting (following the platform again)
+    ...(promptSuggestions !== savedSuggestions
+      ? { promptSuggestions: promptSuggestions === "on" ? null : "off" }
+      : {}),
     ...(compactionPatch !== undefined ? { compaction: compactionPatch } : {}),
   };
   const unsaved = Object.keys(patch).length;
@@ -334,6 +350,21 @@ function OrganizationSettings({ orgId }: { orgId: string }) {
           {platformDeniesSharing && (
             <Text variant="small" tone="muted">
               {t("externalSharing.platformDenied")}
+            </Text>
+          )}
+        </Stack>
+      </FormSection>
+      <FormSection id="prompt-suggestions" title={tps("title")} description={tps("description")}>
+        <Stack gap={4}>
+          <SwitchField
+            label={tps("title")}
+            checked={promptSuggestions === "on" && !platformSuggestionsOff}
+            disabled={!manage || platformSuggestionsOff}
+            onChange={(on) => setDraft((d) => ({ ...d, promptSuggestions: on ? "on" : "off" }))}
+          />
+          {platformSuggestionsOff && (
+            <Text variant="small" tone="muted">
+              {tps("platformOff")}
             </Text>
           )}
         </Stack>

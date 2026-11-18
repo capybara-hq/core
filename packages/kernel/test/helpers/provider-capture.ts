@@ -15,14 +15,19 @@ import { WEB_FETCH_SYSTEM_PROMPT } from "../../src/tools/builtins/web/extract.js
  */
 export interface ProviderCapture {
   /**
-   * Requests in the order they were sent, compaction, title, WebFetch extraction and command review
-   * requests left out (deep copies).
+   * Requests in the order they were sent, compaction, title, prompt suggestion, WebFetch extraction
+   * and command review requests left out (deep copies).
    */
   readonly sent: ModelRequest[];
   /** Compaction requests (their system carries the compaction marker). */
   readonly compactions: ModelRequest[];
   /** Conversation title requests (UI refresh B; their system is the title prompt). */
   readonly titles: ModelRequest[];
+  /**
+   * Prompt suggestion side requests (`purpose: "suggestion"`): sent after a completed web run,
+   * not a step of it, so `sent` and the zero-drift comparisons leave them out.
+   */
+  readonly suggestions: ModelRequest[];
   /** `WebFetch` extraction requests (their system is the extraction prompt). */
   readonly webFetches: ModelRequest[];
   /**
@@ -43,6 +48,7 @@ export function captureProviderRequests(): ProviderCapture {
   const sent: ModelRequest[] = [];
   const compactions: ModelRequest[] = [];
   const titles: ModelRequest[] = [];
+  const suggestions: ModelRequest[] = [];
   const webFetches: ModelRequest[] = [];
   const reviews: ModelRequest[] = [];
   const originalResolve = ProviderRegistry.prototype.resolve;
@@ -50,12 +56,14 @@ export function captureProviderRequests(): ProviderCapture {
     sent,
     compactions,
     titles,
+    suggestions,
     webFetches,
     reviews,
     reset() {
       sent.length = 0;
       compactions.length = 0;
       titles.length = 0;
+      suggestions.length = 0;
       webFetches.length = 0;
       reviews.length = 0;
     },
@@ -68,6 +76,7 @@ export function captureProviderRequests(): ProviderCapture {
           stream(req, opts) {
             const copy = structuredClone(req);
             if (req.purpose === "compaction") compactions.push(copy);
+            else if (req.purpose === "suggestion") suggestions.push(copy);
             else if (req.system.some((s) => s.text === TITLE_PROMPT)) titles.push(copy);
             else if (req.system.some((s) => s.text.startsWith(WEB_FETCH_SYSTEM_PROMPT))) {
               webFetches.push(copy);

@@ -122,6 +122,7 @@ function AdminSettingsRead() {
   const ta = useTranslations("appearance.platform");
   const tk = useTranslations("admin.settings.clientCode");
   const tcp = useTranslations("compaction");
+  const tps = useTranslations("promptSuggestions");
   const tsh = useTranslations("admin.settings.sharing");
   const header = { path: [...scope, { label: "settings" }], title: t("title") };
   if (read.kind === "notFound") return <NotFound />;
@@ -153,6 +154,12 @@ function AdminSettingsRead() {
           title={t("autoMode.title")}
           description={t("autoMode.description")}
           loading={{ fields: [{ control: "radio-cards", options: 2 }, { control: "text" }] }}
+        />
+        <FormSection
+          id="prompt-suggestions"
+          title={tps("title")}
+          description={tps("description")}
+          loading={{ fields: [{ control: "switch" }] }}
         />
         <FormSection
           id="compaction"
@@ -208,6 +215,7 @@ function AdminSettings({
 }) {
   const t = useTranslations("admin.settings");
   const ta = useTranslations("appearance");
+  const tps = useTranslations("promptSuggestions");
   const locale = useLocale();
   const tc = useTranslations("common");
   const toast = useToast();
@@ -225,8 +233,10 @@ function AdminSettings({
       if (patch.devicesAutoMode !== undefined) await invalidateDeviceModes(qc);
       // the attribution defaults ride on every org's settings (the agent page's help text)
       if (patch.attribution !== undefined) await invalidateAttribution(qc);
-      // the platform's compaction defaults are what an org that follows the platform shows
-      if (patch.compaction !== undefined) await invalidateCompactionSettings(qc);
+      // the platform's compaction defaults are what an org that follows the platform shows, and
+      // the prompt suggestion switch locks the org's (both ride on every org's settings)
+      if (patch.compaction !== undefined || patch.promptSuggestions !== undefined)
+        await invalidateCompactionSettings(qc);
       return r;
     },
     invalidates: (patch) => settingsChangeKeys(patch),
@@ -238,6 +248,7 @@ function AdminSettings({
   const [attributionDraft, setAttributionDraft] = useState<AttributionDraft>({});
   const [autoDraft, setAutoDraft] = useState<"allowed" | "off" | undefined>(undefined);
   const [compactionDraft, setCompactionDraft] = useState<CompactionSettingsPatch>({});
+  const [suggestionsDraft, setSuggestionsDraft] = useState<"on" | "off" | undefined>(undefined);
   const [sharingDraft, setSharingDraft] = useState<SharingDraft>({});
   const cq = adminComponentsQuery("theme");
   const eligible = (
@@ -285,6 +296,11 @@ function AdminSettings({
   const compaction: CompactionSettings = { ...savedCompaction, ...compactionDraft };
   const compactionPatch = compactionChange(savedCompaction, compaction);
   if (compactionPatch !== null) patch.compaction = compactionPatch;
+  const savedSuggestions = saved.promptSuggestions ?? "on";
+  const promptSuggestions = suggestionsDraft ?? savedSuggestions;
+  // "on" is the default: clear the key instead of storing it (spec §6)
+  if (promptSuggestions !== savedSuggestions)
+    patch.promptSuggestions = promptSuggestions === "on" ? null : "off";
   const sharing = sharingOf(saved, sharingDraft);
   Object.assign(patch, sharing.patch);
   const unsaved = Object.keys(patch).length;
@@ -299,6 +315,7 @@ function AdminSettings({
       setAttributionDraft({});
       setAutoDraft(undefined);
       setCompactionDraft({});
+      setSuggestionsDraft(undefined);
       setSharingDraft({});
       toast.success(t("saved"));
     } catch (e) {
@@ -346,6 +363,7 @@ function AdminSettings({
             setAttributionDraft({});
             setAutoDraft(undefined);
             setCompactionDraft({});
+            setSuggestionsDraft(undefined);
             setSharingDraft({});
           },
         },
@@ -406,6 +424,13 @@ function AdminSettings({
           onChange={(d) => setAttributionDraft((cur) => ({ ...cur, ...d }))}
         />
       )}
+      <FormSection id="prompt-suggestions" title={tps("title")} description={tps("description")}>
+        <SwitchField
+          label={tps("title")}
+          checked={promptSuggestions === "on"}
+          onChange={(on) => setSuggestionsDraft(on ? "on" : "off")}
+        />
+      </FormSection>
       <CompactionSection
         value={compaction}
         onChange={(d) => setCompactionDraft((cur) => ({ ...cur, ...d }))}

@@ -190,6 +190,7 @@ export class OrgsOperations implements OnModuleInit {
           "externalSharing",
           "shareMaxExpiryDays",
           "htmlRenderCdnAllowlist",
+          "promptSuggestions",
         ],
         extras: ["orgId", "runConcurrency", "sandbox", "subagents"],
         confirm: "platform",

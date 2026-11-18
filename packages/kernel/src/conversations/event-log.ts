@@ -70,6 +70,8 @@ export const conversationTopic = (conversationId: string): string => `conv.${con
  * - `compaction_progress`: a compaction of a run is running (context compaction spec §4.6), on that
  *   run's own conversation's topic **only** (a child's compaction stays on the child's stream); the
  *   SSE forwards the flat data as `event: compaction`. Ephemeral, display-only, not in the log.
+ * - `prompt_suggestion`: a completed run's prompt suggestion was stored (prompt suggestions spec
+ *   §4, `PromptSuggestionStore`). Ephemeral, display-only, not in the log.
  */
 export type ConversationBusMessage =
   | { kind: "events"; toSeq: number }
@@ -101,6 +103,13 @@ export type ConversationBusMessage =
       chunks?: number;
       chars?: number;
       startedAt: number;
+    }
+  | {
+      kind: "prompt_suggestion";
+      conversationId: string;
+      runId: string;
+      afterSeq: number;
+      text: string;
     };
 
 /**

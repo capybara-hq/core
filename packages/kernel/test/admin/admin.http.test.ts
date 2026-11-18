@@ -86,6 +86,7 @@ const DEFAULT_SHARING = {
   externalSharing: { value: "deny", source: "default" },
   shareMaxExpiryDays: { value: 30, source: "default" },
   htmlRenderCdnAllowlist: [...HTML_CDN_ALLOWLIST_DEFAULT],
+  promptSuggestions: "on",
 };
 
 /** The compaction settings with no stored platform value or org override (spec §4.8). */

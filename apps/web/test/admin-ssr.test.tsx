@@ -572,9 +572,9 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
     await expectLoading("FormPage", en.admin.settings.orgCreation.anyone);
     // three policies, 自动模式's two cards and 外观's theme cards, then 插件界面代码's switch row
     expect(document.querySelectorAll('[data-part="loading-radios"]')).toHaveLength(5);
-    // ... plus the compaction section (a switch and four numbers, no card radios) and the sharing
-    // section (a switch, a number and a list)
-    expect(document.querySelectorAll(".cb-form-section")).toHaveLength(9);
+    // ... plus the prompt suggestion switch, the compaction section (a switch and four numbers, no
+    // card radios) and the sharing section (a switch, a number and a list)
+    expect(document.querySelectorAll(".cb-form-section")).toHaveLength(10);
     await release();
   });
 

@@ -286,6 +286,69 @@ describe("org external sharing switch", () => {
   });
 });
 
+describe("prompt suggestions switches", () => {
+  const getAdmin = async () =>
+    (await adminReq({ method: "GET", url: "/api/v1/admin/settings" })).json();
+  const getOrg = async () =>
+    (await adminReq({ method: "GET", url: `/api/v1/orgs/${orgId}/settings` })).json();
+
+  it("the platform switch: absent reads on; off; null clears; an invalid stored value reads off", async () => {
+    expect((await getAdmin()).promptSuggestions).toBe("on");
+    const off = await putSettings({ promptSuggestions: "off" });
+    expect(off.statusCode, off.body).toBe(200);
+    expect(off.json().promptSuggestions).toBe("off");
+    expect((await getAdmin()).promptSuggestions).toBe("off");
+    const cleared = await putSettings({ promptSuggestions: null });
+    expect(cleared.json().promptSuggestions).toBe("on");
+    expect(
+      await db
+        .selectFrom("deployment_settings")
+        .select("key")
+        .where("key", "=", "promptSuggestions")
+        .execute(),
+    ).toEqual([]);
+    expect((await putSettings({ promptSuggestions: "maybe" })).statusCode).toBe(400);
+    await db
+      .insertInto("deployment_settings")
+      .values({ key: "promptSuggestions", value: JSON.stringify("maybe") })
+      .execute();
+    expect((await getAdmin()).promptSuggestions).toBe("off");
+  });
+
+  it("the org switch: absent follows; off; null clears; platform off wins; an invalid value reads off", async () => {
+    const url = `/api/v1/orgs/${orgId}/settings`;
+    let got = await getOrg();
+    expect(got.settings.promptSuggestions).toBeUndefined();
+    expect(got.deployment.promptSuggestions).toBe("on");
+    const off = await patchOrg({ promptSuggestions: "off" });
+    expect(off.statusCode, off.body).toBe(200);
+    expect(off.json().settings.promptSuggestions).toBe("off");
+    const on = await patchOrg({ promptSuggestions: "on" });
+    expect(on.json().settings.promptSuggestions).toBe("on");
+    // an org on under a platform off stays storable; the deployment view shows the platform off
+    await putSettings({ promptSuggestions: "off" });
+    got = await getOrg();
+    expect(got.settings.promptSuggestions).toBe("on");
+    expect(got.deployment.promptSuggestions).toBe("off");
+    // a token may widen or narrow it both ways
+    const req = await viaToken();
+    expect((await req("PATCH", url, { promptSuggestions: "off" })).statusCode).toBe(200);
+    expect((await req("PATCH", url, { promptSuggestions: "on" })).statusCode).toBe(200);
+    const cleared = await patchOrg({ promptSuggestions: null });
+    expect(cleared.json().settings.promptSuggestions).toBeUndefined();
+    const stored = await db
+      .selectFrom("orgs")
+      .select("settings")
+      .where("id", "=", orgId)
+      .executeTakeFirstOrThrow();
+    expect(stored.settings).not.toHaveProperty("promptSuggestions");
+    await sql`UPDATE capybara.orgs SET settings = settings || '{"promptSuggestions": "yes"}'::jsonb WHERE id = ${orgId}`.execute(
+      raw,
+    );
+    expect((await getOrg()).settings.promptSuggestions).toBe("off");
+  });
+});
+
 describe("the file_shares table", () => {
   it("exists and checks audience and revoke_reason", async () => {
     const conv = randomUUID();

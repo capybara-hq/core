@@ -2726,6 +2726,11 @@
     "loadFailed": "无法读取内部端点。",
     "retry": "重试"
   },
+  "promptSuggestions": {
+    "title": "输入建议",
+    "description": "智能体回复后，在输入框里给出你可能想发的下一条消息。每次会额外调用一次同一模型，通常大部分由缓存提供。",
+    "platformOff": "平台已关闭"
+  },
   "compaction": {
     "title": "对话压缩",
     "description": "长对话在填满模型的上下文窗口之前先压缩成摘要，长期进行的对话仍能带着最近的轮次继续。",
@@ -3978,6 +3983,7 @@
           "maintenance": "维护",
           "pluginScope": "插件范围同步",
           "titles": "会话标题",
+          "suggestions": "输入建议",
           "usageReport": "用量上报",
           "evals": "评测",
           "lifecycle": "生命周期通知"

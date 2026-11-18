@@ -209,12 +209,12 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
 
   it.each([
     // the radio cards of tool search, and the compaction section's follow checkbox and switch
-    // (its four numbers are plain fields) and the external sharing switch; the read-only note only
-    // for a member
+    // (its four numbers are plain fields), the external sharing and prompt suggestion switches;
+    // the read-only note only for a member
     [
       "/settings/organization",
       `GET ${O}/settings`,
-      { radios: 1, kv: 0, items: 0, switches: 2, groups: 0, hints: 0 },
+      { radios: 1, kv: 0, items: 0, switches: 3, groups: 0, hints: 0 },
     ],
     // the tool policy, auto mode and cloud network radios, the resources' key-value
     [
@@ -295,7 +295,7 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
     await r2();
   });
 
-  it("/settings/organization: the loading page keeps its six sections and an owner's danger zone (the role is the session's)", async () => {
+  it("/settings/organization: the loading page keeps its seven sections and an owner's danger zone (the role is the session's)", async () => {
     const loading = async (me: ReturnType<typeof as>) => {
       await renderRouteEmptyCache(
         "/settings/organization",
@@ -307,11 +307,12 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
       });
     };
     await loading(as("owner"));
-    expect(document.querySelectorAll('[data-part="form-section"]')).toHaveLength(6);
+    expect(document.querySelectorAll('[data-part="form-section"]')).toHaveLength(7);
     expect(screen.getByRole("heading", { name: en.orgSettings.toolSearch.title })).toBeTruthy();
     expect(screen.getByRole("heading", { name: en.orgSettings.timeZone.title })).toBeTruthy();
     expect(screen.getByRole("heading", { name: en.orgSettings.platformTool.title })).toBeTruthy();
     expect(screen.getByRole("heading", { name: en.compaction.title })).toBeTruthy();
+    expect(screen.getByRole("heading", { name: en.promptSuggestions.title })).toBeTruthy();
     expect(document.querySelectorAll('[data-part="danger-zone"]')).toHaveLength(1);
     expect(screen.getByRole("button", { name: en.orgLifecycle.delete.action })).toBeTruthy();
     // one busy announcement for the page (the sections do not announce)
