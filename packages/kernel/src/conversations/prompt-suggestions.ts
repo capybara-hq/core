@@ -6,7 +6,7 @@ import {
   type ModelUsage,
 } from "@capybara-hq/plugin-sdk";
 import { getQueueToken } from "@nestjs/bullmq";
-import { Inject, Injectable, Module } from "@nestjs/common";
+import { Inject, Injectable, Module, Optional } from "@nestjs/common";
 import type { Job, Queue, Worker } from "bullmq";
 import { sql } from "kysely";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
@@ -17,7 +17,7 @@ import { ExtensionsModule } from "../extensions/extensions.module.js";
 import { ExtensionHost } from "../extensions/host.js";
 import { audit } from "../identity/audit.js";
 import { IdentityModule } from "../identity/identity.module.js";
-import { effectiveCompactionSettings, SettingsService } from "../identity/settings.js";
+import { SettingsService } from "../identity/settings.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
@@ -25,11 +25,8 @@ import { Transactional } from "../infra/database/transactional.decorator.js";
 import { QueueModule } from "../infra/queue/queue.module.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
-import {
-  OrgSettingsModule,
-  OrgSettingsService,
-  readOrgSettings,
-} from "../orgs/settings.service.js";
+import { OrgSettingsModule, OrgSettingsService } from "../orgs/settings.service.js";
+import { resolveCompactionSettings } from "../runtime/compaction-settings.service.js";
 import {
   type AuditEntry,
   fireObserve,
@@ -75,8 +72,42 @@ export const promptSuggestionJobId = (runId: string): string => `suggest-${runId
 export const PROMPT_SUGGESTION_CONCURRENCY = 4;
 const JOB = "suggest";
 
+/**
+ * Test seam (`KernelSeams`): the side call's time limit in ms, asked at every call; default
+ * {@link PROMPT_SUGGESTION_TIMEOUT_MS}.
+ */
+export const PROMPT_SUGGESTION_TIMEOUT = Symbol("PROMPT_SUGGESTION_TIMEOUT");
+
+/**
+ * Model error kinds where the vendor refused the request before processing it: nothing is billed,
+ * so no estimated usage is logged.
+ */
+const UNBILLED_KINDS: ReadonlySet<string> = new Set([
+  "rate_limited",
+  "overloaded",
+  "auth",
+  "invalid_request",
+  "context_overflow",
+]);
+
 /** The usage event's idempotency key: one suggestion usage per run. */
 const usageIdemKey = (runId: string): string => `usage_suggestion:${runId}`;
+
+/** Whether the run's suggestion usage event exists (its call was made: a rerun is a no-op). */
+async function suggestionUsageExists(
+  db: KernelSchemaDb,
+  conversationId: string,
+  runId: string,
+): Promise<boolean> {
+  const row = await db
+    .selectFrom("conversation_events")
+    .select(sql`1`.as("one"))
+    .where("conversation_id", "=", conversationId)
+    .where("idem_key", "=", usageIdemKey(runId))
+    .limit(1)
+    .executeTakeFirst();
+  return row !== undefined;
+}
 
 /** The job's data. `finishedAt`: when the run finished (epoch ms), for the staleness guard. */
 export interface PromptSuggestionJob {
@@ -130,6 +161,9 @@ export class PromptSuggestionGenerator {
     @Inject(KernelConfigService) private readonly config: KernelConfigService,
     @Inject(KERNEL_LOGGER) private readonly log: Pick<KernelLogger, "debug" | "warn">,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
+    @Optional()
+    @Inject(PROMPT_SUGGESTION_TIMEOUT)
+    private readonly timeoutMs: () => number = () => PROMPT_SUGGESTION_TIMEOUT_MS,
   ) {}
 
   private get db(): KernelSchemaDb {
@@ -153,6 +187,9 @@ export class PromptSuggestionGenerator {
       if (shutdown.aborted) return skip("shutdown");
       const facts = await this.runFacts(conversationId, runId);
       if (typeof facts === "string") return skip(facts);
+      // a rerun job (a stalled job's retry, an enqueue after the job was removed): the call was
+      // made and billed already
+      if (await suggestionUsageExists(this.db, conversationId, runId)) return skip("done");
       if (!(await this.orgSettings.promptSuggestionsEnabled(facts.orgId))) return skip("off");
       if (!(await this.store.isFresh(conversationId, { runId, afterSeq: facts.afterSeq }))) {
         return skip("not_fresh");
@@ -191,7 +228,11 @@ export class PromptSuggestionGenerator {
       } catch {
         return skip("media_unavailable");
       }
-      const reserveTokens = await this.reserveTokens(facts.orgId);
+      const { reserveTokens } = await resolveCompactionSettings(
+        this.settings,
+        this.db,
+        facts.orgId,
+      );
       const built = buildSuggestionRequest({
         snapshot,
         model: info,
@@ -210,11 +251,12 @@ export class PromptSuggestionGenerator {
         conversationId,
         runId,
       };
-      const signal = AbortSignal.any([AbortSignal.timeout(PROMPT_SUGGESTION_TIMEOUT_MS), shutdown]);
+      const signal = AbortSignal.any([AbortSignal.timeout(this.timeoutMs()), shutdown]);
       if (!(await this.allowed(scope, ref, request, signal))) return;
       if (signal.aborted) return skip("shutdown");
 
       const sentAt = Date.now();
+      let streamedChars = 0;
       let out: StreamOut;
       try {
         out = await consumeModelStream(
@@ -222,31 +264,42 @@ export class PromptSuggestionGenerator {
           request,
           info.streamIdleTimeoutMs ?? this.config.get().runtime.streamIdleMs,
           signal,
-          () => {},
+          (ev) => {
+            streamedChars += ev.text.length;
+          },
         );
       } catch (err) {
-        // a call cut by the replica stopping gets no model.response (spec §7); a timeout does
-        if (!shutdown.aborted) this.observe(scope, ref, sentAt, null, err, signal);
-        this.log.warn("prompt suggestion call failed", {
-          conversationId,
-          runId,
-          provider: ref.provider,
-          model: ref.model,
-          errorCode: errorCodeOf(err, signal),
-        });
-        // the call was sent, so it is billed: log its estimated input like a title call
-        await this.logUsage(conversationId, runId, {
-          ...ref,
-          usage: {
-            inputTokens: estimate,
-            outputTokens: 0,
-            cacheReadTokens: 0,
-            cacheWriteTokens: 0,
-          },
-        });
+        if (shutdown.aborted) {
+          // cut by the replica stopping: no model.response (spec §7), the job is dropped
+          skip("aborted");
+        } else {
+          // the observe hooks run on the lifecycle signal: the call's own signal is aborted after
+          // its time limit and would skip them
+          this.observe(scope, ref, sentAt, null, err, signal, shutdown);
+          this.log.warn("prompt suggestion call failed", {
+            conversationId,
+            runId,
+            provider: ref.provider,
+            model: ref.model,
+            errorCode: errorCodeOf(err, signal),
+          });
+        }
+        // a vendor refusal before processing bills nothing; any other sent call (a shutdown abort
+        // included) is billed: log its estimated input plus the output streamed so far
+        if (!isModelError(err) || !UNBILLED_KINDS.has(err.kind)) {
+          await this.logUsage(conversationId, runId, {
+            ...ref,
+            usage: {
+              inputTokens: estimate,
+              outputTokens: Math.ceil(streamedChars / 4),
+              cacheReadTokens: 0,
+              cacheWriteTokens: 0,
+            },
+          });
+        }
         return;
       }
-      this.observe(scope, ref, sentAt, out, null, signal);
+      this.observe(scope, ref, sentAt, out, null, signal, shutdown);
       await this.logUsage(conversationId, runId, { ...ref, usage: out.usage });
 
       const outcome = await this.result(conversationId, runId, facts.afterSeq, out, finalText);
@@ -306,15 +359,6 @@ export class PromptSuggestionGenerator {
     };
   }
 
-  /** The org's effective compaction reserve (org override > platform > default). */
-  private async reserveTokens(orgId: string): Promise<number> {
-    const [platform, org] = await Promise.all([
-      this.settings.get(),
-      readOrgSettings(this.db, orgId),
-    ]);
-    return effectiveCompactionSettings(platform.compaction, org.compaction).reserveTokens;
-  }
-
   /**
    * `model.request` (`purpose: "suggestion"`, the run's id, step 0, attempt 1): policy hooks first,
    * failing closed (a policy extension not loaded on this replica denies), then observe. A denial
@@ -367,14 +411,18 @@ export class PromptSuggestionGenerator {
     return false;
   }
 
-  /** `model.response` for a sent call (observe only, not awaited). */
+  /**
+   * `model.response` for a sent call (observe only, not awaited). The hooks run on `lifecycle`
+   * (the worker stopping), never on the call's own signal: a timed-out call still reports.
+   */
   private observe(
     scope: HookScope,
     ref: { provider: string; model: string },
     sentAt: number,
     out: StreamOut | null,
     err: unknown,
-    signal: AbortSignal,
+    callSignal: AbortSignal,
+    lifecycle: AbortSignal,
   ): void {
     const hooks = this.host?.hooks;
     if (!hooks) return;
@@ -393,9 +441,9 @@ export class PromptSuggestionGenerator {
         stopReason: out?.stopReason ?? null,
         usage: out?.usage ?? null,
         latencyMs: Date.now() - sentAt,
-        ...(out === null && { errorCode: errorCodeOf(err, signal) }),
+        ...(out === null && { errorCode: errorCodeOf(err, callSignal) }),
       },
-      signal,
+      lifecycle,
       this.log,
     );
   }
@@ -510,19 +558,8 @@ export class PromptSuggestionQueue {
         .where("c.id", "=", conversationId)
         .where("c.kind", "=", "chat")
         .where("c.source", "=", "web")
-        .where((eb) =>
-          eb.not(
-            eb.exists(
-              eb
-                .selectFrom("conversation_events as e")
-                .select(sql`1`.as("one"))
-                .whereRef("e.conversation_id", "=", "c.id")
-                .where("e.idem_key", "=", usageIdemKey(runId)),
-            ),
-          ),
-        )
         .executeTakeFirst();
-      if (!due) return;
+      if (!due || (await suggestionUsageExists(this.kdb.db, conversationId, runId))) return;
       await this.queue.add(
         JOB,
         { conversationId, runId, finishedAt: Date.now() },
