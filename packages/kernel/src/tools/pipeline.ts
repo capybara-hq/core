@@ -1924,6 +1924,7 @@ export class ToolPipeline {
       const unverified = buildPermissionCandidate(
         { toolKey: tool.key, specHash: tool.specHash, rawInput: call.input, validatedInput: input },
         facts,
+        [device.home, device.deviceHome],
       );
       if (unverified.kind === "in-scope") return null;
       const content =
@@ -1947,6 +1948,7 @@ export class ToolPipeline {
               validatedInput: input,
             },
             facts,
+            [device.home, device.deviceHome],
           );
     if (built.kind === "unsupported")
       return {

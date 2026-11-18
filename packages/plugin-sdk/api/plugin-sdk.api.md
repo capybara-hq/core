@@ -808,6 +808,12 @@ export function defineExtension(m: ExtensionManifest): ExtensionManifest;
 export const DEVICE_BOOT_ID_RE: RegExp;
 
 // @public
+export const DEVICE_DEFAULT_STATE_PATH = "~/.config/capybara-device";
+
+// @public
+export const DEVICE_DENIED_SECRET_PATHS: readonly string[];
+
+// @public
 export const DEVICE_PROTOCOL_VERSION = 3;
 
 // @public

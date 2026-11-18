@@ -1,6 +1,10 @@
 import { isIP } from "node:net";
 import path from "node:path";
-import { validateAllowHost } from "@capybara-hq/plugin-sdk";
+import {
+  DEVICE_DEFAULT_STATE_PATH,
+  DEVICE_DENIED_SECRET_PATHS,
+  validateAllowHost,
+} from "@capybara-hq/plugin-sdk";
 import { ApiError } from "../../errors.js";
 import { generateImagePaths } from "../../tools/builtins/image/paths.js";
 import { coversHost } from "../modes.js";
@@ -71,11 +75,42 @@ export function permissionCandidateHash(
 ): string {
   return permissionScopeHash(candidate);
 }
-/** Extract proposals from the actual validated call. Parsing proposes reach; it never grants it. */
+/** The paths a local device never opens to restricted work, relative to `~`. */
+const OWNER_DENIED_PATHS = [...DEVICE_DENIED_SECRET_PATHS, DEVICE_DEFAULT_STATE_PATH];
+/**
+ * The owner-denied path (as `~/…`) that `target` is at or under for one of `homes`, if any: the
+ * device refuses such a root to every restricted grant, so no approval could make it run.
+ */
+function ownerDeniedPath(target: string, homes: readonly string[]): string | undefined {
+  for (const home of homes)
+    for (const denied of OWNER_DENIED_PATHS)
+      if (withinDirectory(target, path.posix.join(home, denied.slice(2)))) return denied;
+  return undefined;
+}
+const ownerDeniedText = (denied: string, target: string) =>
+  `${target} is under ${denied}, which the device never opens to this conversation's permission profile (a credential location or the device's own state), so this call cannot be approved and did not run. Ask the user to provide what is needed from it, or to choose Full access for this conversation if it must be used there.`;
+/**
+ * Extract proposals from the actual validated call. Parsing proposes reach; it never grants it.
+ * `homes` are the owner's home candidates (the machine's home, the workspace's home prefix): a
+ * call reaching an owner-denied path under one is refused, never proposed.
+ */
 export function buildPermissionCandidate(
   call: { toolKey: string; specHash: string; rawInput: unknown; validatedInput: unknown },
   facts: PermissionReviewSnapshot,
+  homes: readonly (string | null | undefined)[] = [],
 ): PermissionCandidateResult {
+  const homeRoots = [
+    ...new Set(
+      homes.filter(
+        (h): h is string =>
+          typeof h === "string" && h.startsWith("/") && h !== "/" && path.posix.normalize(h) === h,
+      ),
+    ),
+  ];
+  const refuseDenied = (target: string) => {
+    const denied = ownerDeniedPath(target, homeRoots);
+    if (denied) throw new Error(ownerDeniedText(denied, target));
+  };
   const input = call.validatedInput as { file_path?: unknown; command?: unknown } | null;
   let targetPath: string | undefined;
   const reads: string[] = [],
@@ -83,6 +118,7 @@ export function buildPermissionCandidate(
     hosts: string[] = [];
   const proposeDirectory = (value: string, write: boolean) => {
     const normalized = directory(path.posix.resolve(facts.workingRoot, value));
+    refuseDenied(normalized);
     const base = write ? facts.baseWriteDirectories : facts.baseReadDirectories;
     if (!base.some((root) => withinDirectory(normalized, root)))
       (write ? writes : reads).push(normalized);
@@ -107,6 +143,8 @@ export function buildPermissionCandidate(
       if (targets.some((target) => target.split("/").some((segment) => segment === "..")))
         return { kind: "in-scope" };
       const resolved = targets.map((target) => path.posix.resolve(facts.workingRoot, target));
+      // inside the base scope too: the credential consent it would get could never run there
+      for (const target of resolved) refuseDenied(target);
       for (const target of resolved) {
         if (!base.some((root) => withinDirectory(target, root))) {
           proposeDirectory(path.posix.dirname(target), write);

@@ -1,6 +1,7 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 import {
+  DEVICE_DENIED_SECRET_PATHS,
   type DeviceExecGrants,
   type SandboxLimits,
   validateAllowHost,
@@ -8,40 +9,10 @@ import {
 import { type Policy, policyMode, type SandboxMode } from "./state.js";
 
 /**
- * Paths no sandboxed command may read (spec §13.6, extended by ruling R19): SSH keys, cloud CLI
- * credentials, container and Kubernetes credentials, netrc, GnuPG, git / npm / PyPI tokens, the
- * macOS keychains, and the browser profile directories (Chrome, Firefox, Chromium, Safari, Brave,
- * Edge, Arc). Relative to `~`. Auto mode runs as the owner and does not apply them: command review
- * in the kernel does (spec §5.2).
+ * Paths no sandboxed command may read: the SDK's {@link DEVICE_DENIED_SECRET_PATHS} (one source
+ * with the kernel, which never proposes an approval under one). Relative to `~`.
  */
-export const DENIED_SECRET_PATHS: readonly string[] = Object.freeze([
-  "~/.ssh",
-  "~/.aws",
-  "~/.config/gcloud",
-  "~/.azure",
-  "~/.kube",
-  "~/.docker/config.json",
-  "~/.netrc",
-  "~/.gnupg",
-  "~/Library/Application Support/Google/Chrome",
-  "~/Library/Application Support/Firefox",
-  "~/.mozilla",
-  "~/.config/google-chrome",
-  "~/.config/chromium",
-  // Ruling R19: more credential stores and browser data.
-  "~/.config/gh",
-  "~/.git-credentials",
-  "~/.npmrc",
-  "~/.pypirc",
-  "~/Library/Keychains",
-  "~/Library/Cookies",
-  "~/Library/Safari",
-  "~/Library/Application Support/BraveSoftware",
-  "~/Library/Application Support/Microsoft Edge",
-  "~/Library/Application Support/Arc",
-  "~/.config/BraveSoftware",
-  "~/.config/microsoft-edge",
-]);
+export const DENIED_SECRET_PATHS: readonly string[] = DEVICE_DENIED_SECRET_PATHS;
 
 /** {@link DENIED_SECRET_PATHS} with `~` expanded to `home`. */
 export function deniedSecretPaths(home: string = homedir()): string[] {

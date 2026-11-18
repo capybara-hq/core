@@ -11,6 +11,7 @@ export * from "./connector-auth.js";
 export * from "./context.js";
 export * from "./ctx.js";
 export * from "./define-extension.js";
+export { DEVICE_DEFAULT_STATE_PATH, DEVICE_DENIED_SECRET_PATHS } from "./device-denied-paths.js";
 export * from "./device-protocol.js";
 export * from "./directory.js";
 export * from "./extension-point.js";

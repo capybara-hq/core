@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
-import { afterAll, beforeAll, beforeEach, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { KernelConfigSchema } from "../../src/config/schema.js";
 import { EventLog } from "../../src/conversations/event-log.js";
 import { createDb } from "../../src/db/pool.js";
@@ -108,6 +108,47 @@ it.each(["Write", "Edit"])(
     });
   },
 );
+// The device never opens its owner-denied paths (the secret paths, its state directory) to a
+// restricted grant: a call reaching one is refused with what works instead, never proposed for an
+// approval (or a credential consent) that could never run.
+describe("owner-denied device paths", () => {
+  const homes = ["/home/u"];
+  const atHome = { ...facts, baseReadDirectories: ["/home/u"], baseWriteDirectories: ["/home/u"] };
+  const build = (toolKey: string, input: unknown, f = facts) =>
+    buildPermissionCandidate(
+      { toolKey, specHash: "spec", rawInput: input, validatedInput: input },
+      f,
+      homes,
+    );
+  it.each([
+    ["Read", { file_path: "/home/u/.ssh/id_rsa" }, facts, "~/.ssh"],
+    ["Read", { file_path: "/home/u/.ssh/id_rsa" }, atHome, "~/.ssh"],
+    ["Write", { file_path: "/home/u/.ssh/authorized_keys" }, atHome, "~/.ssh"],
+    ["Edit", { file_path: "/home/u/.aws/credentials" }, facts, "~/.aws"],
+    ["Read", { file_path: "/home/u/.ssh" }, facts, "~/.ssh"],
+    [
+      "Write",
+      { file_path: "/home/u/.config/capybara-device/policy.json" },
+      facts,
+      "~/.config/capybara-device",
+    ],
+    ["Bash", { command: "cd /home/u/.aws && ls" }, facts, "~/.aws"],
+  ] as const)("%s %j is refused with an actionable text", (tool, input, f, named) => {
+    const result = build(tool, input, f);
+    expect(result).toMatchObject({ kind: "unsupported" });
+    const message = (result as { message: string }).message;
+    expect(message).toContain(named);
+    expect(message).toMatch(/cannot be approved/);
+    expect(message).toMatch(/Ask the user/);
+  });
+  it("an ordinary home path (and a lookalike name) is still proposed", () => {
+    for (const path of ["/home/u/notes/a.txt", "/home/u/.sshfoo/a.txt", "/home/u/.config/other/a"])
+      expect(build("Read", { file_path: path }), path).toMatchObject({ kind: "proposal" });
+    expect(build("Read", { file_path: "/home/u/.ssh-notes" }, atHome)).toEqual({
+      kind: "in-scope",
+    });
+  });
+});
 it("filesystem-root proposal is not a bounded directory", () => {
   expect(candidate("Write", { file_path: "/report.txt" })).toMatchObject({
     kind: "unsupported",

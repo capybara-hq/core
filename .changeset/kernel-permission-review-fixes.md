@@ -11,3 +11,8 @@ reason (`launch_unknown`, `launch_revoked`) as text, not as a raw code.
 The `permission_reviewed` record of an Approve for me review names who decided: `review-model`
 only for the review model's own verdicts, `rule` for a fixed rule's deny, a rule ask and the
 fail-closed ask.
+
+A file call (`Read`, `Write`, `Edit`, `GenerateImage`) or a `cd` under a path a local device never
+opens to restricted work (`~/.ssh`, `~/.aws` and the other secret paths, the device's state
+directory) is refused at once with what to do instead, rather than asking the person to approve a
+directory or a credential consent the device would always refuse.

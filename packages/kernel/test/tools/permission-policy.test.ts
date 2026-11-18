@@ -473,6 +473,39 @@ it.each(["allow", "ask", "deny"] as const)(
   },
 );
 
+// A file call under an owner-denied device path (here ~/.ssh) is refused before any review: no
+// directory proposal and no credential consent the device could never run.
+it.each(["request-approval", "approve-for-me"] as const)(
+  "a %s Read under ~/.ssh is refused with no approval asked",
+  async (profile) => {
+    const f = await fixture("Read", { file_path: "/home/owner/.ssh/id_rsa" }, true);
+    await f.db
+      .updateTable("conversations")
+      .set({ permission_profile: profile })
+      .where("id", "=", f.conversationId)
+      .execute();
+    const review = vi.spyOn(k.app.get(CommandReviewService), "review");
+    const result = await k.app.get(RunExecution).withClaim(
+      f.claim,
+      () => true,
+      () => k.app.get(ToolPipeline).runStep(f.ctx),
+    );
+    expect(result.kind).not.toBe("suspended");
+    expect(review).not.toHaveBeenCalled();
+    expect(await k.app.get(ApprovalsService).commandForCall(f.runId, f.callId)).toBeFalsy();
+    expect(f.effects()).toBe(0);
+    const payload = (
+      await f.db
+        .selectFrom("conversation_events")
+        .select("payload")
+        .where("conversation_id", "=", f.conversationId)
+        .where("type", "=", "tool_result")
+        .executeTakeFirstOrThrow()
+    ).payload as { content: unknown };
+    expect(JSON.stringify(payload.content)).toMatch(/under ~\/\.ssh.*cannot be approved/);
+  },
+);
+
 // The recorded review names who decided: the review model only for its own verdicts; a fixed
 // rule's deny, a rule ask (the review model unmapped) and the fail-closed ask are the rules'.
 it.each([
