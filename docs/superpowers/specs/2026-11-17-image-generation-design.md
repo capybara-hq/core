@@ -351,9 +351,11 @@ export interface ExtensionImageGenerateResult {
 
 ## 9. Data and migration
 
-- One expand-only kernel migration adding two columns to `model_usage`: `kind text NOT NULL DEFAULT
+- One expand-only kernel migration adding columns to `model_usage`: `kind text NOT NULL DEFAULT
   'embedding'` (so a row's `usage.report` purpose is `image` or `embedding`; the existing `purpose`
-  column holds the extension's own purpose name) and `output_images integer NOT NULL DEFAULT 0`.
+  column holds the extension's own purpose name), `output_images integer NOT NULL DEFAULT 0`, and
+  the answer's `output_tokens`, `cache_read_tokens` and `cache_write_tokens` (`integer NOT NULL
+  DEFAULT 0`; an image model may bill output tokens, and an embedding row keeps reporting zeros).
 - Conversation usage events carry `outputImages` in their usage object; no schema change (the event
   payload is JSON and validated by its zod schema, which gains the optional field).
 - No change to existing rows; nothing to backfill.
@@ -450,22 +452,58 @@ Files: SDK `packages/plugin-sdk/src/model.ts` (`ModelImageGenerationInfo`, `Imag
 `ImageGenerateResult`, `generateImage`, `pickImageSize`, `validateImageGenerateResult`, error kind
 `refusal`), `hooks.ts` (`ImageRequestHookPayload`, `ImageResponseHookPayload`), `ctx.ts`
 (`ExtensionModels.generateImage`); kernel `packages/kernel/src/models/images.ts`,
+`packages/kernel/src/models/image-usable.ts`, `packages/kernel/src/models/purposes.ts`
+(`availability`, `purposes.controller.ts`, Platform `models.ops.ts`),
 `packages/kernel/src/tools/builtins/image/{index,generate,paths}.ts`,
 `packages/kernel/src/tools/builtins/artifacts.ts`, `packages/kernel/src/sandbox/review/review.service.ts`,
-migration `0146_model_usage_image_kind.sql`, `usage-report.ts`; `plugins/model-fake/src/index.ts`;
-`packages/testing/src/model-conformance.ts` (`expect.imageGeneration`); zero-drift fixtures in
-`packages/kernel/test/evals/reconstruct.test.ts`.
+`packages/kernel/src/sandbox/review/permission-candidate.ts`, `packages/kernel/src/tools/pipeline.ts`,
+`packages/kernel/src/ctx/create-ctx.ts`, migration `0160_model_usage_image_kind.sql`,
+`usage-report.ts`; `plugins/model-fake/src/index.ts`; `packages/testing/src/model-conformance.ts`
+(`expect.imageGeneration`); web: the agent form and the model purposes pages. The zero-drift
+fixtures (`packages/kernel/test/evals/reconstruct.test.ts`) are unchanged: `GenerateImage` adds no
+model-visible input beyond its own tool result.
 
 Deviations decided during implementation:
 
-- `model_usage` gained `kind` as well as `output_images` (as §9 says).
+- `model_usage` gained `kind` as well as `output_images` (as §9 says), and `output_tokens`,
+  `cache_read_tokens`, `cache_write_tokens`, recorded from the answer and reported by
+  `usage.report` (embedding rows report zeros there, as before). The migration is
+  `0160_model_usage_image_kind.sql` (renumbered after main's migrations up to 0159: the migrator
+  refuses an unapplied file numbered below the highest applied).
 - Usage of a `GenerateImage` call is recorded as soon as the provider returns a valid result
   (before storage, abort, size check and device copy); an invalid result records none; an extension
   call that fails validation records none.
+- Usage is validated with the images: `validateImageGenerateResult` also requires `usage` to be an
+  object whose token counts are non-negative integers and whose optional `outputImages` is one; a
+  bad value fails as `ModelError("server")` before any usage is recorded. The images billed are
+  `min(usage.outputImages ?? images, images)` (`billedImages`), in the tool's `usage` event and an
+  extension call's `model_usage` row alike.
 - `model.response` carries `errorCode` `model.<kind>` (the chat / `web_fetch` convention).
 - Reference indices in error texts are 0-based.
 - An over-limit generated image fails as a tool error with the spec's failure text, not a `ModelError`.
 - The command review judges every path a call writes (suffixed `-1`, `-2` when `n > 1`); the worst
   outcome decides.
+- Permission profiles: the device copy enters the device through `inToolSandbox`, the entry every
+  builtin takes, so once the managed route is activated the marked `device_paths` are recorded
+  before the copy and every write is a managed operation (a call reviewed against another root is
+  stale and writes nothing). A `GenerateImage` call with `file_path` is reviewed under a permission
+  profile and is a permission candidate exactly like `Write`: every path it writes is resolved and
+  its directory proposed when outside the base write directories, the candidate's `targetPath`
+  (and the ask's `path`) lists every path, and the review's worst outcome over the paths decides. A
+  call without `file_path` writes nothing into the device and is not a candidate.
+- The device copy applies `Write`'s checks (§5.3 "the same path checks as Write"): under the path
+  lease a directory is refused, and an existing file is replaced only when this conversation read
+  it (or wrote it with `Write` / `Edit`) and it is unchanged; each refusal is the device line of
+  the result (the images are already delivered), not a failed call. A written path whose
+  extension is not the image's media type is listed with the type (`out/a.jpg (image/png)`).
+- R15 (availability for members): `GET /api/v1/orgs/:orgId/model-purposes/available` (`agents.use`)
+  answers, for each purpose, only whether the org can use it now (never the model); the Platform
+  operation is `models.purpose-availability`. The agent form offers `GenerateImage` on it. The
+  `image` purpose reads `GenerateImage`'s own predicate (`imagePurposeUsable`): an image model
+  callable now (a provider whose model list fails counts as unavailable) and an object store, so
+  the form and the runtime cannot disagree. Only model refusals count as unavailable; any other
+  failure is logged and rethrown.
+- `ctx.models.describe` of a purpose the extension did not declare is `model.purpose_unknown` with
+  a text that names no kind.
 - Generated artifacts use sourcePath `generated/<callId>/<name>`.
 - Tool error texts carry actionable suffixes where `check:tool-design` required them.
