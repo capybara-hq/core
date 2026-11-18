@@ -947,7 +947,7 @@ describe("GenerateImage facts: repeats, billing, device copies", () => {
       const seen = providerCalls();
       const r = await call(conv, { prompt: "a fox", n: 2 });
       expect(r.payload.isError).toBe(true);
-      expect(r.payload.content).toMatch(/\bn\b/);
+      expect(r.payload.content).toMatch(/additional properties \(n\)/);
       expect(seen).toEqual([]);
     } finally {
       await map("fake-image");
