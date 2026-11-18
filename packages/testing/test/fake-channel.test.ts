@@ -195,4 +195,84 @@ describe("startFakeChannelServer", () => {
     expect((await fetch(`${b.url}/members?cursor=1`)).status).toBe(500);
     expect(b.starts()).toBe(1);
   });
+
+  describe("/send-file", () => {
+    const bytes = Buffer.from("hello file");
+    const fileBody = (key?: string, name = "report.txt") => ({
+      appId: "app",
+      target: { chatId: "c1", chatType: "dm" },
+      file: { name, contentType: "text/plain", kind: "file", data: bytes.toString("base64") },
+      locale: "en",
+      ...(key !== undefined && { idempotencyKey: key }),
+    });
+
+    it("records the file with its decoded bytes and sha256", async () => {
+      im = await startFakeChannelServer();
+      const res = await post(`${im.url}/send-file`, fileBody("k1"));
+      const { messageId } = (await res.json()) as { messageId: string };
+      expect(messageId).toMatch(/^of_\d+$/);
+      expect(im.sentFiles).toHaveLength(1);
+      const f = im.sentFiles[0];
+      expect(f).toMatchObject({
+        appId: "app",
+        name: "report.txt",
+        contentType: "text/plain",
+        kind: "file",
+        messageId,
+        pid: 42,
+        idempotencyKey: "k1",
+        locale: "en",
+        target: { chatId: "c1", chatType: "dm" },
+      });
+      expect(f?.data.equals(bytes)).toBe(true);
+      expect(f?.sha256).toBe(createHash("sha256").update(bytes).digest("hex"));
+    });
+
+    it("dedupes on (appId, idempotencyKey) when dedupeSends is true", async () => {
+      im = await startFakeChannelServer();
+      const a = (await (await post(`${im.url}/send-file`, fileBody("k"))).json()) as {
+        messageId: string;
+      };
+      const b = (await (await post(`${im.url}/send-file`, fileBody("k"))).json()) as {
+        messageId: string;
+      };
+      expect(b.messageId).toBe(a.messageId);
+      expect(im.sentFiles).toHaveLength(1);
+      expect(im.duplicateFiles).toHaveLength(1);
+    });
+
+    it("records both sends when dedupeSends is false", async () => {
+      im = await startFakeChannelServer({ dedupeSends: false });
+      await post(`${im.url}/send-file`, fileBody("k"));
+      await post(`${im.url}/send-file`, fileBody("k"));
+      expect(im.sentFiles).toHaveLength(2);
+      expect(im.duplicateFiles).toHaveLength(0);
+    });
+
+    it("failNext answers the reason without recording; textIncludes matches the file name", async () => {
+      im = await startFakeChannelServer();
+      im.failNext("/send-file", 400, 1, undefined, "rejected", undefined, {
+        textIncludes: "secret",
+      });
+      const other = await post(`${im.url}/send-file`, fileBody("a", "plain.txt"));
+      expect(other.status).toBe(200);
+      const res = await post(`${im.url}/send-file`, fileBody("b", "secret.txt"));
+      expect(res.status).toBe(400);
+      expect(await res.json()).toMatchObject({ reason: "rejected" });
+      expect(im.sentFiles.map((f) => f.name)).toEqual(["plain.txt"]);
+    });
+
+    it("delayNext records at arrival and answers late", async () => {
+      im = await startFakeChannelServer();
+      im.delayNext("/send-file", 300);
+      const pending = post(`${im.url}/send-file`, fileBody("d"));
+      await expect.poll(() => im?.sentFiles.length).toBe(1);
+      let answered = false;
+      void pending.then(() => {
+        answered = true;
+      });
+      expect(answered).toBe(false);
+      expect((await pending).status).toBe(200);
+    });
+  });
 });

@@ -50,6 +50,7 @@ export {
   type FakeChannelFailMatch,
   type FakeChannelPost,
   type FakeChannelSent,
+  type FakeChannelSentFile,
   type FakeChannelServer,
   type FakeChannelServerOptions,
   type FakeChannelStream,
