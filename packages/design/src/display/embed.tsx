@@ -10,13 +10,20 @@ export type EmbedFrameProps = {
   title: string;
   /** 高度（px），默认 360。由调用方根据嵌入页的 resize 消息更新。 */
   height?: number;
+  /**
+   * Fill the height of the flex column it sits in (a full-height pane's body, such as the file
+   * preview), in place of a fixed `height`, which is then ignored. A filling frame is frameless
+   * by default: the pane is its box (spec §1, one box is enough).
+   */
+  fill?: boolean;
   /** 只收到 `event.source === 本 iframe 的 contentWindow` 的 message；内容由调用方解析校验。 */
   onMessage(e: MessageEvent): void;
   /** 拿到 iframe 元素，用于 `frameRef.current?.contentWindow?.postMessage(...)`。 */
   frameRef?: Ref<HTMLIFrameElement>;
   /**
    * The 1px `line` border. Default: framed on the page ground and in a pane, borderless inside a
-   * box (an inline card, a property section, a Card): the box is its frame (spec §6.9).
+   * box (an inline card, a property section, a Card): the box is its frame (spec §6.9); borderless
+   * when it fills a pane (`fill`).
    */
   framed?: boolean;
 };
@@ -34,6 +41,7 @@ export function EmbedFrame({
   src,
   title,
   height = 360,
+  fill = false,
   onMessage,
   frameRef,
   framed,
@@ -68,10 +76,11 @@ export function EmbedFrame({
       ref={setRef}
       className="cb-embed"
       data-part="embed-frame"
-      data-framed={(framed ?? !inBox) ? "true" : "false"}
+      data-framed={(framed ?? (!fill && !inBox)) ? "true" : "false"}
+      data-fill={fill ? "true" : undefined}
       src={src}
       title={title}
-      height={Math.max(0, Math.round(height))}
+      height={fill ? undefined : Math.max(0, Math.round(height))}
       sandbox={EMBED_SANDBOX}
       referrerPolicy="no-referrer"
     />

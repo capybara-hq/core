@@ -132,6 +132,39 @@ describe("the file panel", () => {
     expect(await within(panel).findByText("Quarterly report")).toBeTruthy();
   });
 
+  it("an embed previewer fills the panel body: a frameless iframe with no fixed height", async () => {
+    api({
+      [`GET ${BASE}/files/f1/previewers`]: () =>
+        json(200, {
+          previewers: [
+            {
+              plugin: "file-preview",
+              id: "docx",
+              title: { zh: "Word", en: "Word" },
+              kind: "embed",
+              maxBytes: 1e7,
+            },
+          ],
+        }),
+      [`POST ${ORG}/ui/embeds/file-preview/docx/token`]: () =>
+        json(200, {
+          token: "tok-1",
+          src: "/plugin-ui/file-preview/app",
+          expiresAt: new Date(Date.now() + 300_000).toISOString(),
+          expiresIn: 300,
+        }),
+    });
+    openAt("#file=f1");
+    const panel = await screen.findByRole("complementary", { name: "report.docx" });
+    const frame = await within(panel).findByTitle("Word");
+    expect(frame.tagName).toBe("IFRAME");
+    expect(frame.getAttribute("data-fill")).toBe("true");
+    expect(frame.getAttribute("data-framed")).toBe("false");
+    expect(frame.hasAttribute("height")).toBe(false);
+    // A direct child of the panel body's flex column, which gives it the height below the header.
+    expect(frame.parentElement?.getAttribute("class")).toBe("cb-rpanel-body");
+  });
+
   it("a .docx without a previewer shows the file card and Download", async () => {
     api();
     openAt("#file=f1");
