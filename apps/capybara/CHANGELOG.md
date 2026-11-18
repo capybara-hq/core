@@ -1,5 +1,17 @@
 # @capybara-hq/capybara
 
+## 0.1.0-rc.52
+
+### Patch Changes
+
+- Updated dependencies [909442f]
+- Updated dependencies [909442f]
+- Updated dependencies [909442f]
+- Updated dependencies [909442f]
+- Updated dependencies [909442f]
+- Updated dependencies [909442f]
+  - @capybara-hq/kernel@0.1.0-rc.46
+
 ## 0.1.0-rc.51
 
 ### Patch Changes
