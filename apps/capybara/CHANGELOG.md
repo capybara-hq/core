@@ -1,5 +1,28 @@
 # @capybara-hq/capybara
 
+## 0.1.0-rc.56
+
+### Patch Changes
+
+- dba64f6: Bash, its run_in_background field, TaskOutput and the background launch result now tell the model
+  when the background is the right place (servers, watchers, long jobs it does not need yet) and to run
+  a command whose result it needs in the foreground instead; TaskOutput is for reading logs (block
+  false for servers and watchers) and collecting output after the notification.
+
+## 0.1.0-rc.55
+
+### Patch Changes
+
+- ff84575: A background Bash launch no longer shows as failed in the conversation: it has no exit code yet,
+  and its task's end is reported on its own.
+- d3fe7c3: TaskOutput and TaskList calls get their own tool kind: a group waiting on a background task says
+  "Waiting on a background task" instead of "Reading file", and done ones count as background task
+  checks, not file reads.
+- adb0b31: While GenerateImage runs, the conversation shows one placeholder per requested image, shaped by
+  the requested aspect ratio, and the images replace them in place.
+- Updated dependencies [bc6def9]
+  - @capybara-hq/kernel@0.1.0-rc.48
+
 ## 0.1.0-rc.54
 
 No changes in this release.

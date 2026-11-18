@@ -41,7 +41,7 @@ Amends:
   ```
   Started background task bt_k3f9a2 ("Start the dev server").
   Output: /workspace/.capybara/tasks/bt_k3f9a2.out
-  Read it with TaskOutput (or Read), stop it with TaskStop. You will be told when it finishes.
+  You will be told when it finishes. Read its output with TaskOutput (or Read), stop it with TaskStop.
   ```
 
 - The task's own `timeout` covers the command. The tool call ends as soon as the launch ends (one
@@ -74,6 +74,36 @@ Amends:
   Each check is a short exec under a shared lease.
 - **`Read`** works on the output file as well. The path is under `/workspace` on purpose: Docker
   clears `/tmp` on suspend.
+
+### 2.2.1 Steering (acceptance, 2026-11-19)
+
+A deployment conversation (a 68-page scanned PDF needing OCR) spent 23 minutes mostly in
+`TaskOutput`: the model started each `pip install` in the background and at once blocked on it for
+2, 3, 5, 10 and 10 minutes; it piped the command through `tail -20`, so 15 minutes of
+`TaskOutput` returned no output; and once it nested `nohup … &` inside a background task, whose
+task "completed" after 27 s while the install went on unseen. The tools' words now say when the
+background is the right place and how to read it, as general rules rather than fixes for the
+slips seen; no behaviour changes:
+
+- **When to background.** `Bash` and its `run_in_background` field: only for what must keep running
+  (a dev server, a watcher) or a long job whose result is not needed yet while other work goes on.
+  A command whose result is needed next runs in the foreground with a larger `timeout` (the
+  deployment maximum allows hours); starting it in the background and waiting on it gains nothing.
+- **What `TaskOutput` shows.** The words state the mechanism (what the command has written to its
+  file so far; the task ends when its command exits and what it left running is stopped) and name
+  no particular command or pipe: the context the kernel injects stays neutral and is never a patch
+  for one observed slip (maintainer rule, 2026-11-19).
+- **`TaskOutput` is for reading logs.** With `block: false` for a server or watcher (a task that
+  never finishes always takes the whole timeout), or to collect a finished task's output after the
+  notification. `block` keeps its default `true`, as Claude Code's does (maintainer ruling
+  2026-11-19).
+- **Said once.** The when-to-background rule lives only in the `Bash` description; the
+  `run_in_background` field points to it, and neither `TaskOutput` nor the launch result repeats
+  it (no "do not poll" / "don't sleep" lines: the notification and `block` are the mechanism).
+
+Model-visible text only: tool definitions are fetched by specHash in replays and the launch text
+is in the log, so no `DriftReason` (replay-evals skill). The UI side of the same finding (a launch
+shown as failed, a wait shown as "Reading file") is core#385.
 
 ### 2.3 `TaskStop`
 

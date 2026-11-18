@@ -63,7 +63,7 @@ describe("startedText", () => {
     expect(startedText("bt_k3f9a2", "Start the dev server")).toBe(
       'Started background task bt_k3f9a2 ("Start the dev server").\n' +
         "Output: /workspace/.capybara/tasks/bt_k3f9a2.out\n" +
-        "Read it with TaskOutput (or Read), stop it with TaskStop. You will be told when it finishes.",
+        "You will be told when it finishes. Read its output with TaskOutput (or Read), stop it with TaskStop.",
     );
   });
 });
