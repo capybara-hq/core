@@ -5,6 +5,7 @@
  * sub-agents, files, right panel); every name is a placeholder (示例组织, 研究助手, Acme…).
  */
 
+import type { ImageRatio } from "../conversation/image-ratios";
 import type { PresetId } from "../display/avatar-presets";
 
 // ── Page, agent, models ─────────────────────────────────────────────────────
@@ -845,7 +846,7 @@ export const FILE_FIXTURE: {
    * `count`), and a wide one shown above a delivered image.
    */
   generating: {
-    ratio: "1:1" | "4:3" | "3:4" | "3:2" | "2:3" | "16:9" | "9:16";
+    ratio: ImageRatio;
     several: { ratio: "3:4"; count: 2 };
     wide: { ratio: "16:9" };
   };

@@ -755,7 +755,7 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
     if (o.state === "generating" || o.state === "generating-several" || o.state === "generating-wide") {
       const G = FI.generating;
       const gen = (ratio, label) =>
-        `<figure class="r-img"><div class="r-img-gen" role="img" aria-busy="true" aria-label="${esc(label)}" data-ratio="${ratio}">${icon("image", 20)}</div><figcaption class="r-tline"><span class="r-tlabel"><span class="r-em">${esc(label.split("，")[0])}</span><span class="r-faint"> · ${ratio}</span></span></figcaption></figure>`;
+        `<figure class="r-img"><div class="r-img-gen" role="img" aria-busy="true" aria-label="${esc(label)}" data-ratio="${ratio}">${icon("image", 16)}</div><figcaption class="r-tline"><span class="r-tlabel"><span class="r-em">${esc(label.split("，")[0])}</span><span class="r-faint"> · ${ratio}</span></span></figcaption></figure>`;
       if (o.state === "generating") return gen(G.ratio, "正在生成图片，" + G.ratio);
       if (o.state === "generating-several")
         return gen(G.several.ratio, `正在生成图片 1/${G.several.count}，${G.several.ratio}`);
