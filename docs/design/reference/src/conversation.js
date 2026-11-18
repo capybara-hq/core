@@ -12,6 +12,7 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
   const S = F.SUBAGENT_FIXTURE;
   const FI = F.FILE_FIXTURE;
   const P = F.PANEL_FIXTURE;
+  const SH = F.SHARE_FIXTURE;
 
   // The template's new-conversation pieces (§6.16.25, §6.16.26; the quick actions are a button in
   // the composer), drawn from NEW_CONVERSATION_FIXTURE like greeting.html and agent-row.html (the avatars' pixel paths are
@@ -848,13 +849,19 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
     failed: FI.many[2],
   };
 
+  // Share (§6.16.22, file sharing design §5): an icon button before Download; a live share adds
+  // the `ok` marker and renames the button Shared.
+  const shareBtn = (shared) =>
+    `<button class="r-icon-btn r-share-btn" data-share="true" aria-label="${shared ? "已分享" : "分享"}">${icon("share", 16)}${shared ? '<span class="r-share-marker" aria-hidden="true"></span>' : ""}</button>`;
+
   function filePanel(kind, o = {}) {
     const f = FILE_FOR[kind];
+    const share = o.share ? [shareBtn(o.share === "shared")] : [];
     const head = panelHeader({
       type: f.type,
       title: f.name,
       meta: `v${f.version ?? 1} · ${esc(FI.updated)}`,
-      actions: [iconBtn("download", K.download)],
+      actions: [...share, iconBtn("download", K.download)],
       switching: o.switching,
     });
     return `${head}${filePanelBody(kind)}`;
@@ -893,7 +900,33 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
   }
 
   function filePreview(o) {
-    return `<aside class="r-rpanel" aria-label="文件预览">${filePanel(o.state)}</aside>`;
+    // unshared / shared: the markdown file with the Share action (and its marker)
+    const share = o.state === "unshared" || o.state === "shared";
+    const panel = share ? filePanel("markdown", { share: o.state }) : filePanel(o.state);
+    return `<aside class="r-rpanel" aria-label="文件预览">${panel}</aside>`;
+  }
+
+  // ── File sharing: the HTML document frame (§6.43) and the shared file page (§5.12) ──
+
+  const htmlFrame = () =>
+    `<iframe class="r-html-frame" data-part="html-frame" sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox" referrerpolicy="no-referrer" title="${esc(SH.name)}" srcdoc="${esc(SH.document)}"></iframe>`;
+
+  function sharedPage(o) {
+    const loading = o.state === "loading";
+    const skelText = (w, size) =>
+      `<span class="r-skel-text" data-size="${size}" style="width:${w}px"><span class="r-skel-bar"></span></span>`;
+    // ready: the HTML report; ready-no-download: the CSV file, previewed by the built-in table
+    const file = o.state === "ready" ? { name: SH.name, type: SH.badge } : FI.many[1];
+    const name = loading ? skelText(200, "body") : `<h1 class="r-shared-name r-ellipsis">${esc(file.name)}</h1>`;
+    const meta = loading ? skelText(160, "small") : `<span class="r-shared-meta r-ellipsis">${esc(SH.meta)}</span>`;
+    const badge = loading ? "" : typeBadge(file.type);
+    const download = o.state === "ready" ? btn(K.download, "default", { icon: "download" }) : "";
+    const bar = `<header class="r-shared-bar">${badge}${name}${meta}<span class="r-grow"></span>${download}</header>`;
+    let body;
+    if (loading) body = '<div class="r-shared-loading">正在加载预览…</div>';
+    else if (o.state === "ready") body = htmlFrame();
+    else body = filePanelBody("csv");
+    return `<div class="r-shared"${loading ? ' aria-busy="true"' : ""}>${bar}<main class="r-shared-body">${body}</main></div>`;
   }
 
   // ── Inline cards and property sections ─────────────────────────────────
@@ -1070,5 +1103,7 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
     "file-outputs": (o) => col(fileOutputs(o)),
     "attachment-strip": (o) => col(`<div class="r-composer">${attachmentStrip(o)}<div class="r-composer-input r-faint">帮我对一下这几个文件</div></div>`),
     "file-preview": filePreview,
+    "html-frame": htmlFrame,
+    "shared-file-page": sharedPage,
   };
 };

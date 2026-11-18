@@ -542,10 +542,9 @@ export type UiActionArgs = UiOrgActionArgs | UiPlatformActionArgs;
 /** An action result: a notice, or a new view. */
 export type UiActionResult = { toast?: { zh: string; en: string } } | { view: UiView };
 
-/** The embed claims both scopes share. `exp` is Unix seconds. */
+/** The embed claims every scope shares. `exp` is Unix seconds. */
 export interface EmbedClaimsBase {
   plugin: string;
-  accountId: string;
   contribution: string;
   exp: number;
 }
@@ -554,6 +553,7 @@ export interface EmbedClaimsBase {
 export interface OrgEmbedClaims extends EmbedClaimsBase {
   scope: "org";
   orgId: string;
+  accountId: string;
   /**
    * The caller's role: written at issuance; `ctx.ui.verifyEmbedToken` returns the current role at
    * validation time.
@@ -569,6 +569,7 @@ export interface OrgEmbedClaims extends EmbedClaimsBase {
 /** A `platform.page` embed token's claims: a super admin's, with no org, conversation, agent or file. */
 export interface PlatformEmbedClaims extends EmbedClaimsBase {
   scope: "platform";
+  accountId: string;
   orgId?: undefined;
   role: "superAdmin";
   conversationId?: undefined;
@@ -577,11 +578,26 @@ export interface PlatformEmbedClaims extends EmbedClaimsBase {
 }
 
 /**
- * Claims in an embed token (trustworthy after validation by `ctx.ui.verifyEmbedToken`): narrow on
- * `scope` (`"platform"` has no
- * `orgId` and `role` `"superAdmin"`).
+ * A share page's `file.preview` embed token's claims: no account and no role, only the org, the
+ * share and the share's generation. Valid only for the `file.preview` slot, never for `/api`.
  */
-export type EmbedClaims = OrgEmbedClaims | PlatformEmbedClaims;
+export interface ShareEmbedClaims extends EmbedClaimsBase {
+  scope: "share";
+  orgId: string;
+  shareId: string;
+  generation: number;
+  accountId?: undefined;
+  role?: undefined;
+  conversationId?: undefined;
+  agentId?: undefined;
+  fileId?: undefined;
+}
+
+/**
+ * Claims in an embed token (trustworthy after validation by `ctx.ui.verifyEmbedToken`): narrow on
+ * `scope` (`"platform"` has no `orgId` and `role` `"superAdmin"`; `"share"` has no account or role).
+ */
+export type EmbedClaims = OrgEmbedClaims | PlatformEmbedClaims | ShareEmbedClaims;
 
 /**
  * The version marker of the `postMessage` protocol between the outer page and the embedded iframe.
@@ -591,11 +607,12 @@ export const EMBED_PROTOCOL = "capybara-embed/1";
 /**
  * What an embed's `init` says about where it is shown, narrowed on `scope` like {@link EmbedClaims}:
  * an org's page, panel, section or previewer (`orgId`, and the conversation when there is one), or
- * a platform page of the admin console (no org).
+ * a platform page of the admin console (no org), or a share page (no org or conversation).
  */
 export type EmbedInitContext =
   | { scope: "org"; orgId: string; conversationId?: string }
-  | { scope: "platform"; orgId?: undefined; conversationId?: undefined };
+  | { scope: "platform"; orgId?: undefined; conversationId?: undefined }
+  | { scope: "share"; orgId?: undefined; conversationId?: undefined };
 
 /** Messages the outer page sends to the iframe. */
 export type EmbedParentMessage =

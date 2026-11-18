@@ -65,6 +65,9 @@ const HOT_APPLIERS: Record<string, (k: { log: KernelLogger }, value: unknown) =>
   "attribution.commit": () => {},
   "attribution.pr": () => {},
   "attribution.sessionUrl": () => {},
+  // The sharing switches are read live at every share create, open and settings read.
+  "sharing.external": () => {},
+  "sharing.maxExpiryDays": () => {},
 };
 
 const HOT_PATHS = configFields(KernelConfigSchema)

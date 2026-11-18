@@ -1400,6 +1400,39 @@ export const KernelConfigSchema = z.strictObject({
       path: ["maxBytes"],
     })
     .prefault({} as never),
+  /**
+   * File sharing governance (file sharing spec §8). Both fields are also deployment settings the
+   * super admin changes in the admin console (`externalSharing`, `shareMaxExpiryDays`); a field
+   * set here wins and is read-only there, so neither has a schema default (an unset field means
+   * no config source sets it).
+   */
+  sharing: z
+    .strictObject({
+      external: z
+        .enum(["allow", "deny"])
+        .optional()
+        .meta(
+          meta({
+            hot: true,
+            description:
+              "Whether organizations may share conversation files with people outside the deployment through public links (default deny): allow lets each organization turn external sharing on in its own settings (it is off until it does); deny stops every external link at once. Internal links (for signed-in members) are not affected. Set here, it is read-only in the admin console",
+          }),
+        ),
+      maxExpiryDays: z
+        .number()
+        .int()
+        .min(1)
+        .max(365)
+        .optional()
+        .meta(
+          meta({
+            hot: true,
+            description:
+              "The longest expiry a file share may be given, in days (1 to 365, default 30); an external share always expires, an internal one may also never expire. Set here, it is read-only in the admin console",
+          }),
+        ),
+    })
+    .prefault({} as never),
   subagents: z
     .strictObject({
       maxDepth: z

@@ -49,6 +49,17 @@ export type RouteCaller =
       exp: number;
     }
   | {
+      /** A share page's `file.preview` embed: no account, no role. */
+      access: "embed";
+      scope: "share";
+      orgId: string;
+      shareId: string;
+      contribution: string;
+      /** The token's expiry (Unix seconds): a long-lived response (SSE) ends by then. */
+      exp: number;
+      config: unknown;
+    }
+  | {
       access: "member" | "admin";
       orgId: string;
       accountId: string;

@@ -34,6 +34,8 @@ import { UsageReportModule } from "../runtime/usage-report.js";
 import { SandboxSweepJobs } from "../sandbox/jobs.js";
 import { SandboxModule } from "../sandbox/sandbox.module.js";
 import { ScheduledTaskFireModule } from "../schedules/fire.js";
+import { ShareObjectsModule } from "../shares/share-objects.js";
+import { ShareSweepJob } from "../shares/sweep.job.js";
 import { StoragePurgeJob } from "../storage/purge.js";
 import { StorageModule } from "../storage/storage.module.js";
 import { ToolJobs } from "../tools/jobs.js";
@@ -85,6 +87,8 @@ export class WorkerModule {
         ChannelsModule,
         // the scheduled task scanner (`@LockedCron`) and the fire job's body
         ScheduledTaskFireModule,
+        // the share snapshots the daily share sweep frees
+        ShareObjectsModule,
       ],
       providers: [
         // the one repair of a run nobody runs (transactional outbox spec §8.3)
@@ -104,6 +108,8 @@ export class WorkerModule {
         DirectoryScanJob,
         PluginsReconcileJob,
         GatewayCheckJob,
+        // the daily share sweep (file sharing spec §9)
+        ShareSweepJob,
         WorkerRole,
       ],
       exports: [WorkerRole],

@@ -23,7 +23,9 @@ const SPEC: ToolSpec = {
     "it when the user should receive a file you produced (a report, chart, spreadsheet, archive " +
     "and so on); files that stay in the sandbox are not visible to the user. Delivers one file " +
     "per call; archive a directory first (e.g. tar -czf with Bash). The file size is " +
-    "limited (100 MB by default). Do not use it for intermediate files the user does not need.",
+    "limited (100 MB by default). Do not use it for intermediate files the user does not need. " +
+    "An HTML report should be one self-contained file: inline its own CSS and JS, load " +
+    "libraries from a public CDN, embed images as data URLs.",
   inputSchema: {
     type: "object",
     properties: {

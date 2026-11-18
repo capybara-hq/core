@@ -42,10 +42,32 @@ export const ERROR_CODES = {
   "org.network_allowance_not_found": 404,
   /** Adding an org network allowance through an API token or the Platform tool (a person widens). */
   "org.network_allowance_widen_not_allowed": 400,
+  /**
+   * The org turned external sharing on where the platform denies it, or through an API token or
+   * the Platform tool (only a person turns it on).
+   */
+  "org.external_sharing_not_allowed": 400,
   /** A deployment setting set in the startup config (file, Nacos or env): read-only in the admin console. */
   "deployment.setting_readonly": 409,
   /** Turning the platform's auto mode on through an API token or the Platform tool (only off). */
   "deployment.auto_mode_not_allowed": 400,
+  /** Allowing external sharing at the platform level through an API token or the Platform tool. */
+  "deployment.external_sharing_not_allowed": 400,
+  /**
+   * Raising the share expiry maximum or adding a CDN allowlist origin through an API token or the
+   * Platform tool (only lowering and removing).
+   */
+  "deployment.sharing_widen_not_allowed": 400,
+  /** No live share with this code (unknown, revoked, expired, or its creator lost access). */
+  "share.not_found": 404,
+  /** An internal share opened without a session: sign in as a member of its org. */
+  "share.sign_in_required": 401,
+  /** An external share where external sharing is not allowed for the org now. */
+  "share.external_not_allowed": 403,
+  /** A share expiry beyond the platform's maximum (or no expiry on an external share). */
+  "share.expiry_too_long": 400,
+  /** The file to share is gone (removed) or its snapshot cannot be made (upload mismatch). */
+  "share.file_unavailable": 410,
   "member.not_found": 404,
   "member.already_exists": 409,
   "member.anonymous_guest": 409,

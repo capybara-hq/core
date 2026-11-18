@@ -96,6 +96,7 @@ beforeAll(async () => {
     keyring: createKeyring(Buffer.alloc(32, 1), []),
     embedTokens: new EmbedTokens(createKeyring(Buffer.alloc(32, 1), [])),
     hooks: undefined,
+    shares: undefined,
     runWorkers: true,
     log: {
       info() {},

@@ -235,6 +235,7 @@ describe("org settings nav", () => {
       "members",
       "models",
       "tokens",
+      "shares",
       "audit",
       "sandbox",
       "schedules",

@@ -26,6 +26,7 @@ export {
 } from "./overview-section";
 export { SettingsPage } from "./settings-page";
 export { SetupPage, type SetupPageProps } from "./setup-page";
+export { SharedFilePage, type SharedFilePageProps } from "./shared-file-page";
 export { StatusPage } from "./status-page";
 export { TracePage } from "./trace-page";
 export { WizardPage } from "./wizard-page";

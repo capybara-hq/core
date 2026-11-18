@@ -1052,11 +1052,14 @@ function PreviewBlock({
   id,
   file,
   state = "ready",
+  share,
   children,
 }: {
   id: string;
   file: FixtureFile;
   state?: "ready" | "failed";
+  /** The Share action (§6.16.22): offered, or offered with the shared marker. */
+  share?: "unshared" | "shared";
   children: ReactNode;
 }) {
   return (
@@ -1069,6 +1072,7 @@ function PreviewBlock({
           files: FI.many.map((f) => ({ id: f.id, name: f.name })),
           current: file.id,
           onSwitch: noop,
+          ...(share ? { onShare: noop, shared: share === "shared" } : {}),
           onDownload: noop,
           onFullscreen: noop,
           onClose: noop,
@@ -1117,6 +1121,12 @@ function filePreviewBlocks(): ReactNode {
           hint={false}
           onDownload={noop}
         />
+      </PreviewBlock>
+      <PreviewBlock id="file-preview-unshared" file={FI.text} share="unshared">
+        <MarkdownPreview text={FI.markdownPreview} />
+      </PreviewBlock>
+      <PreviewBlock id="file-preview-shared" file={FI.text} share="shared">
+        <MarkdownPreview text={FI.markdownPreview} />
       </PreviewBlock>
     </>
   );

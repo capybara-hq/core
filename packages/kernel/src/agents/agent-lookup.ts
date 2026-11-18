@@ -1,5 +1,5 @@
 import { Inject, Injectable, Module } from "@nestjs/common";
-import { type ExpressionBuilder, sql } from "kysely";
+import { type Expression, type ExpressionBuilder, sql } from "kysely";
 import type { KernelDatabase, KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
@@ -49,8 +49,11 @@ const notFound = () => new ApiError("agent.not_found", "Agent not found");
  * 可见性判定（`canUse`）的 SQL 条件：agent 未删除、所属组织未删除，且
  * - viewer 为账号：仍是该组织成员（含访客），并且是负责人 / visibility='org' / 在 agent_members 名单中；
  * - viewer 为 null（该组织的服务令牌）：只认 visibility='org'。
+ *
+ * The viewer may also be a column of the outer query (`sql.ref("file_shares.created_by")`): the
+ * share liveness check asks whether each share's creator still sees the agent, in one query.
  */
-export function visibleTo(viewerAccountId: string | null) {
+export function visibleTo(viewerAccountId: string | Expression<string> | null) {
   return (eb: ExpressionBuilder<KernelDatabase, "agents">) => {
     const orgLive = eb.exists(
       eb

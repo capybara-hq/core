@@ -38,6 +38,12 @@ import {
   type SchedFireJobData,
   type SchedSettleJobData,
 } from "../schedules/job-ids.js";
+import {
+  SHARE_OBJECT_DELETE_JOB,
+  type ShareObjectDeleteData,
+  ShareObjects,
+  ShareObjectsModule,
+} from "../shares/share-objects.js";
 import { DeviceOpResolver } from "../tools/device-op-resolver.js";
 import { type DriftConnectorJobData, ToolDrift } from "../tools/drift.js";
 import { DRIFT_CONNECTOR_JOB } from "../tools/job-ids.js";
@@ -73,7 +79,7 @@ export const MAINTENANCE_CONCURRENCY = 5;
  * {@link processStopTree} and `deliver-to-parent` → {@link processDeliverToParent} (both in
  * runtime/subagents/tree-jobs.ts, over {@link Waits}), `owned-plugin-cleanup` →
  * {@link OwnedPluginCleanup}, `sched-fire` and `sched-settle` → {@link ScheduledTaskFirer}, `device-op-resolve` →
- * {@link DeviceOpResolver}). The name of a periodic job (a `@LockedCron` / `@LockedInterval` job,
+ * {@link DeviceOpResolver}, `share-object-delete` → {@link ShareObjects}). The name of a periodic job (a `@LockedCron` / `@LockedInterval` job,
  * such as `sandbox-suspend-idle`) runs that job's body once ({@link ScheduledRuns.runNow}), as the
  * maintenance handlers did when those jobs were schedulers on this queue: an operator's or a
  * test's one-off run, not a second schedule (decision R23 of the Nest kernel spec). Any other
@@ -104,6 +110,7 @@ export class MaintenanceProcessor extends WorkerHost<Worker> {
     @Inject(KERNEL_LOGGER) private readonly log: Pick<KernelLogger, "error" | "warn">,
     @Inject(SandboxOperationReconcileJob)
     private readonly operations: Pick<SandboxOperationReconcileJob, "reconcile" | "revoke">,
+    @Inject(ShareObjects) private readonly shareObjects: Pick<ShareObjects, "deleteObject">,
     @Optional()
     @Inject(CloudPermissionSnapshots)
     private readonly snapshots?: Pick<CloudPermissionSnapshots, "reconcileDevice">,
@@ -202,6 +209,10 @@ export class MaintenanceProcessor extends WorkerHost<Worker> {
       case DEVICE_OP_RESOLVE_JOB:
         await this.deviceOps.resolve(job.data as DeviceOpResolveData);
         return;
+      // a share snapshot a refresh or revoke stopped using (file sharing spec §2)
+      case SHARE_OBJECT_DELETE_JOB:
+        await this.shareObjects.deleteObject(job.data as ShareObjectDeleteData);
+        return;
       default:
         if (await this.scheduled.runNow(job.name)) return;
         // never completed unrun: in a rolling deploy an old worker meets a job a newer replica
@@ -241,6 +252,8 @@ export class MaintenanceProcessor extends WorkerHost<Worker> {
     OwnedPluginCleanupModule,
     // the scheduled task fire job and the scanner (worker-only through this module)
     ScheduledTaskFireModule,
+    // the share snapshot deletion
+    ShareObjectsModule,
     QueueModule.registerQueue(MAINTENANCE_QUEUE_NAME),
   ],
   providers: [

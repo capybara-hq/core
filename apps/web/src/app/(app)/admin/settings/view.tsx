@@ -14,6 +14,7 @@ import {
   Switch,
   SwitchField,
   Text,
+  Textarea,
   useToast,
 } from "@capybara-hq/design";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -37,8 +38,10 @@ import {
   CLIENT_EXTENSIONS_DEFAULT,
   type ClientExtensionsSetting,
   type CustomPolicy,
+  cdnOriginOf,
   type DeploymentSettings,
   type DeploymentSettingsPatch,
+  isCdnOrigin,
   isCurrencyCode,
   type PlatformAttributionView,
   updateDeploymentSettings,
@@ -119,6 +122,7 @@ function AdminSettingsRead() {
   const ta = useTranslations("appearance.platform");
   const tk = useTranslations("admin.settings.clientCode");
   const tcp = useTranslations("compaction");
+  const tsh = useTranslations("admin.settings.sharing");
   const header = { path: [...scope, { label: "settings" }], title: t("title") };
   if (read.kind === "notFound") return <NotFound />;
   if (read.kind === "error") return <ErrorFrame reset={read.retry} />;
@@ -161,6 +165,18 @@ function AdminSettingsRead() {
               { control: "input", help: true },
               { control: "input", help: true },
               { control: "input", help: true },
+            ],
+          }}
+        />
+        <FormSection
+          id="sharing"
+          title={tsh("title")}
+          description={tsh("description")}
+          loading={{
+            fields: [
+              { control: "switch", help: true },
+              { control: "input", help: true },
+              { control: "textarea", rows: 6, help: true },
             ],
           }}
         />
@@ -222,6 +238,7 @@ function AdminSettings({
   const [attributionDraft, setAttributionDraft] = useState<AttributionDraft>({});
   const [autoDraft, setAutoDraft] = useState<"allowed" | "off" | undefined>(undefined);
   const [compactionDraft, setCompactionDraft] = useState<CompactionSettingsPatch>({});
+  const [sharingDraft, setSharingDraft] = useState<SharingDraft>({});
   const cq = adminComponentsQuery("theme");
   const eligible = (
     useQuery({ ...cq, retryOnMount: retryOnMountOf(cq.queryKey) }).data?.components ?? []
@@ -268,6 +285,8 @@ function AdminSettings({
   const compaction: CompactionSettings = { ...savedCompaction, ...compactionDraft };
   const compactionPatch = compactionChange(savedCompaction, compaction);
   if (compactionPatch !== null) patch.compaction = compactionPatch;
+  const sharing = sharingOf(saved, sharingDraft);
+  Object.assign(patch, sharing.patch);
   const unsaved = Object.keys(patch).length;
 
   async function save() {
@@ -280,6 +299,7 @@ function AdminSettings({
       setAttributionDraft({});
       setAutoDraft(undefined);
       setCompactionDraft({});
+      setSharingDraft({});
       toast.success(t("saved"));
     } catch (e) {
       const off = themeOffOrgs(e);
@@ -314,7 +334,9 @@ function AdminSettings({
       header={header}
       actionRow={{
         unsaved,
-        ...(currencyValid ? {} : { errors: 1 }),
+        ...(currencyValid && sharing.errors === 0
+          ? {}
+          : { errors: (currencyValid ? 0 : 1) + sharing.errors }),
         cancel: {
           label: tc("cancel"),
           onSelect: () => {
@@ -324,13 +346,14 @@ function AdminSettings({
             setAttributionDraft({});
             setAutoDraft(undefined);
             setCompactionDraft({});
+            setSharingDraft({});
           },
         },
         primary: {
           label: t("save"),
           onSelect: () => void save(),
           loading: pending,
-          disabled: !currencyValid || unsaved === 0,
+          disabled: !currencyValid || sharing.errors > 0 || unsaved === 0,
         },
       }}
     >
@@ -387,6 +410,13 @@ function AdminSettings({
         value={compaction}
         onChange={(d) => setCompactionDraft((cur) => ({ ...cur, ...d }))}
       />
+      {saved.externalSharing !== undefined && saved.shareMaxExpiryDays !== undefined && (
+        <SharingSection
+          saved={saved}
+          shown={sharing}
+          onChange={(d) => setSharingDraft((cur) => ({ ...cur, ...d }))}
+        />
+      )}
       <FormSection
         id="appearance"
         title={ta("platform.title")}
@@ -403,6 +433,143 @@ function AdminSettings({
       <UiReplacementsSection scope={{ kind: "platform" }} canEdit />
       <UiPlacementSection scope={{ kind: "platform" }} canEdit />
     </FormPage>
+  );
+}
+
+/** The sharing section's edits: the switch, the expiry maximum (text) and the allowlist (text). */
+interface SharingDraft {
+  external?: "allow" | "deny";
+  maxDays?: string;
+  allowlist?: string;
+}
+
+/** The entries of an allowlist text (one per line, commas and spaces too): trimmed, lower case. */
+const originsOf = (text: string): string[] => [
+  ...new Set(
+    text
+      .split(/[\s,]+/)
+      .map(cdnOriginOf)
+      .filter((o) => o !== ""),
+  ),
+];
+
+/**
+ * What the sharing section shows (the draft over the saved values, a locked field always its
+ * startup-config value), the first invalid allowlist entry, the number of errors and the patch:
+ * changed fields only, never one the startup config sets. The allowlist is sent whole.
+ */
+function sharingOf(saved: DeploymentSettings, draft: SharingDraft) {
+  const ext = saved.externalSharing;
+  const max = saved.shareMaxExpiryDays;
+  const list = saved.htmlRenderCdnAllowlist ?? [];
+  const external =
+    ext === undefined || lockedSource(ext.source) !== null
+      ? (ext?.value ?? "deny")
+      : (draft.external ?? ext.value);
+  const maxText =
+    max === undefined || lockedSource(max.source) !== null
+      ? String(max?.value ?? 30)
+      : (draft.maxDays ?? String(max.value));
+  const days = Number(maxText);
+  const maxValid = /^\d+$/.test(maxText) && days >= 1 && days <= 365;
+  const allowText = draft.allowlist ?? list.join("\n");
+  const origins = originsOf(allowText);
+  const badOrigin = origins.find((o) => !isCdnOrigin(o));
+  const patch: DeploymentSettingsPatch = {};
+  if (ext !== undefined && lockedSource(ext.source) === null && external !== ext.value) {
+    patch.externalSharing = external;
+  }
+  if (max !== undefined && lockedSource(max.source) === null && maxValid && days !== max.value) {
+    patch.shareMaxExpiryDays = days;
+  }
+  if (
+    draft.allowlist !== undefined &&
+    badOrigin === undefined &&
+    origins.join("\n") !== list.join("\n")
+  ) {
+    patch.htmlRenderCdnAllowlist = origins;
+  }
+  return {
+    external,
+    maxText,
+    maxValid,
+    allowText,
+    badOrigin,
+    errors: (maxValid ? 0 : 1) + (badOrigin === undefined ? 0 : 1),
+    patch,
+  };
+}
+
+/**
+ * External sharing (file sharing spec §8): the platform switch (off by default; orgs turn it on only where
+ * it is allowed), the longest link expiry and the CDN origins a rendered HTML file may load from.
+ * The switch and the maximum read-only when the startup config sets them. Saved with the ActionRow.
+ */
+function SharingSection({
+  saved,
+  shown,
+  onChange,
+}: {
+  saved: DeploymentSettings;
+  shown: ReturnType<typeof sharingOf>;
+  onChange(d: SharingDraft): void;
+}) {
+  const t = useTranslations("admin.settings.sharing");
+  const tf = useTranslations("configForm");
+  const ext = saved.externalSharing;
+  const max = saved.shareMaxExpiryDays;
+  const extLocked = ext === undefined ? null : lockedSource(ext.source);
+  const maxLocked = max === undefined ? null : lockedSource(max.source);
+  return (
+    <FormSection id="sharing" title={t("title")} description={t("description")}>
+      <Stack gap={12}>
+        <Stack gap={4}>
+          <SwitchField
+            label={t("external")}
+            checked={shown.external === "allow"}
+            disabled={extLocked !== null}
+            onChange={(on) => onChange({ external: on ? "allow" : "deny" })}
+          />
+          <Text variant="small" tone="muted">
+            {extLocked === null
+              ? t("externalHelp")
+              : `${tf("readonly", { source: extLocked })} · sharing.external`}
+          </Text>
+        </Stack>
+        <Field
+          label={t("maxExpiryDays")}
+          help={
+            maxLocked === null
+              ? t("maxExpiryHelp")
+              : `${tf("readonly", { source: maxLocked })} · sharing.maxExpiryDays`
+          }
+          {...(shown.maxValid ? {} : { error: t("maxExpiryInvalid") })}
+        >
+          <Input
+            type="number"
+            min={1}
+            max={365}
+            value={shown.maxText}
+            disabled={maxLocked !== null}
+            onChange={(e) => onChange({ maxDays: e.target.value })}
+          />
+        </Field>
+        <Field
+          label={t("cdnAllowlist")}
+          help={t("cdnHelp")}
+          {...(shown.badOrigin === undefined
+            ? {}
+            : { error: t("invalidOrigin", { origin: shown.badOrigin }) })}
+        >
+          <Textarea
+            code
+            rows={6}
+            value={shown.allowText}
+            onChange={(e) => onChange({ allowlist: e.target.value })}
+          />
+        </Field>
+      </Stack>
+    </FormSection>
   );
 }
 

@@ -443,6 +443,8 @@ describe("org cloudNetwork", () => {
       publicUrl: false,
       // the platform's compaction defaults the org page follows (context compaction spec §4.8)
       compaction: COMPACTION_SETTINGS.parse({}),
+      externalSharing: { value: "deny", source: "default" },
+      shareMaxExpiryDays: 30,
     });
   });
 });

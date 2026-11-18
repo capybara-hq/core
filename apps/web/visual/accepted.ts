@@ -173,6 +173,12 @@ export const ACCEPTED: string[] = [
   // in place; the reference PNGs and the side-by-side review wait for the reference-update and
   // visual-update workflows
   "device-nameplate",
+  // file sharing (file sharing design §4–§6; spec §5.12, §6.43, §6.44; file-preview gained the
+  // unshared / shared states): blocks and size tables in place; the reference PNGs and the
+  // side-by-side review wait for the reference-update and visual-update workflows
+  "html-frame",
+  "copy-field",
+  "shared-file-page",
 ];
 
 /**

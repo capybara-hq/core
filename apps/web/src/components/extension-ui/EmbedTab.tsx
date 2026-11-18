@@ -12,7 +12,7 @@ import {
   readTheme,
 } from "../../lib/embed-bridge";
 import { useAppMutation } from "../../lib/query/mutation";
-import { requestEmbedToken, uiLocale } from "../../lib/ui";
+import { requestEmbedToken, requestShareEmbedToken, uiLocale } from "../../lib/ui";
 import { useErrorMessage } from "../../lib/use-error-message";
 import { FormError } from "../form-error";
 
@@ -28,12 +28,37 @@ export const MAX_REMOUNTS = 3;
 export const REMOUNT_WINDOW_MS = 10_000;
 
 /**
- * 嵌入应用（第二档）：取嵌入令牌，在 design 的 `EmbedFrame`（沙箱 iframe）里打开插件页面，
- * 经消息桥（`lib/embed-bridge.ts`）发 `init` / 续期 `token` / `theme`，处理 iframe 的 resize / navigate / toast。
- * 对话标签（带 `conversationId`）与组织页面（不带）共用。取令牌失败只在这里显示错误与「重试」。
+ * Where an embed is shown: an org's or the platform's page, panel or section (`orgId`), or the
+ * public share page (`share`, file sharing design §7: a share-scoped token, no org or
+ * conversation, no app to navigate in).
+ */
+type EmbedWhere =
+  | {
+      /** `null`: a platform page (the admin routes, no org). */
+      orgId: string | null;
+      conversationId?: string;
+      /** An `agent.detail.section` embed: the agent it is shown on. */
+      agentId?: string;
+      share?: undefined;
+    }
+  | {
+      /** A share page's `file.preview` embed: the share's code mints the token. */
+      share: { code: string };
+      orgId?: undefined;
+      conversationId?: undefined;
+      agentId?: undefined;
+    };
+
+/**
+ * An embedded app (tier 2): mints an embed token, opens the plugin page in the design's
+ * `EmbedFrame` (a sandboxed iframe), sends `init` / renewed `token` / `theme` through the message
+ * bridge (`lib/embed-bridge.ts`) and handles the frame's resize / navigate / toast. Shared by
+ * conversation tabs (with `conversationId`), org and platform pages, and the share page
+ * (`share`: `navigate` is ignored there). A failed mint shows its error and Retry only here.
  */
 export function EmbedTab({
-  orgId,
+  orgId: givenOrgId,
+  share,
   plugin,
   id,
   title,
@@ -42,15 +67,10 @@ export function EmbedTab({
   file,
   fill = false,
   failed,
-}: {
-  /** `null`: a platform page (the admin routes, no org). */
-  orgId: string | null;
+}: EmbedWhere & {
   plugin: string;
   id: string;
   title: string;
-  conversationId?: string;
-  /** An `agent.detail.section` embed: the agent it is shown on. */
-  agentId?: string;
   /** A `file-preview` embed: the file it previews, posted once after `init`. */
   file?: { id: string; read(): Promise<EmbedFile>; maxBytes: number };
   /**
@@ -62,6 +82,8 @@ export function EmbedTab({
   failed?(o: { message: string; onRetry(): void }): ReactNode;
 }) {
   const t = useTranslations();
+  const orgId = givenOrgId ?? null;
+  const shareCode = share?.code;
   const errorMessage = useErrorMessage();
   const locale = uiLocale(useLocale());
   const router = useRouter();
@@ -85,15 +107,19 @@ export function EmbedTab({
     fn: (v: {
       plugin: string;
       id: string;
+      shareCode?: string;
       conversationId?: string;
       agentId?: string;
       fileId?: string;
     }) =>
-      requestEmbedToken(orgId, v.plugin, v.id, {
-        ...(v.conversationId !== undefined && { conversationId: v.conversationId }),
-        ...(v.agentId !== undefined && { agentId: v.agentId }),
-        ...(v.fileId !== undefined && { fileId: v.fileId }),
-      }),
+      // A share's token names the share's snapshot itself: no file id, no org.
+      v.shareCode !== undefined
+        ? requestShareEmbedToken(v.shareCode, v.plugin, v.id)
+        : requestEmbedToken(orgId, v.plugin, v.id, {
+            ...(v.conversationId !== undefined && { conversationId: v.conversationId }),
+            ...(v.agentId !== undefined && { agentId: v.agentId }),
+            ...(v.fileId !== undefined && { fileId: v.fileId }),
+          }),
     invalidates: () => [],
   });
   const mintToken = useRef(mutateAsync);
@@ -116,6 +142,7 @@ export function EmbedTab({
         const r = await mintToken.current({
           plugin,
           id,
+          ...(shareCode !== undefined && { shareCode }),
           ...(conversationId !== undefined && { conversationId }),
           ...(agentId !== undefined && { agentId }),
           ...(fileRef.current !== undefined && { fileId: fileRef.current.id }),
@@ -126,16 +153,21 @@ export function EmbedTab({
       },
       locale,
       context:
-        orgId === null
-          ? { scope: "platform" }
-          : {
-              scope: "org",
-              orgId,
-              ...(conversationId !== undefined && { conversationId }),
-            },
+        shareCode !== undefined
+          ? { scope: "share" }
+          : orgId === null
+            ? { scope: "platform" }
+            : {
+                scope: "org",
+                orgId,
+                ...(conversationId !== undefined && { conversationId }),
+              },
       readTheme: () => ({ theme: readTheme(document), tokens: readDesignTokens(document) }),
       onResize: setHeight,
-      onNavigate: (path) => latest.current.router.push(path),
+      // The share page has no app to navigate in: a share embed's `navigate` goes nowhere.
+      onNavigate: (path) => {
+        if (shareCode === undefined) latest.current.router.push(path);
+      },
       onToast: (text) => latest.current.toast.success(text),
       onTokenError: () => setRefreshFailed(true),
       ...(fileRef.current !== undefined && {
@@ -173,7 +205,7 @@ export function EmbedTab({
       b.dispose();
       if (bridge.current === b) bridge.current = null;
     };
-  }, [orgId, plugin, id, conversationId, agentId, locale, attempt, fileId]);
+  }, [orgId, shareCode, plugin, id, conversationId, agentId, locale, attempt, fileId]);
 
   // 每个 iframe 元素只在第一次 load 收到 init；再次 load（导航走了）由消息桥通知重新挂载。
   // 换上新元素时让消息桥回到「等第一次 load」；旧元素的 load 不再理会。

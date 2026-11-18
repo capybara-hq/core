@@ -17,6 +17,7 @@ import { OrgsModule } from "../orgs/orgs.module.js";
 import { ProvidersModule } from "../runtime/providers.js";
 import { SchedulesModule } from "../schedules/schedules.module.js";
 import { SetupModule } from "../setup/setup.module.js";
+import { SharesModule } from "../shares/shares.module.js";
 import { SkillsModule } from "../skills/skills.module.js";
 import { ThemesModule } from "../themes/themes.module.js";
 import { ToolsModule } from "../tools/tools.module.js";
@@ -50,6 +51,7 @@ import { PreviewersOperations } from "./ops/previewers.ops.js";
 import { RequestsOperations } from "./ops/requests.ops.js";
 import { SchedulesOperations } from "./ops/schedules.ops.js";
 import { SetupOperations } from "./ops/setup.ops.js";
+import { SharesOperations } from "./ops/shares.ops.js";
 import { SkillsOperations } from "./ops/skills.ops.js";
 import { ThemesOperations } from "./ops/themes.ops.js";
 import { UiOperations } from "./ops/ui.ops.js";
@@ -105,6 +107,8 @@ export const PLATFORM_OPERATION_PROVIDERS = [
   SchedulesOperations,
   // dead outbox rows (transactional outbox spec §3.4)
   OutboxOperations,
+  // shared file links (file sharing spec §10)
+  SharesOperations,
 ] as const;
 
 /**
@@ -136,6 +140,7 @@ export const PLATFORM_OPERATION_PROVIDERS = [
     ThemesModule,
     SetupModule,
     SchedulesModule,
+    SharesModule,
   ],
   providers: [...PLATFORM_OPERATION_PROVIDERS],
 })

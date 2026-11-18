@@ -107,6 +107,68 @@ describe("EmbedTokens", () => {
     expect(t.verify(signK1({ ...CLAIMS, exp, scope: "deployment" }), CLAIMS.plugin)).toBeNull();
   });
 
+  it("share claims round-trip: org, share and generation, no account or role", () => {
+    const t = tokens(T0);
+    const share = {
+      plugin: CLAIMS.plugin,
+      scope: "share" as const,
+      orgId: CLAIMS.orgId,
+      shareId: "44444444-4444-4444-8444-444444444444",
+      generation: 2,
+      contribution: "docx-embed",
+    };
+    const issued = t.issue(share);
+    expect(issued.claims).toEqual({ ...share, exp: (T0 + 300_000) / 1000 });
+    expect(t.verify(issued.token, CLAIMS.plugin)).toEqual({ ...share, exp: (T0 + 300_000) / 1000 });
+  });
+
+  it("share claims are parsed strictly; an org or platform claim never carries share fields", () => {
+    const t = tokens(T0);
+    const exp = (T0 + 300_000) / 1000;
+    const share = {
+      plugin: CLAIMS.plugin,
+      scope: "share",
+      orgId: CLAIMS.orgId,
+      shareId: "44444444-4444-4444-8444-444444444444",
+      generation: 1,
+      contribution: "docx-embed",
+      exp,
+    };
+    expect(t.verify(signK1(share), CLAIMS.plugin)).toEqual(share);
+    const conv = "33333333-3333-4333-8333-333333333333";
+    const { orgId: _o, ...noOrg } = share;
+    const { shareId: _s, ...noShare } = share;
+    const { generation: _g, ...noGeneration } = share;
+    for (const bad of [
+      { ...share, accountId: CLAIMS.accountId },
+      { ...share, role: "member" },
+      { ...share, conversationId: conv },
+      { ...share, agentId: conv },
+      { ...share, fileId: conv },
+      { ...share, generation: 0 },
+      { ...share, generation: -1 },
+      { ...share, generation: 1.5 },
+      { ...share, generation: "1" },
+      { ...share, generation: Number.MAX_SAFE_INTEGER + 1 },
+      { ...share, shareId: "" },
+      noOrg,
+      noShare,
+      noGeneration,
+    ]) {
+      expect(t.verify(signK1(bad), CLAIMS.plugin)).toBeNull();
+    }
+    // an org token with a share id or a generation, a platform token with one: refused
+    expect(t.verify(signK1({ ...CLAIMS, exp, shareId: share.shareId }), CLAIMS.plugin)).toBeNull();
+    expect(t.verify(signK1({ ...CLAIMS, exp, generation: 1 }), CLAIMS.plugin)).toBeNull();
+    const { orgId: _po, ...platformBase } = CLAIMS;
+    const platform = { ...platformBase, scope: "platform", role: "superAdmin", exp };
+    expect(t.verify(signK1(platform), CLAIMS.plugin)).not.toBeNull();
+    expect(t.verify(signK1({ ...platform, shareId: share.shareId }), CLAIMS.plugin)).toBeNull();
+    expect(t.verify(signK1({ ...platform, generation: 1 }), CLAIMS.plugin)).toBeNull();
+    // not expressible in the type; refused at issuance too
+    expect(() => t.issue({ ...share, accountId: CLAIMS.accountId } as never)).toThrow(/invalid/);
+  });
+
   it("superAdmin role only with platform scope", () => {
     const t = tokens(T0);
     const exp = (T0 + 300_000) / 1000;

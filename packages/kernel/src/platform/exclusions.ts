@@ -431,6 +431,69 @@ export const PLATFORM_EXCLUSIONS: readonly {
     category: "transport",
     reason: "Serves a rendered file preview",
   },
+  // shares of conversation files (file sharing spec §10); listing and revoking are operations
+  {
+    route: "POST /api/v1/orgs/:orgId/conversations/:id/files/:fileId/shares",
+    category: "human-only",
+    reason: "Publishing a file outside the conversation is a person's act",
+  },
+  {
+    route: "POST /api/v1/orgs/:orgId/shares/:shareId/refresh",
+    category: "human-only",
+    reason: "Publishing a file outside the conversation is a person's act",
+  },
+  {
+    route: "GET /api/v1/orgs/:orgId/conversations/:id/files/:fileId/shares",
+    category: "internal",
+    reason: "The right panel's per-file view; conversations.list-shares lists the same shares",
+  },
+  // the HTML document (file sharing spec §4, §10)
+  {
+    route: "POST /api/v1/orgs/:orgId/conversations/:id/files/:fileId/html-token",
+    category: "transport",
+    reason: "Mints the HTML document's load token for the web panel",
+  },
+  {
+    route: "GET /api/v1/html/*",
+    category: "transport",
+    reason: "Serves a sandboxed HTML document",
+  },
+  // public share links (file sharing spec §3, §10): the link's code is the authority
+  {
+    route: "GET /api/v1/s/:code",
+    category: "transport",
+    reason: "Public share link: the shared file's metadata for the share page",
+  },
+  {
+    route: "GET /api/v1/s/:code/content",
+    category: "transport",
+    reason: "Public share link: streams the shared snapshot's bytes",
+  },
+  {
+    route: "GET /api/v1/s/:code/text",
+    category: "transport",
+    reason: "Public share link: the shared text for the share page's preview",
+  },
+  {
+    route: "GET /api/v1/s/:code/inline",
+    category: "transport",
+    reason: "Public share link: the shared image shown in place",
+  },
+  {
+    route: "GET /api/v1/s/:code/html",
+    category: "transport",
+    reason: "Public share link: redirects to the sandboxed HTML document",
+  },
+  {
+    route: "POST /api/v1/s/:code/embed-token/:plugin/:previewerId",
+    category: "transport",
+    reason: "Public share link: a share-scoped embed token for the share page's embed previewer",
+  },
+  {
+    route: "GET /api/v1/s/:code/previews/:plugin/:previewerId",
+    category: "transport",
+    reason: "Public share link: a view previewer rendered for the shared snapshot",
+  },
   // identity
   {
     route: "POST /api/v1/orgs/:orgId/approvals/:approvalId/initial-password",

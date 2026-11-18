@@ -13,7 +13,7 @@ import {
   SIGN_IN_HEADER,
 } from "./lib/headers";
 import { trustedPeer } from "./lib/peer";
-import { isPublicPath } from "./lib/routes";
+import { isPublicPath, isSharePath } from "./lib/routes";
 import { ACCESS_COOKIE, serverNeedsSetup } from "./lib/server-setup";
 import { accessTokenExpiresSoon, renewSession, setCookieValue } from "./lib/session-renewal";
 import {
@@ -96,6 +96,9 @@ function withCookies(res: NextResponse, setCookies: readonly string[]): NextResp
  * 6. the first workspace document of a sign-in carries `x-cap-sign-in: new` (the shell's
  *    `sign-in=new` token, client extensions spec §7.3), and the response records the session in
  *    `cap_seen` (`lib/sign-in-state.ts`).
+ * 7. a share page (`/s/<code>`, file sharing design §6) answers with `referrer-policy:
+ *    no-referrer` (the code never leaks to the hosts it loads from or links to) and
+ *    `x-robots-tag: noindex`.
  * The client host shims (`/_capybara/client-host/<build>/<name>.mjs`) get step 4 only.
  * Before all that, a native form POST (the client JS did not load) is answered by
  * `lib/form-post.ts` (sign-in and setup run server side, other pages get a 303 back), and a GET of
@@ -224,6 +227,10 @@ export default async function proxy(req: NextRequest): Promise<NextResponse> {
 
   const res = NextResponse.next({ request: { headers } });
   res.headers.set(CSP_HEADER, policy);
+  if (isSharePath(pathname)) {
+    res.headers.set("referrer-policy", "no-referrer");
+    res.headers.set("x-robots-tag", "noindex");
+  }
   return withCookies(res, setCookies);
 }
 

@@ -199,7 +199,7 @@ export const PLATFORM_DOMAINS: readonly { id: string; description: string }[] = 
   {
     id: "conversations",
     description:
-      "Your own conversations: list, read, rename, archive, delete, read their events, list and stop their background tasks.",
+      "Your own conversations: list, read, rename, archive, delete, read their events, list and stop their background tasks, list and revoke shared file links.",
   },
   {
     id: "orgs",

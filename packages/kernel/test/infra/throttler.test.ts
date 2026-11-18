@@ -305,6 +305,7 @@ describe("named throttler table", () => {
       ["client-reports", 20, 60_000],
       ["setup-check", 30, 60_000],
       ["plugin-public-write", 300, 60_000],
+      ["share-open", 30, 600_000],
     ]);
   });
 });

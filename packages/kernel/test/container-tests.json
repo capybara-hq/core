@@ -50,6 +50,7 @@
   "sandbox/sandbox.service-binding.dual.test.ts",
   "schedules/scan.dual.test.ts",
   "setup/setup-checks.dual.test.ts",
+  "shares/shares.dual.test.ts",
   "skills/agent-skill-sharing.dual.test.ts",
   "skills/m5-segment3.dual.test.ts",
   "subagents/forked-skill.dual.test.ts",

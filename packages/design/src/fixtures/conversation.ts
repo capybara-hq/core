@@ -903,6 +903,49 @@ export const FILE_FIXTURE: {
   updated: "刚刚",
 };
 
+// ── File sharing (file sharing design §5, §6) ──────────────────────────────
+
+/**
+ * A shared file's page and the HTML document frame. `document` is an agent-written report page:
+ * English (inside the frame the self-hosted fonts are not available), no script, no network, no
+ * background of its own (the frame's light ground shows). Its colors are named CSS colors: it is
+ * a document the frame shows, not design styling.
+ */
+export const SHARE_FIXTURE: {
+  name: string;
+  badge: string;
+  /** The page's meta line, already localized. */
+  meta: string;
+  link: string;
+  linkLabel: string;
+  document: string;
+} = {
+  name: "季度报告.html",
+  badge: "HTML",
+  meta: "张三 分享 · 2026-11-25 过期",
+  link: "https://capybara.example.com/s/k3Rf9TqW2a",
+  linkLabel: "链接",
+  document: [
+    "<!doctype html>",
+    '<html lang="en"><head><meta charset="utf-8"><title>Quarterly report</title><style>',
+    "body{margin:0;padding:24px 28px;font:14px/1.5 sans-serif;color:black}",
+    "h1{margin:0 0 4px;font-size:20px;line-height:28px}",
+    "p{margin:0 0 20px;color:dimgray}",
+    ".bars{display:flex;align-items:flex-end;gap:16px;height:160px;border-bottom:1px solid silver}",
+    ".bars div{flex:1;background:steelblue}",
+    ".axis{display:flex;gap:16px;margin-top:6px;color:dimgray;font-size:12px}",
+    ".axis span{flex:1;text-align:center}",
+    "</style></head><body>",
+    "<h1>Quarterly report</h1><p>Q3 2026 &middot; revenue by month, in thousands</p>",
+    '<div class="bars"><div style="height:46%"></div><div style="height:62%"></div>',
+    '<div style="height:55%"></div><div style="height:78%"></div><div style="height:70%"></div>',
+    '<div style="height:92%"></div></div>',
+    '<div class="axis"><span>Apr</span><span>May</span><span>Jun</span><span>Jul</span>',
+    "<span>Aug</span><span>Sep</span></div>",
+    "</body></html>",
+  ].join(""),
+};
+
 // ── Properties panel, right panel, extension slots ──────────────────────────
 
 export const PANEL_FIXTURE: {

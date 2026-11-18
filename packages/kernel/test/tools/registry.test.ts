@@ -468,6 +468,8 @@ describe("组织设置与 ToolSearch 启用条件", () => {
           sessionUrl: false,
         },
         publicUrl: false,
+        externalSharing: { value: "deny", source: "default" },
+        shareMaxExpiryDays: 30,
       },
       // the org follows the platform: its sandbox mode gets the platform's list
       effectiveNetwork: { mode: "open", hosts: baseCfg.sandbox.limits.allowHosts },

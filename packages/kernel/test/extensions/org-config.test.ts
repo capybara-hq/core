@@ -71,6 +71,7 @@ beforeAll(async () => {
     keyring,
     embedTokens: new EmbedTokens(keyring),
     hooks: undefined,
+    shares: undefined,
     runWorkers: false,
     log: silent,
   };
