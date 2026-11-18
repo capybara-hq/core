@@ -6,6 +6,8 @@ import { useDesignT } from "../provider";
 import type { ImageRatio } from "./image-ratios";
 import { fillCopy } from "./tool-copy";
 
+export { type ImageRatio, INLINE_IMAGE_RATIOS, isImageRatio } from "./image-ratios";
+
 // Files in the conversation (spec §6.16.19–§6.16.21): file cards for what the agent delivered
 // (UI copy says "files", never "artifacts"), inline image and text outputs, path chips, and the
 // composer's attachment strip.
@@ -193,8 +195,6 @@ export function FileOutputs({
     </div>
   );
 }
-
-export { type ImageRatio, INLINE_IMAGE_RATIOS, isImageRatio } from "./image-ratios";
 
 /**
  * The placeholder drawn while an image is being generated: a still-sized frame with a slowly

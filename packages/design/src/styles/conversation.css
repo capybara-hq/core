@@ -1470,7 +1470,6 @@ button.cb-file-card:focus-visible {
       color-mix(in oklab, var(--cb-ink) 8%, var(--cb-panel)),
       transparent 55%
     );
-  will-change: transform;
   animation: cb-image-flow var(--cb-motion-flow) ease-in-out infinite alternate;
 }
 @keyframes cb-image-flow {
