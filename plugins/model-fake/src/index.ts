@@ -80,11 +80,15 @@ const DeploymentConfig = z.object({
 });
 
 /**
- * 确定性脚本化模型供应商，用于运行时测试、e2e 与无密钥演示。
- * 行为由最后一条 user 消息的英文前缀指令决定（echo / media / slow / slowfail / stall / fail / tool / slowtool / long）。
- * 图片生成模型（kind image_generation）按提示词首词：refuse（拒绝）/ stall（等到中止）/ fail <kind> / short（少一张）/ url（返回 URL），否则返回 n 张 1×1 PNG。
- * 提供 model-provider@2：声明三档 effort 与 `model-fake.style`（`shout` 时回复转大写）。
- * 无进程内状态：缓存命中记录放 ctx.kv（TTL 300 秒）。
+ * A deterministic scripted model provider for runtime tests, e2e and keyless demos.
+ * The last user message's English prefix command decides the behavior (echo / media / slow /
+ * slowfail / stall / fail / tool / slowtool / long).
+ * Image generation models (kind image_generation) follow the prompt's first word: refuse (a
+ * refusal) / stall (waits for the abort) / fail <kind> / short (one image too few) / url (returns
+ * a URL); otherwise n 1×1 PNGs.
+ * Provides model-provider@2: declares three effort levels and `model-fake.style` (`shout` upper-
+ * cases the reply).
+ * No in-process state: cache hit records live in ctx.kv (TTL 300 seconds).
  */
 export default defineExtension({
   name: "model-fake",
