@@ -12,10 +12,11 @@ import { isInternalProvider, LOCAL_PROVIDER } from "./providers.js";
  * the physical no-reuse obligations of old instance incarnations (migration 0157).
  *
  * - **Freeze.** {@link freeze} writes the one freeze row under the platform authority writer (the
- *   exclusive platform permission lock). A legacy SID launch calls {@link admitLegacyDispatch}
- *   immediately before its dispatch, which takes the shared platform lock and refuses once the
- *   row exists; so when the freeze commits, every admission that passed before has committed its
- *   `dispatched` mark, and none passes after. A replica without this code is not fenced: it must
+ *   exclusive platform permission lock). A legacy SID launch called {@link admitLegacyDispatch}
+ *   immediately before its dispatch (no production caller is left since the SID launcher was
+ *   removed, permission activation W5-P2; tests still use it), which takes the shared platform
+ *   lock and refuses once the row exists; so when the freeze commits, every admission that
+ *   passed before has committed its `dispatched` mark, and none passes after. A replica without this code is not fenced: it must
  *   be stopped or drained before the freeze (the rows it writes still read `unknown`, never
  *   "not dispatched", and the periodic re-scan picks them up).
  * - **Obligations.** {@link scan} enumerates, under the freeze, every legacy row whose processes

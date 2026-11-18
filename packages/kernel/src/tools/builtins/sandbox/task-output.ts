@@ -17,11 +17,12 @@ import {
   ManagedOutputUnavailableError,
   type TaskOutputAssembly,
 } from "../../../background/managed-output.js";
-import { formatElapsed, lostReasonText } from "../../../background/render.js";
+import { formatElapsed, taskReasonText } from "../../../background/render.js";
 import { notRunningAs, RECREATED } from "../../../background/stop.js";
 import { type BackgroundTaskRow, isManagedTask } from "../../../background/store.js";
 import {
   type IfRunningResult,
+  RetirementPendingError,
   retirementPending,
   type SandboxService,
 } from "../../../sandbox/sandbox.service.js";
@@ -189,21 +190,6 @@ export async function recheckDevice(env: TaskEnv, ctx: BuiltinCallContext): Prom
 }
 
 /**
- * Why a legacy (SID) launch failed is recorded in the old launcher's raw words (a provider's
- * stderr): never shown, the model gets this instead.
- */
-const LEGACY_LAUNCH_FAILED =
-  "its launch failed under an earlier version of the device runtime; call Bash with run_in_background again to start it";
-
-/** The task's lost or failure reason as the model reads it: kernel text only. */
-function reasonText(task: BackgroundTaskRow): string {
-  const reason = task.lostReason as string;
-  const known = lostReasonText(reason);
-  if (known !== reason || isManagedTask(task)) return known;
-  return LEGACY_LAUNCH_FAILED;
-}
-
-/**
  * The task's status line: `Status: running (2m05s)`, `Status: failed, exit code 3, after 4m12s`,
  * `Status: stopped after 1m00s`, `Status: lost (the sandbox was suspended) after 3s`.
  */
@@ -212,7 +198,7 @@ export function statusLine(task: BackgroundTaskRow, now = new Date()): string {
   const elapsed = formatElapsed(end.getTime() - task.startedAt.getTime());
   if (task.status === "running") return `Status: running (${elapsed})`;
   let s = `Status: ${task.status === "timed_out" ? "timed out" : task.status}`;
-  if (task.lostReason !== null) s += ` (${reasonText(task)})`;
+  if (task.lostReason !== null) s += ` (${taskReasonText(task)})`;
   if (task.exitCode !== null) return `${s}, exit code ${task.exitCode}, after ${elapsed}`;
   return `${s} after ${elapsed}`;
 }
@@ -328,8 +314,50 @@ export function taskOutputTool(deps: SandboxToolDeps): BuiltinTool {
 }
 
 /**
+ * A legacy task's own instance, never signalled or read (as `BackgroundTaskStopper` checks it):
+ * a running one refuses with the retirement gate's own text before any provider call; one that is
+ * not running or was replaced is returned. A task from before devices has none.
+ */
+async function legacyInstance(
+  env: TaskEnv,
+  task: BackgroundTaskRow,
+): Promise<Exclude<IfRunningResult<never>, { kind: "ran" }>> {
+  if (task.deviceId === null || task.sandboxCreatedAt === null)
+    return { kind: "not_running", status: "gone" };
+  let r: IfRunningResult<never>;
+  try {
+    r = await env.ifRunning(
+      task.deviceId,
+      { createdAt: task.sandboxCreatedAt },
+      async () => {
+        throw retirementPending();
+      },
+      AbortSignal.timeout(30_000),
+    );
+  } catch (e) {
+    throw retirementRefusal(e, env);
+  }
+  if (r.kind === "ran") throw retirementRefusal(retirementPending(), env);
+  return r;
+}
+
+/**
+ * The retirement gate's refusal as the tool's error (the generic `device.unavailable` text would
+ * name an inactive provider); anything else mapped as usual.
+ */
+export function retirementRefusal(e: unknown, env: Pick<TaskEnv, "log">): unknown {
+  if (e instanceof RetirementPendingError) {
+    return new ToolError(
+      "This task's device is unavailable: background work started by an earlier version may still run on its previous instance, which has not been confirmed destroyed yet (for a local device, restarting its computer confirms it). The task cannot be read or stopped until then; continue without it, or start the work again with Bash on another device.",
+    );
+  }
+  return mapSandboxError(e, env.log);
+}
+
+/**
  * `TaskOutput` of a legacy (SID) task: never read by an exec (permission activation W5-P2). A
- * running one belongs to the retirement gate, so the call is refused with its actionable text; a
+ * running one whose instance still runs belongs to the retirement gate, so the call is refused
+ * with its actionable text; one whose instance is gone, suspended or replaced is settled lost; a
  * finished one answers with its status and the last lines its finish kept.
  */
 async function legacyTaskOutput(
@@ -346,7 +374,20 @@ async function legacyTaskOutput(
         : "[No output: the command never started.]",
     ]);
   }
-  if (task.status === "running") throw mapSandboxError(retirementPending(), env.log);
+  if (task.status === "running") {
+    // the instance first: only a running one belongs to the retirement gate; a gone, suspended
+    // or replaced one settles the task lost (its processes went with it, or wait for retirement)
+    const seen = await legacyInstance(env, task);
+    const end: End = {
+      to:
+        seen.kind === "not_running"
+          ? notRunningAs(seen.status, seen.status === "suspended")
+          : RECREATED,
+      lastLines: "",
+    };
+    const after = await settle(env, task, end);
+    return result(after, [statusLine(after), unavailableText(after, seen)]);
+  }
   const lines = [
     statusLine(task),
     "[Output unavailable: this task was started by an earlier version of the device runtime, whose output is not read live.]",

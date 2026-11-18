@@ -15,7 +15,14 @@ import {
   unavailableWhenNoSandbox,
 } from "./common.js";
 import { assertDeviceOfRunAccount } from "./device-owner.js";
-import { ownedTask, recheckDevice, statusLine, type TaskEnv, taskEnv } from "./task-output.js";
+import {
+  ownedTask,
+  recheckDevice,
+  retirementRefusal,
+  statusLine,
+  type TaskEnv,
+  taskEnv,
+} from "./task-output.js";
 
 const SPEC: ToolSpec = {
   name: "TaskStop",
@@ -135,7 +142,8 @@ export function taskStopTool(deps: SandboxToolDeps): BuiltinTool {
       try {
         after = await env.tasks.stopper.stop(task, "tool", ctx.signal);
       } catch (e) {
-        const mapped = mapSandboxError(e, env.log);
+        // a running legacy task's stop is the retirement gate's refusal, in its own words
+        const mapped = retirementRefusal(e, env);
         if (mapped instanceof ToolError) throw mapped;
         const why = e instanceof Error ? e.message : String(e);
         throw new ToolError(

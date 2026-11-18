@@ -312,8 +312,9 @@ export class BackgroundTaskStore {
    * stop's claim older than {@link STOP_CLAIM_TTL_MS} does not hold it: a stop only claims a
    * reservation and leaves the rest to the launch, so a dead launch would keep it (and its slot of
    * `maxTasks`) forever. Conditional on `pending`, so a dispatch at that moment wins. No
-   * `background_task_finished` event: the command never started and the model never saw its id. Returns the rows it finished (their owner and sandbox
-   * conversations, for the caller's `changed: "background"` frames).
+   * `background_task_finished` event: the command never started and the model never saw its id.
+   * Returns the rows it finished (their owner and sandbox conversations, for the caller's
+   * `changed: "background"` frames).
    */
   async failAbandonedLaunches(
     before: Date,

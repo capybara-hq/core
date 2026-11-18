@@ -14,7 +14,11 @@ import { Redis } from "ioredis";
 import { sql } from "kysely";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { BackgroundTaskFinisher } from "../../src/background/finish.js";
-import { backgroundMaxSeconds } from "../../src/background/launch.js";
+import {
+  backgroundMaxSeconds,
+  managedTaskArtifactPath,
+  newTaskId,
+} from "../../src/background/launch.js";
 import { BackgroundTaskPollJob } from "../../src/background/poll.job.js";
 import { BackgroundTaskStopper } from "../../src/background/stop.js";
 import { BackgroundTaskStore } from "../../src/background/store.js";
@@ -485,6 +489,9 @@ async function fixture(opts: { project?: string } = {}) {
     reclaim,
     run,
     runCall,
+    event,
+    ctxFor,
+    deps,
     opFor,
     outcome,
     operationId,
@@ -883,6 +890,88 @@ describe("managed background launch identity", () => {
         .where("call_id", "=", callId)
         .execute(),
     ).toHaveLength(0);
+  });
+
+  it("concurrent launches over the cap: exactly maxTasks start, the rest are refused with the actionable text", async () => {
+    const f = await fixture();
+    const calls = Array.from({ length: 6 }, () => randomUUID());
+    // the tool calls are recorded one after another; the launches then race
+    for (const call of calls) await f.event("tool_call_started", { callId: call, toolKey: "Bash" });
+    const ctx = await f.ctxFor();
+    const results = await Promise.all(
+      calls.map((call, i) =>
+        f.outcome(
+          runInBackgroundManaged(
+            f.deps,
+            { ...ctx, callId: call },
+            { command: `serve ${i}`, description: "Serve", run_in_background: true },
+          ),
+        ),
+      ),
+    );
+    expect(results.filter((r) => r.ok)).toHaveLength(MAX_TASKS);
+    const refused = results.filter((r) => !r.ok);
+    expect(refused).toHaveLength(6 - MAX_TASKS);
+    for (const r of refused) {
+      expect((r as { error: unknown }).error).toBeInstanceOf(ToolError);
+      expect(String((r as { error: Error }).error.message)).toBe(
+        `${MAX_TASKS} background tasks are already running; stop one with TaskStop or wait for one to finish, then retry`,
+      );
+    }
+    // only the admitted ones were reserved and started
+    expect(f.provider.calls).toHaveLength(MAX_TASKS);
+    expect(
+      await f.db
+        .selectFrom("background_tasks")
+        .select("id")
+        .where("sandbox_conversation_id", "=", f.conversationId)
+        .where("status", "=", "running")
+        .execute(),
+    ).toHaveLength(MAX_TASKS);
+  });
+
+  it("a sub-agent's reservation counts against its root conversation's maxTasks", async () => {
+    const f = await fixture();
+    const childId = randomUUID();
+    await sql`INSERT INTO capybara.conversations
+        (id, org_id, agent_id, account_id, kind, parent_conversation_id, device_id)
+      SELECT ${childId}, org_id, agent_id, account_id, 'subagent', id, device_id
+      FROM capybara.conversations WHERE id = ${f.conversationId}`.execute(raw);
+    const store = k.app.get(BackgroundTaskStore);
+    const now = Date.now();
+    const reservation = (conversationId: string) => {
+      const id = newTaskId();
+      return {
+        id,
+        orgId: f.orgId,
+        conversationId,
+        sandboxConversationId: f.conversationId,
+        deviceId: f.deviceId,
+        runId: f.runId,
+        callId: randomUUID(),
+        triggerAccountId: owner.id,
+        description: "d",
+        command: "serve",
+        operationId: randomUUID(),
+        workingRoot: "/work",
+        outputPath: managedTaskArtifactPath("/work", id),
+        startedAt: new Date(now),
+        deadlineAt: new Date(now + 60_000),
+        retainUntil: new Date(now + 120_000),
+      };
+    };
+    // the sub-agent's tasks fill the root's slots
+    for (let i = 0; i < MAX_TASKS; i++) {
+      const r = await store.reserveManaged(reservation(childId), MAX_TASKS);
+      expect(r.kind).toBe("reserved");
+      if (r.kind === "reserved") expect(r.row.conversationId).toBe(childId);
+    }
+    // the parent's own launch, and another of the sub-agent's, find the tree full
+    expect((await store.reserveManaged(reservation(f.conversationId), MAX_TASKS)).kind).toBe(
+      "full",
+    );
+    expect((await store.reserveManaged(reservation(childId), MAX_TASKS)).kind).toBe("full");
+    expect(await store.countRunning(f.conversationId)).toBe(MAX_TASKS);
   });
 
   it("clamps the task to the background maximum duration in the persisted deadline and start input", async () => {

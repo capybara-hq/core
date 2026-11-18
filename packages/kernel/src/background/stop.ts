@@ -304,7 +304,9 @@ export class BackgroundTaskStopper {
 
   /**
    * Stops `tasks` side by side. A stop that fails while the sandbox runs leaves its task running
-   * (logged): the poller still checks it and it ends at its own deadline at the latest.
+   * (logged): a managed task stays owed to the poller and ends at its own deadline at the latest;
+   * a legacy task stays with the retirement gate until its instance is destroyed or quarantined
+   * (no deadline ends it in the kernel's view).
    */
   private async stopAll(tasks: BackgroundTaskRow[], why: StopReason): Promise<void> {
     await Promise.all(
