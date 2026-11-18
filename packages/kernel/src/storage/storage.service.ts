@@ -17,6 +17,11 @@ export { StorageKeyError } from "./prefix.js";
 /** 部署级对象的键前缀（见 {@link StorageService.deployment}）。 */
 export const DEPLOYMENT_PREFIX = "deployment/";
 
+/** True for the errors that mean "no object store right now": `storage.unavailable` or an unavailable provider. */
+export const isStorageUnavailable = (e: unknown): boolean =>
+  (e instanceof ApiError && e.code === "storage.unavailable") ||
+  e instanceof ExtensionPointUnavailableError;
+
 /** 没有对象存储提供方时的错误（HTTP 层映射为 `storage.unavailable`，503）。 */
 export const storageUnavailable = (): ExtensionPointUnavailableError =>
   new ExtensionPointUnavailableError(

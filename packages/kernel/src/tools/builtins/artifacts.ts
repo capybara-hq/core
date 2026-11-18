@@ -1,8 +1,7 @@
 import { randomUUID } from "node:crypto";
-import { ExtensionPointUnavailableError, ToolError } from "@capybara-hq/plugin-sdk";
+import { ToolError } from "@capybara-hq/plugin-sdk";
 import type { AppendEvent, EventLog } from "../../conversations/event-log.js";
-import { ApiError } from "../../errors.js";
-import type { StorageService } from "../../storage/storage.service.js";
+import { isStorageUnavailable, type StorageService } from "../../storage/storage.service.js";
 import type { BuiltinCallContext } from "../registry.js";
 
 /**
@@ -39,10 +38,6 @@ export interface StoredArtifact {
   name: string;
   size: number;
 }
-
-const isStorageGone = (e: unknown): boolean =>
-  (e instanceof ApiError && e.code === "storage.unavailable") ||
-  e instanceof ExtensionPointUnavailableError;
 
 /**
  * Stores `files` as artifacts of the call's conversation, all or none: every object is uploaded
@@ -99,7 +94,7 @@ export async function storeArtifacts(
           .catch(() => {}),
       ),
     );
-    if (isStorageGone(e)) throw new ToolError(NO_STORAGE);
+    if (isStorageUnavailable(e)) throw new ToolError(NO_STORAGE);
     throw e;
   }
   await deps.eventLog.publishChanged?.(ctx.conversationId, "files");

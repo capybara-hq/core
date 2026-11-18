@@ -121,6 +121,9 @@ export type AgentTemplateTier = "inherit" | "fast" | "standard" | "capable";
 export function appearanceIssues(manifest: PluginManifest, themeIds: readonly string[]): string[];
 
 // @public
+export function asCode(s: string): string;
+
+// @public
 export function assertValidDeclarations(plugin: string, decl: ModelParameter[]): void;
 
 // @public
@@ -261,9 +264,16 @@ export interface Channel {
         edit: boolean;
         threads: boolean;
         minEditIntervalMs?: number;
+        files?: {
+            maxBytes: number;
+            imageMaxBytes?: number;
+        };
     };
     send(args: ChannelSendArgs): Promise<{
         messageId: string;
+    }>;
+    sendFile?(args: ChannelSendFileArgs): Promise<{
+        messageId?: string;
     }>;
     update(args: ChannelSendArgs & {
         messageId: string;
@@ -328,6 +338,14 @@ export interface ChannelConnectArgs {
 }
 
 // @public
+export interface ChannelFile {
+    contentType: string;
+    data: Uint8Array;
+    kind: "image" | "file";
+    name: string;
+}
+
+// @public
 export type ChannelInboundMode = "long_connection" | "webhook";
 
 // @public
@@ -355,6 +373,16 @@ export class ChannelSendError extends Error {
 
 // @public
 export type ChannelSendFailure = "auth" | "target_gone" | "rejected" | "too_large";
+
+// @public
+export interface ChannelSendFileArgs {
+    config: unknown;
+    file: ChannelFile;
+    idempotencyKey?: string;
+    locale: Locale;
+    signal: AbortSignal;
+    target: ChannelTarget;
+}
 
 // @public
 export interface ChannelTarget {

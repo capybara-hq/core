@@ -579,6 +579,21 @@ other plugins) go through the catalog:
 - **Packages in the pre-0.1.0 format** are refused with a message asking to repack them with
   `capybara-plugin pack` (`pnpm pack-plugin <dir>` in a core checkout).
 
+## IM channels: files
+
+When an agent delivers a file in a conversation reached through an IM channel whose plugin implements
+`sendFile`, the worker reads the file from object storage and uploads it to the chat as its own message.
+Otherwise (or when the file is too big, empty or cannot be uploaded) the chat gets one text line pointing to
+the web conversation (a link when `http.publicUrl` is set).
+
+- `channels.fileMaxBytes` (default 20 MiB): the largest file sent natively, also bounded by the platform's own
+  limit. `0` keeps files out of IM entirely: every file becomes a line pointing to the web.
+- `channels.fileConcurrency` (default 4): uploads at once per process. A worker replica holds at most
+  `fileConcurrency x fileMaxBytes` of file bytes in memory (80 MiB by default); size the worker for it before
+  raising either value.
+- Neither is hot, and both apply to every org: `fileConcurrency` is read once per process at startup,
+  `fileMaxBytes` for each file as it is delivered.
+
 ## IM channels: inbound modes
 
 Each channel connection (Slack, Lark) receives messages in one of two modes. You choose the mode per

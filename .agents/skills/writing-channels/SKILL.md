@@ -38,8 +38,11 @@ interface Channel {
   connect(args: ChannelConnectArgs): Promise<void>;   // long connection loop
   send(args: ChannelSendArgs): Promise<{ messageId: string }>;
   update(args: ChannelSendArgs & { messageId: string }): Promise<void>;
+  sendFile?(args: ChannelSendFileArgs): Promise<{ messageId?: string }>;   // optional, see below
 }
 ```
+
+`features` also carries `files?: { maxBytes; imageMaxBytes? }`, present iff `sendFile` is implemented.
 
 ### Setup guides, checks and drift (spec `2026-11-09-setup-guides-v2-design.md`)
 
@@ -131,6 +134,50 @@ The extension owns its reconnection loop inside `connect` (turning off SDK recon
 - For a channel with `features.cards` false, the kernel first falls each card back to text via `renderCardAsText(card, locale)`, joins them after the body separated by blank lines, and the message handed to the extension has no `cards` (Ruling A33, `packages/kernel/src/channels/features.ts`). The fallback text is **Markdown** (converted by the extension to native rich text, like `message.text`); model-controllable fields (approval title, call summary, question title, answer summary) are placed in inline code / fenced code blocks and won't turn into links; the extension's converter must display code content as is. An extension that declares `cards: true` receives `message.cards` and renders native cards itself; when a card can't be rendered (for example a button callback value over the limit) the extension falls back to a link or text itself.
 - For a channel with `features.threads` false (the platform has no threads), the target the kernel hands the extension has no `threadId`, and replies are sent straight into the chat. Inbound events generally carry no `threadId` either (the platform has no thread to fill in); without it, each @ message in a group opens its own conversation.
 - When `features.edit` is false no streaming draft is sent, only one message at finalization (see above).
+
+### `sendFile` (spec `2026-11-18-channel-file-delivery-design.md`)
+
+Optional and additive (still `channel@1`). `sendFile({ config, target, file, signal, locale, idempotencyKey })`
+sends one file as one message and returns `{ messageId? }` (the id only binds a scheduled run's thread; return
+it when the platform gives it). `file` is `{ name, contentType, kind: "image" | "file", data: Uint8Array }`: the
+whole file in memory, never above `features.files.maxBytes`. `target` has no `threadId` on a channel without
+threads. `name` is model-controlled: show it, never interpret it. Never put an upload URL in an error.
+
+- **How the kernel decides** (`packages/kernel/src/channels/file-delivery.ts`, called by the outbound `Delivery`
+  for each `artifact_created` event, in log order, one message per artifact): native when the session has
+  `features.files` and `sendFile` and `size <= min(features.files.maxBytes, channels.fileMaxBytes)`; otherwise a
+  **link line**. The key must start with `artifacts/<conversation id>/` (a foreign key goes to the link line
+  without reading the object) and size 0 goes to the link line. `kind` is `image` when the type (no parameters,
+  lower case) is in `IMAGE_MEDIA_TYPES` and `size <= imageMaxBytes ?? maxBytes`, else `file` (SVG is a file). A
+  plugin may send an `image` as a file when the platform refuses it as a photo, never the reverse. The object is
+  read from `storage.kernel(orgId)` into one buffer, stopping at the cap.
+- **Config** (deployment level, not hot, not org-overridable): `channels.fileMaxBytes` (default 20 MiB; `0` =
+  never native, every artifact becomes a link line) and `channels.fileConcurrency` (default 4: reads and uploads at
+  once per process, a process-local semaphore guarding memory, no shared state). Memory bound per worker replica:
+  `fileConcurrency x fileMaxBytes`.
+- **Keys** (all `[A-Za-z0-9_-]`, derived from `key(seq)`): the file itself `key(seq)`, the link line
+  `key(seq, "-link")`, a scheduled-run root `key(seq, "-root")`. A crash between send and `advance` resends with
+  the same keys (Lark deduplicates by `uuid`; Slack and Telegram may show the file twice, the accepted cost).
+- **Link line**: one text message through `send`: `phrase("fileOnWeb")` with `http.publicUrl` set, else
+  `phrase("fileOnWebNoLink")`; the name in inline code.
+- **Failures:**
+
+| Situation | Outcome |
+|---|---|
+| no `sendFile` / `features.files`, `fileMaxBytes` 0, over a cap, size 0, foreign key | link line, advance |
+| object missing or storage unavailable | link line, advance (`warn`) |
+| non-retryable `too_large` | link line, advance (`info`) |
+| non-retryable `rejected`, or non-retryable with no reason (the SDK counts that as `rejected`) | link line, advance; the redacted message goes to the connection's `last_error`. Map a missing upload permission or scope to `rejected`, not `auth`, so text keeps flowing |
+| non-retryable `auth` / `target_gone` | as for text: stop the round, `last_error` for `auth`, scheduled task paused |
+| retryable or any other error | rethrown: BullMQ backoff with `retryAfterMs`; after the last attempt the next event resumes from `last_seq` |
+| the link line itself fails non-retryably | the event's poison counting (3 failures, then skipped) |
+
+  `too_large` and `rejected` do not count towards the poison limit.
+- **Scheduled group run whose first post is a file**: the kernel first sends a one-line text root
+  (`phrase("fileRoot")`: "File `x`:" / "文件 `x`：", key `-root`) through `send`, which binds the thread, then the file into the thread.
+- **Tests**: `file-delivery.test.ts` (decisions), `outbound-files.test.ts`, `outbound-files.dual.test.ts`
+  (replicas, resume with the same keys), on `fake-im` and the fakes' upload endpoints (`sendFile` on `fake-im`,
+  fake Slack / Lark / Telegram upload endpoints).
 
 ### Failure classification (`ChannelSendError`)
 
@@ -259,11 +306,11 @@ The fake servers are all in `@capybara-hq/testing`:
 
 | Fake server | Plays | Constructing inbound events |
 |---|---|---|
-| `startFakeChannelServer()` | a generic fake IM: NDJSON long connection, `/send` `/update` (dedup by `idempotencyKey`), OAuth (including PKCE), directory `book(key)`; counts the peak number of concurrent long connections per connection | `fakeDm`, `fakeGroupMessage`, `fakeCardAction`, `fakeDirectoryMember`; `push(connectionId, event)` |
-| `startFakeSlack()` | Web API, Socket Mode (records `acks`), Sign in with Slack (RS256 ID token, `tamperNextIdToken`), `users.list`; `failNext` injects platform errors / 429 | `slackDmEvent`, `slackMentionEvent`, `slackBlockAction`, `findSlackButton` |
-| `startFakeLark()` | OpenAPI, long connection (the SDK's protobuf frames, runs the real `WSClient`, records `acks`), OAuth + PKCE, department / user pagination; `failNext`, `hideUserStatus` | `larkMessageEvent`, `larkCardAction`, `findLarkButton` |
-| `startFakeTelegram()` | Bot API (`getMe`, `getWebhookInfo`, `getUpdates` long polling with offset confirmation, `allowed_updates` and 409 on a webhook or a second concurrent poll, `sendMessage` / `editMessageText` with the 4096 and not-modified errors, `answerCallbackQuery`), several bots, `pollerPeerPorts`; `failNext` injects error envelopes with `retry_after` / `migrate_to_chat_id` | `telegramPrivateMessage`, `telegramGroupMessage`, `telegramCallback`, `findTelegramButton`, `telegramWebhookHeaders`; `push(update, token?)` |
+| `startFakeChannelServer()` | a generic fake IM: NDJSON long connection, `/send` `/update` `/send-file` (dedup by `idempotencyKey`; `sentFiles` / `duplicateFiles`, `failNext("/send-file")`), OAuth (including PKCE), directory `book(key)`; counts the peak number of concurrent long connections per connection | `fakeDm`, `fakeGroupMessage`, `fakeCardAction`, `fakeDirectoryMember`; `push(connectionId, event)` |
+| `startFakeSlack()` | Web API, Socket Mode (records `acks`), Sign in with Slack (RS256 ID token, `tamperNextIdToken`), `users.list`, external uploads (`files.getUploadURLExternal`, `POST /upload/<id>`, `files.completeUploadExternal`; recorded in `files`); `failNext` injects platform errors / 429, `failNext("upload", …)` / `delay("upload", …)` reach the upload POST | `slackDmEvent`, `slackMentionEvent`, `slackBlockAction`, `findSlackButton` |
+| `startFakeLark()` | OpenAPI, long connection (the SDK's protobuf frames, runs the real `WSClient`, records `acks`), OAuth + PKCE, department / user pagination, uploads (`im/v1/images`, `im/v1/files` with `image_upload` / `file_upload` failure names; recorded in `uploads`); `failNext`, `hideUserStatus` | `larkMessageEvent`, `larkCardAction`, `findLarkButton` |
+| `startFakeTelegram()` | Bot API (`getMe`, `getWebhookInfo`, `getUpdates` long polling with offset confirmation, `allowed_updates` and 409 on a webhook or a second concurrent poll, `sendMessage` / `editMessageText` with the 4096 and not-modified errors, `answerCallbackQuery`, multipart `sendPhoto` / `sendDocument` with the 1024 caption limit and empty-file refusal; the file is on the message's `file`), several bots, `pollerPeerPorts`; `failNext` injects error envelopes with `retry_after` / `migrate_to_chat_id` | `telegramPrivateMessage`, `telegramGroupMessage`, `telegramCallback`, `findTelegramButton`, `telegramWebhookHeaders`; `push(update, token?)` |
 
-- **Kernel tests** run on `fake-im` and the small fixtures: inbound and dedupe (`packages/kernel/test/channels/inbound*.test.ts`), outbound (`outbound.test.ts`, `outbound.dual.test.ts`), features and card fallback (`features.test.ts`, `cards.test.ts`), sub-agent cards (`outbox-delivery.test.ts`), the supervisor, roles and sharing (`supervisor*.test.ts`, `supervisor*.dual.test.ts`), webhooks (`webhook*.test.ts`). The first acceptance segment `m4-segment1.dual.test.ts` runs every kernel behaviour with `fake-im` through `createDualReplicaHarness`: one long connection only, takeover after killing the holder, a redelivered message processed once, streaming replies / approval card clicks / card updates / the final reply each delivered once, and the same identity row from web login, directory sync and a direct message.
+- **Kernel tests** run on `fake-im` and the small fixtures: inbound and dedupe (`packages/kernel/test/channels/inbound*.test.ts`), outbound (`outbound.test.ts`, `outbound.dual.test.ts`), features and card fallback (`features.test.ts`, `cards.test.ts`), file delivery (`file-delivery.test.ts`, `outbound-files*.test.ts`), sub-agent cards (`outbox-delivery.test.ts`), the supervisor, roles and sharing (`supervisor*.test.ts`, `supervisor*.dual.test.ts`), webhooks (`webhook*.test.ts`). The first acceptance segment `m4-segment1.dual.test.ts` runs every kernel behaviour with `fake-im` through `createDualReplicaHarness`: one long connection only, takeover after killing the holder, a redelivered message processed once, streaming replies / approval card clicks / card updates / the final reply each delivered once, and the same identity row from web login, directory sync and a direct message.
 - **The official extensions' tests** (unit, dual-replica through a real kernel, same identity row, live platforms) live in capybara-hq/plugins and use `startFakeSlack` / `startFakeLark`, the webhook signers and `socketPeerPorts()` + `pidOwningLocalPort` from `@capybara-hq/testing`; changing those helpers changes their tests. The manual live part is in `docs/superpowers/plans/m4-live-acceptance-checklist.md`.
 - A new fake extension for a kernel test: copy `fake-im` (`packages/testing/fixtures/extensions/fake-im`; its `src/index.ts` exports `makeFakeImChannel`, `fakeImIdentitySource`, `fakeImDirectory` for test extensions that need one part).
