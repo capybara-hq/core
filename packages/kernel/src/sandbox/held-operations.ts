@@ -105,14 +105,18 @@ export function withKernelGeneration(
   const background = provider.background;
   if (!background) return provider;
   const wrapped = Object.create(provider) as SandboxProvider;
+  // only `start` changes; every other method is the provider's own, bound to it (a provider may
+  // leave out methods the kernel never calls on it)
+  const bound = (m: unknown) =>
+    typeof m === "function" ? (m as (...a: unknown[]) => unknown).bind(background) : m;
   wrapped.background = {
-    status: background.status.bind(background),
-    tail: background.tail.bind(background),
-    readOutput: background.readOutput.bind(background),
-    stop: background.stop.bind(background),
+    status: bound(background.status),
+    tail: bound(background.tail),
+    readOutput: bound(background.readOutput),
+    stop: bound(background.stop),
     start: (h, scope, args) =>
       background.start(h, scope, { ...args, instanceGeneration: generation }),
-  };
+  } as NonNullable<SandboxProvider["background"]>;
   return wrapped;
 }
 
