@@ -3,7 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { ModelInfo, ModelRequest, SandboxProvider } from "@capybara-hq/plugin-sdk";
+import type { ModelInfo, ModelRequest } from "@capybara-hq/plugin-sdk";
 import {
   fakeExtensionEntry,
   startTestPostgres,
@@ -47,7 +47,6 @@ import { ProjectKnowledgeService } from "../../src/runtime/project/knowledge.ser
 import { ProviderRegistry } from "../../src/runtime/providers.js";
 import { RUN_CONTEXT_CLOCK } from "../../src/runtime/run-context.service.js";
 import { RunSteps } from "../../src/runtime/run-steps.js";
-import { SandboxProviders } from "../../src/sandbox/providers.js";
 import { SandboxService } from "../../src/sandbox/sandbox.service.js";
 import { ScheduledTaskFirer } from "../../src/schedules/fire.js";
 import { ScheduledTaskStore } from "../../src/schedules/store.js";
@@ -56,7 +55,6 @@ import { StorageService } from "../../src/storage/storage.service.js";
 import { allowedOnceNote } from "../../src/tools/network-asks.js";
 import { hookDeniedText, QUESTION_SKIPPED_TEXT } from "../../src/tools/pipeline.js";
 import { specHash } from "../../src/tools/registry.js";
-import { createFakeSandbox, fakeOperationFacade } from "../fixtures/plugins/sandbox-fake/index.js";
 import { onlyBuiltins } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
@@ -193,51 +191,11 @@ afterAll(async () => {
   if (sandboxRoot) await rm(sandboxRoot, { recursive: true, force: true });
 });
 
-async function enableProbe(enabled: boolean): Promise<void> {
-  const res = await owner({
-    method: "PUT",
-    url: `/api/v1/orgs/${orgId}/extensions/tools-probe`,
-    payload: { enabled },
-  });
-  expect(res.statusCode, res.body).toBe(200);
-}
-
-/** The cloud provider of the activated cases: sandbox-fake with permission-scoped operations. */
-const SCOPED_CLOUD = "@reconstruct-scoped-cloud";
-let scopedCloudRegistered = false;
-
 /**
- * A cloud device of the owner on {@link SCOPED_CLOUD}, bound to `conv`. With the activation gate
- * on, builtins enter a device only through the managed operation route, which needs a provider
- * that reports permission support (sandbox-fake alone has none: its devices are `unsupported`).
- * The provider enforces no scope; what these cases replay is what the tools logged.
+ * A new cloud device of the owner on sandbox-fake (which reports permission support), bound to
+ * `conv`: not yet provisioned, so its first context is unprobed.
  */
-async function bindScopedCloudDevice(conv: string): Promise<string> {
-  if (!scopedCloudRegistered) {
-    const base = createFakeSandbox(sandboxRoot);
-    const facade = fakeOperationFacade(sandboxRoot, base);
-    const impl: SandboxProvider = {
-      ...facade,
-      async permissionSupport() {
-        return {
-          version: 1,
-          restricted: { filesystem: true, network: true, native: true, concurrentScopes: true },
-          fullAccess: true,
-          background: false,
-        };
-      },
-      async operation(h, scope) {
-        return {
-          exec: (args) => base.exec(h, { ...args, actor: scope.actor, tag: scope.tag }),
-          readFile: (path, opts) => base.readFile(h, path, opts),
-          writeFile: (path, data, signal) => base.writeFile(h, path, data, signal),
-          stat: (path, signal) => base.stat(h, path, signal),
-        };
-      },
-    };
-    k.app.get(SandboxProviders).register({ plugin: SCOPED_CLOUD, version: "v1", impl });
-    scopedCloudRegistered = true;
-  }
+async function bindFreshCloudDevice(conv: string): Promise<string> {
   const deviceId = randomUUID();
   await db
     .insertInto("devices")
@@ -247,8 +205,8 @@ async function bindScopedCloudDevice(conv: string): Promise<string> {
       owner_kind: "personal",
       owner_account_id: ownerId,
       source: "cloud",
-      provider: SCOPED_CLOUD,
-      name: `Scoped cloud ${deviceId.slice(0, 8)}`,
+      provider: "sandbox-fake",
+      name: `Fresh cloud ${deviceId.slice(0, 8)}`,
     })
     .execute();
   await db
@@ -257,6 +215,15 @@ async function bindScopedCloudDevice(conv: string): Promise<string> {
     .where("id", "=", conv)
     .execute();
   return deviceId;
+}
+
+async function enableProbe(enabled: boolean): Promise<void> {
+  const res = await owner({
+    method: "PUT",
+    url: `/api/v1/orgs/${orgId}/extensions/tools-probe`,
+    payload: { enabled },
+  });
+  expect(res.statusCode, res.body).toBe(200);
 }
 
 /**
@@ -2280,7 +2247,6 @@ describe("reconstructRequest: UI refresh B tool views", () => {
       },
     );
     const conv = await createConv(owner, orgId, agentId);
-    await bindScopedCloudDevice(conv);
     const bash = { command: "echo hi && false", description: "Greet and fail" };
     await postMessage(owner, orgId, conv, `tool:Bash:${JSON.stringify(bash)}`);
     await waitForTerminal(db, conv, 1, 30_000);
@@ -2389,7 +2355,7 @@ describe("reconstructRequest: the device's permission context (permission runtim
       { tools: [{ kind: "builtin", name: "Bash" }] },
     );
     const conv = await createConv(owner, orgId, agentId);
-    await bindScopedCloudDevice(conv);
+    await bindFreshCloudDevice(conv);
     const bash = { command: "echo one", description: "One" };
     await postMessage(owner, orgId, conv, `tool:Bash:${JSON.stringify(bash)}`);
     await waitForTerminal(db, conv, 1, 30_000);
