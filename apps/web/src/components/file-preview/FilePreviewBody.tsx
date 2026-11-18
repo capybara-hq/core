@@ -71,7 +71,8 @@ type Load<T> = { kind: "loading" } | { kind: "ready"; data: T } | { kind: "error
  * previewers), with the source as text as the second option; otherwise extension previewers
  * come first, in the org's order, then the built-in (bitmaps, text and code, Markdown, CSV / TSV);
  * a file nothing takes shows the file card with Download. A failing previewer shows Retry with
- * the Download fallback.
+ * the Download fallback; on a share page a view previewer that declines the share gives way to the
+ * next option instead.
  */
 export function FilePreviewBody({
   source,
@@ -139,7 +140,15 @@ export function FilePreviewBody({
           ? []
           : null;
 
-  const options: Option[] = html
+  // A share page has no previewer switch: a view previewer that declines the share (502
+  // `ui.render_failed`, e.g. it needs the conversation) gives way to the next option, in the org's
+  // order, then the built-in, then the file card with Download. Keyed by the link's code.
+  const [declined, setDeclined] = useState<{ code: string; ids: readonly string[] }>({
+    code: "",
+    ids: [],
+  });
+  const skipped = share !== null && declined.code === share.code ? declined.ids : [];
+  const allOptions: Option[] = html
     ? [
         { id: HTML_RENDERED, title: ts("rendered"), p: null },
         { id: HTML_SOURCE, title: ts("source"), p: null },
@@ -148,6 +157,7 @@ export function FilePreviewBody({
         ...(extensions ?? []).map((p) => ({ id: previewerId(p), title: p.title[locale], p })),
         ...(builtin !== null ? [{ id: BUILTIN, title: t("builtinPreviewer"), p: null }] : []),
       ];
+  const options = allOptions.filter((o) => !skipped.includes(o.id));
   const current = options.find((o) => o.id === previewer) ?? options[0];
   const p = current?.p ?? null;
   // What the shown option reads: a view previewer's render, or the text of a text built-in
@@ -167,6 +177,20 @@ export function FilePreviewBody({
     enabled: extensions !== null && viewP !== null,
     retry: false,
   });
+  const declines =
+    share !== null &&
+    viewP !== null &&
+    viewQ.error instanceof ApiClientError &&
+    viewQ.error.code === "ui.render_failed";
+  const declinedId = declines ? current?.id : undefined;
+  const shareCode = share?.code ?? "";
+  useEffect(() => {
+    if (declinedId === undefined) return;
+    setDeclined((d) => {
+      const ids = d.code === shareCode ? d.ids : [];
+      return ids.includes(declinedId) ? d : { code: shareCode, ids: [...ids, declinedId] };
+    });
+  }, [declinedId, shareCode]);
   const textOpts = share
     ? shareTextQuery(share.code)
     : fileTextQuery(orgId, conversationId, fileId);
@@ -205,11 +229,14 @@ export function FilePreviewBody({
             ? { kind: "error", e: tokenError }
             : { kind: "loading" }
         : viewP !== null
-          ? viewQ.data !== undefined
-            ? { kind: "ready", data: { view: viewQ.data } }
-            : viewQ.error !== null
-              ? { kind: "error", e: viewQ.error }
-              : { kind: "loading" }
+          ? declines
+            ? // moving on to the next option
+              { kind: "loading" }
+            : viewQ.data !== undefined
+              ? { kind: "ready", data: { view: viewQ.data } }
+              : viewQ.error !== null
+                ? { kind: "error", e: viewQ.error }
+                : { kind: "loading" }
           : !readsText
             ? { kind: "ready", data: {} }
             : textQ.data !== undefined

@@ -175,6 +175,116 @@ describe("the share page /s/[code]", () => {
     noWorkspaceReads(calls);
   });
 
+  it("a view previewer that declines the share gives way to the next one, then the built-in", async () => {
+    const declined = () =>
+      json(502, { error: { code: "ui.render_failed", message: "needs the conversation" } });
+    const view = (plugin: string, id: string) => ({
+      plugin,
+      id,
+      title: { zh: id, en: id },
+      kind: "view" as const,
+      maxBytes: 1e7,
+    });
+    const calls = stubApi({
+      [`GET ${S}`]: () =>
+        json(
+          200,
+          meta({
+            name: "a.csv",
+            contentType: "text/csv",
+            render: "previewers",
+            previewers: [view("chat", "needs-conv"), view("sheets", "grid")],
+          }),
+        ),
+      [`GET ${S}/previews/chat/needs-conv`]: declined,
+      [`GET ${S}/previews/sheets/grid`]: () =>
+        json(200, { view: { blocks: [{ type: "heading", text: "Grid view" }] } }),
+    });
+    await renderAuthRouteWithCache(PAGE, lastStubRoutes());
+    expect(await screen.findByText("Grid view")).toBeTruthy();
+    expect(calls.some((c) => c.url.startsWith(`${S}/previews/chat/needs-conv`))).toBe(true);
+    // a decline is not a failure: no Retry on the page
+    expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+    cleanup();
+
+    // every extension previewer declines: the built-in shows the text
+    const more = stubApi({
+      [`GET ${S}`]: () =>
+        json(
+          200,
+          meta({
+            name: "a.csv",
+            contentType: "text/csv",
+            render: "previewers",
+            previewers: [view("chat", "needs-conv")],
+          }),
+        ),
+      [`GET ${S}/previews/chat/needs-conv`]: declined,
+      [`GET ${S}/text`]: () => new Response("city,count\nParis,3\n", { status: 200 }),
+    });
+    await renderAuthRouteWithCache(PAGE, lastStubRoutes());
+    expect(await screen.findByText("Paris")).toBeTruthy();
+    expect(more.some((c) => c.url.startsWith(`${S}/previews/chat/needs-conv`))).toBe(true);
+  });
+
+  it("a view previewer that fails otherwise shows Retry with the Download fallback", async () => {
+    stubApi({
+      [`GET ${S}`]: () =>
+        json(
+          200,
+          meta({
+            name: "a.bin",
+            contentType: "application/octet-stream",
+            render: "previewers",
+            previewable: null,
+            previewers: [
+              {
+                plugin: "x",
+                id: "slow",
+                title: { zh: "slow", en: "slow" },
+                kind: "view",
+                maxBytes: 1e7,
+              },
+            ],
+          }),
+        ),
+      [`GET ${S}/previews/x/slow`]: () =>
+        json(504, { error: { code: "ui.timeout", message: "timed out" } }),
+    });
+    await renderAuthRouteWithCache(PAGE, lastStubRoutes());
+    expect(await screen.findByRole("button", { name: "Retry" })).toBeTruthy();
+  });
+
+  it("a declining previewer with nothing after it leaves the file card with Download", async () => {
+    stubApi({
+      [`GET ${S}`]: () =>
+        json(
+          200,
+          meta({
+            name: "a.bin",
+            contentType: "application/octet-stream",
+            render: "previewers",
+            previewable: null,
+            previewers: [
+              {
+                plugin: "chat",
+                id: "needs-conv",
+                title: { zh: "c", en: "c" },
+                kind: "view",
+                maxBytes: 1e7,
+              },
+            ],
+          }),
+        ),
+      [`GET ${S}/previews/chat/needs-conv`]: () =>
+        json(502, { error: { code: "ui.render_failed", message: "x" } }),
+    });
+    await renderAuthRouteWithCache(PAGE, lastStubRoutes());
+    expect(await screen.findByText(/No preview available/)).toBeTruthy();
+    expect(screen.getAllByRole("button", { name: /Download/ })).toHaveLength(2);
+    expect(screen.queryByRole("button", { name: "Retry" })).toBeNull();
+  });
+
   it("a CSV with only the built-in reads the share's text route", async () => {
     const calls = stubApi({
       [`GET ${S}`]: () =>

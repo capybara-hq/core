@@ -91,7 +91,8 @@ function SharedFile({ code, meta }: { code: string; meta: ShareMeta }) {
   return (
     <FilePreviewBody
       source={source}
-      // No previewer switch on the page: the first option, in the org's order (design §6).
+      // No previewer switch on the page: the first option, in the org's order (design §6); a view
+      // previewer that declines the share gives way to the next (FilePreviewBody keeps the choice).
       previewer={null}
       onDownload={download}
       embed={(h) => <SharePreviewEmbed code={code} host={h} />}
