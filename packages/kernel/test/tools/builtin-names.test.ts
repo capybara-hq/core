@@ -53,6 +53,8 @@ const builtins = () =>
     dummy,
     dummy,
     dummy,
+    dummy,
+    dummy,
   ).list();
 
 const repoFile = (path: string) =>

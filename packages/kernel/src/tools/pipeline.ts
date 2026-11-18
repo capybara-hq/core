@@ -502,10 +502,17 @@ type ToolCall = { id: string; name: string; input: unknown };
 
 /**
  * The tools the command review covers (auto mode spec §5.1): the shell and the file tools whose
- * writes may leave the workspace. Any other tool call is not reviewed (the review service answers
- * `allow` for it too; the pipeline skips the facts read).
+ * writes may leave the workspace, and `GenerateImage` when it writes its images into the device
+ * (`file_path`; image generation spec §5.3, reviewed as a `Write`). Any other tool call is not
+ * reviewed (the review service answers `allow` for it too; the pipeline skips the facts read).
  */
-const REVIEWED_TOOL_KEYS: ReadonlySet<string> = new Set(["Bash", "Write", "Edit"]);
+const REVIEWED_TOOL_KEYS: ReadonlySet<string> = new Set(["Bash", "Write", "Edit", "GenerateImage"]);
+
+/** Whether the review covers this call ({@link REVIEWED_TOOL_KEYS}; `GenerateImage` with a path). */
+const isReviewedCall = (toolKey: string, input: unknown): boolean =>
+  REVIEWED_TOOL_KEYS.has(toolKey) &&
+  (toolKey !== "GenerateImage" ||
+    typeof (input as { file_path?: unknown } | null)?.file_path === "string");
 
 /** Whether the review holds a shell command or a file write, for the texts and the ask's detail. */
 const reviewKindOf = (toolKey: string): "command" | "write" =>
@@ -1543,7 +1550,7 @@ export class ToolPipeline {
     const review = this.deps.review;
     const devices = this.deps.devices;
     if (review === undefined || devices === undefined) return { kind: "continue" };
-    if (!REVIEWED_TOOL_KEYS.has(tool.key)) return { kind: "continue" };
+    if (!isReviewedCall(tool.key, input)) return { kind: "continue" };
     const asked = await this.deps.approvals.commandForCall(ctx.runId, call.id);
     const rootConversationId = ctx.parent?.rootConversationId ?? ctx.conversationId;
     if (asked !== null) {

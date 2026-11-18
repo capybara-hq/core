@@ -121,8 +121,15 @@ export const REVIEW_REASONS = {
   sessionGrant: "Allowed for the rest of this conversation by an earlier approval.",
 } as const;
 
-/** The tools the review covers: the shell, and the file tools whose writes may leave the workspace. */
-const REVIEWED_TOOLS: ReadonlySet<string> = new Set(["Bash", "Write", "Edit"]);
+/**
+ * The tools the review covers: the shell, and the file tools whose writes may leave the workspace
+ * (`GenerateImage` writes its images into the device at `file_path`, reviewed as a `Write`; a call
+ * without `file_path` writes nothing there and is not reviewed).
+ */
+const REVIEWED_TOOLS: ReadonlySet<string> = new Set(["Bash", "Write", "Edit", "GenerateImage"]);
+
+/** The reviewed tools that write a file at `file_path` (the rest run a shell command). */
+const WRITE_TOOLS: ReadonlySet<string> = new Set(["Write", "Edit", "GenerateImage"]);
 
 /** How many of a conversation tree's latest assistant messages the review reads for its writes. */
 const WRITTEN_EVENTS_READ = 200;
@@ -191,7 +198,9 @@ export class CommandReviewService implements CommandReview {
     if (!REVIEWED_TOOLS.has(input.toolKey)) {
       return allow(REVIEW_REASONS.notReviewed, null);
     }
-    const isWrite = input.toolKey === "Write" || input.toolKey === "Edit";
+    const isWrite = WRITE_TOOLS.has(input.toolKey);
+    // a GenerateImage call without file_path writes nothing into the device
+    if (isWrite && pathOf(input.input) === null) return allow(REVIEW_REASONS.notReviewed, null);
     if (input.mode === "sandbox" && isWrite) {
       return allow(REVIEW_REASONS.sandboxWrite, null);
     }
@@ -408,7 +417,7 @@ export class CommandReviewService implements CommandReview {
     const written = new Set<string>();
     for (const row of rows) {
       for (const call of toolCallsOf(row.payload)) {
-        if ((call.name === "Write" || call.name === "Edit") && typeof call.path === "string") {
+        if (WRITE_TOOLS.has(call.name) && typeof call.path === "string") {
           written.add(call.path.startsWith("/") ? call.path : `${facts.workspace}/${call.path}`);
         } else if (call.name === "Bash" && typeof call.command === "string") {
           for (const path of writtenPaths(call.command, facts)) written.add(path);
@@ -469,7 +478,10 @@ function commandOf(input: unknown): string | null {
   return typeof command === "string" ? command : null;
 }
 
-/** The path of a validated `Write` / `Edit` input, or null when it has none (the tool refuses it). */
+/**
+ * The path of a validated `Write` / `Edit` / `GenerateImage` input, or null when it has none (the
+ * file tools refuse it; a `GenerateImage` call without one writes nothing into the device).
+ */
 function pathOf(input: unknown): string | null {
   const path = (input as { file_path?: unknown } | null)?.file_path;
   return typeof path === "string" ? path : null;

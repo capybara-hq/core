@@ -290,6 +290,8 @@ const ModelUsageShape = {
   outputTokens: count,
   cacheReadTokens: count,
   cacheWriteTokens: count,
+  /** Images produced (an image generation call). */
+  outputImages: count.exactOptional(),
 };
 
 /**
@@ -700,7 +702,9 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
    * `web_fetch` = a `WebFetch` extraction call (web tools spec §5: the tool call's run and step,
    * `callId` = the call; not model-visible, billed and reported, counted on a sub-agent's parent);
    * `review` = the command-review classifier's call (auto mode spec §5.3: not model-visible, billed
-   * and reported, `callId` = the reviewed tool call).
+   * and reported, `callId` = the reviewed tool call); `image` = a `GenerateImage` call (image
+   * generation spec §7: the tool call's run and step, `callId` = the call, `outputImages` = the
+   * images produced; not model-visible, billed and reported, counted on a sub-agent's parent).
    */
   ev(
     "usage",
@@ -709,7 +713,7 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
       provider: z.string(),
       model: z.string(),
       ...ModelUsageShape,
-      purpose: z.enum(["compaction", "title", "web_fetch", "review"]).optional(),
+      purpose: z.enum(["compaction", "title", "web_fetch", "review", "image"]).optional(),
       /**
        * The chunk a chunked compaction call summarised (1-based), with the number of calls the
        * compaction attempted (the full chunk count on a completed one; on a failed or hook-denied
@@ -717,7 +721,7 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
        */
       chunk: count.optional(),
       chunks: count.optional(),
-      /** The tool call a `web_fetch` or `review` usage belongs to. */
+      /** The tool call a `web_fetch`, `review` or `image` usage belongs to. */
       callId: z.string().optional(),
     }),
   ),

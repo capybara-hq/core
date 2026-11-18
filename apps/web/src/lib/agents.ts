@@ -60,6 +60,7 @@ export const BUILTIN_TOOLS = [
   "FetchAttachment",
   "WebSearch",
   "WebFetch",
+  "GenerateImage",
   "Platform",
   "CurrentTime",
   "ScheduleCreate",
