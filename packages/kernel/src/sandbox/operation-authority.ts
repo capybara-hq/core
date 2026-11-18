@@ -7,6 +7,7 @@ import {
   type SandboxActor,
   type SandboxBrowseScope,
   type SandboxOperationScope,
+  SandboxPermissionUnsupportedError,
 } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
 import { sql } from "kysely";
@@ -514,7 +515,13 @@ export class SandboxOperationAuthority {
     )
       throw new ApiError("forbidden", "Unknown sandbox operation");
     // the recorded context withholds its scope for exactly these states (B-16)
-    if (f.admissionRefusal) throw new ApiError("forbidden", f.admissionRefusal);
+    if (f.admissionRefusal) {
+      // a runtime that cannot enforce the profile is the typed pre-effect refusal: the model gets
+      // the actionable unsupported text, never the generic "may not have completed" one
+      if (f.availability.state === "unsupported")
+        throw new SandboxPermissionUnsupportedError(f.admissionRefusal);
+      throw new ApiError("forbidden", f.admissionRefusal);
+    }
     const operationId = randomUUID();
     return intersectPermissionScope({
       operationId,
