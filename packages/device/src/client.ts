@@ -2,10 +2,10 @@ import { homedir } from "node:os";
 import {
   DEVICE_PROTOCOL_VERSION,
   type DeviceFeature,
-  type DeviceHello,
   type DeviceRes,
   type KernelReq,
-  parseDeviceFrame,
+  type LegacyDeviceHello,
+  parseLegacyDeviceFrame,
   validateSandboxPathShape,
 } from "@capybara-hq/plugin-sdk";
 import WebSocket from "ws";
@@ -307,9 +307,9 @@ export function connect(
   };
 
   const onMessage = (raw: string): void => {
-    let frame: ReturnType<typeof parseDeviceFrame>;
+    let frame: ReturnType<typeof parseLegacyDeviceFrame>;
     try {
-      frame = parseDeviceFrame(raw, "kernel");
+      frame = parseLegacyDeviceFrame(raw, "kernel");
     } catch (e) {
       // Best effort: tell the kernel a request it sent was unusable.
       try {
@@ -345,7 +345,7 @@ export function connect(
       : undefined;
   // the deployment's evidence that the host restarted (legacy retirement, cutover 8.5)
   const bootId = opts.bootId === undefined ? currentBootId() : (opts.bootId ?? undefined);
-  const hello = (): DeviceHello => {
+  const hello = (): LegacyDeviceHello => {
     const summary = summaryNow();
     sentPolicy = summary === undefined ? undefined : JSON.stringify(summary);
     const features: DeviceFeature[] = [];

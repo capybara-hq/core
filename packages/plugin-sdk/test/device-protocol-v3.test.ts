@@ -1,10 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { DEVICE_PROTOCOL_VERSION, DeviceProtocolError } from "../src/device-protocol.js";
 import {
-  parseDeviceFrameV3,
-  parseOperationResultV3,
-  parseOwnerCeilingReportV3,
-} from "../src/device-protocol-v3.js";
+  DEVICE_PROTOCOL_VERSION,
+  DeviceProtocolError,
+  parseDeviceFrame,
+  parseOperationResult,
+  parseOwnerCeilingReport,
+} from "../src/device-protocol.js";
 
 const scope = {
   operationId: "op",
@@ -39,11 +40,9 @@ describe("staged v3", () => {
                 : {}),
       };
       if (op === "scan") delete (args as { path?: string }).path;
-      expect(parseDeviceFrameV3(frame(op, args), "kernel").type).toBe("req");
-      expect(() =>
-        parseDeviceFrameV3(frame(op, { ...args, scope: undefined }), "kernel"),
-      ).toThrow();
-      expect(() => parseDeviceFrameV3(frame(op, { ...args, untrusted: true }), "kernel")).toThrow();
+      expect(parseDeviceFrame(frame(op, args), "kernel").type).toBe("req");
+      expect(() => parseDeviceFrame(frame(op, { ...args, scope: undefined }), "kernel")).toThrow();
+      expect(() => parseDeviceFrame(frame(op, { ...args, untrusted: true }), "kernel")).toThrow();
     }
   });
   it("separates preparation, browse and background references", () => {
@@ -64,17 +63,16 @@ describe("staged v3", () => {
       tag: "b",
     };
     expect(
-      parseDeviceFrameV3(frame("prepareStat", { scope: prep, path: "/skills/file" }), "kernel")
-        .type,
+      parseDeviceFrame(frame("prepareStat", { scope: prep, path: "/skills/file" }), "kernel").type,
     ).toBe("req");
     expect(
-      parseDeviceFrameV3(frame("browseScan", { scope: browse, base: "/work" }), "kernel").type,
+      parseDeviceFrame(frame("browseScan", { scope: browse, base: "/work" }), "kernel").type,
     ).toBe("req");
     expect(() =>
-      parseDeviceFrameV3(frame("prepareStat", { scope: browse, path: "/skills/file" }), "kernel"),
+      parseDeviceFrame(frame("prepareStat", { scope: browse, path: "/skills/file" }), "kernel"),
     ).toThrow();
     expect(() =>
-      parseDeviceFrameV3(
+      parseDeviceFrame(
         frame("backgroundStop", {
           ref: { executionId: "e", operationId: "o", instanceId: "i", instanceGeneration: "g" },
           graceMs: -1,
@@ -84,7 +82,7 @@ describe("staged v3", () => {
     ).toThrow();
   });
   it("preserves authenticated exec grants and freezes validated scopes", () => {
-    const req = parseDeviceFrameV3(
+    const req = parseDeviceFrame(
       frame("exec", {
         scope,
         command: "true",
@@ -132,7 +130,7 @@ it("keeps absent runtime identity unprobed and refuses incomplete or mismatched 
     },
     instanceGeneration: "g",
   };
-  expect(parseDeviceFrameV3(JSON.stringify(hello), "device").type).toBe("hello");
+  expect(parseDeviceFrame(JSON.stringify(hello), "device").type).toBe("hello");
   const identity = {
     runtimeHash: "a".repeat(64),
     helperHash: "b".repeat(64),
@@ -140,7 +138,7 @@ it("keeps absent runtime identity unprobed and refuses incomplete or mismatched 
     instanceGeneration: "g",
   };
   expect(
-    parseDeviceFrameV3(JSON.stringify({ ...hello, runtimeIdentity: identity }), "device").type,
+    parseDeviceFrame(JSON.stringify({ ...hello, runtimeIdentity: identity }), "device").type,
   ).toBe("hello");
   for (const bad of [
     { ...identity, helperHash: undefined },
@@ -148,21 +146,21 @@ it("keeps absent runtime identity unprobed and refuses incomplete or mismatched 
     { ...identity, runtimeHash: "exists" },
   ])
     expect(() =>
-      parseDeviceFrameV3(JSON.stringify({ ...hello, runtimeIdentity: bad }), "device"),
+      parseDeviceFrame(JSON.stringify({ ...hello, runtimeIdentity: bad }), "device"),
     ).toThrow();
 });
 
 const outputRef = { instanceId: "d", instanceGeneration: "g", operationId: "o", executionId: "e" };
 it("accepts positional managed output and rejects unknown request authority", () => {
   expect(
-    parseDeviceFrameV3(
+    parseDeviceFrame(
       frame("backgroundReadOutput", { ref: outputRef, offset: 70000, maxBytes: 3072 }),
       "kernel",
     ).type,
   ).toBe("req");
   for (const extra of [{ path: "/tmp/output" }, { scope }, { grants: {} }, { actor: {} }])
     expect(() =>
-      parseDeviceFrameV3(
+      parseDeviceFrame(
         frame("backgroundReadOutput", { ref: outputRef, offset: 0, maxBytes: 1, ...extra }),
         "kernel",
       ),
@@ -175,7 +173,7 @@ it("accepts positional managed output and rejects unknown request authority", ()
     { ref: { ...outputRef, path: "/tmp" } },
   ])
     expect(() =>
-      parseDeviceFrameV3(
+      parseDeviceFrame(
         frame("backgroundReadOutput", { ref: outputRef, offset: 0, maxBytes: 1, ...bad }),
         "kernel",
       ),
@@ -184,7 +182,7 @@ it("accepts positional managed output and rejects unknown request authority", ()
 it("validates exact canonical output range metadata against the request", () => {
   const request = { offset: 10, maxBytes: 1 };
   const good = { dataB64: "YQ==", offset: 10, nextOffset: 11, totalBytes: 11 };
-  expect(parseOperationResultV3("backgroundReadOutput", good, request)).toEqual(good);
+  expect(parseOperationResult("backgroundReadOutput", good, request)).toEqual(good);
   for (const bad of [
     { dataB64: "YR==" },
     { dataB64: "YQ" },
@@ -195,23 +193,23 @@ it("validates exact canonical output range metadata against the request", () => 
     { dataB64: "", nextOffset: 10 },
   ])
     expect(() =>
-      parseOperationResultV3("backgroundReadOutput", { ...good, ...bad }, request),
+      parseOperationResult("backgroundReadOutput", { ...good, ...bad }, request),
     ).toThrow();
   expect(
-    parseOperationResultV3(
+    parseOperationResult(
       "backgroundReadOutput",
       { dataB64: "", offset: 20, nextOffset: 20, totalBytes: 11 },
       { offset: 20, maxBytes: 1 },
     ),
   ).toEqual({ dataB64: "", offset: 20, nextOffset: 20, totalBytes: 11 });
-  expect(
-    parseOperationResultV3("backgroundReadOutput", { unavailable: "expired" }, request),
-  ).toEqual({ unavailable: "expired" });
+  expect(parseOperationResult("backgroundReadOutput", { unavailable: "expired" }, request)).toEqual(
+    { unavailable: "expired" },
+  );
 });
 
 it("strict ready capacity and frame bounds never admit pre-negotiation data", () => {
   const ready = { type: "ready", connectionId: "c", maxFrameBytes: 69632 };
-  expect(parseDeviceFrameV3(JSON.stringify(ready), "kernel", 69632)).toEqual(ready);
+  expect(parseDeviceFrame(JSON.stringify(ready), "kernel", 69632)).toEqual(ready);
   for (const extra of [
     { maxFrameBytes: 0 },
     { maxFrameBytes: 1023 },
@@ -220,14 +218,12 @@ it("strict ready capacity and frame bounds never admit pre-negotiation data", ()
     { connectionId: "" },
     { unexpected: true },
   ])
-    expect(() => parseDeviceFrameV3(JSON.stringify({ ...ready, ...extra }), "kernel")).toThrow();
-  expect(() => parseDeviceFrameV3(JSON.stringify(ready), "device")).toThrow();
-  expect(() => parseDeviceFrameV3(" ".repeat(69633), "kernel", 69632)).toThrow(
-    "negotiated capacity",
-  );
+    expect(() => parseDeviceFrame(JSON.stringify({ ...ready, ...extra }), "kernel")).toThrow();
+  expect(() => parseDeviceFrame(JSON.stringify(ready), "device")).toThrow();
+  expect(() => parseDeviceFrame(" ".repeat(69633), "kernel", 69632)).toThrow("negotiated capacity");
   for (const op of ["killAll", "killTagged"])
     expect(() =>
-      parseDeviceFrameV3(frame(op, op === "killAll" ? {} : { tags: ["old"] }), "kernel"),
+      parseDeviceFrame(frame(op, op === "killAll" ? {} : { tags: ["old"] }), "kernel"),
     ).toThrow();
 });
 it("canonical unbound hello remains unprobed and owner reports require independent reach", () => {
@@ -258,11 +254,11 @@ it("canonical unbound hello remains unprobed and owner reports require independe
       restrictedAllowedDomains: [],
     },
   };
-  expect(parseDeviceFrameV3(JSON.stringify(hello), "device")).toMatchObject({
+  expect(parseDeviceFrame(JSON.stringify(hello), "device")).toMatchObject({
     instanceGeneration: null,
   });
   expect(() =>
-    parseDeviceFrameV3(
+    parseDeviceFrame(
       JSON.stringify({
         ...hello,
         permissionSupport: { ...hello.permissionSupport, fullAccess: true },
@@ -278,7 +274,7 @@ it("canonical unbound hello remains unprobed and owner reports require independe
     { unknown: true },
   ])
     expect(() =>
-      parseDeviceFrameV3(
+      parseDeviceFrame(
         JSON.stringify({ ...hello, ownerCeiling: { ...hello.ownerCeiling, ...extra } }),
         "device",
       ),
@@ -319,10 +315,10 @@ describe("bindInstance (B4 post-commit binding)", () => {
     },
   };
   it("accepts exactly the committed identifiers and refuses paths, manifests and policies", () => {
-    const parsed = parseDeviceFrameV3(frame("bindInstance", request), "kernel");
+    const parsed = parseDeviceFrame(frame("bindInstance", request), "kernel");
     expect(parsed).toMatchObject({ type: "req", op: "bindInstance", args: request });
     expect(
-      parseDeviceFrameV3(
+      parseDeviceFrame(
         frame("bindInstance", { ...request, expectedPreviousGeneration: null }),
         "kernel",
       ).type,
@@ -334,7 +330,7 @@ describe("bindInstance (B4 post-commit binding)", () => {
       { scope },
     ])
       expect(() =>
-        parseDeviceFrameV3(frame("bindInstance", { ...request, ...extra }), "kernel"),
+        parseDeviceFrame(frame("bindInstance", { ...request, ...extra }), "kernel"),
       ).toThrow("Unknown field");
     for (const bad of [
       { instanceGeneration: "now" },
@@ -345,12 +341,12 @@ describe("bindInstance (B4 post-commit binding)", () => {
       { instanceId: "" },
     ])
       expect(() =>
-        parseDeviceFrameV3(frame("bindInstance", { ...request, ...bad }), "kernel"),
+        parseDeviceFrame(frame("bindInstance", { ...request, ...bad }), "kernel"),
       ).toThrow();
   });
   it("binds the answer to the exact request; a delayed or foreign answer is refused", () => {
-    expect(parseOperationResultV3("bindInstance", answer, request)).toEqual(answer);
-    expect(() => parseOperationResultV3("bindInstance", answer)).toThrow("exact request");
+    expect(parseOperationResult("bindInstance", answer, request)).toEqual(answer);
+    expect(() => parseOperationResult("bindInstance", answer)).toThrow("exact request");
     for (const wrong of [
       { bindingId: "0f1e0a52-8f5b-4d5e-9a1c-1f0e2d3c4b5a" },
       { instanceGeneration: "1700000000000" },
@@ -360,10 +356,10 @@ describe("bindInstance (B4 post-commit binding)", () => {
       { extra: true },
     ])
       expect(() =>
-        parseOperationResultV3("bindInstance", { ...answer, ...wrong }, request),
+        parseOperationResult("bindInstance", { ...answer, ...wrong }, request),
       ).toThrow();
     const { runtimeIdentity: _, ...withoutIdentity } = answer;
-    expect(() => parseOperationResultV3("bindInstance", withoutIdentity, request)).toThrow(
+    expect(() => parseOperationResult("bindInstance", withoutIdentity, request)).toThrow(
       "Expected an object",
     );
   });
@@ -379,7 +375,7 @@ describe("owner reports (B2)", () => {
     restrictedAllowedDomains: ["*.example.com"],
   };
   it("parses one strict report and refuses extra fields, bad reach or sequence", () => {
-    expect(parseOwnerCeilingReportV3(report)).toEqual(report);
+    expect(parseOwnerCeilingReport(report)).toEqual(report);
     for (const bad of [
       { ...report, mode: "auto" },
       { ...report, restrictedProjectReach: "home" },
@@ -388,10 +384,10 @@ describe("owner reports (B2)", () => {
       { ...report, version: 1 },
       { ...report, fullAccess: "true" },
     ])
-      expect(() => parseOwnerCeilingReportV3(bad)).toThrow(DeviceProtocolError);
+      expect(() => parseOwnerCeilingReport(bad)).toThrow(DeviceProtocolError);
   });
   it("carries the report in policy frames, policy answers and applied statuses", () => {
-    const frame = parseDeviceFrameV3(
+    const frame = parseDeviceFrame(
       JSON.stringify({
         type: "policy",
         policy: { mode: "sandbox", allowedDomains: [] },
@@ -401,24 +397,24 @@ describe("owner reports (B2)", () => {
     );
     expect(frame).toMatchObject({ type: "policy", ownerCeiling: report });
     expect(() =>
-      parseDeviceFrameV3(JSON.stringify({ type: "policy", policy: undefined }), "device"),
+      parseDeviceFrame(JSON.stringify({ type: "policy", policy: undefined }), "device"),
     ).toThrow(DeviceProtocolError);
     expect(
-      parseOperationResultV3("policy", {
+      parseOperationResult("policy", {
         policy: { mode: "sandbox", allowedDomains: [] },
         ownerCeiling: report,
       }),
     ).toMatchObject({ ownerCeiling: report });
     expect(() =>
-      parseOperationResultV3("policy", { policy: { mode: "sandbox", allowedDomains: [] } }),
+      parseOperationResult("policy", { policy: { mode: "sandbox", allowedDomains: [] } }),
     ).toThrow(DeviceProtocolError);
-    expect(() => parseOperationResultV3("policyStatus", { outcome: "applied" })).toThrow(
+    expect(() => parseOperationResult("policyStatus", { outcome: "applied" })).toThrow(
       DeviceProtocolError,
     );
     expect(
-      parseOperationResultV3("policyStatus", { outcome: "applied", ownerCeiling: report }),
+      parseOperationResult("policyStatus", { outcome: "applied", ownerCeiling: report }),
     ).toMatchObject({ outcome: "applied", ownerCeiling: report });
-    expect(parseOperationResultV3("policyStatus", { outcome: "unknown" })).toEqual({
+    expect(parseOperationResult("policyStatus", { outcome: "unknown" })).toEqual({
       outcome: "unknown",
     });
   });
@@ -435,13 +431,13 @@ describe("owner reports (B2)", () => {
           ownerCeiling,
         },
       });
-    expect(parseDeviceFrameV3(req({ fullAccess: false }), "kernel")).toMatchObject({
+    expect(parseDeviceFrame(req({ fullAccess: false }), "kernel")).toMatchObject({
       op: "policy",
     });
-    expect(
-      parseDeviceFrameV3(req({ restrictedProjectReach: "workspace" }), "kernel"),
-    ).toMatchObject({ op: "policy" });
+    expect(parseDeviceFrame(req({ restrictedProjectReach: "workspace" }), "kernel")).toMatchObject({
+      op: "policy",
+    });
     for (const bad of [{ fullAccess: true }, { restrictedProjectReach: "os-user" }, { x: 1 }])
-      expect(() => parseDeviceFrameV3(req(bad), "kernel")).toThrow(DeviceProtocolError);
+      expect(() => parseDeviceFrame(req(bad), "kernel")).toThrow(DeviceProtocolError);
   });
 });

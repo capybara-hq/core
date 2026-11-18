@@ -1,10 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
 import {
-  type DeviceHelloV3,
-  type DeviceOwnerCeilingV3,
-  type KernelReadyV3,
-  parseDeviceFrameV3,
+  type DeviceHello,
+  type DeviceOwnerCeiling,
+  type KernelReady,
+  parseDeviceFrame,
   SandboxPermissionUnsupportedError,
   ToolError,
 } from "@capybara-hq/plugin-sdk";
@@ -62,7 +62,7 @@ afterAll(async () => {
 const signal = () => AbortSignal.timeout(15000);
 const log = { warn: vi.fn(), info: vi.fn() };
 
-const OWNER: DeviceOwnerCeilingV3 = {
+const OWNER: DeviceOwnerCeiling = {
   version: 2,
   sequence: 1,
   restrictedProjectReach: "workspace",
@@ -143,7 +143,7 @@ async function fixture() {
   const received: Received[] = [];
   /** How the fake device answers a request (undefined: no answer). */
   let answer: (r: Received) => Promise<unknown> | unknown = () => ({ ok: true, result: null });
-  const hello: DeviceHelloV3 = {
+  const hello: DeviceHello = {
     type: "hello",
     protocol: 3,
     programVersion: "fixture",
@@ -166,11 +166,11 @@ async function fixture() {
   const connect = async () => {
     const socket = new WebSocket(`ws://127.0.0.1:${address.port}`);
     await once(socket, "open");
-    let ready: KernelReadyV3 | undefined;
+    let ready: KernelReady | undefined;
     const closed = once(socket, "close").then(([code]) => code as number);
     socket.on("message", async (data) => {
       const raw = data.toString();
-      const frame = parseDeviceFrameV3(raw, "kernel", ready?.maxFrameBytes ?? 69632);
+      const frame = parseDeviceFrame(raw, "kernel", ready?.maxFrameBytes ?? 69632);
       if (frame.type === "ready") {
         ready = frame;
         return;
@@ -188,7 +188,7 @@ async function fixture() {
     socket.send(JSON.stringify(hello));
     await expect.poll(() => ready).toBeDefined();
     await expect.poll(() => targets.transport(deviceId).catch(() => null)).not.toBeNull();
-    return { socket, closed, ready: () => ready as KernelReadyV3 };
+    return { socket, closed, ready: () => ready as KernelReady };
   };
   const session = await connect();
   return {
@@ -216,7 +216,7 @@ it("B-25: records a staged hello and policy frame through the v3 writers with th
   await expect.poll(() => f.machines.recordHelloV3.mock.calls.length).toBe(1);
   const [machineId, hello, helloConnection] = f.machines.recordHelloV3.mock.calls[0] as unknown as [
     string,
-    DeviceHelloV3,
+    DeviceHello,
     string,
   ];
   expect(machineId).toBe("machine");

@@ -1,9 +1,9 @@
 import { randomUUID } from "node:crypto";
 import type {
-  DeviceHello,
   DeviceLocalPolicySummary,
   DevicePolicyOpOutcome,
   KernelReq,
+  LegacyDeviceHello,
 } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
@@ -55,7 +55,7 @@ import type { Answer } from "../local-devices/test-holder.js";
  */
 
 const POLICY: DeviceLocalPolicySummary = { mode: "auto", allowedDomains: ["pypi.org"] };
-const FEATURES: DeviceHello["features"] = ["networkReport", "policyOp", "policyOpId"];
+const FEATURES: LegacyDeviceHello["features"] = ["networkReport", "policyOp", "policyOpId"];
 
 let pgc: TestContainer;
 let rd: TestContainer;
@@ -198,7 +198,7 @@ class Sim {
   }
 }
 
-async function connect(sim: Sim, hello: Partial<DeviceHello> = {}) {
+async function connect(sim: Sim, hello: Partial<LegacyDeviceHello> = {}) {
   const machine = new FakeMachine(wsUrl, s.credential, sim.answer, { hello: false });
   open.push(machine);
   await machine.opened;

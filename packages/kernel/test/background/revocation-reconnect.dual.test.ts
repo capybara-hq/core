@@ -5,7 +5,7 @@ import { mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type {
-  DeviceHelloV3,
+  DeviceHello,
   SandboxExecutionRef,
   SandboxPermissionSupport,
   SandboxProvider,
@@ -202,7 +202,7 @@ async function stagedDevice(deviceId: string) {
   });
   const credential = randomUUID();
   const states = new StagedSessionStates();
-  const hello: Omit<DeviceHelloV3, "transport"> = {
+  const hello: Omit<DeviceHello, "transport"> = {
     type: "hello",
     protocol: 3,
     programVersion: "fixture",

@@ -2,12 +2,12 @@ import { randomUUID } from "node:crypto";
 import { once } from "node:events";
 import {
   type DeviceHello,
-  type DeviceHelloV3,
   type DeviceLocalPolicySummary,
-  type DeviceOwnerCeilingV3,
-  type KernelReadyV3,
+  type DeviceOwnerCeiling,
+  type KernelReady,
   type KernelReq,
-  parseDeviceFrameV3,
+  type LegacyDeviceHello,
+  parseDeviceFrame,
 } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
@@ -132,7 +132,7 @@ async function device(org = orgId) {
 async function connect(
   d: { deviceId: string; machineId: string; credential: string },
   answer: (req: KernelReq) => Answer,
-  hello: Partial<DeviceHello> = {},
+  hello: Partial<LegacyDeviceHello> = {},
 ) {
   const machine = new FakeMachine(url, d.credential, answer, { hello: false });
   open.push(machine);
@@ -158,7 +158,7 @@ async function connect(
   return machine;
 }
 
-const FEATURES: Partial<DeviceHello> = {
+const FEATURES: Partial<LegacyDeviceHello> = {
   features: ["networkReport", "policyOp", "policyOpId", "mode"],
   policy: POLICY,
 };
@@ -511,10 +511,10 @@ describe("DevicePolicyService.apply", () => {
  */
 async function stagedMachine(
   d: { deviceId: string; machineId: string; credential: string },
-  owner: DeviceOwnerCeilingV3,
+  owner: DeviceOwnerCeiling,
   opts: {
     /** Runs before the `policy` answer goes out (the machine's own report of it, say). */
-    beforeAnswer?: (next: DeviceOwnerCeilingV3, socket: WebSocket) => Promise<void>;
+    beforeAnswer?: (next: DeviceOwnerCeiling, socket: WebSocket) => Promise<void>;
   } = {},
 ) {
   // the protocol gate, opened for this test only (the deployment's stays at protocol 2)
@@ -537,10 +537,10 @@ async function stagedMachine(
   const socket = new WebSocket(`ws://127.0.0.1:${address.port}`);
   await once(socket, "open");
   const requests: { op: string; args: Record<string, unknown> }[] = [];
-  let ready: KernelReadyV3 | undefined;
+  let ready: KernelReady | undefined;
   let current = owner;
   socket.on("message", async (data) => {
-    const frame = parseDeviceFrameV3(data.toString(), "kernel", 69632);
+    const frame = parseDeviceFrame(data.toString(), "kernel", 69632);
     if (frame.type === "ready") {
       ready = frame;
       return;
@@ -549,7 +549,7 @@ async function stagedMachine(
     const args = { ...frame.args } as Record<string, unknown>;
     requests.push({ op: frame.op, args });
     if (frame.op !== "policy") return;
-    const narrowing = (args.ownerCeiling ?? {}) as Partial<DeviceOwnerCeilingV3>;
+    const narrowing = (args.ownerCeiling ?? {}) as Partial<DeviceOwnerCeiling>;
     current = {
       ...current,
       ...narrowing,
@@ -569,7 +569,7 @@ async function stagedMachine(
       }),
     );
   });
-  const hello: DeviceHelloV3 = {
+  const hello: DeviceHello = {
     ...HELLO,
     protocol: 3,
     features: ["networkReport", "policyOp", "policyOpId"],
@@ -599,7 +599,7 @@ async function stagedMachine(
     10_000,
     "staged hello recorded",
   );
-  return { socket, requests, ready: () => ready as KernelReadyV3 };
+  return { socket, requests, ready: () => ready as KernelReady };
 }
 
 const stagedCleanups: (() => Promise<unknown>)[] = [];
@@ -607,7 +607,7 @@ afterEach(async () => {
   for (const fn of stagedCleanups.splice(0).reverse()) await fn();
 });
 
-const OWNER_FULL: DeviceOwnerCeilingV3 = {
+const OWNER_FULL: DeviceOwnerCeiling = {
   version: 2,
   sequence: 1,
   restrictedProjectReach: "os-user",
@@ -623,7 +623,7 @@ const ownerReportOf = async (machineId: string) =>
       .select("owner_report")
       .where("id", "=", machineId)
       .executeTakeFirstOrThrow()
-  ).owner_report as { connectionId: string | null; via: string; report: DeviceOwnerCeilingV3 };
+  ).owner_report as { connectionId: string | null; via: string; report: DeviceOwnerCeiling };
 
 const ceilingAudits = (deviceId: string) =>
   db

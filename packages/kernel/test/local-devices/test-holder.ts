@@ -4,7 +4,7 @@ import {
   type ExtensionContext,
   type KernelCancel,
   type KernelReq,
-  parseDeviceFrame,
+  parseLegacyDeviceFrame,
 } from "@capybara-hq/plugin-sdk";
 import type { Redis } from "ioredis";
 import {
@@ -82,7 +82,7 @@ export class TestHolder {
     for (;;) {
       const raw = await this.redis.lpop(deviceReqKey(this.deviceId));
       if (raw === null) return;
-      const f = parseDeviceFrame(raw, "kernel") as KernelReq | KernelCancel;
+      const f = parseLegacyDeviceFrame(raw, "kernel") as KernelReq | KernelCancel;
       this.frames.push(f);
       for (const w of [...this.waiters]) {
         if (w.pred(f)) {

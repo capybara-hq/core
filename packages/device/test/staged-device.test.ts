@@ -2,9 +2,9 @@ import { mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  type BindInstanceResultV3,
+  type BindInstanceResult,
   FileSystemGoneError,
-  parseDeviceFrameV3,
+  parseDeviceFrame,
   type SandboxOperationScope,
   SandboxPermissionUnsupportedError,
 } from "@capybara-hq/plugin-sdk";
@@ -224,7 +224,7 @@ describe("staged device parts (W3-M)", () => {
     const answer = (await staged().device.binder.bind(
       request(G1, B1, null),
       signal(),
-    )) as BindInstanceResultV3;
+    )) as BindInstanceResult;
     expect(answer.permissionSupport).toEqual({
       version: 1,
       restricted: { filesystem: true, network: true, native: true, concurrentScopes: true },
@@ -284,7 +284,7 @@ describe("staged device parts (W3-M)", () => {
   it("an unbound hello reports no capability; a bound one its generation and verified identity", async () => {
     const s = staged();
     const parse = (r: object) =>
-      parseDeviceFrameV3(
+      parseDeviceFrame(
         JSON.stringify({ ...r, transport: { maxFrameBytes: 69632 } }),
         "device",
         69632,

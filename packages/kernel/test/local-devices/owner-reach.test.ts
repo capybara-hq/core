@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { DEFAULT_SANDBOX_ROOTS, type DeviceOwnerCeilingV3 } from "@capybara-hq/plugin-sdk";
+import { DEFAULT_SANDBOX_ROOTS, type DeviceOwnerCeiling } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { KernelConfigSchema } from "../../src/config/schema.js";
@@ -65,7 +65,7 @@ const report = (
   restrictedProjectReach: "workspace" | "os-user",
   restrictedAllowedDomains: string[] = [],
   revision = `rev-${sequence}`,
-): DeviceOwnerCeilingV3 => ({
+): DeviceOwnerCeiling => ({
   version: 2,
   revision,
   sequence,
@@ -86,7 +86,7 @@ async function fixture() {
     .values({ device_id: f.deviceId, name: "outside", path: OUTSIDE, created_by: f.accountId })
     .execute();
   const facts = k.app.get(PermissionFacts);
-  const record = (r: DeviceOwnerCeilingV3) =>
+  const record = (r: DeviceOwnerCeiling) =>
     k.app.get(OwnerReports).record(machine.id, r, { connectionId: "c1", via: "hello" });
   const browse = () =>
     k.app
@@ -460,7 +460,7 @@ describe("web writes only narrow", () => {
       })
       .where("id", "=", f.machineId)
       .execute();
-    const settle = (ownerCeiling: DeviceOwnerCeilingV3) =>
+    const settle = (ownerCeiling: DeviceOwnerCeiling) =>
       k.app.get(TransactionHost).run(() =>
         policies.settleIn(
           { machineId: f.machineId, opId: "op-1" },

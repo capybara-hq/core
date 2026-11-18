@@ -3,10 +3,10 @@ import { constants } from "node:fs";
 import { mkdir, open, rename } from "node:fs/promises";
 import { join } from "node:path";
 import {
-  type BindInstanceRequestV3,
-  type BindInstanceResultV3,
-  type DeviceOwnerCeilingV3,
-  type DeviceRuntimeIdentityV3,
+  type BindInstanceRequest,
+  type BindInstanceResult,
+  type DeviceOwnerCeiling,
+  type DeviceRuntimeIdentity,
   type SandboxHandle,
   SandboxPermissionUnsupportedError,
   SandboxScopeDeniedError,
@@ -25,7 +25,7 @@ export interface StoredBinding {
   instanceGeneration: string;
   bindingId: string;
   previousGeneration: string | null;
-  runtimeIdentity: DeviceRuntimeIdentityV3;
+  runtimeIdentity: DeviceRuntimeIdentity;
 }
 /** Keyed by device like the operation journal, so another device id in the same directory is apart. */
 export const bindingFile = (stateDir: string, deviceId: string) =>
@@ -55,7 +55,7 @@ export interface InstanceBinderOptions {
    */
   verify(): Promise<VerifiedRuntime>;
   /** The strict current owner report (B2 supplies its sequence sidecar). */
-  ownerReport(): Promise<DeviceOwnerCeilingV3>;
+  ownerReport(): Promise<DeviceOwnerCeiling>;
   /** Bound of one drop of older background tasks (default {@link DROP_TIMEOUT_MS}). */
   dropTimeoutMs?: number;
 }
@@ -194,7 +194,7 @@ export class InstanceBinder {
     };
   }
 
-  async bind(request: BindInstanceRequestV3, signal: AbortSignal): Promise<BindInstanceResultV3> {
+  async bind(request: BindInstanceRequest, signal: AbortSignal): Promise<BindInstanceResult> {
     return this.serial(async () => {
       signal.throwIfAborted();
       if (request.instanceId !== this.options.deviceId)
@@ -343,7 +343,7 @@ export const DROP_GRACE_MS = 2000;
 export const DROP_TIMEOUT_MS = 10_000;
 type OwnedStop = { operationId: string; result: SandboxStopResult };
 
-const sameIdentity = (a: DeviceRuntimeIdentityV3, b: VerifiedRuntime) =>
+const sameIdentity = (a: DeviceRuntimeIdentity, b: VerifiedRuntime) =>
   a.runtimeHash === b.runtimeHash &&
   a.helperHash === b.helperHash &&
   a.imageFingerprint === b.imageFingerprint;

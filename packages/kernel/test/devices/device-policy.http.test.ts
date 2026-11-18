@@ -1,5 +1,9 @@
 import { randomUUID } from "node:crypto";
-import type { DeviceHello, DeviceLocalPolicySummary, KernelReq } from "@capybara-hq/plugin-sdk";
+import type {
+  DeviceLocalPolicySummary,
+  KernelReq,
+  LegacyDeviceHello,
+} from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
@@ -37,7 +41,7 @@ const POLICY: DeviceLocalPolicySummary = {
   mode: "auto",
   allowedDomains: ["pypi.org"],
 };
-const FEATURES: Partial<DeviceHello> = {
+const FEATURES: Partial<LegacyDeviceHello> = {
   features: ["networkReport", "policyOp", "policyOpId", "mode"],
   policy: POLICY,
 };
@@ -126,7 +130,7 @@ async function owned() {
 async function connect(
   d: { deviceId: string; machineId: string; credential: string },
   answer: (req: KernelReq) => Answer,
-  hello: Partial<DeviceHello> = FEATURES,
+  hello: Partial<LegacyDeviceHello> = FEATURES,
 ) {
   const machine = new FakeMachine(url, d.credential, answer, { hello: false });
   open.push(machine);

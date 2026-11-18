@@ -1,16 +1,16 @@
 import { randomUUID } from "node:crypto";
 import {
   DEVICE_PROTOCOL_VERSION,
-  type DeviceFrameV3,
-  type DeviceHelloV3,
+  type DeviceFrame,
+  type DeviceHello,
   type DeviceRes,
-  type DeviceResponseV3,
+  type DeviceResponse,
   type ExtensionContext,
   type KernelCancel,
   type KernelReq,
-  type KernelRequestV3,
+  type KernelRequest,
   parseDeviceFrame,
-  parseDeviceFrameV3,
+  parseLegacyDeviceFrame,
 } from "@capybara-hq/plugin-sdk";
 import type { WebSocket } from "@fastify/websocket";
 import { Inject, Injectable } from "@nestjs/common";
@@ -215,11 +215,11 @@ class DeviceConnection {
   }
 
   private async onFrame(text: string): Promise<void> {
-    let frame: ReturnType<typeof parseDeviceFrame> | DeviceFrameV3;
+    let frame: ReturnType<typeof parseLegacyDeviceFrame> | DeviceFrame;
     try {
       frame = this.staged
-        ? parseDeviceFrameV3(text, "device", this.effectiveCap ?? this.gw.maxFrameBytes())
-        : parseDeviceFrame(text, "device");
+        ? parseDeviceFrame(text, "device", this.effectiveCap ?? this.gw.maxFrameBytes())
+        : parseLegacyDeviceFrame(text, "device");
       if (
         this.staged &&
         this.effectiveCap !== undefined &&
@@ -249,7 +249,7 @@ class DeviceConnection {
           return;
         }
         this.effectiveCap = Math.min(
-          (frame as import("@capybara-hq/plugin-sdk").DeviceHelloV3).transport.maxFrameBytes,
+          (frame as import("@capybara-hq/plugin-sdk").DeviceHello).transport.maxFrameBytes,
           this.gw.maxFrameBytes(),
         );
         if (this.effectiveCap < 1024 || Buffer.byteLength(text) > this.effectiveCap) {
@@ -271,7 +271,7 @@ class DeviceConnection {
           if (this.staged)
             await this.gw.machines.recordHelloV3(
               this.identity.machineId,
-              frame as DeviceHelloV3,
+              frame as DeviceHello,
               this.connectionId,
             );
           else await this.gw.machines.recordHello(this.identity.machineId, frame, rawPolicy);
@@ -329,7 +329,7 @@ class DeviceConnection {
    * this device (ruling R20); anything else is dropped.
    */
   private async store(
-    res: DeviceRes | DeviceResponseV3,
+    res: DeviceRes | DeviceResponse,
     /** The gateway's own refusal of a request it never sent (never a device's frame). */
     notSent = false,
   ): Promise<void> {
@@ -437,7 +437,7 @@ class DeviceConnection {
         });
         if (this.effectiveCap === undefined || Buffer.byteLength(raw) > this.effectiveCap)
           throw new Error("Check frame limits: ready cannot fit");
-        parseDeviceFrameV3(raw, "kernel", this.effectiveCap);
+        parseDeviceFrame(raw, "kernel", this.effectiveCap);
         // published before ready: a reader that sees the machine ready also finds its capacity
         await this.publishCapacity();
         if (this.state !== "holding") return false;
@@ -499,7 +499,7 @@ class DeviceConnection {
         String(LIST_TTL_MARGIN_MS),
       )) as string | null;
       if (raw === null) return;
-      let frame: KernelReq | KernelRequestV3 | KernelCancel;
+      let frame: KernelReq | KernelRequest | KernelCancel;
       let wire = raw;
       try {
         const {
@@ -542,13 +542,13 @@ class DeviceConnection {
             continue;
           }
           wire = JSON.stringify(request);
-          frame = parseDeviceFrameV3(wire, "kernel", this.effectiveCap) as
-            | KernelRequestV3
+          frame = parseDeviceFrame(wire, "kernel", this.effectiveCap) as
+            | KernelRequest
             | KernelCancel;
         } else {
           // protocol 2's wire stays byte for byte what the relay queued, minus the stop's fence
           if (stopFor !== undefined) wire = JSON.stringify(request);
-          frame = parseDeviceFrame(wire, "kernel") as KernelReq | KernelCancel;
+          frame = parseLegacyDeviceFrame(wire, "kernel") as KernelReq | KernelCancel;
         }
       } catch (e) {
         this.gw.log.warn("dropping an invalid device request", {
@@ -811,5 +811,5 @@ export class LocalDeviceGateway {
 
 /** Staged validation only; active connection acceptance above remains protocol 2. */
 export function validateDeviceOperationFrameV3(raw: string, from: "device" | "kernel") {
-  return parseDeviceFrameV3(raw, from);
+  return parseDeviceFrame(raw, from);
 }

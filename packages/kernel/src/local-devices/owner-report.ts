@@ -1,6 +1,6 @@
 import {
-  type DeviceOwnerCeilingV3,
-  parseOwnerCeilingReportV3,
+  type DeviceOwnerCeiling,
+  parseOwnerCeilingReport,
   type SandboxBrowseScope,
   type SandboxOperationScope,
 } from "@capybara-hq/plugin-sdk";
@@ -19,7 +19,7 @@ export type OwnerReportVia = "hello" | "policy" | "policy-result" | "bind";
  * strict report, the connection and time it arrived, and a block set by an out-of-order report.
  */
 export interface StoredOwnerReport {
-  report: DeviceOwnerCeilingV3;
+  report: DeviceOwnerCeiling;
   connectionId: string | null;
   observedAt: string;
   via: OwnerReportVia;
@@ -31,9 +31,9 @@ export interface StoredOwnerReport {
 export function storedOwnerReportOf(v: unknown): StoredOwnerReport | null {
   if (typeof v !== "object" || v === null || Array.isArray(v)) return null;
   const o = v as Record<string, unknown>;
-  let report: DeviceOwnerCeilingV3;
+  let report: DeviceOwnerCeiling;
   try {
-    report = parseOwnerCeilingReportV3(o.report);
+    report = parseOwnerCeilingReport(o.report);
   } catch {
     return null;
   }
@@ -62,7 +62,7 @@ export function storedOwnerReportOf(v: unknown): StoredOwnerReport | null {
  */
 export function decideOwnerReport(
   stored: StoredOwnerReport | null,
-  incoming: DeviceOwnerCeilingV3,
+  incoming: DeviceOwnerCeiling,
 ): "record" | "same" | "stale" | "conflict" {
   if (stored === null) return "record";
   const prev = stored.report;
@@ -73,7 +73,7 @@ export function decideOwnerReport(
     : "conflict";
 }
 
-const canonicalReport = (r: DeviceOwnerCeilingV3) => ({
+const canonicalReport = (r: DeviceOwnerCeiling) => ({
   version: r.version,
   revision: r.revision,
   sequence: r.sequence,

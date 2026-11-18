@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { DeviceHello, DeviceLocalPolicySummary } from "@capybara-hq/plugin-sdk";
+import type { DeviceLocalPolicySummary, LegacyDeviceHello } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { sql } from "kysely";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -174,7 +174,7 @@ describe("MachinesService", () => {
   it("recordHello keeps the known features and a valid policy summary; a later hello replaces them", async () => {
     const a = await member();
     const m = await connected(a);
-    const hello: DeviceHello = {
+    const hello: LegacyDeviceHello = {
       type: "hello",
       protocol: 2,
       programVersion: "0.3.0",
@@ -196,7 +196,7 @@ describe("MachinesService", () => {
         "teleport",
         "networkReport",
         "mode",
-      ] as unknown as NonNullable<DeviceHello["features"]>,
+      ] as unknown as NonNullable<LegacyDeviceHello["features"]>,
       policy,
     });
     expect(await machines.activeFor(m.deviceId)).toMatchObject({
@@ -212,7 +212,9 @@ describe("MachinesService", () => {
     await machines.recordHello(m.machineId, {
       ...hello,
       features: ["policyOp"],
-      policy: { ...policy, allowedDomains: "x" } as unknown as NonNullable<DeviceHello["policy"]>,
+      policy: { ...policy, allowedDomains: "x" } as unknown as NonNullable<
+        LegacyDeviceHello["policy"]
+      >,
     });
     expect(await machines.activeFor(m.deviceId)).toMatchObject({
       features: ["policyOp"],
@@ -231,7 +233,7 @@ describe("MachinesService", () => {
   it("recordHello audits device.mode_changed once per change (auto mode spec §4.2)", async () => {
     const a = await member();
     const m = await connected(a);
-    const hello: DeviceHello = {
+    const hello: LegacyDeviceHello = {
       type: "hello",
       protocol: 2,
       programVersion: "0.3.0",
@@ -398,7 +400,7 @@ describe("MachinesService", () => {
   it("derives a pre-auto-mode program's mode fail-closed (unsandboxed old summary is auto)", async () => {
     const a = await member();
     const m = await connected(a);
-    const hello: DeviceHello = {
+    const hello: LegacyDeviceHello = {
       type: "hello",
       protocol: 2,
       programVersion: "0.2.0",

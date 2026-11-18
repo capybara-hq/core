@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 import {
   DEFAULT_SANDBOX_ROOTS,
   type DeviceFeature,
-  type DeviceHelloV3,
+  type DeviceHello,
   FileSystemGoneError,
   type SandboxHandle,
   type SandboxPermissionSupport,
@@ -137,7 +137,7 @@ export interface StagedDevice {
     programVersion?: string;
     home?: string;
     bootId?: string;
-  }): Promise<Omit<DeviceHelloV3, "transport">>;
+  }): Promise<Omit<DeviceHello, "transport">>;
   /** `create`: the roots of a new instance; the bound (now older) generation's tasks are dropped. */
   create(signal: AbortSignal): Promise<{ roots: SandboxRoots }>;
   /**

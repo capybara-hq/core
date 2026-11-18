@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { DeviceHello, DeviceLocalPolicySummary } from "@capybara-hq/plugin-sdk";
+import type { DeviceLocalPolicySummary, LegacyDeviceHello } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { sql } from "kysely";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
@@ -76,7 +76,7 @@ afterAll(async () => {
   await Promise.all([pgc?.stop(), rd?.stop()]);
 });
 
-const HELLO: DeviceHello = {
+const HELLO: LegacyDeviceHello = {
   type: "hello",
   protocol: 2,
   programVersion: "0.3.0",

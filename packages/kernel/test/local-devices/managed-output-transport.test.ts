@@ -1,11 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
 import {
-  type DeviceHelloV3,
+  type DeviceHello,
   DeviceProtocolError,
   isSandboxScopeDeniedError,
-  type KernelReadyV3,
-  parseDeviceFrameV3,
+  type KernelReady,
+  parseDeviceFrame,
   SandboxScopeDeniedError,
 } from "@capybara-hq/plugin-sdk";
 import { startTestRedis, type TestContainer } from "@capybara-hq/testing";
@@ -162,7 +162,7 @@ async function fixture(clientCap = 69632, serverCap = 100000) {
   let socket: WebSocket;
   const frames: string[] = [];
   let beforeReply = async () => {};
-  const hello: DeviceHelloV3 = {
+  const hello: DeviceHello = {
     type: "hello",
     protocol: 3,
     programVersion: "fixture",
@@ -186,10 +186,10 @@ async function fixture(clientCap = 69632, serverCap = 100000) {
   const connect = async (cap = clientCap, waitReady = true) => {
     socket = new WebSocket(`ws://127.0.0.1:${address.port}`);
     await once(socket, "open");
-    let ready: KernelReadyV3 | undefined;
+    let ready: KernelReady | undefined;
     const activeSocket = socket;
     socket.on("message", async (raw) => {
-      const frame = parseDeviceFrameV3(raw.toString(), "kernel", ready?.maxFrameBytes ?? cap);
+      const frame = parseDeviceFrame(raw.toString(), "kernel", ready?.maxFrameBytes ?? cap);
       frames.push(frame.type);
       if (frame.type === "ready") {
         ready = frame;

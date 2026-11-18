@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { once } from "node:events";
-import { type BindInstanceResultV3, DEFAULT_SANDBOX_ROOTS } from "@capybara-hq/plugin-sdk";
+import { type BindInstanceResult, DEFAULT_SANDBOX_ROOTS } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from "vitest";
 import { WebSocketServer } from "ws";
@@ -189,7 +189,7 @@ function deviceAnswers(identity?: (generation: string) => ReturnType<typeof iden
       permissionSupport: support,
       // the same owner report the hello carried (B2 records it; a real change would publish)
       ownerCeiling: stagedHello().ownerCeiling,
-    } satisfies Omit<BindInstanceResultV3, "permissionSupport"> & { permissionSupport: unknown };
+    } satisfies Omit<BindInstanceResult, "permissionSupport"> & { permissionSupport: unknown };
   });
   return sent;
 }

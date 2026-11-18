@@ -1,19 +1,19 @@
 import { randomUUID } from "node:crypto";
 import {
-  type BindInstanceRequestV3,
+  type BindInstanceRequest,
   DEVICE_PROTOCOL_VERSION,
   type DeviceOp,
-  type DeviceOperationV3,
+  type DeviceOperation,
   type DeviceOpResults,
   DeviceProtocolError,
-  type DeviceResponseV3,
+  type DeviceResponse,
   type DeviceStopArgs,
   type ExtensionContext,
   FileSystemGoneError,
   type KernelReq,
   parseDeviceFrame,
-  parseDeviceFrameV3,
-  parseOperationResultV3,
+  parseLegacyDeviceFrame,
+  parseOperationResult,
   parseOpResult,
   SandboxGoneError,
   SandboxOperationOutcomeUnknownError,
@@ -162,7 +162,7 @@ type Outcome =
    * `connectionId`: the connection a staged result arrived on (tagged by the gateway). `notSent`:
    * the gateway's own marker that the request never reached the machine.
    */
-  | { res: DeviceResponseV3; connectionId?: string; notSent?: true }
+  | { res: DeviceResponse; connectionId?: string; notSent?: true }
   | { error: typeof ABORTED | typeof GRACE_EXPIRED | Error };
 
 /**
@@ -210,9 +210,9 @@ const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
  * list and forwards the frames to the machine.
  *
  * **The holder's half of the wire** (Task 6 follows it): items on the list are `KernelReq` or
- * `KernelCancel` frames as JSON text, to be parsed with `parseDeviceFrame(item, "kernel")`; the
+ * `KernelCancel` frames as JSON text, to be parsed with `parseLegacyDeviceFrame(item, "kernel")`; the
  * nudge's payload is `{ id }`. For each `res` frame the machine sends, the holder writes the frame
- * (the JSON text as validated by `parseDeviceFrame(…, "device")`) under
+ * (the JSON text as validated by `parseLegacyDeviceFrame(…, "device")`) under
  * `capk:device-res:<requestId>` with a TTL and publishes the same frame object on
  * `device.res.<requestId>`.
  *
@@ -319,11 +319,11 @@ export class LocalDeviceRelay {
   /** Development staging: the active gateway continues rejecting protocol 3 until coordinated cutover. */
   async callV3(
     deviceId: string,
-    op: DeviceOperationV3,
+    op: DeviceOperation,
     args: Record<string, unknown>,
     opts: DeviceCallOptions,
   ): Promise<unknown> {
-    parseDeviceFrameV3(
+    parseDeviceFrame(
       JSON.stringify({ type: "req", id: "validation", op, args, deadlineMs: opts.deadlineMs }),
       "kernel",
     );
@@ -331,7 +331,7 @@ export class LocalDeviceRelay {
   }
   private async callWithCodec(
     deviceId: string,
-    op: DeviceOperationV3 | DeviceOp,
+    op: DeviceOperation | DeviceOp,
     args: unknown,
     opts: DeviceCallOptions,
     staged: boolean,
@@ -358,7 +358,7 @@ export class LocalDeviceRelay {
     const graceMs = this.graceMs();
     const listTtlMs = graceMs + deadlineMs + LIST_TTL_MARGIN_MS;
     const frame = { type: "req", id, op, args, deadlineMs };
-    if (connection) parseDeviceFrameV3(JSON.stringify(frame), "kernel", connection.maxFrameBytes);
+    if (connection) parseDeviceFrame(JSON.stringify(frame), "kernel", connection.maxFrameBytes);
     const reqJson = JSON.stringify({ ...frame, ...connection });
 
     let settle!: (r: Outcome) => void;
@@ -456,13 +456,13 @@ export class LocalDeviceRelay {
         // only the gateway's marker says a request never reached the machine: never its text
         if (connection && r.notSent) throw notSentError(op);
         return staged && r.res.ok
-          ? parseOperationResultV3(
-              op as DeviceOperationV3,
+          ? parseOperationResult(
+              op as DeviceOperation,
               r.res.result,
               op === "backgroundReadOutput"
                 ? (args as { offset: number; maxBytes: number })
                 : op === "bindInstance"
-                  ? (args as BindInstanceRequestV3)
+                  ? (args as BindInstanceRequest)
                   : undefined,
             )
           : this.resultOf(op as DeviceOp, r.res);
@@ -623,8 +623,8 @@ export class LocalDeviceRelay {
         wire = JSON.stringify(frame);
       }
       const f = connection
-        ? parseDeviceFrameV3(wire, "device", cap)
-        : parseDeviceFrame(wire, "device");
+        ? parseDeviceFrame(wire, "device", cap)
+        : parseLegacyDeviceFrame(wire, "device");
       if (f.type !== "res" || f.id !== id) {
         return { error: new DeviceProtocolError("the connected machine sent an unexpected frame") };
       }
@@ -643,7 +643,7 @@ export class LocalDeviceRelay {
     }
   }
 
-  private resultOf<Op extends DeviceOp>(op: Op, res: DeviceResponseV3): DeviceOpResults[Op] {
+  private resultOf<Op extends DeviceOp>(op: Op, res: DeviceResponse): DeviceOpResults[Op] {
     if (res.ok) {
       try {
         return parseOpResult(op, res.result);

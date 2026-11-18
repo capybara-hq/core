@@ -1,5 +1,5 @@
 import {
-  type KernelRequestV3,
+  type KernelRequest,
   SandboxOperationOutcomeUnknownError,
   SandboxPermissionUnsupportedError,
   SandboxScopeDeniedError,
@@ -23,7 +23,7 @@ const scope = {
 };
 const handle = { id: "d" };
 const request = (op: string, args: unknown) =>
-  ({ type: "req", id: "request", op, args, deadlineMs: 1000 }) as KernelRequestV3;
+  ({ type: "req", id: "request", op, args, deadlineMs: 1000 }) as KernelRequest;
 const signal = new AbortController().signal;
 describe("dormant v3 dispatch", () => {
   it("validates before any factory and binds authenticated exec grants to this operation", async () => {

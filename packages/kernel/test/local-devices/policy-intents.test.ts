@@ -1,9 +1,9 @@
 import { randomUUID } from "node:crypto";
 import type {
-  DeviceHello,
   DeviceLocalPolicySummary,
   DevicePolicyOpOutcome,
   KernelReq,
+  LegacyDeviceHello,
 } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
@@ -58,7 +58,7 @@ const POLICY: DeviceLocalPolicySummary = {
 const GRACE_S = 2;
 /** How long after the intent the op can no longer reach the machine. */
 const T = POLICY_DEADLINE_MS + GRACE_S * 1000 + LIST_TTL_MARGIN_MS + 5000;
-const FEATURES: Partial<DeviceHello> = {
+const FEATURES: Partial<LegacyDeviceHello> = {
   features: ["networkReport", "policyOp", "policyOpId", "mode"],
   policy: POLICY,
 };
@@ -214,7 +214,7 @@ class Sim {
   }
 }
 
-async function connect(d: Dev, sim: Sim, hello: Partial<DeviceHello> = {}) {
+async function connect(d: Dev, sim: Sim, hello: Partial<LegacyDeviceHello> = {}) {
   const machine = new FakeMachine(url, d.credential, sim.answer, { hello: false });
   open.push(machine);
   await machine.opened;

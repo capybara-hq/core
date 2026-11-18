@@ -3,8 +3,6 @@ import {
   type DeviceKillTaggedArgs,
   type DeviceListArgs,
   type DeviceLocalPolicySummary,
-  type DevicePolicyArgs,
-  type DevicePolicyStatus,
   type DevicePolicyStatusArgs,
   type DeviceReadFileArgs,
   type DeviceRes,
@@ -13,6 +11,8 @@ import {
   type DeviceWriteFileArgs,
   isPolicyOpId,
   type KernelReq,
+  type LegacyDevicePolicyArgs,
+  type LegacyDevicePolicyStatus,
   MAX_DEVICE_LIST_ENTRIES,
   type SandboxLimits,
   validateAllowHost,
@@ -155,11 +155,11 @@ function opHosts(list: unknown, key: "add" | "remove", fromApproval: boolean): s
  */
 function applyPolicyOp(
   store: PolicyStore,
-  args: DevicePolicyArgs,
+  args: LegacyDevicePolicyArgs,
   facts: SummaryFacts,
   written: () => void,
 ): { result: { policy: DeviceLocalPolicySummary }; detail: string } {
-  const source = (args.source ?? {}) as Partial<DevicePolicyArgs["source"]>;
+  const source = (args.source ?? {}) as Partial<LegacyDevicePolicyArgs["source"]>;
   const fromApproval = source.approvalId !== undefined;
   const add = [...new Set(opHosts(args.add, "add", fromApproval))];
   const remove = [...new Set(opHosts(args.remove, "remove", fromApproval))];
@@ -272,13 +272,18 @@ function servePolicyOp(
   const known = store.ops.claim(opId);
   if (known !== undefined) return { res: answerFromLog(req, known, store, facts) };
   try {
-    const { result, detail } = applyPolicyOp(store, req.args as DevicePolicyArgs, facts, () => {
-      try {
-        store.ops.recordHeld({ opId, outcome: "applied" });
-      } catch {
-        // the change stands; the log keeps `started` and the deployment learns it from the hello
-      }
-    });
+    const { result, detail } = applyPolicyOp(
+      store,
+      req.args as LegacyDevicePolicyArgs,
+      facts,
+      () => {
+        try {
+          store.ops.recordHeld({ opId, outcome: "applied" });
+        } catch {
+          // the change stands; the log keeps `started` and the deployment learns it from the hello
+        }
+      },
+    );
     return { res: { type: "res", id: req.id, ok: true, result }, detail };
   } catch (e) {
     // an op the log already says was applied stays applied (the log reports what the file holds)
@@ -320,7 +325,11 @@ function unsupported(req: KernelReq): DeviceRes {
 }
 
 /** What the log says of an op id, with the summary now. Read-only. */
-function policyStatus(store: PolicyStore, args: unknown, facts: SummaryFacts): DevicePolicyStatus {
+function policyStatus(
+  store: PolicyStore,
+  args: unknown,
+  facts: SummaryFacts,
+): LegacyDevicePolicyStatus {
   const opId: unknown = (args as Partial<DevicePolicyStatusArgs> | null)?.opId;
   if (!isPolicyOpId(opId)) {
     throw new DeviceOpError("error", 'invalid request: field "opId" must be a valid op id');
@@ -564,7 +573,7 @@ export async function runOp(
 export interface StagedOwnerPolicy {
   store: PolicyStore;
   /** The strict owner report now (`issueOwnerReport`), issued after the write. */
-  report: () => import("@capybara-hq/plugin-sdk").DeviceOwnerCeilingV3;
+  report: () => import("@capybara-hq/plugin-sdk").DeviceOwnerCeiling;
   /** Reconciles live owners against the fresh strict ceiling (`reconcileOwnerCeiling`). */
   reconcile: (signal: AbortSignal) => Promise<void>;
 }
@@ -578,7 +587,7 @@ async function serveOwnerPolicyV3(
   owner: StagedOwnerPolicy,
   req: KernelReq,
   signal: AbortSignal,
-): Promise<import("@capybara-hq/plugin-sdk").DeviceResponseV3> {
+): Promise<import("@capybara-hq/plugin-sdk").DeviceResponse> {
   const sdk = await import("@capybara-hq/plugin-sdk");
   const facts: SummaryFacts = { mode: "os" };
   try {
@@ -588,7 +597,7 @@ async function serveOwnerPolicyV3(
         type: "res",
         id: req.id,
         ok: true,
-        result: sdk.parseOperationResultV3("policyStatus", {
+        result: sdk.parseOperationResult("policyStatus", {
           ...status,
           ...(status.outcome === "applied" && { ownerCeiling: owner.report() }),
         }),
@@ -602,7 +611,7 @@ async function serveOwnerPolicyV3(
       type: "res",
       id: req.id,
       ok: true,
-      result: sdk.parseOperationResultV3("policy", {
+      result: sdk.parseOperationResult("policy", {
         ...(res.result as object),
         ownerCeiling: owner.report(),
       }),
@@ -624,14 +633,14 @@ async function serveOwnerPolicyV3(
 export async function serveOperationV3(
   backend: import("./exec/mac-operation-backend.js").MacOperationBackend,
   handle: import("@capybara-hq/plugin-sdk").SandboxHandle,
-  request: import("@capybara-hq/plugin-sdk").KernelRequestV3,
+  request: import("@capybara-hq/plugin-sdk").KernelRequest,
   signal: AbortSignal,
   binder?: Pick<import("./exec/instance-binding.js").InstanceBinder, "bind">,
   owner?: StagedOwnerPolicy,
-): Promise<import("@capybara-hq/plugin-sdk").DeviceResponseV3> {
+): Promise<import("@capybara-hq/plugin-sdk").DeviceResponse> {
   const sdk = await import("@capybara-hq/plugin-sdk");
   try {
-    const parsed = sdk.parseDeviceFrameV3(JSON.stringify(request), "kernel");
+    const parsed = sdk.parseDeviceFrame(JSON.stringify(request), "kernel");
     if (parsed.type !== "req") throw new sdk.DeviceProtocolError("Expected an operation request");
     const a = parsed.args;
     signal.throwIfAborted();
@@ -647,12 +656,12 @@ export async function serveOperationV3(
         throw new sdk.SandboxPermissionUnsupportedError(
           "This program cannot bind instances; update capybara-device",
         );
-      const bind = a as unknown as import("@capybara-hq/plugin-sdk").BindInstanceRequestV3;
+      const bind = a as unknown as import("@capybara-hq/plugin-sdk").BindInstanceRequest;
       return {
         type: "res",
         id: request.id,
         ok: true,
-        result: sdk.parseOperationResultV3("bindInstance", await binder.bind(bind, signal), bind),
+        result: sdk.parseOperationResult("bindInstance", await binder.bind(bind, signal), bind),
       };
     }
     if (parsed.op === "revokeOperation") {
@@ -764,7 +773,7 @@ export async function serveOperationV3(
       type: "res",
       id: request.id,
       ok: true,
-      result: sdk.parseOperationResultV3(
+      result: sdk.parseOperationResult(
         parsed.op,
         result,
         parsed.op === "backgroundReadOutput"

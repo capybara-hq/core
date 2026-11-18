@@ -7,10 +7,10 @@ import type {
   SandboxRoots,
 } from "@capybara-hq/plugin-sdk";
 import {
-  type BackgroundReadOutputResultV3,
-  type DeviceOperationV3,
-  parseDeviceFrameV3,
-  parseOperationResultV3,
+  type BackgroundReadOutputResult,
+  type DeviceOperation,
+  parseDeviceFrame,
+  parseOperationResult,
   parseSandboxBrowseScope,
   parseSandboxOperationScope,
   parseSandboxPreparationScope,
@@ -77,7 +77,7 @@ const refuseRaw =
 export interface StagedDeviceTransport {
   call(
     deviceId: string,
-    op: DeviceOperationV3,
+    op: DeviceOperation,
     args: Record<string, unknown>,
     opts: {
       deadlineMs: number;
@@ -166,7 +166,7 @@ export class LocalDeviceProvider implements SandboxProvider {
       ...ops,
       create: async (args) => {
         const id = args.fileSystem.id;
-        const r = parseOperationResultV3(
+        const r = parseOperationResult(
           "create",
           await transport.call(
             id,
@@ -216,14 +216,14 @@ export class LocalDeviceProvider implements SandboxProvider {
       ): Promise<unknown> => {
         const name = (
           prefix ? prefix + op.charAt(0).toUpperCase() + op.slice(1) : op
-        ) as DeviceOperationV3;
+        ) as DeviceOperation;
         const result = await transport.call(
           h.id,
           name,
           { scope, ...args },
           { deadlineMs: OP_DEADLINE_MS, signal: AbortSignal.any([factorySignal, signal]) },
         );
-        return parseOperationResultV3(name, result);
+        return parseOperationResult(name, result);
       };
       return {
         exec: async () => {
@@ -295,7 +295,7 @@ export class LocalDeviceProvider implements SandboxProvider {
         const { signal, ...rest } = args;
         const authority = await execArgs(h.id, scope, "backgroundStart", rest);
         signal.throwIfAborted();
-        return parseOperationResultV3(
+        return parseOperationResult(
           "backgroundStart",
           await transport.call(
             h.id,
@@ -306,7 +306,7 @@ export class LocalDeviceProvider implements SandboxProvider {
         ) as Awaited<ReturnType<SandboxBackground["start"]>>;
       },
       status: async (h, ref, signal) =>
-        parseOperationResultV3(
+        parseOperationResult(
           "backgroundStatus",
           await transport.call(
             h.id,
@@ -317,7 +317,7 @@ export class LocalDeviceProvider implements SandboxProvider {
         ) as Awaited<ReturnType<SandboxBackground["status"]>>,
       readOutput: async (h, ref, opts) => {
         opts.signal.throwIfAborted();
-        parseDeviceFrameV3(
+        parseDeviceFrame(
           JSON.stringify({
             type: "req",
             id: "validate",
@@ -331,7 +331,7 @@ export class LocalDeviceProvider implements SandboxProvider {
         const connection = await this.relay.connection(h.id);
         const capacity = Math.min(65536, maxReadBytes(connection.maxFrameBytes));
         const request = { ref, offset: opts.offset, maxBytes: Math.min(opts.maxBytes, capacity) };
-        const result = parseOperationResultV3(
+        const result = parseOperationResult(
           "backgroundReadOutput",
           await transport.call(h.id, "backgroundReadOutput", request, {
             deadlineMs: OP_DEADLINE_MS,
@@ -339,7 +339,7 @@ export class LocalDeviceProvider implements SandboxProvider {
             connection,
           }),
           request,
-        ) as BackgroundReadOutputResultV3;
+        ) as BackgroundReadOutputResult;
         if ("unavailable" in result) return result;
         // A zero-capacity probe can establish EOF, but never reports unread bytes as EOF.
         if (opts.maxBytes > 0 && capacity === 0 && result.totalBytes > opts.offset)
@@ -354,7 +354,7 @@ export class LocalDeviceProvider implements SandboxProvider {
         };
       },
       tail: async (h, ref, opts) => {
-        const r = parseOperationResultV3(
+        const r = parseOperationResult(
           "backgroundTail",
           await transport.call(
             h.id,
@@ -366,7 +366,7 @@ export class LocalDeviceProvider implements SandboxProvider {
         return "unavailable" in r ? r : { data: bytesOf(r.dataB64), truncated: r.truncated };
       },
       stop: async (h, ref, opts) =>
-        parseOperationResultV3(
+        parseOperationResult(
           "backgroundStop",
           await transport.call(
             h.id,
@@ -388,7 +388,7 @@ export class LocalDeviceProvider implements SandboxProvider {
             const authority = await execArgs(h.id, scope, "exec", rest);
             const combined = AbortSignal.any([signal, callSignal]);
             combined.throwIfAborted();
-            return parseOperationResultV3(
+            return parseOperationResult(
               "exec",
               await transport.call(
                 h.id,

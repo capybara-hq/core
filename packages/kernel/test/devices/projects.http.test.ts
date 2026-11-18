@@ -5,8 +5,8 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   DEFAULT_SANDBOX_ROOTS,
-  type DeviceHello,
   type KernelReq,
+  type LegacyDeviceHello,
   type SandboxProvider,
 } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
@@ -64,7 +64,7 @@ const ROOTS = {
   tmp: "/home/me/.capybara/dev/tmp",
 };
 const FEATURES = ["networkReport", "policyOp", "policyOpId", "mode", "projects"] as const;
-const AUTO: Partial<DeviceHello> = {
+const AUTO: Partial<LegacyDeviceHello> = {
   roots: ROOTS,
   home: HOME,
   features: [...FEATURES],
@@ -209,7 +209,7 @@ function listAnswer(p: string): NonNullable<Answer> {
 /** Connects the machine with `hello` and waits until its lease and hello are recorded. */
 async function connect(
   d: { deviceId: string; machineId: string; credential: string },
-  hello: Partial<DeviceHello> = AUTO,
+  hello: Partial<LegacyDeviceHello> = AUTO,
   answer: (req: KernelReq) => Answer = answering(),
 ) {
   const machine = new FakeMachine(url, d.credential, answer, { hello: false });

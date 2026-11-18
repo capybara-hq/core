@@ -10,7 +10,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { type KernelRequestV3, parseOwnerCeilingReportV3 } from "@capybara-hq/plugin-sdk";
+import { type KernelRequest, parseOwnerCeilingReport } from "@capybara-hq/plugin-sdk";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { runCli } from "../src/cli.js";
 import type { MacOperationBackend } from "../src/exec/mac-operation-backend.js";
@@ -164,7 +164,7 @@ describe("owner report sequence sidecar", () => {
   it("advances the sequence once per newly observed policy revision", async () => {
     writePolicy(state, DEFAULT_POLICY);
     const first = report();
-    expect(parseOwnerCeilingReportV3(first)).toEqual(first);
+    expect(parseOwnerCeilingReport(first)).toEqual(first);
     expect(first.sequence).toBe(0);
     expect(JSON.parse(readFileSync(ownerReportPath(state), "utf8"))).toEqual({
       sequence: 0,
@@ -340,7 +340,7 @@ describe("capybara-device ceiling", () => {
 
 describe("staged policy op with owner reports", () => {
   const policyReq = (args: Record<string, unknown>, op = "policy", id = "q1") =>
-    ({ type: "req", id, op, args, deadlineMs: 1000 }) as KernelRequestV3;
+    ({ type: "req", id, op, args, deadlineMs: 1000 }) as KernelRequest;
   const source = { accountId: "acc", accountName: "Ann", via: "web" };
   const setup = () => {
     writePolicy(state, DEFAULT_POLICY);

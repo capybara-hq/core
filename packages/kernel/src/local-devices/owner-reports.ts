@@ -1,4 +1,4 @@
-import { type DeviceOwnerCeilingV3, parseOwnerCeilingReportV3 } from "@capybara-hq/plugin-sdk";
+import { type DeviceOwnerCeiling, parseOwnerCeilingReport } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
 import { audit } from "../identity/audit.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
@@ -76,7 +76,7 @@ export class OwnerReports {
       explainedBy?: { accountId: string; via: string; opId: string; actorTokenId?: string };
     },
   ): Promise<OwnerReportOutcome> {
-    const report: DeviceOwnerCeilingV3 = parseOwnerCeilingReportV3(raw);
+    const report: DeviceOwnerCeiling = parseOwnerCeilingReport(raw);
     const row = await this.db
       .selectFrom("device_machines")
       .select([

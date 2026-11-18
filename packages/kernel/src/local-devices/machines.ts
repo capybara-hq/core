@@ -1,15 +1,15 @@
 import { randomBytes } from "node:crypto";
 import type {
   DeviceFeature,
-  DeviceHello,
   DeviceLocalPolicySummary,
   DeviceStopArgs,
   ExtensionContext,
+  LegacyDeviceHello,
 } from "@capybara-hq/plugin-sdk";
 import {
-  type DeviceHelloV3,
-  type DeviceOwnerCeilingV3,
-  parseDeviceFrameV3,
+  type DeviceHello,
+  type DeviceOwnerCeiling,
+  parseDeviceFrame,
 } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
 import { sql } from "kysely";
@@ -248,10 +248,10 @@ export class MachinesService {
   @Transactional()
   async recordHello(
     machineId: string,
-    hello: DeviceHello,
+    hello: LegacyDeviceHello,
     rawPolicy: unknown = hello.policy,
     /** A v3 hello's authenticated owner report (B2): it, not the summary, decides publication. */
-    owner?: { report: DeviceOwnerCeilingV3; connectionId: string | null },
+    owner?: { report: DeviceOwnerCeiling; connectionId: string | null },
   ): Promise<void> {
     const subject = await this.db
       .selectFrom("device_machines")
@@ -377,7 +377,7 @@ export class MachinesService {
   private async backfillOps(
     machineId: string,
     self: { org_id: string; pending_policy_ops: unknown },
-    recentOps: NonNullable<DeviceHello["recentOps"]>,
+    recentOps: NonNullable<LegacyDeviceHello["recentOps"]>,
     policy: DeviceLocalPolicySummary | null,
   ): Promise<void> {
     const outcomes = new Map(recentOps.map((r) => [r.opId, r.outcome]));
@@ -420,10 +420,10 @@ export class MachinesService {
   @Transactional()
   async recordHelloV3(
     machineId: string,
-    hello: DeviceHelloV3,
+    hello: DeviceHello,
     connectionId: string | null = null,
   ): Promise<void> {
-    const parsed = parseDeviceFrameV3(JSON.stringify(hello), "device");
+    const parsed = parseDeviceFrame(JSON.stringify(hello), "device");
     if (parsed.type !== "hello") throw new Error("Expected a validated operation hello");
     await this.recordHello(machineId, parsed, parsed.policy, {
       report: parsed.ownerCeiling,
@@ -457,7 +457,7 @@ export class MachinesService {
    */
   private async boundIdentityLocked(
     subject: { orgId: string; deviceId: string },
-    hello: DeviceHelloV3,
+    hello: DeviceHello,
   ): Promise<PermissionRuntimeIdentity | undefined> {
     const reported = hello.runtimeIdentity;
     if (hello.instanceGeneration === null || !reported) return undefined;
@@ -550,7 +550,7 @@ export class MachinesService {
     frame: unknown,
     connectionId: string | null = null,
   ): Promise<void> {
-    const parsed = parseDeviceFrameV3(JSON.stringify(frame), "device");
+    const parsed = parseDeviceFrame(JSON.stringify(frame), "device");
     if (parsed.type !== "policy") throw new Error("Expected a validated policy frame");
     const subject = await this.db
       .selectFrom("device_machines")

@@ -3,8 +3,8 @@ import {
   type DeviceFeature,
   type DeviceLocalPolicySummary,
   type DevicePolicyArgs,
-  type DevicePolicyArgsV3,
-  type DevicePolicyStatus,
+  type LegacyDevicePolicyArgs,
+  type LegacyDevicePolicyStatus,
   ToolError,
   validateAllowHost,
 } from "@capybara-hq/plugin-sdk";
@@ -49,7 +49,7 @@ const STATUS_DEADLINE_MS = 10_000;
 export const UNKNOWN_OP_MS = 24 * 3_600_000;
 
 /** A policy change as callers ask for it: the op id and the source are added here. */
-type PolicyChange = Omit<DevicePolicyArgsV3, "source" | "opId">;
+type PolicyChange = Omit<DevicePolicyArgs, "source" | "opId">;
 
 /** The prefix the relay puts before a machine's `policy`-kind refusal. */
 const REFUSED_PREFIX = "Refused by the machine's local policy: ";
@@ -76,7 +76,7 @@ export interface PolicyIntent {
   deviceId: string;
   machineId: string;
   opId: string;
-  args: DevicePolicyArgsV3;
+  args: DevicePolicyArgs;
   /**
    * The staged (protocol 3) connection the op goes to, when the device's machine is connected
    * over one: the op is sent as a v3 `policy` request fenced to it (not sent at all once it
@@ -106,7 +106,7 @@ export type PolicyOpResult =
 
 /** What a machine says of an op id ({@link DevicePolicyService.outcomeOf}). */
 export type PolicyOpStatus =
-  | (DevicePolicyStatus & { ownerCeiling?: unknown; connectionId?: string | null })
+  | (LegacyDevicePolicyStatus & { ownerCeiling?: unknown; connectionId?: string | null })
   | { outcome: "offline" };
 
 const OFFLINE_MESSAGE =
@@ -174,7 +174,7 @@ export class DevicePolicyService {
     orgId: string;
     deviceId: string;
     change: PolicyChange;
-    source: DevicePolicyArgs["source"];
+    source: LegacyDevicePolicyArgs["source"];
     actorTokenId?: string;
   }): Promise<PolicyChangeOutcome> {
     const begun = await this.begin(input);
@@ -198,7 +198,7 @@ export class DevicePolicyService {
     orgId: string;
     deviceId: string;
     change: PolicyChange;
-    source: DevicePolicyArgs["source"];
+    source: LegacyDevicePolicyArgs["source"];
     actorTokenId?: string;
   }): Promise<{ intent: PolicyIntent } | { outcome: PolicyChangeOutcome }> {
     if (currentStore()) {
@@ -255,7 +255,7 @@ export class DevicePolicyService {
         };
     }
     const opId = randomUUID();
-    const args: DevicePolicyArgsV3 = { ...change, opId, source: input.source };
+    const args: DevicePolicyArgs = { ...change, opId, source: input.source };
     const recorded = await this.recordIntent({ ...input, change, machineId: machine.id, opId });
     if (!recorded) return { outcome: offline() };
     return {
@@ -402,7 +402,7 @@ export class DevicePolicyService {
           "policyStatus",
           { opId },
           { ...opts, connection },
-        )) as DevicePolicyStatus & { ownerCeiling?: unknown };
+        )) as LegacyDevicePolicyStatus & { ownerCeiling?: unknown };
         return { ...status, connectionId: connection.connectionId };
       }
       const connectionId = await this.connectionIdOf(deviceId);
@@ -619,7 +619,7 @@ export class DevicePolicyService {
     machineId: string;
     opId: string;
     change: PolicyChange;
-    source: DevicePolicyArgs["source"];
+    source: LegacyDevicePolicyArgs["source"];
     actorTokenId?: string;
   }): Promise<boolean> {
     const locked = await this.db
