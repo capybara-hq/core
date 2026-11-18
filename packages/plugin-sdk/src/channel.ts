@@ -204,6 +204,24 @@ export interface ChannelWebhook {
   }): Promise<ChannelWebhookResult>;
 }
 
+/** One conversation artifact handed to {@link Channel.sendFile}. */
+export interface ChannelFile {
+  name: string;
+  contentType: string;
+  kind: "image" | "file";
+  data: Uint8Array;
+}
+
+export interface ChannelSendFileArgs {
+  config: unknown;
+  target: ChannelTarget;
+  file: ChannelFile;
+  signal: AbortSignal;
+  locale: Locale;
+  /** Same semantics as {@link ChannelSendArgs.idempotencyKey}. */
+  idempotencyKey?: string;
+}
+
 /** A channel implementation (the bot uses the channel connection config). */
 export interface Channel {
   /** Schema of the channel connection config; secret fields use secret(). */
@@ -212,8 +230,17 @@ export interface Channel {
    * `minEditIntervalMs`: the minimum interval the platform allows between two edits of the same
    * message; the kernel's streaming-draft update interval is
    * `max(1000, minEditIntervalMs)`.
+   *
+   * `files`: present iff `sendFile` is implemented; the kernel never hands a file larger than
+   * `maxBytes`, and sends `kind: "image"` only within `imageMaxBytes ?? maxBytes`.
    */
-  features: { cards: boolean; edit: boolean; threads: boolean; minEditIntervalMs?: number };
+  features: {
+    cards: boolean;
+    edit: boolean;
+    threads: boolean;
+    minEditIntervalMs?: number;
+    files?: { maxBytes: number; imageMaxBytes?: number };
+  };
   verify(args: {
     config: unknown;
     signal: AbortSignal;
@@ -236,6 +263,13 @@ export interface Channel {
    * (split by the plugin).
    */
   update(args: ChannelSendArgs & { messageId: string }): Promise<void>;
+  /**
+   * Optional file delivery: one message per file; the kernel picks `kind`; an extension may send an
+   * `image` as a file when the platform refuses it as an image, never the reverse; `messageId`
+   * when the platform returns it; failures as {@link ChannelSendError} (`send`); never put an
+   * upload URL in an error.
+   */
+  sendFile?(args: ChannelSendFileArgs): Promise<{ messageId?: string }>;
   /**
    * Optional webhook inbound (see {@link ChannelWebhook}). Only connections of plugins that
    * implement it can be switched from the default long connection to webhook mode; a connection in
