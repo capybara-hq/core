@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { findRepeat } from "../../src/tools/builtins/delivery-scope.js";
+import { findRepeat } from "../../src/conversations/delivery-scope.js";
 
 /**
  * Truthful delivery spec §2 step 3: the repeat decision. M = the latest scope artifact with the

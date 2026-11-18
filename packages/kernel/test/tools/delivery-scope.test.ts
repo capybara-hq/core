@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import type { DeliveryScope } from "../../src/conversations/delivery-scope.js";
 import { EventLog } from "../../src/conversations/event-log.js";
 import type { ConversationEvent, EventPayload } from "../../src/conversations/events.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
@@ -15,7 +16,6 @@ import {
   REPEAT_TEXT,
   storeArtifacts,
 } from "../../src/tools/builtins/artifacts.js";
-import type { DeliveryScope } from "../../src/tools/builtins/delivery-scope.js";
 import type { BuiltinCallContext } from "../../src/tools/registry.js";
 import { onlyBuiltins } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";

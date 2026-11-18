@@ -8,7 +8,7 @@ import { Transactional } from "../infra/database/transactional.decorator.js";
 import { OutboxService } from "../infra/outbox/outbox.service.js";
 import { KERNEL_BUS, KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
-import type { DeliveryScope, ScopeArtifact } from "../tools/builtins/delivery-scope.js";
+import type { DeliveryScope, ScopeArtifact } from "./delivery-scope.js";
 import {
   type ConversationEvent,
   type ConversationEventBody,

@@ -1,10 +1,10 @@
 import { createHash, randomUUID } from "node:crypto";
 import { ToolError } from "@capybara-hq/plugin-sdk";
+import { findRepeat } from "../../conversations/delivery-scope.js";
 import type { AppendEvent, EventLog } from "../../conversations/event-log.js";
 import type { ConversationEvent } from "../../conversations/events.js";
 import { isStorageUnavailable, type StorageService } from "../../storage/storage.service.js";
 import type { BuiltinCallContext } from "../registry.js";
-import { findRepeat } from "./delivery-scope.js";
 
 /**
  * The tool error when the deployment has no object store (or it went away): files cannot be
