@@ -1,46 +1,21 @@
 "use client";
 
-import {
-  CsvPreview,
-  FileCard,
-  FilePreviewFrame,
-  formatBytes,
-  formatRelative,
-  ImagePreview,
-  ImageViewer,
-  LoadFailed,
-  MarkdownPreview,
-  NoPreview,
-  TextPreview,
-  typeBadge,
-  useNow,
-} from "@capybara-hq/design";
-import { useQuery } from "@tanstack/react-query";
+import { FileCard, FilePreviewFrame, formatRelative, typeBadge, useNow } from "@capybara-hq/design";
 import { useLocale, useTranslations } from "next-intl";
-import { type ReactNode, useState } from "react";
-import { ApiClientError } from "../../lib/api";
-import { artifactDownloadUrl } from "../../lib/artifacts";
-import { attachmentDownloadUrl } from "../../lib/attachments";
-import { builtinPreview, type FileOutput } from "../../lib/files";
-import type { FilePreviewerItem } from "../../lib/previewers";
-import { filePreviewersQuery, filePreviewQuery, fileTextQuery } from "../../lib/query/conversation";
-import { type UiView, uiLocale } from "../../lib/ui";
-import { useErrorMessage } from "../../lib/use-error-message";
+import { useState } from "react";
+import { sourceUrls } from "../../lib/file-source";
+import type { FileOutput } from "../../lib/files";
+import { uiLocale } from "../../lib/ui";
 import { ExtensionSlot } from "../extension-ui/ExtensionSlot";
+import { FilePreviewBody } from "../file-preview/FilePreviewBody";
+import { ShareDialog } from "../file-preview/ShareDialog";
 import { useOpenDownload } from "../SessionFilePreview";
-import { UiViewRenderer } from "../ui-view/UiViewRenderer";
-
-type Load<T> = { kind: "loading" } | { kind: "ready"; data: T } | { kind: "error"; e: unknown };
-
-const BUILTIN = "builtin";
-const previewerId = (p: FilePreviewerItem) => `${p.plugin}/${p.id}`;
 
 /**
  * A file output in the right panel (spec §5.8, design `FilePreviewFrame`): the header switches
- * between the conversation's files and, when more than one applies, previewers. An extension
- * previewer that accepts the file wins over the built-in one (decision 7); built-ins show bitmaps
- * (`?inline=1`), text and code, Markdown and CSV / TSV; anything else shows the file card with
- * Download. A failing previewer shows Retry with the Download fallback, in this panel only.
+ * between the conversation's files and, when more than one applies, previewers; Share opens the
+ * share dialog (file sharing design §5). The body is {@link FilePreviewBody}, the same one the
+ * share page renders; a removed file shows the removed card.
  */
 export function FilePanel({
   orgId,
@@ -62,71 +37,12 @@ export function FilePanel({
   const t = useTranslations("chat");
   const locale = uiLocale(useLocale());
   const now = useNow();
-  const errorMessage = useErrorMessage();
   const openDownload = useOpenDownload();
   const [picked, setPicked] = useState<string | null>(null);
-  const builtin = file.status === "removed" ? null : builtinPreview(file);
-  // An uploaded file is an attachment: its own route downloads it and serves bitmaps inline.
-  const fileUrl = (inline: boolean) =>
-    file.origin === "uploaded"
-      ? attachmentDownloadUrl(orgId, file.id)
-      : artifactDownloadUrl(orgId, conversationId, file.id, inline ? { inline: true } : {});
-  const download = () => openDownload(fileUrl(false));
-
-  // No extension previewers readable: the built-in one (or the file card) shows.
-  const previewers = useQuery({
-    ...filePreviewersQuery(orgId, conversationId, file.id),
-    enabled: file.status !== "removed",
-    retry: false,
-  });
-  const extensions: FilePreviewerItem[] | null =
-    file.status === "removed"
-      ? []
-      : previewers.data !== undefined
-        ? previewers.data
-        : previewers.error !== null
-          ? []
-          : null;
-
-  const options = [
-    ...(extensions ?? []).map((p) => ({ id: previewerId(p), title: p.title[locale], p })),
-    ...(builtin !== null ? [{ id: BUILTIN, title: t("builtinPreviewer"), p: null }] : []),
-  ];
-  const current = options.find((o) => o.id === picked) ?? options[0];
-
-  // The body of the current previewer: an extension's rendered view, an embed (it loads itself),
-  // a bitmap (`?inline=1`, nothing to read) or the file's text for the other built-ins.
-  const p = current?.p ?? null;
-  const viewP = p !== null && p.kind === "view" ? p : null;
-  const viewQ = useQuery({
-    ...filePreviewQuery(orgId, conversationId, file.id, viewP ?? { plugin: "", id: "" }, locale),
-    enabled: extensions !== null && viewP !== null,
-    retry: false,
-  });
-  const textQ = useQuery({
-    ...fileTextQuery(orgId, conversationId, file.id),
-    enabled: extensions !== null && current !== undefined && p === null && builtin !== "image",
-    retry: false,
-  });
-  const body: Load<{ text?: string; truncated?: boolean; view?: UiView }> =
-    extensions === null || current === undefined
-      ? { kind: "loading" }
-      : p !== null
-        ? p.kind !== "view"
-          ? { kind: "ready", data: {} }
-          : viewQ.data !== undefined
-            ? { kind: "ready", data: { view: viewQ.data } }
-            : viewQ.error !== null
-              ? { kind: "error", e: viewQ.error }
-              : { kind: "loading" }
-        : builtin === "image"
-          ? { kind: "ready", data: {} }
-          : textQ.data !== undefined
-            ? { kind: "ready", data: textQ.data }
-            : textQ.error !== null
-              ? { kind: "error", e: textQ.error }
-              : { kind: "loading" };
-  const retryBody = () => void (viewP !== null ? viewQ.refetch() : textQ.refetch());
+  const [sharing, setSharing] = useState(false);
+  const source = { kind: "conversation" as const, orgId, conversationId, file };
+  const download = () => openDownload(sourceUrls(source).download);
+  const available = file.status !== "removed";
 
   const header = {
     badge: typeBadge(file.name, file.contentType),
@@ -139,24 +55,14 @@ export function FilePanel({
     })),
     current: file.id,
     onSwitch,
-    previewers: options.map((o) => ({ id: o.id, title: o.title })),
-    ...(current ? { previewer: current.id } : {}),
     onPreviewer: setPicked,
+    ...(available ? { onShare: () => setSharing(true), shared: file.shared === true } : {}),
     onDownload: download,
     onFullscreen,
     onClose,
   };
-  const fallback = (
-    <NoPreview
-      name={file.name}
-      contentType={file.contentType}
-      size={file.size}
-      hint={false}
-      onDownload={download}
-    />
-  );
 
-  if (file.status === "removed") {
+  if (!available) {
     return (
       <FilePreviewFrame header={header} state="ready">
         <FileCard
@@ -168,119 +74,39 @@ export function FilePanel({
       </FilePreviewFrame>
     );
   }
-  if (extensions !== null && !current) {
-    return (
-      <FilePreviewFrame header={header} state="ready">
-        <NoPreview
-          name={file.name}
-          contentType={file.contentType}
-          size={file.size}
-          onDownload={download}
-        />
-      </FilePreviewFrame>
-    );
-  }
-  if (extensions === null || !current || body.kind === "loading") {
-    return <FilePreviewFrame header={header} state="loading" />;
-  }
-  if (body.kind === "error") {
-    const code = body.e instanceof ApiClientError ? body.e.code : "unknown";
-    return (
-      <FilePreviewFrame
-        header={header}
-        state="failed"
-        failure={{ name: current.title, reason: errorMessage(new ApiClientError(0, code, code)) }}
-        onRetry={retryBody}
-      >
-        {fallback}
-      </FilePreviewFrame>
-    );
-  }
-  let content: ReactNode = null;
-  const data = body.data;
-  if (current.p?.kind === "embed") {
-    const p = current.p;
-    content = (
-      <ExtensionSlot
-        key={`${previewerId(p)}/${file.id}`}
-        slot="file.preview"
-        args={{ orgId, conversationId, fileId: file.id }}
-        select={{ plugin: p.plugin, id: p.id }}
-        host={{
-          title: current.title,
-          maxBytes: p.maxBytes,
-          read: async () => {
-            const res = await fetch(fileUrl(false), { credentials: "same-origin" });
-            if (!res.ok) throw new ApiClientError(res.status, "http_error", "download failed");
-            return {
-              name: file.name,
-              contentType: file.contentType,
-              size: file.size,
-              data: await res.arrayBuffer(),
-            };
-          },
-          failed: ({ message, onRetry }) => (
-            <>
-              <LoadFailed name={current.title} reason={message} onRetry={onRetry} />
-              {fallback}
-            </>
-          ),
-        }}
-      />
-    );
-  } else if (current.p?.kind === "view" && data.view) {
-    content = <UiViewRenderer view={data.view} onAction={async () => {}} />;
-  } else if (builtin === "image") {
-    content = (
-      <PanelImage
-        key={file.id}
-        src={fileUrl(true)}
-        name={file.name}
-        size={formatBytes(file.size)}
-        onDownload={download}
-        onOpenInNewTab={() => openDownload(fileUrl(true))}
-      />
-    );
-  } else if (builtin === "markdown") {
-    content = <MarkdownPreview text={data.text ?? ""} />;
-  } else if (builtin === "csv" || builtin === "tsv") {
-    content = <CsvPreview text={data.text ?? ""} delimiter={builtin === "csv" ? "," : "\t"} />;
-  } else {
-    content = <TextPreview text={data.text ?? ""} truncated={data.truncated === true} />;
-  }
-  return (
-    <FilePreviewFrame header={header} state="ready">
-      {content}
-    </FilePreviewFrame>
-  );
-}
-
-/** The built-in image previewer: a click opens the image viewer for this file. */
-function PanelImage({
-  src,
-  name,
-  size,
-  onDownload,
-  onOpenInNewTab,
-}: {
-  src: string;
-  name: string;
-  size: string;
-  onDownload(): void;
-  onOpenInNewTab(): void;
-}) {
-  const [open, setOpen] = useState(false);
   return (
     <>
-      <ImagePreview src={src} name={name} onOpen={() => setOpen(true)} />
-      <ImageViewer
-        open={open}
-        onOpenChange={setOpen}
-        images={[{ src, name, size }]}
-        index={0}
-        onIndexChange={() => {}}
-        onDownload={onDownload}
-        onOpenInNewTab={onOpenInNewTab}
+      <FilePreviewBody
+        source={source}
+        previewer={picked}
+        onDownload={download}
+        embed={(h) => (
+          <ExtensionSlot
+            key={`${h.previewer.plugin}/${h.previewer.id}/${file.id}`}
+            slot="file.preview"
+            args={{ orgId, conversationId, fileId: file.id }}
+            select={{ plugin: h.previewer.plugin, id: h.previewer.id }}
+            host={{
+              title: h.title,
+              maxBytes: h.previewer.maxBytes,
+              read: h.read,
+              failed: h.failed,
+            }}
+          />
+        )}
+        frame={({ previewers, previewer, ...f }) => (
+          <FilePreviewFrame
+            header={{ ...header, previewers, ...(previewer !== undefined ? { previewer } : {}) }}
+            {...f}
+          />
+        )}
+      />
+      <ShareDialog
+        orgId={orgId}
+        conversationId={conversationId}
+        file={file}
+        open={sharing}
+        onOpenChange={setSharing}
       />
     </>
   );

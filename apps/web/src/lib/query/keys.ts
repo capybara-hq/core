@@ -3,6 +3,9 @@
  * or `deployment`), so an org switch or sign-out can drop a whole scope. Area builders are added
  * next to `all` as `[...all, "<area>", ...rest]`.
  *
+ * A share link's public reads live under `share` + its code: the page needs no session (an
+ * internal link does), and a sign-in or sign-out drops the whole cache anyway.
+ *
  * One literal id is allowed: `keys.account("self")`, for `me()` and `maybeMe()`. `/me` is what
  * tells the account id, so it is read before the id is known; nothing else lives under `"self"`.
  */
@@ -422,6 +425,10 @@ export const keys = {
         contribution: string,
         rest: string,
       ): readonly unknown[] => [...all, "uiView", scope, plugin, contribution, rest],
+      /** Every share list of the org (an invalidation prefix). */
+      sharesAll: (): readonly unknown[] => [...all, "shares"],
+      /** The org's shares: the person's own (`mine`) or every one (`all`, org admins). */
+      shares: (scope: "mine" | "all"): readonly unknown[] => [...all, "shares", scope],
       /** Every conversation's pieces of the org (a prefix: e.g. the owner views naming a root). */
       conversationsAll: (): readonly unknown[] => [...all, "conversation"],
       /** One conversation's pieces (its row, events and what lives outside the log). */
@@ -464,6 +471,10 @@ export const keys = {
             outputId,
             part,
           ],
+          /** The shares of a file (every version of its source path) and the share policy. */
+          fileShares: (fileId: string): readonly unknown[] => [...c, "fileShares", fileId],
+          /** Every file's shares in the conversation (an invalidation prefix). */
+          fileSharesAll: (): readonly unknown[] => [...c, "fileShares"],
           /** A file's extension previewers. */
           filePreviewers: (fileId: string): readonly unknown[] => [...c, "filePreviewers", fileId],
           /** A file's preview body by one previewer (`builtin` or `plugin/id`) and locale. */
@@ -476,6 +487,23 @@ export const keys = {
           ],
         };
       },
+    };
+  },
+  share(code: string) {
+    const all = ["share", code] as const;
+    return {
+      all: all as readonly unknown[],
+      /** The share's metadata (name, type, who shared it, how it renders). */
+      meta: (): readonly unknown[] => [...all, "meta"],
+      /** The snapshot's text for the built-in previews. */
+      text: (): readonly unknown[] => [...all, "text"],
+      /** A view previewer's render of the snapshot (`plugin/id`) by locale. */
+      view: (previewer: string, locale: string): readonly unknown[] => [
+        ...all,
+        "view",
+        previewer,
+        locale,
+      ],
     };
   },
   deployment() {

@@ -366,6 +366,89 @@ describe("the file panel", () => {
   });
 });
 
+describe("the file panel: HTML and Share", () => {
+  const HTML = file("h1", "report.html", "text/html", { previewable: "text" });
+  const htmlApi = (extra: Record<string, (c: Call) => Response> = {}) =>
+    api({
+      [`GET ${BASE}/files`]: () => json(200, { files: [HTML, CSV, GONE], next: null }),
+      // an extension previewer that also accepts HTML never wins over the built-in
+      [`GET ${BASE}/files/h1/previewers`]: () =>
+        json(200, {
+          previewers: [
+            {
+              plugin: "file-preview",
+              id: "html",
+              title: { zh: "HTML", en: "HTML" },
+              kind: "embed",
+              maxBytes: 1e7,
+            },
+          ],
+        }),
+      [`POST ${BASE}/files/h1/html-token`]: () =>
+        json(200, { path: "/api/v1/html/tok-1", expiresIn: 300 }),
+      [`GET ${BASE}/files/h1/content`]: () =>
+        new Response("<h1>Q3</h1>", { status: 200, headers: { "content-type": "text/plain" } }),
+      ...extra,
+    });
+
+  it("an HTML file renders the document frame at the minted path, ahead of extensions", async () => {
+    const calls = htmlApi();
+    openAt("#file=h1");
+    const panel = await screen.findByRole("complementary", { name: "report.html" });
+    const frame = await within(panel).findByTitle("report.html");
+    expect(frame.tagName).toBe("IFRAME");
+    expect(frame.getAttribute("src")).toBe("/api/v1/html/tok-1");
+    expect(frame.getAttribute("sandbox")).toBe(
+      "allow-scripts allow-popups allow-popups-to-escape-sandbox",
+    );
+    expect(calls.some((c) => c.url.endsWith("/files/h1/previewers"))).toBe(false);
+  });
+
+  it("the Source option shows the text built-in", async () => {
+    htmlApi();
+    openAt("#file=h1");
+    const panel = await screen.findByRole("complementary", { name: "report.html" });
+    await within(panel).findByTitle("report.html");
+    const user = userEvent.setup();
+    await user.click(within(panel).getByRole("button", { name: /Rendered/ }));
+    await user.click(await screen.findByRole("menuitemradio", { name: /Source/ }));
+    expect(await within(panel).findByText("<h1>Q3</h1>")).toBeTruthy();
+    expect(panel.querySelector("iframe")).toBeNull();
+  });
+
+  it("an HTML file over 20 MiB shows the card and why, and mints no token", async () => {
+    const big = { ...HTML, size: 20 * 1024 * 1024 + 1 };
+    const calls = htmlApi({
+      [`GET ${BASE}/files`]: () => json(200, { files: [big], next: null }),
+    });
+    openAt("#file=h1");
+    const panel = await screen.findByRole("complementary", { name: "report.html" });
+    expect(await within(panel).findByText(/larger than 20 MiB are not rendered/)).toBeTruthy();
+    expect(within(panel).getAllByRole("button", { name: /Download/ }).length).toBeGreaterThan(0);
+    expect(calls.some((c) => c.url.endsWith("/html-token"))).toBe(false);
+    expect(panel.querySelector("iframe")).toBeNull();
+  });
+
+  it("the header offers Share for an available file, not for a removed one; shared marks it", async () => {
+    htmlApi({
+      [`GET ${BASE}/files`]: () =>
+        json(200, { files: [HTML, { ...CSV, shared: true }, GONE], next: null }),
+    });
+    openAt("#file=h1");
+    let panel = await screen.findByRole("complementary", { name: "report.html" });
+    expect(within(panel).getByRole("button", { name: "Share" })).toBeTruthy();
+    cleanup();
+    openAt("#file=f2");
+    panel = await screen.findByRole("complementary", { name: "diff.csv" });
+    expect(within(panel).getByRole("button", { name: "Shared" })).toBeTruthy();
+    expect(panel.querySelector("[data-part='share-marker']")).not.toBeNull();
+    cleanup();
+    openAt("#file=f4");
+    panel = await screen.findByRole("complementary", { name: "old.txt" });
+    expect(within(panel).queryByRole("button", { name: /^Share/ })).toBeNull();
+  });
+});
+
 describe("builtinPreview", () => {
   it("picks image, Markdown, CSV / TSV and text; null for other files", () => {
     const f = (name: string, contentType: string, previewable: "image" | "text" | null) => ({
