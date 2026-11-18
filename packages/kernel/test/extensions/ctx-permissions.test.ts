@@ -172,13 +172,18 @@ describe("ctx.models (permissions.models)", () => {
     await ctx.models.generateImage({ orgId: "o", purpose: "perm-test.art", prompt: "x" });
     await ctx.models.describe({ orgId: "o", purpose: "perm-test.art" });
     await ctx.models.describe({ orgId: "o", purpose: "perm-test.memory" });
-    // an undeclared purpose goes to the embeddings broker, which refuses it
-    await ctx.models.describe({ orgId: "o", purpose: "perm-test.other" });
+    // an undeclared purpose reaches no broker: refused with a text that names no kind
+    await expect(
+      ctx.models.describe({ orgId: "o", purpose: "perm-test.other" }),
+    ).rejects.toMatchObject({
+      code: "model.purpose_unknown",
+      message:
+        'Extension perm-test declared no model purpose "perm-test.other" in permissions.models',
+    });
     expect(calls).toEqual([
       "images.generate perm-test perm-test.art",
       "images.describe perm-test.art",
       "embeddings.describe perm-test.memory",
-      "embeddings.describe perm-test.other",
     ]);
     expect(imageSignal).toBe(ctx.signal);
     await ctx.close();
