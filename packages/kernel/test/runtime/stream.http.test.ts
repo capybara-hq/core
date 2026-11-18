@@ -146,6 +146,22 @@ const deltasIn = (msgs: SseMessage[]) =>
     );
 const finishedCount = (msgs: SseMessage[]) =>
   eventsIn(msgs).filter((e) => e.type === "run_finished").length;
+/**
+ * The log once the conversation's `n`th prompt suggestion usage event is written: that event
+ * follows `run_finished`, so a replay compared with the log must wait for it too.
+ */
+const suggestionSettled = (db: KernelSchemaDb, convId: string, n: number) =>
+  waitFor(
+    async () => {
+      const evs = await eventsOf(db, convId);
+      const count = evs.filter(
+        (e) => e.type === "usage" && e.payload.purpose === "suggestion",
+      ).length;
+      return count >= n ? evs : null;
+    },
+    15_000,
+    `${n} suggestion usage event(s)`,
+  );
 const textOf = (e: ConversationEvent | undefined) =>
   e?.type === "assistant_message"
     ? e.payload.content.flatMap((b) => (b.type === "text" ? [b.text] : [])).join("")
@@ -439,7 +455,7 @@ describe("会话 SSE（单副本 api+worker）", () => {
       expect(deltas.length).toBeGreaterThan(1);
       expect(deltas.map((d) => d.text).join("")).toBe("hello world");
       expect(textOf(evs[iAssistant])).toBe("hello world");
-      // delta 出现在 assistant_message 之前
+      // the deltas come before the assistant_message
       const firstDelta = s.messages.findIndex((m) => m.event === "delta");
       const assistantMsg = s.messages.findIndex(
         (m) => m.event === "event" && JSON.parse(m.data as string).type === "assistant_message",
@@ -618,45 +634,49 @@ describe("会话 SSE（单副本 api+worker）", () => {
     }
   });
 
-  it("after=<seq> 只回放其后的事件；Last-Event-ID 优先于 after，重连不重复不遗漏", async () => {
+  it("after=<seq> replays only later events; Last-Event-ID wins over after; a reconnect neither repeats nor misses", async () => {
+    // a manual title: no title call, whose usage event would land after run_finished too
+    const renamed = await owner.req({
+      method: "PATCH",
+      url: `/api/v1/orgs/${orgId}/conversations/${convId}`,
+      payload: { title: "Replay" },
+    });
+    expect(renamed.statusCode, renamed.body).toBe(200);
     await postMessage(owner.req, orgId, convId, "echo:one");
-    await waitForTerminal(db, convId, 1);
-    const all = await eventsOf(db, convId);
+    const all = await suggestionSettled(db, convId, 1);
     const mid = all[2]?.seq as number;
 
     const a = await openSse(streamUrl(k, orgId, convId, `?after=${mid}`), {
       cookie: owner.cookie(),
     });
     try {
-      await a.until((m) => finishedCount(m) === 1, 10_000, "replay");
-      expect(eventsIn(a.messages).map((e) => e.seq)).toEqual(
-        all.filter((e) => e.seq > mid).map((e) => e.seq),
-      );
+      const want = all.filter((e) => e.seq > mid).map((e) => e.seq);
+      await a.until((m) => eventsIn(m).length >= want.length, 10_000, "replay");
+      expect(eventsIn(a.messages).map((e) => e.seq)).toEqual(want);
     } finally {
       a.close();
     }
 
-    // 断线：期间又有一轮运行
+    // disconnected: another run happens meanwhile
     const lastSeen = all.at(-1)?.seq as number;
     await postMessage(owner.req, orgId, convId, "echo:two");
-    await waitForTerminal(db, convId, 2);
+    const now = await suggestionSettled(db, convId, 2);
     const b = await openSse(streamUrl(k, orgId, convId, "?after=0"), {
       cookie: owner.cookie(),
       "last-event-id": String(lastSeen),
     });
     try {
-      await b.until((m) => finishedCount(m) === 1, 10_000, "reconnect replay");
-      const now = await eventsOf(db, convId);
-      expect(eventsIn(b.messages).map((e) => e.seq)).toEqual(
-        now.filter((e) => e.seq > lastSeen).map((e) => e.seq),
-      );
-      // 继续实时推送，且不重复
+      const replay = now.filter((e) => e.seq > lastSeen).map((e) => e.seq);
+      await b.until((m) => eventsIn(m).length >= replay.length, 10_000, "reconnect replay");
+      expect(eventsIn(b.messages).map((e) => e.seq)).toEqual(replay);
+      // live pushes continue without repeats
       await postMessage(owner.req, orgId, convId, "echo:three");
-      await b.until((m) => finishedCount(m) === 2, 15_000, "live after replay");
+      const final = await suggestionSettled(db, convId, 3);
+      const live = final.filter((e) => e.seq > lastSeen).map((e) => e.seq);
+      await b.until((m) => eventsIn(m).length >= live.length, 15_000, "live after replay");
       const seqs = eventsIn(b.messages).map((e) => e.seq);
       expect(new Set(seqs).size).toBe(seqs.length);
-      const final = await eventsOf(db, convId);
-      expect(seqs).toEqual(final.filter((e) => e.seq > lastSeen).map((e) => e.seq));
+      expect(seqs).toEqual(live);
     } finally {
       b.close();
     }
