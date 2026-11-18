@@ -47,9 +47,13 @@ export interface StoredArtifact {
   repeatOf?: { artifactId: string; name: string };
 }
 
+/** The clause that says a file repeats an artifact already delivered in the scope. */
+export const REPEAT_CLAUSE = (prior: { name: string; artifactId: string }): string =>
+  `same content as ${prior.name} (artifact ${prior.artifactId}), already delivered to the user since the person last spoke; no new artifact was created.`;
+
 /** The result text of a file that repeats an artifact already delivered in the scope. */
 export const REPEAT_TEXT = (name: string, prior: { name: string; artifactId: string }): string =>
-  `${name} has the same content as ${prior.name} (artifact ${prior.artifactId}), already delivered to the user since the person last spoke; no new artifact was created.`;
+  `${name} has the ${REPEAT_CLAUSE(prior)}`;
 
 /**
  * Stores `files` as artifacts of the call's conversation, all or none: every object is uploaded

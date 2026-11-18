@@ -44,6 +44,7 @@ import type { BuiltinCallContext, BuiltinTool } from "../../registry.js";
 import {
   NO_STORAGE,
   NO_STORAGE_REASON,
+  REPEAT_CLAUSE,
   type StoredArtifact,
   storeArtifacts,
 } from "../artifacts.js";
@@ -317,7 +318,15 @@ export function generateImageTool(deps: GenerateImageDeps): BuiltinTool {
       let deviceLine: string | null = null;
       let notices: string[] = [];
       if (input.file_path !== undefined) {
-        const copied = await copyToDevice(deps, ctx, input.file_path, files);
+        const copied = await copyToDevice(
+          deps,
+          ctx,
+          input.file_path,
+          files.map((f, i) => {
+            const a = stored[i] as StoredArtifact;
+            return { ...f, artifactId: a.repeatOf?.artifactId ?? a.artifactId };
+          }),
+        );
         deviceLine = copied.line;
         notices = copied.notices;
       }
@@ -583,14 +592,14 @@ async function copyToDevice(
   deps: GenerateImageDeps,
   ctx: BuiltinCallContext,
   filePath: string,
-  files: readonly { data: Uint8Array; contentType: ImageMediaType }[],
+  files: readonly { data: Uint8Array; contentType: ImageMediaType; artifactId: string }[],
 ): Promise<{ line: string; notices: string[] }> {
   const sb = deps.sandbox;
   const conv = sandboxConversationOf(ctx);
   if (!(await hasDevice(sb, ctx.orgId, conv))) return { line: NO_DEVICE_LINE, notices: [] };
   const targets = generateImagePaths({ file_path: filePath, n: files.length });
   // the paths written so far (a rebuilt instance runs the copy again from the start)
-  let written: string[] = [];
+  let written: { entry: string; artifactId: string }[] = [];
   let current = targets[0] as string;
   try {
     const { notices } = await inToolSandbox(sb, ctx, async (s) => {
@@ -621,10 +630,10 @@ async function copyToDevice(
           }
           await s.p.writeFile(s.h, path, f.data, signal);
         });
-        written.push(deviceEntry(path, f.contentType));
+        written.push({ entry: deviceEntry(path, f.contentType), artifactId: f.artifactId });
       }
     });
-    return { line: `Written to the device: ${written.join(", ")}`, notices };
+    return { line: writtenLine(written), notices };
   } catch (e) {
     if (ctx.signal.aborted) throw e;
     // a device's own error is not shown to the model (it may name provider internals)
@@ -640,11 +649,21 @@ async function copyToDevice(
     }`;
     // a partial copy says which files are there before the failure
     return {
-      line:
-        written.length === 0 ? failed : `Written to the device: ${written.join(", ")}\n${failed}`,
+      line: written.length === 0 ? failed : `${writtenLine(written)}\n${failed}`,
       notices: [],
     };
   }
+}
+
+/** The device line for the files written: each names the artifact that holds the same bytes. */
+function writtenLine(written: readonly { entry: string; artifactId: string }[]): string {
+  const [only] = written;
+  if (written.length === 1 && only !== undefined) {
+    return `Also written to the device (same bytes as artifact ${only.artifactId}): ${only.entry}`;
+  }
+  return `Also written to the device: ${written
+    .map((w) => `${w.entry} (same bytes as artifact ${w.artifactId})`)
+    .join(", ")}`;
 }
 
 /**
@@ -690,7 +709,7 @@ function sizeText(bytes: number): string {
   return `${(bytes / 1_048_576).toFixed(1)} MB`;
 }
 
-/** The model-visible result (spec §5.3): what was generated, where it went, the revised prompt. */
+/** The model-visible result (spec §5.3): what was generated, delivered or repeated, billing, the device copy. */
 function resultText(
   prepared: PreparedImageCall,
   stored: readonly StoredArtifact[],
@@ -701,12 +720,25 @@ function resultText(
   const n = stored.length;
   const { width, height } = prepared.request.size;
   const lines = [
-    `Generated ${n} ${n === 1 ? "image" : "images"} with ${prepared.ref.provider}/${prepared.ref.model} at ${width}x${height} and delivered ${n === 1 ? "it" : "them"} to the user:`,
-    ...stored.map(
-      (a, i) =>
-        `- ${a.name} (artifact ${a.artifactId}, ${files[i]?.contentType ?? ""}, ${sizeText(a.size)})`,
-    ),
+    `Generated ${n} ${n === 1 ? "image" : "images"} with ${prepared.ref.provider}/${prepared.ref.model} at ${width}x${height}.`,
   ];
+  const fresh = stored.flatMap((a, i) => (a.repeatOf === undefined ? [{ a, i }] : []));
+  if (fresh.length > 0) {
+    lines.push(
+      `Delivered ${fresh.length} to the user:`,
+      ...fresh.map(
+        ({ a, i }) =>
+          `- ${a.name} (artifact ${a.artifactId}, ${files[i]?.contentType ?? ""}, ${sizeText(a.size)})`,
+      ),
+    );
+  }
+  const repeats = stored.filter((a) => a.repeatOf !== undefined);
+  if (repeats.length > 0) {
+    for (const a of repeats) {
+      lines.push(`- ${a.name}: ${REPEAT_CLAUSE(a.repeatOf as NonNullable<typeof a.repeatOf>)}`);
+    }
+    lines.push(`Usage is billed for ${n} generated ${n === 1 ? "image" : "images"}.`);
+  }
   if (typeof revisedPrompt === "string" && revisedPrompt !== "") {
     lines.push(`Revised prompt: ${revisedPrompt}`);
   }
