@@ -181,8 +181,12 @@ export interface FakeSlackServer {
    * closed unacked is dropped from this count.
    */
   pendingEnvelopes(appToken?: string): number;
+  /**
+   * The next `count` calls of `method` fail. The pseudo-method `"upload"` is the `POST /upload/<id>`
+   * step of the external upload flow: it answers `failure.status` (default 500) with a plain-text body.
+   */
   failNext(method: string, failure: FakeSlackFailure, count?: number): void;
-  /** 之后该方法的每次调用先等 `ms` 毫秒再响应（0 取消）。 */
+  /** 之后该方法的每次调用先等 `ms` 毫秒再响应（0 取消）。 `"upload"` holds the upload POST. */
   delay(method: string, ms: number): void;
   /** 接下来 `count` 条 Socket Mode 连接在发出 hello 后立即被关闭（不发 disconnect 消息）。 */
   dropNextConnections(count: number): void;
@@ -612,6 +616,17 @@ export async function startFakeSlack(opts: FakeSlackOptions = {}): Promise<FakeS
   /** `POST /upload/<id>`: the raw bytes or one multipart file part; the length must match. */
   const upload = async (req: IncomingMessage, res: ServerResponse, id: string) => {
     const raw = await readRaw(req);
+    const wait = delays.get("upload") ?? 0;
+    if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+    const f = failures.find((x) => x.method === "upload" && x.left > 0);
+    if (f) {
+      f.left--;
+      const { status, retryAfter } = f.failure;
+      const headers: Record<string, string> = { "content-type": "text/plain" };
+      if (retryAfter !== undefined) headers["retry-after"] = String(retryAfter);
+      res.writeHead(status ?? 500, headers).end("upload failed");
+      return;
+    }
     const u = uploads.get(id);
     if (!u) return reply(res, { ok: false, error: "invalid_arguments" }, 404);
     const type = req.headers["content-type"];

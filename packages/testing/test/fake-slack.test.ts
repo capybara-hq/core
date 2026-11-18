@@ -224,4 +224,45 @@ describe("fake Slack external uploads", () => {
       await s.stop();
     }
   });
+
+  it("failNext('upload') answers the configured status on the upload POST, then recovers", async () => {
+    const s = await startFakeSlack();
+    try {
+      const got = await call(s, "files.getUploadURLExternal", { filename: "a.txt", length: "5" });
+      s.failNext("upload", { status: 503 });
+      const failed = await fetch(String(got.upload_url), { method: "POST", body: "hello" });
+      expect(failed.status).toBe(503);
+      const ok = await fetch(String(got.upload_url), { method: "POST", body: "hello" });
+      expect(ok.status).toBe(200);
+    } finally {
+      await s.stop();
+    }
+  });
+
+  it("delay('upload') holds the upload POST", async () => {
+    const s = await startFakeSlack();
+    try {
+      const got = await call(s, "files.getUploadURLExternal", { filename: "a.txt", length: "5" });
+      s.delay("upload", 300);
+      const t0 = Date.now();
+      const put = await fetch(String(got.upload_url), { method: "POST", body: "hello" });
+      expect(put.status).toBe(200);
+      expect(Date.now() - t0).toBeGreaterThanOrEqual(250);
+    } finally {
+      await s.stop();
+    }
+  });
+
+  it("answers 404 for an unknown upload id", async () => {
+    const s = await startFakeSlack();
+    try {
+      const put = await fetch(`${s.apiUrl.replace(/api\/$/, "")}upload/FNOPE`, {
+        method: "POST",
+        body: "x",
+      });
+      expect(put.status).toBe(404);
+    } finally {
+      await s.stop();
+    }
+  });
 });

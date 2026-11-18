@@ -115,4 +115,19 @@ describe("fake Lark uploads", () => {
     });
     expect(bad.code).toBe(230001);
   });
+
+  it("refuses a file_type outside the allowed list with 234001", async () => {
+    lark = await startFakeLark();
+    const t = await token(lark);
+    const up = await multipart(
+      lark,
+      t,
+      "/open-apis/im/v1/files",
+      { file_type: "zip", file_name: "a.zip" },
+      "file",
+      "PK",
+    );
+    expect(up.code).toBe(234001);
+    expect(lark.uploads).toHaveLength(0);
+  });
 });

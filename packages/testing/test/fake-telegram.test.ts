@@ -527,4 +527,19 @@ describe("fake Telegram uploads", () => {
     });
     expect(tg.messages).toHaveLength(0);
   });
+
+  it("refuses a caption over 1024 characters and an empty file", async () => {
+    tg = await startFakeTelegram();
+    const long = await upload(tg, "sendPhoto", "photo", { chat_id: "1", caption: "x".repeat(1025) });
+    expect(long).toMatchObject({ status: 400, body: { ok: false } });
+    const form = new FormData();
+    form.set("chat_id", "1");
+    form.set("document", new Blob([]), "e.txt");
+    const res = await fetch(`${tg.apiUrl}/bot${tg.bot.token}/sendDocument`, {
+      method: "POST",
+      body: form,
+    });
+    expect(res.status).toBe(400);
+    expect(tg.messages).toHaveLength(0);
+  });
 });
