@@ -1,7 +1,8 @@
 # Image generation: the `image` purpose, `GenerateImage` and `generateImage` on `model-provider@2`
 
 - Date: 2026-11-17.
-- Status: draft for maintainer review. Calls marked **(designer's call)** wait for the maintainer.
+- Status: approved by the maintainer, 2026-11-18. Every call marked **(designer's call)** is
+  accepted as written, including the four open questions of the first draft (§14).
 - Decisions taken with the maintainer, 2026-11-17:
   - The kernel owns the contract, the governance and the tool shell; model provider plugins own the
     implementations (the `WebSearch` / `WebFetch` pattern: kernel builtin tool, plugin provider,
@@ -350,8 +351,9 @@ export interface ExtensionImageGenerateResult {
 
 ## 9. Data and migration
 
-- One expand-only kernel migration: `ALTER TABLE model_usage ADD COLUMN IF NOT EXISTS output_images
-  integer NOT NULL DEFAULT 0`.
+- One expand-only kernel migration adding two columns to `model_usage`: `kind text NOT NULL DEFAULT
+  'embedding'` (so a row's `usage.report` purpose is `image` or `embedding`; the existing `purpose`
+  column holds the extension's own purpose name) and `output_images integer NOT NULL DEFAULT 0`.
 - Conversation usage events carry `outputImages` in their usage object; no schema change (the event
   payload is JSON and validated by its zod schema, which gains the optional field).
 - No change to existing rows; nothing to backfill.
@@ -406,12 +408,14 @@ minutes, so it will need the durable task resumption §8 declines for images.
 3. Plugins PRs (`ark` first: the deployment's chat models already run there), then their releases
    and the marketplace update.
 
-## 14. Open questions
+## 14. Decisions on the first draft's open questions (maintainer, 2026-11-18)
 
-1. `defaultPolicy` `allow` (proposed) or `ask` like the web tools (§5.3).
-2. `file_path` on the tool, or extend `FetchAttachment` to artifacts instead (§5.3).
-3. Whether `model.response` fires for image calls (§5.6).
-4. Whether a later change should show a vision model the images it generated (§3).
+1. `GenerateImage` defaults to `allow` (§5.3).
+2. The tool takes `file_path`; `FetchAttachment` is not extended to artifacts (§5.3).
+3. Image calls fire `model.response` with metadata only (§5.6).
+4. A vendor moderation refusal is the new `ModelErrorKind` `refusal`, not retryable (§5.1).
+
+Still later, outside this design: showing a vision model the images it generated (§3).
 
 ## AGENTS.md rules touched
 
