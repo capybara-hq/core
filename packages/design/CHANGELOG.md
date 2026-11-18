@@ -1,5 +1,13 @@
 # @capybara-hq/design
 
+## 0.2.0-rc.19
+
+### Patch Changes
+
+- b999b66: ComposerBox gains `suggestion` (a prompt suggestion as the placeholder; Tab fills it, Esc and
+  typing dismiss it, a "Use suggestion" button on touch devices), the `corner-down-left` icon and
+  `SUGGESTION_FIXTURE`.
+
 ## 0.2.0-rc.18
 
 ### Patch Changes
