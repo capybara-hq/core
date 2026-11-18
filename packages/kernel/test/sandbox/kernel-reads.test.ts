@@ -17,6 +17,7 @@ import { BackgroundTaskStore } from "../../src/background/store.js";
 import { EventLog } from "../../src/conversations/event-log.js";
 import { kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
+import { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
 import { KernelDb } from "../../src/infra/database/kernel-db.js";
 import { TransactionHost } from "../../src/infra/database/transaction-host.js";
 import { ProjectKnowledgeService } from "../../src/runtime/project/knowledge.service.js";
@@ -438,6 +439,7 @@ describe("a run start's project knowledge read (withKernelRead)", () => {
       k.app.get(SandboxService),
       k.app.get(BackgroundTaskStore),
       k.app.get(BackgroundTaskStopper),
+      k.app.get(KernelConfigService),
     ).reconcile(row.operation_id);
     expect(
       await f.db

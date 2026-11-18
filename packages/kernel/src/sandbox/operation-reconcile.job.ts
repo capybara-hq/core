@@ -12,6 +12,7 @@ import { Inject, Injectable, Optional } from "@nestjs/common";
 import { MANAGED_STOP_GRACE_MS, ManagedInstanceMismatchError } from "../background/managed.js";
 import { BackgroundTaskStopper } from "../background/stop.js";
 import { BackgroundTaskStore } from "../background/store.js";
+import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
 import { isDeviceRequestNotSent } from "../local-devices/relay.js";
@@ -20,6 +21,13 @@ import { checkManagedStart, type ManagedStartArgs } from "./held-operations.js";
 import { type OperationIntent, SandboxOperationIntents } from "./operation-intents.js";
 import { SandboxProviders } from "./providers.js";
 import { SandboxService } from "./sandbox.service.js";
+
+/**
+ * What an operation's in-sandbox time limit leaves beyond `sandbox.limits.maxCommandSeconds`
+ * after its admission deadline (the margin a holder record keeps too).
+ */
+const OPERATION_END_MARGIN_MS = 10 * 60_000;
+
 /** Called only by the maintenance consumer. It has no native dispatch or lease token API. */
 @Injectable()
 export class SandboxOperationReconcileJob {
@@ -31,6 +39,7 @@ export class SandboxOperationReconcileJob {
     @Inject(BackgroundTaskStore)
     private readonly tasks: Pick<BackgroundTaskStore, "byOperation" | "settleOwedCancel">,
     @Inject(BackgroundTaskStopper) private readonly stopper: Pick<BackgroundTaskStopper, "stop">,
+    @Inject(KernelConfigService) private readonly config: Pick<KernelConfigService, "get">,
     /** Where a recovered start's refusal keeps the provider's own message (never the task's). */
     @Optional() @Inject(KERNEL_LOGGER) private readonly log?: Pick<KernelLogger, "warn">,
   ) {}
@@ -192,10 +201,17 @@ export class SandboxOperationReconcileJob {
       !instance?.handle ||
       instance.provider !== row.provider ||
       String(instance.created_at.getTime()) !== row.instance_generation
-    )
+    ) {
+      // ... only the old incarnation's own end (a start may outlive both: its exact stop or the
+      // retirement settles it)
+      if (row.method !== "backgroundStart" && (await this.incarnationEnded(row))) {
+        await this.intents.acknowledgeRevocation(operationId);
+        return;
+      }
       throw new SandboxOperationOutcomeUnknownError(
         "The revoked operation's instance must be reconciled before cleanup is acknowledged",
       );
+    }
     const provider = this.providers.forName(row.provider)?.impl;
     if (!provider?.revokeOperation)
       throw new SandboxOperationOutcomeUnknownError(
@@ -207,6 +223,26 @@ export class SandboxOperationReconcileJob {
       AbortSignal.timeout(30_000),
     );
     await this.intents.acknowledgeRevocation(operationId);
+  }
+  /**
+   * Whether a foreground operation (exec, read, write) of an incarnation that no longer runs has
+   * provably ended, so its owed revoke has nothing left to reach: the provider confirmed that
+   * incarnation's destruction (recorded in `device_instance_destructions`), or the operation is
+   * past its device-enforced bound (admitted before its deadline, then cut by the in-sandbox time
+   * limit of `maxCommandSeconds`). Both read only PostgreSQL and the clock, so every replica
+   * decides alike; without either the revoke stays owed.
+   */
+  private async incarnationEnded(row: OperationIntent): Promise<boolean> {
+    const destroyed = await this.db
+      .selectFrom("device_instance_destructions")
+      .select("device_id")
+      .where("device_id", "=", row.device_id)
+      .where("provider", "=", row.provider)
+      .where("instance_generation", "=", row.instance_generation)
+      .executeTakeFirst();
+    if (destroyed) return true;
+    const maxCommandMs = this.config.get().sandbox.limits.maxCommandSeconds * 1000;
+    return Date.now() > row.deadline.getTime() + maxCommandMs + OPERATION_END_MARGIN_MS;
   }
   /**
    * The exact cancellation a revoked background start owes (design B3): the task's own stop by its

@@ -511,6 +511,7 @@ const reconcileJob = () =>
     k.app.get(SandboxService),
     k.app.get(BackgroundTaskStore),
     k.app.get(BackgroundTaskStopper),
+    k.app.get(KernelConfigService),
   );
 
 /** Publishes an actual ceiling write at `level`, revoking what it selects. */
