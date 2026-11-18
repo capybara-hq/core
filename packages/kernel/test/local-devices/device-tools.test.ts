@@ -3,8 +3,9 @@ import { type KernelReq, type SandboxRoots, ToolError } from "@capybara-hq/plugi
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
 import { sql } from "kysely";
-import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { EventLog } from "../../src/conversations/event-log.js";
+import { PermissionProfileStore } from "../../src/conversations/permission-profile-store.js";
 import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { ConversationDevices } from "../../src/devices/conversation-devices.js";
@@ -16,7 +17,10 @@ import { deviceLeaseKey } from "../../src/local-devices/keys.js";
 import { MachinesService } from "../../src/local-devices/machines.js";
 import { HOLDER_POLL_MS } from "../../src/local-devices/relay.js";
 import { RunExecution } from "../../src/runtime/run-execution.js";
-import { ManagedDeviceContextRecorder } from "../../src/sandbox/managed-device-context.js";
+import {
+  MANAGED_DEVICE_CONTEXT_STALE_TEXT,
+  ManagedDeviceContextRecorder,
+} from "../../src/sandbox/managed-device-context.js";
 import { SandboxService } from "../../src/sandbox/sandbox.service.js";
 import {
   OUTCOME_UNKNOWN_TOOL_TEXT,
@@ -402,6 +406,35 @@ describe("local devices through the sandbox tools", () => {
       expect(next).toMatch(/was disconnected.*capybara-device login/);
       expect(next).not.toMatch(/retry/i);
     }
+    // a conversation whose root moved to another device keeps the stale "retry" (the retry runs
+    // on its new device), and so does a device check that fails
+    const store = k.app.get(PermissionProfileStore);
+    const readRoot = store.readRoot.bind(store);
+    const moved = vi.spyOn(store, "readRoot").mockImplementation(async (o, id) => ({
+      ...(await readRoot(o, id)),
+      device_id: randomUUID(),
+    }));
+    try {
+      expect(await toolError(m.run("Read", { file_path: `${ROOTS_A.workspace}/a.txt` }))).toBe(
+        MANAGED_DEVICE_CONTEXT_STALE_TEXT,
+      );
+    } finally {
+      moved.mockRestore();
+    }
+    const recorder = k.app.get(ManagedDeviceContextRecorder) as unknown as Record<
+      string,
+      (...a: unknown[]) => Promise<unknown>
+    >;
+    const failing = vi
+      .spyOn(recorder, "goneError")
+      .mockRejectedValue(new Error("the database is unreachable"));
+    try {
+      expect(await toolError(m.run("Read", { file_path: `${ROOTS_A.workspace}/a.txt` }))).toBe(
+        MANAGED_DEVICE_CONTEXT_STALE_TEXT,
+      );
+    } finally {
+      failing.mockRestore();
+    }
     expect(machine.frames.length).toBe(sent);
     const again = await refusal(url, {
       Authorization: `Bearer ${credential}`,
@@ -450,6 +483,21 @@ describe("local devices through the sandbox tools", () => {
       lost,
     );
     expect((await m.instance())?.fs_status).toBe("lost");
+    // the managed operation the machine answered fs_gone (Read's first stat) stays unknown
+    // (nothing proves it had no effect); only the files are recorded lost
+    const read = machine.frames.findLast((f) => f.type === "req" && f.op === "stat") as
+      | KernelReq
+      | undefined;
+    const operationId = (read?.args as { scope?: { operationId?: string } } | undefined)?.scope
+      ?.operationId;
+    expect(operationId).toBeDefined();
+    expect(
+      await db
+        .selectFrom("sandbox_operation_intents")
+        .select(["state", "outcome_unknown"])
+        .where("operation_id", "=", operationId as string)
+        .executeTakeFirstOrThrow(),
+    ).toEqual({ state: "started-or-unknown", outcome_unknown: true });
     // later calls fail the same way without reaching the machine
     const sent = machine.frames.length;
     expect(await toolError(m.run("Bash", { command: "ls" }))).toMatch(lost);

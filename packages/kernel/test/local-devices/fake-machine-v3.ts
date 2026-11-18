@@ -38,6 +38,12 @@ export interface FakeMachineOptions {
   /** false: the test sends the hello itself (with {@link FakeMachineApi.hello}). */
   hello?: boolean;
   autoPong?: boolean;
+  /**
+   * false: a `bindInstance` gets exactly what the test's answer gives (a scripted `null` result,
+   * an error, or no answer). Default true: an unscripted bind, or one the answer's catch-all
+   * `null` result covers, gets the installed evidence of {@link bindAnswer}.
+   */
+  autoBind?: boolean;
 }
 
 export type FakeMachineConstructor = new (
@@ -81,6 +87,7 @@ export class FakeMachineV3 implements FakeMachineApi {
     private readonly answer: (req: KernelReq) => Answer = () => undefined,
     opts: FakeMachineOptions = {},
   ) {
+    const autoBind = opts.autoBind ?? true;
     this.ws = new WebSocket(url, {
       headers: { Authorization: `Bearer ${credential}`, "X-Capybara-Device-Protocol": "3" },
       autoPong: opts.autoPong ?? true,
@@ -119,7 +126,11 @@ export class FakeMachineV3 implements FakeMachineApi {
         let a = this.answer(frame);
         // a bind nobody scripted (no answer, or the catch-all `null` result many answers give
         // every op they do not handle) gets the installed evidence an enforcing device returns
-        if (String(frame.op) === "bindInstance" && (a === undefined || isNullResult(a))) {
+        if (
+          autoBind &&
+          String(frame.op) === "bindInstance" &&
+          (a === undefined || isNullResult(a))
+        ) {
           a = bindAnswer(frame);
         }
         if (a !== undefined) this.respond(frame.id, a);

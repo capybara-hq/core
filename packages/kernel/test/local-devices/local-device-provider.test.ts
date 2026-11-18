@@ -865,3 +865,53 @@ it("staged exec re-layers the machine's refused hosts against the limits it carr
     { host: "other.org", port: 80, layer: "org" },
   ]);
 });
+
+it("staged exec: a wildcard the machine calls its own is an address, a bad name is dropped, no report stays none", async () => {
+  let answer: Record<string, unknown> = {};
+  const staged = provider.stagedOperations({
+    call: async () => ({ ...EXEC_RESULT, ...answer }),
+    permissionSupport: async () => ({
+      version: 1,
+      restricted: null,
+      fullAccess: false,
+      background: false,
+    }),
+  });
+  const signal = new AbortController().signal;
+  const scope = {
+    operationId: "operation",
+    admitBeforeMs: Date.now() + 30000,
+    deviceId: "device",
+    rootConversationId: "root",
+    profileRevision: 1,
+    ceilingRevision: "c",
+    profile: "approve-for-me" as const,
+    actor: { accountId: "owner", conversationId: "root", runId: "run" },
+    tag: "operation",
+    filesystem: { kind: "scoped" as const, readRoots: ["/work"], writeRoots: ["/work"] },
+    network: { kind: "none" as const },
+  };
+  admittedGrants = undefined;
+  const operation = await staged.operation({ id: "device" }, scope, signal);
+  const exec = () =>
+    operation.exec({ command: "curl", timeoutMs: 100, maxOutputBytes: 100, signal });
+  answer = {
+    network: {
+      blocked: [
+        // a wildcard is never a host to ask about: nobody can allow it from a refusal
+        { host: "*.example.com", port: 443, layer: "device" },
+        // no valid host name: the codec drops it rather than asking the owner
+        { host: "bad_host!", port: 443, layer: "device" },
+        // an invalid name the machine itself calls an address is kept as one
+        { host: "bad_host!", port: 80, layer: "address" },
+      ],
+    },
+  };
+  expect((await exec()).network?.blocked).toEqual([
+    { host: "*.example.com", port: 443, layer: "address" },
+    { host: "bad_host!", port: 80, layer: "address" },
+  ]);
+  // no report: nothing is invented
+  answer = {};
+  expect((await exec()).network).toBeUndefined();
+});

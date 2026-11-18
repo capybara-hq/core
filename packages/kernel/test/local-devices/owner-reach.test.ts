@@ -382,6 +382,33 @@ describe("Full consent and revocation follow only actual Full changes", () => {
     expect(v.profile).not.toBe("full-access");
   });
 
+  it("an org that turns Full off over an owner report with Full: the profile drops Full, admission narrows", async () => {
+    const f = await fixture();
+    await f.record(report(1, true, "os-user"));
+    await f.consentFull();
+    expect((await f.profileView()).profile).toBe("full-access");
+    const admit = () =>
+      k.app.get(SandboxOperationAuthority).resolve(
+        {
+          orgId: f.orgId,
+          deviceId: f.deviceId,
+          holderConversationId: f.conversationId,
+          actor: { accountId: f.accountId, conversationId: f.conversationId, runId: f.runId },
+        },
+        "exec",
+        new AbortController().signal,
+      );
+    const full = await admit();
+    expect(full).toMatchObject({ profile: "full-access", filesystem: { kind: "device" } });
+    // the org turns Full off; the machine still reports a Full owner ceiling
+    await k.app.get(OrgSettingsService).update(f.orgId, { fullAccess: "off" }, f.accountId);
+    expect((await f.profileView()).profile).not.toBe("full-access");
+    const narrowed = await admit();
+    expect(narrowed.profile).not.toBe("full-access");
+    expect(narrowed.filesystem.kind).toBe("scoped");
+    expect(narrowed.network.kind).not.toBe("environment");
+  });
+
   it("a disconnected owner narrowing arrives with the reconnect hello and resets Full", async () => {
     const f = await fixture();
     const roots = { ...DEFAULT_SANDBOX_ROOTS, workspace: "/work" };

@@ -7,6 +7,7 @@ import {
   DEFAULT_SANDBOX_ROOTS,
   type KernelReq,
   type LegacyDeviceHello,
+  type SandboxBrowseScope,
   type SandboxProvider,
 } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
@@ -27,6 +28,7 @@ import { KernelDb } from "../../src/infra/database/kernel-db.js";
 import { TransactionHost } from "../../src/infra/database/transaction-host.js";
 import { deviceLeaseKey } from "../../src/local-devices/keys.js";
 import { MachinesService } from "../../src/local-devices/machines.js";
+import { SandboxOperationAuthority } from "../../src/sandbox/operation-authority.js";
 import { PermissionCeilingWrites } from "../../src/sandbox/permission-ceiling-writes.js";
 import { PermissionFacts } from "../../src/sandbox/permission-facts.js";
 import { SandboxProviders } from "../../src/sandbox/providers.js";
@@ -127,6 +129,7 @@ beforeAll(async () => {
 
 afterEach(() => {
   for (const m of open.splice(0)) m.close();
+  vi.restoreAllMocks();
 });
 
 afterAll(async () => {
@@ -728,6 +731,15 @@ describe("device projects", () => {
     const id = (created.json() as { device: { id: string } }).device.id;
     const workspace = DEFAULT_SANDBOX_ROOTS.workspace;
     const seen: { op: string; path: string }[] = [];
+    const scopes: SandboxBrowseScope[] = [];
+    // admission reads the app's provider (the fixture offers no list / scan): this provider
+    // stands in for it there too, so only its support differs; reach and workspace stay real
+    const facts = k.app.get(PermissionFacts);
+    const projectScope = facts.projectScope.bind(facts);
+    vi.spyOn(facts, "projectScope").mockImplementation(async (...a) => ({
+      ...(await projectScope(...a)),
+      supported: true,
+    }));
     // the owner browse the activated route opens (its scope is SandboxService.withBrowse's: the
     // effective policy's, never the instance's wider applied mode), on a stand-in provider
     const browse = {
@@ -748,7 +760,12 @@ describe("device projects", () => {
       k.app.get(KernelDb),
       txHost,
       {
-        withBrowse: (_ctx, fn, signal) => fn(browse as never, signal),
+        // the owner browse scope admission gives each call (SandboxService.withBrowse admits it
+        // the same way), then the stand-in provider
+        withBrowse: async (ctx, fn, signal) => {
+          scopes.push(await k.app.get(SandboxOperationAuthority).resolveBrowse(ctx, signal));
+          return fn(browse as never, signal);
+        },
         ensureRunningForOwner: async () => {},
         withSandbox: () => Promise.reject(new Error("no raw route once activated")),
       },
@@ -792,6 +809,9 @@ describe("device projects", () => {
       { op: "list", path: `${workspace}/app` },
       { op: "scan", path: workspace },
     ]);
+    // asked at the effective (sandbox) policy: the workspace only, never the instance's wider
+    // applied auto mode
+    expect(scopes.map((x) => x.readRoots)).toEqual([[workspace], [workspace]]);
     // auto mode (the platform allows it) widens the ceiling, never the scope: still the workspace
     await db.updateTable("devices").set({ mode: null }).where("id", "=", id).execute();
     const outside = service.add(orgId, d.accountId, id, { path: "../etc" });
@@ -800,6 +820,10 @@ describe("device projects", () => {
       path: workspace,
     });
     expect(seen.at(-1)).toEqual({ op: "list", path: workspace });
+    // auto mode widens the ceiling, never a cloud device's browse scope: still the workspace
+    expect(new Set(scopes.map((x) => JSON.stringify(x.readRoots)))).toEqual(
+      new Set([JSON.stringify([workspace])]),
+    );
     expect((await service.list(orgId, d.accountId, id)).projects.map((p) => p.name)).toEqual([
       "app",
       "ws",

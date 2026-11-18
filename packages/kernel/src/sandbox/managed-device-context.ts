@@ -175,8 +175,30 @@ export class ManagedDeviceContextRecorder {
       // R27: a deleted device or a disconnected machine never comes back, so the call says so
       // (actionable, nothing to retry) instead of the stale context's "retry"
       if (mapped instanceof ManagedDeviceContextStale)
-        throw (await this.goneError(input.orgId, held.deviceId)) ?? mapped;
+        throw (await this.goneInstead(input, held.deviceId)) ?? mapped;
       throw mapped;
+    }
+  }
+
+  /**
+   * The gone error to answer instead of a stale context: only while the conversation's root still
+   * works on the held device (a conversation moved to another device keeps the stale "retry", the
+   * retry runs on the new one). Any failure of these reads keeps the stale answer.
+   */
+  private async goneInstead(
+    input: PermissionContextSubject,
+    deviceId: string,
+  ): Promise<ApiError | undefined> {
+    try {
+      const root = await this.profiles.readRoot(input.orgId, input.conversationId);
+      if (root.device_id !== deviceId) return undefined;
+      return await this.goneError(input.orgId, deviceId);
+    } catch (error) {
+      this.log.warn("managed device context: the device check failed", {
+        conversationId: input.conversationId,
+        cause: error instanceof Error ? `${error.name}: ${error.message}`.slice(0, 500) : "",
+      });
+      return undefined;
     }
   }
 
