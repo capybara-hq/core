@@ -320,8 +320,9 @@ describe("every path records a v1 permission context and replies", () => {
       | KernelReq
       | undefined;
     expect(exec).toBeDefined();
-    const scope = (exec?.args as { scope?: { deviceId: string; rootConversationId: string } })
-      .scope;
+    const scope = (
+      exec?.args as { scope?: { deviceId: string; rootConversationId: string } } | undefined
+    )?.scope;
     expect(scope).toMatchObject({ deviceId, rootConversationId: conv });
     expect(
       machine.frames.some(

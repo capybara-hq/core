@@ -507,16 +507,21 @@ const FULL_ACCESS_OFF_BY_POLICY_CODES: ReadonlySet<string> = new Set([
  * 8.5): the device's earlier instance may still run background work an earlier version started.
  * Each says what clears it; the generic `device.unavailable` text would name an inactive provider.
  */
-export const RETIREMENT_TOOL_TEXT: Readonly<Record<string, string>> = {
-  "device.unavailable":
-    "This device is unavailable: background work started by an earlier version may still run on its previous instance, which has not been confirmed destroyed yet, so nothing ran. Retry later (a cloud device becomes usable once its provider confirms the old instance destroyed), continue without the device, or ask the user to start a new conversation on another device.",
-  "device.restart_required":
-    "Background work started by an earlier version may still be running on this device's computer, so nothing ran. Ask the user to restart that computer to finish the upgrade, then retry; or continue without the device.",
-  "device.recreate_required":
-    "Background work started by an earlier version may still be running on an earlier instance of this device, which can no longer be verified as destroyed, so nothing ran. Ask the device's owner to delete the device and create it again, or ask the user to start a new conversation on another device.",
-  "device.replace_required":
-    "Background work started by an earlier version may still be running on this device's computer, which cannot prove a restart, so nothing ran. Ask the device's owner to delete the device and connect the computer again as a new device, or ask the user to start a new conversation on another device.",
-};
+export const RETIREMENT_PENDING_TOOL_TEXT =
+  "This device is unavailable: background work started by an earlier version may still run on its previous instance, which has not been confirmed destroyed yet, so nothing ran. Retry later (a cloud device becomes usable once its provider confirms the old instance destroyed), continue without the device, or ask the user to start a new conversation on another device.";
+export const RETIREMENT_RESTART_TOOL_TEXT =
+  "Background work started by an earlier version may still be running on this device's computer, so nothing ran. Ask the user to restart that computer to finish the upgrade, then retry; or continue without the device.";
+export const RETIREMENT_RECREATE_TOOL_TEXT =
+  "Background work started by an earlier version may still be running on an earlier instance of this device, which can no longer be verified as destroyed, so nothing ran. Ask the device's owner to delete the device and create it again, or ask the user to start a new conversation on another device.";
+export const RETIREMENT_REPLACE_TOOL_TEXT =
+  "Background work started by an earlier version may still be running on this device's computer, which cannot prove a restart, so nothing ran. Ask the device's owner to delete the device and connect the computer again as a new device, or ask the user to start a new conversation on another device.";
+/** The model-facing text of a retirement refusal's code (`device.unavailable` for any other). */
+function retirementToolText(code: string): string {
+  if (code === "device.restart_required") return RETIREMENT_RESTART_TOOL_TEXT;
+  if (code === "device.recreate_required") return RETIREMENT_RECREATE_TOOL_TEXT;
+  if (code === "device.replace_required") return RETIREMENT_REPLACE_TOOL_TEXT;
+  return RETIREMENT_PENDING_TOOL_TEXT;
+}
 /**
  * A managed operation outside the admitted scope (`SandboxScopeDeniedError`): fixed text, never
  * the refusal's own message (a provider may write it).
@@ -598,9 +603,7 @@ export function mapSandboxError(e: unknown, log: Pick<Logger, "warn"> | undefine
     return new ToolError(SANDBOX_CONNECTION_DROPPED_TEXT, { kind: "unavailable" });
   }
   if (e instanceof RetirementPendingError) {
-    return new ToolError(
-      RETIREMENT_TOOL_TEXT[e.code] ?? (RETIREMENT_TOOL_TEXT["device.unavailable"] as string),
-    );
+    return new ToolError(retirementToolText(e.code));
   }
   if (e instanceof ApiError) {
     if (e.code === "sandbox.busy") return new ToolError(BUSY_TEXT);

@@ -23,7 +23,10 @@ import {
   mapSandboxError,
   OUTCOME_UNKNOWN_TOOL_TEXT,
   PERMISSION_UNSUPPORTED_TOOL_TEXT,
-  RETIREMENT_TOOL_TEXT,
+  RETIREMENT_PENDING_TOOL_TEXT,
+  RETIREMENT_RECREATE_TOOL_TEXT,
+  RETIREMENT_REPLACE_TOOL_TEXT,
+  RETIREMENT_RESTART_TOOL_TEXT,
   SCOPE_DENIED_TOOL_TEXT,
 } from "../../../src/tools/builtins/sandbox/common.js";
 
@@ -97,17 +100,17 @@ describe("sandbox tool errors", () => {
 
   // the legacy retirement gate (8.5): its own actionable text, never the inactive-provider one
   it.each([
-    [retirementPending(), /confirmed destroyed/],
-    [restartRequired(), /restart that computer/],
-    [recreateRequired(), /delete the device and create it again/],
-    [replaceRequired(), /connect the computer again as a new device/],
-  ])("a retirement refusal (%#) says what clears it", (error, what) => {
+    [retirementPending(), /confirmed destroyed/, RETIREMENT_PENDING_TOOL_TEXT],
+    [restartRequired(), /restart that computer/, RETIREMENT_RESTART_TOOL_TEXT],
+    [recreateRequired(), /delete the device and create it again/, RETIREMENT_RECREATE_TOOL_TEXT],
+    [replaceRequired(), /connect the computer again as a new device/, RETIREMENT_REPLACE_TOOL_TEXT],
+  ])("a retirement refusal (%#) says what clears it", (error, what, text) => {
     const mapped = mapSandboxError(error, undefined);
     expect(mapped).toBeInstanceOf(ToolError);
     expect(message(mapped)).toMatch(/earlier version/);
     expect(message(mapped)).toMatch(what);
     expect(message(mapped)).not.toMatch(/not active in this deployment/);
-    expect(message(mapped)).toBe(RETIREMENT_TOOL_TEXT[(error as ApiError).code]);
+    expect(message(mapped)).toBe(text);
   });
 
   // the managed route's typed refusals: fixed kernel text, never the refusal's own message
