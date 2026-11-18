@@ -230,11 +230,19 @@ export interface SandboxBackground {
    * Persist exact ownership before acknowledging; retries of the same generation/operation/input
    * return the same reference. Retain starting grants for the lifetime of the owned execution.
    * Validate outputPath inside the scope. retainUntilMs bounds status/output record retention.
+   * instanceGeneration is the kernel's generation of the held instance `h` (the kernel always
+   * passes it, and allocates it only after `create` returns): a provider that keeps no generation
+   * of its own (a cloud provider) returns it in the reference and keys start idempotency by it.
    */
   start(
     h: SandboxHandle,
     scope: SandboxOperationScope,
-    args: SandboxExecOptions & { taskId: string; outputPath: string; retainUntilMs: number },
+    args: SandboxExecOptions & {
+      taskId: string;
+      outputPath: string;
+      retainUntilMs: number;
+      instanceGeneration?: string;
+    },
   ): Promise<SandboxExecutionRef>;
   status(
     h: SandboxHandle,

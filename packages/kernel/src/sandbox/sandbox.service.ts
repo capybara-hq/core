@@ -21,6 +21,7 @@ import {
   createLegacyHeldProvider,
   type HeldProvider,
   type ManagedStartArgs,
+  withKernelGeneration,
 } from "./held-operations.js";
 import { SandboxOperationAuthority } from "./operation-authority.js";
 import {
@@ -1541,8 +1542,10 @@ export class SandboxService {
         sig,
       );
     let ordinal = 0;
+    // a cloud provider's background starts are told the held instance's kernel generation
+    const held = p.binder ? p.impl : withKernelGeneration(p.impl, String(e.createdAt));
     const impl = invocation
-      ? createHeldOperations(p.impl, e.handle, sig, async (method, input, invoke, preflight) => {
+      ? createHeldOperations(held, e.handle, sig, async (method, input, invoke, preflight) => {
           const identity = { ...invocation, ordinal: ordinal++ };
           sig.throwIfAborted();
           await this.register(env, e.lease.token);
