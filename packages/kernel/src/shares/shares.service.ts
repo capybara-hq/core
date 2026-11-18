@@ -47,6 +47,11 @@ export type ShareState = "live" | "expired" | "revoked" | "suspended";
 export interface ShareView {
   id: string;
   code: string;
+  /**
+   * The absolute link people open, `<http.publicUrl>/s/<code>`; null when `http.publicUrl` is not
+   * set (the web builds it from its own origin then).
+   */
+  url: string | null;
   audience: "internal" | "external";
   conversationId: string;
   fileId: string;
@@ -608,9 +613,11 @@ export class SharesService {
           : !r.creator_ok || (r.audience === "external" && external !== "allowed")
             ? "suspended"
             : "live";
+    const publicUrl = this.config.get().http.publicUrl;
     return {
       id: r.id,
       code: r.code,
+      url: publicUrl ? `${publicUrl.replace(/\/+$/, "")}/s/${r.code}` : null,
       audience: r.audience,
       conversationId: r.conversation_id,
       fileId: r.file_id,

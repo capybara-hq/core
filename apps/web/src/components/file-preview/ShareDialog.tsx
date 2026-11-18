@@ -21,7 +21,7 @@ import { type ReactNode, useState } from "react";
 import type { FileOutput } from "../../lib/files";
 import { useCreateShare, useRefreshShare, useRevokeShare } from "../../lib/query/share-mutations";
 import { fileSharesQuery } from "../../lib/query/shares";
-import { SHARE_EXPIRIES, type ShareExpiry, type ShareView, shareLink } from "../../lib/shares";
+import { SHARE_EXPIRIES, type ShareExpiry, type ShareView, shareUrl } from "../../lib/shares";
 import { useErrorMessage } from "../../lib/use-error-message";
 import { FormError } from "../form-error";
 
@@ -47,7 +47,8 @@ const parseExpiry = (v: string): ShareExpiry => (v === "never" ? null : (Number(
  * (organization members, or anyone with it when external sharing is allowed; otherwise disabled
  * with the reason) and when it expires (choices bounded by the platform maximum), then the link
  * with Copy. Below, the file's active links (Copy, Update to latest when a newer version exists,
- * Revoke) and recent ones.
+ * Revoke) and recent ones (Revoke on a suspended one, which may come back). The link is the
+ * kernel's absolute `url` (the deployment's public URL), else `/s/<code>` on this origin.
  */
 export function ShareDialog({
   orgId,
@@ -76,7 +77,8 @@ export function ShareDialog({
   const refresh = useRefreshShare(orgId);
   const revoke = useRevokeShare(orgId);
   const origin = typeof window === "undefined" ? "" : window.location.origin;
-  const link = (code: string) => shareLink(origin, code);
+  // The deployment's public URL when the kernel knows it, else this page's origin.
+  const link = (s: ShareView) => shareUrl(s, origin);
   const policy = q.data?.policy;
   const shares = q.data?.shares ?? [];
 
@@ -99,9 +101,9 @@ export function ShareDialog({
       { onSuccess: ({ share }) => setCreated(share), onError: fail },
     );
   };
-  const copy = async (code: string) => {
+  const copy = async (s: ShareView) => {
     try {
-      await navigator.clipboard.writeText(link(code));
+      await navigator.clipboard.writeText(link(s));
       toast.success(t("copied"));
     } catch {
       // No usable clipboard: the link stays readable in the row's meta line.
@@ -118,7 +120,7 @@ export function ShareDialog({
   const audienceLabel = (a: Audience) => (a === "internal" ? t("internal") : t("external"));
   const meta = (s: ShareView) =>
     [
-      link(s.code),
+      link(s),
       s.expiresAt === null
         ? t("noExpiry")
         : t("expiresOn", { date: formatDateTime(s.expiresAt, "full", timeZone) }),
@@ -169,7 +171,7 @@ export function ShareDialog({
           />
         </Field>
         {error !== null && <FormError message={error} />}
-        {created !== null && <CopyField label={t("link")} value={link(created.code)} />}
+        {created !== null && <CopyField label={t("link")} value={link(created)} />}
         {live.length > 0 && (
           <Subsection title={t("live")} count={live.length} variant="divided">
             <ItemList
@@ -180,7 +182,7 @@ export function ShareDialog({
                 meta: meta(s),
                 actions: (
                   <>
-                    <Button density="dense" onClick={() => void copy(s.code)}>
+                    <Button density="dense" onClick={() => void copy(s)}>
                       {t("copy")}
                     </Button>
                     {s.newerVersion && (
@@ -222,6 +224,22 @@ export function ShareDialog({
                 title: audienceLabel(s.audience),
                 meta: meta(s),
                 status: { label: t(s.state as "revoked" | "expired" | "suspended") },
+                // A suspended link revives when the external switch comes back on: it can still
+                // be revoked.
+                ...(s.state === "suspended" && {
+                  actions: (
+                    <Button
+                      density="dense"
+                      variant="danger"
+                      disabled={busy}
+                      onClick={() =>
+                        revoke.mutate({ shareId: s.id, conversationId }, { onError: fail })
+                      }
+                    >
+                      {t("revoke")}
+                    </Button>
+                  ),
+                }),
               }))}
             />
           </Subsection>

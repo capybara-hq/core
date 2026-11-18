@@ -30,6 +30,7 @@ const FILE: FileOutput = {
 const share = (id: string, extra: Partial<ShareView> = {}): ShareView => ({
   id,
   code: `Code${id}000000`.slice(0, 10),
+  url: null,
   audience: "internal",
   conversationId: "c1",
   fileId: "f1",
@@ -111,6 +112,44 @@ describe("the share dialog", () => {
     expect(screen.queryByRole("button", { name: "Create link" })).toBeNull();
     expect(screen.getByRole("button", { name: "Done" })).toBeTruthy();
     expect(calls.filter((c) => c.method === "POST")).toHaveLength(1);
+  });
+
+  it("the link is the kernel's absolute url (the deployment's public URL) when it has one", async () => {
+    open(ALLOWED, [], {
+      [`POST ${FILES}`]: () =>
+        json(201, {
+          share: share("s1", {
+            code: "AbCdEfGh12",
+            url: "https://capybara.example.com/s/AbCdEfGh12",
+          }),
+        }),
+    });
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: "Create link" }));
+    const field = (await screen.findByRole("textbox", { name: "Link" })) as HTMLInputElement;
+    expect(field.value).toBe("https://capybara.example.com/s/AbCdEfGh12");
+  });
+
+  it("a suspended link sits under recent with Revoke (it revives when the switch is on)", async () => {
+    const calls = open(
+      { external: "org_off", maxExpiryDays: 30 },
+      [
+        share("s4", {
+          audience: "external",
+          state: "suspended",
+          url: "https://capybara.example.com/s/DDDDDDDDDD",
+        }),
+      ],
+      { "DELETE /api/v1/orgs/o1/shares/s4": () => noContent() },
+    );
+    const recent = await screen.findByRole("list", { name: "Recent links" });
+    expect(within(recent).getByText("Paused")).toBeTruthy();
+    expect(within(recent).getByText(/https:\/\/capybara\.example\.com\/s\/DDDDDDDDDD/)).toBeTruthy();
+    const user = userEvent.setup();
+    await user.click(within(recent).getByRole("button", { name: "Revoke" }));
+    await vi.waitFor(() =>
+      expect(calls.some((c) => c.method === "DELETE" && c.url.endsWith("/shares/s4"))).toBe(true),
+    );
   });
 
   it("internal defaults to never expiring; external to 7 days", async () => {

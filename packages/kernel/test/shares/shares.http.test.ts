@@ -68,6 +68,8 @@ beforeAll(async () => {
       { pg: pgc.url, redis: rd.url },
       {
         roles: ["api", "worker"],
+        // The share view's absolute link is built from it (the trailing slash is dropped).
+        http: { port: 0, publicUrl: "https://share.example.com/" },
         extensions: [MODEL_FAKE, OBJECT_STORE],
         extensionConfig: {
           "fake-object-store": {
@@ -253,6 +255,7 @@ describe("creating a share", () => {
     const s = await share(artifactId);
     expect(s.code).toMatch(SHARE_CODE_RE);
     expect(s).toMatchObject({
+      url: `https://share.example.com/s/${s.code}`,
       audience: "internal",
       conversationId: conv,
       fileId: artifactId,

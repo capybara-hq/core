@@ -18,6 +18,7 @@ const MEMBER: Me = {
 const share = (id: string, over: Record<string, unknown> = {}) => ({
   id,
   code: `code-${id}`,
+  url: null,
   audience: "external",
   conversationId: "c1",
   fileId: "f1",

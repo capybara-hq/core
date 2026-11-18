@@ -16,6 +16,8 @@ export type ShareState = "live" | "expired" | "revoked" | "suspended";
 export interface ShareView {
   id: string;
   code: string;
+  /** The absolute link from the deployment's public URL; null when the kernel has none set. */
+  url: string | null;
   audience: "internal" | "external";
   conversationId: string;
   fileId: string;
@@ -51,8 +53,15 @@ const orgBase = (orgId: string) => `/api/v1/orgs/${enc(orgId)}`;
 const fileShares = (orgId: string, conversationId: string, fileId: string) =>
   `${orgBase(orgId)}/conversations/${enc(conversationId)}/files/${enc(fileId)}/shares`;
 
-/** The link people open: `<origin>/s/<code>`. */
+/** A share page's path or link on an origin: `<origin>/s/<code>` (`""`: the path). */
 export const shareLink = (origin: string, code: string) => `${origin}/s/${code}`;
+
+/**
+ * The link people open: the kernel's absolute `url` (built from the deployment's public URL), or
+ * `/s/<code>` on this page's origin when the deployment sets none.
+ */
+export const shareUrl = (share: Pick<ShareView, "url" | "code">, origin: string) =>
+  share.url ?? shareLink(origin, share.code);
 
 export const listFileShares = (orgId: string, conversationId: string, fileId: string) =>
   apiFetch<{ shares: ShareView[]; policy: SharePolicy }>(fileShares(orgId, conversationId, fileId));

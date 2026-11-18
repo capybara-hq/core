@@ -173,6 +173,7 @@ async function orgSharing(value: "on" | "off") {
 interface Created {
   id: string;
   code: string;
+  url: string | null;
 }
 
 async function share(fileId: string, audience: "internal" | "external"): Promise<Created> {
@@ -202,6 +203,8 @@ const opened = () =>
 describe("metadata", () => {
   it("an external share opens anonymously: who shared it, render html, public headers", async () => {
     const s = await share(await deliver("report.html", "<h1>hi</h1>"), "external");
+    // No `http.publicUrl` here: the share view carries no absolute link (the web uses its origin).
+    expect(s.url).toBeNull();
     const r = await anon(base(s.code));
     expect(r.statusCode, r.body).toBe(200);
     const meta = r.json() as Record<string, unknown>;
