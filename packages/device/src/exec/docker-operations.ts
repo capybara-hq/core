@@ -38,7 +38,7 @@ import {
 } from "./operation-worker.js";
 import { acquireSealedRuntime, stageRuntimeSource } from "./runtime-source.js";
 
-/** What the Docker executor lends one operation: its running container, held until release. */
+/** What the device container lends one operation: its running container, held until release. */
 export interface OperationContainerHost {
   operationContainer(
     signal: AbortSignal,

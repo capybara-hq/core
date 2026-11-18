@@ -69,68 +69,32 @@ describe("PolicyStore", () => {
     expect(store.current().allowedDomains).toEqual(["b.com"]);
   });
 
-  it("an invalid file keeps the last good policy and reports once per change", () => {
+  it("an invalid file is no authority: current() refuses it, never a last good policy", () => {
     writePolicy(dir, withDomains(["a.com"]));
-    const errors: string[] = [];
-    const store = new PolicyStore(dir, { err: (l) => errors.push(l) });
+    const store = new PolicyStore(dir);
     expect(store.current().allowedDomains).toEqual(["a.com"]);
     writeFileSync(policyPath(dir), "{nope");
-    expect(store.current().allowedDomains).toEqual(["a.com"]);
-    expect(store.current().allowedDomains).toEqual(["a.com"]);
-    expect(errors).toHaveLength(1);
-    expect(errors[0]).toMatch(/policy\.json is not valid JSON.*keeping the last valid policy/);
-    // Another bad version is reported again; a good one is applied.
+    expect(() => store.current()).toThrow(/policy\.json is not valid JSON/);
+    // every read refuses it until it is fixed, not only the first
+    expect(() => store.current()).toThrow(/policy\.json is not valid JSON/);
     writeFileSync(policyPath(dir), JSON.stringify({ cpu: "lots" }));
-    expect(store.current().allowedDomains).toEqual(["a.com"]);
-    expect(errors).toHaveLength(2);
+    expect(() => store.current()).toThrow();
     writePolicy(dir, withDomains(["c.com"]));
     expect(store.current().allowedDomains).toEqual(["c.com"]);
   });
 
-  it("an invalid mode keeps the last good policy: a broken file never turns auto on", () => {
-    writePolicy(dir, { ...withDomains(["a.com"]), ownerCeiling: ownerCeilingOfMode("sandbox") });
-    const errors: string[] = [];
-    const store = new PolicyStore(dir, { err: (l) => errors.push(l) });
-    expect(policyMode(store.current())).toBe("sandbox");
-    writeFileSync(policyPath(dir), JSON.stringify({ mode: "maybe" }));
-    expect(store.current()).toMatchObject({
-      ownerCeiling: ownerCeilingOfMode("sandbox"),
-      allowedDomains: ["a.com"],
-    });
-    expect(errors[0]).toMatch(/mode must be "auto" or "sandbox"/);
-  });
-
-  it("an invalid file keeps the mode the last good policy had", () => {
+  it("a broken file never keeps a wider ceiling than the file now says", () => {
     writePolicy(dir, { ...withDomains(["a.com"]), ownerCeiling: ownerCeilingOfMode("auto") });
-    const errors: string[] = [];
-    const store = new PolicyStore(dir, { err: (l) => errors.push(l) });
-    expect(policyMode(store.current())).toBe("auto");
-    writeFileSync(policyPath(dir), "{nope");
-    const kept = store.current();
-    expect(kept).toMatchObject({
-      ownerCeiling: ownerCeilingOfMode("auto"),
-      allowedDomains: ["a.com"],
-    });
-    // the same object until the file changes (readers tell reloads by identity)
-    expect(store.current()).toBe(kept);
-    expect(errors).toHaveLength(1);
-    expect(errors[0]).toMatch(/keeping the last valid policy/);
+    const store = new PolicyStore(dir);
+    expect(store.current().ownerCeiling).toEqual(ownerCeilingOfMode("auto"));
+    writeFileSync(
+      policyPath(dir),
+      JSON.stringify({ version: 2, ownerCeiling: { fullAccess: "yes" } }),
+    );
+    expect(() => store.current()).toThrow();
     // a fixed file applies as written
     writePolicy(dir, { ...withDomains(["a.com"]), ownerCeiling: ownerCeilingOfMode("sandbox") });
-    expect(policyMode(store.current())).toBe("sandbox");
-  });
-
-  it("a bad version reported once is reported again when it comes back later", () => {
-    writePolicy(dir, withDomains(["a.com"]));
-    const errors: string[] = [];
-    const store = new PolicyStore(dir, { err: (l) => errors.push(l) });
-    writeFileSync(policyPath(dir), "{nope");
-    store.current();
-    store.current();
-    expect(errors).toHaveLength(1);
-    // Fixing the file with the version it had before still applies it.
-    writePolicy(dir, withDomains(["b.com"]));
-    expect(store.current().allowedDomains).toEqual(["b.com"]);
+    expect(store.current().ownerCeiling).toEqual(ownerCeilingOfMode("sandbox"));
   });
 
   it("a deleted file means the defaults", () => {

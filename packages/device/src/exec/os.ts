@@ -71,12 +71,8 @@ export function sandboxAvailability(): { ok: true } | { ok: false; reason: strin
   return { ok: true };
 }
 
-/** How to fix an unavailable OS sandbox (shared by the command refusal and the mode switch). */
-export {
-  SANDBOX_INSTALL_HINT,
-  sandboxUnavailableMessage,
-  sandboxUnavailableSwitchRefusal,
-} from "./sandbox-messages.js";
+/** How to fix an unavailable OS sandbox (shared with the command refusal). */
+export { SANDBOX_INSTALL_HINT, sandboxUnavailableMessage } from "./sandbox-messages.js";
 
 /**
  * One command's process group. It is tracked after the command's main process exits, as long as

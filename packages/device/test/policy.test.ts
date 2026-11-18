@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { SandboxLimits } from "@capybara-hq/plugin-sdk";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { DOCKER_DOMAIN_NOTE, describeMode, policyCommand } from "../src/commands/policy.js";
+import { describeCeiling, policyCommand } from "../src/commands/policy.js";
 import {
   DENIED_SECRET_PATHS,
   deniedSecretPaths,
@@ -210,19 +210,25 @@ describe("policy command", () => {
     // the restricted default ceiling of a new setup (B-14)
     expect(r.out).toContain('"fullAccess": false');
     expect(r.out).toContain('"restrictedProjectReach": "workspace"');
-    expect(r.out).toContain("Mode: sandbox.");
-  });
-
-  it("describeMode explains auto and sandbox, on the machine and in a container", () => {
-    expect(describeMode(policy({ mode: "auto" }))[0]).toMatch(/Commands run as you/);
-    expect(describeMode(policy({ mode: "auto" }), "docker")[0]).toMatch(/container/);
-    expect(describeMode(policy({ mode: "sandbox" }))[0]).toMatch(/OS sandbox|Only the workspace/);
-    expect(describeMode(policy({ mode: "sandbox" }), "docker")[0]).toMatch(
-      /container with no network/,
+    expect(r.out).toContain(
+      "Owner ceiling: Full access denied: conversations here use the restricted profiles only.",
     );
   });
 
-  it("a Docker-mode device says allowed domains do not apply there", async () => {
+  it("describeCeiling explains the owner ceiling, on the machine and in a container", () => {
+    expect(describeCeiling(policy({ mode: "auto" }))[0]).toMatch(/runs commands as you/);
+    expect(describeCeiling(policy({ mode: "auto" }), "docker")[0]).toMatch(/container/);
+    expect(describeCeiling(policy({ mode: "auto" }))[1]).toMatch(/outside the device's workspace/);
+    expect(describeCeiling(policy({ mode: "sandbox" }))[0]).toMatch(/Full access denied/);
+    expect(describeCeiling(policy({ mode: "sandbox" }))[1]).toMatch(
+      /stay in the device's workspace/,
+    );
+    expect(describeCeiling(policy({ mode: "sandbox" })).at(-1)).toMatch(
+      /capybara-device ceiling set/,
+    );
+  });
+
+  it("a change of allowed domains says restricted work may reach them, also in Docker mode", async () => {
     writeCredential(dir, {
       url: "https://x.test",
       connectUrl: "wss://x.test/device/connect",
@@ -236,7 +242,9 @@ describe("policy command", () => {
     });
     const r = await run(["add", "allowedDomains", "a.com"]);
     expect(r.code).toBe(0);
-    expect(r.out).toContain(DOCKER_DOMAIN_NOTE);
+    expect(r.out).toContain(
+      "Restricted work may reach these domains when the organization allows them too.",
+    );
   });
 
   it("set allowedDomains stores the list; show prints it", async () => {
@@ -251,15 +259,15 @@ describe("policy command", () => {
     expect((await run(["set", "cpu", "0"])).code).toBe(2);
   });
 
-  it("set refuses the removed keys and points at the mode command", async () => {
+  it("set refuses the removed keys and points at the ceiling command", async () => {
     for (const key of ["tier", "isolation", "localhost", "remoteGrants", "network"]) {
       const r = await run(["set", key, "open"]);
       expect(r.code, key).toBe(2);
-      expect(r.err).toMatch(/capybara-device mode auto\|sandbox/);
+      expect(r.err).toMatch(/capybara-device ceiling set/);
     }
     const mode = await run(["set", "mode", "sandbox"]);
     expect(mode.code).toBe(2);
-    expect(mode.err).toMatch(/capybara-device mode auto\|sandbox/);
+    expect(mode.err).toMatch(/capybara-device ceiling set/);
   });
 
   it("set refuses an unknown key and an invalid domain", async () => {
@@ -267,9 +275,9 @@ describe("policy command", () => {
     expect((await run(["set", "allowedDomains", "https://a.com"])).code).toBe(2);
   });
 
-  it("says the running program applies it at the next command, never to restart", async () => {
+  it("says the running program applies it at the next operation, never to restart", async () => {
     const r = await run(["set", "cpu", "2"]);
-    expect(r.out).toMatch(/applies it at the next command/);
+    expect(r.out).toMatch(/applies it at the next operation/);
   });
 
   it("add and remove allowedDomains: validated, lowercased, deduped, idempotent", async () => {

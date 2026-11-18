@@ -8,7 +8,6 @@ import {
   MAX_DEVICE_SCAN_RESULTS,
 } from "@capybara-hq/plugin-sdk";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { HostExecutor } from "../src/exec/host.js";
 import { finishScan, listDirectory, scanDirectory } from "../src/exec/listing.js";
 import { DeviceOpError } from "../src/exec/types.js";
 
@@ -177,22 +176,5 @@ describe("finishScan", () => {
       { path: "/w/a", suggestedName: "a" },
       { path: "/w/b", suggestedName: "b" },
     ]);
-  });
-});
-
-describe("HostExecutor: list and scan", () => {
-  it("reads with the owner's rights in auto mode and refuses a sandbox-mode request", async () => {
-    dirs("env", "home/code/core/.git");
-    const ex = new HostExecutor({ dir: join(base, "env") });
-    const signal = new AbortController().signal;
-    expect(await ex.list("auto", join(base, "home/code"), 10)).toEqual({
-      entries: [{ name: "core", isDir: true }],
-      truncated: false,
-    });
-    expect(await ex.scan("auto", join(base, "home"), signal)).toEqual([
-      { path: join(base, "home/code/core"), suggestedName: "core" },
-    ]);
-    expect(await kindOf(ex.list("sandbox", join(base, "home"), 10))).toBe("policy");
-    expect(await kindOf(ex.scan("sandbox", join(base, "home"), signal))).toBe("policy");
   });
 });

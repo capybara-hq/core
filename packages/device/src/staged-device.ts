@@ -88,9 +88,9 @@ export interface StagedDeviceOptions {
   /** The owner's home (default: the user's), for the denied secret paths and the hello. */
   home?: string;
   platform?: NodeJS.Platform;
-  /** A docker-mode device lends its container to each operation (the Docker executor). */
+  /** A docker-mode device lends its container to each operation (`DockerContainer`). */
   container?: OperationContainerHost;
-  /** Releases what construction acquired (the Docker executor); called by {@link StagedDevice.dispose}. */
+  /** Releases what construction acquired; called by {@link StagedDevice.dispose}. */
   dispose?: () => Promise<void>;
   /**
    * The host interpreter the trusted helpers run with (the output spool helper and the native

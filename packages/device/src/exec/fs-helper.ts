@@ -15,8 +15,7 @@ import {
  * `write` (data on stdin) | `list` (`maxBytes` is the entry limit) | `scan`. A missing or unknown mode is refused. In sandbox mode the roots are
  * enforced; in auto mode any clean absolute path is accepted (shape checks: absolute, no `..`
  * segments, no control characters). The `auto` branch is required by this contract but has no
- * production caller today: the OS executor runs the helper in sandbox mode only, and auto mode
- * reads and writes directly through `HostExecutor`. stdout: one JSON object, `{ "r": <result> }`
+ * production caller today: the OS executor runs the helper in sandbox mode only. stdout: one JSON object, `{ "r": <result> }`
  * or `{ "e": "policy" | "error", "m": <message> }`. read → `null` | `{ b64, truncated }`; stat →
  * `null` | `{ size, isDir }`; write → `null`; list → `null` | `{ entries, truncated }`; scan → the
  * paths of the directories found, unfiltered and unsorted (the caller applies the name rule, the

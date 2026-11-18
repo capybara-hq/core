@@ -25,11 +25,6 @@ export interface CeilingDeps {
   beforeWrite?: () => void;
 }
 
-/** Printed by `show` while the deployment still speaks protocol 2 (M2). */
-export const CEILING_PROTOCOL2_NOTE =
-  "Note: the project reach takes effect only once this program and the deployment use the new " +
-  "device protocol; until then Full access allowed also lets restricted work reach as this OS user.";
-
 /** Thrown inside the locked update when the policy now on disk makes the target a widening. */
 class WideningNeedsConfirmation extends Error {}
 
@@ -94,7 +89,6 @@ export async function ceilingCommand(
       "The platform and organization Full access settings and this machine's runtime support " +
         "apply separately; the deployment's device page shows the effective permissions.",
     );
-    out(CEILING_PROTOCOL2_NOTE);
     return 0;
   }
   const next: OwnerCeilingPolicy = {

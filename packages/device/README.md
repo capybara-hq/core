@@ -55,24 +55,28 @@ and the platform rebuilds the device on its next use.
 
 Commands: `login --url <url> [--no-browser] [--dir <path>] [--mode os|docker]`, `logout`,
 `status [--json]` (it prints the command mode too), `start`, `stop`,
-`drain [--wait] [--timeout <seconds>]`, `mode [auto|sandbox] [--yes]`,
-`policy [show | set <key> <value> [--yes] | add|remove <key> <value>]` and
+`drain [--wait] [--timeout <seconds>]`,
+`ceiling show | ceiling set --full-access allow|deny --project-reach workspace|os-user [--yes]`,
+`policy [show | set <key> <value> | add|remove <key> <value>]` and
 `service install|uninstall|start|stop|restart|status`.
-`mode` is the only way to switch the command mode (`policy set mode` points there); `mode auto`
-prints the risk text and asks for confirmation unless `--yes` is given.
+`ceiling set` is the only way to change the owner ceiling (`policy set mode` points there); a
+widening prints the risk text and asks for confirmation unless `--yes` is given. The old daily
+`mode auto|sandbox` command is gone.
 
 State lives in `$XDG_CONFIG_HOME/capybara-device` (default `~/.config/capybara-device`):
 `credential.json` (mode 0600; the program refuses a file other users can read; it also holds the
 deployment's reconnect grace and frame limit: a result larger than the frame limit is answered
 with an error instead) and `policy.json` (a file with wrong field types stops `start` with an
 error naming it; once running, the program re-reads the file when it changes, and a broken edit
-keeps the last valid policy and logs one error). Changes made with `capybara-device policy` take
+is no authority: operations and owner reports are refused with the reason until it is fixed, never
+served from a policy read earlier). Changes made with `capybara-device policy` take
 `policy.json.lock`, so two writers never lose an update; keys this version does not know are kept.
 The working directory (default `~/capybara-device/<deviceId>`) holds `workspace/`, `skills/`
 and `tmp/`.
 
-In OS mode a device runs every command in one of two modes (`mode` in `policy.json`; switch it
-with `capybara-device mode`):
+The sections below describe the owner ceiling by the two settings it replaced (the old modes: auto
+is Full access allowed with project reach `os-user`, sandbox is Full access denied with project
+reach `workspace`); change it with `capybara-device ceiling set`:
 
 - **auto** (the default of a new login): commands run directly on this computer as you — your real
   `HOME`, `PATH`, environment, caches, credentials (SSH keys, `gh`, cloud CLIs), Docker and any
@@ -93,18 +97,17 @@ with `capybara-device mode`):
 
 If the OS sandbox is unavailable on the machine (an unsupported platform or missing dependencies,
 such as `bwrap` / `socat` on Linux), the device still starts and serves: auto mode works, and every
-sandbox-mode command is refused with the reason and how to fix it (`capybara-device mode auto`, or
-install the dependencies and restart). `capybara-device mode sandbox` is refused on such a machine
-and the policy stays in auto; nothing ever runs unsandboxed by falling back. File operations
+sandbox-mode command is refused with the reason and how to fix it (install the dependencies and
+restart); nothing ever runs unsandboxed by falling back. File operations
 (read, write, stat) there follow only a fresh command decision (the latest command, within a
 minute): without one they are refused, never served on the host. `login` into an organization that
 forbids auto mode checks the OS sandbox first: when it is unavailable, no sandbox policy is written
 and the login line says what to install (or to log in with `--mode docker`).
 
 ```bash
-capybara-device mode                            # print the current mode
-capybara-device mode sandbox                    # switch to the sandbox
-capybara-device mode auto                       # prints the risk text and asks; or add --yes
+capybara-device ceiling show                    # print the owner ceiling
+capybara-device ceiling set --full-access deny --project-reach workspace     # narrow
+capybara-device ceiling set --full-access allow --project-reach os-user --yes  # widen
 capybara-device policy add allowedDomains files.slack.com      # sandbox mode
 capybara-device policy remove allowedDomains files.slack.com
 capybara-device policy show
@@ -114,7 +117,7 @@ A change applies at the next command; a running program does not need a restart.
 sandbox back on stops the commands still running in auto mode. Auto mode is set only on the
 machine: the deployment may narrow a device to `sandbox` but never turn auto mode on. An
 organization can allow or forbid auto mode; when it forbids it, this device runs in the sandbox
-and its summary says so, and the device's own `mode sandbox` always wins. `add` and `remove` work
+and its summary says so, and the device's own narrower ceiling always wins. `add` and `remove` work
 on `allowedDomains` and `allowCredentials`; every domain must be a lowercase host name (optionally
 `*.` for subdomains, never the apex), never an IP address or an internal name. They apply in
 sandbox mode only.
@@ -169,15 +172,15 @@ blocks or asks about the dangerous ones, but that review is the boundary, not an
 injection can still make an agent attempt to delete files or send your credentials away. Commands
 can also read this program's own credential (`credential.json`): if you suspect misuse, run
 `capybara-device logout` and log in again, which revokes it. Keep auto mode to your own development
-machine, with agents and material you trust; `capybara-device mode sandbox` turns the sandbox back
-on.
+machine, with agents and material you trust; `capybara-device ceiling set --full-access deny
+--project-reach workspace` turns it off again.
 
 ### Changes from the deployment
 
 The deployment changes the local policy only by narrowing it: it may add or remove
 `allowedDomains` (an approval adds an exact host; the device page may add a `*.` wildcard) and set
-`mode: "sandbox"`. It can never set `mode: "auto"` — that is `capybara-device mode auto` on the
-machine, with its risk text and confirmation. Every host is validated like a local one, the change
+`mode: "sandbox"` (or narrow the owner ceiling). It can never widen it — that is
+`capybara-device ceiling set` on the machine, with its risk text and confirmation. Every host is validated like a local one, the change
 is written under `policy.json.lock`, and it applies at the next command. Each change from the
 deployment is recorded in the local command log (`commands.log`, next to `policy.json`) with who
 decided it, and so is a refused attempt and the grants a command was given:

@@ -55,29 +55,16 @@ describe("parseCommandLine", () => {
       key: "allowedDomains",
       value: "a.com",
     });
-    // `--yes` is gone from policy: the risk it confirmed moved to `mode auto`.
+    // `--yes` is gone from policy: widening is confirmed by `ceiling set`.
     expect(() => parseCommandLine(["policy", "set", "isolation", "none", "--yes"])).toThrow(
       UsageError,
     );
     expect(() => parseCommandLine(["policy", "--yes"])).toThrow(UsageError);
     expect(() => parseCommandLine(["policy", "add", "allowedDomains"])).toThrow(UsageError);
     expect(() => parseCommandLine(["policy", "remove", "a", "b", "c"])).toThrow(UsageError);
-    expect(parseCommandLine(["mode"])).toEqual({ command: "mode" });
-    expect(parseCommandLine(["mode", "auto"])).toEqual({ command: "mode", mode: "auto" });
-    expect(parseCommandLine(["mode", "sandbox"])).toEqual({ command: "mode", mode: "sandbox" });
-    expect(parseCommandLine(["mode", "auto", "--yes"])).toEqual({
-      command: "mode",
-      mode: "auto",
-      yes: true,
-    });
-    expect(parseCommandLine(["mode", "sandbox", "-y"])).toEqual({
-      command: "mode",
-      mode: "sandbox",
-      yes: true,
-    });
-    expect(() => parseCommandLine(["mode", "vm"])).toThrow(/auto or sandbox/);
-    expect(() => parseCommandLine(["mode", "--yes"])).toThrow(/needs a mode/);
-    expect(() => parseCommandLine(["mode", "auto", "now"])).toThrow(UsageError);
+    // the daily mode command is gone: the owner ceiling replaced it
+    for (const argv of [["mode"], ["mode", "auto"], ["mode", "sandbox", "-y"]])
+      expect(() => parseCommandLine(argv)).toThrow(/unknown command mode/);
     expect(parseCommandLine(["service", "install"])).toEqual({
       command: "service",
       action: "install",

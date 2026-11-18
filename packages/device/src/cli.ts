@@ -4,13 +4,11 @@ import { ceilingCommand } from "./commands/ceiling.js";
 import { drain, drainAndWait } from "./commands/drain.js";
 import { login } from "./commands/login.js";
 import { logout } from "./commands/logout.js";
-import { modeCommand } from "./commands/mode.js";
 import { policyCommand } from "./commands/policy.js";
 import { serviceCommand } from "./commands/service.js";
 import { start } from "./commands/start.js";
 import { status } from "./commands/status.js";
 import { stop } from "./commands/stop.js";
-import type { Executor } from "./exec/types.js";
 import type { ProcessLookup } from "./pid.js";
 import type { PolicyStore } from "./policy-store.js";
 import type { RunSystem } from "./service/manager.js";
@@ -26,8 +24,7 @@ export interface CliEnv {
   openBrowser?: (url: string) => void;
   out?: (line: string) => void;
   err?: (line: string) => void;
-  createExecutor?: (cred: Credential, policy: PolicyStore) => Promise<Executor> | Executor;
-  /** Builds the staged (protocol 3) program's parts; used only when the protocol selects it. */
+  /** Builds the program's parts (the binder and the operation backends). */
   createStaged?: (cred: Credential, policy: PolicyStore) => Promise<StagedDevice> | StagedDevice;
   kill?: typeof process.kill;
   /** Runs a system command for `service` and `stop` and returns its output (default: execFileSync). */
@@ -36,7 +33,7 @@ export interface CliEnv {
   ps?: ProcessLookup;
   /** Standard input is a terminal (default: `process.stdin.isTTY`): a confirmation may be asked. */
   stdinIsTTY?: boolean;
-  /** Whether the OS sandbox can run here, for `login` and `mode` (default: the runtime's check). */
+  /** Whether the OS sandbox can run here, for `login` (default: the runtime's check). */
   sandboxAvailable?: () => { ok: true } | { ok: false; reason: string };
   /** Asks one question on the terminal and resolves the answer (default: node:readline). */
   ask?: (question: string) => Promise<string>;
@@ -56,72 +53,21 @@ async function askOnTerminal(question: string): Promise<string> {
 }
 
 /**
- * Logged when the local policy switches between auto and sandbox. It names the local choice, not
- * the effective mode: the organization's ceiling still cuts it (a device whose org forbids auto
- * runs in the sandbox even with this policy).
- */
-export const AUTO_MODE_ON =
-  "This machine's local policy is auto mode; the deployment's ceiling applies.";
-export const AUTO_MODE_OFF =
-  "This machine's local policy is sandbox mode; commands still running in auto mode were stopped.";
-
-/**
- * The executor for the credential's mode; the program's state directory is unreadable to
- * sandboxed commands. OS mode serves a {@link SwitchingExecutor}: the host (auto mode) or the OS
- * sandbox (sandbox mode), chosen per command from the policy and the kernel's ceiling (spec §4.1).
- */
-function defaultCreateExecutor(stateDir: string, home: string, err: (line: string) => void) {
-  return async (cred: Credential, store: PolicyStore): Promise<Executor> => {
-    const policy = () => store.current();
-    if (cred.mode === "docker") {
-      const { createDockerExecutor } = await import("./exec/docker.js");
-      return createDockerExecutor({
-        dir: cred.dir,
-        deviceId: cred.deviceId,
-        policy,
-      });
-    }
-    // Loaded on demand: the sandbox runtime is only needed by start.
-    const [{ createOsExecutor }, { HostExecutor }, { SwitchingExecutor }] = await Promise.all([
-      import("./exec/os.js"),
-      import("./exec/host.js"),
-      import("./exec/switch.js"),
-    ]);
-    const sandboxed = await createOsExecutor({
-      dir: cred.dir,
-      policy,
-      home,
-      denyRead: [stateDir],
-    });
-    return new SwitchingExecutor(sandboxed, new HostExecutor({ dir: cred.dir }), policy, (mode) =>
-      err(mode === "auto" ? AUTO_MODE_ON : AUTO_MODE_OFF),
-    );
-  };
-}
-
-/**
- * The staged (protocol 3) program's parts (permission activation W3-M): the binder with one
- * operation backend per bound generation, built for this host (macOS, Linux) or the device's
- * container (docker mode). Loaded on demand like the executors.
+ * The program's parts (device protocol 3): the binder with one operation backend per bound
+ * generation, built for this host (macOS, Linux) or the device's container (docker mode). Loaded
+ * on demand: only start needs them.
  */
 function defaultCreateStaged(stateDir: string, home: string) {
   return async (cred: Credential, store: PolicyStore): Promise<StagedDevice> => {
     const { createStagedDevice } = await import("./staged-device.js");
     if (cred.mode === "docker") {
-      const { createDockerExecutor } = await import("./exec/docker.js");
-      const container = await createDockerExecutor({
+      const { createDockerContainer } = await import("./exec/docker.js");
+      const container = await createDockerContainer({
         dir: cred.dir,
         deviceId: cred.deviceId,
         policy: () => store.current(),
       });
-      return createStagedDevice({
-        cred,
-        stateDir,
-        policy: store,
-        home,
-        container,
-        dispose: () => container.dispose(),
-      });
+      return createStagedDevice({ cred, stateDir, policy: store, home, container });
     }
     return createStagedDevice({ cred, stateDir, policy: store, home });
   };
@@ -177,7 +123,6 @@ export async function runCli(argv: string[], io: CliEnv = {}): Promise<number> {
         stateDir: dir,
         out,
         err,
-        createExecutor: io.createExecutor ?? defaultCreateExecutor(dir, home, err),
         createStaged: io.createStaged ?? defaultCreateStaged(dir, home),
         ...(io.env && { env: io.env }),
         ...(io.kill && { kill: io.kill }),
@@ -205,14 +150,6 @@ export async function runCli(argv: string[], io: CliEnv = {}): Promise<number> {
       });
     case "policy":
       return policyCommand(cmd, { stateDir: dir, out, err });
-    case "mode":
-      return modeCommand(cmd, {
-        stateDir: dir,
-        out,
-        err,
-        ...(io.sandboxAvailable && { sandboxAvailable: io.sandboxAvailable }),
-        ...((io.stdinIsTTY ?? process.stdin.isTTY === true) && { ask: io.ask ?? askOnTerminal }),
-      });
     case "ceiling":
       return ceilingCommand(cmd, {
         stateDir: dir,

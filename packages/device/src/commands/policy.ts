@@ -1,7 +1,7 @@
 import { validateAllowHost } from "@capybara-hq/plugin-sdk";
 import type { Command } from "../args.js";
 import { PolicyStore } from "../policy-store.js";
-import { type Policy, policyMode, policyPath, readCredential } from "../state.js";
+import { type Policy, policyPath, readCredential } from "../state.js";
 
 export interface PolicyDeps {
   stateDir: string;
@@ -10,18 +10,16 @@ export interface PolicyDeps {
 }
 
 /** The fields `show` prints and `set` may replace. */
-const KEYS = ["allowedDomains", "allowCredentials", "cpu", "memoryMb", "mode"] as const;
+const KEYS = ["allowedDomains", "allowCredentials", "cpu", "memoryMb"] as const;
 
 /** What OS mode does not enforce yet, shown with `show` and with a limits change. */
 export const NOT_ENFORCED_NOTE =
-  "Note: in OS mode cpu and memoryMb are not enforced yet; allowCredentials is ignored (auto " +
-  "mode already has the owner's credentials, sandbox mode gets none).";
+  "Note: in OS mode cpu and memoryMb are not enforced yet; allowCredentials is ignored (Full " +
+  "access already has the owner's credentials, restricted work gets none).";
 
-/** Shown when a Docker-mode device's policy is shown or given allowed domains. */
-export const DOCKER_DOMAIN_NOTE =
-  "Note: this device runs commands in Docker mode, where the mode alone decides network " +
-  "access (auto: the default bridge; sandbox: no network). Allowed domains apply in OS mode's " +
-  "sandbox only.";
+/** Where the owner ceiling is changed (the policy command never changes it). */
+const CEILING_COMMAND =
+  "capybara-device ceiling set --full-access allow|deny --project-reach workspace|os-user";
 
 function list(value: string): string[] {
   return value
@@ -89,41 +87,28 @@ function edit(
   return current.filter((x) => !has(values, x));
 }
 
-/** What `policy show` says the mode gives on this machine (English, one line each). */
-export function describeMode(policy: Policy, runMode: "os" | "docker" = "os"): string[] {
-  if (policyMode(policy) === "auto") {
-    if (runMode === "docker") {
-      return [
-        "Mode: auto. Commands run in the device's container on its default bridge, and the " +
-          "platform's file tools reach any path in the container; the deployment reviews every " +
-          "command and blocks or asks about dangerous ones.",
-      ];
-    }
-    return [
-      "Mode: auto. Commands run as you on this machine, with their files, credentials and " +
-        "network; the deployment reviews every command and blocks or asks about dangerous ones.",
-      "Allowed domains apply in sandbox mode only (capybara-device mode sandbox).",
-    ];
-  }
-  if (runMode === "docker") {
-    return [
-      "Mode: sandbox. Commands run in the device's container with no network; only the " +
-        "workspace, skills and temporary files are writable.",
-    ];
-  }
+/** What `policy show` says the owner ceiling gives on this machine (English, one line each). */
+export function describeCeiling(policy: Policy, runMode: "os" | "docker" = "os"): string[] {
+  const { fullAccess, restrictedProjectReach } = policy.ownerCeiling;
+  const where = runMode === "docker" ? "in the device's container" : "as you on this machine";
   return [
-    "Mode: sandbox. Only the workspace, skills and temporary files are writable; the network " +
-      "reaches the allowed hosts.",
+    fullAccess
+      ? `Owner ceiling: Full access allowed: a conversation set to Full access runs commands ${where}.`
+      : "Owner ceiling: Full access denied: conversations here use the restricted profiles only.",
+    restrictedProjectReach === "os-user"
+      ? "Restricted work and project browsing may read projects outside the device's workspace."
+      : "Restricted work and project browsing stay in the device's workspace.",
+    `Change the owner ceiling with: ${CEILING_COMMAND}`,
   ];
 }
 
 /**
  * `policy show` prints the local policy and what its mode gives on this machine;
  * `policy set <key> <value>` replaces one field; `policy add|remove <key> <value>` adds or removes
- * entries of a list field. The mode is set with `capybara-device mode`. The machine's user edits
- * this file; the deployment changes it only through the `policy` op (narrowing only: hosts and
- * `mode: "sandbox"`, never auto). Writes take policy.json.lock, and a running program applies the
- * change at its next command.
+ * entries of a list field. The owner ceiling is set with `capybara-device ceiling set`. The
+ * machine's user edits this file; the deployment changes it only through the `policy` op
+ * (narrowing only). Writes take policy.json.lock, and a running program applies the change at its
+ * next operation.
  */
 export async function policyCommand(
   cmd: Extract<Command, { command: "policy" }>,
@@ -141,8 +126,7 @@ export async function policyCommand(
   if (cmd.action === "show") {
     const policy = store.current();
     out(JSON.stringify(policy, null, 2));
-    for (const l of describeMode(policy, docker ? "docker" : "os")) out(l);
-    if (docker) out(DOCKER_DOMAIN_NOTE);
+    for (const l of describeCeiling(policy, docker ? "docker" : "os")) out(l);
     out(NOT_ENFORCED_NOTE);
     return 0;
   }
@@ -169,14 +153,14 @@ export async function policyCommand(
           break;
         }
         case "mode":
-          throw new Error("the mode is set with: capybara-device mode auto|sandbox");
+          throw new Error(`the mode is gone: set the owner ceiling with ${CEILING_COMMAND}`);
         case "network":
         case "tier":
         case "isolation":
         case "localhost":
         case "remoteGrants":
           throw new Error(
-            `"${key}" is gone: the mode is set with capybara-device mode auto|sandbox; ` +
+            `"${key}" is gone: set the owner ceiling with ${CEILING_COMMAND}; ` +
               `allowedDomains with capybara-device policy add allowedDomains <host>`,
           );
         default:
@@ -202,23 +186,16 @@ export async function policyCommand(
     return 2;
   }
   const lines: string[] = [];
-  let next: Policy;
   try {
-    next = store.update((p) => change(p, (l) => lines.push(l)));
+    store.update((p) => change(p, (l) => lines.push(l)));
   } catch (e) {
     err(`Cannot change ${policyPath(stateDir)}: ${(e as Error).message}`);
     return 1;
   }
   for (const l of lines) out(l);
-  out(`Saved ${policyPath(stateDir)}. A running capybara-device applies it at the next command.`);
+  out(`Saved ${policyPath(stateDir)}. A running capybara-device applies it at the next operation.`);
   if (key === "allowedDomains") {
-    out(
-      docker
-        ? DOCKER_DOMAIN_NOTE
-        : policyMode(next) === "auto"
-          ? "Allowed domains apply in sandbox mode only; switch with: capybara-device mode sandbox"
-          : "Sandboxed commands may reach these domains when the organization allows them too.",
-    );
+    out("Restricted work may reach these domains when the organization allows them too.");
   }
   if (key === "cpu" || key === "memoryMb" || key === "allowCredentials") out(NOT_ENFORCED_NOTE);
   return 0;

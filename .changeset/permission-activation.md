@@ -13,3 +13,9 @@ another member triggers in an owner's conversation runs without the owner's devi
 `GenerateImage` call with `file_path` takes the same permission review as `Write`: an outside
 directory is asked about (or reviewed) and granted for that call only. The testing helpers run on
 the activated kernel.
+
+`capybara-device` drops its protocol 2 surface: the old connection and dispatch (`killTagged`,
+`killAll` and unscoped operations are refused as unknown), the host and switching executors, the
+daily `capybara-device mode` command (use `capybara-device ceiling set`), the Docker executor's
+own commands and its startup marker reaper (the container now only hosts permission operations),
+and the last-good fallback of a broken `policy.json` (it is refused until fixed).
