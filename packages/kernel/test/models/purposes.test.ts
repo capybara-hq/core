@@ -39,10 +39,6 @@ const EMBED_CONSUMER = fileURLToPath(
   new URL("../fixtures/plugins/embed-consumer/index.ts", import.meta.url),
 );
 
-const MODEL_IMAGE = fileURLToPath(
-  new URL("../fixtures/plugins/model-image/index.ts", import.meta.url),
-);
-
 let pgc: TestContainer;
 let rd: TestContainer;
 let raw: ReturnType<typeof createDb>;
@@ -60,10 +56,14 @@ beforeAll(async () => {
       { pg: pgc.url, redis: rd.url },
       {
         roles: ["api"],
-        extensions: [MODEL_FAKE, MODEL_EVAL, EMBED_CONSUMER, MODEL_IMAGE],
+        extensions: [MODEL_FAKE, MODEL_EVAL, EMBED_CONSUMER],
         extensionConfig: {
           "model-fake": {
-            models: [{ id: "fake-1" }, { id: "fake-embed", kind: "embedding", dimensions: [4] }],
+            models: [
+              { id: "fake-1" },
+              { id: "fake-embed", kind: "embedding", dimensions: [4] },
+              { id: "fake-image", kind: "image_generation" },
+            ],
           },
         },
       },
@@ -383,7 +383,7 @@ describe("kinds and disabled models (spec B §5.3)", () => {
   });
 
   it("image purpose maps to an image model", async () => {
-    const IMG = { model: { provider: "model-image", model: "img-1" }, params: {} };
+    const IMG = { model: { provider: "model-fake", model: "fake-image" }, params: {} };
     expect(await put(ent, adminUrl("image"), IMG)).toMatchObject({
       kind: "image_generation",
       effective: IMG,

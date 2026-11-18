@@ -2074,6 +2074,45 @@ export const KernelConfigSchema = z.strictObject({
               "Time limit in milliseconds for one embed call to a model provider (one batch of an extension's ctx.models.embed); the call is aborted and fails with a timeout model error",
           }),
         ),
+      imageTimeoutMs: z
+        .number()
+        .int()
+        .positive()
+        .max(1_800_000)
+        .default(300_000)
+        .meta(
+          meta({
+            hot: true,
+            description:
+              "Time limit in milliseconds for one image generation call to a model provider (polling included); the call is aborted and fails with a timeout model error",
+          }),
+        ),
+      imageMaxPerCall: z
+        .number()
+        .int()
+        .positive()
+        .max(16)
+        .default(4)
+        .meta(
+          meta({
+            hot: true,
+            description:
+              "Most images one image generation call may ask for, below each model's own maxImages; more is a validation error",
+          }),
+        ),
+      imagePromptMaxChars: z
+        .number()
+        .int()
+        .positive()
+        .max(100_000)
+        .default(4_000)
+        .meta(
+          meta({
+            hot: true,
+            description:
+              "Longest prompt, in characters (code points), an image generation call accepts; longer is a validation error",
+          }),
+        ),
     })
     .prefault({} as never),
   hooks: z

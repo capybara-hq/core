@@ -52,6 +52,7 @@ export interface FakeModelConfig {
 export const FAKE_PNG_BASE64 =
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC";
 
+// capybara:allow-module-state a read-only constant list (copied before use)
 const IMAGE_SIZES: ImageSize[] = [
   { width: 1024, height: 1024 },
   { width: 1536, height: 1024 },

@@ -86,7 +86,7 @@ export function fireObserve<K extends "model.response" | "tool.postExecute">(
 }
 
 /** Decoded size of standard padded base64, in bytes. */
-const base64Bytes = (data: string): number => {
+export const base64Bytes = (data: string): number => {
   const pad = data.endsWith("==") ? 2 : data.endsWith("=") ? 1 : 0;
   return Math.max(0, Math.floor(data.length / 4) * 3 - pad);
 };
