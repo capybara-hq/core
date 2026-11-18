@@ -25,7 +25,8 @@ export interface ExtensionPermissions {
   policyHooks?: PolicyHook[];
   /**
    * Model purposes (`ctx.models`): each key must be `<extension name>.<name>`; an org admin maps
-   * each to a model of its `kind`. `ctx.models.embed` accepts the `embedding` ones, `generateImage` the `image_generation` ones.
+   * each to a model of its `kind`. `ctx.models.embed` accepts the `embedding` ones, `generateImage`
+   * the `image_generation` ones.
    */
   models?: {
     purpose: string;
@@ -255,7 +256,7 @@ export function validatePermissions(plugin: string, p: unknown): string[] {
           label.en === ""
         ) {
           errs.push(
-            "permissions.models entries need purpose, kind chat/embedding/image_generation and label zh/en",
+            "permissions.models entries need purpose, kind chat/embedding/image_generation, label zh/en",
           );
           continue;
         }

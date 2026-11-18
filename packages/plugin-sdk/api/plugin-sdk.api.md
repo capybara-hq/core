@@ -2192,7 +2192,7 @@ export interface ModelCallRequestHookPayload extends HookScope {
     attempt: number;
     model: string;
     provider: string;
-    purpose: ModelCallPurpose;
+    purpose: Exclude<ModelCallPurpose, "image">;
     request: Readonly<HookModelRequest>;
     step: number;
 }
@@ -2329,7 +2329,7 @@ export interface ModelResponseHookPayload extends HookScope {
     model: string;
     outcome: "ok" | "failed";
     provider: string;
-    purpose: ModelCallPurpose;
+    purpose: Exclude<ModelCallPurpose, "image">;
     step: number;
     stopReason: string | null;
     usage: ModelUsage | null;

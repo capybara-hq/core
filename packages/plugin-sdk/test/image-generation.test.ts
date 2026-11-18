@@ -41,6 +41,20 @@ describe("image generation contract", () => {
     });
   });
 
+  test("pickImageSize: the area rule breaks a ratio tie, not declaration order", () => {
+    const big: ModelImageGenerationInfo = {
+      ...info,
+      sizes: [
+        { width: 2048, height: 2048 },
+        { width: 1024, height: 1024 },
+      ],
+    };
+    expect(pickImageSize(big, { aspectRatio: "1:1" })).toEqual({
+      ok: true,
+      size: { width: 1024, height: 1024 },
+    });
+  });
+
   test("pickImageSize: an exact declared size is returned", () =>
     expect(pickImageSize(info, { size: { width: 2048, height: 2048 } })).toEqual({
       ok: true,
@@ -95,6 +109,13 @@ describe("image generation contract", () => {
     expect(isRetryableKind("refusal")).toBe(false);
     expect(new ModelError("refusal", "x").kind).toBe("refusal");
   });
+
+  test("permissions.models rejects an unknown kind", () =>
+    expect(
+      validatePermissions("p", {
+        models: [{ purpose: "p.x", kind: "rerank", label: { zh: "图", en: "Img" } }],
+      }).join(),
+    ).toMatch(/kind/));
 
   test("permissions.models accepts image_generation", () =>
     expect(

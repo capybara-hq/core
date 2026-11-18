@@ -6,10 +6,14 @@ import {
   HOOKS_AVAILABLE,
   type HookHandler,
   type HookMediaPlaceholder,
+  type HookPayloads,
   type HookVerdict,
+  type ImageRequestHookPayload,
+  type ImageResponseHookPayload,
   LIFECYCLE_HOOKS,
   type ModelCallRequestHookPayload,
   type ModelRequestHookPayload,
+  type ModelResponseHookPayload,
   POLICY_HOOKS,
   type ToolPreHookPayload,
   validatePermissions,
@@ -92,11 +96,20 @@ describe("hook mount points", () => {
     // a handler reading conversation fields off the union must handle their absence
     expectTypeOf<ModelRequestHookPayload["conversationId"]>().toEqualTypeOf<string | undefined>();
     expectTypeOf<
-      Exclude<
-        ModelRequestHookPayload,
-        Embedding | Extract<ModelRequestHookPayload, { purpose: "image" }>
-      >
+      Exclude<ModelRequestHookPayload, Embedding | ImageRequestHookPayload>
     >().toEqualTypeOf<ModelCallRequestHookPayload>();
+  });
+
+  it("purpose image narrows the model hook payloads to the image ones", () => {
+    expectTypeOf<
+      Extract<ModelRequestHookPayload, { purpose: "image" }>
+    >().toEqualTypeOf<ImageRequestHookPayload>();
+    expectTypeOf<
+      Extract<HookPayloads["model.response"], { purpose: "image" }>
+    >().toEqualTypeOf<ImageResponseHookPayload>();
+    expectTypeOf<
+      Exclude<HookPayloads["model.response"], ImageResponseHookPayload>
+    >().toEqualTypeOf<ModelResponseHookPayload>();
   });
 
   it("ctx.hooks.on types the payload by mount point", () => {

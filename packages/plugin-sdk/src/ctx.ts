@@ -138,7 +138,8 @@ export interface ExtensionModelTarget {
 /**
  * Models by purpose (`permissions.models`): the purpose → model mapping is chosen by org admins
  * (and the deployment default by the super admin), never by the extension. Only purposes this
- * extension declared with a matching `kind` (`embedding` for `embed`, `image_generation` for `generateImage`) are accepted (`model.purpose_unknown` otherwise), and
+ * extension declared with a matching `kind` (`embedding` for `embed`, `image_generation` for
+ * `generateImage`) are accepted (`model.purpose_unknown` otherwise), and
  * only for an org that enabled the extension (`extension.not_enabled`). Usage is recorded by the
  * kernel and reported through `usage.report` (purpose `embedding`, or `image` for `generateImage`).
  */

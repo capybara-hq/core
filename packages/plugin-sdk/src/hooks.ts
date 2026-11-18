@@ -101,7 +101,7 @@ export type HookModelRequest = Omit<ModelRequest, "messages"> & { messages: Hook
  * ({@link HookMediaPlaceholder}): no media bytes, no attachment ids.
  */
 export interface ModelCallRequestHookPayload extends HookScope {
-  purpose: ModelCallPurpose;
+  purpose: Exclude<ModelCallPurpose, "image">;
   step: number;
   attempt: number;
   provider: string;
@@ -200,7 +200,8 @@ export interface ImageResponseHookPayload {
 /**
  * `model.request`: before a model call is sent. A policy hook may deny it. Either a chat model call
  * ({@link ModelCallRequestHookPayload}: steps, compaction, titles, `WebFetch`) or an extension's
- * embedding call ({@link EmbeddingRequestHookPayload}, `purpose: "embedding"`); tell them apart by
+ * embedding call ({@link EmbeddingRequestHookPayload}, `purpose: "embedding"`) or an image generation
+ * call ({@link ImageRequestHookPayload}, `purpose: "image"`); tell them apart by
  * `purpose`. Handlers must accept the absent conversation fields of an embedding call (a policy
  * hook that throws on one denies the call). Payloads carry no media bytes.
  */
@@ -213,10 +214,11 @@ export type ModelRequestHookPayload =
  * `model.response`: after a sent model call finished or failed, with its usage when known (step
  * attempts, compaction and title calls, see `purpose`). Not fired for a call the user aborted (the run was
  * stopped while the call was in flight), nor for a call that was never sent (denied, or failed
- * before sending), so a `model.request` can have no matching `model.response`.
+ * before sending), so a `model.request` can have no matching `model.response`. The mount's payload
+ * is this or, for an image generation call, an {@link ImageResponseHookPayload}.
  */
 export interface ModelResponseHookPayload extends HookScope {
-  purpose: ModelCallPurpose;
+  purpose: Exclude<ModelCallPurpose, "image">;
   step: number;
   attempt: number;
   provider: string;
