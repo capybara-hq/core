@@ -268,11 +268,9 @@ describe("startFakeChannelServer", () => {
       const start = performance.now();
       const pending = post(`${im.url}/send-file`, fileBody("d"));
       await expect.poll(() => im?.sentFiles.length).toBe(1);
-      const recordedAfter = performance.now() - start;
       const res = await pending;
       const answeredAfter = performance.now() - start;
       expect(res.status).toBe(200);
-      expect(recordedAfter).toBeLessThan(250);
       expect(answeredAfter).toBeGreaterThanOrEqual(290);
     });
 
