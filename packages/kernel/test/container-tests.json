@@ -1,7 +1,6 @@
 [
   "admin/m6-segment2.dual.test.ts",
   "background/launch.test.ts",
-  "background/macos-device.test.ts",
   "background/permission-lifetime.dual.test.ts",
   "background/poll.dual.test.ts",
   "background/protocol-upgrade.dual.test.ts",

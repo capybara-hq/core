@@ -1,4 +1,4 @@
-import { appendFileSync, mkdirSync, renameSync, statSync } from "node:fs";
+import { appendFileSync, chmodSync, mkdirSync, renameSync, statSync } from "node:fs";
 import { userInfo } from "node:os";
 import { join } from "node:path";
 
@@ -30,6 +30,14 @@ export class CommandLog {
     private readonly maxBytes: number = COMMAND_LOG_MAX_BYTES,
   ) {
     this.file = join(stateDir, "commands.log");
+    // a log written by an older program, or by hand, is the owner's only: tighten it at open
+    for (const file of [this.file, `${this.file}.1`]) {
+      try {
+        chmodSync(file, 0o600);
+      } catch {
+        // absent, or not ours to change: appending still never fails an operation
+      }
+    }
   }
 
   append(entry: CommandLogEntry): void {

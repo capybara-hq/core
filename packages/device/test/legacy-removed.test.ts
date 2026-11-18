@@ -71,6 +71,43 @@ describe("removed protocol 2 operations", () => {
   });
 });
 
+describe("unscoped protocol 2 operation shapes", () => {
+  const limits = { mode: "auto" };
+  const execLimits = {
+    cpu: 1,
+    memoryMb: 512,
+    diskMb: 1024,
+    mode: "auto",
+    network: { kind: "open-public", hosts: [] },
+  };
+  const SHAPES: [op: string, args: unknown][] = [
+    [
+      "exec",
+      {
+        command: "id",
+        timeoutMs: 100,
+        maxOutputBytes: 100,
+        tag: "t1",
+        actor: { accountId: "a", conversationId: "c" },
+        limits: execLimits,
+      },
+    ],
+    ["readFile", { path: "/etc/hosts", maxBytes: 10, limits }],
+    ["writeFile", { path: "/tmp/x", dataB64: "QQ==" }],
+    ["stat", { path: "/etc/hosts", limits }],
+    ["list", { path: "/", limit: 10, limits }],
+    ["scan", { base: "/", limits }],
+  ];
+  for (const [op, args] of SHAPES) {
+    it(`an unscoped ${op} is refused before the backend`, async () => {
+      const { backend, touched } = recordingBackend();
+      const res = await serveOperationV3(backend, handle, request(op, args), signal);
+      expect(res).toMatchObject({ ok: false });
+      expect(touched).toEqual([]);
+    });
+  }
+});
+
 describe("startup", () => {
   it("the program's start path builds no protocol 2 executor and so runs no marker reaper", () => {
     // the OS executor kills marked leftovers when it is built; nothing on the start path builds it

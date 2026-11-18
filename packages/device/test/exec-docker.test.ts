@@ -14,7 +14,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import {
+  CONTAINER_FORMAT,
+  CONTAINER_FORMAT_LABEL,
   containerName,
+  containerSpec,
   containerUser,
   DockerContainer,
   SANDBOX_IMAGE,
@@ -297,12 +300,37 @@ describe.skipIf(!hasDocker)("DockerContainer", () => {
     expect(inspect("{{.HostConfig.Memory}}")).toBe(String(256 * 1024 * 1024));
   });
 
-  it("connects a container an older program left without a network", async () => {
+  it("recreates a container found without the bridge, never reconnects it", async () => {
     await hold();
+    const id = inspect("{{.Id}}");
     execFileSync("docker", ["network", "disconnect", "bridge", containerName(envId)]);
     const fresh = new DockerContainer({ dir, deviceId: envId, policy: () => FULL_POLICY });
     await hold(fresh);
+    expect(inspect("{{.Id}}")).not.toBe(id);
     expect(inspect("{{json .NetworkSettings.Networks}}")).toContain('"bridge"');
+  });
+
+  it("recreates on first use a container a protocol 2 program made (no format version)", async () => {
+    // exactly the flags and spec label the program wrote before the format version existed
+    const flags = ex.runFlags();
+    const at = flags.indexOf(`${CONTAINER_FORMAT_LABEL}=${CONTAINER_FORMAT}`);
+    expect(flags[at - 1]).toBe("--label");
+    const old = [...flags.slice(0, at - 1), ...flags.slice(at + 1)];
+    execFileSync("docker", [
+      "run",
+      "-d",
+      "--name",
+      containerName(envId),
+      "--label",
+      `capybara.device.spec=${containerSpec(old)}`,
+      ...old,
+    ]);
+    const id = inspect("{{.Id}}");
+    await hold();
+    expect(inspect("{{.Id}}")).not.toBe(id);
+    expect(inspect(`{{index .Config.Labels "${CONTAINER_FORMAT_LABEL}"}}`)).toBe(
+      String(CONTAINER_FORMAT),
+    );
   });
 
   it("an abort while waiting holds nothing; an unreadable policy refuses the operation", async () => {

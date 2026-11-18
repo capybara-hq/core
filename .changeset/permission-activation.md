@@ -22,3 +22,7 @@ and the last-good fallback of a broken `policy.json` (it is refused until fixed)
 Under protocol 3 the local `commands.log` records each exec and background start again (tag,
 account, conversation, restricted or full isolation, exit code, the grants' source; never the
 command or its environment) and every policy change from the deployment or the CLI.
+Upgrading from a protocol 2 `capybara-device`: processes the old auto mode left running are not
+searched for; restart the machine or kill leftovers from before the upgrade. A Docker-mode
+device's old container is recreated at its first operation (a container format version), and a
+container found without its bridge is recreated, never reconnected.

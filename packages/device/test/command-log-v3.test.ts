@@ -1,4 +1,13 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir, userInfo } from "node:os";
 import { join } from "node:path";
 import {
@@ -207,6 +216,18 @@ describe("protocol 3 operations in the command log", () => {
   });
 });
 
+describe("the log files", () => {
+  it("tightens an existing commands.log and commands.log.1 to 0600 when the log is opened", () => {
+    for (const name of ["commands.log", "commands.log.1"]) {
+      writeFileSync(join(dir, name), "{}\n");
+      chmodSync(join(dir, name), 0o644);
+    }
+    new CommandLog(dir);
+    for (const name of ["commands.log", "commands.log.1"])
+      expect((statSync(join(dir, name)).mode & 0o777).toString(8), name).toBe("600");
+  });
+});
+
 describe("policy changes in the command log", () => {
   const source = { accountId: "acc_1", accountName: "Ada", via: "web", approvalId: "apr_1" };
 
@@ -238,6 +259,44 @@ describe("policy changes in the command log", () => {
       expect.objectContaining({
         op: "policy",
         detail: expect.stringMatching(/^policy refused add a\.com; remove a\.com by Ada/),
+      }),
+    ]);
+  });
+
+  it("audits a policy op that fails for any other reason, also one the frame parser refuses", async () => {
+    const o = owner();
+    // the policy lock is held: the op fails without a write
+    writeFileSync(join(dir, "policy.json.lock"), String(process.pid));
+    const held = await serveOperationV3(
+      {} as MacOperationBackend,
+      { id: "d" },
+      request("policy", { opId: "op_3", add: ["b.com"], source }),
+      never,
+      undefined,
+      o,
+    );
+    expect(held.ok).toBe(false);
+    rmSync(join(dir, "policy.json.lock"));
+    // a widening the parser refuses before the device's own checks
+    const parsed = await serveOperationV3(
+      {} as MacOperationBackend,
+      { id: "d" },
+      request("policy", { opId: "op_4", mode: "auto", source }),
+      never,
+      undefined,
+      o,
+    );
+    expect(parsed.ok).toBe(false);
+    expect(lines()).toEqual([
+      expect.objectContaining({
+        op: "policy",
+        actor: { accountId: "acc_1" },
+        detail: expect.stringMatching(/^policy failed \(.*held.*\) by Ada \(acc_1\) via web/),
+      }),
+      expect.objectContaining({
+        op: "policy",
+        actor: { accountId: "acc_1" },
+        detail: expect.stringMatching(/^policy failed \(.*mode.*\) by Ada \(acc_1\) via web/),
       }),
     ]);
   });

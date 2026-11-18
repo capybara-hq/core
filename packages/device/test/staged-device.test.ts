@@ -487,6 +487,38 @@ describe("staged connection (W3-M)", () => {
     });
   });
 
+  it("an owner report that breaks after the hello is reported, never an unhandled rejection", async () => {
+    const k = await kernel();
+    const s = staged({ cred: credential({ connectUrl: k.url }) });
+    const report = s.device.owner.report;
+    let calls = 0;
+    s.device.owner.report = () => {
+      calls += 1;
+      // the hello's report succeeds; policy.json breaks right after
+      if (calls > 1) throw new Error("policy.json is not valid JSON");
+      return report();
+    };
+    const unhandled = vi.fn();
+    process.on("unhandledRejection", unhandled);
+    cleanups.push(async () => {
+      process.off("unhandledRejection", unhandled);
+    });
+    const errs: string[] = [];
+    const conn = connectStaged(s.device, {
+      err: (l) => errs.push(l),
+      bootId: null,
+      policyCheckMs: 60_000,
+    });
+    cleanups.push(() => {
+      conn.stop();
+      return conn.done;
+    });
+    await k.waitFor("hello", () => k.of("hello")[0]);
+    await vi.waitFor(() => expect(errs.join("\n")).toMatch(/not valid JSON/));
+    await new Promise((r) => setImmediate(r));
+    expect(unhandled).not.toHaveBeenCalled();
+  });
+
   it("an answer produced while disconnected waits the credential's grace and reaches the next socket (B-3, B-4)", async () => {
     const k = await kernel();
     let release!: () => void;

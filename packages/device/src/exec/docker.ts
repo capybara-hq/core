@@ -33,6 +33,19 @@ export function containerUser(
 
 const SPEC_LABEL = "capybara.device.spec";
 
+/**
+ * The container format. It is part of the run flags, so a container an older format made (a
+ * protocol 2 program's, which may hold its commands' leftovers and may run without a network) is
+ * recreated at its first use, once nothing holds it, never reused.
+ */
+export const CONTAINER_FORMAT = 2;
+export const CONTAINER_FORMAT_LABEL = "capybara.device.format";
+
+/** The spec label of a container made with `runFlags`: a container made otherwise is recreated. */
+export function containerSpec(runFlags: string[]): string {
+  return createHash("sha256").update(JSON.stringify(runFlags)).digest("hex").slice(0, 16);
+}
+
 const ROOTS: SandboxRoots = DEFAULT_SANDBOX_ROOTS;
 
 /** Container name of a device. */
@@ -124,8 +137,6 @@ export class DockerContainer implements OperationContainerHost {
   private readonly hostRoots: SandboxRoots;
   private chain: Promise<unknown> = Promise.resolve();
   private ready = false;
-  /** The container has the default bridge. */
-  private netOpen = false;
   /** Operations holding the container now. */
   private inflight = 0;
   /** The spec hash of the container in use (set when it is created or reused). */
@@ -159,7 +170,7 @@ export class DockerContainer implements OperationContainerHost {
   }
 
   /** Every `docker run` flag of the container except its name and spec label. */
-  private runArgs(): string[] {
+  runFlags(): string[] {
     const policy = this.opts.policy();
     return [
       "--init",
@@ -176,6 +187,8 @@ export class DockerContainer implements OperationContainerHost {
       ROOTS.workspace,
       "--label",
       `capybara.device.id=${this.opts.deviceId}`,
+      "--label",
+      `${CONTAINER_FORMAT_LABEL}=${CONTAINER_FORMAT}`,
       ...this.wanted().flatMap((m) => [
         "--mount",
         `type=bind,source=${m.source},target=${m.dest}${m.rw ? "" : ",readonly"}`,
@@ -193,11 +206,7 @@ export class DockerContainer implements OperationContainerHost {
 
   /** A hash of the run flags: a container made with other flags is recreated. */
   private specHash(): string {
-    return this.hashOf(this.runArgs());
-  }
-
-  private hashOf(runArgs: string[]): string {
-    return createHash("sha256").update(JSON.stringify(runArgs)).digest("hex").slice(0, 16);
+    return containerSpec(this.runFlags());
   }
 
   private matches(c: Inspected): boolean {
@@ -228,23 +237,27 @@ export class DockerContainer implements OperationContainerHost {
       mkdirSync(r, { recursive: true });
     }
     let c = await this.inspect();
-    if (c !== null && (!this.matches(c) || !(await this.seesHostRoots(c)))) {
+    // other flags, an older format, a lost bridge or stale mounts: recreated, never repaired
+    if (
+      c !== null &&
+      (!this.matches(c) ||
+        !("bridge" in (c.NetworkSettings.Networks ?? {})) ||
+        !(await this.seesHostRoots(c)))
+    ) {
       await this.mustDocker(["rm", "-f", this.name], "removing the old container");
       c = null;
     }
     if (c === null) {
-      const runArgs = this.runArgs();
-      const spec = this.hashOf(runArgs);
+      const runArgs = this.runFlags();
+      const spec = containerSpec(runArgs);
       await this.mustDocker(
         ["run", "-d", "--name", this.name, "--label", `${SPEC_LABEL}=${spec}`, ...runArgs],
         "creating the container",
       );
-      this.spec = spec;
       // created on the default bridge
-      this.netOpen = true;
+      this.spec = spec;
     } else {
       if (!c.State.Running) await this.mustDocker(["start", this.name], "starting the container");
-      this.netOpen = "bridge" in (c.NetworkSettings.Networks ?? {});
       this.spec = c.Config.Labels?.[SPEC_LABEL];
     }
     this.ready = true;
@@ -270,8 +283,8 @@ export class DockerContainer implements OperationContainerHost {
 
   /**
    * The container for one permission operation: running on its default bridge (Full access is
-   * the container user's own network; restricted operations are mediated by the launcher). A
-   * container left disconnected by an older program is connected again. The caller holds the
+   * the container user's own network; restricted operations are mediated by the launcher). The
+   * caller holds the
    * container (it is not recreated) until it calls `release`, once; an abort while waiting for it
    * rejects and holds nothing.
    */
@@ -283,10 +296,6 @@ export class DockerContainer implements OperationContainerHost {
       // the policy changed the container's flags (cpu, memory): recreate it once nothing holds it
       if (this.ready && this.inflight === 0 && this.spec !== this.specHash()) this.ready = false;
       await this.ensureContainer();
-      if (!this.netOpen) {
-        await this.mustDocker(["network", "connect", "bridge", this.name], "enabling the network");
-        this.netOpen = true;
-      }
       this.inflight++;
     });
     try {

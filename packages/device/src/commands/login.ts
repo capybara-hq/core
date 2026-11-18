@@ -40,8 +40,8 @@ async function checkSandbox(
   check: SandboxCheck | undefined,
 ): Promise<{ ok: true } | { ok: false; reason: string }> {
   if (check !== undefined) return check();
-  const os = await import("../exec/os.js");
-  return os.sandboxAvailability();
+  const { sandboxAvailability } = await import("../exec/sandbox-check.js");
+  return sandboxAvailability();
 }
 
 /** How the owner widens the ceiling, on this machine only (the deployment may only narrow it). */

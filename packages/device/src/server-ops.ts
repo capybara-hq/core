@@ -296,6 +296,23 @@ function note(log: CommandLog | undefined, entry: Omit<CommandLogEntry, "time">)
   }
 }
 
+/** Who asked for a policy op, for its audit line (read as unknown: the frame may be invalid). */
+function policyBy(args: unknown): string {
+  const source = ((args as { source?: unknown } | null)?.source ?? {}) as Record<string, unknown>;
+  const approval =
+    source.approvalId !== undefined ? `, approval ${clean(source.approvalId, 100)}` : "";
+  return (
+    `by ${clean(source.accountName, 100)} (${clean(source.accountId, 100)}) ` +
+    `via ${clean(source.via, 10)}${approval}`
+  );
+}
+
+/** The audit line of a policy op that failed for a reason other than a refusal. */
+function notePolicyFailure(log: CommandLog | undefined, req: KernelReq, error: unknown): void {
+  const message = error instanceof Error ? error.message : String(error);
+  notePolicy(log, req, `policy failed (${clean(message, 200)}) ${policyBy(req.args)}`);
+}
+
 /** The audit line of a policy change from the deployment, with the deciding account. */
 function notePolicy(log: CommandLog | undefined, req: KernelReq, detail: string): void {
   const source = (req.args as { source?: { accountId?: unknown } } | null)?.source;
@@ -379,8 +396,9 @@ async function serveOwnerPolicyV3(
       }),
     };
   } catch (e) {
-    // a refused change is audited too, with who asked for it
+    // a refused or failed change is audited too, with who asked for it
     if (e instanceof PolicyRefused) notePolicy(owner.log, req, e.detail);
+    else notePolicyFailure(owner.log, req, e);
     return {
       type: "res",
       id: req.id,
@@ -556,6 +574,9 @@ export async function serveOperationV3(
       ),
     };
   } catch (error) {
+    // a policy op refused before the owner controls (the frame parser) is audited as well
+    if ((request as { op?: unknown }).op === "policy")
+      notePolicyFailure(owner?.log, request as unknown as KernelReq, error);
     const kind = errorKind(sdk, error);
     return {
       type: "res",
