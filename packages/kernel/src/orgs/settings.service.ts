@@ -13,6 +13,7 @@ import {
   COMPACTION_SETTINGS_PATCH,
   type CompactionSettings,
   readPlatformCompactionSettings,
+  readPromptSuggestions,
   readSandboxLimitOverride,
   type SandboxLimitOverride,
 } from "../identity/settings.js";
@@ -199,6 +200,15 @@ export const GIT_GATEWAY_INVALID = { enabled: false } as const;
 export type GitGatewaySetting = z.infer<typeof GitGatewaySettingSchema>;
 
 const ExternalSharingSetting = z.enum(["on", "off"]);
+const PromptSuggestionsSetting = z.enum(["on", "off"]);
+
+/** Whether prompt suggestions run for an org: the platform is on and the org has not turned it off. */
+export function effectivePromptSuggestions(
+  platform: "on" | "off",
+  org: "on" | "off" | undefined,
+): boolean {
+  return platform === "on" && org !== "off";
+}
 
 export const OrgSettingsSchema = z.object({
   toolSearch: z.enum(["on", "off"]).default("on").catch("on"),
@@ -234,6 +244,11 @@ export const OrgSettingsSchema = z.object({
    * value reads as `off` (never wider). The platform's switch must allow it too.
    */
   externalSharing: ExternalSharingSetting.optional().catch("off"),
+  /**
+   * The org's prompt suggestions switch; absent follows the platform (on). An invalid stored value
+   * reads as `off`. The platform's switch must be on too ({@link effectivePromptSuggestions}).
+   */
+  promptSuggestions: PromptSuggestionsSetting.optional().catch("off"),
 });
 
 export type OrgSettings = z.infer<typeof OrgSettingsSchema>;
@@ -306,6 +321,8 @@ export const OrgSettingsPatchSchema = z
      * only be turned off (the same code).
      */
     externalSharing: ExternalSharingSetting.nullable().optional(),
+    /** The org's prompt suggestions switch (on or off); null clears it (follow the platform). */
+    promptSuggestions: PromptSuggestionsSetting.nullable().optional(),
   })
   .strict()
   .refine((p) => p.autoMode === undefined || p.fullAccess === undefined, {
@@ -394,6 +411,8 @@ export interface OrgSettingsDeployment {
   externalSharing: ExternalSharingView;
   /** The longest expiry a share may take, in days. */
   shareMaxExpiryDays: number;
+  /** The platform's prompt suggestions switch (off: the org's own switch has no effect). */
+  promptSuggestions: "on" | "off";
 }
 
 /** Compare by value (`cloudNetwork` is an object); the schema fixes the key order. */
@@ -505,6 +524,12 @@ export function invalidStoredExternalSharing(raw: unknown): boolean {
   return v !== undefined && !ExternalSharingSetting.safeParse(v).success;
 }
 
+/** Whether a stored settings object holds a `promptSuggestions` this version reads as `off`. */
+export function invalidStoredPromptSuggestions(raw: unknown): boolean {
+  const v = asObject(raw).promptSuggestions;
+  return v !== undefined && !PromptSuggestionsSetting.safeParse(v).success;
+}
+
 /** Whether a stored settings object holds a `fullAccess` this version reads as `off`. */
 export function invalidStoredFullAccess(raw: unknown): boolean {
   const v = asObject(raw).fullAccess;
@@ -569,6 +594,11 @@ export class OrgSettingsService {
     if (invalidStoredExternalSharing(raw)) {
       this.log?.warn("org settings: stored externalSharing is invalid; it reads as off", { orgId });
     }
+    if (invalidStoredPromptSuggestions(raw)) {
+      this.log?.warn("org settings: stored promptSuggestions is invalid; it reads as off", {
+        orgId,
+      });
+    }
     if (invalidStoredCloudNetwork(raw)) {
       this.log?.warn(
         "org settings: stored cloudNetwork is invalid; it reads as an empty allowlist",
@@ -585,14 +615,21 @@ export class OrgSettingsService {
   /** 部署默认值（设置页展示「跟随部署」时的实际取值）。 */
   async deployment(): Promise<OrgSettingsDeployment> {
     const lim = this.config.get().sandbox.limits;
-    const [fullAccess, attribution, compaction, externalSharing, shareMaxExpiry] =
-      await Promise.all([
-        readDevicesFullAccess(this.db.db, this.config, this.log),
-        readPlatformAttribution(this.db.db, this.config, this.log),
-        readPlatformCompactionSettings(this.db.db),
-        readExternalSharing(this.db.db, this.config, this.log),
-        readShareMaxExpiry(this.db.db, this.config, this.log),
-      ]);
+    const [
+      fullAccess,
+      attribution,
+      compaction,
+      externalSharing,
+      shareMaxExpiry,
+      promptSuggestions,
+    ] = await Promise.all([
+      readDevicesFullAccess(this.db.db, this.config, this.log),
+      readPlatformAttribution(this.db.db, this.config, this.log),
+      readPlatformCompactionSettings(this.db.db),
+      readExternalSharing(this.db.db, this.config, this.log),
+      readShareMaxExpiry(this.db.db, this.config, this.log),
+      readPromptSuggestions(this.db.db, this.log),
+    ]);
     return {
       fullAccess,
       autoMode: legacyAutoModeView(fullAccess),
@@ -606,7 +643,23 @@ export class OrgSettingsService {
       compaction,
       externalSharing,
       shareMaxExpiryDays: shareMaxExpiry.value,
+      promptSuggestions,
     };
+  }
+
+  /** Whether prompt suggestions run for the org now: one read of the platform and of the org. */
+  async promptSuggestionsEnabled(orgId: string): Promise<boolean> {
+    const [platform, row] = await Promise.all([
+      readPromptSuggestions(this.db.db, this.log),
+      this.db
+        .selectFrom("orgs")
+        .select("settings")
+        .where("id", "=", orgId)
+        .where("deleted_at", "is", null)
+        .executeTakeFirst(),
+    ]);
+    if (!row) return false;
+    return effectivePromptSuggestions(platform, parseOrgSettings(row.settings).promptSuggestions);
   }
 
   /**
@@ -801,7 +854,7 @@ export class OrgSettingsService {
       Object.entries(patch)
         .filter(([, v]) => v !== undefined)
         // null clears fullAccess / cloudNetwork / wakeOnBackgroundTask (follow the deployment
-        // again) and externalSharing (off)
+        // again), externalSharing (off) and promptSuggestions (follow the platform)
         .map(([k, v]) => [k, v === null ? undefined : v]),
     ) as Partial<OrgSettings>;
     const arrangementPatch = patch.uiArrangement;
@@ -847,6 +900,7 @@ export class OrgSettingsService {
     }
     if (after.compaction === undefined) delete after.compaction;
     if (after.externalSharing === undefined) delete after.externalSharing;
+    if (after.promptSuggestions === undefined) delete after.promptSuggestions;
     // saving an unreadable security setting writes it even when it equals what it read as
     const repairs =
       (invalidStoredForbiddenTools(stored) && patch.scheduledTasks?.forbiddenTools !== undefined) ||
@@ -870,6 +924,7 @@ export class OrgSettingsService {
       scheduledTasks: _oldScheduled,
       compaction: _oldCompaction,
       externalSharing: _oldExternalSharing,
+      promptSuggestions: _oldPromptSuggestions,
       ...rest
     } = stored;
     const written: Record<string, unknown> = {

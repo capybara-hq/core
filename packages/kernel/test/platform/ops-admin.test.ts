@@ -561,6 +561,23 @@ describe("admin and models", () => {
     expect(http.json()).toEqual(all);
   });
 
+  it("admin.update-settings sets promptSuggestions both ways; null clears it", async () => {
+    expect(await run("admin.settings", {})).toMatchObject({ promptSuggestions: "on" });
+    for (const promptSuggestions of ["off", "on", null]) {
+      expect(await precheck("admin.update-settings", { promptSuggestions })).toEqual({ ok: true });
+    }
+    expect(await run("admin.update-settings", { promptSuggestions: "off" })).toMatchObject({
+      promptSuggestions: "off",
+    });
+    expect(await run("admin.update-settings", { promptSuggestions: "on" })).toMatchObject({
+      promptSuggestions: "on",
+    });
+    await run("admin.update-settings", { promptSuggestions: "off" });
+    expect(await run("admin.update-settings", { promptSuggestions: null })).toMatchObject({
+      promptSuggestions: "on",
+    });
+  });
+
   it("admin.update-settings turns the platform's auto mode off but never on", async () => {
     expect(await run("admin.settings", {})).toMatchObject({
       devicesAutoMode: { mode: "allowed", source: "default" },

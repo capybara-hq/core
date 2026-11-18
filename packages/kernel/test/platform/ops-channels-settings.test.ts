@@ -258,6 +258,29 @@ describe("org settings", () => {
     expect(pre).toEqual({ ok: true });
   });
 
+  it("promptSuggestions goes both ways through the tool; null clears it", async () => {
+    const o = op("org-settings.update");
+    for (const promptSuggestions of ["off", "on", null]) {
+      expect(await o.precheck?.({ promptSuggestions }, ctxOf(ownerId))).toEqual({ ok: true });
+    }
+    const off = (await run("org-settings.update", { promptSuggestions: "off" })) as {
+      settings: { promptSuggestions?: string };
+    };
+    expect(off.settings.promptSuggestions).toBe("off");
+    const on = (await run("org-settings.update", { promptSuggestions: "on" })) as {
+      settings: { promptSuggestions?: string };
+    };
+    expect(on.settings.promptSuggestions).toBe("on");
+    const cleared = (await run("org-settings.update", { promptSuggestions: null })) as {
+      settings: { promptSuggestions?: string };
+    };
+    expect(cleared.settings.promptSuggestions).toBeUndefined();
+    const got = (await run("org-settings.get", {})) as {
+      deployment: { promptSuggestions: string };
+    };
+    expect(got.deployment.promptSuggestions).toBe("on");
+  });
+
   it("autoMode may only be turned off through the tool; a person turns it on", async () => {
     const o = op("org-settings.update");
     const pre = (input: unknown) => o.precheck?.(o.input.parse(input), ctxOf(ownerId));
