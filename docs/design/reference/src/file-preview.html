@@ -10,7 +10,7 @@
 <body>
 <main class="r-page">
 <h1>File preview</h1>
-<p>The right-panel previewer: header with type, name and switcher, version, download, full screen, close (no Share). Built in: image, text, Markdown, CSV; none falls back to the file card and Download; a failed previewer affects only the panel.</p>
+<p>The right-panel previewer: header with type, name and switcher, version, share (with the shared marker when the file has a live share), download, full screen, close. Built in: image, text, Markdown, CSV; none falls back to the file card and Download; a failed previewer affects only the panel.</p>
 <div class="r-blocks">
 <section data-ref-block="file-preview-image" style="width:560px;height:520px">
   <template data-fixture="file-preview" data-opts='{"state": "image"}'></template>
@@ -29,6 +29,12 @@
 </section>
 <section data-ref-block="file-preview-failed" style="width:560px;height:520px">
   <template data-fixture="file-preview" data-opts='{"state": "failed"}'></template>
+</section>
+<section data-ref-block="file-preview-unshared" style="width:560px;height:520px">
+  <template data-fixture="file-preview" data-opts='{"state": "unshared"}'></template>
+</section>
+<section data-ref-block="file-preview-shared" style="width:560px;height:520px">
+  <template data-fixture="file-preview" data-opts='{"state": "shared"}'></template>
 </section>
 </div>
 </main>

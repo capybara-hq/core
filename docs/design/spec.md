@@ -421,6 +421,7 @@ A new page **must** pick one of the following templates; a new template requires
 | T11 | System status | Single centered | — | — | content | 404, 403, under maintenance, not enabled, no access (`kind="no-access"`: a 16 px `lock` in `faint` instead of the code, the title, what the page is, `need` as a mono chip "需要：组织管理员" / "Requires: Org admin" (1px `line`, radius `sm`, `small`), `ask` in `muted` (who to ask); never an action or a retry; the web app's one role gate draws it, web-order spec §9) |
 | T12 | Onboarding | Single centered checklist | — | — | content | New org, empty environment |
 | T13 | Setup | The Shell's geometry with the setup sidebar (§6.13 `context.kind: "setup"`: the setup home and the steps as navigation), the content area, the status bar (§5.5) | — | — | the page's own (content) | The workspace while the org has no model or no agent (web-order spec §3.8, web-SSR spec §4) |
+| T14 | Shared file | No Shell: a top bar (the file's type, name, who shared it and the expiry, Download) over the file rendered across the full width and the remaining height (§5.12) | — | — | full width | A shared file's link (`/s/<code>`; file sharing design §6) |
 
 ### 5.5 Setup (T13)
 
@@ -711,6 +712,38 @@ States: `default`, `loading`
 | skeleton-text[data-size=body] | loading | height | type.body.line |
 | loading-span-row | loading | height | 28 |
 | loading-card | loading | border-radius | radius.md |
+
+### 5.12 Shared file (T14)
+
+`SharedFilePage({ name, badge, meta, onDownload?, state, children })` is the page behind a shared file's link (file sharing design `docs/superpowers/specs/2026-11-18-file-sharing-design.md` §6). It is public: no Shell, no sidebar, no status bar; the people who open it may have no account.
+
+- **Layout**: the whole window (`100dvh`) on the `panel-2` ground, the right panel's ground (§6.16.18), so a previewer looks exactly as it does in the panel. A **top bar** `layout.title-bar` high, padding 0 `space.4`, a `line-soft` bottom line, gap `space.2`: the type badge (§6.16.19), the file name (`body` 500 `ink`, one line, ellipsis; the page's `h1`), the meta line in `small` `muted` (`meta`, already localized: "张三 分享 · 2026-11-25 过期" / "Shared by 张三 · expires 2026-11-25"; one line, ellipsis), then on the right "下载" / "Download" (default button, `download` 14). Without `onDownload` there is no button. Below the bar the **body** fills the rest of the window, full width, and holds the file exactly as the right panel's body would (§6.16.22): the HTML document frame (§6.43), a built-in previewer, an extension previewer or the no-preview card; it scrolls inside itself, never the page.
+- **Loading** (`state: "loading"`): the bar keeps its frame; a name or meta the page does not know yet (an empty string) is a skeleton bar (§6.29); no Download yet; the body shows the panel's loading line ("正在加载预览…" / "Loading preview…", `muted`, centered); the page is `aria-busy` once.
+- **Phones** (below 640): the bar keeps one row; the name and the meta shrink (ellipsis) before the Download button does.
+- The invalid-link page ("This link is invalid or has expired") is the System status template (T11, `kind: "404"`), not this one.
+
+<!-- states: shared-file-page -->
+States: `loading`, `ready`, `ready-no-download`
+
+<!-- size-table: shared-file-page -->
+| Part | State | Property | Value |
+|---|---|---|---|
+| shared-file-page | ready | background-color | color.panel-2 |
+| shared-file-bar | ready | height | layout.title-bar |
+| shared-file-bar | ready | padding-left | space.4 |
+| shared-file-bar | ready | border-bottom-color | color.line-soft |
+| type-badge | ready | font-size | type.micro |
+| shared-file-name | ready | font-size | type.body |
+| shared-file-name | ready | color | color.ink |
+| shared-file-meta | ready | font-size | type.small |
+| shared-file-meta | ready | color | color.muted |
+| button | ready | height | control.default |
+| html-frame | ready | width | 960 |
+| shared-file-bar | ready-no-download | height | layout.title-bar |
+| preview-table | ready-no-download | font-size | type.small |
+| shared-file-bar | loading | height | layout.title-bar |
+| skeleton-text[data-size=body] | loading | height | type.body.line |
+| preview-loading | loading | color | color.muted |
 
 ---
 
@@ -1053,7 +1086,7 @@ Components shared by the conversation stream (modeled on the Claude Code VS Code
 - **InstructionList**: numbered steps a person follows outside the product (a plugin's setup guide, plugin setup guides spec `2026-11-08-plugin-setup-guides-design.md` §5), an `ol` with `space.2` between steps: each step's number in `faint` mono `small`, right-aligned in 2ch, `space.3` before the text in the prose font at `prose-small`. The text is plain: a backtick pair is inline code (the rendered Markdown's inline code, §6.16), nothing else is markup (no HTML, no links). Unlike StepList (§6.12) a step has no done / to-do state.
 - **GuideDocument**: a rendered setup guide (setup guides v2 spec `2026-11-09-setup-guides-v2-design.md` §7.2–§7.3), `GuideDocument({ blocks, renderCheck? })` with the route's blocks (`GuideBlock`: `markdown` / `code` / `check`, declared in the design package, structurally equal to the SDK's): prose is the rendered Markdown (§6.16), code a CodeBlock with its `title` and `copyable` (no language label when the language is empty), a check a CheckRow, all in document order, `space.3` apart. The page composes known pieces and never parses directives. `renderCheck` draws a check (the page's live row); without it a check is a `static` CheckRow (「保存后检查」 / "Checked after saving": no saved target yet, no request carries secrets typed into an unsaved form). It draws no box: it sits in the page's section card, where its code blocks take their borderless form (§1).
 - **CheckRow**: one setup check as a status row, `CheckRow({ label, state, onRecheck?, staticNote? })` with `state { status: ok | failing | unknown | running | not_run | static, reason?, fix?, checkedAt?, cooldownUntil? }`; a `group` named by the label, no box (§1). The head line (min height `control.dense`, gap `space.2`): the status icon (16; `ok` `circle-check` in `ok`, `failing` `circle-x` in `fail`, `unknown` `circle-alert` in `muted`, `not_run` and `static` `circle` in `faint`, `running` the `spinner` in `accent`, named 「检查中」 / "Checking"), the label (500, `ink`), the status word in `small` `muted` (通过 / 未通过 (`fail`) / 无法确定 / 未检查; none while running), the checked-at time 「检查于5分钟前」 / "Checked 5 minutes ago" (`small` `muted`, relative, from `useNow`) for a result, and at the right a dense ghost 重新检查 / Re-check button (`refresh` icon, named 「重新检查 <label>」) when `onRecheck` is given, disabled until `cooldownUntil` and absent while running and on a static row. Under it, as muted prose lines (`prose-small`): the reason for a result, the fix only when failing (both plain text, never Markdown), the static note (`staticNote`, default 「保存后检查」 / "Checked after saving"). `unknown` is never drawn as a failure the person must act on.
-- **EmbedFrame**: the **only** component in the UI that renders an iframe (`apps/web` must not write an iframe itself). `sandbox` is fixed to `allow-scripts allow-forms` (never containing `allow-same-origin`), `referrerpolicy="no-referrer"`, `title` is required; width fills, height comes from props (default 360), or with `fill` it takes the remaining height of the flex column it sits in (a full-height pane's body: a `file.preview` embed fills the file preview below its header, §6.16.18, as the built-in previews do, and scrolls inside itself; a filling frame is frameless by default, the pane being its box, §1); 1px `line` border, `panel` background. **Inside a box** (an inline card, a property section, a Card; §1, §6.16.16) the box is its frame: no border and no ground of its own (`framed` overrides). Only `message` events whose `event.source` is this iframe are passed to `onMessage` (the caller parses and validates the content), and the iframe is exposed through `frameRef` for `postMessage`.
+- **EmbedFrame**: with the HTML document frame (§6.43), the **only** component in the UI that renders an iframe (`apps/web` must not write an iframe itself). `sandbox` is fixed to `allow-scripts allow-forms` (never containing `allow-same-origin`), `referrerpolicy="no-referrer"`, `title` is required; width fills, height comes from props (default 360), or with `fill` it takes the remaining height of the flex column it sits in (a full-height pane's body: a `file.preview` embed fills the file preview below its header, §6.16.18, as the built-in previews do, and scrolls inside itself; a filling frame is frameless by default, the pane being its box, §1); 1px `line` border, `panel` background. **Inside a box** (an inline card, a property section, a Card; §1, §6.16.16) the box is its frame: no border and no ground of its own (`framed` overrides). Only `message` events whose `event.source` is this iframe are passed to `onMessage` (the caller parses and validates the content), and the iframe is exposed through `frameRef` for `postMessage`.
 - **ImageBlock**: an image in a plugin view; block-level, width not exceeding the container, scaled proportionally, 1px `line` border; `loading="lazy"`, `referrerpolicy="no-referrer"`. It takes only an address and alt; it renders only absolute http(s) addresses, and anything else (`javascript:`, `data:`, relative paths) renders nothing.
 - **AttachmentChip** (its looks are superseded by the attachment strip of §6.16.21; the behavior below stays): an uploaded file waiting to be sent in the input box. A line with a 1px `line` border and `panel` background: file name (single line with ellipsis, at most 24ch) + size (small `muted`, `B` / `KB` / `MB`) + a remove button on the right (an `x` icon button, `aria-label` "Remove <file name>"). Three states (`data-status`): `uploading` shows a 4px segmented progress bar under the name (`role="progressbar"`, `aria-valuenow` 0–100, completed segments accent, the rest `line-strong`, consistent with the Toast progress); `ready` has no progress bar; `error` has a `fail` border and small `fail` error text under the name (`role="alert"`), and can still be removed; when the caller supplies a retry, an extra `refresh` icon button appears to the left of the remove button ("Retry <file name>").
 - **FileDrop**: a drag-and-drop / paste area wrapping the input area. When content carrying files is dragged in (only `Files` is recognized; dragging text does not respond) an overlay covers the area: `accent-tint` background + 1px dashed `accent` border, with one centered line of hint text (passed in by the caller); dropping hands the files to `onFiles`. Pasting a clipboard containing files inside the area also hands them to `onFiles`; when the clipboard has no text, the default paste is prevented, while if it also has text (such as copied from a document) the text is pasted as usual; a paste without files is unaffected. The overlay is always dismissed on drop and dragend. When `disabled` neither responds. `dragging` can force the overlay to show (for the catalog page and screenshots).
@@ -2123,12 +2156,12 @@ States: `image`, `file`, `uploading`, `rejected`
 
 #### 6.16.22 File preview
 
-- The right panel showing a file (§6.16.18): header type badge, the name with the file switcher, "v<n> · <updated>" in `faint`, download, full screen, close. There is **no Share** (sharing belongs to Artifacts). The conversation's files are what the agent delivered and what people sent with messages; a sent file is marked "上传" / "Uploaded" in the switchers and the Files section.
-- The body is the previewer that handles the file. Built in: **image** (bitmaps on the `panel` ground, radius `md`, `space.4` margin, scaled to fit; never SVG); **text and source code** (mono `small` `ink`, wrapped, never executed); **Markdown** (§6.16.4, no raw HTML); **CSV / TSV** (a flush table: `small`, header cells `row.dense` `muted` 400, body cells `row.dense` with a `line-soft` top line, padding 0 `space.3`, no wrapping, numbers right-aligned; at most 500 rows, then "显示前 N 行 · 共 M 行" / "Showing the first N of M rows" in `small` `muted`). Spreadsheet previewers may show sheet tabs (`small`, gap `space.4`, the current tab `ink` with a 2px `accent` underline). Extension previewers (`file-preview@1`) come first when one accepts the file; the header lets the person switch when more than one applies.
+- The right panel showing a file (§6.16.18): header type badge, the name with the file switcher, "v<n> · <updated>" in `faint`, share, download, full screen, close. **Share** (`share` 16, "分享" / "Share"; file sharing design §5) is an icon button right before Download, shown only when the caller passes `onShare` (the conversation's owner, a file that is not removed); it opens the share dialog. A file with a live share carries a **shared marker** on that button: a `space.2` round dot in `ok` at its top right, ringed by the `panel-2` ground, and the button's name becomes "已分享" / "Shared" (the dialog behind it lists the file's shares). Never the accent (§2.3). The conversation's files are what the agent delivered and what people sent with messages; a sent file is marked "上传" / "Uploaded" in the switchers and the Files section.
+- The body is the previewer that handles the file. Built in: **HTML** (the HTML document frame, §6.43, wins over extension previewers; a Rendered / Source switch, Source being the text previewer); **image** (bitmaps on the `panel` ground, radius `md`, `space.4` margin, scaled to fit; never SVG); **text and source code** (mono `small` `ink`, wrapped, never executed); **Markdown** (§6.16.4, no raw HTML); **CSV / TSV** (a flush table: `small`, header cells `row.dense` `muted` 400, body cells `row.dense` with a `line-soft` top line, padding 0 `space.3`, no wrapping, numbers right-aligned; at most 500 rows, then "显示前 N 行 · 共 M 行" / "Showing the first N of M rows" in `small` `muted`). Spreadsheet previewers may show sheet tabs (`small`, gap `space.4`, the current tab `ink` with a 2px `accent` underline). Extension previewers (`file-preview@1`) come first when one accepts the file; the header lets the person switch when more than one applies.
 - **No preview**: a centered floating card (at most 400 wide): type badge, name over "<size> · 没有可用的预览" / "<size> · No preview available", and "下载" / "Download" (default, `download`). **Failed**: the load-failure line, then the same card as the fallback.
 
 <!-- states: file-preview -->
-States: `image`, `text`, `markdown`, `csv`, `none`, `failed`
+States: `image`, `text`, `markdown`, `csv`, `none`, `failed`, `unshared`, `shared`
 
 <!-- size-table: file-preview -->
 | Part | State | Property | Value |
@@ -2149,6 +2182,10 @@ States: `image`, `text`, `markdown`, `csv`, `none`, `failed`
 | no-preview | none | padding-left | space.3 |
 | load-failed-title | failed | color | color.fail |
 | no-preview | failed | background-color | color.raised |
+| icon-button[data-share=true] | unshared | width | control.default |
+| share-marker | shared | width | space.2 |
+| share-marker | shared | height | space.2 |
+| share-marker | shared | background-color | color.ok |
 
 #### 6.16.23 Run row
 
@@ -3371,6 +3408,43 @@ States: `cloud`, `local`, `suspended`, `offline`
 ### 6.42 KeycapCommand
 
 `KeycapCommand({ command, hint?, copyLabel? })` (auto mode design §4): **one inline row**, not a block — the hint (when there is one) in prose `small`, `muted`, then the command as keycaps, then the copy button beside them. Each word of `command` is its own `kbd`-styled key (1 px `line` border with a 2 px bottom edge, radius `sm`, `panel` ground, `small` mono `ink`) with `space.1` between them. The copy button is a dense ghost (copy 14), it copies the whole command, reads 已复制 / "Copied" for two seconds, and without a usable clipboard selects the keycaps and says to copy by hand. It is the only place the command appears on a page (`capybara-device mode auto|sandbox`), and its accessible name names the command (复制 <command> / "Copy <command>"). Not in the reference set: no state list or size table yet (like `Kbd`, §6.5).
+
+### 6.43 HtmlDocumentFrame
+
+`HtmlDocumentFrame({ src, title })` (file sharing design §4) shows an HTML file as a whole document: the kernel serves it (`/api/v1/html/<token>`) with a CSP that sandboxes it, and this frame is the second layer. With EmbedFrame (§6.9) it is the only component that renders an iframe; `apps/web` never writes one.
+
+- **Fixed attributes**: `sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox"` (`HTML_DOCUMENT_SANDBOX`; never `allow-same-origin`, `allow-top-navigation` or `allow-forms`, and the caller cannot widen it), `referrerpolicy="no-referrer"`, `title` required (the file name). Scripts run; links open in a new, unsandboxed tab; the document cannot reach the app.
+- **Look**: it fills its container (the right panel's body, the shared file page's body), no border, no radius, no padding. A document without its own background reads as a light page in either theme (what it is when opened alone): the frame's ground is the browser's light page color, and a document that declares a dark color scheme paints its own.
+- No loading or failure state of its own: the caller shows the panel's loading line until it has a token, and the document's own errors stay inside it.
+
+<!-- states: html-frame -->
+States: `ready`
+
+<!-- size-table: html-frame -->
+| Part | State | Property | Value |
+|---|---|---|---|
+| html-frame | ready | width | 560 |
+| html-frame | ready | height | 360 |
+| html-frame | ready | border-top-width | 0 |
+
+### 6.44 CopyField
+
+`CopyField({ label, value })` (file sharing design §5): a value people copy and may see again (a share link), unlike SecretReveal (§6.22), which is shown once. The label (600 `ink`), then one row: a read-only `Input` holding the value (selected on focus, mono like every input) and a default "复制" / "Copy" button (`copy` 14; "已复制" / "Copied" with `check` for 2 s after copying). There is no warning line. Without a usable clipboard (an insecure origin, a refused permission) the button selects the field and a `muted` `small` line with `circle-alert` 14 says to copy it by hand ("无法自动复制：已选中，请按 Ctrl+C（⌘C）复制。" / "Couldn't copy automatically: the text is selected, press Ctrl+C (⌘C) to copy."). Used in the share dialog for a new link and for each live share.
+
+<!-- states: copy-field -->
+States: `idle`, `copied`, `manual`
+
+<!-- size-table: copy-field -->
+| Part | State | Property | Value |
+|---|---|---|---|
+| copy-field | idle | row-gap | space.2 |
+| copy-field-label | idle | color | color.ink |
+| input | idle | height | control.default |
+| input | idle | border-radius | radius.sm |
+| button | idle | height | control.default |
+| button | copied | height | control.default |
+| copy-field-manual | manual | color | color.muted |
+| copy-field-manual | manual | font-size | type.small |
 
 ## 7. Copy and internationalization
 - All UI text goes through next-intl, in both Chinese and English. Text shown to the model (prompts, tool descriptions) is always English, and the prompt field in a form must say so.
