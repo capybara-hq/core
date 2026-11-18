@@ -209,7 +209,7 @@ describe("login", () => {
   });
 
   it("an organization without Full access gets the same restricted default", async () => {
-    tokenAnswers = [{ status: 200, body: { ...granted.body, autoMode: "off" } }];
+    tokenAnswers = [{ status: 200, body: { ...granted.body, fullAccess: "off" } }];
     expect(await run(["login", "--url", base])).toBe(0);
     expect(readPolicy(stateDir()).ownerCeiling).toEqual(RESTRICTED);
     expect(out).toContain(RESTRICTED_CEILING_LOGIN_LINE);
@@ -219,7 +219,7 @@ describe("login", () => {
 
   it("keeps an existing old auto policy (exact mapping) and says the org does not allow Full access", async () => {
     writeOldAutoPolicy(stateDir());
-    tokenAnswers = [{ status: 200, body: { ...granted.body, autoMode: "off" } }];
+    tokenAnswers = [{ status: 200, body: { ...granted.body, fullAccess: "off" } }];
     expect(await run(["login", "--url", base])).toBe(0);
     // an existing policy is the owner's choice: login never rewrites it; it reads exactly as Full
     expect(JSON.parse(readFileSync(policyPath(stateDir()), "utf8")).mode).toBe("auto");

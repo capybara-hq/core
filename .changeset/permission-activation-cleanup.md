@@ -14,3 +14,7 @@ of the inactive-provider text. Messages that named the removed `capybara-device 
 `capybara-device`: unused protocol 2 helpers (the sandbox-runtime config, the network violation
 parser, host file access) are removed. Design: the `KeycapCommand` example names
 `capybara-device ceiling set`.
+
+The device sign-in token response names its field `fullAccess` (was `autoMode`; same values
+`allowed` / `off`), and `capybara-device login` reads it to say that the org does not allow Full
+access. A kernel and a device program upgrade together.

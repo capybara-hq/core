@@ -240,7 +240,7 @@ export async function login(
         out(`Logged in. Device ${granted.deviceId}, working directory ${dir}`);
         if (ceiling.fullAccess) {
           out(FULL_CEILING_LOGIN_LINE);
-          if (granted.autoMode === "off") out(FULL_ACCESS_NOT_ALLOWED_LOGIN_LINE);
+          if (granted.fullAccess === "off") out(FULL_ACCESS_NOT_ALLOWED_LOGIN_LINE);
           // the risk text is shown once at login, and only when Full access runs as the owner on
           // this machine (outside Docker)
           else if (cmd.mode !== "docker") out(FULL_ACCESS_RISK_TEXT);

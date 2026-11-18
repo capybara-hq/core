@@ -130,10 +130,11 @@ export interface DeviceGrant extends Grant {
   /** `devices.local.maxFrameBytes`: the program never sends a larger frame (ruling R26). */
   maxFrameBytes: number;
   /**
-   * Whether the organization allows auto mode now: `off` turns a local device's default to sandbox
-   * mode and makes `login` say why (auto mode spec §4.1). Absent on older kernels counts as allowed.
+   * Whether the platform and the organization allow Full access now (`devices.fullAccess` and the
+   * org's `fullAccess`): `off` makes `login` say that the org does not allow Full access, even
+   * when the machine's owner ceiling does.
    */
-  autoMode: "allowed" | "off";
+  fullAccess: "allowed" | "off";
 }
 
 const codeInvalid = () =>
@@ -256,7 +257,7 @@ export class DeviceAuthService {
           connectUrl,
           reconnectGraceSeconds: local.reconnectGraceSeconds,
           maxFrameBytes: local.maxFrameBytes,
-          autoMode:
+          fullAccess:
             allowedDeviceMode(deployment.fullAccess, settings.fullAccess) === "auto"
               ? "allowed"
               : "off",
