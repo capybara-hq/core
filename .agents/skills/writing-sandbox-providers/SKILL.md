@@ -425,7 +425,12 @@ The kernel owns it; the extension implements only primitives. **Do not do schedu
   - **Delivery.** Each revocation writes `sandbox-operation-revoke-<operationId>` outbox jobs, which deliver `revokeOperation` until acknowledged.
     The holder also delivers the owed revokes of the instance inline before it runs anything (after a resume, or when it found crashed holders).
     That inline delivery is best effort, as the old `killAll` was: at most 100 per call, nothing without `revokeOperation`, and a failure only
-    warned. The owed jobs keep every revoke durable.
+    warned. The owed jobs keep every revoke durable. A revoked exec, read or write whose incarnation no
+    longer runs is acknowledged once that incarnation provably ended: its confirmed destruction is
+    recorded (`device_instance_destructions`), or the operation is past its admission deadline plus
+    `maxCommandSeconds` and a 10-minute margin (the in-sandbox time limit); otherwise it stays owed. A
+    revoked start is acknowledged only after a verified end: a `lost` task record (a launch revoked or
+    given up before its ref was known) is stopped by the late ref first.
   There is no single-holder path and no single "sandbox in use" marker (the `capk:sandbox-busy:<env>` key of earlier kernels is neither read nor written);
   the cap is always `sandbox.maxConcurrentCommands`.
 - **Kernel file writes per path**: `Write`, `Edit`, attachment sync (its marker) and `Skill` copies (the skill's marker) take a per-path

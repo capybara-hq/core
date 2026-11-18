@@ -464,6 +464,7 @@ import {
   type SandboxProvider,
   SandboxScopeDeniedError,
 } from "@capybara-hq/plugin-sdk";
+import { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
 import { KernelDb } from "../../src/infra/database/kernel-db.js";
 import {
   runOutsideTransaction,
@@ -704,6 +705,7 @@ it("revocation before launch acknowledgement keeps the effect cancelled and the 
     k.app.get(SandboxService),
     k.app.get(BackgroundTaskStore),
     k.app.get(BackgroundTaskStopper),
+    k.app.get(KernelConfigService),
   );
   await job.revoke(row.operation_id);
   expect(await verdict).toBeInstanceOf(SandboxScopeDeniedError);
@@ -868,6 +870,7 @@ it("a stale execution claim cannot dispatch and disconnected revocation remains 
     k.app.get(SandboxService),
     k.app.get(BackgroundTaskStore),
     k.app.get(BackgroundTaskStopper),
+    k.app.get(KernelConfigService),
   ).revoke(row.operation_id);
   const updated = await intents.read(row.operation_id);
   expect(updated.revoke_acknowledged).toBe(false);
@@ -1084,6 +1087,7 @@ it("expired payloads keep their consumed identity and cannot repeat an effect", 
     k.app.get(SandboxService),
     k.app.get(BackgroundTaskStore),
     k.app.get(BackgroundTaskStopper),
+    k.app.get(KernelConfigService),
   );
   await job.reconcile(row.operation_id);
   expect((await intents.read(row.operation_id)).result).toEqual(row.result);
@@ -1159,7 +1163,6 @@ it("sandbox egress changes preserve local Full while revoking cloud Full at its 
   });
   const facts = k.app.get(PermissionFacts),
     intents = k.app.get(SandboxOperationIntents);
-  const { KernelConfigService } = await import("../../src/infra/config/kernel-config.service.js");
   const { PermissionConfigPublication } = await import(
     "../../src/sandbox/permission-config-publication.js"
   );
@@ -1445,6 +1448,7 @@ it("native binary write/read above the old inline cap survives duplicate lookup"
     k.app.get(SandboxService),
     k.app.get(BackgroundTaskStore),
     k.app.get(BackgroundTaskStopper),
+    k.app.get(KernelConfigService),
   );
   for (const record of records) await job.reconcile(record.operation_id);
   expect(

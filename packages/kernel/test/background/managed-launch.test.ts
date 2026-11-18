@@ -511,6 +511,7 @@ const reconcileJob = () =>
     k.app.get(SandboxService),
     k.app.get(BackgroundTaskStore),
     k.app.get(BackgroundTaskStopper),
+    k.app.get(KernelConfigService),
   );
 
 /** Publishes an actual ceiling write at `level`, revoking what it selects. */
@@ -644,6 +645,37 @@ describe("managed background launch identity", () => {
     expect(i?.state).toBe("background-running");
     expect(i?.execution_id.startsWith("recovery-")).toBe(true);
   });
+
+  // final review m4: a cloud start is told the kernel's generation (it cannot know it), the first
+  // dispatch the held instance's and recovery the recorded one; a bound device is told none
+  it.each([
+    ["a cloud provider", false],
+    ["a bound device", true],
+  ] as const)(
+    "%s: the start's instanceGeneration on dispatch and on recovery",
+    async (_name, bound) => {
+      const f = await fixture();
+      if (bound)
+        k.app.get(SandboxProviders).register({
+          plugin: PROVIDER,
+          version: "test-1",
+          impl: f.provider.impl,
+          binder: { status: async () => "installed", bind: async () => undefined },
+        });
+      f.provider.hooks.afterEffect = async () => {
+        throw new Error("acknowledgement lost");
+      };
+      expect((await f.outcome(f.run({ command: "sleep 100" }))).ok).toBe(false);
+      f.provider.hooks.afterEffect = undefined;
+      const recorded = (await f.intent())?.instance_generation;
+      expect(recorded).toBe(String(GENERATION));
+      await reconcileJob().reconcile(f.operationId);
+      expect((await f.intent())?.state).toBe("background-running");
+      expect(f.provider.calls.map((c) => c.args.instanceGeneration)).toEqual(
+        bound ? [undefined, undefined] : [String(GENERATION), recorded],
+      );
+    },
+  );
 
   it("an unreachable instance keeps the uncertainty durable and defers recovery", async () => {
     const f = await fixture();

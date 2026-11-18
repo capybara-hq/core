@@ -21,7 +21,7 @@ import { createBus, createBusSubscriber } from "../../src/ctx/bus.js";
 import { kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import type { Account, AccountsService } from "../../src/identity/accounts.js";
-import type { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
+import { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
 import { KernelDb } from "../../src/infra/database/kernel-db.js";
 import { TransactionHost } from "../../src/infra/database/transaction-host.js";
 import { LockService } from "../../src/infra/lock/lock.service.js";
@@ -411,6 +411,7 @@ const reconcileJob = (k: TestKernel) =>
     k.app.get(SandboxService),
     k.app.get(BackgroundTaskStore),
     k.app.get(BackgroundTaskStopper),
+    k.app.get(KernelConfigService),
   );
 
 /** Revokes exactly `operationId` with the device-level writer, written on replica `k`. */

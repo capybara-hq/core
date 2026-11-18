@@ -225,6 +225,7 @@ describe("managed background tasks across two replicas", () => {
       b.app.get(SandboxService),
       b.app.get(BackgroundTaskStore),
       b.app.get(BackgroundTaskStopper),
+      b.app.get(KernelConfigService),
     ).reconcile(f.operationId);
     await recovery;
     expect(f.provider.calls.start).toBe(1);
