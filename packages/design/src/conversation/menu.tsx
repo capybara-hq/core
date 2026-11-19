@@ -424,6 +424,7 @@ export function ConvMenu({
       noteId={noteId}
       inline={inline === true}
       inlineSide={side}
+      size={size}
       sideOffset={sideOffset}
       triggerRef={triggerRef}
       listbox={listbox === true}
@@ -506,7 +507,9 @@ function AnchoredContent({
   listbox,
   onClose,
   onTabOut,
+  size,
 }: {
+  size: "narrow" | "default" | "wide";
   shared: Record<string, unknown>;
   entries: ConvMenuEntry[];
   noteId: string;
@@ -531,8 +534,11 @@ function AnchoredContent({
   const [side, setSide] = useState<"top" | "bottom">(inline ? inlineSide : "bottom");
   const filterable = itemCount(entries) > MENU_FILTER_THRESHOLD;
   const shown = filterable ? filterMenuEntries(entries, query) : entries;
-  const body = shown.filter((e) => e.kind !== "note");
-  const footer = entries.map((e, i) => [e, i] as const).filter(([e]) => e.kind === "note");
+  // notes and segments (the mode menu's effort) stay in view under the scrolling list
+  const body = shown.filter((e) => e.kind !== "note" && e.kind !== "segments");
+  const footer = entries
+    .map((e, i) => [e, i] as const)
+    .filter(([e]) => e.kind === "note" || e.kind === "segments");
   const matches = body.filter(
     (e): e is Extract<ConvMenuEntry, { kind: "item" }> => e.kind === "item",
   );
@@ -645,6 +651,7 @@ function AnchoredContent({
       className="cb-cmenu"
       data-cap-part="menu"
       data-anchored="true"
+      data-size={size === "default" ? undefined : size}
       {...(inline ? { "data-inline": "true" } : {})}
       side={side}
       avoidCollisions={!inline}

@@ -84,8 +84,8 @@ describe("ModeMenu", () => {
     const segments = within(effort).getAllByRole("menuitemradio");
     expect(segments.map((s) => s.textContent)).toEqual(["Low", "Medium", "High"]);
     expect(segments[2]?.getAttribute("aria-checked")).toBe("true");
-    // the effort sits under a hairline after the profiles
-    expect(menu.querySelector(".cb-cmenu-sep + .cb-cmenu-segments")).not.toBeNull();
+    // the effort sits under the scrolling profile list, always in view
+    expect(menu.querySelector('[data-part="menu-list"] + .cb-cmenu-segments')).not.toBeNull();
     expect(findNestedBoxes(document.body)).toEqual([]);
   });
 

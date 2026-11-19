@@ -144,13 +144,8 @@ export const MODE_MENU_FIXTURE = {
   label: "权限",
   hint: "⇧Tab 切换",
   selected: "approve-for-me",
+  /** The effort label; the efforts and the chosen one are the selected model's (`CONV_FIXTURE`). */
   effortLabel: "思考档位",
-  efforts: [
-    { id: "low", label: "低" },
-    { id: "medium", label: "中" },
-    { id: "high", label: "高" },
-  ],
-  effort: "high",
   locked: "跟随主对话的权限",
 } as const;
 

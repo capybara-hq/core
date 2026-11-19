@@ -6680,3 +6680,7 @@ span.r-scal-daynum {
   background: var(--cb-selected);
   color: var(--cb-ink);
 }
+.r-menu-effort {
+  margin-top: var(--cb-space-1);
+  border-top: 1px solid var(--cb-line-soft);
+}

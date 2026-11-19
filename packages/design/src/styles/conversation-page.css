@@ -337,6 +337,20 @@ span.cb-title-btn {
   flex: none;
   color: var(--cb-faint);
 }
+/* The mode menu (§6.16.3a): wider rows, so a profile's sentence takes one or two lines, and the
+ * whole height the room allows; the effort stays under the list, its own hairline above it. */
+.cb-cmenu[data-anchored="true"][data-size="wide"] {
+  max-width: min(400px, calc(100vw - 16px));
+  max-height: var(--radix-dropdown-menu-content-available-height, 520px);
+}
+.cb-cmenu[data-anchored="true"][data-size="wide"][data-inline="true"] {
+  max-height: none;
+}
+.cb-cmenu-segments {
+  flex: none;
+  margin-top: var(--cb-space-1);
+  border-top: 1px solid var(--cb-line-soft);
+}
 /* Segments (the mode menu's effort, §6.16.3a): the label, then one row of equal segments on the
  * `bg` ground inside a 1px `line` frame; the checked one on `selected` with `ink`. */
 .cb-cmenu-segment-row {

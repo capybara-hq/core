@@ -500,7 +500,7 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
   /**
    * The mode menu (§6.16.3a): `closed` is the composer row with the mode button; `open`,
    * `no-effort` and `locked` hang the menu from it (end-aligned): the head with the Shift+Tab hint,
-   * the described profile rows, the action, then the effort segments under a hairline.
+   * the described profile rows, the action, then the effort segments under their own hairline.
    */
   function modeMenu(o) {
     const M = F.MODE_MENU_FIXTURE;
@@ -516,12 +516,12 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
       })
       .join("");
     const note = locked ? `<div class="r-menu-note" data-part="menu-note">${esc(M.locked)}</div>` : "";
-    const action = `<div class="r-menu-sep"></div><div class="r-menu-item" data-part="menu-item" role="menuitem">${icon(PM.action.icon, 14)}<span>${esc(PM.action.label)}</span></div>`;
+    const action = locked ? "" : `<div class="r-menu-sep"></div><div class="r-menu-item" data-part="menu-item" role="menuitem">${icon(PM.action.icon, 14)}<span>${esc(PM.action.label)}</span></div>`;
     const effort = o.state === "no-effort"
       ? ""
-      : `<div class="r-menu-sep"></div><div class="r-menu-label" data-part="menu-label">${esc(M.effortLabel)}</div><div class="r-menu-segments" data-part="menu-segments" role="group" aria-label="${esc(M.effortLabel)}">${M.efforts.map((e) => `<div class="r-menu-segment" data-part="menu-segment" role="menuitemradio" aria-checked="${e.id === M.effort}">${esc(e.label)}</div>`).join("")}</div>`;
+      : `<div class="r-menu-label r-menu-effort" data-part="menu-label">${esc(M.effortLabel)}</div><div class="r-menu-segments" data-part="menu-segments" role="group" aria-label="${esc(M.effortLabel)}">${C.models[0].models[0].efforts.map((e) => `<div class="r-menu-segment" data-part="menu-segment" role="menuitemradio" aria-checked="${e === C.selected.effort}">${esc(C.effortLabels[e])}</div>`).join("")}</div>`;
     const bar = composer({ state: o.state === "no-effort" ? "no-effort" : "idle", mode: locked ? "locked" : "open" });
-    return `<div class="r-menu-stage" data-tall>${bar}<div class="r-menu r-anchored-menu r-anchored-end" data-part="menu" role="menu">${head}${rows}${note}${action}${effort}</div></div>`;
+    return `<div class="r-menu-stage" data-tall>${bar}<div class="r-menu r-anchored-menu r-anchored-end" data-part="menu" role="menu">${head}${rows}${action}${note}${effort}</div></div>`;
   }
 
   /**

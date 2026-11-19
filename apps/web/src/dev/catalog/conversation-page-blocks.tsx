@@ -781,14 +781,20 @@ function modeProps(state: "closed" | "open" | "no-effort" | "locked"): ModeMenuP
       checked: i.id === M.selected,
     })),
     onPickMode: noop,
-    action: { ...PERMISSION_FIXTURE.action, onSelect: noop },
-    ...(state === "locked" ? { locked: M.locked } : {}),
+    // a locked profile offers no action (the page passes none)
+    ...(state === "locked"
+      ? { locked: M.locked }
+      : { action: { ...PERMISSION_FIXTURE.action, onSelect: noop } }),
     ...(state === "no-effort"
       ? {}
       : {
           effort: {
             label: M.effortLabel,
-            items: M.efforts.map((e) => ({ ...e, checked: e.id === M.effort })),
+            items: (C.models[0]?.models[0]?.efforts ?? []).map((e) => ({
+              id: e,
+              label: C.effortLabels[e] ?? e,
+              checked: e === C.selected.effort,
+            })),
             onPick: noop,
           },
         }),

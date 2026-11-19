@@ -88,15 +88,12 @@ export function modeMenuEntries(p: ModeMenuProps): ConvMenuEntry[] {
       },
     );
   if (p.effort !== undefined)
-    entries.push(
-      { kind: "separator" },
-      {
-        kind: "segments",
-        label: p.effort.label,
-        items: p.effort.items,
-        onSelect: p.effort.onPick,
-      },
-    );
+    entries.push({
+      kind: "segments",
+      label: p.effort.label,
+      items: p.effort.items,
+      onSelect: p.effort.onPick,
+    });
   return entries;
 }
 
@@ -119,6 +116,7 @@ export function ModeMenu(p: ModeMenuProps): JSX.Element {
       anchored
       side="top"
       align="end"
+      size="wide"
       open={open}
       onOpenChange={setOpen}
       trigger={
