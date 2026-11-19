@@ -111,10 +111,10 @@ export type SandboxNetworkScope =
   | { readonly kind: "allowlist"; readonly hosts: readonly string[] }
   /**
    * The public internet, decided on the resolved address against `AddressClass`
-   * (`network-classes.ts`): every class in `OPEN_PUBLIC_DENIED_CLASSES` stays closed. W0 stub:
-   * the parser does not accept it yet.
+   * (`network-classes.ts`): every class in `OPEN_PUBLIC_DENIED_CLASSES` stays closed.
    */
   | { readonly kind: "open-public" }
+  /** Only with `filesystem: { kind: "device" }`: that pair is the escalated (outside) call. */
   | { readonly kind: "environment" };
 
 /** An operation locator for idempotent admission and revocation, never a credential. */
@@ -416,12 +416,12 @@ function fileScope(value: unknown): SandboxFileScope {
 
 function networkScope(value: unknown): SandboxNetworkScope {
   const v = record(value, ["kind", "hosts"], "network");
-  if (v.kind === "none" || v.kind === "environment") {
+  if (v.kind === "none" || v.kind === "open-public" || v.kind === "environment") {
     record(value, ["kind"], "network");
     return Object.freeze({ kind: v.kind });
   }
   if (v.kind !== "allowlist")
-    return invalid("network.kind", "expected none, allowlist or environment");
+    return invalid("network.kind", "expected none, allowlist, open-public or environment");
   return Object.freeze({
     kind: "allowlist",
     hosts: strings(v.hosts, 100, validateAllowHost, "network.hosts"),
@@ -456,6 +456,7 @@ export function parseSandboxOperationRef(value: unknown): SandboxOperationRef {
  * IDs and ceiling revisions are bounded to 128 characters; roots to 64 paths of at most 4096 characters;
  * hosts to 100 entries passing validateAllowHost. Empty grants stay empty, including deny-all.
  * Performs no I/O, authority lookup or deadline refresh. Unknown fields are rejected at every level.
+ * The `environment` network is accepted only together with the `device` filesystem.
  */
 export function parseSandboxOperationScope(value: unknown): SandboxOperationScope {
   const v = record(
@@ -477,6 +478,14 @@ export function parseSandboxOperationScope(value: unknown): SandboxOperationScop
   );
   if (!isPermissionProfile(v.profile))
     return invalid("profile", "expected request-approval, approve-for-me or full-access");
+  const filesystem = fileScope(v.filesystem);
+  const network = networkScope(v.network);
+  // The environment network is the escalated call's half: it never pairs with a sandboxed filesystem.
+  if (network.kind === "environment" && filesystem.kind !== "device")
+    return invalid(
+      "network.kind: environment requires the device filesystem",
+      "a scoped filesystem takes none, allowlist or open-public",
+    );
   return Object.freeze({
     ...operationRef(v),
     deviceId: id(v.deviceId, "deviceId"),
@@ -486,8 +495,8 @@ export function parseSandboxOperationScope(value: unknown): SandboxOperationScop
     profile: v.profile,
     actor: actor(v.actor),
     tag: tag(v.tag),
-    filesystem: fileScope(v.filesystem),
-    network: networkScope(v.network),
+    filesystem,
+    network,
   });
 }
 

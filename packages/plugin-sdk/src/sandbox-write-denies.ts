@@ -6,7 +6,8 @@
  *
  * 1. {@link SANDBOX_MANDATORY_WRITE_DENIES}: component sequences denied wherever they appear (the
  *    entry and everything beneath it): shell startup files, git's global files, direnv and npm
- *    configuration, editor and agent configuration.
+ *    configuration, editor and agent configuration, and the OS persistence directories (launchd,
+ *    systemd user units, autostart, the crontab spools). Entries are written already folded.
  * 2. Inside a `.git` directory (the first `.git` component of a path) only git's ordinary
  *    internals are writable, an allowlist ({@link SANDBOX_GIT_ALLOWED_DIRECTORIES},
  *    {@link SANDBOX_GIT_ALLOWED_FILES}, `info/exclude`). Everything else there is denied:
@@ -90,6 +91,16 @@ export const SANDBOX_MANDATORY_WRITE_DENIES: readonly (readonly string[])[] = Ob
     ["simple-git-hooks.cjs"],
     // the conventional core.hooksPath directory a repository's existing config may name
     [".githooks"],
+    // persistence vectors the OS runs later (approval-only profiles design, "Fixed denies"):
+    // launchd agents and daemons, systemd user units, XDG autostart, and the crontab spools of
+    // macOS (`/private/var/at/tabs`, also reached as `/usr/lib/cron/tabs`, a link to it) and Linux
+    // (`/var/spool/cron` with its `crontabs` or `tabs` layouts). Entries are written folded.
+    ["library", "launchagents"],
+    ["library", "launchdaemons"],
+    [".config", "systemd", "user"],
+    [".config", "autostart"],
+    ["at", "tabs"],
+    ["spool", "cron"],
   ].map((entry) => Object.freeze(entry)),
 );
 

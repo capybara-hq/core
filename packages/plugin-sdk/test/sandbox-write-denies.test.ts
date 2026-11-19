@@ -5,9 +5,60 @@ import { NATIVE_FILES_SOURCE } from "../src/sandbox-native-runtime-source.js";
 import {
   isSandboxMoveDenied,
   isSandboxWriteDenied,
+  SANDBOX_MANDATORY_WRITE_DENIES,
   SANDBOX_WRITE_POLICY_PYTHON,
   sandboxFoldName,
 } from "../src/sandbox-write-denies.js";
+
+/**
+ * The persistence vectors of the approval-only profiles design ("Fixed denies"): launchd agents and
+ * daemons, systemd user units, XDG autostart and the crontab spool, in every spelling a consumer
+ * may see (APFS case folding, full Unicode case folding, the `/private` and Data-volume forms of
+ * macOS, the Linux spool layouts).
+ */
+const PERSISTENCE_DENIED = [
+  "/Users/u/Library/LaunchAgents",
+  "/Users/u/Library/LaunchAgents/com.evil.plist",
+  "/users/u/library/launchagents/com.evil.plist",
+  "/Users/u/LIBRARY/LAUNCHAGENTS/com.evil.plist",
+  "/Users/u/Library/LaunchAgentſ/com.evil.plist",
+  "/Users/u/Ｌibrary/LaunchAgents/com.evil.plist",
+  "/System/Volumes/Data/Users/u/Library/LaunchAgents/com.evil.plist",
+  "/private/var/root/Library/LaunchAgents/x.plist",
+  "/Library/LaunchAgents/com.evil.plist",
+  "/Library/LaunchDaemons",
+  "/Library/LaunchDaemons/com.evil.plist",
+  "/Users/u/Library/LaunchDaemons/com.evil.plist",
+  "/library/launchdaemons/com.evil.plist",
+  "/home/u/.config/systemd/user",
+  "/home/u/.config/systemd/user/evil.service",
+  "/home/u/.config/systemd/user/default.target.wants/evil.service",
+  "/home/u/.CONFIG/Systemd/USER/evil.service",
+  "/home/u/.config/autostart",
+  "/home/u/.config/autostart/evil.desktop",
+  "/home/u/.config/AutoStart/evil.desktop",
+  "/private/var/at/tabs/u",
+  "/var/at/tabs/u",
+  "/private/var/at/tabs",
+  "/PRIVATE/VAR/AT/TABS/u",
+  "/var/spool/cron/crontabs/u",
+  "/var/spool/cron/u",
+  "/var/spool/cron/tabs/u",
+  "/var/spool/cron",
+  "/VAR/SPOOL/CRON/crontabs/u",
+];
+const PERSISTENCE_ALLOWED = [
+  "/Users/u/Library/Caches/x",
+  "/Users/u/Library",
+  "/Users/u/LaunchAgents/x.plist",
+  "/home/u/.config/systemd",
+  "/home/u/.config/systemd/system.conf",
+  "/home/u/.config/autostart-scripts.txt",
+  "/var/spool/mail/u",
+  "/private/var/at/jobs/x",
+  "/w/src/cron/job.ts",
+  "/w/tabs/at.ts",
+];
 
 const DENIED = [
   "/w/.git/config",
@@ -60,6 +111,7 @@ const DENIED = [
   "/w/.git/index.stash.",
   "/w/.baſhrc",
   "/w/.ﬁx/../.bashrc",
+  ...PERSISTENCE_DENIED,
 ];
 const ALLOWED = [
   "/w/src/a.ts",
@@ -89,6 +141,7 @@ const ALLOWED = [
   "/w/.git/index.stash.12345.lock",
   "/w/.git/packed-refs.new",
   "/w/.git/MERGE_AUTOSTASH",
+  ...PERSISTENCE_ALLOWED,
 ];
 /** Names whose folding differs between toLowerCase and full case folding (and NFKC). */
 const FOLDS = ["Straße", "ſ", "\u212A", "ΣΑΣ", "ς", "ǰ", "ŉ", "ᏸ", "Ꭰ", "ﬃ", "ＡＢＣ", "İ"];
@@ -101,12 +154,27 @@ const MOVES: [string, string, boolean, boolean][] = [
   ["/w/file", "/w/sub/.git", false, true],
   ["/w/a", "/w/b", true, false],
   ["/w/.claude/x", "/w/y", false, true],
+  // a persistence directory is not moved away, edited and moved back
+  ["/Users/u/Library", "/Users/u/L2", true, true],
+  ["/Users/u/L2", "/Users/u/Library", true, true],
+  ["/home/u/.config/systemd", "/home/u/sd", true, true],
+  ["/var/spool", "/var/sp2", true, true],
+  ["/var/at", "/var/at2", true, true],
+  // ordinary directory names stay movable
+  ["/w/var/cache/x", "/w/x", false, false],
+  ["/w/usr/lib/x", "/w/x", false, false],
+  ["/w/src/cron/job.ts", "/w/job.ts", false, false],
 ];
 
 describe("restricted write policy", () => {
   it("denies git internals beyond the allowlist, rc and editor files, bare lookalikes", () => {
     for (const path of DENIED) expect(isSandboxWriteDenied(path), path).toBe(true);
     for (const path of ALLOWED) expect(isSandboxWriteDenied(path), path).toBe(false);
+  });
+
+  it("writes every mandatory entry already folded (the TypeScript side compares folded names)", () => {
+    for (const entry of SANDBOX_MANDATORY_WRITE_DENIES)
+      for (const name of entry) expect(sandboxFoldName(name), name).toBe(name);
   });
 
   it("refuses moves out of protected names and directories into them", () => {

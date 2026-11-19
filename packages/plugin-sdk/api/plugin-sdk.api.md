@@ -9,7 +9,21 @@ import { z } from 'zod';
 import type { ZodTypeAny } from 'zod';
 
 // @public
+export const ADDRESS_CLASS_RANGES: readonly AddressClassRange[];
+
+// @public
 export type AddressClass = "public" | "private" | "cgnat" | "ula" | "link-local" | "metadata" | "loopback" | "multicast" | "broadcast" | "unspecified" | "nat64" | "reserved";
+
+// @public
+export type AddressClassRange = {
+    readonly family: "ipv4" | "ipv6";
+    readonly cidr: string;
+    readonly class: AddressClass;
+} | {
+    readonly family: "ipv6";
+    readonly cidr: string;
+    readonly embeddedIpv4At: number;
+};
 
 // @public
 export const AGENT_TEMPLATE_FIELDS: readonly AgentTemplateField[];
@@ -2803,7 +2817,13 @@ export function parseOperationResult(op: DeviceOperation, result: unknown, reque
 export function parseOpResult<Op extends DeviceOp>(op: Op, result: unknown): DeviceOpResults[Op];
 
 // @public
+export function parseOwnerCeilingNarrowingV3(value: unknown): DeviceOwnerCeilingNarrowingV3;
+
+// @public
 export function parseOwnerCeilingReport(value: unknown): DeviceOwnerCeiling;
+
+// @public
+export function parseOwnerCeilingReportV3(value: unknown): DeviceOwnerCeilingV3;
 
 // @public
 export function parsePluginManifest(json: unknown): PluginManifest | {
@@ -2821,6 +2841,9 @@ export function parseSandboxOperationRef(value: unknown): SandboxOperationRef;
 
 // @public
 export function parseSandboxOperationScope(value: unknown): SandboxOperationScope;
+
+// @public
+export function parseSandboxPermissionSupportV2(value: unknown): SandboxPermissionSupportV2;
 
 // @public
 export function parseSandboxPreparationScope(value: unknown): SandboxPreparationScope;
@@ -3341,12 +3364,13 @@ export type SandboxNetworkScope = {
 }
 /**
 * The public internet, decided on the resolved address against `AddressClass`
-* (`network-classes.ts`): every class in `OPEN_PUBLIC_DENIED_CLASSES` stays closed. W0 stub:
-* the parser does not accept it yet.
+* (`network-classes.ts`): every class in `OPEN_PUBLIC_DENIED_CLASSES` stays closed.
 */
 | {
     readonly kind: "open-public";
-} | {
+}
+/** Only with `filesystem: { kind: "device" }`: that pair is the escalated (outside) call. */
+| {
     readonly kind: "environment";
 };
 
