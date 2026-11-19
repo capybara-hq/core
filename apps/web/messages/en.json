@@ -1624,23 +1624,18 @@
         "fullAccess": "Full access"
       },
       "description": {
-        "requestApproval": "Works directly in the project and asks you before going beyond it.",
-        "approveForMe": "Works directly in the project and hands extra access to automatic review.",
-        "fullAccess": "Uses the full access already authorized on this device, without asking each time."
+        "requestApproval": "Works freely inside the sandbox; asks you before going beyond it or running sensitive commands.",
+        "approveForMe": "Same sandbox; a review model decides requests to go beyond it and asks you when unsure.",
+        "fullAccess": "Same sandbox; approves whatever this device allows, without asking."
       },
       "reason": {
         "noDevice": "Choose a device first",
         "checking": "Checking this device…",
         "checkFailed": "Couldn't check this device",
-        "ceiling": "Not allowed on this device",
-        "unsupported": "Not supported on this device",
-        "restrictedUnsupported": "Can't keep work inside the project"
+        "unsupported": "Not supported on this device"
       },
       "note": {
-        "unprobed": "Checked when this device starts.",
-        "review": "If a review model is unavailable or uncertain, you will be asked.",
-        "new": "The choice applies from this conversation's first operation.",
-        "existing": "Changes apply to new operations. Work already started keeps its starting permissions."
+        "unprobed": "Checked when this device starts."
       },
       "configureReview": "Set up the review model",
       "locked": {
@@ -1649,9 +1644,9 @@
       },
       "full": {
         "title": "Use Full access on {device}?",
-        "body": "Operations use the access already authorized on this device, and nothing asks you before each step.",
-        "bodyProject": "Operations use the access already authorized on this device, not only the project {project}, and nothing asks you before each step.",
-        "limits": "This is not root access: sudo may still ask for a password, and platform and organization denials still apply.",
+        "body": "Commands still run in the sandbox; the agent's requests to go beyond it{outside} are approved automatically and recorded.",
+        "outside": " (including running commands outside the sandbox)",
+        "limits": "Protected paths and platform and organization denials still apply.",
         "confirm": "Use Full access",
         "cancel": "Cancel"
       },
@@ -1660,7 +1655,8 @@
       "refresh": "Refresh",
       "changed": "Permissions changed. Changes apply to new operations. Work already started keeps its starting permissions.",
       "conflict": "The permissions or their scope changed meanwhile. Check the current choice and choose again.",
-      "unknownOutcome": "No answer arrived, so the change may or may not have been saved. The value shown is the last confirmed one."
+      "unknownOutcome": "No answer arrived, so the change may or may not have been saved. The value shown is the last confirmed one.",
+      "modeHint": "⇧Tab to switch"
     },
     "firstSend": {
       "unconfirmed": "Your earlier message got no answer, so it may already have started a conversation.",

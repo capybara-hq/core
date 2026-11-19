@@ -89,8 +89,8 @@ import NotFound from "../../not-found";
  * §10.2); a save that changes it marks every cached client set stale. The device sandbox:
  * running outside the sandbox (`devicesOutsideSandbox`) and the device network's default and
  * ceiling (`devicesNetwork`), each read with where it comes from; a value set in the startup config
- * is shown read-only with its source. 按组织的限额在「组织」页；
- * 组织自己的设置仍在 `/settings/*`。有改动时出现 ActionRow，只提交改过的项。
+ * is shown read-only with its source. Per-org limits live on the orgs page; an org's own settings
+ * stay under `/settings/*`. The ActionRow shows once something changed and saves only those.
  * From the query cache (the layout prefetched it on a first load); a save writes the answered
  * settings into the cache.
  */

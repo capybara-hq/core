@@ -409,8 +409,12 @@ describe("the conversation page (ConversationPage)", () => {
     // an ongoing conversation's menu says the pick applies from the next message
     expect(await screen.findByText(en.chat.nextMessage)).toBeTruthy();
     await user.click(await screen.findByRole("menuitemradio", { name: /Fake 2/ }));
-    await user.click(await screen.findByRole("button", { name: `${en.chat.pickEffort}: Low` }));
-    await user.click(await screen.findByRole("menuitemradio", { name: /High/ }));
+    // the effort lives in the mode menu (its button names it); picking keeps the menu open
+    await user.click(
+      await screen.findByRole("button", { name: new RegExp(`: ${en.chat.pickEffort} Low$`) }),
+    );
+    await user.click(await screen.findByRole("menuitemradio", { name: "High" }));
+    await user.keyboard("{Escape}");
     await user.type(input(), "later{Enter}");
     await vi.waitFor(() => expect(posts(calls, `${BASE}/messages`)).toHaveLength(1));
     expect(bodyOf(posts(calls, `${BASE}/messages`)[0])).toMatchObject({
@@ -907,14 +911,18 @@ describe("the conversation page (ConversationPage)", () => {
     await renderChat();
     await screen.findByText("hi");
     const user = userEvent.setup();
-    // fake-1 declares no effort: no effort picker
+    // fake-1 declares no effort: the model chip names no effort, the mode menu has none
     const model = await screen.findByRole("button", { name: `${en.chat.pickModel}: Fake 1` });
-    expect(screen.queryByRole("button", { name: new RegExp(`^${en.chat.pickEffort}`) })).toBeNull();
+    expect(screen.queryByRole("button", { name: new RegExp(`${en.chat.pickEffort}`) })).toBeNull();
     await user.click(model);
     await user.click(await screen.findByRole("menuitemradio", { name: /Fake 2/ }));
-    const effort = await screen.findByRole("button", { name: `${en.chat.pickEffort}: Low` });
-    await user.click(effort);
-    await user.click(await screen.findByRole("menuitemradio", { name: /High/ }));
+    // fake-2 does: the model · effort chip, and the effort segments in the mode menu
+    await screen.findByRole("button", { name: `${en.chat.pickModel}: Fake 2 · Low` });
+    await user.click(
+      await screen.findByRole("button", { name: new RegExp(`: ${en.chat.pickEffort} Low$`) }),
+    );
+    await user.click(await screen.findByRole("menuitemradio", { name: "High" }));
+    await user.keyboard("{Escape}");
     await user.type(input(), "one{Enter}");
     await screen.findByText("one");
     await user.type(input(), "two{Enter}");

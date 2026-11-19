@@ -29,6 +29,7 @@ import {
   Icon,
   IconButton,
   InlineCard,
+  type ModeMenuProps,
   PanelTabs,
   type PickerProps,
   PropertiesPanel,
@@ -65,6 +66,7 @@ import {
   type FixtureFile,
   type FixtureSubagent,
   LONG_MODELS_FIXTURE,
+  MODE_MENU_FIXTURE,
   NEW_CONVERSATION_FIXTURE,
   PANEL_FIXTURE,
   PERMISSION_FIXTURE,
@@ -765,6 +767,56 @@ function pickerMenuBlocks(): ReactNode {
   );
 }
 
+/** The mode menu's props (§6.16.3a) from the fixtures: open in place unless `closed`. */
+function modeProps(state: "closed" | "open" | "no-effort" | "locked"): ModeMenuProps {
+  const M = MODE_MENU_FIXTURE;
+  return {
+    label: M.label,
+    hint: M.hint,
+    modes: PERMISSION_FIXTURE.items.map((i) => ({
+      id: i.id,
+      label: i.label,
+      icon: i.icon,
+      description: i.description,
+      checked: i.id === M.selected,
+    })),
+    onPickMode: noop,
+    action: { ...PERMISSION_FIXTURE.action, onSelect: noop },
+    ...(state === "locked" ? { locked: M.locked } : {}),
+    ...(state === "no-effort"
+      ? {}
+      : {
+          effort: {
+            label: M.effortLabel,
+            items: M.efforts.map((e) => ({ ...e, checked: e.id === M.effort })),
+            onPick: noop,
+          },
+        }),
+    ...(state === "closed" ? {} : { referenceOpen: true }),
+  };
+}
+
+function modeMenuBlocks(): ReactNode {
+  return (
+    <>
+      {(["closed", "open", "no-effort", "locked"] as const).map((m) => {
+        // an ongoing conversation's row: the device, the model · effort chip, the mode button
+        const base = composerProps(m === "no-effort" ? "no-effort" : "idle");
+        const device = pickers("device").device;
+        return (
+          <Block key={m} id={`mode-menu-${m}`} {...(m === "closed" ? {} : { offsetTop: 380 })}>
+            <ComposerBox
+              {...base}
+              pickers={{ ...base.pickers, ...(device ? { device } : {}) }}
+              mode={modeProps(m)}
+            />
+          </Block>
+        );
+      })}
+    </>
+  );
+}
+
 // ── Inline card ─────────────────────────────────────────────────────────────
 
 const tasks = P.tasks.items.map((t) => ({ text: t.text, state: t.state }));
@@ -1403,6 +1455,7 @@ export const CONVERSATION_PAGE_BLOCKS = {
   composer: composerBlocks,
   "command-palette": commandPaletteBlocks,
   "picker-menu": pickerMenuBlocks,
+  "mode-menu": modeMenuBlocks,
   "quick-actions": quickActionsBlocks,
   "agents-chip": agentsChipBlocks,
   "inline-card": inlineCardBlocks,

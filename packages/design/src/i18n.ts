@@ -384,21 +384,16 @@ const zh = {
   "hitl.network.bodyPlain": "这条命令被这台设备的网络规则拦下了。",
   "hitl.network.hosts": "域名",
   "hitl.network.once": "这次允许",
-  "hitl.network.always": "这台设备一直允许",
   "hitl.network.deny": "拒绝",
   "hitl.network.hintOnce": "到智能体这次回复结束为止有效",
   // biome-ignore format: the design i18n check reads one "key": "text" line per entry
-  "hitl.network.hintAlways": "写入这台设备的本地策略，之后的命令都可以访问；可在设备页或用 `capybara-device policy` 撤销",
   // biome-ignore format: the design i18n check reads one "key": "text" line per entry
-  "hitl.network.remoteOff": "这台设备不接受远程修改；要一直允许，请在设备上运行 `capybara-device policy add allowedDomains {host}`",
+  "hitl.network.onMachine": "要让这台设备一直允许，请在设备上运行 `capybara-device policy add allowedDomains {host}`",
   "hitl.network.allowedOnce": "已允许（这次）",
-  "hitl.network.allowedAlways": "已允许（这台设备）",
   "hitl.network.denied": "已拒绝",
   "hitl.network.expired": "已过期",
   "hitl.network.cancelled": "已取消",
   "hitl.network.skipped": "已跳过",
-  "hitl.network.fallbackOffline": "设备离线，已按这次允许",
-  "hitl.network.fallbackRefused": "设备不接受远程修改，已按这次允许",
   "hitl.network.org": "`{host}` 不在组织的网络白名单里，只有组织管理员能添加。",
   "hitl.network.address": "`{host}`：这个地址指向内网或本机，智能体的命令不能访问。",
   "hitl.command.title": "智能体想运行这条命令，允许吗？",
@@ -980,22 +975,15 @@ const en: Record<DesignKey, string> = {
   "hitl.network.bodyPlain": "This command was blocked by this device's network rules.",
   "hitl.network.hosts": "Domains",
   "hitl.network.once": "Allow this time",
-  "hitl.network.always": "Always allow on this device",
   "hitl.network.deny": "Deny",
   "hitl.network.hintOnce": "Until the agent finishes this reply",
-  "hitl.network.hintAlways":
-    "Saved in this device's local policy for all later commands; undo on the device page or with `capybara-device policy`",
-  "hitl.network.remoteOff":
-    "This device does not accept remote changes; to always allow, run `capybara-device policy add allowedDomains {host}` on the device",
+  "hitl.network.onMachine":
+    "To always allow it on this device, run `capybara-device policy add allowedDomains {host}` on the device",
   "hitl.network.allowedOnce": "Allowed (this time)",
-  "hitl.network.allowedAlways": "Allowed (this device)",
   "hitl.network.denied": "Denied",
   "hitl.network.expired": "Expired",
   "hitl.network.cancelled": "Cancelled",
   "hitl.network.skipped": "Skipped",
-  "hitl.network.fallbackOffline": "The device is offline; allowed this time instead",
-  "hitl.network.fallbackRefused":
-    "The device does not accept remote changes; allowed this time instead",
   "hitl.network.org":
     "`{host}` is not in the organization's network allowlist; only an org admin can add it.",
   "hitl.network.address":

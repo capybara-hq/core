@@ -652,7 +652,7 @@ function networkApprovalBlocks(): ReactNode {
         tool="Bash"
         toolKey="Bash"
         input={{}}
-        scopes={["once", "always"]}
+        scopes={["once"]}
         network={one}
         state={{ kind: "decided", ...state }}
       />
@@ -665,7 +665,7 @@ function networkApprovalBlocks(): ReactNode {
           tool="Bash"
           toolKey="Bash"
           input={{}}
-          scopes={["once", "always"]}
+          scopes={["once"]}
           network={one}
           state={{ kind: "pending" }}
           onApprove={noop}
@@ -677,7 +677,7 @@ function networkApprovalBlocks(): ReactNode {
           tool="Bash"
           toolKey="Bash"
           input={{}}
-          scopes={["once", "always"]}
+          scopes={["once"]}
           network={{ hosts: N.hosts, command: N.command }}
           state={{ kind: "pending" }}
           onApprove={noop}
@@ -701,19 +701,6 @@ function networkApprovalBlocks(): ReactNode {
         scope: "once",
         who: W.who,
         when: W.approved.at,
-      })}
-      {decided("approval-block-network-always", {
-        decision: "approved",
-        scope: "always",
-        who: W.who,
-        when: W.approved.at,
-      })}
-      {decided("approval-block-network-fallback", {
-        decision: "approved",
-        scope: "once",
-        who: W.who,
-        when: W.approved.at,
-        fallback: "offline",
       })}
       {decided("approval-block-network-denied", {
         decision: "denied",

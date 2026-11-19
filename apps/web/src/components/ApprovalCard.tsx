@@ -211,7 +211,7 @@ export function useDecide(orgId: string) {
  * nothing is drawn until the read answers, so a decided approval never paints as pending first.
  *
  * A network ask (network ask spec §6.5, `kind: "network"`) draws the block's network variant: the
- * hosts, the refused command, 「这次允许」 / 「拒绝」 and the checked hosts in the decision. Device
+ * hosts, the refused command, "allow this time" / "deny" and the checked hosts in the decision. Device
  * protocol 4 never widens a device from the deployment, so it offers no "always" (the block names
  * the machine command instead). Decided, it still reads the approval: the granted hosts are only
  * there.

@@ -50,7 +50,7 @@ import NotFound from "../../not-found";
  * a ceiling and a default (open internet or the allowlist; never above the platform's ceiling, the
  * default never above the ceiling) and the host editor, which starts from the effective hosts and
  * saves a delta over the platform's list. The kill switch makes the network read-only. An org with
- * a stored network gets 跟随平台 (after a confirmation: `deviceNetwork: null`, which drops its own
+ * a stored network gets "follow the platform" (after a confirmation: `deviceNetwork: null`, which drops its own
  * default, ceiling, additions and removals). Plus
  * the sandbox resources (cpu / memory, read-only: super admins
  * override them per organization in the deployment settings, C19). Members can see, admins can

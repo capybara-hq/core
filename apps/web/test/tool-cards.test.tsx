@@ -408,7 +408,7 @@ describe("ApprovalCard: a network ask (network ask spec §6.5)", () => {
     });
     await screen.findByRole("button", { name: "Allow this time" });
     expect(screen.queryByRole("button", { name: "Always allow on this device" })).toBeNull();
-    expect(container.querySelector('[data-part="network-remote-off"]')?.textContent).toContain(
+    expect(container.querySelector('[data-part="network-on-machine"]')?.textContent).toContain(
       "capybara-device policy add allowedDomains",
     );
   });

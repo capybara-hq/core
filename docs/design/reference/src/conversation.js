@@ -331,7 +331,8 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
   }
 
   // The network ask (spec §6.16.11, network ask spec §6.5): hosts, the refused command, the
-  // checked hosts, 这次允许 (primary) / 这台设备一直允许 with their hints, and its decided lines.
+  // checked hosts, 这次允许 (primary) with its hint, 拒绝, the machine command line (device
+  // protocol 4 never widens a device from the deployment), and its decided lines.
   const registrable = (h) => h.split(".").slice(-2).join(".");
   const netHost = (h) =>
     `<span class="r-net-host"><strong>${esc(registrable(h))}</strong><code class="r-code">${esc(h)}</code></span>`;
@@ -340,8 +341,6 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
     const W = H.decided;
     const decided = {
       "network-allowed": ["check", "已允许（这次）", W.who, "", W.approved.at],
-      "network-always": ["check", "已允许（这台设备）", W.who, "", W.approved.at],
-      "network-fallback": ["check", "已允许（这次）", W.who, "设备离线，已按这次允许", W.approved.at],
       "network-denied": ["x", "已拒绝", W.who, `「${W.denied.reason}」`, W.denied.at],
       "network-skipped": ["x", "已跳过", W.who, "", W.denied.at],
     }[o.state];
@@ -350,7 +349,6 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
       return `<div class="r-tline">${icon(ic, 12)}<span class="r-tlabel">${esc(word)} <span class="r-faint">${esc(N.host)} · ${esc(who)}</span>${note ? `<span class="r-muted"> · ${esc(note)}</span>` : ""}<span class="r-faint"> · ${esc(at)}</span></span></div>`;
     }
     const many = o.state === "network-hosts";
-    const once = o.state === "network-once";
     const title = many
       ? `智能体想访问 ${N.hosts.length} 个域名，允许吗？`
       : `智能体想访问 <code class="r-code">${esc(N.host)}</code>，允许吗？`;
@@ -367,18 +365,9 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
       : `<div class="r-net-hosts">${netHost(N.host)}</div>`;
     const choice = (label, variant, hint) =>
       `<span class="r-choice">${btn(label, variant)}<span class="r-muted r-small" data-part="scope-hint">${hint}</span></span>`;
-    const always = once
-      ? ""
-      : choice(
-          "这台设备一直允许",
-          "default",
-          '写入这台设备的本地策略，之后的命令都可以访问；可在设备页或用 <code class="r-code">capybara-device policy</code> 撤销',
-        );
-    const actions = `<div class="r-card-actions" data-hints>${choice("这次允许", "primary", "到智能体这次回复结束为止有效")}${always}${btn("拒绝", "default")}</div>`;
-    const remoteOff = once
-      ? `<div class="r-muted r-small" data-part="network-remote-off">这台设备不接受远程修改；要一直允许，请在设备上运行 <code class="r-code">capybara-device policy add allowedDomains ${esc(N.host)}</code></div>`
-      : "";
-    return `<div class="r-card" data-pending role="group"><div class="r-card-head"><span class="r-dot" aria-hidden="true"></span><strong>${title}</strong></div><div>${body}</div><pre class="r-net-cmd">${esc(N.command)}</pre>${hosts}${actions}${remoteOff}</div>`;
+    const actions = `<div class="r-card-actions" data-hints>${choice("这次允许", "primary", "到智能体这次回复结束为止有效")}${btn("拒绝", "default")}</div>`;
+    const onMachine = `<div class="r-muted r-small" data-part="network-on-machine">要让这台设备一直允许，请在设备上运行 <code class="r-code">capybara-device policy add allowedDomains ${esc(many ? "<host>" : N.host)}</code></div>`;
+    return `<div class="r-card" data-pending role="group"><div class="r-card-head"><span class="r-dot" aria-hidden="true"></span><strong>${title}</strong></div><div>${body}</div><pre class="r-net-cmd">${esc(N.command)}</pre>${hosts}${actions}${onMachine}</div>`;
   }
 
   // Network facts (spec §6.16.11a): the org and address layers, one info callout each.
@@ -495,7 +484,44 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
     // the agent map's entry (§6.16.29, AC3): "N 个智能体" after the effort picker and the quick
     // actions, led by the status dot while a sub-agent runs or waits
     const agents = o.agents ? agentsChip(o.agents) : "";
+    // the mode menu (§6.16.3a): the model picker names the effort, one mode button before send
+    if (o.mode) {
+      const M = F.MODE_MENU_FIXTURE;
+      const P = F.PERMISSION_FIXTURE.items.find((i) => i.id === M.selected);
+      const modelText = modelLabel(model.provider, model.model) + (o.state === "no-effort" ? "" : ` · ${C.effortLabels[C.selected.effort]}`);
+      const modeButton = o.mode === "locked"
+        ? `<button class="r-btn r-picker" data-variant="ghost" data-part="mode-button" data-locked title="${esc(M.locked)}">${icon(P.icon, 14)}${esc(P.label)}${icon("chevron-down", 12)}</button>`
+        : `<button class="r-btn r-picker" data-variant="ghost" data-part="mode-button"${o.mode === "open" ? ' aria-expanded="true" data-state="hover" style="anchor-name: --r-open-trigger"' : ""}>${icon(P.icon, 14)}${esc(P.label)}${icon("chevron-down", 12)}</button>`;
+      return `<div class="r-composer"><label class="r-sr" for="msg">消息</label>${textarea}<div class="r-composer-bar">${iconBtn("plus", K.attach)}${devicePicker({ device: "default" })}${picker(modelText)}<span class="r-grow"></span>${modeButton}${action}</div></div>`;
+    }
     return `<div class="r-composer"${o.state === "focus" ? ' data-state="focus"' : ""}>${strip}<label class="r-sr" for="msg">消息</label>${line}${suggestionHint}<div class="r-composer-bar">${iconBtn("plus", K.attach)}${o.noAgent || !isNew ? "" : picker(C.agent.name, { open: o.menu === "agent" })}${o.device ? devicePicker(o) : ""}${o.permission ? picker(F.PERMISSION_FIXTURE.items.find((i) => i.id === F.PERMISSION_FIXTURE.selected).label, { open: o.menu === "permission" }) : ""}${picker(o.modelValue ?? modelLabel(model.provider, model.model), { open: o.menu === "model" })}${effort}${quick}${agents}<span class="r-grow"></span>${useSuggestion}${action}</div></div>`;
+  }
+
+  /**
+   * The mode menu (§6.16.3a): `closed` is the composer row with the mode button; `open`,
+   * `no-effort` and `locked` hang the menu from it (end-aligned): the head with the Shift+Tab hint,
+   * the described profile rows, the action, then the effort segments under a hairline.
+   */
+  function modeMenu(o) {
+    const M = F.MODE_MENU_FIXTURE;
+    const PM = F.PERMISSION_FIXTURE;
+    if (o.state === "closed") return composer({ state: "idle", mode: "closed" });
+    const locked = o.state === "locked";
+    const head = `<div class="r-menu-label" data-part="menu-label" data-hinted><span>${esc(M.label)}</span><span class="r-grow"></span>${locked ? "" : `<span class="r-menu-hint" data-part="menu-hint">${esc(M.hint)}</span>`}</div>`;
+    const rows = PM.items
+      .map((it) => {
+        const sel = it.id === M.selected;
+        const off = locked;
+        return `<div class="r-menu-item" data-part="menu-item" data-described role="menuitemradio" aria-checked="${sel}"${off ? ' aria-disabled="true" data-disabled' : ""}>${icon(it.icon, 14)}<span class="r-menu-body"><span class="r-menu-head"><span>${esc(it.label)}</span></span><span class="r-menu-desc" data-part="menu-desc">${esc(it.description)}</span></span>${sel ? icon("check", 14) : ""}</div>`;
+      })
+      .join("");
+    const note = locked ? `<div class="r-menu-note" data-part="menu-note">${esc(M.locked)}</div>` : "";
+    const action = `<div class="r-menu-sep"></div><div class="r-menu-item" data-part="menu-item" role="menuitem">${icon(PM.action.icon, 14)}<span>${esc(PM.action.label)}</span></div>`;
+    const effort = o.state === "no-effort"
+      ? ""
+      : `<div class="r-menu-sep"></div><div class="r-menu-label" data-part="menu-label">${esc(M.effortLabel)}</div><div class="r-menu-segments" data-part="menu-segments" role="group" aria-label="${esc(M.effortLabel)}">${M.efforts.map((e) => `<div class="r-menu-segment" data-part="menu-segment" role="menuitemradio" aria-checked="${e.id === M.effort}">${esc(e.label)}</div>`).join("")}</div>`;
+    const bar = composer({ state: o.state === "no-effort" ? "no-effort" : "idle", mode: locked ? "locked" : "open" });
+    return `<div class="r-menu-stage" data-tall>${bar}<div class="r-menu r-anchored-menu r-anchored-end" data-part="menu" role="menu">${head}${rows}${note}${action}${effort}</div></div>`;
   }
 
   /**
@@ -1064,6 +1090,7 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
     "title-bar": (o) => `<div class="r-titlebar-stage">${titleBar(o)}</div>`,
     composer: (o) => col(composer(o)),
     "picker-menu": (o) => col(pickerMenu({ menu: o.state })),
+    "mode-menu": (o) => col(modeMenu(o)),
     "quick-actions": (o) => col(quickMenu({ open: o.state === "menu", state: o.state === "hover" ? "hover" : undefined })),
     "agents-chip": (o) => {
       const A = F.AGENTS_CHIP_FIXTURE;

@@ -182,7 +182,7 @@ export function DeviceOverview({
 /**
  * Settings: the device's controls, and the only place they live (2026-11-14). A conversation picks
  * its permission profile; the device keeps its sandbox, the same under every profile, in one
- * 沙箱 / Sandbox section with its network, running outside the sandbox and the project reach:
+ * Sandbox section with its network, running outside the sandbox and the project reach:
  * - a local machine's sandbox is its owner's, widened only on the machine (the commands as
  *   keycaps); the page only narrows it through the policy op (the allowlist, removing hosts,
  *   running outside the sandbox off, the workspace reach), and only while the machine is online,

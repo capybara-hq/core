@@ -576,7 +576,7 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
     const { release } = await renderHeld("/admin/settings", "GET /api/v1/admin/settings");
     await expectLoading("FormPage", en.admin.settings.orgCreation.anyone);
     // three policies, running outside the sandbox, the device network's ceiling and default and
-    // 外观's theme cards, then 插件界面代码's switch row
+    // the appearance theme cards, then the plugin UI code switch row
     expect(document.querySelectorAll('[data-part="loading-radios"]')).toHaveLength(7);
     // ... plus the prompt suggestion switch, the compaction section (a switch and four numbers, no
     // card radios) and the sharing section (a switch, a number and a list)

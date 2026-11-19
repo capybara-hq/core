@@ -30,14 +30,7 @@ export type ApprovalState =
       reason?: string;
       /** A network ask: the hosts the decision covers (the checked ones when approved). */
       hosts?: string[];
-      /**
-       * A network ask decided "always" that became "this time": the device was offline, or does
-       * not accept remote changes (refused, or a program without the feature).
-       */
-      fallback?: NetworkFallback;
     };
-
-export type NetworkFallback = "offline" | "refused" | "unsupported";
 
 /** A network ask (network ask spec §6.5): a command on a device was refused these hosts. */
 export type NetworkAsk = {
@@ -425,10 +418,7 @@ function NetworkApproval(p: ApprovalBlockProps & { network: NetworkAsk }): JSX.E
     const shown = s.hosts && s.hosts.length > 0 ? s.hosts : hosts;
     const d = s.decision;
     const approved = d === "approved";
-    const word =
-      d === "approved"
-        ? t(s.scope === "always" ? "hitl.network.allowedAlways" : "hitl.network.allowedOnce")
-        : t(NETWORK_DECIDED[d]);
+    const word = d === "approved" ? t("hitl.network.allowedOnce") : t(NETWORK_DECIDED[d]);
     // who decided: an approval, a denial, a skip (the person who wrote); expiry and cancel name no one
     const who = s.decision === "expired" || s.decision === "cancelled" ? "" : s.who;
     return (
@@ -444,11 +434,6 @@ function NetworkApproval(p: ApprovalBlockProps & { network: NetworkAsk }): JSX.E
           <span className="cb-faint" data-part="tool-key">
             {[shown.join(", "), who].filter(Boolean).join(" · ")}
           </span>
-          {s.fallback ? (
-            <span className="cb-muted" data-part="network-fallback">
-              {` · ${t(s.fallback === "offline" ? "hitl.network.fallbackOffline" : "hitl.network.fallbackRefused")}`}
-            </span>
-          ) : null}
           {s.reason ? (
             <span className="cb-muted">
               {` · ${fillCopy(t("hitl.reasonQuote"), { reason: s.reason })}`}
@@ -467,23 +452,13 @@ function NetworkApproval(p: ApprovalBlockProps & { network: NetworkAsk }): JSX.E
   const description = p.network.description?.trim();
   const picked = one ? hosts : hosts.filter((h) => checked.includes(h));
   const none = picked.length === 0;
+  // device protocol 4 never widens a device from the deployment: a network ask is allowed for
+  // this run only, and widening the device is its owner's command on the machine
+  const scopes = p.scopes.filter((scope) => scope === "once");
   const label = (scope: ApprovalScope) =>
-    p.scopeLabels?.[scope] ??
-    t(
-      scope === "always"
-        ? "hitl.network.always"
-        : scope === "once"
-          ? "hitl.network.once"
-          : SCOPE_LABEL[scope],
-    );
+    p.scopeLabels?.[scope] ?? t(scope === "once" ? "hitl.network.once" : SCOPE_LABEL[scope]);
   const hint = (scope: ApprovalScope): ReactNode =>
-    p.scopeHints?.[scope] ??
-    (scope === "once"
-      ? t("hitl.network.hintOnce")
-      : scope === "always"
-        ? richCopy(t("hitl.network.hintAlways"))
-        : undefined);
-  const remoteOff = !p.scopes.includes("always");
+    p.scopeHints?.[scope] ?? (scope === "once" ? t("hitl.network.hintOnce") : undefined);
 
   let actions: ReactNode;
   if (denying) {
@@ -524,7 +499,7 @@ function NetworkApproval(p: ApprovalBlockProps & { network: NetworkAsk }): JSX.E
   } else {
     actions = (
       <div className="cb-hcard-actions" data-hints="true">
-        {p.scopes.map((scope, i) => (
+        {scopes.map((scope, i) => (
           <ScopeChoice
             key={scope}
             primary={i === 0}
@@ -589,9 +564,9 @@ function NetworkApproval(p: ApprovalBlockProps & { network: NetworkAsk }): JSX.E
         </div>
       )}
       {actions}
-      {remoteOff && !denying ? (
-        <div className="cb-muted cb-small" data-part="network-remote-off">
-          {richCopy(t("hitl.network.remoteOff"), { host: one ? (hosts[0] ?? "") : "<host>" })}
+      {!denying ? (
+        <div className="cb-muted cb-small" data-part="network-on-machine">
+          {richCopy(t("hitl.network.onMachine"), { host: one ? (hosts[0] ?? "") : "<host>" })}
         </div>
       ) : null}
     </div>

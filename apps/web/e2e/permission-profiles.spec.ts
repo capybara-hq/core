@@ -88,16 +88,22 @@ async function newChat(page: Page, agentId: string): Promise<void> {
   await expect(composer(page)).not.toHaveAttribute("placeholder", /—/);
 }
 
-/** The composer's permission picker button, named "Permission: <profile>" in zh. */
+/**
+ * The composer's mode button, named "权限: <profile>" in zh, then ": 思考档位 <effort>" when the
+ * model declares efforts.
+ */
 const permissionButton = (page: Page, profile?: string): Locator =>
   page.getByRole("button", {
-    name: profile === undefined ? new RegExp(`^${p.label}: `) : `${p.label}: ${profile}`,
-    exact: profile !== undefined,
+    name: new RegExp(`^${p.label}: ${profile === undefined ? "" : `${profile}(:|$)`}`),
   });
 
-/** A row of the open permission menu (named by its label, then any unavailable tag). */
+/** The profile rows of the open mode menu (the effort segments are radios too). */
+const profileRows = (page: Page): Locator =>
+  page.locator('[role="menu"] [data-part="menu-item"][role="menuitemradio"]');
+
+/** A row of the open mode menu (named by its label, then any unavailable tag). */
 const row = (page: Page, profile: string): Locator =>
-  page.getByRole("menuitemradio", { name: new RegExp(`^${profile}`) });
+  profileRows(page).filter({ has: page.getByText(profile, { exact: true }) });
 
 /** Picks `name` in the new conversation's device picker. */
 async function pickDevice(page: Page, name: string): Promise<void> {
@@ -129,7 +135,9 @@ test.describe("permission profiles", () => {
     await newChat(page, agentId);
     await pickDevice(page, deviceName);
     await permissionButton(page, PROFILE.approveForMe).click();
-    const rows = page.getByRole("menuitemradio");
+    // the head hints the Shift+Tab shortcut
+    await expect(page.getByRole("menu").getByText(p.modeHint, { exact: true })).toBeVisible();
+    const rows = profileRows(page);
     await expect(rows).toHaveCount(3);
     await expect(rows.nth(0)).toHaveAccessibleName(PROFILE.requestApproval);
     await expect(rows.nth(1)).toHaveAccessibleName(PROFILE.approveForMe);
@@ -162,14 +170,19 @@ test.describe("permission profiles", () => {
     await row(page, PROFILE.fullAccess).click();
     let dialog = page.getByRole("dialog", { name: fullTitle });
     await expect(dialog).toBeVisible();
-    await expect(dialog.getByText(p.full.body, { exact: true })).toBeVisible();
+    // the shorter body: commands stay in the sandbox (whether it names running outside the
+    // sandbox depends on the device)
+    const [bodyStart, bodyEnd] = p.full.body.split("{outside}") as [string, string];
+    await expect(dialog).toContainText(bodyStart);
+    await expect(dialog).toContainText(bodyEnd);
     await expect(dialog.getByText(p.full.limits, { exact: true })).toBeVisible();
     await dialog.getByRole("button", { name: p.full.cancel, exact: true }).click();
     await expect(dialog).toBeHidden();
     await expect(permissionButton(page, PROFILE.approveForMe)).toBeVisible();
 
-    await permissionButton(page).click();
-    await row(page, PROFILE.fullAccess).click();
+    // Shift+Tab in the composer moves to the next profile: Full access, through its confirmation
+    await composer(page).focus();
+    await page.keyboard.press("Shift+Tab");
     dialog = page.getByRole("dialog", { name: fullTitle });
     await dialog.getByRole("button", { name: p.full.confirm, exact: true }).click();
     await expect(dialog).toBeHidden();
@@ -261,7 +274,7 @@ test.describe("permission profiles", () => {
     );
   });
 
-  test("a device that cannot restrict execution: the restricted rows say why, nothing falls back to 完全访问", async ({
+  test("a device that cannot restrict execution: every profile says why, nothing falls back to 完全访问", async ({
     page,
   }) => {
     await signIn(page);
@@ -317,19 +330,17 @@ test.describe("permission profiles", () => {
         report: { restricted: null, outsideSandbox: true },
       });
 
-      // The existing conversation's picker: both restricted rows unavailable with the reason,
-      // Request approval still the selected profile, Full access offered but not chosen.
+      // The existing conversation's mode menu: every profile unavailable with the same reason (a
+      // profile only chooses who approves; the sandbox is the device's), Request approval still
+      // the selected profile, Full access never chosen.
       await page.reload();
       await expect(page.locator('[data-template="ConversationPage"]')).toBeVisible();
       await permissionButton(page, PROFILE.requestApproval).click();
-      for (const profile of [PROFILE.requestApproval, PROFILE.approveForMe]) {
+      for (const profile of [PROFILE.requestApproval, PROFILE.approveForMe, PROFILE.fullAccess]) {
         await expect(row(page, profile)).toBeDisabled();
-        await expect(row(page, profile)).toHaveAccessibleName(
-          `${profile} ${p.reason.restrictedUnsupported}`,
-        );
+        await expect(row(page, profile)).toHaveAccessibleName(`${profile} ${p.reason.unsupported}`);
       }
       await expect(row(page, PROFILE.requestApproval)).toHaveAttribute("aria-checked", "true");
-      await expect(row(page, PROFILE.fullAccess)).toBeEnabled();
       await expect(row(page, PROFILE.fullAccess)).toHaveAttribute("aria-checked", "false");
       await page.keyboard.press("Escape");
       await expect(permissionButton(page, PROFILE.requestApproval)).toBeVisible();
@@ -339,11 +350,9 @@ test.describe("permission profiles", () => {
       await newChat(page, agentId);
       await pickDevice(page, deviceName);
       await permissionButton(page, PROFILE.approveForMe).click();
-      for (const profile of [PROFILE.requestApproval, PROFILE.approveForMe]) {
+      for (const profile of [PROFILE.requestApproval, PROFILE.approveForMe, PROFILE.fullAccess]) {
         await expect(row(page, profile)).toBeDisabled();
-        await expect(row(page, profile)).toHaveAccessibleName(
-          `${profile} ${p.reason.restrictedUnsupported}`,
-        );
+        await expect(row(page, profile)).toHaveAccessibleName(`${profile} ${p.reason.unsupported}`);
       }
       await expect(row(page, PROFILE.approveForMe)).toHaveAttribute("aria-checked", "true");
       await expect(row(page, PROFILE.fullAccess)).toHaveAttribute("aria-checked", "false");
