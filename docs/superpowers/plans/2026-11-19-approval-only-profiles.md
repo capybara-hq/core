@@ -4,10 +4,11 @@ Status: plan for the trimmed R3 scope the maintainer approved on 2026-11-19. It 
 [approval-only profiles design](../specs/2026-11-19-approval-only-profiles-design.md), which stays
 the authority; this file only orders the work. The target is about two days of agent wall time.
 
-**Base:** R3 starts from `perm/w4-int` after R2 merges to `main`. That base already holds the
-per-call escalation (`approverForProfile`, `isFullExecutionScope`, `escalationRefusal`, migration
-`0162`) and the macOS abort fix. R3 integrates on a single branch, `perm/r3-int`, cut from that
-base. Each task runs in its own worktree from it: `pnpm wt:new <task-branch> --from perm/r3-int`.
+**Base:** R2 merged to `main` (#394) and was released by its version PR (#395, `0.1.0-rc.58`), so
+`perm/w4-int` is contained in `main`. `perm/r3-int` was cut from `origin/main` at `5f6c3541a`,
+which holds the per-call escalation (`approverForProfile`, `isFullExecutionScope`,
+`escalationRefusal`, migration `0162`) and the macOS abort fix. R3 integrates on that single
+branch. Each task runs in its own worktree from it: `pnpm wt:new <task-branch> --from perm/r3-int`.
 
 **Execution:** the `wave-planned-subagent-development` skill.
 
@@ -32,6 +33,26 @@ The tasks in a wave code against these names, so they can run in parallel. The c
 them as a stub commit in W0 (types and empty functions only, behind no flag). Each implementer then
 fills in only its own part.
 
+**Interim names (W0 correction).** The SDK wire shapes cannot change in place before W1: dozens of
+kernel, device, testing and web files own them, most in later waves. The stub commit therefore
+adds the new shapes next to the old ones, and step W1.M swaps them:
+
+| W0 stub (file) | Final name after W1.M |
+|---|---|
+| `SandboxPermissionSupportV2` (`sandbox-operation.ts`) | `SandboxPermissionSupport` |
+| `DeviceOwnerCeilingV3` (`device-protocol.ts`) | `DeviceOwnerCeiling` |
+| `DeviceOwnerCeilingNarrowingV3` (`device-protocol.ts`) | `DeviceOwnerCeilingNarrowing` |
+| `PermissionFullAccessGrantDecision` (`sandbox/permission-call-types.ts`) | a member of `PermissionGrantDecision` (T6, with migration `0164`) |
+
+Already final in W0: `{ kind: "open-public" }` in `SandboxNetworkScope` (the parser still refuses
+it until T1), `SandboxBoundary`, `DeviceNetworkMode`, `network-classes.ts` (`AddressClass`,
+`OPEN_PUBLIC_DENIED_CLASSES`, `classifyAddress`, which throws until T1), the kernel's
+`sandbox/device-sandbox.ts` (`DeviceSandbox`, its four layer inputs, `DeviceSandboxSettings`,
+`effectiveDeviceSandbox`, which throws until T5), `PermissionCrossingKind`, `approverForCrossing`
+(`review/permission-candidate.ts`, throws until T6), `ReviewRecord.crossing`,
+`PermissionContextSandboxSchema` (`events.ts`) and the DriftReason `device_sandbox_changed` with
+its web labels.
+
 - **SDK:**
   - `SandboxNetworkScope` adds `{ kind: "open-public" }`.
   - `SandboxPermissionSupport` becomes v2: `{ version: 2, boundary, restricted, network: {
@@ -54,7 +75,8 @@ fills in only its own part.
   - The settings reader `readDeviceSandboxSettings(): { outsideSandbox, network: { default,
     ceiling } }`.
 - **Migration numbers:** `0163` for T2 (cloud device network columns) and `0164` for T6 (the
-  grant source). The controller renumbers both at merge if `main` has already taken these numbers.
+  grant source). Checked in W0: `main` ends at `0162`, so both are free. The controller renumbers
+  them at merge if `main` takes these numbers before then.
 
 ## Wave overview
 
@@ -62,6 +84,7 @@ fills in only its own part.
 |---|---|---|---|
 | W0 | Controller: cut `perm/r3-int`, stub commit, baselines | — | 1 h |
 | W1 | T1 SDK contract (TB) · T2 kernel settings and config (MIG) · T3 device policy and CLI (TB) · T4 replay context | T1, T2, T3 solo; T4 alone in its batch | 4–5 h |
+| W1.M | Controller: protocol 4 cutover and the facts rename, after the W1 merge | solo | 1–2 h |
 | W2 | T5 kernel device sandbox and admission (TB+MR) · T6 review, grants and audit (TB+MR+MIG) · T7 macOS open network (TB) · T8 Linux open network and own loopback (TB) | all four solo | 6–7 h |
 | W3 | T9 conformance suite (TB) · T10 device view, cloud network and network asks · T11 web UI · T12 dual-replica matrix (MR) + docs · T13 cloud providers, plugins repo (TB) | T9, T12, T13 solo; T10 and T11 batched | 5–6 h |
 | W4 | Controller: integrated verification, two final solo reviews, dogfood | — | 2–3 h |
@@ -76,8 +99,9 @@ leaves a cloud device `unprobed`.
 
 ## W0: controller
 
-1. Cut `perm/r3-int` from `perm/w4-int` after the R2 merge.
-2. Write the stub commit for the frozen interfaces.
+1. Cut `perm/r3-int` from `origin/main` (R2 merged, `perm/w4-int` contained) and merge the design
+   branch (docs only).
+2. Write the stub commit for the frozen interfaces (interim names above).
 3. Record the baselines:
    - zero-drift: `pnpm exec vitest run packages/kernel/test/evals/reconstruct.test.ts
      packages/kernel/test/evals/run-replay.test.ts --maxWorkers=2`;
@@ -85,7 +109,8 @@ leaves a cloud device `unprobed`.
    - the macOS conformance (`packages/testing/test/device-mac-backend.test.ts`);
    - the Linux conformance (`sandbox-linux-runtime.test.ts` with
      `CAPYBARA_TEST_REQUIRE_LINUX_RESTRICTED=1`).
-4. Note whether R2 shipped device protocol 3. If it did, T1 makes this change protocol 4.
+4. Note whether R2 shipped device protocol 3. Checked: it did (`DEVICE_PROTOCOL_VERSION = 3`,
+   released in `0.1.0-rc.58`), so this change is protocol 4, cut over in W1.M.
 
 ## W1
 
@@ -99,6 +124,10 @@ leaves a cloud device `unprobed`.
 - `index.ts`, `api/plugin-sdk.api.md`
 - the SDK tests for these
 - a changeset
+
+T1 implements and strictly parses the interim shapes (`SandboxPermissionSupportV2`,
+`DeviceOwnerCeilingV3`, `DeviceOwnerCeilingNarrowingV3`) as new exported parsers next to the old
+ones. It does not change the old shapes, the hello parser or `DEVICE_PROTOCOL_VERSION`: W1.M does.
 
 **RED first:**
 
@@ -117,13 +146,17 @@ tests.
 **Owns:**
 
 - `packages/kernel/src/config/{schema,load}.ts`
-- `sandbox/platform-full-access.ts` → `sandbox/device-sandbox-settings.ts`
+- `sandbox/platform-full-access.ts` → `sandbox/device-sandbox-settings.ts`, and
+  `sandbox/permission-config-publication.ts` (`convertStoredPermissionKeys` and the permission
+  config fingerprint live there)
 - `identity/settings.ts`
 - `orgs/settings.service.ts`, and `orgs/cloud-network-setting.ts` → `orgs/device-network-setting.ts`
-- `errors.ts`
+- `errors.ts` (the org and deployment codes; `device.full_access_not_allowed` is thrown in
+  `devices/devices.service.ts`, so T10 renames it)
 - `platform/ops/{admin,org-settings,platform}.ops.ts`
 - the permission config fingerprint inputs
 - the converter for `apps/capybara` `config migrate-permissions`
+  (`apps/capybara/src/commands/config.ts`, `apps/capybara/test/config-migrate.test.ts`)
 - migration `0163` (add `devices.network_mode` and `network_hosts`, copy the allowlist outer
   networks) and `db/kernel-schema.ts` (those columns only)
 - `docs/config.md` (regenerated)
@@ -144,16 +177,22 @@ tests.
 
 - `check:config-docs`, `check:platform-ops`, `platform-parity.test.ts`, `check:i18n`
 - `test/config/permission-config-*`, `test/orgs/settings`, `test/identity/settings`
-- the renamed settings reader test
+- the renamed settings reader test (`test/sandbox/platform-full-access.test.ts` →
+  `device-sandbox-settings.test.ts`)
 
 ### T3: device policy and CLI (TB)
 
 **Owns:**
 
-- `packages/device/src/{state,policy,policy-store}.ts`
+- `packages/device/src/{state,policy,policy-store,owner-report}.ts`
 - `exec/operation-types.ts`
+- the `policy` op's owner-ceiling narrowing in `server-ops.ts`
 - `commands/{ceiling,policy,login}.ts`, `args.ts`
-- their tests
+- their tests (`operation-ceilings`, `owner-ceiling`, `policy`, `state`, `server-ops`, `args`,
+  `login`)
+
+T3 moves the device's own ceiling model to `DeviceOwnerCeilingV3`. Until W1.M the wire stays
+protocol 3: one temporary mapping in `owner-report.ts` reports the old shape, and W1.M removes it.
 
 **RED first:**
 
@@ -189,6 +228,22 @@ and the drift rule against fixture contexts.
 - A snapshot test covers the model text for each profile, with and without escalation available.
 
 **Gate:** the zero-drift group passes before and after the change.
+
+## W1.M: protocol 4 cutover (controller, after the W1 merge)
+
+One mechanical commit on `perm/r3-int`, behaviour kept wherever a later task owns the semantics:
+
+- Rename the interim SDK shapes to their final names and delete the old ones; switch the hello,
+  owner report and narrowing parsers to T1's new parsers; `DEVICE_PROTOCOL_VERSION = 4` and
+  `LEGACY_DEVICE_PROTOCOL_VERSION = 3`; `pnpm gen:sdk-api`.
+- Update every consumer by a mapping that keeps today's behaviour: kernel `local-devices/*`,
+  `sandbox/permission-availability.ts` and the other support readers, the device exec workers'
+  support report (`boundary: "operation"`, `outsideSandbox` = the old `fullAccess`), the testing
+  conformance and fixtures, the kernel fake machines, and the `apps/web/src/lib/devices.ts` type.
+  Remove T3's temporary wire mapping.
+- Rename the facts field `fullAccessCeiling` → `outsideSandboxCeiling` (kernel sources, the
+  conversation permission view, tests, `apps/web`), so T5 and T6 share it in W2.
+- Gate: `CAPYBARA_TEST_WORKERS=4 pnpm verify --full`. Review: solo (protocol, TB).
 
 ## W2
 
@@ -228,7 +283,9 @@ and the drift rule against fixture contexts.
 - `sandbox/review/{review.service,permission-candidate,classifier}.ts`
 - `sandbox/{permission-call-grants,permission-call-types}.ts`
 - `tools/approvals.service.ts`
-- the audit action registration
+- the audit action registration, with its label in `apps/web/src/lib/audit-actions.ts` and the
+  `admin.audit.actions` keys in `apps/web/messages/{en,zh}.json` (`audit-actions.test.ts` requires
+  every kernel audit literal there)
 - migration `0164` (`full-access` added to the grant `source` check), and `db/kernel-schema.ts`
   (that check only; the T2 columns are already merged)
 - `tools/builtins/sandbox/bash.ts` (the description: proxy-aware traffic, the escalation wording)
