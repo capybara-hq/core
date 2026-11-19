@@ -21,6 +21,16 @@ export { isTouchPointer, keyboardInset } from "./pointer";
 export { PreferenceBar, type PreferenceBarProps, ThemeToggle } from "./preference-bar";
 export { ReplaceableFrame } from "./replaceable-frame";
 export { SafeModeBanner } from "./safe-mode-banner";
+export {
+  applyShellEnvironment,
+  readShellEnvironment,
+  SHELL_ENVIRONMENT_SCRIPT,
+  type ShellEnvironment,
+  ShellEnvironmentScript,
+  type ShellKind,
+  type ShellPlatform,
+  useShellEnvironment,
+} from "./shell-environment";
 export { type ShellPage, useRegisterShellPage } from "./shell-page";
 export {
   initialOf,

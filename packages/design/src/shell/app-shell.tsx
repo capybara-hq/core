@@ -5,6 +5,7 @@ import { useDesignT } from "../provider";
 import { BottomNav, type BottomNavItem, bottomNavCurrent, isTabRoot } from "./bottom-nav";
 import { keyboardInset } from "./pointer";
 import { SetupSteps } from "./setup-steps";
+import { useShellEnvironment } from "./shell-environment";
 import { type ShellPage, ShellPageContext } from "./shell-page";
 import { Sidebar, type SidebarProps, useSidebarWidthMode } from "./sidebar";
 import { useShortWindow, useSizeClass } from "./size-class";
@@ -59,7 +60,7 @@ export type AppShellProps = {
    * The state tokens for plugin CSS (`run=idle`, `motion=full`, `theme=builtin`, space-separated),
    * rendered as `data-cap-state` on the shell element. The shell appends its own `sidebar=rail`
    * or `sidebar=full` after hydration (none below 600: the compact class has no sidebar), then
-   * `size=compact|medium|expanded`.
+   * `size=compact|medium|expanded`, then `shell=desktop|mobile` inside a native shell only.
    */
   capState?: string;
   /**
@@ -100,6 +101,8 @@ export function AppShell({
   const hydrated = useHydrated();
   const sizeClass = useSizeClass();
   const short = useShortWindow();
+  // Inside a native shell (mobile layout spec §9.3): its kind, after hydration; null in a browser.
+  const shellKind = useShellEnvironment();
   const [ownCollapsed, setOwnCollapsed] = useState(false);
   const collapsed = collapsedProp ?? ownCollapsed;
   const setCollapsed = (next: boolean) => {
@@ -124,6 +127,7 @@ export function AppShell({
         capState,
         sidebarMode === null ? null : `sidebar=${sidebarMode}`,
         sizeClass && `size=${sizeClass}`,
+        shellKind && `shell=${shellKind}`,
       ]
         .filter(Boolean)
         .join(" ");

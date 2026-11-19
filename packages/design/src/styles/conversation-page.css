@@ -640,7 +640,7 @@ span.cb-title-btn {
   min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
-  padding: var(--cb-space-2) var(--cb-space-2) calc(var(--cb-space-4) + env(safe-area-inset-bottom));
+  padding: var(--cb-space-2) var(--cb-space-2) calc(var(--cb-space-4) + var(--cb-inset-bottom));
 }
 /* A Filter sheet's single-choice options (§6.7). */
 .cb-sheet-option {
@@ -1256,6 +1256,13 @@ button.cb-property-row {
   }
   .cb-conv-composer {
     padding-inline: var(--cb-space-4);
+    /* pinned at the window's bottom on a pushed page: above the home indicator (spec §4.7) */
+    padding-bottom: calc(var(--cb-space-3) + var(--cb-inset-bottom));
+  }
+  /* A tab root's bottom navigation pads the inset already; an open keyboard covers it. */
+  .cb-shell-main:has(~ .cb-shell-bottomnav) .cb-conv-composer,
+  .cb-shell[data-keyboard="open"] .cb-conv-composer {
+    padding-bottom: var(--cb-space-3);
   }
   .cb-title-bar {
     padding-inline: var(--cb-space-4) var(--cb-space-1);

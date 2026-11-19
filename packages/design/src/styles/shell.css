@@ -49,6 +49,9 @@
   height: 100dvh;
   min-height: 0;
   overflow: clip;
+  /* the landscape notch, or a shell's side chrome (spec §4.7) */
+  padding-right: var(--cb-inset-right);
+  padding-left: var(--cb-inset-left);
   background: var(--cb-bg);
   color: var(--cb-ink);
 }

@@ -4,6 +4,16 @@
   box-sizing: border-box;
 }
 
+/* Safe areas (mobile layout spec §7.5, design spec §4.7): the OS insets (`viewport-fit=cover`)
+   combined with a native shell's own chrome (`--cb-shell-inset-*`, set on <html> by the Shell
+   environment script, §9.3) in one set of properties; nothing hardcodes a device's inset. */
+:root {
+  --cb-inset-top: max(env(safe-area-inset-top, 0px), var(--cb-shell-inset-top, 0px));
+  --cb-inset-right: max(env(safe-area-inset-right, 0px), var(--cb-shell-inset-right, 0px));
+  --cb-inset-bottom: max(env(safe-area-inset-bottom, 0px), var(--cb-shell-inset-bottom, 0px));
+  --cb-inset-left: max(env(safe-area-inset-left, 0px), var(--cb-shell-inset-left, 0px));
+}
+
 /* Scrollbars (inherited): a quiet thumb on a transparent track in both themes. */
 html {
   scrollbar-color: var(--cb-scroll-thumb) transparent;
