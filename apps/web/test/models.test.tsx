@@ -343,7 +343,6 @@ describe("/admin/models（ListPage）", () => {
       // The eval row carries the warning (a warn line with its icon), not a line above the rows
       expect((await purposeBox("eval")).getByText(m.models.evalUnmapped)).toBeTruthy();
       const plugin = await purposeBox("notes.summarize");
-      expect(plugin.getByText(m.models.purpose.pluginNote)).toBeTruthy();
       // An extension's purpose names the extension by its display name
       expect(
         plugin.getByText(
@@ -351,7 +350,6 @@ describe("/admin/models（ListPage）", () => {
         ),
       ).toBeTruthy();
       const ev = await purposeBox("eval");
-      expect(ev.queryByText(m.models.purpose.pluginNote)).toBeNull();
       // A kernel purpose has no source line, only what happens while it is unset
       expect(ev.getByText(m.models.purpose.hint.eval)).toBeTruthy();
       // Purpose ids are internal: never on the page

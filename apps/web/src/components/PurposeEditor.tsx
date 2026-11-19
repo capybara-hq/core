@@ -307,11 +307,6 @@ function PurposeEditor({
               })}
             </Text>
           ) : null}
-          {plugin ? (
-            <Text variant="small" tone="warn">
-              {t("pluginNote")}
-            </Text>
-          ) : null}
           {hint !== undefined && hint !== null ? (
             <Text variant="small" tone="muted">
               {t(hint)}

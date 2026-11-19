@@ -3822,7 +3822,6 @@
     },
     "purpose": {
       "declaredByPlugin": "From {plugin}",
-      "pluginNote": "Extensions cannot call models yet. You can configure this in advance.",
       "model": "Model",
       "modelInvalid": "The selected model is not available.",
       "unset": "Not set",
