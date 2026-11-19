@@ -3810,7 +3810,6 @@
     },
     "purpose": {
       "declaredByPlugin": "来自 {plugin}",
-      "pluginNote": "扩展调用模型尚未开放，可先配置。",
       "model": "模型",
       "modelInvalid": "所选模型不可用。",
       "unset": "未设置",
