@@ -68,6 +68,7 @@
   "local-devices/policy-summary.test.ts",
   "log-config.test.ts",
   "log.test.ts",
+  "media/image-header.unit.test.ts",
   "net/public-address.test.ts",
   "orgs/roles.test.ts",
   "orgs/security-settings.test.ts",
