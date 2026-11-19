@@ -924,6 +924,12 @@ export const PLATFORM_EXCLUSIONS: readonly {
     category: "transport",
     reason: "Serves a theme version's font and logo bytes to the browser",
   },
+  // the platform icon (mobile layout spec §10.2.1)
+  {
+    route: "GET /api/v1/platform/icon/:purpose",
+    category: "transport",
+    reason: "Public image delivery for the manifest and favicons",
+  },
   {
     route: "GET /api/v1/platform/theme",
     category: "transport",

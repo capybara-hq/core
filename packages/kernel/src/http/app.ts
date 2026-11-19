@@ -151,6 +151,12 @@ const LARGE_BODY_ROUTES = new Set([
   "/api/v1/orgs/:orgId/connectors/preview",
 ]);
 const LARGE_BODY_LIMIT = 6 * 1024 * 1024;
+/**
+ * The platform icon upload (mobile layout spec §10.2.1): a file of up to 1 MiB as JSON base64 is
+ * about 1.4 MB; 2 MiB lets a file somewhat over the limit reach `platform_icon.too_large`.
+ */
+const PLATFORM_ICON_ROUTE = "/api/v1/admin/platform/icons/:purpose";
+const PLATFORM_ICON_BODY_LIMIT = 2 * 1024 * 1024;
 
 /**
  * Sets up the Fastify side of the kernel's Nest application (built by `buildKernelApp` from
@@ -183,6 +189,9 @@ export async function createHttpApp(
     // 安装 / 预览连接器的请求体可带最大 2 MB 的 OpenAPI 文档（JSON 转义后更大），其余路由保持默认 1 MiB
     if (LARGE_BODY_ROUTES.has(r.url) && [r.method].flat().includes("POST")) {
       r.bodyLimit = LARGE_BODY_LIMIT;
+    }
+    if (r.url === PLATFORM_ICON_ROUTE && [r.method].flat().includes("PUT")) {
+      r.bodyLimit = PLATFORM_ICON_BODY_LIMIT;
     }
     const upload = PACKAGE_UPLOAD_ROUTES.has(r.url) || ORG_PACKAGE_UPLOAD_ROUTES.has(r.url);
     if (upload && opts.packageMaxBytes !== undefined) {

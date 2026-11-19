@@ -176,6 +176,16 @@ export const ERROR_CODES = {
    * a removed theme's versions are still served.
    */
   "theme.not_found": 404,
+  /** A platform icon upload of the wrong type for its purpose (mobile layout spec §10.2.1). */
+  "platform_icon.invalid_type": 400,
+  /** A PNG platform icon that is not exactly 512 × 512 (§10.2.1). */
+  "platform_icon.invalid_size": 400,
+  /** A platform icon file over 1 MiB (§10.2.1). */
+  "platform_icon.too_large": 413,
+  /** No object store to keep or serve the platform icon in (§10.2.1). */
+  "platform_icon.storage_unavailable": 503,
+  /** No platform icon of that purpose is uploaded, or the URL's hash is not the current one. */
+  "platform_icon.not_found": 404,
   /**
    * An `extension.client` section whose extension manifest lacks `permissions.client: true`
    * (client extensions spec §5.4: client code is always declared and reviewed).

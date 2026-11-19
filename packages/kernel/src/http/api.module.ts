@@ -107,6 +107,8 @@ import { InvocableSkillsController } from "../skills/invocable.controller.js";
 import { SkillsController } from "../skills/skills.controller.js";
 import { SkillsModule } from "../skills/skills.module.js";
 import { StorageModule } from "../storage/storage.module.js";
+import { PlatformIconController } from "../themes/platform-icon.controller.js";
+import { PlatformIconPublicController } from "../themes/platform-icon-public.controller.js";
 import { OrgThemesController } from "../themes/themes.controller.js";
 import { ThemesModule } from "../themes/themes.module.js";
 import {
@@ -212,6 +214,8 @@ const CONTROLLERS: Type[] = [
   OrgThemesController,
   ThemeDeliveryController,
   PlatformThemeController,
+  PlatformIconController,
+  PlatformIconPublicController,
   DeviceAuthController,
   ClientDeliveryController,
   OrgClientController,

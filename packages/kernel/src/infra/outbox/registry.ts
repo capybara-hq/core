@@ -51,6 +51,15 @@ export const OUTBOX_JOBS = {
     processedIn: "packages/kernel/src/runtime/maintenance.ts",
     opts: { attempts: 10, backoff: { type: "exponential", delay: 5000 }, removeOnComplete: true },
   },
+  // `themes/platform-icon-objects.ts` PLATFORM_ICON_DELETE_JOB: owed by an icon upload (its own
+  // object's delayed orphan check), a replace and a clear (the object the row stopped naming)
+  "platform-icon-delete": {
+    queue: "cap-kernel-maintenance",
+    idempotent:
+      "Deletes one icon object only when the purpose's row does not name it, under the purpose's lock; deleting a missing object is a no-op",
+    processedIn: "packages/kernel/src/runtime/maintenance.ts",
+    opts: { attempts: 10, backoff: { type: "exponential", delay: 5000 }, removeOnComplete: true },
+  },
   "permission-approval-recheck": {
     queue: "cap-kernel-maintenance",
     idempotent:
