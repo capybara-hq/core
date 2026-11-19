@@ -5,6 +5,7 @@
  */
 
 .cb-scal {
+  container: cb-scal / inline-size;
   display: flex;
   flex-direction: column;
   gap: var(--cb-space-3);
@@ -544,7 +545,7 @@ span.cb-scal-daynum {
   line-height: var(--cb-type-small-line);
 }
 
-/* `range="agenda"` shows the agenda at every width; below 600 CSS shows it on the first paint. */
+/* `range="agenda"` shows the agenda at every width; below a 580 frame CSS shows it on the first paint. */
 .cb-scal[data-range="agenda"] .cb-scal-agenda {
   display: flex;
 }
@@ -554,7 +555,9 @@ span.cb-scal-daynum {
 .cb-scal[data-range="agenda"] .cb-scal-narrow {
   display: inline-flex;
 }
-@media (max-width: 599px) {
+/* The week grid needs a 580 frame (spec §5.1, §6.40): a container query on the calendar itself, so
+   the sidebar and a second viewport segment count, not the window. */
+@container cb-scal (max-width: 579px) {
   .cb-scal-grid {
     display: none;
   }

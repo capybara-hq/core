@@ -46,5 +46,9 @@ export function Link({
 
 export function resetNavigation(path = "/") {
   pathname.current = path;
+  // a list-detail item or an open span lives in the hash: a test must not inherit the last one
+  if (typeof window !== "undefined" && window.location.hash !== "") {
+    window.history.replaceState(null, "", window.location.pathname + window.location.search);
+  }
   for (const fn of Object.values(router)) fn.mockReset();
 }

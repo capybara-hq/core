@@ -591,7 +591,7 @@ describe("ScheduleCalendar agenda", () => {
       resolve(import.meta.dirname, "../src/styles/schedule-calendar.css"),
       "utf8",
     );
-    const narrow = css.slice(css.indexOf("@media (max-width: 599px)"));
+    const narrow = css.slice(css.indexOf("@container cb-scal (max-width: 579px)"));
     expect(narrow).toMatch(/\.cb-scal-grid \{\s*display: none;/);
     expect(narrow).toMatch(/\.cb-scal-agenda \{\s*display: flex;/);
     expect(css).toMatch(/\.cb-scal\[data-range="agenda"\] \.cb-scal-agenda \{\s*display: flex;/);

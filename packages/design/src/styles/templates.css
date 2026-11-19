@@ -1503,3 +1503,25 @@ a.cb-object-name:hover {
     border-left: 1px solid var(--cb-line-soft);
   }
 }
+
+/* TracePage on compact (spec §5.11): the waterfall is the page, an open span its own screen. */
+.cb-trace-back {
+  display: none;
+  margin-bottom: var(--cb-space-2);
+}
+@media (max-width: 599px) {
+  .cb-trace[data-open="true"] > .cb-trace-waterfall,
+  .cb-trace[data-open="false"] > .cb-trace-detail {
+    display: none;
+  }
+  .cb-trace-back {
+    display: block;
+  }
+  .cb-shell .cb-trace-back {
+    display: none;
+  }
+  .cb-trace-detail {
+    padding-top: 0;
+    border-top: 0;
+  }
+}

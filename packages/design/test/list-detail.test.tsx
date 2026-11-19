@@ -1,5 +1,3 @@
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { renderToString } from "react-dom/server";
@@ -14,8 +12,10 @@ import {
   LIST_DETAIL_FITS,
   ListDetail,
   type ListDetailProps,
+  TracePage,
   WizardPage,
 } from "../src/index";
+import { css, parseCss } from "./css-rules";
 
 afterEach(() => {
   cleanup();
@@ -42,7 +42,6 @@ function region(p: Partial<ListDetailProps> = {}, locale: "zh" | "en" = "zh") {
 }
 
 const part = (p: string) => document.querySelector(`[data-part="${p}"]`) as HTMLElement | null;
-const css = (f: string) => readFileSync(resolve(import.meta.dirname, "../src/styles", f), "utf8");
 
 describe("ListDetail draws both forms, CSS picks one (first paint follows the window)", () => {
   it("renders the list, the detail pane, the back bar and the open flag in the server render", () => {
@@ -150,54 +149,6 @@ describe("inside the shell the open item is a pushed page", () => {
   });
 });
 
-type CssRule = { media: string | null; selector: string; decls: Record<string, string> };
-
-/** The style rules of a stylesheet with the media query they sit in (one nesting level). */
-function parseCss(source: string): CssRule[] {
-  const text = source.replace(/\/\*[\s\S]*?\*\//g, "");
-  const out: CssRule[] = [];
-  const block = (from: number): number => {
-    let depth = 0;
-    for (let i = from; i < text.length; i++) {
-      if (text[i] === "{") depth++;
-      if (text[i] === "}" && --depth === 0) return i;
-    }
-    return text.length;
-  };
-  const rules = (chunk: string, media: string | null) => {
-    for (const m of chunk.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
-      const decls: Record<string, string> = {};
-      for (const d of (m[2] ?? "").split(";")) {
-        const at = d.indexOf(":");
-        if (at > 0)
-          decls[d.slice(0, at).trim()] = d
-            .slice(at + 1)
-            .replace(/\s+/g, " ")
-            .trim();
-      }
-      out.push({ media, selector: (m[1] ?? "").replace(/\s+/g, " ").trim(), decls });
-    }
-  };
-  let i = 0;
-  while (i < text.length) {
-    const open = text.indexOf("{", i);
-    if (open < 0) break;
-    const head = text.slice(i, open).trim();
-    if (head.startsWith("@media")) {
-      const end = block(open);
-      rules(text.slice(open + 1, end), head.slice(6).trim());
-      i = end + 1;
-    } else if (head.startsWith("@")) {
-      i = block(open) + 1;
-    } else {
-      const end = block(open);
-      rules(text.slice(i, end + 1), null);
-      i = end + 1;
-    }
-  }
-  return out;
-}
-
 describe("the compact forms of the templates", () => {
   it("ActionRow stacks the primary on its own line; the compact CSS makes it sticky above the keyboard", () => {
     render(
@@ -217,7 +168,7 @@ describe("the compact forms of the templates", () => {
     );
     expect(part("action-secondary")?.textContent).toBe("放弃");
     expect(part("action-primary")?.textContent).toBe("保存");
-    const rules = parseCss(css("templates.css")).filter((r) => r.media === "(max-width: 599px)");
+    const rules = parseCss(css("templates.css")).filter((r) => r.at === "(max-width: 599px)");
     const decl = (selector: string, prop: string) =>
       rules.find((r) => r.selector === selector)?.decls[prop];
     expect(decl(".cb-actionrow", "position")).toBe("sticky");
@@ -327,5 +278,25 @@ describe('Grid columns="list-detail"', () => {
     );
     expect(plain.container.querySelector(".cb-grid-frame > .cb-grid")).not.toBeNull();
     expect(css("controls.css")).toContain("@container cb-grid (max-width: 579px)");
+  });
+});
+
+describe("TracePage on compact", () => {
+  it("carries the open flag and a back button that calls onBack", async () => {
+    const onBack = vi.fn();
+    render(
+      <DesignProvider locale="zh">
+        <TracePage
+          header={{ path: [{ label: "a" }], title: "轨迹" }}
+          waterfall={<p>W</p>}
+          detail={<p>D</p>}
+          open
+          onBack={onBack}
+        />
+      </DesignProvider>,
+    );
+    expect(document.querySelector(".cb-trace")?.getAttribute("data-open")).toBe("true");
+    await userEvent.click(screen.getByRole("button", { name: "返回" }));
+    expect(onBack).toHaveBeenCalledTimes(1);
   });
 });
