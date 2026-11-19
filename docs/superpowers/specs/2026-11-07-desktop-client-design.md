@@ -3,9 +3,11 @@
 - Date: 2026-11-19, written against `main` at `b9c01fe0` (first draft 2026-11-07).
 - Status: draft for review.
 - Pairs with: the mobile layout design (`2026-11-19-mobile-layout-design.md`, branch
-  `docs/mobile-layout`), which owns the **Shell environment** contract (`window.capybaraShell`,
-  `data-shell`, insets, drag regions). This document only defines the desktop's values and
-  capabilities in that contract (§7.3).
+  `docs/mobile-layout`), whose §9 **"Shell environment"** owns the `window.capybaraShell` contract:
+  its shape and types (in `@capybara-hq/plugin-sdk`), versioning (`version`, capabilities by
+  `name@major`), the injection and security rule, and how the web and design use it. This document
+  defines only the desktop's values and the capabilities it owns there: `device@1`, `notify@1`,
+  `openExternal@1` (§7.3, §8).
 - Builds on: the environments design (`2026-11-07-environments-design.md`; §13 and §15 for local
   devices), the device service control design (`2026-11-14-device-service-control-design.md`), the
   permission profiles and auto-mode designs (owner ceiling, Full access, restricted work) and the
@@ -44,8 +46,8 @@ keeps working from the browser or an IM channel while the machine is online.
 - **Address page**: the only page bundled in the app. It asks for a deployment address.
 - **Deployment profile**: one deployment the app knows: its origin, the name discovery returned and
   a separate browser session.
-- **Bridge**: the calls the shell exposes to the deployment's web pages, next to the Shell
-  environment fields (§8).
+- **Capability**: a `name@major` object of functions on `window.capybaraShell.capabilities`
+  (mobile layout §9.2); the desktop's are defined in §8. "Bridge" below means these calls.
 - **Runner**: the `capybara-device start` process serving this machine, whoever started it (the
   app, the login service or a terminal).
 - **Native dialog**: an OS message box or menu shown by the app's main process
@@ -64,7 +66,7 @@ Goals:
 3. The web adapts when it detects the desktop shell through the Shell environment contract (title
    bar insets for the macOS traffic lights, drag regions), by capability detection, never by
    user-agent sniffing **(decided)**.
-4. 「连接本机」: when the shell declares the `device` capability, the web's 新建设备 flow offers to
+4. 「连接本机」: when the shell offers the `device@1` capability, the web's 新建设备 flow offers to
    connect this machine, and the shell connects it after a native confirmation naming the
    platform **(decided)**.
 5. Local policy changes from the web can only tighten; widening needs a native confirmation or an
@@ -93,8 +95,8 @@ Anti-goals (a failure even if it works):
 
 - The device credential, the file system or command execution reachable from any web page,
   including the deployment's own pages.
-- The bridge available to any origin other than the profile's deployment origin, or to any frame
-  but the top frame.
+- The shell environment available outside the top frame of the profile's exact origin (mobile
+  layout §9.4).
 - A remote page that connects the machine, resumes a paused runner or widens the local policy
   without a native confirmation.
 - Any inbound port on the machine. The runner's control socket (§4.2) is a local Unix socket, not
@@ -127,7 +129,7 @@ fight it (§5.2). State of `@capybara-hq/device` at `b9c01fe0` (`0.1.0-rc.16`):
 
 | Gap | Why | Proposed change in `packages/device` |
 |---|---|---|
-| Live status and running operations | The bridge's `device.status` / `device.running` (§8) and the tray need the connection state (connecting, online, offline with the last error, draining), the bound device and what runs now. `status --json` reads files only; `Connection` has only `done`, `drain()`, `stop()`; there is no event stream | The runner opens a **control socket** `<stateDir>/control.sock` (Unix socket, 0600 in the 0700 state directory; checked like `credential.json`), JSON lines: `status`, `running` (tag, conversation id, account id, `restricted` / `full`, started at; never command text, like the command log), `subscribe` (status changes), `drain`, `stop`. `status --json` adds the live fields when a runner answers **(designer's call)** |
+| Live status and running operations | The bridge's `device@1.status` / `device@1.running` (§8) and the tray need the connection state (connecting, online, offline with the last error, draining), the bound device and what runs now. `status --json` reads files only; `Connection` has only `done`, `drain()`, `stop()`; there is no event stream | The runner opens a **control socket** `<stateDir>/control.sock` (Unix socket, 0600 in the 0700 state directory; checked like `credential.json`), JSON lines: `status`, `running` (tag, conversation id, account id, `restricted` / `full`, started at; never command text, like the command log), `subscribe` (status changes), `drain`, `stop`. `status --json` adds the live fields when a runner answers **(designer's call)** |
 | Machine-readable login | The app must open the verification URL in the profile's own window and know when login ends; scraping the "Open … and confirm the code …" line is fragile | `login --json`: JSON lines `{ "event": "verification", "url", "userCode", "expiresIn" }`, then `{ "event": "done", "deviceId", "orgId" }` or `{ "event": "error", "code" }`; implies `--no-browser` |
 | Machine-readable ceiling and service state | The device page shows the ceiling from the kernel's owner report, but the app must decide whether a requested change widens it, and whether a service is installed | `ceiling show --json` and `service status --json` (the facts `service status` prints today) |
 | Several deployments | One `credential.json` per state directory: a machine user is connected to one deployment at a time | None in D2: the app connects this machine to one deployment at a time and says so (§9.3). Per-deployment state is a later change **(designer's call)** |
@@ -230,7 +232,6 @@ GET /api/v1/meta   (@Public, cache-control: no-store)
 {
   "name": "Example Corp",            // the platform's display name, or null (open question 1)
   "protocols": {
-    "shell":  { "min": 1, "max": 1 }, // the bridge and Shell environment version the web speaks
     "device": { "min": 3, "max": 3 }  // DEVICE_PROTOCOL_VERSION range of the gateway
   },
   "features": { "localDevices": true }
@@ -241,9 +242,10 @@ GET /api/v1/meta   (@Public, cache-control: no-store)
   version **(designer's call)**.
 - No gateway URL: the token response already carries `connectUrl`, and the web tier proxies
   `/device/connect` to the gateway (`apps/web/src/lib/device-connect-proxy.ts`).
-- An app outside `protocols.shell` shows 「请升级客户端」 on the address page and does not load
-  the deployment. A missing endpoint (an older kernel) counts as "not a Capybara deployment or too
-  old".
+- No shell range: skew between the web and the app is carried by the Shell environment's
+  `version` and capability keys (mobile layout §9.2): a web that does not know a capability
+  ignores it, a shell that lacks one is treated as the browser. A missing endpoint (an older
+  kernel) counts as "not a Capybara deployment or too old".
 - The route gets a Platform-tool exclusion (category `transport`: pre-sign-in discovery for
   clients, nothing for an agent to do).
 
@@ -282,9 +284,10 @@ GET /api/v1/meta   (@Public, cache-control: no-store)
 ### 7.2 Security baseline
 
 - `contextIsolation: true`, `sandbox: true`, `nodeIntegration: false`, no `<webview>`.
-- Every IPC call is checked in the main process against `event.senderFrame`: only the top frame
-  whose origin equals the profile's origin is served. Frames, including extension embeds under
-  `/plugin-ui` and sandboxed shared HTML, are refused.
+- Injection and the per-call origin check follow the Shell environment's security rule (mobile
+  layout §9.4): the preload injects `window.capybaraShell` only into the top frame of the
+  profile's exact origin, and the main process re-checks every IPC call against
+  `event.senderFrame`.
 - Permission requests (notifications, microphone, camera, clipboard) are granted only to the
   profile origin, and only for the permissions the web app uses.
 - Electron fuses: `RunAsNode` off, `EnableNodeOptionsEnvironmentVariable` off,
@@ -296,42 +299,45 @@ GET /api/v1/meta   (@Public, cache-control: no-store)
 
 ### 7.3 The desktop in the Shell environment
 
-The contract (`window.capybaraShell = { platform, insets, capabilities }`, injected by a native
-shell only on the deployment origin; design's AppShell reads it, sets `data-shell`, reserves the
-insets and defines `app-region: drag` areas, so `apps/web` stays style-free) is defined in the
-mobile layout design, section **"Shell environment"**. The desktop's values:
+Shape, versioning, the injection rule, the no-flash script, the `--cb-shell-inset-*` /
+`--cb-inset-*` tokens, drag regions in design CSS and the `lib/shell.ts` adapter are the mobile
+layout design's §9 (with §7.5 for the inset tokens); nothing here redefines them. The desktop's
+values:
 
 | Field | Desktop value |
 |---|---|
+| `version` | `1` |
+| `kind` | `"desktop"` |
 | `platform` | `"macos"` (later `"windows"`, `"linux"`) |
-| `insets` | macOS: `top` = the title bar height of `titleBarStyle: "hiddenInset"` (28 px at the default traffic-light position), `left` / `right` / `bottom` 0. The leading area of that band is covered by the traffic lights (about 80 px); the AppShell keeps it clear on `platform: "macos"` (open question 4) |
-| `capabilities` | `notify` always; `device` when 「连接本机」 is available: macOS or Linux, not turned off by managed configuration, and the deployment's `/api/v1/meta` says `localDevices` and a `device` range the bundled program speaks |
+| `shellVersion` | The app's version |
+| `insets` | macOS with `titleBarStyle: "hiddenInset"`: `top` 28 (the title bar band holding the traffic lights at their default position), `right` / `bottom` / `left` 0. In fullscreen the traffic lights hide: `top` 0, announced with `change` |
+| `capabilities` | `notify@1` and `openExternal@1` always; `chrome@1` (mobile layout §9.2: window background and title bar follow the theme); `device@1` when 「连接本机」 is available: macOS or Linux, not turned off by managed configuration, and the deployment's `/api/v1/meta` says `localDevices` with a `device` range the bundled program speaks |
 
-- The preload script defines `window.capybaraShell` with `contextBridge` only when the top frame's
-  origin is the profile's origin, before the page's scripts run; the bridge calls (§8) hang off the
-  same object, one namespace per capability.
-- The web detects a capability (`capybaraShell?.capabilities.includes("device")`), never the user
-  agent. Without the object every page behaves as in a browser.
-- The window is draggable only where the AppShell declares drag regions; the shell adds none of its
-  own.
+Desktop choices that §9.3 leaves to this spec, realized in design CSS under
+`[data-shell="desktop"][data-shell-platform="macos"]` **(designer's call)**: the sidebar head and,
+on compact and medium widths, the top bar clear about 80 px at the leading edge of the top band
+for the traffic lights; the sidebar head, the top bar and the conversation title bar are drag
+regions, every interactive element in them `no-drag`. The shell adds no drag regions of its own.
 
-## 8. Bridge API (shell protocol 1)
+## 8. The desktop's capabilities
 
-Exposed on `window.capybaraShell` with `contextBridge`, served only to the profile origin's top
-frame (§7.2). Every call returns plain data, never a credential.
+Offered on `window.capybaraShell.capabilities` under the rules of mobile layout §9.2 and §9.4: the
+web uses them only through `lib/shell.ts`, detects them by key
+(`capybaraShell?.capabilities["device@1"]`), and treats an absent one as the browser. Every call
+returns plain data, never a credential.
 
-| Call | Capability | Does |
-|---|---|---|
-| `info()` | — | App version, platform, shell protocol version |
-| `notify({ title, body, path? })` | `notify` | OS notification; a click focuses the shell and navigates to `path` (same origin only) |
-| `device.status()` / `device.onStatus(cb)` | `device` | For this machine: `not_connected`, `connected_elsewhere` (logged in to another deployment: its origin only), or connected to this deployment with `deviceId`, `orgId`, run mode (`os` / `docker`), connection state (`starting`, `online`, `offline` + reason, `draining`, `stopped`), whether the login service is installed. From `status --json` and the control socket |
-| `device.running()` | `device` | What runs on this machine now (control socket `running`): tag, conversation id, account id, isolation, started at; no command text |
-| `device.connect({ orgId, deviceId? })` | `device` | Asks natively first (§9.1); on yes, runs the authorization of §9.2; resolves `connected`, `cancelled` or an error code |
-| `device.pause()` | `device` | Drain: no new operations, the runner stops when the running ones finish; stays stopped |
-| `device.resume()` | `device` | Starts the runner again (or `service start`); asks natively first, like connect |
-| `device.disconnect()` | `device` | Stops the runner now (`stop`, or `service stop` when the service runs it) |
-| `device.requestCeiling({ fullAccess, projectReach })` | `device` | A narrowing applies at once (`ceiling set …`); a widening shows the native confirmation with the program's risk text (§9.5) and applies only on yes |
-| `device.keepConnected(on)` | `device` | 「关闭窗口后保持接入」: `service install` / `uninstall` through the bundled Node |
+| Capability · function | Does |
+|---|---|
+| `notify@1.notify({ title, body, path? })` | OS notification; a click focuses the shell and navigates to `path` (same origin only) |
+| `openExternal@1.open(url)` | Opens an http(s) URL in the system browser |
+| `device@1.status()` / `device@1.onStatus(cb)` | For this machine: `not_connected`, `connected_elsewhere` (logged in to another deployment: its origin only), or connected to this deployment with `deviceId`, `orgId`, run mode (`os` / `docker`), connection state (`starting`, `online`, `offline` + reason, `draining`, `stopped`), whether the login service is installed. From `status --json` and the control socket |
+| `device@1.running()` | What runs on this machine now (control socket `running`): tag, conversation id, account id, isolation, started at; no command text |
+| `device@1.connect({ orgId, deviceId? })` | Asks natively first (§9.1); on yes, runs the authorization of §9.2; resolves `connected`, `cancelled` or an error code |
+| `device@1.pause()` | Drain: no new operations, the runner stops when the running ones finish; stays stopped |
+| `device@1.resume()` | Starts the runner again (or `service start`); asks natively first, like connect |
+| `device@1.disconnect()` | Stops the runner now (`stop`, or `service stop` when the service runs it) |
+| `device@1.requestCeiling({ fullAccess, projectReach })` | A narrowing applies at once (`ceiling set …`); a widening shows the native confirmation with the program's risk text (§9.5) and applies only on yes |
+| `device@1.keepConnected(on)` | 「关闭窗口后保持接入」: `service install` / `uninstall` through the bundled Node |
 
 Deliberately absent: the credential, file access, command execution, `policy add`
 `allowedDomains` from the page (the deployment already has its own narrowing-only policy
@@ -346,12 +352,12 @@ dialog is open per profile at a time; further requests fail with `busy`.
 
 ### 9.1 The flow
 
-1. On the 设备 page, 新建设备 → 本地设备 shows, when the `device` capability is present, a
+1. On the 设备 page, 新建设备 → 本地设备 shows, when `device@1` is present, a
    primary 「连接本机」 above the terminal steps (which stay, for other machines). If this machine
    is already connected to this deployment, the dialog shows that device's state and a link to its
    page instead; if it is connected to another deployment, it says so and offers nothing but the
    terminal steps.
-2. A click calls `device.connect({ orgId })` with the org the person is in.
+2. A click calls `device@1.connect({ orgId })` with the org the person is in.
 3. The shell shows a **native confirmation** **(decided)**, parented to the window: 「允许
    <平台名称>（<host>）在这台电脑上运行命令吗？」 with a detail line: what a local device is, that
    it starts restricted (no Full access, the device's workspace only) and that it can be
@@ -367,7 +373,7 @@ dialog is open per profile at a time; further requests fail with `busy`.
   page preselects that org and 新建设备 named after the machine (a core change, §13), so the person
   reads the disclosure and confirms in one step. The page stays the deployment's: it may still let
   the person pick another org or an existing device.
-- On `done` the child window closes, the shell starts the runner (§9.3) and `device.onStatus`
+- On `done` the child window closes, the shell starts the runner (§9.3) and `device@1.onStatus`
   reports `online`; the web's 新建设备 dialog then sees the new device (it already polls the device
   list) and opens its page.
 - The credential is written by the program to its own `credential.json`; it never enters a
@@ -385,7 +391,7 @@ dialog is open per profile at a time; further requests fail with `busy`.
 
 - A runner the app started runs while the app runs; quitting while operations run asks natively:
   wait (drain) or stop now.
-- 「关闭窗口后保持接入」 (on the device page, via `device.keepConnected`) installs the login
+- 「关闭窗口后保持接入」 (on the device page, via `device@1.keepConnected`) installs the login
   service on the bundled Node; the app then uses the service's runner. Turning it off uninstalls it.
 - The app starts at login only when the person turns that on in the app menu (off by default)
   **(designer's call)**.
@@ -405,9 +411,9 @@ dialog is open per profile at a time; further requests fail with `busy`.
 ### 9.6 Where state is shown
 
 - The deployment's device page shows the machine's state as it does today (the kernel's view),
-  plus, when `device.status` says the device is this machine, 「本机」, the live running list from
-  `device.running`, 暂停 / 断开 / 恢复, the keep-connected switch, and a widen action that goes
-  through `device.requestCeiling` (instead of the `capybara-device ceiling set` line it shows in a
+  plus, when `device@1.status` says the device is this machine, 「本机」, the live running list from
+  `device@1.running`, 暂停 / 断开 / 恢复, the keep-connected switch, and a widen action that goes
+  through `device@1.requestCeiling` (instead of the `capybara-device ceiling set` line it shows in a
   browser).
 - The device list and the conversation's device picker mark this machine 「本机」.
 - The tray icon shows not connected, online, offline, paused and busy. Its native menu: the
@@ -417,14 +423,14 @@ dialog is open per profile at a time; further requests fail with `busy`.
 ## 10. Notifications
 
 Runs that need attention (an approval, a question, a finished background run) reach the person
-through the web's existing signals; when the `notify` capability is present the web also calls
-`capybaraShell.notify`, so they show while the window is hidden. A click navigates to the
+through the web's existing signals; when `notify@1` is present the web also calls
+`notify@1.notify`, so they show while the window is hidden. A click navigates to the
 conversation.
 
 ## 11. Distribution and updates
 
 - **macOS first** (universal, Developer ID signed, notarized) **(decided)**; Windows (signed; the
-  device runs in WSL or Docker there, so `device` is absent on native Windows until a design says
+  device runs in WSL or Docker there, so `device@1` is absent on native Windows until a design says
   otherwise) and Linux (AppImage, deb) later. No macOS-only API where a cross-platform one exists.
 - Signing certificates and the app id are arranged by the maintainer **(decided)**; the working
   app id is `com.capybarahq.desktop`.
@@ -445,7 +451,7 @@ Latin word `agent`. The language follows the OS; everything else is the deployme
 
 | Threat | Measure |
 |---|---|
-| A malicious or compromised page drives the machine | No execution, files or credential in the bridge; connect, resume and widening need a native confirmation and a user activation; origin and top frame checked per IPC call (§7.2, §8) |
+| A malicious or compromised page drives the machine | No execution, files or credential in the bridge; connect, resume and widening need a native confirmation and a user activation; the Shell environment security rule (mobile layout §9.4) |
 | A page connects the machine silently | Native dialog naming the platform and host before any login (§9.1) |
 | A page loosens the local policy | Only narrowing applies directly; widening shows the program's risk text natively (§9.5) |
 | A misled agent runs harmful commands | Unchanged: the permission profile, the owner ceiling, the restricted runtime, the deployment's command review; plus one-click pause and disconnect from the tray |
@@ -459,8 +465,8 @@ Latin word `agent`. The language follows the OS; everything else is the deployme
 | Where | Change |
 |---|---|
 | `packages/kernel` | `GET /api/v1/meta` (§6.2), `@Public`, no-store, tested through the web proxy; a Platform-tool exclusion (`transport`); the name source per open question 1 |
-| `packages/design` | The AppShell honours the Shell environment (owned by the mobile layout design); the desktop needs the `macos` title-bar inset and the traffic-light area kept clear (§7.3) |
-| `apps/web` | A small shell adapter (`lib/shell.ts`: capability detection, typed bridge calls, `defineQuery` for `device.status` / `device.running`, `useAppMutation` for the actions); `DeviceCreateDialog` local branch: 「连接本机」 or this machine's state (§9.1); the device page's 本机 section and widen-through-bridge action (§9.6); 本机 marks in the device list and picker; `notify` for attention signals (§10); zh / en messages (`check:i18n`) |
+| `packages/design` | Shell environment support comes with the mobile layout design (§9.3 there); this spec adds the desktop CSS choices of §7.3 (traffic-light clearance, which regions drag) |
+| `apps/web` | Typed accessors for `device@1` and `notify@1` in the shell adapter `lib/shell.ts` (the adapter itself, the plugin-sdk types and the no-flash script come with the mobile layout design), `defineQuery` for `device@1.status` / `device@1.running`, `useAppMutation` for the actions); `DeviceCreateDialog` local branch: 「连接本机」 or this machine's state (§9.1); the device page's 本机 section and widen-through-bridge action (§9.6); 本机 marks in the device list and picker; `notify@1` for attention signals (§10); zh / en messages (`check:i18n`) |
 | `apps/web` `/devices/link` | Honour `org=<orgId>`: preselect the org and 新建设备 named after the machine (§9.2) |
 | `packages/device` | The gaps of §4.2: the control socket and live `status --json`; `login --json`; `ceiling show --json`; `service status --json`; README and tests; a changeset |
 | `docs/architecture.md` | `capybara-hq/clients` (desktop, later mobile) as an external app in its own repository |
@@ -469,9 +475,9 @@ Latin word `agent`. The language follows the OS; everything else is the deployme
 
 | Phase | Content | Depends on |
 |---|---|---|
-| **D1 Shell** (macOS) | `capybara-hq/clients` with `apps/desktop` and `packages/shell`; address page; `/api/v1/meta`; profiles; shell security; navigation rules; the Shell environment values; `notify`; deep links; managed configuration; signing and updates | `/api/v1/meta`; the AppShell side of the Shell environment (mobile layout design) |
-| **D2 Connect this machine** | Bundled Node and device package; runner supervisor; `device` bridge namespace; native dialogs; 「连接本机」 and the device page's 本机 section in core web; `/devices/link?org=`; keep-connected service; tray | The `packages/device` gaps of §4.2 |
-| D3 Windows and Linux | Builds, signing, installers; `device` on Linux (WSL / Docker on Windows) | D2 |
+| **D1 Shell** (macOS) | `capybara-hq/clients` with `apps/desktop` and `packages/shell`; address page; `/api/v1/meta`; profiles; shell security; navigation rules; the Shell environment values; `notify@1`, `openExternal@1`, `chrome@1`; deep links; managed configuration; signing and updates | `/api/v1/meta`; the AppShell side of the Shell environment (mobile layout design) |
+| **D2 Connect this machine** | Bundled Node and device package; runner supervisor; `device@1`; native dialogs; 「连接本机」 and the device page's 本机 section in core web; `/devices/link?org=`; keep-connected service; tray | The `packages/device` gaps of §4.2 |
+| D3 Windows and Linux | Builds, signing, installers; `device@1` on Linux (WSL / Docker on Windows) | D2 |
 | Later | Mobile (Capacitor) in the same repository; several connected deployments per machine user; keychain credential; a virtual-machine sandbox mode; local MCP servers on the device (own design) | — |
 
 The order of D1 and D2 inside each phase is the designer's call; D1 does not wait for D2's core
@@ -501,7 +507,7 @@ Decided by the maintainer:
    Native (§5.1).
 3. The desktop draws no UI: only the plain-HTML address page; sign-in, OAuth and setup are the
    deployment's web (§3, §6.1, §7.1).
-4. The web adapts through the Shell environment contract (§7.3).
+4. The web adapts through the Shell environment contract (mobile layout §9; the desktop values in §7.3).
 5. 「连接本机」 in the 新建设备 flow, with a native confirmation naming the platform (§9.1).
 6. Remote can only tighten; no local settings windows (§9.5, §3).
 
@@ -516,6 +522,3 @@ Open:
 3. Should an IdP that refuses embedded browsers (some reject Electron windows) get a system-browser
    sign-in with a one-time hand-off into the window's session? That needs a kernel hand-off
    endpoint; not planned until a deployment hits it.
-4. How the Shell environment expresses the macOS traffic-light area (an inset only, a
-   `platform`-based AppShell rule, or an explicit window-controls field): to settle together with
-   the mobile layout design.
