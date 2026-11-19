@@ -10,7 +10,7 @@ import {
 import { ApiError } from "../../errors.js";
 import { HIDDEN_FORMAT_RE } from "../../text.js";
 import { generateImagePaths } from "../../tools/builtins/image/paths.js";
-import { hostGrantable } from "../device-sandbox.js";
+import { type DeviceSandboxLayer, hostGrantable } from "../device-sandbox.js";
 import { coversHost } from "../modes.js";
 import type {
   PermissionCandidate,
@@ -134,15 +134,46 @@ export const ESCALATION_JUSTIFICATION_MISSING_TEXT =
 /** Why an escalation cannot be reviewed: an unattended run (no one can approve it). */
 export const ESCALATION_UNATTENDED_WHY =
   "this is an unattended run (a scheduled task) where no one can approve running outside the sandbox";
-/** Why an escalation cannot be reviewed: the device, org or platform forbids Full access. */
-export const ESCALATION_CEILING_WHY =
-  "running commands outside the sandbox is not allowed on this device (its owner, the organization or the platform has not allowed Full access)";
-/** Why an escalation cannot be reviewed: the runtime cannot run Full access now. */
+/**
+ * Why an escalation cannot be reviewed because a layer's outside-sandbox setting is off: one text
+ * per layer that blocks it (`DeviceSandbox.layer.outsideSandbox`), each naming who lifts it and how.
+ */
+export const ESCALATION_DEVICE_OFF_WHY =
+  "running commands outside the sandbox is off on this device; its owner turns it on by running `capybara-device ceiling set --outside-sandbox on` on that machine";
+export const ESCALATION_ORG_OFF_WHY =
+  "running commands outside the sandbox is off in this organization; an organization admin can allow running outside the sandbox";
+export const ESCALATION_PLATFORM_OFF_WHY =
+  "running commands outside the sandbox is off on this platform; a super admin can allow running outside the sandbox";
+export const ESCALATION_NO_OUTSIDE_WHY =
+  "this device is a cloud instance that is itself the sandbox, so this device has no outside of its sandbox to run a command in";
+/**
+ * The refusal text of an escalation that a layer's outside-sandbox setting blocks. A cloud device
+ * or an instance-boundary runtime has no outside at all, whichever layer is off; a local runtime
+ * that cannot run outside its sandbox is a runtime limit.
+ */
+export const escalationCeilingWhy = (input: {
+  layer: DeviceSandboxLayer | null;
+  location: "local" | "cloud";
+  boundary: "operation" | "instance";
+}): string => {
+  if (input.location === "cloud" || input.boundary === "instance") return ESCALATION_NO_OUTSIDE_WHY;
+  switch (input.layer) {
+    case "platform":
+      return ESCALATION_PLATFORM_OFF_WHY;
+    case "org":
+      return ESCALATION_ORG_OFF_WHY;
+    case "provider":
+      return escalationRuntimeWhy("This device's runtime cannot run a command outside its sandbox");
+    default:
+      return ESCALATION_DEVICE_OFF_WHY;
+  }
+};
+/** Why an escalation cannot be reviewed: the runtime cannot run a command outside its sandbox now. */
 export const escalationRuntimeWhy = (reason: string): string =>
   `this device cannot run commands outside its sandbox now (${reason.replace(/\.$/, "")})`;
 /** What the model gets when its escalated call cannot be reviewed, with what works instead. */
 export const escalationRefusedText = (why: string, workingRoot: string): string =>
-  `This Bash call asked to run outside the sandbox, but ${why}, so it did not run. Call Bash without sandbox: "escalated" to run the command inside the sandbox (inside ${workingRoot} and the directories already granted), or ask the user to run it themselves or to allow Full access on this device.`;
+  `This Bash call asked to run outside the sandbox, but ${why}, so it did not run. Call Bash without sandbox: "escalated" to run the command inside the sandbox (inside ${workingRoot} and the directories already granted), or ask the user to run it themselves.`;
 /**
  * Appended to a refusal of a restricted `Bash` call (the sandbox or the restricted scope stopped
  * it) when this device and org allow running outside the sandbox: the model may retry the same

@@ -62,8 +62,8 @@ import {
 } from "./permission-context-types.js";
 import { hostsWithinOuter, PermissionFacts, permissionScopeHash } from "./permission-facts.js";
 import {
-  ESCALATION_CEILING_WHY,
   ESCALATION_UNATTENDED_WHY,
+  escalationCeilingWhy,
   escalationRuntimeWhy,
   normalizePermissionExpansion,
   withinDirectory,
@@ -753,9 +753,11 @@ export class SandboxOperationAuthority {
       : withheld
         ? escalationRuntimeWhy(withheld.reason)
         : !view.outsideSandboxCeiling
-          ? sandbox.layer.outsideSandbox === "provider"
-            ? escalationRuntimeWhy("This device's runtime cannot run a command outside its sandbox")
-            : ESCALATION_CEILING_WHY
+          ? escalationCeilingWhy({
+              layer: sandbox.layer.outsideSandbox,
+              location: device.source === "local" ? "local" : "cloud",
+              boundary: sandbox.boundary,
+            })
           : null;
     const vector = await this.epochs.readLocked(subject);
     signal.throwIfAborted();

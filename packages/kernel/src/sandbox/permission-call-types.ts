@@ -51,7 +51,7 @@ export type PermissionCrossingKind = "directory" | "host" | "outside-sandbox" | 
 /**
  * What a call grant authorizes: an exact directory and host expansion of the restricted scope, or
  * one Bash call run outside the OS sandbox (per-call sandbox escalation: full execution for that
- * call only, within the device's Full access ceiling).
+ * call only, within the device's outside-sandbox setting).
  */
 export type PermissionScopeKind = "directories-and-hosts" | "sandbox-escalation";
 /**
@@ -123,8 +123,8 @@ export type PermissionReviewSnapshot = Readonly<
     hostRefusal?: (host: string) => string | null;
     /**
      * Why this call could not run outside the sandbox (per-call escalation): an unattended run, a
-     * device, org or platform Full access ceiling that forbids it, or a runtime that cannot run
-     * Full access now. Null or absent when an escalation may be reviewed.
+     * device, org or platform outside-sandbox setting that forbids it (one text per layer), or a
+     * runtime that cannot run a command outside its sandbox now. Null or absent when an escalation may be reviewed.
      */
     escalationRefusal?: string | null;
   }
