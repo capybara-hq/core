@@ -14,6 +14,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { PolicyStore } from "../src/policy-store.js";
 import {
   DEFAULT_POLICY,
+  MISSING_POLICY_OWNER_CEILING,
   ownerCeilingOfMode,
   type Policy,
   policyLockPath,
@@ -32,8 +33,8 @@ afterEach(() => rmSync(dir, { recursive: true, force: true }));
 const withDomains = (allowedDomains: string[]): Policy => ({ ...DEFAULT_POLICY, allowedDomains });
 
 describe("PolicyStore", () => {
-  it("starts from the file, or the defaults without one", () => {
-    expect(new PolicyStore(dir).current()).toEqual(DEFAULT_POLICY);
+  it("starts from the file, or the closed missing-file policy without one", () => {
+    expect(new PolicyStore(dir).current().ownerCeiling).toEqual(MISSING_POLICY_OWNER_CEILING);
     writePolicy(dir, withDomains(["a.com"]));
     expect(new PolicyStore(dir).current().allowedDomains).toEqual(["a.com"]);
   });
@@ -96,12 +97,13 @@ describe("PolicyStore", () => {
     expect(store.current().ownerCeiling).toEqual(ownerCeilingOfMode("sandbox"));
   });
 
-  it("a deleted file means the defaults", () => {
+  it("a deleted file means the closed missing-file policy, never the open default", () => {
     writePolicy(dir, withDomains(["a.com"]));
     const store = new PolicyStore(dir);
     expect(store.current().allowedDomains).toEqual(["a.com"]);
     rmSync(policyPath(dir));
-    expect(store.current()).toEqual(DEFAULT_POLICY);
+    expect(store.current().ownerCeiling).toEqual(MISSING_POLICY_OWNER_CEILING);
+    expect(store.current().allowedDomains).toEqual([]);
   });
 
   it("uses the initial policy until the file changes", () => {
@@ -138,7 +140,7 @@ describe("PolicyStore", () => {
 
   it("update sees a change another process wrote since the last read", () => {
     const store = new PolicyStore(dir);
-    expect(store.current()).toEqual(DEFAULT_POLICY);
+    expect(store.current().ownerCeiling).toEqual(MISSING_POLICY_OWNER_CEILING);
     writePolicy(dir, withDomains(["other.com"]));
     store.update((p) => ({ ...p, allowedDomains: [...p.allowedDomains, "mine.com"] }));
     expect(readPolicy(dir).allowedDomains).toEqual(["other.com", "mine.com"]);

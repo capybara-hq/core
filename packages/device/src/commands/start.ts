@@ -64,6 +64,15 @@ export function legacyPolicyNotice(ceiling: OwnerCeilingPolicy): string {
   );
 }
 
+/**
+ * Printed once when start found no policy.json (a device set up before rc.58, whose `login` wrote
+ * none) and wrote the closed ceiling it already ran with.
+ */
+export const MISSING_POLICY_NOTICE =
+  "policy.json was missing, so this machine keeps the sandbox it had: no network host allowed and " +
+  "no running outside the sandbox (written to policy.json). To open the sandbox network: " +
+  "capybara-device ceiling set --network open";
+
 /** `start`: connect and serve in the foreground until stopped, drained, revoked or replaced. */
 export async function start(deps: StartDeps): Promise<number> {
   const { stateDir, out, err } = deps;
@@ -262,9 +271,10 @@ async function serveStaged(
   const { stateDir, out, err } = deps;
   let device: StagedDevice;
   try {
-    const converted = convertPolicyFile(stateDir) === "converted";
+    const conversion = convertPolicyFile(stateDir);
     const policy = new PolicyStore(stateDir);
-    if (converted) out(legacyPolicyNotice(policy.current().ownerCeiling));
+    if (conversion === "converted") out(legacyPolicyNotice(policy.current().ownerCeiling));
+    if (conversion === "created") out(MISSING_POLICY_NOTICE);
     device = await (deps.createStaged as NonNullable<StartDeps["createStaged"]>)(cred, policy);
   } catch (e) {
     err(`Cannot start: ${(e as Error).message}`);

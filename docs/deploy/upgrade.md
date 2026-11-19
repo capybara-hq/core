@@ -152,7 +152,11 @@ Platform tool (`devices.set-network`) may only narrow.
 **Local devices.** `capybara-device` converts its `policy.json` once on start, never wider:
 Full access allowed becomes outside-the-sandbox allowed with the open network; denied keeps the
 allowlist with its old `allowedDomains`, and `start` prints `capybara-device ceiling set --network
-open` to open it. New installs get outside-the-sandbox off and the open network. The CLI is now
+open` to open it. A device set up before rc.58 may have no `policy.json` at all (its `login` wrote
+none), and such a device ran with no reachable host: on its first start with a credential the
+program writes `{ outsideSandbox: false, network: "allowlist", allowedDomains: [] }` and prints how
+to open it (`capybara-device ceiling set --network open`); a missing file never reads as the open
+network. New installs (`login`) get outside-the-sandbox off and the open network. The CLI is now
 `capybara-device ceiling set [--outside-sandbox on|off] [--network open|allowlist]
 [--project-reach workspace|os-user]`; `--full-access` is gone. The device page only narrows a
 local device: `POST …/devices/:id/policy` takes only `remove` and `ownerCeiling` narrowings (`add`

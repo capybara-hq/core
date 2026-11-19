@@ -131,6 +131,27 @@ export const DEFAULT_POLICY: Policy = {
   keepAwake: "while-busy",
 };
 
+/**
+ * The owner ceiling of a machine without policy.json. A new setup has one from `login`; before
+ * rc.58 `login` wrote none, and such a device ran with no reachable host. So a missing file is
+ * never the open default: no running outside the sandbox, the allowlist network with no host, the
+ * workspace reach. `start` writes it once ({@link convertPolicyFile}) and says how to open it.
+ */
+export const MISSING_POLICY_OWNER_CEILING: OwnerCeilingPolicy = Object.freeze({
+  outsideSandbox: false,
+  network: "allowlist",
+  restrictedProjectReach: "workspace",
+});
+
+/** The policy every reader sees while policy.json is missing: {@link MISSING_POLICY_OWNER_CEILING}. */
+function missingPolicy(): Policy {
+  return {
+    ...DEFAULT_POLICY,
+    allowedDomains: [],
+    ownerCeiling: { ...MISSING_POLICY_OWNER_CEILING },
+  };
+}
+
 type Env = Record<string, string | undefined>;
 
 /** `$XDG_CONFIG_HOME/capybara-device`, or `~/.config/capybara-device`. */
@@ -242,7 +263,10 @@ const LEGACY_POLICY_KEYS: readonly string[] = [
 
 const isMode = (v: unknown): v is SandboxMode => v === "auto" || v === "sandbox";
 
-/** The local policy (defaults when absent). Throws, naming the file, on bad JSON or field types. */
+/**
+ * The local policy (the closed {@link MISSING_POLICY_OWNER_CEILING} when absent, never the open
+ * default). Throws, naming the file, on bad JSON or field types.
+ */
 export function readPolicy(dir: string): Policy {
   return readPolicyFile(dir).policy;
 }
@@ -266,13 +290,7 @@ export interface PolicyFile {
  */
 export function readPolicyFile(dir: string): PolicyFile {
   const file = policyPath(dir);
-  if (!existsSync(file)) {
-    return {
-      policy: { ...DEFAULT_POLICY, ownerCeiling: { ...DEFAULT_POLICY.ownerCeiling } },
-      extra: {},
-      legacy: false,
-    };
-  }
+  if (!existsSync(file)) return { policy: missingPolicy(), extra: {}, legacy: false };
   let raw: unknown;
   try {
     raw = JSON.parse(readFileSync(file, "utf8"));
@@ -401,12 +419,16 @@ export function writePolicy(
 /**
  * The one-time explicit conversion of policy.json to version 3, under the policy lock and atomic:
  * an old ceiling converts never wider ({@link convertV2OwnerCeiling}, {@link ownerCeilingOfMode});
- * domains, resources and unknown keys are kept. `absent`: no file (nothing written); `current`:
- * already version 3. Throws, writing nothing, on a malformed file.
+ * domains, resources and unknown keys are kept. `created`: no file, so the closed
+ * {@link MISSING_POLICY_OWNER_CEILING} is written (a device set up before rc.58, whose `login`
+ * wrote none); `current`: already version 3. Throws, writing nothing, on a malformed file.
  */
-export function convertPolicyFile(dir: string): "absent" | "current" | "converted" {
+export function convertPolicyFile(dir: string): "created" | "current" | "converted" {
   return withPolicyLock(dir, () => {
-    if (!existsSync(policyPath(dir))) return "absent";
+    if (!existsSync(policyPath(dir))) {
+      writePolicy(dir, missingPolicy());
+      return "created";
+    }
     const { policy, extra, legacy } = readPolicyFile(dir);
     if (!legacy) return "current";
     writePolicy(dir, policy, extra);

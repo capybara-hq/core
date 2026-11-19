@@ -102,7 +102,9 @@ prints the ceiling and how to widen it; a widening prints the risk text and need
 at the prompt. The organization and the platform have their own settings; the narrowest wins. An
 older `policy.json` (protocol 3, `fullAccess`) is converted once on start, never wider: allowed
 becomes outside-the-sandbox on with the open network, denied keeps the allowlist (and `start` prints
-`capybara-device ceiling set --network open`).
+`capybara-device ceiling set --network open`). A logged-in machine without `policy.json` (set up
+before rc.58) ran with no reachable host and keeps that: `start` writes outside-the-sandbox off and
+the allowlist with no host, and prints the same command; a missing file never reads as open.
 
 ```bash
 capybara-device ceiling show                    # the owner ceiling, network, revision

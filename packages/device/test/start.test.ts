@@ -16,7 +16,7 @@ import { RunningOperations } from "../src/activity.js";
 import type { Connection } from "../src/client.js";
 import { CommandLog } from "../src/command-log.js";
 import { drain, drainAndWait } from "../src/commands/drain.js";
-import { legacyPolicyNotice, start } from "../src/commands/start.js";
+import { legacyPolicyNotice, MISSING_POLICY_NOTICE, start } from "../src/commands/start.js";
 import { stop } from "../src/commands/stop.js";
 import { queryControl } from "../src/control/client.js";
 import { controlSocketPath } from "../src/control/protocol.js";
@@ -26,6 +26,7 @@ import type { StagedDevice } from "../src/staged-device.js";
 import {
   DEFAULT_POLICY,
   FULL_OWNER_CEILING,
+  MISSING_POLICY_OWNER_CEILING,
   readPolicy,
   SANDBOX_OWNER_CEILING,
   writeCredential,
@@ -115,6 +116,22 @@ describe("start: legacy policy notice", () => {
       allowedDomains: ["a.test"],
       ownerCeiling: SANDBOX_OWNER_CEILING,
     });
+  });
+
+  it("a device without policy.json (set up before rc.58) gets the closed allowlist, never open", async () => {
+    writeCredential(dir, cred);
+    const out = await run();
+    expect(out).toContain(MISSING_POLICY_NOTICE);
+    expect(MISSING_POLICY_NOTICE).toContain("capybara-device ceiling set --network open");
+    // written once: no host, no running outside the sandbox, the workspace reach
+    expect(JSON.parse(readFileSync(join(dir, "policy.json"), "utf8"))).toMatchObject({
+      version: 3,
+      allowedDomains: [],
+      ownerCeiling: { outsideSandbox: false, network: "allowlist" },
+    });
+    expect(readPolicy(dir).ownerCeiling).toEqual(MISSING_POLICY_OWNER_CEILING);
+    // the next start finds the file and says nothing
+    expect((await run()).some((l) => l === MISSING_POLICY_NOTICE)).toBe(false);
   });
 
   it("says nothing for a current policy", async () => {
