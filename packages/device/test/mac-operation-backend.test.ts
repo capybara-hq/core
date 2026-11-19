@@ -201,6 +201,20 @@ it("preparation cannot select the entire attachments base or arbitrary roots", a
       .then((p) => p.stat(join(f.roots.workspace, "attachments"), signal)),
   ).rejects.toThrow(/preparation/);
 });
+it("reports runtime support for running outside the sandbox, not the owner's consent", async () => {
+  // SandboxPermissionSupport.outsideSandbox is runtime support (as the Linux backends report it);
+  // the owner's switch reaches the kernel in the owner report, whose layer names the device
+  // ceiling and its CLI command. Mixing the consent in made the kernel blame the runtime, show a
+  // local device the cloud text, and keep refusing escalations after `ceiling set
+  // --outside-sandbox on` until the program restarted (R3 Mac dogfood, 2026-11-20).
+  const f = await fixture();
+  f.setCeiling({ revision: "off", outsideSandbox: false });
+  const off = await f.backend.permissionSupport({ id: "d" }, signal);
+  expect(off.outsideSandbox).toBe(true);
+  f.setCeiling({ revision: "on", outsideSandbox: true });
+  expect((await f.backend.permissionSupport({ id: "d" }, signal)).outsideSandbox).toBe(true);
+});
+
 it("rejects wrong device handles before creating a worker", async () => {
   const f = await fixture();
   await expect(f.backend.operation({ id: "other" }, f.scope, signal)).rejects.toThrow(/handle/);

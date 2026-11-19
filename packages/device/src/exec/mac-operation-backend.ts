@@ -508,7 +508,9 @@ export async function createLocalOperationBackend(
       signal.throwIfAborted();
       // a transiently failed proof is retried before it is reported (rate-limited, bounded)
       await host.proof?.refresh();
-      const c = await read();
+      // the owner policy is still read (and checked) here; its outside-sandbox switch is consent,
+      // reported in the owner report, never runtime support
+      await read();
       const restricted = restrictedNow();
       // an operation boundary: the sandbox network (the open public internet decided on the
       // resolved address, or the allowlist with per-operation hosts) only with restricted support
@@ -523,7 +525,7 @@ export async function createLocalOperationBackend(
           allowlist: restricted,
           perOperationHosts: restricted,
         },
-        outsideSandbox: host.outsideSandbox && c.outsideSandbox,
+        outsideSandbox: host.outsideSandbox,
         background: host.background,
         ...(!restricted
           ? { unavailableReason: host.proof?.failure() ?? host.unavailableReason ?? host.pending }
