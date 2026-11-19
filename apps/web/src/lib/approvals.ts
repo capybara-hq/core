@@ -50,6 +50,13 @@ export interface NetworkApprovalDetail {
 export interface CommandAskDetail {
   /** The exact reach this ask grants (absent on older asks). */
   permissionScope?: PermissionScope;
+  /**
+   * The command asks to run outside the sandbox for this call only (per-call escalation): the
+   * agent's justification. The card shows it instead of a directory scope.
+   */
+  escalation?: { justification: string };
+  /** The directory the command runs in (shown with an escalation). */
+  workingRoot?: string;
   /** The file the call targets, informational only. */
   targetPath?: string;
   candidateHash?: string;

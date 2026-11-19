@@ -83,7 +83,12 @@ describe("owner report ordering (B2)", () => {
   it("revokes Full work only on Full removal and restricted work only on what narrows it", () => {
     const facts = (over: Record<string, unknown>) => ownerFactsOfReport(stored(report(1, over)));
     const roots = ["/work"];
-    const full = op({ profile: "full-access" } as never);
+    // full execution is the scope's reach (Full access, or an escalated call under its profile)
+    const full = op({
+      profile: "full-access",
+      filesystem: { kind: "device" },
+      network: { kind: "environment" },
+    } as never);
     expect(
       ownerReportRevokes(
         facts({ restrictedProjectReach: "workspace", restrictedAllowedDomains: [] }),

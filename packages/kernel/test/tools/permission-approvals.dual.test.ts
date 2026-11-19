@@ -377,7 +377,12 @@ it("two different grant issuances race for one exact binding on distinct Postgre
         );
       expect(
         await kernel.app.get(PermissionCallGrants).findForAdmission(candidate.binding),
-      ).toEqual({ id: rows[0]?.id, expansion: rows[0]?.expansion, source: rows[0]?.source });
+      ).toEqual({
+        id: rows[0]?.id,
+        expansion: rows[0]?.expansion,
+        scopeKind: rows[0]?.scope_kind,
+        source: rows[0]?.source,
+      });
     });
   await writeFile(
     "/tmp/capybara-task7-replica-provenance.json",

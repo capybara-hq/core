@@ -40,7 +40,8 @@ type PermissionCandidate = Readonly<{
   binding: PermissionCallBinding;
   permissionScope: PermissionExpansion;
   targetPath?: string; // explanatory file, never the authorized root
-  scopeKind: "directories-and-hosts";
+  scopeKind: "directories-and-hosts" | "sandbox-escalation"; // escalation: 2026-11-19 amendment
+  escalation?: { justification: string }; // only with "sandbox-escalation"
   candidateHash: string;
 }>;
 type PermissionCandidateResult =
@@ -61,6 +62,18 @@ Controller-selected deterministic extraction policy: bare validated Read/Write/E
 Calls needing no known expansion, including ordinary opaque inline Python, return in-scope and run under enforced base scope; this is **not** a claim that parsing predicted every access. Unknown/dynamic targets receive no expansion and any later confinement failure preserves prior effects without auto-replay. Existing fixed-deny/ask checks run before this branch. Never use a regex whitelist to authorize arbitrary inline code.
 
 The pipeline sends the same frozen normalized candidate to `ReviewClassifierInput`/independent review request as delimited untrusted data, retaining server-controlled identity and instructions; the verdict cannot replace it. The human command detail, approval_requested/permission_reviewed evidence and grant row carry exactly its permissionScope, targetPath and candidateHash. Request asks; Approve-for-me reviews then asks on uncertain/error; only a final allow issues the identical expansion. Admission retrieves that stored object and adds it to base scope under current ceilings; no second normalization or inferred parent widening occurs. A current ceiling mismatch invalidates the proposal rather than silently approving a different object. An actual-input staged pipeline test must exercise this entire chain, not hand supply roots to issueLocked.
+
+### Proposal kinds (amended 2026-11-19)
+
+A candidate has one of two kinds. `directories-and-hosts` is the exact directory and host
+expansion above. `sandbox-escalation` (per-call sandbox escalation, conversation approval profiles
+design, "Per-call sandbox escalation") is one `Bash` call with `sandbox: "escalated"` and a
+`justification`: an empty expansion, the justification in `escalation`, the same binding. Its
+grant row stores `scope_kind = 'sandbox-escalation'` and the justification (`escalation` column,
+migration 0162; the check ties the column to the kind), and admission gives that call's command
+full execution (`filesystem: device`, `network: environment`) under the conversation's restricted
+profile, only within the current Full access ceiling; the call's native methods keep the base
+scope. Evidence verification compares the whole candidate, justification included.
 
 ## Persisted call-grant contract
 

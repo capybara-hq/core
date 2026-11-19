@@ -523,6 +523,21 @@ limits; a host the limits now refuse fails the call). The machine re-checks ever
 device programs upgrade together: a protocol 2 device is refused (426, "Update capybara-device"), and a protocol 3 device that
 reaches a kernel still on protocol 2 gets the same 426 from that kernel, so upgrade the kernel first.
 
+## Per-call sandbox escalation
+
+An approved escalated `Bash` call (approval profiles design, "Per-call sandbox escalation") is
+admitted with the conversation's restricted `profile` and full reach (`filesystem: device`,
+`network: environment`) for its command only (exec or backgroundStart; its native methods keep the
+base scope). "Needs Full" is therefore the Full access profile or a full reach, never the profile
+name alone: `isFullExecutionScope` (`sandbox/operation-authority-types.ts`) drives the provider support check
+(`held-operations.ts`) and the Full ceiling revocation predicates (`permission-ceiling-writes.ts`,
+`owner-report.ts`, `policy-summary.ts`), and the device's `intersectOperation` decides the same way,
+so the owner's Full ceiling bounds an escalation exactly as it bounds Full access. Admission
+(`resolveInvocation`) refuses an escalation grant when the snapshot's `escalationRefusal` is set
+(no Full ceiling, a runtime without Full support now, an unattended run). The device's
+`commands.log` writes `isolation: "full"` and `grantSource: "call approval"` for such an operation,
+never the command. E2B is Full only, so escalation never applies there.
+
 ## Known limitations (permission activation)
 
 - **Local Docker mode needs the host's `/usr/bin/python3`.** A `capybara-device` in Docker mode runs the

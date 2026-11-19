@@ -341,6 +341,10 @@ export const PermissionCallBindingSchema = z
     authorityRevision: z.string(),
   })
   .strict();
+/** A per-call sandbox escalation's justification, as the person and the review model saw it. */
+export const PermissionEscalationSchema = z
+  .object({ justification: z.string().min(1).max(500) })
+  .strict();
 export const ReviewRecordSchema = z
   .object({
     profile: z.enum(["request-approval", "approve-for-me", "full-access"]).optional(),
@@ -358,6 +362,8 @@ export const ReviewRecordSchema = z
       .string()
       .regex(/^[a-f0-9]{64}$/)
       .optional(),
+    /** The call was allowed to run outside the OS sandbox (a per-call escalation). */
+    sandbox: z.literal("escalated").optional(),
   })
   .strict();
 
@@ -367,6 +373,10 @@ export const CommandAskSchema = z
     permissionScope: PermissionExpansionSchema.optional(),
     targetPath: z.string().max(4096).optional(),
     candidateHash: z.string().optional(),
+    /** The command asks to run outside the OS sandbox for this call (its justification). */
+    escalation: PermissionEscalationSchema.optional(),
+    /** The directory the command runs in (an escalation shows it). */
+    workingRoot: z.string().max(4096).optional(),
     /** A shell command or a file write. */
     kind: z.enum(["command", "write"]),
     /** The command text, or the tool key of the write. */
@@ -691,7 +701,9 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
       binding: PermissionCallBindingSchema,
       permissionScope: PermissionExpansionSchema,
       targetPath: z.string().max(4096).optional(),
-      scopeKind: z.literal("directories-and-hosts"),
+      scopeKind: z.enum(["directories-and-hosts", "sandbox-escalation"]),
+      /** A per-call sandbox escalation: the model's justification (its scope is empty). */
+      escalation: PermissionEscalationSchema.optional(),
       candidateHash: z.string(),
       outcome: z.enum(["allow", "ask", "deny"]),
       reason: z.string(),

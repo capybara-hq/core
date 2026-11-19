@@ -158,6 +158,55 @@ describe("protocol 3 operations in the command log", () => {
     ]);
   });
 
+  it("logs an escalated exec as full with its call approval, and the next exec restricted again", async () => {
+    // a per-call sandbox escalation: the conversation's restricted profile with full reach
+    const escalated = {
+      ...scope("approve-for-me", "t2"),
+      filesystem: { kind: "device" },
+      network: { kind: "environment" },
+    };
+    const o = owner();
+    await serveOperationV3(
+      backend(OK),
+      { id: "d" },
+      request("exec", execArgs("approve-for-me", { scope: escalated })),
+      never,
+      undefined,
+      o,
+    );
+    await serveOperationV3(
+      backend(OK),
+      { id: "d" },
+      request("exec", execArgs("approve-for-me")),
+      never,
+      undefined,
+      o,
+    );
+    const [first, second] = lines();
+    expect(first).toMatchObject({
+      op: "exec",
+      tag: "t2",
+      isolation: "full",
+      grantSource: "call approval",
+    });
+    expect(second).toMatchObject({ op: "exec", tag: "t1", isolation: "restricted" });
+    expect(second).not.toHaveProperty("grantSource");
+    expect(readFileSync(join(dir, "commands.log"), "utf8")).not.toContain("echo");
+  });
+
+  it("logs a Full access exec without a call approval source", async () => {
+    await serveOperationV3(
+      backend(OK),
+      { id: "d" },
+      request("exec", execArgs("full-access")),
+      never,
+      undefined,
+      owner(),
+    );
+    expect(lines()[0]).toMatchObject({ isolation: "full" });
+    expect(lines()[0]).not.toHaveProperty("grantSource");
+  });
+
   it("logs a background start and a failed exec (the error kind only)", async () => {
     const o = owner();
     await serveOperationV3(

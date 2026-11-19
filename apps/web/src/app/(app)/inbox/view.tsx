@@ -31,6 +31,7 @@ import { PendingConnectorDialog } from "../../../components/agent/PendingConnect
 import { ErrorFrame } from "../../../components/ErrorFrame";
 import { NoAccess } from "../../../components/NoAccess";
 import { PermissionScopeDetail } from "../../../components/PermissionScopeDetail";
+import { SandboxEscalationDetail } from "../../../components/SandboxEscalationDetail";
 import {
   requesterOf,
   SkillChangeReview,
@@ -853,10 +854,16 @@ function toolApprovalDetail({
                 {...(write ? { title: ta("command.path") } : {})}
               />
             )}
-            {command?.permissionScope !== undefined && (
+            {command?.permissionScope !== undefined && command.escalation === undefined && (
               <PermissionScopeDetail
                 scope={command.permissionScope}
                 targetPath={command.targetPath}
+              />
+            )}
+            {command?.escalation !== undefined && (
+              <SandboxEscalationDetail
+                justification={command.escalation.justification}
+                workingRoot={command.workingRoot}
               />
             )}
             {approval.status === "superseded" ? (

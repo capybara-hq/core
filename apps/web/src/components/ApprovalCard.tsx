@@ -38,6 +38,7 @@ import { lang, PLATFORM_PREFIX, toolLabel, toolLabelOfKey, toolLabelText } from 
 import { useErrorMessage } from "../lib/use-error-message";
 import { InitialPasswordReveal } from "./InitialPasswordReveal";
 import { PermissionScopeDetail } from "./PermissionScopeDetail";
+import { SandboxEscalationDetail } from "./SandboxEscalationDetail";
 import { useSession } from "./shell/session";
 
 /**
@@ -304,6 +305,7 @@ export function ApprovalCard({
   const network = networkAskOf(item, view);
   const command = commandAskOf(item, view);
   const scope = permissionScopeOf(item, view);
+  const escalation = escalationOf(item, view);
   const detail = view?.kind === "network" ? (view.detail ?? null) : null;
   // A permission change replaced the ask before anyone decided it: a final line, never actions.
   if (outcome?.decision === "superseded") {
@@ -333,6 +335,12 @@ export function ApprovalCard({
           )}
           {scope !== undefined && (
             <PermissionScopeDetail scope={scope.permissionScope} targetPath={scope.targetPath} />
+          )}
+          {escalation !== undefined && (
+            <SandboxEscalationDetail
+              justification={escalation.justification}
+              workingRoot={escalation.workingRoot}
+            />
           )}
         </Stack>
       </div>
@@ -412,6 +420,12 @@ export function ApprovalCard({
       {scope !== undefined && (
         <PermissionScopeDetail scope={scope.permissionScope} targetPath={scope.targetPath} />
       )}
+      {escalation !== undefined && (
+        <SandboxEscalationDetail
+          justification={escalation.justification}
+          workingRoot={escalation.workingRoot}
+        />
+      )}
       {state.kind === "pending" && detail?.attempt !== undefined && (
         <Text variant="small" tone="warn">
           {detail.attempt.outcome === "failed"
@@ -489,9 +503,27 @@ export function permissionScopeOf(
 ): { permissionScope: PermissionScope; targetPath?: string } | undefined {
   const detail = view?.kind === "command" ? view.command : null;
   const from = detail?.permissionScope !== undefined ? detail : item.command;
-  if (from?.permissionScope === undefined) return undefined;
+  // an escalation names no directory scope: its own detail shows what it crosses
+  if (from?.permissionScope === undefined || from.escalation !== undefined) return undefined;
   return {
     permissionScope: from.permissionScope,
     ...(from.targetPath !== undefined ? { targetPath: from.targetPath } : {}),
+  };
+}
+
+/**
+ * The per-call sandbox escalation an ask requests: from its detail once read, else from the log's
+ * `approval_requested.command`; undefined for any other ask.
+ */
+export function escalationOf(
+  item: Pick<ApprovalItem, "command">,
+  view: Approval | null | undefined,
+): { justification: string; workingRoot?: string } | undefined {
+  const detail = view?.kind === "command" ? view.command : null;
+  const from = detail?.escalation !== undefined ? detail : item.command;
+  if (from?.escalation === undefined) return undefined;
+  return {
+    justification: from.escalation.justification,
+    ...(from.workingRoot !== undefined ? { workingRoot: from.workingRoot } : {}),
   };
 }
