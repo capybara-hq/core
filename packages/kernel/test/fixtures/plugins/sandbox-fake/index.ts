@@ -1,3 +1,4 @@
+import { AsyncLocalStorage } from "node:async_hooks";
 import { execFile, spawn } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
 import {
@@ -669,8 +670,12 @@ export function createFakeSandbox(
   };
   /**
    * The host path of a device path. `/workspace`, `/skills` and `/tmp` map to the instance's
-   * directories; any other clean absolute path maps under the instance's `machine` directory (the
-   * instance's whole file system: the operation's scope, never the lifecycle limits, bounds it).
+   * directories. Any other clean absolute path maps under the instance's `machine` directory (the
+   * instance's whole file system) only where something bounds it: inside a permission-scoped
+   * operation (the scope was checked first), or on an instance-boundary report (a cloud device:
+   * the whole instance is in scope). A raw provider call outside the roots on an
+   * operation-boundary instance throws, so kernel tests catch the kernel issuing a raw read or
+   * write there instead of going through an operation.
    */
   const real = async (h: SandboxHandle, p: string) => {
     const errors = validateSandboxPathShape(p);
@@ -678,6 +683,11 @@ export function createFakeSandbox(
     const m = await mounts(h);
     const r = Object.keys(m).find((k) => p === k || p.startsWith(`${k}/`));
     if (r !== undefined) return join(m[r] as string, p.slice(r.length));
+    if (scopedCall.getStore() !== true && (await fakeBoundary(root)) === "operation")
+      throw new Error(
+        `Sandbox path ${p} is outside the instance roots (/workspace, /skills, /tmp): a raw call ` +
+          "outside them is refused on an operation-boundary device; use an operation",
+      );
     return join(instanceDir(root, h.id), "machine", p.slice(1));
   };
 
@@ -1020,13 +1030,30 @@ interface FakeInternals {
   root: string;
   binDir: string;
   list: boolean;
-  /** The host path of a device path (throws on a bad shape or, in sandbox mode, outside the roots). */
+  /**
+   * The host path of a device path (throws on a bad shape or, for a raw call on an
+   * operation-boundary instance, outside the roots).
+   */
   real(h: SandboxHandle, p: string): Promise<string>;
   /** Where `/workspace`, `/skills` and `/tmp` of the instance live on the host. */
   mounts(h: SandboxHandle): Promise<Record<string, string>>;
   /** Starts a suspended instance (the contract's auto-start); throws when it is gone. */
   requireRunning(h: SandboxHandle): Promise<void>;
   log(line: string): Promise<void>;
+}
+
+/**
+ * Marks the raw calls a permission-scoped operation makes after its scope check: they may reach
+ * the instance's whole file system (see `real` in {@link createFakeSandbox}).
+ */
+const scopedCall = new AsyncLocalStorage<true>();
+
+/** The boundary the fake reports now (its override file, else {@link FAKE_PERMISSION_SUPPORT}). */
+async function fakeBoundary(root: string): Promise<"operation" | "instance"> {
+  const text = await readFile(join(root, "permission-support.json"), "utf8").catch(() => null);
+  return text === null
+    ? FAKE_PERMISSION_SUPPORT.boundary
+    : (JSON.parse(text) as SandboxPermissionSupport).boundary;
 }
 
 /** The fake's default permission support: both profiles and background ownership. */
@@ -1045,8 +1072,23 @@ export const FAKE_PERMISSION_SUPPORT: SandboxPermissionSupport = Object.freeze({
 }) as SandboxPermissionSupport;
 
 /**
+ * The report of an instance-boundary provider (a cloud device: the container or microVM is the
+ * sandbox), for {@link setFakeSandboxPermissionSupport}: no per-operation restriction, the whole
+ * instance in scope (raw calls anywhere in it included), the provider's outer network open or an
+ * allowlist with no per-call hosts, and nothing outside the sandbox.
+ */
+export const FAKE_INSTANCE_PERMISSION_SUPPORT: SandboxPermissionSupport = Object.freeze({
+  version: 2,
+  boundary: "instance",
+  restricted: null,
+  network: { openPublic: true, allowlist: true, perOperationHosts: false },
+  outsideSandbox: false,
+  background: true,
+}) as SandboxPermissionSupport;
+
+/**
  * Overrides what `permissionSupport` answers (read at each call); `null` restores
- * {@link FAKE_PERMISSION_SUPPORT}.
+ * {@link FAKE_PERMISSION_SUPPORT}. The boundary it reports also decides where raw calls reach.
  */
 export async function setFakeSandboxPermissionSupport(
   root: string,
@@ -1153,7 +1195,7 @@ function managedSurface(
     }
     await writeFile(join(dir, "request"), hash);
     if (await revoked(operationId)) throw new SandboxScopeDeniedError("Operation revoked");
-    const value = await work();
+    const value = await scopedCall.run(true, work);
     await writeFile(join(dir, "result"), encode(value));
     return value;
   };
@@ -1317,7 +1359,8 @@ function managedSurface(
       }
       await f.requireRunning(h);
       const m = await f.mounts(h);
-      const output = await f.real(h, args.outputPath);
+      // after the scope check: the paths may lie anywhere the scope grants
+      const output = await scopedCall.run(true, () => f.real(h, args.outputPath));
       await mkdir(dirname(output), { recursive: true });
       // the artifact exists once the start is acknowledged; the command writes through the
       // descriptor opened here, so a later removal of the file never brings it back
@@ -1337,7 +1380,7 @@ function managedSurface(
         "/bin/sh",
         ["-c", script, "sh", String(seconds), command, join(dir, "exit")],
         {
-          cwd: await f.real(h, cwd),
+          cwd: await scopedCall.run(true, () => f.real(h, cwd)),
           env: {
             HOME: m["/workspace"],
             ...args.env,
@@ -1507,7 +1550,9 @@ function managedSurface(
         readRoots: scope.writeRoots,
         writeRoots: scope.writeRoots,
       };
-      const { readFile, writeFile, stat } = native(h, fs, signal, (_input, work) => work());
+      const { readFile, writeFile, stat } = native(h, fs, signal, (_input, work) =>
+        scopedCall.run(true, work),
+      );
       return { readFile, writeFile, stat };
     },
 
@@ -1515,7 +1560,7 @@ function managedSurface(
       async browse(h, given, signal) {
         const scope = parseSandboxBrowseScope(given);
         const fs: SandboxFileScope = { kind: "scoped", readRoots: scope.readRoots, writeRoots: [] };
-        const n = native(h, fs, signal, (_input, work) => work());
+        const n = native(h, fs, signal, (_input, work) => scopedCall.run(true, work));
         return {
           stat: n.stat,
           list: n.list as NonNullable<SandboxOperation["list"]>,

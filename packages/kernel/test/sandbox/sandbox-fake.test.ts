@@ -11,6 +11,7 @@ import {
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   createFakeSandbox,
+  FAKE_INSTANCE_PERMISSION_SUPPORT,
   FAKE_PERMISSION_SUPPORT,
   fakeFileSystems,
   fakeSandboxMeta,
@@ -399,6 +400,69 @@ describe("sandbox-fake permission-scoped surface", () => {
     // Full access (device scope) reaches what the raw provider reaches
     const full = await op("op-f1", { kind: "device" });
     expect(await full.stat("/workspace/b.txt", sig())).toBeNull();
+  });
+
+  it("an operation boundary refuses a raw read outside the roots; an operation's scope reaches it", async () => {
+    const p = createFakeSandbox(root);
+    const h = await mk(p, "cap-raw-roots");
+    const data = new TextEncoder().encode("x");
+    // the kernel's raw provider calls (no operation) stay under /workspace, /skills and /tmp
+    await expect(
+      p.readFile(h, "/home/u/project/f", { maxBytes: 9, signal: sig() }),
+    ).rejects.toThrow(/outside the instance roots/);
+    await expect(p.writeFile(h, "/home/u/project/f", data, sig())).rejects.toThrow(
+      /outside the instance roots/,
+    );
+    await expect(p.stat(h, "/etc", sig())).rejects.toThrow(/outside the instance roots/);
+    await expect(
+      p.exec(h, {
+        command: "true",
+        cwd: "/home/u",
+        timeoutMs: 5000,
+        maxOutputBytes: 9,
+        signal: sig(),
+        tag: "raw",
+        actor,
+      }),
+    ).rejects.toThrow(/outside the instance roots/);
+    // an operation whose scope grants the path reaches it (the scope, not the roots, bounds it)
+    const op = await (p.operation as NonNullable<SandboxProvider["operation"]>)(
+      h,
+      scopeOf("op-raw-1", scoped(["/home/u/project"])),
+      sig(),
+    );
+    await op.writeFile("/home/u/project/f", data, sig());
+    const read = await (p.operation as NonNullable<SandboxProvider["operation"]>)(
+      h,
+      scopeOf("op-raw-2", scoped(["/home/u/project"])),
+      sig(),
+    );
+    expect(
+      (await read.readFile("/home/u/project/f", { maxBytes: 9, signal: sig() }))?.data,
+    ).toEqual(data);
+  });
+
+  it("an instance boundary (a cloud device) puts the whole instance in scope, raw reads included", async () => {
+    const p = createFakeSandbox(root);
+    const h = await mk(p, "cap-instance");
+    await setFakeSandboxPermissionSupport(root, FAKE_INSTANCE_PERMISSION_SUPPORT);
+    try {
+      expect(await p.permissionSupport?.(h, sig())).toEqual({
+        version: 2,
+        boundary: "instance",
+        restricted: null,
+        network: { openPublic: true, allowlist: true, perOperationHosts: false },
+        outsideSandbox: false,
+        background: true,
+      });
+      const data = new TextEncoder().encode("y");
+      await p.writeFile(h, "/home/u/notes", data, sig());
+      expect((await p.readFile(h, "/home/u/notes", { maxBytes: 9, signal: sig() }))?.data).toEqual(
+        data,
+      );
+    } finally {
+      await setFakeSandboxPermissionSupport(root, null);
+    }
   });
 
   it("consumes each operation id once: a retry returns the recorded result, other input is denied", async () => {
