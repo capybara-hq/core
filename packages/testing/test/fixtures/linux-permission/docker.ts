@@ -255,6 +255,7 @@ export class Agent {
       "-i",
       "-u",
       "1000:1000",
+      ...Object.entries(PLANTED).flatMap(([name, value]) => ["-e", `${name}=${value}`]),
       device.name,
       ...command,
       JSON.stringify(endpoints),
@@ -338,11 +339,26 @@ export function execResult(response: AgentResponse, restricted: boolean): ExecRe
   };
 }
 
+/** Planted in every agent's environment: no command it launches may see them. */
+export const PLANTED = {
+  AWS_SECRET_ACCESS_KEY: "planted-aws-secret-0d1e",
+  CAPYBARA_TEST_DEVICE_TOKEN: "planted-capybara-token-7f3a",
+  // an innocent-looking name: only a minimal environment keeps it out, never a denylist
+  PLANTED_PLAIN: randomUUID(),
+};
+
 /** One-shot operations over the agent for an immutable copy of the grant. */
-export function operation(agent: Agent, grant: SandboxPermissionGrant): SandboxOperation {
+export function operation(
+  agent: Agent,
+  grant: SandboxPermissionGrant,
+  outsideAllowed: () => boolean = () => true,
+): SandboxOperation {
   const frozen = structuredClone(grant);
   Object.freeze(frozen);
   const restricted = frozen.filesystem.kind === "scoped";
+  // the stand-in's owner ceiling: the escalated pair only while outside the sandbox is allowed
+  if (!restricted && !outsideAllowed())
+    throw new SandboxScopeDeniedError("Running outside the sandbox is off on this stand-in");
   // Like a conforming provider (parseSandboxOperationScope): the environment network comes only
   // with the device filesystem (the escalated pair), and no scope carries an invalid host.
   if ((frozen.network.kind === "environment") !== (frozen.filesystem.kind === "device"))
@@ -506,6 +522,7 @@ export async function dockerPermissionFixture(
   const root = `/workspace/project-${id}`;
   const sibling = `/workspace/sibling-${id}`;
   device.run(`mkdir ${root} ${sibling} && printf rc > /home/sandbox/.profile-${id}`);
+  let outside = true;
   const read = async (path: string) => {
     const value = (await agent.request({ op: "inspect", what: "read", path })).result as
       | string
@@ -520,9 +537,27 @@ export async function dockerPermissionFixture(
       granted: endpoint(agent, "granted"),
       ungranted: [endpoint(agent, "ungranted4"), endpoint(agent, "ungranted6")],
       access: agent.access,
+      closedGranted: {
+        unavailable:
+          "the runtime harness's allowlist is a stand-in that routes names to loopback endpoints; " +
+          "the device forwarder's closed classes are proved in device-linux-backend",
+      },
+    },
+    // the agent starts every command from its fixed environment (PATH, LANG, the call's own)
+    deviceEnvironment: { variables: PLANTED, escalatedControl: false },
+    withoutOutsideSandbox: async () => {
+      outside = false;
+      return async () => {
+        outside = true;
+      };
+    },
+    home: {
+      unavailable:
+        "the runtime alone resolves no owner home: protected link chains are the device " +
+        "workers' (device-linux-backend)",
     },
     support: () => support(agent),
-    operation: async (grant) => operation(agent, grant),
+    operation: async (grant) => operation(agent, grant, () => outside),
     async seed(entries: readonly NativeFixtureEntry[]) {
       await agent.request({
         op: "seed",

@@ -3,6 +3,7 @@ import { chmod, mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { TOOL_HOME_DIRS } from "../../device/src/exec/shared.js";
 // The device's own test helpers (the device package may not depend on this one, so its backends
 // meet the harness here): a hardened container with endpoints, and the bundled backend server.
 import {
@@ -43,6 +44,8 @@ describe.runIf(required && unavailable !== null)("Linux restricted runtime is re
 const PLANTED = {
   AWS_SECRET_ACCESS_KEY: "planted-aws-secret-0d1e",
   CAPYBARA_TEST_DEVICE_TOKEN: "planted-capybara-token-7f3a",
+  // an innocent-looking name: only a minimal environment keeps it out, never a denylist
+  PLANTED_PLAIN: randomUUID(),
 };
 
 /** The device options of every backend here: the open network under the production rules. */
@@ -137,6 +140,13 @@ function fixture(
         target("nat64-name", "nat64.permission.test", net.port, priv),
         target("nat64-literal", `64:ff9b::${s.private}`, net.port, priv),
         target("metadata-name", "metadata.permission.test", 80),
+        target("ula", "fd12:3456::1", 80),
+        target("link-local", "169.254.1.1", 80),
+        target("link-local6", "fe80::1", 80),
+        target("multicast", "224.0.0.251", 80),
+        target("broadcast", "255.255.255.255", 80),
+        target("reserved", "240.0.0.1", 80),
+        target("benchmark", "198.18.0.1", 80),
         target("metadata", "169.254.169.254", 80),
         target("metadata-mapped", "::ffff:169.254.169.254", 80),
         target("azure-name", "azure.permission.test", 80),
@@ -160,7 +170,12 @@ function fixture(
         ],
       },
     },
-    deviceEnvironment: { variables: PLANTED, escalatedControl: options.escalatedEnvironment },
+    deviceEnvironment: {
+      variables: PLANTED,
+      escalatedControl: options.escalatedEnvironment,
+      // the tool homes the device passes through (version managers' data directories)
+      allowed: TOOL_HOME_DIRS.map(([name]) => name),
+    },
     withoutOutsideSandbox: async () => {
       await backend.server.call({
         op: "ceiling",
@@ -170,17 +185,19 @@ function fixture(
         await backend.server.call({ op: "ceiling", ceiling: backend.ceiling });
       };
     },
-    ...(options.home
+    home: options.home
       ? {
-          home: {
-            // the device process's home (the image gives the device user its own)
-            path: device.run(`node -e "process.stdout.write(require('os').homedir())"`).trim(),
-            remove: async (path: string) => {
-              device.run(`rm -f ${path}`);
-            },
+          // the device process's home (the image gives the device user its own)
+          path: device.run(`node -e "process.stdout.write(require('os').homedir())"`).trim(),
+          remove: async (path: string) => {
+            device.run(`rm -f ${path}`);
           },
         }
-      : {}),
+      : {
+          unavailable:
+            "a local-Docker device protects no home: its commands run in the device's container, " +
+            "whose home is the image's, and the owner's home is never mounted there",
+        },
     support: () => backend.support(),
     operation: async (grant) => {
       const scope = scopeFor(backend.deviceId, grant);
@@ -324,7 +341,7 @@ describe.skipIf(unavailable !== null)("capybara-device Linux operation backends"
         const backend = backends[kind] as HostBackend;
         const support = await backend.support();
         if (required) expect(support.restricted).not.toBeNull();
-        await runSandboxPermissionConformance(
+        const report = await runSandboxPermissionConformance(
           fixture(devices[kind] as LinuxDevice, backend, {
             // the local-Docker device's escalated calls run in its container, whose environment
             // is the container's, not the device process's
@@ -334,5 +351,7 @@ describe.skipIf(unavailable !== null)("capybara-device Linux operation backends"
           }),
           { parts: [part] },
         );
+        for (const { item, reason } of report.unavailable)
+          await context.annotate(`unavailable: ${item}: ${reason}`);
       });
 });

@@ -1006,6 +1006,8 @@ export type DeviceResponse =
         /**
          * The typed failure: `denied`, `unsupported`, `unknown` and `invalid` carry the SDK's
          * scope denial, unsupported permission, unknown outcome and scope validation errors.
+         * `invalid` never proves the operation had no effect (a skewed device may have parsed
+         * part of it): it must never join the not-run refusals (`isRefusal`, `failureKindOf`).
          */
         kind:
           | "gone"

@@ -1,9 +1,9 @@
 import {
   type KernelRequest,
   SandboxOperationOutcomeUnknownError,
-  SandboxScopeValidationError,
   SandboxPermissionUnsupportedError,
   SandboxScopeDeniedError,
+  SandboxScopeValidationError,
 } from "@capybara-hq/plugin-sdk";
 import { describe, expect, it, vi } from "vitest";
 import type { MacOperationBackend } from "../src/exec/mac-operation-backend.js";

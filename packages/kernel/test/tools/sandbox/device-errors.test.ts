@@ -4,6 +4,7 @@ import {
   SandboxOperationOutcomeUnknownError,
   SandboxPermissionUnsupportedError,
   SandboxScopeDeniedError,
+  SandboxScopeValidationError,
   ToolError,
 } from "@capybara-hq/plugin-sdk";
 import { describe, expect, it } from "vitest";
@@ -28,6 +29,7 @@ import {
   RETIREMENT_REPLACE_TOOL_TEXT,
   RETIREMENT_RESTART_TOOL_TEXT,
   SCOPE_DENIED_TOOL_TEXT,
+  SCOPE_INVALID_TOOL_TEXT,
 } from "../../../src/tools/builtins/sandbox/common.js";
 
 /** The model-visible tool errors of a device (spec 2026-11-07-environments-design §15). */
@@ -111,6 +113,18 @@ describe("sandbox tool errors", () => {
     expect(message(mapped)).toMatch(what);
     expect(message(mapped)).not.toMatch(/not active in this deployment/);
     expect(message(mapped)).toBe(text);
+  });
+
+  it("a scope the device refuses as invalid is a kernel invariant break: fixed text, logged", () => {
+    const warned: unknown[][] = [];
+    const mapped = mapSandboxError(
+      new SandboxScopeValidationError("provider secret network.kind: environment"),
+      { warn: (...args: unknown[]) => void warned.push(args) } as never,
+    );
+    expect(mapped).toBeInstanceOf(ToolError);
+    expect(message(mapped)).toBe(SCOPE_INVALID_TOOL_TEXT);
+    expect(message(mapped)).not.toContain("provider secret");
+    expect(String(warned[0]?.[0])).toMatch(/kernel invariant/);
   });
 
   // the managed route's typed refusals: fixed kernel text, never the refusal's own message

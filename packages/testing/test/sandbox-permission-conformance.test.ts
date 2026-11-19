@@ -17,6 +17,7 @@ import { dirname, join } from "node:path";
 import {
   type ExecResult,
   parseSandboxOperationScope,
+  SANDBOX_RESERVED_NAME_PREFIX,
   type SandboxOperation,
   type SandboxPermissionSupport,
   SandboxPermissionUnsupportedError,
@@ -28,6 +29,7 @@ import {
   type SandboxPermissionEndpoint,
   type SandboxPermissionFixture,
   type SandboxPermissionGrant,
+  type SandboxPermissionTarget,
   waitForFile,
 } from "../src/sandbox-permission-conformance.js";
 
@@ -137,7 +139,11 @@ const INSTANCE_SUPPORT: SandboxPermissionSupport = {
   background: true,
 };
 const GRANTED = "granted.permission.test";
-const PLANTED = { CAPYBARA_SELFTEST_TOKEN: "planted-capybara-token" };
+const PLANTED = {
+  CAPYBARA_SELFTEST_TOKEN: "planted-capybara-token",
+  PLANTED_PLAIN: "planted-plain-0b5f",
+};
+const UNGRANTED = "ungranted.permission.test";
 
 /**
  * A stand-in instance-boundary provider on this machine (no isolation: the "instance" is the host,
@@ -149,7 +155,7 @@ async function instanceFixture(
   base: string,
   options: {
     support?: Partial<SandboxPermissionSupport>;
-    broken?: "escalated" | "environment-pair" | "environment";
+    broken?: "escalated" | "environment-pair" | "environment" | "per-operation-hosts";
   } = {},
 ): Promise<SandboxPermissionFixture> {
   const root = join(base, `root-${Math.random().toString(36).slice(2, 8)}`);
@@ -163,10 +169,26 @@ async function instanceFixture(
   });
   await new Promise<void>((resolve) => target.listen(0, "127.0.0.1", resolve));
   const targetPort = (target.address() as AddressInfo).port;
-  // the instance's outer network: an allowlist proxy for the granted name
+  // a port nothing listens on: the ungranted endpoint's address
+  const closedPort = await new Promise<number>((resolve) => {
+    const probe = createServer().listen(0, "127.0.0.1", () => {
+      const { port } = probe.address() as AddressInfo;
+      probe.close(() => resolve(port));
+    });
+  });
+  // the instance's outer network: an allowlist proxy for the granted name (broken
+  // "per-operation-hosts": also for the hosts the operation names in its proxy credentials)
   const proxy = createServer((req, res) => {
     const to = new URL(req.url ?? "/");
-    if (to.hostname !== GRANTED) {
+    const credentials = Buffer.from(
+      (req.headers["proxy-authorization"] ?? "").replace(/^Basic /, ""),
+      "base64",
+    ).toString();
+    const asked = decodeURIComponent(credentials.split(":")[0] ?? "").split(",");
+    if (
+      to.hostname !== GRANTED &&
+      !(options.broken === "per-operation-hosts" && asked.includes(to.hostname))
+    ) {
       res.writeHead(403).end();
       return;
     }
@@ -199,6 +221,11 @@ async function instanceFixture(
     if (options.broken !== "environment-pair") parseSandboxOperationScope(scope);
     if (grant.filesystem.kind === "device" && options.broken !== "escalated")
       throw new SandboxScopeDeniedError("An instance has no outside to run in");
+    const hosts = grant.network.kind === "allowlist" ? grant.network.hosts : [];
+    const operationProxy = proxyUrl.replace(
+      "http://",
+      `http://${encodeURIComponent(hosts.join(","))}:x@`,
+    );
     const exec: SandboxOperation["exec"] = (args) =>
       new Promise<ExecResult>((resolve) => {
         const child = spawn("/bin/sh", ["-c", args.command], {
@@ -206,8 +233,12 @@ async function instanceFixture(
           detached: true,
           env:
             options.broken === "environment"
-              ? { ...process.env, http_proxy: proxyUrl }
-              : { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: root, http_proxy: proxyUrl },
+              ? { ...process.env, http_proxy: operationProxy }
+              : {
+                  PATH: process.env.PATH ?? "/usr/bin:/bin",
+                  HOME: root,
+                  http_proxy: operationProxy,
+                },
         });
         let stdout = "";
         let stderr = "";
@@ -274,8 +305,19 @@ async function instanceFixture(
         port: targetPort,
         receipts: async () => accepted,
       },
-      ungranted: [],
+      ungranted: [
+        { name: UNGRANTED, address: "127.0.0.1", port: closedPort, receipts: async () => 0 },
+      ],
       access: "proxy",
+      // the proxy forwards no other name: a metadata name is refused like any other
+      closedGranted: [
+        {
+          label: "metadata",
+          host: "metadata.permission.test",
+          port: 80,
+          address: "169.254.169.254",
+        },
+      ],
     },
     instanceNetwork: "allowlist",
     deviceEnvironment: { variables: PLANTED, escalatedControl: false },
@@ -354,10 +396,427 @@ describe("permission conformance harness: instance boundary", () => {
     ).rejects.toThrow(/nothing outside/);
   });
 
+  it("rejects an instance boundary whose operations widen its outer allowlist", async () => {
+    await expect(
+      runSandboxPermissionConformance(
+        await instanceFixture(base, { broken: "per-operation-hosts" }),
+      ),
+    ).rejects.toThrow(/an ungranted name in the scope's hosts must still be refused/);
+  });
+
+  it("rejects an instance boundary without a metadata name behind its allowlist", async () => {
+    const fixture = await instanceFixture(base);
+    await expect(
+      runSandboxPermissionConformance({
+        ...fixture,
+        endpoints: { ...fixture.endpoints, closedGranted: [] },
+      }),
+    ).rejects.toThrow(/closedGranted with a name served at a cloud metadata address/);
+  });
+
   it("rejects an instance boundary whose commands inherit the provider's environment", async () => {
     await expect(
       runSandboxPermissionConformance(await instanceFixture(base, { broken: "environment" })),
     ).rejects.toThrow(/no provider variable reaches a command/);
+  });
+});
+
+/** The report of an operation-boundary provider with restricted support (a local device). */
+const OPERATION_SUPPORT: SandboxPermissionSupport = {
+  version: 2,
+  boundary: "operation",
+  restricted: { filesystem: true, network: true, native: true, concurrentScopes: true },
+  network: { openPublic: true, allowlist: true, perOperationHosts: true },
+  outsideSandbox: true,
+  background: false,
+};
+const SCRIPTED_PLANTED = {
+  AWS_SECRET_ACCESS_KEY: "scripted-aws-secret",
+  CAPYBARA_SCRIPTED_TOKEN: "scripted-capybara-token",
+  PLANTED_PLAIN: "scripted-plain-value",
+};
+type ScriptedBreak =
+  | "proxy-502"
+  | "closed-receipt"
+  | "own-connect"
+  | "escalated-capybara"
+  | "outside-off"
+  | "reserved-name"
+  | "link-chain"
+  | "denylist";
+
+/** Runs a command on this machine in its own process group (a stand-in has no isolation). */
+function hostRun(command: string, cwd: string, env: Record<string, string>): Promise<ExecResult> {
+  return new Promise<ExecResult>((resolve) => {
+    const child = spawn("/bin/sh", ["-c", command], { cwd, detached: true, env });
+    let stdout = "";
+    let stderr = "";
+    child.stdout.on("data", (b: Buffer) => {
+      stdout += b.toString();
+    });
+    child.stderr.on("data", (b: Buffer) => {
+      stderr += b.toString();
+    });
+    child.on("close", (code) =>
+      resolve({ exitCode: code, stdout, stderr, truncated: false, timedOut: false }),
+    );
+  });
+}
+
+/**
+ * A scripted operation-boundary stand-in: the setup and positive controls run on this machine for
+ * real, and each approval-only probe the harness sends gets the answer a conforming provider
+ * gives (canned), unless `broken` names the one promise to break. It runs only with `checks`: it
+ * proves that each approval-only predicate of the harness catches its violation.
+ */
+async function scriptedFixture(
+  base: string,
+  broken?: ScriptedBreak,
+): Promise<SandboxPermissionFixture> {
+  const root = join(base, `scripted-${Math.random().toString(36).slice(2, 8)}`);
+  const sibling = `${root}-sibling`;
+  const home = `${root}-home`;
+  for (const dir of [root, sibling, home]) await mkdir(dir, { recursive: true });
+  const counts: Record<string, number> = {};
+  const counter = (key: string) => async () => counts[key] ?? 0;
+  const seen = (key: string) => {
+    counts[key] = (counts[key] ?? 0) + 1;
+  };
+  const target = (label: string, host: string): SandboxPermissionTarget => ({
+    label,
+    host,
+    port: 80,
+    receipts: counter(label),
+  });
+  // one literal per closed class
+  const closed = [
+    target("private", "10.0.0.1"),
+    target("cgnat", "100.64.0.1"),
+    target("ula", "fd12:3456::1"),
+    target("link-local", "169.254.1.1"),
+    target("metadata", "169.254.169.254"),
+    target("loopback", "127.0.0.1"),
+    target("multicast", "224.0.0.251"),
+    target("broadcast", "255.255.255.255"),
+    target("unspecified", "0.0.0.0"),
+    target("nat64", "64:ff9b::a00:1"),
+    target("reserved", "240.0.0.1"),
+    target("rebinding", "loop.permission.test"),
+  ];
+  const reachable = [target("public", "public.permission.test")];
+  const closedGranted = [target("granted-closed", "closed.permission.test")];
+  const closedLabels = new Set([...closed, ...closedGranted].map((t) => t.label));
+  let outside = true;
+  let release: (() => void) | undefined;
+  const served = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  const minimal = { PATH: process.env.PATH ?? "/usr/bin:/bin", HOME: root };
+  /** The canned answer of a conforming provider to one harness probe, or undefined (run it). */
+  const canned = async (command: string, escalated: boolean): Promise<string | undefined> => {
+    if (command === "env") {
+      if (escalated)
+        return Object.entries(SCRIPTED_PLANTED)
+          .filter(([name]) => broken === "escalated-capybara" || !name.startsWith("CAPYBARA_"))
+          .map(([name, value]) => `${name}=${value}\n`)
+          .join("");
+      const env =
+        broken === "denylist"
+          ? Object.fromEntries(
+              Object.entries({ ...SCRIPTED_PLANTED, SHELL: "/bin/zsh", ...minimal }).filter(
+                ([name]) => !/SECRET|TOKEN|CAPYBARA/.test(name),
+              ),
+            )
+          : minimal;
+      return Object.entries(env)
+        .map(([name, value]) => `${name}=${value}\n`)
+        .join("");
+    }
+    if (command.includes("curl -sS -m 10")) {
+      const viaProxy = command.includes("--noproxy");
+      return [...command.matchAll(/printf '%s %s\\n' '([^']+)'/g)]
+        .map(([, label]) => {
+          const name = label as string;
+          if (!closedLabels.has(name)) {
+            seen(name);
+            return `${name} 200\n`;
+          }
+          if (broken === "closed-receipt" && name === "loopback") seen(name);
+          return `${name} ${viaProxy ? (broken === "proxy-502" ? "502" : "403") : "000"}\n`;
+        })
+        .join("");
+    }
+    if (command.includes("SO_REUSEPORT"))
+      return `${JSON.stringify({
+        "own 127.0.0.1": broken === "own-connect" ? "ok" : "denied",
+        "own ::1": "denied",
+        reuseport: "denied",
+      })}\n`;
+    if (command.includes("unspec="))
+      return "127.0.0.1=ok ::1=ok 0.0.0.0=denied ::=denied unspec=denied\n";
+    if (command.includes("peer.recv(16)")) {
+      const portFile = command.split(" ").at(-1)?.replaceAll("'", "") as string;
+      await writeFile(portFile, "4242");
+      await served;
+      return "from-outside\n";
+    }
+    if (command.includes('("127.0.0.1", 4242)')) {
+      release?.();
+      return "";
+    }
+    if (command.includes(SANDBOX_RESERVED_NAME_PREFIX) && broken !== "reserved-name") {
+      // what a conforming runtime leaves: the ordinary names only
+      await mkdir(join(root, "plain-dir"), { recursive: true });
+      await writeFile(join(root, `not${SANDBOX_RESERVED_NAME_PREFIX}f`), "ok");
+      return "";
+    }
+    if (command.startsWith("cd dotfiles") && broken !== "link-chain") return "";
+    return undefined;
+  };
+  let sequence = 0;
+  const operation = async (grant: SandboxPermissionGrant): Promise<SandboxOperation> => {
+    parseSandboxOperationScope({
+      operationId: `op-${++sequence}`,
+      admitBeforeMs: Date.now() + 60_000,
+      deviceId: "scripted",
+      rootConversationId: "c",
+      profileRevision: 0,
+      ceilingRevision: "c",
+      profile: grant.profile,
+      actor: { accountId: "a", conversationId: "c" },
+      tag: `op-${sequence}`,
+      filesystem: grant.filesystem,
+      network: grant.network,
+    });
+    const escalated = grant.filesystem.kind === "device";
+    if (escalated && !outside && broken !== "outside-off")
+      throw new SandboxScopeDeniedError("Running outside the sandbox is off");
+    const refuse = (path: string) => {
+      if (path.includes(SANDBOX_RESERVED_NAME_PREFIX) || path.includes("dotfiles/"))
+        throw new SandboxScopeDeniedError(`Writing ${path} is outside the scope`);
+    };
+    return {
+      exec: async (args) => {
+        const answer = await canned(args.command, escalated);
+        if (answer !== undefined)
+          return { exitCode: 0, stdout: answer, stderr: "", truncated: false, timedOut: false };
+        // not a probe: run it here (the setup and positive controls; the host's own tools)
+        return hostRun(args.command, args.cwd ?? root, {
+          ...(process.env as Record<string, string>),
+        });
+      },
+      readFile: async (path, { maxBytes }) => {
+        const data = await readFile(path).catch(() => null);
+        if (data === null) return null;
+        return {
+          data: new Uint8Array(data.subarray(0, maxBytes)),
+          truncated: data.length > maxBytes,
+        };
+      },
+      writeFile: async (path, data) => {
+        refuse(path);
+        await mkdir(dirname(path), { recursive: true });
+        await writeFile(path, data);
+      },
+      stat: async (path) => {
+        const s = await stat(path).catch(() => null);
+        return s && { size: s.size, isDir: s.isDirectory() };
+      },
+      list: async (path, { limit }) => {
+        const names = (await readdir(path, { withFileTypes: true })).slice(0, limit);
+        return {
+          entries: names.map((d) => ({ name: d.name, isDir: d.isDirectory() })),
+          truncated: false,
+        };
+      },
+      scan: async () => [],
+    };
+  };
+  return {
+    root,
+    sibling,
+    protectedPaths: [],
+    endpoints: {
+      granted: {
+        name: GRANTED,
+        address: "127.0.0.1",
+        port: 1,
+        receipts: counter("granted"),
+      },
+      ungranted: [],
+      access: "proxy",
+      closedGranted,
+    },
+    openNetwork: { reachable, closed, fakeIp: { unavailable: "a scripted stand-in" } },
+    deviceEnvironment: { variables: SCRIPTED_PLANTED, escalatedControl: true },
+    withoutOutsideSandbox: async () => {
+      outside = false;
+      return async () => {
+        outside = true;
+      };
+    },
+    home: { path: home, remove: (path) => rm(path, { force: true }) },
+    support: async () => OPERATION_SUPPORT,
+    operation,
+    seed: async (entries) => {
+      for (const entry of entries) {
+        await mkdir(entry.kind === "directory" ? entry.path : dirname(entry.path), {
+          recursive: true,
+        });
+        if (entry.kind === "file") await writeFile(entry.path, entry.data);
+        else if (entry.kind === "symlink") await symlink(entry.target, entry.path);
+      }
+    },
+    inspect: {
+      readFile: async (path) =>
+        readFile(path).then(
+          (b) => new Uint8Array(b),
+          () => null,
+        ),
+      mode: async (path) =>
+        stat(path).then(
+          (s) => s.mode & 0o7777,
+          () => null,
+        ),
+      alive: async () => [],
+    },
+    dispose: async () => {},
+  };
+}
+
+const ALL_CHECKS = [
+  "outside-switch",
+  "environment",
+  "reserved-names",
+  "link-chain",
+  "closed-granted",
+  "loopback",
+  "open-network",
+] as const;
+
+describe("permission conformance harness: approval-only predicates", () => {
+  let base = "";
+  beforeAll(async () => {
+    base = await realpath(await mkdtemp(join(tmpdir(), "cap-scripted-conformance-")));
+  });
+  afterAll(async () => {
+    if (base) await rm(base, { recursive: true, force: true });
+  });
+
+  it("passes the scripted stand-in on every approval-only check, and reports what it lacks", async () => {
+    const report = await runSandboxPermissionConformance(await scriptedFixture(base), {
+      checks: ALL_CHECKS,
+    });
+    expect(report.unavailable).toEqual([
+      { item: "open network: fake-IP names", reason: "a scripted stand-in" },
+    ]);
+  });
+
+  it.each([
+    ["proxy-502", "open-network", /must be refused by the proxy \(403\)/],
+    ["closed-receipt", "open-network", /loopback must see no connection/],
+    ["own-connect", "loopback", /no loopback connect, no SO_REUSEPORT/],
+    ["escalated-capybara", "environment", /minus every CAPYBARA_ variable/],
+    ["outside-off", "outside-switch", /outside-sandbox setting is off/],
+    ["reserved-name", "reserved-names", /reserved name/],
+    ["link-chain", "link-chain", /no hop of a protected chain is writable/],
+    ["denylist", "environment", /no device variable reaches a sandboxed command/],
+  ] as const)("rejects a provider that breaks %s (%s)", async (broken, check, message) => {
+    await expect(
+      runSandboxPermissionConformance(await scriptedFixture(base, broken), { checks: [check] }),
+    ).rejects.toThrow(message);
+  });
+
+  it("rejects a minimal-looking environment that carries extra names", async () => {
+    const fixture = await scriptedFixture(base);
+    await expect(
+      runSandboxPermissionConformance(
+        {
+          ...fixture,
+          // the provider adds names it never stated (a filtered copy of the device's)
+          deviceEnvironment: { variables: SCRIPTED_PLANTED, escalatedControl: true, allowed: [] },
+          operation: async (grant) => {
+            const operation = await fixture.operation(grant);
+            return {
+              ...operation,
+              exec: async (args) =>
+                args.command === "env" && grant.filesystem.kind === "scoped"
+                  ? {
+                      exitCode: 0,
+                      stdout: "PATH=/bin\nSHELL=/bin/zsh\nUSER=owner\n",
+                      stderr: "",
+                      truncated: false,
+                      timedOut: false,
+                    }
+                  : operation.exec(args),
+            };
+          },
+        },
+        { checks: ["environment"] },
+      ),
+    ).rejects.toThrow(/minimal environment only/);
+  });
+
+  it("refuses an empty parts or checks list", async () => {
+    await expect(
+      runSandboxPermissionConformance(await scriptedFixture(base), { parts: [] }),
+    ).rejects.toThrow(/parts must not be empty/);
+    await expect(
+      runSandboxPermissionConformance(await scriptedFixture(base), { checks: [] }),
+    ).rejects.toThrow(/checks must not be empty/);
+  });
+
+  it("requires the approval-only inputs of a provider with restricted support", async () => {
+    const fixture = await scriptedFixture(base);
+    const { withoutOutsideSandbox: _off, ...noSwitch } = fixture;
+    await expect(
+      runSandboxPermissionConformance(noSwitch, { checks: ["environment"] }),
+    ).rejects.toThrow(/withoutOutsideSandbox is required/);
+    await expect(
+      runSandboxPermissionConformance(
+        {
+          ...(await scriptedFixture(base)),
+          deviceEnvironment: {
+            variables: { AWS_SECRET_ACCESS_KEY: "x" },
+            escalatedControl: false,
+          },
+        },
+        { checks: ["environment"] },
+      ),
+    ).rejects.toThrow(/innocent-looking/);
+    const unlisted = await scriptedFixture(base);
+    await expect(
+      runSandboxPermissionConformance(
+        {
+          ...unlisted,
+          endpoints: {
+            granted: unlisted.endpoints.granted,
+            ungranted: unlisted.endpoints.ungranted,
+            access: unlisted.endpoints.access,
+          },
+        },
+        { checks: ["environment"] },
+      ),
+    ).rejects.toThrow(/closedGranted is required/);
+  });
+
+  it("fails an open network without any reachable target unless allowNoPositive is set", async () => {
+    const fixture = await scriptedFixture(base);
+    const offline = {
+      ...(fixture.openNetwork as NonNullable<typeof fixture.openNetwork>),
+      reachable: { unavailable: "offline" },
+    };
+    await expect(
+      runSandboxPermissionConformance(
+        { ...fixture, openNetwork: offline },
+        { checks: ["open-network"] },
+      ),
+    ).rejects.toThrow(/needs a reachable public target/);
+    const report = await runSandboxPermissionConformance(
+      { ...(await scriptedFixture(base)), openNetwork: { ...offline, allowNoPositive: true } },
+      { checks: ["open-network"] },
+    );
+    expect(report.unavailable.map((u) => u.item)).toContain("open network: public targets");
   });
 });
 

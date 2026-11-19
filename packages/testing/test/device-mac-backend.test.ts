@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { lookup } from "node:dns/promises";
 import { mkdir, mkdtemp, readFile, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { createServer, type Server } from "node:http";
@@ -14,6 +15,7 @@ import {
 } from "../../device/src/exec/mac-operation-backend.js";
 import type { DeviceOwnerCeiling } from "../../device/src/exec/operation-types.js";
 import { startMacOperationWorker } from "../../device/src/exec/operation-worker.js";
+import { TOOL_HOME_DIRS } from "../../device/src/exec/shared.js";
 import { sealWorkspaceRuntime } from "../../device/test/runtime-seal.js";
 import type { NativeFixtureEntry } from "../src/sandbox-native-conformance.js";
 import {
@@ -38,7 +40,7 @@ import {
  * Endpoints are loopback HTTP servers (IPv4 and IPv6). No name can lead to them without a
  * hosts-file change, and the operation's proxy refuses an allowlisted name that resolves to
  * loopback (its DNS-rebinding guard), so the harness runs every network negative here and the
- * by-name positive is skipped (`namedReach: "unavailable"`).
+ * by-name positive is skipped (`namedReach: { unavailable }`, annotated on the test).
  *
  * The open network: the closed classes are probed as IP literals and through names the system
  * resolver knows (`localhost`, and `localtest.me`, a public name resolving to loopback: a DNS
@@ -66,6 +68,8 @@ const REBINDING = "localtest.me";
 const PLANTED = {
   AWS_SECRET_ACCESS_KEY: "planted-aws-secret-0d1e",
   CAPYBARA_TEST_DEVICE_TOKEN: "planted-capybara-token-7f3a",
+  // an innocent-looking name: only a minimal environment keeps it out, never a denylist
+  PLANTED_PLAIN: randomUUID(),
 };
 
 /** Whether `name` resolves (the system resolver) into the fake-IP range 198.18.0.0/15. */
@@ -225,6 +229,7 @@ describe.runIf(darwin)("capybara-device macOS operation backend", () => {
     const rebinding = (await lookup(REBINDING).catch(() => null)) !== null;
     const publicName = literal("public-name", "example.com");
     const openNetwork: SandboxPermissionOpenNetwork = {
+      ...(internet ? {} : { allowNoPositive: true as const }),
       reachable: internet
         ? [literal("public-literal", "1.1.1.1"), ...(fakeIp ? [] : [publicName])]
         : { unavailable: "this machine reaches no public address (offline run)" },
@@ -244,6 +249,9 @@ describe.runIf(darwin)("capybara-device macOS operation backend", () => {
         literal("link-local6", "fe80::1"),
         literal("nat64", "64:ff9b::a00:1"),
         literal("benchmark", "198.18.0.1"),
+        literal("reserved", "240.0.0.1"),
+        literal("multicast", "224.0.0.251"),
+        literal("broadcast", "255.255.255.255"),
         literal("unspecified", "0.0.0.0", v4.port),
         ...(rebinding && !fakeIp ? [loopback("rebinding", REBINDING, v4)] : []),
       ],
@@ -274,7 +282,20 @@ describe.runIf(darwin)("capybara-device macOS operation backend", () => {
       root,
       sibling: join(home, "code", "sibling"),
       protectedPaths: [key, profile],
-      deviceEnvironment: { variables: PLANTED, escalatedControl: true },
+      deviceEnvironment: {
+        variables: PLANTED,
+        escalatedControl: true,
+        allowed: [
+          // the sandbox runtime's own: its marker, and git, ssh and Java routed through its proxy
+          // (an http.proxyAuthMethod setting, a SOCKS ProxyCommand, the proxy system properties)
+          "SANDBOX_RUNTIME",
+          "GIT_CONFIG_PARAMETERS",
+          "GIT_SSH_COMMAND",
+          "JAVA_TOOL_OPTIONS",
+          // the tool homes the device passes through (version managers' data directories)
+          ...TOOL_HOME_DIRS.map(([name]) => name),
+        ],
+      },
       withoutOutsideSandbox: async () => {
         const allowed = ceiling;
         ceiling = { ...ceiling, revision: "no-outside", outsideSandbox: false };
@@ -300,9 +321,15 @@ describe.runIf(darwin)("capybara-device macOS operation backend", () => {
         granted,
         ungranted,
         access: "proxy",
-        namedReach: "unavailable",
+        namedReach: {
+          unavailable:
+            "no hosts-file entry may lead the name to a loopback endpoint and the proxy refuses " +
+            "loopback by design (device: overlapping workers keep their network grants)",
+        },
         // allowlisted, yet resolving to loopback: refused by address
-        ...(rebinding ? { closedGranted: [loopback("granted-rebinding", REBINDING, v4)] } : {}),
+        closedGranted: rebinding
+          ? [loopback("granted-rebinding", REBINDING, v4)]
+          : { unavailable: `${REBINDING} does not resolve here (no DNS)` },
       },
       support: () => backend.permissionSupport(handle, new AbortController().signal),
       operation: async (grant) => {
@@ -381,8 +408,11 @@ describe.runIf(darwin)("capybara-device macOS operation backend", () => {
 
   // the conformance in its three parts (one test each keeps every part within the test timeout)
   for (const part of ["filesystem", "network", "processes"] as const)
-    it(`passes the permission conformance: ${part}`, async () => {
-      await runSandboxPermissionConformance(await fresh(), { parts: [part] });
+    it(`passes the permission conformance: ${part}`, async (context) => {
+      const report = await runSandboxPermissionConformance(await fresh(), { parts: [part] });
+      // what this machine could not prove is recorded on the test, never passed silently
+      for (const { item, reason } of report.unavailable)
+        await context.annotate(`unavailable: ${item}: ${reason}`);
     });
 
   it("starts, polls and stops a background test run by its exact ref while a sibling runs on", async () => {

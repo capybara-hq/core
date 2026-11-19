@@ -500,7 +500,9 @@ attempt("clone3", lambda: raw(435, 0, 0))
         it(`passes the permission conformance: ${part}`, async (context) => {
           requireSupport(context);
           const fixture = await dockerPermissionFixture(device, agent, async () => {});
-          await runSandboxPermissionConformance(fixture, { parts: [part] });
+          const report = await runSandboxPermissionConformance(fixture, { parts: [part] });
+          for (const { item, reason } of report.unavailable)
+            await context.annotate(`unavailable: ${item}: ${reason}`);
         });
 
         it(`passes the permission conformance with allowlist traffic through a proxy: ${part}`, async (context) => {
@@ -509,7 +511,9 @@ attempt("clone3", lambda: raw(435, 0, 0))
           await proxied.ready;
           try {
             const fixture = await dockerPermissionFixture(device, proxied, async () => {});
-            await runSandboxPermissionConformance(fixture, { parts: [part] });
+            const report = await runSandboxPermissionConformance(fixture, { parts: [part] });
+            for (const { item, reason } of report.unavailable)
+              await context.annotate(`unavailable: ${item}: ${reason}`);
           } finally {
             proxied.close();
           }

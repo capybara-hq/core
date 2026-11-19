@@ -3,10 +3,12 @@ import { randomUUID } from "node:crypto";
 import { isIP, isIPv4 } from "node:net";
 import { posix } from "node:path";
 import {
+  classifyAddress,
   type ExecResult,
   isSandboxPermissionUnsupportedError,
   isSandboxScopeDeniedError,
   isSandboxScopeValidationError,
+  OPEN_PUBLIC_DENIED_CLASSES,
   type PermissionProfile,
   SANDBOX_RESERVED_NAME_PREFIX,
   type SandboxFileScope,
@@ -60,6 +62,11 @@ export interface SandboxPermissionTarget {
  * asked for under the `open-public` network, once per profile.
  */
 export interface SandboxPermissionOpenNetwork {
+  /**
+   * Set only where no public target can be reached here at all (offline): without it the harness
+   * fails when every reachable list (`reachable`, `fakeIp.reachable`) is empty or unavailable.
+   */
+  readonly allowNoPositive?: true;
   /**
    * Public targets the open network reaches, by name and by literal. `{ unavailable }` where no
    * public target can be reached from here (no internet and no stand-in), with the reason; every
@@ -125,19 +132,23 @@ export interface SandboxPermissionFixture {
      */
     readonly access: "direct" | "proxy";
     /**
-     * "unavailable" where the fixture cannot make the allowlisted name lead to `granted` without
-     * changing the host (macOS: no hosts-file entry, and the runtime's proxy refuses a name that
-     * resolves to loopback, by design). The by-name positives are then skipped and `granted`
-     * must see no connection at all; every negative still runs. The positive allowlist reach is
-     * then the provider's own test's evidence (state it next to the fixture). Default "available".
+     * `{ unavailable }` with the reason where the fixture cannot make the allowlisted name lead to
+     * `granted` without changing the host (macOS: no hosts-file entry, and the runtime's proxy
+     * refuses a name that resolves to loopback, by design). The by-name positives are then skipped
+     * (and reported unavailable) and `granted` must see no connection at all; every negative still
+     * runs. The positive allowlist reach is then the provider's own test's evidence (state it next
+     * to the fixture). Default "available".
      */
-    readonly namedReach?: "available" | "unavailable";
+    readonly namedReach?: "available" | { readonly unavailable: string };
     /**
      * Names on every allowlist the device applies (the scope's, the owner's and the org's) that
      * resolve into a closed address class: an allowlist grant never reaches a closed class, so
-     * each must be refused and see no connection.
+     * each must be refused and see no connection. Required for a provider with restricted support
+     * and for an instance boundary (there at least one target whose `address` is a cloud metadata
+     * address); `{ unavailable }` with the reason only where no name can resolve into a closed
+     * class through the provider's own allowlist path (a stand-in proxy), reported unavailable.
      */
-    readonly closedGranted?: readonly SandboxPermissionTarget[];
+    readonly closedGranted?: readonly SandboxPermissionTarget[] | { readonly unavailable: string };
   };
   /**
    * The open public network's targets. Required when the provider reports
@@ -146,20 +157,27 @@ export interface SandboxPermissionFixture {
   readonly openNetwork?: SandboxPermissionOpenNetwork;
   /**
    * Variables present in the environment of the device program (or the provider process) that runs
-   * the operations, such as a planted `AWS_SECRET_ACCESS_KEY`. No sandboxed command under any
-   * profile may see one of their values (the minimal environment). With `escalatedControl` (and
-   * outside-sandbox support), an escalated call must see every one whose name does not start with
-   * `CAPYBARA_` and none that does: the planted values are real, and the device's own variables
-   * stay out even there.
+   * the operations: at least one secret-looking (`AWS_SECRET_ACCESS_KEY`) and at least one
+   * innocent-looking name (no `SECRET`, `TOKEN`, `KEY`, `PASS`, `CREDENTIAL` or `CAPYBARA_` in it),
+   * so a denylist cannot pass for a minimal environment. No sandboxed command under any profile may
+   * see one of their values, and on an operation boundary its variable names must all be in the
+   * minimal set (approval-only profiles design, "Fixed denies and the minimal environment"):
+   * `PATH`, `LANG`, `HOME`, `TMPDIR` / `TMP` / `TEMP`, the proxy variables (any name containing
+   * `PROXY`), what the shell itself sets (`PWD`, `OLDPWD`, `SHLVL`, `_`), and `allowed`: the tool
+   * homes and runtime variables this provider adds (state each). With `escalatedControl` (and
+   * outside-sandbox support), an escalated call must see every planted variable whose name does
+   * not start with `CAPYBARA_` and none that does: the planted values are real, and the device's
+   * own variables stay out even there. Required for a provider with restricted support.
    */
   readonly deviceEnvironment?: {
     readonly variables: Readonly<Record<string, string>>;
     readonly escalatedControl: boolean;
+    readonly allowed?: readonly string[];
   };
   /**
-   * Turns the owner's outside-sandbox setting off and returns a function that restores it. When
-   * present (with outside-sandbox support), the harness proves that the escalated pair runs only
-   * while the setting allows it.
+   * Turns the owner's outside-sandbox setting off and returns a function that restores it. The
+   * harness proves that the escalated pair runs only while the setting allows it. Required when
+   * the provider reports `outsideSandbox`.
    */
   withoutOutsideSandbox?(): Promise<() => Promise<void>>;
   /**
@@ -168,9 +186,12 @@ export interface SandboxPermissionFixture {
    * the harness links `.zprofile` there through a chain of symbolic links into the granted root
    * (seeded with `seed`, which may write under this path) and proves that no hop of the chain and
    * not the target can be written, retargeted or moved away; `remove` deletes the entry it
-   * seeded under the home afterwards.
+   * seeded under the home afterwards. `{ unavailable }` with the reason where the provider has no
+   * owner home to protect (reported unavailable); required for a provider with restricted support.
    */
-  readonly home?: { readonly path: string; remove(path: string): Promise<void> };
+  readonly home?:
+    | { readonly path: string; remove(path: string): Promise<void> }
+    | { readonly unavailable: string };
   /**
    * For an instance-boundary provider (`boundary: "instance"`: the container or microVM is the
    * sandbox): its outer network, which the harness proves instead of per-operation networks.
@@ -535,6 +556,61 @@ print(peer.recv(16).decode())
 export type SandboxPermissionConformancePart = "filesystem" | "network" | "processes";
 
 /**
+ * The approval-only checks of the operation-boundary conformance, for a focused rerun or a harness
+ * self-test (`checks`: only these, after the setup, positive controls and the scope contract):
+ * `outside-switch` (processes), `environment`, `reserved-names` and `link-chain` (filesystem),
+ * `closed-granted`, `loopback` and `open-network` (network).
+ */
+export type SandboxPermissionConformanceCheck =
+  | "outside-switch"
+  | "environment"
+  | "reserved-names"
+  | "link-chain"
+  | "closed-granted"
+  | "loopback"
+  | "open-network";
+
+const CHECK_PART: Readonly<
+  Record<SandboxPermissionConformanceCheck, SandboxPermissionConformancePart>
+> = {
+  "outside-switch": "processes",
+  environment: "filesystem",
+  "reserved-names": "filesystem",
+  "link-chain": "filesystem",
+  "closed-granted": "network",
+  loopback: "network",
+  "open-network": "network",
+};
+
+export interface SandboxPermissionConformanceOptions {
+  /** Only these parts (each needs a fresh fixture); never empty. Default: every part. */
+  readonly parts?: readonly SandboxPermissionConformancePart[];
+  /** Only these approval-only checks (see {@link SandboxPermissionConformanceCheck}); never empty. */
+  readonly checks?: readonly SandboxPermissionConformanceCheck[];
+}
+
+/** What a run could not prove here, each with the fixture's reason (annotate or log them). */
+export interface SandboxPermissionConformanceReport {
+  readonly unavailable: readonly { readonly item: string; readonly reason: string }[];
+}
+
+/** The innocent-looking planted name a denylist would let through (see `deviceEnvironment`). */
+const SECRET_LOOKING = /SECRET|TOKEN|KEY|PASS|CREDENTIAL|^CAPYBARA_/i;
+/** The minimal environment's fixed names (see `deviceEnvironment`). */
+const MINIMAL_ENVIRONMENT = new Set([
+  "PATH",
+  "LANG",
+  "HOME",
+  "TMPDIR",
+  "TMP",
+  "TEMP",
+  "PWD",
+  "OLDPWD",
+  "SHLVL",
+  "_",
+]);
+
+/**
  * Proves an actual provider's permission boundary on one shared device (approval-only profiles
  * design). The sandbox is the device's and the same under every profile: a profile only chooses
  * who approves a crossing, so every profile's ordinary call is sandboxed, and only the escalated
@@ -567,11 +643,18 @@ export type SandboxPermissionConformancePart = "filesystem" | "network" | "proce
  */
 export async function runSandboxPermissionConformance(
   fixture: SandboxPermissionFixture,
-  options: { parts?: readonly SandboxPermissionConformancePart[] } = {},
-): Promise<void> {
+  options: SandboxPermissionConformanceOptions = {},
+): Promise<SandboxPermissionConformanceReport> {
   const { root, sibling } = fixture;
+  const unavailable: { item: string; reason: string }[] = [];
+  const report = (): SandboxPermissionConformanceReport => ({ unavailable: [...unavailable] });
   const part = (name: SandboxPermissionConformancePart) =>
     options.parts === undefined || options.parts.includes(name);
+  /** The parts' other checks run only in a run that does not pick single checks. */
+  const whole = (name: SandboxPermissionConformancePart) =>
+    options.checks === undefined && part(name);
+  const want = (check: SandboxPermissionConformanceCheck) =>
+    options.checks === undefined ? part(CHECK_PART[check]) : options.checks.includes(check);
   const at = (base: string, name: string) => posix.join(base, name);
   const secret = `sibling-secret-${randomUUID()}`;
   const scoped = (writeRoots: string[]): SandboxFileScope => ({
@@ -714,15 +797,60 @@ export async function runSandboxPermissionConformance(
       assert.equal(after[index], before[index], `${what}: ${target.label} must see no connection`);
     });
   };
-  /** The values of the planted device variables a command under `grant` can see. */
-  const leakedVariables = async (grant: SandboxPermissionGrant) => {
+  /** The names of the planted device variables a command under `grant` can see, and its names. */
+  const environmentOf = async (grant: SandboxPermissionGrant) => {
     const planted = fixture.deviceEnvironment?.variables ?? {};
     const result = await exec(grant, "env");
     assert.equal(result.exitCode, 0, `env must run: ${result.stderr}`);
-    const seen = new Set(result.stdout.split("\n"));
-    return Object.entries(planted)
-      .filter(([name, value]) => seen.has(`${name}=${value}`) || result.stdout.includes(value))
-      .map(([name]) => name);
+    const names = result.stdout
+      .split("\n")
+      .filter((line) => /^[A-Za-z_][A-Za-z0-9_]*=/.test(line))
+      .map((line) => line.slice(0, line.indexOf("=")));
+    return {
+      leaked: Object.entries(planted)
+        .filter(([, value]) => result.stdout.includes(value))
+        .map(([name]) => name),
+      names,
+    };
+  };
+  const leakedVariables = async (grant: SandboxPermissionGrant) =>
+    (await environmentOf(grant)).leaked;
+  /**
+   * A sandboxed command under `grant` sees no planted value and, on an operation boundary, only
+   * the minimal environment's names (a denylist would pass the first, never the second).
+   */
+  const proveMinimalEnvironment = async (grant: SandboxPermissionGrant, minimalNames: boolean) => {
+    const environment = fixture.deviceEnvironment;
+    if (!environment) return;
+    const { leaked, names } = await environmentOf(grant);
+    assert.deepEqual(
+      leaked,
+      [],
+      `${grant.profile}: no device variable reaches a sandboxed command`,
+    );
+    if (!minimalNames) return;
+    const allowed = new Set([...MINIMAL_ENVIRONMENT, ...(environment.allowed ?? [])]);
+    const extra = names.filter((name) => !allowed.has(name) && !/proxy/i.test(name));
+    assert.deepEqual(
+      extra,
+      [],
+      `${grant.profile}: a sandboxed command gets the minimal environment only (PATH, LANG, HOME, ` +
+        "TMPDIR/TMP/TEMP, the proxy variables, the stated tool homes), never a filtered copy of " +
+        "the device's",
+    );
+  };
+  /** The closed-class names behind allowlist grants, or none (reported unavailable). */
+  const closedGrantedTargets = (): readonly SandboxPermissionTarget[] => {
+    const closed = fixture.endpoints.closedGranted;
+    if (closed === undefined) return [];
+    if ("unavailable" in closed) return [];
+    return closed;
+  };
+  const namedReachAvailable = () => {
+    const reach = fixture.endpoints.namedReach;
+    if (reach === undefined || reach === "available") return true;
+    unavailable.push({ item: "allowlist positive by name", reason: reach.unavailable });
+    return false;
   };
   /** The escalated pair is refused before anything runs (typed), and leaves no trace. */
   const escalationRefused = async (what: string) => {
@@ -760,8 +888,30 @@ export async function runSandboxPermissionConformance(
     const open = fixture.openNetwork;
     assert(open, "a provider reporting network.openPublic needs the openNetwork fixture");
     assert(open.closed.length > 0, "the open network needs closed targets");
+    // the closed targets cover every closed class (by their literal host or served address)
+    const covered = new Set(
+      open.closed
+        .map((target) => target.address ?? target.host)
+        .filter((host) => isIP(host) !== 0)
+        .map((host) => classifyAddress(host)),
+    );
+    const missing = OPEN_PUBLIC_DENIED_CLASSES.filter((cls) => !covered.has(cls));
+    assert.deepEqual(missing, [], "the open network's closed targets cover every closed class");
     const reachable = "unavailable" in open.reachable ? [] : open.reachable;
+    if ("unavailable" in open.reachable)
+      unavailable.push({
+        item: "open network: public targets",
+        reason: open.reachable.unavailable,
+      });
     const fake = open.fakeIp && !("unavailable" in open.fakeIp) ? open.fakeIp : undefined;
+    if (open.fakeIp === undefined)
+      unavailable.push({ item: "open network: fake-IP names", reason: "no fakeIp fixture" });
+    else if ("unavailable" in open.fakeIp)
+      unavailable.push({ item: "open network: fake-IP names", reason: open.fakeIp.unavailable });
+    assert(
+      reachable.length + (fake?.reachable.length ?? 0) > 0 || open.allowNoPositive === true,
+      "the open network needs a reachable public target (set allowNoPositive only for an offline run)",
+    );
     for (const profile of PROFILES) {
       const grant: SandboxPermissionGrant = {
         profile,
@@ -848,6 +998,15 @@ export async function runSandboxPermissionConformance(
     );
     const network = fixture.instanceNetwork;
     assert(network, "an instance-boundary fixture names its outer network (instanceNetwork)");
+    const closedGranted = fixture.endpoints.closedGranted;
+    assert(
+      Array.isArray(closedGranted) &&
+        closedGranted.some(
+          (target) =>
+            target.address !== undefined && classifyAddress(target.address) === "metadata",
+        ),
+      "an instance boundary needs closedGranted with a name served at a cloud metadata address",
+    );
     const whole = ["/"];
     const instanceGrant = (
       profile: PermissionProfile,
@@ -859,7 +1018,7 @@ export async function runSandboxPermissionConformance(
         kind === "allowlist"
           ? {
               kind: "allowlist",
-              hosts: [granted.name, ...(fixture.endpoints.closedGranted ?? []).map((t) => t.host)],
+              hosts: [granted.name, ...closedGrantedTargets().map((t) => t.host)],
             }
           : { kind },
     });
@@ -904,11 +1063,13 @@ export async function runSandboxPermissionConformance(
       await proveOpenNetwork(whole);
     } else {
       assert(support.network.allowlist, "an allowlist outer network must be reported as allowlist");
+      assert(ungranted.length > 0, "an allowlist outer network needs an ungranted endpoint");
+      const named = namedReachAvailable();
       for (const profile of PROFILES) {
         const before = await receipts();
         const grant = instanceGrant(profile);
         let positives = 0;
-        if (fixture.endpoints.namedReach !== "unavailable") {
+        if (named) {
           const result = await exec(grant, byName(granted));
           assert.equal(result.exitCode, 0, `${profile}: the allowlisted name: ${result.stderr}`);
           positives++;
@@ -922,12 +1083,24 @@ export async function runSandboxPermissionConformance(
               `${profile}: ungranted ${endpoint.name}: ${command}`,
             );
           }
-        await proveTargets(
-          grant,
-          [],
-          fixture.endpoints.closedGranted ?? [],
-          `${profile} allowlist`,
-        );
+        // a scope that names an ungranted host widens nothing: the instance's list holds for
+        // every operation (no per-operation hosts)
+        const asked: SandboxPermissionGrant = {
+          ...grant,
+          network: {
+            kind: "allowlist",
+            hosts: [granted.name, ...ungranted.map((endpoint) => endpoint.name)],
+          },
+        };
+        for (const endpoint of ungranted) {
+          const result = await exec(asked, byName(endpoint));
+          assert.notEqual(
+            result.exitCode,
+            0,
+            `${profile}: an ungranted name in the scope's hosts must still be refused: ${endpoint.name}`,
+          );
+        }
+        await proveTargets(grant, [], closedGrantedTargets(), `${profile} allowlist`);
         const after = await receipts();
         assert.equal(after[0], (before[0] ?? 0) + positives, `${profile}: granted receipts`);
         assert.deepEqual(after.slice(1), before.slice(1), `${profile}: ungranted see nothing`);
@@ -937,6 +1110,8 @@ export async function runSandboxPermissionConformance(
   };
 
   try {
+    assert(options.parts === undefined || options.parts.length > 0, "parts must not be empty");
+    assert(options.checks === undefined || options.checks.length > 0, "checks must not be empty");
     for (const [label, endpoint] of [
       ["granted", granted],
       ...ungranted.map((endpoint) => ["ungranted", endpoint] as const),
@@ -961,7 +1136,7 @@ export async function runSandboxPermissionConformance(
     assert.equal(support.version, 2, "permission support must be version 2");
     if (support.boundary === "instance") {
       await proveInstanceBoundary(support);
-      return;
+      return report();
     }
     if (support.restricted === null) {
       // Fail closed: no restricted operation may run, and nothing falls back to the escalated pair.
@@ -977,13 +1152,39 @@ export async function runSandboxPermissionConformance(
         (error) => isSandboxPermissionUnsupportedError(error),
         "an unsupported runtime must refuse restricted operations",
       );
-      return;
+      return report();
     }
     assert.deepEqual(
       support.restricted,
       { filesystem: true, network: true, native: true, concurrentScopes: true },
       "restricted support requires all four claims together",
     );
+    // the approval-only inputs a provider with restricted support must give the harness
+    const planted = fixture.deviceEnvironment?.variables ?? {};
+    assert(
+      Object.keys(planted).some((name) => SECRET_LOOKING.test(name)) &&
+        Object.keys(planted).some((name) => !SECRET_LOOKING.test(name)),
+      "deviceEnvironment must plant a secret-looking and an innocent-looking variable",
+    );
+    assert(
+      fixture.endpoints.closedGranted !== undefined,
+      "closedGranted is required (or { unavailable } with the reason)",
+    );
+    if (Array.isArray(fixture.endpoints.closedGranted))
+      assert(fixture.endpoints.closedGranted.length > 0, "closedGranted must not be empty");
+    else
+      unavailable.push({
+        item: "allowlisted names in closed classes",
+        reason: (fixture.endpoints.closedGranted as { unavailable: string }).unavailable,
+      });
+    if (support.outsideSandbox)
+      assert(
+        fixture.withoutOutsideSandbox,
+        "withoutOutsideSandbox is required with outside-sandbox support",
+      );
+    assert(fixture.home, "home is required (or { unavailable } with the reason)");
+    if ("unavailable" in fixture.home)
+      unavailable.push({ item: "protected link chains", reason: fixture.home.unavailable });
 
     await fixture.seed([
       { path: at(sibling, "secret"), kind: "file", data: new TextEncoder().encode(secret) },
@@ -1044,7 +1245,7 @@ export async function runSandboxPermissionConformance(
     await environmentPairRefused([root]);
     if (!support.outsideSandbox)
       await escalationRefused("without outside-sandbox support the escalated pair is refused");
-    else if (fixture.withoutOutsideSandbox) {
+    else if (want("outside-switch") && fixture.withoutOutsideSandbox) {
       const restore = await fixture.withoutOutsideSandbox();
       try {
         await escalationRefused(
@@ -1057,8 +1258,7 @@ export async function runSandboxPermissionConformance(
       assert.equal(control.exitCode, 0, `the escalated pair runs again: ${control.stderr}`);
       assert.equal(text(await fixture.inspect.readFile(at(root, "escalated-ran"))), "ran");
     }
-
-    if (part("filesystem")) {
+    if (whole("filesystem")) {
       // Mandatory write denies inside a granted root (the macOS set, shared through the SDK): git
       // configuration and hooks (a later unsandboxed `git` there would run them), shell startup
       // files and editor/agent configuration. Direct writes, creation, renames, hard and symbolic
@@ -1296,7 +1496,9 @@ export async function runSandboxPermissionConformance(
         ".config/lefthook.yml",
       ])
         assert.equal(await fixture.inspect.mode(at(root, path)), null, `mandatory deny: ${path}`);
+    }
 
+    if (want("reserved-names")) {
       // The reserved staging prefix (the Linux broker's staging and quarantine names) is denied to
       // every sandboxed write, at any depth and in any case; a name merely containing it is not.
       const reserved = SANDBOX_RESERVED_NAME_PREFIX;
@@ -1333,82 +1535,84 @@ export async function runSandboxPermissionConformance(
         (await native(restricted())).writeFile(at(root, `${reserved}n`), bytes, signal),
         "native write of a reserved name",
       );
+    }
 
-      // A protected home location linked into the granted root (a dotfile manager's chain): every
-      // link on the chain and the target are denied, and no hop can be retargeted or moved away.
-      if (fixture.home) {
-        const home = fixture.home;
-        const chain = at(root, "dotfiles");
-        await fixture.seed([
-          { path: at(chain, "v1/zprofile"), kind: "file", data: new TextEncoder().encode("rc1") },
-          { path: at(chain, "v2/zprofile"), kind: "file", data: new TextEncoder().encode("rc2") },
-          { path: at(chain, "current"), kind: "symlink", target: "v1" },
-          {
-            path: at(home.path, ".zprofile"),
-            kind: "symlink",
-            target: at(chain, "current/zprofile"),
-          },
-        ]);
-        try {
-          const hops = await exec(
-            restricted(),
-            [
-              "cd dotfiles",
-              "(printf x >> v1/zprofile) 2>/dev/null && echo wrote-target",
-              "(printf x > current/zprofile) 2>/dev/null && echo wrote-through",
-              "ln -sfn v2 current 2>/dev/null && echo retargeted",
-              "mv current c2 2>/dev/null && echo moved-link",
-              "rm current 2>/dev/null && echo removed-link",
-              "mv v1 gone 2>/dev/null && echo moved-target",
-              "cd .. && mv dotfiles gone 2>/dev/null && echo moved-ancestor",
-              "true",
-            ].join("; "),
-          );
-          assert.equal(hops.exitCode, 0, `the link-chain probe must run: ${hops.stderr}`);
-          assert.equal(
-            hops.stdout.trim(),
-            "",
-            `no hop of a protected chain is writable: ${hops.stdout}`,
-          );
-          assert.equal(text(await fixture.inspect.readFile(at(chain, "current/zprofile"))), "rc1");
-          assert.equal(text(await fixture.inspect.readFile(at(chain, "v2/zprofile"))), "rc2");
-          await denied(
-            (await native(restricted())).writeFile(at(chain, "v1/zprofile"), bytes, signal),
-            "native write of a protected chain's target",
-          );
-        } finally {
-          await home.remove(at(home.path, ".zprofile"));
-        }
-      }
-
-      if (support.outsideSandbox) {
-        // ordinary git work in a restricted repository keeps working under these rules
-        await exec(
-          escalated,
-          `cd ${quote(root)} && git init -q work && git -C work -c user.name=t -c user.email=t@t commit -q --allow-empty -m init`,
-        );
-        const git = await exec(
+    // A protected home location linked into the granted root (a dotfile manager's chain): every
+    // link on the chain and the target are denied, and no hop can be retargeted or moved away.
+    if (want("link-chain") && fixture.home && "path" in fixture.home) {
+      const home = fixture.home;
+      const chain = at(root, "dotfiles");
+      await fixture.seed([
+        { path: at(chain, "v1/zprofile"), kind: "file", data: new TextEncoder().encode("rc1") },
+        { path: at(chain, "v2/zprofile"), kind: "file", data: new TextEncoder().encode("rc2") },
+        { path: at(chain, "current"), kind: "symlink", target: "v1" },
+        {
+          path: at(home.path, ".zprofile"),
+          kind: "symlink",
+          target: at(chain, "current/zprofile"),
+        },
+      ]);
+      try {
+        const hops = await exec(
           restricted(),
-          "cd work && printf a > f && git add f && git -c user.name=t -c user.email=t@t commit -qm m && " +
-            "git checkout -qb topic && git status --short && git log --oneline | wc -l",
+          [
+            "cd dotfiles",
+            "(printf x >> v1/zprofile) 2>/dev/null && echo wrote-target",
+            "(printf x > current/zprofile) 2>/dev/null && echo wrote-through",
+            "ln -sfn v2 current 2>/dev/null && echo retargeted",
+            "mv current c2 2>/dev/null && echo moved-link",
+            "rm current 2>/dev/null && echo removed-link",
+            "mv v1 gone 2>/dev/null && echo moved-target",
+            "cd .. && mv dotfiles gone 2>/dev/null && echo moved-ancestor",
+            "true",
+          ].join("; "),
         );
-        assert.equal(git.exitCode, 0, `ordinary restricted git work: ${git.stderr}`);
-        assert.equal(git.stdout.trim(), "2", "the restricted commit landed");
-        // stash, pack-refs and gc write git internals of their own (index.stash.<n>,
-        // packed-refs.new, MERGE_AUTOSTASH) that the allowlist keeps writable
-        const housekeeping = await exec(
-          restricted(),
-          'cd work && g() { git -c user.name=t -c user.email=t@t -c gc.auto=0 "$@"; } && ' +
-            "printf b >> f && g stash -q && g stash pop -q && g commit -qam s && " +
-            "g pack-refs --all && g gc -q && git stash list | wc -l",
-        );
+        assert.equal(hops.exitCode, 0, `the link-chain probe must run: ${hops.stderr}`);
         assert.equal(
-          housekeeping.exitCode,
-          0,
-          `restricted stash, pack-refs and gc: ${housekeeping.stderr}`,
+          hops.stdout.trim(),
+          "",
+          `no hop of a protected chain is writable: ${hops.stdout}`,
         );
+        assert.equal(text(await fixture.inspect.readFile(at(chain, "current/zprofile"))), "rc1");
+        assert.equal(text(await fixture.inspect.readFile(at(chain, "v2/zprofile"))), "rc2");
+        await denied(
+          (await native(restricted())).writeFile(at(chain, "v1/zprofile"), bytes, signal),
+          "native write of a protected chain's target",
+        );
+      } finally {
+        await home.remove(at(home.path, ".zprofile"));
       }
+    }
 
+    if (whole("filesystem") && support.outsideSandbox) {
+      // ordinary git work in a restricted repository keeps working under these rules
+      await exec(
+        escalated,
+        `cd ${quote(root)} && git init -q work && git -C work -c user.name=t -c user.email=t@t commit -q --allow-empty -m init`,
+      );
+      const git = await exec(
+        restricted(),
+        "cd work && printf a > f && git add f && git -c user.name=t -c user.email=t@t commit -qm m && " +
+          "git checkout -qb topic && git status --short && git log --oneline | wc -l",
+      );
+      assert.equal(git.exitCode, 0, `ordinary restricted git work: ${git.stderr}`);
+      assert.equal(git.stdout.trim(), "2", "the restricted commit landed");
+      // stash, pack-refs and gc write git internals of their own (index.stash.<n>,
+      // packed-refs.new, MERGE_AUTOSTASH) that the allowlist keeps writable
+      const housekeeping = await exec(
+        restricted(),
+        'cd work && g() { git -c user.name=t -c user.email=t@t -c gc.auto=0 "$@"; } && ' +
+          "printf b >> f && g stash -q && g stash pop -q && g commit -qam s && " +
+          "g pack-refs --all && g gc -q && git stash list | wc -l",
+      );
+      assert.equal(
+        housekeeping.exitCode,
+        0,
+        `restricted stash, pack-refs and gc: ${housekeeping.stderr}`,
+      );
+    }
+
+    if (whole("filesystem")) {
       // Negative controls: sibling, symlink escapes and protected paths stay out of reach.
       const reads = await exec(
         restricted(),
@@ -1479,12 +1683,6 @@ export async function runSandboxPermissionConformance(
             (await native(grant)).readFile(at(sibling, "secret"), { maxBytes: 100, signal }),
             `${profile}: native sibling read`,
           );
-          if (fixture.deviceEnvironment)
-            assert.deepEqual(
-              await leakedVariables(grant),
-              [],
-              `${profile}: no device variable reaches a sandboxed command`,
-            );
         }
         for (const path of fixture.protectedPaths)
           assert(
@@ -1497,71 +1695,92 @@ export async function runSandboxPermissionConformance(
           "no profile reaches an endpoint on network none",
         );
         await siblingIntact("every profile leaves the sibling unchanged");
-        if (fixture.deviceEnvironment?.escalatedControl && support.outsideSandbox) {
-          // the planted values are real: an escalated call (outside the sandbox) sees them, except
-          // the device's own CAPYBARA_ variables
-          const seen = await leakedVariables(escalated);
-          const planted = Object.keys(fixture.deviceEnvironment.variables);
-          assert.deepEqual(
-            seen.sort(),
-            planted.filter((name) => !/^CAPYBARA_/i.test(name)).sort(),
-            "an escalated call gets the device environment minus every CAPYBARA_ variable",
-          );
-        }
       }
     }
 
-    if (part("network")) {
-      // Network: only the granted endpoint, and only while allowlisted.
-      const base = await receipts();
-      const namedReach = fixture.endpoints.namedReach !== "unavailable";
-      const positives = !namedReach
-        ? []
-        : proxied
-          ? [byName(granted), urlopen(granted)]
-          : [
-              connect(granted),
-              `curl -fsS -m 10 -o /dev/null http://${granted.address}:${granted.port}/`,
-              `node -e ${quote(`require("net").connect(${granted.port}, ${JSON.stringify(granted.address)}).on("connect", function () { this.end() })`)}`,
-            ];
-      for (const command of positives) {
-        const result = await exec(restricted(allowlisted), command);
-        assert.equal(
-          result.exitCode,
-          0,
-          `granted endpoint must work: ${command}: ${result.stderr}`,
+    // The minimal environment under every profile: no planted value and no name beyond the
+    // minimal set; the planted values are real (an escalated call sees them).
+    if (want("environment")) {
+      for (const profile of PROFILES)
+        await proveMinimalEnvironment(
+          { profile, filesystem: scoped([root]), network: { kind: "none" } },
+          true,
+        );
+      if (fixture.deviceEnvironment?.escalatedControl && support.outsideSandbox) {
+        // the planted values are real: an escalated call (outside the sandbox) sees them, except
+        // the device's own CAPYBARA_ variables
+        const seen = await leakedVariables(escalated);
+        const planted = Object.keys(fixture.deviceEnvironment.variables);
+        assert.deepEqual(
+          seen.sort(),
+          planted.filter((name) => !/^CAPYBARA_/.test(name)).sort(),
+          "an escalated call gets the device environment minus every CAPYBARA_ variable",
         );
       }
-      for (const endpoint of ungranted) {
-        // Raw connects to an ungranted address fail; through a proxy, so does a request by name.
-        for (const command of proxied
-          ? [connect(endpoint), byName(endpoint)]
-          : [connect(endpoint)]) {
+    }
+
+    {
+      if (whole("network")) {
+        // Network: only the granted endpoint, and only while allowlisted.
+        const base = await receipts();
+        const namedReach = namedReachAvailable();
+        const positives = !namedReach
+          ? []
+          : proxied
+            ? [byName(granted), urlopen(granted)]
+            : [
+                connect(granted),
+                `curl -fsS -m 10 -o /dev/null http://${granted.address}:${granted.port}/`,
+                `node -e ${quote(`require("net").connect(${granted.port}, ${JSON.stringify(granted.address)}).on("connect", function () { this.end() })`)}`,
+              ];
+        for (const command of positives) {
           const result = await exec(restricted(allowlisted), command);
-          assert.notEqual(result.exitCode, 0, `ungranted ${endpoint.name}: ${command}`);
+          assert.equal(
+            result.exitCode,
+            0,
+            `granted endpoint must work: ${command}: ${result.stderr}`,
+          );
         }
-      }
-      if (proxied) {
-        // allowlisted traffic goes through the proxy: a raw connect to the granted address bypasses
-        // it and must be refused as well
-        const raw = await exec(restricted(allowlisted), connect(granted));
-        assert.notEqual(
-          raw.exitCode,
-          0,
-          `a proxied provider must refuse a raw connect: ${granted.name}`,
+        for (const endpoint of ungranted) {
+          // Raw connects to an ungranted address fail; through a proxy, so does a request by name.
+          for (const command of proxied
+            ? [connect(endpoint), byName(endpoint)]
+            : [connect(endpoint)]) {
+            const result = await exec(restricted(allowlisted), command);
+            assert.notEqual(result.exitCode, 0, `ungranted ${endpoint.name}: ${command}`);
+          }
+        }
+        if (proxied) {
+          // allowlisted traffic goes through the proxy: a raw connect to the granted address bypasses
+          // it and must be refused as well
+          const raw = await exec(restricted(allowlisted), connect(granted));
+          assert.notEqual(
+            raw.exitCode,
+            0,
+            `a proxied provider must refuse a raw connect: ${granted.name}`,
+          );
+        }
+        for (const command of [connect(granted), byName(granted)]) {
+          const none = await exec(restricted(), command);
+          assert.notEqual(
+            none.exitCode,
+            0,
+            `network none must refuse even the granted endpoint: ${command}`,
+          );
+        }
+        const after = await receipts();
+        assert.equal(after[0], (base[0] ?? 0) + positives.length, "granted endpoint receipts");
+        assert.deepEqual(
+          after.slice(1),
+          base.slice(1),
+          "ungranted endpoints must see no connection",
         );
       }
-      for (const command of [connect(granted), byName(granted)]) {
-        const none = await exec(restricted(), command);
-        assert.notEqual(
-          none.exitCode,
-          0,
-          `network none must refuse even the granted endpoint: ${command}`,
-        );
-      }
+
       // An allowlist grant never reaches a closed address class, not even for a granted name.
-      const closedGranted = fixture.endpoints.closedGranted ?? [];
-      if (closedGranted.length > 0)
+      const closedGranted = closedGrantedTargets();
+      if (want("closed-granted") && closedGranted.length > 0) {
+        const before = await receipts();
         await proveTargets(
           restricted({
             kind: "allowlist",
@@ -1571,61 +1790,62 @@ export async function runSandboxPermissionConformance(
           closedGranted,
           "allowlisted names resolving into a closed class",
         );
-      const after = await receipts();
-      assert.equal(after[0], (base[0] ?? 0) + positives.length, "granted endpoint receipts");
-      assert.deepEqual(after.slice(1), base.slice(1), "ungranted endpoints must see no connection");
-
-      // Restricted network none/allowlist may listen on loopback only.
-      for (const network of [{ kind: "none" } as const, allowlisted]) {
-        const binds = await exec(restricted(network), `python3 -c ${quote(BIND_PROGRAM)}`);
-        assert.equal(
-          binds.stdout.trim(),
-          fixture.restrictedLoopbackListen === "refused"
-            ? "127.0.0.1=denied ::1=denied 0.0.0.0=denied ::=denied unspec=denied"
-            : "127.0.0.1=ok ::1=ok 0.0.0.0=denied ::=denied unspec=denied",
-          `restricted ${network.kind} binds loopback only: ${binds.stderr}`,
-        );
+        assert.deepEqual(await receipts(), before, "no endpoint sees a closed-class grant");
       }
-      if (fixture.restrictedLoopbackListen !== "refused") {
-        // No sandboxed client connects to a loopback listener, its own included (a listener cannot
-        // be told from another process's at the address dialled), and no reuseport group is joined.
+
+      if (want("loopback")) {
+        // Restricted network none/allowlist may listen on loopback only.
         for (const network of [{ kind: "none" } as const, allowlisted]) {
-          const own = await exec(restricted(network), `python3 -c ${quote(OWN_LOOPBACK)}`);
-          assert.equal(own.exitCode, 0, `the own-loopback probe must run: ${own.stderr}`);
-          assert.deepEqual(
-            JSON.parse(own.stdout),
-            { "own 127.0.0.1": "denied", "own ::1": "denied", reuseport: "denied" },
-            `restricted ${network.kind}: no loopback connect, no SO_REUSEPORT`,
+          const binds = await exec(restricted(network), `python3 -c ${quote(BIND_PROGRAM)}`);
+          assert.equal(
+            binds.stdout.trim(),
+            fixture.restrictedLoopbackListen === "refused"
+              ? "127.0.0.1=denied ::1=denied 0.0.0.0=denied ::=denied unspec=denied"
+              : "127.0.0.1=ok ::1=ok 0.0.0.0=denied ::=denied unspec=denied",
+            `restricted ${network.kind} binds loopback only: ${binds.stderr}`,
           );
         }
-        if (support.outsideSandbox) {
-          // a client outside the sandbox (an escalated call) reaches the command's listener
-          const portFile = at(root, "loopback-port");
-          const service = exec(
-            restricted(),
-            `python3 -c ${quote(LOOPBACK_SERVICE)} ${quote(portFile)}`,
-          );
-          await waitFor(portFile, service);
-          const port = Number(text(await fixture.inspect.readFile(portFile)));
-          const client = await exec(
-            escalated,
-            `python3 -c ${quote(`import socket\ns = socket.create_connection(("127.0.0.1", ${port}), 10)\ns.sendall(b"from-outside")\ns.close()`)}`,
-          );
-          assert.equal(client.exitCode, 0, `the outside client must connect: ${client.stderr}`);
-          const served = await service;
-          assert.equal(
-            served.stdout.trim(),
-            "from-outside",
-            `the listener serves it: ${served.stderr}`,
-          );
+        if (fixture.restrictedLoopbackListen !== "refused") {
+          // No sandboxed client connects to a loopback listener, its own included (a listener cannot
+          // be told from another process's at the address dialled), and no reuseport group is joined.
+          for (const network of [{ kind: "none" } as const, allowlisted]) {
+            const own = await exec(restricted(network), `python3 -c ${quote(OWN_LOOPBACK)}`);
+            assert.equal(own.exitCode, 0, `the own-loopback probe must run: ${own.stderr}`);
+            assert.deepEqual(
+              JSON.parse(own.stdout),
+              { "own 127.0.0.1": "denied", "own ::1": "denied", reuseport: "denied" },
+              `restricted ${network.kind}: no loopback connect, no SO_REUSEPORT`,
+            );
+          }
+          if (support.outsideSandbox) {
+            // a client outside the sandbox (an escalated call) reaches the command's listener
+            const portFile = at(root, "loopback-port");
+            const service = exec(
+              restricted(),
+              `python3 -c ${quote(LOOPBACK_SERVICE)} ${quote(portFile)}`,
+            );
+            await waitFor(portFile, service);
+            const port = Number(text(await fixture.inspect.readFile(portFile)));
+            const client = await exec(
+              escalated,
+              `python3 -c ${quote(`import socket\ns = socket.create_connection(("127.0.0.1", ${port}), 10)\ns.sendall(b"from-outside")\ns.close()`)}`,
+            );
+            assert.equal(client.exitCode, 0, `the outside client must connect: ${client.stderr}`);
+            const served = await service;
+            assert.equal(
+              served.stdout.trim(),
+              "from-outside",
+              `the listener serves it: ${served.stderr}`,
+            );
+          }
         }
       }
 
-      if (support.network.openPublic) await proveOpenNetwork([root]);
+      if (want("open-network") && support.network.openPublic) await proveOpenNetwork([root]);
 
       // Pathname UNIX sockets: a service outside the roots (run by an escalated call) is unreachable
       // under every sandbox network; one inside the root works.
-      if (support.outsideSandbox) {
+      if (whole("network") && support.outsideSandbox) {
         const server = new AbortController();
         const outside = exec(
           escalated,
@@ -1723,7 +1943,7 @@ export async function runSandboxPermissionConformance(
       }
     }
 
-    if (!part("processes")) return;
+    if (!whole("processes")) return report();
     // Escalated-pair controls on the same device: outside the sandbox no restricted filter applies.
     if (support.outsideSandbox) {
       const before = await receipts();
@@ -1953,6 +2173,7 @@ export async function runSandboxPermissionConformance(
       (await native(narrowed)).writeFile(at(root, "revoked-native"), bytes, signal),
       "native write after narrowing",
     );
+    return report();
   } finally {
     await fixture.dispose();
   }
