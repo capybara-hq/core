@@ -1,8 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { DEFAULT_SANDBOX_ROOTS } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
+import { getQueueToken } from "@nestjs/bullmq";
 import { MODULE_METADATA } from "@nestjs/common/constants.js";
 import { ModulesContainer } from "@nestjs/core";
+import type { Queue } from "bullmq";
 import { Redis } from "ioredis";
 import { sql } from "kysely";
 import {
@@ -30,6 +32,7 @@ import { NetworkGrants } from "../../src/local-devices/network-grants.js";
 import { createLogger } from "../../src/log.js";
 import type { MembersService } from "../../src/orgs/members.service.js";
 import { OrgSettingsService } from "../../src/orgs/settings.service.js";
+import { MAINTENANCE_QUEUE_NAME } from "../../src/runtime/maintenance-queue.js";
 import { SandboxOperationAuthority } from "../../src/sandbox/operation-authority.js";
 import { OperationAuthorityModule } from "../../src/sandbox/operation-authority.module.js";
 import { PermissionAuthorityEpochStore } from "../../src/sandbox/permission-authority-epochs.js";
@@ -44,6 +47,7 @@ import { accountsFor } from "../helpers/identity.js";
 import { seedCloudEvidence, seedInstalledEvidence } from "../helpers/installed-evidence.js";
 import { testMembers } from "../helpers/members.js";
 import { MODEL_PLUGINS_CONFIG } from "../helpers/model-plugins.js";
+import { drainOutbox } from "../helpers/outbox.js";
 import { enableModelProviders, startKernel, type TestKernel } from "../helpers/runs.js";
 
 let pgc: TestContainer;
@@ -1748,16 +1752,16 @@ describe("approval-only profiles: the device sandbox in admission and the record
       ).state;
     expect(await state(open.operationId)).toBe("revoked");
     expect(await state(sibling.operationId)).toBe("admitted");
-    const jobs = await f.db
-      .selectFrom("outbox")
-      .select("job_id")
-      .where("job_name", "=", "sandbox-operation-revoke")
-      .where("job_id", "in", [
-        `sandbox-operation-revoke-${open.operationId}`,
-        `sandbox-operation-revoke-${sibling.operationId}`,
-      ])
-      .execute();
-    expect(jobs.map((j) => j.job_id)).toEqual([`sandbox-operation-revoke-${open.operationId}`]);
+    // the owed revoke reaches the queue either by the after-commit fast path (which deletes its
+    // row) or by this relay pass: read the queued job, not the outbox row
+    await drainOutbox(k.app, { jobName: "sandbox-operation-revoke" });
+    const maintenance = k.app.get<Queue>(getQueueToken(MAINTENANCE_QUEUE_NAME));
+    expect(
+      (await maintenance.getJob(`sandbox-operation-revoke-${open.operationId}`))?.data,
+    ).toEqual({ operationId: open.operationId });
+    expect(
+      await maintenance.getJob(`sandbox-operation-revoke-${sibling.operationId}`),
+    ).toBeUndefined();
     // widening the ceiling again resets Full consent with a recorded profile change
     await select(f, "full-access");
     await k.app.get(SettingsService).update({ devicesNetwork: { ceiling: "open" } }, owner.id);

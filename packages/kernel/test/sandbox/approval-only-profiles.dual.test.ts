@@ -876,6 +876,34 @@ async function stoppedOnDevice(
   );
 }
 
+/**
+ * Waits until the run woken by `task`'s finish (a revocation's stop has no `stoppedBy`, so it
+ * wakes the conversation) has ended and the conversation is idle; returns its terminal count. The
+ * wake run and a message posted meanwhile may or may not share a run, so a following {@link call}
+ * counts its terminal from here.
+ */
+async function wakeSettled(conv: string, task: { id: string }): Promise<number> {
+  return waitFor(
+    async () => {
+      const events = await eventsOf(db, conv);
+      const finished = events.find(
+        (e) =>
+          e.type === "background_task_finished" &&
+          (e.payload as { taskId?: string }).taskId === task.id,
+      );
+      if (!finished) return null;
+      const started = events.filter((e) => e.type === "run_started");
+      const ended = events.filter((e) =>
+        ["run_finished", "run_failed", "run_aborted"].includes(e.type),
+      );
+      const woken = started.some((e) => e.seq > finished.seq);
+      return woken && started.length === ended.length ? ended.length : null;
+    },
+    30_000,
+    `the wake run of the task ${task.id} ended`,
+  );
+}
+
 const intentState = async (operationId: string | null) =>
   (
     await db
@@ -974,8 +1002,15 @@ describe("ceiling narrowings revoke exactly the work they take", () => {
     expect(await taskStatus(onList.id)).toBe("running");
     // the narrowing keeps Full consent: Full access would now approve less
     expect((await permissions(s, convOpen)).profile).toBe("full-access");
-    // the next call runs on the allowlist
-    const next = await call(s, convOpen, "Bash", { command: "echo after", description: "Run" }, 3);
+    // the next call runs on the allowlist (after the wake run the stop's finish started)
+    const ended = await wakeSettled(convOpen, onOpen);
+    const next = await call(
+      s,
+      convOpen,
+      "Bash",
+      { command: "echo after", description: "Run" },
+      ended + 1,
+    );
     expect(next.payload.isError, next.payload.content).toBe(false);
     expect(
       scopeOf(open.reqs("exec").find((x) => commandOf(x) === "echo after") as KernelReq).network
