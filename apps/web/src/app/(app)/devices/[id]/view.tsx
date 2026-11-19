@@ -183,7 +183,7 @@ function Detail({
           titleHidden: true,
           actions: [
             { label: t("detail.rename"), variant: "default", onSelect: () => setOpen("rename") },
-            ...((e.filesLost || e.mode.pendingFilesReset || e.reconcileRequired) &&
+            ...((e.filesLost || e.sandbox.pendingFilesReset || e.reconcileRequired) &&
             e.available &&
             !local
               ? [
@@ -247,7 +247,7 @@ function Detail({
               device={e}
               onOpenSettings={() => setTab("settings")}
             />
-            <RecentChanges recent={e.mode.recent} />
+            <RecentChanges recent={e.sandbox.recent} />
           </Stack>
         ) : (
           <>

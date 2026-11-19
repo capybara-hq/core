@@ -89,7 +89,7 @@ async function newChat(page: Page, agentId: string): Promise<void> {
 }
 
 /**
- * The composer's mode button, named "权限: <profile>" in zh, then ": 思考档位 <effort>" when the
+ * The composer's mode button, named "Permissions: <profile>" (in the zh copy), then ": Effort <effort>" when the
  * model declares efforts.
  */
 const permissionButton = (page: Page, profile?: string): Locator =>

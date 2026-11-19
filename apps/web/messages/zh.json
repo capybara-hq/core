@@ -358,8 +358,6 @@
       "credential_invalid": "这台电脑的连接凭据已失效，请在电脑上重新连接。",
       "policy_refused": "这台设备不接受平台的这次修改，请在机器上修改。",
       "policy_unsupported": "这台设备不支持从平台修改网络设置，请在机器上升级设备程序。",
-      "mode_on_device": "该设备的访问上限保存在它所连接的电脑上：请在设备页面收窄，或在那台电脑上运行 capybara-device ceiling set。",
-      "mode_requires_session": "设备的模式只能由其所有者在设备页面修改，不能用 API 令牌修改。",
       "project_name_invalid": "该项目名称不可用：请使用 1-64 个字符，不能是 . 或 ..，不含 / 或控制字符，首尾不留空格。",
       "project_name_taken": "这台设备上已有同名项目，请换一个名称。",
       "project_limit_reached": "这台设备的项目已达 100 个上限，请先移除一个再添加。",
@@ -373,11 +371,9 @@
       "projects_unavailable": "现在无法向设备确认该目录，请稍后重试。",
       "not_running": "设备在读取前已停止。请重试，系统会先启动它。",
       "permission_reconcile_required": "该设备的沙箱限制需要重新确立，确立之前不会运行任何命令。请在设备页面重建文件后再试。",
-      "permission_not_migrated": "该设备的权限尚未迁移，所以现在不能设置它的完全访问上限。关闭完全访问仍然可用；请在迁移完成后再尝试允许。重建文件不会改变这一点。",
       "owner_report_stale": "这台电脑发来的权限报告已过期，新的工作已暂停。请在电脑上重新运行 capybara-device login。",
-      "owner_ceiling_confirmation_required": "为该设备开启完全访问需要你确认。请确认后再试。",
-      "full_access_not_allowed": "平台、你的组织或该设备的提供方不允许该设备使用完全访问。",
-      "network_not_allowed": "该网络比你的组织或平台对此设备允许的更宽。",
+      "network_not_allowed": "该网络比你的组织、平台或提供方对此设备允许的更宽，或有主机不在组织的清单里。",
+      "ceiling_on_machine": "本地设备的沙箱保存在它的电脑上：请在设备页面收窄，或由所有者在那台电脑上运行 capybara-device ceiling set。",
       "outside_sandbox_not_allowed": "平台、你的组织、设备所有者或该设备的提供方不允许此设备在沙箱外运行。",
       "restart_required": "旧版本启动的后台任务可能仍在这台电脑上运行。请重启这台电脑以完成升级，然后再试。",
       "replace_required": "旧版本启动的后台任务可能仍在这台电脑上运行，且这台电脑无法证明已重启。请删除这台设备，再把这台电脑作为新设备重新连接。",
@@ -1790,8 +1786,11 @@
       "network": "网络",
       "networkValue": {
         "open": "开放互联网（内网除外）",
-        "allowlist": "白名单"
+        "allowlist": "白名单",
+        "none": "关闭（不联网）"
       },
+      "followOrg": "跟随组织",
+      "followOrgNow": "当前：{value}",
       "outside": "在沙箱外运行",
       "outsideValue": {
         "allowed": "允许",
@@ -1818,13 +1817,19 @@
         "network": {
           "platform": "平台已限定为白名单（超级管理员设置）",
           "org": "组织已限定为白名单（组织管理员设置）",
-          "owner": "只有电脑的所有者能在电脑上放宽",
+          "device": "只有电脑的所有者能在电脑上放宽",
           "provider": "设备的提供方已限定为白名单"
+        },
+        "closed": {
+          "platform": "平台已关闭网络（超级管理员设置）",
+          "org": "组织已关闭网络（组织管理员设置）",
+          "device": "只有电脑的所有者能在电脑上开放",
+          "provider": "设备的提供方已关闭网络"
         },
         "outside": {
           "platform": "平台已关闭（超级管理员设置）",
           "org": "组织已关闭（组织管理员设置）",
-          "owner": "只有电脑的所有者能在电脑上允许",
+          "device": "只有电脑的所有者能在电脑上允许",
           "provider": "云端设备的实例就是它的沙箱"
         }
       },
@@ -1852,7 +1857,7 @@
       "pendingNextUse": "下次使用时生效，文件保留。",
       "pendingFilesReset": "重建文件后生效。",
       "cloudHosts": "主机",
-      "cloudHostsHelp": "每行一个主机。只有组织清单里的主机生效；留空则跟随组织的清单。",
+      "cloudHostsHelp": "每行一个主机。只有组织清单里的主机生效；留空则使用组织的主机。",
       "invalidHost": "{host} 不是有效的主机：请使用小写名称，例如 files.example.com 或 *.example.com。",
       "save": "保存网络",
       "saved": "设备的网络已保存。"
@@ -1863,12 +1868,15 @@
       "remove": "移除 {hosts}",
       "change": "{setting}：{from} → {to}",
       "set": "{setting}：{to}",
+      "withHosts": "{value}（{hosts}）",
       "none": "没有改动",
       "unknownBy": "未知账号",
       "via": {
         "web": "网页",
         "im": "IM",
-        "device": "本机"
+        "device": "本机",
+        "agent": "智能体",
+        "token": "API 令牌"
       },
       "outcome": {
         "unknown": "机器未确认",
@@ -1892,8 +1900,8 @@
       "domainsEmpty": "没有允许的主机。",
       "overviewNote": "沙箱里的命令只能访问这些主机。",
       "cloudHint": {
-        "org": "组织在设置里修改这里。",
-        "platform": "由平台设置。"
+        "org": "这台设备跟随组织的网络，组织在设置里修改。",
+        "device": "这台设备自己的网络，限于组织的主机。"
       }
     },
     "overview": {

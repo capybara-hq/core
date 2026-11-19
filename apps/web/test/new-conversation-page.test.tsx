@@ -18,6 +18,7 @@ import { bodyOf, json, stubApi } from "./support/api";
 import {
   CONV,
   DEVICES,
+  ENV_SANDBOX,
   envView,
   ev,
   FakeEventSource,
@@ -517,22 +518,19 @@ describe("the device picker (environments design §4.1)", () => {
 
   it("the picker draws no daily auto / sandbox mark on local devices", async () => {
     resetNavigation("/");
-    const mode = (m: string, allowed = "auto") => ({
-      mode: m,
-      allowedMode: allowed,
-      allowedBy: allowed === "auto" ? "org" : null,
-      network: { kind: "allowlist", hosts: [], source: "platform" },
-      local: { reported: m, allowedDomains: [] },
-      pendingNextUse: false,
-      recent: [],
+    const sandbox = (outsideSandbox: boolean) => ({
+      ...ENV_SANDBOX,
+      network: "allowlist",
+      outsideSandbox,
+      layer: { network: "device", outsideSandbox: outsideSandbox ? null : "device" },
     });
     const local = { source: "local", provider: "@local", online: true };
     const devices = {
       ...DEVICES,
       items: [
         ...DEVICES.items,
-        envView("d1", "Laptop", { ...local, mode: mode("auto") }),
-        envView("d2", "Server", { ...local, mode: mode("sandbox") }),
+        envView("d1", "Laptop", { ...local, sandbox: sandbox(true) }),
+        envView("d2", "Server", { ...local, sandbox: sandbox(false) }),
       ],
     };
     await renderRouteWithCache("/", withDevices(devices));

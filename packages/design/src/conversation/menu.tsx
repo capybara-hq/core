@@ -50,7 +50,7 @@ export type ConvMenuEntry =
   | {
       kind: "label";
       label: string;
-      /** A key hint at the end of the label's line ("⇧Tab 切换"), `faint` (the mode menu's head). */
+      /** A key hint at the end of the label's line ("⇧Tab to switch"), `faint` (the mode menu's head). */
       hint?: string;
     }
   | {

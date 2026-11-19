@@ -31,19 +31,18 @@ const LIMITS = {
   cpu: 2,
   memoryMb: 2048,
   diskMb: 10240,
-  mode: "auto",
   network: { kind: "open-public", hosts: [] },
 };
-/** A device's mode and network (kernel `DeviceModeView`): a cloud device in auto mode. */
-const MODE = {
-  mode: "auto",
-  allowedMode: "auto",
-  allowedBy: "org",
-  network: { kind: "open-public", hosts: [], source: "org" },
-  local: null,
-  sandboxNetwork: { kind: "open-public", hosts: [] },
-  fullNetwork: { kind: "open-public", hosts: [] },
-  outerNetwork: null,
+/** A device's sandbox (kernel `DeviceSandboxView`): a cloud device following its org's open network. */
+const SANDBOX = {
+  network: "open",
+  networkCeiling: "open",
+  hosts: [],
+  ownNetwork: null,
+  allowedDomains: [],
+  outsideSandbox: false,
+  restrictedProjectReach: "workspace",
+  layer: { network: null, outsideSandbox: "provider" },
   pendingNextUse: false,
   pendingFilesReset: false,
   recent: [],
@@ -61,13 +60,7 @@ const env = (id: string, name: string | null, over: Record<string, unknown> = {}
   filesLost: false,
   instance: null,
   limits: LIMITS,
-  mode: MODE,
-  sandbox: {
-    network: "open",
-    allowedDomains: [],
-    outsideSandbox: false,
-    layer: { network: null, outsideSandbox: "provider" },
-  },
+  sandbox: SANDBOX,
   createdAt: T,
   ...over,
 });
@@ -756,7 +749,7 @@ describe("a local machine's allowlist (approval-only profiles design)", () => {
     );
     await vi.waitFor(() => expect(calls.some((c) => c.method === "POST")).toBe(true));
     expect(bodyOf(calls.find((c) => c.method === "POST"))).toEqual({
-      ownerCeiling: { removeAllowedDomains: ["files.example.com"] },
+      remove: ["files.example.com"],
     });
     expect(await screen.findByText(S.hostsEmpty)).toBeTruthy();
     expect(client.getQueryState(["org", "o1", "devices"])?.isInvalidated).toBe(true);

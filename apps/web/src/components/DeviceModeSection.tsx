@@ -24,10 +24,11 @@ import { osLabel } from "../lib/device-sign-in";
 import {
   type Device,
   type DeviceCeilingChangeSide,
-  type DeviceModeChange,
   type DeviceNetworkMode,
+  type DeviceNetworkSetting,
   type DevicePolicyPatch,
   type DeviceSandboxView,
+  type DeviceSettingChange,
   deviceCeilingOf,
   setCloudDeviceNetwork,
   updateDevicePolicy,
@@ -62,6 +63,10 @@ const parseHosts = (text: string): string[] => [
 
 /** A network value as people read it. */
 const networkText = (t: Translate, n: DeviceNetworkMode) => t(`networkValue.${n}`);
+/** Networks from the narrowest to the widest. */
+const NETWORK_ORDER: readonly DeviceNetworkMode[] = ["none", "allowlist", "open"];
+const wider = (a: DeviceNetworkMode, b: DeviceNetworkMode) =>
+  NETWORK_ORDER.indexOf(a) > NETWORK_ORDER.indexOf(b);
 /** Whether running outside the sandbox may be granted, as people read it. */
 const outsideText = (t: Translate, allowed: boolean) =>
   t(`outsideValue.${allowed ? "allowed" : "off"}`);
@@ -119,7 +124,7 @@ export function DeviceOverview({
   const tc = useTranslations("devices.network");
   const local = e.source === "local";
   const sandbox = deviceCeilingOf(e).sandbox;
-  const hosts = sandbox?.allowedDomains ?? [];
+  const hosts = sandbox?.hosts ?? [];
   const showNetwork =
     (local && e.machine !== null && sandbox !== null) ||
     (sandbox?.network === "allowlist" && hosts.length > 0);
@@ -131,7 +136,11 @@ export function DeviceOverview({
       {showNetwork && (
         <ContentSection
           title={tc("title")}
-          description={local ? tc("overviewNote") : tc(`cloudHint.${e.mode.network.source}`)}
+          description={
+            local
+              ? tc("overviewNote")
+              : tc(sandbox?.ownNetwork == null ? "cloudHint.org" : "cloudHint.device")
+          }
           actions={
             <Button density="dense" onClick={onOpenSettings}>
               {t("overview.editNetwork")}
@@ -187,8 +196,8 @@ export function DeviceOverview({
  *   keycaps); the page only narrows it through the policy op (the allowlist, removing hosts,
  *   running outside the sandbox off, the workspace reach), and only while the machine is online,
  *   current and able to take it, else it says why;
- * - a cloud device's network is changed by its owner or an org admin in either direction within
- *   the platform and org ceilings; a cloud device never runs outside its instance.
+ * - a cloud device's network is changed by its owner in either direction within the platform,
+ *   org and provider ceilings, or follows the org again; it never runs outside its instance.
  * A disabled option names the layer that limits it. Disconnect this machine follows; the page's
  * danger zone follows this block.
  */
@@ -213,7 +222,7 @@ export function DeviceSettings({
     invalidates,
   });
   const cloudChange = useAppMutation({
-    fn: (network: { mode: DeviceNetworkMode; hosts: string[] }) =>
+    fn: (network: { mode: DeviceNetworkMode | null; hosts?: string[] }) =>
       setCloudDeviceNetwork(orgId, e.id, network),
     invalidates,
   });
@@ -230,7 +239,7 @@ export function DeviceSettings({
       setFailure(err);
     }
   };
-  const saveCloud = async (network: { mode: DeviceNetworkMode; hosts: string[] }) => {
+  const saveCloud = async (network: { mode: DeviceNetworkMode | null; hosts?: string[] }) => {
     setFailure(null);
     try {
       await cloudChange.mutateAsync(network);
@@ -254,12 +263,12 @@ export function DeviceSettings({
               {ts(`notice.${facts.notice}`)}
             </Text>
           )}
-          {!local && e.mode.pendingNextUse && (
+          {!local && e.sandbox.pendingNextUse && (
             <Text variant="prose" tone="muted">
               {ts("pendingNextUse")}
             </Text>
           )}
-          {!local && e.mode.pendingFilesReset && (
+          {!local && e.sandbox.pendingFilesReset && (
             <Text variant="prose" tone="warn">
               {ts("pendingFilesReset")}
             </Text>
@@ -269,7 +278,7 @@ export function DeviceSettings({
           ) : facts.sandbox != null ? (
             <CloudNetwork
               // a saved network starts the draft again from what the kernel answers
-              key={`${facts.sandbox.network}:${facts.sandbox.allowedDomains.join(",")}`}
+              key={`${facts.sandbox.ownNetwork}:${facts.sandbox.allowedDomains.join(",")}`}
               sandbox={facts.sandbox}
               pending={pending}
               onSave={saveCloud}
@@ -341,7 +350,7 @@ function LocalSandbox({
         <Stack gap={12}>
           <RadioGroup
             label={t("network")}
-            value={s.network}
+            value={s.network === "open" ? "open" : "allowlist"}
             disabled={disabled}
             onChange={(v) => {
               if (v === "allowlist" && s.network === "open")
@@ -352,10 +361,12 @@ function LocalSandbox({
                 value: "open",
                 label: networkText(t, "open"),
                 // the machine widens only on the machine; a platform or org ceiling names itself
-                ...(s.network === "allowlist"
+                ...(s.network !== "open"
                   ? {
                       disabled: true,
-                      description: t(`limited.network.${s.layer.network ?? "owner"}`),
+                      description: t(
+                        `limited.${s.network === "none" ? "closed" : "network"}.${s.layer.network ?? "device"}`,
+                      ),
                     }
                   : {}),
               },
@@ -374,12 +385,7 @@ function LocalSandbox({
                         density="dense"
                         disabled={pending}
                         aria-label={t("removeLabel", { host: h })}
-                        onClick={() =>
-                          onSend(
-                            { ownerCeiling: { removeAllowedDomains: [h] } },
-                            t("removed", { host: h }),
-                          )
-                        }
+                        onClick={() => onSend({ remove: [h] }, t("removed", { host: h }))}
                       >
                         {t("remove")}
                       </Button>
@@ -410,7 +416,7 @@ function LocalSandbox({
               ...(!s.outsideSandbox
                 ? {
                     disabled: true,
-                    description: t(`limited.outside.${s.layer.outsideSandbox ?? "owner"}`),
+                    description: t(`limited.outside.${s.layer.outsideSandbox ?? "device"}`),
                   }
                 : {}),
             },
@@ -444,11 +450,15 @@ function LocalSandbox({
   );
 }
 
+/** A cloud network choice: the device's own network, or `follow` (its org's, `mode: null`). */
+type CloudChoice = DeviceNetworkMode | "follow";
+
 /**
- * A cloud device's network, changed by its owner or an org admin in either direction within the
- * platform and org ceilings (`PATCH` with `{ network: { mode, hosts } }`): the open internet
- * (private networks blocked) or an allowlist whose hosts only narrow the organization's list. An
- * open network above a ceiling is disabled and names the layer; the kernel refuses it too
+ * A cloud device's network, changed by its owner in either direction within the platform, org and
+ * provider ceilings (`PATCH` with `{ network: { mode, hosts? } }`): follow the organization
+ * (`mode: null`), the open internet (private networks blocked), an allowlist whose hosts only
+ * narrow the organization's list (empty follows its hosts), or closed. A network above the ceiling
+ * is disabled and names the layer that set it; the kernel refuses it too
  * (`device.network_not_allowed`).
  */
 function CloudNetwork({
@@ -458,37 +468,58 @@ function CloudNetwork({
 }: {
   sandbox: DeviceSandboxView;
   pending: boolean;
-  onSave(network: { mode: DeviceNetworkMode; hosts: string[] }): Promise<boolean>;
+  onSave(network: { mode: DeviceNetworkMode | null; hosts?: string[] }): Promise<boolean>;
 }) {
   const t = useTranslations("devices.sandbox");
-  const [mode, setMode] = useState<DeviceNetworkMode>(s.network);
+  const initial: CloudChoice = s.ownNetwork ?? "follow";
+  const [choice, setChoice] = useState<CloudChoice>(initial);
   const [text, setText] = useState(s.allowedDomains.join("\n"));
   const hosts = parseHosts(text);
   const bad = hosts.find((h) => allowHostProblem(h, { wildcard: true }) !== null);
   const changed =
-    mode !== s.network ||
-    (mode === "allowlist" && hosts.join("\n") !== s.allowedDomains.join("\n"));
-  const openLimit = s.layer.network;
+    choice !== initial ||
+    (choice === "allowlist" && hosts.join("\n") !== s.allowedDomains.join("\n"));
+  const layer = s.layer.network ?? "provider";
+  const limit = (n: DeviceNetworkMode) =>
+    wider(n, s.networkCeiling)
+      ? {
+          disabled: true,
+          description: t(`limited.${s.networkCeiling === "none" ? "closed" : "network"}.${layer}`),
+        }
+      : {};
+  const save = () =>
+    void onSave(
+      choice === "follow"
+        ? { mode: null }
+        : choice === "allowlist"
+          ? { mode: "allowlist", hosts }
+          : { mode: choice },
+    );
   return (
     <Subsection title={t("network")}>
       <Stack gap={12}>
         <RadioGroup
           label={t("network")}
-          value={mode}
+          value={choice}
           disabled={pending}
-          onChange={(v) => setMode(v === "open" ? "open" : "allowlist")}
+          onChange={(v) => {
+            const next = (["follow", ...NETWORK_ORDER] as const).find((x) => x === v);
+            if (next !== undefined) setChoice(next);
+          }}
           options={[
             {
-              value: "open",
-              label: networkText(t, "open"),
-              ...(openLimit !== null && s.network === "allowlist"
-                ? { disabled: true, description: t(`limited.network.${openLimit}`) }
+              value: "follow",
+              label: t("followOrg"),
+              ...(s.ownNetwork === null
+                ? { description: t("followOrgNow", { value: networkText(t, s.network) }) }
                 : {}),
             },
-            { value: "allowlist", label: networkText(t, "allowlist") },
+            { value: "open", label: networkText(t, "open"), ...limit("open") },
+            { value: "allowlist", label: networkText(t, "allowlist"), ...limit("allowlist") },
+            { value: "none", label: networkText(t, "none") },
           ]}
         />
-        {mode === "allowlist" && (
+        {choice === "allowlist" && (
           <Field
             label={t("cloudHosts")}
             help={t("cloudHostsHelp")}
@@ -510,7 +541,7 @@ function CloudNetwork({
             variant="primary"
             loading={pending}
             disabled={!changed || bad !== undefined || pending}
-            onClick={() => void onSave({ mode, hosts: mode === "allowlist" ? hosts : [] })}
+            onClick={save}
           >
             {t("save")}
           </Button>
@@ -521,23 +552,23 @@ function CloudNetwork({
 }
 
 /**
- * The recent sandbox and policy changes: what, when, by whom and from where; a change sent to the
- * machine that did not take effect is marked. A setting change names each setting it changed with
- * its from and to values (the network, running outside the sandbox, a machine's project reach).
+ * The recent setting changes: what, when, by whom and from where; a change sent to the machine
+ * that did not take effect is marked. A setting change names each setting it changed with its from
+ * and to values: a machine's owner ceiling (the network, running outside the sandbox, the project
+ * reach) or a cloud device's network (following the organization, or its own network and hosts).
  */
-export function RecentChanges({ recent }: { recent: DeviceModeChange[] }) {
+export function RecentChanges({ recent }: { recent: DeviceSettingChange[] }) {
   const t = useTranslations("devices.recent");
   const ts = useTranslations("devices.sandbox");
   const zone = useTimeZone();
   if (recent.length === 0) return null;
-  const settingTexts = (c: DeviceModeChange["ceiling"]) => {
+  const line = (setting: string, before: string | undefined, after: string) =>
+    before !== undefined
+      ? t("change", { setting, from: before, to: after })
+      : t("set", { setting, to: after });
+  const ceilingTexts = (c: DeviceSettingChange["ceiling"]) => {
     if (c === null) return [];
-    const from: DeviceCeilingChangeSide = c.from ?? {};
-    const known = c.from !== null;
-    const line = (setting: string, before: string | undefined, after: string) =>
-      known && before !== undefined
-        ? t("change", { setting, from: before, to: after })
-        : t("set", { setting, to: after });
+    const from: Partial<DeviceCeilingChangeSide> = c.from ?? {};
     const out: string[] = [];
     const to = c.to;
     if (to.network !== undefined && from.network !== to.network)
@@ -548,7 +579,7 @@ export function RecentChanges({ recent }: { recent: DeviceModeChange[] }) {
           networkText(ts, to.network),
         ),
       );
-    if (to.outsideSandbox !== undefined && from.outsideSandbox !== to.outsideSandbox)
+    if (from.outsideSandbox !== to.outsideSandbox)
       out.push(
         line(
           ts("outside"),
@@ -571,11 +602,20 @@ export function RecentChanges({ recent }: { recent: DeviceModeChange[] }) {
       );
     return out;
   };
-  const what = (c: DeviceModeChange) =>
+  const networkSetting = (n: DeviceNetworkSetting) =>
+    n.mode === null
+      ? ts("followOrg")
+      : n.mode === "allowlist" && n.hosts.length > 0
+        ? t("withHosts", { value: networkText(ts, n.mode), hosts: n.hosts.join(", ") })
+        : networkText(ts, n.mode);
+  const networkTexts = (c: DeviceSettingChange["network"]) =>
+    c === null ? [] : [line(ts("network"), networkSetting(c.from), networkSetting(c.to))];
+  const what = (c: DeviceSettingChange) =>
     [
       ...(c.add.length > 0 ? [t("add", { hosts: c.add.join(", ") })] : []),
       ...(c.remove.length > 0 ? [t("remove", { hosts: c.remove.join(", ") })] : []),
-      ...settingTexts(c.ceiling ?? null),
+      ...ceilingTexts(c.ceiling ?? null),
+      ...networkTexts(c.network ?? null),
     ].join(" · ");
   return (
     <ContentSection title={t("title")}>

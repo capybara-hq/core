@@ -331,7 +331,7 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
   }
 
   // The network ask (spec §6.16.11, network ask spec §6.5): hosts, the refused command, the
-  // checked hosts, 这次允许 (primary) with its hint, 拒绝, the machine command line (device
+  // checked hosts, "allow this time" (primary) with its hint, "deny", the machine command line (device
   // protocol 4 never widens a device from the deployment), and its decided lines.
   const registrable = (h) => h.split(".").slice(-2).join(".");
   const netHost = (h) =>

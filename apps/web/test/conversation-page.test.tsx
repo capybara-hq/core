@@ -11,6 +11,7 @@ import {
   AGENTS,
   CONV,
   DEVICES,
+  ENV_SANDBOX,
   envView,
   ev,
   FakeEventSource,
@@ -1276,21 +1277,10 @@ describe("the conversation page's server gate", () => {
 
 describe("the properties panel's device mark", () => {
   it("the device carries its neutral sandbox mark, never a daily mode", async () => {
-    const mode = {
-      mode: "auto",
-      allowedMode: "auto",
-      allowedBy: "org",
-      network: { kind: "allowlist", hosts: [], source: "platform" },
-      local: { reported: "auto", allowedDomains: [] },
-      pendingNextUse: false,
-      pendingFilesReset: false,
-      recent: [],
-    };
     const device = envView("e1", "Laptop", {
       source: "local",
       provider: "@local",
       online: true,
-      mode,
       ownerCeiling: {
         state: "report",
         revision: "r1",
@@ -1303,9 +1293,10 @@ describe("the properties panel's device mark", () => {
         stale: false,
       },
       sandbox: {
-        network: "open",
-        allowedDomains: [],
+        ...ENV_SANDBOX,
+        ownNetwork: "open",
         outsideSandbox: true,
+        restrictedProjectReach: "os-user",
         layer: { network: null, outsideSandbox: null },
       },
     });

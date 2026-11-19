@@ -16,15 +16,15 @@ export type ModeMenuMode = {
   /** One line under the label saying what the mode does. */
   description: string;
   checked?: boolean;
-  /** Not choosable now; `tag` says why ("请先选择设备"). */
+  /** Not choosable now; `tag` says why ("Choose a device first"). */
   disabled?: boolean;
   tag?: string;
 };
 
 export type ModeMenuProps = {
-  /** What the menu chooses, its accessible name and the head of the menu ("权限"). */
+  /** What the menu chooses, its accessible name and the head of the menu ("Permissions"). */
   label: string;
-  /** The key hint in the head ("⇧Tab 切换"); absent when the modes cannot change. */
+  /** The key hint in the head ("⇧Tab to switch"); absent when the modes cannot change. */
   hint?: string;
   modes: ModeMenuMode[];
   onPickMode(id: string): void;
@@ -40,11 +40,11 @@ export type ModeMenuProps = {
     onPick(id: string): void;
   };
   /**
-   * A transient fact closing the modes ("设备启动时检查"), never a standing explanation; a locked
+   * A transient fact closing the modes ("Checked when this device starts"), never a standing explanation; a locked
    * menu's reason comes first.
    */
   note?: string;
-  /** One plain action after the modes ("设置审查模型" for an org admin); it closes the menu. */
+  /** One plain action after the modes ("Set up the review model" for an org admin); it closes the menu. */
   action?: { label: string; icon?: IconName; onSelect(): void };
   /** The reference set and catalog only: the menu drawn open in place. */
   referenceOpen?: boolean;

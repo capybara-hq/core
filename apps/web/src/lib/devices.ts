@@ -17,12 +17,7 @@ export interface DeviceLimits {
   cpu: number;
   memoryMb: number;
   diskMb: number;
-  /** The mode the limits were made with. Mirrored from the kernel view; the web reads it nowhere. */
-  mode: DeviceMode;
-  /**
-   * `open-public` for a cloud device in auto mode; the allowlist in sandbox mode. Mirrored from the
-   * kernel view; the web reads `mode.network` (the effective network) instead.
-   */
+  /** Mirrored from the kernel view; the web reads `sandbox` (the effective network) instead. */
   network: { kind: DeviceNetworkKind; hosts: string[] };
 }
 
@@ -58,35 +53,42 @@ export interface DeviceNetwork {
   policy: DeviceNetworkPolicy | null;
 }
 
-/**
- * One side of a device sandbox setting change (kernel `DeviceCeilingFacts`; approval-only profiles
- * design names, coded ahead of T10): only the settings the row recorded are present.
- */
+/** One side of an owner ceiling change (kernel `DeviceCeilingFacts`). */
 export interface DeviceCeilingChangeSide {
-  /** Whether a call may be granted running outside the sandbox (a local machine only). */
-  outsideSandbox?: boolean;
-  /** The sandbox network. */
-  network?: DeviceNetworkMode;
-  /** A machine's restricted project reach; a cloud device's change has none. */
+  outsideSandbox: boolean;
+  /** A machine's restricted project reach, when the row records it. */
   restrictedProjectReach?: "workspace" | "os-user";
+  /** The owner's sandbox network, when the row records it. */
+  network?: "open" | "allowlist";
 }
 
-/** One policy or sandbox setting change of a device (kernel `DeviceModeChangeView`), newest first. */
-export interface DeviceModeChange {
+/** A cloud device's stored network (kernel `DeviceNetworkSetting`): `mode` null follows its org. */
+export interface DeviceNetworkSetting {
+  mode: DeviceNetworkMode | null;
+  hosts: string[];
+}
+
+/** One setting change of a device (kernel `DeviceSettingChangeView`), newest first. */
+export interface DeviceSettingChange {
   at: string;
   /**
-   * `policy`: a local allowlist change; `ceiling`: a sandbox setting changed (a machine's report,
-   * or a cloud device's network on the device page). Older `mode` rows read as no change.
+   * `policy`: a local allowlist change; `ceiling`: a machine's owner ceiling changed; `network`: a
+   * cloud device's network changed.
    */
-  kind: "policy" | "mode" | "ceiling";
+  kind: "policy" | "ceiling" | "network";
   add: string[];
   remove: string[];
-  /** The setting change (`ceiling` rows only; `from` null when unknown); else null. */
+  /** The owner ceiling change (`ceiling` rows only; `from` null when unknown); else null. */
   ceiling: { from: DeviceCeilingChangeSide | null; to: DeviceCeilingChangeSide } | null;
+  /** The cloud network change (`network` rows only); else null. */
+  network: { from: DeviceNetworkSetting; to: DeviceNetworkSetting } | null;
   /** The deciding account's display name (null once the account is gone). */
   by: string | null;
-  /** `device`: made or reported on the machine itself. */
-  via: "web" | "im" | "device";
+  /**
+   * `device`: made or reported on the machine itself; `agent`: an agent's Platform tool call;
+   * `token`: an API token.
+   */
+  via: "web" | "im" | "device" | "agent" | "token";
   /**
    * What became of a change sent to the machine: `unknown`, its answer never came; `failed`, it
    * did not take effect. Every other row is `applied`.
@@ -94,59 +96,53 @@ export interface DeviceModeChange {
   outcome: "applied" | "unknown" | "failed";
 }
 
-/** A device's mode and network as its owner sees it (kernel `DeviceModeView`, auto mode spec §4.3). */
-export interface DeviceModeView {
-  /** The mode its commands run at. */
-  mode: DeviceMode;
-  /** `auto` only while the platform's and the org's `fullAccess` allow it. */
-  allowedMode: DeviceMode;
-  /** Which layer allows auto mode; null when only sandbox mode is allowed. */
-  allowedBy: "org" | "platform" | null;
-  /** A cloud device's effective network; a local device's sandbox-mode allowlist. */
-  network: { kind: DeviceNetworkKind; hosts: string[]; source: "org" | "platform" };
-  /** A local device: the mode its machine reported and its own allowlist; null for cloud. */
-  local: { reported: DeviceMode | null; allowedDomains: string[] } | null;
-  /**
-   * A cloud device: the network it reaches with Full access off (the org's cloud network, open by
-   * default) within its outer network, whatever mode it runs at now; null for a local device.
-   */
-  sandboxNetwork: { kind: DeviceNetworkKind; hosts: string[] } | null;
-  /** A cloud device: the network it reaches with Full access within its outer network; null for local. */
-  fullNetwork: { kind: DeviceNetworkKind; hosts: string[] } | null;
-  /** A cloud device's outer network, which no change widens; null for local or not migrated. */
-  outerNetwork: { kind: DeviceNetworkKind; hosts: string[] } | null;
-  /** A cloud device's instance runs an older mode or network: its next use applies this one. */
-  pendingNextUse: boolean;
-  /** Its provider applies limits at a file reset, so only that applies the new mode or network. */
-  pendingFilesReset: boolean;
-  /** Its last mode and policy changes, newest first. */
-  recent: DeviceModeChange[];
-}
-
-/** A device sandbox network: the open public internet (private networks blocked) or an allowlist. */
-export type DeviceNetworkMode = "open" | "allowlist";
+/** A device sandbox network: the open internet (private networks blocked), an allowlist or closed. */
+export type DeviceNetworkMode = "open" | "allowlist" | "none";
 
 /**
- * The layer whose ceiling limits a sandbox setting: the platform (super admin), the organization
- * (its admins), the device's owner on the machine, or the provider (a cloud instance has no
- * outside).
+ * The layer that set a sandbox ceiling: the platform (super admin), the organization (its
+ * admins), the device (its owner on the machine, or a cloud device's own choice) or the provider.
  */
-export type DeviceSandboxLayer = "platform" | "org" | "owner" | "provider";
+export type DeviceSandboxLayer = "platform" | "org" | "device" | "provider";
 
-/** {@link Device.sandbox}: effective values, each with the layer that limits it (null: none). */
+/**
+ * A device's sandbox in effect (kernel `DeviceSandboxView`, approval-only profiles design, "UI"),
+ * the same under every permission profile.
+ */
 export interface DeviceSandboxView {
   network: DeviceNetworkMode;
-  /** The hosts an allowlist network reaches (meaningful under `allowlist`). */
+  /** The widest network the platform, the org and the provider leave this device. */
+  networkCeiling: DeviceNetworkMode;
+  /** The allowlist hosts in effect (empty unless `network` is `allowlist`). */
+  hosts: string[];
+  /**
+   * The device's own network: a cloud device's stored choice (null follows its org), a local
+   * owner's reported one (null without a readable report).
+   */
+  ownNetwork: DeviceNetworkMode | null;
+  /**
+   * The device's own host list, which only narrows the org's: a local owner's `allowedDomains`, a
+   * cloud device's stored hosts (empty: it follows its org's hosts).
+   */
   allowedDomains: string[];
+  /** Whether a call may be granted running outside the sandbox (never on a cloud device). */
   outsideSandbox: boolean;
+  restrictedProjectReach: "workspace" | "os-user";
+  /** The layer that set each ceiling (a disabled option names it), null when nothing did. */
   layer: { network: DeviceSandboxLayer | null; outsideSandbox: DeviceSandboxLayer | null };
+  /** A cloud device's instance runs another network: its next use applies this one. */
+  pendingNextUse: boolean;
+  /** Its provider applies limits at a file reset, so only that applies the new network. */
+  pendingFilesReset: boolean;
+  /** Its last setting changes, newest first. */
+  recent: DeviceSettingChange[];
 }
 
 export interface Device {
   id: string;
   /**
-   * null for the person's default device (shown as 个人设备 / "Personal") and for a former
-   * default (shown from `demotedFrom`); see {@link deviceName}.
+   * null for the person's default device (shown as 个人设备 / "Personal"; english-comments-ok:
+   * the zh UI label) and for a former default (shown from `demotedFrom`); see {@link deviceName}.
    */
   name: string | null;
   isDefault: boolean;
@@ -171,16 +167,9 @@ export interface Device {
    * none connected.
    */
   network?: DeviceNetwork | null;
-  /** Its mode and network (auto mode spec §4.3). */
-  mode: DeviceModeView;
-  /**
-   * Its sandbox as the kernel applies it (approval-only profiles design, "Settings model"): the
-   * effective network and hosts, whether running outside the sandbox may be granted, and the layer
-   * whose ceiling limits each. Coded against the design's names (R3 T10 adds it to the kernel's
-   * device view).
-   */
+  /** Its sandbox in effect (approval-only profiles design, "Settings model"). */
   sandbox: DeviceSandboxView;
-  /** Its owner ceiling (read only); null for a local device without a machine or a cloud one not migrated. */
+  /** A local machine's owner ceiling (read only); null for a cloud device or none connected. */
   ownerCeiling: DeviceOwnerCeiling | null;
   /**
    * A cloud device whose sandbox limits must be established again: nothing runs on it until its
@@ -237,7 +226,7 @@ export const RESET_POLL_DEADLINE_MS = 120_000;
 export function resetPollInterval(
   d:
     | (Pick<Device, "filesLost" | "reconcileRequired"> & {
-        mode: Pick<DeviceModeView, "pendingFilesReset">;
+        sandbox: Pick<DeviceSandboxView, "pendingFilesReset">;
       })
     | undefined,
   startedAt: number | null,
@@ -245,7 +234,7 @@ export function resetPollInterval(
 ): number | false {
   if (d === undefined || startedAt === null || now - startedAt >= RESET_POLL_DEADLINE_MS)
     return false;
-  return d.filesLost || d.mode.pendingFilesReset || d.reconcileRequired ? RESET_POLL_MS : false;
+  return d.filesLost || d.sandbox.pendingFilesReset || d.reconcileRequired ? RESET_POLL_MS : false;
 }
 
 /**
@@ -338,19 +327,19 @@ export const resetDeviceFiles = (orgId: string, id: string) =>
 /**
  * The owner ceiling of a device as last reported (kernel `DeviceOwnerCeilingView`, read only): a
  * local machine's authenticated owner report (`report`), a stale or conflicting one (`blocked`) or
- * nothing readable (`missing`); a cloud device's stored network (`cloud`).
+ * nothing readable (`missing`). A cloud device has none.
  */
 export interface DeviceOwnerCeiling {
-  state: "report" | "blocked" | "missing" | "cloud";
+  state: "report" | "blocked" | "missing";
   revision: string | null;
   sequence: number | null;
-  /** The owner allows granting a call running outside the sandbox (a cloud device: never). */
+  /** The owner allows granting a call running outside the sandbox (fail closed: false). */
   outsideSandbox: boolean;
-  /** The owner's sandbox network. */
-  network: DeviceNetworkMode;
+  /** The owner's sandbox network (fail closed: `allowlist`). */
+  network: "open" | "allowlist";
   /** The owner's allowlist: under `allowlist` the machine's host ceiling. */
   allowedDomains: string[];
-  /** How far project browsing and work reach; a cloud device: `workspace`. */
+  /** How far project browsing and work reach. */
   restrictedProjectReach: "workspace" | "os-user";
   observedAt: string | null;
   /** The machine is offline or its report is not current: last-known facts, not authority. */
@@ -389,7 +378,7 @@ export function deviceSandboxOf(
  * A local machine fails closed while its report is blocked or missing.
  */
 export function deviceCeilingOf(
-  e: Pick<Device, "source" | "machine" | "mode" | "ownerCeiling" | "sandbox">,
+  e: Pick<Device, "source" | "machine" | "ownerCeiling" | "sandbox">,
 ): DeviceCeilingFacts {
   const c = e.ownerCeiling ?? null;
   const sandbox = deviceSandboxOf(e);
@@ -416,7 +405,7 @@ export function deviceCeilingOf(
  * call may be granted running outside its sandbox there (neutral), never a daily mode.
  */
 export const deviceCeilingMark = (
-  e: Pick<Device, "source" | "machine" | "mode" | "ownerCeiling" | "sandbox">,
+  e: Pick<Device, "source" | "machine" | "ownerCeiling" | "sandbox">,
 ): "outside" | "sandbox" =>
   deviceCeilingOf(e).sandbox?.outsideSandbox === true ? "outside" : "sandbox";
 
@@ -426,24 +415,25 @@ export const deviceCeilingMark = (
  * does, on the machine, with `capybara-device ceiling set` / `policy add`).
  */
 export interface DevicePolicyPatch {
-  ownerCeiling: {
+  /** Hosts to remove from the machine's allowlist. */
+  remove?: string[];
+  ownerCeiling?: {
     outsideSandbox?: false;
     network?: "allowlist";
-    /** Hosts to remove from the machine's allowlist. */
-    removeAllowedDomains?: string[];
     restrictedProjectReach?: "workspace";
   };
 }
 
 /**
- * A cloud device's network (`PATCH …/devices/:id`), by its owner or an org admin in either
- * direction within the platform and org ceilings (`device.network_not_allowed` above them). Its
- * hosts only narrow the organization's list; an empty list follows it.
+ * A cloud device's network (`PATCH …/devices/:id`), by its owner only, in either direction within
+ * the platform and org ceilings (`device.network_not_allowed` above them): `none` closes it, an
+ * allowlist's hosts only narrow the organization's list (empty follows it), `mode: null` follows the
+ * organization. A local device refuses it (`device.ceiling_on_machine`).
  */
 export const setCloudDeviceNetwork = (
   orgId: string,
   id: string,
-  network: { mode: DeviceNetworkMode; hosts: string[] },
+  network: { mode: DeviceNetworkMode | null; hosts?: string[] },
 ) =>
   apiFetch<{ device: Device }>(`${org(orgId)}/${enc(id)}`, {
     method: "PATCH",

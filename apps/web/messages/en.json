@@ -358,8 +358,6 @@
       "credential_invalid": "This computer's connection credential is no longer valid. Connect again on the computer.",
       "policy_refused": "This device does not accept this change from the platform. Change it on the machine.",
       "policy_unsupported": "This device can't change its network settings from the platform. Upgrade the device program on the machine.",
-      "mode_on_device": "This device's owner ceiling is kept on its connected computer: narrow it from the device page, or run capybara-device ceiling set on that computer.",
-      "mode_requires_session": "A device's mode is changed by its owner on the device page, not with an API token.",
       "project_name_invalid": "This project name is not allowed: use 1-64 characters, not . or .., without / or control characters, and without spaces at either end.",
       "project_name_taken": "This device already has a project with this name. Choose another name.",
       "project_limit_reached": "This device has reached its limit of 100 projects. Remove one to add another.",
@@ -373,11 +371,9 @@
       "projects_unavailable": "The device could not be asked about this directory right now. Try again in a moment.",
       "not_running": "The device stopped before it could be read. Try again; it will be started first.",
       "permission_reconcile_required": "This device's sandbox limits must be established again before it runs anything. Rebuild its files on its device page, then try again.",
-      "permission_not_migrated": "This device's permissions have not been migrated yet, so its Full access ceiling can't be set now. Turning Full access off still works; try allowing it again once the migration has run. Rebuilding the files does not change this.",
       "owner_report_stale": "This computer sent an outdated permission report, so new work is paused. Run capybara-device login again on the computer.",
-      "owner_ceiling_confirmation_required": "Giving this device Full access needs your confirmation. Confirm the change and try again.",
-      "full_access_not_allowed": "Full access is not allowed for this device by your platform, your organization or its provider.",
-      "network_not_allowed": "This network is wider than your organization or platform allows for this device.",
+      "network_not_allowed": "This network is wider than your organization, the platform or the provider allows for this device, or a host is outside the organization's list.",
+      "ceiling_on_machine": "A local device's sandbox is kept on its computer: narrow it from the device page, or have its owner run capybara-device ceiling set on that computer.",
       "outside_sandbox_not_allowed": "Running outside the sandbox is not allowed for this device by your platform, your organization, its owner or its provider.",
       "restart_required": "Background work started by an earlier version may still be running on this computer. Restart this computer to finish the upgrade, then try again.",
       "replace_required": "Background work started by an earlier version may still be running on this computer, and it cannot prove a restart. Delete this device and connect the computer again as a new device.",
@@ -1802,8 +1798,11 @@
       "network": "Network",
       "networkValue": {
         "open": "Open internet (private networks blocked)",
-        "allowlist": "Allowlist"
+        "allowlist": "Allowlist",
+        "none": "Closed (no network)"
       },
+      "followOrg": "Follow the organization",
+      "followOrgNow": "Now: {value}",
       "outside": "Run outside the sandbox",
       "outsideValue": {
         "allowed": "Allowed",
@@ -1830,13 +1829,19 @@
         "network": {
           "platform": "Limited to the allowlist by the platform (super admin)",
           "org": "Limited to the allowlist by the organization (organization admin)",
-          "owner": "Widened only on the computer, by its owner",
+          "device": "Widened only on the computer, by its owner",
           "provider": "Limited to the allowlist by the device's provider"
+        },
+        "closed": {
+          "platform": "Closed by the platform (super admin)",
+          "org": "Closed by the organization (organization admin)",
+          "device": "Opened only on the computer, by its owner",
+          "provider": "Closed by the device's provider"
         },
         "outside": {
           "platform": "Turned off by the platform (super admin)",
           "org": "Turned off by the organization (organization admin)",
-          "owner": "Allowed only on the computer, by its owner",
+          "device": "Allowed only on the computer, by its owner",
           "provider": "A cloud device's instance is its sandbox"
         }
       },
@@ -1864,7 +1869,7 @@
       "pendingNextUse": "Takes effect at the next use; files are kept.",
       "pendingFilesReset": "Takes effect after the files are reset.",
       "cloudHosts": "Hosts",
-      "cloudHostsHelp": "One host per line. Only hosts on the organization's list take effect; leave it empty to follow the organization's list.",
+      "cloudHostsHelp": "One host per line. Only hosts on the organization's list take effect; leave it empty to use the organization's hosts.",
       "invalidHost": "{host} is not a valid host: use a lowercase name such as files.example.com or *.example.com.",
       "save": "Save network",
       "saved": "The device's network is saved."
@@ -1875,12 +1880,15 @@
       "remove": "Removed {hosts}",
       "change": "{setting}: {from} → {to}",
       "set": "{setting}: {to}",
+      "withHosts": "{value} ({hosts})",
       "none": "No change",
       "unknownBy": "Unknown account",
       "via": {
         "web": "web",
         "im": "IM",
-        "device": "on the machine"
+        "device": "on the machine",
+        "agent": "by an agent",
+        "token": "API token"
       },
       "outcome": {
         "unknown": "Not confirmed by the machine",
@@ -1904,8 +1912,8 @@
       "domainsEmpty": "No host is allowed.",
       "overviewNote": "Commands in the sandbox reach these hosts only.",
       "cloudHint": {
-        "org": "The organization sets this in its settings.",
-        "platform": "The platform sets this."
+        "org": "This device follows the organization's network, set in its settings.",
+        "device": "This device's own network, within the organization's hosts."
       }
     },
     "overview": {

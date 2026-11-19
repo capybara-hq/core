@@ -41,7 +41,6 @@ const LIMITS = {
   cpu: 2,
   memoryMb: 2048,
   diskMb: 10240,
-  mode: "auto",
   network: { kind: "open-public", hosts: [] },
 };
 const MACHINE = {
@@ -52,35 +51,6 @@ const MACHINE = {
   programVersion: "0.4.0",
   lastSeenAt: T,
 };
-
-const cloudMode = (over: Record<string, unknown> = {}) => ({
-  mode: "auto",
-  allowedMode: "auto",
-  allowedBy: "org",
-  network: { kind: "open-public", hosts: [], source: "org" },
-  local: null,
-  sandboxNetwork: { kind: "open-public", hosts: [] },
-  fullNetwork: { kind: "open-public", hosts: [] },
-  outerNetwork: { kind: "open-public", hosts: [] },
-  pendingNextUse: false,
-  pendingFilesReset: false,
-  recent: [],
-  ...over,
-});
-const localMode = (over: Record<string, unknown> = {}) => ({
-  mode: "auto",
-  allowedMode: "auto",
-  allowedBy: "org",
-  network: { kind: "allowlist", hosts: [], source: "platform" },
-  local: { reported: "auto", allowedDomains: [] },
-  sandboxNetwork: null,
-  fullNetwork: null,
-  outerNetwork: null,
-  pendingNextUse: false,
-  pendingFilesReset: false,
-  recent: [],
-  ...over,
-});
 
 /** A local machine's authenticated owner report: outside allowed, the open network, the OS user's reach. */
 const report = (over: Record<string, unknown> = {}) => ({
@@ -95,26 +65,30 @@ const report = (over: Record<string, unknown> = {}) => ({
   stale: false,
   ...over,
 });
-/** A cloud device's stored network. */
-const cloudCeiling = () => ({
-  state: "cloud",
-  revision: null,
-  sequence: null,
-  outsideSandbox: false,
-  network: "open",
-  allowedDomains: [],
-  restrictedProjectReach: "workspace",
-  observedAt: null,
-  stale: false,
-});
-/** The kernel's effective sandbox view (approval-only profiles design names). */
+/** The kernel's effective sandbox view (`DeviceSandboxView`): a local machine's open report. */
 const sandbox = (over: Record<string, unknown> = {}) => ({
   network: "open",
+  networkCeiling: "open",
+  hosts: [],
+  ownNetwork: "open",
   allowedDomains: [],
   outsideSandbox: true,
+  restrictedProjectReach: "os-user",
   layer: { network: null, outsideSandbox: null },
+  pendingNextUse: false,
+  pendingFilesReset: false,
+  recent: [],
   ...over,
 });
+/** A cloud device's sandbox: following its org's open network, never outside its instance. */
+const cloudSandbox = (over: Record<string, unknown> = {}) =>
+  sandbox({
+    ownNetwork: null,
+    outsideSandbox: false,
+    restrictedProjectReach: "workspace",
+    layer: { network: null, outsideSandbox: "provider" },
+    ...over,
+  });
 
 const cloud = (over: Record<string, unknown> = {}) => ({
   id: "e1",
@@ -132,14 +106,13 @@ const cloud = (over: Record<string, unknown> = {}) => ({
   filesLost: false,
   instance: null,
   limits: LIMITS,
-  mode: cloudMode(),
-  ownerCeiling: cloudCeiling(),
-  sandbox: sandbox({ outsideSandbox: false, layer: { network: null, outsideSandbox: "provider" } }),
+  ownerCeiling: null,
+  sandbox: cloudSandbox(),
   reconcileRequired: false,
   createdAt: T,
   ...over,
 });
-const local = (over: Record<string, unknown> = {}, modeOver: Record<string, unknown> = {}) => ({
+const local = (over: Record<string, unknown> = {}, sandboxOver: Record<string, unknown> = {}) => ({
   id: "e1",
   name: "Laptop",
   isDefault: true,
@@ -157,10 +130,9 @@ const local = (over: Record<string, unknown> = {}, modeOver: Record<string, unkn
   sessionIsolation: false,
   filesLost: false,
   instance: null,
-  limits: { ...LIMITS, mode: "sandbox", network: { kind: "allowlist", hosts: [] } },
-  mode: localMode(modeOver),
+  limits: { ...LIMITS, network: { kind: "allowlist", hosts: [] } },
   ownerCeiling: report(),
-  sandbox: sandbox(),
+  sandbox: sandbox(sandboxOver),
   reconcileRequired: false,
   createdAt: T,
   ...over,
@@ -322,7 +294,7 @@ describe("a local device's sandbox", () => {
           sandbox: sandbox({
             network: "allowlist",
             outsideSandbox: false,
-            layer: { network: "owner", outsideSandbox: "owner" },
+            layer: { network: "device", outsideSandbox: "device" },
           }),
         }),
       ),
@@ -332,8 +304,8 @@ describe("a local device's sandbox", () => {
     await sandboxSection();
     expect(radio(S.network, S.networkValue.open).disabled).toBe(true);
     expect(radio(S.outside, S.outsideValue.allowed).disabled).toBe(true);
-    expect(screen.getByText(S.limited.network.owner)).toBeTruthy();
-    expect(screen.getByText(S.limited.outside.owner)).toBeTruthy();
+    expect(screen.getByText(S.limited.network.device)).toBeTruthy();
+    expect(screen.getByText(S.limited.outside.device)).toBeTruthy();
   });
 
   it("a disabled option names its layer: 平台 / 超级管理员", async () => {
@@ -369,7 +341,7 @@ describe("a local device's sandbox", () => {
     await user.click(screen.getByRole("button", { name: "Remove files.example.com" }));
     await vi.waitFor(() => expect(posts(calls)).toHaveLength(1));
     expect(bodyOf(posts(calls)[0])).toEqual({
-      ownerCeiling: { removeAllowedDomains: ["files.example.com"] },
+      remove: ["files.example.com"],
     });
   });
 
@@ -405,7 +377,6 @@ describe("a local device's sandbox", () => {
       detail(
         local({
           ownerCeiling: report({ state: "blocked" }),
-          sandbox: undefined,
         }),
       ),
     );
@@ -426,7 +397,6 @@ describe("a local device's sandbox", () => {
           network: null,
           online: false,
           ownerCeiling: null,
-          sandbox: undefined,
         }),
       ),
     );
@@ -457,12 +427,14 @@ describe("a cloud device's network", () => {
     const calls = stubApi({
       ...detail(cloud()),
       [`PATCH ${BASE}/e1`]: () =>
-        json(200, { device: cloud({ sandbox: sandbox({ network: "allowlist" }) }) }),
+        json(200, { device: cloud({ sandbox: cloudSandbox({ ownNetwork: "allowlist" }) }) }),
     });
     await renderDetail();
     const user = await openSettings();
     await sandboxSection();
     expect(screen.queryByRole("radiogroup", { name: S.outside })).toBeNull();
+    // it follows the organization until it chooses its own network
+    expect(radio(S.network, S.followOrg).checked).toBe(true);
     await user.click(radio(S.network, S.networkValue.allowlist));
     await user.type(screen.getByRole("textbox", { name: S.cloudHosts }), "files.example.com");
     await user.click(screen.getByRole("button", { name: S.save }));
@@ -472,29 +444,56 @@ describe("a cloud device's network", () => {
     });
   });
 
-  it("widens back to the open internet within the ceilings", async () => {
+  it("prefills its own hosts, and goes back to following the organization with mode null", async () => {
     const calls = stubApi({
-      ...detail(cloud({ sandbox: sandbox({ network: "allowlist", allowedDomains: ["a.test"] }) })),
+      ...detail(
+        cloud({
+          sandbox: cloudSandbox({
+            network: "allowlist",
+            ownNetwork: "allowlist",
+            hosts: ["a.test"],
+            allowedDomains: ["a.test"],
+          }),
+        }),
+      ),
       [`PATCH ${BASE}/e1`]: () => json(200, { device: cloud() }),
     });
     await renderDetail();
     const user = await openSettings();
     await sandboxSection();
-    await user.click(radio(S.network, S.networkValue.open));
+    expect(radio(S.network, S.networkValue.allowlist).checked).toBe(true);
+    expect((screen.getByRole("textbox", { name: S.cloudHosts }) as HTMLTextAreaElement).value).toBe(
+      "a.test",
+    );
+    await user.click(radio(S.network, S.followOrg));
+    await user.click(screen.getByRole("button", { name: S.save }));
+    await vi.waitFor(() => expect(calls.some((c) => c.method === "PATCH")).toBe(true));
+    expect(bodyOf(calls.find((c) => c.method === "PATCH"))).toEqual({ network: { mode: null } });
+  });
+
+  it("opens to the internet or closes the network without hosts", async () => {
+    const calls = stubApi({
+      ...detail(cloud()),
+      [`PATCH ${BASE}/e1`]: () => json(200, { device: cloud() }),
+    });
+    await renderDetail();
+    const user = await openSettings();
+    await sandboxSection();
+    await user.click(radio(S.network, S.networkValue.none));
     await user.click(screen.getByRole("button", { name: S.save }));
     await vi.waitFor(() => expect(calls.some((c) => c.method === "PATCH")).toBe(true));
     expect(bodyOf(calls.find((c) => c.method === "PATCH"))).toEqual({
-      network: { mode: "open", hosts: [] },
+      network: { mode: "none" },
     });
   });
 
-  it("an open network above the org ceiling is disabled and names the layer", async () => {
+  it("a network above the org ceiling is disabled and names the layer", async () => {
     stubApi(
       detail(
         cloud({
-          sandbox: sandbox({
+          sandbox: cloudSandbox({
             network: "allowlist",
-            outsideSandbox: false,
+            networkCeiling: "allowlist",
             layer: { network: "org", outsideSandbox: "provider" },
           }),
         }),
@@ -504,12 +503,33 @@ describe("a cloud device's network", () => {
     await openSettings();
     await sandboxSection();
     expect(radio(S.network, S.networkValue.open).disabled).toBe(true);
+    expect(radio(S.network, S.networkValue.allowlist).disabled).toBe(false);
     expect(screen.getByText(S.limited.network.org)).toBeTruthy();
+  });
+
+  it("a network the provider closed names the provider", async () => {
+    stubApi(
+      detail(
+        cloud({
+          sandbox: cloudSandbox({
+            network: "none",
+            networkCeiling: "none",
+            layer: { network: "provider", outsideSandbox: "provider" },
+          }),
+        }),
+      ),
+    );
+    await renderDetail();
+    await openSettings();
+    await sandboxSection();
+    expect(radio(S.network, S.networkValue.open).disabled).toBe(true);
+    expect(radio(S.network, S.networkValue.allowlist).disabled).toBe(true);
+    expect(screen.getAllByText(S.limited.closed.provider).length).toBe(2);
   });
 
   it("a refusal above the ceiling shows its copy", async () => {
     stubApi({
-      ...detail(cloud({ sandbox: sandbox({ network: "allowlist" }) })),
+      ...detail(cloud()),
       [`PATCH ${BASE}/e1`]: failWith(400, "device.network_not_allowed"),
     });
     await renderDetail();
@@ -518,9 +538,7 @@ describe("a cloud device's network", () => {
     await user.click(radio(S.network, S.networkValue.open));
     await user.click(screen.getByRole("button", { name: S.save }));
     const alert = await screen.findByRole("alert");
-    expect(alert.textContent).toContain(
-      (en.errors.device as Record<string, string>).network_not_allowed,
-    );
+    expect(alert.textContent).toContain(en.errors.device.network_not_allowed);
   });
 
   it("a device whose limits must be established again says so up front and offers 重建文件", async () => {
@@ -531,14 +549,14 @@ describe("a cloud device's network", () => {
   });
 
   it("a pending change is one status line", async () => {
-    stubApi(detail(cloud({ mode: cloudMode({ pendingNextUse: true }) })));
+    stubApi(detail(cloud({ sandbox: cloudSandbox({ pendingNextUse: true }) })));
     await renderDetail();
     await openSettings();
     expect(await screen.findByText(S.pendingNextUse)).toBeTruthy();
   });
 
   it("a change only a file reset applies has its own status line and offers 重建文件", async () => {
-    stubApi(detail(cloud({ mode: cloudMode({ pendingFilesReset: true }) })));
+    stubApi(detail(cloud({ sandbox: cloudSandbox({ pendingFilesReset: true }) })));
     await renderDetail();
     await openSettings();
     expect(await screen.findByText(S.pendingFilesReset)).toBeTruthy();
@@ -546,14 +564,14 @@ describe("a cloud device's network", () => {
   });
 
   it("a network change invalidates the device, so its permission previews are read again", async () => {
-    let mode = "open";
+    let mode: string | null = null;
     const calls = stubApi({
       ...detail(cloud()),
       [`GET ${BASE}/e1`]: () =>
-        json(200, { device: cloud({ sandbox: sandbox({ network: mode }) }) }),
+        json(200, { device: cloud({ sandbox: cloudSandbox({ ownNetwork: mode }) }) }),
       [`PATCH ${BASE}/e1`]: () => {
         mode = "allowlist";
-        return json(200, { device: cloud({ sandbox: sandbox({ network: "allowlist" }) }) });
+        return json(200, { device: cloud({ sandbox: cloudSandbox({ ownNetwork: "allowlist" }) }) });
       },
     });
     const { client } = await renderDetail();
@@ -580,7 +598,11 @@ describe("the network on 概览", () => {
     stubApi(
       detail(
         local({
-          sandbox: sandbox({ network: "allowlist", allowedDomains: ["files.example.com"] }),
+          sandbox: sandbox({
+            network: "allowlist",
+            hosts: ["files.example.com"],
+            allowedDomains: ["files.example.com"],
+          }),
         }),
       ),
     );
@@ -603,10 +625,9 @@ describe("the network on 概览", () => {
     stubApi(
       detail(
         cloud({
-          sandbox: sandbox({
+          sandbox: cloudSandbox({
             network: "allowlist",
-            allowedDomains: ["files.example.com", "*.slack.com"],
-            outsideSandbox: false,
+            hosts: ["files.example.com", "*.slack.com"],
           }),
         }),
       ),
@@ -626,6 +647,7 @@ describe("the recent changes", () => {
     add: [],
     remove: [],
     ceiling: null,
+    network: null,
     by: "Ada",
     via: "web",
     outcome: "applied",
@@ -642,15 +664,16 @@ describe("the recent changes", () => {
   it("lists host changes with who, where and what became of them", async () => {
     stubApi(
       detail(
-        cloud({
-          mode: cloudMode({
+        local(
+          {},
+          {
             recent: [
               change({ add: ["files.example.com"] }),
               change({ remove: ["*.slack.com"] }),
               change({ add: ["x.example.com"], outcome: "failed" }),
             ],
-          }),
-        }),
+          },
+        ),
       ),
     );
     await renderDetail();
@@ -674,13 +697,15 @@ describe("the recent changes", () => {
           {},
           {
             recent: [
-              ceiling({ network: "open" }, { network: "allowlist" }),
+              ceiling(
+                { outsideSandbox: true, network: "open" },
+                { outsideSandbox: true, network: "allowlist" },
+              ),
               ceiling({ outsideSandbox: false }, { outsideSandbox: true }, "device"),
               ceiling(
-                { restrictedProjectReach: "os-user" },
-                { restrictedProjectReach: "workspace" },
+                { outsideSandbox: true, restrictedProjectReach: "os-user" },
+                { outsideSandbox: true, restrictedProjectReach: "workspace" },
               ),
-              ceiling(null, { network: "open" }),
             ],
           },
         ),
@@ -697,7 +722,6 @@ describe("the recent changes", () => {
     expect(
       within(list).getByText(`${S.reach}: ${S.reachValue["os-user"]} → ${S.reachValue.workspace}`),
     ).toBeTruthy();
-    expect(within(list).getByText(`${S.network}: ${S.networkValue.open}`)).toBeTruthy();
     // a report of the machine names nobody
     const deviceRow = within(list)
       .getAllByRole("listitem")
@@ -705,6 +729,47 @@ describe("the recent changes", () => {
     const meta = deviceRow.querySelector(".cb-item-list-meta")?.textContent ?? "";
     expect(meta).toContain(E.recent.via.device);
     expect(meta).not.toContain(E.recent.unknownBy);
+  });
+});
+
+describe("a cloud device's network changes in the recent changes", () => {
+  it("reads following the organization and the own network with its hosts, from and to", async () => {
+    const row = (from: unknown, to: unknown, via = "web") => ({
+      at: T,
+      kind: "network",
+      add: [],
+      remove: [],
+      ceiling: null,
+      network: { from, to },
+      by: "Ada",
+      via,
+      outcome: "applied",
+    });
+    stubApi(
+      detail(
+        cloud({
+          sandbox: cloudSandbox({
+            recent: [
+              row({ mode: null, hosts: [] }, { mode: "allowlist", hosts: ["a.test", "b.test"] }),
+              row({ mode: "open", hosts: [] }, { mode: "none", hosts: [] }, "agent"),
+              row({ mode: "none", hosts: [] }, { mode: null, hosts: [] }, "token"),
+            ],
+          }),
+        }),
+      ),
+    );
+    await renderDetail();
+    const list = await screen.findByRole("list", { name: E.recent.title });
+    expect(
+      within(list).getByText(
+        `${S.network}: ${S.followOrg} → ${S.networkValue.allowlist} (a.test, b.test)`,
+      ),
+    ).toBeTruthy();
+    expect(
+      within(list).getByText(`${S.network}: ${S.networkValue.open} → ${S.networkValue.none}`),
+    ).toBeTruthy();
+    expect(list.textContent).toContain(E.recent.via.agent);
+    expect(list.textContent).toContain(E.recent.via.token);
   });
 });
 
@@ -759,14 +824,14 @@ describe("polling after a file reset", () => {
   const state = (over: Record<string, unknown> = {}) => ({
     filesLost: false,
     reconcileRequired: false,
-    mode: { pendingFilesReset: false },
+    sandbox: { pendingFilesReset: false },
     ...over,
   });
 
   it("polls while a reset is pending and stops once nothing waits for it", () => {
     expect(resetPollInterval(state({ filesLost: true }), at, at + 1)).toBe(RESET_POLL_MS);
     expect(resetPollInterval(state({ reconcileRequired: true }), at, at + 1)).toBe(RESET_POLL_MS);
-    expect(resetPollInterval(state({ mode: { pendingFilesReset: true } }), at, at + 1)).toBe(
+    expect(resetPollInterval(state({ sandbox: { pendingFilesReset: true } }), at, at + 1)).toBe(
       RESET_POLL_MS,
     );
     expect(resetPollInterval(state(), at, at + 1)).toBe(false);
