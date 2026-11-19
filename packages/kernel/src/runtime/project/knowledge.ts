@@ -133,6 +133,12 @@ export const projectUnavailable = {
       "unreadable",
       `The project's root ${clipped(root)} was not read: this device's runtime cannot enforce a read-only read on its host; turn on its sandbox enforcement or use another device.`,
     ),
+  /** A device runtime that refused the kernel's read-only read scope (its text is logged). */
+  refused: (root: string) =>
+    unavailable(
+      "unreadable",
+      `The project's root ${clipped(root)} was not read: this device's runtime refused the kernel's read-only read.`,
+    ),
   unsupported: () =>
     unavailable(
       "unsupported",

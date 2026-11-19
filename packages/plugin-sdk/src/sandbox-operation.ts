@@ -172,6 +172,15 @@ export interface SandboxPermissionSupport {
   readonly unavailableReason?: string;
 }
 
+/**
+ * Whether a report is a supported instance boundary: `boundary: "instance"` with no
+ * `unavailableReason`. An instance report naming a reason (a stale image, a digest mismatch)
+ * claims nothing, so a device reporting it is unsupported, never the whole-instance sandbox.
+ */
+export function instanceSupported(report: SandboxPermissionSupport): boolean {
+  return report.boundary === "instance" && report.unavailableReason === undefined;
+}
+
 /** Actor and tag come only from the immutable operation scope. */
 export type SandboxExecOptions = Omit<Parameters<SandboxProvider["exec"]>[1], "tag" | "actor">;
 

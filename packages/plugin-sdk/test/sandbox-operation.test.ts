@@ -1,6 +1,7 @@
 import { describe, expect, expectTypeOf, it } from "vitest";
 import {
   FileSystemGoneError,
+  instanceSupported,
   isPermissionProfile,
   isSandboxGoneError,
   isSandboxOperationOutcomeUnknownError,
@@ -20,6 +21,33 @@ import {
   SandboxScopeDeniedError,
   SandboxScopeValidationError,
 } from "../src/index.js";
+
+describe("instanceSupported", () => {
+  const instance = {
+    version: 2,
+    boundary: "instance",
+    restricted: null,
+    network: { openPublic: true, allowlist: true, perOperationHosts: false },
+    outsideSandbox: false,
+    background: true,
+  } as const;
+  it("is true for an instance boundary with no unavailable reason", () => {
+    expect(instanceSupported(instance)).toBe(true);
+  });
+  it("is false for an instance report naming why it is unavailable (a stale image)", () => {
+    expect(
+      instanceSupported({
+        ...instance,
+        network: { openPublic: false, allowlist: false, perOperationHosts: false },
+        background: false,
+        unavailableReason: "The instance runs a stale image",
+      }),
+    ).toBe(false);
+  });
+  it("is false for an operation boundary", () => {
+    expect(instanceSupported({ ...instance, boundary: "operation" })).toBe(false);
+  });
+});
 
 describe("isPermissionProfile", () => {
   it.each(["request-approval", "approve-for-me", "full-access"])("accepts %s", (value) => {

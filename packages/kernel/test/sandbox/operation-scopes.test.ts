@@ -152,6 +152,45 @@ it("missing factories and unsupported runtime never fall back to raw exec", asyn
   expect(rawCalls).toBe(0);
 });
 
+it("an instance report naming why it is unavailable refuses a network-none native call", async () => {
+  const signal = new AbortController().signal;
+  const instance = {
+    version: 2,
+    boundary: "instance",
+    restricted: null,
+    network: { openPublic: false, allowlist: false, perOperationHosts: false },
+    outsideSandbox: false,
+    background: false,
+  };
+  let opened = 0;
+  const heldFor = (report: object) =>
+    createHeldOperations(
+      {
+        async permissionSupport() {
+          return report;
+        },
+        async revokeOperation() {},
+        async operation() {
+          opened++;
+          return { readFile: async () => ({ data: new Uint8Array([1]), truncated: false }) };
+        },
+      } as unknown as SandboxProvider,
+      { id: "device" },
+      signal,
+      async (_method, _input, invoke) => invoke(scope(1), signal),
+    );
+  const read = (report: object) =>
+    heldFor(report).readFile({ id: "device" }, "/root-1/file", { maxBytes: 10, signal });
+  // a stale image or a digest mismatch: the provider names the reason and claims nothing
+  await expect(
+    read({ ...instance, unavailableReason: "The instance runs a stale image" }),
+  ).rejects.toThrow("The instance runs a stale image");
+  expect(opened).toBe(0);
+  // the same instance without a reason is the sandbox: the call goes on
+  await expect(read(instance)).resolves.toMatchObject({ truncated: false });
+  expect(opened).toBe(1);
+});
+
 import { ownerPolicyRevokes } from "../../src/local-devices/policy-summary.js";
 
 it("owner baseline removal preserves Full and explicit additions but revokes baseline-only exec", () => {

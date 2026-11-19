@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import {
   type DeviceExecGrants,
+  instanceSupported,
   type PermissionProfile,
   parseSandboxBrowseScope,
   parseSandboxOperationScope,
@@ -134,7 +135,7 @@ function withheldScope(input: {
   // a local machine's sandbox is per operation; only a cloud provider's instance is the sandbox
   if (availability.report.boundary === "instance" && input.location === "local")
     return { state: "unsupported", reason: "A local device cannot report an instance boundary" };
-  if (availability.report.restricted === null && availability.report.boundary !== "instance")
+  if (availability.report.restricted === null && !instanceSupported(availability.report))
     return {
       state: "unsupported",
       reason:
@@ -558,7 +559,7 @@ export class SandboxOperationAuthority {
     if (availability.state === "supported") {
       route = kernelReadRoute({
         restricted:
-          availability.report.restricted !== null || availability.report.boundary === "instance",
+          availability.report.restricted !== null || instanceSupported(availability.report),
         fullAccess: availability.report.outsideSandbox,
         isolated: await this.isolatedRuntime(ctx.orgId, ctx.deviceId),
       });
@@ -574,11 +575,20 @@ export class SandboxOperationAuthority {
       throw new ApiError("forbidden", "The kernel read is outside the conversation's profile");
     // a restricted read-only scope whenever the runtime enforces it, whatever the conversation's
     // profile: a runtime keyed on Full access may follow a symlinked AGENTS.md or SKILL.md out of
-    // the project, and a kernel read has no tool call or review to show for it
+    // the project, and a kernel read has no tool call or review to show for it. An instance
+    // boundary runs only its instance scope (the instance is the sandbox, a narrower scope is
+    // refused by the provider); the covering-path check above confines the read's path
+    const instance = availability.state === "supported" && instanceSupported(availability.report);
     return parseSandboxOperationScope({
       ...profile,
       profile: route === "full" ? profile.profile : KERNEL_READ_PROFILE,
-      filesystem: { kind: "scoped", readRoots: [covering], writeRoots: [] },
+      filesystem: instance
+        ? {
+            kind: "scoped",
+            readRoots: instanceRoots(f.workingRoot),
+            writeRoots: instanceRoots(f.workingRoot),
+          }
+        : { kind: "scoped", readRoots: [covering], writeRoots: [] },
       network: { kind: "none" },
     });
   }
