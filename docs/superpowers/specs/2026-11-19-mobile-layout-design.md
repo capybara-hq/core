@@ -262,10 +262,15 @@ conversation's greeting and agents row.
     hash-backed push gives back-button behavior for free (designer's call).
   - Approval, question and connect blocks in the thread keep their actions within the thread
     width (no row wider than the window), buttons at 40 px.
-  - `/conversations` (new route, designer's call; open question 3) is a `ListPage` of the
-    sidebar's conversation groups (the same query as the sidebar, `conversationGroupsQuery`),
-    reachable on every class but linked only from the compact bottom navigation and the medium
-    rail button. `/` stays the new conversation and the home (maintainer decision 2026-11-07).
+  - `/conversations` (new route, designer's call under the maintainer's 2026-11-19 "whatever is
+    reasonable on phones") is a `ListPage` of the sidebar's conversation groups (the same query
+    as the sidebar, `conversationGroupsQuery`, with its search and 加载更多), with a "new" action
+    to `/`. It is the compact bottom navigation's Chats tab and linked from nowhere else; the
+    medium rail button opens the same list as a sheet without a route. It **renders at every
+    class and never redirects by width**: the server cannot know the width, so a width redirect
+    would run after hydration and flash, and a link someone shares must not depend on the
+    sender's window. On expanded it is simply the same list the sidebar shows. `/` stays the new
+    conversation and the home (maintainer decision 2026-11-07).
 - **medium**: the thread centered as today; the right area a side sheet (`layout.panel` or the
   window less 48, whichever is smaller) with follow-finger dismiss (§7.4); conversations in the
   rail's sheet.
@@ -355,7 +360,7 @@ No windowing today. Step one is CSS-only: thread items get `content-visibility: 
 `contain-intrinsic-size` from their last measured height, which keeps the DOM (find in page,
 screen readers, the scroll anchoring above) and skips layout and paint off screen. Real
 windowing (only mounting visible items) comes only if a measurement on a mid-range phone with a
-2 000-item recorded log shows it is needed (open question 8), and must then keep follow-bottom,
+2 000-item recorded log shows it is needed (open question 7), and must then keep follow-bottom,
 anchor-to-item (`#approval=`) and find-in-page behavior.
 
 ### 7.4 Follow-finger sheets and drawers
@@ -415,7 +420,7 @@ developer previews behind feature flags:
 WebKit recommends responsive layout plus feature detection, never user-agent sniffing. Content
 does not yet extend behind the outer display's side controls, and Apple has not decided how
 `viewport-fit=cover` behaves there; WKWebView support for either API is not stated (it matters for
-the Capacitor shell: open question 4).
+the Capacitor shell: open question 3).
 
 The design:
 
@@ -602,7 +607,7 @@ declare global {
 ### 10.2 The PWA (decided; details designer's call)
 
 - **Manifest** from a Next metadata route (`app/manifest.ts`): name and short name from the
-  deployment (the metadata title, a platform branding setting later: open question 10),
+  deployment (the metadata title, a platform branding setting later: open question 8),
   `display: "standalone"`, `start_url: "/"`, `scope: "/"`, the capybara icon set (maskable and
   monochrome), `theme_color` / `background_color` from the default theme's tokens.
 - iOS: `appleWebApp` metadata (capable, `black-translucent` status bar with the safe areas of
@@ -628,10 +633,10 @@ are: the path for conversations bound to them.
   `created_at`, `last_ok_at`, `failures`, `disabled_at`. Per **account**, not per org: one phone
   serves every org the person belongs to; every notification is for one (account, org) pair and
   rechecked at send time (below).
-- **Preferences** `capybara.notification_preferences`: per account, per kind (§10.5), on / off;
-  defaults on for approvals and questions, on for finished background work, off for the rest.
+- **Preferences** `capybara.notification_preferences`: per account, per category (§10.5), push
+  on / off (§10.6 for where they live and the defaults).
 - **Delivery providers** are an extension point `push-provider@1` (designer's call, following
-  "the kernel only hosts, extensions provide"; open question 6): a provider declares the target
+  "the kernel only hosts, extensions provide"; open question 5): a provider declares the target
   `kind`s it sends, and the kernel calls `send(target, payload)` with an org-free, kernel-built
   payload. The Web Push provider (VAPID, RFC 8030 / 8291 encryption) is a `builtin: true`
   bootstrap plugin in `capybara-hq/plugins` (`plugin-push-webpush`), pinned in
@@ -652,32 +657,36 @@ are: the path for conversations bound to them.
   "Notify me on this device"; the web asks for permission (a user gesture, required by iOS),
   subscribes with the deployment's VAPID public key and sends the subscription
   (`POST /api/v1/me/notification-targets`). The page lists the person's targets with their
-  labels and last success, each removable, and the per-kind preferences.
+  labels and last success, each removable, and the per-category preferences (§10.6).
 - **Mobile app** (later): the web calls `push@1.register()`; the shell confirms natively (the OS
   permission prompt), obtains the native token and registers it **itself** with the kernel using
   the page's session (so the token never passes through page JS, §9.4).
 - A provider's "gone" answer (Web Push 404 / 410, APNs `Unregistered`) deletes the target;
   repeated other failures disable it after a threshold, shown on the settings page.
 
-### 10.5 What notifies (designer's call)
+### 10.5 What notifies (decided: the categories; their mapping to events is designer's call)
 
-| Kind | When | Recipient |
-|---|---|---|
-| `approval` | A tool approval is waiting for the person (`approval_requested` where they can decide, sub-agents included) | Each account that can decide it |
-| `question` | A question or connect request waits for the person | The conversation's owner |
-| `run_finished` | A run the person started ends (done or failed) while they are not watching it (presence below) | The conversation's owner |
-| `background_finished` | A background task or a background sub-agent finishes | The conversation's owner |
-| `schedule_attention` | A scheduled task needs its owner (the inbox's `schedule_attention`) | The task's owner |
-| `admin_request` (off by default) | A member's request waits for org admins (catalog / connector setup / network) | Org admins |
+Four **categories** (maintainer decision 2026-11-19, approvals kept from the first draft), each
+triggered by an event the kernel already writes in one transaction, so the outbox row of §10.7
+joins that transaction:
 
-Not notified: anything the person did themselves, org notices (they wait in the inbox), anything
-in a conversation bound to an IM channel thread (the channel already delivers there).
+| Category | Triggering write (existing) | Notifies when | Recipient |
+|---|---|---|---|
+| `waiting` 等你处理 / Waiting for you | `ApprovalsService` appending `approval_requested` (sub-agents' included); `question_asked` and a connect request for the person (designer's call: these also block the run on the person, so they ride in this category instead of a fifth one) | Always (presence below still applies) | Each account that can decide the approval; the conversation's owner for a question or connect request |
+| `replies` 智能体回复 / Agent replies | `RunFinish.finishIn` (`runtime/run-finish.ts`, the one writer of a run's terminal state) with `completed` (the final `assistant_message`) or `failed` | The owner is not viewing that conversation (presence below). Not for `aborted` (the person stopped it), not for a sub-agent's run (the parent's reply covers it), not for a scheduled task's run (the `schedules` category covers it) | The conversation's owner |
+| `tasks` 任务状态 / Task status | `BackgroundFinish.finish` (`background/finish.ts`) appending `background_task_finished` (finished, failed, or `lost`, which reads as failed); a background sub-agent's `subagent_finished` | A background task or background sub-agent finishes or fails. Not when the person stopped it (`stoppedBy` the person) | The conversation's owner |
+| `schedules` 定时任务 / Scheduled tasks | `ScheduleRunTracker.onRunFinished` (`schedules/run-tracker.ts`, in the same transaction as `finishIn`) with `completed` or `failed`, trial runs included | A task run finishes or fails (a run the person aborted counts as completed and does not notify, as the tracker already treats it). A task paused after repeated failures says so in the failed run's notification | The task's owner |
+
+Not notified: anything the person did themselves, org notices and members' requests for admins
+(they wait in the inbox). **No deduplication with IM channels (decided)**: a conversation bound to
+a channel thread may deliver its card in the chat *and* a push; the person controls push per
+category (§10.6).
 
 - **Presence suppression**: a person watching the conversation is not pushed for it. The web
   reports `PUT /api/v1/me/presence { conversationId, visible }` on visibility changes and every
   20 s while visible; the kernel keeps it in Redis with a 45 s TTL (never process memory). A
   notification is skipped when a visible presence exists for that account and conversation.
-- **Payload** (designer's call; open question 7): the kind, the org slug, the conversation id,
+- **Payload** (designer's call; open question 6): the category, the org slug, the conversation id,
   a title in the account's locale ("研究助手 等待你的批准" / "Research assistant needs your
   approval") and the conversation's title. Never tool arguments, message text, file names or
   secrets: the lock screen is public. The click target is a same-origin URL
@@ -692,7 +701,17 @@ in a conversation bound to an IM channel thread (the channel already delivers th
   between accounts.
 - The super admin switches push on the platform (on by default once a provider is enabled); an
   org admin can switch it off for the org (an org-level deployment field,
-  `orgAccess(schema, "override")`); the person chooses kinds.
+  `orgAccess(schema, "override")`); the person chooses categories (below).
+- **Per-person preferences (decided: categories × push on/off; place and defaults designer's
+  call).** Each person sets, per category, whether to receive push: four switches on
+  **我的 → 通知 / Me → Notifications** (`/account/notifications`, the personal `SettingsPage` of
+  §10.4, reached from the compact Me tab and from the account menu on medium and expanded),
+  under the list of their devices. They are per **account** and apply in every org the person
+  belongs to (one phone, one set of choices; a per-org override is not added). **Default: all
+  four on** once the person has registered a device (registering is already the opt-in; a
+  person who registered wants to hear about their work). The preferences govern push only; IM
+  delivery stays the channel binding's. Read and written through `GET` / `PUT
+  /api/v1/me/notification-preferences`.
 - Payloads carry no org data beyond the slug and titles; a person in two orgs sees which org a
   notification is from.
 
@@ -713,8 +732,8 @@ in a conversation bound to an IM channel thread (the channel already delivers th
 
 The desktop shell has no Web Push (Electron has no push service); while it runs it gets
 notifications through the same stream data via `notify@1` (desktop spec). IM channels are
-unchanged. A person can have all three; the kernel does not deduplicate across a channel and
-push beyond the "bound to a channel thread" rule above (open question 9).
+unchanged. A person can have all three and may get the same event on several (decided: no
+deduplication); the per-category preferences of §10.6 are the person's control over push.
 
 ## 11. Verification (decided)
 
@@ -832,24 +851,19 @@ Recorded so review sees them; the design above resolves each.
    Inbox with it?
 2. **Expanded below 1280**: keep the rail and the right-area sheet there (§3.3), or require the
    full sidebar from 841 and accept a narrower thread?
-3. **`/conversations`**: a new route for the conversations list (compact and medium entry), or a
-   compact-only form of `/`?
-4. **WKWebView** support of the Device Posture and Viewport Segments APIs (the Capacitor shell):
+3. **WKWebView** support of the Device Posture and Viewport Segments APIs (the Capacitor shell):
    unknown until Apple says; the design degrades to one screen without them.
-5. **`viewport-fit=cover` on the iPhone Duo outer display**: Apple has not decided; we follow
+4. **`viewport-fit=cover` on the iPhone Duo outer display**: Apple has not decided; we follow
    `env()`. Revisit when Safari ships the behavior.
-6. **Push delivery as an extension point** (`push-provider@1`, Web Push as a builtin plugin) or
+5. **Push delivery as an extension point** (`push-provider@1`, Web Push as a builtin plugin) or
    kernel built-in Web Push (a standard protocol, no vendor SDK)?
-7. **Lock-screen content**: agent name and conversation title (proposed), or a generic text
-   only, or an org setting to choose?
-8. **Thread windowing**: accept the CSS-only step first and windowing only on measurement?
-9. **Duplicate paths**: should a person who gets an approval in an IM direct chat also get a push
-   for the same approval in a web conversation (they cannot today: only channel-bound
-   conversations reach IM)?
-10. **PWA name and icon**: from a platform branding setting (none exists) or the active theme's
+6. **Lock-screen content** (the categories are decided, §10.5): agent name and conversation
+   title (proposed), or a generic text only, or an org setting to choose?
+7. **Thread windowing**: accept the CSS-only step first and windowing only on measurement?
+8. **PWA name and icon**: from a platform branding setting (none exists) or the active theme's
     logo?
-11. **Short windows** (§3.2): accept the height trim, or keep height out entirely?
-12. **Chinese Android vendor push**: which channels first, given they need the native app (P3
+9. **Short windows** (§3.2): accept the height trim, or keep height out entirely?
+10. **Chinese Android vendor push**: which channels first, given they need the native app (P3
     later)?
 
 ## AGENTS.md rules touched
