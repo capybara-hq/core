@@ -194,19 +194,46 @@ describe("devices", () => {
       "devices.remove-project",
       "devices.rename",
       "devices.reset-files",
+      "devices.set-network",
     ]);
   });
 
-  it("no operation changes a device's mode: widening (mode null) is a person's act (spec D2)", () => {
+  it("only devices.set-network changes a device's network, and only narrowing it", async () => {
     const rename = op("devices.rename").input;
     const deviceId = "4e8a0c1d-6b2f-4a37-8d19-3c5e7f9a1b20";
-    for (const mode of [null, "sandbox", "auto"]) {
-      expect(rename.safeParse({ deviceId, name: "X", mode }).success).toBe(false);
-    }
-    // B2: nor its owner ceiling (session-only)
-    for (const ownerCeiling of [{ outsideSandbox: true }, { outsideSandbox: false }])
-      expect(rename.safeParse({ deviceId, name: "X", ownerCeiling }).success).toBe(false);
-    expect(op("devices.rename").omits).toEqual(["mode", "ownerCeiling", "confirmWidening"]);
+    expect(rename.safeParse({ deviceId, name: "X", network: { mode: "none" } }).success).toBe(
+      false,
+    );
+    expect(op("devices.rename").omits).toEqual(["network"]);
+    expect(op("devices.set-network").omits).toEqual(["name"]);
+    const ctx = ctxOf(ownerId);
+    const created = (await run("devices.create", { name: "Narrowed" }, ctx)) as {
+      device: { id: string };
+    };
+    const id = created.device.id;
+    expect(
+      await precheck("devices.set-network", { deviceId: id, network: { mode: "allowlist" } }, ctx),
+    ).toEqual({ ok: true });
+    // a precheck writes nothing
+    expect(await audits("device.network_changed")).toEqual([]);
+    const narrowed = (await run(
+      "devices.set-network",
+      { deviceId: id, network: { mode: "allowlist" } },
+      ctx,
+    )) as { device: { sandbox: { network: string } } };
+    expect(narrowed.device.sandbox.network).toBe("allowlist");
+    expect((await audits("device.network_changed"))[0]?.detail).toMatchObject({
+      to: { mode: "allowlist", hosts: [] },
+      via: "agent",
+      operation: "devices.set-network",
+    });
+    // a widening is refused at the precheck and at the run
+    expect(
+      await precheck("devices.set-network", { deviceId: id, network: { mode: "open" } }, ctx),
+    ).toMatchObject({ ok: false, code: "device.network_not_allowed" });
+    await expect(
+      run("devices.set-network", { deviceId: id, network: { mode: null } }, ctx),
+    ).rejects.toThrow(/^device\.network_not_allowed: /);
   });
 
   it("creates and renames with a card naming the objects, lists and reads, and audits the agent", async () => {
@@ -252,21 +279,15 @@ describe("devices", () => {
       device: {
         name: string;
         provider: string;
-        mode: {
-          mode: string;
-          allowedMode: string;
-          allowedBy: string | null;
-          network: { kind: string; source: string };
-        };
+        sandbox: { network: string; networkCeiling: string; outsideSandbox: boolean };
       };
     };
     expect(got.device.name).toBe("Reports");
-    // a cloud device follows what the org allows; the default deployment allows auto mode
-    expect(got.device.mode).toMatchObject({
-      mode: "auto",
-      allowedMode: "auto",
-      allowedBy: "platform",
-      network: { kind: "open-public", source: "platform" },
+    // a cloud device follows its org's network, open by default, and never runs outside
+    expect(got.device.sandbox).toMatchObject({
+      network: "open",
+      networkCeiling: "open",
+      outsideSandbox: false,
     });
   });
 

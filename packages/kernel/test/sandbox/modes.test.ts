@@ -8,6 +8,7 @@ import {
   instanceLimitsJson,
   type NetworkLimits,
   type OrgDeviceSettings,
+  orgAllowedDomains,
   orgCloudMode,
   orgEffectiveHosts,
   orgHostOutsideCeiling,
@@ -31,7 +32,6 @@ describe("effectiveDevicePolicy", () => {
       mode: "auto",
       allowedMode: "auto",
       network: { kind: "open-public", hosts: [] },
-      localAllowedDomains: L,
     });
   });
 
@@ -53,7 +53,6 @@ describe("effectiveDevicePolicy", () => {
         mode: "sandbox",
         allowedMode: "sandbox",
         network: { kind: "open-public", hosts: [] },
-        localAllowedDomains: L,
       },
     ],
     [
@@ -65,7 +64,6 @@ describe("effectiveDevicePolicy", () => {
         mode: "sandbox",
         allowedMode: "sandbox",
         network: { kind: "open-public", hosts: [] },
-        localAllowedDomains: L,
       },
     ],
     [
@@ -77,7 +75,6 @@ describe("effectiveDevicePolicy", () => {
         mode: "auto",
         allowedMode: "auto",
         network: { kind: "open-public", hosts: [] },
-        localAllowedDomains: L,
       },
     ],
     [
@@ -89,7 +86,6 @@ describe("effectiveDevicePolicy", () => {
         mode: "sandbox",
         allowedMode: "auto",
         network: { kind: "open-public", hosts: [] },
-        localAllowedDomains: L,
       },
     ],
     [
@@ -101,7 +97,6 @@ describe("effectiveDevicePolicy", () => {
         mode: "sandbox",
         allowedMode: "sandbox",
         network: { kind: "open-public", hosts: [] },
-        localAllowedDomains: L,
       },
     ],
     [
@@ -113,7 +108,6 @@ describe("effectiveDevicePolicy", () => {
         mode: "auto",
         allowedMode: "auto",
         network: { kind: "open-public", hosts: [] },
-        localAllowedDomains: L,
       },
     ],
     [
@@ -131,7 +125,6 @@ describe("effectiveDevicePolicy", () => {
         mode: "sandbox",
         allowedMode: "auto",
         network: { kind: "allowlist", hosts: ["registry.npmjs.org", "a.com"] },
-        localAllowedDomains: ["registry.npmjs.org", "a.com"],
       },
     ],
     [
@@ -143,7 +136,6 @@ describe("effectiveDevicePolicy", () => {
         mode: "sandbox",
         allowedMode: "auto",
         network: { kind: "allowlist", hosts: ["a.com"] },
-        localAllowedDomains: ["a.com"],
       },
     ],
   ])("%s", (_name, dep, org, deviceMode, expected) => {
@@ -153,7 +145,7 @@ describe("effectiveDevicePolicy", () => {
   it("the platform kill switch forces an empty allowlist, cloud and local (R20)", () => {
     const p = effectiveDevicePolicy(deployment("allowed", "none"), NO_ORG, "auto");
     expect(p.network).toEqual({ kind: "allowlist", hosts: [] });
-    expect(p.localAllowedDomains).toEqual([]);
+    expect(orgAllowedDomains(deployment("allowed", "none"), NO_ORG)).toEqual([]);
     // the org may not widen it back
     expect(
       effectiveDevicePolicy(

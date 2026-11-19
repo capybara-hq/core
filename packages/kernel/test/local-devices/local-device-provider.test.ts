@@ -29,6 +29,7 @@ import {
   type DeploymentDevicePolicy,
   effectiveDevicePolicy,
   type OrgDeviceSettings,
+  orgAllowedDomains,
 } from "../../src/sandbox/modes.js";
 import { LOCAL_PROVIDER, SandboxProviders } from "../../src/sandbox/providers.js";
 import type { SandboxService } from "../../src/sandbox/sandbox.service.js";
@@ -174,7 +175,7 @@ beforeAll(async () => {
           memoryMb: 1024,
           diskMb: 2048,
           mode: p.allowedMode,
-          network: { kind: "allowlist", hosts: [...p.localAllowedDomains] },
+          network: { kind: "allowlist", hosts: orgAllowedDomains(deployment, orgSettings) },
         };
       },
     } as Pick<SandboxService, "devicePolicy" | "deviceLimits" | "hostGrantCeiling">,

@@ -94,7 +94,7 @@ import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { KERNEL_LOGGER, REDIS } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
-import { effectiveSandboxLimits } from "../orgs/settings.service.js";
+import { effectiveSandboxLimits, readOrgSettings } from "../orgs/settings.service.js";
 import { isStorageError } from "../runtime/permission-context-errors.js";
 import { canonicalJson } from "../tools/canonical-json.js";
 import { attachmentsDir } from "./attachments-path.js";
@@ -102,7 +102,7 @@ import {
   CloudPermissionSnapshots,
   type CloudSnapshotOutcome,
 } from "./cloud-permission-snapshot.js";
-import type { HostGrantCeiling } from "./device-sandbox.js";
+import type { DeviceSandbox, HostGrantCeiling } from "./device-sandbox.js";
 import {
   isKernelReadMethod,
   type KernelReadInvocation,
@@ -126,6 +126,7 @@ import {
   type DeviceNetwork,
   type EffectiveDevicePolicy,
   instanceLimitsJson,
+  orgEffectiveHosts,
   providerLimits,
   readInstanceLimits,
   sameApplied,
@@ -687,6 +688,8 @@ export class SandboxService {
       | "readHeldEnvironment"
       | "readDevice"
       | "deviceSandbox"
+      | "deviceSandboxFacts"
+      | "orgHostGrantCeiling"
     >,
     @Inject(SandboxOperationIntents) private readonly operationIntents: SandboxOperationIntents,
     @Inject(SandboxOperationAuthority) private readonly authority: SandboxOperationAuthority,
@@ -831,13 +834,17 @@ export class SandboxService {
   }
 
   /**
-   * The org's sandbox-mode limits ({@link deviceLimits} with the sandbox-mode allowlist): what a local device's sandbox mode may reach at most, so what a network grant,
-   * approval or request is checked against.
+   * The org's limits for a standing network grant (a scheduled task's grant, a network approval):
+   * {@link deviceLimits} with the org's per-call host ceiling as an allowlist (`hostGrantCeiling`
+   * with no device). Where that ceiling is bounded by the kernel only (`any`, which an allowlist
+   * cannot carry with its exclusions), the org's effective hosts: a standing grant never reaches
+   * past what the org lists. A device's own layers narrow it further at each exec.
    */
   async ceilingLimits(orgId: string): Promise<SandboxLimits> {
-    const [policy, override] = await Promise.all([
-      this.devicePolicy({ orgId }),
+    const [ceiling, override, { deviceNetwork: org }] = await Promise.all([
+      this.facts.orgHostGrantCeiling(orgId),
       readSandboxLimitOverride(this.db.db, orgId),
+      readOrgSettings(this.db.db, orgId),
     ]);
     const cfg = this.config.get().sandbox;
     return effectiveSandboxLimits(
@@ -845,10 +852,25 @@ export class SandboxService {
         cpu: cfg.limits.cpu,
         memoryMb: cfg.limits.memoryMb,
         diskMb: cfg.limits.diskMb,
-        network: { kind: "allowlist", hosts: [...policy.localAllowedDomains] },
+        network: {
+          kind: "allowlist",
+          hosts: ceiling.kind === "any" ? orgEffectiveHosts(cfg.limits, org) : [...ceiling.hosts],
+        },
       },
       override,
     );
+  }
+
+  /**
+   * Why a per-call host grant for each host is unavailable on the device, naming who can add it
+   * (`hostGrantRefusal`; null: grantable): a network ask is made only for a grantable host.
+   */
+  async hostRefusal(device: {
+    orgId: string;
+    deviceId: string;
+  }): Promise<{ refusal: (host: string) => string | null; box: DeviceSandbox }> {
+    const facts = await this.facts.deviceSandboxFacts(device.orgId, device.deviceId);
+    return { refusal: facts.refusal, box: facts.box };
   }
 
   /**

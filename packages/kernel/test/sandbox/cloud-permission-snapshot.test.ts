@@ -3,7 +3,6 @@ import type { SandboxProvider } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { afterAll, beforeAll, beforeEach, expect, it } from "vitest";
 import { KernelConfigSchema } from "../../src/config/schema.js";
-import { DevicesService } from "../../src/devices/devices.service.js";
 import { KernelDb } from "../../src/infra/database/kernel-db.js";
 import { createLogger } from "../../src/log.js";
 import { OrgSettingsService } from "../../src/orgs/settings.service.js";
@@ -346,17 +345,6 @@ it("a stored platform off over the default is part of the old effective authorit
   const f = await fixture();
   await snapshots().snapshot(f.orgId, f.deviceId);
   expect(await f.device()).toMatchObject({ owner_full_access: false, outer_network: OPEN });
-});
-
-it("after a snapshot the old switch narrows the owner ceiling, and clearing it never widens", async () => {
-  const f = await fixture();
-  await snapshots().snapshot(f.orgId, f.deviceId);
-  const devices = k.app.get(DevicesService);
-  await devices.update(f.orgId, f.accountId, f.deviceId, { mode: "sandbox" });
-  expect((await f.device()).owner_full_access).toBe(false);
-  await devices.update(f.orgId, f.accountId, f.deviceId, { mode: null });
-  expect((await f.device()).owner_full_access).toBe(false);
-  expect((await policy(f)).mode).toBe("sandbox");
 });
 
 it("the file reset job reconciles the device it reset", async () => {

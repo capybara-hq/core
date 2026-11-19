@@ -88,17 +88,16 @@ const canonicalReport = (r: DeviceOwnerCeiling) => ({
  * - `blocked`: a stale or conflicting report arrived: fail closed, admission refused;
  * - `missing`: nothing readable (no report, or one of an older protocol): fail closed.
  *
- * The report maps onto the facts the kernel decides with today: `fullAccess` is the report's
- * `outsideSandbox`, `restrictedAllowedDomains` its `allowedDomains`; `network` is carried for the
- * device sandbox the kernel computes next.
+ * The facts carry the report's fields under its own names: `outsideSandbox`, `network` and
+ * `allowedDomains` (the owner's sandbox allowlist, a ceiling while its network is `allowlist`).
  */
 export interface OwnerFacts {
   state: "report" | "blocked" | "missing";
-  /** The owner allows running outside the sandbox (the report's `outsideSandbox`). */
-  fullAccess: boolean;
+  /** The owner allows running outside the sandbox (an escalated call). */
+  outsideSandbox: boolean;
   restrictedProjectReach: RestrictedProjectReach;
-  /** The owner's sandbox allowlist (the report's `allowedDomains`). */
-  restrictedAllowedDomains: string[];
+  /** The owner's sandbox allowlist: the machine's host ceiling while its network is `allowlist`. */
+  allowedDomains: string[];
   /** The owner's sandbox network (`allowlist` when failing closed). */
   network: "open" | "allowlist";
   revision: string | null;
@@ -107,9 +106,9 @@ export interface OwnerFacts {
 }
 
 const FAIL_CLOSED = {
-  fullAccess: false,
+  outsideSandbox: false,
   restrictedProjectReach: "workspace" as const,
-  restrictedAllowedDomains: [],
+  allowedDomains: [],
   network: "allowlist" as const,
 };
 
@@ -125,9 +124,9 @@ export function ownerFactsOfReport(stored: StoredOwnerReport): OwnerFacts {
     };
   return {
     state: "report",
-    fullAccess: stored.report.outsideSandbox,
+    outsideSandbox: stored.report.outsideSandbox,
     restrictedProjectReach: stored.report.restrictedProjectReach,
-    restrictedAllowedDomains: [...stored.report.allowedDomains],
+    allowedDomains: [...stored.report.allowedDomains],
     network: stored.report.network,
     revision: stored.report.revision,
     sequence: stored.report.sequence,
@@ -166,7 +165,7 @@ export function ownerReportRevokes(
     return (
       next.restrictedProjectReach === "workspace" && scope.readRoots.some((r) => !inMachine(r))
     );
-  if (isFullExecutionScope(scope)) return !next.fullAccess;
+  if (isFullExecutionScope(scope)) return !next.outsideSandbox;
   if (next.restrictedProjectReach === "workspace" && outsideMachineRoots(scope, machineRoots))
     return true;
   if (!isExecutionMethod(method)) return false;
@@ -176,7 +175,7 @@ export function ownerReportRevokes(
   if (scope.network.kind !== "allowlist" || next.network !== "allowlist") return false;
   return scope.network.hosts.some(
     (host) =>
-      !next.restrictedAllowedDomains.some((pattern) => coversHost(pattern, host)) &&
+      !next.allowedDomains.some((pattern) => coversHost(pattern, host)) &&
       !grantedHosts.includes(host),
   );
 }
@@ -206,10 +205,10 @@ export function machineRootList(roots: unknown): string[] {
 }
 
 /**
- * The mode encoding of a machine's owner outside-sandbox permission (the kernel's internal ceiling
- * encoding; never re-encodes reach): `auto` only for an authenticated report that allows running
- * outside the sandbox; a blocked, missing or older report fails closed.
+ * A machine's owner outside-sandbox permission in the kernel-internal tier encoding (`SandboxMode`
+ * in `sandbox/modes.ts`; never re-encodes reach): `auto` only for an authenticated report that
+ * allows running outside the sandbox; a blocked, missing or older report fails closed.
  */
 export function ownerModeOf(row: { owner_report?: unknown }): "auto" | "sandbox" {
-  return ownerFactsOf(row).fullAccess ? "auto" : "sandbox";
+  return ownerFactsOf(row).outsideSandbox ? "auto" : "sandbox";
 }

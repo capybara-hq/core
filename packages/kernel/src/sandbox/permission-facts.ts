@@ -32,6 +32,7 @@ import {
   type DeviceSandbox,
   type DeviceSandboxDeviceLayer,
   effectiveDeviceSandbox,
+  type HostGrantCeiling,
   hostGrantCeiling,
   hostGrantRefusal,
   providerLayerOf,
@@ -128,10 +129,10 @@ export class PermissionFacts {
         ? null
         : {
             state: facts.state,
-            outsideSandbox: facts.fullAccess,
+            outsideSandbox: facts.outsideSandbox,
             restrictedProjectReach: facts.restrictedProjectReach,
             network: facts.network,
-            allowedDomains: facts.restrictedAllowedDomains,
+            allowedDomains: facts.allowedDomains,
           };
     const sandbox = await this.deviceSandboxFacts(orgId, deviceId, availability);
     return {
@@ -186,12 +187,12 @@ export class PermissionFacts {
     let owner: { network: "open" | "allowlist"; allowedDomains: readonly string[] } | null = null;
     if (location === "local") {
       const facts = ownerFactsOf(row ?? {});
-      owner = { network: facts.network, allowedDomains: facts.restrictedAllowedDomains };
+      owner = { network: facts.network, allowedDomains: facts.allowedDomains };
       device = {
         location,
-        outsideSandbox: facts.fullAccess,
+        outsideSandbox: facts.outsideSandbox,
         network: facts.network,
-        allowedDomains: facts.restrictedAllowedDomains,
+        allowedDomains: facts.allowedDomains,
         restrictedProjectReach: facts.restrictedProjectReach,
       };
     } else device = { location, ...cloudOwnNetwork(row) };
@@ -226,6 +227,41 @@ export class PermissionFacts {
         hostCeiling: canonicalHostCeiling(hostCeiling),
       } satisfies ConsentReach,
     };
+  }
+
+  /**
+   * The per-call host ceiling of an org, with no device (`hostGrantCeiling` under the platform and
+   * org layers alone): what a standing grant that may reach any of the org's devices (a scheduled
+   * task's network grant, a network approval) is checked against. A device's own layers only
+   * narrow it further.
+   */
+  async orgHostGrantCeiling(orgId: string): Promise<HostGrantCeiling> {
+    const [settings, org] = await Promise.all([
+      readDeviceSandboxSettings(this.db.db, this.config),
+      readOrgSettings(this.db.db, orgId),
+    ]);
+    const limits = this.config.get().sandbox.limits;
+    const platform = {
+      settings,
+      allowHosts: limits.allowHosts,
+      orgHosts: limits.orgHosts,
+      egress: limits.egress,
+    };
+    const orgLayer = {
+      ...(org.outsideSandbox !== undefined && { outsideSandbox: org.outsideSandbox }),
+      ...(org.deviceNetwork !== undefined && { deviceNetwork: org.deviceNetwork }),
+    };
+    const box = effectiveDeviceSandbox(
+      platform,
+      orgLayer,
+      { location: "cloud", networkMode: null, networkHosts: [] },
+      {
+        boundary: "operation",
+        network: { openPublic: true, allowlist: true, perOperationHosts: true },
+        outsideSandbox: false,
+      },
+    );
+    return hostGrantCeiling(box, platform, orgLayer, null);
   }
 
   /** Stored binding only; projectScope supplies the live owner and deletion checks. */

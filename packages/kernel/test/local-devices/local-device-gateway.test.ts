@@ -492,8 +492,8 @@ describe("the hello's policy summary and the reported mode", () => {
       {
         action: "device.owner_ceiling_changed",
         detail: expect.objectContaining({
-          from: expect.objectContaining({ fullAccess: true }),
-          to: expect.objectContaining({ fullAccess: false }),
+          from: expect.objectContaining({ outsideSandbox: true }),
+          to: expect.objectContaining({ outsideSandbox: false }),
           via: "device",
         }),
       },

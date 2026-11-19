@@ -495,10 +495,10 @@ function legacyPreparationSession(s: SandboxSession): PreparationSession {
 export const FULL_ACCESS_OFF_BY_POLICY_TOOL_TEXT =
   "Full access is turned off by your organization's or the platform's policy, so nothing ran. Continue with the Request approval or Approve for me permission profile, or ask an org admin (or a super admin) to allow Full access.";
 /**
- * The device's owner ceiling does not allow Full access (`device.full_access_not_allowed`).
+ * The device does not allow running outside the sandbox (`device.outside_sandbox_not_allowed`).
  */
-export const FULL_ACCESS_CEILING_TOOL_TEXT =
-  "This device's owner ceiling does not allow Full access, so nothing ran. Ask the device's owner to raise it with `capybara-device ceiling set` on that machine, or continue with the Request approval or Approve for me permission profile.";
+export const OUTSIDE_SANDBOX_CEILING_TOOL_TEXT =
+  "This device does not allow running commands outside the sandbox, so nothing ran. Run the command inside the sandbox, or ask the device's owner to allow it on that machine with `capybara-device ceiling set --outside-sandbox on`.";
 /** The full-access refusal codes off by policy (organization and platform). */
 const FULL_ACCESS_OFF_BY_POLICY_CODES: ReadonlySet<string> = new Set([
   "org.outside_sandbox_not_allowed",
@@ -634,8 +634,8 @@ export function mapSandboxError(e: unknown, log: Pick<Logger, "warn"> | undefine
     if (e.code === "device.files_lost") return new ToolError(ENV_FILES_LOST_TEXT);
     if (e.code === "device.offline") return new ToolError(DEVICE_OFFLINE_TEXT);
     if (e.code === "device.program_outdated") return new ToolError(DEVICE_OUTDATED_TEXT);
-    if (e.code === "device.full_access_not_allowed")
-      return new ToolError(FULL_ACCESS_CEILING_TOOL_TEXT);
+    if (e.code === "device.outside_sandbox_not_allowed")
+      return new ToolError(OUTSIDE_SANDBOX_CEILING_TOOL_TEXT);
     if (FULL_ACCESS_OFF_BY_POLICY_CODES.has(e.code))
       return new ToolError(FULL_ACCESS_OFF_BY_POLICY_TOOL_TEXT);
     if (e.code === "device.permission_reconcile_required") {

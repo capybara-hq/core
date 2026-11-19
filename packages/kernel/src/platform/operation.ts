@@ -248,7 +248,7 @@ export const PLATFORM_DOMAINS: readonly { id: string; description: string }[] = 
   {
     id: "devices",
     description:
-      "Your own cloud devices (the workspaces your conversations run in): list, read, create, rename, delete, wipe the files.",
+      "Your own cloud devices (the workspaces your conversations run in): list, read, create, rename, narrow the sandbox network, delete, wipe the files.",
   },
   {
     id: "schedules",

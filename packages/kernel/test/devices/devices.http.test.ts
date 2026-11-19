@@ -128,11 +128,23 @@ describe("devices API", () => {
       sessionIsolation: false,
       filesLost: false,
       instance: null,
-      limits: {
-        mode: expect.any(String),
-        network: { kind: expect.any(String), hosts: expect.any(Array) },
+      limits: { network: { kind: expect.any(String), hosts: expect.any(Array) } },
+      // a cloud device has no machine and no owner ceiling, and never runs outside its sandbox
+      ownerCeiling: null,
+      sandbox: {
+        network: "open",
+        networkCeiling: "open",
+        hosts: [],
+        ownNetwork: null,
+        allowedDomains: [],
+        outsideSandbox: false,
+        layer: { network: null, outsideSandbox: "provider" },
+        recent: [],
       },
     });
+    // the kernel-internal tier is not part of the view
+    expect(env.limits).not.toHaveProperty("mode");
+    expect(env).not.toHaveProperty("mode");
     expect(typeof env.createdAt).toBe("string");
 
     const l = await list(m.req);
@@ -457,15 +469,15 @@ describe("devices API", () => {
   });
 });
 
-describe("a cloud device's mode switch (auto mode spec §4.3, hardening D2)", () => {
+describe("a cloud device's sandbox network (approval-only profiles design)", () => {
   const patch = (req: Req, id: string, payload: Record<string, unknown>) =>
     req({ method: "PATCH", url: `${base()}/${id}`, payload });
-  const modeAudits = (id: string) =>
+  const networkAudits = (id: string) =>
     db
       .selectFrom("audit_events")
       .select(["actor_account_id", "detail"])
       .where("target", "=", id)
-      .where("action", "=", "device.mode_changed")
+      .where("action", "=", "device.network_changed")
       .orderBy("at")
       .orderBy("id")
       .execute();
@@ -477,130 +489,277 @@ describe("a cloud device's mode switch (auto mode spec §4.3, hardening D2)", ()
     });
     expect(res.statusCode, res.body).toBe(200);
   };
+  const viewOf = (res: { json(): unknown }) => (res.json() as { device: DeviceView }).device;
 
-  it("defaults to auto; the owner narrows it to sandbox, which applies the org's allowlist", async () => {
-    await setOrgNetwork({ ceiling: "allowlist" });
+  /** A Full access conversation on the device and an admitted open-network operation in it. */
+  async function fullAccessWork(accountId: string, deviceId: string) {
+    const agentId = randomUUID();
+    const conversationId = randomUUID();
+    await db
+      .insertInto("agents")
+      .values({
+        id: agentId,
+        org_id: orgId,
+        owner_account_id: accountId,
+        visibility: "org",
+        current_version: 1,
+      })
+      .execute();
+    await db
+      .insertInto("conversations")
+      .values({
+        id: conversationId,
+        org_id: orgId,
+        account_id: accountId,
+        agent_id: agentId,
+        title: null,
+        source: "web",
+        device_id: deviceId,
+        permission_profile: "full-access",
+        permission_consent: JSON.stringify({ deviceId, scopeRevision: "test" }),
+      })
+      .execute();
+    const intent = async (network: Record<string, unknown>) => {
+      const operationId = randomUUID();
+      const scope = {
+        operationId,
+        deviceId,
+        rootConversationId: conversationId,
+        profileRevision: 0,
+        ceilingRevision: "test",
+        profile: "full-access",
+        actor: { accountId, conversationId },
+        tag: "test",
+        filesystem: { kind: "scoped", readRoots: ["/w"], writeRoots: ["/w"] },
+        network,
+      };
+      await db
+        .insertInto("sandbox_operation_intents")
+        .values({
+          operation_id: operationId,
+          org_id: orgId,
+          account_id: accountId,
+          device_id: deviceId,
+          root_conversation_id: conversationId,
+          conversation_id: conversationId,
+          run_id: null,
+          call_id: null,
+          ordinal: 0,
+          method: "exec",
+          input_hash: "a".repeat(64),
+          admission_hash: "b".repeat(64),
+          input: "{}",
+          scope: JSON.stringify(scope),
+          epochs: JSON.stringify({ platform: 0, org: 0, device: 0, root: 0 }),
+          provider: "sandbox-fake",
+          provider_version: "test",
+          instance_generation: "test",
+          deadline: new Date(Date.now() + 30_000),
+          retain_until: new Date(Date.now() + 60_000),
+          state: "admitted",
+          execution_id: randomUUID(),
+        })
+        .execute();
+      return operationId;
+    };
+    const stateOf = async (operationId: string) =>
+      (
+        await db
+          .selectFrom("sandbox_operation_intents")
+          .select("state")
+          .where("operation_id", "=", operationId)
+          .executeTakeFirstOrThrow()
+      ).state;
+    const profile = async () =>
+      (
+        await db
+          .selectFrom("conversations")
+          .select("permission_profile")
+          .where("id", "=", conversationId)
+          .executeTakeFirstOrThrow()
+      ).permission_profile;
+    return { conversationId, intent, stateOf, profile };
+  }
+
+  it("follows the org by default; the owner narrows it to the allowlist, audited and listed", async () => {
+    await setOrgNetwork(null);
     const me = await member();
-    const env = await create(me.req, "Mode");
-    expect(env.mode).toMatchObject({
-      mode: "auto",
-      allowedMode: "auto",
-      allowedBy: "platform",
-    });
-    expect(env.limits).toMatchObject({ mode: "auto", network: { kind: "open-public" } });
-    // the network sandbox mode would give it, named before the switch (hardening spec D3)
-    expect(env.mode.sandboxNetwork).toEqual({
-      kind: "allowlist",
+    const env = await create(me.req, "Net");
+    expect(env.sandbox).toMatchObject({ network: "open", ownNetwork: null });
+    expect(env.limits.network).toEqual({ kind: "open-public", hosts: [] });
+
+    const set = await patch(me.req, env.id, { network: { mode: "allowlist" } });
+    expect(set.statusCode, set.body).toBe(200);
+    const view = viewOf(set);
+    // an allowlist with no hosts of its own follows the org's hosts
+    expect(view.sandbox).toMatchObject({
+      network: "allowlist",
+      ownNetwork: "allowlist",
+      allowedDomains: [],
       hosts: expect.arrayContaining(["registry.npmjs.org"]),
     });
-
-    const set = await patch(me.req, env.id, { mode: "sandbox" });
-    expect(set.statusCode, set.body).toBe(200);
-    const view = (set.json() as { device: DeviceView }).device;
-    expect(view.mode).toMatchObject({ mode: "sandbox", allowedMode: "auto" });
-    expect(view.limits).toMatchObject({
-      mode: "sandbox",
-      network: { kind: "allowlist" },
-    });
-    expect(view.mode.recent[0]).toMatchObject({
-      kind: "mode",
-      mode: { from: "auto", to: "sandbox" },
+    expect(view.limits.network).toMatchObject({ kind: "allowlist" });
+    expect(view.sandbox.recent[0]).toMatchObject({
+      kind: "network",
+      network: { from: { mode: null, hosts: [] }, to: { mode: "allowlist", hosts: [] } },
       via: "web",
       outcome: "applied",
     });
-    expect(await modeAudits(env.id)).toEqual([
+    expect(await networkAudits(env.id)).toEqual([
       {
         actor_account_id: me.id,
-        detail: { from: "auto", to: "sandbox", by: me.id, via: "web" },
+        detail: {
+          from: { mode: null, hosts: [] },
+          to: { mode: "allowlist", hosts: [] },
+          by: me.id,
+          via: "web",
+        },
       },
     ]);
-
-    // the same narrow mode again changes nothing; a rename and the mode in one request
-    expect((await patch(me.req, env.id, { mode: "sandbox" })).statusCode).toBe(200);
-    const both = await patch(me.req, env.id, { name: "Mode 2", mode: "sandbox" });
+    // the same setting again changes nothing; a rename and the network in one request
+    const both = await patch(me.req, env.id, { name: "Net 2", network: { mode: "allowlist" } });
     expect(both.statusCode, both.body).toBe(200);
-    expect((both.json() as { device: DeviceView }).device).toMatchObject({
-      name: "Mode 2",
-      mode: { mode: "sandbox" },
-    });
-    expect(await modeAudits(env.id)).toHaveLength(1);
-    // auto is never set as such: the owner clears the choice (mode null) to follow the org
-    expect((await patch(me.req, env.id, { mode: "auto" })).statusCode).toBe(400);
-  });
+    expect(viewOf(both).name).toBe("Net 2");
+    expect(await networkAudits(env.id)).toHaveLength(1);
 
-  it("the owner sends it back to auto with mode null (follow the org), audited (spec D2, K4)", async () => {
-    await setOrgNetwork({ ceiling: "allowlist" });
-    const me = await member();
-    const env = await create(me.req, "Back");
-    expect((await patch(me.req, env.id, { mode: "sandbox" })).statusCode).toBe(200);
-    const back = await patch(me.req, env.id, { mode: null });
-    expect(back.statusCode, back.body).toBe(200);
-    const view = (back.json() as { device: DeviceView }).device;
-    expect(view.mode).toMatchObject({ mode: "auto", allowedMode: "auto" });
-    expect(view.limits).toMatchObject({ mode: "auto", network: { kind: "open-public" } });
-    expect(view.mode.recent[0]).toMatchObject({
-      kind: "mode",
-      mode: { from: "sandbox", to: "auto" },
-      via: "web",
+    // its own hosts only narrow the org's; closed; then back to following the org
+    const narrowed = await patch(me.req, env.id, {
+      network: { mode: "allowlist", hosts: ["registry.npmjs.org"] },
     });
-    expect(await modeAudits(env.id)).toEqual([
-      { actor_account_id: me.id, detail: { from: "auto", to: "sandbox", by: me.id, via: "web" } },
-      { actor_account_id: me.id, detail: { from: "sandbox", to: "auto", by: me.id, via: "web" } },
+    expect(narrowed.statusCode, narrowed.body).toBe(200);
+    expect(viewOf(narrowed).sandbox).toMatchObject({
+      hosts: ["registry.npmjs.org"],
+      allowedDomains: ["registry.npmjs.org"],
+    });
+    const closed = await patch(me.req, env.id, { network: { mode: "none" } });
+    expect(viewOf(closed).sandbox).toMatchObject({ network: "none", hosts: [] });
+    const back = await patch(me.req, env.id, { network: { mode: null } });
+    expect(viewOf(back).sandbox).toMatchObject({ network: "open", ownNetwork: null });
+    expect(viewOf(back).sandbox.recent.map((r) => r.network?.to.mode)).toEqual([
+      null,
+      "none",
+      "allowlist",
+      "allowlist",
     ]);
-    // following the org again changes nothing and writes nothing
-    expect((await patch(me.req, env.id, { mode: null })).statusCode).toBe(200);
-    expect(await modeAudits(env.id)).toHaveLength(2);
-    const stored = await db
-      .selectFrom("devices")
-      .select("mode")
-      .where("id", "=", env.id)
-      .executeTakeFirstOrThrow();
-    expect(stored.mode).toBeNull();
   });
 
-  it("on the default open cloud network, sandbox mode keeps the open network (spec D3)", async () => {
-    await setOrgNetwork(null);
-    const me = await member();
-    const env = await create(me.req, "Open");
-    expect(env.mode.sandboxNetwork).toEqual({ kind: "open-public", hosts: [] });
-    const set = await patch(me.req, env.id, { mode: "sandbox" });
-    const view = (set.json() as { device: DeviceView }).device;
-    expect(view.mode).toMatchObject({
-      mode: "sandbox",
-      network: { kind: "open-public" },
-      sandboxNetwork: { kind: "open-public", hosts: [] },
-    });
-  });
-
-  it("mode null while the org allows only sandbox clears the choice and widens nothing", async () => {
-    const me = await member();
-    const env = await create(me.req, "Capped");
-    expect((await patch(me.req, env.id, { mode: "sandbox" })).statusCode).toBe(200);
-    const off = await owner({
-      method: "PATCH",
-      url: `/api/v1/orgs/${orgId}/settings`,
-      payload: { outsideSandbox: "off" },
-    });
-    expect(off.statusCode, off.body).toBe(200);
+  it("above the org's ceiling, or a host outside the org's list → 400 device.network_not_allowed", async () => {
+    await setOrgNetwork({ ceiling: "allowlist" });
     try {
-      const back = await patch(me.req, env.id, { mode: null });
-      expect(back.statusCode, back.body).toBe(200);
-      expect((back.json() as { device: DeviceView }).device.mode).toMatchObject({
-        mode: "sandbox",
-        allowedMode: "sandbox",
+      const me = await member();
+      const env = await create(me.req, "Capped");
+      expect(env.sandbox).toMatchObject({
+        network: "allowlist",
+        networkCeiling: "allowlist",
+        layer: { network: "org" },
       });
-      expect(await modeAudits(env.id)).toHaveLength(1);
+      const open = await patch(me.req, env.id, { network: { mode: "open" } });
+      expect(open.statusCode, open.body).toBe(400);
+      expect(errCode(open)).toBe("device.network_not_allowed");
+      const host = await patch(me.req, env.id, {
+        network: { mode: "allowlist", hosts: ["evil.example.org"] },
+      });
+      expect(host.statusCode, host.body).toBe(400);
+      expect(errCode(host)).toBe("device.network_not_allowed");
+      expect(JSON.stringify(host.json())).toContain("an organization admin adds evil.example.org");
+      // nothing was written
+      const row = await db
+        .selectFrom("devices")
+        .select(["network_mode", "network_hosts"])
+        .where("id", "=", env.id)
+        .executeTakeFirstOrThrow();
+      expect(row).toEqual({ network_mode: null, network_hosts: [] });
+      expect(await networkAudits(env.id)).toEqual([]);
     } finally {
-      await owner({
-        method: "PATCH",
-        url: `/api/v1/orgs/${orgId}/settings`,
-        payload: { outsideSandbox: null },
-      });
+      await setOrgNetwork(null);
     }
   });
 
+  it("a narrowing revokes open-network work and keeps Full consent; a widening resets it", async () => {
+    await setOrgNetwork(null);
+    const me = await member();
+    const env = await create(me.req, "Revoke");
+    const w = await fullAccessWork(me.id, env.id);
+    const openWork = await w.intent({ kind: "open-public" });
+    const listed = await w.intent({ kind: "allowlist", hosts: ["registry.npmjs.org"] });
+
+    const narrowed = await patch(me.req, env.id, { network: { mode: "allowlist" } });
+    expect(narrowed.statusCode, narrowed.body).toBe(200);
+    expect(await w.stateOf(openWork)).toBe("revoked");
+    expect(await w.stateOf(listed)).toBe("admitted");
+    expect(await w.profile()).toBe("full-access");
+
+    const widened = await patch(me.req, env.id, { network: { mode: "open" } });
+    expect(widened.statusCode, widened.body).toBe(200);
+    expect(await w.profile()).toBe("approve-for-me");
+    const changed = await db
+      .selectFrom("conversation_events")
+      .select("type")
+      .where("conversation_id", "=", w.conversationId)
+      .where("type", "=", "permission_profile_changed")
+      .execute();
+    expect(changed).toHaveLength(1);
+  });
+
+  it("an API token may only narrow it (a rename still works); a local device's network is its machine's", async () => {
+    await setOrgNetwork(null);
+    const me = await member();
+    const env = await create(me.req, "Tokened");
+    const { token } = await apiTokensFor(db).createPersonal(me.id, { name: "cli" });
+    const viaPat = (payload: Record<string, unknown>) =>
+      k.http.inject({
+        method: "PATCH",
+        url: `${base()}/${env.id}`,
+        headers: { authorization: `Bearer ${token}`, "x-capybara-csrf": "1" },
+        payload,
+      });
+    const narrowed = await viaPat({ network: { mode: "allowlist" } });
+    expect(narrowed.statusCode, narrowed.body).toBe(200);
+    for (const network of [{ mode: "open" }, { mode: null }]) {
+      const res = await viaPat({ network });
+      expect(res.statusCode, res.body).toBe(400);
+      expect(errCode(res)).toBe("device.network_not_allowed");
+    }
+    const renamed = await viaPat({ name: "By token" });
+    expect(renamed.statusCode, renamed.body).toBe(200);
+    expect(await networkAudits(env.id)).toHaveLength(1);
+
+    for (const payload of [
+      {},
+      { network: { mode: "max" } },
+      { network: { mode: "open", hosts: ["a.example.com"] } },
+      { network: { mode: "allowlist", hosts: ["http://x"] } },
+      // the old auto/sandbox switch and the cloud Full ceiling are gone
+      { mode: "sandbox" },
+      { ownerCeiling: { fullAccess: false } },
+    ]) {
+      const res = await patch(me.req, env.id, payload);
+      expect(res.statusCode, JSON.stringify(payload)).toBe(400);
+      expect(errCode(res)).toBe("validation_failed");
+    }
+
+    const local = await k.app
+      .get(TransactionHost)
+      .run(() => k.app.get(DevicesService).createLocal(orgId, me.id, "Laptop"));
+    const res = await patch(me.req, local.id, { network: { mode: "allowlist" } });
+    expect(res.statusCode, res.body).toBe(409);
+    expect(errCode(res)).toBe("device.ceiling_on_machine");
+  });
+
+  it("another member or the org's owner changing my device gets not_found", async () => {
+    const me = await member();
+    const other = await member();
+    const env = await create(me.req, "Not yours");
+    for (const req of [other.req, owner]) {
+      const res = await patch(req, env.id, { network: { mode: "none" } });
+      expect(res.statusCode, res.body).toBe(404);
+      expect(errCode(res)).toBe("device.not_found");
+    }
+    expect(await networkAudits(env.id)).toEqual([]);
+  });
+
   it("a used instance is pending until its next use", async () => {
-    await setOrgNetwork({ ceiling: "allowlist" });
+    await setOrgNetwork(null);
     const me = await member();
     const env = await create(me.req, "Used");
     const conversationId = randomUUID();
@@ -614,61 +773,8 @@ describe("a cloud device's mode switch (auto mode spec §4.3, hardening D2)", ()
       async () => null,
       ctl(),
     );
-    const set = await patch(me.req, env.id, { mode: "sandbox" });
+    const set = await patch(me.req, env.id, { network: { mode: "allowlist" } });
     expect(set.statusCode, set.body).toBe(200);
-    expect((set.json() as { device: DeviceView }).device.mode).toMatchObject({
-      pendingNextUse: true,
-    });
-  });
-
-  it("another member or the org's owner switching my device gets not_found", async () => {
-    const me = await member();
-    const other = await member();
-    const env = await create(me.req, "Not yours");
-    for (const req of [other.req, owner]) {
-      const res = await patch(req, env.id, { mode: "sandbox" });
-      expect(res.statusCode, res.body).toBe(404);
-      expect(errCode(res)).toBe("device.not_found");
-    }
-    const mine = await me.req({ method: "GET", url: `${base()}/${env.id}` });
-    expect((mine.json() as { device: DeviceView }).device.mode.mode).toBe("auto");
-    expect(await modeAudits(env.id)).toEqual([]);
-  });
-
-  it("an API token cannot set it (a rename still works); a local device's mode is its machine's", async () => {
-    const me = await member();
-    const env = await create(me.req, "Tokened");
-    const { token } = await apiTokensFor(db).createPersonal(me.id, { name: "cli" });
-    const viaPat = (payload: Record<string, unknown>) =>
-      k.http.inject({
-        method: "PATCH",
-        url: `${base()}/${env.id}`,
-        headers: { authorization: `Bearer ${token}`, "x-capybara-csrf": "1" },
-        payload,
-      });
-    // a device's mode is a person's choice in a web session, narrowing or widening (spec K4)
-    for (const mode of ["sandbox", null]) {
-      const res = await viaPat({ mode });
-      expect(res.statusCode, res.body).toBe(403);
-      expect(errCode(res)).toBe("device.mode_requires_session");
-    }
-    const renamed = await viaPat({ name: "By token" });
-    expect(renamed.statusCode, renamed.body).toBe(200);
-    expect(await modeAudits(env.id)).toEqual([]);
-
-    for (const payload of [{}, { mode: "max" }, { mode: "sandbox", x: 1 }]) {
-      const res = await patch(me.req, env.id, payload);
-      expect(res.statusCode, JSON.stringify(payload)).toBe(400);
-      expect(errCode(res)).toBe("validation_failed");
-    }
-
-    const local = await k.app
-      .get(TransactionHost)
-      .run(() => k.app.get(DevicesService).createLocal(orgId, me.id, "Laptop"));
-    for (const mode of ["sandbox", null]) {
-      const res = await patch(me.req, local.id, { mode });
-      expect(res.statusCode, res.body).toBe(409);
-      expect(errCode(res)).toBe("device.mode_on_device");
-    }
+    expect(viewOf(set).sandbox).toMatchObject({ pendingNextUse: true });
   });
 });

@@ -215,19 +215,6 @@ export class ProjectKnowledgeService {
         });
         return unavailableProject(bound.project, bound.root, projectUnavailable.unsupported());
       }
-      // A machine reporting a wider mode than the org allows is not read unasked. The local
-      // provider rechecks the current ceiling on every readFile / stat request as well.
-      if (scope.widerThanAllowed) {
-        this.log.warn("project knowledge not read: the device runs a wider mode than allowed", {
-          ...where,
-          deviceId,
-        });
-        return unavailableProject(
-          bound.project,
-          bound.root,
-          projectUnavailable.widerMode(bound.root),
-        );
-      }
       const enter = await this.entry(input, bound.accountId, bound.root);
       return await enter(
         {

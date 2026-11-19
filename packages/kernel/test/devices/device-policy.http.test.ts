@@ -13,7 +13,6 @@ import { createDb } from "../../src/db/pool.js";
 import type { DeviceView } from "../../src/devices/devices.service.js";
 import { DevicesService } from "../../src/devices/devices.service.js";
 import { TransactionHost } from "../../src/infra/database/transaction-host.js";
-import { HOSTS_ON_MACHINE_MESSAGE } from "../../src/local-devices/device-policy.service.js";
 import { deviceLeaseKey } from "../../src/local-devices/keys.js";
 import { MachinesService } from "../../src/local-devices/machines.js";
 import { legacyDbFor } from "../helpers/conversations.js";
@@ -33,11 +32,11 @@ import { FakeMachine, ownerReportFor } from "../local-devices/fake-machine-v3.js
 import type { Answer } from "../local-devices/test-holder.js";
 
 /**
- * The device owner changes the machine's policy from the web (network ask-to-allow spec §7, §13
- * Q6; auto mode spec §4.1): `POST /devices/:id/policy` removing hosts or with `mode: "sandbox"`,
+ * The device owner narrows the machine's sandbox from the web (approval-only profiles design,
+ * "Settings model"): `POST /devices/:id/policy` removing hosts or narrowing the owner ceiling,
  * owner only, web session only, delivered with the `policy` op to a fake machine on a real
- * WebSocket, and the recent changes on the device view. Under device protocol 4 an `add` is
- * refused before anything is sent or recorded: hosts are added on the machine only.
+ * WebSocket, and the recent changes on the device view. The web never widens it: an `add`, an open
+ * network or running outside the sandbox is refused before anything is sent or recorded.
  */
 
 const POLICY: DeviceLocalPolicySummary = {
@@ -177,13 +176,17 @@ function applying(
     if (req.op !== "policy") return { ok: true, result: null };
     const a = req.args as {
       remove?: string[];
-      ownerCeiling?: Pick<Partial<DeviceOwnerCeiling>, "outsideSandbox" | "restrictedProjectReach">;
+      ownerCeiling?: Pick<
+        Partial<DeviceOwnerCeiling>,
+        "outsideSandbox" | "restrictedProjectReach" | "network"
+      >;
     };
     const domains = new Set(now.allowedDomains);
     for (const h of a.remove ?? []) domains.delete(h);
     now = { ...now, allowedDomains: [...domains] };
     // the answer carries the owner report issued for the change (a narrowing applied)
     if (a.ownerCeiling?.outsideSandbox === false) ceiling = { ...ceiling, outsideSandbox: false };
+    if (a.ownerCeiling?.network === "allowlist") ceiling = { ...ceiling, network: "allowlist" };
     if (a.ownerCeiling?.restrictedProjectReach !== undefined)
       ceiling = { ...ceiling, restrictedProjectReach: a.ownerCeiling.restrictedProjectReach };
     return {
@@ -216,18 +219,25 @@ async function view(req: Req, deviceId: string): Promise<DeviceView> {
 }
 
 describe("POST /devices/:id/policy", () => {
-  it("an add is refused (nothing sent or recorded); the owner removes and narrows to sandbox (the owner ceiling); each change is audited", async () => {
+  it("the web never widens (nothing sent or recorded); the owner removes hosts and narrows the ceiling; each change is audited", async () => {
     const d = await owned();
     const start: DeviceLocalPolicySummary = {
       allowedDomains: ["pypi.org", "files.slack.com", "*.npmjs.org"],
     };
     const machine = await connect(d, applying(start), { ...FEATURES, policy: start });
 
-    // protocol 4: the platform never widens a local device's sandbox; hosts are added on the machine
-    const added = await post(d.req, d.deviceId, { add: ["files.example.com"] });
-    expect(added.statusCode, added.body).toBe(409);
-    expect(errCode(added)).toBe("device.policy_refused");
-    expect(errMessage(added)).toBe(HOSTS_ON_MACHINE_MESSAGE);
+    // protocol 4: the platform never widens a local device's sandbox; that happens on the machine
+    for (const payload of [
+      { add: ["files.example.com"] },
+      { ownerCeiling: { outsideSandbox: true } },
+      { ownerCeiling: { network: "open" } },
+      { ownerCeiling: { restrictedProjectReach: "os-user" } },
+      { mode: "sandbox" },
+    ]) {
+      const res = await post(d.req, d.deviceId, payload);
+      expect(res.statusCode, JSON.stringify(payload)).toBe(400);
+      expect(errCode(res)).toBe("validation_failed");
+    }
     expect(policyReqs(machine)).toEqual([]);
     expect(await auditsOf(d.deviceId, "device.policy_requested")).toEqual([]);
     expect(await auditsOf(d.deviceId, "device.policy_failed")).toEqual([]);
@@ -244,59 +254,57 @@ describe("POST /devices/:id/policy", () => {
       source: { accountId: d.accountId, accountName: `Name ${d.login}`, via: "web" },
     });
 
-    const narrowed = await post(d.req, d.deviceId, { mode: "sandbox" });
+    const narrowed = await post(d.req, d.deviceId, {
+      ownerCeiling: { outsideSandbox: false, network: "allowlist" },
+    });
     expect(narrowed.statusCode, narrowed.body).toBe(200);
-    expect(narrowed.json()).toEqual({
-      policy: { allowedDomains: ["files.slack.com", "*.npmjs.org"] },
-    });
-    // the narrowing reaches the machine as the owner-ceiling narrowing it stands for
     expect(policyReqs(machine).at(-1)?.args).toMatchObject({
-      ownerCeiling: { outsideSandbox: false, restrictedProjectReach: "workspace" },
+      ownerCeiling: { outsideSandbox: false, network: "allowlist" },
     });
-    expect(policyReqs(machine).at(-1)?.args).not.toHaveProperty("mode");
 
     expect((await auditsOf(d.deviceId)).map((a) => a.detail)).toEqual([
-      expect.objectContaining({ remove: ["pypi.org"], via: "web" }),
+      { opId: expect.any(String), remove: ["pypi.org"], by: d.accountId, via: "web" },
     ]);
-    // the Full change is the owner report's, audited once by its writer; no daily mode audit
+    // the ceiling change is the owner report's, audited once by its writer as the web's
     expect(
       (await auditsOf(d.deviceId, "device.owner_ceiling_changed")).map((a) => a.detail),
     ).toEqual([
       expect.objectContaining({
-        from: { fullAccess: true, restrictedProjectReach: "workspace" },
-        to: { fullAccess: false, restrictedProjectReach: "workspace" },
+        from: { outsideSandbox: true, restrictedProjectReach: "workspace", network: "open" },
+        to: { outsideSandbox: false, restrictedProjectReach: "workspace", network: "allowlist" },
         via: "web",
       }),
     ]);
-    expect(await auditsOf(d.deviceId, "device.mode_changed")).toEqual([]);
 
     // the device page lists the recent changes, newest first, with the person's name
     const v = await view(d.req, d.deviceId);
-    expect(v.mode.local).toEqual({
-      reported: "sandbox",
+    expect(v.ownerCeiling).toMatchObject({
+      state: "report",
+      outsideSandbox: false,
+      network: "allowlist",
       allowedDomains: ["files.slack.com", "*.npmjs.org"],
     });
-    expect(v.mode.recent).toHaveLength(2);
-    expect(v.mode.recent[0]).toMatchObject({
+    expect(v.sandbox).toMatchObject({
+      network: "allowlist",
+      ownNetwork: "allowlist",
+      allowedDomains: ["files.slack.com", "*.npmjs.org"],
+      outsideSandbox: false,
+    });
+    expect(v.sandbox.recent).toHaveLength(2);
+    expect(v.sandbox.recent[0]).toMatchObject({
       kind: "ceiling",
       ceiling: {
-        from: { fullAccess: true, restrictedProjectReach: "workspace" },
-        to: { fullAccess: false, restrictedProjectReach: "workspace" },
+        from: { outsideSandbox: true, restrictedProjectReach: "workspace", network: "open" },
+        to: { outsideSandbox: false, restrictedProjectReach: "workspace", network: "allowlist" },
       },
       by: `Name ${d.login}`,
       via: "web",
     });
-    expect(v.mode.recent[1]).toMatchObject({
+    expect(v.sandbox.recent[1]).toMatchObject({
       kind: "policy",
       add: [],
       remove: ["pypi.org"],
       by: `Name ${d.login}`,
-    });
-    expect(v.mode).toMatchObject({
-      mode: "sandbox",
-      allowedMode: "auto",
-      allowedBy: "platform",
-      local: { reported: "sandbox" },
     });
   });
 
@@ -310,14 +318,14 @@ describe("POST /devices/:id/policy", () => {
       const res = await post(d.req, d.deviceId, { remove: [`h${i}.example.com`] });
       expect(res.statusCode, res.body).toBe(200);
     }
-    const recent = (await view(d.req, d.deviceId)).mode.recent;
+    const recent = (await view(d.req, d.deviceId)).sandbox.recent;
     expect(recent.map((r) => r.remove[0])).toEqual(
       Array.from({ length: 10 }, (_, i) => `h${10 - i}.example.com`),
     );
     // the list view carries them too
     const list = await d.req({ method: "GET", url: base() });
     const item = (list.json() as { items: DeviceView[] }).items.find((i) => i.id === d.deviceId);
-    expect(item?.mode.recent).toHaveLength(10);
+    expect(item?.sandbox.recent).toHaveLength(10);
   });
 
   it("another member and an org admin get 404; nothing is sent", async () => {
@@ -328,7 +336,7 @@ describe("POST /devices/:id/policy", () => {
     expect(res.statusCode, res.body).toBe(404);
     expect(errCode(res)).toBe("device.not_found");
     const admin = await session(k, "owner");
-    const viaAdmin = await post(admin, d.deviceId, { mode: "sandbox" });
+    const viaAdmin = await post(admin, d.deviceId, { ownerCeiling: { outsideSandbox: false } });
     expect(viaAdmin.statusCode, viaAdmin.body).toBe(404);
     expect(policyReqs(machine)).toEqual([]);
     expect(await auditsOf(d.deviceId)).toEqual([]);
@@ -343,7 +351,7 @@ describe("POST /devices/:id/policy", () => {
       method: "POST",
       url: `${base()}/${d.deviceId}/policy`,
       headers: { authorization: `Bearer ${pat.token}`, "x-capybara-csrf": "1" },
-      payload: { mode: "sandbox" },
+      payload: { ownerCeiling: { outsideSandbox: false } },
     });
     expect(viaPat.statusCode, viaPat.body).toBe(403);
     expect(errCode(viaPat)).toBe("auth.session_required");
@@ -367,27 +375,21 @@ describe("POST /devices/:id/policy", () => {
     const machine = await connect(d, applying(POLICY));
     for (const payload of [
       {},
-      { add: [] },
-      { add: ["http://evil.com"] },
-      { add: ["10.0.0.1"] },
-      { add: ["Files.Slack.com"] },
+      { remove: [] },
+      { remove: ["http://evil.com"] },
+      { remove: ["Files.Slack.com"] },
       { remove: ["localhost"] },
       { network: "open" },
       { mode: "auto" },
       { isolation: "none" },
-      { add: ["a.example.com"], extra: true },
-      { add: Array.from({ length: 21 }, (_, i) => `h${i}.example.com`) },
-      { add: ["*.com"] },
-      { add: ["*.co.uk"] },
-      { add: ["*.github.io"] },
+      { remove: ["a.example.com"], extra: true },
+      { remove: Array.from({ length: 101 }, (_, i) => `h${i}.example.com`) },
+      { ownerCeiling: {} },
+      { ownerCeiling: { outsideSandbox: false, extra: true } },
     ]) {
       const res = await post(d.req, d.deviceId, payload);
       expect(res.statusCode, JSON.stringify(payload)).toBe(400);
     }
-    const suffix = await post(d.req, d.deviceId, { add: ["*.co.uk"] });
-    expect(JSON.stringify(suffix.json())).toContain(
-      "Use a narrower domain; *.co.uk covers a whole public suffix.",
-    );
     expect(policyReqs(machine)).toEqual([]);
   });
 

@@ -267,8 +267,8 @@ describe("MachinesService", () => {
         actor_account_id: a,
         org_id: orgId,
         detail: {
-          from: { fullAccess: false, restrictedProjectReach: "os-user" },
-          to: { fullAccess: true, restrictedProjectReach: "os-user" },
+          from: { outsideSandbox: false, restrictedProjectReach: "os-user" },
+          to: { outsideSandbox: true, restrictedProjectReach: "os-user" },
           sequence: 2,
           by: a,
           via: "device",
@@ -277,13 +277,13 @@ describe("MachinesService", () => {
       },
     ]);
     // the device page lists it, made on the device
-    const recent = (await devices.get(orgId, a, m.deviceId)).mode.recent;
+    const recent = (await devices.get(orgId, a, m.deviceId)).sandbox.recent;
     expect(recent.map((r) => [r.kind, r.ceiling, r.via])).toEqual([
       [
         "ceiling",
         {
-          from: { fullAccess: false, restrictedProjectReach: "os-user" },
-          to: { fullAccess: true, restrictedProjectReach: "os-user" },
+          from: { outsideSandbox: false, restrictedProjectReach: "os-user" },
+          to: { outsideSandbox: true, restrictedProjectReach: "os-user" },
         },
         "device",
       ],
@@ -342,7 +342,6 @@ describe("MachinesService", () => {
       by: a,
       via: "device",
       machineId: m.machineId,
-      approvalId: null,
     };
     expect(await changes("device.policy_changed")).toEqual([
       { actor_account_id: a, detail: { add: ["files.example.com"], remove: [], ...common } },
@@ -351,8 +350,8 @@ describe("MachinesService", () => {
       {
         actor_account_id: a,
         detail: {
-          from: { fullAccess: true, restrictedProjectReach: "workspace" },
-          to: { fullAccess: false, restrictedProjectReach: "workspace" },
+          from: { outsideSandbox: true, restrictedProjectReach: "workspace" },
+          to: { outsideSandbox: false, restrictedProjectReach: "workspace" },
           sequence: 2,
           by: a,
           via: "device",
@@ -360,7 +359,7 @@ describe("MachinesService", () => {
         },
       },
     ]);
-    const recent = (await devices.get(orgId, a, m.deviceId)).mode.recent;
+    const recent = (await devices.get(orgId, a, m.deviceId)).sandbox.recent;
     expect(recent.map((r) => [r.kind, r.add, r.via])).toEqual([
       ["policy", ["files.example.com"], "device"],
       ["ceiling", [], "device"],

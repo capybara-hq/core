@@ -264,7 +264,6 @@ async function disconnect(d: Dev, machine: FakeMachine) {
 }
 
 const source = (accountId: string) => ({
-  approvalId: "ap-1",
   accountId,
   accountName: "Me",
   via: "web" as const,
@@ -354,11 +353,9 @@ describe("device policy intents", () => {
         actor_account_id: d.accountId,
         detail: {
           opId,
-          add: [],
           remove: ["files.slack.com"],
           by: d.accountId,
           via: "web",
-          approvalId: "ap-1",
         },
       },
     ]);
@@ -409,11 +406,9 @@ describe("device policy intents", () => {
     ]);
     expect(audits[1]?.detail).toEqual({
       opId,
-      add: [],
       remove: ["files.slack.com"],
       by: d.accountId,
       via: "web",
-      approvalId: "ap-1",
     });
     // the resolver never re-sends the change: one `policy`, one `policyStatus`
     expect(policyReqs(machine)).toHaveLength(1);
@@ -485,7 +480,7 @@ describe("device policy intents", () => {
     expect(audits[2]?.detail).toMatchObject({ opId, remove: ["files.slack.com"], late: true });
     expect((await policies.summary(d.deviceId))?.policy?.allowedDomains).toEqual(["pypi.org"]);
     // the device page lists the change once applied, after the unconfirmed attempt
-    const recent = (await devices.get(orgId, d.accountId, d.deviceId)).mode.recent;
+    const recent = (await devices.get(orgId, d.accountId, d.deviceId)).sandbox.recent;
     expect(recent).toEqual([
       expect.objectContaining({
         kind: "policy",
@@ -586,7 +581,7 @@ describe("device policy intents", () => {
     expect(audits[1]?.detail).toMatchObject({ reason: "refused", message: sim.refuse });
     expect((await policies.summary(d.deviceId))?.policy).toEqual(POLICY);
     // the device page lists the change that did not take effect
-    const recent = (await devices.get(orgId, d.accountId, d.deviceId)).mode.recent;
+    const recent = (await devices.get(orgId, d.accountId, d.deviceId)).sandbox.recent;
     expect(recent).toEqual([
       expect.objectContaining({
         kind: "policy",
