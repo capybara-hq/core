@@ -1209,14 +1209,33 @@ function request(o: Record<string, unknown>): KernelRequest {
       JSON.stringify({ type: "req", id, op: native, args: validated, deadlineMs }),
       "kernel",
     );
-    if (
-      native === "writeFile" &&
-      (typeof a.dataB64 !== "string" ||
-        !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(a.dataB64))
-    )
+    if (native === "writeFile" && (typeof a.dataB64 !== "string" || !isBase64(a.dataB64)))
       throw new DeviceProtocolError("Invalid base64 payload");
   }
   return freeze({ type: "req", id, op: op as DeviceOperation, args: a, deadlineMs });
+}
+/**
+ * Padded standard base64: whole quartets of `A-Z a-z 0-9 + /`, the last one possibly ending in
+ * `=` or `==`. One linear pass: a regex with a repeated group exhausts the engine's backtracking
+ * stack on payloads of a few megabytes.
+ */
+function isBase64(value: string): boolean {
+  if (value.length % 4 !== 0) return false;
+  const padding = value.endsWith("==") ? 2 : value.endsWith("=") ? 1 : 0;
+  for (let i = 0; i < value.length - padding; i++) {
+    const c = value.charCodeAt(i);
+    if (
+      !(
+        (c >= 65 && c <= 90) ||
+        (c >= 97 && c <= 122) ||
+        (c >= 48 && c <= 57) ||
+        c === 43 ||
+        c === 47
+      )
+    )
+      return false;
+  }
+  return true;
 }
 /** Strictly parses one protocol 3 frame; throws {@link DeviceProtocolError}. */
 export function parseDeviceFrame(
@@ -1371,7 +1390,7 @@ export function parseOperationResult(
       integer(o.offset) !== offset ||
       typeof o.dataB64 !== "string" ||
       o.dataB64.length > 87384 ||
-      !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(o.dataB64)
+      !isBase64(o.dataB64)
     )
       throw new DeviceProtocolError("Invalid output range or base64");
     const decoded = atob(o.dataB64);

@@ -122,9 +122,7 @@ it.runIf(process.platform === "darwin")(
         }
       }
       // the whole device path of one request except the socket: frame parse, base64, backend,
-      // the answer serialised as the session sends it. A write frame carrying more than about
-      // 3.3 MB overflows the SDK's base64 pattern check (parseDeviceFrame), so this round moves 3 MB.
-      const frameData = data.subarray(0, 3 * 1024 * 1024);
+      // the answer serialised as the session sends it
       const framePath = join(roots.workspace, "frame.bin");
       const serve = async (op: string, args: object) => {
         const started = performance.now();
@@ -152,15 +150,15 @@ it.runIf(process.platform === "darwin")(
         const wire = JSON.stringify(res);
         return { res, wire, ms: performance.now() - started };
       };
-      const write = await serve("writeFile", { dataB64: frameData.toString("base64") });
+      const write = await serve("writeFile", { dataB64: data.toString("base64") });
       expect(write.res, write.wire.slice(0, 300)).toMatchObject({ ok: true });
-      expect((await readFile(framePath)).equals(frameData)).toBe(true);
-      const read = await serve("readFile", { maxBytes: frameData.length });
+      expect((await readFile(framePath)).equals(data)).toBe(true);
+      const read = await serve("readFile", { maxBytes: data.length });
       const answer = JSON.parse(read.wire) as { result: { dataB64: string } };
-      expect(Buffer.from(answer.result.dataB64, "base64").equals(frameData)).toBe(true);
+      expect(Buffer.from(answer.result.dataB64, "base64").equals(data)).toBe(true);
       report.push(
-        `restricted frame write (3 MB): total=${write.ms.toFixed(0)}ms`,
-        `restricted frame read (3 MB): total=${read.ms.toFixed(0)}ms`,
+        `restricted frame write: total=${write.ms.toFixed(0)}ms`,
+        `restricted frame read: total=${read.ms.toFixed(0)}ms`,
       );
     } finally {
       stop();
