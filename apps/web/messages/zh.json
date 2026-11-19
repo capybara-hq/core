@@ -4164,6 +4164,10 @@
       "actions": {
         "accountCreated": "创建了账号",
         "accountUpdated": "修改了账号",
+        "authAppAuthorized": "授权桌面端登录",
+        "authAppSignedIn": "桌面端已登录",
+        "platformIconUpdated": "更换了平台图标",
+        "platformIconCleared": "恢复了默认平台图标",
         "identityLinked": "关联了外部身份",
         "identityVerified": "验证了外部身份",
         "identityUnlinked": "解除了外部身份关联",

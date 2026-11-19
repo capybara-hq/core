@@ -8,6 +8,10 @@
 export const AUDIT_ACTION_KEYS: Readonly<Record<string, string>> = {
   "account.created": "accountCreated",
   "account.updated": "accountUpdated",
+  "auth.app_authorized": "authAppAuthorized",
+  "auth.app_signed_in": "authAppSignedIn",
+  "platform.icon.updated": "platformIconUpdated",
+  "platform.icon.cleared": "platformIconCleared",
   "identity.linked": "identityLinked",
   "identity.verified": "identityVerified",
   "identity.unlinked": "identityUnlinked",
