@@ -401,10 +401,13 @@ function strArray(o: Record<string, unknown>, k: string, label: string = k): str
   return v as string[];
 }
 
-/** The exec `limits`: resources and the outer network (no mode: protocol 4 removed it). */
+/**
+ * The exec `limits`: resources and the outer network (no mode: protocol 4 removed it). Unknown
+ * keys are refused, so a stale `mode` (or any field the device would ignore) is never accepted.
+ */
 function parseLimits(v: unknown): SandboxLimits {
-  const o = obj(v, 'field "limits"');
-  const network = obj(o.network, 'field "network"');
+  const o = strictRecord(v, ["cpu", "memoryMb", "diskMb", "network"], 'field "limits"');
+  const network = strictRecord(o.network, ["kind", "hosts"], 'field "network"');
   const kind = oneOf(network, "kind", ["open-public", "allowlist"] as const);
   const hosts = strArray(network, "hosts", "network.hosts");
   for (const h of hosts) {

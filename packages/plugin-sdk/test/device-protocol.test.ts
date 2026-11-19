@@ -174,6 +174,10 @@ describe("device protocol", () => {
         "exec",
         { ...exec, limits: { ...limits, network: { ...limits.network, hosts: ["10.0.0.1"] } } },
       ],
+      // protocol 4 removed the mode tier: unknown limits keys are refused, not ignored
+      ["exec", { ...exec, limits: { ...limits, mode: "auto" } }],
+      ["exec", { ...exec, limits: { ...limits, network: { ...limits.network, extra: true } } }],
+      ["create", { limits: { ...limits, mode: "auto" } }],
       ["exec", { ...exec, cwd: 1 }],
       ["exec", { ...exec, env: { A: 1 } }],
       ["readFile", { path: "/a", maxBytes: -1 }],
