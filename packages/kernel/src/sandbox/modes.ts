@@ -166,7 +166,8 @@ export function deviceNetwork(
   mode: SandboxMode,
 ): DeviceNetwork {
   if (deployment.limits.egress === "none") return { kind: "allowlist", hosts: [] };
-  // auto mode is 开放挡内网 whatever the org says; only sandbox mode applies `deviceNetwork`
+  // auto mode is the open public network (private ranges closed) whatever the org says; only
+  // sandbox mode applies `deviceNetwork`
   if (mode === "auto") return { kind: "open-public", hosts: [] };
   if (orgCloudMode(deployment.limits, org.deviceNetwork) === "open") {
     return { kind: "open-public", hosts: [] };
