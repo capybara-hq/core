@@ -684,3 +684,72 @@ describe("final review a11y (m11, m13, m14)", () => {
     ]);
   });
 });
+
+describe("ConversationPage on a phone (§5.4, mobile layout spec §5.4)", () => {
+  function phone(compact: boolean) {
+    vi.stubGlobal(
+      "matchMedia",
+      (q: string) =>
+        ({
+          matches: compact ? q === "(max-width: 599px)" || q === "(max-width: 1279px)" : false,
+          media: q,
+          addEventListener: () => {},
+          removeEventListener: () => {},
+        }) as unknown as MediaQueryList,
+    );
+  }
+
+  it("the open right area is a pushed full-screen page with a back control, not a dialog", async () => {
+    phone(true);
+    const onCloseRight = vi.fn();
+    wrap(<ConversationPage {...page({ right: "properties", layout: "auto", onCloseRight })} />);
+    const root = document.querySelector('[data-template="ConversationPage"]') as HTMLElement;
+    expect(root.getAttribute("data-right")).toBe("pushed");
+    const pushed = document.querySelector('[data-part="pushed"]') as HTMLElement;
+    expect(pushed).not.toBeNull();
+    expect(within(pushed).getByTestId("properties")).toBeTruthy();
+    expect(screen.queryByRole("dialog")).toBeNull();
+    await userEvent.click(within(pushed).getByRole("button", { name: "返回" }));
+    expect(onCloseRight).toHaveBeenCalledTimes(1);
+  });
+
+  it("a panel is pushed too, and Esc goes back", async () => {
+    phone(true);
+    const onCloseRight = vi.fn();
+    wrap(<ConversationPage {...page({ right: "panel", layout: "auto", onCloseRight })} />);
+    const pushed = document.querySelector('[data-part="pushed"]') as HTMLElement;
+    expect(within(pushed).getByTestId("panel")).toBeTruthy();
+    await userEvent.keyboard("{Escape}");
+    expect(onCloseRight).toHaveBeenCalledTimes(1);
+  });
+
+  it("closed, nothing is pushed and data-right stays none", () => {
+    phone(true);
+    wrap(<ConversationPage {...page({ right: "none", layout: "auto" })} />);
+    const root = document.querySelector('[data-template="ConversationPage"]') as HTMLElement;
+    expect(root.getAttribute("data-right")).toBe("none");
+    expect(document.querySelector('[data-part="pushed"]')).toBeNull();
+  });
+
+  it("a wider window keeps the sheet (medium) and is never pushed", () => {
+    vi.stubGlobal(
+      "matchMedia",
+      (q: string) =>
+        ({
+          matches: q === "(max-width: 1279px)",
+          media: q,
+          addEventListener: () => {},
+          removeEventListener: () => {},
+        }) as unknown as MediaQueryList,
+    );
+    wrap(<ConversationPage {...page({ right: "properties", layout: "auto" })} />);
+    expect(document.querySelector('[data-part="pushed"]')).toBeNull();
+    expect(screen.getByRole("dialog")).toBeTruthy();
+  });
+
+  it("an explicit layout never pushes", () => {
+    phone(true);
+    wrap(<ConversationPage {...page({ right: "properties", layout: "sheet" })} />);
+    expect(document.querySelector('[data-part="pushed"]')).toBeNull();
+  });
+});

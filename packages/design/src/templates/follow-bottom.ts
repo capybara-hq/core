@@ -1,4 +1,4 @@
-import { useCallback } from "react";
+import { useCallback, useRef } from "react";
 
 /** Within this many px of the bottom counts as "at the bottom": new content is followed. */
 const FOLLOW_SLACK = 48;
@@ -43,6 +43,44 @@ function topVisible(el: HTMLElement): HTMLElement | null {
 }
 
 /**
+ * Long threads: once an item has been measured it gets `content-visibility: auto` and its height as
+ * `contain-intrinsic-size` (`auto` keeps the browser's own last-rendered size once it has one), so
+ * the first paint never skips an item and off-screen items skip layout and paint afterwards. The
+ * items are observed one by one: a streaming item re-measures only itself.
+ */
+function lightenItems(wrapper: Element | null): () => void {
+  if (!wrapper || typeof ResizeObserver === "undefined") return () => {};
+  const apply = (item: HTMLElement, height: number) => {
+    if (!(height > 0)) return;
+    item.style.setProperty("content-visibility", "auto");
+    item.style.setProperty("contain-intrinsic-size", `auto ${Math.round(height)}px`);
+  };
+  const measure = new ResizeObserver((entries) => {
+    for (const e of entries) {
+      const item = e.target as HTMLElement;
+      apply(item, e.borderBoxSize?.[0]?.blockSize ?? item.getBoundingClientRect().height);
+    }
+  });
+  const watch = (n: Node) => {
+    if (n instanceof HTMLElement) measure.observe(n);
+  };
+  for (const c of Array.from(wrapper.children)) watch(c);
+  const items = new MutationObserver((records) => {
+    for (const r of records) {
+      for (const n of Array.from(r.addedNodes)) watch(n);
+      for (const n of Array.from(r.removedNodes)) {
+        if (n instanceof HTMLElement) measure.unobserve(n);
+      }
+    }
+  });
+  items.observe(wrapper, { childList: true });
+  return () => {
+    items.disconnect();
+    measure.disconnect();
+  };
+}
+
+/**
  * A thread that follows the newest message. The thread's scroll container is anchored at the
  * bottom by CSS (`flex-direction: column-reverse` around one content wrapper, so its scroll origin,
  * `scrollTop` 0, is the bottom): the first painted frame, server HTML before any script, already
@@ -56,12 +94,24 @@ function topVisible(el: HTMLElement): HTMLElement | null {
  * always instant (never smooth): a smooth scroll chases growing streamed content, and instant
  * scrolling also honors prefers-reduced-motion.
  *
+ * `onUnseen(true)` fires when content arrives while the reader is away from the bottom (the
+ * "latest" button), `onUnseen(false)` once they are back within the slack. A resize (the keyboard,
+ * a closing sheet) is not arrival: the follow state decided before it is reapplied after it, and
+ * the content's height not changing raises nothing.
+ *
+ * It also lightens long threads: each item of the thread (the children of the scroller's one
+ * content wrapper) gets `content-visibility: auto` with a `contain-intrinsic-size` from its last
+ * measured height once it has been measured, so off-screen items skip layout and paint while the
+ * DOM, find in page and scroll anchoring stay whole.
+ *
  * Returns a callback ref, so it attaches again whenever the scroll element is replaced. In a
  * container that is not reversed it scrolls to the bottom on attach and while following.
  */
-export function useFollowBottom<T extends HTMLElement>(): (
-  el: T | null,
-) => (() => void) | undefined {
+export function useFollowBottom<T extends HTMLElement>(
+  onUnseen?: (unseen: boolean) => void,
+): (el: T | null) => (() => void) | undefined {
+  const report = useRef(onUnseen);
+  report.current = onUnseen;
   return useCallback((el: T | null) => {
     if (!el) return undefined;
     const reversed = getComputedStyle(el).flexDirection === "column-reverse";
@@ -70,6 +120,13 @@ export function useFollowBottom<T extends HTMLElement>(): (
     const gap = () => (reversed ? -el.scrollTop : el.scrollHeight - el.clientHeight - el.scrollTop);
     const range = () => el.scrollHeight - el.clientHeight;
     let following = true;
+    let unseen = false;
+    let lastHeight = el.scrollHeight;
+    const setUnseen = (v: boolean) => {
+      if (unseen === v) return;
+      unseen = v;
+      report.current?.(v);
+    };
     let fromTop = range() - gap();
     /** The topmost visible item and its offset from the scroller's top (no scroll anchoring). */
     let anchor: HTMLElement | null = null;
@@ -78,6 +135,7 @@ export function useFollowBottom<T extends HTMLElement>(): (
       a.getBoundingClientRect().top - el.getBoundingClientRect().top;
     const remember = () => {
       following = gap() <= FOLLOW_SLACK;
+      if (following) setUnseen(false);
       fromTop = range() - gap();
       if (reversed && !anchoring && !following) {
         anchor = topVisible(el);
@@ -85,6 +143,9 @@ export function useFollowBottom<T extends HTMLElement>(): (
       } else anchor = null;
     };
     const onGrow = () => {
+      const height = el.scrollHeight;
+      if (!following && height > lastHeight) setUnseen(true);
+      lastHeight = height;
       if (following) {
         el.scrollTop = reversed ? 0 : el.scrollHeight;
       } else if (reversed && !anchoring) {
@@ -111,10 +172,12 @@ export function useFollowBottom<T extends HTMLElement>(): (
     const resize = typeof ResizeObserver === "undefined" ? undefined : new ResizeObserver(onGrow);
     resize?.observe(el);
     if (el.firstElementChild) resize?.observe(el.firstElementChild);
+    const lighten = lightenItems(el.firstElementChild);
     return () => {
       el.removeEventListener("scroll", remember);
       mutations.disconnect();
       resize?.disconnect();
+      lighten();
     };
   }, []);
 }

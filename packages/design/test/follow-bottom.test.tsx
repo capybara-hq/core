@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { cleanup, render } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { ConversationPage, DesignProvider } from "../src/index";
 import { useFollowBottom } from "../src/templates/follow-bottom";
@@ -276,5 +276,182 @@ describe("useFollowBottom attaches again when the scroller is replaced", () => {
     // jsdom applies no stylesheet, so the scroller is not reversed here: attaching scrolls it
     // to the bottom, which proves the hook ran on the new element.
     await vi.waitFor(() => expect(scroll.scrollTop).toBe(900));
+  });
+});
+
+/** A ResizeObserver whose callbacks the test fires by hand (jsdom has none): one entry per target. */
+function stubResizeObserver() {
+  const live = new Set<RO>();
+  class RO {
+    readonly targets = new Set<Element>();
+    constructor(private readonly cb: (entries: { target: Element }[]) => void) {
+      live.add(this);
+    }
+    observe(t: Element) {
+      this.targets.add(t);
+    }
+    unobserve(t: Element) {
+      this.targets.delete(t);
+    }
+    disconnect() {
+      live.delete(this);
+    }
+    fire() {
+      this.cb([...this.targets].map((target) => ({ target })));
+    }
+  }
+  vi.stubGlobal("ResizeObserver", RO);
+  return () => {
+    for (const o of [...live]) o.fire();
+  };
+}
+
+/** scrollHeight 400; clientHeight is mutable (the keyboard). Not reversed: jsdom has no CSS. */
+function mockPlainLayout(view: { h: number }) {
+  const tops = new WeakMap<Element, number>();
+  vi.spyOn(Element.prototype, "scrollHeight", "get").mockReturnValue(400);
+  vi.spyOn(Element.prototype, "clientHeight", "get").mockImplementation(() => view.h);
+  vi.spyOn(Element.prototype, "scrollTop", "get").mockImplementation(function (this: Element) {
+    return tops.get(this) ?? 0;
+  });
+  vi.spyOn(Element.prototype, "scrollTop", "set").mockImplementation(function (
+    this: Element,
+    v: number,
+  ) {
+    tops.set(this, Math.max(0, Math.min(v, this.scrollHeight - view.h)));
+  });
+}
+
+describe("a resize is not a scroll (the keyboard opening, a sheet closing)", () => {
+  function Plain({ n, onUnseen }: { n: number; onUnseen?: (u: boolean) => void }) {
+    const ref = useFollowBottom<HTMLDivElement>(onUnseen);
+    return (
+      <div ref={ref} data-testid="s">
+        <div>
+          {Array.from({ length: n }, (_, i) => (
+            // biome-ignore lint/suspicious/noArrayIndexKey: static case
+            <p key={i}>m {i}</p>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  it("at the bottom, shrinking the scroller by 300 px keeps it at the bottom", () => {
+    const view = { h: 500 };
+    vi.spyOn(Element.prototype, "scrollHeight", "get").mockReturnValue(1000);
+    vi.spyOn(Element.prototype, "clientHeight", "get").mockImplementation(() => view.h);
+    const tops = new WeakMap<Element, number>();
+    vi.spyOn(Element.prototype, "scrollTop", "get").mockImplementation(function (this: Element) {
+      return tops.get(this) ?? 0;
+    });
+    vi.spyOn(Element.prototype, "scrollTop", "set").mockImplementation(function (
+      this: Element,
+      v: number,
+    ) {
+      tops.set(this, Math.max(0, Math.min(v, 1000 - view.h)));
+    });
+    const fire = stubResizeObserver();
+    const r = render(<Plain n={3} />);
+    const el = r.getByTestId("s");
+    expect(el.scrollTop).toBe(500);
+    view.h = 200;
+    fire();
+    expect(el.scrollTop).toBe(800);
+    view.h = 500;
+    fire();
+    expect(el.scrollTop).toBe(500);
+  });
+
+  it("away from the bottom a resize neither follows nor raises the latest signal", () => {
+    const view = { h: 100 };
+    mockPlainLayout(view);
+    const fire = stubResizeObserver();
+    const onUnseen = vi.fn();
+    const r = render(<Plain n={3} onUnseen={onUnseen} />);
+    const el = r.getByTestId("s");
+    el.scrollTop = 100;
+    el.dispatchEvent(new Event("scroll"));
+    view.h = 50;
+    fire();
+    expect(el.scrollTop).toBe(100);
+    expect(onUnseen).not.toHaveBeenCalledWith(true);
+  });
+
+  it("away from the bottom, new content raises the latest signal; scrolling back clears it", async () => {
+    const view = { h: 100 };
+    mockPlainLayout(view);
+    let height = 400;
+    vi.spyOn(Element.prototype, "scrollHeight", "get").mockImplementation(() => height);
+    const onUnseen = vi.fn();
+    const r = render(<Plain n={3} onUnseen={onUnseen} />);
+    const el = r.getByTestId("s");
+    el.scrollTop = 50;
+    el.dispatchEvent(new Event("scroll"));
+    height = 480;
+    r.rerender(<Plain n={4} onUnseen={onUnseen} />);
+    await vi.waitFor(() => expect(onUnseen).toHaveBeenLastCalledWith(true));
+    el.scrollTop = 380;
+    el.dispatchEvent(new Event("scroll"));
+    expect(onUnseen).toHaveBeenLastCalledWith(false);
+  });
+
+  it("thread items get content-visibility auto and their measured height after the first measure", async () => {
+    mockPlainLayout({ h: 100 });
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({
+      height: 120,
+      width: 300,
+      top: 0,
+      bottom: 120,
+      left: 0,
+      right: 300,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    });
+    const fire = stubResizeObserver();
+    const r = render(<Plain n={2} />);
+    const items = [...r.getByTestId("s").querySelectorAll("p")] as HTMLElement[];
+    // not before the first measure: a first paint is never skipped
+    expect(items[0]?.style.contentVisibility ?? "").toBe("");
+    fire();
+    for (const p of items) {
+      expect(p.getAttribute("style")).toMatch(/content-visibility:\s*auto/);
+      expect(p.getAttribute("style")).toMatch(/contain-intrinsic-size:\s*auto 120px/);
+    }
+  });
+});
+
+describe("ConversationPage latest button", () => {
+  const props = (thread: React.ReactNode) => (
+    <DesignProvider locale="en">
+      <ConversationPage
+        titleBar={titleBar}
+        thread={thread}
+        composer={<div>c</div>}
+        status={{ context: "", version: "" }}
+        right="none"
+        onCloseRight={() => {}}
+      />
+    </DesignProvider>
+  );
+
+  it("appears when new content arrives away from the bottom; one tap scrolls down and hides it", async () => {
+    const view = { h: 100 };
+    mockPlainLayout(view);
+    let height = 400;
+    vi.spyOn(Element.prototype, "scrollHeight", "get").mockImplementation(() => height);
+    const r = render(props(<p>one</p>));
+    const scroll = document.querySelector(".cb-conv-scroll") as HTMLElement;
+    expect(screen.queryByRole("button", { name: "Latest" })).toBeNull();
+    scroll.scrollTop = 50;
+    fireEvent.scroll(scroll);
+    height = 500;
+    r.rerender(props([<p key="a">one</p>, <p key="b">two</p>]));
+    const button = await screen.findByRole("button", { name: "Latest" });
+    act(() => button.click());
+    expect(scroll.scrollTop).toBe(400);
+    fireEvent.scroll(scroll);
+    await vi.waitFor(() => expect(screen.queryByRole("button", { name: "Latest" })).toBeNull());
   });
 });

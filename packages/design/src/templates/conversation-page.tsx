@@ -24,7 +24,8 @@ import { BoxScope } from "../layout/box";
 import { useDragDismiss } from "../overlays/drag";
 import { useFocusReturn } from "../overlays/focus-return";
 import { useDesignT } from "../provider";
-import { INLINE_RIGHT_AREA_BELOW } from "../shell/size-class";
+import { useRegisterShellPage } from "../shell/shell-page";
+import { INLINE_RIGHT_AREA_BELOW, useSizeClass } from "../shell/size-class";
 import { StatusBar } from "../shell/status-bar";
 import { useMediaQuery } from "../shell/use-media-query";
 import { useFollowBottom } from "./follow-bottom";
@@ -218,7 +219,7 @@ function useInlineFocus(
     }
     const area = root.current?.querySelector<HTMLElement>(
       shown === "panel"
-        ? '[data-part="panel-slot"] > aside, [data-part="panel-full"] > aside'
+        ? '[data-part="panel-slot"] > aside, [data-part="panel-full"] > aside, [data-part="pushed-body"] > aside'
         : '[data-part="properties"]',
     );
     if (area && !area.contains(document.activeElement)) area.focus({ preventScroll: true });
@@ -246,8 +247,25 @@ export function ConversationPage({
 }: ConversationPageProps) {
   const t = useDesignT();
   const narrowWindow = useMediaQuery(INLINE_RIGHT_AREA_BELOW);
-  const sheet = layout === "sheet" || (layout === "auto" && narrowWindow);
-  const scroll = useFollowBottom<HTMLDivElement>();
+  const compact = useSizeClass() === "compact";
+  const sheetLayout = layout === "sheet" || (layout === "auto" && narrowWindow);
+  const [unseen, setUnseen] = useState(false);
+  const follow = useFollowBottom<HTMLDivElement>(setUnseen);
+  const scrollEl = useRef<HTMLDivElement | null>(null);
+  const scroll = useCallback(
+    (el: HTMLDivElement | null) => {
+      scrollEl.current = el;
+      return follow(el);
+    },
+    [follow],
+  );
+  // One tap on the latest button: to the bottom (a reversed column's origin, scrollTop 0, is the
+  // bottom); the scroll event lets the hook resume following and hide the button.
+  const toLatest = () => {
+    const el = scrollEl.current;
+    if (!el) return;
+    el.scrollTop = getComputedStyle(el).flexDirection === "column-reverse" ? 0 : el.scrollHeight;
+  };
   const root = useRef<HTMLDivElement>(null);
   const [content, setContent] = useState(0);
   const [width, setWidth] = useState(PANEL_DEFAULT);
@@ -361,7 +379,18 @@ export function ConversationPage({
           )}
         </div>
       </div>
-      <div className="cb-conv-composer">{composerNode}</div>
+      <div className="cb-conv-composer">
+        {unseen ? (
+          <div className="cb-conv-latest" data-part="latest">
+            <IconButton
+              label={t("conv.latest")}
+              icon={<Icon name="arrow-down" size={16} />}
+              onClick={toLatest}
+            />
+          </div>
+        ) : null}
+        {composerNode}
+      </div>
     </div>
   );
 
@@ -403,7 +432,25 @@ export function ConversationPage({
     (newConversation !== undefined && loading?.agents === true);
   const open = rightNode != null && right !== "none";
   const full = rightFull === true && right === "panel" && open;
-  useInlineFocus(root, full ? "panel" : sheet ? "sheet" : open ? right : "none");
+  // On a phone (auto layout) the open right area is a page pushed over the conversation, full
+  // screen, kept by the URL hash the page owns: back closes it. Inside an AppShell it also hides
+  // the bottom navigation.
+  const pushed = layout === "auto" && compact && open;
+  const sheet = sheetLayout && !pushed;
+  const closeRight = useRef(onCloseRight);
+  closeRight.current = onCloseRight;
+  const pushedBack = useCallback(() => closeRight.current(), []);
+  useRegisterShellPage(pushed ? { onBack: pushedBack } : {});
+  useEffect(() => {
+    if (!pushed) return;
+    const onKey = (e: globalThis.KeyboardEvent) => {
+      if (e.key === "Escape" && !e.defaultPrevented) closeRight.current();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [pushed]);
+  const inlineArea = open ? right : "none";
+  useInlineFocus(root, pushed ? inlineArea : full ? "panel" : sheet ? "sheet" : inlineArea);
   useEffect(() => {
     if (!full || !onRightFullChange) return;
     const onKey = (e: globalThis.KeyboardEvent) => {
@@ -419,7 +466,7 @@ export function ConversationPage({
       ref={root}
       className="cb-template cb-conv-page"
       data-template="ConversationPage"
-      data-right={right}
+      data-right={pushed ? "pushed" : right}
       data-right-full={full ? "true" : undefined}
       data-layout={layout}
       data-sheet={sheet ? "true" : undefined}
@@ -432,14 +479,14 @@ export function ConversationPage({
             <TitleBar {...titleBar} {...(loading?.title ? { loading: true } : {})} />
           )}
           <div className="cb-conv-cols">
-            {full ? (
+            {full && !pushed ? (
               <div className="cb-conv-panel-full" data-part="panel-full">
                 <RightFullContext.Provider value={true}>{panelNode}</RightFullContext.Provider>
               </div>
             ) : (
               center
             )}
-            {!sheet && right === "properties" ? propertiesNode : null}
+            {!sheet && !pushed && right === "properties" ? propertiesNode : null}
           </div>
           <StatusBar
             context={status.context}
@@ -451,7 +498,7 @@ export function ConversationPage({
             announceFirst={(status.right?.length ?? 0) > 0}
           />
         </div>
-        {!full && !sheet && right === "panel" && open ? (
+        {!full && !sheet && !pushed && right === "panel" && open ? (
           <div
             className="cb-conv-panel"
             data-part="panel-slot"
@@ -476,6 +523,26 @@ export function ConversationPage({
             />
             {panelNode}
           </div>
+        ) : null}
+        {pushed ? (
+          <section className="cb-conv-pushed" data-part="pushed" aria-label={t("panel.label")}>
+            <div className="cb-conv-pushed-bar" data-part="pushed-bar">
+              <IconButton
+                label={t("panel.back")}
+                icon={<Icon name="chevron-left" size={16} />}
+                density="default"
+                onClick={onCloseRight}
+              />
+              {right === "properties" ? (
+                <span className="cb-rpanel-title-text cb-rpanel-title-plain">
+                  {t("props.label")}
+                </span>
+              ) : null}
+            </div>
+            <div className="cb-conv-pushed-body" data-part="pushed-body">
+              {rightNode}
+            </div>
+          </section>
         ) : null}
         {sheet ? (
           // Kept mounted in sheet mode so closing runs Radix's close path (focus goes back to the

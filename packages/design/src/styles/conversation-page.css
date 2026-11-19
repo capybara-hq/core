@@ -1546,3 +1546,70 @@ button.cb-property-row {
   color: var(--cb-warn);
   white-space: nowrap;
 }
+
+/*
+ * The latest button (spec §7.2): an icon button on the composer's top edge, end side, drawn only
+ * while the reader is away from the bottom and new content has arrived.
+ */
+.cb-conv-composer {
+  position: relative;
+}
+.cb-conv-latest {
+  position: absolute;
+  inset-inline-end: var(--cb-layout-gutter);
+  bottom: 100%;
+  z-index: 1;
+  display: flex;
+  margin-bottom: var(--cb-space-2);
+  border: 1px solid var(--cb-line);
+  border-radius: var(--cb-radius-md);
+  background: var(--cb-panel);
+}
+@media (max-width: 599px) {
+  .cb-conv-latest {
+    inset-inline-end: var(--cb-space-4);
+  }
+}
+/*
+ * Phones: the open right area is a page pushed over the conversation (data-right="pushed"), full
+ * screen under the OS insets, with a back bar; the conversation keeps its scroll underneath.
+ */
+.cb-conv-pushed {
+  position: fixed;
+  inset: 0;
+  z-index: var(--cb-z-sheet);
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  padding-top: var(--cb-inset-top, env(safe-area-inset-top, 0px));
+  padding-bottom: var(--cb-inset-bottom, env(safe-area-inset-bottom, 0px));
+  background: var(--cb-panel-2);
+}
+.cb-conv-pushed-bar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-2);
+  height: var(--cb-row-roomy);
+  padding: 0 var(--cb-space-2);
+  border-bottom: 1px solid var(--cb-line-soft);
+}
+.cb-conv-pushed-body {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+}
+.cb-conv-pushed-body > .cb-properties {
+  width: 100%;
+  gap: 0;
+  padding: var(--cb-space-2) var(--cb-space-4);
+}
+.cb-conv-pushed-body > .cb-rpanel {
+  flex: 1;
+  width: 100%;
+  min-width: 0;
+  border-left: 0;
+}
