@@ -3,3 +3,7 @@ export function read() {
   const b = globalThis.capybaraShell;
   return [a, b];
 }
+export function destructure() {
+  const { capybaraShell } = window;
+  return capybaraShell;
+}
