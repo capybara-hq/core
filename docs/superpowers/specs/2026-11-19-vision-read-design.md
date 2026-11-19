@@ -237,7 +237,12 @@ An image is data whose sniffed type is PNG, JPEG, GIF or WebP. The sniff runs be
 - **Retention:** a new `@LockedCron` job (worker only, hourly) handles `read` rows whose
   conversation has had `deleted_at` set for more than `attachments.readPurgeAfterHours` (hot,
   default 24). It claims a batch, deletes each object, then deletes the row, the same pattern as
-  `deleteExpired`. Org purge covers them too.
+  `deleteExpired`. The purge also covers the `read` copies of sub-agent conversations below a
+  deleted root (a descendant walk of at most 16 levels; a sub-agent conversation keeps
+  `deleted_at` null when its root is deleted). Org purge covers them too.
+- **Intent row transaction:** the unbound intent row commits in its own transaction
+  (`propagation: "requires_new"`), so it survives a rollback of a caller's transaction and the
+  expiry collects it; `storeRead` must therefore be called outside a transaction.
 - **Privacy:** a `Read` of an image keeps a copy in the deployment's object store for the life of
   the conversation. In auto mode it can read anywhere on the machine. This is the same exposure
   as `Read` of a text file today, whose content lands in the event log. The `Read` description
@@ -411,7 +416,7 @@ append-only:
 | Conversation cap reached | Shown or described for this call, not stored. The result says it will not stay in the history. |
 | Org whose image model has only 2K sizes | `standard` returns the closest size it has, and the result says `at 2048x2048`. |
 | `resolution: "high"` on ark | The largest size at that ratio, for example 2816×1584 for 16:9. |
-| Conversation deleted | Its `read` copies are purged `readPurgeAfterHours` later. |
+| Conversation deleted | Its `read` copies, and those of its sub-agent conversations (16 levels), are purged `readPurgeAfterHours` later. |
 
 ## Testing
 

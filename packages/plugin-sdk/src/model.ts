@@ -82,7 +82,7 @@ export interface ModelInfo {
      * Whether `document` blocks are accepted (default false). Images are governed by `vision`. When
      * the model does not support them the kernel replaces media blocks with English text
      * placeholders
-     * (e.g. `[Attached image "<name>" — this model cannot view images.]`; `text/*` documents are
+     * (e.g. `[Attached image "<name>" — this model cannot view images. Read with file_id <id> sends it to the organization's vision model, if one is set.]`; `text/*` documents are
      * inlined as truncated text instead),
      * and never sends the bytes to it.
      */

@@ -1050,9 +1050,9 @@ export class AttachmentsService {
   /**
    * Purges the `read` copies of conversations deleted more than `attachments.readPurgeAfterHours`
    * ago (read at run time), and of the sub-agent conversations below them (a sub-agent
-   * conversation keeps `deleted_at` null when its root is deleted): claims up to {@link READ_PURGE_BATCH} rows at a time as `deleting`
-   * (`FOR UPDATE SKIP LOCKED`, so concurrent runs never share a row), deletes each object, then the
-   * row. A row whose object delete fails stays `deleting` and is claimed again on the next run.
+   * conversation keeps `deleted_at` null when its root is deleted): claims up to
+   * {@link READ_PURGE_BATCH} rows at a time as `deleting` (`FOR UPDATE SKIP LOCKED`, so concurrent
+   * runs never share a row), deletes each object, then the row. A row whose object delete fails stays `deleting` and is claimed again on the next run.
    * Chat attachments of deleted conversations are not touched. Does nothing without an object
    * store. Returns the number of rows deleted.
    */
