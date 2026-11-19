@@ -57,7 +57,7 @@ Goals:
 - Foldables, including the iPhone Duo, by progressive enhancement (§8).
 - A **Shell environment** contract for native shells (§9), shared with the desktop spec.
 - An installable PWA with Web Push, on a generic **notification target** model in the kernel
-  (§10), which later carries APNs and Chinese Android vendor push.
+  (§10), built into the kernel, with a seam for native push in an enterprise's own app build.
 - Verification per class and per template, with real-device widths (§11).
 
 Non-goals:
@@ -90,7 +90,7 @@ The layout class follows the **window width** in CSS px (Material window size cl
 |---|---|---|
 | `compact` | < 600 | Phones in portrait, the iPhone Duo outer display (382), a narrow split screen |
 | `medium` | 600–840 | Tablets in portrait, unfolded foldables in portrait, a phone in landscape at the low end |
-| `expanded` | > 840 | Tablets in landscape, the iPhone Duo inner display in landscape (951), desktops |
+| `expanded` | ≥ 841 | Tablets in landscape, the iPhone Duo inner display in landscape (951), desktops |
 
 Never by orientation, device model or user agent. A foldable opening or closing, entering split
 screen or a desktop window being narrowed is just a class change, handled by CSS live, without a
@@ -104,7 +104,7 @@ reload and without losing state (the URL hash keeps the right area, §5.4).
   design package exports them once (`SIZE_CLASS_QUERIES` in `shell/size-class.ts`), next to the
   sidebar's queries today (`SIDEBAR_RAIL_QUERY` / `SIDEBAR_DRAWER_QUERY` in `shell/sidebar.tsx`,
   which they replace). A check (§11.4) rejects any other `max-width` / `min-width` number in the
-  design CSS, except the fit thresholds of §3.3, named in one list.
+  design CSS, except the one fit threshold of §3.3 (1280), named in one list.
 - **JS reads it after hydration.** `useSizeClass(): "compact" | "medium" | "expanded" | null`
   (`null` on the server and during hydration, like `useMediaQuery` today). Where a component's
   tree differs by class, the server render draws every variant and CSS shows one (the pattern
@@ -125,29 +125,32 @@ the StatusBar hides, the PageHeader drops its path row (the back button keeps th
 and the bottom navigation (compact only) shows icons without labels. This is not orientation:
 a short desktop window gets the same.
 
-### 3.3 Fit thresholds inside a class (designer's call)
+### 3.3 Two width rules (decided)
 
-A class picks the **frame**; inside the expanded class some content still needs room it may not
-have. Two thresholds stay, renamed as fit rules, not classes:
+The whole width layout is two rules beside the classes:
 
-- **Full sidebar at 1280.** Expanded windows below 1280 keep today's icon rail (the full sidebar
-  256 + the content minimum would not fit). This is today's rail, so "expanded = today's left
-  sidebar" holds literally: today's sidebar is already a rail below 1280.
-- **Inline right area at 1280.** The conversation's right area (properties or one right panel)
-  sits beside the thread from 1280 (with the full sidebar: 256 + `layout.chat-min` 480 +
-  `layout.panel-min` 520 = 1256); below that, in the expanded and medium classes, it is the side
-  sheet it is today.
+1. **The full sidebar from 841** (the expanded class). The person can collapse it to the rail
+   and expand it again (a toggle in the sidebar head; ⌘\ / Ctrl+\). The choice is remembered in a
+   cookie (`cb-sidebar=rail`, designer's call), which the app layout reads like the theme cookie,
+   so the first paint draws the chosen form and nothing jumps.
+2. **The inline right area from 1280.** The conversation's right area (properties or one right
+   panel) sits beside the thread from 1280; below that, in every class, it opens as a sheet (a
+   side sheet on medium and expanded, a pushed page on compact, §5.4). 1280 is the one fit
+   threshold left in the design CSS. Between 841 and 1279 the thread keeps the width the sidebar
+   leaves it (585 at 841 with the full sidebar, above `layout.chat-min` 480).
 
-The 960 drawer threshold disappears: medium windows get the rail, not a drawer (§4).
+Compared with today: 640 becomes 600, the 960 drawer becomes the medium rail and the compact
+bottom navigation, and below 1280 the sidebar no longer turns into the rail by itself (only by
+the person's toggle).
 
 ## 4. The App Shell per class (decided, details designer's call)
 
 | | compact | medium | expanded |
 |---|---|---|---|
-| Navigation | **Bottom navigation** (4 items, §4.2) | **Navigation rail**: today's icon rail (`layout.sidebar-rail`, 48), the conversations behind a rail button (§4.3) | **Today's sidebar**: full from 1280, the rail below (§3.3) |
+| Navigation | **Bottom navigation** (4 items, §4.2) | **Navigation rail**: today's icon rail (`layout.sidebar-rail`, 48), the conversations behind a rail button (§4.3) | **The full sidebar**, collapsible to the rail by the person (§3.3) |
 | Page | Full screen; deeper pages are **pushed** (bottom nav hidden, back in the bar) | One pane, or list-detail two panes when both fit (§5.2) | Today's layouts (§4.3 of the design spec) |
 | Sidebar content (org switcher, more, account, admin entry) | The **Me** tab (a full page) and bottom sheets | Rail popovers, as today's rail | As today |
-| Right area (conversation) | A full-screen page pushed over the conversation (§5.4) | A side sheet with a follow-finger dismiss | Inline from 1280, a side sheet below |
+| Right area (conversation) | A full-screen page pushed over the conversation (§5.4) | A side sheet with a follow-finger dismiss | Inline from 1280, a side sheet below (§3.3) |
 | Drawer menu bar | Replaced by the **top bar** (§4.1) | None (the rail holds the menu) | None |
 | StatusBar | Hidden (its system status moves to the Me page) | Shown | Shown |
 | ActionRow | Sticky at the bottom, above the safe area | As today | As today |
@@ -169,14 +172,14 @@ The 960 drawer threshold disappears: medium windows get the rail, not a drawer (
   the web adds no edge gesture of its own.
 - **The keyboard hides the bottom navigation** (`data-keyboard="open"`, §7.1).
 
-### 4.2 Bottom navigation items (designer's call against the real nav)
+### 4.2 Bottom navigation items (decided)
 
-The suggestion was conversations, agents, files, me. Against the real navigation
+Four items, defined once in the shell (`AppShell` takes them; apps/web passes the same `useNav`
+data it passes the sidebar). There is **no files page in this design** (decided): files are
+reached from their conversation (§5.5). Against the real navigation
 (`apps/web/src/components/shell/nav.tsx`: the new conversation as home, 智能体, 技能, 连接器, 定时任务
 as primary, the inbox as a brand-row button, devices / plugins / extensions / channels / evals /
-settings under 更多): there is **no workspace files page**, and the inbox is where approvals and
-notices wait. The items, defined once in the shell (`AppShell` takes them; apps/web passes the
-same `useNav` data it passes the sidebar):
+settings under 更多), the inbox is where approvals and notices wait:
 
 | Item | Target | Notes |
 |---|---|---|
@@ -185,7 +188,7 @@ same `useNav` data it passes the sidebar):
 | 收件箱 / Inbox | `/inbox` | With the pending count badge (the brand row's count today) |
 | 我 / Me | `/me` (new compact page) | Account, org switcher, the 更多 items the role sees, personal settings, the admin entry for super admins, system status, sign out; drawn by the shell from the sidebar's data |
 
-Files join when a files page exists (open question 1). 技能 / 连接器 / 定时任务 are reached from
+技能 / 连接器 / 定时任务 are reached from
 Me (and from the agents' pages), as 更多 items are on the sidebar.
 
 ### 4.3 Medium: the rail (designer's call)
@@ -193,12 +196,14 @@ Me (and from the agents' pages), as 更多 items are on the sidebar.
 Today's rail, unchanged in look, gains one button: **conversations**, which opens the
 conversations list as a side sheet over the content (a pane beside a conversation when the
 window has two segments, §8). The account row's popover holds the org switcher and 更多, as the
-rail's does today. The content minimum width (`560`, design spec §4.3) drops to **520** so a
-600 window with the 48 rail fits (552); the conversation's `layout.chat-min` (480) already fits.
+rail's does today. The content minimum width (`560`, design spec §4.3) drops to **552**
+(600 − the 48 rail), so the narrowest medium window fits; at 841 the full sidebar leaves 585, so
+expanded needs nothing more. The conversation's `layout.chat-min` (480) fits both.
 
 ### 4.4 Expanded
 
-Today's shell. The only changes are the renames of §3.3 and the shell environment insets (§9.3).
+Today's shell with the full sidebar from 841 and the person's collapse toggle (§3.3), and the
+shell environment insets (§9.3).
 
 ## 5. Templates per class (decided: templates declare it, pages do not change)
 
@@ -274,7 +279,7 @@ conversation's greeting and agents row.
 - **medium**: the thread centered as today; the right area a side sheet (`layout.panel` or the
   window less 48, whichever is smaller) with follow-finger dismiss (§7.4); conversations in the
   rail's sheet.
-- **expanded**: as today (§3.3 for the inline threshold).
+- **expanded**: as today (the right area inline from 1280, §3.3).
 
 ### 5.5 Approvals, inbox and files (optimized)
 
@@ -360,7 +365,7 @@ No windowing today. Step one is CSS-only: thread items get `content-visibility: 
 `contain-intrinsic-size` from their last measured height, which keeps the DOM (find in page,
 screen readers, the scroll anchoring above) and skips layout and paint off screen. Real
 windowing (only mounting visible items) comes only if a measurement on a mid-range phone with a
-2 000-item recorded log shows it is needed (open question 7), and must then keep follow-bottom,
+2 000-item recorded log shows it is needed (open question 4), and must then keep follow-bottom,
 anchor-to-item (`#approval=`) and find-in-page behavior.
 
 ### 7.4 Follow-finger sheets and drawers
@@ -420,7 +425,7 @@ developer previews behind feature flags:
 WebKit recommends responsive layout plus feature detection, never user-agent sniffing. Content
 does not yet extend behind the outer display's side controls, and Apple has not decided how
 `viewport-fit=cover` behaves there; WKWebView support for either API is not stated (it matters for
-the Capacitor shell: open question 3).
+the Capacitor shell: open question 1).
 
 The design:
 
@@ -522,7 +527,7 @@ declare global {
   | `device@1` | Desktop spec | "Connect this machine" as a local device; status of this machine's device |
   | `notify@1` | Desktop spec | OS notifications while the shell runs; a click focuses the conversation |
   | `openExternal@1` | Desktop spec | Open an http(s) URL in the system browser |
-  | `push@1` | Mobile app spec (later) | Register the app's native push token (APNs, a vendor channel) as a notification target (§10.4) |
+  | `push@1` | Mobile app spec (later) | Only in an enterprise's own fork of the mobile app (§10.9): register its native push token (APNs, a vendor channel) as a notification target. The official app does not offer it |
   | `chrome@1` | This spec | The web tells the shell its scheme and background token so native chrome (status bar, window background, title bar overlay) matches the theme: `setAppearance({ scheme, background })` |
 
   Which shells offer `chrome@1`: the **desktop shell** always (window background and title bar
@@ -606,10 +611,13 @@ declare global {
 
 ### 10.2 The PWA (decided; details designer's call)
 
-- **Manifest** from a Next metadata route (`app/manifest.ts`): name and short name from the
-  deployment (the metadata title, a platform branding setting later: open question 8),
-  `display: "standalone"`, `start_url: "/"`, `scope: "/"`, the capybara icon set (maskable and
-  monochrome), `theme_color` / `background_color` from the default theme's tokens.
+- **Manifest** from a Next metadata route (`app/manifest.ts`), served by the deployment, so the
+  installed app's **name and icon are per deployment (decided)**: name and short name from the
+  kernel config `platform.name` (`CAPYBARA_PLATFORM__NAME`, introduced by the desktop spec,
+  PR #407, and read through `GET /api/v1/meta`), "Capybara" when unset; the icons from the
+  platform icon setting (§10.2.1); `display: "standalone"`, `start_url: "/"`, `scope: "/"`,
+  `theme_color` / `background_color` from the platform default theme's tokens. The document
+  `<title>` default and the `apple-mobile-web-app-title` follow the same name.
 - iOS: `appleWebApp` metadata (capable, `black-translucent` status bar with the safe areas of
   §7.5).
 - **Service worker** `/sw.js` (scope `/`), served by the web with `Cache-Control: no-cache`:
@@ -619,12 +627,33 @@ declare global {
 - **Install** is the browser's own (Chrome's install prompt, Safari's Add to Home Screen); the
   Me page offers a short how-to on iOS, where Web Push needs the home-screen app (iOS 16.4+).
 
+#### 10.2.1 The platform icon (designer's call)
+
+- **Where**: the super admin's deployment settings, `/admin/settings` 外观, beside the platform
+  default theme: a 「应用图标 / App icon」 section with a preview on light and dark grounds,
+  upload, and 恢复默认 / Restore default. Org admins cannot change it (one installed app per
+  deployment).
+- **What is uploaded**: an **app icon**, a square PNG of exactly 512 × 512 (required), and
+  optionally a **maskable** variant, a 512 × 512 PNG whose subject stays inside the central 80 %
+  safe zone (Android launchers crop it to their shape), and an **SVG favicon**. Each at most
+  1 MB; the kernel checks the PNG header's size and the type (no image library: nothing is
+  resized). Without a maskable variant the manifest lists the app icon with purpose `any` only.
+- **Stored** in object storage under the kernel's `deployment/` prefix, with a row in PG
+  (`capybara.platform_icons`: purpose, object key, SHA-256, updated at); served by a public
+  route `GET /api/v1/platform/icon/<purpose>?v=<sha256>` with an immutable cache (the hash in the
+  URL changes on upload).
+- **Uses**: the manifest's icons (512, and the maskable one), the `apple-touch-icon` (iOS scales
+  the 512), the favicon when the active theme sets none (a theme's `logo.favicon` still wins for
+  the tab), and the desktop shell's start page and `/api/v1/meta` if the desktop spec wants it.
+- **Default**: the Capybara icon set shipped with the web (app, maskable, monochrome SVG).
+
 ### 10.3 The notification target model (kernel)
 
-A **notification target** is one place a person's notifications can be delivered: a browser's
-Web Push subscription first, later a native app's APNs token or a Chinese Android vendor channel
-token (Huawei, Xiaomi, OPPO, vivo, Honor; there is no FCM in China). IM channels stay what they
-are: the path for conversations bound to them.
+A **notification target** is one place a person's notifications can be delivered. **The kernel
+ships Web Push built in (decided)**; native push (APNs, Chinese Android vendor channels: Huawei,
+Xiaomi, OPPO, vivo, Honor; there is no FCM in China) exists only for an enterprise's own build of
+the mobile app, configured with its own credentials on its own deployment (§10.9). **There is no
+official push relay** run by Capybara (decided). IM channels stay what they are.
 
 - **Table** `capybara.notification_targets` (designer's call): `id`, `account_id`, `kind`
   (`web_push` | later `apns` | `vendor:<name>`), `data` (the subscription: endpoint, `p256dh`,
@@ -635,21 +664,24 @@ are: the path for conversations bound to them.
   rechecked at send time (below).
 - **Preferences** `capybara.notification_preferences`: per account, per category (§10.5), push
   on / off (§10.6 for where they live and the defaults).
-- **Delivery providers** are an extension point `push-provider@1` (designer's call, following
-  "the kernel only hosts, extensions provide"; open question 5): a provider declares the target
-  `kind`s it sends, and the kernel calls `send(target, payload)` with an org-free, kernel-built
-  payload. The Web Push provider (VAPID, RFC 8030 / 8291 encryption) is a `builtin: true`
-  bootstrap plugin in `capybara-hq/plugins` (`plugin-push-webpush`), pinned in
-  `packages/kernel/bootstrap.json`; APNs and vendor providers are later plugins. Providers do no
-  retries (the kernel's queue does), like model providers.
+- **Senders** (designer's call): an internal kernel registry, one `NotificationSender` provider
+  per target `kind`, each `send(target, payload)` with an org-free, kernel-built payload and no
+  retries of its own (the queue retries). Web Push (VAPID, RFC 8030 / 8291 encryption) is the one
+  sender now, in the kernel's `notifications` module. **No extension point**: Web Push is a
+  standard protocol with no vendor SDK, and the native senders of §10.9 are deployment-credential
+  integrations an enterprise turns on in config, not something org admins install; an extension
+  point would be a contract nobody implements yet. If a vendor channel ever needs an SDK the
+  kernel should not carry, that is the time to introduce one.
 - **Egress**: a push endpoint is a URL a browser supplied. The kernel accepts a Web Push target
   only when the endpoint's host is on a configurable allowlist of push services
   (`fcm.googleapis.com`, `updates.push.services.mozilla.com`, `web.push.apple.com`,
-  `*.notify.windows.com` by default) and the provider sends through `ctx.net` (private addresses
-  refused, `packages/kernel/src/net`).
-- **Keys**: the VAPID key pair is deployment config (`notifications.webPush.vapid`, secret, of
-  the provider's deployment config); without it the provider generates one once (under
-  `LockService`) and stores it in its PG config, so every replica signs with the same key.
+  `*.notify.windows.com` by default) and the sender goes through `packages/kernel/src/net`
+  (private addresses refused).
+- **Keys**: one VAPID key pair **per deployment**: kernel config
+  `notifications.webPush.vapidPublicKey` / `vapidPrivateKey` (secret,
+  `CAPYBARA_NOTIFICATIONS__WEB_PUSH__…`); when unset the kernel generates a pair once (under
+  `LockService`) and stores it encrypted in PG, so every replica signs with the same key. Changing
+  the key invalidates every browser subscription (the settings page then asks to re-enable).
 
 ### 10.4 Registering a target
 
@@ -658,10 +690,11 @@ are: the path for conversations bound to them.
   subscribes with the deployment's VAPID public key and sends the subscription
   (`POST /api/v1/me/notification-targets`). The page lists the person's targets with their
   labels and last success, each removable, and the per-category preferences (§10.6).
-- **Mobile app** (later): the web calls `push@1.register()`; the shell confirms natively (the OS
-  permission prompt), obtains the native token and registers it **itself** with the kernel using
-  the page's session (so the token never passes through page JS, §9.4).
-- A provider's "gone" answer (Web Push 404 / 410, APNs `Unregistered`) deletes the target;
+- **An enterprise's own mobile app build** (later, §10.9): the web calls `push@1.register()`; the
+  shell confirms natively (the OS permission prompt), obtains the native token and registers it
+  **itself** with the kernel using the page's session (so the token never passes through page JS,
+  §9.4).
+- A sender's "gone" answer (Web Push 404 / 410, APNs `Unregistered`) deletes the target;
   repeated other failures disable it after a threshold, shown on the settings page.
 
 ### 10.5 What notifies (decided: the categories; their mapping to events is designer's call)
@@ -686,8 +719,8 @@ category (§10.6).
   reports `PUT /api/v1/me/presence { conversationId, visible }` on visibility changes and every
   20 s while visible; the kernel keeps it in Redis with a 45 s TTL (never process memory). A
   notification is skipped when a visible presence exists for that account and conversation.
-- **Payload** (designer's call; open question 6): the category, the org slug, the conversation id,
-  a title in the account's locale ("研究助手 等待你的批准" / "Research assistant needs your
+- **Payload** (designer's call, proposed for the lock-screen question): the category, the org
+  slug, the conversation id, a title in the account's locale ("研究助手 等待你的批准" / "Research assistant needs your
   approval") and the conversation's title. Never tool arguments, message text, file names or
   secrets: the lock screen is public. The click target is a same-origin URL
   (`/chat/<id>#approval=<id>`, `/inbox`); the service worker focuses an open window on it or
@@ -699,9 +732,8 @@ category (§10.6).
   still **can see the item** (decide the approval, own the conversation or task, be an org
   admin for `admin_request`); otherwise the notification is dropped. A target is never shared
   between accounts.
-- The super admin switches push on the platform (on by default once a provider is enabled); an
-  org admin can switch it off for the org (an org-level deployment field,
-  `orgAccess(schema, "override")`); the person chooses categories (below).
+- The super admin switches push on the platform (`/admin/settings`, on by default); an org admin
+  can switch it off for the org (`/settings`); the person chooses categories (below).
 - **Per-person preferences (decided: categories × push on/off; place and defaults designer's
   call).** Each person sets, per category, whether to receive push: four switches on
   **我的 → 通知 / Me → Notifications** (`/account/notifications`, the personal `SettingsPage` of
@@ -724,7 +756,7 @@ category (§10.6).
   enqueues one BullMQ job per target on queue `cap-kernel-notifications` with the deterministic
   id `notify-<kind>-<sourceId>-<targetId>` (no `:`), so a retried dispatch never sends twice.
   The consumer and the outbox handler are provided only under `WorkerModule`.
-- Retries with backoff are the queue's; a provider error with a "gone" kind deletes the target
+- Retries with backoff are the queue's; a sender error with a "gone" kind deletes the target
   in a transaction.
 - Presence lives in Redis with a TTL; nothing is in process memory.
 
@@ -734,6 +766,26 @@ The desktop shell has no Web Push (Electron has no push service); while it runs 
 notifications through the same stream data via `notify@1` (desktop spec). IM channels are
 unchanged. A person can have all three and may get the same event on several (decided: no
 deduplication); the per-category preferences of §10.6 are the person's control over push.
+
+### 10.9 Official apps, forks and native push (decided)
+
+- **Capybara publishes only the official desktop app and the official mobile app shell**, with
+  the fixed Capybara name and icon. There is no supported white-label product. The clients
+  repository is open source; an enterprise that wants its own name, icon or native push forks it
+  and publishes its own build in the stores itself. The fork keeps the brand (app name, icons,
+  bundle id / application id, push entitlements and vendor app ids) in one place in the clients
+  repository (`packages/shell` brand config, designer's call), so a fork changes one file and its
+  assets.
+- **The official mobile app has no native push**: there is no relay, and Web Push is not
+  available inside the app's WebView. In the official app, notifications come from IM channels;
+  the installed PWA (§10.2) keeps Web Push. Native push exists only in an enterprise's own fork,
+  with its own credentials.
+- **The kernel seam, just enough for such a fork later** (not designed now): a new target `kind`
+  per native channel (`apns`, `vendor:<name>`), carrying the app id it was registered from; the
+  matching `NotificationSender` in the kernel; and the enterprise's own credentials (an APNs key,
+  a vendor app secret) as kernel deployment config, keyed by app id, so the deployment sends only
+  for the apps it is configured for. A target whose kind or app id has no configured credentials
+  is refused at registration. Nothing else (triggers, preferences, presence, the outbox) changes.
 
 ## 11. Verification (decided)
 
@@ -787,7 +839,8 @@ state lists, size tables, reference blocks, the blind side-by-side review, `ACCE
 ## 12. Phases (designer's call)
 
 - **P1: shell, templates, keyboard, conversation.** Size classes and the breakpoint migration
-  (640 / 960 / 1280 → 600 / 840 and the 1280 fit rules), the compact bottom navigation, top bar
+  (640 / 960 / 1280 → 600 / 841 / 1280 per §3.3, the sidebar collapse toggle), the compact
+  bottom navigation, top bar
   and push model, the medium rail, `/conversations` and `/me`, the template forms of §5.1, the
   conversation, inbox and files (§5.4, §5.5), the viewport meta and safe areas, the keyboard
   generalization, scroll pinning, follow-finger sheets, foreground resume (§7.6), the visual
@@ -796,9 +849,9 @@ state lists, size tables, reference blocks, the blind side-by-side review, `ACCE
   manifest narrowing, `useSizeClass` / `useViewportSegments` in plugin-client, the `size=` and
   `shell=` state tokens, the segment-aware split, the Shell environment (`ShellEnvironmentScript`,
   insets, drag regions, `chrome@1`, `lib/shell.ts`) in time for the desktop client.
-- **P3: PWA and notifications.** Manifest, service worker, the notification target model, the
-  `push-provider@1` extension point and the Web Push plugin, presence, triggers, the settings
-  page. Later: `push@1` for the mobile app, APNs and vendor providers.
+- **P3: PWA and notifications.** Manifest with `platform.name` and the platform icon, service
+  worker, the notification target model and the built-in Web Push sender, presence, triggers, the
+  settings page. Native senders are not planned: only the seam of §10.9 exists.
 
 ## 13. Changes by package
 
@@ -810,11 +863,11 @@ state lists, size tables, reference blocks, the blind side-by-side review, `ACCE
   data for the bottom navigation, `lib/shell.ts`, foreground resume and presence, the manifest
   and service worker, i18n (zh and en).
 - `packages/plugin-sdk`: `compact` on `UiSlotSpec`, the manifest narrowing, the
-  `CapybaraShell` types, the `push-provider@1` contract.
+  `CapybaraShell` types.
 - `packages/plugin-client`: `useSizeClass`, `useViewportSegments`.
 - `packages/kernel`: a `notifications` module (targets, preferences, presence, dispatch, the
-  outbox handler and queue), its migrations and routes, the extension point host.
-- `capybara-hq/plugins`: `plugin-push-webpush`.
+  outbox handler and queue, the Web Push sender), the platform icon (table, upload and public
+  routes), VAPID config, its migrations and routes.
 - `tools/checks`: `design-breakpoint`, `web-shell-access`, the slot field in `check:ui-slots`.
 
 ## 14. Facts in the code that differ from the decisions
@@ -823,17 +876,18 @@ Recorded so review sees them; the design above resolves each.
 
 1. **Breakpoints**: the design package uses 640 (phone), 960 (drawer) and 1280 (rail, right area
    as a Sheet), in 23 + 4 + 3 media queries and in `SIDEBAR_RAIL_QUERY` /
-   `SIDEBAR_DRAWER_QUERY`; the decided classes are 600 / 840. §3.3 keeps 1280 as a fit rule and
-   drops 960.
+   `SIDEBAR_DRAWER_QUERY`; the decision is 600 / 841 for the classes and the two rules of §3.3
+   (full sidebar from 841, inline right area from 1280).
 2. **The drawer**: below 960 the sidebar is a drawer from a menu bar, holding the full nav and the
    conversations; the decision replaces it with the bottom navigation (compact) and the rail
    (medium).
-3. **"Expanded = sidebar + main + right panel"** does not fit physically below 1280 (256 + 480 +
-   520); today the right area is a Sheet below 1280 and the sidebar a rail. §3.3.
+3. **The rail below 1280**: today the sidebar turns into the rail by itself below 1280; the
+   decision keeps the full sidebar from 841 and makes the rail the person's choice there. The
+   right area's sheet below 1280 is unchanged.
 4. **Content minimum width 560** (design spec §4.3) does not fit a 600 window beside the 48 rail;
-   lowered to 520 (§4.3).
-5. **No files page and no notifications page** in the workspace: the suggested "files" bottom item
-   has no target, and the inbox is the notifications page. §4.2.
+   lowered to 552 (§4.3).
+5. **No files page and no notifications page** in the workspace: the decision keeps it that way
+   (no files item), and the inbox is the notifications page. §4.2.
 6. **Settings sub-nav on phones** is a decided sideways-scrolling row (2026-11-09), not a
    list-detail stack; kept.
 7. **No viewport meta** beyond Next's default and **no visibility handling** in the web; safe
@@ -846,25 +900,15 @@ Recorded so review sees them; the design above resolves each.
 
 ## 15. Open questions
 
-1. **Bottom navigation**: Chats, Agents, Inbox, Me (no files page exists). Add a workspace files
-   page (all files a person's conversations produced) and make it the fifth item, or replace
-   Inbox with it?
-2. **Expanded below 1280**: keep the rail and the right-area sheet there (§3.3), or require the
-   full sidebar from 841 and accept a narrower thread?
-3. **WKWebView** support of the Device Posture and Viewport Segments APIs (the Capacitor shell):
+1. **WKWebView** support of the Device Posture and Viewport Segments APIs (the Capacitor shell):
    unknown until Apple says; the design degrades to one screen without them.
-4. **`viewport-fit=cover` on the iPhone Duo outer display**: Apple has not decided; we follow
+2. **`viewport-fit=cover` on the iPhone Duo outer display**: Apple has not decided; we follow
    `env()`. Revisit when Safari ships the behavior.
-5. **Push delivery as an extension point** (`push-provider@1`, Web Push as a builtin plugin) or
-   kernel built-in Web Push (a standard protocol, no vendor SDK)?
-6. **Lock-screen content** (the categories are decided, §10.5): agent name and conversation
-   title (proposed), or a generic text only, or an org setting to choose?
-7. **Thread windowing**: accept the CSS-only step first and windowing only on measurement?
-8. **PWA name and icon**: from a platform branding setting (none exists) or the active theme's
-    logo?
-9. **Short windows** (§3.2): accept the height trim, or keep height out entirely?
-10. **Chinese Android vendor push**: which channels first, given they need the native app (P3
-    later)?
+3. **Lock-screen content** (proposed in §10.5: agent name and conversation title, never tool
+   arguments, message text or file names; no setting): confirm, or prefer generic text or an
+   org setting?
+4. **Thread windowing**: accept the CSS-only step first and windowing only on measurement?
+5. **Short windows** (§3.2): accept the height trim, or keep height out entirely?
 
 ## AGENTS.md rules touched
 
@@ -875,28 +919,32 @@ Recorded so review sees them; the design above resolves each.
   `web-shell-access` join `check:web-ui` / `tools/checks/README.md`.
 - **Extension UI.** `UI_SLOTS` gains `compact` per slot (`pnpm gen:ui-slots`, `check:ui-slots`);
   embeds and the HTML render never get the shell global; embed tokens unchanged.
-- **SDK public API.** `UiSlotSpec.compact`, the manifest narrowing, the `CapybaraShell` types and
-  `push-provider@1`: `pnpm gen:sdk-api` and a changeset bumping `@capybara-hq/plugin-sdk`;
+- **SDK public API.** `UiSlotSpec.compact`, the manifest narrowing and the `CapybaraShell` types:
+  `pnpm gen:sdk-api` and a changeset bumping `@capybara-hq/plugin-sdk`;
   `useSizeClass` / `useViewportSegments` in `@capybara-hq/plugin-client` with its changeset and
   `check:plugin-client-api`.
 - **Dependency direction.** apps/web still depends only on `@capybara-hq/design` and implements
   plugin-client's interface; the shell contract types live in plugin-sdk, which imports nothing.
 - **Multi-replica discipline.** Notifications are owed work: an outbox row in the triggering
   transaction, a BullMQ queue and job ids without `:`, consumers under `WorkerModule`, presence in
-  Redis with a TTL, VAPID key generation under `LockService`.
+  Redis with a TTL, VAPID key generation under `LockService`; the sidebar choice is a cookie,
+  not server state.
 - **Migrations.** New expand-only tables in schema `capybara` (`notification_targets`,
-  `notification_preferences`).
+  `notification_preferences`, `platform_icons`).
 - **Kernel.** A new `notifications` module with `@Injectable` providers, `createZodDto` DTOs,
   registered error codes.
 - **Platform tool.** The new routes get Platform operations (preferences, listing and removing
   targets) or exclusions with a reason (registering a browser subscription and presence need a
   browser).
-- **Extensions / plugins.** A new extension point `push-provider@1`; the Web Push plugin is a
-  `builtin: true` bootstrap entry in `bootstrap.json` (`check:bootstrap`).
+- **Extensions / plugins.** Untouched: Web Push is built into the kernel and no extension point
+  is added (§10.3).
 - **Plugins and the catalog: URLs through `packages/kernel/src/net`.** Push endpoints are
-  browser-supplied URLs: host allowlist plus `ctx.net`.
-- **Config.** VAPID keys and the platform push switch are provider deployment config with an org
-  override (`orgAccess`), env > file / Nacos > PG > default; invalid config never fails startup.
+  browser-supplied URLs: host allowlist plus the kernel's `net`.
+- **Config.** New kernel config `notifications.webPush.vapidPublicKey` / `vapidPrivateKey`
+  (secret; generated into PG when unset), `notifications.webPush.allowedHosts`, and later the
+  native senders' credentials keyed by app id; `platform.name` comes from the desktop spec.
+  `adding-config`: schema meta and `docs/config.md` regenerated.
+- **Object storage.** The platform icon lives under the kernel's `deployment/` prefix.
 - **Language / i18n.** New UI text in zh and en (平台 / 超级管理员 / 智能体); notification titles in
   the account's locale; model-facing text untouched.
 - **Tests.** New visual and Playwright specs, design jsdom tests and kernel integration tests for
