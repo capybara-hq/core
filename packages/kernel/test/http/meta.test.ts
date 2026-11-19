@@ -40,6 +40,7 @@ describe("GET /api/v1/meta", () => {
     expect(res.json()).toEqual({
       name: null,
       icon: null,
+      icons: { app: null, maskable: null, favicon: null },
       protocols: { device: { min: 3, max: 3 } },
       features: { localDevices: true, appSignIn: false },
     });
@@ -76,16 +77,28 @@ describe("GET /api/v1/meta", () => {
     expect(off.features.appSignIn).toBe(false);
   });
 
-  it("returns the platform icon URL, null for the default", async () => {
+  it("returns each platform icon URL, null for the default; icon is icons.app", async () => {
     const db = app.get(KernelDb);
-    expect((await app.inject({ method: "GET", url: "/api/v1/meta" })).json().icon).toBeNull();
-    const sha256 = "a".repeat(64);
-    await db
-      .insertInto("platform_icons")
-      .values({ purpose: "app", object_key: "k", sha256, content_type: "image/png" })
-      .execute();
-    const res = await app.inject({ method: "GET", url: "/api/v1/meta" });
-    expect(res.json().icon).toBe(`/api/v1/platform/icon/app?v=${sha256}`);
+    const get = async () => (await app.inject({ method: "GET", url: "/api/v1/meta" })).json();
+    expect((await get()).icons).toEqual({ app: null, maskable: null, favicon: null });
+    const sha = (c: string) => c.repeat(64);
+    for (const [purpose, c] of [
+      ["app", "a"],
+      ["maskable", "b"],
+      ["favicon", "c"],
+    ] as const) {
+      await db
+        .insertInto("platform_icons")
+        .values({ purpose, object_key: "k", sha256: sha(c), content_type: "image/png" })
+        .execute();
+      const body = await get();
+      expect(body.icons[purpose]).toBe(`/api/v1/platform/icon/${purpose}?v=${sha(c)}`);
+    }
+    const body = await get();
+    expect(body.icon).toBe(body.icons.app);
+    await db.deleteFrom("platform_icons").where("purpose", "=", "maskable").execute();
+    expect((await get()).icons.maskable).toBeNull();
+    expect((await get()).icons.app).not.toBeNull();
     await db.deleteFrom("platform_icons").execute();
   });
 });
