@@ -57,6 +57,10 @@ const startOver = (e: unknown) =>
     e.code === "device_sign_in.expired" ||
     e.code === "device_sign_in.unavailable");
 
+/** This page's address for a code, keeping the link's `org`. */
+const linkPath = (code: string, org: string | undefined) =>
+  `/devices/link?code=${code}${org === undefined ? "" : `&org=${encodeURIComponent(org)}`}`;
+
 /** The `新建设备` choice of the device select (a device id is a uuid, never this). */
 const NEW = "new";
 
@@ -88,21 +92,27 @@ function Disclosure() {
  * of the person's local devices in that org) and the disclosure; 确认连接 or 拒绝.
  * Without a code the page asks for the one the terminal shows.
  */
-export default function DeviceLinkView({ code: raw }: { code: string }) {
+export default function DeviceLinkView({
+  code: raw,
+  org,
+}: {
+  code: string;
+  org?: string | undefined;
+}) {
   const code = codeParam(raw);
-  if (code === "") return <EnterCode />;
-  return <ConfirmDevice key={code} code={code} />;
+  if (code === "") return <EnterCode org={org} />;
+  return <ConfirmDevice key={code} code={code} org={org} />;
 }
 
 /** No `?code=`: the person types the code the terminal shows. */
-function EnterCode() {
+function EnterCode({ org }: { org?: string | undefined }) {
   const t = useTranslations("deviceLink");
   const router = useRouter();
   const preferences = usePreferences();
   const [value, setValue] = useState("");
   const code = normalizeUserCode(value);
   const submit = () => {
-    if (code !== null) router.replace(`/devices/link?code=${code}`);
+    if (code !== null) router.replace(linkPath(code, org));
   };
   return (
     <AuthPage title={t("enterTitle")} subtitle={t("enterSubtitle")} preferences={preferences}>
@@ -135,7 +145,7 @@ function EnterCode() {
 
 type Outcome = { kind: "confirmed"; orgId: string; deviceId: string } | { kind: "denied" };
 
-function ConfirmDevice({ code }: { code: string }) {
+function ConfirmDevice({ code, org }: { code: string; org?: string | undefined }) {
   const t = useTranslations("deviceLink");
   const tc = useTranslations("common");
   const router = useRouter();
@@ -148,7 +158,7 @@ function ConfirmDevice({ code }: { code: string }) {
   const [outcome, setOutcome] = useState<Outcome>();
   // A confirm or deny that found the code unusable meanwhile.
   const [gone, setGone] = useState<unknown>();
-  const here = `/devices/link?code=${code}`;
+  const here = linkPath(code, org);
   // Into the workspace: a full navigation, so its layout's import map runs (server-rendered)
   const home = () => navigateBrowser(HOME_PATH);
 
@@ -241,6 +251,7 @@ function ConfirmDevice({ code }: { code: string }) {
         code={code}
         machine={pending.data.machine}
         me={me.data}
+        org={org}
         onFailure={onFailure}
         onDone={setOutcome}
       />
@@ -252,12 +263,14 @@ function ConfirmForm({
   code,
   machine,
   me,
+  org,
   onFailure,
   onDone,
 }: {
   code: string;
   machine: PendingMachine;
   me: Me;
+  org?: string | undefined;
   onFailure(e: unknown): string | undefined;
   onDone(o: Outcome): void;
 }) {
@@ -265,7 +278,10 @@ function ConfirmForm({
   const te = useTranslations("devices");
   const deviceLabel = useDeviceName();
   const memberships = me.memberships;
-  const [orgId, setOrgId] = useState(() => defaultDeviceOrg(me));
+  const [orgId, setOrgId] = useState(() =>
+    // the `org` of the link, when the person is in it; else their default
+    org !== undefined && memberships.some((m) => m.orgId === org) ? org : defaultDeviceOrg(me),
+  );
   const [target, setTarget] = useState(NEW);
   const [name, setName] = useState(machine.name);
   const [error, setError] = useState<string>();

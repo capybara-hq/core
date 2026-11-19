@@ -506,6 +506,15 @@ export const keys = {
       ],
     };
   },
+  /** What the desktop shell reports (never read on the server). */
+  shell() {
+    const all = ["shell"] as const;
+    return {
+      all: all as readonly unknown[],
+      /** This machine's status for the deployment (`device@1` `status()`). */
+      deviceStatus: (): readonly unknown[] => [...all, "device-status"],
+    };
+  },
   deployment() {
     const all = ["deployment"] as const;
     return {

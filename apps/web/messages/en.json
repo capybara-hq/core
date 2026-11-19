@@ -1775,7 +1775,20 @@
       "waiting": "Waiting for the machine to log in… It appears in the device list once confirmed, and comes online after step 3.",
       "connected": "{name} connected.",
       "close": "Close",
-      "startStep": "3. Start the connection to keep the device online (to connect at login: capybara-device service install)"
+      "startStep": "3. Start the connection to keep the device online (to connect at login: capybara-device service install)",
+      "connectMachine": "Connect this machine",
+      "connectFailed": "Could not connect this machine. Try again.",
+      "thisMachineConnected": "This computer is connected to this platform: {state}.",
+      "thisMachineOtherOrg": "This computer is connected to another of your organizations.",
+      "connectedElsewhere": "This computer is connected to another platform ({origin}). Use the commands below to connect it here.",
+      "openDevice": "Open device",
+      "connection": {
+        "starting": "Starting",
+        "online": "Online",
+        "offline": "Offline",
+        "draining": "Finishing tasks",
+        "stopped": "Stopped"
+      }
     },
     "detail": {
       "demotedNote": "This was your personal device before the platform changed its sandbox provider. When the platform switches back to {provider}, it becomes your default device again, with its files.",

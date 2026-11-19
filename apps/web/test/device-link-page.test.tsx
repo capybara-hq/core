@@ -127,6 +127,48 @@ describe("/devices/link", () => {
     }
   });
 
+  it("org= preselects that org with 新建设备 named after the machine; one click confirms", async () => {
+    const me = {
+      ...ME,
+      memberships: [
+        ...ME.memberships,
+        { orgId: "o2", slug: "beta", name: "Beta", role: "member" as const },
+      ],
+    };
+    const calls = stubApi({
+      ...ROUTES,
+      "GET /api/v1/me": () => json(200, me),
+      "GET /api/v1/orgs/o2/devices": () => json(200, { ...LIST, items: [LIST.items[0]] }),
+      "POST /api/v1/device/confirm": () => json(200, { deviceId: "d9" }),
+    });
+    await renderAuthRouteWithCache(`${PAGE}&org=o2`, lastStubRoutes());
+    await screen.findByRole("combobox", { name: D.org });
+    await vi.waitFor(() =>
+      expect(calls.some((c) => c.url === "/api/v1/orgs/o2/devices")).toBe(true),
+    );
+    expect(screen.getByRole("combobox", { name: D.device }).textContent).toBe(D.newDevice);
+    expect(screen.getByRole("textbox", { name: D.name })).toHaveProperty("value", "grant-mbp");
+    expect(calls.filter((c) => c.method === "POST")).toHaveLength(0);
+    await userEvent.setup().click(screen.getByRole("button", { name: D.confirm }));
+    expect(await screen.findByText(D.doneTitle)).toBeTruthy();
+    expect(bodyOf(calls.find((c) => c.method === "POST"))).toEqual({
+      userCode: CODE,
+      orgId: "o2",
+      name: "grant-mbp",
+    });
+  });
+
+  it("an org= the person is not in is ignored", async () => {
+    const calls = stubApi({
+      ...ROUTES,
+      "POST /api/v1/device/confirm": () => json(200, { deviceId: "d9" }),
+    });
+    await renderAuthRouteWithCache(`${PAGE}&org=zz`, lastStubRoutes());
+    await userEvent.setup().click(await screen.findByRole("button", { name: D.confirm }));
+    expect(await screen.findByText(D.doneTitle)).toBeTruthy();
+    expect(bodyOf(calls.find((c) => c.method === "POST"))).toMatchObject({ orgId: "o1" });
+  });
+
   it("confirms into an existing local device of the org", async () => {
     const calls = stubApi({
       ...ROUTES,

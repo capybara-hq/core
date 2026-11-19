@@ -1763,7 +1763,20 @@
       "waiting": "正在等待机器登录…确认后它会出现在设备列表里，运行第 3 步后变为在线。",
       "connected": "已连接 {name}。",
       "close": "关闭",
-      "startStep": "3. 启动连接，保持设备在线（开机自动连接：capybara-device service install）"
+      "startStep": "3. 启动连接，保持设备在线（开机自动连接：capybara-device service install）",
+      "connectMachine": "连接本机",
+      "connectFailed": "无法连接本机，请重试。",
+      "thisMachineConnected": "这台电脑已连接到这个平台：{state}。",
+      "thisMachineOtherOrg": "这台电脑已连接到你的另一个组织。",
+      "connectedElsewhere": "这台电脑已连接到另一个平台（{origin}）。请用下面的命令连接到这里。",
+      "openDevice": "打开设备",
+      "connection": {
+        "starting": "正在启动",
+        "online": "在线",
+        "offline": "离线",
+        "draining": "正在结束任务",
+        "stopped": "已停止"
+      }
     },
     "detail": {
       "demotedNote": "这是平台更换沙箱提供方之前你的个人设备。平台换回{provider}后，它会重新成为你的默认设备，文件也随之回来。",

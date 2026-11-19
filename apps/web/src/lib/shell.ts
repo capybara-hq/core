@@ -188,28 +188,73 @@ export function shellCapability<T extends object>(key: string): T | undefined {
 }
 
 /**
- * The desktop shell's capability shapes, mirrored from `@capybara-hq/plugin-sdk`
- * (`shell-capabilities.ts`) because apps/web depends only on the design system: the page uses the
- * parts it calls. Capability keys are `name@major`.
+ * The desktop shell's capability shapes: a mirror of `packages/plugin-sdk/src/shell-capabilities.ts`
+ * (`@capybara-hq/plugin-sdk`; apps/web depends only on the design system and may not import it),
+ * keep in step. Capability keys are `name@major`; a rejected call carries `{ code: ShellCallError }`.
  */
 export const SHELL_CAPABILITY_KEYS = {
   device: "device@1",
   notify: "notify@1",
+  openExternal: "openExternal@1",
   signIn: "signIn@1",
 } as const;
 
-/** `device@1` as far as the web calls it (the device status page narrows it further). */
+export type KeepAwakeMode = "off" | "while-busy" | "connected";
+
+export type DeviceConnection = "starting" | "online" | "offline" | "draining" | "stopped";
+
+/** What this machine is to the deployment the shell shows. */
+export type ThisMachineStatus =
+  | { state: "not_connected" }
+  | { state: "connected_elsewhere"; origin: string }
+  | {
+      state: "connected";
+      deviceId: string;
+      orgId: string;
+      mode: "os" | "docker";
+      connection: DeviceConnection;
+      offlineReason?: string;
+      serviceInstalled: boolean;
+      keepAwake: { mode: KeepAwakeMode; held: boolean; unavailable?: string };
+      lastWakeAt?: string;
+    };
+
+/** One operation running on this machine for the deployment. */
+export interface RunningOperationView {
+  tag: string;
+  conversationId: string | null;
+  accountId: string | null;
+  isolation: "restricted" | "full";
+  startedAt: string;
+}
+
+/** The `code` of a rejected shell call. */
+export type ShellCallError = "busy" | "no_activation" | "cancelled" | "failed";
+
+/** `device@1`: connect this machine to the deployment as a device. */
 export interface DeviceCapabilityV1 {
-  status(): Promise<{ state: string }>;
-  onStatus(listener: (s: { state: string }) => void): () => void;
+  status(): Promise<ThisMachineStatus>;
+  onStatus(listener: (s: ThisMachineStatus) => void): () => void;
+  running(): Promise<RunningOperationView[]>;
+  connect(input: { orgId: string; deviceId?: string }): Promise<"connected" | "cancelled">;
   pause(): Promise<void>;
   resume(): Promise<"resumed" | "cancelled">;
   disconnect(): Promise<void>;
+  requestCeiling(input: {
+    fullAccess: boolean;
+    projectReach: "workspace" | "os-user";
+  }): Promise<"applied" | "cancelled">;
+  setKeepAwake(mode: KeepAwakeMode): Promise<"applied" | "cancelled">;
 }
 
 /** `notify@1`: a native notification; `path` is the in-app path opened on click. */
 export interface NotifyCapabilityV1 {
   notify(input: { title: string; body: string; path?: string }): Promise<void>;
+}
+
+/** `openExternal@1`: open a URL in the system browser. */
+export interface OpenExternalCapabilityV1 {
+  open(url: string): Promise<void>;
 }
 
 /** `signIn@1`: sign in through the system browser (desktop client spec §6.5). */
