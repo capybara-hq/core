@@ -77,7 +77,7 @@ describe("页面模板根节点与页头", () => {
     ],
     [
       "InboxPage",
-      <InboxPage header={header} list={<div>l</div>} inspector={<div>i</div>}>
+      <InboxPage header={header} list={<div>l</div>} facts={[{ label: "键", value: "i" }]}>
         x
       </InboxPage>,
     ],
@@ -421,22 +421,6 @@ describe("WizardPage", () => {
 });
 
 describe("其他模板行为", () => {
-  it("InboxPage passes onInspectorClose through", async () => {
-    const onClose = vi.fn();
-    zh(
-      <InboxPage
-        header={header}
-        list={<div>l</div>}
-        inspector={<div>i</div>}
-        onInspectorClose={onClose}
-      >
-        x
-      </InboxPage>,
-    );
-    await userEvent.click(screen.getByRole("button", { name: "关闭" }));
-    expect(onClose).toHaveBeenCalledTimes(1);
-  });
-
   it("InboxPage with no items: one page empty state instead of the list + detail split", () => {
     zh(
       <InboxPage header={header} list={<div>l</div>} empty={{ text: "没有待处理的事项" }}>

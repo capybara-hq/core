@@ -8,6 +8,7 @@ export { Card, type Gap, Grid, Stack, Text } from "./layout/index";
 export {
   LIST_DETAIL_FITS,
   ListDetail,
+  type ListDetailFact,
   ListDetailItem,
   ListDetailList,
   type ListDetailListItem,

@@ -1,17 +1,8 @@
 import type { ReactNode } from "react";
-import { IconButton } from "../controls/index";
-import {
-  EmptyState,
-  type EmptyStateProps,
-  SkeletonBox,
-  SkeletonGroup,
-  SkeletonText,
-} from "../display/index";
-import { Icon } from "../icons/icon";
-import { ListDetail } from "../layout/list-detail";
+import { EmptyState, type EmptyStateProps, SkeletonGroup, SkeletonText } from "../display/index";
+import { ListDetail, type ListDetailFact, ListDetailItem } from "../layout/list-detail";
 import { useDesignT } from "../provider";
 import { ActionRow, type ActionRowProps, Body, type PageHeaderProps } from "../shell/index";
-import { type Column, DataTable } from "../table/index";
 import {
   LoadingCards,
   LoadingInspector,
@@ -27,45 +18,56 @@ const DETAIL_MIN = 360;
 /** 64 px rows a loading inbox draws when it is not told how many (spec §5.7). */
 const LOADING_ROWS = 4;
 
-/** One inbox row as placeholders: the object row's box, a mark and two text lines. */
-function LoadingRow() {
+/**
+ * A loading inbox's list: `rows` rows in the ListDetailList's own row box (spec §6.47): the dot
+ * slot, a `body` title slot over a `small` meta slot, a time slot at the end.
+ */
+function LoadingList({ rows = LOADING_ROWS }: { rows?: number | undefined }) {
   return (
-    <li className="cb-object-row" data-part="loading-row">
-      <SkeletonBox part="mark" />
-      <span className="cb-object-text">
-        <SkeletonText width="55%" />
-        <SkeletonText width="30%" size="small" />
-      </span>
-    </li>
+    <ul className="cb-ld-list" data-part="loading-list">
+      {Array.from({ length: Math.max(0, rows) }, (_, i) => (
+        // biome-ignore lint/suspicious/noArrayIndexKey: the placeholders are positional
+        <li key={i}>
+          <span className="cb-ld-row" data-part="loading-row">
+            <span className="cb-ld-dot" aria-hidden="true" />
+            <span className="cb-ld-text">
+              <SkeletonText width="55%" />
+              <SkeletonText width="30%" size="small" />
+            </span>
+            <span className="cb-ld-time">
+              <SkeletonText width={32} size="small" />
+            </span>
+          </span>
+        </li>
+      ))}
+    </ul>
   );
 }
 
 /**
- * What `InboxPage.loading` takes: object rows (default), or the table shape of a records list;
- * `inspector` draws the selected item's inspector as KeyValue placeholders (`rows`, `keyWidth`),
- * for a page whose loaded state opens its first item (the rail-inspector layout).
+ * What `InboxPage.loading` takes: `rows` list rows (default 4) and `facts`, which draws the open
+ * item's facts as placeholders (`rows`, `keyWidth`) for a page whose loaded state opens its first
+ * item.
  */
-export type InboxLoading = (
-  | { list?: "objects"; rows?: number }
-  | {
-      list: "records";
-      /** The caller's table shape: its label, header columns and the DataTable's row height and frame. */
-      table: {
-        label: string;
-        columns: Column<never>[];
-        rowHeight?: "dense" | "default" | "roomy";
-        framed?: boolean;
-      };
-    }
-) & { inspector?: boolean | { rows?: number; keyWidth?: string } };
+export type InboxLoading = {
+  rows?: number;
+  facts?: boolean | { rows?: number; keyWidth?: string };
+};
 
 type InboxPageProps = {
   header: PageHeaderProps;
   /** The rail's filters, above the list; static, so they stay real while loading. */
   filters?: ReactNode;
-  inspector?: ReactNode;
-  inspectorTitle?: string;
-  onInspectorClose?: () => void;
+  /** The open item's title (`h2`) and the status mark beside it (spec §6.47). */
+  title?: string;
+  status?: ReactNode;
+  /** The open item's facts: translated labels, a tool key's value mono (spec §6.47). */
+  facts?: ListDetailFact[];
+  /** The facts block's accessible name. */
+  factsLabel?: string;
+  /** What belongs with the facts under them (a link to the conversation). */
+  aside?: ReactNode;
+  /** The decision row, pinned at the bottom of the open item's pane. */
   actionRow?: ActionRowProps;
   /**
    * Whether an item is open (spec §6.47). In the two-level stack (compact, or too narrow for the
@@ -76,101 +78,29 @@ type InboxPageProps = {
   /** The stack's back: the page closes the open item (sets `open` false). */
   onBack?: () => void;
   empty?: EmptyStateProps;
+  /** The open item's content, after its facts. */
   children?: ReactNode;
 } & ({ loading?: undefined; list: ReactNode } | { loading: InboxLoading; list?: ReactNode });
 
 /**
- * The open item: its content, and its facts (the inspector) as a 400 column beside it while the
- * region has room (expanded) or below it (CSS, a container query on the region): the facts are
- * always inline, never in a sheet, so the decision they belong to is whole on one page.
- */
-function InboxDetail({
-  inspector,
-  inspectorTitle,
-  onInspectorClose,
-  children,
-}: {
-  inspector: ReactNode;
-  inspectorTitle: string | undefined;
-  onInspectorClose: (() => void) | undefined;
-  children: ReactNode;
-}) {
-  const t = useDesignT();
-  return (
-    <div
-      className="cb-inbox-detail"
-      data-part="inbox-detail"
-      data-facts={inspector != null ? "true" : undefined}
-    >
-      <div className="cb-inbox-main" data-part="inbox-main">
-        {children}
-      </div>
-      {inspector != null ? (
-        <aside
-          className="cb-inbox-facts"
-          data-part="inbox-facts"
-          {...(inspectorTitle !== undefined ? { "aria-label": inspectorTitle } : {})}
-        >
-          {onInspectorClose ? (
-            <IconButton
-              label={t("shell.inspectorClose")}
-              icon={<Icon name="x" />}
-              density="default"
-              onClick={onInspectorClose}
-            />
-          ) : null}
-          {inspector}
-        </aside>
-      ) : null}
-    </div>
-  );
-}
-
-function LoadingList({ loading }: { loading: InboxLoading }) {
-  if (loading.list === "records") {
-    const { label, columns, rowHeight, framed } = loading.table;
-    return (
-      <DataTable<never>
-        label={label}
-        state="loading"
-        columns={columns}
-        rows={[]}
-        rowKey={() => ""}
-        {...(rowHeight ? { rowHeight } : {})}
-        {...(framed !== undefined ? { framed } : {})}
-      />
-    );
-  }
-  // The loaded ObjectList's own container, so the border, radius and first row are the same.
-  return (
-    <ul className="cb-object-list" data-part="loading-list">
-      {Array.from({ length: loading.rows ?? LOADING_ROWS }, (_, i) => (
-        // biome-ignore lint/suspicious/noArrayIndexKey: the placeholders are positional
-        <LoadingRow key={i} />
-      ))}
-    </ul>
-  );
-}
-
-/**
- * T6 Inbox: Rail (the list) + Content (+ Inspector); an ActionRow while deciding. The split is
- * capped at the content width like every page (spec §4.3), so the head and the body share one left
- * edge. `empty` (no items, a failed load) draws one EmptyState instead of the list + detail split.
- * `filters` sit at the top of the rail, above `list`. `loading` draws the frame while the data is
- * on the way (spec §5.7): the filters stay real (they are static), the list is `rows` 64 px rows
- * (default 4) in the object list's own container in place of `list` (`loading.list: "records"`
- * draws the DataTable's loading state in the caller's table shape instead), the content is a
- * card-shaped block in place of `children`, and a real `inspector` stays. A page whose loaded state
- * opens its first item passes `loading.inspector` (KeyValue placeholders in the inspector column)
- * and its decision `actionRow` (the labels are static), which stays with its buttons disabled.
+ * T6 Inbox (spec §5.7): the list (a `ListDetailList`, the filters above it) beside the open item,
+ * a `ListDetailItem` (its title, facts, content and the decision ActionRow at the pane's bottom),
+ * in one `ListDetail`. The split is capped at the content width like every page (spec §4.3), so
+ * the head and the body share one left edge. `empty` (no items, a failed load) draws one
+ * EmptyState instead of the split. `loading` draws the frame while the data is on the way: the
+ * filters stay real (they are static), the list is `rows` 64 px row placeholders, the content a
+ * card-shaped block, `loading.facts` the facts as placeholders, and a decision `actionRow` the
+ * page passes (its labels are static) stays with its buttons disabled.
  */
 export function InboxPage({
   header,
   list,
   filters,
-  inspector,
-  inspectorTitle,
-  onInspectorClose,
+  title,
+  status,
+  facts,
+  factsLabel,
+  aside,
   actionRow,
   open = false,
   onBack,
@@ -179,16 +109,11 @@ export function InboxPage({
   children,
 }: InboxPageProps) {
   const t = useDesignT();
-  const shape = loading?.inspector;
-  const inspectorNode = shape ? (
-    <LoadingInspector {...(typeof shape === "object" ? shape : {})} />
-  ) : (
-    inspector
-  );
+  const shape = loading?.facts;
   const rail = loading ? (
     <>
       {filters}
-      <LoadingList loading={loading} />
+      <LoadingList rows={loading.rows} />
     </>
   ) : filters != null ? (
     <>
@@ -209,13 +134,26 @@ export function InboxPage({
     );
   }
   const detail = (
-    <InboxDetail
-      inspector={inspectorNode}
-      inspectorTitle={inspectorTitle}
-      onInspectorClose={onInspectorClose}
+    <ListDetailItem
+      title={loading ? undefined : title}
+      status={loading ? undefined : status}
+      facts={loading ? [] : (facts ?? [])}
+      factsLabel={factsLabel}
+      aside={
+        shape ? (
+          <LoadingInspector variant="facts" {...(typeof shape === "object" ? shape : {})} />
+        ) : loading ? undefined : (
+          aside
+        )
+      }
+      actions={
+        actionRow ? (
+          <ActionRow {...(loading ? loadingActionRow(actionRow) : actionRow)} />
+        ) : undefined
+      }
     >
       {loading ? <LoadingCards count={1} /> : children}
-    </InboxDetail>
+    </ListDetailItem>
   );
   const page = (
     <>
@@ -230,11 +168,6 @@ export function InboxPage({
             }
             detail={open && !loading ? detail : null}
             preview={detail}
-            footer={
-              actionRow ? (
-                <ActionRow {...(loading ? loadingActionRow(actionRow) : actionRow)} />
-              ) : undefined
-            }
             onBack={onBack ?? (() => {})}
             listMin={LIST_MIN}
             detailMin={DETAIL_MIN}

@@ -228,14 +228,17 @@ const SIDEBAR = {
   account: { name: "grant", menu: [] },
 };
 
-describe("InboxPage structure (spec §5.7: rail + content + inspector, decisions under the columns)", () => {
-  it("draws the 320 rail, the content, the facts and the ActionRow under both panes", () => {
+describe("InboxPage structure (spec §5.7: the list beside the open item, R24)", () => {
+  it("draws the 320 rail and the open item: title, facts, content, the decision row in the pane", () => {
     render(
       <DesignProvider locale="zh">
         <InboxPage
           header={{ path: [{ label: "a" }], title: "收件箱" }}
           list={<p>L</p>}
-          inspector={<p>FACTS</p>}
+          title="需要你批准"
+          facts={[{ label: "工具", value: "Acme" }]}
+          factsLabel="详情"
+          aside={<p>LINK</p>}
           actionRow={{ primary: { label: "批准", onSelect: () => {} } }}
           open
         >
@@ -243,17 +246,22 @@ describe("InboxPage structure (spec §5.7: rail + content + inspector, decisions
         </InboxPage>
       </DesignProvider>,
     );
-    const frame = part("list-detail") as HTMLElement;
     expect(part("rail")?.textContent).toBe("L");
-    expect(part("inbox-main")?.textContent).toBe("CONTENT");
-    expect(part("inbox-facts")?.textContent).toBe("FACTS");
-    // the decision row is the region's footer, a sibling of both panes
-    expect(part("list-detail-footer")?.parentElement).toBe(frame);
-    expect(part("list-detail-footer")?.querySelector('[data-part="action-row"]')).not.toBeNull();
-    const sheet = css("templates.css");
-    expect(sheet).toMatch(
-      /@container cb-ld \(min-width: 1100px\) \{[^@]*grid-template-columns: minmax\(0, 1fr\) 400px;/,
-    );
+    expect(screen.getByRole("heading", { level: 2, name: "需要你批准" })).toBeTruthy();
+    const facts = screen.getByRole("complementary", { name: "详情" });
+    expect(facts.querySelector('[data-part="fact-key"]')?.textContent).toBe("工具");
+    expect(facts.textContent).toContain("LINK");
+    expect(part("list-detail-content")?.textContent).toBe("CONTENT");
+    // the decision row closes the open item's pane (spec §6.47), not a footer under both panes
+    const item = part("list-detail-item") as HTMLElement;
+    expect(item.lastElementChild?.getAttribute("data-part")).toBe("action-row");
+    expect(part("list-detail-footer")).toBeNull();
+  });
+
+  it("from a 1100 region the facts are a 400 column beside the content", () => {
+    const wide = parseCss(css("templates.css")).filter((r) => r.at === "cb-ld (min-width: 1100px)");
+    const body = wide.find((r) => r.selector === '.cb-ld-item-body[data-facts="true"]');
+    expect(body?.decls["grid-template-columns"]).toBe("minmax(0, 1fr) 400px");
   });
 });
 
@@ -316,7 +324,14 @@ describe("TracePage on compact", () => {
 
 describe("ListDetailList and ListDetailItem (spec §6.47: the list rows, the open item)", () => {
   const items = [
-    { id: "a", title: "需要你批准", meta: "Acme 工单 · 研究助手", at: "14:02", waiting: true },
+    {
+      id: "a",
+      title: "需要你批准",
+      trailing: "v0.1.0",
+      meta: "Acme 工单 · 研究助手",
+      at: "14:02",
+      waiting: true,
+    },
     { id: "b", title: "运行完成", meta: "周报 · 周报助手", at: "昨天" },
   ];
 
@@ -337,6 +352,12 @@ describe("ListDetailList and ListDetailItem (spec §6.47: the list rows, the ope
     expect(second.querySelector('[data-part="list-dot"]')?.getAttribute("data-state")).toBeNull();
     expect(within(second).queryByRole("img")).toBeNull();
     expect(first.querySelector('[data-part="list-title"]')?.textContent).toBe("需要你批准");
+    expect(first.querySelector('[data-part="list-title"]')?.getAttribute("title")).toBe(
+      "需要你批准",
+    );
+    // a version beside the title is never cut: the title takes the ellipsis
+    expect(first.querySelector('[data-part="list-trailing"]')?.textContent).toBe("v0.1.0");
+    expect(second.querySelector('[data-part="list-trailing"]')).toBeNull();
     expect(first.querySelector('[data-part="list-meta"]')?.textContent).toBe(
       "Acme 工单 · 研究助手",
     );

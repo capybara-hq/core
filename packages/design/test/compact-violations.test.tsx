@@ -108,7 +108,8 @@ describe("the real components at the compact width have no violation", () => {
           <InboxPage
             header={{ path: [{ label: "收件箱" }], title: "收件箱" }}
             list={<p>L</p>}
-            inspector={<p>FACTS</p>}
+            title="T"
+            facts={[{ label: "工具", value: "FACTS" }]}
             actionRow={{ primary: { label: "批准", onSelect: () => {} } }}
             open
             onBack={() => {}}

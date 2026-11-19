@@ -1615,8 +1615,18 @@ li:first-child > .cb-ld-row {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.cb-ld-head {
+  display: flex;
+  gap: var(--cb-space-2);
+  min-width: 0;
+}
 .cb-ld-title {
+  min-width: 0;
   color: var(--cb-ink);
+}
+.cb-ld-trailing {
+  flex: none;
+  color: var(--cb-muted);
 }
 .cb-ld-meta {
   color: var(--cb-muted);
@@ -1629,8 +1639,9 @@ li:first-child > .cb-ld-row {
   font-size: var(--cb-type-micro-size);
   line-height: var(--cb-type-micro-line);
 }
-/* The open item (spec §6.47): a page body padded space.4 that scrolls, its h2 title space.3 above
-   the facts, the decision row pinned at the bottom of the pane. */
+/* The open item (spec §6.47, §5.7): a page body padded space.4 that scrolls, the h2 title (and
+   its status) space.3 above the facts, the content after them, the decision row pinned at the
+   bottom of the pane; from a 1100 region the facts are a 400 column beside the content. */
 .cb-ld-item {
   display: flex;
   flex: 1;
@@ -1638,21 +1649,59 @@ li:first-child > .cb-ld-row {
   min-height: 0;
 }
 .cb-ld-item-body {
+  display: flex;
   flex: 1;
+  flex-direction: column;
+  gap: var(--cb-space-3);
   min-height: 0;
   padding: var(--cb-space-4);
   overflow: auto;
+}
+.cb-ld-item-head {
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-3);
+  min-width: 0;
 }
 /* The pane's decision row ends at the pane's own padding (the body above keeps no gutter). */
 .cb-ld-item > .cb-actionrow {
   scrollbar-gutter: auto;
 }
 .cb-ld-item-title {
-  margin: 0 0 var(--cb-space-3);
+  flex: 1;
+  min-width: 0;
+  margin: 0;
   color: var(--cb-ink);
   font-size: var(--cb-type-h2-size);
   line-height: var(--cb-type-h2-line);
   font-weight: 500;
+}
+.cb-ld-item-facts,
+.cb-ld-item-content {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cb-space-3);
+  min-width: 0;
+}
+@container cb-ld (min-width: 1100px) {
+  .cb-ld-item-body[data-facts="true"] {
+    display: grid;
+    grid-template-areas: "head head" "content facts";
+    grid-template-columns: minmax(0, 1fr) 400px;
+    gap: var(--cb-space-3) var(--cb-space-4);
+    align-content: start;
+  }
+  .cb-ld-item-body[data-facts="true"] > .cb-ld-item-head {
+    grid-area: head;
+  }
+  .cb-ld-item-body[data-facts="true"] > .cb-ld-item-content {
+    grid-area: content;
+  }
+  .cb-ld-item-body[data-facts="true"] > .cb-ld-item-facts {
+    grid-area: facts;
+    padding-left: var(--cb-space-4);
+    border-left: 1px solid var(--cb-line-soft);
+  }
 }
 /* InboxPage: the pane pair is capped at the content width inside the content padding, like every
    frame, and reserves the head's scrollbar gutter, so its left edge is the head's. */
@@ -1682,37 +1731,6 @@ li:first-child > .cb-ld-row {
   max-width: var(--cb-layout-content);
   margin: 0 auto;
 }
-/* The open item: its content, and its facts (the inspector) beside it as a 400 column while the
-   region has room for the 320 list, the content and that column (expanded, "Rail + Content +
-   Inspector" as today), else below the content. */
-.cb-inbox-detail {
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-  gap: var(--cb-space-3);
-  min-height: 0;
-  padding: var(--cb-space-4);
-  overflow: auto;
-}
-.cb-inbox-main {
-  min-width: 0;
-}
-.cb-inbox-facts {
-  min-width: 0;
-}
-@container cb-ld (min-width: 1100px) {
-  .cb-inbox-detail[data-facts="true"] {
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) 400px;
-    gap: 0 var(--cb-space-4);
-    align-content: start;
-  }
-  .cb-inbox-detail[data-facts="true"] > .cb-inbox-facts {
-    padding-left: var(--cb-space-4);
-    border-left: 1px solid var(--cb-line-soft);
-  }
-}
-
 /* TracePage on compact (spec §5.11): the waterfall is the page, an open span its own screen. */
 .cb-trace-back {
   display: none;

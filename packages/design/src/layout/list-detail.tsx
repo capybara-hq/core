@@ -149,6 +149,8 @@ export function ListDetail({
 export type ListDetailListItem = {
   id: string;
   title: string;
+  /** Beside the title and never cut (a version): the title takes the ellipsis. */
+  trailing?: string;
   meta?: string;
   /** The time at the row's end (`micro`, `faint`). */
   at?: string;
@@ -197,8 +199,15 @@ export function ListDetailList({
               <span className="cb-ld-dot" data-part="list-dot" aria-hidden="true" />
             )}
             <span className="cb-ld-text">
-              <span className="cb-ld-title" data-part="list-title">
-                {it.title}
+              <span className="cb-ld-head">
+                <span className="cb-ld-title" data-part="list-title" title={it.title}>
+                  {it.title}
+                </span>
+                {it.trailing ? (
+                  <span className="cb-ld-trailing" data-part="list-trailing">
+                    {it.trailing}
+                  </span>
+                ) : null}
               </span>
               {it.meta ? (
                 <span className="cb-ld-meta" data-part="list-meta">
@@ -218,32 +227,74 @@ export function ListDetailList({
   );
 }
 
+/** One fact of an open item: a translated label, never a raw payload key (spec §6.47). */
+export type ListDetailFact = { label: string; value: ReactNode; mono?: boolean };
+
 /**
- * The open item of a list-detail region (spec §6.47), a page body: its title (`h2`), its facts
- * (a KeyValue of translated labels; a tool key's value stays mono) and what the page adds under
- * them (`children`), padded `space.4` and scrolling, with `actions` (the decision ActionRow)
- * pinned at the bottom of the pane.
+ * The open item of a list-detail region (spec §6.47, §5.7), a page body padded `space.4` that
+ * scrolls: its title (`h2`, with an optional `status` mark beside it), its facts (a KeyValue
+ * `facts` variant of translated labels; a tool key's value stays mono; `aside` adds what belongs
+ * with them, such as a link) and the page's content (`children`), with `actions` (the decision
+ * ActionRow) pinned at the bottom of the pane. The facts come before the content; from a 1100
+ * region (expanded) they are a 400 column beside it.
  */
 export function ListDetailItem({
   title,
-  facts,
+  status,
+  facts = [],
+  factsLabel,
+  aside,
   actions,
   children,
 }: {
-  title: string;
-  facts: { label: string; value: ReactNode; mono?: boolean }[];
+  title?: string | undefined;
+  status?: ReactNode;
+  facts?: ListDetailFact[];
+  /** The facts block's accessible name. */
+  factsLabel?: string | undefined;
+  aside?: ReactNode;
   actions?: ReactNode;
   children?: ReactNode;
 }) {
+  const hasFacts = facts.length > 0 || (aside !== undefined && aside !== null);
+  const hasContent = children !== undefined && children !== null && children !== false;
   return (
     <div className="cb-ld-item" data-part="list-detail-item">
-      <div className="cb-ld-item-body">
-        <h2 className="cb-ld-item-title">{title}</h2>
-        <KeyValue
-          variant="facts"
-          rows={facts.map((f) => ({ k: f.label, v: f.value, ...(f.mono ? { mono: true } : {}) }))}
-        />
-        {children}
+      <div
+        className="cb-ld-item-body"
+        data-part="list-detail-body"
+        data-facts={hasFacts && hasContent ? "true" : undefined}
+      >
+        {title !== undefined || status ? (
+          <div className="cb-ld-item-head" data-part="list-detail-head">
+            {title !== undefined ? <h2 className="cb-ld-item-title">{title}</h2> : null}
+            {status}
+          </div>
+        ) : null}
+        {hasFacts ? (
+          <aside
+            className="cb-ld-item-facts"
+            data-part="list-detail-facts"
+            {...(factsLabel !== undefined ? { "aria-label": factsLabel } : {})}
+          >
+            {facts.length > 0 ? (
+              <KeyValue
+                variant="facts"
+                rows={facts.map((f) => ({
+                  k: f.label,
+                  v: f.value,
+                  ...(f.mono ? { mono: true } : {}),
+                }))}
+              />
+            ) : null}
+            {aside}
+          </aside>
+        ) : null}
+        {hasContent ? (
+          <div className="cb-ld-item-content" data-part="list-detail-content">
+            {children}
+          </div>
+        ) : null}
       </div>
       {actions}
     </div>

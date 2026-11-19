@@ -142,20 +142,24 @@ export function LoadingCards({ count }: { count: number }) {
 export function LoadingInspector({
   rows = 4,
   keyWidth = "8ch",
+  variant,
 }: {
   rows?: number;
   keyWidth?: string;
+  /** `facts`: the KeyValue facts variant's small slots (an open list-detail item, spec §6.47). */
+  variant?: "facts";
 }) {
+  const size = variant === "facts" ? "small" : "body";
   return (
-    <dl className="cb-kv" data-part="loading-inspector">
+    <dl className="cb-kv" data-part="loading-inspector" data-variant={variant}>
       {Array.from({ length: Math.max(0, rows) }, (_, i) => (
         // biome-ignore lint/suspicious/noArrayIndexKey: the placeholders are positional
         <div key={i} className="cb-kv-row" data-part="loading-inspector-row">
           <dt className="cb-kv-key" style={{ width: keyWidth }}>
-            <SkeletonText width="100%" />
+            <SkeletonText width="100%" size={size} />
           </dt>
           <dd className="cb-kv-value">
-            <SkeletonText width="55%" />
+            <SkeletonText width="55%" size={size} />
           </dd>
         </div>
       ))}
