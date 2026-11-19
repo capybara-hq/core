@@ -17,7 +17,8 @@ import { BlockList, isIP } from "node:net";
  * a host behind a SIIT translator could otherwise reach a private IPv4 address.
  *
  * Link-local addresses (`169.254.0.0/16`, including cloud metadata, and `fe80::/10`) and the cloud
- * metadata endpoints outside link-local (AWS IPv6 `fd00:ec2::254`, Alibaba Cloud `100.100.100.200`)
+ * metadata endpoints outside link-local (AWS IPv6 `fd00:ec2::254`, Alibaba Cloud `100.100.100.200`,
+ * Azure WireServer `168.63.129.16`)
  * stay forbidden whatever the exemptions: no internal mirror lives there.
  *
  * Extension requests (`ctx.net`, {@link NetPolicy.extension}) also refuse loopback and unspecified
@@ -29,6 +30,7 @@ const BLOCKED_V4: readonly (readonly [string, number])[] = [
   ["10.0.0.0", 8],
   ["100.64.0.0", 10], // CGNAT
   ["127.0.0.0", 8],
+  ["168.63.129.16", 32], // Azure WireServer (metadata, outside link-local)
   ["169.254.0.0", 16], // link-local, including cloud metadata 169.254.169.254
   ["172.16.0.0", 12],
   ["192.0.0.0", 24],
@@ -62,6 +64,7 @@ const neverAllowed = new BlockList();
 neverAllowed.addSubnet("169.254.0.0", 16, "ipv4");
 neverAllowed.addSubnet("fe80::", 10, "ipv6");
 neverAllowed.addAddress("100.100.100.200", "ipv4"); // Alibaba Cloud metadata (inside CGNAT)
+neverAllowed.addAddress("168.63.129.16", "ipv4"); // Azure WireServer
 neverAllowed.addAddress("fd00:ec2::254", "ipv6"); // AWS IMDS over IPv6 (inside ULA)
 /** Loopback and unspecified: never allowed for extension requests (see the file header). */
 const loopbackOrUnspecified = new BlockList();
@@ -127,7 +130,7 @@ export function isForbiddenAddress(ip: string): boolean {
 
 /**
  * Link-local (incl. cloud metadata 169.254.169.254), another cloud metadata endpoint
- * (`100.100.100.200`, `fd00:ec2::254`) or unparseable: forbidden whatever the exemptions.
+ * (`100.100.100.200`, `168.63.129.16`, `fd00:ec2::254`) or unparseable: forbidden whatever the exemptions.
  */
 export function isLinkLocalAddress(ip: string): boolean {
   return inTable(ip, neverAllowed);

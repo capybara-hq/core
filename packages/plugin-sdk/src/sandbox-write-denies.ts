@@ -5,8 +5,11 @@
  * from executing what a restricted command left behind.
  *
  * 1. {@link SANDBOX_MANDATORY_WRITE_DENIES}: component sequences denied wherever they appear (the
- *    entry and everything beneath it): shell startup files, git's global files, direnv and npm
- *    configuration, editor and agent configuration.
+ *    entry and everything beneath it): shell startup and logout files, git's global files, direnv
+ *    and npm configuration, editor and agent configuration, and the OS persistence locations
+ *    (launchd, systemd, environment.d, XDG and KDE autostart, X session files, fish). Entries are
+ *    written already folded. {@link SANDBOX_SYSTEM_WRITE_DENIES}: absolute system paths denied
+ *    with everything beneath them (the crontab and at spools), anchored at `/`.
  * 2. Inside a `.git` directory (the first `.git` component of a path) only git's ordinary
  *    internals are writable, an allowlist ({@link SANDBOX_GIT_ALLOWED_DIRECTORIES},
  *    {@link SANDBOX_GIT_ALLOWED_FILES}, `info/exclude`). Everything else there is denied:
@@ -16,9 +19,14 @@
  *    any reading of its name would make it a denied internal.
  * 3. Outside `.git`, a file named `HEAD` is denied: with `objects/` and `refs/` it would make a
  *    bare-repository lookalike whose configuration git honours.
- * 4. Moves ({@link isSandboxMoveDenied}): nothing leaves a protected name (`.git`, `.claude`, …)
- *    except within the same protected directory; a directory is not moved under a protected name
- *    from outside it; no non-directory becomes `.git` (a `gitdir:` pointer).
+ * 4. Moves ({@link isSandboxMoveDenied}): neither end may be a denied write; nothing leaves a
+ *    protected name ({@link SANDBOX_PROTECTED_PATH_NAMES}: `.git` and the single-component
+ *    entries) except within the same protected directory; a directory is not moved under a
+ *    protected name from outside it; no non-directory becomes `.git` (a `gitdir:` pointer). For a
+ *    multi-component entry `[a, b, …]` (or an absolute system path) a destination ending in a
+ *    proper prefix of it (`…/a`) takes no non-directory (a link there would redirect the entry)
+ *    and no directory holding the entry's next component (`b`): a prepared directory never moves
+ *    into place, while ordinary names (`library`, `.config`) stay movable.
  *
  * 5. Inside an allowlisted subtree nothing can make a repository: no `.git`, no `HEAD` except
  *    where git keeps one (`logs/HEAD`, `refs/remotes/<r>/HEAD`, …), and no `objects`, `commondir`
@@ -33,6 +41,17 @@
  * (its state directories are writable for git's own use) and continuing it runs its `exec` lines.
  * The macOS worker expresses this policy as ordered Seatbelt regex rules
  * (`packages/device/src/exec/mac-write-policy.ts`).
+ *
+ * Constraints on consumers:
+ *
+ * - The policy judges the path it is given. A protected home location reached through a symbolic
+ *   link (`~/.config` or `~/Library` linked elsewhere, as dotfile managers do) is denied only at
+ *   its resolved target: a device worker resolves the protected home locations at operation start
+ *   and adds their resolved targets as absolute denies.
+ * - The move check needs the entries of a moved directory. A consumer passes them from the source
+ *   descriptor; the Python `move_denied` otherwise lists the source path, refusing when it cannot.
+ *   A listing is a snapshot: a concurrent writer could add the next component between the check
+ *   and the rename, so a consumer that can re-checks the destination after the rename.
  */
 export const SANDBOX_MANDATORY_WRITE_DENIES: readonly (readonly string[])[] = Object.freeze(
   [
@@ -90,8 +109,49 @@ export const SANDBOX_MANDATORY_WRITE_DENIES: readonly (readonly string[])[] = Ob
     ["simple-git-hooks.cjs"],
     // the conventional core.hooksPath directory a repository's existing config may name
     [".githooks"],
+    // every other shell startup and logout file (the kernel review's persistence rules name them)
+    [".zshenv"],
+    [".zlogin"],
+    [".zlogout"],
+    [".bash_login"],
+    [".bash_logout"],
+    [".logout"],
+    [".tcshrc"],
+    [".cshrc"],
+    [".kshrc"],
+    [".config", "git", "config"],
+    [".config", "fish", "config.fish"],
+    [".config", "fish", "conf.d"],
+    // persistence locations the OS runs later (approval-only profiles design, "Fixed denies"):
+    // launchd agents and daemons, systemd units, drop-ins and session environment, XDG and KDE
+    // autostart, the X session files. The crontab spools are SANDBOX_SYSTEM_WRITE_DENIES.
+    ["library", "launchagents"],
+    ["library", "launchdaemons"],
+    [".config", "systemd"],
+    [".local", "share", "systemd"],
+    [".config", "environment.d"],
+    [".config", "autostart"],
+    [".config", "autostart-scripts"],
+    [".config", "plasma-workspace", "env"],
+    [".xprofile"],
+    [".xsessionrc"],
   ].map((entry) => Object.freeze(entry)),
 );
+
+/**
+ * Absolute system paths denied with everything beneath them, compared folded and anchored at `/`:
+ * the crontab and at spools of Linux (`/var/spool/cron` in its `crontabs` and `tabs` layouts,
+ * `/var/spool/at`) and macOS (`/private/var/at`, also spelled `/var/at`; `/usr/lib/cron/tabs` is a
+ * link resolving there). Never protected move names: a project's own `at/` or `spool/` stays
+ * ordinary.
+ */
+export const SANDBOX_SYSTEM_WRITE_DENIES: readonly string[] = Object.freeze([
+  "/var/spool/cron",
+  "/var/spool/at",
+  "/private/var/at/tabs",
+  "/private/var/at/jobs",
+  "/var/at",
+]);
 
 /** Directories inside a gitdir whose whole subtree is writable (objects, refs, operation state). */
 export const SANDBOX_GIT_ALLOWED_DIRECTORIES: readonly string[] = Object.freeze([
@@ -155,11 +215,32 @@ export const SANDBOX_GIT_DENIED_INTERNALS: readonly string[] = Object.freeze([
   "info/attributes",
 ]);
 
-/** Names nothing leaves, and no directory is moved under, from outside. */
+/**
+ * Names nothing leaves, and no directory is moved under, from outside: `.git` and the
+ * single-component entries. A multi-component entry is guarded by its prefix rule instead (rule 4),
+ * so its first component (`library`, `.config`) stays an ordinary name.
+ */
 export const SANDBOX_PROTECTED_PATH_NAMES: readonly string[] = Object.freeze([
   ".git",
-  ...new Set(SANDBOX_MANDATORY_WRITE_DENIES.map((entry) => entry[0] as string)),
+  ...new Set(
+    SANDBOX_MANDATORY_WRITE_DENIES.filter((entry) => entry.length === 1).map(
+      (entry) => entry[0] as string,
+    ),
+  ),
 ]);
+
+/** The multi-component entries and the anchored system paths, as folded name sequences. */
+const PREFIX_GUARDED: readonly { readonly names: readonly string[]; readonly anchored: boolean }[] =
+  [
+    ...SANDBOX_MANDATORY_WRITE_DENIES.filter((entry) => entry.length > 1).map((names) => ({
+      names,
+      anchored: false,
+    })),
+    ...SANDBOX_SYSTEM_WRITE_DENIES.map((path) => ({
+      names: path.split("/").filter((p) => p !== ""),
+      anchored: true,
+    })),
+  ];
 
 /**
  * Python's `str.casefold` where it differs from `toLowerCase` (full case folding, Unicode 15.1),
@@ -535,6 +616,10 @@ function gitInternalAllowed(rel: readonly string[]): boolean {
 /** Whether restricted execution may never write `path` (an absolute, normalized path). */
 export function isSandboxWriteDenied(path: string): boolean {
   const names = parts(path);
+  for (const system of SANDBOX_SYSTEM_WRITE_DENIES) {
+    const anchored = parts(system);
+    if (anchored.every((name, j) => names[j] === name)) return true;
+  }
   for (const entry of SANDBOX_MANDATORY_WRITE_DENIES)
     for (let i = 0; i + entry.length <= names.length; i++)
       if (entry.every((name, j) => names[i + j] === name)) return true;
@@ -543,14 +628,41 @@ export function isSandboxWriteDenied(path: string): boolean {
   return names[names.length - 1] === "head";
 }
 
-/** Whether a restricted rename or link of `source` to `destination` is refused (rule 4). */
+/**
+ * The next components a moved entry must not bring to `to`: for each guarded sequence whose proper
+ * prefix `to` ends in (anchored: equals), the component that follows. Empty when `to` is no prefix.
+ */
+function prefixNext(to: readonly string[]): string[] {
+  const next: string[] = [];
+  for (const { names, anchored } of PREFIX_GUARDED)
+    for (let k = 1; k < names.length; k++) {
+      if (anchored && to.length !== k) continue;
+      if (to.length < k) continue;
+      if (names.slice(0, k).every((name, j) => to[to.length - k + j] === name))
+        next.push(names[k] as string);
+    }
+  return next;
+}
+
+/**
+ * Whether a restricted rename or link of `source` to `destination` is refused (rule 4).
+ * `sourceEntries` are the names directly in a moved directory; the check needs them only when the
+ * destination ends in a proper prefix of a guarded entry, and without them it refuses.
+ */
 export function isSandboxMoveDenied(
   source: string,
   destination: string,
   sourceIsDirectory: boolean,
+  sourceEntries?: readonly string[],
 ): boolean {
+  if (isSandboxWriteDenied(source) || isSandboxWriteDenied(destination)) return true;
   const from = parts(source);
   const to = parts(destination);
+  const next = prefixNext(to);
+  if (next.length > 0) {
+    if (!sourceIsDirectory || sourceEntries === undefined) return true;
+    if (sourceEntries.some((name) => next.includes(fold(name)))) return true;
+  }
   const protectedAt = (names: string[]) =>
     names.findIndex((n) => SANDBOX_PROTECTED_PATH_NAMES.includes(n));
   const i = protectedAt(from);
@@ -569,6 +681,8 @@ export function isSandboxMoveDenied(
 export const SANDBOX_WRITE_POLICY_PYTHON: string = `
 import unicodedata as _unicodedata
 WRITE_DENIES = [[_unicodedata.normalize("NFKC", n).casefold() for n in e] for e in ${JSON.stringify(SANDBOX_MANDATORY_WRITE_DENIES)}]
+SYSTEM_WRITE_DENIES = [[_unicodedata.normalize("NFKC", n).casefold() for n in p.split("/") if n] for p in ${JSON.stringify(SANDBOX_SYSTEM_WRITE_DENIES)}]
+PREFIX_GUARDED = [(e, False) for e in WRITE_DENIES if len(e) > 1] + [(e, True) for e in SYSTEM_WRITE_DENIES]
 GIT_ALLOWED_DIRECTORIES = set(${JSON.stringify(SANDBOX_GIT_ALLOWED_DIRECTORIES)})
 GIT_ALLOWED_FILES = set(${JSON.stringify(SANDBOX_GIT_ALLOWED_FILES)})
 GIT_DANGER = set(${JSON.stringify([...GIT_DANGER])})
@@ -621,6 +735,9 @@ def _git_internal_allowed(rel):
 
 def write_denied(path):
     names = _fold_parts(path)
+    for system in SYSTEM_WRITE_DENIES:
+        if names[:len(system)] == system:
+            return True
     for entry in WRITE_DENIES:
         for i in range(len(names) - len(entry) + 1):
             if names[i:i + len(entry)] == entry:
@@ -630,8 +747,34 @@ def write_denied(path):
     return bool(names) and names[-1] == "head"
 
 
-def move_denied(source, destination, is_dir):
+def _prefix_next(dst):
+    nxt = []
+    for names, anchored in PREFIX_GUARDED:
+        for k in range(1, len(names)):
+            if (anchored and len(dst) != k) or len(dst) < k:
+                continue
+            if dst[len(dst) - k:] == names[:k]:
+                nxt.append(names[k])
+    return nxt
+
+
+def move_denied(source, destination, is_dir, entries=None):
+    if write_denied(source) or write_denied(destination):
+        return True
     src, dst = _fold_parts(source), _fold_parts(destination)
+    nxt = _prefix_next(dst)
+    if nxt:
+        if not is_dir:
+            return True
+        if entries is None:
+            # no entries given: list the source path itself, refusing what cannot be listed
+            try:
+                import os as _os
+                entries = _os.listdir(source)
+            except OSError:
+                return True
+        if any(_unicodedata.normalize("NFKC", n).casefold() in nxt for n in entries):
+            return True
 
     def protected_at(names):
         return next((k for k, n in enumerate(names) if n in PROTECTED_PATH_NAMES), -1)

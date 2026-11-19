@@ -221,7 +221,11 @@ describe("immutable operation scope parsing", () => {
     { tag: "a".repeat(65) },
     { filesystem: { kind: "unknown" } },
     { filesystem: { kind: "device", readRoots: [] } },
-    { network: { kind: "open-public" } },
+    { network: { kind: "open-public", hosts: [] } },
+    { network: { kind: "open" } },
+    { network: { kind: "public" } },
+    { network: { kind: "host-environment" } },
+    { network: { kind: "Environment" } },
     { network: { kind: "none", hosts: [] } },
     { network: { kind: "environment", hosts: [] } },
     { network: { kind: "allowlist", hosts: ["127.0.0.1"] } },
@@ -247,6 +251,50 @@ describe("immutable operation scope parsing", () => {
     });
     expect(parsed.profileRevision).toBe(Number.MAX_SAFE_INTEGER);
     expect(parsed.admitBeforeMs).toBe(Number.MAX_SAFE_INTEGER);
+  });
+
+  it.each(["request-approval", "approve-for-me", "full-access"])(
+    "accepts the open public network with a scoped filesystem for %s",
+    (profile) => {
+      const parsed = parseSandboxOperationScope({
+        ...operationScope(),
+        profile,
+        network: { kind: "open-public" },
+      });
+      expect(parsed.network).toEqual({ kind: "open-public" });
+      expect(Object.isFrozen(parsed.network)).toBe(true);
+      expect(parsed.filesystem.kind).toBe("scoped");
+    },
+  );
+
+  it.each([
+    { kind: "scoped", readRoots: [], writeRoots: [] },
+    { kind: "scoped", readRoots: ["/"], writeRoots: ["/"] },
+  ])("rejects the environment network without the device filesystem: %j", (filesystem) => {
+    for (const profile of ["request-approval", "approve-for-me", "full-access"])
+      expect(() =>
+        parseSandboxOperationScope({
+          ...operationScope(),
+          profile,
+          filesystem,
+          network: { kind: "environment" },
+        }),
+      ).toThrow(/network\.kind: environment requires the device filesystem/);
+  });
+
+  it("rejects the device filesystem without the environment network (the pair goes both ways)", () => {
+    for (const network of [
+      { kind: "none" },
+      { kind: "open-public" },
+      { kind: "allowlist", hosts: ["example.com"] },
+    ])
+      expect(() =>
+        parseSandboxOperationScope({
+          ...operationScope(),
+          filesystem: { kind: "device" },
+          network,
+        }),
+      ).toThrow(/filesystem\.kind: device requires the environment network/);
   });
 
   it.each(["request-approval", "approve-for-me"])(

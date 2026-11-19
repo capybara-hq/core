@@ -28,6 +28,7 @@ import {
   parseSandboxOperationScope,
   parseSandboxPreparationScope,
   type SandboxPermissionSupport,
+  type SandboxPermissionSupportV2,
 } from "./sandbox-operation.js";
 
 /** The protocol version carried in `X-Capybara-Device-Protocol` and the hello frame. */
@@ -1129,6 +1130,196 @@ function owner(value: unknown): DeviceOwnerCeiling {
   )
     throw new DeviceProtocolError("Invalid owner ceiling");
   return o as unknown as DeviceOwnerCeiling;
+}
+/**
+ * A strict copy of a wire object for the protocol 4 shapes: a plain object of own data properties
+ * only (no accessor is ever invoked, so a value cannot change between check and use), each key in
+ * `allowed`. Nested values are copied by the caller's own checks.
+ */
+function strictRecord(value: unknown, allowed: readonly string[], what: string) {
+  if (typeof value !== "object" || value === null || Array.isArray(value))
+    throw new DeviceProtocolError(`Invalid ${what}: expected an object`);
+  const proto = Object.getPrototypeOf(value);
+  if (proto !== Object.prototype && proto !== null)
+    throw new DeviceProtocolError(`Invalid ${what}: expected a plain object`);
+  const out: Record<string, unknown> = Object.create(null);
+  for (const key of Reflect.ownKeys(value)) {
+    if (typeof key !== "string" || !allowed.includes(key))
+      throw new DeviceProtocolError(`Invalid ${what}: unknown field ${String(key)}`);
+    const d = Object.getOwnPropertyDescriptor(value, key);
+    if (!d || !("value" in d))
+      throw new DeviceProtocolError(`Invalid ${what}: accessor fields are not allowed`);
+    if (d.value !== undefined) out[key] = d.value;
+  }
+  return out;
+}
+function strictHosts(value: unknown, what: string): string[] {
+  if (!Array.isArray(value))
+    throw new DeviceProtocolError(`Invalid ${what}: expected at most 100 hosts`);
+  // one read of the length: a proxy or a getter cannot grow the list between check and copy
+  const length: number = value.length;
+  if (length > 100) throw new DeviceProtocolError(`Invalid ${what}: expected at most 100 hosts`);
+  const hosts: string[] = [];
+  for (let i = 0; i < length; i++) {
+    const d = Object.getOwnPropertyDescriptor(value, i);
+    const h: unknown = d && "value" in d ? d.value : undefined;
+    if (typeof h !== "string" || validateAllowHost(h).length)
+      throw new DeviceProtocolError(`Invalid ${what}: expected hostnames or *.domain patterns`);
+    hosts.push(h);
+  }
+  return hosts;
+}
+function strictBoolean(o: Record<string, unknown>, key: string, what: string): boolean {
+  const v = o[key];
+  if (typeof v !== "boolean")
+    throw new DeviceProtocolError(`Invalid ${what}: ${key} must be a boolean`);
+  return v;
+}
+
+/**
+ * Strictly parses a runtime permission report, version 2 (the protocol 4 `permissionSupport`, also
+ * the shape a cloud provider reports), and returns a frozen copy; throws {@link DeviceProtocolError}.
+ * Restricted support is all four claims or `null`; per-operation hosts need the allowlist; an
+ * operation boundary without restricted support claims no sandbox network at all. An
+ * instance boundary is the whole instance: it claims no restricted per-operation scope, no
+ * outside-sandbox escalation and no per-operation hosts (a host joins the device's list instead).
+ */
+export function parseSandboxPermissionSupportV2(value: unknown): SandboxPermissionSupportV2 {
+  const what = "runtime permission report";
+  const o = strictRecord(
+    value,
+    [
+      "version",
+      "boundary",
+      "restricted",
+      "network",
+      "outsideSandbox",
+      "background",
+      "unavailableReason",
+    ],
+    what,
+  );
+  if (o.version !== 2) throw new DeviceProtocolError(`Invalid ${what}: expected version 2`);
+  if (o.boundary !== "operation" && o.boundary !== "instance")
+    throw new DeviceProtocolError(`Invalid ${what}: boundary must be operation or instance`);
+  let restricted: SandboxPermissionSupportV2["restricted"] = null;
+  if (o.restricted !== null) {
+    const claims = ["filesystem", "network", "native", "concurrentScopes"] as const;
+    const r = strictRecord(o.restricted, claims, `${what} restricted claims`);
+    if (claims.some((k) => r[k] !== true))
+      throw new DeviceProtocolError(`Invalid ${what}: restricted support needs all four claims`);
+    restricted = { filesystem: true, network: true, native: true, concurrentScopes: true };
+  }
+  const n = strictRecord(
+    o.network,
+    ["openPublic", "allowlist", "perOperationHosts"],
+    `${what} network`,
+  );
+  const network = {
+    openPublic: strictBoolean(n, "openPublic", what),
+    allowlist: strictBoolean(n, "allowlist", what),
+    perOperationHosts: strictBoolean(n, "perOperationHosts", what),
+  };
+  if (
+    o.boundary === "operation" &&
+    restricted === null &&
+    (network.openPublic || network.allowlist || network.perOperationHosts)
+  )
+    throw new DeviceProtocolError(
+      `Invalid ${what}: without restricted support an operation boundary has no sandbox network`,
+    );
+  if (network.perOperationHosts && !network.allowlist)
+    throw new DeviceProtocolError(`Invalid ${what}: per-operation hosts need the allowlist`);
+  const outsideSandbox = strictBoolean(o, "outsideSandbox", what);
+  const background = strictBoolean(o, "background", what);
+  if (
+    o.boundary === "instance" &&
+    (restricted !== null || outsideSandbox || network.perOperationHosts)
+  )
+    throw new DeviceProtocolError(
+      `Invalid ${what}: an instance boundary claims no restricted scope, outside escalation or per-operation hosts`,
+    );
+  if (o.unavailableReason !== undefined) string(o.unavailableReason, 4096);
+  return freeze({
+    version: 2,
+    boundary: o.boundary,
+    restricted,
+    network,
+    outsideSandbox,
+    background,
+    ...(o.unavailableReason !== undefined
+      ? { unavailableReason: o.unavailableReason as string }
+      : {}),
+  });
+}
+
+/**
+ * Strictly parses one authenticated owner-ceiling report of protocol 4 and returns a frozen copy;
+ * throws {@link DeviceProtocolError}. Unknown fields (the protocol 3 `fullAccess` and
+ * `restrictedAllowedDomains` among them) are refused.
+ */
+export function parseOwnerCeilingReportV3(value: unknown): DeviceOwnerCeilingV3 {
+  const what = "owner ceiling report";
+  const o = strictRecord(
+    value,
+    [
+      "version",
+      "sequence",
+      "revision",
+      "outsideSandbox",
+      "network",
+      "allowedDomains",
+      "restrictedProjectReach",
+    ],
+    what,
+  );
+  if (o.version !== 3) throw new DeviceProtocolError(`Invalid ${what}: expected version 3`);
+  if (o.network !== "open" && o.network !== "allowlist")
+    throw new DeviceProtocolError(`Invalid ${what}: network must be open or allowlist`);
+  if (o.restrictedProjectReach !== "workspace" && o.restrictedProjectReach !== "os-user")
+    throw new DeviceProtocolError(`Invalid ${what}: project reach must be workspace or os-user`);
+  return freeze({
+    version: 3,
+    sequence: integer(o.sequence),
+    revision: string(o.revision, 512),
+    outsideSandbox: strictBoolean(o, "outsideSandbox", what),
+    network: o.network,
+    allowedDomains: strictHosts(o.allowedDomains, `${what} allowedDomains`),
+    restrictedProjectReach: o.restrictedProjectReach,
+  });
+}
+
+/**
+ * Strictly parses an owner-ceiling narrowing of protocol 4 and returns a frozen copy; throws
+ * {@link DeviceProtocolError}. Every field can only narrow: `outsideSandbox` only to `false`,
+ * `network` only to `allowlist`, the project reach only to `workspace`, and hosts only removed.
+ * There is no way to name a host to add or a list to replace.
+ */
+export function parseOwnerCeilingNarrowingV3(value: unknown): DeviceOwnerCeilingNarrowingV3 {
+  const what = "owner ceiling narrowing";
+  const o = strictRecord(
+    value,
+    ["outsideSandbox", "network", "removeAllowedDomains", "restrictedProjectReach"],
+    what,
+  );
+  if (
+    (Object.hasOwn(o, "outsideSandbox") && o.outsideSandbox !== false) ||
+    (Object.hasOwn(o, "network") && o.network !== "allowlist") ||
+    (Object.hasOwn(o, "restrictedProjectReach") && o.restrictedProjectReach !== "workspace")
+  )
+    throw new DeviceProtocolError("The deployment may only narrow the owner ceiling");
+  return freeze({
+    ...(Object.hasOwn(o, "outsideSandbox") ? { outsideSandbox: false as const } : {}),
+    ...(Object.hasOwn(o, "network") ? { network: "allowlist" as const } : {}),
+    ...(Object.hasOwn(o, "removeAllowedDomains")
+      ? {
+          removeAllowedDomains: strictHosts(o.removeAllowedDomains, `${what} removeAllowedDomains`),
+        }
+      : {}),
+    ...(Object.hasOwn(o, "restrictedProjectReach")
+      ? { restrictedProjectReach: "workspace" as const }
+      : {}),
+  });
 }
 const GENERATION = /^[0-9]{1,16}$/;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;

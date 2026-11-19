@@ -43,6 +43,9 @@ adds the new shapes next to the old ones, and step W1.M swaps them:
 | `DeviceOwnerCeilingV3` (`device-protocol.ts`) | `DeviceOwnerCeiling` |
 | `DeviceOwnerCeilingNarrowingV3` (`device-protocol.ts`) | `DeviceOwnerCeilingNarrowing` |
 | `PermissionFullAccessGrantDecision` (`sandbox/permission-call-types.ts`) | a member of `PermissionGrantDecision` (T6, with migration `0164`) |
+| `parseSandboxPermissionSupportV2` (`device-protocol.ts`, T1) | `parseSandboxPermissionSupport` |
+| `parseOwnerCeilingReportV3` (`device-protocol.ts`, T1) | `parseOwnerCeilingReport` (replaces the protocol 3 one) |
+| `parseOwnerCeilingNarrowingV3` (`device-protocol.ts`, T1) | `parseOwnerCeilingNarrowing` |
 
 Already final in W0: `{ kind: "open-public" }` in `SandboxNetworkScope` (the parser still refuses
 it until T1), `SandboxBoundary`, `DeviceNetworkMode`, `network-classes.ts` (`AddressClass`,
@@ -319,12 +322,17 @@ One mechanical commit on `perm/r3-int`, behaviour kept wherever a later task own
 
 - **SRT configuration for `open-public`:**
   - an allow-all ask callback, so decisions go through the resolved-address guard;
-  - `deniedResolvedAddresses` built from the private, CGNAT and ULA classes of `classifyAddress`;
+  - `deniedResolvedAddresses` built from the private, CGNAT and ULA classes of `classifyAddress`
+    (`OPEN_PUBLIC_DENIED_CIDRS` is the whole closed set as CIDRs, embedded forms expanded);
   - `deniedDomains` CIDR rules for IP literals.
 - **Execution paths:**
   - The unwrapped full branch runs only for the escalated pair.
   - An escalated call's environment drops `CAPYBARA_*` and the device credential.
   - The restricted environment is used for every profile.
+- **Protected locations:** at operation start the worker resolves the protected home locations
+  (`~/Library`, `~/.config`, `~/.local/share` and the secret paths) and adds each resolved target
+  that differs (a dotfile manager's symbolic link) as an absolute deny, and the write rules gain
+  `SANDBOX_SYSTEM_WRITE_DENIES` (SDK `sandbox-write-denies.ts`).
 
 **RED first:**
 
@@ -358,6 +366,12 @@ T1 does not touch this SDK file.
   - no host match, and any TCP port;
   - the existing resolved-IP `is_global` check stays;
   - the class table is mirrored from the SDK, with a hash test against it.
+- **Protected locations:** at operation start the worker resolves the protected home locations and
+  adds each resolved target that differs (a symbolic link) as an absolute deny, as in T7. The
+  broker passes the moved directory's entries, listed from the source descriptor, as
+  `move_denied(…, entries)` instead of letting the policy list the source path, re-checks the
+  destination after a directory rename, and refuses a `symlink` whose new name ends in a proper
+  prefix of a multi-component deny (`move_denied` already refuses renaming a link there).
 - **Execution:** `hostBaseEnv(full)` is removed, and escalated calls get the environment described
   in T7.
 - **Support report:** the v2 report.
