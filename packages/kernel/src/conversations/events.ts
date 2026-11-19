@@ -1435,9 +1435,11 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
     }),
   ),
   /**
-   * A still-pending approval changed without a decision: a network ask's 「这台设备一直允许」 whose
-   * device change was not applied or not confirmed (`detail.attempt`, transactional outbox spec
-   * §7). Display only, never model-visible: the page reads the approval again.
+   * A still-pending approval changed without a decision: a network ask's "always allow on this
+   * device" whose device change was not applied or not confirmed (`detail.attempt`, transactional
+   * outbox spec §7). No longer written (a network ask grants only the run since device protocol
+   * 4); an older log may hold it. Display only, never model-visible: the page reads the approval
+   * again.
    */
   ev("approval_updated", z.object({ approvalId: z.string(), callId: z.string() })),
   /**

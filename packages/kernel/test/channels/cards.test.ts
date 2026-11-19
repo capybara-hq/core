@@ -343,11 +343,12 @@ describe("a network ask card (network ask-to-allow spec §6.4, §6.5)", () => {
     expect(text).toContain("The agent wants to reach 2 domains. Allow?");
     expect(text).toContain("files.slack.com");
     expect(text).toContain("This decision applies to all the domains above");
-    expect(text).toContain("Allow this time / Always allow on this device");
+    expect(text).toContain("Allow this time");
+    expect(text).not.toContain("Always allow");
     const zh = await approvalCard(deps(view), "na1", "https://cap.example", "zh", redact);
-    expect(renderCardAsText(zh as NonNullable<typeof zh>, "zh")).toContain(
-      "这次允许 / 这台设备一直允许",
-    );
+    const zhText = renderCardAsText(zh as NonNullable<typeof zh>, "zh");
+    expect(zhText).toContain("这次允许");
+    expect(zhText).not.toContain("一直允许");
   });
 });
 
