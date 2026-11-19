@@ -23,6 +23,7 @@ import {
   type TitleBarProps,
   titleBarFit,
 } from "../src/index";
+import { ShellPageContext } from "../src/shell/shell-page";
 
 afterEach(() => {
   cleanup();
@@ -751,5 +752,59 @@ describe("ConversationPage on a phone (§5.4, mobile layout spec §5.4)", () => 
     phone(true);
     wrap(<ConversationPage {...page({ right: "properties", layout: "sheet" })} />);
     expect(document.querySelector('[data-part="pushed"]')).toBeNull();
+  });
+
+  it("without a shell the page draws its own cover and back bar and the thread is inert", () => {
+    phone(true);
+    wrap(<ConversationPage {...page({ right: "properties", layout: "auto" })} />);
+    const pushed = document.querySelector('[data-part="pushed"]') as HTMLElement;
+    expect(pushed.getAttribute("data-shell")).toBeNull();
+    expect(pushed.querySelector('[data-part="pushed-bar"]')).not.toBeNull();
+    expect(document.querySelector('[data-part="conv-main"]')?.hasAttribute("inert")).toBe(true);
+  });
+
+  it("inside a shell there is one back: the shell's, registered with onBack and a title", () => {
+    phone(true);
+    const register = vi.fn();
+    const onCloseRight = vi.fn();
+    wrap(
+      <ShellPageContext.Provider value={register}>
+        <ConversationPage {...page({ right: "properties", layout: "auto", onCloseRight })} />
+      </ShellPageContext.Provider>,
+    );
+    const pushed = document.querySelector('[data-part="pushed"]') as HTMLElement;
+    expect(pushed.getAttribute("data-shell")).toBe("true");
+    expect(pushed.querySelector('[data-part="pushed-bar"]')).toBeNull();
+    expect(within(pushed).queryByRole("button", { name: "返回" })).toBeNull();
+    expect(document.querySelector('[data-part="conv-main"]')?.hasAttribute("hidden")).toBe(true);
+    const last = register.mock.calls.filter((c) => c[1] !== null).at(-1)?.[1] as {
+      onBack: () => void;
+      title: string;
+    };
+    expect(last.title).toBe("属性面板");
+    last.onBack();
+    expect(onCloseRight).toHaveBeenCalledTimes(1);
+  });
+
+  it("a pushed RightPanel draws no ×, full-screen button or back chevron of its own", () => {
+    phone(true);
+    wrap(
+      <ConversationPage
+        {...page({
+          right: "panel",
+          layout: "auto",
+          panel: (
+            <RightPanel title="文件" onClose={noop} onFullscreen={noop} onBack={noop}>
+              body
+            </RightPanel>
+          ),
+        })}
+      />,
+    );
+    const pushed = document.querySelector('[data-part="pushed"]') as HTMLElement;
+    expect(within(pushed).getByText("文件")).toBeTruthy();
+    expect(within(pushed).queryByRole("button", { name: "关闭" })).toBeNull();
+    expect(within(pushed).queryByRole("button", { name: "全屏" })).toBeNull();
+    expect(within(pushed).queryAllByRole("button", { name: "返回" })).toHaveLength(1);
   });
 });

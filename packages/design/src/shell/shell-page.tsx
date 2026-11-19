@@ -36,3 +36,8 @@ export function useRegisterShellPage(page: ShellPage): void {
     return () => register?.(own, null);
   }, [register]);
 }
+
+/** Whether the page is inside an `AppShell` (its top bar owns back for a pushed page). */
+export function useHasShell(): boolean {
+  return useContext(ShellPageContext) !== null;
+}

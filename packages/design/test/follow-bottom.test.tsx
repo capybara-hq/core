@@ -378,9 +378,68 @@ describe("a resize is not a scroll (the keyboard opening, a sheet closing)", () 
     expect(onUnseen).not.toHaveBeenCalledWith(true);
   });
 
-  it("away from the bottom, new content raises the latest signal; scrolling back clears it", async () => {
-    const view = { h: 100 };
-    mockPlainLayout(view);
+  /** The scroller spans 0..100; a row is below it, or above it when marked `data-above`. */
+  function mockRects() {
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (
+      this: HTMLElement,
+    ) {
+      const r = (top: number, bottom: number) =>
+        ({
+          top,
+          bottom,
+          height: bottom - top,
+          width: 300,
+          left: 0,
+          right: 300,
+          x: 0,
+          y: top,
+          toJSON: () => ({}),
+        }) as DOMRect;
+      if (this.dataset.testid === "s") return r(0, 100);
+      return this.dataset.above ? r(-60, -10) : r(400, 450);
+    });
+  }
+
+  it("away from the bottom, a row appended at the end raises the latest signal; scrolling back clears it", async () => {
+    mockPlainLayout({ h: 100 });
+    mockRects();
+    stubResizeObserver();
+    const onUnseen = vi.fn();
+    const r = render(<Plain n={3} onUnseen={onUnseen} />);
+    const el = r.getByTestId("s");
+    el.scrollTop = 50;
+    el.dispatchEvent(new Event("scroll"));
+    r.rerender(<Plain n={4} onUnseen={onUnseen} />);
+    await vi.waitFor(() => expect(onUnseen).toHaveBeenLastCalledWith(true));
+    el.scrollTop = 300;
+    el.dispatchEvent(new Event("scroll"));
+    expect(onUnseen).toHaveBeenLastCalledWith(false);
+  });
+
+  it("history prepended above while away raises nothing", async () => {
+    mockPlainLayout({ h: 100 });
+    mockRects();
+    stubResizeObserver();
+    const onUnseen = vi.fn();
+    const r = render(<Plain n={3} onUnseen={onUnseen} />);
+    const el = r.getByTestId("s");
+    el.scrollTop = 50;
+    el.dispatchEvent(new Event("scroll"));
+    const wrapper = el.firstElementChild as HTMLElement;
+    const older = document.createElement("p");
+    older.dataset.above = "true";
+    older.textContent = "older";
+    await act(async () => {
+      wrapper.prepend(older);
+      await new Promise((res) => setTimeout(res, 0));
+    });
+    expect(onUnseen).not.toHaveBeenCalledWith(true);
+  });
+
+  it("layout growth without a new row (an image, a block, a size swap) raises nothing", async () => {
+    mockPlainLayout({ h: 100 });
+    mockRects();
+    const fire = stubResizeObserver();
     let height = 400;
     vi.spyOn(Element.prototype, "scrollHeight", "get").mockImplementation(() => height);
     const onUnseen = vi.fn();
@@ -388,12 +447,79 @@ describe("a resize is not a scroll (the keyboard opening, a sheet closing)", () 
     const el = r.getByTestId("s");
     el.scrollTop = 50;
     el.dispatchEvent(new Event("scroll"));
-    height = 480;
+    height = 700;
+    fire();
+    await act(async () => {
+      el.querySelector("p")?.append(" more text");
+      await new Promise((res) => setTimeout(res, 0));
+    });
+    expect(onUnseen).not.toHaveBeenCalledWith(true);
+  });
+
+  it("releasing the scroller (a switched conversation) clears the signal", async () => {
+    mockPlainLayout({ h: 100 });
+    mockRects();
+    stubResizeObserver();
+    const onUnseen = vi.fn();
+    const r = render(<Plain n={3} onUnseen={onUnseen} />);
+    const el = r.getByTestId("s");
+    el.scrollTop = 50;
+    el.dispatchEvent(new Event("scroll"));
     r.rerender(<Plain n={4} onUnseen={onUnseen} />);
     await vi.waitFor(() => expect(onUnseen).toHaveBeenLastCalledWith(true));
-    el.scrollTop = 380;
-    el.dispatchEvent(new Event("scroll"));
+    r.unmount();
     expect(onUnseen).toHaveBeenLastCalledWith(false);
+  });
+
+  it("a role=log list inside the thread: its rows are the items, and its new rows count", async () => {
+    mockPlainLayout({ h: 100 });
+    mockRects();
+    const fire = stubResizeObserver();
+    const onUnseen = vi.fn();
+    function Logged({ n }: { n: number }) {
+      const ref = useFollowBottom<HTMLDivElement>(onUnseen);
+      return (
+        <div ref={ref} data-testid="s">
+          <div>
+            <div role="log" data-testid="log">
+              {Array.from({ length: n }, (_, i) => (
+                // biome-ignore lint/suspicious/noArrayIndexKey: static case
+                <p key={i}>m {i}</p>
+              ))}
+            </div>
+          </div>
+        </div>
+      );
+    }
+    const r = render(<Logged n={2} />);
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (
+      this: HTMLElement,
+    ) {
+      const top = this.dataset.testid === "s" ? 0 : 400;
+      const bottom = this.dataset.testid === "s" ? 100 : 450;
+      return {
+        top,
+        bottom,
+        height: bottom - top,
+        width: 1,
+        left: 0,
+        right: 1,
+        x: 0,
+        y: top,
+        toJSON: () => ({}),
+      } as DOMRect;
+    });
+    fire();
+    const rows = [...r.getByTestId("log").children] as HTMLElement[];
+    expect(rows[0]?.style.getPropertyValue("content-visibility")).toBe("auto");
+    expect((r.getByTestId("log") as HTMLElement).style.getPropertyValue("content-visibility")).toBe(
+      "",
+    );
+    const el = r.getByTestId("s");
+    el.scrollTop = 50;
+    el.dispatchEvent(new Event("scroll"));
+    r.rerender(<Logged n={3} />);
+    await vi.waitFor(() => expect(onUnseen).toHaveBeenLastCalledWith(true));
   });
 
   it("thread items get content-visibility auto and their measured height after the first measure", async () => {
@@ -436,21 +562,36 @@ describe("ConversationPage latest button", () => {
     </DesignProvider>
   );
 
-  it("appears when new content arrives away from the bottom; one tap scrolls down and hides it", async () => {
-    const view = { h: 100 };
-    mockPlainLayout(view);
-    let height = 400;
-    vi.spyOn(Element.prototype, "scrollHeight", "get").mockImplementation(() => height);
+  it("appears when a message arrives away from the bottom; one tap scrolls down and hides it", async () => {
+    mockPlainLayout({ h: 100 });
+    stubResizeObserver();
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockImplementation(function (
+      this: HTMLElement,
+    ) {
+      const scroller = this.classList.contains("cb-conv-scroll");
+      const top = scroller ? 0 : 400;
+      const bottom = scroller ? 100 : 450;
+      return {
+        top,
+        bottom,
+        height: bottom - top,
+        width: 1,
+        left: 0,
+        right: 1,
+        x: 0,
+        y: top,
+        toJSON: () => ({}),
+      } as DOMRect;
+    });
     const r = render(props(<p>one</p>));
     const scroll = document.querySelector(".cb-conv-scroll") as HTMLElement;
     expect(screen.queryByRole("button", { name: "Latest" })).toBeNull();
     scroll.scrollTop = 50;
     fireEvent.scroll(scroll);
-    height = 500;
     r.rerender(props([<p key="a">one</p>, <p key="b">two</p>]));
     const button = await screen.findByRole("button", { name: "Latest" });
     act(() => button.click());
-    expect(scroll.scrollTop).toBe(400);
+    expect(scroll.scrollTop).toBe(300);
     fireEvent.scroll(scroll);
     await vi.waitFor(() => expect(screen.queryByRole("button", { name: "Latest" })).toBeNull());
   });

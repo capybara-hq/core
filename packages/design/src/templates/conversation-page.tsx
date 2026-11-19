@@ -14,7 +14,7 @@ import {
 import { IconButton } from "../controls/button";
 import { AgentRowLoading } from "../conversation/agent-row";
 import { PropertiesPanel, PropertySection, RightPanel } from "../conversation/panels";
-import { RightFullContext } from "../conversation/right-full";
+import { RightFullContext, RightPushedContext } from "../conversation/right-full";
 import { ThreadHistory, type ThreadHistoryProps } from "../conversation/thread-history";
 import { NewTitleBar, TitleBar, type TitleBarProps } from "../conversation/title-bar";
 import { WorkingLine } from "../conversation/working-line";
@@ -24,7 +24,7 @@ import { BoxScope } from "../layout/box";
 import { useDragDismiss } from "../overlays/drag";
 import { useFocusReturn } from "../overlays/focus-return";
 import { useDesignT } from "../provider";
-import { useRegisterShellPage } from "../shell/shell-page";
+import { useHasShell, useRegisterShellPage } from "../shell/shell-page";
 import { INLINE_RIGHT_AREA_BELOW, useSizeClass } from "../shell/size-class";
 import { StatusBar } from "../shell/status-bar";
 import { useMediaQuery } from "../shell/use-media-query";
@@ -440,7 +440,14 @@ export function ConversationPage({
   const closeRight = useRef(onCloseRight);
   closeRight.current = onCloseRight;
   const pushedBack = useCallback(() => closeRight.current(), []);
-  useRegisterShellPage(pushed ? { onBack: pushedBack } : {});
+  // Inside an AppShell the shell's top bar is the one back (and shows the title) and the right
+  // area sits in normal flow under it; without one the page draws its own cover and back bar.
+  const inShell = useHasShell();
+  useRegisterShellPage(
+    pushed
+      ? { onBack: pushedBack, title: right === "properties" ? t("props.label") : t("panel.label") }
+      : {},
+  );
   useEffect(() => {
     if (!pushed) return;
     const onKey = (e: globalThis.KeyboardEvent) => {
@@ -470,9 +477,15 @@ export function ConversationPage({
       data-right-full={full ? "true" : undefined}
       data-layout={layout}
       data-sheet={sheet ? "true" : undefined}
+      data-shell={pushed && inShell ? "true" : undefined}
     >
       <SkeletonGroup label={t("table.loading")} active={anyLoading}>
-        <div className="cb-conv-main" data-part="conv-main">
+        <div
+          className="cb-conv-main"
+          data-part="conv-main"
+          // covered by the pushed page: out of the tab order and the reading order
+          {...(pushed ? (inShell ? { hidden: true } : { inert: true }) : {})}
+        >
           {newConversation ? (
             <NewTitleBar />
           ) : (
@@ -525,22 +538,29 @@ export function ConversationPage({
           </div>
         ) : null}
         {pushed ? (
-          <section className="cb-conv-pushed" data-part="pushed" aria-label={t("panel.label")}>
-            <div className="cb-conv-pushed-bar" data-part="pushed-bar">
-              <IconButton
-                label={t("panel.back")}
-                icon={<Icon name="chevron-left" size={16} />}
-                density="default"
-                onClick={onCloseRight}
-              />
-              {right === "properties" ? (
-                <span className="cb-rpanel-title-text cb-rpanel-title-plain">
-                  {t("props.label")}
-                </span>
-              ) : null}
-            </div>
+          <section
+            className="cb-conv-pushed"
+            data-part="pushed"
+            data-shell={inShell ? "true" : undefined}
+            aria-label={t("panel.label")}
+          >
+            {inShell ? null : (
+              <div className="cb-conv-pushed-bar" data-part="pushed-bar">
+                <IconButton
+                  label={t("panel.back")}
+                  icon={<Icon name="chevron-left" size={16} />}
+                  density="default"
+                  onClick={onCloseRight}
+                />
+                {right === "properties" ? (
+                  <span className="cb-rpanel-title-text cb-rpanel-title-plain">
+                    {t("props.label")}
+                  </span>
+                ) : null}
+              </div>
+            )}
             <div className="cb-conv-pushed-body" data-part="pushed-body">
-              {rightNode}
+              <RightPushedContext.Provider value={true}>{rightNode}</RightPushedContext.Provider>
             </div>
           </section>
         ) : null}

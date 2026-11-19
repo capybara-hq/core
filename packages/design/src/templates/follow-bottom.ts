@@ -42,13 +42,20 @@ function topVisible(el: HTMLElement): HTMLElement | null {
   return found;
 }
 
+const isLog = (n: Node): n is HTMLElement =>
+  n instanceof HTMLElement && n.getAttribute("role") === "log";
+
 /**
- * Long threads: once an item has been measured it gets `content-visibility: auto` and its height as
- * `contain-intrinsic-size` (`auto` keeps the browser's own last-rendered size once it has one), so
- * the first paint never skips an item and off-screen items skip layout and paint afterwards. The
- * items are observed one by one: a streaming item re-measures only itself.
+ * The thread's rows: the children of the scroller's one content wrapper, where a `role="log"` child
+ * (the web thread's one list of rows) stands for its own children. Each measured row gets
+ * `content-visibility: auto` and its height as `contain-intrinsic-size` (`auto` keeps the browser's
+ * own last-rendered size once it has one), so the first paint never skips a row and off-screen
+ * rows skip layout and paint afterwards; rows are observed one by one, so a streaming row
+ * re-measures only itself. A row added after the first render is reported to `onAdded`, which is
+ * how the page learns of new content at the newest end (not of history prepended above, nor of a
+ * row growing in place).
  */
-function lightenItems(wrapper: Element | null): () => void {
+function lightenItems(wrapper: Element | null, onAdded: (row: HTMLElement) => void): () => void {
   if (!wrapper || typeof ResizeObserver === "undefined") return () => {};
   const apply = (item: HTMLElement, height: number) => {
     if (!(height > 0)) return;
@@ -61,19 +68,32 @@ function lightenItems(wrapper: Element | null): () => void {
       apply(item, e.borderBoxSize?.[0]?.blockSize ?? item.getBoundingClientRect().height);
     }
   });
-  const watch = (n: Node) => {
-    if (n instanceof HTMLElement) measure.observe(n);
+  let items: MutationObserver;
+  const container = (c: Element) => {
+    items.observe(c, { childList: true });
+    for (const child of Array.from(c.children)) {
+      if (isLog(child)) container(child);
+      else measure.observe(child);
+    }
   };
-  for (const c of Array.from(wrapper.children)) watch(c);
-  const items = new MutationObserver((records) => {
+  items = new MutationObserver((records) => {
     for (const r of records) {
-      for (const n of Array.from(r.addedNodes)) watch(n);
       for (const n of Array.from(r.removedNodes)) {
-        if (n instanceof HTMLElement) measure.unobserve(n);
+        if (!(n instanceof HTMLElement)) continue;
+        measure.unobserve(n);
+        if (isLog(n)) for (const c of Array.from(n.children)) measure.unobserve(c);
+      }
+      for (const n of Array.from(r.addedNodes)) {
+        if (!(n instanceof HTMLElement)) continue;
+        if (isLog(n)) container(n);
+        else {
+          measure.observe(n);
+          onAdded(n);
+        }
       }
     }
   });
-  items.observe(wrapper, { childList: true });
+  container(wrapper);
   return () => {
     items.disconnect();
     measure.disconnect();
@@ -95,9 +115,9 @@ function lightenItems(wrapper: Element | null): () => void {
  * scrolling also honors prefers-reduced-motion.
  *
  * `onUnseen(true)` fires when content arrives while the reader is away from the bottom (the
- * "latest" button), `onUnseen(false)` once they are back within the slack. A resize (the keyboard,
- * a closing sheet) is not arrival: the follow state decided before it is reapplied after it, and
- * the content's height not changing raises nothing.
+ * "latest" button), `onUnseen(false)` once they are back within the slack or the scroller is
+ * released. Only a row added at the newest end counts: a resize (the keyboard, a closing sheet),
+ * history prepended above and layout growth without a new row raise nothing.
  *
  * It also lightens long threads: each item of the thread (the children of the scroller's one
  * content wrapper) gets `content-visibility: auto` with a `contain-intrinsic-size` from its last
@@ -121,7 +141,6 @@ export function useFollowBottom<T extends HTMLElement>(
     const range = () => el.scrollHeight - el.clientHeight;
     let following = true;
     let unseen = false;
-    let lastHeight = el.scrollHeight;
     const setUnseen = (v: boolean) => {
       if (unseen === v) return;
       unseen = v;
@@ -143,9 +162,6 @@ export function useFollowBottom<T extends HTMLElement>(
       } else anchor = null;
     };
     const onGrow = () => {
-      const height = el.scrollHeight;
-      if (!following && height > lastHeight) setUnseen(true);
-      lastHeight = height;
       if (following) {
         el.scrollTop = reversed ? 0 : el.scrollHeight;
       } else if (reversed && !anchoring) {
@@ -172,8 +188,14 @@ export function useFollowBottom<T extends HTMLElement>(
     const resize = typeof ResizeObserver === "undefined" ? undefined : new ResizeObserver(onGrow);
     resize?.observe(el);
     if (el.firstElementChild) resize?.observe(el.firstElementChild);
-    const lighten = lightenItems(el.firstElementChild);
+    const lighten = lightenItems(el.firstElementChild, (row) => {
+      // New content at the newest end while away from the bottom: it extends past the view's bottom
+      // edge (history prepended above, or a row growing in place, never does).
+      if (following) return;
+      if (row.getBoundingClientRect().bottom > el.getBoundingClientRect().bottom) setUnseen(true);
+    });
     return () => {
+      setUnseen(false);
       el.removeEventListener("scroll", remember);
       mutations.disconnect();
       resize?.disconnect();

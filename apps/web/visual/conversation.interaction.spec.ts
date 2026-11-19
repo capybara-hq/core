@@ -149,6 +149,8 @@ test("below 1280 the panel is a sheet; Esc closes it and focus returns to the ic
 // sits inside the window's 16 px gutters instead of running past the right edge.
 test("390: the composer stays inside the 16 px gutters", async ({ page }) => {
   await openTemplate(page, 390);
+  // the demo opens the file panel, a pushed page on a phone: go back to the conversation
+  await page.getByRole("button", { name: "返回" }).click();
   const box = await page.locator('[data-part="composer"]').first().boundingBox();
   expect(box).not.toBeNull();
   if (!box) return;
@@ -256,10 +258,12 @@ test("the pushed right area goes back and clears the hash", async ({ page }) => 
   await page.waitForLoadState("networkidle");
   const pushed = page.locator('[data-part="pushed"]');
   await expect(pushed).toBeVisible();
+  // inside the shell the one back is the top bar's, and the page fills the content area
   const box = await pushed.boundingBox();
   expect(box?.width).toBe(500);
-  expect(box?.height).toBe(900);
-  await pushed.getByRole("button", { name: "返回" }).click();
+  expect(box?.height).toBeGreaterThan(500);
+  await expect(pushed.getByRole("button", { name: "关闭" })).toHaveCount(0);
+  await page.getByRole("button", { name: "返回" }).click();
   await expect(pushed).toHaveCount(0);
   await expect.poll(() => page.evaluate(() => window.location.hash)).toBe("");
 });

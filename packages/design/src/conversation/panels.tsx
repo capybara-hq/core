@@ -9,7 +9,7 @@ import { useDesignT } from "../provider";
 import { LoadFailed } from "./file-preview";
 import { TypeBadge } from "./files";
 import { ConvMenu, type ConvMenuEntry } from "./menu";
-import { useRightFull } from "./right-full";
+import { useRightFull, useRightPushed } from "./right-full";
 import { fillCopy } from "./tool-copy";
 
 // The extension slots and side areas of the conversation page (spec §6.16.16–§6.16.18): the
@@ -413,6 +413,7 @@ export function RightPanel({
 }: RightPanelProps): JSX.Element {
   const t = useDesignT();
   const full = useRightFull();
+  const pushed = useRightPushed();
   const entries: ConvMenuEntry[] = [];
   switcher?.groups.forEach((g, gi) => {
     if (gi > 0) entries.push({ kind: "separator" });
@@ -473,7 +474,7 @@ export function RightPanel({
         tabIndex={-1}
       >
         <header className="cb-rpanel-head" data-part="panel-head">
-          {onBack ? (
+          {onBack && !pushed ? (
             <IconButton
               label={t("panel.back")}
               icon={<Icon name="chevron-left" size={16} />}
@@ -489,18 +490,20 @@ export function RightPanel({
           ) : null}
           <span className="cb-rpanel-grow" />
           {actions}
-          {onFullscreen ? (
+          {onFullscreen && !pushed ? (
             <IconButton
               label={t(full ? "panel.exitFullscreen" : "panel.fullscreen")}
               icon={<Icon name={full ? "minimize-2" : "maximize-2"} size={16} />}
               onClick={onFullscreen}
             />
           ) : null}
-          <IconButton
-            label={t("overlay.close")}
-            icon={<Icon name="x" size={16} />}
-            onClick={onClose}
-          />
+          {pushed ? null : (
+            <IconButton
+              label={t("overlay.close")}
+              icon={<Icon name="x" size={16} />}
+              onClick={onClose}
+            />
+          )}
         </header>
         <div
           className="cb-rpanel-body"

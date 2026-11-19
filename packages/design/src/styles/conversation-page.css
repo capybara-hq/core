@@ -1585,6 +1585,16 @@ button.cb-property-row {
   padding-bottom: var(--cb-inset-bottom, env(safe-area-inset-bottom, 0px));
   background: var(--cb-panel-2);
 }
+/* Inside an AppShell the shell's top bar is the back: the page sits in the content area. */
+.cb-conv-pushed[data-shell="true"] {
+  position: static;
+  flex: 1;
+  padding: 0;
+  z-index: auto;
+}
+.cb-conv-main[hidden] {
+  display: none;
+}
 .cb-conv-pushed-bar {
   flex: none;
   display: flex;
