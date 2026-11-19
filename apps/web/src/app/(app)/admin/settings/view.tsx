@@ -86,7 +86,7 @@ import NotFound from "../../not-found";
  * 组织能否自建连接器 / 技能（`deny` 时只能从平台目录安装）, and 外观: the platform default theme
  * (themes spec §7, §10), 内置主题 or a platform-owned theme whose scope is `all` and that is not
  * disabled; the kernel refuses one off in some org with the orgs (shown). The app icon: the
- * platform icon (mobile layout spec §10.2.1, `AppIconSection`), saved per action. 插件界面代码: the
+ * platform icon (mobile layout spec §10.2.1, `AppIconSection`), saved per action. Plugin UI code: the
  * client code kill switch and the plugins whose client code alone is stopped (client extensions
  * spec §10.2); a save that changes it marks every cached client set stale. The device sandbox:
  * running outside the sandbox (`devicesOutsideSandbox`) and the device network's default and
