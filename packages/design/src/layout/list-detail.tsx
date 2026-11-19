@@ -72,6 +72,25 @@ export function ListDetail({
   // Side by side on two segments the item is no pushed page: no shell back.
   useRegisterShellPage(open && !segments ? { onBack: shellBack } : {});
 
+  // Stacked segments: the footer is part of the second segment, so its height comes off the
+  // detail's row (CSS cannot ask a sibling for it).
+  const hasFooter = Boolean(footer);
+  const section = useRef<HTMLElement>(null);
+  const footerEl = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    const host = section.current;
+    const f = footerEl.current;
+    if (!host || !f || !segments || typeof ResizeObserver === "undefined") return;
+    const set = () => host.style.setProperty("--cb-ld-footer-h", `${f.offsetHeight}px`);
+    set();
+    const ro = new ResizeObserver(set);
+    ro.observe(f);
+    return () => {
+      ro.disconnect();
+      host.style.removeProperty("--cb-ld-footer-h");
+    };
+  }, [segments, hasFooter]);
+
   // The list keeps its scroll position while an item covers it (it is display: none then).
   useEffect(() => {
     if (!open && listPane.current) listPane.current.scrollTop = scrolled.current;
@@ -80,6 +99,7 @@ export function ListDetail({
   return (
     <div className="cb-ld" data-part="list-detail-frame">
       <section
+        ref={section}
         className="cb-listdetail"
         data-part="list-detail"
         data-fit={fit}
@@ -112,7 +132,7 @@ export function ListDetail({
           <div className="cb-listdetail-body">{detail ?? preview ?? null}</div>
         </div>
         {footer ? (
-          <div className="cb-listdetail-footer" data-part="list-detail-footer">
+          <div ref={footerEl} className="cb-listdetail-footer" data-part="list-detail-footer">
             {footer}
           </div>
         ) : null}

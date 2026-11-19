@@ -130,7 +130,7 @@ describe("ListDetail on two segments", () => {
     expect(cols).not.toContain("env(viewport-segment-width 0 0)");
     expect(grid(h)?.decls["column-gap"]).toContain("env(viewport-segment-left 1 0)");
     const rows = grid(v)?.decls["grid-template-rows"] ?? "";
-    expect(rows).toContain("env(viewport-segment-height 1 0)");
+    expect(rows).toContain("env(viewport-segment-height 0 1)");
     expect(rows).toContain("env(viewport-segment-top 0 1)");
     for (const rs of [h, v]) {
       const shown = rs.find(
@@ -180,9 +180,9 @@ describe("ListDetail on two segments", () => {
       expect(by(h, sel)["margin-left"]).toContain("env(viewport-segment-left 1 0)");
     }
     expect(by(v, ".cb-conv-page .cb-conv-main").flex).toBe("1 1 0");
-    expect(by(v, ".cb-conv-page .cb-conv-panel").flex).toBe("0 0 env(viewport-segment-height 1 0)");
+    expect(by(v, ".cb-conv-page .cb-conv-panel").flex).toBe("0 0 env(viewport-segment-height 0 1)");
     expect(by(v, ".cb-conv-page .cb-conv-cols > .cb-properties").flex).toBe(
-      "0 0 env(viewport-segment-height 1 0)",
+      "0 0 calc(env(viewport-segment-height 0 1) - var(--cb-layout-status-bar))",
     );
   });
 });

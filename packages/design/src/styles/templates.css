@@ -1454,8 +1454,11 @@ a.cb-object-name:hover {
    are viewport-relative while the region sits right of the sidebar and below the top bar, so the
    second segment's track is anchored from the trailing edge (its size is the segment's own) and
    the first takes the rest; the hinge is the gap between them. `--cb-segment-trail` is a frame's
-   own inset on the trailing side (0 where the region reaches the viewport's edge). Both panes are
-   drawn in the two-pane form, overriding the stack at any width. */
+   inline-end inset and `--cb-segment-trail-block` its bottom inset (the vertical form); both
+   default to 0, which is exact only where the region reaches the viewport's trailing edge. The
+   inbox frame sets the inline one to its content padding: its content is capped at 1120 and
+   centred, so that is exact up to about 1440 wide; every other ListDetail consumer uses 0. Both
+   panes are drawn in the two-pane form, overriding the stack at any width. */
 @media (horizontal-viewport-segments: 2) {
   .cb-listdetail[data-fit] {
     grid-template-columns:
@@ -1490,23 +1493,23 @@ a.cb-object-name:hover {
     padding-inline: var(--cb-space-4) 0;
   }
 }
-/* Vertical: the first row takes what the second segment leaves (a percentage of the region's own
-   height), then the hinge, then the detail and its footer inside the second segment. */
+/* Vertical: the first row takes what the second segment leaves (1fr), then the hinge, then the
+   detail, whose row is the second segment minus the footer (`--cb-ld-footer-h`, measured by
+   ListDetail while it has a footer; 0 without) and the frame's bottom inset, then the footer. */
 @media (vertical-viewport-segments: 2) {
   .cb-listdetail[data-fit] {
     grid-template-columns: minmax(0, 1fr);
     grid-template-rows:
+      minmax(0, 1fr)
+      calc(env(viewport-segment-top 0 1) - env(viewport-segment-bottom 0 0))
       minmax(
         0,
         calc(
-          100% -
-          env(viewport-segment-height 1 0) -
-          var(--cb-segment-trail, 0px) -
-          (env(viewport-segment-top 0 1) - env(viewport-segment-bottom 0 0))
+          env(viewport-segment-height 0 1) -
+          var(--cb-segment-trail-block, 0px) -
+          var(--cb-ld-footer-h, 0px)
         )
       )
-      calc(env(viewport-segment-top 0 1) - env(viewport-segment-bottom 0 0))
-      minmax(0, 1fr)
       auto;
   }
   .cb-listdetail[data-fit][data-open] > .cb-listdetail-list {
@@ -1543,6 +1546,8 @@ a.cb-object-name:hover {
    frame, and reserves the head's scrollbar gutter, so its left edge is the head's. */
 .cb-inbox-frame {
   --cb-segment-trail: var(--cb-content-pad);
+  /* the shell's status bar under the page */
+  --cb-segment-trail-block: var(--cb-layout-status-bar);
   display: flex;
   flex: 1;
   box-sizing: border-box;
