@@ -6,6 +6,7 @@ import {
   MePanel,
   type MePanelProps,
   type MeRow,
+  ReferenceScreen,
   TopBar,
 } from "@capybara-hq/design";
 import {
@@ -29,7 +30,7 @@ const DUO_OUTER = 382;
 
 // ── BottomNav ───────────────────────────────────────────────────────────────
 
-const bottomItems = (badge: boolean): BottomNavItem[] =>
+export const bottomItems = (badge: boolean): BottomNavItem[] =>
   BOTTOM_NAV_FIXTURE.items.map((i) => ({
     id: i.id as BottomNavItem["id"],
     label: i.label,
@@ -59,7 +60,7 @@ function bottomNavBlocks(): ReactNode {
 
 // ── TopBar ──────────────────────────────────────────────────────────────────
 
-const overflow: ConvMenuEntry[] = TOP_BAR_FIXTURE.overflow.map((m) => ({
+export const overflow: ConvMenuEntry[] = TOP_BAR_FIXTURE.overflow.map((m) => ({
   kind: "item" as const,
   id: m.id,
   label: m.label,
@@ -171,16 +172,33 @@ const adminContext: MePanelProps = {
   system: M.system,
 };
 
+/** The Me tab's screen, as the reference draws it: the root top bar (Me), the panel, the bottom nav. */
+function MeScreen({ children }: { children: ReactNode }) {
+  return (
+    <ReferenceScreen
+      top={<TopBar title={M.title} onSearch={() => {}} menu={overflow} />}
+      bottom={<BottomNav items={bottomItems(true)} current="me" />}
+      pad
+    >
+      {children}
+    </ReferenceScreen>
+  );
+}
+
 function mePanelBlocks(): ReactNode {
   return (
     <>
       {(["member", "admin", "super-admin"] as const).map((role) => (
-        <RefBlock key={role} id={`me-panel-${role}`} width={PHONE} pad>
-          <MePanel {...panel(role)} />
+        <RefBlock key={role} id={`me-panel-${role}`} width={PHONE}>
+          <MeScreen>
+            <MePanel {...panel(role)} />
+          </MeScreen>
         </RefBlock>
       ))}
-      <RefBlock id="me-panel-admin-context" width={PHONE} pad>
-        <MePanel {...adminContext} />
+      <RefBlock id="me-panel-admin-context" width={PHONE}>
+        <MeScreen>
+          <MePanel {...adminContext} />
+        </MeScreen>
       </RefBlock>
     </>
   );

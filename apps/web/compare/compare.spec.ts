@@ -17,6 +17,11 @@ const components = (process.env.COMPARE ?? "")
   .map((c) => c.trim())
   .filter(Boolean);
 
+const PHONE = { width: 390, height: 844 };
+const DESKTOP = { width: 1440, height: 900 };
+const isPhoneState = (state: string) =>
+  state === "narrow" || state.startsWith("narrow-") || state.startsWith("compact");
+
 const esc = (s: string) => s.replace(/[&<>"]/g, (c) => `&#${c.charCodeAt(0)};`);
 
 test("side by side", async ({ page }) => {
@@ -27,20 +32,28 @@ test("side by side", async ({ page }) => {
   const missing: string[] = [];
   for (const component of components) {
     for (const theme of THEMES) {
-      await openReference(page, component, theme, ORIGIN);
-      const ids = await blockIds(page);
-      expect(ids, `${component} has no blocks in /dev/ui/reference`).not.toEqual([]);
-      for (const id of ids) {
-        const ref = resolve(refDir, `${id}-${theme}.png`);
-        if (!existsSync(ref)) {
-          missing.push(`${id}-${theme}.png`);
-          continue;
+      // Phone-window states (`narrow`, `narrow-*`, `compact*`) are drawn by media queries below
+      // 600, so they are shot in a phone window, as fidelity.spec.ts measures them; the rest at
+      // the desktop size.
+      for (const phone of [false, true]) {
+        await page.setViewportSize(phone ? PHONE : DESKTOP);
+        await openReference(page, component, theme, ORIGIN);
+        const all = await blockIds(page);
+        if (!phone) expect(all, `${component} has no blocks in /dev/ui/reference`).not.toEqual([]);
+        const ids = all.filter((id) => isPhoneState(id.slice(component.length + 1)) === phone);
+        for (const id of ids) {
+          const ref = resolve(refDir, `${id}-${theme}.png`);
+          if (!existsSync(ref)) {
+            missing.push(`${id}-${theme}.png`);
+            continue;
+          }
+          copyFileSync(ref, resolve(outDir, `${id}-${theme}.ref.png`));
+          await page.locator(`[data-ref-block="${id}"]`).screenshot({
+            path: resolve(outDir, `${id}-${theme}.impl.png`),
+            animations: "disabled",
+          });
+          rows.push({ id, theme });
         }
-        copyFileSync(ref, resolve(outDir, `${id}-${theme}.ref.png`));
-        await page
-          .locator(`[data-ref-block="${id}"]`)
-          .screenshot({ path: resolve(outDir, `${id}-${theme}.impl.png`), animations: "disabled" });
-        rows.push({ id, theme });
       }
     }
   }

@@ -1,18 +1,24 @@
 import {
   ActionRow,
+  BottomNav,
   Card,
   type Column,
   DataTable,
   InboxPage,
-  KeyValue,
   ListDetail,
+  ListDetailItem,
+  ListDetailList,
+  type ListDetailListItem,
+  ReferenceScreen,
   Stack,
   StatusMark,
   Text,
+  TopBar,
   useStatusBar,
 } from "@capybara-hq/design";
 import { LIST_DETAIL_FIXTURE as F } from "@capybara-hq/design/fixtures";
 import { type ReactNode, useState } from "react";
+import { bottomItems, overflow } from "../compact-shell-blocks";
 import { FixtureShell } from "../frame";
 import { RefBlock } from "../ref-block";
 import { TraceSummary } from "../table";
@@ -101,61 +107,37 @@ export function InboxTemplate() {
 }
 
 // ListDetail (spec §6.47): the region in its three states, with the ids and boxes of
-// docs/design/reference/src/list-detail.html (the shell's top bar and bottom navigation around the
-// compact ones are the shell blocks' own; the region draws its own back bar here).
-type ListItem = (typeof F.items)[number];
-
-const LD_COLUMNS: Column<ListItem>[] = [
-  {
-    key: "title",
-    header: F.listTitle,
-    cell: (i) => (
-      <Stack gap={0}>
-        <Text>{i.title}</Text>
-        <Text variant="small" tone="muted">
-          {i.meta}
-        </Text>
-      </Stack>
-    ),
-  },
-  { key: "at", header: "", tone: "muted", cell: (i) => i.at },
-];
-
-function ldList(current?: string): ReactNode {
-  return (
-    <DataTable<ListItem>
-      label={F.listTitle}
-      rowHeight="roomy"
-      framed={false}
-      columns={LD_COLUMNS}
-      rows={F.items}
-      rowKey={(i) => i.id}
-      rowLabel={(i) => i.title}
-      {...(current ? { activeKey: current } : {})}
-      onOpen={noop}
-    />
-  );
-}
+// docs/design/reference/src/list-detail.html: the compact ones in the screen the shell gives them
+// (the top bar, and the bottom navigation on the list, a tab root), two panes alone.
+const LD_ITEMS: ListDetailListItem[] = F.items.map((i) => ({
+  id: i.id,
+  title: i.title,
+  meta: i.meta,
+  at: i.at,
+  ...(i.state === "warn" ? { waiting: true } : {}),
+}));
 
 function ldDetail(): ReactNode {
-  const [primary, ...others] = [...F.detail.decisions].reverse();
+  const by = (variant: "primary" | "default") =>
+    F.detail.decisions.filter((d) => d.variant === variant).map((d) => d.label);
+  const [cancel = "", secondary = ""] = by("default");
+  const [primary = ""] = by("primary");
   return (
-    <>
-      <Stack gap={12}>
-        <Text variant="h2">{F.detail.title}</Text>
-        <KeyValue
-          rows={F.detail.facts.map((f) => ({
-            k: f.label,
-            v: f.mono ? <Text variant="body">{f.value}</Text> : f.value,
-          }))}
+    <ListDetailItem
+      title={F.detail.title}
+      facts={F.detail.facts.map((f) => ({
+        label: f.label,
+        value: f.value,
+        ...(f.mono ? { mono: true } : {}),
+      }))}
+      actions={
+        <ActionRow
+          cancel={{ label: cancel, onSelect: noop }}
+          secondary={{ label: secondary, onSelect: noop }}
+          primary={{ label: primary, onSelect: noop }}
         />
-      </Stack>
-      <ActionRow
-        cancel={{ label: others[1]?.label ?? "", onSelect: noop }}
-        secondary={{ label: others[0]?.label ?? "", onSelect: noop }}
-        primary={{ label: primary?.label ?? "", onSelect: noop }}
-      />
-    </>
+      }
+    />
   );
 }
 
@@ -163,7 +145,14 @@ function LdRegion({ open, current }: { open: boolean; current?: string }) {
   const [opened, setOpened] = useState(open);
   return (
     <ListDetail
-      list={ldList(current)}
+      list={
+        <ListDetailList
+          label={F.listTitle}
+          items={LD_ITEMS}
+          current={current}
+          onOpen={() => setOpened(true)}
+        />
+      }
       detail={opened ? ldDetail() : null}
       onBack={() => setOpened(false)}
       listMin={320}
@@ -177,13 +166,24 @@ export function listDetailBlocks(): ReactNode {
   return (
     <>
       <RefBlock id="list-detail-compact-list" width={390} height={844}>
-        <LdRegion open={false} />
+        <ReferenceScreen
+          top={<TopBar title={F.listTitle} onSearch={noop} menu={overflow} />}
+          bottom={<BottomNav items={bottomItems(true)} current="inbox" />}
+        >
+          <LdRegion open={false} />
+        </ReferenceScreen>
       </RefBlock>
       <RefBlock id="list-detail-compact-detail" width={390} height={844}>
-        <LdRegion open />
+        <ReferenceScreen
+          top={<TopBar title={F.detail.title} back={noop} onSearch={noop} menu={overflow} />}
+        >
+          <LdRegion open />
+        </ReferenceScreen>
       </RefBlock>
       <RefBlock id="list-detail-two-pane" width={720} height={560}>
-        <LdRegion open current="ib1" />
+        <ReferenceScreen>
+          <LdRegion open current="ib1" />
+        </ReferenceScreen>
       </RefBlock>
     </>
   );
