@@ -572,6 +572,18 @@ it.each(["instance", "selective-publication", "general-publication"] as const)(
         reason: "Requires review",
       },
     });
+    // only a widening resets Full consent (approval-only profiles, "Consent fingerprint"): a
+    // publication writer first narrows (outside the sandbox off, the egress kill switch closed),
+    // the consent is given there, and the publication under test widens back to the app config
+    const config = b.app.get(KernelConfigService).get();
+    const narrow = structuredClone(config);
+    if (writer === "general-publication") narrow.devices.outsideSandbox = "off";
+    if (writer === "selective-publication") narrow.sandbox.limits.egress = "none";
+    if (writer !== "instance") {
+      expect(config.devices.outsideSandbox ?? "allowed").toBe("allowed");
+      expect(config.sandbox.limits.egress).toBe("allowlist");
+      await b.app.get(PermissionConfigPublication).publish(config, narrow);
+    }
     await f.db
       .updateTable("conversations")
       .set({
@@ -603,11 +615,6 @@ it.each(["instance", "selective-publication", "general-publication"] as const)(
       }
       return append(...args);
     });
-    const config = b.app.get(KernelConfigService).get();
-    const next = structuredClone(config);
-    if (writer === "general-publication") next.devices.outsideSandbox = "off";
-    if (writer === "selective-publication")
-      next.sandbox.limits.egress = config.sandbox.limits.egress === "none" ? "allowlist" : "none";
     const writing =
       writer === "instance"
         ? b.app
@@ -620,7 +627,7 @@ it.each(["instance", "selective-publication", "general-publication"] as const)(
               {},
               new AbortController().signal,
             )
-        : b.app.get(PermissionConfigPublication).publish(config, next);
+        : b.app.get(PermissionConfigPublication).publish(narrow, config);
     await entered.promise;
     const locks = a.app.get(PermissionAuthorityLock),
       acquire = locks.acquire.bind(locks);
@@ -704,11 +711,7 @@ it.each(["instance", "selective-publication", "general-publication"] as const)(
     expect(audits[0]?.detail).toMatchObject({
       writer: { level: writer === "instance" ? "device" : "platform" },
     });
-    // Restore publication through its actual CAS path so the next fixture starts at the app config.
-    if (writer !== "instance") {
-      vi.restoreAllMocks();
-      await b.app.get(PermissionConfigPublication).publish(next, config);
-    }
+    // the widening publication already restored the app config for the next fixture
   },
 );
 
