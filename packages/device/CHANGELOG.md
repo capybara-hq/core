@@ -1,5 +1,20 @@
 # @capybara-hq/device
 
+## 0.1.0-rc.18
+
+### Minor Changes
+
+- bd2ac1a: A running `capybara-device` answers on a local control socket (`<stateDir>/control.sock`, mode
+  0600): live status, running operations, status events, drain and stop. `status --json` adds
+  `control` and `live`.
+- 10e7317: `login --json`, `ceiling show --json` and `service status --json` print machine-readable output so
+  a desktop app can drive the CLI. `login --json` writes one JSON event per line to stdout (human
+  lines go to stderr) and opens no browser.
+- 0a56636: Keep-awake: `policy.json` gets `keepAwake` (`off`, `while-busy` default, `connected`). While it
+  applies, the program holds an idle-sleep assertion (`caffeinate` on macOS, `systemd-inhibit` on
+  Linux). New command `capybara-device keep-awake [show | off | while-busy | connected]`; the live
+  status adds `keepAwake` and `lastWakeAt`, and a wake from sleep is logged.
+
 ## 0.1.0-rc.17
 
 ### Patch Changes
