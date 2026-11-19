@@ -487,8 +487,14 @@ export function ConversationPage({
         <div
           className="cb-conv-main"
           data-part="conv-main"
-          // covered by the pushed page: out of the tab order and the reading order
-          {...(pushed ? (inShell ? { hidden: true } : { inert: true }) : {})}
+          // covered by the pushed page: out of the tab order and the reading order. In a shell it
+          // stays laid out under the pushed section (`data-covered`, not `hidden`), so the thread
+          // keeps its scroll position when the right area closes.
+          {...(pushed
+            ? inShell
+              ? { inert: true, "aria-hidden": true, "data-covered": "true" }
+              : { inert: true }
+            : {})}
         >
           {newConversation ? (
             <NewTitleBar />

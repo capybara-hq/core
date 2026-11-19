@@ -1,4 +1,11 @@
-import { type CSSProperties, type JSX, type KeyboardEvent, type ReactNode, useRef } from "react";
+import {
+  type CSSProperties,
+  type JSX,
+  type KeyboardEvent,
+  type ReactNode,
+  useCallback,
+  useRef,
+} from "react";
 import { Button, IconButton } from "../controls/button";
 import { Badge } from "../display/basic";
 import { useSkeletonAnnounces } from "../display/skeleton";
@@ -6,6 +13,7 @@ import { Icon } from "../icons/icon";
 import type { IconName } from "../icons/paths";
 import { BoxScope, useInBox } from "../layout/box";
 import { useDesignT } from "../provider";
+import { useRegisterShellPage } from "../shell/shell-page";
 import { LoadFailed } from "./file-preview";
 import { TypeBadge } from "./files";
 import { ConvMenu, type ConvMenuEntry } from "./menu";
@@ -414,6 +422,13 @@ export function RightPanel({
   const t = useDesignT();
   const full = useRightFull();
   const pushed = useRightPushed();
+  // Pushed on a phone the panel draws no back of its own: with a step to go back to (`onBack`) it
+  // registers with the shell over the conversation's entry (layer 1), so the shell's back steps
+  // within the panel first and closes the right area at the panel's root.
+  const back = useRef(onBack);
+  back.current = onBack;
+  const stepBack = useCallback(() => back.current?.(), []);
+  useRegisterShellPage(pushed && onBack !== undefined ? { onBack: stepBack } : {}, 1);
   const entries: ConvMenuEntry[] = [];
   switcher?.groups.forEach((g, gi) => {
     if (gi > 0) entries.push({ kind: "separator" });

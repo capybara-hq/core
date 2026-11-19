@@ -133,18 +133,21 @@ export function AppShell({
         .join(" ");
 
   // What the page tells the shell about itself (name, path, overflow menu): the compact top bar's.
-  const [pages, setPages] = useState<ReadonlyMap<symbol, ShellPage>>(() => new Map());
-  const registerPage = useCallback((id: symbol, page: ShellPage | null) => {
+  const [pages, setPages] = useState<ReadonlyMap<symbol, { page: ShellPage; layer: number }>>(
+    () => new Map(),
+  );
+  const registerPage = useCallback((id: symbol, page: ShellPage | null, layer = 0) => {
     setPages((prev) => {
       const next = new Map(prev);
       if (page === null) next.delete(id);
-      else next.set(id, page);
+      else next.set(id, { page, layer });
       return next;
     });
   }, []);
   const page = useMemo(() => {
     const merged: ShellPage = {};
-    for (const p of pages.values()) {
+    // later registrations win within a layer, a higher layer over a lower one (a stable sort)
+    for (const { page: p } of [...pages.values()].sort((a, b) => a.layer - b.layer)) {
       if (p.title !== undefined) merged.title = p.title;
       if (p.path !== undefined) merged.path = p.path;
       if (p.menu !== undefined) merged.menu = p.menu;

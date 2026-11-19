@@ -13,7 +13,7 @@ export type ShellPage = {
   onBack?: () => void;
 };
 
-type Register = (id: symbol, page: ShellPage | null) => void;
+type Register = (id: symbol, page: ShellPage | null, layer?: number) => void;
 
 /** Provided by `AppShell`; pages register through {@link useRegisterShellPage}. */
 export const ShellPageContext = createContext<Register | null>(null);
@@ -21,16 +21,18 @@ export const ShellPageContext = createContext<Register | null>(null);
 /**
  * A page tells the shell its name and path (the PageHeader does, for every template), so the
  * compact top bar shows the title and knows where back goes (design spec §4.6, §6.46); a page may
- * add its overflow menu. The registration lasts while the page is mounted.
+ * add its overflow menu. The registration lasts while the page is mounted. A part pushed inside the
+ * page (a right panel with steps of its own) registers on a higher `layer`: its fields win over the
+ * page's whatever order the two mounted in.
  */
-export function useRegisterShellPage(page: ShellPage): void {
+export function useRegisterShellPage(page: ShellPage, layer = 0): void {
   const register = useContext(ShellPageContext);
   const id = useRef<symbol>(Symbol("shell-page"));
   const key = JSON.stringify([page.title, page.path]);
   // biome-ignore lint/correctness/useExhaustiveDependencies: `key` stands for title and path
   useEffect(() => {
-    register?.(id.current, page);
-  }, [register, key, page.menu, page.onBack]);
+    register?.(id.current, page, layer);
+  }, [register, key, page.menu, page.onBack, layer]);
   useEffect(() => {
     const own = id.current;
     return () => register?.(own, null);

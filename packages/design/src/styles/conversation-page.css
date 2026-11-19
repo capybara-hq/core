@@ -1065,6 +1065,7 @@ button.cb-property-row {
 /* ── ConversationPage (§5.4) ── */
 
 .cb-conv-page {
+  position: relative;
   display: flex;
   flex: 1;
   flex-direction: row;
@@ -1651,8 +1652,13 @@ button.cb-property-row {
   padding: 0;
   z-index: auto;
 }
-.cb-conv-main[hidden] {
-  display: none;
+/* The conversation under a pushed section in a shell: laid out but out of view (display: none would
+   drop the thread's scroll position); the pushed section takes the flow. */
+.cb-conv-main[data-covered="true"] {
+  visibility: hidden;
+  position: absolute;
+  inset: 0;
+  min-width: 0;
 }
 .cb-conv-pushed-bar {
   flex: none;
