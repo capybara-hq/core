@@ -149,8 +149,56 @@ describe("inside the shell the open item is a pushed page", () => {
   });
 });
 
+type CssRule = { media: string | null; selector: string; decls: Record<string, string> };
+
+/** The style rules of a stylesheet with the media query they sit in (one nesting level). */
+function parseCss(source: string): CssRule[] {
+  const text = source.replace(/\/\*[\s\S]*?\*\//g, "");
+  const out: CssRule[] = [];
+  const block = (from: number): number => {
+    let depth = 0;
+    for (let i = from; i < text.length; i++) {
+      if (text[i] === "{") depth++;
+      if (text[i] === "}" && --depth === 0) return i;
+    }
+    return text.length;
+  };
+  const rules = (chunk: string, media: string | null) => {
+    for (const m of chunk.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+      const decls: Record<string, string> = {};
+      for (const d of (m[2] ?? "").split(";")) {
+        const at = d.indexOf(":");
+        if (at > 0)
+          decls[d.slice(0, at).trim()] = d
+            .slice(at + 1)
+            .replace(/\s+/g, " ")
+            .trim();
+      }
+      out.push({ media, selector: (m[1] ?? "").replace(/\s+/g, " ").trim(), decls });
+    }
+  };
+  let i = 0;
+  while (i < text.length) {
+    const open = text.indexOf("{", i);
+    if (open < 0) break;
+    const head = text.slice(i, open).trim();
+    if (head.startsWith("@media")) {
+      const end = block(open);
+      rules(text.slice(open + 1, end), head.slice(6).trim());
+      i = end + 1;
+    } else if (head.startsWith("@")) {
+      i = block(open) + 1;
+    } else {
+      const end = block(open);
+      rules(text.slice(i, end + 1), null);
+      i = end + 1;
+    }
+  }
+  return out;
+}
+
 describe("the compact forms of the templates", () => {
-  it("ActionRow is sticky above the keyboard and stacks the primary on its own line", () => {
+  it("ActionRow stacks the primary on its own line; the compact CSS makes it sticky above the keyboard", () => {
     render(
       <DesignProvider locale="zh">
         <FormPage
@@ -166,14 +214,24 @@ describe("the compact forms of the templates", () => {
         </FormPage>
       </DesignProvider>,
     );
-    const row = part("action-row") as HTMLElement;
-    expect(row.getAttribute("data-sticky")).toBe("true");
     expect(part("action-secondary")?.textContent).toBe("放弃");
     expect(part("action-primary")?.textContent).toBe("保存");
-    const compact = css("templates.css").slice(css("templates.css").indexOf("ActionRow, compact"));
-    expect(compact).toContain("position: sticky");
-    expect(compact).toContain("var(--cb-keyboard-inset, 0px)");
-    expect(compact).toContain("height: 40px");
+    const rules = parseCss(css("templates.css")).filter((r) => r.media === "(max-width: 599px)");
+    const decl = (selector: string, prop: string) =>
+      rules.find((r) => r.selector === selector)?.decls[prop];
+    expect(decl(".cb-actionrow", "position")).toBe("sticky");
+    expect(decl(".cb-actionrow", "bottom")).toBe("0");
+    expect(decl(".cb-actionrow", "padding")).toContain("var(--cb-keyboard-inset, 0px)");
+    expect(decl(".cb-actionrow .cb-actionrow-frame", "flex-direction")).toBe("column");
+    expect(
+      decl(
+        ".cb-actionrow .cb-actionrow-others > *, .cb-actionrow .cb-actionrow-primary > *",
+        "height",
+      ),
+    ).toBe("40px");
+    // on a tab root the bottom navigation pads the inset: the row adds only the keyboard
+    const tabRoot = ".cb-shell-main:has(~ .cb-shell-bottomnav) .cb-actionrow";
+    expect(decl(tabRoot, "padding-bottom")).not.toContain("inset-bottom");
   });
 
   it("WizardPage's compact step bar reads 2 / 4", () => {

@@ -33,7 +33,7 @@ function optional(b: ButtonSpec) {
  * right: cancel · secondary · primary (rightmost), all `default` density. Inside a template its
  * row lies in the content frame (the page's one width and side padding), so the primary ends where
  * the content ends. On compact (CSS, §4.4) the row is sticky above the bottom inset and the
- * keyboard (`data-sticky`) and stacks: the primary fills the bottom line, the other actions share
+ * keyboard and stacks: the primary fills the bottom line, the other actions share
  * the line above it.
  */
 export function ActionRow({ unsaved, errors = 0, cancel, secondary, primary }: ActionRowProps) {
@@ -42,12 +42,7 @@ export function ActionRow({ unsaved, errors = 0, cancel, secondary, primary }: A
     t(key).replace("{n}", () => String(n));
   const dirty = (unsaved ?? 0) > 0;
   return (
-    <section
-      className="cb-actionrow"
-      data-part="action-row"
-      data-sticky="true"
-      aria-label={t("shell.pending")}
-    >
+    <section className="cb-actionrow" data-part="action-row" aria-label={t("shell.pending")}>
       <div className="cb-actionrow-frame" data-part="action-row-frame">
         <span className="cb-actionrow-info">
           {dirty ? <span className="cb-actionrow-dot" aria-hidden="true" /> : null}
