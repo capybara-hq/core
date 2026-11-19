@@ -10,6 +10,12 @@ export {
   PANES,
 } from "./boxes";
 export {
+  type CompactRule,
+  type CompactViolation,
+  describeCompactViolation,
+  findCompactViolations,
+} from "./compact";
+export {
   checkSpecTables,
   missingStates,
   parseSizeTables,
