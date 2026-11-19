@@ -2,6 +2,7 @@ import { homedir } from "node:os";
 import { parseCommandLine, USAGE, UsageError } from "./args.js";
 import { ceilingCommand } from "./commands/ceiling.js";
 import { drain, drainAndWait } from "./commands/drain.js";
+import { keepAwakeCommand } from "./commands/keep-awake.js";
 import { login } from "./commands/login.js";
 import { logout } from "./commands/logout.js";
 import { policyCommand } from "./commands/policy.js";
@@ -161,6 +162,13 @@ export async function runCli(argv: string[], io: CliEnv = {}): Promise<number> {
         err,
         ...((io.stdinIsTTY ?? process.stdin.isTTY === true) && { ask: io.ask ?? askOnTerminal }),
         ...(io.beforeCeilingWrite && { beforeWrite: io.beforeCeilingWrite }),
+      });
+    case "keep-awake":
+      return keepAwakeCommand(cmd, {
+        stateDir: dir,
+        out,
+        err,
+        ...((io.stdinIsTTY ?? process.stdin.isTTY === true) && { ask: io.ask ?? askOnTerminal }),
       });
     case "service":
       return serviceCommand(

@@ -183,7 +183,7 @@ or more than 1 MiB of answers a peer leaves unread, closes it.
 
 | Op | Result |
 |---|---|
-| `status` | The live status: `pid`, `version`, `url`, `orgId`, `deviceId`, `mode` (`os` or `docker`), `connection` (`starting`, `online`, `offline` or `draining`), `offlineReason` (while offline), `since` (when `connection` last changed) |
+| `status` | The live status: `pid`, `version`, `url`, `orgId`, `deviceId`, `mode` (`os` or `docker`), `connection` (`starting`, `online`, `offline` or `draining`), `offlineReason` (while offline), `since` (when `connection` last changed), `keepAwake` (`mode`, `held`, and `unavailable` with the reason when the holder cannot run), `lastWakeAt` (once the computer woke from sleep) |
 | `running` | The operations executing now (an exec while it runs, a background task until it completes or is killed): `tag`, `conversationId`, `accountId`, `isolation` (`restricted` or `full`), `startedAt`; never a command's text, environment or output |
 | `subscribe` | The live status now; afterwards the connection receives `{"event":"status","status":{...}}` after each change |
 | `drain` | `null`; drains as `capybara-device drain` does |
@@ -196,6 +196,37 @@ or more than 1 MiB of answers a peer leaves unread, closes it.
 - `live`: the live status above, or `null`.
 
 The credential is never part of any answer.
+
+## Keep-awake
+
+While the device serves, it can keep this computer from going to idle sleep, so a command a
+conversation started is not cut off and the deployment can reach the device. `policy.json` holds
+the mode in `keepAwake`:
+
+- `off`: never;
+- `while-busy` (the default): only while operations run (an exec, or a background task until it
+  ends);
+- `connected`: the whole time the device is connected to the deployment.
+
+```bash
+capybara-device keep-awake                  # show the mode (--json for one JSON object)
+capybara-device keep-awake off              # lower it: applies at once
+capybara-device keep-awake connected --yes  # raise it: asks on a terminal, needs --yes without one
+```
+
+A running program applies a change within a few seconds, without a restart; the change is logged
+in `commands.log`. The hold is a helper process: `/usr/bin/caffeinate -i -w <pid>` on macOS and
+`systemd-inhibit --what=idle:sleep --mode=block --who=capybara-device --why="Capybara device is
+serving" sleep infinity` on Linux. If it cannot start or ends early, the status says so
+(`keepAwake.unavailable`); it is never reported as held then. The program also notices a wake from
+sleep (a wall-clock jump of over 30 s): it writes `{ "op": "wake" }` to `commands.log` and sets
+`lastWakeAt` in the live status.
+
+What this cannot prevent: closing the lid of a Mac on battery without an external display
+(clamshell) still sleeps; so do choosing Sleep, a critically low battery and thermal emergencies;
+on Linux, the lid switch as logind handles it (taking `handle-lid-switch` needs privileges the user
+service lacks). While the computer sleeps the device's WebSocket stops, and the kernel sees a
+sleeping machine as offline, as for a lost network.
 
 ## Docker mode
 

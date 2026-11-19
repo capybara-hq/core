@@ -4,6 +4,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   realpathSync,
   rmSync,
   writeFileSync,
@@ -11,7 +12,9 @@ import {
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { RunningOperations } from "../src/activity.js";
 import type { Connection } from "../src/client.js";
+import { CommandLog } from "../src/command-log.js";
 import { drain, drainAndWait } from "../src/commands/drain.js";
 import { legacyPolicyNotice, start } from "../src/commands/start.js";
 import { stop } from "../src/commands/stop.js";
@@ -21,6 +24,7 @@ import { type ProcessLookup, pidPath, readRunning, removePid, writePid } from ".
 import type { PolicyStore } from "../src/policy-store.js";
 import type { StagedDevice } from "../src/staged-device.js";
 import { DEFAULT_POLICY, writeCredential, writePolicy } from "../src/state.js";
+import { WakeDetector } from "../src/wake.js";
 
 /** `ps` for a test: every pid is a capybara-device that started long ago. */
 const ps: ProcessLookup = () => ({
@@ -553,5 +557,81 @@ describe("start: the control socket", () => {
     expect(code).toBe(0);
     expect(errs.join("\n")).toContain("control socket unavailable");
     expect(existsSync(controlSocketPath(dir))).toBe(false);
+  });
+});
+
+describe("start: keep-awake in the live status", () => {
+  it("status shows keepAwake and lastWakeAt", async () => {
+    writeCredential(dir, cred);
+    writePolicy(dir, DEFAULT_POLICY);
+    const proc = Object.assign(new EventEmitter(), { pid: 4280 });
+    const running = new RunningOperations();
+    const spawned: { args: string[]; killed: boolean }[] = [];
+    const spawn = ((_command: string, args: string[]) => {
+      const child = Object.assign(new EventEmitter(), {
+        killed: false,
+        kill() {
+          this.killed = true;
+          entry.killed = true;
+        },
+      });
+      const entry = { args, killed: false };
+      spawned.push(entry);
+      return child;
+    }) as never;
+    let wall = Date.UTC(2026, 10, 19);
+    const mono = 0;
+    const wake = new WakeDetector({ now: () => wall, monotonic: () => mono });
+    const calls: string[] = [];
+    let finish!: (code: number) => void;
+    const conn: Connection = {
+      done: new Promise<number>((r) => {
+        finish = r;
+      }),
+      drain: () => {},
+      stop: () => finish(0),
+    };
+    const staged = {
+      ...stagedParts(calls),
+      owner: { running, store: undefined, log: new CommandLog(dir) },
+    } as unknown as StagedDevice;
+    const p = start({
+      stateDir: dir,
+      out: () => {},
+      err: () => {},
+      proc: proc as never,
+      service: { home: dir, platform: "darwin" },
+      createStaged: () => staged,
+      connectStaged: () => {
+        calls.push("connectStaged");
+        return conn;
+      },
+      keepAwakeSpawn: spawn,
+      wake,
+      tickMs: 5,
+    });
+    await vi.waitFor(() => expect(calls).toContain("connectStaged"));
+    expect(await queryControl(dir, "status")).toMatchObject({
+      keepAwake: { mode: "while-busy", held: false },
+    });
+    running.begin(
+      { tag: "t", conversationId: "c", accountId: "a", isolation: "full", startedAt: "x" },
+      "op1",
+    );
+    expect(await queryControl(dir, "status")).toMatchObject({
+      keepAwake: { mode: "while-busy", held: true },
+    });
+    expect(spawned.map((s) => s.args)).toEqual([["-i", "-w", "4280"]]);
+    running.endOperation("op1");
+    expect(spawned[0]?.killed).toBe(true);
+    wall += 60_000; // the computer slept for a minute: the monotonic clock did not move
+    await vi.waitFor(async () =>
+      expect(await queryControl(dir, "status")).toHaveProperty("lastWakeAt"),
+    );
+    const live = (await queryControl(dir, "status")) as { lastWakeAt: string };
+    expect(live.lastWakeAt).toBe(new Date(wall).toISOString());
+    expect(readFileSync(join(dir, "commands.log"), "utf8")).toContain('"op":"wake"');
+    expect(await queryControl(dir, "stop")).toBeNull();
+    expect(await p).toBe(0);
   });
 });

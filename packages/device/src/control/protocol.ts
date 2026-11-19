@@ -48,4 +48,8 @@ export interface LiveStatus {
   offlineReason?: string;
   /** When `connection` last changed (ISO 8601). */
   since: string;
+  /** Keep-awake now: the policy mode, whether the assertion is held, why it cannot be. */
+  keepAwake: { mode: "off" | "while-busy" | "connected"; held: boolean; unavailable?: string };
+  /** When this program last noticed the computer woke from sleep (ISO 8601), once it did. */
+  lastWakeAt?: string;
 }

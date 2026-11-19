@@ -1,7 +1,10 @@
+import type { spawn } from "node:child_process";
 import { homedir } from "node:os";
 import type { Connection } from "../client.js";
+import { CommandLog } from "../command-log.js";
 import type { LiveStatus } from "../control/protocol.js";
 import { startControlServer } from "../control/server.js";
+import { KeepAwake } from "../keep-awake.js";
 import { type ProcessLookup, readRunningPid, removePid, writePid } from "../pid.js";
 import { PolicyStore } from "../policy-store.js";
 import { hasLoginService } from "../service/installed.js";
@@ -9,8 +12,17 @@ import { rotateServiceLog } from "../service/launchd.js";
 import { startedByServiceManager } from "../service/manager.js";
 import { connectStaged, type StagedConnectOptions } from "../staged-connect.js";
 import type { StagedDevice } from "../staged-device.js";
-import { type Credential, convertPolicyFile, policyMode, readCredential } from "../state.js";
+import {
+  type Credential,
+  convertPolicyFile,
+  DEFAULT_POLICY,
+  type KeepAwakeMode,
+  policyMode,
+  readCredential,
+  readPolicy,
+} from "../state.js";
 import { PROGRAM_VERSION } from "../version.js";
+import { WakeDetector } from "../wake.js";
 
 export interface StartDeps {
   stateDir: string;
@@ -30,6 +42,11 @@ export interface StartDeps {
    */
   createStaged?: (cred: Credential, policy: PolicyStore) => Promise<StagedDevice> | StagedDevice;
   connectStaged?: typeof connectStaged;
+  /** Test seams for keep-awake: the holder's spawn, the wake detector and the check period. */
+  keepAwakeSpawn?: typeof spawn;
+  wake?: WakeDetector;
+  /** How often the policy is re-read and a wake is looked for (default 2 s). */
+  tickMs?: number;
 }
 
 /** Printed once when start converted an old-format policy.json to version 2. */
@@ -89,6 +106,19 @@ export async function start(deps: StartDeps): Promise<number> {
   let device: StagedDevice | undefined;
   // the live status the control socket answers: built from the credential, then followed through
   // the connection's state changes (never the credential itself)
+  const keepAwake = new KeepAwake({
+    platform: where.platform,
+    pid: proc.pid,
+    ...(deps.keepAwakeSpawn && { spawn: deps.keepAwakeSpawn }),
+  });
+  const wake = deps.wake ?? new WakeDetector();
+  let mode: KeepAwakeMode = (() => {
+    try {
+      return readPolicy(stateDir).keepAwake;
+    } catch {
+      return DEFAULT_POLICY.keepAwake;
+    }
+  })();
   let live: LiveStatus = {
     pid: proc.pid,
     version: PROGRAM_VERSION,
@@ -98,6 +128,7 @@ export async function start(deps: StartDeps): Promise<number> {
     mode: cred.mode,
     connection: "starting",
     since: new Date().toISOString(),
+    keepAwake: { mode, held: false },
   };
   let publish: (s: LiveStatus) => void = () => {};
   const setState = (s: { connection: LiveStatus["connection"]; reason?: string }): void => {
@@ -109,9 +140,49 @@ export async function start(deps: StartDeps): Promise<number> {
       ...(s.connection === "offline" && s.reason !== undefined && { offlineReason: s.reason }),
       since: s.connection === live.connection ? live.since : new Date().toISOString(),
     };
-    if (JSON.stringify(next) === JSON.stringify(live)) return;
+    const changed = JSON.stringify(next) !== JSON.stringify(live);
     live = next;
-    publish(live);
+    refresh(changed);
+  };
+  /**
+   * Applies keep-awake for the state now (policy mode, connection, running operations) and follows
+   * it in the live status; publishes when the status changed (or `changed` says it did).
+   */
+  const refresh = (changed = false): void => {
+    keepAwake.update({
+      mode,
+      connected: live.connection === "online",
+      busy: (device?.owner?.running?.list().length ?? 0) > 0,
+    });
+    const { unavailable, ...held } = keepAwake.state();
+    const next: LiveStatus = {
+      ...live,
+      keepAwake: { ...held, ...(unavailable !== undefined && { unavailable }) },
+    };
+    const moved = changed || JSON.stringify(next) !== JSON.stringify(live);
+    live = next;
+    if (moved) publish(live);
+  };
+  const tick = (): void => {
+    try {
+      // a change made with `keep-awake` applies here, without a restart; an unreadable file keeps
+      // the mode in force
+      mode = device?.owner?.store.current().keepAwake ?? readPolicy(stateDir).keepAwake;
+    } catch {
+      // keep the last mode
+    }
+    const woke = wake.check();
+    if (woke !== undefined) {
+      live = { ...live, lastWakeAt: woke };
+      (device?.owner?.log ?? new CommandLog(stateDir)).append({
+        time: woke,
+        op: "wake",
+        tag: null,
+        actor: null,
+        exitCode: null,
+      });
+      refresh(true);
+    } else refresh();
   };
   const onStop = (): void => {
     stopRequested = true;
@@ -124,6 +195,8 @@ export async function start(deps: StartDeps): Promise<number> {
     out("Draining: no new commands; stopping when the running ones finish.");
     conn?.drain();
   };
+  const ticker = setInterval(tick, deps.tickMs ?? 2000);
+  ticker.unref();
   proc.on("SIGTERM", onStop);
   proc.on("SIGINT", onStop);
   proc.on("SIGUSR2", onDrain);
@@ -145,6 +218,7 @@ export async function start(deps: StartDeps): Promise<number> {
       drainRequested: () => drainRequested,
       built: (d) => {
         device = d;
+        d.owner?.running?.subscribe(() => refresh());
       },
       connected: (c) => {
         conn = c;
@@ -152,6 +226,8 @@ export async function start(deps: StartDeps): Promise<number> {
       onState: setState,
     });
   } finally {
+    clearInterval(ticker);
+    keepAwake.dispose();
     if (!("unavailable" in control)) await control.close();
     proc.off("SIGTERM", onStop);
     proc.off("SIGINT", onStop);
