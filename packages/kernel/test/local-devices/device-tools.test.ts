@@ -27,6 +27,7 @@ import { SandboxService } from "../../src/sandbox/sandbox.service.js";
 import {
   OUTCOME_UNKNOWN_TOOL_TEXT,
   SANDBOX_RESTARTED_NOTICE,
+  SCOPE_DENIED_TOOL_TEXT,
   sandboxFilesResetNotice,
 } from "../../src/tools/builtins/sandbox/common.js";
 import { type SandboxToolDeps, sandboxTools } from "../../src/tools/builtins/sandbox/index.js";
@@ -142,9 +143,22 @@ function answerer(dir: MachineDir, roots: SandboxRoots): (req: KernelReq) => Ans
           ok: true,
           result: { exitCode: 0, stdout: "ok\n", stderr: "", truncated: false, timedOut: false },
         };
-      case "writeFile":
-        dir.files.set(a.path as string, a.dataB64 as string);
+      case "writeFile": {
+        // an enforcing device refuses a write outside the operation's admitted scope
+        const fs = (a.scope as { filesystem?: { kind: string; writeRoots?: string[] } } | undefined)
+          ?.filesystem;
+        const path = a.path as string;
+        if (
+          fs?.kind === "scoped" &&
+          !(fs.writeRoots ?? []).some((r) => path === r || path.startsWith(`${r}/`))
+        )
+          return {
+            ok: false,
+            error: { kind: "denied", message: "outside the write roots" },
+          } as unknown as Answer;
+        dir.files.set(path, a.dataB64 as string);
         return { ok: true, result: null };
+      }
       case "readFile": {
         const d = dir.files.get(a.path as string);
         return { ok: true, result: d === undefined ? null : { dataB64: d, truncated: false } };
@@ -316,10 +330,11 @@ describe("local devices through the sandbox tools", () => {
     );
     expect(second.machine.frames.find((f) => f.type === "req")).toMatchObject({ op: "create" });
     expect(await m.paths()).toEqual([ROOTS_A, ROOTS_B]);
-    // a path of the old roots is now outside the device
+    // a path of the old roots is now outside the operation's admitted scope: the device refuses it
     expect(
       await toolError(m.run("Write", { file_path: `${ROOTS_A.workspace}/c.txt`, content: "c" })),
-    ).toMatch(/workspace/i);
+    ).toBe(SCOPE_DENIED_TOOL_TEXT);
+    expect(second.dir.files.has(`${ROOTS_A.workspace}/c.txt`)).toBe(false);
   });
 
   it("a new login on the same machine and directory keeps the files; another machine resets them", async () => {

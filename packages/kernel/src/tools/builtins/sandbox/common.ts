@@ -146,8 +146,15 @@ export interface SandboxToolDeps {
 export interface SandboxSession {
   /** The device the call runs in (path leases are taken on it). */
   deviceId: string;
-  /** The mode the device runs at now (auto mode spec §4.1): the file tools' path checks follow it. */
-  mode: SandboxMode;
+  /**
+   * What bounds the file tools' paths ({@link checkToolPath}), never the device's tier or its
+   * outside-sandbox setting (approval-only profiles: the sandbox is the same under every profile):
+   * - `scope`: the operation's admitted scope. On the managed route every native request carries
+   *   it (project roots plus directory grants, protected paths excluded) and the device enforces
+   *   it, as for `Bash`, so the kernel checks only a path's shape; legacy auto mode too.
+   * - `roots`: the instance's fixed roots (the legacy route in sandbox mode only).
+   */
+  pathBound: "scope" | "roots";
   h: SandboxHandle;
   /** The instance's roots: every path the call builds or checks is under one of them. */
   roots: SandboxRoots;
@@ -344,16 +351,18 @@ export function checkPath(path: string, roots: SandboxRoots, field = "path"): st
 }
 
 /**
- * A file tool's path in the mode the device runs at now (auto mode spec §4.1, decision 1): auto
- * mode accepts any clean absolute path on the machine (shape checks only, the review judges a write
- * outside the workspace); sandbox mode keeps the roots ({@link checkPath}).
+ * A file tool's path under the session's {@link SandboxSession.pathBound}: bounded by the
+ * operation's admitted scope, any clean absolute path passes here (shape checks only; the review
+ * proposes a directory crossing for a path outside the scope, and the device refuses one the
+ * scope does not cover, protected paths included); bounded by the fixed roots, a path must lie
+ * under one of them ({@link checkPath}).
  */
 export function checkToolPath(
   path: string,
-  s: Pick<SandboxSession, "roots" | "mode">,
+  s: Pick<SandboxSession, "roots" | "pathBound">,
   field = "path",
 ): string {
-  if (s.mode !== "auto") return checkPath(path, s.roots, field);
+  if (s.pathBound === "roots") return checkPath(path, s.roots, field);
   checkPathShape(path, field);
   return path.length > 1 && path.endsWith("/") ? path.slice(0, -1) : path;
 }
@@ -393,15 +402,15 @@ export function resolveToolPath(path: string, s: Pick<SandboxSession, "workingRo
   return `${s.workingRoot === "/" ? "" : s.workingRoot}/${segments.join("/")}`;
 }
 
-/** {@link checkToolPath} for a writing tool: the skills directory stays read-only in both modes. */
+/** {@link checkToolPath} for a writing tool: the skills directory stays read-only either way. */
 export function checkToolWritable(
   path: string,
-  s: Pick<SandboxSession, "roots" | "mode" | "workingRoot">,
+  s: Pick<SandboxSession, "roots" | "pathBound" | "workingRoot">,
 ): string {
   const p = checkToolPath(resolveToolPath(path, s), s, "file_path");
   if (p === s.roots.skills || p.startsWith(`${s.roots.skills}/`)) {
     const where =
-      s.mode === "auto"
+      s.pathBound === "scope"
         ? "pass another path instead"
         : `pass a path under ${s.roots.workspace} or ${s.roots.tmp} instead`;
     throw new ToolError(
@@ -856,11 +865,13 @@ async function inSandboxWith<T>(
         },
       },
       async (h, p, info, signal) => {
-        // unknown mode: the strict (sandbox) path checks stay (fail closed)
+        // unknown mode: the strict (sandbox) working root rule stays (fail closed)
         const mode = level?.mode ?? "sandbox";
         const s: SandboxSession = {
           deviceId,
-          mode,
+          // the managed route: the admitted scope of each operation bounds the paths, whatever
+          // the device's tier (its outside-sandbox setting decides only escalations)
+          pathBound: sessionPathBound(operations, mode),
           h,
           roots: info.roots,
           // a managed call runs in the working root its device context recorded (admission's),
@@ -957,6 +968,16 @@ export function sessionWorkingRoot(
   const root = workingRootOf(working.project, { mode, reach, ...working });
   return root === working.workspace ? workspace : root;
 }
+
+/**
+ * What bounds a session's file-tool paths ({@link SandboxSession.pathBound}): the admitted scope
+ * on the managed operation route, under every tier; on the legacy route, the fixed roots unless
+ * the device runs in auto mode.
+ */
+export const sessionPathBound = (
+  operations: boolean,
+  mode: SandboxMode,
+): SandboxSession["pathBound"] => (operations || mode === "auto" ? "scope" : "roots");
 
 /** The conversation whose device a call uses (the root conversation's for a sub-agent). */
 export const sandboxConversationOf = (ctx: BuiltinCallContext): string =>

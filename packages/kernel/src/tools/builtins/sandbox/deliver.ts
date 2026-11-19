@@ -9,8 +9,8 @@ import {
   storeArtifacts,
 } from "../artifacts.js";
 import {
-  checkPath,
   checkPathShape,
+  checkToolPath,
   clip,
   display,
   inToolSandbox,
@@ -141,22 +141,21 @@ export function sandboxDeliverTool(deps: SandboxToolDeps): BuiltinTool {
       const max = deps.config.get().sandbox.deliverMaxBytes;
       checkPathShape((input as DeliverInput).file_path, "file_path");
       let path = "";
-      const { value: data, notices } = await inToolSandbox(
-        deps,
-        ctx,
-        async ({ h, roots, p, signal }) => {
-          path = checkPath((input as DeliverInput).file_path, roots, "file_path");
-          const st = await p.stat(h, path, signal);
-          if (st === null) throw new ToolError(notFound(path));
-          if (st.isDir) throw new ToolError(isDirectory(path));
-          if (st.size > max) throw new ToolError(tooLarge(path, st.size, max));
-          const got = await p.readFile(h, path, { maxBytes: max, signal });
-          if (got === null) throw new ToolError(notFound(path));
-          // 读的过程中文件变大了
-          if (got.truncated) throw new ToolError(tooLarge(path, max + 1, max));
-          return got.data;
-        },
-      );
+      const { value: data, notices } = await inToolSandbox(deps, ctx, async (s) => {
+        const { h, p, signal } = s;
+        // bounded as the other file tools are: the admitted scope (a project file outside the
+        // workspace too), the fixed roots only on the legacy route in sandbox mode
+        path = checkToolPath((input as DeliverInput).file_path, s, "file_path");
+        const st = await p.stat(h, path, signal);
+        if (st === null) throw new ToolError(notFound(path));
+        if (st.isDir) throw new ToolError(isDirectory(path));
+        if (st.size > max) throw new ToolError(tooLarge(path, st.size, max));
+        const got = await p.readFile(h, path, { maxBytes: max, signal });
+        if (got === null) throw new ToolError(notFound(path));
+        // the file grew while it was read
+        if (got.truncated) throw new ToolError(tooLarge(path, max + 1, max));
+        return got.data;
+      });
       const name = given ?? defaultName(path);
       // uploaded outside the device lock: the device is not held meanwhile
       const contentType = contentTypeFor(name);

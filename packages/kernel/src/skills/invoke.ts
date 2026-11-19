@@ -37,7 +37,7 @@ import { SandboxService } from "../sandbox/sandbox.service.js";
 import { SandboxProviderUnreachableError } from "../sandbox/unreachable.js";
 import { StorageService } from "../storage/storage.service.js";
 import { BUILTIN } from "../tools/builtin-names.js";
-import { sessionWorkingRoot } from "../tools/builtins/sandbox/common.js";
+import { sessionPathBound, sessionWorkingRoot } from "../tools/builtins/sandbox/common.js";
 import {
   findSkillVersion,
   PROJECT_DIR_DIGEST,
@@ -618,7 +618,8 @@ export class SkillInvoker {
           readProjectSkill(
             {
               deviceId,
-              mode,
+              // the legacy route (gate off): the fixed roots unless the device runs in auto mode
+              pathBound: sessionPathBound(false, mode),
               h,
               roots: info.roots,
               // the working root a tool call of this conversation would get (one rule)
