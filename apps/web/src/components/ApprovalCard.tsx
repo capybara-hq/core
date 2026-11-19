@@ -25,7 +25,7 @@ import {
   formatInput,
   scopesFor,
 } from "../lib/approvals";
-import type { PermissionScope, ToolInfo } from "../lib/conversations";
+import type { PermissionScope, SandboxEscalation, ToolInfo } from "../lib/conversations";
 import { retryOnMountOf } from "../lib/query/client";
 import { approvalQuery } from "../lib/query/conversation";
 import { inboxChangeKeys } from "../lib/query/inbox";
@@ -340,6 +340,8 @@ export function ApprovalCard({
             <SandboxEscalationDetail
               justification={escalation.justification}
               workingRoot={escalation.workingRoot}
+              background={escalation.background}
+              maxSeconds={escalation.maxSeconds}
             />
           )}
         </Stack>
@@ -424,6 +426,8 @@ export function ApprovalCard({
         <SandboxEscalationDetail
           justification={escalation.justification}
           workingRoot={escalation.workingRoot}
+          background={escalation.background}
+          maxSeconds={escalation.maxSeconds}
         />
       )}
       {state.kind === "pending" && detail?.attempt !== undefined && (
@@ -518,12 +522,14 @@ export function permissionScopeOf(
 export function escalationOf(
   item: Pick<ApprovalItem, "command">,
   view: Approval | null | undefined,
-): { justification: string; workingRoot?: string } | undefined {
+): (SandboxEscalation & { workingRoot?: string }) | undefined {
   const detail = view?.kind === "command" ? view.command : null;
   const from = detail?.escalation !== undefined ? detail : item.command;
   if (from?.escalation === undefined) return undefined;
   return {
     justification: from.escalation.justification,
+    ...(from.escalation.background === true ? { background: true as const } : {}),
+    ...(from.escalation.maxSeconds !== undefined ? { maxSeconds: from.escalation.maxSeconds } : {}),
     ...(from.workingRoot !== undefined ? { workingRoot: from.workingRoot } : {}),
   };
 }

@@ -59,6 +59,12 @@ export type ToolRowData = {
    * "需先加载工具" / "Load the tool first" in `muted` (§6.16.9).
    */
   notice?: ToolNotice;
+  /**
+   * A command the command review admitted to run outside the OS sandbox (a per-call escalation):
+   * a done or failed row adds the neutral word "在沙箱外运行" / "Ran outside the sandbox" in
+   * `muted` (§6.16.9).
+   */
+  outsideSandbox?: boolean;
   /** The error; its first line is shown after "Failed". */
   error?: string;
   /** The extension whose policy hook denied the call. */
@@ -151,6 +157,11 @@ export function ToolLabel({ row }: { row: ToolRowData }): JSX.Element {
       {row.status === "done" && row.notice ? (
         <span className="cb-muted" data-part="notice-word">
           {` · ${t(`tool.notice.${row.notice}`)}`}
+        </span>
+      ) : null}
+      {(row.status === "done" || row.status === "failed") && row.outsideSandbox ? (
+        <span className="cb-muted" data-part="sandbox-word">
+          {` · ${t("tool.outsideSandbox")}`}
         </span>
       ) : null}
       {row.status === "cancelled" ? (

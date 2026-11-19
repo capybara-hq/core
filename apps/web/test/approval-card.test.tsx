@@ -517,6 +517,66 @@ describe("ApprovalCard: a per-call sandbox escalation", () => {
     // an escalation names no directory scope: no empty scope box
     expect(container.querySelector('[data-role="permission-scope"]')).toBeNull();
     expect(box?.querySelector("a")).toBeNull();
+    // a foreground command: no background line
+    expect(box?.querySelector('[data-escalation="background"]')).toBeNull();
+  });
+  it("says a background command keeps running outside the sandbox, at most N minutes", async () => {
+    const background = {
+      justification: JUSTIFICATION,
+      background: true as const,
+      maxSeconds: 1530,
+    };
+    stubApi({
+      "GET /api/v1/orgs/o1/approvals/ap1": () =>
+        json(200, {
+          approval: APPROVAL_COMMAND({
+            scopes: ["once"],
+            command: {
+              ...DETAIL,
+              command: "npm run dev",
+              rule: null,
+              reason: escalationCommand.reason,
+              permissionScope: { readDirectories: [], writeDirectories: [], hosts: [] },
+              escalation: background,
+              workingRoot: "/work/app",
+            },
+          }),
+        }),
+    });
+    const { container } = renderPage(
+      <ApprovalCard
+        orgId="o1"
+        item={item({ command: { ...escalationCommand, escalation: background } })}
+      />,
+      { locale: "en" },
+    );
+    await screen.findByRole("button", { name: "Allow once" });
+    const line = container.querySelector(
+      '[data-role="sandbox-escalation"] [data-escalation="background"]',
+    );
+    // 1530 seconds round up to 26 minutes
+    expect(line?.textContent).toBe(
+      "Approving starts a background process that keeps running outside the sandbox until it exits or is stopped, at most 26 minutes.",
+    );
+  });
+  it("omits the limit when a background command names no deadline", () => {
+    stubApi({ "GET /api/v1/orgs/o1/approvals/ap1": () => new Promise<Response>(() => {}) });
+    const { container } = renderPage(
+      <ApprovalCard
+        orgId="o1"
+        item={item({
+          command: {
+            ...escalationCommand,
+            escalation: { justification: JUSTIFICATION, background: true },
+          },
+        })}
+      />,
+      { locale: "zh" },
+    );
+    expect(
+      container.querySelector('[data-role="sandbox-escalation"] [data-escalation="background"]')
+        ?.textContent,
+    ).toBe(zh.approval.escalation.background);
   });
   it("speaks English from the log before the read", () => {
     stubApi({ "GET /api/v1/orgs/o1/approvals/ap1": () => new Promise<Response>(() => {}) });

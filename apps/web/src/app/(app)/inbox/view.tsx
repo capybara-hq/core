@@ -864,6 +864,8 @@ function toolApprovalDetail({
               <SandboxEscalationDetail
                 justification={command.escalation.justification}
                 workingRoot={command.workingRoot}
+                background={command.escalation.background}
+                maxSeconds={command.escalation.maxSeconds}
               />
             )}
             {approval.status === "superseded" ? (

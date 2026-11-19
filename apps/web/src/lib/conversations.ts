@@ -84,6 +84,8 @@ export interface ReviewRecord {
   scope?: "once" | "session";
   /** SHA-256 of the command text a `command` approval holds in full (person decisions). */
   commandHash?: string;
+  /** Set only when the command was actually admitted to run outside the OS sandbox. */
+  sandbox?: "escalated";
 }
 
 /**
@@ -96,15 +98,27 @@ export interface PermissionScope {
   hosts: string[];
 }
 
+/**
+ * A per-call sandbox escalation: the agent's justification and, for a command that starts a
+ * background process, that flag and the most seconds the process may run (its deadline).
+ */
+export interface SandboxEscalation {
+  justification: string;
+  background?: true;
+  maxSeconds?: number;
+}
+
 /** A `command` ask's facts (auto mode spec §5.4; display only). */
 export interface CommandAsk {
   /** The exact reach this ask grants (absent on an ask without one: an auto-mode command ask). */
   permissionScope?: PermissionScope;
   /**
    * The command asks to run outside the sandbox for this call only (per-call escalation): the
-   * agent's justification. The card shows it instead of a directory scope.
+   * agent's justification. The card shows it instead of a directory scope. `background`: the
+   * approved command starts a background process; `maxSeconds` (with `background`) is the most
+   * seconds that process may run before it is stopped.
    */
-  escalation?: { justification: string };
+  escalation?: SandboxEscalation;
   /** The directory the command runs in (shown with an escalation). */
   workingRoot?: string;
   /** The file the call targets, informational only: the scope names its directory. */
