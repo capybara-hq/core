@@ -32,6 +32,7 @@ const component = (id: string, slot: UiSlotId, after?: string): UiContributionIt
   ...(after !== undefined ? { after } : {}),
   kind: "component",
   icon: "puzzle",
+  compact: "kept" as const,
 });
 
 const setOf = (components: { id: string; slot: string }[]): ClientExtensionsResponse => {

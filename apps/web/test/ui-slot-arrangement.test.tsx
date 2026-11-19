@@ -24,6 +24,7 @@ const item = (plugin: string, id: string, title: string, hidden = false) => ({
   slot: "org.page" as const,
   kind: "view" as const,
   icon: "puzzle" as const,
+  compact: "kept" as const,
   hidden,
 });
 

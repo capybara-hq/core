@@ -68,4 +68,5 @@ export type {
   SizeClass,
   SlotComponentProps,
   UiView,
+  ViewportSegment,
 } from "./types.js";

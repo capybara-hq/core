@@ -402,8 +402,6 @@ export function useTheme(): {
 // @public
 export function useView(): ViewState;
 
-// Warning: (ae-forgotten-export) The symbol "ViewportSegment" needs to be exported by the entry point index.d.ts
-//
 // @public
 export function useViewportSegments(): ViewportSegment[] | null;
 
@@ -413,6 +411,14 @@ export const ViewBlocks: ComponentType<ViewBlocksProps>;
 // @public
 export interface ViewBlocksProps {
     view: UiView;
+}
+
+// @public
+export interface ViewportSegment {
+    height: number;
+    width: number;
+    x: number;
+    y: number;
 }
 
 // @public

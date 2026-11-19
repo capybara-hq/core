@@ -30,6 +30,7 @@ const home: UiContributionItem = {
   slot: "platform.page",
   kind: "view",
   icon: "puzzle",
+  compact: "kept" as const,
 };
 const NOT_SUPER: Me = { ...ME, account: { ...ME.account, isSuperAdmin: false } };
 

@@ -28,6 +28,7 @@ const section = (id: string, en: string, after: string): UiContributionItem => (
   after,
   kind: "view",
   icon: "list-checks",
+  compact: "kept" as const,
 });
 const page = (id: string, en: string): UiContributionItem => ({
   plugin: "board",
@@ -36,6 +37,7 @@ const page = (id: string, en: string): UiContributionItem => ({
   slot: "org.page",
   kind: "view",
   icon: "puzzle",
+  compact: "kept" as const,
 });
 const viewOf = (text: string): UiView => ({ blocks: [{ type: "heading", text }] });
 
@@ -180,6 +182,7 @@ describe("ExtensionSlot", () => {
           slot: "conversation.panel",
           kind: "view",
           icon: "list-checks",
+          compact: "kept" as const,
         },
       ],
       { [`GET ${UI}/views/todo/tasks-panel`]: () => json(200, { view: viewOf("panel body") }) },

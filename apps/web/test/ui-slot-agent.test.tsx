@@ -32,6 +32,7 @@ const NOTES: UiContributionItem = {
   slot: "agent.detail.section",
   kind: "view",
   icon: "puzzle",
+  compact: "kept" as const,
 };
 const OTHER_SLOT: UiContributionItem = { ...NOTES, id: "tasks", slot: "conversation.panel" };
 

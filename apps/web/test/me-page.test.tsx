@@ -91,6 +91,33 @@ describe("/me by role (hiding is cosmetic; the kernel decides)", () => {
     const ids = rows("workspace");
     expect(ids.at(-1)).toBe("ext:todo/board");
   });
+
+  it("a page that is hidden on compact is not a row of the compact class's navigation", () => {
+    renderFrame(
+      shellOf(as("member"), {
+        extensions: [
+          {
+            plugin: "todo",
+            id: "board",
+            slot: "org.page",
+            title: { zh: "看板", en: "Board" },
+            compact: "kept",
+          },
+          {
+            plugin: "todo",
+            id: "wide",
+            slot: "org.page",
+            title: { zh: "宽屏", en: "Wide" },
+            compact: "hidden",
+          },
+        ] as never,
+      }),
+      <MeView />,
+    );
+    const ids = rows("workspace");
+    expect(ids).toContain("ext:todo/board");
+    expect(ids).not.toContain("ext:todo/wide");
+  });
 });
 
 describe("/me", () => {

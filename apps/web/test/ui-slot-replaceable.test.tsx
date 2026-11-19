@@ -36,6 +36,7 @@ const winner = (id: string, slot: UiSlotId): UiContributionItem => ({
   slot,
   kind: "component",
   icon: "puzzle",
+  compact: "kept" as const,
 });
 
 const setOf = (components: { id: string; slot: string }[]): ClientExtensionsResponse => {

@@ -61,7 +61,9 @@ import { AdminMePage, type MePanels, MePanelsContext } from "./me";
 import {
   activeAdminOf,
   activeNavOf,
+  type ExtensionNavItem,
   navLevelOf,
+  shownOnCompact,
   statusPrompt,
   useAdminInboxCount,
   useAdminItems,
@@ -238,7 +240,7 @@ function Frame({ version, children }: { version: string; children: ReactNode }) 
 type Sections = {
   conversations: SidebarConversations;
   pending: { count: number; more: boolean; refresh(): void };
-  extensions: { id: string; label: string; href: string }[];
+  extensions: ExtensionNavItem[];
 };
 
 /** The frame of an account with a current org: readiness and the sidebar sections. */
@@ -345,12 +347,17 @@ function ShellFrame({
   // item what waits in its 待确认 tab; the persistent sidebar refetches the stale counts on each
   // path change.
   const adminContext = me.account.isSuperAdmin && under(pathname, "/admin");
+  const adminPages = useAdminExtensionPages(adminContext);
   const adminItems = useAdminItems(
     {
       inbox: useAdminInboxCount(adminContext),
       plugins: usePluginPendingCount(adminContext),
     },
-    useAdminExtensionPages(adminContext),
+    adminPages,
+  );
+  // the Me panel is the compact class's navigation: pages that are hidden on compact are not in it
+  const hiddenOnCompact = new Set(
+    adminPages.filter((p) => p.compact === "hidden").map((p) => `ext:${p.id}`),
   );
   const preferences = usePreferences();
   // The account row's scheme toggle; usePreferences leaves it out under a single-scheme theme.
@@ -585,7 +592,7 @@ function ShellFrame({
       org: sidebarOrg(orgItems),
       workspace: [
         ...meNav.workspace.map(toRow),
-        ...extensions.map((x) => ({
+        ...shownOnCompact(extensions).map((x) => ({
           id: `ext:${x.id}`,
           label: x.label,
           icon: "extension" as const,
@@ -614,7 +621,7 @@ function ShellFrame({
           account: { name: me.account.displayName },
           org: null,
           adminContext: true,
-          manage: adminItems.map(toRow),
+          manage: adminItems.filter((i) => !hiddenOnCompact.has(i.id)).map(toRow),
           back: { id: "back", label: t("me.back"), icon: "arrow-left", href: HOME_PATH },
           accountRows,
           system,

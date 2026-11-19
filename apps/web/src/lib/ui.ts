@@ -45,8 +45,8 @@ export interface UiContributionItem {
   path?: string;
   /** From `UI_ICONS`; `puzzle` when the manifest names none. */
   icon: UiIcon;
-  /** The form on a compact screen: the slot's, narrowed by the contribution's (spec §5.6); absent reads as `kept`. */
-  compact?: UiCompactForm;
+  /** The form on a compact screen: the slot's, narrowed by the contribution's (spec §5.6). */
+  compact: UiCompactForm;
 }
 
 /** What a contribution becomes on a compact screen: drawn, handed to the owner's sheet, or not drawn. */

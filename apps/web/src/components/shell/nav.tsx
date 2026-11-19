@@ -9,7 +9,7 @@ import { adminInboxCountQuery } from "../../lib/query/admin";
 import { retryOnMountOf } from "../../lib/query/client";
 import { keys } from "../../lib/query/keys";
 import { extensionPagesQuery, inboxCountQuery } from "../../lib/query/shell";
-import { type UiContributionItem, uiLocale } from "../../lib/ui";
+import { type UiCompactForm, type UiContributionItem, uiLocale } from "../../lib/ui";
 import { ADMIN_PAGES, type AdminExtensionPage, type AdminPageId } from "../admin-nav";
 import { useOfferedContributions } from "../extension-ui/ClientComponentBlock";
 
@@ -236,6 +236,21 @@ export function useAdminInboxCount(enabled: boolean): number | undefined {
 export const pluginPageHref = (plugin: string, id: string) =>
   `/p/${encodeURIComponent(plugin)}/${encodeURIComponent(id)}`;
 
+/** An extension page of the Extensions group; `compact` `hidden`: not listed on the compact class. */
+export type ExtensionNavItem = {
+  id: string;
+  label: string;
+  href: string;
+  compact: UiCompactForm;
+};
+
+/**
+ * The entries a compact list shows: the Me panel is the compact class's navigation, so a page
+ * whose compact form is `hidden` is left out of it (the wide sidebar lists every page).
+ */
+export const shownOnCompact = <T extends { compact?: UiCompactForm }>(items: readonly T[]): T[] =>
+  items.filter((i) => i.compact !== "hidden");
+
 /**
  * The sidebar's Extensions group: the page contributions (slot `org.page`) of the current org's
  * enabled extensions, schema views, embeds and client components, labelled by the page title; when
@@ -243,10 +258,7 @@ export const pluginPageHref = (plugin: string, id: string) =>
  * its code may run (not in safe mode, under the kill switch or after the crash budget). Empty
  * while loading, without pages or on a failed read (the group is then hidden).
  */
-export function useExtensions(
-  orgId: string,
-  locale: string,
-): { id: string; label: string; href: string }[] {
+export function useExtensions(orgId: string, locale: string): ExtensionNavItem[] {
   const query = extensionPagesQuery(orgId);
   const pages =
     useQuery({ ...query, retryOnMount: retryOnMountOf(query.queryKey) }).data ?? NO_PAGES;
@@ -256,10 +268,7 @@ export function useExtensions(
 const NO_PAGES: UiContributionItem[] = [];
 
 /** The Extensions group's items for `pages`. */
-function extensionItems(
-  pages: readonly UiContributionItem[],
-  locale: string,
-): { id: string; label: string; href: string }[] {
+function extensionItems(pages: readonly UiContributionItem[], locale: string): ExtensionNavItem[] {
   const lang = uiLocale(locale);
   const titles = pages.map((p) => p.title[lang]);
   return pages.map((p) => {
@@ -269,6 +278,7 @@ function extensionItems(
       id: `${p.plugin}/${p.id}`,
       label: shared ? `${title} · ${p.plugin}` : title,
       href: pluginPageHref(p.plugin, p.id),
+      compact: p.compact ?? "kept",
     };
   });
 }
