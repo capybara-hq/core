@@ -69,7 +69,8 @@ export function ListDetail({
   const back = useRef(onBack);
   back.current = onBack;
   const shellBack = useCallback(() => back.current(), []);
-  useRegisterShellPage(open ? { onBack: shellBack } : {});
+  // Side by side on two segments the item is no pushed page: no shell back.
+  useRegisterShellPage(open && !segments ? { onBack: shellBack } : {});
 
   // The list keeps its scroll position while an item covers it (it is display: none then).
   useEffect(() => {

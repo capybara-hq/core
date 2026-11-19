@@ -1450,12 +1450,17 @@ a.cb-object-name:hover {
   padding-left: var(--cb-space-4);
 }
 /* Two viewport segments (mobile layout spec §8): the media features are the authority for first
-   paint (`data-segments="2"` only mirrors `useViewportSegments()` for script). Both panes are drawn
-   in the two-pane form, the list in the first segment and the detail in the second, the gap between
-   the segments (the hinge) as the grid gap; this overrides the stack form at any width. */
+   paint (`data-segments="2"` only mirrors `useViewportSegments()` for script). The `env()` values
+   are viewport-relative while the region sits right of the sidebar and below the top bar, so the
+   second segment's track is anchored from the trailing edge (its size is the segment's own) and
+   the first takes the rest; the hinge is the gap between them. `--cb-segment-trail` is a frame's
+   own inset on the trailing side (0 where the region reaches the viewport's edge). Both panes are
+   drawn in the two-pane form, overriding the stack at any width. */
 @media (horizontal-viewport-segments: 2) {
   .cb-listdetail[data-fit] {
-    grid-template-columns: minmax(0, env(viewport-segment-width 0 0)) minmax(0, 1fr);
+    grid-template-columns:
+      minmax(0, 1fr)
+      minmax(0, calc(env(viewport-segment-width 1 0) - var(--cb-segment-trail, 0px)));
     grid-template-rows: minmax(0, 1fr) auto;
     column-gap: calc(env(viewport-segment-left 1 0) - env(viewport-segment-right 0 0));
   }
@@ -1479,17 +1484,30 @@ a.cb-object-name:hover {
     display: none;
   }
   .cb-listdetail[data-fit][data-divided="true"] > .cb-listdetail-list {
-    padding-right: var(--cb-space-4);
+    padding-inline: 0 var(--cb-space-4);
   }
   .cb-listdetail[data-fit][data-divided="true"] > .cb-listdetail-detail {
-    padding-left: var(--cb-space-4);
+    padding-inline: var(--cb-space-4) 0;
   }
 }
+/* Vertical: the first row takes what the second segment leaves (a percentage of the region's own
+   height), then the hinge, then the detail and its footer inside the second segment. */
 @media (vertical-viewport-segments: 2) {
   .cb-listdetail[data-fit] {
     grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: minmax(0, env(viewport-segment-height 0 0)) minmax(0, 1fr) auto;
-    row-gap: calc(env(viewport-segment-top 0 1) - env(viewport-segment-bottom 0 0));
+    grid-template-rows:
+      minmax(
+        0,
+        calc(
+          100% -
+          env(viewport-segment-height 1 0) -
+          var(--cb-segment-trail, 0px) -
+          (env(viewport-segment-top 0 1) - env(viewport-segment-bottom 0 0))
+        )
+      )
+      calc(env(viewport-segment-top 0 1) - env(viewport-segment-bottom 0 0))
+      minmax(0, 1fr)
+      auto;
   }
   .cb-listdetail[data-fit][data-open] > .cb-listdetail-list {
     display: block;
@@ -1500,15 +1518,19 @@ a.cb-object-name:hover {
   .cb-listdetail[data-fit][data-open] > .cb-listdetail-detail {
     display: flex;
     grid-column: 1;
-    grid-row: 2;
+    grid-row: 3;
   }
   .cb-listdetail[data-fit][data-open] > .cb-listdetail-footer {
     display: block;
     grid-column: 1;
-    grid-row: 3;
+    grid-row: 4;
   }
   .cb-listdetail[data-fit] > .cb-listdetail-detail > .cb-listdetail-bar {
     display: none;
+  }
+  .cb-listdetail[data-fit][data-divided="true"] > .cb-listdetail-list,
+  .cb-listdetail[data-fit][data-divided="true"] > .cb-listdetail-detail {
+    padding-inline: var(--cb-space-4);
   }
 }
 /* Inside the shell on compact the top bar is the one back (the open item is a pushed page). */
@@ -1520,6 +1542,7 @@ a.cb-object-name:hover {
 /* InboxPage: the pane pair is capped at the content width inside the content padding, like every
    frame, and reserves the head's scrollbar gutter, so its left edge is the head's. */
 .cb-inbox-frame {
+  --cb-segment-trail: var(--cb-content-pad);
   display: flex;
   flex: 1;
   box-sizing: border-box;
@@ -1527,6 +1550,13 @@ a.cb-object-name:hover {
   padding: 0 var(--cb-content-pad);
   overflow: hidden;
   scrollbar-gutter: stable;
+}
+/* On two segments the trailing edge must be known: no reserved scrollbar gutter (its width is the
+   platform's), only the content padding, which `--cb-segment-trail` carries. */
+@media (horizontal-viewport-segments: 2) {
+  .cb-inbox-frame {
+    scrollbar-gutter: auto;
+  }
 }
 .cb-inbox-content {
   display: flex;

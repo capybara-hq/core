@@ -3,7 +3,8 @@ import { useSyncExternalStore } from "react";
 /** One viewport segment: a screen of a folded or dual-screen display, in CSS px. */
 export type ViewportSegment = { x: number; y: number; width: number; height: number };
 
-const SEGMENT_QUERIES = [
+/** The media queries the stylesheet uses (a test keeps the CSS in step with these). */
+export const SEGMENT_QUERIES = [
   "(horizontal-viewport-segments: 2)",
   "(vertical-viewport-segments: 2)",
 ] as const;
