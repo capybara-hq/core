@@ -22,9 +22,10 @@ import type { BackgroundTaskItem, BackgroundTaskStatus } from "./subagents";
 import { fillCopy } from "./tool-copy";
 
 // The agent map (spec §6.16.28, agent map spec §9): a dialog over the conversation page whose
-// level 1 is the tree of agents, columns by depth with elbow connectors, every node one fixed
-// height, status only as a dot (with a legend), and the root's background tasks under its column;
-// level 2 is one agent's summary (AgentDetail), level 3 its transcript (TranscriptFrame).
+// level 1 is the tree of agents, columns by depth with elbow connectors, every node one compact
+// row of a fixed height, status only as a dot (with a legend), and the root's background tasks
+// under its column; level 2 is one agent's summary (AgentDetail), level 3 its transcript
+// (TranscriptFrame).
 
 export type AgentMapNode = {
   id: string;
@@ -282,9 +283,9 @@ const countRunning = (n: AgentMapNode): number =>
 const depthOf = (n: AgentMapNode): number => 1 + Math.max(0, ...n.children.map(depthOf));
 
 /**
- * Level 1 of the agent map (§6.16.28): the count line, the tree (columns by depth, the parent
- * centred on its children, elbow connectors), the root's background tasks under the root column
- * and the status legend.
+ * Level 1 of the agent map (§6.16.28): the count line, the tree (columns by depth, compact rows,
+ * the parent level with its first child, elbow connectors), the root's background tasks under
+ * the root column and the status legend.
  */
 export function AgentMapTree({
   root,
@@ -311,11 +312,10 @@ export function AgentMapTree({
   ].join(" · ");
 
   const node = (n: AgentMapNode, depth: number): JSX.Element => {
-    const meta = [
-      n.model,
-      formatDuration(n.durationMs, locale),
-      agentMapTokens(n.tokens, locale),
-    ].join(" · ");
+    const cost = [formatDuration(n.durationMs, locale), agentMapTokens(n.tokens, locale)].join(
+      " · ",
+    );
+    const meta = `${n.model} · ${cost}`;
     const body = (
       <>
         <span className="cb-amap-node-line">
@@ -324,8 +324,10 @@ export function AgentMapTree({
             {n.description}
           </span>
         </span>
+        {/* the model gives way first: time and tokens always stay whole */}
         <span className="cb-amap-node-meta" data-part="agent-node-meta">
-          {meta}
+          <span className="cb-amap-node-model">{n.model}</span>
+          <span className="cb-amap-node-cost">{` · ${cost}`}</span>
         </span>
       </>
     );
@@ -600,9 +602,10 @@ export type AgentDetailProps = {
 
 /**
  * Level 2 of the agent map (§6.16.28): one agent's summary, live at the granularity of tool
- * summaries. The head (back, status, description, close; kind, spawner and cost lines), the
- * latest text, the collapsible task, background tasks and tool calls (newest first, the running
- * one with a pulsing dot and a clock), and the footer: "Open transcript" and, while running, Stop.
+ * summaries. The head (back, status, description, close; the kind line, then spawner and
+ * cost), the latest text, the collapsible task, background tasks and tool calls (newest first,
+ * the running one with a pulsing dot and a clock), and the footer: "Open transcript" and, while
+ * running, Stop.
  */
 export function AgentDetail({
   node,
@@ -641,11 +644,11 @@ export function AgentDetail({
             <p className="cb-amap-meta" data-part="agent-meta">
               {meta.kind}
             </p>
-            <p className="cb-amap-meta" data-part="agent-spawned-by">
-              {withParent(t("agentMap.spawnedBy"), parent)}
-            </p>
             <p className="cb-amap-meta" data-part="agent-meta">
-              {meta.cost}
+              <span data-part="agent-spawned-by">
+                {withParent(t("agentMap.spawnedBy"), parent)}
+              </span>
+              {` · ${meta.cost}`}
             </p>
           </>
         }
