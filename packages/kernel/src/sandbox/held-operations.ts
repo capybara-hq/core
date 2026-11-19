@@ -1,5 +1,6 @@
 import {
   type ExecResult,
+  instanceSupported,
   type SandboxExecOptions,
   type SandboxExecutionRef,
   type SandboxHandle,
@@ -64,9 +65,10 @@ export async function assertPermissionSupport(
   const support = await provider.permissionSupport(handle, signal);
   // the sandbox is the same under every profile: an escalated call needs the runtime to run
   // outside it; every other call needs per-operation enforcement, or an instance that is itself
-  // the sandbox, and the sandbox network it names
+  // the sandbox (one whose report names no reason it is unavailable), and the sandbox network
+  // it names
   const sandboxed =
-    support.boundary === "instance" ||
+    instanceSupported(support) ||
     (support.restricted?.filesystem === true &&
       support.restricted.network &&
       support.restricted.native &&

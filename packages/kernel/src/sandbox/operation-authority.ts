@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import {
   type DeviceExecGrants,
+  instanceSupported,
   type PermissionProfile,
   parseSandboxBrowseScope,
   parseSandboxOperationScope,
@@ -134,7 +135,7 @@ function withheldScope(input: {
   // a local machine's sandbox is per operation; only a cloud provider's instance is the sandbox
   if (availability.report.boundary === "instance" && input.location === "local")
     return { state: "unsupported", reason: "A local device cannot report an instance boundary" };
-  if (availability.report.restricted === null && availability.report.boundary !== "instance")
+  if (availability.report.restricted === null && !instanceSupported(availability.report))
     return {
       state: "unsupported",
       reason:
@@ -558,7 +559,7 @@ export class SandboxOperationAuthority {
     if (availability.state === "supported") {
       route = kernelReadRoute({
         restricted:
-          availability.report.restricted !== null || availability.report.boundary === "instance",
+          availability.report.restricted !== null || instanceSupported(availability.report),
         fullAccess: availability.report.outsideSandbox,
         isolated: await this.isolatedRuntime(ctx.orgId, ctx.deviceId),
       });

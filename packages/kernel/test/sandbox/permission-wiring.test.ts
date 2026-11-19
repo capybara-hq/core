@@ -1837,4 +1837,52 @@ describe("approval-only profiles: the device sandbox in admission and the record
       expect(recorded.scope?.network).toEqual(scope.network);
     }
   });
+
+  it("an instance report naming why it is unavailable reads as unsupported and refuses a native call", async () => {
+    // a stale image or a digest mismatch: every network flag false, no background
+    const stale = {
+      ...OPEN_SUPPORT,
+      restricted: null,
+      boundary: "instance" as const,
+      network: { openPublic: false, allowlist: false, perOperationHosts: false },
+      outsideSandbox: false,
+      background: false,
+      unavailableReason: "The instance runs a stale image",
+    };
+    const f = await operationFixture({ permissionSupport: async () => stale } as never, {
+      evidence: false,
+    });
+    await f.db
+      .updateTable("devices")
+      .set({ source: "cloud", network_mode: "allowlist", network_hosts: "[]" })
+      .where("id", "=", f.deviceId)
+      .execute();
+    await orgHosts(f.orgId);
+    await f.db
+      .updateTable("device_instances")
+      .set({
+        instance_limits: JSON.stringify({
+          mode: "auto",
+          network: { kind: "allowlist", hosts: ["example.com"] },
+        }),
+      })
+      .where("device_id", "=", f.deviceId)
+      .execute();
+    await seedInstalledEvidence(k, raw, {
+      orgId: f.orgId,
+      deviceId: f.deviceId,
+      provider: "@permission-test",
+      version: "test-1",
+      report: stale,
+    });
+    await select(f as never, "request-approval");
+    const preview = await k.app.get(PermissionFacts).preview(f.orgId, owner.id, f.deviceId);
+    expect(preview.availability).toMatchObject({
+      state: "unsupported",
+      reason: "The instance runs a stale image",
+    });
+    await expect(
+      k.app.get(SandboxOperationAuthority).resolve(f.ctx, "readFile", new AbortController().signal),
+    ).rejects.toThrow("The instance runs a stale image");
+  });
 });

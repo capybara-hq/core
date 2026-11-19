@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import {
+  instanceSupported,
   parseSandboxPermissionSupport,
   type SandboxHandle,
   type SandboxPermissionSupport,
@@ -251,8 +252,9 @@ export async function readCurrentReport(
   if (stored === null) return unprobed;
   const report =
     device?.source === "cloud" ? cloudEnforceable(stored, instance.instance_limits) : stored;
-  // an instance-boundary provider is a supported device whose scope is the whole instance
-  if (!report.restricted && report.boundary !== "instance" && !report.outsideSandbox)
+  // an instance-boundary provider is a supported device whose scope is the whole instance,
+  // unless its report names why it is unavailable (a stale image, a digest mismatch)
+  if (!report.restricted && !instanceSupported(report) && !report.outsideSandbox)
     return {
       availability: {
         state: "unsupported",

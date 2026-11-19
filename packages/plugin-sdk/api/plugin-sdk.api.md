@@ -2026,6 +2026,9 @@ export interface InputRequired {
 }
 
 // @public
+export function instanceSupported(report: SandboxPermissionSupport): boolean;
+
+// @public
 export function isAttachmentId(s: unknown): s is string;
 
 // @public
