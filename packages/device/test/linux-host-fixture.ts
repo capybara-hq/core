@@ -13,6 +13,7 @@ import {
   type SandboxPermissionSupport,
   SandboxPermissionUnsupportedError,
   SandboxScopeDeniedError,
+  SandboxScopeValidationError,
 } from "@capybara-hq/plugin-sdk";
 import { build } from "esbuild";
 import type { DeviceOwnerCeiling, LocalExecAuthority } from "../src/exec/operation-types.js";
@@ -132,7 +133,9 @@ export class HostServer {
               ? new SandboxPermissionUnsupportedError(message)
               : reply.error.unknown
                 ? new SandboxOperationOutcomeUnknownError(message)
-                : new Error(message),
+                : reply.error.invalid
+                  ? new SandboxScopeValidationError(message)
+                  : new Error(message),
         );
       });
       this.child.stdin.write(`${JSON.stringify({ ...body, id })}\n`);

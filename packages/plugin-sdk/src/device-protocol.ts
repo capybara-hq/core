@@ -1003,7 +1003,19 @@ export type DeviceResponse =
       id: string;
       ok: false;
       error: {
-        kind: "gone" | "fs_gone" | "policy" | "error" | "denied" | "unsupported" | "unknown";
+        /**
+         * The typed failure: `denied`, `unsupported`, `unknown` and `invalid` carry the SDK's
+         * scope denial, unsupported permission, unknown outcome and scope validation errors.
+         */
+        kind:
+          | "gone"
+          | "fs_gone"
+          | "policy"
+          | "error"
+          | "denied"
+          | "unsupported"
+          | "unknown"
+          | "invalid";
         message: string;
       };
     };
@@ -1438,9 +1450,16 @@ export function parseDeviceFrame(
     const e = object(o.error);
     keys(e, ["kind", "message"]);
     if (
-      !["gone", "fs_gone", "policy", "error", "denied", "unsupported", "unknown"].includes(
-        String(e.kind),
-      )
+      ![
+        "gone",
+        "fs_gone",
+        "policy",
+        "error",
+        "denied",
+        "unsupported",
+        "unknown",
+        "invalid",
+      ].includes(String(e.kind))
     )
       throw new DeviceProtocolError("Unknown outcome kind");
     return freeze({

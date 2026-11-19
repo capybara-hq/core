@@ -627,16 +627,18 @@ export async function serveOperationV3(
 function errorKind(
   sdk: typeof import("@capybara-hq/plugin-sdk"),
   error: unknown,
-): "denied" | "unsupported" | "unknown" | "gone" | "fs_gone" | "error" {
+): "denied" | "unsupported" | "unknown" | "invalid" | "gone" | "fs_gone" | "error" {
   return sdk.isSandboxScopeDeniedError(error)
     ? "denied"
-    : sdk.isSandboxPermissionUnsupportedError(error)
-      ? "unsupported"
-      : sdk.isSandboxOperationOutcomeUnknownError(error)
-        ? "unknown"
-        : sdk.isSandboxGoneError(error)
-          ? "gone"
-          : sdk.isFileSystemGoneError(error)
-            ? "fs_gone"
-            : "error";
+    : sdk.isSandboxScopeValidationError(error)
+      ? "invalid"
+      : sdk.isSandboxPermissionUnsupportedError(error)
+        ? "unsupported"
+        : sdk.isSandboxOperationOutcomeUnknownError(error)
+          ? "unknown"
+          : sdk.isSandboxGoneError(error)
+            ? "gone"
+            : sdk.isFileSystemGoneError(error)
+              ? "fs_gone"
+              : "error";
 }

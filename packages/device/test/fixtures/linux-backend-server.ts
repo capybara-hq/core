@@ -6,6 +6,7 @@
 // bundle): it still refuses any hash but the attested one.
 import { createInterface } from "node:readline";
 import {
+  parseSandboxOperationScope,
   type SandboxExecOptions,
   SandboxPermissionUnsupportedError,
 } from "@capybara-hq/plugin-sdk";
@@ -97,9 +98,11 @@ async function handle(message: Record<string, unknown>): Promise<unknown> {
       if (!backend) throw new Error("No backend");
       const authority = message.authority as LocalExecAuthority | undefined;
       const factory = authority ? backend.forExecution(authority) : backend;
+      // like the device's server (server-ops), the scope is parsed before any factory: a scope
+      // the contract makes invalid is refused with a typed validation error
       const operation = await factory.operation(
         handleOf,
-        message.scope as Parameters<LocalOperationBackend["operation"]>[1],
+        parseSandboxOperationScope(message.scope),
         signal,
       );
       const args = message.args as Record<string, unknown>;
@@ -175,6 +178,7 @@ createInterface({ input: process.stdin }).on("line", (line) => {
           denied: error?.sandboxScopeDenied === true,
           unsupported: error?.sandboxPermissionUnsupported === true,
           unknown: error?.sandboxOperationOutcomeUnknown === true,
+          invalid: error?.sandboxScopeValidation === true,
         },
       }),
     )

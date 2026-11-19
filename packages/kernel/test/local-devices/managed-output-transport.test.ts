@@ -4,6 +4,7 @@ import {
   type DeviceHello,
   DeviceProtocolError,
   isSandboxScopeDeniedError,
+  isSandboxScopeValidationError,
   type KernelReady,
   parseDeviceFrame,
   SandboxScopeDeniedError,
@@ -234,14 +235,21 @@ async function fixture(clientCap = 69632, serverCap = 100000) {
       if (activeSocket.readyState !== activeSocket.OPEN) return;
       activeSocket.send(
         JSON.stringify(
-          r.instanceGeneration !== "g"
+          r.instanceGeneration === "invalid"
             ? {
                 type: "res",
                 id: frame.id,
                 ok: false,
-                error: { kind: "denied", message: "Check exact instance generation" },
+                error: { kind: "invalid", message: "The scope is invalid" },
               }
-            : { type: "res", id: frame.id, ok: true, result },
+            : r.instanceGeneration !== "g"
+              ? {
+                  type: "res",
+                  id: frame.id,
+                  ok: false,
+                  error: { kind: "denied", message: "Check exact instance generation" },
+                }
+              : { type: "res", id: frame.id, ok: true, result },
         ),
       );
     });
@@ -382,6 +390,19 @@ it("refuses another generation with a typed scope denial", async () => {
   expect(denied).toBeInstanceOf(SandboxScopeDeniedError);
   expect(isSandboxScopeDeniedError(denied)).toBe(true);
 });
+it("carries the device's typed scope validation refusal as a SandboxScopeValidationError", async () => {
+  const f = await fixture();
+  const invalid = await f.staged.background
+    .readOutput(
+      f.handle,
+      { ...f.ref, instanceGeneration: "invalid" },
+      { offset: 0, maxBytes: 1, signal: signal() },
+    )
+    .catch((e: unknown) => e);
+  expect(isSandboxScopeValidationError(invalid), String(invalid)).toBe(true);
+  expect((invalid as Error).message).toBe("The scope is invalid");
+});
+
 it("a reconnect changes the exact capacity and fences requests of the old connection", async () => {
   const f = await fixture();
   await f.emit(Buffer.alloc(10000, 66));
