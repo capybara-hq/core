@@ -1,7 +1,6 @@
 import { IconButton } from "../controls/index";
 import { ConvMenu, type ConvMenuEntry } from "../conversation/menu";
 import { Icon } from "../icons/icon";
-import { Menu, type MenuItem } from "../overlays/index";
 import { useDesignLink, useDesignT } from "../provider";
 import { withViewTransition } from "./view-transition";
 
@@ -18,10 +17,10 @@ export type TopBarProps = {
   /** The page's overflow menu; empty or absent: no button is drawn (spec §6.7 "no menu of one"). */
   menu?: ConvMenuEntry[] | undefined;
   /**
-   * The setup frame's steps (the setup home and the steps, `MenuItem`s with links): a menu button
-   * before the search, since the compact class has no sidebar to hold them (design spec §5.5).
+   * The setup frame's steps button before the search (the compact class has no sidebar to hold
+   * them): it pushes the steps page (design spec §5.5).
    */
-  steps?: MenuItem[] | undefined;
+  onSteps?: (() => void) | undefined;
   /** Draw the overflow menu open in place (the reference set and the catalog only). */
   menuOpen?: boolean;
 };
@@ -66,7 +65,7 @@ const SETTLE_LIMIT_MS = 500;
  * place the drawer menu bar had: back (pushed pages), the page's name, search and the overflow
  * menu. Every button is the ordinary ghost icon button with a 40 x 40 tap target.
  */
-export function TopBar({ title, back, onSearch, menu, steps, menuOpen }: TopBarProps) {
+export function TopBar({ title, back, onSearch, menu, onSteps, menuOpen }: TopBarProps) {
   const t = useDesignT();
   const Link = useDesignLink();
   const pushed = back !== undefined;
@@ -103,11 +102,12 @@ export function TopBar({ title, back, onSearch, menu, steps, menuOpen }: TopBarP
       <span className="cb-topbar-title" data-part="title" {...(title ? { title } : {})}>
         {title}
       </span>
-      {steps !== undefined ? (
-        <Menu
-          items={steps}
+      {onSteps !== undefined ? (
+        <IconButton
+          part="steps"
           label={t("shell.steps")}
-          trigger={<IconButton part="steps" label={t("shell.steps")} icon={<Icon name="menu" />} />}
+          icon={<Icon name="menu" />}
+          onClick={onSteps}
         />
       ) : null}
       {onSearch ? (

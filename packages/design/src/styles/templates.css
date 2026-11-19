@@ -1525,3 +1525,54 @@ a.cb-object-name:hover {
     border-top: 0;
   }
 }
+
+/* Setup on compact (spec §5.5): the setup home is the tab root, the steps a pushed page over it. The
+   body and the steps page are both drawn; the steps page shows only on compact while it is open. */
+.cb-setup-steps-page {
+  display: none;
+}
+.cb-setup-body {
+  display: contents;
+}
+@media (max-width: 599px) {
+  .cb-setup-body[data-steps-open="true"] {
+    display: none;
+  }
+  .cb-setup-steps-page[data-open="true"] {
+    display: block;
+  }
+}
+.cb-setup-steps-list {
+  margin: 0;
+  padding: 0 var(--cb-space-4);
+  list-style: none;
+}
+.cb-setup-step {
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-3);
+  min-height: var(--cb-row-roomy);
+  border-top: 1px solid var(--cb-line-soft);
+  color: var(--cb-ink);
+  text-decoration: none;
+}
+li:first-child > .cb-setup-step {
+  border-top: 0;
+}
+.cb-setup-step[aria-current="page"] {
+  background: var(--cb-accent-tint);
+  box-shadow: inset 2px 0 0 var(--cb-accent);
+}
+.cb-setup-step[aria-disabled="true"] {
+  color: var(--cb-muted);
+}
+.cb-setup-step-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.cb-setup-step-reason {
+  color: var(--cb-faint);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+}

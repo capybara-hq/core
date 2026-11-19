@@ -1,9 +1,10 @@
 import { type ReactNode, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import type { ConvMenuEntry } from "../conversation/menu";
-import { type CommandGroup, CommandPalette, type MenuItem } from "../overlays/index";
+import { type CommandGroup, CommandPalette } from "../overlays/index";
 import { useDesignT } from "../provider";
 import { BottomNav, type BottomNavItem, bottomNavCurrent, isTabRoot } from "./bottom-nav";
 import { keyboardInset } from "./pointer";
+import { SetupSteps } from "./setup-steps";
 import { type ShellPage, ShellPageContext } from "./shell-page";
 import { Sidebar, type SidebarProps, useSidebarWidthMode } from "./sidebar";
 import { useShortWindow, useSizeClass } from "./size-class";
@@ -148,12 +149,28 @@ export function AppShell({
     return merged;
   }, [pages]);
 
+  // The setup frame's steps are a page of their own on compact (spec §5.5): the setup home is the
+  // tab root, the steps button pushes them (the URL hash `#steps`, so the system back closes them).
+  const setup = sidebar.context.kind === "setup" ? sidebar.context : null;
+  const [stepsOpen, setStepsOpen] = useState(false);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `pathname` re-reads the hash after a link left the steps page (a client navigation fires no hashchange)
+  useEffect(() => {
+    if (!setup) return;
+    const read = () => setStepsOpen(window.location.hash === "#steps");
+    read();
+    window.addEventListener("hashchange", read);
+    window.addEventListener("popstate", read);
+    return () => {
+      window.removeEventListener("hashchange", read);
+      window.removeEventListener("popstate", read);
+    };
+  }, [setup, pathname]);
   // The route: a tab root shows the bottom navigation, every other route is pushed (spec §4.6).
   // Back goes to the previous in-app entry while one lies behind, else up the path.
   const items = bottomNav ?? [];
   const tabRoot = pathname === undefined || items.length === 0 || isTabRoot(items, pathname);
   // An open list-detail item is a pushed page too, keyed by its URL state (spec §4.6, §6.47).
-  const pushed = !tabRoot || page.onBack !== undefined;
+  const pushed = !tabRoot || page.onBack !== undefined || (setup !== null && stepsOpen);
   const currentTab = pathname === undefined ? null : bottomNavCurrent(items, pathname);
   // How many in-app history entries lie behind this one: a push adds one, a pop (the browser's
   // popstate, our own back button included) takes one, so back never leaves the app.
@@ -191,35 +208,22 @@ export function AppShell({
   }, [pathname, tabRoot]);
   const tabLabel = items.find((i) => i.id === currentTab && tabRoot)?.label;
 
-  // The setup frame's steps are a list in the compact top bar (the sidebar's setup context has no
-  // drawer any more): a menu of the setup home and the steps, current one marked.
-  const setupSteps: MenuItem[] | undefined =
-    sidebar.context.kind === "setup"
-      ? [
-          {
-            label: t("sidebar.setupHome"),
-            href: sidebar.context.home.href,
-            ...(sidebar.activeNav === "home" ? { current: true } : {}),
-          },
-          ...sidebar.context.steps.map(
-            (step): MenuItem =>
-              step.state === "waiting" || step.href === undefined
-                ? {
-                    label: step.label,
-                    description: step.reason ?? t("sidebar.stepWaiting"),
-                    icon: "clock",
-                    disabled: true,
-                    onSelect: () => {},
-                  }
-                : {
-                    label: step.label,
-                    href: step.href,
-                    icon: step.state === "done" ? "check" : "circle",
-                    ...(sidebar.activeNav === step.id ? { current: true } : {}),
-                  },
-          ),
-        ]
-      : undefined;
+  const stepsPushed = useRef(false);
+  const openSteps = useCallback(() => {
+    stepsPushed.current = true;
+    window.history.pushState(window.history.state, "", "#steps");
+    setStepsOpen(true);
+  }, []);
+  const closeSteps = useCallback(() => {
+    // `#steps` was pushed by the button: its entry goes; a deep link to it just drops the hash
+    if (stepsPushed.current) {
+      stepsPushed.current = false;
+      window.history.back();
+    } else {
+      window.history.replaceState(window.history.state, "", window.location.pathname);
+      setStepsOpen(false);
+    }
+  }, []);
 
   const searchable = commands !== undefined;
   // ⌘K opens the palette; ⌘\ / Ctrl+\ collapses or expands the sidebar (the expanded class only:
@@ -326,10 +330,14 @@ export function AppShell({
             <div className="cb-shell-topbar" data-part="top-bar-slot">
               <TopBar
                 title={page.title ?? tabLabel ?? title}
-                back={page.onBack ?? (pushed ? backTarget(page.path ?? [], depth > 0) : undefined)}
+                back={
+                  setup !== null && stepsOpen
+                    ? closeSteps
+                    : (page.onBack ?? (pushed ? backTarget(page.path ?? [], depth > 0) : undefined))
+                }
                 onSearch={searchable ? () => setPaletteOpen(true) : undefined}
                 menu={page.menu ?? menu}
-                steps={setupSteps}
+                onSteps={setup !== null ? openSteps : undefined}
               />
             </div>
             <main
@@ -339,7 +347,24 @@ export function AppShell({
               // The slide of the last push or pop (compact only, none under reduced motion).
               data-nav={slide ? `${slide.direction}-${slide.n}` : undefined}
             >
-              {children}
+              {setup !== null ? (
+                <>
+                  <div className="cb-setup-body" data-steps-open={stepsOpen ? "true" : "false"}>
+                    {children}
+                  </div>
+                  {stepsOpen ? (
+                    <div className="cb-setup-steps-page" data-open="true">
+                      <SetupSteps
+                        home={setup.home}
+                        steps={setup.steps}
+                        current={sidebar.activeNav}
+                      />
+                    </div>
+                  ) : null}
+                </>
+              ) : (
+                children
+              )}
             </main>
             {ownStatusBar ? null : <StatusBar {...status} pageStatus={pageStatus} />}
             {items.length > 0 && !pushed ? (

@@ -230,7 +230,7 @@ target.
 | `FormPage` | Single column (labels above fields), **sticky ActionRow** above the safe area | Labels above fields | As today (label column while it fits, §3.3) |
 | `SettingsPage` | Sub-nav as the sticky sideways row (maintainer decision 2026-11-09, kept) | Sub-nav stacked above content (today's < 960 form) | As today (sub-nav inline while it fits, §3.3) |
 | `WizardPage` | Single column, step bar as "2 / 4" text, sticky previous / next | As today | As today |
-| `InboxPage` | **Two-level stack**: the list is the page, an item is pushed full screen with its decision buttons sticky at the bottom (the primary a full-width line, the others side by side above; facts with translated labels, never raw payload keys) | **List-detail**: two panes when both fit (list 320 + detail ≥ 360), else the stack | Rail + content + inspector, as today |
+| `InboxPage` | **Two-level stack**: the list is the page, an item is pushed full screen with its decision buttons sticky at the bottom (the primary a full-width line, the others side by side above; facts with translated labels, never raw payload keys) | **List-detail**: two panes when both fit (list 320 + detail ≥ 360), else the stack | Rail + content + inspector, as today, the inspector inline (a 400 column from a 1100 frame, else below the content; never a Sheet) and no rail collapse button (maintainer to confirm: R20) |
 | `ConversationPage` | §5.4 | §5.4 | As today |
 | `TracePage` | Waterfall full width; a span is pushed as its own screen | Waterfall, detail below | As today |
 | `OverviewPage` | StatCards 2 × 2, sections stacked | StatCards in a row of up to 4 | As today |
