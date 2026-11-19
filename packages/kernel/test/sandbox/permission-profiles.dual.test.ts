@@ -33,7 +33,7 @@ import {
   waitFor,
   waitForTerminal,
 } from "../helpers/runs.js";
-import { FakeMachineV3, ownerReportFor } from "../local-devices/fake-machine-v3.js";
+import { bindAnswer, FakeMachineV3, ownerReportFor } from "../local-devices/fake-machine-v3.js";
 import type { Answer } from "../local-devices/test-holder.js";
 
 /**
@@ -250,6 +250,17 @@ async function denyThrough(conv: string, askId: string, terminal: number): Promi
   expect(res.statusCode, res.body).toBe(200);
   await waitForTerminal(db, conv, terminal, 60_000);
   return (await results(conv)).at(-1) as ToolResult;
+}
+
+/** The device's admission epoch (absent: revision zero). */
+async function deviceEpoch(deviceId: string): Promise<number> {
+  const row = await db
+    .selectFrom("permission_authority_epochs")
+    .select("revision")
+    .where("kind", "=", "device")
+    .where("id", "=", deviceId)
+    .executeTakeFirst();
+  return Number(row?.revision ?? 0);
 }
 
 /** Approves an ask once through replica B. */
@@ -544,7 +555,7 @@ describe("a local device's project outside its fixed workspace", () => {
     label: string,
     outsideSandbox: boolean,
     answer: (req: KernelReq) => Answer,
-  ): Promise<{ deviceId: string; machine: FakeMachineV3; conv: string }> {
+  ): Promise<{ deviceId: string; machine: FakeMachineV3; conv: string; credential: string }> {
     const { deviceId, credential } = await kA.app.get(TransactionHost).run(async () => {
       const { id } = await kA.app.get(DevicesService).createLocal(orgId, ownerId, label);
       const issued = await kA.app.get(MachinesService).issue({
@@ -602,7 +613,7 @@ describe("a local device's project outside its fixed workspace", () => {
     expect(added.statusCode, added.body).toBe(201);
     const conv = await conversation(deviceId, "app");
     await setProfile(conv, "request-approval");
-    return { deviceId, machine, conv };
+    return { deviceId, machine, conv, credential };
   }
 
   /**
@@ -831,6 +842,120 @@ describe("a local device's project outside its fixed workspace", () => {
     expect(await approvalsOf(conv)).toHaveLength(asks);
     expect(native("readFile", SECRET)).toEqual([]);
   }
+
+  /**
+   * An upgrade of capybara-device (or a rebuilt package of the same version): every release
+   * changes the runtime bytes, so the restarted program's verified runtime hash differs from the
+   * one its stored binding attested. The device then starts unbound and says so in its hello; the
+   * kernel must replace the instance (old work revoked, the fence moved on) and bind a new
+   * generation under the new evidence, without the owner logging out and in again.
+   */
+  it("a device restarted with a changed runtime hash is re-probed and rebound on its next call", async () => {
+    const files = new Map([[`${PROJECT}/README.md`, "hello app\n"]]);
+    const runtimeHashes: string[] = [];
+    const answerWith =
+      (runtimeHash: string) =>
+      (req: KernelReq): Answer => {
+        const a = req.args as { path?: string };
+        const op = String(req.op).replace(/^browse(\w)/, (_, c: string) => c.toLowerCase());
+        switch (op) {
+          case "bindInstance": {
+            runtimeHashes.push(runtimeHash);
+            const answer = bindAnswer(req) as { ok: true; result: Record<string, unknown> };
+            const identity = answer.result.runtimeIdentity as Record<string, unknown>;
+            return {
+              ok: true,
+              result: { ...answer.result, runtimeIdentity: { ...identity, runtimeHash } },
+            };
+          }
+          case "create":
+            return { ok: true, result: { roots: ROOTS } };
+          case "stat": {
+            if (a.path === PROJECT) return { ok: true, result: { size: 0, isDir: true } };
+            const f = a.path === undefined ? undefined : files.get(a.path);
+            return { ok: true, result: f === undefined ? null : { size: f.length, isDir: false } };
+          }
+          case "list":
+            return { ok: true, result: { entries: [], truncated: false } };
+          case "readFile": {
+            const f = a.path === undefined ? undefined : files.get(a.path);
+            return {
+              ok: true,
+              result:
+                f === undefined
+                  ? null
+                  : { dataB64: Buffer.from(f).toString("base64"), truncated: false },
+            };
+          }
+          default:
+            return { ok: true, result: null };
+        }
+      };
+    const { deviceId, machine, conv, credential } = await osUserProject(
+      "Laptop upgrade",
+      false,
+      answerWith("a".repeat(64)),
+    );
+    const first = await call(conv, "Read", { file_path: `${PROJECT}/README.md` }, 1);
+    expect(first.payload.isError, first.payload.content).toBe(false);
+    const before = await db
+      .selectFrom("device_instance_bindings")
+      .select(["instance_generation", "status"])
+      .where("device_id", "=", deviceId)
+      .orderBy("installed_at", "desc")
+      .executeTakeFirstOrThrow();
+    expect(before.status).toBe("installed");
+    const epochBefore = await deviceEpoch(deviceId);
+
+    // the program is replaced and restarts: its stored binding no longer verifies, so it is unbound
+    machine.close();
+    await machine.closed;
+    const upgraded = new FakeMachineV3(
+      `ws://127.0.0.1:${kA.port}/device/connect`,
+      credential,
+      answerWith("d".repeat(64)),
+      { hello: false },
+    );
+    machines.push(upgraded);
+    await upgraded.opened;
+    upgraded.hello({
+      roots: ROOTS,
+      home: HOME,
+      features: ["networkReport", "policyOp", "policyOpId", "projects"],
+      policy: { allowedDomains: [] },
+      ownerCeiling: ownerReportFor(
+        { allowedDomains: [] },
+        { outsideSandbox: false, restrictedProjectReach: "os-user" },
+      ),
+      instanceGeneration: null,
+    });
+    await upgraded.ready;
+    // the old generation's admitted work is revoked: the device's admission epoch moved on
+    await waitFor(
+      async () => (await deviceEpoch(deviceId)) > epochBefore,
+      15_000,
+      "the device epoch advanced",
+    );
+
+    // the next call succeeds on a new generation bound under the new runtime evidence
+    const next = await call(conv, "Read", { file_path: `${PROJECT}/README.md` }, 2);
+    expect(next.payload.isError, next.payload.content).toBe(false);
+    expect(next.payload.content).toContain("hello app");
+    const after = await db
+      .selectFrom("device_instance_bindings")
+      .select(["instance_generation", "status", "runtime_identity", "previous_generation"])
+      .where("device_id", "=", deviceId)
+      .orderBy("installed_at", "desc")
+      .executeTakeFirstOrThrow();
+    expect(after.status).toBe("installed");
+    expect(BigInt(after.instance_generation)).toBeGreaterThan(BigInt(before.instance_generation));
+    expect(after.previous_generation).toBe(before.instance_generation);
+    expect((after.runtime_identity as { runtimeHash: string }).runtimeHash).toBe("d".repeat(64));
+    expect(runtimeHashes.at(-1)).toBe("d".repeat(64));
+    expect(upgraded.frames.some((f) => f.type === "req" && String(f.op) === "bindInstance")).toBe(
+      true,
+    );
+  });
 
   it("Request approval with outside-sandbox off: the file tools follow the admitted scope", async () => {
     await fileToolsOutsideOff("request-approval");

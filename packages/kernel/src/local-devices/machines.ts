@@ -437,7 +437,7 @@ export class MachinesService {
       machine.device_id,
       LOCAL_PROVIDER,
       parsed.programVersion,
-      await this.boundIdentityLocked(subject, parsed),
+      await this.boundIdentityLocked(subject, machineId, parsed),
       parsed.permissionSupport,
     );
   }
@@ -446,44 +446,92 @@ export class MachinesService {
    * The runtime identity a v3 hello may attest (B4): only a bound hello re-reporting exactly the
    * identity of the current instance generation's installed binding. An unbound hello, another
    * generation or a binding still awaiting the device attests nothing (unprobed; it never finishes
-   * an installation, which only the bindInstance answer does). A changed identity under the same
-   * binding (helper, interpreter or environment bytes) invalidates the report and advances the
-   * device's admission epoch; a changed environment fingerprint also resets Full consent.
+   * an installation, which only the bindInstance answer does).
+   *
+   * The machine the current generation was installed for no longer attesting it means its program
+   * can never serve that generation again: a restarted program whose verified runtime differs from
+   * the one its stored binding attested (every capybara-device upgrade changes the runtime bytes)
+   * starts unbound, and the device refuses to rebind a generation under a changed runtime. The
+   * instance is then replaced ({@link replaceUnattestedLocked}), so the next use creates and binds
+   * a new generation under the new evidence instead of staying unprobed until a new login.
    */
   private async boundIdentityLocked(
     subject: { orgId: string; deviceId: string },
+    machineId: string,
     hello: DeviceHello,
   ): Promise<PermissionRuntimeIdentity | undefined> {
-    const reported = hello.runtimeIdentity;
-    if (hello.instanceGeneration === null || !reported) return undefined;
     const instance = await this.db
       .selectFrom("device_instances")
-      .select(["provider", "created_at", "permission_runtime_identity"])
+      .select(["provider", "status", "handle", "created_at", "permission_runtime_identity"])
       .where("device_id", "=", subject.deviceId)
       .executeTakeFirst();
     if (
       !instance ||
       instance.provider !== LOCAL_PROVIDER ||
-      String(instance.created_at.getTime()) !== reported.instanceGeneration
+      !instance.handle ||
+      (instance.status !== "running" && instance.status !== "suspended")
     )
       return undefined;
+    const generation = String(instance.created_at.getTime());
     const binding = await this.db
       .selectFrom("device_instance_bindings")
-      .select(["status", "runtime_identity"])
+      .select(["status", "runtime_identity", "machine_id"])
       .where("device_id", "=", subject.deviceId)
-      .where("instance_generation", "=", reported.instanceGeneration)
+      .where("instance_generation", "=", generation)
       .executeTakeFirst();
+    // not installed yet (the kernel's bindInstance finishes it), or installed for another machine
+    // (a login replaced the instance already): nothing to attest, nothing to replace
     if (binding?.status !== "installed" || !binding.runtime_identity) return undefined;
-    if (sameRuntimeIdentity(binding.runtime_identity, reported)) return reported;
-    const previous = instance.permission_runtime_identity;
-    if (previous)
-      await this.ceilings.publishLocked(
-        subject,
-        "device",
-        true,
-        previous.imageFingerprint !== reported.imageFingerprint,
-      );
+    if (binding.machine_id !== machineId) return undefined;
+    const reported = hello.runtimeIdentity;
+    if (
+      hello.instanceGeneration === generation &&
+      reported?.instanceGeneration === generation &&
+      sameRuntimeIdentity(binding.runtime_identity, reported)
+    )
+      return reported;
+    await this.replaceUnattestedLocked(
+      subject,
+      binding.runtime_identity.imageFingerprint,
+      reported?.imageFingerprint,
+    );
     return undefined;
+  }
+
+  /**
+   * Replaces a local instance whose installed binding its machine no longer attests (under the
+   * device authority writer): the row forgets its instance (status `none`, no handle) and its
+   * fence moves on, so a lifecycle holder of the old instance fails its next write; the device's
+   * admission epoch advances, revoking every admitted or started operation of the old generation.
+   * The files stay (the same machine and directory): the next use creates a new instance on them,
+   * which the kernel binds under the program's new runtime evidence, and the install resets Full
+   * consent when the environment fingerprint changed. A bound hello that already names another
+   * fingerprint resets it here.
+   */
+  private async replaceUnattestedLocked(
+    subject: { orgId: string; deviceId: string },
+    boundFingerprint: string,
+    reportedFingerprint: string | undefined,
+  ): Promise<void> {
+    await this.ceilings.publishLocked(
+      subject,
+      "device",
+      true,
+      reportedFingerprint !== undefined && reportedFingerprint !== boundFingerprint,
+    );
+    await this.db
+      .updateTable("device_instances")
+      .set((eb) => ({
+        status: "none",
+        handle: null,
+        running_since: null,
+        suspended_at: null,
+        destroyed_at: sql<Date>`now()`,
+        generation: eb("generation", "+", 1),
+        permission_runtime_identity: null,
+      }))
+      .where("device_id", "=", subject.deviceId)
+      .execute();
   }
 
   /**
