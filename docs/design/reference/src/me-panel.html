@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<title>MePanel · reference</title>
+<link rel="stylesheet" href="/design/styles/fonts.css">
+<link rel="stylesheet" href="/design/styles/tokens.css">
+<link rel="stylesheet" href="reference.css">
+</head>
+<body>
+<main class="r-page">
+<h1>MePanel</h1>
+<p>The Me tab's page body (spec §6.48; mobile layout spec §4.2): what the sidebar holds, drawn by the shell from the sidebar's data. The account row and the org switcher (which opens a bottom sheet), the 更多 group of every item the role sees (技能, 连接器, 定时任务, 设备, 插件, 扩展, 组织设置; 渠道 and 评测与运行 for org admins), 管理后台 for super admins, the account group (个人设置, 语言, 主题, 退出登录) and the system status line the compact class has no StatusBar for. Rows are `row.roomy` high, split by `line-soft`, in no box. Drawn in its page with the root top bar and the bottom navigation.</p>
+<div class="r-blocks">
+<section data-ref-block="me-panel-member" style="width:390px">
+  <template data-fixture="me-panel" data-opts='{"role": "member"}'></template>
+</section>
+<section data-ref-block="me-panel-admin" style="width:390px">
+  <template data-fixture="me-panel" data-opts='{"role": "admin"}'></template>
+</section>
+<section data-ref-block="me-panel-super-admin" style="width:390px">
+  <template data-fixture="me-panel" data-opts='{"role": "super-admin"}'></template>
+</section>
+</div>
+</main>
+<script src="mobile-shell.js"></script>
+<script src="fill.js"></script>
+</body>
+</html>

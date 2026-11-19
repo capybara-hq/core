@@ -86,6 +86,9 @@
   --cb-layout-calendar-hour: 48px;
   --cb-layout-calendar-day-min: 76px;
   --cb-layout-calendar-cell: 112px;
+  --cb-layout-content-min: 552px;
+  --cb-layout-bottom-nav: 56px;
+  --cb-layout-top-bar: 44px;
   --cb-builtin-dark-bg: #0A0A0A;
   --cb-builtin-dark-panel: #111110;
   --cb-builtin-dark-ink: #E6E6E3;

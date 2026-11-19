@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<title>BottomNav · reference</title>
+<link rel="stylesheet" href="/design/styles/fonts.css">
+<link rel="stylesheet" href="/design/styles/tokens.css">
+<link rel="stylesheet" href="reference.css">
+</head>
+<body>
+<main class="r-page">
+<h1>BottomNav</h1>
+<p>The compact class's navigation (spec §4.6, §6.45; mobile layout spec §4.2): four items in the fixed order 会话 · 智能体 · 收件箱 · 我, each `layout.bottom-nav` (56) high and a quarter of the width, on the sidebar ground with a `line-soft` top line, an icon 16 over a `micro` label. The current item takes the `sidebar-active` ground, `ink` and weight 600. The inbox item carries the pending count as a badge. In a short window (below 480 high; drawn at the iPhone Duo outer display, 382) the labels go and the names stay. The home-indicator inset and the keyboard (which hides the bar) are not drawn.</p>
+<div class="r-blocks">
+<section data-ref-block="bottom-nav-default" style="width:390px">
+  <template data-fixture="bottom-nav" data-opts='{"current": "chats"}'></template>
+</section>
+<section data-ref-block="bottom-nav-active" style="width:390px">
+  <template data-fixture="bottom-nav" data-opts='{"current": "agents"}'></template>
+</section>
+<section data-ref-block="bottom-nav-badge" style="width:390px">
+  <template data-fixture="bottom-nav" data-opts='{"current": "chats", "badge": true}'></template>
+</section>
+<section data-ref-block="bottom-nav-short" style="width:382px">
+  <template data-fixture="bottom-nav" data-opts='{"current": "chats", "badge": true, "short": true}'></template>
+</section>
+</div>
+</main>
+<script src="mobile-shell.js"></script>
+<script src="fill.js"></script>
+</body>
+</html>

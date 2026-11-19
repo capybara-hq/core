@@ -98,6 +98,12 @@ const PAGES = [
   "schedule-calendar",
   // a device's head and its two modes (auto mode design §4, plan Task 10)
   "device-nameplate",
+  // the mobile and foldable layout: the compact shell, the list-detail region, the sheet drag states
+  "bottom-nav",
+  "top-bar",
+  "list-detail",
+  "me-panel",
+  "sheet",
 ];
 const THEMES = ["dark", "light"] as const;
 const BLOCK_ID = /^[a-z-]+-[a-z0-9-]+$/;

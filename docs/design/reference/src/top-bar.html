@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<title>TopBar · reference</title>
+<link rel="stylesheet" href="/design/styles/fonts.css">
+<link rel="stylesheet" href="/design/styles/tokens.css">
+<link rel="stylesheet" href="reference.css">
+</head>
+<body>
+<main class="r-page">
+<h1>TopBar</h1>
+<p>The compact class's one-row bar, in the place of the drawer menu bar (spec §4.6, §6.46; mobile layout spec §4.1): `layout.top-bar` (44, `row.roomy`) high, a `line-soft` bottom line, the page title (`body`, 600, one line with an ellipsis), and at the end search (the command palette) and the page's overflow menu, all buttons 40 × 40. A tab root (root) has no back button and starts the title on the 16 px content edge; a pushed page (pushed) leads with the back button, and the bottom navigation is hidden. The overflow menu (overflow) is the design Menu with 40 px items; a danger item sits last after a separator.</p>
+<div class="r-blocks">
+<section data-ref-block="top-bar-root" style="width:390px">
+  <template data-fixture="top-bar" data-opts='{}'></template>
+</section>
+<section data-ref-block="top-bar-pushed" style="width:390px">
+  <template data-fixture="top-bar" data-opts='{"pushed": true}'></template>
+</section>
+<section data-ref-block="top-bar-overflow" style="width:390px;height:268px">
+  <template data-fixture="top-bar" data-opts='{"pushed": true, "overflow": true}'></template>
+</section>
+</div>
+</main>
+<script src="mobile-shell.js"></script>
+<script src="fill.js"></script>
+</body>
+</html>

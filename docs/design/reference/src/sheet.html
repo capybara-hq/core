@@ -1,0 +1,26 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<title>Sheet drag states · reference</title>
+<link rel="stylesheet" href="/design/styles/fonts.css">
+<link rel="stylesheet" href="/design/styles/tokens.css">
+<link rel="stylesheet" href="reference.css">
+</head>
+<body>
+<main class="r-page">
+<h1>Sheet drag states</h1>
+<p>The follow-finger states of a bottom sheet (spec §6.7; mobile layout spec §7.4), drawn with a ListPage's filter sheet over the list: dragging (the sheet follows the finger, here 24% of its height down, with no transition; the scrim fades by the same share, the grab handle on `muted`) and settling (released past the 40% threshold, so it carries off to the dismissed position over `motion.expand`, `ease-out`; here at 60%; a release below the threshold springs back the same way). Under `prefers-reduced-motion` it still drags but snaps without animation.</p>
+<div class="r-blocks">
+<section data-ref-block="sheet-dragging" style="width:390px;height:844px">
+  <template data-fixture="sheet" data-opts='{"state": "dragging"}'></template>
+</section>
+<section data-ref-block="sheet-settling" style="width:390px;height:844px">
+  <template data-fixture="sheet" data-opts='{"state": "settling"}'></template>
+</section>
+</div>
+</main>
+<script src="mobile-shell.js"></script>
+<script src="fill.js"></script>
+</body>
+</html>

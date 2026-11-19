@@ -121,5 +121,8 @@ export const SIZES = {
     "calendar-hour": 48,
     "calendar-day-min": 76,
     "calendar-cell": 112,
+    "content-min": 552,
+    "bottom-nav": 56,
+    "top-bar": 44,
   },
 } as const;
