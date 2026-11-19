@@ -782,7 +782,7 @@ it("local current host ceiling refuses an unapproved host before independent rev
     .where("run_id", "=", f.runId)
     .execute();
   // the reply names who adds the host: the machine's owner
-  expect((refused?.payload as { content?: string }).content).toContain(
+  expect((refused?.payload as { content?: string } | undefined)?.content).toContain(
     "capybara-device policy add allowedDomains not-in-org-ceiling.example",
   );
 });
