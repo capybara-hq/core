@@ -60,6 +60,7 @@ export function ReferenceBlock({
  * the body filling the rest, then `bottom` (the bottom navigation or a sticky row), so a block
  * shows a component in the frame the shell would give it at a phone's width in any window. It
  * stands in for the shell: a ListDetail inside draws no back bar of its own (the top bar has it).
+ * Development catalog only (`/dev/ui` reference blocks, spec §9.2), never a page.
  */
 export function ReferenceScreen({
   top,
