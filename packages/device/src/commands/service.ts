@@ -82,7 +82,10 @@ export async function serviceCommand(
     env: serviceEnv(deps.env),
   };
   try {
-    if (action === "status" && options.json === true) return statusJson(deps, run);
+    const jsonStatus = action === "status" && options.json === true;
+    if (deps.platform === "darwin" || deps.platform === "linux") {
+      if (jsonStatus) return statusJson(deps, run);
+    }
     if (deps.platform === "darwin") return await launchd(action, spec, deps, run);
     if (deps.platform === "linux") return await systemd(action, spec, deps, run);
   } catch (e) {

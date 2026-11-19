@@ -99,7 +99,7 @@ the platform can switch Full access off on their side; the narrowest setting win
 
 ```bash
 capybara-device ceiling show                    # the owner ceiling, network baseline, revision
-capybara-device ceiling show --json             # {"fullAccess":…,"projectReach":…,"revision":…}
+capybara-device ceiling show --json             # {"fullAccess":…,"projectReach":…,"revision":…}  (revision: string | null)
 capybara-device ceiling set --full-access deny --project-reach workspace       # narrow
 capybara-device ceiling set --full-access allow --project-reach os-user --yes  # widen
 capybara-device policy add allowedDomains files.slack.com

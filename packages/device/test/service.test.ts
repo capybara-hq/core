@@ -17,6 +17,7 @@ import {
   SERVICE_POLL_MS,
   serviceCommand,
 } from "../src/commands/service.js";
+import { writePid } from "../src/pid.js";
 import {
   LAUNCHD_THROTTLE_INTERVAL_SECONDS,
   plistContent,
@@ -482,6 +483,40 @@ describe("service command", () => {
       installedVersion: "1.2.3",
       binExists: true,
     });
+  });
+
+  it("status --json: a running program with a matching pid reports pid and runningVersion", async () => {
+    installUnit();
+    const stateDir = base().stateDir;
+    writePid(stateDir, 4000, "9.9.9");
+    const systemctl = (_cmd: string, args: string[]): string =>
+      args.includes("MainPID") ? "4000\n" : "";
+    expect(
+      await serviceCommand(
+        "status",
+        {
+          ...base(),
+          run: systemctl,
+          platform: "linux",
+          kill: (() => true) as unknown as typeof process.kill,
+          ps: () => ({ command: "node /x/bin/capybara-device.mjs start", started: new Date(0) }),
+        },
+        { json: true },
+      ),
+    ).toBe(0);
+    expect(JSON.parse(lines[0] ?? "")).toMatchObject({
+      running: true,
+      pid: 4000,
+      runningVersion: "9.9.9",
+    });
+  });
+
+  it("status --json on an unsupported platform fails like the human path", async () => {
+    expect(await serviceCommand("status", { ...base(), platform: "win32" }, { json: true })).toBe(
+      1,
+    );
+    expect(lines.join("\n")).toContain("needs macOS (launchd) or Linux (systemd)");
+    expect(lines.join("\n")).not.toContain("{");
   });
 
   it("is wired into the CLI", async () => {
