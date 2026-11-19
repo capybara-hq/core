@@ -35,12 +35,12 @@ const iconKeys = (): (readonly unknown[])[] => [
 const ROW = { lines: 2, buttons: 1 } as const;
 
 /**
- * 应用图标 (mobile layout spec §10.2.1): the installed app's icon for the whole deployment, on the
- * super admin's `/admin/settings` (the page is the super admin's alone, so nobody else sees it). A
- * row per purpose (the app icon, its maskable variant, the SVG favicon) with its current picture
- * (the upload, else the web's default), 上传 (the file goes as base64 JSON; the kernel checks the
- * type and the PNG's 512 × 512) and, for an upload, 恢复默认. Each action saves at once, apart from
- * the page's ActionRow.
+ * The app icon section (mobile layout spec §10.2.1): the installed app's icon for the whole
+ * deployment, on the super admin's `/admin/settings` (the page is the super admin's alone, so
+ * nobody else sees it). A row per purpose (the app icon, its maskable variant, the SVG favicon)
+ * with its current picture (the upload, else the web's default), an upload button (the file goes
+ * as base64 JSON; the kernel checks the type and the PNG's 512 × 512) and, for an upload, a
+ * restore-default button. Each action saves at once, apart from the page's ActionRow.
  */
 export function AppIconSection() {
   const t = useTranslations("appIcon");
@@ -75,7 +75,7 @@ export function AppIconSection() {
   };
 
   const head = { id: "app-icon", title: t("title"), description: t("description") };
-  // Never claim 默认 for an icon whose state is unknown: placeholders while reading, the failure
+  // Never call an icon whose state is unknown the default: placeholders while reading, the failure
   // with a retry (and no actions) when the read failed.
   if (read.isPending) {
     return <FormSection {...head} loading={{ items: PLATFORM_ICON_PURPOSES.map(() => ROW) }} />;

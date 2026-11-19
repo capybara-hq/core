@@ -122,7 +122,7 @@ export const adminAccountsQuery = (after?: string) =>
 export const adminOrgsQuery = () =>
   defineQuery({ key: d().adminOrgs(), fn: () => listAdminOrgs(), freshness: "deployment" });
 
-/** The uploaded platform icons (`{ icons }`, `/admin/settings` 应用图标). */
+/** The uploaded platform icons (`{ icons }`, the app icon section of `/admin/settings`). */
 export const platformIconsQuery = () =>
   defineQuery({ key: d().platformIcons(), fn: () => listPlatformIcons(), freshness: "deployment" });
 

@@ -1,5 +1,5 @@
-// Mobile layout spec §10.2.1: the super admin's 应用图标 section on /admin/settings: a row per
-// purpose with its preview, upload (the file as base64 JSON) and 恢复默认.
+// Mobile layout spec §10.2.1: the super admin's app icon section on /admin/settings: a row per
+// purpose with its preview, upload (the file as base64 JSON) and restore default.
 
 import { cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";

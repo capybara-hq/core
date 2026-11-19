@@ -512,7 +512,7 @@ export const keys = {
       all: all as readonly unknown[],
       /** The platform's public description (`GET /api/v1/meta`: its name and icons). */
       platformMeta: (): readonly unknown[] => [...all, "platformMeta"],
-      /** The uploaded platform icons (`/admin/settings` 应用图标, super admins). */
+      /** The uploaded platform icons (the app icon section of `/admin/settings`, super admins). */
       platformIcons: (): readonly unknown[] => [...all, "platformIcons"],
       /** The sign-in sources the login page offers. */
       authSources: (): readonly unknown[] => [...all, "authSources"],
