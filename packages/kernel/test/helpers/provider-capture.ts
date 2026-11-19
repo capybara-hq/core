@@ -68,11 +68,18 @@ export function captureProviderRequests(): ProviderCapture {
       reviews.length = 0;
     },
     install() {
-      ProviderRegistry.prototype.resolve = async function (this: ProviderRegistry, orgId, ref) {
-        const r = await originalResolve.call(this, orgId, ref);
+      ProviderRegistry.prototype.resolve = async function (
+        this: ProviderRegistry,
+        orgId,
+        ref,
+        opts,
+      ) {
+        // the expected kind passes through (an image model resolves as `callable`)
+        const r = await originalResolve.call(this, orgId, ref, opts);
         const inner = r.provider;
         const provider: BoundProvider = {
           ...(inner.embed && { embed: inner.embed }),
+          ...(inner.generateImage && { generateImage: inner.generateImage }),
           stream(req, opts) {
             const copy = structuredClone(req);
             if (req.purpose === "compaction") compactions.push(copy);

@@ -142,6 +142,7 @@ import {
   type CallPolicy,
   type ResolvedTool,
   ToolRegistry,
+  type ToolResultMedia,
 } from "./registry.js";
 import { runResourceTool } from "./resources.js";
 import { validateInput } from "./validate.js";
@@ -722,6 +723,12 @@ function loadedFrom(result: unknown, tools: readonly ResolvedTool[]): string[] {
   if (!Array.isArray(raw)) return [];
   const known = new Set(tools.filter((t) => !isAlwaysLoaded(t.key)).map((t) => t.key));
   return [...new Set(raw.filter((k): k is string => typeof k === "string" && known.has(k)))];
+}
+
+/** A builtin result's `media` (see `BuiltinResult`): a non-empty array, else nothing. */
+function mediaFrom(result: unknown): ToolResultMedia[] | undefined {
+  const raw = (result as { media?: unknown } | null)?.media;
+  return Array.isArray(raw) && raw.length > 0 ? (raw as ToolResultMedia[]) : undefined;
 }
 
 class Stopped extends Error {}
@@ -1520,6 +1527,12 @@ export class ToolPipeline {
       outcome.kind === "result" && tool.source.kind === "builtin"
         ? loadedFrom(outcome.result, resolved.tools)
         : [];
+    // the images the builtin Read stored for the call (vision-read design §1.2): builtins only,
+    // so a plugin can never name an attachment for request building
+    const media =
+      outcome.kind === "result" && tool.source.kind === "builtin"
+        ? mediaFrom(outcome.result)
+        : undefined;
     // 显示摘要：只认插件 / 内置工具与内核的 resources 工具给的（连接器结果来自外部服务，不采信），
     // 校验不过就丢弃并告警
     const display =
@@ -1644,6 +1657,7 @@ export class ToolPipeline {
         ...(spilled.outputId !== undefined && { outputId: spilled.outputId }),
         ...(rendered.contentTypes.length > 0 && { contentTypes: rendered.contentTypes }),
         ...(loadedTools.length > 0 && { loadedTools }),
+        ...(media !== undefined && { media }),
         ...(display !== undefined && { display }),
         ...(view !== undefined && { view }),
         ...(card !== undefined && { card }),
@@ -2968,6 +2982,7 @@ export class ToolPipeline {
       outputId?: string;
       contentTypes?: string[];
       loadedTools?: string[];
+      media?: ToolResultMedia[];
       display?: ToolDisplay;
       view?: ToolView;
       card?: ToolCard;
