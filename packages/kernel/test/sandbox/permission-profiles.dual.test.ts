@@ -727,4 +727,150 @@ describe("a per-call sandbox escalation across replicas", () => {
     expect(last?.permission_grant_id).toBeNull();
     expect((await approvalsOf(conv)).filter((a) => a.status === "pending")).toEqual([]);
   });
+
+  it("a background escalation runs its start outside the sandbox once; TaskOutput and TaskStop stay sandboxed", async () => {
+    const deviceId = await cloudDevice();
+    const conv = await conversation(deviceId);
+    const bound = await call(conv, "Bash", { command: "echo bound", description: "Bind" }, 1);
+    expect(bound.payload.isError, bound.payload.content).toBe(false);
+    await setProfile(conv, "request-approval");
+    const justification = "The dev server must keep running while the person tests it.";
+    await postMessage(
+      ownerA,
+      orgId,
+      conv,
+      `tool:Bash:${JSON.stringify({
+        command: "sleep 120",
+        description: "Serve",
+        run_in_background: true,
+        sandbox: "escalated",
+        justification,
+      })}`,
+    );
+    const ask = await pendingAsk(conv);
+    expect(ask.detail as Record<string, unknown>).toMatchObject({
+      kind: "command",
+      command: "sleep 120",
+      escalation: { justification, background: true, maxSeconds: expect.any(Number) },
+    });
+    const approved = await ownerB({
+      method: "POST",
+      url: `/api/v1/orgs/${orgId}/approvals/${ask.id}/decision`,
+      payload: { decision: "approve", scope: "once" },
+    });
+    expect(approved.statusCode, approved.body).toBe(200);
+    await waitForTerminal(db, conv, 2, 60_000);
+    const started = (await results(conv)).at(-1) as ToolResult;
+    expect(started.payload.isError, started.payload.content).toBe(false);
+    expect(started.payload.review).toMatchObject({ by: "person", sandbox: "escalated" });
+    const start = (await intentsOf(conv)).filter((i) => i.method === "backgroundStart").at(-1);
+    expect(start?.scope).toMatchObject({
+      profile: "request-approval",
+      filesystem: { kind: "device" },
+      network: { kind: "environment" },
+    });
+    expect(start?.permission_grant_id).not.toBeNull();
+    const grant = await db
+      .selectFrom("permission_call_grants")
+      .select(["id", "scope_kind"])
+      .where("id", "=", start?.permission_grant_id as string)
+      .executeTakeFirstOrThrow();
+    expect(grant.scope_kind).toBe("sandbox-escalation");
+    const task = await waitFor(
+      async () =>
+        db
+          .selectFrom("background_tasks")
+          .select(["id", "status"])
+          .where("conversation_id", "=", conv)
+          .where("status", "=", "running")
+          .executeTakeFirst(),
+      30_000,
+      "the running escalated task",
+    );
+    const before = (await intentsOf(conv)).length;
+    const output = await call(conv, "TaskOutput", { task_id: task.id, block: false }, 3);
+    expect(output.payload.isError, output.payload.content).toBe(false);
+    expect(output.payload.review?.sandbox).toBeUndefined();
+    const stopped = await call(conv, "TaskStop", { task_id: task.id }, 4);
+    expect(stopped.payload.isError, stopped.payload.content).toBe(false);
+    expect(stopped.payload.review?.sandbox).toBeUndefined();
+    // whatever they dispatched ran with the conversation's restricted scope and no grant
+    for (const i of (await intentsOf(conv)).slice(before)) {
+      expect(i.scope.filesystem, i.method).toEqual(readsWithin("/workspace"));
+      expect(i.permission_grant_id, i.method).toBeNull();
+    }
+    expect(await approvalsOf(conv)).toHaveLength(1);
+  });
+
+  it("an escalated background task is stopped when the org turns Full access off", async () => {
+    const deviceId = await cloudDevice();
+    const conv = await conversation(deviceId);
+    const bound = await call(conv, "Bash", { command: "echo bound", description: "Bind" }, 1);
+    expect(bound.payload.isError, bound.payload.content).toBe(false);
+    await setProfile(conv, "request-approval");
+    await postMessage(
+      ownerA,
+      orgId,
+      conv,
+      `tool:Bash:${JSON.stringify({
+        command: "sleep 120",
+        description: "Serve",
+        run_in_background: true,
+        sandbox: "escalated",
+        justification: "Keep the server up.",
+      })}`,
+    );
+    const ask = await pendingAsk(conv);
+    const approved = await ownerB({
+      method: "POST",
+      url: `/api/v1/orgs/${orgId}/approvals/${ask.id}/decision`,
+      payload: { decision: "approve", scope: "once" },
+    });
+    expect(approved.statusCode, approved.body).toBe(200);
+    await waitForTerminal(db, conv, 2, 60_000);
+    const task = await waitFor(
+      async () =>
+        db
+          .selectFrom("background_tasks")
+          .select(["id", "operation_id"])
+          .where("conversation_id", "=", conv)
+          .where("status", "=", "running")
+          .executeTakeFirst(),
+      30_000,
+      "the running escalated task",
+    );
+    const off = await ownerB({
+      method: "PATCH",
+      url: `/api/v1/orgs/${orgId}/settings`,
+      payload: { fullAccess: "off" },
+    });
+    expect(off.statusCode, off.body).toBe(200);
+    try {
+      await waitFor(
+        async () =>
+          (
+            await db
+              .selectFrom("background_tasks")
+              .select("status")
+              .where("id", "=", task.id)
+              .executeTakeFirstOrThrow()
+          ).status === "stopped",
+        30_000,
+        "the escalated task stopped by the org switch",
+      );
+      const intent = await db
+        .selectFrom("sandbox_operation_intents")
+        .select("state")
+        .where("operation_id", "=", task.operation_id as string)
+        .executeTakeFirstOrThrow();
+      expect(intent.state).toBe("revoked");
+    } finally {
+      const on = await ownerB({
+        method: "PATCH",
+        url: `/api/v1/orgs/${orgId}/settings`,
+        payload: { fullAccess: "allowed" },
+      });
+      expect(on.statusCode, on.body).toBe(200);
+    }
+  });
 });
