@@ -21,6 +21,36 @@ afterEach(() => {
 
 const zh = (ui: React.ReactElement) => render(<DesignProvider locale="zh">{ui}</DesignProvider>);
 
+/**
+ * A fake Navigation API (jsdom has none): the current entry's index, moved by push / replace /
+ * traverse like the browser's, firing `currententrychange`.
+ */
+function fakeNavigation(start = 0) {
+  const listeners = new Set<() => void>();
+  const nav = {
+    currentEntry: { index: start },
+    addEventListener: (_: string, fn: () => void) => listeners.add(fn),
+    removeEventListener: (_: string, fn: () => void) => listeners.delete(fn),
+  };
+  Object.defineProperty(window, "navigation", { value: nav, configurable: true });
+  const move = (index: number, url: string) => {
+    window.history.replaceState(null, "", url);
+    nav.currentEntry = { index };
+    for (const fn of listeners) fn();
+  };
+  return {
+    push: (url: string) => move(nav.currentEntry.index + 1, url),
+    replace: (url: string) => move(nav.currentEntry.index, url),
+    traverse: (delta: number, url: string) => {
+      move(nav.currentEntry.index + delta, url);
+      window.dispatchEvent(new PopStateEvent("popstate"));
+    },
+  };
+}
+afterEach(() => {
+  Reflect.deleteProperty(window, "navigation");
+});
+
 describe("backTarget", () => {
   it("back without history goes up the path: the last linked segment", () => {
     expect(backTarget([{ href: "/agents" }, {}], false)).toBe("/agents");
@@ -263,8 +293,10 @@ describe("push and pop in the shell", () => {
 
   it("a push slides in, a pop slides back, a move between tab roots does not slide", () => {
     window.matchMedia = matchMediaFor(390).matchMedia;
+    const nav = fakeNavigation();
     const { rerender } = render(shell("/agents"));
     expect(main().getAttribute("data-nav")).toBeNull();
+    nav.push("/agents/new");
     rerender(shell("/agents/new"));
     expect(main().getAttribute("data-nav")).toMatch(/^push-/);
     // once the shell has seen a navigation, back goes through the history
@@ -321,35 +353,69 @@ describe("back never leaves the app", () => {
   it("a deep link, one push, a pop: the second back goes up the path, not out through the history", () => {
     window.matchMedia = matchMediaFor(390).matchMedia;
     window.history.replaceState(null, "", "/agents/new");
+    const nav = fakeNavigation(3);
     const { rerender } = render(shell("/agents/new"));
-    // deep link: nothing behind it in the app
+    // deep link: nothing behind it in the app (the entries before the shell mounted are not ours)
     expect(back().tagName).toBe("A");
     expect(back().getAttribute("href")).toBe("/agents");
-    window.history.pushState(null, "", "/agents/new/step");
+    nav.push("/agents/new/step");
     rerender(shell("/agents/new/step"));
     expect(back().tagName).toBe("BUTTON"); // one in-app entry behind: history back
-    window.history.replaceState(null, "", "/agents/new");
-    window.dispatchEvent(new PopStateEvent("popstate"));
+    nav.traverse(-1, "/agents/new");
     rerender(shell("/agents/new"));
     expect(back().tagName).toBe("A"); // back at the deep link: up the path
     expect(back().getAttribute("href")).toBe("/agents");
   });
 
-  it("a hash-only pop (an item opened and closed) does not count as a page pop", () => {
+  it("a replace (router.replace at the start) is no entry behind: back goes up the path", () => {
+    window.matchMedia = matchMediaFor(390).matchMedia;
+    window.history.replaceState(null, "", "/agents/new");
+    const nav = fakeNavigation();
+    const { rerender } = render(shell("/agents/new"));
+    nav.replace("/agents/new/step");
+    rerender(shell("/agents/new/step"));
+    expect(back().tagName).toBe("A");
+    expect(back().getAttribute("href")).toBe("/agents");
+  });
+
+  it("a forward after a pop is not a pop: back goes through the history again", () => {
+    window.matchMedia = matchMediaFor(390).matchMedia;
+    window.history.replaceState(null, "", "/agents/new");
+    const nav = fakeNavigation();
+    const { rerender } = render(shell("/agents/new"));
+    nav.push("/agents/new/step");
+    rerender(shell("/agents/new/step"));
+    nav.traverse(-1, "/agents/new");
+    rerender(shell("/agents/new"));
+    nav.traverse(1, "/agents/new/step");
+    rerender(shell("/agents/new/step"));
+    expect(back().tagName).toBe("BUTTON");
+  });
+
+  it("without the Navigation API back always goes up the path (a counter cannot tell a push from a replace)", () => {
     window.matchMedia = matchMediaFor(390).matchMedia;
     window.history.replaceState(null, "", "/agents/new");
     const { rerender } = render(shell("/agents/new"));
-    // open an item (a hash push) and close it (a hash pop): the path never changes
-    window.history.pushState(null, "", "/agents/new#item");
-    window.history.replaceState(null, "", "/agents/new");
-    window.dispatchEvent(new PopStateEvent("popstate"));
-    // a real push after it
     window.history.pushState(null, "", "/agents/new/step");
     rerender(shell("/agents/new/step"));
-    expect(back().tagName).toBe("BUTTON"); // depth 1, not 0
-    // and its pop
+    expect(back().tagName).toBe("A");
+    expect(back().getAttribute("href")).toBe("/agents");
+  });
+
+  it("a hash-only step (an item opened and closed) leaves no entry behind", () => {
+    window.matchMedia = matchMediaFor(390).matchMedia;
     window.history.replaceState(null, "", "/agents/new");
-    window.dispatchEvent(new PopStateEvent("popstate"));
+    const nav = fakeNavigation();
+    const { rerender } = render(shell("/agents/new"));
+    // open an item (a hash push) and close it (a traverse back): the path never changes
+    nav.push("/agents/new#item");
+    nav.traverse(-1, "/agents/new");
+    // a real push after it
+    nav.push("/agents/new/step");
+    rerender(shell("/agents/new/step"));
+    expect(back().tagName).toBe("BUTTON");
+    // and its pop
+    nav.traverse(-1, "/agents/new");
     rerender(shell("/agents/new"));
     expect(back().tagName).toBe("A");
   });

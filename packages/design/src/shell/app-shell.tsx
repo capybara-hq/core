@@ -176,20 +176,18 @@ export function AppShell({
   // An open list-detail item is a pushed page too, keyed by its URL state (spec §4.6, §6.47).
   const pushed = !tabRoot || page.onBack !== undefined || (setup !== null && stepsOpen);
   const currentTab = pathname === undefined ? null : bottomNavCurrent(items, pathname);
-  // How many in-app history entries lie behind this one: a push adds one, a pop (the browser's
-  // popstate, our own back button included) takes one, so back never leaves the app.
+  // How many in-app history entries lie behind this one: the Navigation API's current index minus
+  // the index when the shell mounted, so a replace (router.replace at the start) adds none and a
+  // forward is no pop. Without the API there is no count: a counter cannot tell a push from a
+  // replace, so back goes up the path rather than risk leaving the app.
   const [depth, setDepth] = useState(0);
-  const popping = useRef(false);
-  // The document path the shell last settled on: a popstate that leaves it unchanged is a hash-only
-  // step (a list item opened and closed), which is no page change and counts for nothing.
-  const settledPath = useRef<string | null>(null);
   useEffect(() => {
-    settledPath.current = window.location.pathname;
-    const onPop = () => {
-      if (window.location.pathname !== settledPath.current) popping.current = true;
-    };
-    window.addEventListener("popstate", onPop);
-    return () => window.removeEventListener("popstate", onPop);
+    const nav = navigationApi();
+    if (nav === null) return;
+    const start = nav.currentEntry?.index ?? 0;
+    const update = () => setDepth(Math.max(0, (nav.currentEntry?.index ?? start) - start));
+    nav.addEventListener("currententrychange", update);
+    return () => nav.removeEventListener("currententrychange", update);
   }, []);
   // The slide of the last route change: its direction and a parity that restarts the animation
   // when two pushes follow each other (the CSS animations are named by both).
@@ -199,10 +197,6 @@ export function AppShell({
     const last = lastRoute.current;
     if (last.pathname === pathname) return;
     lastRoute.current = { pathname, tabRoot };
-    const wasPop = popping.current;
-    popping.current = false;
-    settledPath.current = window.location.pathname;
-    setDepth((d) => Math.max(0, d + (wasPop ? -1 : 1)));
     // A pushed page slides in from the end edge; the way back to a root slides back.
     setSlide((prev) =>
       tabRoot && last.tabRoot
@@ -387,4 +381,15 @@ export function AppShell({
       </StatusBarSetterContext.Provider>
     </ShellPageContext.Provider>
   );
+}
+
+/** The browser's Navigation API where it has one (not in every engine, and not in jsdom). */
+type NavigationApi = {
+  currentEntry: { index: number } | null;
+  addEventListener(type: "currententrychange", fn: () => void): void;
+  removeEventListener(type: "currententrychange", fn: () => void): void;
+};
+function navigationApi(): NavigationApi | null {
+  const nav = (window as { navigation?: NavigationApi }).navigation;
+  return nav?.currentEntry ? nav : null;
 }
