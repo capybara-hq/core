@@ -1,4 +1,5 @@
 import {
+  classifyAddress,
   DEFAULT_SANDBOX_ROOTS,
   type ExecResult,
   isSandboxOperationOutcomeUnknownError,
@@ -439,12 +440,30 @@ const isRefusal = (e: unknown): boolean =>
 
 /**
  * Sandbox-specific signals in a command's output: the EPERM a Seatbelt or Landlock write denial
- * gives, the read-only bind of the Linux sandbox, Seatbelt's own deny report, and the sandbox
- * proxy refusing a host or a tunnel (in curl 7's and curl 8's wording). A plain "Permission
- * denied" (EACCES) is not one: ssh publickey failures, git 403s and file modes print it too.
+ * gives, the read-only bind of the Linux sandbox and Seatbelt's own deny report.
+ * A plain "Permission denied" (EACCES) is not one: ssh publickey failures, git 403s and file modes
+ * print it too.
  */
 const SANDBOX_DENIED_RE =
-  /Operation not permitted|Read-only file system|Sandbox: \S+\(\d+\) deny\(\d+\)|Connection blocked by network allowlist|blocked-by-allowlist|HTTP code 403 from proxy after CONNECT|CONNECT tunnel failed, response 403/;
+  /Operation not permitted|Read-only file system|Sandbox: \S+\(\d+\) deny\(\d+\)/;
+/** The sandbox proxy refusing a host or a tunnel (in curl 7's and curl 8's wording). */
+const SANDBOX_PROXY_REFUSED_RE =
+  /Connection blocked by network allowlist|blocked-by-allowlist|HTTP code 403 from proxy after CONNECT|CONNECT tunnel failed, response 403/;
+/**
+ * curl's direct connect failure, with the address it dialled. A restricted command never reaches
+ * an address in a closed class (private, loopback, link-local, …) directly, so such a failure is
+ * the sandbox's: a client that ignored the proxy variables (or `--noproxy`) dialled it itself, and
+ * Seatbelt or the network namespace gives no message of its own.
+ */
+const DIRECT_CONNECT_FAILED_RE = /Failed to connect to (\S+) port \d+/g;
+const closedAddress = (host: string): boolean => {
+  try {
+    return classifyAddress(host.replace(/^\[(.*)\]$/, "$1")) !== "public";
+  } catch {
+    // a name, not an address: curl names the host it was asked for, not where it resolved
+    return false;
+  }
+};
 /**
  * Credential and auth failures: never a reason to run outside the sandbox, so they never get the
  * escalation hint, whatever else the output says.
@@ -452,15 +471,45 @@ const SANDBOX_DENIED_RE =
 const AUTH_FAILURE_RE =
   /Permission denied \(publickey|Host key verification failed|Authentication failed|authentication required|could not read (?:Username|Password)|Bad credentials|invalid credentials|remote: Permission to \S+ denied|The requested URL returned error: 40[13]|\b401 Unauthorized\b/i;
 /**
- * Whether a finished command failed in a way the OS sandbox may have caused: a host the device
- * refused (`network.blocked`) or a sandbox-specific message, and no credential or auth failure.
+ * How a finished command failed in a way the OS sandbox may have caused: `network` for a host the
+ * device refused (`network.blocked`), the proxy's refusal or a direct connect to a closed address;
+ * `other` for a sandbox-specific message; null when neither, or on a credential or auth failure.
  */
-export const sandboxDenied = (r: ExecResult): boolean => {
-  if (r.exitCode === null || r.exitCode === 0) return false;
+export const sandboxDenial = (r: ExecResult): "network" | "other" | null => {
+  if (r.exitCode === null || r.exitCode === 0) return null;
   const out = `${r.stdout}\n${r.stderr}`;
-  if (AUTH_FAILURE_RE.test(out)) return false;
-  return (r.network?.blocked.length ?? 0) > 0 || SANDBOX_DENIED_RE.test(out);
+  if (AUTH_FAILURE_RE.test(out)) return null;
+  if (
+    (r.network?.blocked.length ?? 0) > 0 ||
+    SANDBOX_PROXY_REFUSED_RE.test(out) ||
+    [...out.matchAll(DIRECT_CONNECT_FAILED_RE)].some((m) => closedAddress(m[1] as string))
+  )
+    return "network";
+  return SANDBOX_DENIED_RE.test(out) ? "other" : null;
 };
+/** Whether a finished command failed in a way the OS sandbox may have caused ({@link sandboxDenial}). */
+export const sandboxDenied = (r: ExecResult): boolean => sandboxDenial(r) !== null;
+/**
+ * The line a restricted `Bash` result ends with when the OS sandbox may have denied it: what the
+ * sandbox closes, then either the invitation to retry escalated (this device and org allow running
+ * outside the sandbox) or why that is not possible here and who can change it (the per-layer
+ * escalation refusal). Empty for an escalated call, a call without escalation facts, or no signal.
+ */
+export function sandboxDenialHint(
+  r: ExecResult,
+  escalation: { escalation?: "available" | "escalated"; refusal?: string },
+): string {
+  if (escalation.escalation !== "available" && escalation.refusal === undefined) return "";
+  const kind = sandboxDenial(r);
+  if (kind === null) return "";
+  const lead =
+    kind === "network"
+      ? "\n[sandbox] The OS sandbox may have blocked this command's connection: private and local addresses are closed inside the sandbox, and so is any host the sandbox network does not allow."
+      : "\n[sandbox] The OS sandbox may have blocked this command.";
+  return escalation.escalation === "available"
+    ? `${lead}${ESCALATION_RETRY_HINT}`
+    : `${lead} Running it outside the sandbox is not possible here: ${escalation.refusal}.`;
+}
 /**
  * {@link SCOPE_DENIED_TOOL_TEXT} followed by {@link ESCALATION_RETRY_HINT}, written out as a literal
  * for the tool design check (a unit test keeps the two copies equal).
@@ -548,9 +597,12 @@ export function sandboxBashTool(deps: SandboxToolDeps): BuiltinTool {
       const text =
         formatExec(r, seconds, clamped, workspace) +
         lowered +
-        (ctx.sandboxEscalation === "available" && sandboxDenied(r)
-          ? `\n[sandbox] The OS sandbox may have blocked this command.${ESCALATION_RETRY_HINT}`
-          : "");
+        sandboxDenialHint(r, {
+          ...(ctx.sandboxEscalation !== undefined && { escalation: ctx.sandboxEscalation }),
+          ...(ctx.sandboxEscalationRefusal !== undefined && {
+            refusal: ctx.sandboxEscalationRefusal,
+          }),
+        });
       return {
         content: [{ type: "text", text: withNotices(notices, text) }],
         isError: r.timedOut || r.exitCode === null,

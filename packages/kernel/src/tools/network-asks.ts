@@ -6,6 +6,7 @@ import {
 } from "@capybara-hq/plugin-sdk";
 import { NETWORK_ASK_MAX_HOSTS, NETWORK_HOST_MAX_CHARS } from "../conversations/events.js";
 import type { NetworkRunState } from "../local-devices/network-grants.js";
+import { ESCALATION_UNATTENDED_WHY } from "../sandbox/review/permission-candidate.js";
 import {
   networkGrantKey,
   type UnattendedRun,
@@ -94,11 +95,19 @@ export const platformCeilingNote = (hosts: readonly string[]) =>
     ? `[network] ${list(hosts)} is not in the platform's network allowlist, which limits this organization. Only a super admin can add it; organization admins cannot. Continue without it or tell the user.`
     : `[network] ${list(hosts)} are not in the platform's network allowlist, which limits this organization. Only a super admin can add them; organization admins cannot. Continue without them or tell the user.`;
 
-/** The address layer (spec §6.6): no host grant lifts it. */
-export const addressLayerNote = (hosts: readonly string[]) =>
-  one(hosts)
-    ? `[network] ${list(hosts)} is a private or local address, which commands can never reach.`
-    : `[network] ${list(hosts)} are private or local addresses, which commands can never reach.`;
+/**
+ * The address layer (spec §6.6): no host grant lifts it, only running outside the sandbox. `why`,
+ * when running outside the sandbox is not possible for this call, is the escalation refusal's
+ * per-layer text (who turns it on, or that an unattended run cannot ask).
+ */
+export const addressLayerNote = (hosts: readonly string[], why?: string) =>
+  `${
+    one(hosts)
+      ? `[network] ${list(hosts)} is a private or local address.`
+      : `[network] ${list(hosts)} are private or local addresses.`
+  } Private and local addresses are closed inside the sandbox; only a command run outside the sandbox reaches ${pron(hosts)}${
+    why === undefined ? "." : `, but ${why}. Continue without ${pron(hosts)} or tell the user.`
+  }`;
 
 /**
  * The address layer under the open sandbox network on a device that allows running outside the
@@ -166,6 +175,11 @@ export interface NetworkPlanContext {
    * escalation hint.
    */
   escalation?: boolean;
+  /**
+   * Why this call could not run outside the sandbox (the escalation refusal's per-layer text):
+   * a private-address block names who could allow it.
+   */
+  escalationRefusal?: string;
 }
 
 /** What to do with a command's refused hosts. */
@@ -279,7 +293,10 @@ export function planNetworkAsk(
     notes.push(
       ctx.escalation === true && ctx.unattended == null
         ? addressEscalationNote(address)
-        : addressLayerNote(address),
+        : addressLayerNote(
+            address,
+            ctx.unattended != null ? ESCALATION_UNATTENDED_WHY : ctx.escalationRefusal,
+          ),
     );
   return { ask, notes, missingGrants };
 }

@@ -29,6 +29,7 @@ import { RunQueue } from "../../src/runtime/run-queue.js";
 import { Waits } from "../../src/runtime/waits.js";
 import { PermissionFacts } from "../../src/sandbox/permission-facts.js";
 import { REVIEW_SYSTEM_PROMPT } from "../../src/sandbox/review/index.js";
+import { ESCALATION_NO_OUTSIDE_WHY } from "../../src/sandbox/review/permission-candidate.js";
 import { ScheduledTaskFirer } from "../../src/schedules/fire.js";
 import { SCHED_SCAN_JOB } from "../../src/schedules/job-ids.js";
 import { type ScheduledTaskInsert, ScheduledTaskStore } from "../../src/schedules/store.js";
@@ -429,10 +430,11 @@ describe("the command review in the pipeline", () => {
       expect(r.payload.isError).toBe(false);
       const facts = await k.app.get(ConversationDevices).reviewFacts(orgId, conv);
       const bash = execute.mock.calls.find(([tool]) => tool.key === "Bash");
-      // a cloud device has no outside of its sandbox: no escalation hint state is carried
+      // a cloud device has no outside of its sandbox: the hints say so instead of inviting one
       expect(bash?.[6]).toEqual({
         workingRoot: undefined,
         against: facts?.workingRoot,
+        escalationRefusal: ESCALATION_NO_OUTSIDE_WHY,
       });
       expect(facts?.workingRoot).toBe(facts?.workspace);
     } finally {
@@ -459,7 +461,11 @@ describe("the command review in the pipeline", () => {
       expect((await decide(ask.id, { decision: "approve", scope: "once" })).statusCode).toBe(200);
       await waitForTerminal(db, conv, 1, 30_000);
       const bash = execute.mock.calls.find(([tool]) => tool.key === "Bash");
-      expect(bash?.[6]).toEqual({ workingRoot: undefined, against: approvedRoot });
+      expect(bash?.[6]).toEqual({
+        workingRoot: undefined,
+        against: approvedRoot,
+        escalationRefusal: ESCALATION_NO_OUTSIDE_WHY,
+      });
     } finally {
       execute.mockRestore();
       facts.mockRestore();

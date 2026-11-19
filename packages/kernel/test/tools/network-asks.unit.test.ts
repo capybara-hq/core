@@ -1,6 +1,10 @@
 import type { NetworkBlockedHost } from "@capybara-hq/plugin-sdk";
 import { describe, expect, it } from "vitest";
 import type { NetworkRunState } from "../../src/local-devices/network-grants.js";
+import {
+  ESCALATION_DEVICE_OFF_WHY,
+  ESCALATION_UNATTENDED_WHY,
+} from "../../src/sandbox/review/permission-candidate.js";
 import { networkGrantRefusal } from "../../src/schedules/grant-rules.js";
 import type { UnattendedRun } from "../../src/schedules/unattended.js";
 import {
@@ -77,7 +81,7 @@ describe("planNetworkAsk", () => {
     expect(p).not.toHaveProperty("scopes");
     expect(p.notes).toEqual([
       "[network] api.foo.com is not in the organization's network allowlist. Only an organization admin can add it; the user can ask an admin from the conversation. Continue without it or tell the user.",
-      "[network] 10.0.0.5 is a private or local address, which commands can never reach.",
+      "[network] 10.0.0.5 is a private or local address. Private and local addresses are closed inside the sandbox; only a command run outside the sandbox reaches it.",
     ]);
     expect(p.missingGrants).toEqual([]);
   });
@@ -135,7 +139,22 @@ describe("planNetworkAsk", () => {
         escalation: true,
       }).notes,
     ).toEqual([
-      "[network] 10.0.0.5 is a private or local address, which commands can never reach.",
+      `[network] 10.0.0.5 is a private or local address. Private and local addresses are closed inside the sandbox; only a command run outside the sandbox reaches it, but ${ESCALATION_UNATTENDED_WHY}. Continue without it or tell the user.`,
+    ]);
+  });
+
+  // R3 Mac dogfood: "commands can never reach" was untrue where the device's owner (or an admin)
+  // can allow running outside the sandbox; the note now names who
+  it("a private address where running outside the sandbox is off names who turns it on", () => {
+    const blocked = [
+      { host: "10.0.0.5", port: 80, layer: "address" as const },
+      { host: "192.168.3.1", port: 80, layer: "address" as const },
+    ];
+    expect(
+      planNetworkAsk(blocked, run(), { ...attended, escalationRefusal: ESCALATION_DEVICE_OFF_WHY })
+        .notes,
+    ).toEqual([
+      `[network] 10.0.0.5, 192.168.3.1 are private or local addresses. Private and local addresses are closed inside the sandbox; only a command run outside the sandbox reaches them, but ${ESCALATION_DEVICE_OFF_WHY}. Continue without them or tell the user.`,
     ]);
   });
 

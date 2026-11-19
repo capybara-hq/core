@@ -637,6 +637,8 @@ type ReviewOutcome =
       reviewedAgainst?: string | undefined;
       /** A restricted `Bash` call's escalation state, for the tool's sandbox hints. */
       sandboxEscalation?: "available" | "escalated" | undefined;
+      /** Why a restricted `Bash` call could not run outside the sandbox here, for those hints. */
+      sandboxEscalationRefusal?: string | undefined;
     }
   /** The run waits on the call's `command` approval. */
   | { kind: "wait"; wait: WaitingFor }
@@ -1322,6 +1324,9 @@ export class ToolPipeline {
       workingRoot: reviewed.workingRoot,
       against: reviewed.reviewedAgainst,
       ...(reviewed.sandboxEscalation !== undefined && { escalation: reviewed.sandboxEscalation }),
+      ...(reviewed.sandboxEscalationRefusal !== undefined && {
+        escalationRefusal: reviewed.sandboxEscalationRefusal,
+      }),
     };
     if (reviewed.commandAsk !== undefined)
       authorization = approvalAuthorization(reviewed.commandAsk);
@@ -1653,6 +1658,7 @@ export class ToolPipeline {
           ...(loginCode !== undefined && { loginCode }),
         },
         reviewedRoots.escalation,
+        reviewedRoots.escalationRefusal,
       );
       if (handled.kind === "wait") {
         if (hooks && hookBase) {
@@ -1919,18 +1925,21 @@ export class ToolPipeline {
     tool: ResolvedTool,
     input: unknown,
   ): Promise<ReviewOutcome | null> {
-    const note: { escalation?: "available" | "escalated" } = {};
+    const note: { escalation?: "available" | "escalated"; refusal?: string } = {};
     const outcome = await this.reviewPermissionCallWith(ctx, call, tool, input, note);
-    return outcome?.kind === "continue" && note.escalation !== undefined
-      ? { ...outcome, sandboxEscalation: note.escalation }
-      : outcome;
+    if (outcome?.kind !== "continue") return outcome;
+    return {
+      ...outcome,
+      ...(note.escalation !== undefined && { sandboxEscalation: note.escalation }),
+      ...(note.refusal !== undefined && { sandboxEscalationRefusal: note.refusal }),
+    };
   }
   private async reviewPermissionCallWith(
     ctx: ToolStepContext,
     call: ToolCall,
     tool: ResolvedTool,
     input: unknown,
-    note: { escalation?: "available" | "escalated" },
+    note: { escalation?: "available" | "escalated"; refusal?: string },
   ): Promise<ReviewOutcome | null> {
     if (
       !this.permissionAuthority ||
@@ -2023,6 +2032,10 @@ export class ToolPipeline {
     // sandbox) on a device and org whose ceiling allows running outside the sandbox
     if (tool.key === "Bash" && !facts.escalationRefusal)
       note.escalation = escalated ? "escalated" : "available";
+    // where it cannot (a layer's outside-sandbox setting is off, the runtime cannot), the hints
+    // say why and who changes it, in the escalation refusal's per-layer words
+    else if (tool.key === "Bash" && facts.escalationRefusal && !escalated)
+      note.refusal = facts.escalationRefusal;
     // candidate building runs for every profile: the profile only chooses who approves
     const built = buildPermissionCandidate(
       {
@@ -2406,6 +2419,8 @@ export class ToolPipeline {
     result: NetworkAskDetail["result"] & { text: string; review?: ReviewRecord },
     /** Admission's verdict for this call: `available` when it may run outside the sandbox. */
     escalation?: "available" | "escalated",
+    /** Why this call could not run outside the sandbox here (absent when it could). */
+    escalationRefusal?: string,
   ): Promise<
     | { kind: "wait"; wait: WaitingFor; content: string }
     | { kind: "write"; event: AppendEvent | null; notes: string[] }
@@ -2441,6 +2456,7 @@ export class ToolPipeline {
         // the open network makes a private address the one thing escalation adds
         escalation: addressEscalationHint(escalation, sandbox.box.networkMode),
       }),
+      ...(escalationRefusal !== undefined && { escalationRefusal }),
     });
     if (ctx.unattended != null) {
       for (const key of plan.missingGrants) {
@@ -2628,6 +2644,7 @@ export class ToolPipeline {
       workingRoot?: string | undefined;
       against?: string | undefined;
       escalation?: "available" | "escalated" | undefined;
+      escalationRefusal?: string | undefined;
     },
   ): Promise<ExecOutcome> {
     const reviewedWorkingRoot = reviewed?.workingRoot;
@@ -2664,6 +2681,10 @@ export class ToolPipeline {
         reviewedAgainstRoot !== undefined && { reviewedAgainstRoot }),
       ...(tool.source.kind === "builtin" &&
         reviewed?.escalation !== undefined && { sandboxEscalation: reviewed.escalation }),
+      ...(tool.source.kind === "builtin" &&
+        reviewed?.escalationRefusal !== undefined && {
+          sandboxEscalationRefusal: reviewed.escalationRefusal,
+        }),
       // a sub-agent works in its root conversation's sandbox (spec §10.1, at every depth)
       ...(tool.source.kind === "builtin" &&
         ctx.parent !== undefined && { sandboxConversationId: ctx.parent.rootConversationId }),
