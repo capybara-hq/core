@@ -92,6 +92,7 @@ let ownerId: string;
 let otherId: string;
 let orgId: string;
 let agentId: string;
+let courierId: string;
 
 beforeAll(async () => {
   [pgc, rd] = await Promise.all([startTestPostgres(), startTestRedis()]);
@@ -160,6 +161,25 @@ beforeAll(async () => {
   });
   expect(created.statusCode, created.body).toBe(201);
   agentId = (created.json() as { agent: { id: string } }).agent.id;
+  // Deliver as well: the delivery scope is one run, so a scripted run needs both tools
+  const courier = await owner({
+    method: "POST",
+    url: `/api/v1/orgs/${orgId}/agents`,
+    payload: {
+      definition: {
+        name: "Courier",
+        instructions: "Draw and deliver.",
+        model: { provider: "model-fake", model: "fake-1" },
+        disabledTools: onlyBuiltins([
+          { kind: "builtin", name: "GenerateImage" },
+          { kind: "builtin", name: "Deliver" },
+        ]),
+      },
+      visibility: "org",
+    },
+  });
+  expect(courier.statusCode, courier.body).toBe(201);
+  courierId = (courier.json() as { agent: { id: string } }).agent.id;
 });
 
 afterAll(async () => {
@@ -1119,15 +1139,43 @@ describe("GenerateImage facts: repeats, billing, device copies", () => {
     expect(imageUsage(events)).toHaveLength(2);
   });
 
-  it("GenerateImage then Deliver of its device copy is a repeat", async () => {
+  it("GenerateImage then Deliver of its device copy in one run is a repeat", async () => {
     await map("fake-image");
-    const conv = await createConv(owner, orgId, agentId);
+    const conv = await createConv(owner, orgId, courierId);
     const name = `dev${randomUUID().slice(0, 6)}`;
-    const g = await call(conv, { prompt: "a fox", file_path: `out/${name}.png` });
-    const path = /device[^:]*: (\S+)/.exec(g.payload.content.split("\n").at(-1) ?? "")?.[1];
-    await postMessage(owner, orgId, conv, `tool:Deliver:${JSON.stringify({ file_path: path })}`);
+    const script = [
+      { name: "GenerateImage", input: { prompt: "a fox", file_path: `out/${name}.png` } },
+      { name: "Deliver", input: { file_path: `/workspace/out/${name}.png` } },
+    ];
+    await postMessage(owner, orgId, conv, `tools:${JSON.stringify(script)}`);
+    await waitForTerminal(db, conv, 1, 30_000);
+    const events = await eventsOf(db, conv);
+    const results = ofType(events, "tool_result");
+    const deliver = results.find((e) => e.payload.toolKey === "Deliver");
+    expect(deliver?.payload.isError, deliver?.payload.content).toBe(false);
+    expect(ofType(events, "artifact_created")).toHaveLength(1);
+    expect(deliver?.payload.content).toContain("already delivered");
+  });
+
+  it("a Deliver in a later run delivers the same bytes again (a new run is a new scope)", async () => {
+    await map("fake-image");
+    const conv = await createConv(owner, orgId, courierId);
+    const name = `dev${randomUUID().slice(0, 6)}`;
+    await postMessage(
+      owner,
+      orgId,
+      conv,
+      `tool:GenerateImage:${JSON.stringify({ prompt: "a fox", file_path: `out/${name}.png` })}`,
+    );
+    await waitForTerminal(db, conv, 1, 30_000);
+    await postMessage(
+      owner,
+      orgId,
+      conv,
+      `tool:Deliver:${JSON.stringify({ file_path: `/workspace/out/${name}.png` })}`,
+    );
     await waitForTerminal(db, conv, 2, 30_000);
-    expect(ofType(await eventsOf(db, conv), "artifact_created")).toHaveLength(1);
+    expect(ofType(await eventsOf(db, conv), "artifact_created")).toHaveLength(2);
   });
 
   it("n the listing does not offer fails validation", async () => {
