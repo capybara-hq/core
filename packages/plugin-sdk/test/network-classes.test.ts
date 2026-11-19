@@ -260,11 +260,13 @@ describe("SANDBOX_FAKE_IP_DNS", () => {
       "https://1.1.1.1/dns-query",
       "https://1.0.0.1/dns-query",
       "https://8.8.8.8/dns-query",
+      "https://8.8.4.4/dns-query",
     ]);
     for (const endpoint of SANDBOX_FAKE_IP_DNS.endpoints)
       expect(classifyAddress(new URL(endpoint).hostname)).toBe("public");
     expect(SANDBOX_FAKE_IP_DNS.timeoutMs).toBeLessThanOrEqual(5000);
     expect(SANDBOX_FAKE_IP_DNS.cacheTtlCapSeconds).toBeLessThanOrEqual(600);
+    expect(SANDBOX_FAKE_IP_DNS.cacheMaxNames).toBe(256);
     expect(Object.isFrozen(SANDBOX_FAKE_IP_DNS)).toBe(true);
   });
 });

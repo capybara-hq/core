@@ -308,26 +308,32 @@ export const OPEN_PUBLIC_DENIED_CIDRS: readonly string[] = Object.freeze(
  * query and answers each name with an address in {@link fakeIpCidr} (`198.18.0.0/15`, a reserved
  * class), so in open mode every name would resolve to a closed address. When the system
  * resolver's answer for a name contains such an address, a sandbox egress proxy re-resolves the
- * name (A and AAAA) through DNS-over-HTTPS at these IP-literal endpoints, in order (Cloudflare,
- * then Google as the fallback), verifying TLS against the endpoint's IP SAN so no DNS is needed
- * to reach them. Each request waits at most {@link timeoutMs}; answers are cached for their TTL,
- * at most {@link cacheTtlCapSeconds}. The real address is classified like any resolved address
- * and dialled as checked. When encrypted DNS fails the connection is refused, naming the fake-IP
- * resolver; the fake address is never dialled. The same rule applies to an allowlisted name.
- * Shared by the macOS worker and the Linux forwarder, so both keep identical endpoints and limits.
+ * name (A and AAAA) through DNS-over-HTTPS (RFC 8484, GET, wire format) at these IP-literal
+ * endpoints, in order (Cloudflare, then Google as the fallback), verifying TLS against the
+ * endpoint's IP SAN so no DNS is needed to reach them. {@link timeoutMs} is one overall deadline
+ * per name, covering A and AAAA and every endpoint; each endpoint gets its share of the time left.
+ * An answer is cached only when both queries succeeded, for its TTL, at most
+ * {@link cacheTtlCapSeconds}, and for at most {@link cacheMaxNames} names. The real address is
+ * classified like any resolved address and dialled as checked. When encrypted DNS fails the
+ * connection is refused, naming the fake-IP resolver; the fake address is never dialled. The same
+ * rule applies to an allowlisted name. Shared by the macOS worker and the Linux forwarder, so both
+ * keep identical endpoints and limits.
  */
 export const SANDBOX_FAKE_IP_DNS: {
   readonly fakeIpCidr: string;
   readonly endpoints: readonly string[];
   readonly timeoutMs: number;
   readonly cacheTtlCapSeconds: number;
+  readonly cacheMaxNames: number;
 } = Object.freeze({
   fakeIpCidr: "198.18.0.0/15",
   endpoints: Object.freeze([
     "https://1.1.1.1/dns-query",
     "https://1.0.0.1/dns-query",
     "https://8.8.8.8/dns-query",
+    "https://8.8.4.4/dns-query",
   ]),
-  timeoutMs: 3000,
+  timeoutMs: 5000,
   cacheTtlCapSeconds: 300,
+  cacheMaxNames: 256,
 });

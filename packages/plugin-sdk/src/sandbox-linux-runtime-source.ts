@@ -19,10 +19,6 @@
  * Landlock, and each write-capable open, create, mkdir, mknod, unlink, rename, link, symlink,
  * truncate and metadata change is performed by the broker on its own no-follow resolution from
  * the pinned descriptors, refusing the mandatory write denies (`sandbox-write-denies.ts`).
- *
- * Network none/endpoints: TCP connects go to the granted endpoints and to the operation's own
- * loopback listeners only. The broker keeps each loopback listener the command creates, so the
- * address it allows a connect to cannot be another process's while it holds it.
  */
 import { SANDBOX_WRITE_POLICY_PYTHON } from "./sandbox-write-denies.js";
 
@@ -55,6 +51,7 @@ def protect_self():
 
 SELF_PROTECTION = protect_self()
 
+import contextlib
 import errno
 import importlib.machinery
 import importlib.util
@@ -90,16 +87,13 @@ import time
 #   /proc/self/fd and /proc/self/maps reads). hidepid needs a mount and PID namespaces need new
 #   privileges, both outside this launcher's design. Consumers keep secrets out of command lines.
 # - Network none/allowlist: TCP sockets may bind and listen on loopback (127.0.0.1, ::1) only;
-#   connections go only to the endpoints the consumer granted and to the operation's own loopback
-#   listeners. Environment lifts that filter. Own listeners: when a brokered TCP socket starts
-#   listening on loopback, the broker keeps its own reference instead of dropping it, so the
-#   address stays bound to this operation's socket for as long as the broker allows connects to
-#   it; no other process can bind it in between (a listener with SO_REUSEPORT, which another
-#   same-uid socket could join, is never connected to). A listener no process of the operation
-#   holds any more (the command closed it) is closed by the broker within about a second, at once
-#   when the command binds its port again, and a connect to it is refused (ECONNREFUSED). A
-#   descriptor in flight over a UNIX socket is held by no process for that moment, so the broker
-#   may give up such a listener early: the command then cannot connect to it, nothing else opens.
+#   connections go only to the endpoints the consumer granted. A command's own loopback listener
+#   is reachable from outside the sandbox, never from the command's own client: the broker cannot
+#   tell an own listener from another process's at the address dialled (a listener can be
+#   re-listened after another socket took its port, or share it through SO_REUSEPORT).
+#   SO_REUSEPORT and its group programs (SO_ATTACH_REUSEPORT_CBPF / EBPF) are refused (EPERM), and
+#   a socket with SO_REUSEPORT set never binds or listens: joining a foreign service's reuseport
+#   group would receive that service's connections. Environment lifts that filter.
 # - UNIX sockets in every network kind: stream/seqpacket only (datagram and raw are refused);
 #   pathname connect/bind only to sockets inside the write roots, resolved through the pinned
 #   descriptors; abstract and unnamed addresses are refused. socketpair() is unaffected.
@@ -145,6 +139,7 @@ ARCHES = {
             "lremovexattr": 15, "fremovexattr": 16, "ioctl": 29, "fchmod": 52, "fchmodat": 53,
             "fchownat": 54, "fchown": 55, "utimensat": 88, "unshare": 97, "setsid": 157,
             "socket": 198, "socketpair": 199, "bind": 200, "listen": 201, "connect": 203, "sendto": 206,
+            "setsockopt": 208,
             "sendmsg": 211, "add_key": 217, "request_key": 218, "keyctl": 219, "clone": 220,
             "setns": 268, "sendmmsg": 269, "userfaultfd": 282,
             "mknodat": 33, "mkdirat": 34, "unlinkat": 35, "symlinkat": 36, "linkat": 37,
@@ -157,7 +152,7 @@ ARCHES = {
         "x32": True,
         "nr": {
             "ioctl": 16, "socket": 41, "connect": 42, "sendto": 44, "sendmsg": 46, "bind": 49,
-            "listen": 50, "socketpair": 53, "clone": 56, "chmod": 90, "fchmod": 91, "chown": 92, "fchown": 93,
+            "listen": 50, "socketpair": 53, "setsockopt": 54, "clone": 56, "chmod": 90, "fchmod": 91, "chown": 92, "fchown": 93,
             "lchown": 94, "setsid": 112, "utime": 132, "uselib": 134, "setxattr": 188,
             "lsetxattr": 189, "fsetxattr": 190, "removexattr": 197, "lremovexattr": 198,
             "fremovexattr": 199, "utimes": 235, "add_key": 248, "request_key": 249,
@@ -222,10 +217,8 @@ AF_UNSPEC, AF_UNIX, AF_INET, AF_INET6, AF_NETLINK = 0, 1, 2, 10, 16
 SOCK_STREAM, SOCK_DGRAM, SOCK_SEQPACKET = 1, 2, 5
 SOCK_NONBLOCK, SOCK_CLOEXEC = 0o4000, 0o2000000
 SOL_SOCKET, SO_DOMAIN, IPPROTO_TCP = 1, 39, 6
-SO_REUSEPORT, SO_ACCEPTCONN = 15, 30
+SO_REUSEPORT, SO_ATTACH_REUSEPORT_CBPF, SO_ATTACH_REUSEPORT_EBPF = 15, 51, 52
 LOOPBACK = ("127.0.0.1", "::1")
-# How often the broker closes the own listeners the command closed (seconds).
-LISTENER_SWEEP_S = 1.0
 AT_FDCWD = -100
 AT_SYMLINK_NOFOLLOW = 0x100
 AT_EMPTY_PATH = 0x1000
@@ -395,10 +388,25 @@ def build_filter(table, network_mediated, brokered):
     p.jeq(nr["unshare"], "namespaces")
     p.jeq(nr["clone"], "namespaces")
     if network_mediated:
+        p.jeq(nr["setsockopt"], "setsockopt")
         p.jeq(nr["sendto"], "fastopen3")
         p.jeq(nr["sendmmsg"], "fastopen3")
         p.jeq(nr["sendmsg"], "fastopen2")
     p.ret(RET_ALLOW)
+    if network_mediated:
+        # SO_REUSEPORT and its group programs: joining a foreign service's reuseport group would
+        # receive that service's connections (kept close to the dispatch: jumps reach 255 at most)
+        p.label("setsockopt")
+        p.ld_arg(1)
+        p.jeq(SOL_SOCKET, "sockopt_name")
+        p.ret(RET_ALLOW)
+        p.label("sockopt_name")
+        p.ld_arg(2)
+        for option in (SO_REUSEPORT, SO_ATTACH_REUSEPORT_CBPF, SO_ATTACH_REUSEPORT_EBPF):
+            p.jeq(option, "sockopt_eperm")
+        p.ret(RET_ALLOW)
+        p.label("sockopt_eperm")
+        p.ret(RET_ERRNO(errno.EPERM))
     for number, action in simple.items():
         p.label("r%d" % number)
         p.ret(action)
@@ -597,24 +605,6 @@ def socket_int(fd, name):
     return struct.unpack("i", socket_option(fd, SOL_SOCKET, name))[0]
 
 
-def operation_sockets():
-    """The socket inodes the operation's processes (the supervisor's descendants) hold."""
-    held = set()
-    for pid, _ in descendants():
-        try:
-            names = os.listdir("/proc/%d/fd" % pid)
-        except OSError:
-            continue
-        for name in names:
-            try:
-                link = os.readlink("/proc/%d/fd/%s" % (pid, name))
-            except OSError:
-                continue
-            if link.startswith("socket:[") and link.endswith("]"):
-                held.add(int(link[8:-1]))
-    return held
-
-
 def add_write_denies(paths, *modules):
     """Absolute write denies the consumer resolved for this operation (a protected home location
     reached through a link, at its resolved target): denied with everything beneath them, and
@@ -631,6 +621,46 @@ def add_write_denies(paths, *modules):
             policy["PREFIX_GUARDED"].extend((names, True) for names in folded)
 
 
+class SharedLock:
+    """Many shared holders or one exclusive holder. New shared holders are not held back by a
+    waiting exclusive one: a shared holder may wait long (a FIFO open waiting for its peer)."""
+
+    def __init__(self):
+        self.condition = threading.Condition()
+        self.readers = 0
+        self.writer = False
+
+    @contextlib.contextmanager
+    def shared(self):
+        with self.condition:
+            while self.writer:
+                self.condition.wait()
+            self.readers += 1
+        try:
+            yield
+        finally:
+            with self.condition:
+                self.readers -= 1
+                self.condition.notify_all()
+
+    @contextlib.contextmanager
+    def exclusive(self):
+        with self.condition:
+            while self.writer or self.readers:
+                self.condition.wait()
+            self.writer = True
+        try:
+            yield
+        finally:
+            with self.condition:
+                self.writer = False
+                self.condition.notify_all()
+
+
+class NeedsExclusive(Exception):
+    """A directory move into a guarded prefix: redone holding the files lock exclusively."""
+
+
 class Broker:
     def __init__(self, native, roots, table, endpoints, listener):
         self.native = native
@@ -639,10 +669,13 @@ class Broker:
         self.endpoints = endpoints
         self.listener = listener
         self.sockets = {}
-        # The operation's own loopback listeners: (address, port) -> [{fd, inode, busy}]. The
-        # broker holds each listener's socket, so its address cannot become another process's.
-        self.listeners = {}
         self.lock = threading.Lock()
+        # Every mutating file operation holds this shared; a directory move into a guarded prefix
+        # holds it exclusively (listing, rename and recheck), so no write of the operation lands
+        # between its check and its rename.
+        self.files_lock = SharedLock()
+        # A failure the broker could not undo: the supervisor ends the operation and reports it.
+        self.fatal = None
         self.counts = {}
         # Creation modes are the command's (its umask is applied explicitly), never the broker's.
         os.umask(0)
@@ -817,13 +850,18 @@ class Broker:
             if name == "listen":
                 return self.listen(ident, pid, args)
             mem = self.memory(pid, ident)
-            if name in FILE_OPS:
-                return self.file_op(ident, pid, mem, name, args)
             if name == "connect":
                 return self.connect(ident, pid, mem, args)
-            if name == "bind":
-                return self.bind(ident, pid, mem, args)
-            return self.metadata(ident, pid, mem, name, args)
+            try:
+                with self.files_lock.shared():
+                    if name in FILE_OPS:
+                        return self.file_op(ident, pid, mem, name, args)
+                    if name == "bind":
+                        return self.bind(ident, pid, mem, args)
+                    return self.metadata(ident, pid, mem, name, args)
+            except NeedsExclusive:
+                with self.files_lock.exclusive():
+                    return self.file_op(ident, pid, mem, name, args, exclusive=True)
         except Denied:
             return None, errno.EACCES
         except OSError as error:
@@ -986,6 +1024,13 @@ class Broker:
         if creates_entry and _fold_parts(name) == [".git"]:
             raise Denied()
 
+    def fail(self, message):
+        """Ends the operation for a failure the broker could not undo: the supervisor kills the
+        whole tree (as for a cancel) and reports the message in its exit event."""
+        if self.fatal is None:
+            self.fatal = message
+        os.kill(os.getpid(), signal.SIGTERM)
+
     @staticmethod
     def listing(parent, name):
         """The names in the directory name below parent, opened without following a link; None
@@ -1067,7 +1112,7 @@ class Broker:
             os.set_blocking(fd, True)
             return fd
 
-    def file_op(self, ident, pid, mem, name, args):
+    def file_op(self, ident, pid, mem, name, args, exclusive=False):
         if name in ("open", "openat", "creat"):
             if name == "open":
                 dirfd, address, flags, mode = AT_FDCWD, args[0], args[1], args[2]
@@ -1217,6 +1262,8 @@ class Broker:
                         guarded = is_dir and bool(_prefix_next(_fold_parts(to)))
                         # the moved directory's entries, listed from the broker's own descriptor
                         entries = self.listing(parent, entry) if guarded else None
+                        if guarded and not exclusive:
+                            raise NeedsExclusive()
                         if guarded and entries is None:
                             raise Denied()
                         # nothing leaves a protected name, nor is a directory moved under one
@@ -1227,18 +1274,24 @@ class Broker:
                     if libc.renameat2(sparent, os.fsencode(sname), dparent, os.fsencode(dname),
                                       ctypes.c_uint(flags)) < 0:
                         return None, ctypes.get_errno()
-                    # A listing is a snapshot: a concurrent writer may have added the guarded next
-                    # component in between. Check the moved directory where it is now and undo a
-                    # move that became a deny.
+                    # The operation's own writes wait (exclusive files lock), but another process
+                    # may still have added the guarded next component in between. Check the moved
+                    # directory where it is now and undo a move that became a deny; an undo that
+                    # fails ends the operation and is reported.
                     for (parent, entry), origin, to in recheck:
                         entries = self.listing(parent, entry)
                         if entries is None or move_denied(origin, to, True, entries):
                             if flags & RENAME_EXCHANGE:
-                                libc.renameat2(sparent, os.fsencode(sname), dparent,
-                                               os.fsencode(dname), ctypes.c_uint(RENAME_EXCHANGE))
+                                undone = libc.renameat2(
+                                    sparent, os.fsencode(sname), dparent, os.fsencode(dname),
+                                    ctypes.c_uint(RENAME_EXCHANGE)) == 0
                             else:
-                                libc.renameat2(dparent, os.fsencode(dname), sparent,
-                                               os.fsencode(sname), ctypes.c_uint(RENAME_NOREPLACE))
+                                undone = libc.renameat2(
+                                    dparent, os.fsencode(dname), sparent, os.fsencode(sname),
+                                    ctypes.c_uint(RENAME_NOREPLACE)) == 0
+                            if not undone:
+                                self.fail("A directory moved under a protected path could not be "
+                                          "moved back: %s" % to)
                             return None, errno.EACCES
                 finally:
                     os.close(dparent)
@@ -1374,32 +1427,20 @@ class Broker:
                 return 0, 0
             finally:
                 os.close(handle)
-        _, address, port, _ = self.inet_address(raw, size)
+        _, address, _, _ = self.inet_address(raw, size)
         # Restricted none/allowlist listens on loopback only (product decision); environment
         # lifts only the network filter.
         if address is None or (self.endpoints is not None and str(address) not in LOOPBACK):
             return None, errno.EACCES
+        if self.endpoints is not None and socket_int(own, SO_REUSEPORT):
+            return None, errno.EPERM  # never into a foreign service's reuseport group
         copied = ctypes.create_string_buffer(raw, size)
         if libc.bind(own, copied, ctypes.c_uint32(size)) < 0:
-            code = ctypes.get_errno()
-            if code != errno.EADDRINUSE or self.endpoints is None:
-                return None, code
-            # the command's own listener there may be closed and only held by the broker: give
-            # it up and bind again
-            if not self.sweep((str(address), port)):
-                return None, code
-            if libc.bind(own, copied, ctypes.c_uint32(size)) < 0:
-                return None, ctypes.get_errno()
+            return None, ctypes.get_errno()
         return 0, 0
 
     def listen(self, ident, pid, args):
         own, inode = self.owned(pid, ident, args[0])
-        held = self.held_listener(inode) if own is None else None
-        if held is not None:
-            # listen() again on an own listener (a new backlog), on the broker's object
-            if libc.listen(held, ctypes.c_int(args[1] & 0xFFFFFFFF)) < 0:
-                return None, ctypes.get_errno()
-            return 0, 0
         if own is None:
             # Broker ownership ends only with a successful connect, so an unowned socket is
             # connected (or accepted, or a socketpair end): it cannot legitimately listen. Under
@@ -1413,87 +1454,16 @@ class Broker:
             host = socket_name(own)
             if host not in ("127.0.0.1", "::1"):
                 return None, errno.EACCES
+        if self.endpoints is not None and socket_domain(own) != AF_UNIX \
+                and socket_int(own, SO_REUSEPORT):
+            self.release(inode)
+            return None, errno.EPERM  # never into a foreign service's reuseport group
         result = libc.listen(own, ctypes.c_int(args[1] & 0xFFFFFFFF))
         code = ctypes.get_errno() if result < 0 else 0
-        if code or self.endpoints is None or socket_domain(own) == AF_UNIX:
-            # A listening socket never connects; drop the broker's reference so close semantics
-            # remain the target's own.
-            self.release(inode)
-            return (None, code) if code else (0, 0)
-        # An own loopback listener: the broker keeps its reference (see own_listener) until no
-        # process of the operation holds the socket any more (sweep).
-        key = socket_address(own)
-        with self.lock:
-            self.sockets.pop(inode, None)
-            self.listeners.setdefault(key, []).append({"fd": own, "inode": inode, "busy": 0})
-        return 0, 0
-
-    def held_listener(self, inode):
-        if inode is None:
-            return None
-        with self.lock:
-            for entries in self.listeners.values():
-                for entry in entries:
-                    if entry["inode"] == inode:
-                        return entry["fd"]
-        return None
-
-    def own_listener(self, host, port, scope):
-        """Leases the operation's own listeners at a loopback address for one connect: None when
-        there is none (not the operation's), False when the command closed them or one allows
-        SO_REUSEPORT (another same-uid socket could share the address). A leased listener is not
-        closed by a sweep, so the connect reaches the broker-held socket and nothing else."""
-        if scope or host not in LOOPBACK:
-            return None
-        with self.lock:
-            entries = list(self.listeners.get((host, port), ()))
-            for entry in entries:
-                entry["busy"] += 1
-        if not entries:
-            return None
-        try:
-            usable = all(socket_int(e["fd"], SO_ACCEPTCONN) == 1
-                         and socket_int(e["fd"], SO_REUSEPORT) == 0 for e in entries)
-            if usable:
-                held = operation_sockets()
-                usable = any(e["inode"] in held for e in entries)
-        except OSError:
-            usable = False
-        if not usable:
-            self.unlease(entries)
-            return False
-        return entries
-
-    def unlease(self, entries):
-        with self.lock:
-            for entry in entries:
-                entry["busy"] -= 1
-
-    def sweep(self, key=None):
-        """Closes the own listeners no process of the operation holds any more (the command closed
-        them; their ports are free again) and no connect is using; only those at key when given.
-        Returns whether one was closed."""
-        with self.lock:
-            if not any(key is None or k == key for k in self.listeners):
-                return False
-        held = operation_sockets()
-        closed = False
-        with self.lock:
-            for k in list(self.listeners):
-                if key is not None and k != key:
-                    continue
-                keep = []
-                for entry in self.listeners[k]:
-                    if entry["busy"] or entry["inode"] in held:
-                        keep.append(entry)
-                    else:
-                        os.close(entry["fd"])
-                        closed = True
-                if keep:
-                    self.listeners[k] = keep
-                else:
-                    del self.listeners[k]
-        return closed
+        # A listening socket never connects; drop the broker's reference so close semantics
+        # remain the target's own.
+        self.release(inode)
+        return (None, code) if code else (0, 0)
 
     def connect(self, ident, pid, mem, args):
         size = args[2] & 0xFFFFFFFF
@@ -1515,26 +1485,15 @@ class Broker:
                 self.release(inode)
             return (None, code) if code else (0, 0)
         family, address, port, scope = self.inet_address(raw, size)
-        lease = None
         if family != AF_UNSPEC:  # AF_UNSPEC only dissolves an existing association
             if address is None:
                 return None, errno.EACCES
             if self.endpoints is not None and (str(address), port, scope) not in self.endpoints:
-                # beyond the grant only the operation's own loopback listener
-                lease = self.own_listener(str(address), port, scope)
-                if lease is None:
-                    return None, errno.EACCES
-                if lease is False:
-                    return None, errno.ECONNREFUSED
+                return None, errno.EACCES
         # Connect with the broker's own copy of the checked address on the broker-owned object.
         copied = ctypes.create_string_buffer(raw, size)
-        try:
-            failed = libc.connect(own, copied, ctypes.c_uint32(size)) < 0
-            code = ctypes.get_errno() if failed else 0
-        finally:
-            if lease:
-                self.unlease(lease)
-        if code:
+        if libc.connect(own, copied, ctypes.c_uint32(size)) < 0:
+            code = ctypes.get_errno()
             if code == errno.EINPROGRESS:
                 threading.Thread(target=self.settle, args=(own, inode), daemon=True).start()
             # A refused or dissolved association keeps the broker's ownership: an unconnected
@@ -1572,22 +1531,16 @@ class Broker:
     # shared mutable state across its steps (socket ownership is locked): every check is made on
     # the broker's own resolution, and every effect is one syscall on descriptors that handler
     # holds, so concurrent notifications interleave only as the kernel would interleave the calls.
+    # The one multi-step check, a directory move into a guarded prefix (listing, rename, recheck),
+    # holds the files lock exclusively, so none of the operation's own writes lands inside it.
     def loop(self, stop):
         poller = select.poll()
         poller.register(self.listener, select.POLLIN)
         poller.register(stop, select.POLLIN)
-        swept = time.monotonic()
         while True:
-            # while own listeners are held, wake up to close the ones the command closed
-            events = dict(poller.poll(int(LISTENER_SWEEP_S * 1000) if self.listeners else None))
+            events = dict(poller.poll())
             if stop in events:
                 return
-            if self.listeners and time.monotonic() - swept >= LISTENER_SWEEP_S:
-                swept = time.monotonic()
-                try:
-                    self.sweep()
-                except OSError:
-                    pass
             event = events.get(self.listener, 0)
             if event & select.POLLIN:
                 buffer = ctypes.create_string_buffer(80)
@@ -1603,9 +1556,7 @@ class Broker:
     def close(self):
         with self.lock:
             fds = list(self.sockets.values())
-            fds += [entry["fd"] for entries in self.listeners.values() for entry in entries]
             self.sockets.clear()
-            self.listeners.clear()
         for fd in fds:
             os.close(fd)
 
@@ -1966,11 +1917,16 @@ def supervise(pid, request, report, broker, thread, stop_w, cancellation):
     if thread is not None:
         thread.join()
     counts = {}
+    fatal = None
     if broker is not None:
         counts = dict(broker.counts)
+        fatal = broker.fatal
         broker.close()
-    report.write({"event": "exit", "exitCode": exit_code, "timedOut": timed_out,
-                  "cancelled": bool(cancelled), "killed": survivors, "brokered": counts})
+    event = {"event": "exit", "exitCode": exit_code, "timedOut": timed_out,
+             "cancelled": bool(cancelled), "killed": survivors, "brokered": counts}
+    if fatal is not None:
+        event["fatal"] = fatal
+    report.write(event)
     if exit_code is None:
         return 124 if timed_out else 143
     return exit_code if exit_code >= 0 else 128 - exit_code

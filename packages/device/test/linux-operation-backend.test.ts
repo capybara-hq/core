@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -709,9 +710,12 @@ for host, port in json.loads(sys.argv[1]):
 print(json.dumps(out))
 `;
 
-/** The command's own loopback listeners, then other listeners, closing and rebinding. */
+/**
+ * The command's own loopback listeners: its own connects to them are refused, while a client
+ * outside the sandbox reaches them (the port is written to `port`; one connection is accepted).
+ */
 const OWN_LISTENER = String.raw`
-import json, os, socket, sys
+import json, socket, sys
 def attempt(host, port):
     family = socket.AF_INET6 if ":" in host else socket.AF_INET
     s = socket.socket(family, socket.SOCK_STREAM)
@@ -723,42 +727,38 @@ def attempt(host, port):
         return "denied:%s" % error.errno
     finally:
         s.close()
-def roundtrip(family, host, port=0):
-    server = socket.socket(family, socket.SOCK_STREAM)
-    server.bind((host, port))
-    server.listen(4)
-    port = server.getsockname()[1]
-    client = socket.create_connection((host, port), 5)
-    peer, _ = server.accept()
-    client.sendall(b"ping")
-    ok = peer.recv(4) == b"ping"
-    client.close()
-    peer.close()
-    return server, port, ok
 out = {}
-s4, p4, out["own4"] = roundtrip(socket.AF_INET, "127.0.0.1")
-s6, p6, out["own6"] = roundtrip(socket.AF_INET6, "::1")
-out["crossFamily"] = attempt("::1", p4)
+servers = []
+for family, host in ((socket.AF_INET, "127.0.0.1"), (socket.AF_INET6, "::1")):
+    server = socket.socket(family, socket.SOCK_STREAM)
+    server.bind((host, 0))
+    server.listen(4)
+    servers.append(server)
+    out["own " + host] = attempt(host, server.getsockname()[1])
 for name, port in json.loads(sys.argv[1]).items():
     out[name] = attempt("127.0.0.1", port)
 out["other6"] = attempt("::1", 18082)
-# a listener of a forked child is the operation's own too
-r, w = os.pipe()
-child = os.fork()
-if child == 0:
-    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    server.bind(("127.0.0.1", 0))
+# a listener whose reading side was shut down and listened again (the review's vector) is no
+# more reachable than any other
+server = servers[0]
+server.shutdown(socket.SHUT_RD)
+try:
     server.listen(4)
-    os.write(w, str(server.getsockname()[1]).encode())
-    server.accept()[0].close()
-    os._exit(0)
-port = int(os.read(r, 16))
-out["child"] = attempt("127.0.0.1", port)
-os.waitpid(child, 0)
-# a closed own listener refuses, and its port binds again at once
-s4.close()
-out["closed"] = attempt("127.0.0.1", p4)
-again, _, out["rebound"] = roundtrip(socket.AF_INET, "127.0.0.1", p4)
+except OSError:
+    pass
+out["relistened"] = attempt("127.0.0.1", server.getsockname()[1])
+listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+listener.bind(("127.0.0.1", 0))
+listener.listen(4)
+open("port.tmp", "w").write(str(listener.getsockname()[1]))
+import os
+os.rename("port.tmp", "port")
+listener.settimeout(30)
+try:
+    peer, _ = listener.accept()
+    out["outsideClient"] = peer.recv(4).decode()
+except OSError as error:
+    out["outsideClient"] = "none:%s" % error
 print(json.dumps(out))
 `;
 
@@ -959,7 +959,7 @@ describe.skipIf(unavailable !== null)("Linux host operation backend: open networ
     expect(net.accepted("public80")).toBe(2);
   });
 
-  it("the command reaches its own loopback listeners; other processes' listeners stay closed", async () => {
+  it("never connects to a loopback listener, its own included; clients outside reach its own", async () => {
     const root = project("listen");
     const before = await read("/opt/capybara-receipts/ungranted4");
     // another process outside the sandbox (a TCP service such as a Docker daemon on 2375) and
@@ -980,7 +980,7 @@ describe.skipIf(unavailable !== null)("Linux host operation backend: open networ
       false,
     );
     const otherPort = Number(await read(`${otherRoot}/port`));
-    const result = await exec(
+    const running = exec(
       root,
       python(
         OWN_LISTENER,
@@ -988,17 +988,37 @@ describe.skipIf(unavailable !== null)("Linux host operation backend: open networ
       ),
       { kind: "none" },
     );
+    // a client outside the sandbox (Full access) reaches the command's listener
+    while ((await read(`${root}/port`)) === null)
+      await new Promise((resolve) => setImmediate(resolve));
+    const port = Number(await read(`${root}/port`));
+    const client = scopeFor(backend.deviceId, {
+      profile: "full-access",
+      filesystem: { kind: "device" },
+      network: { kind: "environment" },
+    });
+    await backend.operation(client, openAuthorityFor(client.operationId)).exec({
+      command: python(
+        "import socket, sys\ns = socket.create_connection(('127.0.0.1', int(sys.argv[1])), 10)\ns.sendall(b'from')\ns.close()",
+        String(port),
+      ),
+      timeoutMs: 30_000,
+      maxOutputBytes: 1024,
+      signal: signal(),
+    });
+    const result = await running;
     expect(result.exitCode, result.stderr).toBe(0);
-    const out = JSON.parse(result.stdout) as Record<string, unknown>;
-    expect(out).toMatchObject({ own4: true, own6: true, child: "ok", rebound: true });
+    const out = JSON.parse(result.stdout) as Record<string, string>;
+    expect(out.outsideClient).toBe("from");
     for (const key of [
-      "crossFamily",
+      "own 127.0.0.1",
+      "own ::1",
       "outside",
       "outside2",
       "otherOperation",
       "root4",
       "other6",
-      "closed",
+      "relistened",
     ])
       expect(out[key], key).toMatch(/^denied:/);
     expect(await read("/opt/capybara-receipts/ungranted4")).toBe(before);
@@ -1017,6 +1037,84 @@ describe.skipIf(unavailable !== null)("Linux host operation backend: open networ
       expect.stringMatching(/^denied:/),
       expect.stringMatching(/^denied:/),
     ]);
+  });
+
+  it("the review's listener probes: no foreign listener is ever reached", async () => {
+    const root = project("probes");
+    const shut = await exec(
+      root,
+      python(readFileSync(new URL("./fixtures/linux-probe-shut2.py", import.meta.url), "utf8")),
+      { kind: "none" },
+    );
+    // every run fails at its first connect: no "hits" line, the foreign listener X gets nothing
+    expect(shut.stdout, shut.stderr).not.toMatch(/hits|'X'|\{/);
+    expect(shut.stdout.trim().split("\n")).toHaveLength(4);
+    for (const line of shut.stdout.trim().split("\n")) expect(line).toMatch(/\[Errno \d+\]/);
+    const reuse = await exec(
+      root,
+      python(readFileSync(new URL("./fixtures/linux-probe-reuseport.py", import.meta.url), "utf8")),
+      { kind: "none" },
+    );
+    // SO_REUSEPORT is refused before any group exists
+    expect(reuse.exitCode).not.toBe(0);
+    expect(reuse.stderr).toMatch(/PermissionError: \[Errno 1\]/);
+  });
+
+  it("never joins a foreign service's SO_REUSEPORT group", async () => {
+    const root = project("reuseport");
+    // a service outside the sandbox in a reuseport group on loopback, counting its connections
+    await background(
+      root,
+      python(
+        "import socket, threading, time\ns = socket.socket(); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)\ns.bind(('127.0.0.1', 18085)); s.listen(64)\nopen('ready', 'w').close()\nn = 0\nwhile True:\n    s.accept()[0].close(); n += 1\n    open('count.tmp', 'w').write(str(n))\n    import os; os.rename('count.tmp', 'count')",
+      ),
+      true,
+    );
+    const attacker = String.raw`
+import ctypes, json, socket, struct
+out = {}
+def attempt(name, action):
+    try:
+        action()
+        out[name] = "ok"
+    except OSError as error:
+        out[name] = "denied:%d" % error.errno
+s = socket.socket()
+attempt("reuseport", lambda: s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1))
+# a classic BPF program (return 0) as SO_ATTACH_REUSEPORT_CBPF
+program = struct.pack("HBBI", 0x06, 0, 0, 0)
+buffer = ctypes.create_string_buffer(program)
+fprog = struct.pack("HxxxxxxQ", 1, ctypes.addressof(buffer))
+attempt("cbpf", lambda: s.setsockopt(socket.SOL_SOCKET, 51, fprog))
+attempt("ebpf", lambda: s.setsockopt(socket.SOL_SOCKET, 52, struct.pack("i", 3)))
+attempt("bind", lambda: s.bind(("127.0.0.1", 18085)))
+print(json.dumps(out))
+`;
+    const result = await exec(root, python(attacker), { kind: "none" });
+    expect(result.exitCode, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual({
+      reuseport: "denied:1",
+      cbpf: "denied:1",
+      ebpf: "denied:1",
+      bind: "denied:98",
+    });
+    // the service still gets every connection made to it from outside
+    const client = scopeFor(backend.deviceId, {
+      profile: "full-access",
+      filesystem: { kind: "device" },
+      network: { kind: "environment" },
+    });
+    await backend.operation(client, openAuthorityFor(client.operationId)).exec({
+      command: python(
+        "import socket\nfor _ in range(20):\n    socket.create_connection(('127.0.0.1', 18085), 5).close()",
+      ),
+      timeoutMs: 30_000,
+      maxOutputBytes: 1024,
+      signal: signal(),
+    });
+    while (Number(await read(`${root}/count`)) < 20)
+      await new Promise((resolve) => setImmediate(resolve));
+    expect(Number(await read(`${root}/count`))).toBe(20);
   });
 
   it("refuses the Docker socket and any UNIX socket outside its roots", async () => {
@@ -1113,6 +1211,104 @@ print(json.dumps(out))
     } finally {
       device.run(`rm -f ${home}/.config ${home}/.bashrc`);
     }
+  });
+
+  it("a dotfile link's target cannot be moved away, and a dangling link is still followed", async () => {
+    const home = device.run(`node -e "process.stdout.write(require('os').homedir())"`).trim();
+    const root = project("dangling");
+    device.run(`mkdir -p ${root}/dotfiles/config && ln -s ${root}/dotfiles/config ${home}/.config`);
+    try {
+      // call 1: moving the target's ancestor away (an anchored deny's ancestor) is refused
+      const first = await exec(root, "mv dotfiles gone 2>/dev/null && echo moved; true", {
+        kind: "none",
+      });
+      expect(first.stdout.trim(), first.stderr).toBe("");
+      // the move done outside the sandbox: the link dangles, and call 2 still denies its target
+      device.run(`mv ${root}/dotfiles ${root}/gone`);
+      const second = await exec(
+        root,
+        "mkdir -p dotfiles/config/systemd/user 2>/dev/null && echo systemd; mkdir -p dotfiles/config/app && echo app; true",
+        { kind: "none" },
+      );
+      expect(second.stdout.trim(), second.stderr).toBe("app");
+    } finally {
+      device.run(`rm -f ${home}/.config`);
+    }
+  });
+
+  it("every link of a dotfile chain is denied: a middle link cannot be retargeted", async () => {
+    const home = device.run(`node -e "process.stdout.write(require('os').homedir())"`).trim();
+    const root = project("chain");
+    device.run(
+      `mkdir -p ${root}/v1 ${root}/v2 && printf rc > ${root}/v1/zshrc && printf rc > ${root}/v2/zshrc && ln -s v1 ${root}/current && ln -s ${root}/current/zshrc ${home}/.zshrc`,
+    );
+    try {
+      const first = await exec(
+        root,
+        [
+          "ln -sfn v2 current 2>/dev/null && echo retargeted",
+          "mv current c2 2>/dev/null && echo moved",
+          "rm current 2>/dev/null && echo removed",
+          "(printf x >> v1/zshrc) 2>/dev/null && echo wrote",
+          "true",
+        ].join("; "),
+        { kind: "none" },
+      );
+      expect(first.stdout.trim(), first.stderr).toBe("");
+      // retargeted outside the sandbox: the next operation denies the new target
+      device.run(`ln -sfn v2 ${root}/current`);
+      const second = await exec(root, "(printf x >> v2/zshrc) 2>/dev/null && echo wrote; true", {
+        kind: "none",
+      });
+      expect(second.stdout.trim(), second.stderr).toBe("");
+      expect(await read(`${root}/v1/zshrc`)).toBe("rc");
+      expect(await read(`${root}/v2/zshrc`)).toBe("rc");
+    } finally {
+      device.run(`rm -f ${home}/.zshrc`);
+    }
+  });
+
+  it("a directory move into a guarded prefix is atomic against the operation's own writes", async () => {
+    const root = project("race");
+    // one thread moves d to .claude and back while another adds and removes d/commands and a
+    // third watches for .claude/commands: the move's check, rename and recheck exclude the writes
+    const race = String.raw`
+import os, threading, time
+stop = time.monotonic() + 6
+seen = [0]
+moves = [0]
+def mover():
+    while time.monotonic() < stop:
+        os.makedirs("d", exist_ok=True)
+        try:
+            os.rename("d", ".claude")
+            moves[0] += 1
+            os.rename(".claude", "d")
+        except OSError:
+            pass
+def writer():
+    while time.monotonic() < stop:
+        try:
+            os.mkdir("d/commands")
+            os.rmdir("d/commands")
+        except OSError:
+            pass
+def watcher():
+    while time.monotonic() < stop:
+        if os.path.isdir(".claude/commands"):
+            seen[0] += 1
+threads = [threading.Thread(target=f) for f in (mover, writer, watcher)]
+for t in threads:
+    t.start()
+for t in threads:
+    t.join()
+print(seen[0], moves[0])
+`;
+    const result = await exec(root, python(race), { kind: "none" });
+    expect(result.exitCode, result.stderr).toBe(0);
+    const [seen, moves] = result.stdout.trim().split(" ").map(Number);
+    expect(moves).toBeGreaterThan(0);
+    expect(seen).toBe(0);
   });
 
   it("re-resolves a fake-IP resolver's answers through encrypted DNS and checks the real address", async () => {

@@ -1,12 +1,21 @@
 import { spawn } from "node:child_process";
-import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  rename,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type ExecResult, SANDBOX_RUNTIME_SOURCE } from "@capybara-hq/plugin-sdk";
 import { afterEach, describe, expect, it } from "vitest";
-import { createDockerOperationBackend } from "../src/exec/docker-operations.js";
+import { createDockerOperationBackend, hostAddresses } from "../src/exec/docker-operations.js";
 import { LINUX_DEVICE_AGENT } from "../src/exec/linux-agent.js";
-import { linuxOperationWorker } from "../src/exec/linux-operation-worker.js";
+import { linuxOperationWorker, protectedWriteTargets } from "../src/exec/linux-operation-worker.js";
 import { type LinuxAgentTransport, probeLinuxRuntime } from "../src/exec/linux-runtime.js";
 import type { MacWorkerRequest } from "../src/exec/operation-worker.js";
 
@@ -271,6 +280,61 @@ describe("Linux operation worker", () => {
     const [allowSent] = await allow.lines();
     expect(allowSent).toMatchObject({ network: { kind: "allowlist", hosts: ["a.example"] } });
     expect(allowSent).not.toHaveProperty("writeDenies");
+  });
+
+  it("protected home targets: every link of a chain and the target of a dangling link", async () => {
+    const root = await realpath(await mkdtemp(join(tmpdir(), "cap-chain-")));
+    dirs.push(root);
+    const home = join(root, "home");
+    await mkdir(join(root, "w", "v1"), { recursive: true });
+    await mkdir(join(root, "w", "dotfiles", "config"), { recursive: true });
+    await mkdir(home);
+    await writeFile(join(root, "w", "v1", "zshrc"), "");
+    await symlink("v1", join(root, "w", "current"));
+    await symlink(join(root, "w", "current", "zshrc"), join(home, ".zshrc"));
+    await symlink(join(root, "w", "dotfiles", "config"), join(home, ".config"));
+    // the target's ancestor moved away outside the sandbox: the link dangles
+    await rename(join(root, "w", "dotfiles"), join(root, "w", "gone"));
+    const denies = protectedWriteTargets(home);
+    expect(denies).toEqual(
+      expect.arrayContaining([
+        join(home, ".zshrc"),
+        join(root, "w", "current"),
+        join(root, "w", "v1", "zshrc"),
+        join(home, ".config"),
+        join(root, "w", "dotfiles", "config", "systemd"),
+      ]),
+    );
+    // a location reached without a link adds nothing
+    expect(denies).not.toContain(join(home, ".bashrc"));
+  });
+
+  it("a container's worker closes the host's own addresses to the forwarder", async () => {
+    const fake = await fakeTransport("exit");
+    await (
+      await linuxOperationWorker({
+        ...fake,
+        baseEnv: env,
+        acquireRuntime: gate,
+        closedAddresses: () => ["203.0.113.7", "2001:db8::7"],
+      })(
+        execRequest(false, { grant: { ...grant(false), openNetwork: true } }),
+        new AbortController().signal,
+      )
+    ).completion;
+    const [sent] = await fake.lines();
+    expect(sent).toMatchObject({ closedAddresses: ["203.0.113.7", "2001:db8::7"] });
+  });
+
+  it("the host's own addresses are every interface address but loopback", () => {
+    const addresses = hostAddresses({
+      lo0: [{ address: "127.0.0.1", internal: true } as never],
+      en0: [
+        { address: "198.51.100.4", internal: false } as never,
+        { address: "fe80::1", internal: false, scopeid: 4 } as never,
+      ],
+    });
+    expect(addresses).toEqual(["198.51.100.4", "fe80::1"]);
   });
 
   it("an abort sends one immediate cancel; a second cancel is coalesced", async () => {

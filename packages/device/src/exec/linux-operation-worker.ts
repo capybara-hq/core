@@ -1,6 +1,6 @@
 import type { ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import type { Readable } from "node:stream";
 import {
   type ExecResult,
@@ -16,13 +16,13 @@ import {
   reapLinuxSession,
 } from "./linux-runtime.js";
 import type { NativeHelperResult } from "./native-helper-client.js";
-import { withCanonicalForms } from "./operation-types.js";
 import {
   createCancellationAttempt,
   type MacWorkerHandle,
   type MacWorkerRequest,
   type TrustedLaunchIdentity,
 } from "./operation-worker.js";
+import { onDisk, protectedChain } from "./protected-targets.js";
 import { acquireSealedRuntime } from "./runtime-source.js";
 import { ENV_NAME_RE, OutputCap, restrictedToolHomes, shellQuote } from "./shared.js";
 
@@ -66,20 +66,33 @@ export interface LinuxWorkerOptions {
    * `SANDBOX_FAKE_IP_DNS` endpoints, which a test network cannot reach.
    */
   fakeIpDnsTest?: { endpoints: string[]; caPem: string };
+  /**
+   * Extra addresses the forwarder closes besides its own host's: a local-Docker device's agents
+   * run in a container, whose own addresses are not the host's, so the host's interface addresses
+   * (a public one included) are closed explicitly. Read at each operation start.
+   */
+  closedAddresses?: () => string[];
 }
 
 /**
- * The resolved targets of the protected home locations that differ from their literal paths (a
- * dotfile manager links `~/.config` or `~/.bashrc` into a project): each mandatory write deny
- * anchored at the home, in its canonical form. The write policy judges the path the broker
- * resolved, so a protected location reached through a link is denied only at its target; these
- * go to the launcher as absolute denies, resolved once at operation start.
+ * The anchored write denies of the protected home locations (each
+ * {@link SANDBOX_MANDATORY_WRITE_DENIES} entry under `home`) reached through a symbolic link,
+ * resolved with the workers' shared {@link protectedChain}: every link on the chain (also with its
+ * parent in on-disk form) and each final target. They go to the launcher as absolute denies,
+ * resolved once at operation start; the write policy then refuses moving an ancestor of one away,
+ * so no hop can be swapped within the operation. A link changed outside the sandbox is seen by the
+ * next operation; a dangling link is followed to the location it names.
  */
 export function protectedWriteTargets(home: string): string[] {
   const out = new Set<string>();
   for (const entry of SANDBOX_MANDATORY_WRITE_DENIES) {
-    const literal = join(home, ...entry);
-    for (const form of withCanonicalForms([literal])) if (form !== literal) out.add(form);
+    const chain = protectedChain(join(home, ...entry));
+    if (!chain.links.length) continue;
+    out.add(chain.target);
+    for (const link of chain.links) {
+      out.add(link);
+      out.add(join(onDisk(dirname(link)), basename(link)));
+    }
   }
   return [...out];
 }
@@ -198,6 +211,7 @@ export function linuxOperationWorker(
             // background output is one merged stream; its stderr is the launcher's diagnostics
             ...(options.allowPrivateProxyTargets ? { allowPrivate: true } : {}),
             ...(options.fakeIpDnsTest ? { dohTest: options.fakeIpDnsTest } : {}),
+            ...(options.closedAddresses ? { closedAddresses: options.closedAddresses() } : {}),
             command: request.managedOutput
               ? `exec /bin/bash -c ${shellQuote(args.command)} 2>&1`
               : args.command,
@@ -323,6 +337,8 @@ export function linuxOperationWorker(
           }
           return response?.result ?? null;
         }
+        if (typeof result.fatal === "string")
+          throw new Error(`The restricted launcher ended the operation: ${result.fatal}`);
         if (result.supervisorLost === true && !cancelled)
           throw new Error("The restricted launcher was lost; its owned session was ended");
         const timedOut = result.timedOut === true;

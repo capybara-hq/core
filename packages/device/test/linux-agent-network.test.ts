@@ -201,60 +201,99 @@ print(json.dumps({
     expect(out.plainPrivate).toMatchObject({ refused: "PermissionError", asked: [] });
   });
 
+  it.runIf(python)("closes the extra addresses it is given (a container's host)", () => {
+    const out = withResolution(String.raw`
+system = lambda host, port, *a: [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("9.9.9.9", port)),
+                                 (socket.AF_INET, socket.SOCK_STREAM, 6, "", ("8.8.8.8", port))]
+found = vetted_addresses("example.test", 443, None, resolve=system, closed=closed_set(["9.9.9.9", "::ffff:8.8.4.4"]))
+try:
+    vetted_addresses("example.test", 443, None, resolve=system, closed=closed_set(["9.9.9.9", "8.8.8.8"]))
+    refused = False
+except PermissionError:
+    refused = True
+print(json.dumps({"dialled": [c[4][0] for c in found], "refused": refused,
+                  "mapped": public_address("::ffff:8.8.4.4", closed_set(["8.8.4.4"]))}))
+`);
+    expect(out).toEqual({ dialled: ["8.8.8.8"], refused: true, mapped: false });
+  });
+
   it.runIf(python)(
-    "asks the endpoints in order, parses A and AAAA, caches within the TTL cap",
+    "asks the endpoints in order within one deadline; caches complete answers",
     () => {
       const out = withResolution(String.raw`
 ${ANSWER}
-calls = []
+def qtype_of(query):
+    end = query.index(b"\0", 12)
+    return struct.unpack(">H", query[end + 1:end + 3])[0]
 now = [1000.0]
-def fetch(url, query):
-    name_end = query.index(b"\0", 12)
-    qtype = struct.unpack(">H", query[name_end + 1:name_end + 3])[0]
-    calls.append([url, qtype])
+calls = []
+def fetch(url, query, timeout):
+    qtype = qtype_of(query)
+    calls.append([url, qtype, round(timeout, 3)])
     if "1.1.1.1" in url:
-        raise OSError(errno.ECONNREFUSED, "refused")
+        raise OSError(errno.ECONNREFUSED, "refused")          # at once: no time used
+    if "1.0.0.1" in url:
+        if qtype == 28:
+            now[0] += timeout                                  # the AAAA query times out
+            raise OSError(errno.ETIMEDOUT, "timed out")
+        now[0] += 0.5
+        return answer("example.test", 1, [(1, 30, "9.9.9.9")])
     if qtype == 1:
         return answer("example.test", 1, [(1, 30, "8.8.8.8"), (5, 30, "1.2.3.4")])
     return answer("example.test", 28, [(28, 100000, "2606:4700::1111")])
 doh = EncryptedDns(fetch=fetch, clock=lambda: now[0])
 first = doh.resolve("Example.Test.")
-cached = len(calls)
+order = list(calls)
 doh.resolve("example.test")
-again = len(calls)
+cached = len(calls) - len(order)
 now[0] += 31
 doh.resolve("example.test")
-expired = len(calls)
-def broken(url, query):
-    calls.append([url, 0])
+expired = len(calls) - len(order) - cached
+# every endpoint slow: the whole lookup ends at the deadline
+slow_now = [0.0]
+slow_calls = []
+def slow(url, query, timeout):
+    slow_calls.append(round(timeout, 3))
+    slow_now[0] += timeout
     raise OSError(errno.ETIMEDOUT, "timed out")
 try:
-    EncryptedDns(fetch=broken).resolve("other.test")
+    EncryptedDns(fetch=slow, clock=lambda: slow_now[0]).resolve("other.test")
     failure = None
 except FakeIpUnresolved as error:
     failure = str(error)
-long = EncryptedDns(fetch=lambda url, q: answer("x.test", struct.unpack(">H", q[q.index(b"\0", 12) + 1:q.index(b"\0", 12) + 3])[0], [(1, 999999, "8.8.8.8")]))
-long.resolve("x.test")
-print(json.dumps({"first": first, "calls": calls[:cached], "cachedCalls": again - cached,
-                  "expiredCalls": expired - again, "failure": failure,
-                  "brokenUrls": [c[0] for c in calls if c[1] == 0],
-                  "cap": long.cache["x.test"][0] - time.monotonic(), "query": base64.b64encode(dns_query("a.b", 28)).decode()}))
+# a bounded cache with a capped TTL
+bounded = EncryptedDns(fetch=lambda url, q, t: answer("x.test", qtype_of(q), [(qtype_of(q), 999999, "8.8.8.8" if qtype_of(q) == 1 else "2606:4700::1")]))
+for i in range(300):
+    bounded.resolve("n%d.test" % i)
+print(json.dumps({"first": first, "order": order, "cached": cached, "expired": expired,
+                  "failure": failure, "slowTotal": round(slow_now[0], 3), "slowCalls": slow_calls,
+                  "size": len(bounded.cache), "newest": "n299.test" in bounded.cache,
+                  "oldest": "n0.test" in bounded.cache,
+                  "ttl": bounded.cache["n299.test"][0] - time.monotonic(),
+                  "query": base64.b64encode(dns_query("a.b", 28)).decode()}))
 `) as Record<string, unknown>;
-      const [primary, secondary, fallback] = SANDBOX_FAKE_IP_DNS.endpoints;
+      const [cf1, cf2, g1, g2] = SANDBOX_FAKE_IP_DNS.endpoints;
+      expect(SANDBOX_FAKE_IP_DNS.endpoints).toHaveLength(4);
+      // the whole answer of one endpoint: 1.0.0.1 answered A but not AAAA, so 8.8.8.8 answered
       expect(out.first).toEqual(["8.8.8.8", "2606:4700::1111"]);
-      // the first endpoint refused: the next one answered both queries
-      expect(out.calls).toEqual([
-        [primary, 1],
-        [secondary, 1],
-        [secondary, 28],
+      // each endpoint gets an equal share of the time left; A and AAAA share an endpoint's share
+      expect(out.order).toEqual([
+        [cf1, 1, 1.25],
+        [cf2, 1, 1.667],
+        [cf2, 28, 1.167],
+        [g1, 1, 1.667],
+        [g1, 28, 1.667],
       ]);
-      expect(out.cachedCalls).toBe(0);
-      expect(out.expiredCalls).toBeGreaterThan(0);
-      expect(out.brokenUrls).toEqual([primary, secondary, fallback]);
+      expect(out.cached).toBe(0);
+      expect(out.expired).toBeGreaterThan(0);
       expect(String(out.failure)).toMatch(/fake-IP resolver/);
-      // a long TTL is capped
-      expect(out.cap).toBeLessThanOrEqual(SANDBOX_FAKE_IP_DNS.cacheTtlCapSeconds);
-      expect(out.cap).toBeGreaterThan(SANDBOX_FAKE_IP_DNS.cacheTtlCapSeconds - 60);
+      expect(out.slowTotal).toBeLessThanOrEqual(SANDBOX_FAKE_IP_DNS.timeoutMs / 1000);
+      expect((out.slowCalls as number[]).length).toBeGreaterThanOrEqual(4);
+      expect(out.size).toBe(SANDBOX_FAKE_IP_DNS.cacheMaxNames);
+      expect(out).toMatchObject({ newest: true, oldest: false });
+      expect(out.ttl).toBeLessThanOrEqual(SANDBOX_FAKE_IP_DNS.cacheTtlCapSeconds);
+      expect(out.ttl).toBeGreaterThan(SANDBOX_FAKE_IP_DNS.cacheTtlCapSeconds - 60);
+      expect(g2).toBe("https://8.8.4.4/dns-query");
       // RD set, one question, a.b, AAAA, class IN
       expect(Buffer.from(String(out.query), "base64").subarray(2).toString("hex")).toBe(
         "010000010000000000000161016200001c0001",

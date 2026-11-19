@@ -26,7 +26,8 @@
  *    multi-component entry `[a, b, …]` (or an absolute system path) a destination ending in a
  *    proper prefix of it (`…/a`) takes no non-directory (a link there would redirect the entry)
  *    and no directory holding the entry's next component (`b`): a prepared directory never moves
- *    into place, while ordinary names (`library`, `.config`) stay movable.
+ *    into place, while ordinary names (`library`, `.config`) stay movable. An ancestor of an
+ *    anchored path (a system path, or a consumer's resolved target) never moves away.
  *
  * 5. Inside an allowlisted subtree nothing can make a repository: no `.git`, no `HEAD` except
  *    where git keeps one (`logs/HEAD`, `refs/remotes/<r>/HEAD`, …), and no `objects`, `commondir`
@@ -658,6 +659,10 @@ export function isSandboxMoveDenied(
   if (isSandboxWriteDenied(source) || isSandboxWriteDenied(destination)) return true;
   const from = parts(source);
   const to = parts(destination);
+  // an anchored deny's ancestor never moves away: a link resolved into it would dangle
+  for (const { names, anchored } of PREFIX_GUARDED)
+    if (anchored && from.length < names.length && from.every((name, k) => names[k] === name))
+      return true;
   const next = prefixNext(to);
   if (next.length > 0) {
     if (!sourceIsDirectory || sourceEntries === undefined) return true;
@@ -762,6 +767,10 @@ def move_denied(source, destination, is_dir, entries=None):
     if write_denied(source) or write_denied(destination):
         return True
     src, dst = _fold_parts(source), _fold_parts(destination)
+    # an anchored deny's ancestor never moves away: a link resolved into it would dangle
+    for names, anchored in PREFIX_GUARDED:
+        if anchored and len(src) < len(names) and names[:len(src)] == src:
+            return True
     nxt = _prefix_next(dst)
     if nxt:
         if not is_dir:

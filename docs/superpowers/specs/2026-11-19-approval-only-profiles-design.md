@@ -269,9 +269,15 @@ Closed in open mode, and reachable only by running outside the sandbox:
 - private and LAN ranges: `10/8`, `172.16/12`, `192.168/16`, CGNAT `100.64/10`, IPv6 ULA `fc00::/7`;
 - link-local and metadata: `169.254/16` (including `169.254.169.254`), `fe80::/10`, `fd00:ec2::254`;
 - loopback and this host's own interface addresses, so another process's localhost port is closed.
-  On Linux the command's **own** TCP loopback listener stays reachable within the operation: the
-  broker allows a connect to ports the operation itself bound. On macOS a restricted command cannot
-  listen at all (section "Known limitations");
+  No sandboxed client connects to a loopback listener, its own included, on either platform
+  (maintainer ruling 2026-11-19 after the T8 security review: an "own listener" cannot be told
+  from another process's at the address dialled, since a listener can be re-listened after another
+  socket took its port or share it through `SO_REUSEPORT`). On Linux a restricted command may
+  still bind and listen on `127.0.0.1` / `::1`, and clients outside the sandbox reach it; on macOS
+  it cannot listen at all (section "Known limitations"). On Linux `SO_REUSEPORT` and its group
+  programs are refused in the sandbox, so a command never joins a foreign service's reuseport
+  group (which would hand it that service's connections). A local-Docker device's forwarder runs
+  in the container, so the host's own interface addresses are passed in and closed as well;
 - the Docker and kernel sockets: UNIX sockets outside the write roots stay refused
   (`/var/run/docker.sock`, `~/.docker/run/docker.sock`, `/run/containerd`), and so does TCP to them
   over loopback;
@@ -280,6 +286,20 @@ Closed in open mode, and reachable only by running outside the sandbox:
 Traffic goes through the proxy. HTTP(S)- and SOCKS-aware clients work on any TCP port. A client that
 ignores proxy variables, such as plain `ssh`, does not connect from the sandbox. The `Bash`
 description says so, and notes that `GIT_SSH_COMMAND` with a SOCKS `ProxyCommand` works.
+
+The same address rules hold for the allowlist: a granted name whose resolved address is in a closed
+class is refused (403 on Linux, the same refusal on macOS); private ranges are reachable only
+through the escalation, never through a host grant.
+
+**Fake-IP resolvers.** A network whose resolver answers every name with `198.18.0.0/15` (a router
+running a fake-IP proxy such as OpenClash) would close every name. When the system resolver's answer
+for a name contains such an address, the proxy re-resolves the name (A and AAAA) through
+DNS-over-HTTPS, RFC 8484 wire format at `/dns-query` on `1.1.1.1`, `1.0.0.1`, `8.8.8.8` and
+`8.8.4.4`, TLS verified against the IP SAN, within one 5 s deadline per name shared among the
+endpoints; answers are cached only when both queries succeeded, for their TTL capped at 300 s, at
+most 256 names. The real address is judged like any resolved address and dialled as checked; when
+encrypted DNS fails the request is refused with a reason naming the fake-IP resolver, and the fake
+address is never dialled. One definition, `SANDBOX_FAKE_IP_DNS` in the SDK, serves macOS and Linux.
 
 The address classes live in one SDK table: `packages/plugin-sdk/src/network-classes.ts`, pure data
 plus `classifyAddress`. The device workers consume it. A unit test checks it against the kernel's
@@ -506,7 +526,8 @@ The migration never widens.
   sandbox-runtime 0.0.81). Restricted macOS operations therefore keep `allowLocalBinding: false`
   under every profile. A dev server or test server that must listen on macOS runs through the
   per-call outside-sandbox escalation (the person, the review model or a Full access auto-grant,
-  within the outside-sandbox ceiling). Linux allows a loopback listener and its own connect.
+  within the outside-sandbox ceiling). Linux allows a loopback listener that clients outside the
+  sandbox reach; a sandboxed client, the listener's own command included, never connects to it.
 - **Proxy-unaware clients** (plain `ssh`) do not reach the network from the sandbox (section "Open
   network").
 

@@ -25,12 +25,12 @@ export const SANDBOX_RUNTIME_SOURCE: {
     Object.freeze({
       name: "native-files.py",
       source: NATIVE_FILES_SOURCE,
-      sha256: "029f47a8663ce7a40674657f856d07cc58cb5b9374c85d3edf69f3979b380a48",
+      sha256: "129c184fbf8d0bdcd198ac4259c8787f41a89bf04657173c5f5fe5bfcdf93fd9",
     }),
     Object.freeze({
       name: "linux-sandbox.py",
       source: LINUX_SANDBOX_SOURCE,
-      sha256: "b0b18d8980e3b2832b40d0882896b7d8e3a7c4b79c17569437d3d72508ccbce6",
+      sha256: "f414bf9bf348e0f84d3e2cee9ac9ce0e9f3c3e2f8b249ce1d1707e47e65904d6",
     }),
   ]),
 });

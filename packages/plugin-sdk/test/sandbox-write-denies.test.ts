@@ -232,7 +232,11 @@ const MOVES: [string, string, boolean, boolean, string[]?][] = [
   ["/w/link", "/Users/u/Library", false, true],
   ["/w/link", "/home/u/.config/fish", false, true],
   // the system spools are anchored absolute paths
-  ["/var/spool", "/var/sp2", true, false, ["cron"]],
+  // an anchored deny's ancestor never moves away (a link resolved into it would dangle)
+  ["/var/spool", "/var/sp2", true, true, ["mail"]],
+  ["/var", "/v2", true, true, []],
+  ["/private/var/at", "/private/var/at2", true, true, []],
+  ["/var/spool/mail", "/var/spool/mail2", true, false, []],
   ["/var/sp2", "/var/spool", true, true, ["cron"]],
   ["/var/sp2", "/var/spool", true, false, ["mail"]],
   ["/tmp/prep", "/var", true, true, ["at"]],

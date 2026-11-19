@@ -3192,6 +3192,7 @@ export const SANDBOX_FAKE_IP_DNS: {
     readonly endpoints: readonly string[];
     readonly timeoutMs: number;
     readonly cacheTtlCapSeconds: number;
+    readonly cacheMaxNames: number;
 };
 
 // @public

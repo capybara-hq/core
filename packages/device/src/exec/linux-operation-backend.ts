@@ -93,8 +93,8 @@ export function checkLinuxRestrictedGrant(
  * The Linux local operation backend (permission activation W2-S): the same functions as the macOS
  * backend on the SDK's restricted Linux runtime. Restricted exec runs through the launcher on
  * pinned root descriptors (Landlock, the seccomp broker), with network none, an allowlist or the
- * open public network served by an operation-owned proxy (and the command's own loopback
- * listeners); native work uses the SDK helper on the same kind of pinned
+ * open public network served by an operation-owned proxy (a loopback listener the command opens is
+ * reachable from outside the sandbox only); native work uses the SDK helper on the same kind of pinned
  * descriptors; Full access runs as the OS user without restricted filters. Background work,
  * retained output and exact cancellation share the macOS supervisor. Restricted support is what
  * the launcher's probe reports (an unsupported kernel, ABI or architecture fails closed while Full

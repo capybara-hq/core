@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import { readFileSync } from "node:fs";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   runSandboxPermissionConformance,
@@ -431,6 +432,24 @@ attempt("clone3", lambda: raw(435, 0, 0))
         expect(decode(result.stdout).trim(), decode(result.stderr)).toBe(
           "refused=denied unspec=denied",
         );
+      });
+
+      it("the security review's listener probes reach no foreign listener", async (context) => {
+        requireSupport(context);
+        const probe = (name: string) =>
+          readFileSync(
+            new URL(`./fixtures/linux-permission/probe-${name}.py`, import.meta.url),
+            "utf8",
+          );
+        // shutdown(SHUT_RD), a foreign SO_REUSEADDR bind, listen again: every connect is refused
+        const shut = await run(restricted(), `python3 - <<'EOF'\n${probe("shut2")}\nEOF`);
+        const lines = decode(shut.stdout).trim().split("\n");
+        expect(lines, decode(shut.stderr)).toHaveLength(4);
+        for (const line of lines) expect(line).toMatch(/\[Errno \d+\]/);
+        // SO_REUSEPORT (a foreign service's group would hand its connections over) is refused
+        const reuse = await run(restricted(), `python3 - <<'EOF'\n${probe("reuseport")}\nEOF`);
+        expect(decode(reuse.stdout).trim()).toBe("");
+        expect(decode(reuse.stderr)).toMatch(/PermissionError: \[Errno 1\]/);
       });
 
       it("records the session before any restricted code runs (supervisor killed at once)", async (context) => {
