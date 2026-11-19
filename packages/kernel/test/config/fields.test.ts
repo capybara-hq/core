@@ -24,6 +24,9 @@ describe("configFields", () => {
       "auth.trustedIdentitySources",
       "runtime.orgConcurrency",
       "tools.git.enabled",
+      "attachments.readImagesPerRequest",
+      "attachments.readMaxBytesPerConversation",
+      "attachments.readPurgeAfterHours",
       "sharing.external",
       "sharing.maxExpiryDays",
       "subagents.maxDepth",
@@ -55,6 +58,9 @@ describe("configFields", () => {
       "models.imageTimeoutMs",
       "models.imageMaxPerCall",
       "models.imagePromptMaxChars",
+      "models.imageStandardPixels",
+      "models.visionTimeoutMs",
+      "models.visionMaxOutputTokens",
       "hooks.timeoutMs",
       "log.level",
     ]);
@@ -179,5 +185,33 @@ describe("unreachableSecrets", () => {
     type Node = { child?: Node | undefined };
     const node: z.ZodType<Node> = z.lazy(() => z.object({ child: node.optional() }));
     expect(unreachableSecrets(z.object({ tree: node }))).toEqual([]);
+  });
+});
+
+describe("vision read config keys", () => {
+  const parse = (over: object) =>
+    KernelConfigSchema.parse({
+      db: { url: "postgres://u:pw@h/db" },
+      redis: { url: "redis://h" },
+      masterKey,
+      ...over,
+    });
+  const cases: [string, string, number, number, number][] = [
+    ["models", "imageStandardPixels", 1_048_576, 262_144, 16_777_216],
+    ["models", "visionTimeoutMs", 120_000, 5_000, 600_000],
+    ["models", "visionMaxOutputTokens", 2_000, 100, 16_000],
+    ["attachments", "readImagesPerRequest", 6, 2, 20],
+    ["attachments", "readMaxBytesPerConversation", 536_870_912, 0, 17_179_869_184],
+    ["attachments", "readPurgeAfterHours", 24, 1, 720],
+  ];
+  it.each(cases)("%s.%s has its default and range and is hot", (section, key, def, min, max) => {
+    const out = parse({}) as unknown as Record<string, Record<string, number>>;
+    expect(out[section]?.[key]).toBe(def);
+    expect(parse({ [section]: { [key]: min } })).toBeDefined();
+    expect(parse({ [section]: { [key]: max } })).toBeDefined();
+    expect(() => parse({ [section]: { [key]: min - 1 } })).toThrow();
+    expect(() => parse({ [section]: { [key]: max + 1 } })).toThrow();
+    const field = configFields(KernelConfigSchema).find((f) => f.path === `${section}.${key}`);
+    expect(field?.meta?.hot).toBe(true);
   });
 });

@@ -1417,6 +1417,45 @@ export const KernelConfigSchema = z.strictObject({
               "Budget of raw attachment bytes in one model request; the newest attachments are kept and older ones are replaced with a placeholder. At most 24 MiB: base64 inflates it by about 4/3, and common providers cap a request at 32 MB",
           }),
         ),
+      readImagesPerRequest: z
+        .number()
+        .int()
+        .min(2)
+        .max(20)
+        .default(6)
+        .meta(
+          meta({
+            hot: true,
+            description:
+              "Most images Read may show the model in one request; older Read images are replaced with a placeholder",
+          }),
+        ),
+      readMaxBytesPerConversation: z
+        .number()
+        .int()
+        .min(0)
+        .max(17_179_869_184)
+        .default(536_870_912)
+        .meta(
+          meta({
+            hot: true,
+            description:
+              "Bytes of images Read keeps for one conversation (images from files on a device or generated artifacts); 0 turns the cache off",
+          }),
+        ),
+      readPurgeAfterHours: z
+        .number()
+        .int()
+        .min(1)
+        .max(720)
+        .default(24)
+        .meta(
+          meta({
+            hot: true,
+            description:
+              "Hours after the last use before a Read image copy is deleted (row and object)",
+          }),
+        ),
     })
     // 单个附件不能大于单次请求的预算：否则它永远被省略（最新的附件总能放进请求）
     .refine((c) => c.maxBytes <= c.requestMediaBytes, {
@@ -2169,6 +2208,44 @@ export const KernelConfigSchema = z.strictObject({
             hot: true,
             description:
               "Longest prompt, in characters (code points), an image generation call accepts; longer is a validation error",
+          }),
+        ),
+      imageStandardPixels: z
+        .number()
+        .int()
+        .min(262_144)
+        .max(16_777_216)
+        .default(1_048_576)
+        .meta(
+          meta({
+            hot: true,
+            description:
+              "Pixel budget (width times height) a generated image or a Read image is scaled down to before it is shown to a model",
+          }),
+        ),
+      visionTimeoutMs: z
+        .number()
+        .int()
+        .min(5_000)
+        .max(600_000)
+        .default(120_000)
+        .meta(
+          meta({
+            hot: true,
+            description: "Milliseconds a vision model call for Read may take before it is aborted",
+          }),
+        ),
+      visionMaxOutputTokens: z
+        .number()
+        .int()
+        .min(100)
+        .max(16_000)
+        .default(2_000)
+        .meta(
+          meta({
+            hot: true,
+            description:
+              "Most tokens a vision model may answer with when it reads an image for Read",
           }),
         ),
     })
