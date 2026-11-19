@@ -2,9 +2,11 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { KernelRequest } from "@capybara-hq/plugin-sdk";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { type RunningOperation, RunningOperations } from "../src/activity.js";
 import type { MacOperationBackend } from "../src/exec/mac-operation-backend.js";
+import { MacOperationSupervisor } from "../src/exec/operation-supervisor.js";
+import type { MacWorkerRequest } from "../src/exec/operation-worker.js";
 import { PolicyStore } from "../src/policy-store.js";
 import { type StagedOwnerPolicy, serveOperationV3 } from "../src/server-ops.js";
 
@@ -72,6 +74,7 @@ const scope = (profile: "approve-for-me" | "full-access") => ({
       : { kind: "scoped", readRoots: ["/work"], writeRoots: ["/work"] },
   network: profile === "full-access" ? { kind: "environment" } : { kind: "none" },
 });
+const never = new AbortController().signal;
 const limits = {
   cpu: 1,
   memoryMb: 512,
@@ -150,5 +153,121 @@ describe("running operations from the operation dispatch", () => {
     expect(res).toMatchObject({ ok: false });
     expect(during).toHaveLength(1);
     expect(after).toEqual([]);
+  });
+});
+
+describe("background tasks in the running operations", () => {
+  /** A supervisor whose workers are fakes: each launch waits for `finish` (or a kill). */
+  function supervisor(running: RunningOperations) {
+    const finishes: (() => void)[] = [];
+    const result = { exitCode: 0, stdout: "", stderr: "", truncated: false, timedOut: false };
+    const sup = new MacOperationSupervisor({
+      stateDir: dir,
+      deviceId: "d",
+      instanceGeneration: "g",
+      now: () => 1,
+      onLiveEnded: (id) => running.endOperation(id),
+      start: async (request: MacWorkerRequest) => {
+        await request.beforeLaunch();
+        await request.onLaunch({ pid: 123, token: "trusted-child" });
+        let finish!: (v: typeof result) => void;
+        const completion = new Promise<typeof result>((r) => {
+          finish = r;
+        });
+        finishes.push(() => finish(result));
+        return {
+          ready: Promise.resolve(),
+          completion,
+          cancel: async () => finish({ ...result, exitCode: null }),
+        };
+      },
+    });
+    return { sup, finishes };
+  }
+  const bgRequest = (operationId: string) => ({
+    managedOutput: { artifactRoot: dir, outputPath: join(dir, `${operationId}.out`) },
+    kind: "exec" as const,
+    scope: { ...scope("full-access"), operationId, tag: operationId, admitBeforeMs: 1000 },
+    grant: {
+      full: true,
+      readRoots: ["/"],
+      writeRoots: ["/"],
+      hosts: [],
+      deniedReadRoots: [],
+      revision: "v",
+    },
+    args: { command: "sleep 1000", timeoutMs: 1000, maxOutputBytes: 1000 },
+    stateDir: dir,
+    pythonPath: "/usr/bin/python3",
+    runtimeHash: "runtime",
+    beforeLaunch: async () => {},
+    onLaunch: async () => {},
+  });
+  const begin = (running: RunningOperations, operationId: string) =>
+    running.begin({ ...op(operationId), isolation: "full" }, operationId);
+
+  it("a background task stays after its start answered and leaves when it completes", async () => {
+    const running = new RunningOperations();
+    const { sup, finishes } = supervisor(running);
+    begin(running, "bg1");
+    const ref = await sup.start(bgRequest("bg1") as never, "hash", 2000, never);
+    expect(await sup.status(ref, never)).toEqual({ state: "running" });
+    expect(running.list().map((o) => o.tag)).toEqual(["bg1"]);
+    finishes[0]?.();
+    await vi.waitFor(() => expect(running.list()).toEqual([]));
+  });
+
+  it("a background task leaves when it is killed", async () => {
+    const running = new RunningOperations();
+    const { sup } = supervisor(running);
+    begin(running, "bg2");
+    const ref = await sup.start(bgRequest("bg2") as never, "hash", 2000, never);
+    expect(running.list()).toHaveLength(1);
+    await sup.stop(ref, { graceMs: 0, signal: never });
+    await vi.waitFor(() => expect(running.list()).toEqual([]));
+  });
+
+  it("the dispatch keeps a started background task only while its status says running", async () => {
+    for (const state of ["running", "exited"] as const) {
+      const running = new RunningOperations();
+      const owner: StagedOwnerPolicy = {
+        store: new PolicyStore(dir),
+        report: () => ({}) as never,
+        reconcile: async () => {},
+        running,
+      };
+      const ref = { id: "bg_1", operationId: "op_1", deviceId: "d", instanceGeneration: "g" };
+      const backend = {
+        forExecution: () => ({ background: { start: async () => ref } }),
+        background: { status: async () => ({ state }) },
+      } as unknown as MacOperationBackend;
+      await serveOperationV3(
+        backend,
+        { id: "d" },
+        {
+          type: "req",
+          id: "q",
+          op: "backgroundStart",
+          args: {
+            scope: scope("approve-for-me"),
+            command: "sleep 1000",
+            timeoutMs: 100,
+            maxOutputBytes: 100,
+            limits,
+            taskId: "task_1",
+            outputPath: "/work/out.txt",
+            retainUntilMs: Date.now() + 60_000,
+          },
+          deadlineMs: 1000,
+        } as KernelRequest,
+        never,
+        undefined,
+        owner,
+      );
+      expect(running.list().map((o) => o.tag)).toEqual(state === "running" ? ["t1"] : []);
+      // the backend reports the worker's end: it leaves
+      running.endOperation("op_1");
+      expect(running.list()).toEqual([]);
+    }
   });
 });

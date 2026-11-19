@@ -107,6 +107,11 @@ export interface SupervisorOptions {
   now?: () => number;
   start?: (request: MacWorkerRequest, signal: AbortSignal) => Promise<MacWorkerHandle>;
   onLiveChanged?: (live: boolean) => void;
+  /**
+   * Called once each live worker (an exec, or a background task long after its start answered)
+   * is gone: completed, killed or failed to launch. Never throws into the supervisor.
+   */
+  onLiveEnded?: (operationId: string) => void;
   pythonPath?: string;
   outputBarrier?: (name: string) => Promise<void>;
   beforePersist?: () => void;
@@ -779,6 +784,7 @@ export class MacOperationSupervisor {
             await spool?.close();
             signal.removeEventListener("abort", abort);
             this.live.delete(entry.ref.operationId);
+            this.liveEnded(entry.ref.operationId);
             this.notifyOwned();
           })
           .catch((error) => {
@@ -805,6 +811,7 @@ export class MacOperationSupervisor {
         });
         reject(error);
         this.live.delete(entry.ref.operationId);
+        this.liveEnded(entry.ref.operationId);
         this.notifyOwned();
         throw error;
       }
@@ -1067,6 +1074,13 @@ export class MacOperationSupervisor {
    * The owner watcher runs while anything is owned: a live worker, a faulted collector's owner or
    * an exact cancellation still settling (an idle socket or a disconnect does not end it).
    */
+  private liveEnded(operationId: string): void {
+    try {
+      this.options.onLiveEnded?.(operationId);
+    } catch {
+      // an observer never affects the supervisor
+    }
+  }
   private notifyOwned(): void {
     this.options.onLiveChanged?.(
       this.live.size > 0 || this.faultOwners.size > 0 || this.cancellations.size > 0,

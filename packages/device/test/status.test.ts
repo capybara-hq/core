@@ -99,6 +99,27 @@ describe("status: the running program's live state", () => {
     });
   });
 
+  it("an answer that is not a live status is treated as no answer", async () => {
+    writeCredential(dir, cred);
+    const server = await startControlServer({
+      stateDir: dir,
+      status: () => ({ junk: true }) as unknown as LiveStatus,
+      running: () => [],
+      drain: () => {},
+      stop: () => {},
+    });
+    if (!("close" in server)) throw new Error(server.unavailable);
+    close = () => server.close();
+    const absent = await run(dir, true, { running: () => undefined });
+    expect(JSON.parse(absent.out[0] as string)).toMatchObject({ control: "absent", live: null });
+    const runner = await run(dir, true, { running: () => 4242 });
+    expect(JSON.parse(runner.out[0] as string)).toMatchObject({
+      control: "unavailable",
+      controlReason: expect.stringContaining("does not answer"),
+      live: null,
+    });
+  });
+
   it("the credential is never printed", async () => {
     writeCredential(dir, cred);
     const server = await startControlServer({

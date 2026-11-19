@@ -5,6 +5,7 @@ import {
   CONTROL_LINE_MAX_BYTES,
   CONTROL_OPS,
   CONTROL_PATH_MAX_BYTES,
+  CONTROL_WRITE_MAX_BYTES,
   type ControlEvent,
   type ControlRequest,
   type ControlResponse,
@@ -145,7 +146,10 @@ export async function startControlServer(
   const sockets = new Set<Socket>();
   const subscribers = new Set<Socket>();
   const send = (sock: Socket, line: ControlResponse | ControlEvent): void => {
-    if (!sock.destroyed && sock.writable) sock.write(`${JSON.stringify(line)}\n`);
+    if (sock.destroyed || !sock.writable) return;
+    sock.write(`${JSON.stringify(line)}\n`);
+    // a peer that stopped reading (a subscriber above all) never pins memory here
+    if (sock.writableLength > CONTROL_WRITE_MAX_BYTES) sock.destroy();
   };
   const failure = (id: number, code: string, message: string): ControlResponse => ({
     id,
@@ -206,10 +210,10 @@ export async function startControlServer(
       for (let i = buf.indexOf("\n"); i >= 0; i = buf.indexOf("\n")) {
         const line = buf.slice(0, i);
         buf = buf.slice(i + 1);
-        if (line.length > CONTROL_LINE_MAX_BYTES) return overLong();
+        if (Buffer.byteLength(line) > CONTROL_LINE_MAX_BYTES) return overLong();
         if (line.trim() !== "") answer(sock, line);
       }
-      if (buf.length > CONTROL_LINE_MAX_BYTES) overLong();
+      if (Buffer.byteLength(buf) > CONTROL_LINE_MAX_BYTES) overLong();
     });
     sock.on("error", () => {
       // a peer that went away: nothing to answer

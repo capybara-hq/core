@@ -47,6 +47,11 @@ export interface MacOperationBackendOptions {
    */
   runtimeHash?: string;
   readOwnerCeiling: () => Promise<DeviceOwnerCeiling>;
+  /**
+   * Called when an operation's worker is gone (completed, killed, failed to launch): a background
+   * task long after its start answered. Feeds the control socket's running operations.
+   */
+  onOperationEnded?: (operationId: string) => void;
 }
 export type MacOperationBackend = Required<
   Pick<
@@ -224,6 +229,7 @@ export async function createLocalOperationBackend(
     ...(dependencies.now ? { now: dependencies.now } : {}),
     ...(host.startWorker ? { start: host.startWorker } : {}),
     ...(host.reapOrphan ? { reapOrphan: host.reapOrphan } : {}),
+    ...(options.onOperationEnded ? { onLiveEnded: options.onOperationEnded } : {}),
     onLiveChanged: (live) => {
       if (live && !stopWatch) {
         if (dependencies.watch) stopWatch = dependencies.watch(tick);
