@@ -1,334 +1,387 @@
 # Approval-only permission profiles and device sandbox settings
 
-Status: design amendment, not yet reviewed. It amends the
-[conversation permission profiles design](2026-11-16-conversation-approval-profiles-design.md) and the
-parts of the [operation contract](2026-11-16-permission-operation-contract.md),
+Status: design amendment. The maintainer approved its three decisions and the trimmed R3 scope on
+2026-11-19 (section "Decisions"); the rest is the author's technical design, for review. It amends
+the [conversation permission profiles design](2026-11-16-conversation-approval-profiles-design.md),
+including its "Per-call sandbox escalation" section, and the parts of the
+[operation contract](2026-11-16-permission-operation-contract.md),
 [call grants](2026-11-16-permission-call-grants-and-approvals-design.md),
 [context replay](2026-11-16-permission-context-replay-design.md) and
-[runtime cutover](2026-11-16-permission-runtime-cutover-design.md) designs that coupled a profile to
-the execution boundary. It records the maintainer decisions of 2026-11-19 and the coordinator's
-guardrails of the same day. Binding: `perm/w4-int` at `0ce1ab054`. The plan is
-[2026-11-19-approval-only-profiles](../plans/2026-11-19-approval-only-profiles.md).
+[runtime cutover](2026-11-16-permission-runtime-cutover-design.md) designs that tied a profile to
+the execution boundary. It records the maintainer decisions and the coordinator's guardrails of
+2026-11-19. Binding: `perm/w4-int` at `91917b4b3`, which includes the merged per-call escalation
+(`perm/call-escalation`, migration `0162`). R3 starts from `perm/w4-int` after R2 merges to `main`.
+The plan is [2026-11-19-approval-only-profiles](../plans/2026-11-19-approval-only-profiles.md).
 
-## Questions for the maintainer
+## Decisions (maintainer, 2026-11-19)
 
-Only these need a decision. Each has a recommendation; everything else below is decided.
-
-1. **Cloud devices: the cloud machine is the sandbox.** Neither official provider implements the
-   operation factory today (`plugins/sandbox-docker`, `plugins/sandbox-e2b`: no `permissionSupport`,
-   `operation` or `revokeOperation`), and an in-VM per-operation runtime was never proven on E2B.
-   **Recommendation:** a provider declares `boundary: "instance"`. The container or microVM is the
-   sandbox, its whole filesystem is the scope, and its outer network (open public or allowlist,
-   enforced by the provider) is the sandbox network. All three profiles are offered there. They
-   differ only in sensitive-command consent: no directory crossing exists, running outside the
-   sandbox does not exist, and a new host on an allowlist cannot be granted per call because the
-   provider's network is instance-wide (the reply says to add it to the device's list). The Linux
-   per-operation runtime stays the upgrade path for a provider that later declares
-   `boundary: "operation"`. The alternative is to keep holding cloud profiles for an in-VM runtime.
-2. **Full access keeps its confirmation.** Choosing it removes every approval on this device,
-   including running commands outside the sandbox when the device allows that. **Recommendation:**
-   keep the explicit confirmation and the consent binding to device plus crossing ceilings, with a
-   rewritten, shorter dialog. A device switch or a widened ceiling resets the conversation to
-   Approve for me, as today. Dropping the dialog would let one click auto-approve host escalation on
-   a device whose owner allowed it for a different purpose.
-3. **Cloud metadata, link-local addresses and the Docker/kernel sockets are reachable only by
-   running outside the sandbox.** The coordinator's guardrail lists them as crossings approved per
-   profile. **Recommendation:** private/LAN ranges and another process's loopback port are a
-   network crossing that a call can be granted (`privateEndpoints`). Link-local and metadata
-   addresses and the sockets are never granted inside the sandbox: reaching them needs the per-call
-   outside-sandbox escalation, so the outside-sandbox ceiling bounds them. A metadata endpoint holds
-   instance credentials, and a socket is root on the host, so a sandbox grant to either is not
-   meaningfully narrower than running outside it.
+1. **Cloud devices: the instance is the sandbox.** A provider declares `boundary: "instance"`. The
+   container or microVM is the sandbox, its whole filesystem is the scope, and its outer network,
+   which the provider enforces, is the sandbox network. All three profiles are offered. On a cloud
+   device they differ only in sensitive-command consent. There are no directory crossings and no
+   running outside the sandbox. A new host on an allowlist cannot be granted per call, because the
+   provider's network covers the whole instance, so the reply says to add the host to the device's
+   list. If a provider later declares `boundary: "operation"`, it can use the Linux per-operation
+   runtime.
+2. **Full access keeps a shorter confirmation.** Consent stays bound to the device and its crossing
+   ceilings. A device switch or a widened ceiling resets the conversation to Approve for me.
+3. **Cloud metadata, link-local addresses and the Docker and kernel sockets are reachable only by
+   running outside the sandbox.** With the trimmed scope this also holds for private and LAN ranges
+   and for the host's other loopback ports. Inside the sandbox they are simply closed.
 
 ## What changes, in one paragraph
 
-A **profile** only chooses who approves a crossing: the person (Request approval), the review model
-with the person as fallback (Approve for me), or nobody (Full access). The **sandbox** is a property
-of the device, identical under all three profiles: the scope (project root, workspace, scratch and
-tool directories), the sandbox network (open public internet by default, or an allowlist), whether
-private-network crossings can be granted, and whether a call may run outside the sandbox. Full access
-never removes the sandbox: its commands run in it, and its crossings are granted automatically within
-the device's ceilings and recorded. Fixed denies and the minimal environment hold under every
-profile.
+A **profile** only chooses who approves a crossing:
+
+- Request approval: the person.
+- Approve for me: the review model, falling back to the person.
+- Full access: nobody.
+
+The **sandbox** is a property of the device and is the same under all three profiles. It consists
+of:
+
+- the scope: the project root, the workspace, scratch and tool directories;
+- the sandbox network: the open public internet by default, or an allowlist;
+- whether a call may run outside the sandbox.
+
+Full access never removes the sandbox. Its commands run inside it. Its crossings are granted
+automatically within the device's ceilings, and every one is recorded and audited. The fixed denies
+and the minimal environment hold under every profile.
 
 ## Superseded parts of earlier designs
 
 | Earlier text | Now |
 |---|---|
 | Profiles design, "Proposed behavior" table, Full row: "use the device authority its owner/admin already granted" | Full access auto-approves crossings within the device ceilings; commands stay in the sandbox |
-| Profiles design, "Full access follows the approved Codex-style preset ... removes Codex's own sandbox" and approach 3 coupling | Superseded by the Claude Code model below; the sandbox and the profile are independent |
-| Profiles design, "Full access is unavailable when that ceiling forbids it" | Full access is available wherever a profile is; the ceiling bounds only outside-sandbox escalation |
-| Operation contract, "Full access uses `filesystem.kind: "device"` and `network.kind: "environment"`" | Only an escalated call (outside the sandbox) uses that pair; every profile's ordinary call is scoped |
-| Operation contract, `DeviceOwnerCeiling.fullAccess`, `restrictedAllowedDomains` "a restricted-profile allowance" | `outsideSandbox`, `network`, `privateNetwork`, `allowedDomains` describe the device sandbox for every profile |
-| Operation contract, `SandboxPermissionSupport` v1 (`fullAccess`, restricted claims) | v2 below (`boundary`, network kinds, `outsideSandbox`) |
-| Operation contract and cutover, `SandboxLimits.mode` as internal ceiling encoding | Removed; lifecycle receives the outer network only |
-| Context replay design, refine "Full access must be device + environment" | Every profile records a scoped sandbox; escalation is per call in the review record |
+| Profiles design, Codex-style preset (Full access removes the sandbox) and the approach-3 coupling | The sandbox and the profile are independent (Claude Code model) |
+| Profiles design, "Full access is unavailable when that ceiling forbids it" | Full access is available wherever any profile is; the ceiling bounds only running outside the sandbox |
+| Profiles design, "Per-call sandbox escalation": "Until it lands, Full access still runs every call unsandboxed, so an escalation under Full access is a no-op"; "Escalation is possible only where Full access would be"; "E2B is Full only" | Full access runs in the sandbox and its escalation is a real, audited auto-grant within the outside-sandbox ceiling; the ceiling is renamed; cloud devices have no outside |
+| Operation contract, "Full access uses `filesystem.kind: "device"` and `network.kind: "environment"`" | Only an escalated call uses that pair (`isFullExecutionScope`); every profile's ordinary call is scoped |
+| Operation contract, `DeviceOwnerCeiling.fullAccess`, `restrictedAllowedDomains` "a restricted-profile allowance" | `outsideSandbox`, `network`, `allowedDomains` describe the device sandbox for every profile |
+| Operation contract, `SandboxPermissionSupport` v1 | v2 (section "SDK and protocol") |
+| Operation contract and cutover, `SandboxLimits.mode` as the internal ceiling encoding | Removed; lifecycle receives the outer network only |
+| Context replay design, refine "Full access must be device + environment" | Every profile records a scoped sandbox |
 | Call grants design, "`issueLocked` rejects full-access" | Full access issues grants with source `full-access`, recorded and audited |
-| Config activation and cutover, `devices.fullAccess`, org `fullAccess`, `devicesFullAccess`, org `cloudNetwork` | Renamed and reshaped (section "Settings model") |
-| Profiles design, "Device selection represents ... its independently authorized ceiling, without a daily auto/sandbox picker" | Kept: there is still no daily sandbox picker; device settings live on the device page |
+| Config activation and cutover: `devices.fullAccess`, org `fullAccess`, `devicesFullAccess`, org `cloudNetwork` | Renamed and reshaped (section "Settings model") |
 
-Everything else in those designs stands: operation identity, admission, epochs and revocation,
-call-bound grants and their immutability, owner-only profile changes, pending-card supersession,
-starting grants for started work, the event log as the source of truth.
+Everything else in those designs still stands:
+
+- operation identity, admission, epochs and revocation;
+- immutable call-bound grants;
+- owner-only profile changes;
+- pending-card supersession;
+- starting grants for started work;
+- the event log as the source of truth;
+- no daily sandbox picker in the composer.
 
 ## Profiles
 
-Crossing kinds are the closed set below. A **sensitive command** is one the review rules classify as
-consent (`ask.sudo`, `ask.credential-print`, `ask.credential-link`, `ask.persistence`,
-`ask.shell-config`, `ask.ssh`, `ask.secret-file`, `ask.global-install`, `ask.force-push`,
-`ask.remote-destroy`, `ask.remote-write`, `ask.docker-privileged`, `ask.kill-other`, `ask.git-exec`,
-`ask.dynamic-arg`, and every `unsure.*`) (`sandbox/review/rules.ts`).
+A **sensitive command** is one the review rules classify as consent:
+
+- the `ask.*` rules: `ask.sudo`, `ask.credential-print`, `ask.credential-link`, `ask.persistence`,
+  `ask.shell-config`, `ask.ssh`, `ask.secret-file`, `ask.global-install`, `ask.force-push`,
+  `ask.remote-destroy`, `ask.remote-write`, `ask.docker-privileged`, `ask.kill-other`,
+  `ask.git-exec`, `ask.dynamic-arg`;
+- every `unsure.*` rule.
+
+They live in `sandbox/review/rules.ts`.
 
 | Request | Request approval | Approve for me (default) | Full access |
 |---|---|---|---|
-| Read, edit, command inside the sandbox scope, network the sandbox allows | Runs | Runs | Runs |
+| Read, edit, command inside the sandbox scope; network the sandbox allows | Runs | Runs | Runs |
 | Directory outside the scope (`directory`) | Ask | Review model | Auto-grant, recorded |
 | New host while the network is an allowlist (`host`) | Ask | Review model | Auto-grant within the network ceiling, recorded |
-| Private/LAN address or another loopback port (`private-endpoint`) | Ask | Review model | Auto-grant if private grants are allowed, recorded |
-| Run this call outside the sandbox (`outside-sandbox`) | Ask | Review model | Auto-grant if the outside-sandbox ceiling allows, recorded |
+| Run this call outside the sandbox (`outside-sandbox`): also the only way to reach private, LAN, loopback, link-local and metadata addresses, the sockets and the protected paths | Ask | Review model | Auto-grant within the outside-sandbox ceiling, recorded |
 | Sensitive command | Ask | Review model | Runs, recorded (unchanged from today) |
-| Fixed deny (rule `deny.*`, platform/org deny, protected paths inside the sandbox) | Deny | Deny | Deny |
-| Crossing beyond a ceiling | Unavailable: actionable error naming the layer | Same | Same |
+| Fixed deny (rule `deny.*`, a platform or org deny, protected paths inside the sandbox) | Deny | Deny | Deny |
+| Crossing beyond a ceiling | Unavailable: an actionable error that names the layer | Same | Same |
 
-The review model's verdict is final only as an allow or a deny. Unavailable, unsure, a failing
-classifier or an unmapped review purpose asks the person (today's `decidePermission`). Its deny stays
-a deny. The review model sits **behind** the fixed denies: `ReviewService.decide` evaluates the rule
-table first and a `deny.*` hit returns before `decidePermission` runs (`review.service.ts:387-394`);
-a call grant can never add a protected path to the sandbox scope (the candidate builder refuses it,
-admission re-checks it, and the device intersects it again). A prompt-injected allow therefore never
-crosses a fixed deny.
+The review model's verdict counts only when it is an allow or a deny. An unavailable or unsure
+model, a failing classifier or an unmapped review purpose all ask the person (today's
+`decidePermission`). A deny from the model stays a deny.
 
-**Sensitive consent under Full access** stays skipped, as today. It does not conflict with the new
-model: the sandbox still holds the protected paths and the minimal environment, so `sudo` or a
-credential read inside the sandbox fails by enforcement; doing it for real needs an outside-sandbox
-crossing, which the outside-sandbox ceiling bounds. Every skip is recorded (`decisionSource:
-"full-access"`, crossing kind `sensitive`).
+**The review model sits behind the fixed denies.** `CommandReviewService.decide` evaluates the rule
+table first, and a `deny.*` hit returns before `decidePermission` runs. A directory grant can never
+add a protected path to the scope: the candidate builder refuses it, admission checks again, and
+the device intersects again. A prompt-injected allow therefore never crosses a fixed deny.
 
-**Unattended runs** (scheduled tasks, `facts.unattended`) use Request approval with every ask turned
-into a deny, as today. They get the same sandbox. Their crossings are limited to the scheduled task's
-explicit grants (`scheduled_task_grants` network hosts); they never escalate outside the sandbox and
-never inherit a chat's Full access.
+**Sensitive consent under Full access** stays skipped, as today. This does not conflict with the new
+model. The sandbox still holds the protected paths and the minimal environment, so `sudo` or a
+credential read inside the sandbox fails by enforcement. Doing either for real needs an
+outside-sandbox crossing, which the ceiling bounds. Every skip is recorded with crossing kind
+`sensitive`.
 
-**Sub-agents** resolve the root's profile live. Their directory, host and private-endpoint crossings
-use the root's approver: the root owner, the review model, or auto under Full access. Their
-outside-sandbox escalations are refused with an actionable error ("ask the parent conversation to
-run it"): a sub-agent cannot grant itself escalation, and a background child has no person watching.
-Calls by another account (a shared viewer, a channel guest) never escalate and never get a crossing
-issued; `reviewCall` already refuses a device call by a non-owner.
+**Unattended runs** (scheduled tasks) use Request approval with every ask turned into a deny, as
+today. They get the same sandbox. Their crossings are limited to the task's explicit host grants.
+They never escalate (the merged `escalationRefusal`) and never inherit a chat's Full access.
+
+**Sub-agents** resolve the root's profile live:
+
+- Their `directory` and `host` crossings use the root's approver.
+- Their `outside-sandbox` escalation is decided by the person under Request approval and by the
+  review model under Approve for me **and under Full access**. A sub-agent's escalation is never
+  auto-granted. This keeps the merged rule ("only the person or the review model approves, never
+  the agent itself") now that Full access really auto-grants.
+- Another account's call never gets a crossing; `reviewCall` refuses a device call by a non-owner.
 
 ## Fixed denies and the minimal environment
 
-These hold under every profile, Full access included:
+These hold under every profile, Full access included.
 
-- **Protected paths inside the sandbox.** The owner-denied secret paths
-  (`DEVICE_DENIED_SECRET_PATHS`: `~/.ssh`, `~/.aws`, gcloud, `.azure`, `.kube`,
-  `.docker/config.json`, `.netrc`, `.gnupg`, browser profiles, `gh`, `.git-credentials`, `.npmrc`,
-  `.pypirc`, Keychains), the device state directory, and the persistence vectors: the mandatory write
-  denies (`SANDBOX_MANDATORY_WRITE_DENIES`: shell rc files, `.git/hooks`, `.git/config` and the rest
-  of the list) plus, added by this change, `~/Library/LaunchAgents`, `~/Library/LaunchDaemons`,
-  `~/.config/systemd/user`, `~/.config/autostart` and the user crontab spool (crontab itself needs a
-  setuid helper the sandbox refuses). No directory grant covers them; a proposal that would reaches
-  `unsupported` with a message offering the outside-sandbox escalation.
-- **Only an explicit per-call escalation outside the sandbox reaches them:** Request approval asks,
-  Approve for me goes to the review model, Full access auto-grants only within the outside-sandbox
-  ceiling. Rule-table `deny.*` hits (`deny.secret-exfil`, `deny.root-destroy`, `deny.tooling-edit`)
-  stay denies even for an escalated call.
-- **Minimal environment.** A sandboxed command never inherits the device program's environment. It
-  gets `PATH`, `LANG`, `HOME` (the working root), a private `TMPDIR`/`TMP`/`TEMP`, the tool homes the
-  device detects (`restrictedToolHomes`), the proxy variables and the call's own `env`. This is
-  today's restricted environment (`operation-worker.ts:704-714`, `linux-operation-worker.ts:141-147`),
-  now used by Full access too (which today inherits `process.env`). With the network open,
-  exfiltration is therefore limited to what the sandbox can read: the project, the workspace and the
-  readable tool directories, never the device's secrets, tokens or protected paths.
-- An escalated call (outside the sandbox) gets the device program's environment minus every
-  `CAPYBARA_*` variable and the device credential, because it runs as the owner by definition.
+**Protected paths inside the sandbox:**
 
-## Device settings model
+- the owner-denied secret paths (`DEVICE_DENIED_SECRET_PATHS`): `~/.ssh`, `~/.aws`, gcloud,
+  `.azure`, `.kube`, `.docker/config.json`, `.netrc`, `.gnupg`, browser profiles, `gh`,
+  `.git-credentials`, `.npmrc`, `.pypirc`, Keychains;
+- the device state directory;
+- the persistence vectors already in `SANDBOX_MANDATORY_WRITE_DENIES`: shell rc files,
+  `.git/hooks`, `.git/config` and the rest of that list;
+- the persistence vectors this change adds: `~/Library/LaunchAgents`, `~/Library/LaunchDaemons`,
+  `~/.config/systemd/user`, `~/.config/autostart` and the user crontab spool. `crontab` itself needs
+  a setuid helper, which the sandbox refuses.
+
+No directory grant covers a protected path. A proposal that would cover one returns `unsupported`,
+with a message offering the outside-sandbox escalation.
+
+**Only an explicit per-call escalation reaches the protected paths.** Request approval asks,
+Approve for me goes to the review model, and Full access auto-grants only within the outside-sandbox
+ceiling. Rule-table denies (`deny.secret-exfil`, `deny.root-destroy`, `deny.tooling-edit`) stay
+denies for an escalated call too, which the merged escalation already tests.
+
+**Minimal environment.** A sandboxed command never inherits the device program's environment. It
+gets:
+
+- `PATH` and `LANG`;
+- `HOME`, set to the working root;
+- a private `TMPDIR`, `TMP` and `TEMP`;
+- the tool homes the device detects (`restrictedToolHomes`);
+- the proxy variables;
+- the call's own `env`.
+
+This is today's restricted environment (`operation-worker.ts`, `linux-operation-worker.ts`). Full
+access now uses it too; today Full access inherits `process.env`. With the network open,
+exfiltration is therefore limited to what the sandbox can read: the project, the workspace and the
+readable tool directories. It never includes the device's secrets, tokens or protected paths.
+
+An escalated call runs as the owner by definition. It gets the device program's environment minus
+every `CAPYBARA_*` variable and the device credential.
+
+## Settings model
 
 ### Fields
 
 | Setting | Values | Meaning |
 |---|---|---|
-| Sandbox scope | `projectReach: "workspace" \| "os-user"` | Where a project root may live: under the device workspace, or anywhere the OS user can read (excluding protected paths). The scope of a call is always the selected project root, the workspace, scratch and tool directories, never all of `os-user`. Renames `restrictedProjectReach`. |
-| Sandbox network | `network: "open" \| "allowlist"` and `allowedDomains: string[]` | `open` = the public internet (section "Open network"). `allowlist` = only the listed hosts, plus per-call host grants. |
-| Private network | `privateNetwork: "allowed" \| "off"` | Whether a call can be granted a private/LAN endpoint or another loopback port. |
-| Outside the sandbox | `outsideSandbox: "allowed" \| "off"` (device owner: boolean) | Whether a call may be granted escalation outside the sandbox. Renames the "Full access ceiling". |
+| Sandbox network | `network: "open" \| "allowlist"`, `allowedDomains: string[]` | `open` is the public internet (section "Open network"). `allowlist` is only the listed hosts, plus per-call host grants. |
+| Outside the sandbox | `outsideSandbox: "allowed" \| "off"` (device owner: a boolean) | Whether a call may be granted escalation outside the sandbox. This is the renamed "Full access ceiling". |
+| Project reach | `restrictedProjectReach` | Unchanged: name, values, default, control and widening rule as today. |
 
 ### Layers, writers and intersection
 
-| Layer | Writer | Where | Defaults |
+| Layer | Writer | Keys | Defaults |
 |---|---|---|---|
-| Platform | super admin: startup config (env > file / Nacos), else the admin console (deployment settings) | `devices.outsideSandbox`, `devices.network.default`, `devices.network.ceiling`, `devices.privateNetwork`; host list `sandbox.limits.allowHosts` with `orgHosts`; kill switch `sandbox.limits.egress` | `allowed`, `open`, `open`, `allowed` |
-| Org | org admin, web session (narrow-only through the Platform tool or an API token, as today) | org settings `outsideSandbox`, `deviceNetwork { default?, ceiling?, base?, extraHosts?, excludedHosts? }`, `privateNetwork` | absent = follow the platform |
-| Device, local | the owner on the machine (`capybara-device sandbox …`) widens; the owner in a web session narrows | on-disk `policy.json` `ownerCeiling { outsideSandbox, projectReach, network, privateNetwork }` and `allowedDomains` | new install: `outsideSandbox: false`, `projectReach: "os-user"`, `network: "open"`, `privateNetwork: true` |
-| Device, cloud | the device owner or an org admin, web session, both directions within org/platform | `devices.network_mode`, `devices.network_hosts` | absent = follow the org |
+| Platform | the super admin: startup config (env > file / Nacos), else the admin console | `devices.outsideSandbox`, `devices.network.default`, `devices.network.ceiling`; the host list `sandbox.limits.allowHosts` with `orgHosts`; the kill switch `sandbox.limits.egress` | `allowed`, `open`, `open` |
+| Org | an org admin in a web session (only narrowing through the Platform tool or an API token, as today) | `outsideSandbox`, `deviceNetwork { default?, ceiling?, base?, extraHosts?, excludedHosts? }` | absent = follow the platform |
+| Device, local | the owner on the machine (`capybara-device ceiling set`) widens; the owner in a web session narrows | on-disk `ownerCeiling { outsideSandbox, restrictedProjectReach, network }` and `allowedDomains` | new install: `outsideSandbox: false`, `network: "open"`, reach as today |
+| Device, cloud | the device owner or an org admin in a web session, both directions within the org and platform ceilings | `devices.network_mode`, `devices.network_hosts` | absent = follow the org |
 
-Effective values, computed by one pure function `effectiveDeviceSandbox(platform, org, device,
-provider)` in the new `packages/kernel/src/sandbox/device-sandbox.ts` and mirrored on the device by
-`intersectOperation`:
+The effective values come from one pure function, `effectiveDeviceSandbox(platform, org, device,
+provider)`, in the new `packages/kernel/src/sandbox/device-sandbox.ts`. The device mirrors it in
+`intersectOperation`.
 
-- `outsideSandbox` = platform ∧ org ∧ device owner ∧ provider `outsideSandbox` (an instance-boundary
-  provider has none).
-- network ceiling = the narrower of platform and org `ceiling` (`allowlist` < `open`), and
-  `allowlist` when the kill switch is `none` (with an empty list). Network mode = device choice ??
-  org default ?? platform default, clamped to the ceiling, then clamped to the provider's outer
-  network for a cloud device.
-- allowlist hosts: when the ceiling is `open` (the owner chose the allowlist), the owner's
-  `allowedDomains` ∪ the org's effective hosts (`orgEffectiveHosts`, platform `allowHosts` ± org
-  `extraHosts`/`excludedHosts`); when the ceiling forces `allowlist`, the org's effective hosts, and
-  the owner's hosts only where those cover them. A per-call host grant is possible under `orgHosts:
-  extend`; under `within` only for hosts the list covers (else unavailable: "an admin adds the host").
-- `privateNetwork` = platform ∧ org ∧ device; always off for an instance-boundary provider (its outer
-  network blocks private ranges).
-- `projectReach` = the owner's value (local); cloud: the whole instance.
+- **`outsideSandbox`:** allowed only when the platform, the org, the device owner and the provider
+  all allow it. An instance-boundary provider never does.
+- **Network ceiling:** the narrower of the platform and org ceilings, where `allowlist` is narrower
+  than `open`. It is `allowlist` with an empty list when the kill switch is `none`.
+- **Network mode:** the device's choice, else the org default, else the platform default. It is then
+  clamped to the ceiling, and for a cloud device also to the provider's outer network.
+- **Allowlist hosts when the ceiling is `open`** (the owner chose the allowlist): the owner's
+  `allowedDomains`, plus the org's effective hosts (`orgEffectiveHosts`).
+- **Allowlist hosts when the ceiling forces `allowlist`:** the org's effective hosts, plus those of
+  the owner's hosts the org's list covers.
+- **Per-call host grant:** possible under `orgHosts: extend`. Under `within`, only for hosts the list
+  covers; otherwise it is unavailable ("an admin adds the host").
 
-The local device intersects every request with its on-disk ceiling even if the kernel's view is
-stale (unchanged rule). The web can narrow a local device's ceiling (`network` to `allowlist`,
-removing hosts, `privateNetwork` off, `outsideSandbox` off, reach to `workspace`) through the v3
-`policy` op; widening any of them happens only on the machine. A cloud device has no machine, so its
-owner or an org admin changes its network in both directions within the org and platform ceilings.
+The local device intersects every request with its on-disk ceiling even when the kernel's view is
+stale; that rule is unchanged.
+
+- The web can narrow a local ceiling through the v3 `policy` op: switch the network to `allowlist`,
+  remove hosts, or turn `outsideSandbox` off.
+- Widening happens only on the machine.
+- A cloud device has no machine, so its owner or an org admin changes its network in both
+  directions, within the ceilings.
 
 ### Why open is the shipped default
 
-Every device must be able to do development work: package installs, git over HTTPS, documentation
-fetches and API calls are routine, and an empty allowlist makes the default device useless. The
-sandbox still holds the filesystem, the environment is minimal, private ranges and the host's own
-services stay closed, so open public egress exposes only what the sandbox can read. An enterprise
-that needs egress control sets `devices.network.ceiling: allowlist` on the platform, or `deviceNetwork
-.ceiling: allowlist` on an org, and keeps its list in `allowHosts`/`extraHosts`.
+Every device must be able to do development work. Package installs, git over HTTPS, documentation
+fetches and API calls are routine, and an empty allowlist makes the default device useless.
 
-### Config keys and API fields (pre-0.1.0: renamed directly, no aliases)
+Open egress stays bounded. The sandbox holds the filesystem, the environment is minimal, and private
+ranges and the host's own services stay closed. So open public egress exposes only what the sandbox
+can read.
+
+An enterprise that needs egress control sets `devices.network.ceiling: allowlist` on the platform,
+or `deviceNetwork.ceiling: allowlist` on an org, and keeps its list in `allowHosts` / `extraHosts`.
+
+### Config keys and API fields
+
+Before 0.1.0 these are renamed directly, with no aliases.
 
 | Old | New |
 |---|---|
 | `devices.fullAccess` (`CAPYBARA_DEVICES__FULL_ACCESS`), admin `devicesFullAccess` | `devices.outsideSandbox` (`CAPYBARA_DEVICES__OUTSIDE_SANDBOX`), admin `devicesOutsideSandbox`; hot |
-| (none) | `devices.network.default`, `devices.network.ceiling` (`open \| allowlist`), `devices.privateNetwork` (`allowed \| off`); hot, published like the other permission keys |
+| (none) | `devices.network.default`, `devices.network.ceiling` (`open \| allowlist`); hot, published like the other permission keys |
 | org `fullAccess` | org `outsideSandbox` |
-| org `cloudNetwork { mode, base, extraHosts, excludedHosts }` | org `deviceNetwork { default, ceiling, base, extraHosts, excludedHosts }`, applying to local and cloud devices |
-| (none) | org `privateNetwork` |
-| local `ownerCeiling { fullAccess, restrictedProjectReach }` | `ownerCeiling { outsideSandbox, projectReach, network, privateNetwork }` |
-| wire `DeviceOwnerCeiling { fullAccess, restrictedAllowedDomains, restrictedProjectReach }` | `{ outsideSandbox, network, privateNetwork, allowedDomains, projectReach }` |
-| `devices.owner_full_access` (cloud) | `devices.network_mode`, `devices.network_hosts` (cloud has no outside-sandbox) |
+| org `cloudNetwork { mode, base, extraHosts, excludedHosts }` | org `deviceNetwork { default, ceiling, base, extraHosts, excludedHosts }`, for local and cloud devices |
+| local `ownerCeiling { fullAccess, restrictedProjectReach }` | `ownerCeiling { outsideSandbox, restrictedProjectReach, network }` |
+| wire `DeviceOwnerCeiling { fullAccess, restrictedAllowedDomains, … }` | `{ outsideSandbox, network, allowedDomains, restrictedProjectReach, revision, sequence, version }` |
+| cloud `devices.owner_full_access` | `devices.network_mode`, `devices.network_hosts` (a cloud device has no outside) |
 | errors `org/deployment/device.full_access_not_allowed` | `*.outside_sandbox_not_allowed`; new `*.network_not_allowed` for a mode above the ceiling |
-| `capybara-device ceiling set --full-access` | `capybara-device sandbox set --outside-sandbox on\|off --network open\|allowlist --private-network on\|off --project-reach …` |
-| permission facts `fullAccessCeiling`, `broadProjectReach` | `outsideSandboxCeiling`, `projectReach` |
+| `capybara-device ceiling set --full-access` | `capybara-device ceiling set --outside-sandbox on\|off --network open\|allowlist` |
+| facts `fullAccessCeiling`, `escalationRefusal` text "Full access ceiling" | `outsideSandboxCeiling`; texts say "running outside the sandbox" |
 
-The old keys are refused with a conversion message (`config/load.ts`), and `capybara config
-migrate-permissions` converts file and Nacos documents. Stored values are converted, not aliased:
-`convertStoredPermissionKeys` (`sandbox/platform-full-access.ts:222`, which moves to
-`sandbox/device-sandbox-settings.ts`) gains the conversions below, and the device's strict policy
-parser converts an old `policy.json` once on start. The permission config fingerprint covers the new
-keys, so a deployment that changes them activates with `--activate-permission-config` (config
-activation design, unchanged mechanism).
+**Conversion of old keys:**
+
+- `config/load.ts` refuses the old config keys with a conversion message.
+- `capybara config migrate-permissions` converts file and Nacos documents.
+- Stored values are converted, not aliased. `convertStoredPermissionKeys` gains the conversions in
+  section "Migration"; it moves from `sandbox/platform-full-access.ts` to
+  `sandbox/device-sandbox-settings.ts`.
+- The device's strict policy parser converts an old `policy.json` once on start.
+- The permission config fingerprint covers the new keys. A deployment that changes them activates
+  with `--activate-permission-config`; that mechanism is unchanged.
 
 ## Open network
 
 `open` means the public internet. Every sandboxed connection is decided on the **resolved address**
-by the operation's own proxy (macOS SRT, the Linux forwarder, a provider's egress proxy); the proxy
-dials the address it checked, so DNS rebinding cannot swap it. An IP literal is classified by the
-same rules as a resolved name (SRT skips its resolved-address guard for literals, so the worker adds
-explicit `deniedDomains` CIDR rules). Closed in open mode:
+by the operation's own proxy: macOS SRT, the Linux forwarder, or a provider's egress proxy. The proxy
+dials the address it checked, so DNS rebinding cannot swap it.
+
+An IP literal is classified by the same rules as a resolved name. SRT skips its resolved-address
+guard for literals, so the macOS worker adds explicit `deniedDomains` CIDR rules.
+
+Closed in open mode, and reachable only by running outside the sandbox:
 
 - private and LAN ranges: `10/8`, `172.16/12`, `192.168/16`, CGNAT `100.64/10`, IPv6 ULA `fc00::/7`;
 - link-local and metadata: `169.254/16` (including `169.254.169.254`), `fe80::/10`, `fd00:ec2::254`;
-- loopback and this host's own interface addresses: another process's localhost port; the command's
-  **own** loopback listener stays reachable within the operation (Linux: the broker allows connect to
-  ports the operation itself bound; macOS: the separate loopback fix);
+- loopback and this host's own interface addresses, so another process's localhost port is closed.
+  The command's **own** TCP loopback listener stays reachable within the operation. On Linux the
+  broker allows a connect to ports the operation itself bound. On macOS this comes with the separate
+  loopback-listening fix;
 - the Docker and kernel sockets: UNIX sockets outside the write roots stay refused
-  (`/var/run/docker.sock`, `~/.docker/run/docker.sock`, `/run/containerd`), as does TCP to them via
-  loopback;
-- multicast, broadcast, `0/8`, NAT64 prefixes.
+  (`/var/run/docker.sock`, `~/.docker/run/docker.sock`, `/run/containerd`), and so does TCP to them
+  over loopback;
+- multicast, broadcast, `0/8` and the NAT64 prefixes.
 
-`private-endpoint` crossings (one `host:port` or `ip:port` each, at most 16 per call) re-open a single
-private or loopback endpoint for one call. Link-local, metadata and sockets need an outside-sandbox
-escalation (question 3). Traffic is proxy-mediated: HTTP(S) and SOCKS-aware clients work on any TCP
-port; a client that ignores proxy variables (plain `ssh`) does not connect from the sandbox, which
-the tool description states (`GIT_SSH_COMMAND` with a SOCKS `ProxyCommand` works). One shared
-classification table lives in the SDK (`packages/plugin-sdk/src/network-classes.ts`, pure data plus
-`classifyAddress`), consumed by the device workers and checked against the kernel's
-`net/public-address.ts` by a unit test, so the classes cannot drift.
+Traffic goes through the proxy. HTTP(S)- and SOCKS-aware clients work on any TCP port. A client that
+ignores proxy variables, such as plain `ssh`, does not connect from the sandbox. The `Bash`
+description says so, and notes that `GIT_SSH_COMMAND` with a SOCKS `ProxyCommand` works.
+
+The address classes live in one SDK table: `packages/plugin-sdk/src/network-classes.ts`, pure data
+plus `classifyAddress`. The device workers consume it. A unit test checks it against the kernel's
+`net/public-address.ts`, and a hash test checks it against the Linux forwarder's copy, so the
+classes cannot drift.
 
 ## SDK and protocol
 
-- `SandboxNetworkScope` becomes `none | { allowlist, hosts, privateEndpoints } | { "open-public",
-  privateEndpoints } | environment`; `environment` is legal only with `filesystem: device`, and that
-  pair only for an escalated call.
-- `SandboxOperationScope` gains `escalated: boolean`. The profile stays in the scope for audit only;
+- `SandboxNetworkScope` gains `{ kind: "open-public" }`.
+- `environment` is legal only together with `filesystem: device`. That pair is the escalated call,
+  recognized by `isFullExecutionScope` as merged. The profile stays in the scope for audit only;
   providers never derive enforcement from it.
-- `SandboxPermissionSupport` version 2: `{ version: 2, boundary: "operation" | "instance",
-  restricted: {filesystem, network, native, concurrentScopes} | null, network: { openPublic,
-  allowlist, perOperationHosts, privateEndpoints }, outsideSandbox: boolean, background: boolean,
-  unavailableReason? }`. `boundary: "instance"` with `restricted: null` is a supported device whose
-  scope is the instance.
-- `SandboxLimits.mode` is removed; lifecycle create/update carries only resources and the outer
+- `SandboxPermissionSupport` becomes version 2:
+  `{ version: 2, boundary: "operation" | "instance", restricted: {filesystem, network, native,
+  concurrentScopes} | null, network: { openPublic, allowlist, perOperationHosts }, outsideSandbox,
+  background, unavailableReason? }`. `boundary: "instance"` with `restricted: null` is a supported
+  device whose scope is the whole instance.
+- `SandboxLimits.mode` is removed. Lifecycle create and update carry only resources and the outer
   network.
-- `DeviceOwnerCeiling` (device protocol) takes the new fields; `DeviceOwnerCeilingNarrowing` can
-  narrow each. If protocol 3 has not shipped in a release when this lands, it changes in place;
-  otherwise it becomes protocol 4 with no fallback, paired kernel/device release as in Phase 8.6.
-- `pnpm gen:sdk-api`, changesets on `@capybara-hq/plugin-sdk`, `@capybara-hq/testing`,
-  `@capybara-hq/kernel`, `@capybara-hq/device`.
+- The device protocol's `DeviceOwnerCeiling` takes the new fields, and `DeviceOwnerCeilingNarrowing`
+  can narrow each of them. If R2 shipped protocol 3, this is protocol 4: a paired kernel and device
+  release with no fallback, as in Phase 8.6.
+- `pnpm gen:sdk-api`, plus changesets on `@capybara-hq/plugin-sdk`, `@capybara-hq/testing`,
+  `@capybara-hq/kernel` and `@capybara-hq/device`.
 
 ## Kernel: decision, admission and records
 
-- **Candidate building runs for every profile.** `reviewPermissionCall` stops short-circuiting Full
-  access to in-scope (`pipeline.ts:1940-1952`), and an unsupported device no longer sends Full access
-  to the legacy review (`:1920-1933`). `buildPermissionCandidate` adds `private-endpoint` proposals
-  (literal URL hosts that resolve to, or are, private addresses; the explicit `privateEndpoints`
-  proposal of the network ask) and keeps the escalation kind from `perm/call-escalation`; its
-  protected-path refusal text offers escalation instead of "choose Full access"
-  (`permission-candidate.ts:91,110-113`).
-- **One approver function** (`approverForProfile`, introduced by `perm/call-escalation`) maps profile
-  → `person | review-model | none` for every crossing kind. `decidePermission` returns `allow` with
-  `decisionSource: "full-access"` for `none`, but a call with a candidate continues to grant issuance.
-- **Full access issues a grant.** `PermissionCallGrants.issueLocked` accepts `{ source: "full-access",
-  reviewEventSeq, decidedBy: null }`. The pipeline appends `permission_reviewed` (outcome allow, kind,
-  decision source `full-access`), writes the audit row `permission.crossing_auto_granted` with the
-  kind, and inserts the grant, in one fenced transaction under the shared authority lock. The binding
-  hash makes issuance exactly-once across replicas. The issue check re-reads current ceilings: an
-  `outside-sandbox` grant needs `outsideSandboxCeiling`, a `private-endpoint` grant needs
-  `privateNetwork`, a `host` grant needs the network ceiling rules above, and an `unattended`,
-  sub-agent-escalation or non-owner call is refused.
-- **Admission.** `intersectPermissionScope` (`operation-authority.ts:128`) no longer branches on the
-  profile. Every call gets `filesystem: scoped` (base roots ∪ granted directories, protected paths
-  excluded) and the device network: `open-public` (plus granted private endpoints) or `allowlist`
-  (base hosts ∪ granted hosts, plus private endpoints), or `none` under the kill switch. Only a call
-  holding an `outside-sandbox` grant gets `device` + `environment` and `escalated: true`, and only
-  while `outsideSandboxCeiling` holds. `withheldScope` reads support v2. Full consent is no longer an
-  admission input; it only keeps the profile selected (`viewWithAccess`).
-- **Ceiling writes.** `PermissionCeilingWrites` gains the narrowing kinds `network-allowlist`,
-  `hosts-removed`, `private-network-off`, `outside-sandbox-off`, `project-reach-workspace`. Each bumps
-  its epoch and revokes affected admitted/started work in the same transaction: open-network work on
-  `network-allowlist`, escalated work on `outside-sandbox-off`, private-endpoint work on
-  `private-network-off`. Widening any of them resets Full consent (Full access would auto-approve
-  more). A profile change alone never revokes started work (unchanged).
-- **Consent fingerprint.** `scopeRevision` (`permission-facts.ts:451`) hashes the device identity,
-  project binding and the crossing ceilings (`outsideSandbox`, network ceiling and mode,
-  `privateNetwork`, `projectReach`, the epochs), no longer the old `mode/allowedMode`.
+**Candidate building runs for every profile.**
+
+- `reviewPermissionCall` stops short-circuiting Full access to in-scope (`pipeline.ts`, the
+  `facts.profile === "full-access"` branches, including the escalation-hint guard).
+- An unsupported device no longer routes Full access to the legacy review.
+- The candidate builder's protected-path refusal offers escalation instead of "choose Full access".
+
+**One approver function.** The merged `approverForProfile` maps profile → `person | review-model |
+none` for `directory`, `host` and `outside-sandbox` crossings. A sub-agent's escalation is the one
+exception: `none` becomes `review-model`. For `none`, `decidePermission` returns allow with
+`decisionSource: "full-access"`, and a call with a candidate continues to grant issuance.
+
+**Full access issues a grant.** `PermissionCallGrants.issueLocked` accepts `{ source: "full-access",
+reviewEventSeq, decidedBy: null }`. The pipeline writes the following in one fenced transaction under
+the shared authority lock:
+
+- a `permission_reviewed` event (outcome allow, the crossing kind, decision source `full-access`);
+- an audit row `permission.crossing_auto_granted` with the kind;
+- the grant itself.
+
+The binding hash makes issuance exactly-once across replicas. Issuance re-reads the current
+ceilings:
+
+- an `outside-sandbox` grant needs `outsideSandboxCeiling`;
+- a `host` grant needs the network rules above;
+- unattended calls, non-owner calls and a sub-agent's auto-escalation are refused.
+
+**Admission.** `intersectPermissionScope` no longer branches on the profile.
+
+- Every call gets `filesystem: scoped`: the base roots plus granted directories, with protected
+  paths excluded. On an instance-boundary device the scope is the whole instance.
+- The network is `open-public`, or `allowlist` (base hosts plus granted hosts), or `none` under the
+  kill switch.
+- Only a call holding an `outside-sandbox` grant gets `device` + `environment`, and only while
+  `outsideSandboxCeiling` holds.
+- `withheldScope` reads support v2.
+- Full consent is no longer an admission input. It only keeps the profile selected
+  (`viewWithAccess`).
+
+**Ceiling writes.** `PermissionCeilingWrites` gains the narrowing kinds `network-allowlist` and
+`hosts-removed`; the existing Full-ceiling kind becomes `outside-sandbox-off`. Each narrowing bumps
+its epoch and, in the same transaction, revokes the affected admitted or started work:
+
+- open-network work on `network-allowlist`;
+- escalated work on `outside-sandbox-off`, as the merged predicate already does.
+
+Widening any of them resets Full consent, because Full access would then auto-approve more. A
+profile change alone still never revokes started work.
+
+**Consent fingerprint.** `scopeRevision` (`permission-facts.ts`) hashes the device identity, the
+project binding and the crossing ceilings: `outsideSandbox`, the network ceiling and mode,
+`restrictedProjectReach`, and the epochs. It no longer hashes `mode` / `allowedMode`.
 
 ## Replay and permission context
 
-- `PermissionContext` (events schema, today `PermissionContextV1Schema`, `conversations/events.ts:139`)
-  becomes version 2: `selectedProfile`, `effectiveProfile`, `execution`, `inherited`, `deviceId`,
-  `scopeRevision`, `authorityRevision`, `availability`, and `sandbox { boundary, location,
-  workingRoot, projectReach, network: { kind: "none" | "allowlist" | "open-public", hostsCount },
-  privateNetwork, outsideSandbox, outerNetwork }`. The refine that tied Full access to device +
-  environment is removed; selected Full access reads effective Full access or Approve for me (consent
-  mismatch), unchanged.
-- The model-visible text (`runtime/context/permission-profile.ts:66-134`) states the sandbox once
-  and the approver per crossing kind, and for Full access: "commands run in the sandbox; crossings
-  this device allows are approved automatically; to run a command outside the sandbox set
-  `sandbox: "escalated"` with a justification" (only when available).
-- `DriftReason` gains `device_sandbox_changed` for a recorded context whose `sandbox` block differs
-  from the previous one; `permission_profile_changed` stays for profile changes.
-- `ReviewRecord` gains `crossing?: "directory" | "host" | "private-endpoint" | "outside-sandbox" |
-  "sensitive"`; `decisionSource` keeps its values. Replay uses the recorded decision, never today's
-  settings (unchanged). Before 0.1.0 there are no frozen copies: the zero-drift fixtures are
-  regenerated in the same change and `reconstruct.test.ts` must pass before and after.
+- `PermissionContext` (today `PermissionContextV1Schema` in `conversations/events.ts`) becomes
+  version 2:
+  - kept fields: `selectedProfile`, `effectiveProfile`, `execution`, `inherited`, `deviceId`,
+    `scopeRevision`, `authorityRevision`, `availability`;
+  - new block: `sandbox { boundary, location, workingRoot, network: { kind: "none" | "allowlist" |
+    "open-public", hostsCount }, outsideSandbox, outerNetwork }`.
+
+  The refine that tied Full access to device + environment is removed. A selected Full access still
+  reads as effective Full access, or as Approve for me on a consent mismatch.
+- The model-visible text (`runtime/context/permission-profile.ts`) states the sandbox once and then
+  the approver per crossing kind. For Full access it says: "commands run in the sandbox; crossings
+  this device allows are approved automatically; to run a command outside the sandbox set `sandbox:
+  "escalated"` with a justification". The last clause appears only where escalation is available.
+- `DriftReason` gains `device_sandbox_changed`, for a recorded context whose `sandbox` block differs
+  from the previous one. `permission_profile_changed` stays for profile changes.
+- `ReviewRecord` gains `crossing?: "directory" | "host" | "outside-sandbox" | "sensitive"`.
+- Replay uses the recorded decision, never today's settings. Before 0.1.0 there are no frozen
+  copies: the zero-drift fixtures are regenerated in the same change, and `reconstruct.test.ts` must
+  pass before and after.
 
 ## UI
 
-Composer picker (`apps/web/src/components/conversation/PermissionPicker.tsx`), three neutral rows,
-unchanged order and icons; `chat.permission.description.*`:
+**Composer picker** (`apps/web/src/components/conversation/PermissionPicker.tsx`): three neutral
+rows, order and icons unchanged. The `chat.permission.description.*` keys become:
 
 | Profile | zh | en |
 |---|---|---|
@@ -336,122 +389,188 @@ unchanged order and icons; `chat.permission.description.*`:
 | 帮我批准 / Approve for me | 同样的沙箱；超出范围的请求交给审查模型，拿不准时问你。 | Same sandbox; a review model decides requests to go beyond it and asks you when unsure. |
 | 完全访问 / Full access | 同样的沙箱；在此设备允许的范围内自动批准，不再询问。 | Same sandbox; approves whatever this device allows, without asking. |
 
-Full access dialog (`chat.permission.full.*`): title 在 {device} 上使用完全访问？ / Use Full access on
-{device}?; body: 命令仍在沙箱中运行。智能体超出沙箱的请求（项目外的目录、新的网络主机、内网地址{outside}）会自动批准并记录，不再询问你。 /
-Commands still run in the sandbox. The agent's requests to go beyond it (directories outside the
-project, new network hosts, private addresses{outside}) are approved automatically and recorded,
-without asking you.; `{outside}` = ，以及在沙箱外运行命令 / , and running commands outside the
-sandbox, only when the device allows it; limits: 受保护的路径、平台和组织的禁止项仍然有效。 /
-Protected paths and platform and organization denials still apply. Remove `reason.ceiling` and
-`reason.restrictedUnsupported` for Full access (it is never unavailable for a ceiling now).
+**Full access dialog** (`chat.permission.full.*`), shorter than today:
 
-Device page (`apps/web/src/app/(app)/devices/[id]/view.tsx`; `DeviceModeSection.tsx` becomes
-`DeviceSandboxSection.tsx`), a `FormSection` titled 沙箱 / Sandbox, one box, no nesting:
+| Part | zh | en |
+|---|---|---|
+| title | 在 {device} 上使用完全访问？ | Use Full access on {device}? |
+| body | 命令仍在沙箱中运行；智能体超出沙箱的请求{outside}会自动批准并记录。 | Commands still run in the sandbox; the agent's requests to go beyond it{outside} are approved automatically and recorded. |
+| `{outside}`, only when the device allows running outside the sandbox | （包括在沙箱外运行命令） | (including running commands outside the sandbox) |
+| limits | 受保护的路径、平台和组织的禁止项仍然有效。 | Protected paths and platform and organization denials still apply. |
 
-- 网络 / Network: 开放互联网（内网除外） / Open internet (private networks blocked) | 白名单 /
-  Allowlist; the host list editor when allowlist; a disabled option says which layer set the ceiling
-  (平台已限定为白名单（超级管理员设置） / Limited to the allowlist by the platform (super admin)).
-- 内网访问 / Private network: 可按次批准 / Can be granted per call | 关闭 / Off.
-- 在沙箱外运行 / Run outside the sandbox: 允许 / Allowed | 关闭 / Off; for a local device, widening
-  shows the machine command (`capybara-device sandbox set --outside-sandbox on`) in the existing
-  keycap block; cloud: not shown (no outside).
-- 项目范围 / Project reach: 工作区 / Workspace | 整个用户目录 / Anywhere in the user's home.
-- The nameplate mark becomes neutral 可在沙箱外运行 / 仅沙箱 (Can run outside the sandbox / Sandbox
-  only). Recent changes list each setting change with from/to.
+Remove `reason.ceiling` and `reason.restrictedUnsupported` for Full access: it is never unavailable
+because of a ceiling now.
 
-Org settings (`/settings/sandbox`) and platform settings (`/admin/settings`) get the same three
-groups as defaults and ceilings; the platform labels say 平台 and 超级管理员, never 企业. Approval cards
-(`ApprovalCard.tsx`, `PermissionScopeDetail.tsx`) show `privateEndpoints` and the escalation
-justification; the conversation timeline shows an auto-granted crossing as a neutral line (已自动批准：…
-/ Approved automatically: …). Reads use `defineQuery`, writes `useAppMutation`; apps/web writes no
-styles (writing-web-ui).
+**Device page** (`apps/web/src/app/(app)/devices/[id]/view.tsx`, `DeviceModeSection.tsx`). The
+existing settings section shows two groups, in one box with no nesting:
+
+- **网络 / Network:** 开放互联网（内网除外） / Open internet (private networks blocked), or 白名单 /
+  Allowlist with the host list editor.
+  - A disabled option names the layer that set the ceiling, e.g. 平台已限定为白名单（超级管理员设置） /
+    Limited to the allowlist by the platform (super admin).
+  - A local device widens only on the machine, shown in the existing keycap block.
+- **在沙箱外运行 / Run outside the sandbox:** 允许 / Allowed, or 关闭 / Off.
+  - The local machine command is `capybara-device ceiling set --outside-sandbox on`.
+  - Not shown for a cloud device.
+- **Project reach** keeps today's control.
+- The nameplate mark becomes the neutral 可在沙箱外运行 / 仅沙箱 (Can run outside the sandbox / Sandbox
+  only).
+- Recent changes show each setting change with its from and to values.
+
+**Other pages:**
+
+- Org settings (`/settings/sandbox`) and platform settings (`/admin/settings`) get the same two
+  groups, as default and ceiling. The labels say 平台 and 超级管理员, never 企业.
+- The conversation timeline shows an auto-granted crossing as a neutral line: 已自动批准：… /
+  Approved automatically: ….
+- Reads use `defineQuery` and writes `useAppMutation`; apps/web writes no styles (writing-web-ui).
 
 ## Migration
 
-- **Platform and org settings** (stored-key conversion on read and on the next write, as
-  `convertStoredPermissionKeys` does today): `devicesFullAccess` → `devicesOutsideSandbox`; org
-  `fullAccess` → `outsideSandbox`; org `cloudNetwork.mode: "allowlist"` → `deviceNetwork.ceiling:
-  "allowlist"` with `base/extraHosts/excludedHosts` kept, `mode: "open"` or absent → absent.
-- **Local devices** (device strict parser, once): `fullAccess: true` → `outsideSandbox: true,
-  network: "open"`; `fullAccess: false` → `outsideSandbox: false, network: "allowlist"` with the old
-  `allowedDomains`; `restrictedProjectReach` → `projectReach`; `privateNetwork: true`. No device gains
-  reach it did not have; the CLI prints how to open the network (`capybara-device sandbox set
-  --network open`). New installs get the open defaults.
-- **Cloud devices** (kernel migration, expand then contract): add `network_mode`, `network_hosts`;
-  copy the snapshot's `outer_network` where it was an allowlist; `owner_full_access` stops being read
-  and is dropped in a later migration (writing-migrations two-step).
-- **Conversations:** no data rewrite. The consent fingerprint changes, so a stored Full access
-  selection reads as Approve for me (`viewWithAccess`) until the owner confirms again, and the next
-  run records a context with `device_sandbox_changed`. Started work keeps its starting grant.
-- **Call grants:** migration adds `full-access` to the grant `source` check and a nullable
-  `private_endpoints` column (numbered after `perm/call-escalation`'s `0162`).
+The migration never widens.
+
+- **Platform and org settings:** stored keys are converted on read and on the next write, as
+  `convertStoredPermissionKeys` does today.
+  - `devicesFullAccess` → `devicesOutsideSandbox`.
+  - org `fullAccess` → `outsideSandbox`.
+  - org `cloudNetwork.mode: "allowlist"` → `deviceNetwork.ceiling: "allowlist"`, keeping `base`,
+    `extraHosts` and `excludedHosts`.
+  - `mode: "open"` or absent → absent.
+- **Local devices:** converted once by the device's strict parser.
+  - `fullAccess: true` → `outsideSandbox: true, network: "open"`.
+  - `fullAccess: false` → `outsideSandbox: false, network: "allowlist"` with the old
+    `allowedDomains`.
+  - No device gains reach it did not have before. The CLI prints how to open the network
+    (`capybara-device ceiling set --network open`).
+  - New installs get the open default.
+- **Cloud devices:** a kernel migration, expand then contract.
+  - Add `network_mode` and `network_hosts`.
+  - Copy the snapshot's `outer_network` where it was an allowlist.
+  - `owner_full_access` is no longer read; a later migration drops it (the writing-migrations
+    two-step).
+- **Conversations:** no data rewrite.
+  - The consent fingerprint changes, so a stored Full access selection reads as Approve for me until
+    the owner confirms again.
+  - The next run records a context with `device_sandbox_changed`.
+  - Started work keeps its starting grant.
+- **Call grants:** a migration adds `full-access` to the grant `source` check, numbered after
+  `0162`.
+
+## Later (cut from R3)
+
+- Per-call private-endpoint grants (`privateEndpoints`), and the platform, org and device
+  `privateNetwork` settings. Until then, private and LAN ranges and the host's other loopback ports
+  are closed in open mode and need outside-sandbox escalation.
+- Showing project reach in the new device settings layout, and renaming `restrictedProjectReach`.
+- Restricted UNIX-socket listening on macOS.
+- Operation-scoped (`boundary: "operation"`) cloud providers on the Linux runtime.
+- Per-call host grants on instance-boundary devices (they need per-operation proxy credentials).
 
 ## What changes in existing code and tests
 
-Kernel (`packages/kernel/src`): `tools/pipeline.ts` (`reviewPermissionCall`), `sandbox/review/
-{review.service,permission-candidate,classifier}.ts`, `sandbox/{permission-call-grants,
-permission-call-types,operation-authority,operation-authority-types,permission-facts,
-permission-ceiling-writes,modes}.ts`, `sandbox/platform-full-access.ts` → `device-sandbox-settings.ts`,
-new `sandbox/device-sandbox.ts`, `conversations/{permission-profiles.service,events}.ts`,
-`runtime/context/permission-profile.ts`, `runtime/permission-context.service.ts`,
-`evals/reconstruct.ts`, `config/{schema,load}.ts`, `orgs/{settings.service,cloud-network-setting}.ts`,
-`identity/settings.ts`, `devices/devices.service.ts`, `local-devices/{owner-report,policy-summary,
-device-policy.service,network-grants}.ts`, `tools/network-asks.ts`, `errors.ts`, `platform/ops/
-{devices,org-settings,admin,platform}.ops.ts`, a migration. The activation already built on
-`perm/w4-int` changes as follows: review order keeps fixed denies first but drops the Full-access
-skip; permission facts drop `fullAccessCeiling = mode auto ∧ allowedMode auto`; admission's
-`intersectPermissionScope` drops the profile branch; `platform-full-access` becomes the device
-sandbox settings reader. Device (`packages/device/src`): `state.ts`, `policy.ts` (`effectiveEgress`),
-`exec/operation-types.ts` (`intersectOperation`, `readStrictOwnerCeilingSync`), `exec/
-{operation-worker,mac-operation-backend,linux-agent,linux-operation-worker,linux-operation-backend,
-docker-operations}.ts`, `commands/{ceiling,policy,login}.ts`. SDK: `sandbox-operation.ts`,
-`device-protocol.ts`, `sandbox.ts` (`SandboxLimits`), `device-denied-paths.ts`, `sandbox-write-denies.ts`,
-`sandbox-linux-runtime-source.ts`, new `network-classes.ts`. Testing: `sandbox-permission-conformance.ts`.
-Web: the files named in "UI". Docs and skills: `AGENTS.md` (Sandboxes line), writing-sandbox-providers,
-writing-tools, writing-web-ui, writing-kernel-api, replay-evals, `docs/config.md`,
-`docs/deploy/upgrade.md`. Plugins repo: `sandbox-docker`, `sandbox-e2b` (instance-boundary operation
-factory, support v2).
+**Kernel** (`packages/kernel/src`):
 
-Tests that encode the old coupling and change: the conformance "Full access controls ... no
-restricted filters apply" cases (`sandbox-permission-conformance.ts:1020-1060`, the UNIX-socket Full
-control `:1003`) become escalated-call controls; `test/sandbox/operation-authority.test.ts`,
-`operation-scopes(.dual)`, `permission-wiring`, `platform-full-access`, `modes`,
-`cloud-permission-snapshot*`, `test/tools/permission-policy`, `call-policy`, `pipeline`,
-`test/sandbox/review-*`, `test/runtime/permission-context*`, `permission-activation`,
-`test/conversations/permission-profiles.http`, `test/sandbox/permission-profiles.dual`,
-`test/evals/reconstruct` fixtures, the device `operation-ceilings` and policy tests, and web
-`permission-picker`, `devices-mode`, `settings-sandbox`, `admin-settings`, `e2e/permission-profiles`.
+- `tools/pipeline.ts`;
+- `sandbox/review/{review.service,permission-candidate,classifier}.ts`;
+- `sandbox/{permission-call-grants,permission-call-types,operation-authority,
+  operation-authority-types,permission-facts,permission-ceiling-writes,modes,held-operations}.ts`;
+- `sandbox/platform-full-access.ts` → `device-sandbox-settings.ts`, and the new
+  `sandbox/device-sandbox.ts`;
+- `conversations/{permission-profiles.service,events}.ts`;
+- `runtime/context/permission-profile.ts`, `runtime/permission-context.service.ts`;
+- `evals/reconstruct.ts`;
+- `config/{schema,load}.ts`;
+- `orgs/{settings.service,cloud-network-setting}.ts`, `identity/settings.ts`;
+- `devices/devices.service.ts`;
+- `local-devices/{owner-report,policy-summary,device-policy.service}.ts`;
+- `tools/network-asks.ts`;
+- `errors.ts`;
+- `platform/ops/{devices,org-settings,admin,platform}.ops.ts`;
+- two migrations.
+
+**The activation already built on `perm/w4-int`:**
+
+- The review order keeps the fixed denies first but drops the Full access skip.
+- Permission facts drop `fullAccessCeiling = mode auto ∧ allowedMode auto`.
+- `intersectPermissionScope` in admission drops the profile branch.
+- `platform-full-access` becomes the device sandbox settings reader.
+- The merged escalation's ceiling check and texts are renamed.
+
+**Device** (`packages/device/src`):
+
+- `state.ts`;
+- `policy.ts` (`effectiveEgress`);
+- `exec/operation-types.ts` (`intersectOperation`, `readStrictOwnerCeilingSync`);
+- `exec/{operation-worker,mac-operation-backend,linux-agent,linux-operation-worker,
+  linux-operation-backend,docker-operations}.ts`;
+- `commands/{ceiling,login}.ts`.
+
+**SDK:**
+
+- `sandbox-operation.ts`;
+- `device-protocol.ts`;
+- `sandbox.ts`;
+- `device-denied-paths.ts`;
+- `sandbox-write-denies.ts`;
+- `sandbox-linux-runtime-source.ts`;
+- new `network-classes.ts`.
+
+**Testing:** `sandbox-permission-conformance.ts`.
+
+**Web:** the files named in "UI".
+
+**Docs and skills:** `AGENTS.md`, writing-sandbox-providers, writing-tools, writing-web-ui,
+writing-kernel-api, replay-evals, `docs/config.md`, `docs/deploy/upgrade.md`.
+
+**Plugins repo:** `sandbox-docker` and `sandbox-e2b` get an instance-boundary operation factory and
+support v2. This follows the R3 SDK release.
+
+**Tests that encode the old coupling and change:**
+
+- the conformance cases "Full access controls ... no restricted filters apply" and the UNIX-socket
+  Full control, which become escalated-call controls;
+- kernel: `test/tools/permission-escalation` ("Full access asks nobody: the call already runs
+  outside the sandbox"), `test/sandbox/{operation-authority,operation-scopes(.dual),
+  permission-wiring,platform-full-access,modes,cloud-permission-snapshot*,review-*}`,
+  `test/tools/{permission-policy,call-policy,pipeline}`, `test/runtime/permission-context*`,
+  `permission-activation`, `test/conversations/permission-profiles.http`,
+  `test/sandbox/permission-profiles.dual`, the `test/evals/reconstruct` fixtures;
+- device: `operation-ceilings` and the policy tests;
+- web: `permission-picker`, `devices-mode`, `settings-sandbox`, `admin-settings`,
+  `e2e/permission-profiles`.
 
 ## Risks and how tests prove the semantics
 
 | Risk | Proof |
 |---|---|
-| Full access silently keeps unsandboxed execution | Admission table test: every profile × device kind → scoped filesystem and non-`environment` network unless an `outside-sandbox` grant exists; conformance: a Full-profile call cannot read `~/.ssh`, write `~/.zshrc` or reach `10.0.0.1` |
-| A review-model allow crosses a fixed deny | Classifier fake that always allows: every fixed-deny class still denies under all profiles, escalated or not where the rule is `deny.*`; a directory proposal covering a protected path is `unsupported` before review |
-| Open network reaches private or host services | Device conformance on macOS SRT and Linux (Docker harness): public test target reachable; `10/8`, `100.64/10`, `fc00::/7`, `169.254.169.254`, another loopback port, `docker.sock`, an IP literal and a name resolving to a private address (rebinding fixture) all refused; the command's own loopback listener reachable |
-| Secrets leak through env | Conformance: a device env variable (`AWS_SECRET_ACCESS_KEY=sentinel`) is absent inside a sandboxed command under every profile |
-| Auto-grant issued twice or after narrowing | Dual-replica: two replicas race the same Full crossing → one grant row, one audit row; a ceiling narrowing races an auto-grant → either the grant is refused or the started work is revoked; network `open → allowlist` revokes running open-network work, sibling allowlist work survives |
-| Profile change and crossing race | Dual: Approve for me → Full while a card waits → card superseded, re-evaluated as auto-grant, executed once |
-| Unattended or sub-agent escalation | Unit + integration: scheduled run and sub-agent escalation refused with the actionable text; task-grant hosts still work |
-| Cloud honesty | Fake instance-boundary provider: all three profiles available, no directory/outside crossings offered, an allowlist host request answers "add it to the device's list" |
-| Drift | `reconstruct.test.ts` and `run-replay` before and after; a settings change between runs logs `device_sandbox_changed` |
-| UI | Web unit tests for the picker copy and device section; Playwright `permission-profiles.spec.ts`: picker rows, Full dialog with and without outside, network toggle, allowlist editing, auto-granted line in the timeline and audit |
+| Full access silently keeps unsandboxed execution | Admission table test: every profile × device kind gives a scoped filesystem and a non-`environment` network unless an `outside-sandbox` grant exists. Conformance: a Full-profile call cannot read `~/.ssh`, write `~/.zshrc` or reach `10.0.0.1` |
+| A review-model allow crosses a fixed deny | A classifier fake that always allows: every fixed-deny class still denies under all profiles. A directory proposal covering a protected path is `unsupported` before review |
+| Open network reaches private networks or host services | Device conformance on macOS SRT and on Linux (Docker harness). A public test target is reachable. Refused: `10/8`, `100.64/10`, `fc00::/7`, `169.254.169.254`, another loopback port, `docker.sock`, an IP literal, and a name that resolves to a private address (rebinding fixture). The command's own TCP loopback listener is reachable |
+| Secrets leak through the environment | Conformance: a device env variable (`AWS_SECRET_ACCESS_KEY=sentinel`) is absent inside a sandboxed command under every profile |
+| An auto-grant is issued twice or after narrowing | Dual-replica: two replicas race the same Full access crossing and produce one grant row and one audit row. A ceiling narrowing races an auto-grant: either the grant is refused or the started work is revoked. Network `open → allowlist` revokes running open-network work, while sibling allowlist work survives |
+| A profile change races a crossing | Dual: Approve for me → Full access while a card waits. The card is superseded, re-evaluated as an auto-grant, and executed once |
+| An unattended run or a sub-agent escalates | An unattended run is refused, as merged. A sub-agent's escalation under Full access goes to the review model, never auto. Task-grant hosts still work |
+| Cloud devices are misrepresented | A fake instance-boundary provider: all three profiles are available, no directory or outside crossings are offered, and an allowlist host request answers "add it to the device's list" |
+| Replay drift | `reconstruct.test.ts` and `run-replay` before and after. A settings change between runs logs `device_sandbox_changed` |
+| UI | Web unit tests for the picker copy and the device section. Playwright `permission-profiles.spec.ts`: the picker rows, the Full access dialog with and without outside, the network toggle, allowlist editing, and the auto-granted line |
 
 ## AGENTS.md rules touched
 
-- **Sandboxes** (changed): the line "in one of two modes (auto: the environment's own capability;
-  sandbox: the OS sandbox and the allowlist network)" becomes: "commands run in the device's sandbox
-  under every permission profile (scope: project, workspace, tool directories; network open public
-  internet or an allowlist; private ranges, metadata and host services closed; minimal environment);
-  a profile only chooses who approves a crossing (person, review model, nobody); running outside the
-  sandbox is a per-call escalation bounded by the device's outside-sandbox setting". The command
-  review failing closed, abort, locking and the socket proxy rule stay.
+- **Sandboxes** (changed). Today the rule says devices run "in one of two modes (auto: the
+  environment's own capability; sandbox: the OS sandbox and the allowlist network)". The new text:
+  "commands run in the device's sandbox under every permission profile (scope: project, workspace,
+  tool directories; network: the open public internet or an allowlist; private ranges, metadata and
+  host services closed; minimal environment); a profile only chooses who approves a crossing
+  (person, review model, nobody); running outside the sandbox is a per-call escalation bounded by
+  the device's outside-sandbox setting". The rest of the rule stays: the command review fails
+  closed, abort kills the command, locking belongs to the kernel, and the socket proxy is never
+  published on a host address.
 - **Runtime and replay** (applied): the new model-visible context dimension gets the DriftReason
   `device_sandbox_changed`.
-- **Config** (applied): new keys use the `CAPYBARA_` prefix and the permission publication path;
-  renamed keys have no aliases (Before 0.1.0).
-- **Migrations** (applied): one new migration, expand then contract for `owner_full_access`.
-- **Web UI** (applied): the device sandbox section uses `FormSection` and design components, one box.
+- **Config** (applied): the new keys use the `CAPYBARA_` prefix and the permission publication path;
+  renamed keys get no aliases (Before 0.1.0).
+- **Migrations** (applied): new migrations, expand then contract for `owner_full_access`.
+- **Web UI** (applied): design components only, one box.
 - **SDK public API** (applied): `gen:sdk-api` and a plugin-sdk changeset.
 - **Multi-replica discipline** (applied): auto-grants and ceiling revocations run in the existing
   fenced transactions with outbox rows; no process state.
