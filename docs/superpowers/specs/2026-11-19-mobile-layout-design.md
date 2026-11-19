@@ -527,6 +527,7 @@ declare global {
   | `device@1` | Desktop spec | "Connect this machine" as a local device; status of this machine's device |
   | `notify@1` | Desktop spec | OS notifications while the shell runs; a click focuses the conversation |
   | `openExternal@1` | Desktop spec | Open an http(s) URL in the system browser |
+  | `signIn@1` | Desktop spec (§6.5 there) | `start()`: sign in through the system browser (`/apps/authorize`, PKCE, back through the app's `capybara://auth/callback` scheme; `features.appSignIn` in `/api/v1/meta`). Offered by the desktop shell and by the later mobile app shell, which reuses the same flow (an `ASWebAuthenticationSession` / Custom Tabs style browser session returning through its scheme) |
   | `push@1` | Mobile app spec (later) | Only in an enterprise's own fork of the mobile app (§10.9): register its native push token (APNs, a vendor channel) as a notification target. The official app does not offer it |
   | `chrome@1` | This spec | The web tells the shell its scheme and background token so native chrome (status bar, window background, title bar overlay) matches the theme: `setAppearance({ scheme, background })` |
 
@@ -644,7 +645,8 @@ declare global {
   URL changes on upload).
 - **Uses**: the manifest's icons (512, and the maskable one), the `apple-touch-icon` (iOS scales
   the 512), the favicon when the active theme sets none (a theme's `logo.favicon` still wins for
-  the tab), and the desktop shell's start page and `/api/v1/meta` if the desktop spec wants it.
+  the tab), and the desktop shell as a consumer if it wants one (its start page, `/api/v1/meta`,
+  the Dock icon at runtime; the desktop spec decides).
 - **Default**: the Capybara icon set shipped with the web (app, maskable, monochrome SVG).
 
 ### 10.3 The notification target model (kernel)
@@ -680,7 +682,12 @@ official push relay** run by Capybara (decided). IM channels stay what they are.
 - **Keys**: one VAPID key pair **per deployment**: kernel config
   `notifications.webPush.vapidPublicKey` / `vapidPrivateKey` (secret,
   `CAPYBARA_NOTIFICATIONS__WEB_PUSH__…`); when unset the kernel generates a pair once (under
-  `LockService`) and stores it encrypted in PG, so every replica signs with the same key. Changing
+  `LockService`) and stores the private key **through the kernel's existing secret storage**:
+  `capybara.secrets`, envelope-encrypted under the deployment master key (`masterKey`, rotated
+  with `masterKeyPrevious` and `rewrapToCurrentMasterKey`), in the kernel namespace and the
+  deployment pseudo-org `_deployment`, as extension deployment-config secrets are stored today
+  (`extensions/deployment-config-store.ts`, `ctx/secrets.ts`). Never plaintext in PG; the public
+  key may sit beside it in the clear. Every replica signs with the same key. Changing
   the key invalidates every browser subscription (the settings page then asks to re-enable).
 
 ### 10.4 Registering a target
@@ -776,6 +783,8 @@ deduplication); the per-category preferences of §10.6 are the person's control 
   bundle id / application id, push entitlements and vendor app ids) in one place in the clients
   repository (`packages/shell` brand config, designer's call), so a fork changes one file and its
   assets.
+- **Sign-in in the mobile app shell** reuses the desktop's system-browser flow (`signIn@1`,
+  §9.2): the same kernel routes, PKCE and an app scheme registered in `auth.appRedirectUris`.
 - **The official mobile app has no native push**: there is no relay, and Web Push is not
   available inside the app's WebView. In the official app, notifications come from IM channels;
   the installed PWA (§10.2) keeps Web Push. Native push exists only in an enterprise's own fork,
@@ -927,7 +936,8 @@ Recorded so review sees them; the design above resolves each.
   plugin-client's interface; the shell contract types live in plugin-sdk, which imports nothing.
 - **Multi-replica discipline.** Notifications are owed work: an outbox row in the triggering
   transaction, a BullMQ queue and job ids without `:`, consumers under `WorkerModule`, presence in
-  Redis with a TTL, VAPID key generation under `LockService`; the sidebar choice is a cookie,
+  Redis with a TTL, VAPID key generation under `LockService` (the private key in the encrypted
+  `capybara.secrets`); the sidebar choice is a cookie,
   not server state.
 - **Migrations.** New expand-only tables in schema `capybara` (`notification_targets`,
   `notification_preferences`, `platform_icons`).
