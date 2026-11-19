@@ -18,4 +18,7 @@ export interface PluginManifest {
 // @public
 export function parsePluginManifest(json: unknown): PluginManifest | { errors: string[] };
 
+// @public (a shell capability, not an extension capability)
+export const SHELL_CAPABILITIES: readonly { key: string; owner: string }[];
+
 ```
