@@ -244,6 +244,7 @@ GET /api/v1/meta   (@Public, cache-control: no-store)
   "protocols": {
     "device": { "min": 3, "max": 3 }  // DEVICE_PROTOCOL_VERSION range of the gateway
   },
+  "icon": "/api/v1/platform/icon/app?v=<sha256>",  // null while the platform icon is the default
   "features": { "localDevices": true, "appSignIn": true }
 }
 ```
@@ -554,9 +555,17 @@ conversation.
   icons, app id, URL scheme, signing identity, update feed) lives in one file of `apps/desktop`
   **(designer's call)**; a fork that changes the scheme registers its redirect URI in
   `auth.appRedirectUris` (§6.5).
-- The Dock icon stays the Capybara icon **(designer's call)**: switching it to a deployment's icon
-  at runtime would need a deployment icon the kernel does not have, and the window title already
-  names the platform.
+- **The Dock icon follows a customised platform icon** **(designer's call)**: the installed app
+  icon (Finder, Launchpad, the first frame of the Dock) stays Capybara, but when the deployment's
+  super admin has set a platform icon (mobile layout §10.2.1) the app sets the Dock icon to it at
+  runtime (`app.dock.setIcon`). Why: someone who uses the app for their organization's platform
+  looks for that icon in the Dock and the app switcher, as with the platform's installed PWA; it
+  costs one fetch and changes nothing installed. Only with exactly one profile; with several the
+  Dock stays Capybara (one app icon cannot stand for several platforms, and switching on focus
+  would flicker). The icon comes from `/api/v1/meta` `icon` (§6.2), fetched by the main process,
+  accepted only as a PNG of at most 1 MB, cached per profile by its hash. The tray icon stays the
+  Capybara template image, and the address page shows the platform icon next to the name once
+  discovery answers.
 - Updates: automatic from GitHub Releases by default; managed configuration may turn them off or
   point at an internal feed. An update that changes the bundled device runs `service restart` when
   the service runs the app's copy (§5.2).
@@ -589,7 +598,7 @@ Latin word `agent`. The language follows the OS; everything else is the deployme
 
 | Where | Change |
 |---|---|
-| `packages/kernel` | `GET /api/v1/meta` (§6.2), `@Public`, no-store, tested through the web proxy; a Platform-tool exclusion (`transport`); new config field `platform.name` (`adding-config`: schema meta, `docs/config.md` regenerated) |
+| `packages/kernel` | `GET /api/v1/meta` (§6.2), `@Public`, no-store, tested through the web proxy; a Platform-tool exclusion (`transport`); `icon`: the same versioned URL the manifest uses for the platform app icon (mobile layout §10.2.1), null while it is the default; new config field `platform.name` (`adding-config`: schema meta, `docs/config.md` regenerated) |
 | `packages/design` | Shell environment support comes with the mobile layout design (§9.3 there); this spec adds only the desktop's drag regions (§7.3); controls clearance comes from `--cb-shell-controls-*` |
 | `apps/web` | Typed accessors for `device@1` and `notify@1` on `useShellCapability` in the shell adapter `lib/shell.ts` (the adapter itself, the plugin-sdk types and the no-flash script come with the mobile layout design), `defineQuery` for `device@1.status` / `device@1.running`, `useAppMutation` for the actions); `DeviceCreateDialog` local branch: 「连接本机」 or this machine's state (§9.1); the device page's 本机 section and widen-through-bridge action (§9.6); 本机 marks in the device list and picker; `notify@1` for attention signals (§10); zh / en messages (`check:i18n`) |
 | `packages/kernel` sign-in | `POST /api/v1/app-auth/authorize` and `/token` (§6.5): Redis codes, PKCE, sessions through `SessionService.create`, audit events, error codes `app_auth.*`, two Platform-tool exclusions, `features.appSignIn` in meta; config `auth.appRedirectUris` |
