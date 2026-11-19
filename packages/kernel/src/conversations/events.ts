@@ -125,6 +125,7 @@ const PermissionScopeSchema = z
       z.object({ kind: z.literal("none") }).strict(),
       z.object({ kind: z.literal("environment") }).strict(),
       z.object({ kind: z.literal("allowlist"), hosts: PermissionHosts }).strict(),
+      z.object({ kind: z.literal("open-public") }).strict(),
     ]),
     outerNetwork: z.discriminatedUnion("kind", [
       z.object({ kind: z.literal("host-environment") }).strict(),
@@ -137,8 +138,7 @@ const PermissionScopeSchema = z
 
 /**
  * The `sandbox` block of permission context version 2 (approval-only profiles design, "Replay and
- * permission context"): the device sandbox, the same under every profile. W0 interface stub: the
- * replay context task (T4) builds version 2 on it; nothing parses it yet.
+ * permission context"): the device sandbox, the same under every profile.
  */
 export const PermissionContextSandboxSchema = z
   .object({
@@ -162,10 +162,14 @@ export const PermissionContextSandboxSchema = z
   .strict();
 export type PermissionContextSandbox = z.infer<typeof PermissionContextSandboxSchema>;
 
-/** Complete recorded facts, never a grant or a requested-but-unverified scope. */
-export const PermissionContextV1Schema = z
+/**
+ * Complete recorded facts, never a grant or a requested-but-unverified scope. Version 2
+ * (approval-only profiles design) adds the device `sandbox` block, the same under every profile:
+ * a profile only chooses who approves a crossing, so Full access records a scoped sandbox too.
+ */
+export const PermissionContextV2Schema = z
   .object({
-    version: z.literal(1),
+    version: z.literal(2),
     rootConversationId: PermissionId,
     profileRevision: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).nullable(),
     selectedProfile: PermissionProfileSchema.nullable(),
@@ -187,6 +191,8 @@ export const PermissionContextV1Schema = z
         .strict(),
     ]),
     scope: PermissionScopeSchema.nullable(),
+    /** The device sandbox; only a supported context carries one. */
+    sandbox: PermissionContextSandboxSchema.nullable(),
   })
   .strict()
   .superRefine((p, ctx) => {
@@ -232,13 +238,33 @@ export const PermissionContextV1Schema = z
       )
         reject("Invalid effective profile transition");
     }
+    if (p.sandbox !== null && p.availability.state !== "supported")
+      reject("Only supported context carries a sandbox");
     const s = p.scope;
     if (!s) return;
-    if (p.effectiveProfile === "full-access") {
-      if (s.filesystem.kind !== "device" || s.network.kind !== "environment")
-        reject("Full access requires device filesystem and environment networking");
-    } else if (s.filesystem.kind !== "scoped" || s.network.kind === "environment")
-      reject("Restricted profiles require scoped filesystem and restricted networking");
+    // every profile may record a scoped sandbox; a device filesystem or environment networking
+    // is never a restricted profile's, and never under a recorded sandbox block
+    if (
+      (p.effectiveProfile !== "full-access" || p.sandbox !== null) &&
+      (s.filesystem.kind !== "scoped" || s.network.kind === "environment")
+    )
+      reject("A sandboxed context requires scoped filesystem and restricted networking");
+    if (p.sandbox !== null) {
+      const box = p.sandbox;
+      if (box.location !== s.location || box.workingRoot !== s.workingRoot)
+        reject("The sandbox must match the scope's location and working root");
+      if (canonicalOuter(box.outerNetwork) !== canonicalOuter(s.outerNetwork))
+        reject("The sandbox must match the scope's outer network");
+      const hosts = s.network.kind === "allowlist" ? s.network.hosts.length : 0;
+      const kindMatches =
+        box.network.kind === "allowlist"
+          ? s.network.kind === "allowlist" || s.network.kind === "none"
+          : box.network.kind === s.network.kind;
+      if (!kindMatches || box.network.hostsCount !== hosts)
+        reject("The sandbox network must match the scope's network");
+      if (box.boundary === "instance" && (box.location !== "cloud" || box.outsideSandbox))
+        reject("An instance boundary is a cloud device's, with nothing outside it");
+    }
     if (s.filesystem.kind === "scoped") {
       const { readDirectories, writeDirectories } = s.filesystem;
       if (
@@ -252,6 +278,8 @@ export const PermissionContextV1Schema = z
     }
     if ((s.location === "local") !== (s.outerNetwork.kind === "host-environment"))
       reject("Outer boundary must match the device location");
+    if (s.network.kind === "open-public" && s.outerNetwork.kind === "none")
+      reject("An open network exceeds the disabled outer boundary");
     if (s.location === "cloud" && s.network.kind === "allowlist") {
       if (s.outerNetwork.kind === "none")
         reject("Network hosts exceed the disabled outer boundary");
@@ -262,7 +290,12 @@ export const PermissionContextV1Schema = z
       }
     }
   });
-export type PermissionContextV1 = z.infer<typeof PermissionContextV1Schema>;
+export type PermissionContextV2 = z.infer<typeof PermissionContextV2Schema>;
+
+/** Order-independent identity of an outer network value (host lists are already sorted). */
+function canonicalOuter(value: { kind: string; hosts?: readonly string[] }): string {
+  return JSON.stringify([value.kind, value.hosts ?? null]);
+}
 
 export const ManagedDevicePathsV1Schema = z
   .object({
@@ -403,8 +436,9 @@ export const ReviewRecordSchema = z
     /** The call was allowed to run outside the OS sandbox (a per-call escalation). */
     sandbox: z.literal("escalated").optional(),
     /**
-     * The crossing this review decided (approval-only profiles design). W0 interface stub: nothing
-     * writes it yet; the replay context task (T4) and the review task (T6) fill it.
+     * The crossing this review decided (approval-only profiles design): a directory outside the
+     * scope, a host outside the allowlist, running outside the sandbox, or a sensitive command.
+     * Not model-visible, so it needs no DriftReason.
      */
     crossing: z.enum(["directory", "host", "outside-sandbox", "sensitive"]).optional(),
   })
@@ -737,7 +771,7 @@ export const PluginContextSchema = z.object({
  * 读出时按写入时的形状原样返回。
  */
 export const ConversationEventSchema = z.discriminatedUnion("type", [
-  ev("permission_context", PermissionContextV1Schema),
+  ev("permission_context", PermissionContextV2Schema),
   ev(
     "permission_reviewed",
     z.object({

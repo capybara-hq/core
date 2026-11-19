@@ -41,6 +41,7 @@ import {
 } from "../runtime/context/fit.js";
 import {
   assertRecordedPermissionEvents,
+  canonicalPermissionJson,
   permissionContextHistory,
   RecordedPermissionContextError,
 } from "../runtime/context/permission-profile.js";
@@ -88,6 +89,8 @@ function samePlan(a: FitPlan | null | undefined, b: FitPlan | undefined): boolea
  *   whose effective definition differs from the one frozen in its `subagent_started` (see
  *   {@link subagentChanged}); the request still renders the logged definition and preamble. A child
  *   case never consults `definitions` (no `definition_missing`);
+ * - `device_sandbox_changed`: the call's run recorded a permission context whose `sandbox` block
+ *   differs from the previous recorded one (see {@link deviceSandboxDrift});
  * - `params_changed`：没给候选参数时，记录的参数按所用模型的声明清洗后有键被丢弃或值变了（换了模型或模型声明变了）；
  * - `media_missing`：某附件记录里不是「不再可用」，还原时却取不到；
  * - `media_changed`（只在基线判定）：其余任何媒体结果与记录不同（按附件 id 比 outcome 与 etag：预算省略、
@@ -108,9 +111,9 @@ export type DriftReason =
   /** Original bounded permission contributions or their recorded locator/hash differ. */
   | "permission_profile_changed"
   /**
-   * Approval-only profiles: the recorded permission context's `sandbox` block differs from the
-   * previous one (the device sandbox changed between runs). W0 interface stub: the replay context
-   * task (T4) emits it.
+   * Approval-only profiles: the call's run recorded a permission context whose `sandbox` block
+   * differs from the previous recorded block (the device sandbox changed between runs). The request
+   * still rebuilds from the log; the reason marks that the run saw another sandbox than before.
    */
   | "device_sandbox_changed"
   | "params_changed"
@@ -226,7 +229,7 @@ export function assertSnapshotPermissionEvents(events: readonly ConversationEven
 
 /**
  * Compare only the original request range, never live state or candidate-generated history.
- * Throws `eval.snapshot_invalid` first when any recorded v1 event in the snapshot
+ * Throws `eval.snapshot_invalid` first when any recorded permission event in the snapshot
  * (inside or outside the range, covered by a summary or not) fails its strict schema.
  */
 export function recordedPermissionContextDrift(
@@ -249,6 +252,28 @@ export function recordedPermissionContextDrift(
     parsed.data.hash !== rebuilt.hash
   )
     return ["permission_profile_changed"];
+  return [];
+}
+
+/**
+ * `device_sandbox_changed` (approval-only profiles design): a `permission_context` the call's own
+ * run recorded within the call's input range carries a `sandbox` block that differs from the
+ * latest earlier recorded block. Contexts without a block (no device, unprobed, unsupported) are
+ * neither compared nor a baseline, so provisioning a device or losing it is no sandbox change; a
+ * profile change on the same sandbox is none either. Reads only the snapshot, already validated.
+ */
+export function deviceSandboxDrift(
+  events: readonly ConversationEvent[],
+  call: ModelCallEvent,
+): DriftReason[] {
+  let previous: string | undefined;
+  for (const e of [...inputEvents(events, call)].sort((a, b) => a.seq - b.seq)) {
+    if (e.type !== "permission_context" || e.payload.sandbox === null) continue;
+    const current = canonicalPermissionJson(e.payload.sandbox);
+    if (e.runId === call.runId && previous !== undefined && previous !== current)
+      return ["device_sandbox_changed"];
+    previous = current;
+  }
   return [];
 }
 
@@ -304,7 +329,10 @@ export function reconstructInputs(
   const all = toEvents(s);
   const call = findCall(all, modelCallSeq);
   const rec: Recorded = call.payload.request;
-  const drift = new Set<DriftReason>(recordedPermissionContextDrift(all, call));
+  const drift = new Set<DriftReason>([
+    ...recordedPermissionContextDrift(all, call),
+    ...deviceSandboxDrift(all, call),
+  ]);
 
   const origVersion = recordedVersion(s, all, call);
   const version = opts.agentVersion ?? origVersion;

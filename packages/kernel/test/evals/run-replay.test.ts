@@ -10,7 +10,7 @@ import type {
   ConversationEvent,
   EventPayload,
   ManagedDevicePathsV1,
-  PermissionContextV1,
+  PermissionContextV2,
   ReviewRecord,
 } from "../../src/conversations/events.js";
 import { PermissionProfileStore } from "../../src/conversations/permission-profile-store.js";
@@ -997,9 +997,10 @@ describe("整轮回放", () => {
   async function seedPermissionRun(
     convId: string,
     runId: string,
-  ): Promise<{ a: PermissionContextV1 }> {
-    const ctx = (revision: number): PermissionContextV1 => ({
-      version: 1,
+  ): Promise<{ a: PermissionContextV2 }> {
+    const ctx = (revision: number): PermissionContextV2 => ({
+      version: 2,
+      sandbox: null,
       rootConversationId: convId,
       profileRevision: revision,
       selectedProfile: "approve-for-me",
@@ -1404,7 +1405,7 @@ describe("整轮回放", () => {
     expect(changed.drift).toEqual(["permission_profile_changed"]);
     expect((changed.candidate as RunReplayResult).permissionContextDrift).toBe(true);
     const corrupt = await tamper("perm-corrupt", (p) => {
-      p.version = 2;
+      Object.assign(p, { version: 3 });
     });
     expect(corrupt.status).toBe("error");
     expect(corrupt.error).toMatchObject({ code: "eval.snapshot_invalid" });

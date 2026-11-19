@@ -195,7 +195,8 @@ describe("recorded permission context recorder", () => {
     expect(rest).toEqual([]);
     expect(first?.runId).toBe(f.runId);
     expect(first?.payload).toEqual({
-      version: 1,
+      version: 2,
+      sandbox: null,
       rootConversationId: f.rootId,
       profileRevision: 0,
       selectedProfile: "request-approval",
@@ -639,7 +640,8 @@ describe("permission context projection", () => {
     const none = await seedContext(k, raw, { device: false });
     await record(none);
     expect((await contexts(raw, none.rootId))[0]?.payload).toEqual({
-      version: 1,
+      version: 2,
+      sandbox: null,
       rootConversationId: none.rootId,
       profileRevision: 0,
       selectedProfile: "request-approval",
@@ -659,7 +661,8 @@ describe("permission context projection", () => {
     const foreign = await seedContext(k, raw, { foreignDevice: true, profile: "full-access" });
     await record(foreign);
     expect((await contexts(raw, foreign.rootId))[0]?.payload).toEqual({
-      version: 1,
+      version: 2,
+      sandbox: null,
       rootConversationId: foreign.rootId,
       profileRevision: null,
       selectedProfile: null,

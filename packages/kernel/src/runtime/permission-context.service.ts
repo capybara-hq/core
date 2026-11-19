@@ -1,7 +1,7 @@
 import { SandboxScopeDeniedError } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
 import { EventLog } from "../conversations/event-log.js";
-import { PermissionContextV1Schema } from "../conversations/events.js";
+import { PermissionContextV2Schema } from "../conversations/events.js";
 import { PermissionProfileStore } from "../conversations/permission-profile-store.js";
 import { ApiError } from "../errors.js";
 import { afterCommit } from "../infra/database/after-commit.js";
@@ -54,7 +54,7 @@ class RecorderRefused extends Error {
  * to what the run sees, before any request is sent: a revoked or replaced execution keeps its
  * identical `ExecutionRevoked` object, an abort keeps its reason, a `RunError` passes, and every
  * other failure becomes one of the named run errors. A recorded `permission_context` (or marked
- * path) the strict v1 schema rejects is `run.permission_context_invalid`, never a provider error
+ * path) its strict schema rejects is `run.permission_context_invalid`, never a provider error
  * and never rendered as historical text.
  */
 export function permissionContextFailure(error: unknown, signal?: AbortSignal): unknown {
@@ -277,7 +277,7 @@ export class PermissionContextRecorder {
       .executeTakeFirst();
     const previousSeq = latest ? Number(latest.seq) : 0;
     if (latest) {
-      const prior = PermissionContextV1Schema.safeParse(latest.payload);
+      const prior = PermissionContextV2Schema.safeParse(latest.payload);
       if (!prior.success)
         throw new RecordedPermissionContextError(previousSeq, "permission_context");
       if (permissionContextHash(prior.data) === permissionContextHash(payload)) return null;

@@ -16,7 +16,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
   type ConversationEvent,
   type EventPayload,
-  PermissionContextV1Schema,
+  PermissionContextV2Schema,
 } from "../../src/conversations/events.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
@@ -49,7 +49,7 @@ import type { Answer } from "../local-devices/test-holder.js";
 
 /**
  * Permission activation, gate on end to end (W6 Task Q, B-20 and the cross-path smoke test): the
- * kernel as production starts it (no activation override) records a v1 permission context before
+ * kernel as production starts it (no activation override) records a v2 permission context before
  * every agent request and answers, on each path a run reaches a device by: an anonymous IM guest
  * (no device), a member's local device whose machine speaks protocol 3 over the real gateway
  * route, and a member's cloud device on the sandbox-fake provider through the managed operation
@@ -144,7 +144,7 @@ const ofType = <T extends ConversationEvent["type"]>(events: ConversationEvent[]
 
 /**
  * The recorded contexts of a finished conversation, checked against the activation invariant:
- * the run finished; every context is a schema-valid v1 snapshot; the first one precedes the first
+ * the run finished; every context is a schema-valid v2 snapshot; the first one precedes the first
  * agent request; and every agent request locates the latest context recorded before it. Returns
  * the contexts, the agent requests and the events.
  */
@@ -158,10 +158,10 @@ async function recorded(conv: string) {
   expect(contexts.length).toBeGreaterThan(0);
   expect(calls.length).toBeGreaterThan(0);
   for (const c of contexts) {
-    expect(PermissionContextV1Schema.safeParse(c.payload).success, JSON.stringify(c.payload)).toBe(
+    expect(PermissionContextV2Schema.safeParse(c.payload).success, JSON.stringify(c.payload)).toBe(
       true,
     );
-    expect(c.payload.version).toBe(1);
+    expect(c.payload.version).toBe(2);
     expect(c.payload.rootConversationId).toBe(conv);
   }
   expect(contexts[0]?.seq ?? Infinity).toBeLessThan(calls[0]?.seq ?? 0);
@@ -192,7 +192,7 @@ describe("the paired activation is on as production starts it", () => {
   });
 });
 
-describe("every path records a v1 permission context and replies", () => {
+describe("every path records a v2 permission context and replies", () => {
   it("an anonymous IM guest: no device, the context says so, and the bot replies", async () => {
     const en = await owner({
       method: "PUT",

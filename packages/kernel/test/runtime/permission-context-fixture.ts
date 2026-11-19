@@ -5,7 +5,7 @@ import {
   type SandboxProvider,
 } from "@capybara-hq/plugin-sdk";
 import type { Kysely } from "kysely";
-import type { PermissionContextV1 } from "../../src/conversations/events.js";
+import type { PermissionContextV2 } from "../../src/conversations/events.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { TransactionHost } from "../../src/infra/database/transaction-host.js";
 import { PermissionContextRecorder } from "../../src/runtime/permission-context.service.js";
@@ -406,7 +406,7 @@ export function recordUnder(
 export async function contexts(
   raw: Kysely<unknown>,
   conversationId: string,
-): Promise<{ seq: number; runId: string | null; payload: PermissionContextV1; idemKey: string }[]> {
+): Promise<{ seq: number; runId: string | null; payload: PermissionContextV2; idemKey: string }[]> {
   // biome-ignore lint/suspicious/noExplicitAny: the test pool carries no schema types
   const rows = await kernelDb(raw as Kysely<any>)
     .selectFrom("conversation_events")
@@ -418,7 +418,7 @@ export async function contexts(
   return rows.map((r) => ({
     seq: Number(r.seq),
     runId: r.run_id,
-    payload: r.payload as PermissionContextV1,
+    payload: r.payload as PermissionContextV2,
     idemKey: r.idem_key ?? "",
   }));
 }

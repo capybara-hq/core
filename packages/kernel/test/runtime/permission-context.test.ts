@@ -8,8 +8,9 @@ import {
   type ManagedDevicePathsV1,
   ManagedDevicePathsV1Schema,
   type PermissionContextMetaV1,
-  type PermissionContextV1,
-  PermissionContextV1Schema,
+  type PermissionContextSandbox,
+  type PermissionContextV2,
+  PermissionContextV2Schema,
 } from "../../src/conversations/events.js";
 import { ApiError } from "../../src/errors.js";
 import { reconstructRequest } from "../../src/evals/reconstruct.js";
@@ -41,8 +42,9 @@ import { coversHost } from "../../src/sandbox/modes.js";
 
 const root = "00000000-0000-4000-8000-000000000001";
 const device = "00000000-0000-4000-8000-000000000002";
-const supported: PermissionContextV1 = {
-  version: 1,
+const supported: PermissionContextV2 = {
+  version: 2,
+  sandbox: null,
   rootConversationId: root,
   profileRevision: 0,
   selectedProfile: "request-approval",
@@ -112,7 +114,7 @@ function build(events: ConversationEvent[]) {
 }
 
 describe("recorded permission context", () => {
-  it("accepts a complete v1 snapshot without stripping its fields", () => {
+  it("accepts a complete v2 snapshot without stripping its fields", () => {
     expect(
       ConversationEventSchema.safeParse({ type: "permission_context", payload: supported }),
     ).toMatchObject({ success: true, data: { payload: supported } });
@@ -151,8 +153,12 @@ describe("recorded permission context", () => {
       [event("device_paths", { roots: paths.roots, permissionContextVersion: "1" }, 1)],
     ],
     [
-      "a permission_context version 2",
-      [event("permission_context", { ...supported, version: 2 }, 1)],
+      "a permission_context version 1",
+      [event("permission_context", { ...supported, version: 1 }, 1)],
+    ],
+    [
+      "a permission_context version 3",
+      [event("permission_context", { ...supported, version: 3 }, 1)],
     ],
     [
       "a permission_context with an unknown key",
@@ -166,9 +172,9 @@ describe("recorded permission context", () => {
       ],
     ],
     [
-      "a covered superseded permission_context version 2",
+      "a covered superseded permission_context version 1",
       [
-        event("permission_context", { ...supported, version: 2 }, 1),
+        event("permission_context", { ...supported, version: 1 }, 1),
         event("permission_context", supported, 2),
         event("compaction_summary", { coversUpToSeq: 2, text: "Summary" }, 3),
       ],
@@ -217,7 +223,7 @@ const fullPolicy =
   "No discretionary command approval; explicit policy, device-owner limits and OS permissions still apply.";
 const localOuter = "Outer network boundary: the host environment.";
 const offNetwork = "Network: no destinations are authorized for new commands.";
-function snapshot(profile: PermissionProfile, location: "local" | "cloud"): PermissionContextV1 {
+function snapshot(profile: PermissionProfile, location: "local" | "cloud"): PermissionContextV2 {
   return {
     ...structuredClone(supported),
     selectedProfile: profile,
@@ -234,11 +240,11 @@ function snapshot(profile: PermissionProfile, location: "local" | "cloud"): Perm
     },
   };
 }
-function scopeOf(p: PermissionContextV1): NonNullable<PermissionContextV1["scope"]> {
+function scopeOf(p: PermissionContextV2): NonNullable<PermissionContextV2["scope"]> {
   if (p.scope === null) throw new Error("Expected a supported snapshot with a scope");
   return p.scope;
 }
-function scopedFs(p: PermissionContextV1) {
+function scopedFs(p: PermissionContextV2) {
   const fs = scopeOf(p).filesystem;
   if (fs.kind !== "scoped") throw new Error("Expected a scoped filesystem");
   return fs;
@@ -334,7 +340,7 @@ function literalLines(index: number): string[] {
   if (row === undefined) throw new Error(`No literal case ${index}`);
   return row.lines;
 }
-describe("frozen v1 text and availability matrix", () => {
+describe("text without a sandbox block and availability matrix", () => {
   for (const row of literalCases) {
     it(`${row.location} ${row.profile} supported uses exact authority lines`, () => {
       expect(permissionContextText(snapshot(row.profile, row.location))).toBe(row.lines.join("\n"));
@@ -359,7 +365,7 @@ describe("frozen v1 text and availability matrix", () => {
       });
     }
     it(`${row.location} ${row.profile} unavailable redacts device facts`, () => {
-      const p: PermissionContextV1 = {
+      const p: PermissionContextV2 = {
         ...snapshot(row.profile, row.location),
         effectiveProfile: null,
         deviceId: null,
@@ -425,7 +431,7 @@ describe("frozen v1 text and availability matrix", () => {
       '"a\\"\\n\\u003c\\u003e\\u0026\\u2028\\u2029\\\\\\u0000\\t"',
     );
     const reason = 'Use "capability"\n<test>&\u2028\u2029';
-    const p: PermissionContextV1 = {
+    const p: PermissionContextV2 = {
       ...supported,
       scope: null,
       availability: { state: "unprobed", reason },
@@ -449,7 +455,7 @@ describe("frozen v1 text and availability matrix", () => {
 });
 
 describe("complete strict schema", () => {
-  const invalid: [string, (p: PermissionContextV1) => void][] = [
+  const invalid: [string, (p: PermissionContextV2) => void][] = [
     [
       "unknown top-level key",
       (p) => {
@@ -459,7 +465,7 @@ describe("complete strict schema", () => {
     [
       "unknown version",
       (p) => {
-        Object.assign(p, { version: 2 });
+        Object.assign(p, { version: 1 });
       },
     ],
     [
@@ -728,7 +734,7 @@ describe("complete strict schema", () => {
   it.each(invalid)("rejects %s instead of inventing a usable scope", (_name, mutate) => {
     const p = structuredClone(supported);
     mutate(p);
-    expect(PermissionContextV1Schema.safeParse(p).success).toBe(false);
+    expect(PermissionContextV2Schema.safeParse(p).success).toBe(false);
     expect(() => permissionContextText(p)).toThrow();
     expect(() => permissionContextHash(p)).toThrow();
   });
@@ -740,13 +746,13 @@ describe("complete strict schema", () => {
       readDirectories: ["/project", "/\ue000", "/\u{10000}"],
       writeDirectories: ["/project"],
     };
-    expect(PermissionContextV1Schema.parse(p)).toEqual(p);
+    expect(PermissionContextV2Schema.parse(p)).toEqual(p);
     const q = structuredClone(p);
     if (q.scope?.filesystem.kind === "scoped") q.scope.filesystem.readDirectories.reverse();
-    expect(PermissionContextV1Schema.safeParse(q).success).toBe(false);
+    expect(PermissionContextV2Schema.safeParse(q).success).toBe(false);
   });
   it("redacts actor-device-access and uses exact unavailable diagnostics", () => {
-    const p: PermissionContextV1 = {
+    const p: PermissionContextV2 = {
       ...supported,
       selectedProfile: null,
       profileRevision: null,
@@ -770,14 +776,14 @@ describe("complete strict schema", () => {
       ].join("\n"),
     );
     expect(
-      PermissionContextV1Schema.safeParse({
+      PermissionContextV2Schema.safeParse({
         ...p,
         selectedProfile: "full-access",
         profileRevision: 1,
       }).success,
     ).toBe(false);
     expect(
-      PermissionContextV1Schema.safeParse({
+      PermissionContextV2Schema.safeParse({
         ...p,
         availability: { ...p.availability, reason: "Other" },
       }).success,
@@ -814,16 +820,19 @@ describe("canonical hashes and predecessor identity", () => {
     expect(canonicalPermissionJson({ "\u{10000}": null, "\ue000": "é" })).toBe(
       '{"\ue000":"é","\u{10000}":null}',
     );
-    expect(canonicalPermissionJson(["permission_context", 1, supported])).toBe(
-      '["permission_context",1,{"authorityRevision":"authority-1","availability":{"state":"supported"},"deviceId":"00000000-0000-4000-8000-000000000002","effectiveProfile":"request-approval","execution":"interactive","inherited":false,"profileRevision":0,"rootConversationId":"00000000-0000-4000-8000-000000000001","scope":{"filesystem":{"kind":"scoped","readDirectories":["/project"],"writeDirectories":["/project"]},"location":"local","network":{"kind":"none"},"outerNetwork":{"kind":"host-environment"},"workingRoot":"/project"},"scopeRevision":"scope-1","selectedProfile":"request-approval","version":1}]',
+    const contextCanonical =
+      '["permission_context",2,{"authorityRevision":"authority-1","availability":{"state":"supported"},"deviceId":"00000000-0000-4000-8000-000000000002","effectiveProfile":"request-approval","execution":"interactive","inherited":false,"profileRevision":0,"rootConversationId":"00000000-0000-4000-8000-000000000001","sandbox":null,"scope":{"filesystem":{"kind":"scoped","readDirectories":["/project"],"writeDirectories":["/project"]},"location":"local","network":{"kind":"none"},"outerNetwork":{"kind":"host-environment"},"workingRoot":"/project"},"scopeRevision":"scope-1","selectedProfile":"request-approval","version":2}]';
+    expect(canonicalPermissionJson(["permission_context", 2, supported])).toBe(contextCanonical);
+    expect(permissionContextHash(supported)).toBe(
+      createHash("sha256").update(contextCanonical, "utf8").digest("hex"),
     );
   });
   it("ignores object insertion order but rejects missing nulls and unnormalized arrays", () => {
     const reordered = Object.fromEntries(
       Object.entries(supported).reverse(),
-    ) as PermissionContextV1;
+    ) as PermissionContextV2;
     expect(permissionContextHash(reordered)).toBe(permissionContextHash(supported));
-    expect(permissionContextHash(PermissionContextV1Schema.parse(supported))).toBe(
+    expect(permissionContextHash(PermissionContextV2Schema.parse(supported))).toBe(
       permissionContextHash(supported),
     );
     expect(canonicalPermissionJson({ value: null })).not.toBe(canonicalPermissionJson({}));
@@ -836,7 +845,7 @@ describe("canonical hashes and predecessor identity", () => {
     ])
       expect(() => canonicalPermissionJson(value)).toThrow();
     expect(() =>
-      permissionContextHash({ ...supported, scope: undefined } as unknown as PermissionContextV1),
+      permissionContextHash({ ...supported, scope: undefined } as unknown as PermissionContextV2),
     ).toThrow();
   });
   it("hashes rendered contributions in order independently from payload revisions and initial system", () => {
@@ -861,8 +870,8 @@ describe("canonical hashes and predecessor identity", () => {
   });
   it("uses sentinel zero, all hash digits and predecessor identity for A to B to A", () => {
     const key = permissionContextIdemKey(supported, 0);
-    expect(key).toMatch(/^permission_context:v1:[a-f0-9]{64}:0$/);
-    expect(key).toBe(`permission_context:v1:${permissionContextHash(supported)}:0`);
+    expect(key).toMatch(/^permission_context:v2:[a-f0-9]{64}:0$/);
+    expect(key).toBe(`permission_context:v2:${permissionContextHash(supported)}:0`);
     expect(permissionContextIdemKey(supported, 2)).not.toBe(key);
     expect(managedDevicePathsIdemKey(paths, 0)).toBe(
       `device_paths:permission-v1:${managedDevicePathsHash(paths)}:0`,
@@ -1018,7 +1027,7 @@ describe("ordered history, summaries and original request metadata", () => {
     const payload = callOf(snap, callSeq);
     if (kind === "missing context") snap.events = snap.events.filter((e) => e.seq !== 3);
     if (kind === "altered context") {
-      const altered = eventAt(snap, 3).payload as PermissionContextV1;
+      const altered = eventAt(snap, 3).payload as PermissionContextV2;
       altered.effectiveProfile = "request-approval";
       altered.selectedProfile = "request-approval";
     }
@@ -1072,10 +1081,10 @@ describe("ordered history, summaries and original request metadata", () => {
       (p) => Object.assign(p, { permissionContextVersion: "1" }),
     ],
     [
-      "a covered superseded permission context with version 2",
+      "a covered superseded permission context with version 1",
       [...changes.slice(0, 2), summaryAt(3, 4)],
       1,
-      (p) => Object.assign(p, { version: 2 }),
+      (p) => Object.assign(p, { version: 1 }),
     ],
     [
       "a covered superseded permission context with an unknown key",
@@ -1276,7 +1285,7 @@ describe("authority boundary normalization", () => {
   const withScope = (
     profile: PermissionProfile,
     location: "local" | "cloud",
-    edit: (scope: NonNullable<PermissionContextV1["scope"]>) => void,
+    edit: (scope: NonNullable<PermissionContextV2["scope"]>) => void,
   ) => {
     const p = snapshot(profile, location);
     if (p.scope === null) throw new Error("supported snapshot has a scope");
@@ -1284,7 +1293,7 @@ describe("authority boundary normalization", () => {
     return p;
   };
   const host253 = `${"a".repeat(63)}.${"b".repeat(63)}.${"c".repeat(63)}.${"d".repeat(57)}.com`;
-  it.each<[string, PermissionContextV1]>([
+  it.each<[string, PermissionContextV2]>([
     [
       "64 combined roots",
       scoped([
@@ -1362,10 +1371,10 @@ describe("authority boundary normalization", () => {
       }),
     ],
   ])("accepts %s at the authority bound", (_name, p) => {
-    expect(PermissionContextV1Schema.parse(p)).toEqual(p);
+    expect(PermissionContextV2Schema.parse(p)).toEqual(p);
     expect(permissionContextHash(p)).toMatch(/^[a-f0-9]{64}$/);
   });
-  it.each<[string, PermissionContextV1]>([
+  it.each<[string, PermissionContextV2]>([
     ["a dot segment in a readable directory", scoped(["/./project", "/project"])],
     ["a nested dot segment in a readable directory", scoped(["/a/./b", "/project"])],
     ["a trailing slash in a readable directory", scoped(["/project", "/z/"])],
@@ -1422,7 +1431,7 @@ describe("authority boundary normalization", () => {
       }),
     ],
   ])("rejects %s instead of normalizing it", (_name, p) => {
-    expect(PermissionContextV1Schema.safeParse(p).success).toBe(false);
+    expect(PermissionContextV2Schema.safeParse(p).success).toBe(false);
     expect(() => permissionContextText(p)).toThrow();
   });
   // 9.2 review M4: the schema's outer-allowlist coverage is the authority's own coversHost
@@ -1441,7 +1450,7 @@ describe("authority boundary normalization", () => {
       s.network = { kind: "allowlist", hosts: [host] };
       s.outerNetwork = { kind: "allowlist", hosts: [pattern] };
     });
-    expect(PermissionContextV1Schema.safeParse(p).success).toBe(coversHost(pattern, host));
+    expect(PermissionContextV2Schema.safeParse(p).success).toBe(coversHost(pattern, host));
   });
   it.each(["/project/", "/./project", "/a/../project", "//project"])(
     "rejects managed working root %s",
@@ -1455,4 +1464,365 @@ describe("authority boundary normalization", () => {
       ).toBe(false);
     },
   );
+});
+
+// Approval-only profiles design, "Replay and permission context": version 2 records the device
+// sandbox, the same under every profile, and the profile only chooses who approves a crossing.
+describe("permission context v2: the device sandbox and the approver per crossing", () => {
+  const localSandbox = (outsideSandbox: boolean): PermissionContextSandbox => ({
+    boundary: "operation",
+    location: "local",
+    workingRoot: "/project",
+    network: { kind: "allowlist", hostsCount: 1 },
+    outsideSandbox,
+    outerNetwork: { kind: "host-environment" },
+  });
+  function sandboxed(
+    profile: PermissionProfile,
+    outsideSandbox: boolean,
+    overrides: Partial<PermissionContextV2> = {},
+  ): PermissionContextV2 {
+    return {
+      ...structuredClone(supported),
+      selectedProfile: profile,
+      effectiveProfile: profile,
+      scope: {
+        location: "local",
+        workingRoot: "/project",
+        filesystem: {
+          kind: "scoped",
+          readDirectories: ["/project"],
+          writeDirectories: ["/project"],
+        },
+        network: { kind: "allowlist", hosts: ["api.example.com"] },
+        outerNetwork: { kind: "host-environment" },
+      },
+      sandbox: localSandbox(outsideSandbox),
+      ...overrides,
+    };
+  }
+  const head = (label: string) => [`Permission context for new operations: ${label}.`, supersedes];
+  const operationSandbox =
+    "Sandbox: the same under every profile; new commands run in the device's OS sandbox, limited to the directories and network below.";
+  const allowlisted = [
+    'Working directory: "/project".',
+    'Readable directories: ["/project"].',
+    'Writable directories: ["/project"].',
+    'Network: new commands may reach only these authorized hosts: ["api.example.com"].',
+    localOuter,
+  ];
+  const escalate = 'set `sandbox: "escalated"` with a justification';
+  const person = "the person approves";
+  const reviewer = "a separate reviewer approves; uncertainty asks the person";
+  const crossings = (approver: string, escalation: boolean) => [
+    `Directories outside the readable or writable directories: ${approver}.`,
+    `Hosts outside the network allowlist: ${approver}.`,
+    ...(escalation ? [`Running a command outside the sandbox: ${approver}; ${escalate}.`] : []),
+    `Sensitive commands: ${approver}.`,
+  ];
+  const fullWith =
+    'Full access: commands run in the sandbox; crossings this device allows are approved automatically; to run a command outside the sandbox set `sandbox: "escalated"` with a justification.';
+  const fullWithout =
+    "Full access: commands run in the sandbox; crossings this device allows are approved automatically.";
+
+  it("parses a Full access context with a scoped sandbox (the Full = device refine is gone)", () => {
+    const p = sandboxed("full-access", true);
+    expect(PermissionContextV2Schema.parse(p)).toEqual(p);
+    expect(
+      ConversationEventSchema.safeParse({ type: "permission_context", payload: p }).success,
+    ).toBe(true);
+  });
+
+  it.each<[string, PermissionContextV2, string[]]>([
+    [
+      "Request approval with escalation",
+      sandboxed("request-approval", true),
+      [...head("Request approval"), operationSandbox, ...allowlisted, ...crossings(person, true)],
+    ],
+    [
+      "Request approval without escalation",
+      sandboxed("request-approval", false),
+      [...head("Request approval"), operationSandbox, ...allowlisted, ...crossings(person, false)],
+    ],
+    [
+      "Approve for me with escalation",
+      sandboxed("approve-for-me", true),
+      [...head("Approve for me"), operationSandbox, ...allowlisted, ...crossings(reviewer, true)],
+    ],
+    [
+      "Approve for me without escalation",
+      sandboxed("approve-for-me", false),
+      [...head("Approve for me"), operationSandbox, ...allowlisted, ...crossings(reviewer, false)],
+    ],
+    [
+      "Full access with escalation",
+      sandboxed("full-access", true),
+      [...head("Full access"), operationSandbox, ...allowlisted, fullWith],
+    ],
+    [
+      "Full access without escalation",
+      sandboxed("full-access", false),
+      [...head("Full access"), operationSandbox, ...allowlisted, fullWithout],
+    ],
+    [
+      "a Full access sub-agent, whose escalation a reviewer decides",
+      sandboxed("full-access", true, { inherited: true }),
+      [
+        ...head("Full access"),
+        operationSandbox,
+        ...allowlisted,
+        fullWith,
+        "In this sub-agent, a separate reviewer decides each escalation; uncertainty asks the person.",
+      ],
+    ],
+    [
+      "a scheduled run, which never escalates",
+      sandboxed("request-approval", true, {
+        selectedProfile: "full-access",
+        execution: "scheduled",
+      }),
+      [
+        ...head("Request approval"),
+        operationSandbox,
+        ...allowlisted,
+        "Scheduled run: only the unattended policy and explicit task grants apply; interactive approvals and chat Full access do not apply.",
+      ],
+    ],
+    [
+      "an instance-boundary cloud device on the open public internet",
+      sandboxed("approve-for-me", false, {
+        scope: {
+          location: "cloud",
+          workingRoot: "/project",
+          filesystem: {
+            kind: "scoped",
+            readDirectories: ["/", "/project"],
+            writeDirectories: ["/", "/project"],
+          },
+          network: { kind: "open-public" },
+          outerNetwork: { kind: "open-public" },
+        },
+        sandbox: {
+          boundary: "instance",
+          location: "cloud",
+          workingRoot: "/project",
+          network: { kind: "open-public", hostsCount: 0 },
+          outsideSandbox: false,
+          outerNetwork: { kind: "open-public" },
+        },
+      }),
+      [
+        ...head("Approve for me"),
+        "Sandbox: the same under every profile; the provisioned device instance is the sandbox, its whole filesystem is in scope and its outer network applies.",
+        'Working directory: "/project".',
+        'Readable directories: ["/","/project"].',
+        'Writable directories: ["/","/project"].',
+        "Network: the open public internet; private, LAN, loopback, link-local and metadata addresses are closed inside the sandbox.",
+        "Outer network boundary: public addresses only.",
+        `Sensitive commands: ${reviewer}.`,
+      ],
+    ],
+    [
+      "an instance-boundary allowlist, whose hosts no call can add",
+      sandboxed("request-approval", false, {
+        scope: {
+          location: "cloud",
+          workingRoot: "/project",
+          filesystem: {
+            kind: "scoped",
+            readDirectories: ["/", "/project"],
+            writeDirectories: ["/", "/project"],
+          },
+          network: { kind: "allowlist", hosts: ["api.example.com"] },
+          outerNetwork: { kind: "allowlist", hosts: ["api.example.com"] },
+        },
+        sandbox: {
+          boundary: "instance",
+          location: "cloud",
+          workingRoot: "/project",
+          network: { kind: "allowlist", hostsCount: 1 },
+          outsideSandbox: false,
+          outerNetwork: { kind: "allowlist", hosts: ["api.example.com"] },
+        },
+      }),
+      [
+        ...head("Request approval"),
+        "Sandbox: the same under every profile; the provisioned device instance is the sandbox, its whole filesystem is in scope and its outer network applies.",
+        'Working directory: "/project".',
+        'Readable directories: ["/","/project"].',
+        'Writable directories: ["/","/project"].',
+        'Network: new commands may reach only these authorized hosts: ["api.example.com"].',
+        'Outer network boundary: allowed hosts ["api.example.com"].',
+        "Hosts outside the network allowlist: not approvable per call on this device; the device's host list must include them.",
+        `Sensitive commands: ${person}.`,
+      ],
+    ],
+  ])("states the sandbox once, then the approver per crossing: %s", (_name, p, lines) => {
+    expect(permissionContextText(p)).toBe([...lines, closing].join("\n"));
+  });
+
+  it.each<[string, (p: PermissionContextV2) => void]>([
+    [
+      "a sandbox on an unavailable context",
+      (p) => {
+        Object.assign(p, {
+          effectiveProfile: null,
+          deviceId: null,
+          scopeRevision: null,
+          authorityRevision: null,
+          scope: null,
+          availability: {
+            state: "unavailable",
+            cause: "no-device",
+            reason: "Choose a device to run device operations",
+          },
+        });
+      },
+    ],
+    [
+      "a sandbox on an unprobed context",
+      (p) => {
+        Object.assign(p, { scope: null, availability: { state: "unprobed", reason: "Not yet" } });
+      },
+    ],
+    [
+      "another working root",
+      (p) => {
+        if (p.sandbox) p.sandbox.workingRoot = "/elsewhere";
+      },
+    ],
+    [
+      "another location",
+      (p) => {
+        if (p.sandbox)
+          Object.assign(p.sandbox, { location: "cloud", outerNetwork: { kind: "open-public" } });
+      },
+    ],
+    [
+      "another outer network",
+      (p) => {
+        if (p.sandbox) p.sandbox.outerNetwork = { kind: "none" };
+      },
+    ],
+    [
+      "another network kind",
+      (p) => {
+        if (p.sandbox) p.sandbox.network = { kind: "open-public", hostsCount: 0 };
+      },
+    ],
+    [
+      "another host count",
+      (p) => {
+        if (p.sandbox) p.sandbox.network.hostsCount = 2;
+      },
+    ],
+    [
+      "a device filesystem",
+      (p) => {
+        if (p.scope) p.scope.filesystem = { kind: "device" };
+      },
+    ],
+    [
+      "an instance boundary on a local device",
+      (p) => {
+        if (p.sandbox) p.sandbox.boundary = "instance";
+      },
+    ],
+    [
+      "running outside an instance boundary",
+      (p) => {
+        Object.assign(p, {
+          scope: { ...p.scope, location: "cloud", outerNetwork: { kind: "open-public" } },
+          sandbox: {
+            ...p.sandbox,
+            boundary: "instance",
+            location: "cloud",
+            outsideSandbox: true,
+            outerNetwork: { kind: "open-public" },
+          },
+        });
+      },
+    ],
+    [
+      "an unknown sandbox key",
+      (p) => {
+        Object.assign(p.sandbox ?? {}, { grant: true });
+      },
+    ],
+    [
+      "a missing sandbox key",
+      (p) => {
+        Reflect.deleteProperty(p, "sandbox");
+      },
+    ],
+  ])("rejects %s", (_name, mutate) => {
+    const p = sandboxed("request-approval", true);
+    mutate(p);
+    expect(PermissionContextV2Schema.safeParse(p).success).toBe(false);
+  });
+  it("accepts an empty allowlist sandbox as a scope without hosts", () => {
+    const p = sandboxed("request-approval", false);
+    if (p.scope && p.sandbox) {
+      p.scope.network = { kind: "none" };
+      p.sandbox.network = { kind: "allowlist", hostsCount: 0 };
+    }
+    expect(PermissionContextV2Schema.safeParse(p).success).toBe(true);
+  });
+
+  function runCall(runId: string, seq: number, events: ConversationEvent[]): ConversationEvent {
+    return {
+      ...event(
+        "model_call",
+        {
+          step: 1,
+          attempt: 1,
+          provider: "fake",
+          model: "fake",
+          fallback: false,
+          request: { ...build(events).meta, maxOutputTokens: 4096 },
+        },
+        seq,
+      ),
+      runId,
+    } as ConversationEvent;
+  }
+  function twoRuns(second: PermissionContextV2): {
+    snap: CaseSnapshot;
+    first: number;
+    last: number;
+  } {
+    const runA = "00000000-0000-4000-8000-00000000000a";
+    const runB = "00000000-0000-4000-8000-00000000000b";
+    const at = (type: string, payload: unknown, seq: number, runId: string) =>
+      ({ ...event(type, payload, seq), runId }) as ConversationEvent;
+    const a = [at("permission_context", sandboxed("request-approval", true), 1, runA)];
+    const callA = runCall(runA, 2, a);
+    const b = [...a, callA, at("permission_context", second, 3, runB)];
+    const callB = runCall(runB, 4, b);
+    const events = [...b, callB];
+    return {
+      first: 2,
+      last: 4,
+      snap: structuredClone({
+        version: 1,
+        orgId: root,
+        conversationId: root,
+        runId: runB,
+        agentId: root,
+        agentVersion: 1,
+        definitions: { "1": agent },
+        toolSpecs: {},
+        events: events.map((e) => ({ ...e, createdAt: e.createdAt.toISOString() })),
+      }),
+    };
+  }
+  it("logs device_sandbox_changed for a run whose recorded sandbox block differs from the previous one", () => {
+    const { snap, first, last } = twoRuns(sandboxed("request-approval", false));
+    expect(reconstructRequest(snap, first, { model }).drift).toEqual([]);
+    expect(reconstructRequest(snap, last, { model }).drift).toEqual(["device_sandbox_changed"]);
+  });
+  it("logs no device_sandbox_changed for a profile change on the same sandbox", () => {
+    const { snap, last } = twoRuns(sandboxed("approve-for-me", true));
+    expect(reconstructRequest(snap, last, { model }).drift).toEqual([]);
+  });
 });
