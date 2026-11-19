@@ -1,10 +1,10 @@
-import { existsSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync, readlinkSync } from "node:fs";
 import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { createServer, type Server } from "node:http";
 import { connect } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { type ExecResult, type SandboxOperationScope } from "@capybara-hq/plugin-sdk";
+import type { ExecResult, SandboxOperationScope } from "@capybara-hq/plugin-sdk";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import {
   type DeviceOwnerCeiling,
@@ -73,7 +73,7 @@ const signal = () => AbortSignal.timeout(50_000);
 async function run(
   command: string,
   grant: Partial<LocalOperationGrant> = {},
-  extra: { scope?: SandboxOperationScope; home?: string } = {},
+  extra: { scope?: SandboxOperationScope; home?: string; allowPrivate?: boolean } = {},
 ): Promise<ExecResult> {
   const project = await mkdtemp(join(root, "project-"));
   const state = await mkdtemp(join(root, "state-"));
@@ -96,6 +96,7 @@ async function run(
       pythonPath: "/usr/bin/python3",
       runtimeHash: workspace.runtimeHash,
       ...(extra.home ? { toolHome: { home: extra.home, env: { HOME: extra.home } } } : {}),
+      ...(extra.allowPrivate ? { allowPrivateProxyTargets: true } : {}),
       beforeLaunch: async () => {},
       onLaunch: async () => {},
     },
@@ -110,6 +111,24 @@ const probes = (urls: Record<string, string>) =>
     .map(
       ([label, url]) =>
         `printf '${label}:%s\\n' "$(/usr/bin/curl --silent --output /dev/null --max-time 8 --noproxy '' --write-out '%{http_code}' '${url}')"`,
+    )
+    .join("; ");
+
+/** `curl` through the proxy's CONNECT tunnel: the proxy's own answer to CONNECT per URL. */
+const connectProbes = (urls: Record<string, string>) =>
+  Object.entries(urls)
+    .map(
+      ([label, url]) =>
+        `printf '${label}:%s\n' "$(/usr/bin/curl --silent --output /dev/null --max-time 8 --noproxy '' --proxytunnel --write-out '%{http_connect}' '${url}')"`,
+    )
+    .join("; ");
+
+/** `curl` through the proxy's SOCKS5 side (names resolved by the proxy): curl's exit per URL. */
+const socksProbes = (urls: Record<string, string>) =>
+  Object.entries(urls)
+    .map(
+      ([label, url]) =>
+        `/usr/bin/curl --silent --output /dev/null --max-time 8 --noproxy '' --socks5-hostname "\${FTP_PROXY#socks5h://}" '${url}'; printf '${label}:%s\n' "$?"`,
     )
     .join("; ");
 
@@ -154,6 +173,36 @@ it.runIf(darwin)(
   },
 );
 
+it.runIf(darwin)(
+  "CONNECT tunnels and SOCKS5 refuse the same destinations, in any literal spelling",
+  async () => {
+    receipts.length = 0;
+    const result = await run(
+      [
+        connectProbes({
+          mapped: "https://[::ffff:10.0.0.1]/",
+          hex: `https://0x7f.1:${port}/`,
+          metadata: "https://169.254.169.254/",
+          localhost: `https://localhost:${port}/`,
+        }),
+        socksProbes({
+          socksPrivate: "http://10.0.0.1/",
+          socksLoopback: `http://127.0.0.1:${port}/socks`,
+          socksLocalhost: `http://localhost:${port}/socks-name`,
+          socksMetadata: "http://169.254.169.254/",
+        }),
+      ].join("; "),
+    );
+    const seen = statuses(result.stdout);
+    for (const label of ["mapped", "hex", "metadata", "localhost"])
+      expect(seen[label], `${label}: ${result.stdout}`).toBe("403");
+    // 97: the SOCKS5 proxy refused the connection
+    for (const label of ["socksPrivate", "socksLoopback", "socksLocalhost", "socksMetadata"])
+      expect(seen[label], `${label}: ${result.stdout}`).toBe("97");
+    expect(receipts).toEqual([]);
+  },
+);
+
 it.runIf(darwin)("a loopback port is not reachable directly either", async () => {
   receipts.length = 0;
   const result = await run(
@@ -166,16 +215,44 @@ it.runIf(darwin)("a loopback port is not reachable directly either", async () =>
 
 it.runIf(darwin)("an allowlist grant still reaches exactly its hosts", async () => {
   receipts.length = 0;
+  // the fixture listens on loopback, which only the trusted test seam reopens
   const result = await run(
     probes({
       granted: `http://127.0.0.1:${port}/granted`,
       other: "http://10.0.0.1/",
     }),
     { openNetwork: false, hosts: [`127.0.0.1:${port}`] },
+    { allowPrivate: true },
   );
   expect(statuses(result.stdout)).toMatchObject({ granted: "200", other: "403" });
   expect(receipts).toEqual(["/granted"]);
 });
+
+it.runIf(darwin)(
+  "the allowlist refuses a granted private, loopback or metadata destination too",
+  async () => {
+    receipts.length = 0;
+    const result = await run(
+      probes({
+        loopback: `http://127.0.0.1:${port}/granted-loopback`,
+        localhost: `http://localhost:${port}/granted-localhost`,
+        private10: "http://10.0.0.1/",
+        metadata: "http://169.254.169.254/",
+      }),
+      {
+        openNetwork: false,
+        hosts: [`127.0.0.1:${port}`, `localhost:${port}`, "10.0.0.1", "169.254.169.254"],
+      },
+    );
+    expect(statuses(result.stdout)).toEqual({
+      loopback: "403",
+      localhost: "403",
+      private10: "403",
+      metadata: "403",
+    });
+    expect(receipts).toEqual([]);
+  },
+);
 
 it.runIf(darwin)("listening stays refused in the open network", async () => {
   const result = await run(
@@ -233,10 +310,88 @@ it.runIf(darwin)(
     expect(existsSync(join(dotfiles, "config/systemd/user/evil.service"))).toBe(false);
     expect(existsSync(join(dotfiles, "launch/evil.plist"))).toBe(false);
     expect(existsSync(join(dotfiles, "config/autostart"))).toBe(false);
-    const { readFileSync } = await import("node:fs");
     expect(readFileSync(join(dotfiles, "zshrc"), "utf8")).toBe("# rc\n");
   },
 );
+
+it.runIf(darwin)(
+  "a protected location behind a two-hop link chain keeps every hop in place",
+  async () => {
+    const home = await mkdtemp(join(root, "home-"));
+    const code = await mkdtemp(join(root, "code-"));
+    await mkdir(join(code, "dotfiles-v1", "config", "systemd", "user"), { recursive: true });
+    await writeFile(join(code, "dotfiles-v1", "zshrc"), "# rc\n");
+    // ~/.zshrc -> code/dotfiles-current/zshrc and ~/.config -> code/dotfiles-current/config,
+    // where dotfiles-current is itself a link inside the write root
+    await symlink(join(code, "dotfiles-v1"), join(code, "dotfiles-current"));
+    await symlink(join(code, "dotfiles-current", "zshrc"), join(home, ".zshrc"));
+    await symlink(join(code, "dotfiles-current", "config"), join(home, ".config"));
+    const result = await run(
+      [
+        `cd ${code}`,
+        // swap the middle hop for a real directory holding a new rc file and a unit
+        "rm dotfiles-current || mv dotfiles-current gone",
+        "mkdir -p dotfiles-current/config/systemd/user",
+        "printf evil > dotfiles-current/zshrc",
+        "printf evil > dotfiles-current/config/systemd/user/evil.service",
+        "ln -sfn /tmp dotfiles-current",
+        "printf ok > plain",
+        "true",
+      ].join("; "),
+      { readRoots: [code], writeRoots: [code] },
+      { home },
+    );
+    expect(existsSync(join(code, "plain")), result.stderr).toBe(true);
+    expect(lstatSync(join(code, "dotfiles-current")).isSymbolicLink()).toBe(true);
+    expect(readlinkSync(join(code, "dotfiles-current"))).toBe(join(code, "dotfiles-v1"));
+    expect(readFileSync(join(home, ".zshrc"), "utf8")).toBe("# rc\n");
+    expect(existsSync(join(home, ".config", "systemd", "user", "evil.service"))).toBe(false);
+  },
+);
+
+it.runIf(darwin)(
+  "an ancestor of a protected target cannot move away, in one call or across two",
+  async () => {
+    const home = await mkdtemp(join(root, "home-"));
+    const code = await mkdtemp(join(root, "code-"));
+    await mkdir(join(code, "dots", "v1"), { recursive: true });
+    await writeFile(join(code, "dots", "v1", "zshrc"), "# rc\n");
+    await symlink(join(code, "dots", "v1", "zshrc"), join(home, ".zshrc"));
+    const grant = { readRoots: [code], writeRoots: [code] };
+    // one call: move the target's ancestor away, recreate it, write the rc file
+    const first = await run(
+      `cd ${code}; mv dots moved; mkdir -p dots/v1; printf evil > dots/v1/zshrc; printf ok > plain; true`,
+      grant,
+      { home },
+    );
+    expect(existsSync(join(code, "plain")), first.stderr).toBe(true);
+    expect(existsSync(join(code, "moved"))).toBe(false);
+    // two calls: the second resolves the chain afresh and still finds the same target
+    await run(`cd ${code}; mv dots/v1 dots/v0; true`, grant, { home });
+    await run(`cd ${code}; mkdir -p dots/v1; printf evil > dots/v1/zshrc; true`, grant, { home });
+    expect(readFileSync(join(home, ".zshrc"), "utf8")).toBe("# rc\n");
+    expect(existsSync(join(code, "dots", "v0"))).toBe(false);
+  },
+);
+
+it.runIf(darwin)("an ancestor of a link in a protected chain cannot move away", async () => {
+  const home = await mkdtemp(join(root, "home-"));
+  const code = await mkdtemp(join(root, "code-"));
+  await mkdir(join(code, "v1"), { recursive: true });
+  await mkdir(join(code, "sub"), { recursive: true });
+  await writeFile(join(code, "v1", "zshrc"), "# rc\n");
+  // ~/.zshrc -> code/sub/current/zshrc, where code/sub/current -> code/v1
+  await symlink(join(code, "v1"), join(code, "sub", "current"));
+  await symlink(join(code, "sub", "current", "zshrc"), join(home, ".zshrc"));
+  const result = await run(
+    `cd ${code}; mv sub sub2; mkdir -p sub/current; printf evil > sub/current/zshrc; printf ok > plain; true`,
+    { readRoots: [code], writeRoots: [code] },
+    { home },
+  );
+  expect(existsSync(join(code, "plain")), result.stderr).toBe(true);
+  expect(existsSync(join(code, "sub2"))).toBe(false);
+  expect(readFileSync(join(home, ".zshrc"), "utf8")).toBe("# rc\n");
+});
 
 const fullAccessScope = (
   filesystem: SandboxOperationScope["filesystem"],

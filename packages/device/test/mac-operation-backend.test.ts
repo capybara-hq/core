@@ -446,6 +446,8 @@ it.runIf(process.platform === "darwin")(
           stateDir,
           pythonPath: "/usr/bin/python3",
           runtimeHash: workspace.runtimeHash,
+          // the fixture listens on loopback, which only the trusted test seam reopens
+          allowPrivateProxyTargets: true,
           beforeLaunch: async () => {},
           onLaunch: async () => {},
         },
@@ -565,6 +567,8 @@ it.runIf(process.platform === "darwin")(
               stateDir,
               pythonPath: "/usr/bin/python3",
               runtimeHash: workspace.runtimeHash,
+              // the fixture listens on loopback, which only the trusted test seam reopens
+              allowPrivateProxyTargets: true,
               beforeLaunch: async () => {},
               onLaunch: async (info) => {
                 identities.push(info.pid);

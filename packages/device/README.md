@@ -117,10 +117,13 @@ ULA, link-local, cloud metadata and NAT64 addresses and this machine's own addre
 for names and IP literals alike. A client that ignores the proxy variables (plain `ssh`) does not
 connect; a restricted command cannot listen on macOS (a dev server needs an approved call outside
 the sandbox). Behind a fake-IP resolver (a router or proxy in OpenClash-style fake-IP mode answers
-every name with an address in `198.18.0.0/15`), the macOS proxy re-resolves such a name through
-DNS-over-HTTPS to Cloudflare (`1.1.1.1`, `1.0.0.1`) and then Google (`8.8.8.8`, `8.8.4.4`), reached
-by IP over verified TLS, and judges the real answer; when that lookup fails the connection is
-refused with a reason naming the fake-IP resolver, never dialed to the fake address. Restricted work also
+every name with an address in `198.18.0.0/15`), the proxy re-resolves such a name through
+DNS-over-HTTPS (RFC 8484) to Cloudflare (`1.1.1.1`, `1.0.0.1`) and then Google (`8.8.8.8`,
+`8.8.4.4`), reached by IP over verified TLS within 5 seconds, and judges the real answer; when that
+lookup fails the connection is refused with a reason naming the fake-IP resolver, never dialed to
+the fake address. The open network decides on the address, not on where it routes: a router's
+public WAN address reached by hairpin NAT, a VPN routing public addresses to an intranet, or an
+operator NAT64 prefix are not closed; such a machine should keep the allowlist. Restricted work also
 follows one write policy (below). On macOS each restricted command also gets its own empty temporary
 directory (`TMPDIR`, `TMP`, `TEMP`), removed when the command ends; `mktemp` without a template
 writes to the user's shared temporary directory instead, which stays closed, so give it one (`mktemp

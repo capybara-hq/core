@@ -61,7 +61,7 @@ index 0e598b612d84d24b09ec2ab0d7ccc9b009c9457b..10c4bd0b6518f6b968a105b0ed70838b
          '  (sysctl-name "hw.ncpu")',
          '  (sysctl-name "hw.nperflevels")',
 diff --git a/dist/sandbox/resolved-address-guard.js b/dist/sandbox/resolved-address-guard.js
-index 54970f754e71188fb6ab98971b39560b0b8f8724..3887f78d7c5eeb665496444cd8fd913fc9bc0ada 100644
+index 54970f754e71188fb6ab98971b39560b0b8f8724..e222d21be8df9d5bd77f6b1a33601737965fa5f1 100644
 --- a/dist/sandbox/resolved-address-guard.js
 +++ b/dist/sandbox/resolved-address-guard.js
 @@ -25,6 +25,8 @@
@@ -73,25 +73,23 @@ index 54970f754e71188fb6ab98971b39560b0b8f8724..3887f78d7c5eeb665496444cd8fd913f
  import { logForDebugging } from '../utils/debug.js';
  import { ipLiteralRules } from './domain-pattern.js';
  import { addRange, addressInSet, embeddedIPv4, isLoopbackAddress, isLoopbackName, LOOPBACK_RANGES, } from './address.js';
-@@ -86,6 +88,146 @@ export function localInterfaceAddresses() {
+@@ -86,6 +88,192 @@ export function localInterfaceAddresses() {
          .flat()
          .flatMap(i => (i ? [i.address] : []));
  }
 +/**
 + * capybara patch: DNS-over-HTTPS for names a fake-IP resolver answered. A router or local proxy in
 + * fake-IP mode (OpenClash and the like) intercepts every DNS query, port 53 to any server
-+ * included, and answers each name with an address in 198.18.0.0/15, which it maps back on
-+ * connect. The guard cannot judge such an answer, so with `fakeIpDoh` it re-resolves the name
-+ * through DNS-over-HTTPS to IP-literal endpoints (TLS verified against the endpoint's IP
-+ * certificate; no DNS is needed to reach them) and judges and dials the real answer like any
-+ * resolved address. A failed lookup refuses the connection: the fake address is never dialed.
++ * included, and answers each name with an address in a fake-IP range (`fakeIpDoh.fakeIpCidr`,
++ * 198.18.0.0/15), which it maps back on connect. The guard cannot judge such an answer, so with
++ * `fakeIpDoh` it re-resolves the name through DNS-over-HTTPS (RFC 8484: GET, wire format, A and
++ * AAAA) to IP-literal endpoints (TLS verified against the endpoint's IP certificate; no DNS is
++ * needed to reach them) and judges and dials the real answer like any resolved address. A failed
++ * lookup refuses the connection: the fake address is never dialed. Only the IPv4 range is a
++ * signal: a fake-IP resolver handing out IPv6 addresses (from ULA space, say) is not detected and
++ * its answers are judged as they are (ULA is closed, so they fail closed).
 + */
-+const FAKE_IP_RANGES = ['198.18.0.0/15'];
-+/** The whole DNS-over-HTTPS lookup of one name (A and AAAA, every endpoint) ends within this. */
-+const DOH_DEADLINE_MS = 5000;
-+/** Answers are cached for their TTL, at most this long, and at most this many names. */
-+const DOH_TTL_CAP_SECONDS = 300;
-+const DOH_CACHE_MAX = 256;
++const DOH_DEFAULTS = { timeoutMs: 5000, cacheTtlCapSeconds: 300, cacheMaxNames: 256 };
 +const DOH_ANSWER_MAX_BYTES = 65536;
 +function dohEndpoint(entry) {
 +    let url;
@@ -104,10 +102,13 @@ index 54970f754e71188fb6ab98971b39560b0b8f8724..3887f78d7c5eeb665496444cd8fd913f
 +        throw new Error(`A DNS-over-HTTPS endpoint must be an https URL with an IP-literal host and no query: ${JSON.stringify(entry)}`);
 +    return url;
 +}
-+/** One JSON DNS-over-HTTPS request (`application/dns-json`, the Cloudflare and Google format). */
-+function defaultDohRequest(url, timeoutMs) {
++/**
++ * One RFC 8484 GET (`application/dns-message`). `tls` is a test seam only (a trusted CA for a
++ * local fixture); production verifies against the system's roots.
++ */
++export function defaultDohRequest(url, timeoutMs, tls = {}) {
 +    return new Promise((resolve, reject) => {
-+        const req = httpsGet(url, { headers: { accept: 'application/dns-json' }, agent: false, timeout: timeoutMs }, res => {
++        const req = httpsGet(url, { headers: { accept: 'application/dns-message' }, agent: false, timeout: timeoutMs, ...(tls.ca ? { ca: tls.ca } : {}) }, res => {
 +            if (res.statusCode !== 200) {
 +                res.resume();
 +                reject(new Error(`HTTP ${res.statusCode}`));
@@ -122,14 +123,7 @@ index 54970f754e71188fb6ab98971b39560b0b8f8724..3887f78d7c5eeb665496444cd8fd913f
 +                else
 +                    chunks.push(chunk);
 +            });
-+            res.on('end', () => {
-+                try {
-+                    resolve(JSON.parse(Buffer.concat(chunks).toString('utf8')));
-+                }
-+                catch (error) {
-+                    reject(error);
-+                }
-+            });
++            res.on('end', () => resolve(Buffer.concat(chunks)));
 +            res.on('error', reject);
 +        });
 +        req.on('timeout', () => req.destroy(new Error('timed out')));
@@ -145,82 +139,134 @@ index 54970f754e71188fb6ab98971b39560b0b8f8724..3887f78d7c5eeb665496444cd8fd913f
 +        }),
 +    ]).finally(() => clearTimeout(timer));
 +}
-+/** The addresses of one JSON answer for `type`, the fake-IP range dropped, and their TTL. */
-+function dohAnswer(body, type) {
-+    if (!body || typeof body !== 'object' || !Number.isInteger(body.Status))
-+        throw new Error('malformed answer');
++/** A wire-format query (RFC 1035) for `name` and `qtype`, id 0 as RFC 8484 recommends. */
++function dnsQuery(name, qtype) {
++    const labels = name.split('.');
++    if (name.length > 253 || labels.some(l => !l.length || l.length > 63 || /[^\x21-\x7e]/.test(l)))
++        throw new Error('name not expressible in DNS');
++    const header = Buffer.from([0, 0, 1, 0, 0, 1, 0, 0, 0, 0, 0, 0]);
++    const parts = labels.map(l => Buffer.concat([Buffer.from([l.length]), Buffer.from(l, 'ascii')]));
++    const tail = Buffer.from([0, qtype >> 8, qtype & 0xff, 0, 1]);
++    return Buffer.concat([header, ...parts, tail]);
++}
++/** The offset after the (possibly compressed) name at `at`. */
++function skipName(message, at) {
++    for (let hops = 0; hops < 128; hops++) {
++        const length = message[at];
++        if (length === undefined)
++            throw new Error('truncated');
++        if (length === 0)
++            return at + 1;
++        if ((length & 0xc0) === 0xc0)
++            return at + 2;
++        at += length + 1;
++    }
++    throw new Error('malformed name');
++}
++/** The addresses of one wire-format answer for `qtype`, the fake-IP range dropped, and their TTL. */
++function dnsAnswer(message, qtype, fakeIp, ttlCap) {
++    if (message.length < 12)
++        throw new Error('truncated answer');
++    const flags = message.readUInt16BE(2);
++    if (!(flags & 0x8000) || flags & 0x0200)
++        throw new Error('not a complete answer');
++    const rcode = flags & 0x000f;
 +    // NXDOMAIN is an answer: the name does not exist
-+    if (body.Status === 3)
++    if (rcode === 3)
 +        return { addresses: [], ttl: 0 };
-+    if (body.Status !== 0)
-+        throw new Error(`DNS status ${body.Status}`);
-+    const want = type === 'A' ? 1 : 28;
-+    const family = type === 'A' ? 4 : 6;
++    if (rcode !== 0)
++        throw new Error(`DNS rcode ${rcode}`);
++    const questions = message.readUInt16BE(4);
++    const answers = message.readUInt16BE(6);
++    let at = 12;
++    for (let i = 0; i < questions; i++)
++        at = skipName(message, at) + 4;
++    const size = qtype === 1 ? 4 : 16;
 +    const addresses = [];
-+    let ttl = DOH_TTL_CAP_SECONDS;
-+    for (const record of Array.isArray(body.Answer) ? body.Answer : []) {
-+        if (record?.type !== want || typeof record.data !== 'string' || isIP(record.data) !== family)
-+            continue;
-+        if (addressInSet(FAKE_IP_SET, record.data))
-+            continue;
-+        addresses.push({ address: record.data, family });
-+        if (Number.isFinite(record.TTL))
-+            ttl = Math.min(ttl, Math.max(0, Math.floor(record.TTL)));
++    let ttl = ttlCap;
++    for (let i = 0; i < answers; i++) {
++        at = skipName(message, at);
++        if (at + 10 > message.length)
++            throw new Error('truncated answer');
++        const type = message.readUInt16BE(at);
++        const rclass = message.readUInt16BE(at + 2);
++        const recordTtl = message.readUInt32BE(at + 4);
++        const length = message.readUInt16BE(at + 8);
++        at += 10;
++        if (at + length > message.length)
++            throw new Error('truncated answer');
++        if (type === qtype && rclass === 1 && length === size) {
++            const bytes = message.subarray(at, at + length);
++            const address = size === 4
++                ? [...bytes].join('.')
++                : Array.from({ length: 8 }, (_, g) => bytes.readUInt16BE(g * 2).toString(16)).join(':');
++            if (!addressInSet(fakeIp, address)) {
++                addresses.push({ address, family: size === 4 ? 4 : 6 });
++                ttl = Math.min(ttl, recordTtl);
++            }
++        }
++        at += length;
 +    }
 +    return { addresses, ttl };
 +}
-+const FAKE_IP_SET = new BlockList();
-+for (const range of FAKE_IP_RANGES)
-+    addRange(FAKE_IP_SET, range);
 +function createDohResolver(config, request) {
 +    const endpoints = (config.endpoints ?? []).map(dohEndpoint);
 +    if (!endpoints.length)
 +        throw new Error('A DNS-over-HTTPS endpoint list must not be empty');
-+    const deadlineMs = config.timeoutMs ?? DOH_DEADLINE_MS;
++    const deadlineMs = config.timeoutMs ?? DOH_DEFAULTS.timeoutMs;
++    const ttlCap = config.cacheTtlCapSeconds ?? DOH_DEFAULTS.cacheTtlCapSeconds;
++    const cacheMax = config.cacheMaxNames ?? DOH_DEFAULTS.cacheMaxNames;
++    const fakeIp = new BlockList();
++    if (!addRange(fakeIp, config.fakeIpCidr ?? '198.18.0.0/15'))
++        throw new Error(`Invalid fake-IP range: ${JSON.stringify(config.fakeIpCidr)}`);
 +    const cache = new Map();
-+    const query = async (name, type, deadline) => {
-+        let last;
-+        for (const endpoint of endpoints) {
-+            const remaining = deadline - Date.now();
-+            if (remaining <= 0)
-+                break;
-+            const url = new URL(endpoint.href);
-+            url.searchParams.set('name', name);
-+            url.searchParams.set('type', type);
-+            try {
-+                return dohAnswer(await withDeadline(Promise.resolve().then(() => request(url.href, remaining)), remaining), type);
-+            }
-+            catch (error) {
-+                last = error;
-+            }
-+        }
-+        throw last ?? new Error('timed out');
++    const ask = (endpoint, name, qtype, ms) => {
++        const url = new URL(endpoint.href);
++        url.searchParams.set('dns', dnsQuery(name, qtype).toString('base64url'));
++        return withDeadline(Promise.resolve().then(() => request(url.href, ms)), ms).then(body => dnsAnswer(Buffer.from(body), qtype, fakeIp, ttlCap));
 +    };
-+    return async (hostname) => {
++    const lookup = async (hostname) => {
 +        const name = hostname.toLowerCase().replace(/\.$/, '');
 +        const hit = cache.get(name);
 +        if (hit && hit.expires > Date.now())
 +            return hit.addresses;
 +        cache.delete(name);
 +        const deadline = Date.now() + deadlineMs;
-+        const answers = await Promise.allSettled([query(name, 'A', deadline), query(name, 'AAAA', deadline)]);
-+        const ok = answers.filter(a => a.status === 'fulfilled').map(a => a.value);
-+        if (!ok.length)
-+            throw answers[0].reason;
-+        const addresses = ok.flatMap(a => a.addresses);
-+        const ttl = Math.min(...ok.map(a => a.ttl));
-+        if (ttl > 0) {
-+            if (cache.size >= DOH_CACHE_MAX)
-+                cache.delete(cache.keys().next().value);
-+            cache.set(name, { addresses, expires: Date.now() + ttl * 1000 });
++        let partial;
++        let last;
++        for (let i = 0; i < endpoints.length; i++) {
++            const remaining = deadline - Date.now();
++            if (remaining <= 0)
++                break;
++            // each endpoint gets its share of what is left, so a stalled one cannot starve the rest
++            const share = Math.max(1, Math.floor(remaining / (endpoints.length - i)));
++            const [a, aaaa] = await Promise.allSettled([1, 28].map(qtype => ask(endpoints[i], name, qtype, share)));
++            if (a.status === 'fulfilled' && aaaa.status === 'fulfilled') {
++                const addresses = [...a.value.addresses, ...aaaa.value.addresses];
++                const ttl = Math.min(a.value.ttl, aaaa.value.ttl);
++                // cached only when both queries answered
++                if (ttl > 0 && cacheMax > 0) {
++                    if (cache.size >= cacheMax)
++                        cache.delete(cache.keys().next().value);
++                    cache.set(name, { addresses, expires: Date.now() + ttl * 1000 });
++                }
++                return addresses;
++            }
++            const ok = [a, aaaa].find(r => r.status === 'fulfilled');
++            partial ??= ok?.value.addresses;
++            last = [a, aaaa].find(r => r.status === 'rejected')?.reason ?? last;
 +        }
-+        return addresses;
++        // one family answered somewhere: use it, uncached
++        if (partial)
++            return partial;
++        throw last ?? new Error('timed out');
 +    };
++    return { lookup, fakeIp };
 +}
  export class ResolvedAddressDeniedError extends Error {
      /**
       * @param reason parenthetical for the violation line and the client, e.g.
-@@ -131,6 +273,14 @@ export function createResolvedAddressGuard(opts = {}) {
+@@ -131,6 +319,14 @@ export function createResolvedAddressGuard(opts = {}) {
          ['a listed address', buildRuleSet(opts.deniedResolvedAddresses ?? [])],
      ];
      const resolve = opts.resolve ?? dnsLookup;
@@ -235,7 +281,7 @@ index 54970f754e71188fb6ab98971b39560b0b8f8724..3887f78d7c5eeb665496444cd8fd913f
      /** This host's addresses right now; a malformed entry from the seam is skipped. */
      const localSet = () => {
          const list = new BlockList();
-@@ -140,8 +290,8 @@ export function createResolvedAddressGuard(opts = {}) {
+@@ -140,8 +336,8 @@ export function createResolvedAddressGuard(opts = {}) {
          return list;
      };
      /** Why `hostname:port` may not use resolved `address`, or undefined if it may. */
@@ -246,16 +292,21 @@ index 54970f754e71188fb6ab98971b39560b0b8f8724..3887f78d7c5eeb665496444cd8fd913f
              return undefined;
          if (!isIP(address))
              return 'an unparsable address';
-@@ -159,7 +309,7 @@ export function createResolvedAddressGuard(opts = {}) {
+@@ -157,9 +353,11 @@ export function createResolvedAddressGuard(opts = {}) {
+             (v4 !== undefined && inRuleSet(set, v4, port));
+         if (denies(refused))
              return 'a deny-listed address';
-         if (inRuleSet(allowed, address, port))
+-        if (inRuleSet(allowed, address, port))
++        // capybara patch: in strict mode an allow-listed literal gets no carve-out over the
++        // closed classes (private destinations need the escalation)
++        if (!strict && inRuleSet(allowed, address, port))
              return undefined;
 -        if (isLoopbackName(hostname)) {
 +        if (!strict && isLoopbackName(hostname)) {
              return isLoopbackAddress(address) ? undefined : 'a non-loopback address';
          }
          const why = denied.find(([, set]) => denies(set))?.[0];
-@@ -171,11 +321,24 @@ export function createResolvedAddressGuard(opts = {}) {
+@@ -171,11 +369,24 @@ export function createResolvedAddressGuard(opts = {}) {
          return undefined;
      };
      const lookupFor = (port) => (hostname, options, callback) => {
@@ -267,11 +318,11 @@ index 54970f754e71188fb6ab98971b39560b0b8f8724..3887f78d7c5eeb665496444cd8fd913f
              }
 +            // capybara patch: a fake-IP answer is re-resolved through DNS-over-HTTPS, and only
 +            // the real answer is judged; when that fails, the connection is refused
-+            if (doh && answer.some(a => isIP(a.address) && addressInSet(FAKE_IP_SET, a.address))) {
-+                doh(hostname).then(judge, error => {
++            if (doh && answer.some(a => isIP(a.address) && addressInSet(doh.fakeIp, a.address))) {
++                doh.lookup(hostname).then(judge, error => {
 +                    const fake = answer.map(a => a.address);
 +                    logForDebugging(`DNS-over-HTTPS failed for ${hostname}:${port} behind a fake-IP resolver: ${error?.message ?? error}`);
-+                    callback(new ResolvedAddressDeniedError(hostname, `resolved by a fake-IP resolver (198.18.0.0/15) and the DNS-over-HTTPS lookup failed (${error?.message ?? 'unknown error'})`, fake), []);
++                    callback(new ResolvedAddressDeniedError(hostname, `resolved by a fake-IP resolver and the DNS-over-HTTPS lookup failed (${error?.message ?? 'unknown error'})`, fake), []);
 +                });
 +                return;
 +            }
@@ -281,7 +332,7 @@ index 54970f754e71188fb6ab98971b39560b0b8f8724..3887f78d7c5eeb665496444cd8fd913f
              const local = localSet();
              const kept = [];
              const dropped = [];
-@@ -211,10 +374,13 @@ export function createResolvedAddressGuard(opts = {}) {
+@@ -211,10 +422,13 @@ export function createResolvedAddressGuard(opts = {}) {
                  callback(null, kept);
              else
                  callback(null, first.address, first.family);
@@ -297,10 +348,10 @@ index 54970f754e71188fb6ab98971b39560b0b8f8724..3887f78d7c5eeb665496444cd8fd913f
      };
  }
 diff --git a/dist/sandbox/sandbox-config.js b/dist/sandbox/sandbox-config.js
-index 76b00b1dc82a2d42a451a9f58068cbbd5e68da75..be19f45db63f7962e69a7fd4f973db19e12ad3c3 100644
+index 76b00b1dc82a2d42a451a9f58068cbbd5e68da75..e00370349136adcd79465395efd3ffb051116c71 100644
 --- a/dist/sandbox/sandbox-config.js
 +++ b/dist/sandbox/sandbox-config.js
-@@ -608,6 +608,20 @@ export const NetworkConfigSchema = z.object({
+@@ -608,6 +608,23 @@ export const NetworkConfigSchema = z.object({
          'deniedDomains. A permitted name that resolves only into these is refused instead of dialed. A name may ' +
          'resolve to a denied address only if that IP literal (and port) is itself in allowedDomains. Not evaluated ' +
          'for connections routed through parentProxy (including one taken from HTTP_PROXY/HTTPS_PROXY) or mitmProxy (that hop resolves the name).'),
@@ -312,16 +363,19 @@ index 76b00b1dc82a2d42a451a9f58068cbbd5e68da75..be19f45db63f7962e69a7fd4f973db19
 +    // capybara patch: DNS-over-HTTPS for names a fake-IP resolver answered (198.18.0.0/15)
 +    fakeIpDoh: z
 +        .object({
++        fakeIpCidr: z.string().optional(),
 +        endpoints: z.array(z.string()).min(1),
 +        timeoutMs: z.number().int().min(1).max(30000).optional(),
++        cacheTtlCapSeconds: z.number().int().min(0).max(86400).optional(),
++        cacheMaxNames: z.number().int().min(0).max(65536).optional(),
 +    })
 +        .strict()
 +        .optional()
-+        .describe('When the system resolver answers a name with a fake-IP address (198.18.0.0/15), re-resolve it through these DNS-over-HTTPS endpoints (https URLs with IP-literal hosts, JSON API) and judge and dial the real answer; a failed lookup refuses the connection.'),
++        .describe('When the system resolver answers a name with an address in fakeIpCidr (default 198.18.0.0/15), re-resolve it through these DNS-over-HTTPS endpoints (https URLs with IP-literal hosts, RFC 8484 wire format; timeoutMs is the whole lookup, shared among the endpoints) and judge and dial the real answer; a failed lookup refuses the connection.'),
      allowUnixSockets: z
          .array(z.string())
          .optional()
-@@ -832,6 +846,22 @@ export const FilesystemConfigSchema = z.object({
+@@ -832,6 +849,22 @@ export const FilesystemConfigSchema = z.object({
          .boolean()
          .optional()
          .describe('Allow writes to .git/config files (default: false). Enables git remote URL updates while keeping .git/hooks protected.'),

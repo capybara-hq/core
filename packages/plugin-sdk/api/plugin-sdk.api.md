@@ -3187,6 +3187,15 @@ export type RouteCaller = {
 export const SANDBOX_EXTENSION_POINT = "sandbox@2";
 
 // @public
+export const SANDBOX_FAKE_IP_DNS: {
+    readonly fakeIpCidr: string;
+    readonly endpoints: readonly string[];
+    readonly timeoutMs: number;
+    readonly cacheTtlCapSeconds: number;
+    readonly cacheMaxNames: number;
+};
+
+// @public
 export const SANDBOX_GIT_ALLOWED_DIRECTORIES: readonly string[];
 
 // @public

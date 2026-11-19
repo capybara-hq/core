@@ -164,7 +164,10 @@ exfiltration is therefore limited to what the sandbox can read: the project, the
 readable tool directories. It never includes the device's secrets, tokens or protected paths.
 
 An escalated call runs as the owner by definition. It gets the device program's environment minus
-every `CAPYBARA_*` variable and the device credential.
+every `CAPYBARA_*` variable. The device credential file (`credential.json` in the state directory)
+stays readable to it: the call runs as the owner outside the sandbox, so nothing can hide a file the
+owner can read. This is inherent to the escalation, which is why only the person, the review model
+or a Full access auto-grant within the outside-sandbox ceiling allows it.
 
 ## Settings model
 
@@ -270,17 +273,22 @@ own addresses included, and drops the carve-out. (SRT's `deniedDomains` takes no
 (OpenClash and the like) intercepts every DNS query, port 53 to any server included, and answers
 each name with an address in `198.18.0.0/15`, which is closed (`reserved`). An answer containing such
 an address is taken as the signal: the operation's proxy re-resolves the name through
-DNS-over-HTTPS (JSON API, A and AAAA) to IP-literal endpoints, Cloudflare `https://1.1.1.1/dns-query`
-and `https://1.0.0.1/dns-query`, then Google `https://8.8.8.8/resolve` and `https://8.8.4.4/resolve`,
-TLS verified against the endpoint's IP certificate, so no DNS is needed to reach them. The real
-answer is judged and dialed like any resolved address (closed classes and the host's own addresses
-refused, the checked address dialed). The lookup runs in the proxy, outside the sandbox, within a
-5-second deadline, and is cached per operation for its TTL (at most 300 s). When it fails the
-connection is refused with a reason naming the fake-IP resolver; the fake address is never dialed.
-The allowlist network uses the same path, so an allow-listed name works on such networks too. This
-lives in the patched runtime's guard (`fakeIpDoh`), so the rebinding protection holds. macOS only
-in R3; the Linux forwarder (T8) needs the same before it reports `openPublic`. A device setting to
-override or switch off the endpoints is later work.
+DNS-over-HTTPS (RFC 8484, GET, wire format, A and AAAA) at IP-literal endpoints, Cloudflare
+`https://1.1.1.1/dns-query` and `https://1.0.0.1/dns-query`, then Google `https://8.8.8.8/dns-query`
+and `https://8.8.4.4/dns-query`, TLS verified against the endpoint's IP certificate, so no DNS is
+needed to reach them. The real answer is judged and dialed like any resolved address (closed
+classes and the host's own addresses refused, the checked address dialed). The lookup runs in the
+proxy, outside the sandbox, within one 5-second deadline per name covering both queries and every
+endpoint (each endpoint gets its share of the time left, so a stalled one cannot starve the rest).
+An answer is cached per operation only when both queries succeeded, for its TTL, at most 300 s and
+256 names. When it fails the connection is refused with a reason naming the fake-IP resolver; the
+fake address is never dialed. The allowlist network uses the same path, so an allow-listed name
+works on such networks too. The range, endpoints and limits are one SDK constant
+(`SANDBOX_FAKE_IP_DNS`) shared by the macOS worker (the patched runtime's guard, `fakeIpDoh`, so the
+rebinding protection holds) and the Linux forwarder. Only the IPv4 range is a signal: a fake-IP
+resolver handing out IPv6 addresses is not detected; its answers are judged as they are (ULA space
+is closed, so they fail closed). A device setting to override or switch off the endpoints is later
+work.
 
 Closed in open mode, and reachable only by running outside the sandbox:
 
@@ -527,6 +535,17 @@ The migration never widens.
   within the outside-sandbox ceiling). Linux allows a loopback listener and its own connect.
 - **Proxy-unaware clients** (plain `ssh`) do not reach the network from the sandbox (section "Open
   network").
+- **Public addresses that lead inward.** The classes are decided on the address, not on where it
+  routes. Not closed: the router's own public WAN address reached by hairpin NAT (a port forward on
+  it leads back into the LAN); a corporate VPN that routes public-range addresses to an intranet;
+  an operator NAT64 prefix (a network-specific prefix announced by DNS64, which embeds private IPv4
+  addresses in ordinary global unicast). A machine on such a network that must keep those closed
+  needs an owner allowlist instead of the open network.
+- **Hard links.** The write rules judge paths: a hard link to a protected file that already exists
+  inside a write root (under an ordinary name) is the same file and is not caught. A restricted
+  command cannot create one to a file outside its write roots, and the protected link chains are
+  anchored (every symbolic link on the way and the final target are denied, and their ancestors
+  cannot move away).
 
 ## Later (cut from R3)
 

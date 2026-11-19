@@ -421,6 +421,8 @@ describe("verified runtime closure: verify-to-launch pinning (B-7)", () => {
           "  wrapWithSandbox: async (script) => script,",
           "  reset: async () => {},",
           "};",
+          // the network patch's schema fields, which the worker checks for before it starts
+          "export const NetworkConfigSchema = { shape: { resolvedAddressStrict: {}, fakeIpDoh: {} } };",
           "",
         ].join("\n"),
       );
