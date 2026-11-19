@@ -98,7 +98,6 @@ export const CHANNEL_PHRASES = {
   /** A network ask's 「once」 button. */
   networkAllowOnce: { zh: "这次允许", en: "Allow this time" },
   /** A network ask's 「always」 button. */
-  networkAllowAlways: { zh: "这台设备一直允许", en: "Always allow on this device" },
   /** A git push ask's card title (`{repo}`; sandbox git credentials spec §7). */
   gitTitle: {
     zh: "智能体想推送到 {repo}，允许吗？",

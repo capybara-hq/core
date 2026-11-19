@@ -11,8 +11,9 @@ import {
 /**
  * Device modes (auto mode spec §4.1–§4.3): who may choose auto mode, and the network each mode
  * gets. One pure function, {@link effectiveDevicePolicy}, combines the platform's switch
- * (`devices.fullAccess`), the org's (`fullAccess`, `cloudNetwork`) and the device's owner ceiling (a
- * local machine's owner report, a cloud device's B1 snapshot; null follows the platform and the org).
+ * (`devices.outsideSandbox`), the org's (`outsideSandbox`, `deviceNetwork`) and the device's owner
+ * ceiling (a local machine's owner report, a cloud device's B1 snapshot; null follows the platform
+ * and the org).
  * It is a ceiling only: no device-chosen default mode selects how an operation runs (permission
  * runtime cutover 8.6); the conversation's permission profile does, within this ceiling.
  */
@@ -165,7 +166,7 @@ export function deviceNetwork(
   mode: SandboxMode,
 ): DeviceNetwork {
   if (deployment.limits.egress === "none") return { kind: "allowlist", hosts: [] };
-  // auto mode is 开放挡内网 whatever the org says; only sandbox mode applies `cloudNetwork`
+  // auto mode is 开放挡内网 whatever the org says; only sandbox mode applies `deviceNetwork`
   if (mode === "auto") return { kind: "open-public", hosts: [] };
   if (orgCloudMode(deployment.limits, org.deviceNetwork) === "open") {
     return { kind: "open-public", hosts: [] };

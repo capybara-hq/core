@@ -245,10 +245,8 @@ export function networkCardText(
       ...(command !== "" ? ["", command] : []),
       ...(hosts.length > 1 ? ["", phrase("networkAllHosts", locale)] : []),
     ].join("\n"),
-    scopeLabels: {
-      once: phrase("networkAllowOnce", locale),
-      always: phrase("networkAllowAlways", locale),
-    },
+    // a run grant only: the owner adds hosts to a device's allowlist on the machine
+    scopeLabels: { once: phrase("networkAllowOnce", locale) },
   };
 }
 
@@ -388,8 +386,11 @@ export async function approvalCard(
     // the field keeps its contract name; it carries the call line (a network ask's hosts and
     // command, a command ask's reason and command), never the raw input
     inputPreview: special?.inputPreview ?? callSummary(v, display, locale, redact),
-    // the scopes the approval allows (the kernel stores them for per-call policies)
-    scopes: v.scopes,
+    // the scopes the approval allows (the kernel stores them for per-call policies); a network,
+    // git or command ask offers only those it labels (an older network ask may still list
+    // `always`, which the decision refuses)
+    scopes:
+      special !== null ? v.scopes.filter((k) => Object.hasOwn(special.scopeLabels, k)) : v.scopes,
     // the labels of the scopes offered only
     ...(special !== null && {
       scopeLabels: Object.fromEntries(

@@ -61,7 +61,8 @@ keeps it). Scheduled tasks run as Request approval with every ask refused, and n
 **Cloud devices**: the container or microVM is the sandbox. Its whole file system is the scope and
 its network, which the sandbox extension enforces, is the sandbox network. There are no directory
 crossings and nothing runs outside it; the profiles differ only in sensitive-command consent. A new
-host cannot be granted per call there: add it to the device's or the org's list.
+host cannot be granted per call there: an org admin adds it to the org's list (a device's own list
+only narrows the org's).
 
 Who sets the sandbox (each layer can only narrow the one above):
 
@@ -80,9 +81,17 @@ Who sets the sandbox (each layer can only narrow the one above):
   the owner's allowlist (`capybara-device policy add allowedDomains <host>`). With the allowlist
   network the owner's list is the machine's ceiling: a per-call host grant counts only where it
   covers the host. A new install starts with outside-sandbox off and the open network. The device
-  page can narrow a local device (allowlist, remove hosts, outside-sandbox off) but never widen it.
-- **Device (cloud)**: follows its org's network; its own choice (`network_mode`, `network_hosts`)
-  only narrows, never adds a host.
+  page's sandbox section can narrow a local device (the allowlist network, removing hosts,
+  outside-sandbox off, workspace project reach; `POST /api/v1/orgs/:orgId/devices/:id/policy`) but
+  never widen it (a local device's network PATCH is refused with `device.ceiling_on_machine`,
+  which names the machine commands).
+- **Device (cloud)**: follows its org's network until its owner picks one on the device page
+  (`PATCH /api/v1/orgs/:orgId/devices/:id` with `network: { mode: open | allowlist | none | null,
+  hosts? }`; `null` follows the org again). The choice stays within the org's and the platform's
+  ceilings (`device.network_not_allowed` above them), and its hosts only narrow the org's list,
+  never add one. Through an API token or the Platform tool (`devices.set-network`) it only narrows.
+  The change applies on the device's next use (files kept), or after a file reset where the
+  provider applies limits to the file system; the page says which, and lists recent changes.
 
 A crossing beyond a ceiling is unavailable under every profile, with an error naming who can
 change it (the device owner on the machine, an org admin, or the super admin). If the device

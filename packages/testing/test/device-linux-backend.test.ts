@@ -16,8 +16,8 @@ import {
   startLinuxDevice,
 } from "../../device/test/linux-docker-fixture.js";
 import {
-  type HostBackend,
   authorityFor,
+  type HostBackend,
   HostServer,
   hostBackend,
   installServer,

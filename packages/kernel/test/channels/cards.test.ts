@@ -296,14 +296,15 @@ describe("a network ask card (network ask-to-allow spec §6.4, §6.5)", () => {
     expect(networkCardText(one, "en").inputPreview).toBe("files.slack.com\n\ncurl x");
   });
 
-  it("the card: Bash, the hosts, the clipped redacted command, the all-hosts line and the scope labels", async () => {
+  it("the card: Bash, the hosts, the clipped redacted command, the all-hosts line and only the once scope", async () => {
     const zh = await approvalCard(deps(view), "na1", "https://cap.example", "zh", redact);
     expect(zh).toMatchObject({
       kind: "approval",
       title: "智能体想访问 2 个域名，允许吗？",
       toolName: "Bash",
-      scopes: ["once", "always"],
-      scopeLabels: { once: "这次允许", always: "这台设备一直允许" },
+      // an ask made before run grants still lists always: the card offers only once
+      scopes: ["once"],
+      scopeLabels: { once: "这次允许" },
       state: "pending",
       webUrl: "https://cap.example/chat/c1",
     });
@@ -319,10 +320,7 @@ describe("a network ask card (network ask-to-allow spec §6.4, §6.5)", () => {
     // the description stays on the web
     expect(zh?.inputPreview).not.toContain("Download the file");
     const en = await approvalCard(deps(view), "na1", "https://cap.example", "en", redact);
-    expect(en?.scopeLabels).toEqual({
-      once: "Allow this time",
-      always: "Always allow on this device",
-    });
+    expect(en?.scopeLabels).toEqual({ once: "Allow this time" });
     expect(en?.inputPreview.split("\n").at(-1)).toBe(
       "This decision applies to all the domains above",
     );

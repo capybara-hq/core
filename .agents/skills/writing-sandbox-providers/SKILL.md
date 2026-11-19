@@ -305,6 +305,14 @@ Every provider must follow these; the kernel's behaviour below assumes them. How
   - **Network mode:** the device's choice (a local owner's `network`, a cloud device's
     `devices.network_mode`; NULL follows the org), else the org default, else
     `devices.network.default`, clamped to the ceiling. `network_mode: none` is a closed cloud network.
+    The owner sets a cloud device's choice on the device page (`PATCH /devices/:id` `network:
+    { mode, hosts? }`, `DevicesService.update` / `planNetwork`; a local device gets
+    `device.ceiling_on_machine`): within the ceilings and the org's hosts
+    (`device.network_not_allowed`), under the ordered locks (membership, device row, the device's
+    permission write lock). An API token or the Platform tool (`devices.set-network`) may only
+    narrow, compared on the stored setting and on the effective sandbox. The view reports
+    `pendingNextUse` / `pendingFilesReset` (`limitsApplyAt: "fileSystem"`) and the audit
+    `device.network_changed` (`via: web | token | agent`).
   - **Hosts:** the org's effective hosts (`orgEffectiveHosts`: the platform's `allowHosts` minus the
     org's `excludedHosts` plus its `extraHosts`, or the extras alone under `base: none`; never a
     copy, so platform changes reach every org), intersected with the device's own list (a local
@@ -546,7 +554,7 @@ through `browse`, commands through the request-bound execution adapter (the admi
 limits; a host the limits now refuse fails the call). The machine re-checks every scope against its owner ceiling
 (`ownerCeiling { outsideSandbox, network, allowedDomains, restrictedProjectReach }`, reported as `DeviceOwnerCeiling`
 version 3). The web narrows it only through the `policy` op (network to `allowlist`, hosts removed, `outsideSandbox`
-off); a `policy` op that adds hosts or carries a `mode` is refused (`POLICY_ADD_REFUSED`): widening happens only on the
+off, `restrictedProjectReach: workspace`); a `policy` op that adds hosts or carries a `mode` is refused (`POLICY_ADD_REFUSED`): widening happens only on the
 machine (`capybara-device ceiling set --outside-sandbox on|off --network open|allowlist`, `capybara-device policy add
 allowedDomains <host>`). Kernels and device programs upgrade together with no fallback: the kernel refuses a protocol 3
 program (426, "Update capybara-device"), and a protocol 4 program facing an older deployment says the deployment must be

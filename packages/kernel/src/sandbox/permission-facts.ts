@@ -173,7 +173,7 @@ export class PermissionFacts {
     deviceId: string,
     availability?: PermissionAvailability,
     /** A cloud device's network as it would be stored (a change checked before it is written). */
-    cloudNetwork?: { networkMode: "open" | "allowlist" | "none" | null; networkHosts: string[] },
+    pendingCloud?: { networkMode: "open" | "allowlist" | "none" | null; networkHosts: string[] },
   ) {
     const [settings, org, row] = await Promise.all([
       readDeviceSandboxSettings(this.db.db, this.config),
@@ -202,7 +202,7 @@ export class PermissionFacts {
         allowedDomains: facts.allowedDomains,
         restrictedProjectReach: facts.restrictedProjectReach,
       };
-    } else device = { location, ...(cloudNetwork ?? cloudOwnNetwork(row)) };
+    } else device = { location, ...(pendingCloud ?? cloudOwnNetwork(row)) };
     const current = availability ?? (await this.availability(orgId, deviceId));
     const report = current.state === "supported" ? current.report : null;
     const platform = {

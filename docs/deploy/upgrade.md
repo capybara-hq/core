@@ -142,14 +142,22 @@ the publication barrier).
 an allowlist outer network snapshot into them (an empty or unreadable list ran closed and becomes
 `network_mode: none`). A cloud device that followed its org on the allowlist (for example under
 `sandbox.limits.orgHosts: within`) keeps the allowlist. `owner_full_access` is no longer read. A
-cloud device has no outside of its sandbox: an escalation there is refused.
+cloud device has no outside of its sandbox: an escalation there is refused. `PATCH …/devices/:id`
+no longer takes `mode` or `ownerCeiling` (the codes `device.mode_on_device`,
+`device.mode_requires_session`, `device.full_access_not_allowed`,
+`device.owner_ceiling_confirmation_required` and `device.permission_not_migrated` are gone); it
+takes `network` (`{ mode: open | allowlist | none | null, hosts? }`), which an API token or the
+Platform tool (`devices.set-network`) may only narrow.
 
 **Local devices.** `capybara-device` converts its `policy.json` once on start, never wider:
 Full access allowed becomes outside-the-sandbox allowed with the open network; denied keeps the
 allowlist with its old `allowedDomains`, and `start` prints `capybara-device ceiling set --network
 open` to open it. New installs get outside-the-sandbox off and the open network. The CLI is now
 `capybara-device ceiling set [--outside-sandbox on|off] [--network open|allowlist]
-[--project-reach workspace|os-user]`; `--full-access` is gone.
+[--project-reach workspace|os-user]`; `--full-access` is gone. The device page only narrows a
+local device: `POST …/devices/:id/policy` takes only `remove` and `ownerCeiling` narrowings (`add`
+and `mode` are gone), and a `network` PATCH on a local device is refused with
+`device.ceiling_on_machine`, which names the machine commands.
 
 **Upgrade order.** This is device protocol 4, a paired release with no fallback:
 
