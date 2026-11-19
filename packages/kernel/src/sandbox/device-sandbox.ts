@@ -274,11 +274,15 @@ export function providerLayerOf(
  * - Under an open ceiling, `orgHosts: within` keeps grants within the org's effective hosts (the
  *   platform list minus exclusions, or only the extras the platform list covers under `base:
  *   none`); `extend` allows any host the org does not exclude.
- * - A local owner's allowlist is the machine's ceiling: intersected with the owner's list.
+ * - A local owner's allowlist is the machine's ceiling: intersected with the owner's list, and
+ *   under an open ceiling still minus the org's exclusions (`excluded`).
+ *
+ * An excluded entry is a pattern like an allowlist entry (`*.example.com` excludes every
+ * subdomain, never the apex): a host is grantable only when no excluded entry covers it.
  */
 export type HostGrantCeiling =
   | { kind: "any"; excluded: readonly string[] }
-  | { kind: "hosts"; hosts: readonly string[] };
+  | { kind: "hosts"; hosts: readonly string[]; excluded?: readonly string[] };
 
 export function hostGrantCeiling(
   box: Pick<DeviceSandbox, "boundary" | "networkMode" | "networkCeiling"> & {
@@ -302,15 +306,15 @@ export function hostGrantCeiling(
         };
   if (owner?.network === "allowlist") {
     const own = owner.allowedDomains;
-    ceiling =
-      ceiling.kind === "any"
-        ? {
-            kind: "hosts",
-            hosts: own
-              .map((h) => h.toLowerCase())
-              .filter((h) => !(ceiling as { excluded: readonly string[] }).excluded.includes(h)),
-          }
-        : { kind: "hosts", hosts: intersectHosts(ceiling.hosts, own) };
+    if (ceiling.kind === "any") {
+      const excluded = ceiling.excluded;
+      // an own entry an exclusion covers is dropped; an own wildcard that covers an excluded host
+      // stays, with the exclusion carried so that host is still refused
+      const hosts = own
+        .map((h) => h.toLowerCase())
+        .filter((h) => !excluded.some((x) => coversHost(x, h)));
+      ceiling = excluded.length ? { kind: "hosts", hosts, excluded } : { kind: "hosts", hosts };
+    } else ceiling = { kind: "hosts", hosts: intersectHosts(ceiling.hosts, own) };
   }
   return ceiling;
 }
@@ -318,15 +322,17 @@ export function hostGrantCeiling(
 /** Whether a per-call grant may name `host` under `ceiling`. */
 export function hostGrantable(ceiling: HostGrantCeiling, host: string): boolean {
   const h = host.toLowerCase();
-  if (ceiling.kind === "any") return !ceiling.excluded.includes(h);
+  if ((ceiling.excluded ?? []).some((x) => coversHost(x.toLowerCase(), h))) return false;
+  if (ceiling.kind === "any") return true;
   return ceiling.hosts.some((p) => coversHost(p.toLowerCase(), h));
 }
 
 /** A canonical form of a ceiling (sorted, deduplicated, lowercased) for the consent fingerprint. */
 export function canonicalHostCeiling(ceiling: HostGrantCeiling): HostGrantCeiling {
   const norm = (l: readonly string[]) => [...new Set(l.map((h) => h.toLowerCase()))].sort();
-  return ceiling.kind === "any"
-    ? { kind: "any", excluded: norm(ceiling.excluded) }
+  if (ceiling.kind === "any") return { kind: "any", excluded: norm(ceiling.excluded) };
+  return ceiling.excluded?.length
+    ? { kind: "hosts", hosts: norm(ceiling.hosts), excluded: norm(ceiling.excluded) }
     : { kind: "hosts", hosts: norm(ceiling.hosts) };
 }
 
@@ -385,11 +391,11 @@ export function reachWithin(now: ConsentReach, consented: ConsentReach): boolean
     return false;
   const a = now.hostCeiling,
     b = consented.hostCeiling;
-  if (b.kind === "any")
-    return a.kind === "any"
-      ? b.excluded.every((h) => a.excluded.includes(h))
-      : a.hosts.every(
-          (h) => hostGrantable(b, h) && !b.excluded.some((x) => coversHost(h.toLowerCase(), x)),
-        );
-  return a.kind === "hosts" && a.hosts.every((h) => hostGrantable(b, h));
+  // every exclusion consented to still holds now: no host it covers became grantable
+  const keepsExclusions = (b.excluded ?? []).every(
+    (x) => (a.excluded ?? []).some((y) => coversHost(y, x)) || !hostGrantable(a, x),
+  );
+  if (!keepsExclusions) return false;
+  if (a.kind === "any") return b.kind === "any";
+  return a.hosts.every((h) => hostGrantable(b, h));
 }

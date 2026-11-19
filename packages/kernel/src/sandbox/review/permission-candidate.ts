@@ -24,7 +24,8 @@ import type {
 export type { PermissionCrossingKind };
 
 import { hostsWithinOuter, permissionScopeHash } from "../permission-facts.js";
-import { parseCommand } from "./rules.js";
+import { parseCommand, reviewRules } from "./rules.js";
+import type { ReviewFacts } from "./types.js";
 
 export const withinDirectory = (target: string, root: string): boolean =>
   target === root || target.startsWith(root === "/" ? "/" : `${root}/`);
@@ -168,6 +169,16 @@ export const approverForProfile = (profile: PermissionProfile): PermissionApprov
  */
 export const isCredentialConsentRule = (rule: string): boolean =>
   rule.startsWith("ask.credential-") || rule === "ask.ssh" || rule === "ask.secret-file";
+/**
+ * Whether a command carries a credential consent ({@link isCredentialConsentRule}) under the
+ * review rules, derived from the command itself: grant issuance re-derives it from the recorded
+ * call so a Full access auto-grant never covers a credential escalation, whatever the pipeline
+ * decided.
+ */
+export const commandCarriesCredentialConsent = (command: string, facts: ReviewFacts): boolean =>
+  reviewRules(command, facts).hits.some(
+    (hit) => hit.outcome === "ask" && isCredentialConsentRule(hit.id),
+  );
 /**
  * Who decides one crossing (approval-only profiles design, "Profiles"): {@link approverForProfile},
  * except that an `outside-sandbox` escalation is never auto-granted when a sub-agent asks for it or

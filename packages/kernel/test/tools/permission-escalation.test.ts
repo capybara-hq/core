@@ -887,3 +887,31 @@ it("Full access: the review model's allow of a credential escalation is its gran
     { source: "review-model", scope_kind: "sandbox-escalation" },
   ]);
 });
+
+// R3 final review m2: issuance re-derives the credential consent from the recorded command, so a
+// Full access auto-grant never covers a credential escalation even when the pipeline erred
+it("Full access: issuance refuses an auto-grant of a credential escalation the pipeline let through", async () => {
+  const f = await escalated("full-access", {
+    ...ESCALATED,
+    command: "cat ~/.ssh/id_ed25519.pub",
+  });
+  // a pipeline that lost the consent: the review answers that nobody needs to approve
+  vi.spyOn(k.app.get(CommandReviewService), "review").mockResolvedValue({
+    decision: "allow",
+    by: "rule",
+    reason: "Full access grants this crossing within the device's limits.",
+    rule: null,
+    crossing: "outside-sandbox",
+    approver: "none",
+  });
+  await f.step().catch(() => undefined);
+  expect(f.effects()).toBe(0);
+  expect(await f.db.selectFrom("permission_call_grants").selectAll().execute()).toEqual([]);
+  expect(
+    await f.db
+      .selectFrom("audit_events")
+      .select("id")
+      .where("action", "=", "permission.crossing_auto_granted")
+      .execute(),
+  ).toEqual([]);
+});

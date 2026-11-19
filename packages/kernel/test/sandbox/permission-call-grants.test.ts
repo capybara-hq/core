@@ -744,6 +744,27 @@ describe("per-call hosts within the device sandbox's host ceiling", () => {
     expect(build(curl("https://other.test/x"), f)).toMatchObject({ kind: "proposal" });
   });
 
+  // R3 final review m1: an excluded entry is a pattern, as the allowlist entries are
+  it.each(profiles)("%s: an org's excluded wildcard makes its subdomains ungrantable", (p) => {
+    const f = ceilingFacts(p, "open", { deviceNetwork: { excludedHosts: ["*.example.com"] } });
+    expect(build(curl("https://api.example.com/x"), f)).toMatchObject({ kind: "unsupported" });
+    expect(build(curl("https://deep.api.example.com/x"), f)).toMatchObject({ kind: "unsupported" });
+    // the apex is no subdomain, and other hosts stay grantable
+    expect(build(curl("https://example.com/x"), f)).toMatchObject({ kind: "proposal" });
+    expect(build(curl("https://other.test/x"), f)).toMatchObject({ kind: "proposal" });
+    // through the owner's allowlist too: neither an own entry under the exclusion nor an own
+    // wildcard covering an excluded host grants it
+    const owned = ceilingFacts(
+      p,
+      "open",
+      { deviceNetwork: { excludedHosts: ["*.example.com", "bad.other.test"] } },
+      { network: "allowlist", allowedDomains: ["api.example.com", "*.other.test"] },
+    );
+    expect(build(curl("https://api.example.com/x"), owned)).toMatchObject({ kind: "unsupported" });
+    expect(build(curl("https://bad.other.test/x"), owned)).toMatchObject({ kind: "unsupported" });
+    expect(build(curl("https://ok.other.test/x"), owned)).toMatchObject({ kind: "proposal" });
+  });
+
   it.each(profiles)("%s: an open-public sandbox network proposes no host", (p) => {
     for (const ceiling of ["open", "allowlist"] as const)
       expect(

@@ -26,10 +26,12 @@ import type {
 import { PermissionFacts, permissionScopeHash } from "./permission-facts.js";
 import {
   approverForCrossing,
+  commandCarriesCredentialConsent,
   crossingOfCandidate,
   normalizePermissionExpansion,
   permissionCandidateHash,
 } from "./review/permission-candidate.js";
+import { homeOf } from "./review/rules.js";
 
 type GrantRow = Selectable<PermissionCallGrantsTable>;
 export function bindingOfGrant(r: GrantRow): PermissionCallBinding {
@@ -61,9 +63,12 @@ export class PermissionCallGrants {
     @Inject(PermissionProfileStore) private readonly profiles: PermissionProfileStore,
     @Inject(PermissionFacts) private readonly facts: PermissionFacts,
   ) {}
-  /** The caller takes authority before conversation/approval/run locks. No I/O occurs here. */
+  /**
+   * The caller takes authority before conversation/approval/run locks. No I/O occurs here.
+   * Returns the recorded input of the bound call.
+   */
   @Transactional({ propagation: "mandatory" })
-  async assertCurrent(binding: PermissionCallBinding): Promise<void> {
+  async assertCurrent(binding: PermissionCallBinding): Promise<unknown> {
     this.locks.assertHeld("root", binding.rootConversationId);
     const root = await this.profiles.readOwnedRoot(
       binding.orgId,
@@ -120,16 +125,43 @@ export class PermissionCallGrants {
         ? (row.payload as { content: unknown[] }).content
         : [],
     ) as { type?: string; id?: string; name?: string; input?: unknown }[];
-    if (
-      !calls.some(
-        (call) =>
-          call.type === "tool_call" &&
-          call.id === binding.callId &&
-          call.name === binding.toolKey &&
-          permissionScopeHash(call.input) === binding.callInputHash,
-      )
-    )
+    const recorded = calls.find(
+      (call) =>
+        call.type === "tool_call" &&
+        call.id === binding.callId &&
+        call.name === binding.toolKey &&
+        permissionScopeHash(call.input) === binding.callInputHash,
+    );
+    if (!recorded)
       throw new ApiError("forbidden", "Permission proposal does not match the recorded tool input");
+    return recorded.input;
+  }
+  /**
+   * Whether the bound call's recorded command carries a credential consent, re-derived with the
+   * review rules against the working root and the owner's home (a missing command counts as one).
+   */
+  private async credentialConsentOf(b: PermissionCallBinding, input: unknown): Promise<boolean> {
+    const command = (input as { command?: unknown } | null)?.command;
+    if (typeof command !== "string") return true;
+    const root = await this.profiles.readOwnedRoot(b.orgId, b.conversationId, b.accountId);
+    const [working, device] = await Promise.all([
+      this.facts.readWorkingFacts({
+        orgId: b.orgId,
+        rootConversationId: b.rootConversationId,
+        holderConversationId: b.conversationId,
+        deviceId: b.deviceId,
+      }),
+      this.facts.readDevice(b.orgId, b.deviceId),
+    ]);
+    const workspace = root.project_path ?? working.workspace;
+    return commandCarriesCredentialConsent(command, {
+      workspace,
+      cwd: workspace,
+      home: working.home,
+      deviceHome: homeOf(working.workspace),
+      mode: device.policy.mode,
+      attended: true,
+    });
   }
   @Transactional({ propagation: "mandatory" })
   async issueLocked(
@@ -137,7 +169,7 @@ export class PermissionCallGrants {
     decision: PermissionGrantDecision,
   ): Promise<{ id: string }> {
     const b = candidate.binding;
-    await this.assertCurrent(b);
+    const recordedInput = await this.assertCurrent(b);
     const { candidateHash, ...presentation } = candidate;
     const escalation = candidate.scopeKind === "sandbox-escalation";
     if (
@@ -169,6 +201,11 @@ export class PermissionCallGrants {
       profile: b.profile,
       crossing,
       subAgent: b.conversationId !== b.rootConversationId,
+      // re-derived from the recorded command, never taken from the pipeline's verdict
+      credentialConsent:
+        escalation && b.profile === "full-access"
+          ? await this.credentialConsentOf(b, recordedInput)
+          : false,
     });
     const reviewModelMay =
       approver === "review-model" ||

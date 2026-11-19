@@ -360,6 +360,36 @@ describe("the per-call host grant ceiling", () => {
     );
   });
 
+  // R3 final review m1: an exclusion is a pattern, like an allowlist entry
+  it("an excluded wildcard refuses every subdomain, never the apex, also through an owner list", () => {
+    const org = { deviceNetwork: { excludedHosts: ["*.Example.com"] } };
+    const open = hostGrantCeiling(box(), lim(), org, null);
+    expect(hostGrantable(open, "api.example.com")).toBe(false);
+    expect(hostGrantable(open, "a.b.example.com")).toBe(false);
+    expect(hostGrantable(open, "example.com")).toBe(true);
+    expect(hostGrantRefusal("api.example.com", box(), lim(), org, null)).toMatch(
+      /organization admin adds api.example.com/,
+    );
+    const owner = {
+      network: "allowlist" as const,
+      allowedDomains: ["api.example.com", "*.other.test"],
+    };
+    const owned = hostGrantCeiling(
+      box(),
+      lim(),
+      { deviceNetwork: { excludedHosts: ["*.example.com", "bad.other.test"] } },
+      owner,
+    );
+    expect(owned).toEqual({
+      kind: "hosts",
+      hosts: ["*.other.test"],
+      excluded: ["*.example.com", "bad.other.test"],
+    });
+    expect(hostGrantable(owned, "api.example.com")).toBe(false);
+    expect(hostGrantable(owned, "bad.other.test")).toBe(false);
+    expect(hostGrantable(owned, "ok.other.test")).toBe(true);
+  });
+
   it("within keeps grants inside the org's effective hosts; base none removes the platform list", () => {
     expect(hostGrantRefusal("api.test", box(), lim("within"), {}, null)).toBe(
       "api.test is outside the platform's host list; a super admin adds the host",
@@ -459,6 +489,28 @@ describe("the Full access consent reach", () => {
       reachWithin(
         reach({ hostCeiling: { kind: "hosts", hosts: ["*.test"] } }),
         reach({ hostCeiling: { kind: "any", excluded: ["a.test"] } }),
+      ),
+    ).toBe(false);
+    // an excluded wildcard narrowed to one of its hosts widens; widened to cover it narrows
+    expect(
+      reachWithin(
+        reach({ hostCeiling: { kind: "any", excluded: ["api.test"] } }),
+        reach({ hostCeiling: { kind: "any", excluded: ["*.test"] } }),
+      ),
+    ).toBe(false);
+    expect(
+      reachWithin(
+        reach({ hostCeiling: { kind: "any", excluded: ["*.test"] } }),
+        reach({ hostCeiling: { kind: "any", excluded: ["api.test"] } }),
+      ),
+    ).toBe(true);
+    // an owner list that keeps its exclusion stays within; dropping the exclusion widens
+    const kept = { kind: "hosts" as const, hosts: ["*.other.test"], excluded: ["bad.other.test"] };
+    expect(reachWithin(reach({ hostCeiling: kept }), reach({ hostCeiling: kept }))).toBe(true);
+    expect(
+      reachWithin(
+        reach({ hostCeiling: { kind: "hosts", hosts: ["*.other.test"] } }),
+        reach({ hostCeiling: kept }),
       ),
     ).toBe(false);
   });
