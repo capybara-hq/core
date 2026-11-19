@@ -5,7 +5,7 @@ import type { AppendEvent } from "../../src/conversations/event-log.js";
 import {
   type ConversationEvent,
   ConversationEventSchema,
-  type PermissionContextV1,
+  type PermissionContextV2,
 } from "../../src/conversations/events.js";
 import { ApiError } from "../../src/errors.js";
 import {
@@ -42,8 +42,9 @@ const RUN = "target-run";
 const GEN = { conversationId: "generated-conversation", runId: "generated-run" };
 
 /** A valid v1 snapshot, distinct per revision. */
-const ctx = (revision: number): PermissionContextV1 => ({
-  version: 1,
+const ctx = (revision: number): PermissionContextV2 => ({
+  version: 2,
+  sandbox: null,
   rootConversationId: ROOT,
   profileRevision: revision,
   selectedProfile: "request-approval",
@@ -316,7 +317,7 @@ describe("recorded-only feeder (spec B4)", () => {
       { call: { step: 1, attempt: 1 } },
     ]);
     expect(recordedPermissionContext(s, seeded(s), GEN)).toBeUndefined();
-    expect(recordedRunPermissionDrift(s)).toBe(false);
+    expect(recordedRunPermissionDrift(s)).toEqual([]);
   });
 
   it("feeds A then B at the only step-1 request, never C or D early, and keeps the seeded earlier context once", async () => {
@@ -360,7 +361,7 @@ describe("recorded-only feeder (spec B4)", () => {
     expect(log.contexts().map(([, , r]) => r)).toEqual([0, 1, 2, 3]);
     // payloads are copied exactly; only the run id is the generated one
     for (const e of log.events.filter((x) => x.type === "permission_context" && x.seq > 5))
-      expect(e.payload).toEqual(ctx((e.payload as PermissionContextV1).profileRevision ?? -1));
+      expect(e.payload).toEqual(ctx((e.payload as PermissionContextV2).profileRevision ?? -1));
   });
 
   it("a candidate ending after step 1 consumes no later context", async () => {
@@ -470,20 +471,20 @@ describe("recorded-only feeder (spec B4)", () => {
 describe("original-coordinate diagnostics", () => {
   it("an unchanged marked recording has no drift; a tampered recorded context has", () => {
     const s = reference();
-    expect(recordedRunPermissionDrift(s)).toBe(false);
+    expect(recordedRunPermissionDrift(s)).toEqual([]);
     const tampered = structuredClone(s);
     const event = tampered.events.find((e) => e.seq === 7);
     // an unrendered revision alone changes no rendered contribution, so no drift
-    (event?.payload as PermissionContextV1).scopeRevision = "tampered";
-    expect(recordedRunPermissionDrift(tampered)).toBe(false);
-    Object.assign(event?.payload as PermissionContextV1, {
+    (event?.payload as PermissionContextV2).scopeRevision = "tampered";
+    expect(recordedRunPermissionDrift(tampered)).toEqual([]);
+    Object.assign(event?.payload as PermissionContextV2, {
       selectedProfile: "approve-for-me",
       effectiveProfile: "approve-for-me",
     });
-    expect(recordedRunPermissionDrift(tampered)).toBe(true);
+    expect(recordedRunPermissionDrift(tampered)).toEqual(["permission_profile_changed"]);
     // a deleted event is caught too, and nothing live is consulted to fill it in
     const deleted = { ...s, events: s.events.filter((e) => e.seq !== 10) };
-    expect(recordedRunPermissionDrift(deleted)).toBe(true);
+    expect(recordedRunPermissionDrift(deleted)).toEqual(["permission_profile_changed"]);
   });
   it("an earlier run's tampered call alone does not count; the replayed run's requests do", () => {
     const s = reference();
@@ -492,11 +493,11 @@ describe("original-coordinate diagnostics", () => {
     Object.assign((earlierCall.payload as { request: Record<string, unknown> }).request, {
       permissionContext: { version: 1, contextSeq: 2, hash: "a".repeat(64) },
     });
-    expect(recordedRunPermissionDrift(s)).toBe(false);
+    expect(recordedRunPermissionDrift(s)).toEqual([]);
   });
   it("an unsupported recorded version fails as eval.snapshot_invalid, never as drift", () => {
     const s = reference();
-    Object.assign(s.events.find((e) => e.seq === 6)?.payload as object, { version: 2 });
+    Object.assign(s.events.find((e) => e.seq === 6)?.payload as object, { version: 3 });
     for (const f of [
       () => recordedRunPermissionDrift(s),
       () => recordedPermissionContext(s, seeded(s), GEN),

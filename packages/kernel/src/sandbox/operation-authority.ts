@@ -14,8 +14,8 @@ import { sql } from "kysely";
 import {
   ACTOR_DEVICE_ACCESS_REASON,
   ACTOR_NOT_DEVICE_OWNER_REASON,
-  type PermissionContextV1,
-  PermissionContextV1Schema,
+  type PermissionContextV2,
+  PermissionContextV2Schema,
   permissionCodePointCompare,
 } from "../conversations/events.js";
 import {
@@ -922,7 +922,7 @@ export class SandboxOperationAuthority {
   async readContextLocked(
     input: PermissionContextSubject,
     signal: AbortSignal,
-  ): Promise<PermissionContextV1> {
+  ): Promise<PermissionContextV2> {
     signal.throwIfAborted();
     // a run whose trigger account is not the conversation's owner (a group-chat sender, a wake
     // attributed to another member) is not refused: its context is unavailable and it runs without
@@ -962,14 +962,17 @@ export class SandboxOperationAuthority {
       (await this.runScheduledLocked(input.conversationId, input.accountId, input.runId)) ||
       root.scheduled_task_id !== null;
     const header = {
-      version: 1 as const,
+      version: 2 as const,
+      // interim: no device sandbox block yet (T5 records it), so the context keeps its
+      // profile-level policy line
+      sandbox: null,
       rootConversationId: root.id,
       execution: scheduled ? ("scheduled" as const) : ("interactive" as const),
       inherited: input.conversationId !== root.id,
     };
-    const parse = (payload: PermissionContextV1) => {
+    const parse = (payload: PermissionContextV2) => {
       signal.throwIfAborted();
-      return PermissionContextV1Schema.parse(payload);
+      return PermissionContextV2Schema.parse(payload);
     };
     if (foreign && root.device_id !== null)
       return parse({

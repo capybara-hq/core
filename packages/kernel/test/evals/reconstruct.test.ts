@@ -2616,7 +2616,8 @@ describe("reconstructRequest：漂移原因", () => {
       runId: call.runId,
       createdAt: call.createdAt,
       payload: {
-        version: 1,
+        version: 2,
+        sandbox: null,
         rootConversationId: s.conversationId,
         profileRevision: 1,
         selectedProfile: "request-approval",
@@ -2651,6 +2652,80 @@ describe("reconstructRequest：漂移原因", () => {
     };
     expect(reconstructRequest(s, call.seq, { model: info }).drift).toEqual([
       "permission_profile_changed",
+    ]);
+  });
+
+  it("device_sandbox_changed: a sandbox change between runs is zero drift; another rebuilt block is drift", () => {
+    const s = clone();
+    const call = s.events.find((e) => e.seq === seq) as CaseSnapshot["events"][number];
+    const payload = call.payload as EventPayload<"model_call">;
+    const first = payload.request.toSeq + 1;
+    for (const e of s.events) if (e.seq >= first) e.seq += 2;
+    const device = "00000000-0000-4000-8000-0000000000d1";
+    const context = (outsideSandbox: boolean) => ({
+      version: 2 as const,
+      rootConversationId: s.conversationId,
+      profileRevision: 1,
+      selectedProfile: "request-approval" as const,
+      effectiveProfile: "request-approval" as const,
+      execution: "interactive" as const,
+      inherited: false,
+      deviceId: device,
+      scopeRevision: "scope-1",
+      authorityRevision: "authority-1",
+      availability: { state: "supported" as const },
+      scope: {
+        location: "local" as const,
+        workingRoot: "/project",
+        filesystem: {
+          kind: "scoped" as const,
+          readDirectories: ["/project"],
+          writeDirectories: ["/project"],
+        },
+        network: { kind: "none" as const },
+        outerNetwork: { kind: "host-environment" as const },
+      },
+      sandbox: {
+        boundary: "operation" as const,
+        location: "local" as const,
+        workingRoot: "/project",
+        network: { kind: "none" as const, hostsCount: 0 },
+        outsideSandbox,
+        outerNetwork: { kind: "host-environment" as const },
+      },
+    });
+    // an earlier run recorded one sandbox, the call's run another
+    s.events.push(
+      {
+        type: "permission_context",
+        seq: first,
+        runId: "00000000-0000-4000-8000-0000000000e1",
+        createdAt: call.createdAt,
+        payload: context(true),
+      },
+      {
+        type: "permission_context",
+        seq: first + 1,
+        runId: call.runId,
+        createdAt: call.createdAt,
+        payload: context(false),
+      },
+    );
+    payload.request.toSeq = first + 1;
+    // the request as it was sent: its metadata names the sandbox block it saw
+    payload.request.permissionContext = reconstructRequest(s, call.seq, {
+      model: info,
+    }).meta.permissionContext;
+    expect(payload.request.permissionContext?.sandbox).toMatch(/^[a-f0-9]{64}$/);
+    expect(reconstructRequest(s, call.seq, { model: info }).drift).toEqual([]);
+    const candidate = { model: info, params: {} };
+    expect(reconstructRequest(s, call.seq, candidate).drift).toEqual([]);
+    // the snapshot now rebuilds another block than the recorded one
+    const second = s.events.find((e) => e.seq === first + 1) as CaseSnapshot["events"][number];
+    second.payload = context(true);
+    expect(reconstructRequest(s, call.seq, candidate).drift).toEqual([
+      "permission_profile_changed",
+      "device_sandbox_changed",
     ]);
   });
 

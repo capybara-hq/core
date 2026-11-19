@@ -85,12 +85,17 @@ export interface RunReplayResult {
    * reports `permission_profile_changed`.
    */
   permissionContextDrift?: true;
+  /**
+   * Set when an original request of the run rebuilds another device sandbox block than its
+   * recorded metadata names; the result reports `device_sandbox_changed`.
+   */
+  deviceSandboxDrift?: true;
 }
 
 /** 原运行（基线）的同形摘要。 */
 export type RunBaseline = Omit<
   RunReplayResult,
-  "conversationId" | "outcome" | "unmatched" | "permissionContextDrift"
+  "conversationId" | "outcome" | "unmatched" | "permissionContextDrift" | "deviceSandboxDrift"
 >;
 
 /** 测试钩子。 */
@@ -547,7 +552,7 @@ export async function replayRun(
   // recorded permission context (spec B4), both before anything is seeded so an invalid recording
   // fails as `eval.snapshot_invalid` without an eval conversation: the original-coordinate
   // diagnostics, and the recorded-only feeder (undefined for a recording without markers)
-  const permissionContextDrift = recordedRunPermissionDrift(s);
+  const permissionDrift = recordedRunPermissionDrift(s);
   const permissionContext = recordedPermissionContext(s, eventLog, { conversationId, runId });
   // the recorded tool results (reviews validated here) are read before the seed too, so an
   // invalid recording leaves no eval conversation either
@@ -857,6 +862,11 @@ export async function replayRun(
     outcome: outcome.kind,
     ...summary,
     unmatched: pipeline.unmatched(),
-    ...(permissionContextDrift && { permissionContextDrift: true as const }),
+    ...(permissionDrift.includes("permission_profile_changed") && {
+      permissionContextDrift: true as const,
+    }),
+    ...(permissionDrift.includes("device_sandbox_changed") && {
+      deviceSandboxDrift: true as const,
+    }),
   };
 }

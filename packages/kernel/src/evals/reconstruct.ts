@@ -88,7 +88,10 @@ function samePlan(a: FitPlan | null | undefined, b: FitPlan | undefined): boolea
  *   whose effective definition differs from the one frozen in its `subagent_started` (see
  *   {@link subagentChanged}); the request still renders the logged definition and preamble. A child
  *   case never consults `definitions` (no `definition_missing`);
- * - `params_changed`：没给候选参数时，记录的参数按所用模型的声明清洗后有键被丢弃或值变了（换了模型或模型声明变了）；
+ * - `device_sandbox_changed`: the rebuilt permission context's `sandbox` block differs from the one
+ *   the recorded metadata names (see {@link recordedPermissionContextDrift});
+ * - `params_changed`: without candidate params, sanitizing the recorded params against the model's
+ *   declarations dropped a key or changed a value (another model, or its declarations changed);
  * - `media_missing`：某附件记录里不是「不再可用」，还原时却取不到；
  * - `media_changed`（只在基线判定）：其余任何媒体结果与记录不同（按附件 id 比 outcome 与 etag：预算省略、
  *   图片数 / 页数上限、对象被替换后 etag 变了等）；
@@ -108,9 +111,9 @@ export type DriftReason =
   /** Original bounded permission contributions or their recorded locator/hash differ. */
   | "permission_profile_changed"
   /**
-   * Approval-only profiles: the recorded permission context's `sandbox` block differs from the
-   * previous one (the device sandbox changed between runs). W0 interface stub: the replay context
-   * task (T4) emits it.
+   * Approval-only profiles: the snapshot rebuilds another device `sandbox` block for the request
+   * than the one its recorded metadata names (`permissionContext.sandbox`). An ordinary sandbox
+   * change between runs is recorded input: zero drift.
    */
   | "device_sandbox_changed"
   | "params_changed"
@@ -226,7 +229,7 @@ export function assertSnapshotPermissionEvents(events: readonly ConversationEven
 
 /**
  * Compare only the original request range, never live state or candidate-generated history.
- * Throws `eval.snapshot_invalid` first when any recorded v1 event in the snapshot
+ * Throws `eval.snapshot_invalid` first when any recorded permission event in the snapshot
  * (inside or outside the range, covered by a summary or not) fails its strict schema.
  */
 export function recordedPermissionContextDrift(
@@ -242,14 +245,13 @@ export function recordedPermissionContextDrift(
   const recorded = call.payload.request.permissionContext;
   if (recorded === undefined && rebuilt === undefined) return [];
   const parsed = PermissionContextMetaV1Schema.safeParse(recorded);
-  if (
-    !parsed.success ||
-    rebuilt === undefined ||
-    parsed.data.contextSeq !== rebuilt.contextSeq ||
-    parsed.data.hash !== rebuilt.hash
-  )
-    return ["permission_profile_changed"];
-  return [];
+  if (!parsed.success || rebuilt === undefined) return ["permission_profile_changed"];
+  const drift: DriftReason[] = [];
+  if (parsed.data.contextSeq !== rebuilt.contextSeq || parsed.data.hash !== rebuilt.hash)
+    drift.push("permission_profile_changed");
+  // the sandbox block the request saw, against the one the snapshot rebuilds
+  if (parsed.data.sandbox !== rebuilt.sandbox) drift.push("device_sandbox_changed");
+  return drift;
 }
 
 /** 该请求的 agent 版本：所属运行的 `run_started`；没有（不应出现）时用快照运行的版本。 */

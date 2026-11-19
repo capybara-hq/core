@@ -984,7 +984,7 @@ describe("runs of accounts that own no device here", () => {
     );
     const [context] = await contextsOf(conv);
     expect(context?.payload).toMatchObject({
-      version: 1,
+      version: 2,
       deviceId: null,
       scope: null,
       availability: { state: "unavailable", cause: "no-device" },

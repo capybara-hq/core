@@ -195,7 +195,8 @@ describe("recorded permission context recorder", () => {
     expect(rest).toEqual([]);
     expect(first?.runId).toBe(f.runId);
     expect(first?.payload).toEqual({
-      version: 1,
+      version: 2,
+      sandbox: null,
       rootConversationId: f.rootId,
       profileRevision: 0,
       selectedProfile: "request-approval",
@@ -243,6 +244,40 @@ describe("recorded permission context recorder", () => {
     await record(f);
     expect(await contexts(raw, f.rootId)).toHaveLength(1);
     expect(notify).not.toHaveBeenCalled();
+  });
+
+  // deployments hold v1 rows: the recorder reads them as v2 with a null sandbox, never rewrites them
+  it("a stored v1 prior runs fine: identical content appends nothing, a changed profile appends v2", async () => {
+    const f = await seedContext(k, raw);
+    await record(f);
+    const [first] = await contexts(raw, f.rootId);
+    const { sandbox: _sandbox, ...v1 } = { ...must(first).payload, version: 1 };
+    await f.db
+      .updateTable("conversation_events")
+      .set({ payload: JSON.stringify(v1) })
+      .where("conversation_id", "=", f.rootId)
+      .where("seq", "=", must(first).seq as never)
+      .execute();
+    await record(f);
+    let events = await contexts(raw, f.rootId);
+    expect(events).toHaveLength(1);
+    expect(events[0]?.payload).toEqual(v1);
+    await k.app.get(PermissionProfilesService).set(f.orgId, f.rootId, f.accountId, {
+      profile: "approve-for-me",
+      expectedRevision: 0,
+    });
+    await record(f);
+    events = await contexts(raw, f.rootId);
+    expect(events).toHaveLength(2);
+    expect(events[0]?.payload).toEqual(v1);
+    expect(events[1]?.payload).toMatchObject({
+      version: 2,
+      sandbox: null,
+      selectedProfile: "approve-for-me",
+    });
+    expect(events[1]?.idemKey).toBe(
+      permissionContextIdemKey(must(events[1]).payload, must(events[0]).seq),
+    );
   });
 
   it("appends profile changes A to B to A from the persisted log and restricted-only authority changes", async () => {
@@ -639,7 +674,8 @@ describe("permission context projection", () => {
     const none = await seedContext(k, raw, { device: false });
     await record(none);
     expect((await contexts(raw, none.rootId))[0]?.payload).toEqual({
-      version: 1,
+      version: 2,
+      sandbox: null,
       rootConversationId: none.rootId,
       profileRevision: 0,
       selectedProfile: "request-approval",
@@ -659,7 +695,8 @@ describe("permission context projection", () => {
     const foreign = await seedContext(k, raw, { foreignDevice: true, profile: "full-access" });
     await record(foreign);
     expect((await contexts(raw, foreign.rootId))[0]?.payload).toEqual({
-      version: 1,
+      version: 2,
+      sandbox: null,
       rootConversationId: foreign.rootId,
       profileRevision: null,
       selectedProfile: null,

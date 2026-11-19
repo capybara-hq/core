@@ -374,8 +374,22 @@ project binding and the crossing ceilings: `outsideSandbox`, the network ceiling
   the approver per crossing kind. For Full access it says: "commands run in the sandbox; crossings
   this device allows are approved automatically; to run a command outside the sandbox set `sandbox:
   "escalated"` with a justification". The last clause appears only where escalation is available.
-- `DriftReason` gains `device_sandbox_changed`, for a recorded context whose `sandbox` block differs
-  from the previous one. `permission_profile_changed` stays for profile changes.
+- Request metadata (`model_call.request.permissionContext`) gains `sandbox`: the canonical hash of
+  the located context's `sandbox` block, absent when that context has none.
+- `DriftReason` gains `device_sandbox_changed`, mirroring `permission_profile_changed`: the block the
+  snapshot rebuilds for a request differs from the one its recorded metadata names (an edited
+  block also changes the rendered text, so both reasons appear). A sandbox change between runs is
+  recorded input and replays with zero drift, for a baseline and a candidate alike. Step and
+  full-run replay both report it (`RunReplayResult.deviceSandboxDrift`).
+- Stored v1 contexts are never rewritten. Every reader (the recorder's prior, snapshot validation,
+  rendering, replay and the full-run feeder) reads a v1 payload as v2 with `sandbox: null`, which
+  renders the same bytes and hashes as that form, so an identical v1 prior appends nothing.
+- Until the producer records the block, a supported context may carry `sandbox: null`: it keeps
+  the profile-level policy line, and Full access without a block is exactly device + environment.
+- A block's network matches the scope's (`none` for a scope without hosts); an open network never
+  sits inside a disabled or allowlisted outer boundary; a cloud device never runs outside its
+  sandbox. With no hosts yet, the model text names the approver "where this device allows network
+  access", because the block does not tell an empty allowlist from the kill switch.
 - `ReviewRecord` gains `crossing?: "directory" | "host" | "outside-sandbox" | "sensitive"`.
 - Replay uses the recorded decision, never today's settings. Before 0.1.0 there are no frozen
   copies: the zero-drift fixtures are regenerated in the same change, and `reconstruct.test.ts` must
