@@ -184,6 +184,13 @@ export const ACCEPTED: string[] = [
   // reference-update and visual-update workflows
   "sheet",
   "icon-preview",
+  // the compact shell and the list-detail region (mobile layout spec §4, §5.2; spec §6.45–§6.48):
+  // accepted side by side in the Linux image (blind review round 2); minor: top-bar-overflow's
+  // menu sits 0.5 css px higher than the reference (the popper's position vs its calc)
+  "bottom-nav",
+  "top-bar",
+  "me-panel",
+  "list-detail",
 ];
 
 /**
