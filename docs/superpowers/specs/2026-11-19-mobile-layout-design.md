@@ -1,7 +1,8 @@
 # Mobile and foldable layout, and the shell environment
 
 - Date: 2026-11-19, written against `origin/main` at `5f6c3541a`.
-- Status: draft for maintainer review.
+- Status: approved by the maintainer on 2026-11-20 (the review applied); the provisional rulings
+  are marked "maintainer to confirm: R<n>".
 - Related: the design spec (`docs/design/spec.md`, the only UI spec: §4 App Shell, §4.3 the
   phone rules, §5 templates, §6.13 Sidebar, §6.16 conversation components, §7.3 state tokens),
   the writing-web-ui and writing-extension-ui skills, UI slots
@@ -10,8 +11,8 @@
   (`2026-11-12-transactional-outbox-design.md`), and the desktop client
   (`2026-11-07-desktop-client-design.md`, being rewritten on `docs/desktop-client`), which fills
   in the **Shell environment** of §9 for its Electron shell.
-- Markers: **(decided)** is a maintainer decision of 2026-11-19; **(designer's call)** is decided
-  here and open to review. Unmarked text restates current code, AGENTS.md or the design spec.
+- Markers: **(decided)** is a maintainer decision of 2026-11-19 or of the 2026-11-20 approval;
+  **(designer's call)** is decided here and approved with the spec on 2026-11-20. Unmarked text restates current code, AGENTS.md or the design spec.
 
 ## 1. Why
 
@@ -120,7 +121,9 @@ reload and without losing state (the URL hash keeps the right area, §5.4).
 
 Width decides the class; height only trims chrome. A window **shorter than 480 px** (a phone in
 landscape, the iPhone Duo at its shortest reported height, 368) sets `data-short` on the shell:
-the StatusBar hides, the PageHeader drops its path row (the back button keeps the way up, §4.1),
+the StatusBar hides, the PageHeader drops its path row on every class (on compact the top bar's back
+button keeps the way up, §4.1; medium and expanded have no top bar, and a phone in landscape at
+844 × 390 is expanded: the rail or sidebar is the way around there),
 and the bottom navigation (compact only) shows icons without labels at its full 56 height. This is not orientation:
 a short desktop window gets the same.
 
@@ -154,7 +157,7 @@ the person's toggle).
 | Right area (conversation) | A full-screen page pushed over the conversation (§5.4) | A side sheet with a follow-finger dismiss | Inline from 1280, a side sheet below (§3.3) |
 | Drawer menu bar | Replaced by the **top bar** (§4.1) | None (the rail holds the menu) | None |
 | StatusBar | Hidden (its system status moves to the Me page) | Shown | Shown |
-| ActionRow | Sticky at the bottom, above the safe area: the primary a full-width line, the other actions side by side above it | As today | As today |
+| ActionRow | Sticky at the bottom, above the safe area: the primary a full-width line, the other actions side by side above it, on every ActionRow, forms included (maintainer to confirm: R16) | As today | As today |
 
 ### 4.1 Compact: top bar and push model (decided)
 
@@ -188,7 +191,7 @@ settings under 更多), the inbox is where approvals and notices wait:
 | 会话 / Chats | `/conversations` (new compact list route, §5.4) | The conversations grouped by agent, as the sidebar's section; a "new" action to `/` |
 | 智能体 / Agents | `/agents` | The cards page as today |
 | 收件箱 / Inbox | `/inbox` | With the pending count badge (the rail's nav badge: outside the icon's top-right corner, 2px gap, a ring in the bar ground) |
-| 我 / Me | `/me` (new compact page) | Account, org switcher, 工作区 (技能, 连接器, 定时任务, 设备: the rows the role sees on the sidebar) and 管理 (插件, 扩展, 渠道, 评测与运行, 组织设置 for org admins and owners only; 管理后台 for super admins; members see only 工作区), personal settings, system status, sign out; drawn by the shell from the sidebar's data |
+| 我 / Me | `/me` (new compact page) | Account, org switcher, 工作区 (技能, 连接器, 定时任务, 设备: the rows the role sees on the sidebar) and 管理 (插件, 扩展, 渠道, 评测与运行, 组织设置 for org admins and owners only; 管理后台 for super admins; members see only 工作区: maintainer to confirm: R14), personal settings, system status, sign out; drawn by the shell from the sidebar's data |
 
 技能 / 连接器 / 定时任务 are reached from
 Me (and from the agents' pages), as 更多 items are on the sidebar. The current item has no ground
@@ -230,7 +233,7 @@ target.
 | `FormPage` | Single column (labels above fields), **sticky ActionRow** above the safe area | Labels above fields | As today (label column while it fits, §3.3) |
 | `SettingsPage` | Sub-nav as the sticky sideways row (maintainer decision 2026-11-09, kept) | Sub-nav stacked above content (today's < 960 form) | As today (sub-nav inline while it fits, §3.3) |
 | `WizardPage` | Single column, step bar as "2 / 4" text, sticky previous / next | As today | As today |
-| `InboxPage` | **Two-level stack**: the list is the page, an item is pushed full screen with its decision buttons sticky at the bottom (the primary a full-width line, the others side by side above; facts with translated labels, never raw payload keys) | **List-detail**: two panes when both fit (list 320 + detail ≥ 360), else the stack | Rail + content + inspector, as today, the inspector inline (a 400 column from a 1100 frame, else below the content; never a Sheet) and no rail collapse button (maintainer to confirm: R20) |
+| `InboxPage` | **Two-level stack**: the list (a `ListDetailList`, on every class: maintainer to confirm: R24) is the page, an item is pushed full screen with its decision buttons sticky at the bottom (the primary a full-width line, the others side by side above; its facts inline, with translated labels, never raw payload keys) | **List-detail**: two panes when both fit (list 320 + detail ≥ 360), else the stack; the list a `ListDetailList`, the facts inline (R24) | The list (320, a `ListDetailList`, never a DataTable) + the open item, its facts inline (a 400 column from a 1100 frame, else above the content; never a Sheet: maintainer to confirm: R24) and no rail collapse button (maintainer to confirm: R20) |
 | `ConversationPage` | §5.4 | §5.4 | As today |
 | `TracePage` | Waterfall full width; a span is pushed as its own screen | Waterfall, detail below | As today |
 | `OverviewPage` | StatCards 2 × 2, sections stacked | StatCards in a row of up to 4 | As today |
@@ -325,7 +328,8 @@ Each slot in `UI_SLOTS` (`packages/plugin-sdk/src/ui-slots.ts`) gains a required
 | `shell.overlay` | `kept` | Must stay `pointer-events: none` and clear of the bottom nav and safe areas |
 
 - `drawer` means "the slot's content moves into a sheet or pushed page"; `hidden` means the slot
-  is not rendered on compact. A **contribution may narrow** its slot's form in its manifest
+  is not rendered on compact. Only `conversation.panel` has a sheet or pushed page to move into:
+  `drawer` on any other slot (a contribution narrowing a `kept` slot) behaves as `kept`. A **contribution may narrow** its slot's form in its manifest
   (`ui.<contribution>.compact`, `kept` → `drawer` → `hidden`), never widen it (designer's call).
   The field is `compact?` on the SDK's `UiContribution`, where contributions are declared, not a
   separate manifest key **(decided)**.
@@ -730,16 +734,21 @@ state lists, size tables, reference blocks, the blind side-by-side review, `ACCE
 - **Playwright** (`apps/web/visual/compact.interaction.spec.ts`, designer's call): for every
   template's catalog page at 382 and 390, with JavaScript on and off (the first paint, as the
   writing-web-ui skill requires): no horizontal page scroll
-  (`scrollingElement.scrollWidth <= innerWidth`); every interactive element has a 40 × 40 hit
-  area; the primary action is reachable without horizontal scrolling; nothing is covered by the
+  (`scrollingElement.scrollWidth <= innerWidth`); the controls design spec §4.3 lists (the top
+  bar, the bottom navigation, the page head's tabs and actions, ObjectRow, the row menu, the title
+  bar's buttons) have a 40 × 40 hit area, every other interactive element is counted, not failed
+  (maintainer to confirm: R22); the primary action is reachable without horizontal scrolling; nothing is covered by the
   bottom navigation at the end of a scroll; text fields are at least 16 px on a coarse pointer.
 - **jsdom** (`findCompactViolations` in `@capybara-hq/design/reference`, next to
   `findNestedBoxes`): structural rules on the rendered DOM: no action reachable only by hover,
   `title` or a context menu; every icon-only control has an accessible name; a list-detail region
   in its compact form has a back control.
 - **Segments**: `useViewportSegments` and the segment split are unit-tested with a fake
-  `window.viewport.segments` and `matchMedia`; a Chromium run with display-feature emulation is
-  added if it proves stable; the Duo simulator check is manual and part of P2's acceptance.
+  `window.viewport.segments` and `matchMedia`; a headless Chromium run with display-feature
+  emulation (`apps/web/visual/segments.interaction.spec.ts`) checks the two-pane regions and the
+  conversation's right area against the hinge; a Chromium that cannot emulate display features
+  fails it, never a silent skip (`CAPYBARA_SKIP_FOLD_EMULATION=1` skips it knowingly); the Duo
+  simulator check is manual and part of P2's acceptance.
 
 ### 11.4 Static checks (designer's call)
 
