@@ -15,8 +15,9 @@ export type CompactViolation = {
 /**
  * Marks an action that only a pointer hover reveals (or only a context menu reaches): a compact
  * window has neither. A component that needs such a control must also offer it another way and
- * must not carry the marker. Detection is marker-based: jsdom has no cascade, so a control shown
- * only by a `:hover` rule is found only when it carries the marker.
+ * must not carry the marker. Detection here is marker-based (jsdom has no cascade); a control shown
+ * only by a `:hover` rule is found by the static stylesheet pass instead (`findHoverOnlyRules` in
+ * the design package's test/css-rules.ts, run over every design stylesheet).
  */
 const HOVER_ONLY = "[data-hover-only], [data-context-menu-only]";
 

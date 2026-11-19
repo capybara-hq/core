@@ -1515,6 +1515,12 @@ button.cb-file-card:focus-visible {
 .cb-image-frame:focus-within .cb-image-tools {
   opacity: 1;
 }
+/* Touch screens have no hover: the image's tools are always shown (spec §11.3). */
+@media (hover: none) {
+  .cb-image-tools {
+    opacity: 1;
+  }
+}
 .cb-image-tools .cb-icon-btn {
   border: 1px solid var(--cb-line);
   background: var(--cb-raised);

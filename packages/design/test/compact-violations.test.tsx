@@ -1,3 +1,5 @@
+import { readdirSync } from "node:fs";
+import { resolve } from "node:path";
 import { cleanup, render } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import {
@@ -10,6 +12,7 @@ import {
   ListDetail,
 } from "../src/index";
 import { describeCompactViolation, findCompactViolations } from "../src/reference/index";
+import { css, findHoverOnlyRules, parseCss } from "./css-rules";
 import { matchMediaFor } from "./width";
 
 // The structural half of the compact rule set (mobile layout spec §11.3), red first: the rule set
@@ -23,6 +26,38 @@ afterEach(() => {
 });
 
 const found = () => findCompactViolations(document.body).map(describeCompactViolation);
+
+describe("hover-only actions in the stylesheets (spec §11.3, a static pass)", () => {
+  it("finds a control a hover reveals with no touch fallback (red first)", () => {
+    const sheet = `
+      .row-menu { opacity: 0; }
+      .row:hover .row-menu, .row:focus-within .row-menu { opacity: 1; }
+      .tip { display: none; }
+      .card:hover > .tip { display: block; }
+      .tools { visibility: hidden; }
+      .frame:hover .tools { visibility: visible; }
+      @media (hover: none) { .tools { visibility: visible; } }
+      .plain:hover .label { color: red; }
+    `;
+    expect(findHoverOnlyRules(parseCss(sheet))).toEqual([
+      ".row:hover .row-menu",
+      ".card:hover > .tip",
+    ]);
+  });
+
+  it("the design stylesheets have none: every hover-revealed action is shown on touch screens", () => {
+    const files = readdirSync(resolve(import.meta.dirname, "../src/styles")).filter((f) =>
+      f.endsWith(".css"),
+    );
+    const rules = files.flatMap((f) => parseCss(css(f)));
+    // Not actions: a hint inside a control that is itself always shown
+    const notActions: Record<string, string> = {
+      ".cb-table-sort:hover .cb-table-arrow":
+        "the sort direction hint inside the header's sort button, which is always shown",
+    };
+    expect(findHoverOnlyRules(rules).filter((s) => !(s in notActions))).toEqual([]);
+  });
+});
 
 describe("findCompactViolations (the rule set itself, red first)", () => {
   it("finds a hover-only action, an unnamed icon-only button and a list-detail without back", () => {
