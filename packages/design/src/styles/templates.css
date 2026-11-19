@@ -1297,6 +1297,9 @@ a.cb-object-name:hover {
     bottom: 0;
     z-index: 1;
     height: auto;
+    row-gap: var(--cb-space-2);
+    /* the buttons span the row: no gutter kept for a scrollbar the row never has */
+    scrollbar-gutter: auto;
     padding: var(--cb-space-2) var(--cb-space-4)
       calc(
         var(--cb-space-2) +
@@ -1314,6 +1317,10 @@ a.cb-object-name:hover {
     flex: none;
     font-size: var(--cb-type-small-size);
     line-height: var(--cb-type-small-line);
+  }
+  /* no unsaved / errors text: no empty line (and gap) above the buttons */
+  .cb-actionrow .cb-actionrow-info:empty {
+    display: none;
   }
   .cb-actionrow .cb-actionrow-actions {
     flex-direction: column;
@@ -1536,11 +1543,111 @@ a.cb-object-name:hover {
     padding-inline: var(--cb-space-4);
   }
 }
-/* Inside the shell on compact the top bar is the one back (the open item is a pushed page). */
+/* Inside the shell on compact the top bar is the one back (the open item is a pushed page); the
+   reference set's compact frame stands in for the shell. */
 @media (max-width: 599px) {
-  .cb-shell .cb-listdetail[data-fit] > .cb-listdetail-detail > .cb-listdetail-bar {
+  .cb-shell .cb-listdetail[data-fit] > .cb-listdetail-detail > .cb-listdetail-bar,
+  .cb-ref-screen .cb-listdetail[data-fit] > .cb-listdetail-detail > .cb-listdetail-bar {
     display: none;
   }
+}
+/* The list of a list-detail region (spec §6.47): 64 px rows split by line-soft, a 6 px state dot
+   slot, the title over the meta, the time at the end; the current row is the selected row. */
+.cb-ld-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.cb-ld-row {
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-3);
+  box-sizing: border-box;
+  width: 100%;
+  height: 64px;
+  padding: 0 var(--cb-space-4);
+  border: 0;
+  border-top: 1px solid var(--cb-line-soft);
+  background: transparent;
+  color: var(--cb-ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color var(--cb-motion-hover);
+}
+li:first-child > .cb-ld-row {
+  border-top: 0;
+}
+.cb-ld-row:hover {
+  background: var(--cb-hover);
+}
+.cb-ld-row:focus-visible {
+  outline: 1px solid var(--cb-accent);
+  outline-offset: -1px;
+}
+.cb-ld-row[aria-current="true"] {
+  background: var(--cb-accent-tint);
+  box-shadow: inset 2px 0 0 var(--cb-accent);
+}
+.cb-ld-dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+.cb-ld-dot[data-state="warn"] {
+  background: var(--cb-warn);
+}
+.cb-ld-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+.cb-ld-title,
+.cb-ld-meta {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cb-ld-title {
+  color: var(--cb-ink);
+}
+.cb-ld-meta {
+  color: var(--cb-muted);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+}
+.cb-ld-time {
+  flex: none;
+  color: var(--cb-faint);
+  font-size: var(--cb-type-micro-size);
+  line-height: var(--cb-type-micro-line);
+}
+/* The open item (spec §6.47): a page body padded space.4 that scrolls, its h2 title space.3 above
+   the facts, the decision row pinned at the bottom of the pane. */
+.cb-ld-item {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+.cb-ld-item-body {
+  flex: 1;
+  min-height: 0;
+  padding: var(--cb-space-4);
+  overflow: auto;
+}
+/* The pane's decision row ends at the pane's own padding (the body above keeps no gutter). */
+.cb-ld-item > .cb-actionrow {
+  scrollbar-gutter: auto;
+}
+.cb-ld-item-title {
+  margin: 0 0 var(--cb-space-3);
+  color: var(--cb-ink);
+  font-size: var(--cb-type-h2-size);
+  line-height: var(--cb-type-h2-line);
+  font-weight: 500;
 }
 /* InboxPage: the pane pair is capped at the content width inside the content padding, like every
    frame, and reserves the head's scrollbar gutter, so its left edge is the head's. */

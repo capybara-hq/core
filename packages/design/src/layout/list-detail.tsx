@@ -1,5 +1,6 @@
 import { type CSSProperties, type ReactNode, useCallback, useEffect, useRef } from "react";
 import { IconButton } from "../controls/index";
+import { KeyValue } from "../display/key-value";
 import { Icon } from "../icons/icon";
 import { useDesignT } from "../provider";
 import { useViewportSegments } from "../shell/segments";
@@ -77,6 +78,7 @@ export function ListDetail({
   const hasFooter = Boolean(footer);
   const section = useRef<HTMLElement>(null);
   const footerEl = useRef<HTMLDivElement>(null);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: hasFooter re-runs it when the footer comes or goes (the ref itself does not)
   useEffect(() => {
     const host = section.current;
     const f = footerEl.current;
@@ -137,6 +139,111 @@ export function ListDetail({
           </div>
         ) : null}
       </section>
+    </div>
+  );
+}
+
+/** One row of a list-detail region's list (spec §6.47). */
+export type ListDetailListItem = {
+  id: string;
+  title: string;
+  meta?: string;
+  /** The time at the row's end (`micro`, `faint`). */
+  at?: string;
+  /** Waits for the person: the 6 px `warn` dot at the row's start. */
+  waiting?: boolean;
+};
+
+/**
+ * The list of a list-detail region (spec §6.47): 64 px rows split by `line-soft`, each a 6 px state
+ * dot slot (filled only for what waits for the person), the title (`body`, `ink`) over the meta
+ * (`small`, `muted`), both one line with an ellipsis, and the time at the end. The current row
+ * (two panes) is the selected row of §2.3. A row is a button that opens its item.
+ */
+export function ListDetailList({
+  label,
+  items,
+  current,
+  onOpen,
+}: {
+  label: string;
+  items: ListDetailListItem[];
+  current?: string | undefined;
+  onOpen(id: string): void;
+}) {
+  const t = useDesignT();
+  return (
+    <ul className="cb-ld-list" data-part="list" aria-label={label}>
+      {items.map((it) => (
+        <li key={it.id}>
+          <button
+            type="button"
+            className="cb-ld-row"
+            data-part="list-row"
+            aria-current={it.id === current ? "true" : undefined}
+            onClick={() => onOpen(it.id)}
+          >
+            {it.waiting ? (
+              <span
+                className="cb-ld-dot"
+                data-part="list-dot"
+                data-state="warn"
+                role="img"
+                aria-label={t("listDetail.waiting")}
+              />
+            ) : (
+              <span className="cb-ld-dot" data-part="list-dot" aria-hidden="true" />
+            )}
+            <span className="cb-ld-text">
+              <span className="cb-ld-title" data-part="list-title">
+                {it.title}
+              </span>
+              {it.meta ? (
+                <span className="cb-ld-meta" data-part="list-meta">
+                  {it.meta}
+                </span>
+              ) : null}
+            </span>
+            {it.at ? (
+              <span className="cb-ld-time" data-part="list-time">
+                {it.at}
+              </span>
+            ) : null}
+          </button>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+/**
+ * The open item of a list-detail region (spec §6.47), a page body: its title (`h2`), its facts
+ * (a KeyValue of translated labels; a tool key's value stays mono) and what the page adds under
+ * them (`children`), padded `space.4` and scrolling, with `actions` (the decision ActionRow)
+ * pinned at the bottom of the pane.
+ */
+export function ListDetailItem({
+  title,
+  facts,
+  actions,
+  children,
+}: {
+  title: string;
+  facts: { label: string; value: ReactNode; mono?: boolean }[];
+  actions?: ReactNode;
+  children?: ReactNode;
+}) {
+  return (
+    <div className="cb-ld-item" data-part="list-detail-item">
+      <div className="cb-ld-item-body">
+        <h2 className="cb-ld-item-title">{title}</h2>
+        <KeyValue
+          variant="facts"
+          rows={facts.map((f) => ({ k: f.label, v: f.value, ...(f.mono ? { mono: true } : {}) }))}
+        />
+        {children}
+      </div>
+      {actions}
     </div>
   );
 }

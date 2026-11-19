@@ -11,7 +11,10 @@ import {
   InboxPage,
   LIST_DETAIL_FITS,
   ListDetail,
+  ListDetailItem,
+  ListDetailList,
   type ListDetailProps,
+  ReferenceScreen,
   TracePage,
   WizardPage,
 } from "../src/index";
@@ -143,9 +146,19 @@ describe("inside the shell the open item is a pushed page", () => {
     await userEvent.click(within(top).getByRole("button", { name: "返回" }));
     expect(onBack).toHaveBeenCalledTimes(1);
     expect(document.querySelector('[data-part="bottom-nav-slot"]')).toBeNull();
-    expect(css("templates.css")).toMatch(
-      /@media \(max-width: 599px\) \{\s*\.cb-shell \.cb-listdetail\[data-fit\] > \.cb-listdetail-detail > \.cb-listdetail-bar \{\s*display: none;/,
-    );
+    expect(
+      parseCss(css("templates.css")).some(
+        (r) =>
+          r.at === "(max-width: 599px)" &&
+          r.selector
+            .split(",")
+            .map((x) => x.trim())
+            .includes(
+              ".cb-shell .cb-listdetail[data-fit] > .cb-listdetail-detail > .cb-listdetail-bar",
+            ) &&
+          r.decls.display === "none",
+      ),
+    ).toBe(true);
   });
 });
 
@@ -298,5 +311,114 @@ describe("TracePage on compact", () => {
     expect(document.querySelector(".cb-trace")?.getAttribute("data-open")).toBe("true");
     await userEvent.click(screen.getByRole("button", { name: "返回" }));
     expect(onBack).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("ListDetailList and ListDetailItem (spec §6.47: the list rows, the open item)", () => {
+  const items = [
+    { id: "a", title: "需要你批准", meta: "Acme 工单 · 研究助手", at: "14:02", waiting: true },
+    { id: "b", title: "运行完成", meta: "周报 · 周报助手", at: "昨天" },
+  ];
+
+  it("draws one row per item: the state dot, title over meta, the time at the end", async () => {
+    const onOpen = vi.fn();
+    render(
+      <DesignProvider locale="zh">
+        <ListDetailList label="收件箱" items={items} current="a" onOpen={onOpen} />
+      </DesignProvider>,
+    );
+    const list = screen.getByRole("list", { name: "收件箱" });
+    const rows = [...list.querySelectorAll('[data-part="list-row"]')] as HTMLElement[];
+    expect(rows).toHaveLength(2);
+    const [first, second] = rows as [HTMLElement, HTMLElement];
+    // the dot slot is always there (the text keeps one indent); only a waiting item fills it
+    expect(first.querySelector('[data-part="list-dot"]')?.getAttribute("data-state")).toBe("warn");
+    expect(within(first).getByRole("img", { name: "等待我" })).toBeTruthy();
+    expect(second.querySelector('[data-part="list-dot"]')?.getAttribute("data-state")).toBeNull();
+    expect(within(second).queryByRole("img")).toBeNull();
+    expect(first.querySelector('[data-part="list-title"]')?.textContent).toBe("需要你批准");
+    expect(first.querySelector('[data-part="list-meta"]')?.textContent).toBe(
+      "Acme 工单 · 研究助手",
+    );
+    expect(first.lastElementChild?.getAttribute("data-part")).toBe("list-time");
+    expect(first.getAttribute("aria-current")).toBe("true");
+    expect(second.getAttribute("aria-current")).toBeNull();
+    await userEvent.click(second);
+    expect(onOpen).toHaveBeenCalledWith("b");
+  });
+
+  it("the open item: its h2 title, the facts (mono keys, prose values, a mono key row), actions last", () => {
+    render(
+      <DesignProvider locale="zh">
+        <ListDetailItem
+          title="需要你批准"
+          facts={[
+            { label: "工具", value: "Acme 工单: 发送消息" },
+            { label: "键", value: "mcp__acme__send", mono: true },
+          ]}
+          actions={<p>ACTIONS</p>}
+        />
+      </DesignProvider>,
+    );
+    expect(screen.getByRole("heading", { level: 2, name: "需要你批准" })).toBeTruthy();
+    const keys = [...document.querySelectorAll('[data-part="fact-key"]')].map((k) => k.textContent);
+    expect(keys).toEqual(["工具", "键"]);
+    expect(part("key-value")?.getAttribute("data-variant")).toBe("facts");
+    const values = [...document.querySelectorAll(".cb-kv-value")];
+    expect(values.map((v) => v.getAttribute("data-mono"))).toEqual([null, "true"]);
+    const item = part("list-detail-item") as HTMLElement;
+    expect(item.lastElementChild?.textContent).toBe("ACTIONS");
+  });
+
+  it("styles: 64 px rows split by line-soft, the selected row, the facts' faces", () => {
+    const rules = parseCss(css("templates.css"));
+    const at = (sel: string) => rules.find((r) => r.at === null && r.selector === sel)?.decls;
+    expect(at(".cb-ld-row")?.height).toBe("64px");
+    expect(at(".cb-ld-row")?.["border-top"]).toBe("1px solid var(--cb-line-soft)");
+    expect(at('.cb-ld-row[aria-current="true"]')?.background).toBe("var(--cb-accent-tint)");
+    expect(at(".cb-ld-time")?.color).toBe("var(--cb-faint)");
+    expect(at(".cb-ld-item-body")?.padding).toBe("var(--cb-space-4)");
+    const display = parseCss(css("display.css"));
+    const d = (sel: string) => display.find((r) => r.at === null && r.selector === sel)?.decls;
+    expect(d('.cb-kv[data-variant="facts"] .cb-kv-value')?.["font-family"]).toBe(
+      "var(--cb-font-prose)",
+    );
+    expect(d('.cb-kv[data-variant="facts"] .cb-kv-value[data-mono="true"]')?.["font-family"]).toBe(
+      "var(--cb-font)",
+    );
+  });
+});
+
+describe("ReferenceScreen (the reference set's compact frame)", () => {
+  it("draws the top, the body and the bottom in one column, and hides a ListDetail's own back bar", () => {
+    render(
+      <DesignProvider locale="zh">
+        <ReferenceScreen top={<p>TOP</p>} bottom={<p>BOTTOM</p>}>
+          <p>BODY</p>
+        </ReferenceScreen>
+      </DesignProvider>,
+    );
+    const screenEl = part("screen") as HTMLElement;
+    expect([...screenEl.children].map((c) => c.textContent)).toEqual(["TOP", "BODY", "BOTTOM"]);
+    const compact = parseCss(css("templates.css")).filter((r) => r.at === "(max-width: 599px)");
+    expect(
+      compact.some(
+        (r) =>
+          r.selector.includes(".cb-ref-screen .cb-listdetail[data-fit]") &&
+          r.decls.display === "none",
+      ),
+    ).toBe(true);
+  });
+});
+
+describe("the compact ActionRow fills the row (spec §4.4)", () => {
+  it("reserves no scrollbar gutter and drops the empty status line", () => {
+    const compact = parseCss(css("templates.css")).filter((r) => r.at === "(max-width: 599px)");
+    expect(compact.find((r) => r.selector === ".cb-actionrow")?.decls["scrollbar-gutter"]).toBe(
+      "auto",
+    );
+    expect(
+      compact.find((r) => r.selector === ".cb-actionrow .cb-actionrow-info:empty")?.decls.display,
+    ).toBe("none");
   });
 });

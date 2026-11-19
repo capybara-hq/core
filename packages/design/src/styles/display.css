@@ -605,6 +605,23 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* An open item's facts in a list-detail region (spec §6.47): small type, mono keys, prose values
+   (a tool key stays mono). */
+.cb-kv[data-variant="facts"] {
+  gap: var(--cb-space-1);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+}
+.cb-kv[data-variant="facts"] .cb-kv-key {
+  font-family: var(--cb-font);
+}
+.cb-kv[data-variant="facts"] .cb-kv-value {
+  color: var(--cb-ink);
+  font-family: var(--cb-font-prose);
+}
+.cb-kv[data-variant="facts"] .cb-kv-value[data-mono="true"] {
+  font-family: var(--cb-font);
+}
 /* Two columns of pairs (spec §6.5): key and value space.3 apart, the columns space.7 (32 px)
    apart, each key column as wide as its widest key, so the gaps never vary from row to row. */
 .cb-kv[data-columns="2"] {

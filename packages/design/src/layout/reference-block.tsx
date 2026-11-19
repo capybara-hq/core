@@ -54,3 +54,32 @@ export function ReferenceBlock({
     </section>
   );
 }
+
+/**
+ * A compact screen in a reference block (the reference set's `r-screen`): `top` (the top bar),
+ * the body filling the rest, then `bottom` (the bottom navigation or a sticky row), so a block
+ * shows a component in the frame the shell would give it at a phone's width in any window. It
+ * stands in for the shell: a ListDetail inside draws no back bar of its own (the top bar has it).
+ */
+export function ReferenceScreen({
+  top,
+  bottom,
+  pad,
+  children,
+}: {
+  top?: ReactNode;
+  bottom?: ReactNode;
+  /** The body padded `space.4` at the top and the sides (a page body such as the MePanel). */
+  pad?: boolean;
+  children?: ReactNode;
+}) {
+  return (
+    <div className="cb-ref-screen" data-part="screen">
+      {top}
+      <div className="cb-ref-screen-body" data-pad={pad ? "true" : undefined}>
+        {children}
+      </div>
+      {bottom}
+    </div>
+  );
+}
