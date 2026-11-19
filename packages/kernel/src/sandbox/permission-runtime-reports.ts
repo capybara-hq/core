@@ -251,7 +251,8 @@ export async function readCurrentReport(
   if (stored === null) return unprobed;
   const report =
     device?.source === "cloud" ? cloudEnforceable(stored, instance.instance_limits) : stored;
-  if (!report.restricted && !report.outsideSandbox)
+  // an instance-boundary provider is a supported device whose scope is the whole instance
+  if (!report.restricted && report.boundary !== "instance" && !report.outsideSandbox)
     return {
       availability: {
         state: "unsupported",

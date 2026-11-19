@@ -918,13 +918,31 @@ describe("cloud installed evidence in the real lifecycle", () => {
     expect(await availability(f, "v1")).toBe("supported");
   });
 
-  /** The device's B1 outer network snapshot, which caps its effective desired network. */
-  const setOuter = (f: Fixture, hosts: string[]) =>
+  /** The org's allowlist names the hosts these tests narrow to (beside the platform's). */
+  const orgHosts = (f: Fixture) =>
     f.db
+      .updateTable("orgs")
+      .set({
+        settings: JSON.stringify({ deviceNetwork: { extraHosts: ["a.example", "b.example"] } }),
+      })
+      .where("id", "=", f.orgId)
+      .execute();
+  /**
+   * The device's own sandbox network (as the B1 snapshot writer now copies an allowlist
+   * snapshot): an allowlist of `hosts`, which narrows its org's hosts and caps the desired network.
+   */
+  const setOuter = async (f: Fixture, hosts: string[]) => {
+    await orgHosts(f);
+    await f.db
       .updateTable("devices")
-      .set({ outer_network: JSON.stringify({ kind: "allowlist", hosts }) })
+      .set({
+        outer_network: JSON.stringify({ kind: "allowlist", hosts }),
+        network_mode: "allowlist",
+        network_hosts: JSON.stringify(hosts),
+      })
       .where("id", "=", f.deviceId)
       .execute();
+  };
   const appliedLimits = async (f: Fixture) =>
     (
       await f.db
@@ -955,7 +973,7 @@ describe("cloud installed evidence in the real lifecycle", () => {
     const f = await seedCloud();
     await call(f);
     expect(await admission(f)).toBe("admitted");
-    await setOuter(f, []);
+    await setOuter(f, ["a.example"]);
     expect(await admission(f)).toMatch(/not verified yet/);
     // the next use records the narrowing as unapplied; managed work is unavailable until a reset
     const err = await failure(call(f));
@@ -1027,13 +1045,23 @@ describe("cloud installed evidence in the real lifecycle", () => {
    * B-12: a device carrying the reconcile marker on a provider that can `update`: the lifecycle
    * reconcile applies the target under the exclusive lease, never wider than the instance runs.
    */
-  const mark = (f: Fixture, device: { fullAccess: boolean; outer: unknown }, limits: unknown) =>
+  const mark = (
+    f: Fixture,
+    device: { fullAccess: boolean; outer: { kind: string; hosts: string[] } },
+    limits: unknown,
+  ) =>
     Promise.all([
+      orgHosts(f),
       f.db
         .updateTable("devices")
         .set({
           owner_full_access: device.fullAccess,
           outer_network: JSON.stringify(device.outer),
+          // the device's own network carries an allowlist snapshot, as the snapshot writer does
+          ...(device.outer.kind === "allowlist" && {
+            network_mode: "allowlist",
+            network_hosts: JSON.stringify(device.outer.hosts),
+          }),
           permission_reconcile_required: true,
         })
         .where("id", "=", f.deviceId)

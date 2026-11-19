@@ -429,11 +429,10 @@ describe("the command review in the pipeline", () => {
       expect(r.payload.isError).toBe(false);
       const facts = await k.app.get(ConversationDevices).reviewFacts(orgId, conv);
       const bash = execute.mock.calls.find(([tool]) => tool.key === "Bash");
-      // a restricted Bash call on a device that allows escalation carries its hint state
+      // a cloud device has no outside of its sandbox: no escalation hint state is carried
       expect(bash?.[6]).toEqual({
         workingRoot: undefined,
         against: facts?.workingRoot,
-        escalation: "available",
       });
       expect(facts?.workingRoot).toBe(facts?.workspace);
     } finally {
@@ -460,11 +459,7 @@ describe("the command review in the pipeline", () => {
       expect((await decide(ask.id, { decision: "approve", scope: "once" })).statusCode).toBe(200);
       await waitForTerminal(db, conv, 1, 30_000);
       const bash = execute.mock.calls.find(([tool]) => tool.key === "Bash");
-      expect(bash?.[6]).toEqual({
-        workingRoot: undefined,
-        against: approvedRoot,
-        escalation: "available",
-      });
+      expect(bash?.[6]).toEqual({ workingRoot: undefined, against: approvedRoot });
     } finally {
       execute.mockRestore();
       facts.mockRestore();

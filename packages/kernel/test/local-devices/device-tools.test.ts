@@ -355,8 +355,11 @@ describe("local devices through the sandbox tools", () => {
     await m.run("Bash", { command: "true" });
     const execs = () => machine.frames.filter((f) => f.type === "req" && f.op === "exec");
     expect((execs()[0] as KernelReq).args).toMatchObject({
-      limits: { mode: "auto", network: { kind: "allowlist", hosts: ["example.com"] } },
+      limits: { network: { kind: "allowlist", hosts: ["example.com"] } },
     });
+    // the kernel's mode tier never goes on the wire (protocol 4 limits: resources and network)
+    const sent = (execs()[0] as KernelReq).args as { limits: object };
+    expect(Object.keys(sent.limits)).not.toContain("mode");
     await sql`UPDATE capybara.orgs SET settings = ${JSON.stringify({
       deviceNetwork: { ceiling: "allowlist", base: "none", extraHosts: ["other.example.com"] },
     })}::jsonb WHERE id = ${orgId}`.execute(raw);

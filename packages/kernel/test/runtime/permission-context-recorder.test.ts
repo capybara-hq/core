@@ -196,7 +196,15 @@ describe("recorded permission context recorder", () => {
     expect(first?.runId).toBe(f.runId);
     expect(first?.payload).toEqual({
       version: 2,
-      sandbox: null,
+      // the device sandbox, recorded on every supported context
+      sandbox: {
+        boundary: "operation",
+        location: "local",
+        workingRoot: "/work",
+        network: { kind: "none", hostsCount: 0 },
+        outsideSandbox: true,
+        outerNetwork: { kind: "host-environment" },
+      },
       rootConversationId: f.rootId,
       profileRevision: 0,
       selectedProfile: "request-approval",
@@ -247,7 +255,7 @@ describe("recorded permission context recorder", () => {
   });
 
   // deployments hold v1 rows: the recorder reads them as v2 with a null sandbox, never rewrites them
-  it("a stored v1 prior runs fine: identical content appends nothing, a changed profile appends v2", async () => {
+  it("a stored v1 prior runs fine: the next record appends v2 with its sandbox block", async () => {
     const f = await seedContext(k, raw);
     await record(f);
     const [first] = await contexts(raw, f.rootId);
@@ -258,26 +266,23 @@ describe("recorded permission context recorder", () => {
       .where("conversation_id", "=", f.rootId)
       .where("seq", "=", must(first).seq as never)
       .execute();
+    // the producer always records the device sandbox block, which the v1 prior lacks: one v2
+    // context is appended (never a rewrite of the v1 row), then identical facts dedupe
     await record(f);
     let events = await contexts(raw, f.rootId);
-    expect(events).toHaveLength(1);
-    expect(events[0]?.payload).toEqual(v1);
-    await k.app.get(PermissionProfilesService).set(f.orgId, f.rootId, f.accountId, {
-      profile: "approve-for-me",
-      expectedRevision: 0,
-    });
-    await record(f);
-    events = await contexts(raw, f.rootId);
     expect(events).toHaveLength(2);
     expect(events[0]?.payload).toEqual(v1);
     expect(events[1]?.payload).toMatchObject({
       version: 2,
-      sandbox: null,
-      selectedProfile: "approve-for-me",
+      sandbox: { boundary: "operation" },
+      selectedProfile: "request-approval",
     });
     expect(events[1]?.idemKey).toBe(
       permissionContextIdemKey(must(events[1]).payload, must(events[0]).seq),
     );
+    await record(f);
+    events = await contexts(raw, f.rootId);
+    expect(events).toHaveLength(2);
   });
 
   it("appends profile changes A to B to A from the persisted log and restricted-only authority changes", async () => {
@@ -831,7 +836,8 @@ describe("permission context projection", () => {
     });
   });
 
-  // effective profile x report: supported only when the report supports exactly that profile
+  // effective profile x report: the sandbox is the same under every profile, so a device is
+  // supported exactly when its runtime enforces the sandbox, whatever the profile
   const matrix: [
     "request-approval" | "approve-for-me" | "full-access",
     boolean | undefined,
@@ -839,32 +845,13 @@ describe("permission context projection", () => {
     string,
   ][] = [];
   for (const report of ["both", "restricted-only", "full-only", "neither"] as const) {
+    const state = report === "both" || report === "restricted-only" ? "supported" : "unsupported";
     matrix.push(
-      [
-        "request-approval",
-        undefined,
-        report,
-        report === "both" || report === "restricted-only" ? "supported" : "unsupported",
-      ],
-      [
-        "approve-for-me",
-        undefined,
-        report,
-        report === "both" || report === "restricted-only" ? "supported" : "unsupported",
-      ],
-      [
-        "full-access",
-        true,
-        report,
-        report === "both" || report === "full-only" ? "supported" : "unsupported",
-      ],
-      // stale Full consent evaluates Approve for me: a Full-only runtime is then unsupported
-      [
-        "full-access",
-        false,
-        report,
-        report === "both" || report === "restricted-only" ? "supported" : "unsupported",
-      ],
+      ["request-approval", undefined, report, state],
+      ["approve-for-me", undefined, report, state],
+      ["full-access", true, report, state],
+      // stale Full consent evaluates Approve for me
+      ["full-access", false, report, state],
     );
   }
   it.each(matrix)(
@@ -881,14 +868,15 @@ describe("permission context projection", () => {
           : profile,
       );
       expect(payload?.availability.state).toBe(state);
-      if (state === "supported" && payload?.effectiveProfile === "full-access")
-        expect(payload.scope).toEqual({
-          location: "local",
-          workingRoot: "/work",
-          filesystem: { kind: "device" },
-          network: { kind: "environment" },
-          outerNetwork: { kind: "host-environment" },
+      // Full access keeps the sandbox: a scoped filesystem and the sandbox network
+      if (state === "supported" && payload?.effectiveProfile === "full-access") {
+        expect(payload.scope?.filesystem.kind).toBe("scoped");
+        expect(payload.scope?.network.kind).not.toBe("environment");
+        expect(payload.sandbox).toMatchObject({
+          boundary: "operation",
+          outsideSandbox: report === "both",
         });
+      }
       if (state !== "supported") expect(payload?.scope).toBeNull();
     },
   );
@@ -1273,10 +1261,11 @@ describe("permission context projection", () => {
     );
     expect(admitted.network).toEqual({ kind: "allowlist", hosts: ["api.example.com"] });
     expect(await contexts(raw, f.rootId)).toEqual([]);
-    // the interactive root run itself keeps Full and no task hosts
+    // the interactive root run itself keeps Full (in the sandbox) and no task hosts
     await record(f);
-    expect((await contexts(raw, f.rootId))[0]?.payload.scope?.network).toEqual({
-      kind: "environment",
+    expect((await contexts(raw, f.rootId))[0]?.payload).toMatchObject({
+      effectiveProfile: "full-access",
+      scope: { network: { kind: "none" } },
     });
   });
 
@@ -1286,13 +1275,16 @@ describe("permission context projection", () => {
     const taskRun = await seedTaskRun(f.db, f.orgId, taskId);
     await f.db.updateTable("runs").set({ status: "completed" }).where("id", "=", f.runId).execute();
     const run = await startRun(k, raw, f.rootId, f.accountId, taskRun);
-    // the platform and org ceiling of this device allows only api.example.com
+    // the platform keeps orgs and grants within its list, which allows only api.example.com
     const facts = k.app.get(PermissionFacts);
-    const policy = facts.devicePolicy.bind(facts);
-    vi.spyOn(facts, "devicePolicy").mockImplementation(async (device) => ({
-      ...(await policy(device)),
-      network: { kind: "allowlist", hosts: ["api.example.com"] },
-    }));
+    const readDevice = facts.readDevice.bind(facts);
+    vi.spyOn(facts, "readDevice").mockImplementation(async (orgId, deviceId) => {
+      const device = await readDevice(orgId, deviceId);
+      return {
+        ...device,
+        limits: { ...device.limits, orgHosts: "within", allowHosts: ["api.example.com"] },
+      };
+    });
     await recordUnder(k, run.claim, { ...inputOf(f), runId: run.runId });
     const admitted = await k.app.get(SandboxOperationAuthority).resolve(
       {

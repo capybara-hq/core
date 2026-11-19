@@ -43,6 +43,7 @@ import { PermissionAuthorityModule } from "../sandbox/permission-authority.modul
 import {
   localMachineRoots,
   needsFullCeiling,
+  needsOpenNetwork,
   needsWiderDeviceCeiling,
   PermissionCeilingWrites,
 } from "../sandbox/permission-ceiling-writes.js";
@@ -1007,10 +1008,15 @@ export class OrgSettingsService {
           effectiveOrgNetwork(platform.network, reread.deviceNetwork),
         ) !== null;
       const machineRoots = await localMachineRoots(this.db.db, orgId);
+      // a network ceiling narrowed to the allowlist takes running open-network work
+      const networkNarrowed =
+        effectiveOrgNetwork(platform.network, before.deviceNetwork).ceiling === "open" &&
+        effectiveOrgNetwork(platform.network, reread.deviceNetwork).ceiling === "allowlist";
       await this.ceilings.publishLocked(
         { orgId },
         "org",
         (scope, row) => {
+          if (networkNarrowed && needsOpenNetwork(scope)) return true;
           // outside off takes escalated work and restricted work outside the machine's roots;
           // anything else still goes through the host check below
           if (

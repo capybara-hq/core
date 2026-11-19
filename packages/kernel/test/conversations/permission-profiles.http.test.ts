@@ -533,11 +533,8 @@ describe("Conversation permission profiles", () => {
       "readFile",
       new AbortController().signal,
     );
-    expect(scope).toMatchObject({
-      profile: "full-access",
-      filesystem: { kind: "device" },
-      network: { kind: "environment" },
-    });
+    // Full access keeps the sandbox: a scoped filesystem, never the device pair
+    expect(scope).toMatchObject({ profile: "full-access", filesystem: { kind: "scoped" } });
     await kernelDb(raw)
       .updateTable("device_machines")
       .set({ owner_report: storedOwnerReport({ outsideSandbox: false, sequence: 1 }) })

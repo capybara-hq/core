@@ -242,9 +242,10 @@ export const PermissionContextV2Schema = z
       reject("Only supported context carries a sandbox");
     const s = p.scope;
     if (!s) return;
-    // every profile records a scoped sandbox under a block; a device filesystem or environment
-    // networking is never a restricted profile's. Interim: Full access without a block is exactly
-    // device + environment (v1 and the producer before T5 writes the block); T5 drops that form
+    // every profile records a scoped sandbox under a block (the producer always writes one); a
+    // device filesystem or environment networking is never a sandboxed context's. Only a stored
+    // version 1 context, read as version 2 without a block, records Full access as exactly device
+    // + environment: that form stays readable because the log is never rewritten
     if (p.effectiveProfile === "full-access" && p.sandbox === null) {
       if (s.filesystem.kind !== "device" || s.network.kind !== "environment")
         reject(

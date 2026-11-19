@@ -99,6 +99,7 @@
   "runtime/stream.test.ts",
   "runtime/tool-map-render.test.ts",
   "sandbox/cloud-snapshot-cases.test.ts",
+  "sandbox/device-sandbox.test.ts",
   "sandbox/instance.test.ts",
   "sandbox/lifecycle.test.ts",
   "sandbox/non-tool-callers.test.ts",

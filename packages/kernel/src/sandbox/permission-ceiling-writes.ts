@@ -7,7 +7,7 @@ import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { OutboxService } from "../infra/outbox/outbox.service.js";
 import { machineRootList, outsideMachineRoots } from "../local-devices/owner-report.js";
-import { isFullExecutionScope } from "./operation-authority-types.js";
+import { isFullExecutionScope, usesOpenNetwork } from "./operation-authority-types.js";
 import { PermissionAuthorityEpochStore } from "./permission-authority-epochs.js";
 import { type AuthoritySubject, PermissionAuthorityLock } from "./permission-authority-lock.js";
 import { PermissionTransitions } from "./permission-transitions.js";
@@ -200,6 +200,22 @@ export async function localMachineRoots(
 }
 
 /**
+ * The narrowings a ceiling write publishes (approval-only profiles design, "Ceiling writes"), each
+ * bumping its epoch and revoking, in the same transaction, the admitted or started work it takes:
+ * - `outside-sandbox-off`: escalated work ({@link needsFullCeiling});
+ * - `network-allowlist`: work on the open public network ({@link needsOpenNetwork});
+ * - `hosts-removed`: allowlist work naming a host the new list no longer covers (the writer's own
+ *   host check, which keeps hosts an independent grant still holds).
+ * Widening any of them resets Full consent instead (`invalidateFullConsent`); a profile change
+ * alone never revokes started work.
+ */
+export type CeilingNarrowing = "outside-sandbox-off" | "network-allowlist" | "hosts-removed";
+
+/** Work on the open public network: what a network ceiling narrowed to `allowlist` takes away. */
+export const needsOpenNetwork = (scope: SandboxOperationScope | SandboxBrowseScope): boolean =>
+  usesOpenNetwork(scope);
+
+/**
  * What a platform or org Full ceiling turning off takes away (B2, same split as the owner writer):
  * Full execution, broad browsing, and running restricted work outside the machine's roots, since
  * the effective restricted reach narrows to the workspace.
@@ -209,7 +225,7 @@ export const needsWiderDeviceCeiling = (
   machineRoots: readonly string[] | undefined,
 ): boolean => needsFullCeiling(scope) || outsideMachineRoots(scope, machineRoots);
 
-/** Full execution: a Full-profile operation (B2: decided by Full permission alone). */
+/** Running outside the sandbox: an escalated call (`outside-sandbox-off` takes it). */
 export const requiresFullExecution = (scope: SandboxOperationScope | SandboxBrowseScope): boolean =>
   isFullExecutionScope(scope);
 /**
@@ -220,8 +236,8 @@ export const requiresBroadProjectReach = (
   scope: SandboxOperationScope | SandboxBrowseScope,
 ): boolean => !("profile" in scope) && scope.readRoots.includes("/");
 /**
- * What a platform or org Full ceiling turning off takes away: Full execution and, as before, the
- * wider device ceiling restricted reach depended on.
+ * What a platform or org outside-sandbox ceiling turning off takes away: escalated work and, as
+ * before, the wider device ceiling restricted reach depended on.
  */
 export const needsFullCeiling = (scope: SandboxOperationScope | SandboxBrowseScope): boolean =>
   requiresFullExecution(scope) || requiresBroadProjectReach(scope);

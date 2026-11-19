@@ -158,6 +158,21 @@ describe("owner report ordering (B2)", () => {
   });
 });
 
+describe("the owner's sandbox network", () => {
+  const facts = (over: Record<string, unknown>) => ownerFactsOfReport(stored(report(1, over)));
+  const open = op({ profile: "full-access", network: { kind: "open-public" } } as never);
+  it("narrowing to the allowlist revokes open-network executions, under every profile", () => {
+    expect(ownerReportRevokes(facts({ network: "allowlist" }), open, "exec", [], ["/work"])).toBe(
+      true,
+    );
+    expect(ownerReportRevokes(facts({ network: "open" }), open, "exec", [], ["/work"])).toBe(false);
+    // a sandboxed Full access call is not running outside the sandbox
+    expect(ownerReportRevokes(facts({ outsideSandbox: false }), open, "exec", [], ["/work"])).toBe(
+      false,
+    );
+  });
+});
+
 describe("a running per-call sandbox escalation loses to every Full ceiling turning off", () => {
   // an escalated call keeps its restricted profile; its reach is full (device, environment)
   const escalated = op({

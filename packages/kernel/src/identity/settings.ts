@@ -45,6 +45,7 @@ import {
 } from "../sandbox/device-sandbox-settings.js";
 import {
   localMachineRoots,
+  needsOpenNetwork,
   needsWiderDeviceCeiling,
   PermissionCeilingWrites,
 } from "../sandbox/permission-ceiling-writes.js";
@@ -1056,12 +1057,18 @@ export class SettingsService {
         r.before.network.ceiling !== r.after.network.ceiling;
       if (outsideChanged || networkChanged) {
         const machineRoots = outsideOff ? await localMachineRoots(this.db.db) : null;
+        // a network ceiling narrowed to the allowlist takes running open-network work
+        const networkNarrowed =
+          r.before.network.ceiling === "open" && r.after.network.ceiling === "allowlist";
         await this.ceilings.publishLocked(
           {},
           "platform",
-          machineRoots === null
+          machineRoots === null && !networkNarrowed
             ? false
-            : (scope, row) => needsWiderDeviceCeiling(scope, machineRoots.get(row.device_id)),
+            : (scope, row) =>
+                (networkNarrowed && needsOpenNetwork(scope)) ||
+                (machineRoots !== null &&
+                  needsWiderDeviceCeiling(scope, machineRoots.get(row.device_id))),
           outsideChanged || widened(r.before.network, r.after.network),
         );
       }

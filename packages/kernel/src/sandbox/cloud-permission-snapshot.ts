@@ -303,6 +303,9 @@ export class CloudPermissionSnapshots {
       .set({
         owner_full_access: snap.fullAccess,
         outer_network: JSON.stringify(snap.outerNetwork),
+        // the device's own sandbox network carries an allowlist snapshot (never wider): the
+        // device sandbox reads it, not `outer_network`
+        ...(device.network_mode === null && ownNetworkOf(snap.outerNetwork)),
         permission_migration: JSON.stringify({
           from: "auto-mode",
           old: { mode: old.mode, network: old.network },
@@ -343,9 +346,11 @@ export class CloudPermissionSnapshots {
         if (needsFullCeiling(scope)) return !snap.fullAccess;
         if (outer.kind !== "allowlist" || !("network" in scope) || !isExecutionMethod(row.method))
           return false;
-        // an execution outside any allowlist (environment networking) is wider than the outer
-        // allowlist; `none` is narrower; an allowlist must be covered host by host
-        if (scope.network.kind === "environment") return true;
+        // an execution outside any allowlist (environment networking, the open public network)
+        // is wider than the outer allowlist; `none` is narrower; an allowlist must be covered
+        // host by host
+        if (scope.network.kind === "environment" || scope.network.kind === "open-public")
+          return true;
         if (scope.network.kind !== "allowlist") return false;
         return scope.network.hosts.some((h) => !outer.hosts.some((p) => coversHost(p, h)));
       },
@@ -394,6 +399,8 @@ export class CloudPermissionSnapshots {
             .set({
               owner_full_access: narrowed.fullAccess,
               outer_network: JSON.stringify(narrowed.outerNetwork),
+              // a narrower instance narrows the device's own network choice too
+              ...ownNetworkOf(narrowed.outerNetwork),
             })
             .where("id", "=", deviceId)
             .execute();
@@ -446,6 +453,7 @@ export class CloudPermissionSnapshots {
         "mode",
         "owner_full_access",
         "outer_network",
+        "network_mode",
         "permission_reconcile_required",
         "deleted_at",
       ])
@@ -477,4 +485,16 @@ export class CloudPermissionSnapshots {
       (row.handle !== null && (row.status === "running" || row.status === "suspended"));
     return live || row.fs_status !== "none" ? row : null;
   }
+}
+
+/**
+ * The device's own sandbox network columns for an allowlist snapshot (`network_mode: allowlist`,
+ * its hosts as `network_hosts`), as migrations 0163 and 0165 copy them; nothing for an open one,
+ * which follows the org.
+ */
+function ownNetworkOf(
+  outer: DeviceNetwork,
+): { network_mode: "allowlist"; network_hosts: string } | Record<string, never> {
+  if (outer.kind !== "allowlist") return {};
+  return { network_mode: "allowlist", network_hosts: JSON.stringify([...outer.hosts]) };
 }

@@ -447,6 +447,9 @@ it.each(["exec", "backgroundStart"] as const)(
       source: { kind: "run", id: "run", accountId: "owner" },
     });
     expect(sent[1]?.grants).toEqual(sent[0]?.grants);
+    // the wire carries resources and the outer network only, never the kernel's mode tier
+    expect(sent[0]?.limits).toBeDefined();
+    expect(Object.keys(sent[0]?.limits as object)).not.toContain("mode");
     orgSettings = {
       deviceNetwork: { ceiling: "allowlist", excludedHosts: ["example.com"], extraHosts: [] },
     };

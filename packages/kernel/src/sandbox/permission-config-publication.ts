@@ -28,6 +28,7 @@ import { isExecutionMethod } from "./operation-authority-types.js";
 import {
   localMachineRoots,
   needsFullCeiling,
+  needsOpenNetwork,
   needsWiderDeviceCeiling,
   PermissionCeilingWrites,
 } from "./permission-ceiling-writes.js";
@@ -479,10 +480,16 @@ export class PermissionConfigPublication {
       await this.ceilings.invalidateDeviceConsentUnderPlatform(
         devices.filter((device) => device.source === "cloud").map((device) => device.id),
       );
+    // a network ceiling narrowed to the allowlist, or closed by the kill switch, takes running
+    // open-network work
+    const networkNarrowed =
+      (beforeView.network.ceiling === "open" && nextView.network.ceiling === "allowlist") ||
+      (before.egress !== "none" && next.egress === "none");
     await this.ceilings.publishLocked(
       {},
       "platform",
       (scope, row) => {
+        if (networkNarrowed && needsOpenNetwork(scope)) return true;
         // Full off also narrows restricted reach to the workspace (B2): running restricted work
         // outside a machine's roots goes with Full work, as the owner writer decides
         if (nextMode === "off" && needsWiderDeviceCeiling(scope, machineRoots.get(row.device_id)))

@@ -84,6 +84,13 @@ export type PermissionReviewSnapshot = Readonly<
     baseWriteDirectories: readonly string[];
     baseHosts: readonly string[];
     workingRoot: string;
+    /**
+     * The call's sandbox network (the device sandbox within the applied outer boundary): `open-public`,
+     * `allowlist` (the base hosts plus accepted host grants) or `none`. Absent reads as `none`.
+     */
+    network?: "open-public" | "allowlist" | "none";
+    /** The provider's boundary; absent reads as `operation`. */
+    boundary?: "operation" | "instance";
     outsideSandboxCeiling: boolean;
     /** Restricted directory expansions beyond the working root (B2 broad project reach). */
     broadProjectReach: boolean;

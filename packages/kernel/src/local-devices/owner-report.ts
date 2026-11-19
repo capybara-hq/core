@@ -169,7 +169,10 @@ export function ownerReportRevokes(
   if (isFullExecutionScope(scope)) return !next.fullAccess;
   if (next.restrictedProjectReach === "workspace" && outsideMachineRoots(scope, machineRoots))
     return true;
-  if (!isExecutionMethod(method) || scope.network.kind !== "allowlist") return false;
+  if (!isExecutionMethod(method)) return false;
+  // the open public network goes when the owner narrows the sandbox network to the allowlist
+  if (scope.network.kind === "open-public") return next.network === "allowlist";
+  if (scope.network.kind !== "allowlist") return false;
   return scope.network.hosts.some(
     (host) =>
       !next.restrictedAllowedDomains.some((pattern) => coversHost(pattern, host)) &&

@@ -23,6 +23,7 @@ import {
 } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable, Optional } from "@nestjs/common";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
+import { providerLimits } from "../sandbox/modes.js";
 import { PermissionCallGrants } from "../sandbox/permission-call-grants.js";
 import { deviceNotFound, SandboxService } from "../sandbox/sandbox.service.js";
 import { grantsWithin, relayer } from "./network-grants.js";
@@ -257,7 +258,8 @@ export class LocalDeviceProvider implements SandboxProvider {
         throw new Error(
           "Current organization limits refuse the admitted explicit hosts; review the operation again",
         );
-      return { limits, ...(grants === undefined ? {} : { grants }) };
+      // the wire carries resources and the outer network only: the mode tier is kernel-internal
+      return { limits: providerLimits(limits), ...(grants === undefined ? {} : { grants }) };
     };
     const background: SandboxBackground = {
       start: async (h, input, args) => {

@@ -29,6 +29,7 @@ import type { Account, AccountsService } from "../../src/identity/accounts.js";
 import { NetworkGrants } from "../../src/local-devices/network-grants.js";
 import { createLogger } from "../../src/log.js";
 import type { MembersService } from "../../src/orgs/members.service.js";
+import { OrgSettingsService } from "../../src/orgs/settings.service.js";
 import { SandboxOperationAuthority } from "../../src/sandbox/operation-authority.js";
 import { OperationAuthorityModule } from "../../src/sandbox/operation-authority.module.js";
 import { PermissionAuthorityEpochStore } from "../../src/sandbox/permission-authority-epochs.js";
@@ -1152,7 +1153,7 @@ it("instance recreation preserves consent for the same roots and resets it befor
     );
   }
 });
-it("sandbox egress changes preserve local Full while revoking cloud Full at its outer ceiling", async () => {
+it("the egress kill switch closes every device's sandbox network and moves Full consent", async () => {
   const local = await operationFixture(),
     cloud = await operationFixture();
   await cloud.db
@@ -1225,22 +1226,22 @@ it("sandbox egress changes preserve local Full while revoking cloud Full at its 
     });
     for (const f of [local, cloud]) {
       const preview = await facts.preview(f.orgId, owner.id, f.deviceId);
-      if (f === local) {
-        expect(preview.outsideSandboxCeiling).toBe(true);
-        expect(preview.scopeRevision).toBe(initial.get(f.deviceId));
-      }
+      // the network ceiling is a crossing ceiling of the consent fingerprint (local and cloud)
+      expect(preview.scopeRevision).not.toBe(initial.get(f.deviceId));
+      expect(preview.sandbox.networkMode).toBe("none");
+      // a sandboxed native read reaches no network: nothing to revoke
       const row = await f.db
         .selectFrom("sandbox_operation_intents")
         .select("state")
         .where("run_id", "=", f.claim.runId)
         .executeTakeFirstOrThrow();
-      expect(row.state).toBe(f === local ? "admitted" : "revoked");
+      expect(row.state).toBe("admitted");
       const scope = await k.app
         .get(SandboxOperationAuthority)
         .resolve(f.ctx, "exec", new AbortController().signal);
-      expect(scope.profile).toBe(f === local ? "full-access" : "approve-for-me");
-      if (f === local) expect(scope.network).toEqual({ kind: "environment" });
-      else expect(scope.network).toEqual({ kind: "none" });
+      expect(scope.profile).toBe("approve-for-me");
+      expect(scope.filesystem.kind).toBe("scoped");
+      expect(scope.network).toEqual({ kind: "none" });
     }
   } finally {
     await publisher.publish(next, before);
@@ -1562,4 +1563,278 @@ it("post-effect storage denial stays unknown, then reconciles oversized exec out
   }
   expect(effects).toBe(1);
   expect((await intents.read(row.operation_id)).state).toBe("completed");
+});
+
+describe("approval-only profiles: the device sandbox in admission and the recorded context", () => {
+  const OPEN_SUPPORT = {
+    version: 2 as const,
+    restricted: {
+      filesystem: true as const,
+      network: true as const,
+      native: true as const,
+      concurrentScopes: true as const,
+    },
+    boundary: "operation" as const,
+    network: { openPublic: true, allowlist: true, perOperationHosts: true },
+    outsideSandbox: true,
+    background: false,
+  };
+  /** The org's allowlist names `example.com` (the platform list is empty here). */
+  const orgHosts = (orgId: string) =>
+    k.app
+      .get(OrgSettingsService)
+      .update(orgId, { deviceNetwork: { extraHosts: ["example.com"] } }, owner.id);
+  /** A local device whose runtime enforces the open network, its owner's network `network`. */
+  async function sandboxFixture(network: "open" | "allowlist") {
+    const f = await operationFixture({ permissionSupport: async () => OPEN_SUPPORT } as never, {
+      evidence: false,
+    });
+    await seedInstalledEvidence(k, raw, {
+      orgId: f.orgId,
+      deviceId: f.deviceId,
+      provider: "@permission-test",
+      version: "test-1",
+      report: OPEN_SUPPORT,
+    });
+    await orgHosts(f.orgId);
+    await f.db
+      .updateTable("device_machines")
+      .set({
+        owner_report: storedOwnerReport({ network, allowedDomains: ["example.com"] }),
+      })
+      .where("device_id", "=", f.deviceId)
+      .execute();
+    return f;
+  }
+  const select = async (
+    f: Awaited<ReturnType<typeof sandboxFixture>>,
+    profile: "request-approval" | "approve-for-me" | "full-access",
+  ) => {
+    const preview = await k.app.get(PermissionFacts).preview(f.orgId, owner.id, f.deviceId);
+    await f.db
+      .updateTable("conversations")
+      .set({
+        permission_profile: profile,
+        permission_consent:
+          profile === "full-access"
+            ? JSON.stringify({ deviceId: f.deviceId, scopeRevision: preview.scopeRevision })
+            : null,
+      })
+      .where("id", "=", f.root.id)
+      .execute();
+  };
+  const context = (f: Awaited<ReturnType<typeof sandboxFixture>>) =>
+    k.app.get(TransactionHost).run(async () => {
+      await k.app
+        .get(PermissionAuthorityLock)
+        .acquire(
+          { orgId: f.orgId, deviceId: f.deviceId, rootConversationId: f.root.id },
+          { kind: "admit" },
+        );
+      return k.app.get(SandboxOperationAuthority).readContextLocked(
+        {
+          orgId: f.orgId,
+          conversationId: f.root.id,
+          accountId: owner.id,
+          runId: f.claim.runId,
+        },
+        new AbortController().signal,
+      );
+    });
+
+  it.each([
+    ["request-approval", "open"],
+    ["approve-for-me", "open"],
+    ["full-access", "open"],
+    ["request-approval", "allowlist"],
+    ["approve-for-me", "allowlist"],
+    ["full-access", "allowlist"],
+  ] as const)(
+    "%s with the owner's %s network: the context and admission agree",
+    async (profile, network) => {
+      const f = await sandboxFixture(network);
+      await select(f, profile);
+      const recorded = await context(f);
+      const scope = await k.app
+        .get(SandboxOperationAuthority)
+        .resolve(f.ctx, "exec", new AbortController().signal);
+      expect(recorded.effectiveProfile).toBe(profile);
+      expect(scope.profile).toBe(profile);
+      // the sandbox is the same under every profile: scoped, with the device's network
+      expect(scope.filesystem.kind).toBe("scoped");
+      expect(recorded.scope?.filesystem).toEqual({
+        kind: "scoped",
+        readDirectories: scope.filesystem.kind === "scoped" ? scope.filesystem.readRoots : [],
+        writeDirectories: scope.filesystem.kind === "scoped" ? scope.filesystem.writeRoots : [],
+      });
+      expect(scope.network).toEqual(
+        network === "open"
+          ? { kind: "open-public" }
+          : { kind: "allowlist", hosts: ["example.com"] },
+      );
+      expect(recorded.scope?.network).toEqual(scope.network);
+      expect(recorded.sandbox).toEqual({
+        boundary: "operation",
+        location: "local",
+        workingRoot: recorded.scope?.workingRoot,
+        network: { kind: scope.network.kind, hostsCount: network === "open" ? 0 : 1 },
+        outsideSandbox: true,
+        outerNetwork: { kind: "host-environment" },
+      });
+    },
+  );
+
+  it("a platform network ceiling narrowed to the allowlist revokes open-network work and keeps allowlist siblings", async () => {
+    const f = await sandboxFixture("open");
+    const intent = (network: object, method: "exec" | "stat" = "exec") => {
+      const operationId = randomUUID();
+      return {
+        operationId,
+        row: {
+          operation_id: operationId,
+          org_id: f.orgId,
+          account_id: owner.id,
+          device_id: f.deviceId,
+          root_conversation_id: f.root.id,
+          ordinal: 0,
+          method,
+          input_hash: "i",
+          admission_hash: "a",
+          granted_hosts: "[]",
+          input: "{}",
+          scope: JSON.stringify({
+            operationId,
+            admitBeforeMs: Date.now() + 30000,
+            deviceId: f.deviceId,
+            rootConversationId: f.root.id,
+            profileRevision: 0,
+            ceilingRevision: "c",
+            profile: "full-access",
+            actor: { accountId: owner.id, conversationId: f.root.id },
+            tag: operationId,
+            filesystem: { kind: "scoped", readRoots: ["/work"], writeRoots: ["/work"] },
+            network,
+          }),
+          epochs: JSON.stringify({ platform: 0, org: 0, device: 0, root: 0 }),
+          provider: "@permission-test",
+          provider_version: "test-1",
+          instance_generation: "1700000000000",
+          execution_id: randomUUID(),
+          deadline: new Date(Date.now() + 60000),
+          retain_until: new Date(Date.now() + 60000),
+          state: "admitted" as const,
+        },
+      };
+    };
+    const open = intent({ kind: "open-public" });
+    const sibling = intent({ kind: "allowlist", hosts: ["example.com"] });
+    await f.db.insertInto("sandbox_operation_intents").values([open.row, sibling.row]).execute();
+    const { SettingsService } = await import("../../src/identity/settings.js");
+    // the platform writer re-checks its actor under the super admin lock
+    await f.db
+      .updateTable("accounts")
+      .set({ is_super_admin: true })
+      .where("id", "=", owner.id)
+      .execute();
+    await k.app.get(SettingsService).update({ devicesNetwork: { ceiling: "allowlist" } }, owner.id);
+    const state = async (id: string) =>
+      (
+        await f.db
+          .selectFrom("sandbox_operation_intents")
+          .select("state")
+          .where("operation_id", "=", id)
+          .executeTakeFirstOrThrow()
+      ).state;
+    expect(await state(open.operationId)).toBe("revoked");
+    expect(await state(sibling.operationId)).toBe("admitted");
+    const jobs = await f.db
+      .selectFrom("outbox")
+      .select("job_id")
+      .where("job_name", "=", "sandbox-operation-revoke")
+      .where("job_id", "in", [
+        `sandbox-operation-revoke-${open.operationId}`,
+        `sandbox-operation-revoke-${sibling.operationId}`,
+      ])
+      .execute();
+    expect(jobs.map((j) => j.job_id)).toEqual([`sandbox-operation-revoke-${open.operationId}`]);
+    // widening the ceiling again resets Full consent with a recorded profile change
+    await select(f, "full-access");
+    await k.app.get(SettingsService).update({ devicesNetwork: { ceiling: "open" } }, owner.id);
+    const root = await f.db
+      .selectFrom("conversations")
+      .select(["permission_profile", "permission_consent"])
+      .where("id", "=", f.root.id)
+      .executeTakeFirstOrThrow();
+    expect(root).toEqual({ permission_profile: "approve-for-me", permission_consent: null });
+    const changed = await f.db
+      .selectFrom("conversation_events")
+      .select("payload")
+      .where("conversation_id", "=", f.root.id)
+      .where("type", "=", "permission_profile_changed")
+      .execute();
+    expect(changed.at(-1)?.payload).toMatchObject({
+      oldProfile: "full-access",
+      newProfile: "approve-for-me",
+    });
+    await f.db.deleteFrom("deployment_settings").where("key", "=", "devicesNetwork").execute();
+    await f.db
+      .updateTable("accounts")
+      .set({ is_super_admin: false })
+      .where("id", "=", owner.id)
+      .execute();
+  });
+
+  it("an instance-boundary provider gives a whole-instance scope with no outside and no per-call hosts", async () => {
+    const instance = {
+      ...OPEN_SUPPORT,
+      restricted: null,
+      boundary: "instance" as const,
+      network: { openPublic: true, allowlist: true, perOperationHosts: false },
+      outsideSandbox: false,
+    };
+    const f = await operationFixture({ permissionSupport: async () => instance } as never, {
+      evidence: false,
+    });
+    await f.db
+      .updateTable("devices")
+      .set({ source: "cloud", network_mode: "allowlist", network_hosts: "[]" })
+      .where("id", "=", f.deviceId)
+      .execute();
+    await orgHosts(f.orgId);
+    await f.db
+      .updateTable("device_instances")
+      .set({
+        instance_limits: JSON.stringify({
+          mode: "auto",
+          network: { kind: "allowlist", hosts: ["example.com"] },
+        }),
+      })
+      .where("device_id", "=", f.deviceId)
+      .execute();
+    await seedInstalledEvidence(k, raw, {
+      orgId: f.orgId,
+      deviceId: f.deviceId,
+      provider: "@permission-test",
+      version: "test-1",
+      report: instance,
+    });
+    for (const profile of ["request-approval", "approve-for-me", "full-access"] as const) {
+      await select(f as never, profile);
+      const preview = await k.app.get(PermissionFacts).preview(f.orgId, owner.id, f.deviceId);
+      expect(preview.availability.state).toBe("supported");
+      expect(preview.outsideSandboxCeiling).toBe(false);
+      const scope = await k.app
+        .get(SandboxOperationAuthority)
+        .resolve(f.ctx, "exec", new AbortController().signal);
+      expect(scope.profile).toBe(profile);
+      expect(scope.filesystem).toEqual({
+        kind: "scoped",
+        readRoots: ["/", "/work"],
+        writeRoots: ["/", "/work"],
+      });
+      const recorded = await context(f as never);
+      expect(recorded.sandbox).toMatchObject({ boundary: "instance", outsideSandbox: false });
+      expect(recorded.scope?.network).toEqual(scope.network);
+    }
+  });
 });

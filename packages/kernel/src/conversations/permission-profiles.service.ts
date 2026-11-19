@@ -97,14 +97,15 @@ export class PermissionProfilesService {
         "Full access requires an explicitly selected device and displayed scope consent",
       );
     const preview = await this.facts.scope(orgId, deviceId, projectPath, project);
+    // Full access is available wherever any profile is: the sandbox stays, and the consent binds
+    // the device and the crossing ceilings it auto-approves within (`scopeRevision`)
     if (
-      !preview.outsideSandboxCeiling ||
       preview.availability.state === "unsupported" ||
       preview.scopeRevision !== selection.consentScopeRevision
     )
       throw new ApiError(
         "conflict",
-        "Device authority changed or Full access is unavailable; refresh the permission preview",
+        "Device authority changed; refresh the permission preview and confirm Full access again",
       );
     return { deviceId, scopeRevision: preview.scopeRevision };
   }

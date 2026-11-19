@@ -332,10 +332,9 @@ async function matrix(profile: Profile): Promise<void> {
   );
   for (const i of ran) {
     expect(i.scope.profile, i.method).toBe(profile);
-    if (profile === "full-access") {
-      expect(i.scope.filesystem, i.method).toEqual({ kind: "device" });
-      expect(i.scope.network, i.method).toEqual({ kind: "environment" });
-    } else expect(i.scope.filesystem, i.method).toEqual(scopedTo("/workspace"));
+    // the sandbox is the same under every profile: Full access keeps the scoped filesystem
+    expect(i.scope.filesystem, i.method).toEqual(scopedTo("/workspace"));
+    expect(i.scope.network.kind, i.method).not.toBe("environment");
     expect(i.permission_grant_id, i.method).toBeNull();
   }
 
@@ -621,8 +620,8 @@ describe("a local device's project outside its fixed workspace", () => {
   });
 });
 
-describe("a device whose runtime cannot enforce the restricted profiles", () => {
-  it("restricted profiles refuse truthfully before any effect; Full access still runs", async () => {
+describe("a device whose runtime cannot enforce its sandbox", () => {
+  it("every profile refuses truthfully before any effect, Full access included", async () => {
     await setFakeSandboxPermissionSupport(sandboxRoot, {
       version: 2,
       restricted: null,
@@ -664,215 +663,52 @@ describe("a device whose runtime cannot enforce the restricted profiles", () => 
       await setProfile(conv, "request-approval");
       const again = await call(conv, "Read", { file_path: "/workspace/x.txt" }, 2);
       expect(again.payload.content).toBe(PERMISSION_UNSUPPORTED_TOOL_TEXT);
-      // Full access, explicitly chosen with its consent, runs
+      // Full access keeps the sandbox: on a runtime that only runs outside it, a call under Full
+      // access runs nothing either
       await setProfile(conv, "full-access");
       const full = await call(conv, "Bash", { command: "echo full-ok", description: "Run" }, 3);
-      expect(full.payload.isError, full.payload.content).toBe(false);
-      expect(full.payload.content).toContain("full-ok");
-      expect((await intentsOf(conv)).at(-1)?.scope.filesystem).toEqual({ kind: "device" });
+      expect(full.payload.isError).toBe(true);
+      expect(full.payload.content).toBe(PERMISSION_UNSUPPORTED_TOOL_TEXT);
+      expect((await intentsOf(conv)).filter((i) => i.method === "exec")).toEqual([]);
     } finally {
       await setFakeSandboxPermissionSupport(sandboxRoot, null);
     }
   });
 });
 
-describe("a per-call sandbox escalation across replicas", () => {
-  it("approved on replica B, it runs on replica A outside the sandbox once; the next call is sandboxed", async () => {
-    const deviceId = await cloudDevice();
-    const conv = await conversation(deviceId);
-    const bound = await call(conv, "Bash", { command: "echo bound", description: "Bind" }, 1);
-    expect(bound.payload.isError, bound.payload.content).toBe(false);
-    await setProfile(conv, "request-approval");
-    const justification = "The build writes the system cache outside the project.";
-    await postMessage(
-      ownerA,
-      orgId,
-      conv,
-      `tool:Bash:${JSON.stringify({
-        command: "echo escalated",
-        description: "Escalate",
-        sandbox: "escalated",
-        justification,
-      })}`,
-    );
-    const ask = await pendingAsk(conv);
-    expect(ask.detail as Record<string, unknown>).toMatchObject({
-      kind: "command",
-      command: "echo escalated",
-      escalation: { justification },
-      workingRoot: "/workspace",
-    });
-    const res = await ownerB({
-      method: "POST",
-      url: `/api/v1/orgs/${orgId}/approvals/${ask.id}/decision`,
-      payload: { decision: "approve", scope: "once" },
-    });
-    expect(res.statusCode, res.body).toBe(200);
-    await waitForTerminal(db, conv, 2, 60_000);
-    const ran = (await results(conv)).at(-1) as ToolResult;
-    expect(ran.payload.isError, ran.payload.content).toBe(false);
-    expect(ran.payload.content).toContain("escalated");
-    expect(ran.payload.review).toMatchObject({ by: "person", sandbox: "escalated" });
-    const execs = (await intentsOf(conv)).filter((i) => i.method === "exec");
-    const escalatedExec = execs.at(-1);
-    expect(escalatedExec?.scope).toMatchObject({
-      profile: "request-approval",
-      filesystem: { kind: "device" },
-      network: { kind: "environment" },
-    });
-    expect(escalatedExec?.permission_grant_id).not.toBeNull();
-    // the next call of the conversation runs in the sandbox again: the grant was that call's only
-    const next = await call(conv, "Bash", { command: "echo again", description: "Again" }, 3);
-    expect(next.payload.isError, next.payload.content).toBe(false);
-    const last = (await intentsOf(conv)).filter((i) => i.method === "exec").at(-1);
-    expect(last?.scope.filesystem).toEqual(scopedTo("/workspace"));
-    expect(last?.permission_grant_id).toBeNull();
-    expect((await approvalsOf(conv)).filter((a) => a.status === "pending")).toEqual([]);
-  });
-
-  it("a background escalation runs its start outside the sandbox once; TaskOutput and TaskStop stay sandboxed", async () => {
-    const deviceId = await cloudDevice();
-    const conv = await conversation(deviceId);
-    const bound = await call(conv, "Bash", { command: "echo bound", description: "Bind" }, 1);
-    expect(bound.payload.isError, bound.payload.content).toBe(false);
-    await setProfile(conv, "request-approval");
-    const justification = "The dev server must keep running while the person tests it.";
-    await postMessage(
-      ownerA,
-      orgId,
-      conv,
-      `tool:Bash:${JSON.stringify({
-        command: "sleep 120",
-        description: "Serve",
-        run_in_background: true,
-        sandbox: "escalated",
-        justification,
-      })}`,
-    );
-    const ask = await pendingAsk(conv);
-    expect(ask.detail as Record<string, unknown>).toMatchObject({
-      kind: "command",
-      command: "sleep 120",
-      escalation: { justification, background: true, maxSeconds: expect.any(Number) },
-    });
-    const approved = await ownerB({
-      method: "POST",
-      url: `/api/v1/orgs/${orgId}/approvals/${ask.id}/decision`,
-      payload: { decision: "approve", scope: "once" },
-    });
-    expect(approved.statusCode, approved.body).toBe(200);
-    await waitForTerminal(db, conv, 2, 60_000);
-    const started = (await results(conv)).at(-1) as ToolResult;
-    expect(started.payload.isError, started.payload.content).toBe(false);
-    expect(started.payload.review).toMatchObject({ by: "person", sandbox: "escalated" });
-    const start = (await intentsOf(conv)).filter((i) => i.method === "backgroundStart").at(-1);
-    expect(start?.scope).toMatchObject({
-      profile: "request-approval",
-      filesystem: { kind: "device" },
-      network: { kind: "environment" },
-    });
-    expect(start?.permission_grant_id).not.toBeNull();
-    const grant = await db
-      .selectFrom("permission_call_grants")
-      .select(["id", "scope_kind"])
-      .where("id", "=", start?.permission_grant_id as string)
-      .executeTakeFirstOrThrow();
-    expect(grant.scope_kind).toBe("sandbox-escalation");
-    const task = await waitFor(
-      async () =>
-        db
-          .selectFrom("background_tasks")
-          .select(["id", "status"])
-          .where("conversation_id", "=", conv)
-          .where("status", "=", "running")
-          .executeTakeFirst(),
-      30_000,
-      "the running escalated task",
-    );
-    const before = (await intentsOf(conv)).length;
-    const output = await call(conv, "TaskOutput", { task_id: task.id, block: false }, 3);
-    expect(output.payload.isError, output.payload.content).toBe(false);
-    expect(output.payload.review?.sandbox).toBeUndefined();
-    const stopped = await call(conv, "TaskStop", { task_id: task.id }, 4);
-    expect(stopped.payload.isError, stopped.payload.content).toBe(false);
-    expect(stopped.payload.review?.sandbox).toBeUndefined();
-    // whatever they dispatched ran with the conversation's restricted scope and no grant
-    for (const i of (await intentsOf(conv)).slice(before)) {
-      expect(i.scope.filesystem, i.method).toEqual(readsWithin("/workspace"));
-      expect(i.permission_grant_id, i.method).toBeNull();
-    }
-    expect(await approvalsOf(conv)).toHaveLength(1);
-  });
-
-  it("an escalated background task is stopped when the org turns Full access off", async () => {
-    const deviceId = await cloudDevice();
-    const conv = await conversation(deviceId);
-    const bound = await call(conv, "Bash", { command: "echo bound", description: "Bind" }, 1);
-    expect(bound.payload.isError, bound.payload.content).toBe(false);
-    await setProfile(conv, "request-approval");
-    await postMessage(
-      ownerA,
-      orgId,
-      conv,
-      `tool:Bash:${JSON.stringify({
-        command: "sleep 120",
-        description: "Serve",
-        run_in_background: true,
-        sandbox: "escalated",
-        justification: "Keep the server up.",
-      })}`,
-    );
-    const ask = await pendingAsk(conv);
-    const approved = await ownerB({
-      method: "POST",
-      url: `/api/v1/orgs/${orgId}/approvals/${ask.id}/decision`,
-      payload: { decision: "approve", scope: "once" },
-    });
-    expect(approved.statusCode, approved.body).toBe(200);
-    await waitForTerminal(db, conv, 2, 60_000);
-    const task = await waitFor(
-      async () =>
-        db
-          .selectFrom("background_tasks")
-          .select(["id", "operation_id"])
-          .where("conversation_id", "=", conv)
-          .where("status", "=", "running")
-          .executeTakeFirst(),
-      30_000,
-      "the running escalated task",
-    );
-    const off = await ownerB({
-      method: "PATCH",
-      url: `/api/v1/orgs/${orgId}/settings`,
-      payload: { outsideSandbox: "off" },
-    });
-    expect(off.statusCode, off.body).toBe(200);
-    try {
-      await waitFor(
-        async () =>
-          (
-            await db
-              .selectFrom("background_tasks")
-              .select("status")
-              .where("id", "=", task.id)
-              .executeTakeFirstOrThrow()
-          ).status === "stopped",
-        30_000,
-        "the escalated task stopped by the org switch",
+describe("a per-call sandbox escalation on a cloud device", () => {
+  // a cloud device has no outside of its sandbox (approval-only profiles design, decision 1):
+  // an escalation is refused before any effect, under every profile; the cross-replica
+  // escalation flows run on a local device (the approval-only profiles dual matrix)
+  it.each(["request-approval", "full-access"] as const)(
+    "under %s it is refused before any effect and asks no one",
+    async (profile) => {
+      const deviceId = await cloudDevice();
+      const conv = await conversation(deviceId);
+      const bound = await call(conv, "Bash", { command: "echo bound", description: "Bind" }, 1);
+      expect(bound.payload.isError, bound.payload.content).toBe(false);
+      await setProfile(conv, profile);
+      const refused = await call(
+        conv,
+        "Bash",
+        {
+          command: "echo escalated",
+          description: "Escalate",
+          sandbox: "escalated",
+          justification: "The build writes the system cache outside the project.",
+        },
+        2,
       );
-      const intent = await db
-        .selectFrom("sandbox_operation_intents")
-        .select("state")
-        .where("operation_id", "=", task.operation_id as string)
-        .executeTakeFirstOrThrow();
-      expect(intent.state).toBe("revoked");
-    } finally {
-      const on = await ownerB({
-        method: "PATCH",
-        url: `/api/v1/orgs/${orgId}/settings`,
-        payload: { outsideSandbox: "allowed" },
-      });
-      expect(on.statusCode, on.body).toBe(200);
-    }
-  });
+      expect(refused.payload.isError).toBe(true);
+      expect(await approvalsOf(conv)).toEqual([]);
+      expect((await intentsOf(conv)).filter((i) => i.scope.filesystem.kind === "device")).toEqual(
+        [],
+      );
+      expect(
+        (await readFakeSandboxOps(sandboxRoot)).filter(
+          (o) => o[0] === "exec" && o.join(" ").includes("echo escalated"),
+        ),
+      ).toEqual([]);
+    },
+  );
 });

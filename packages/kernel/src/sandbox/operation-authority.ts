@@ -5,6 +5,7 @@ import {
   parseSandboxBrowseScope,
   parseSandboxOperationScope,
   type SandboxActor,
+  type SandboxBoundary,
   type SandboxBrowseScope,
   type SandboxOperationScope,
   SandboxPermissionUnsupportedError,
@@ -31,6 +32,7 @@ import {
 } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { NetworkGrants } from "../local-devices/network-grants.js";
+import type { DeviceSandbox } from "./device-sandbox.js";
 import {
   type KernelReadInvocation,
   type KernelReadMethod,
@@ -51,12 +53,17 @@ import type { PermissionAvailability } from "./permission-availability.js";
 import { PermissionCallGrants } from "./permission-call-grants.js";
 import type { PermissionCallRef, PermissionReviewSnapshot } from "./permission-call-types.js";
 import { PermissionConfigPublication } from "./permission-config-publication.js";
-import type { AppliedEnvironment } from "./permission-context-types.js";
+import type { AppliedEnvironment, AppliedOuterNetwork } from "./permission-context-types.js";
 import {
   type PermissionContextSubject,
   PermissionContextSubjectChanged,
 } from "./permission-context-types.js";
-import { hostsWithinOuter, PermissionFacts, permissionScopeHash } from "./permission-facts.js";
+import {
+  hostGrantCeiling,
+  hostsWithinOuter,
+  PermissionFacts,
+  permissionScopeHash,
+} from "./permission-facts.js";
 import {
   ESCALATION_CEILING_WHY,
   ESCALATION_UNATTENDED_WHY,
@@ -87,12 +94,15 @@ export interface PermissionScopeFacts {
   readRoots: readonly string[];
   writeRoots: readonly string[];
   allowedHosts: readonly string[];
+  /** The sandbox network of the call ({@link sandboxNetworkOf}); `allowlist` uses `allowedHosts`. */
+  network: "open-public" | "allowlist" | "none";
+  /** The provider's boundary: an `instance` device's scope is its whole filesystem. */
+  boundary: SandboxBoundary;
   outsideSandboxCeiling: boolean;
-  fullConsent?: boolean;
   /**
    * An approved per-call sandbox escalation of this exact call (its immutable call grant): the
-   * operation gets full execution under the conversation's restricted profile, within the same
-   * Full access ceiling. Only admission sets it, from the grant row; never a caller.
+   * operation runs outside the sandbox, within the device's outside-sandbox ceiling, under any
+   * profile. Only admission sets it, from the grant row; never a caller.
    */
   escalated?: boolean;
 }
@@ -106,11 +116,11 @@ type WithheldScope = { state: "unsupported" | "unprobed"; reason: string };
  * admission refuses with the same reason, so the model is never told it can do what admission
  * refuses, nor the reverse (local and cloud devices alike, B-15). Unknown applied facts precede a
  * positive capability report; a working root that is not the installed workspace (no project) is
- * never installed scope.
+ * never installed scope. The sandbox is the same under every profile (support v2): a runtime that
+ * enforces per-operation scopes, or an instance-boundary provider whose instance is the sandbox.
  */
 function withheldScope(input: {
   availability: PermissionAvailability;
-  effectiveProfile: PermissionProfile;
   location: "local" | "cloud";
   workingRoot: string;
   projectPath: string | null;
@@ -125,13 +135,14 @@ function withheldScope(input: {
     (input.projectPath === null && input.workingRoot !== applied.roots.workspace)
   )
     return { state: "unprobed", reason: UNPROVED_ENVIRONMENT };
-  if (input.effectiveProfile === "full-access") {
-    if (!availability.report.outsideSandbox)
-      return { state: "unsupported", reason: "This device's runtime cannot run Full access" };
-  } else if (availability.report.restricted === null)
+  // a local machine's sandbox is per operation; only a cloud provider's instance is the sandbox
+  if (availability.report.boundary === "instance" && input.location === "local")
+    return { state: "unsupported", reason: "A local device cannot report an instance boundary" };
+  if (availability.report.restricted === null && availability.report.boundary !== "instance")
     return {
       state: "unsupported",
-      reason: "This device's runtime cannot enforce the restricted permission profiles",
+      reason:
+        availability.report.unavailableReason ?? "This device's runtime cannot enforce its sandbox",
     };
   return null;
 }
@@ -140,21 +151,35 @@ function withheldScope(input: {
  * read root (a symlink out of the project is refused) whatever the conversation selected.
  */
 const KERNEL_READ_PROFILE: PermissionProfile = "request-approval";
-/** Only server-resolved facts enter this constructor; callers never submit roots or profile. */
+/**
+ * The sandbox network of a call: the device sandbox's mode within a cloud instance's applied outer
+ * boundary (an open network never sits inside an allowlisted or disabled one); `allowlist` takes
+ * the call's hosts, and an allowlist without hosts is `none` at the scope.
+ */
+export function sandboxNetworkOf(
+  box: Pick<DeviceSandbox, "networkMode">,
+  outer: AppliedOuterNetwork | null | undefined,
+): "open-public" | "allowlist" | "none" {
+  if (box.networkMode === "none" || outer?.kind === "none") return "none";
+  if (box.networkMode === "open" && outer?.kind !== "allowlist") return "open-public";
+  return "allowlist";
+}
+/** An instance-boundary device's scope: its whole filesystem, plus the working root it names. */
+const instanceRoots = (workingRoot: string): string[] =>
+  [...new Set(["/", workingRoot])].sort(permissionCodePointCompare);
+/**
+ * Only server-resolved facts enter this constructor; callers never submit roots or profile. It
+ * never branches on the profile: every call is sandboxed (scoped filesystem, the sandbox network),
+ * and only an escalated call within the outside-sandbox ceiling gets the device pair.
+ */
 export function intersectPermissionScope(f: PermissionScopeFacts): SandboxOperationScope {
-  if (f.profile === "full-access" && (!f.fullConsent || !f.outsideSandboxCeiling))
+  if (f.escalated && (!f.outsideSandboxCeiling || f.boundary === "instance"))
     throw new ApiError(
       "forbidden",
-      "Full access requires current device authority and matching consent",
+      "Running outside the sandbox requires the device's current outside-sandbox ceiling",
     );
-  // an escalated call runs with full execution: the same device, org and platform ceiling as Full
-  // access, its consent the exact call grant (bound to the scope revision) instead of the profile's
-  if (f.escalated && (f.profile === "full-access" || !f.outsideSandboxCeiling))
-    throw new ApiError(
-      "forbidden",
-      "A sandbox escalation requires a restricted profile and the current Full access ceiling",
-    );
-  const full = f.profile === "full-access" || f.escalated === true;
+  const escalated = f.escalated === true;
+  const hosts = [...new Set(f.allowedHosts)].sort();
   return parseSandboxOperationScope({
     operationId: f.operationId,
     admitBeforeMs: f.admitBeforeMs,
@@ -165,18 +190,26 @@ export function intersectPermissionScope(f: PermissionScopeFacts): SandboxOperat
     profile: f.profile,
     actor: f.actor,
     tag: f.tag,
-    filesystem: full
+    filesystem: escalated
       ? { kind: "device" }
-      : {
-          kind: "scoped",
-          readRoots: [...new Set([...f.readRoots, ...f.writeRoots])].sort(),
-          writeRoots: [...new Set(f.writeRoots)].sort(),
-        },
-    network: full
+      : f.boundary === "instance"
+        ? {
+            kind: "scoped",
+            readRoots: instanceRoots(f.workingRoot),
+            writeRoots: instanceRoots(f.workingRoot),
+          }
+        : {
+            kind: "scoped",
+            readRoots: [...new Set([...f.readRoots, ...f.writeRoots])].sort(),
+            writeRoots: [...new Set(f.writeRoots)].sort(),
+          },
+    network: escalated
       ? { kind: "environment" }
-      : f.allowedHosts.length
-        ? { kind: "allowlist", hosts: [...new Set(f.allowedHosts)].sort() }
-        : { kind: "none" },
+      : f.network === "open-public"
+        ? { kind: "open-public" }
+        : f.network === "allowlist" && hosts.length
+          ? { kind: "allowlist", hosts }
+          : { kind: "none" },
   });
 }
 /** Fresh authority shape only. Provider dispatch must add durable admission fencing before use. */
@@ -393,15 +426,14 @@ export class SandboxOperationAuthority {
             resolvedInputHash: permissionInput.resolvedInputHash,
           })
         : null;
-    // full execution for this exact call's command only (a native method of the same call keeps
-    // the base scope): the same checks as Full access, now
+    // outside the sandbox for this exact call's command only (a native method of the same call
+    // keeps the base scope), under any profile: Full access auto-grants it, never skips the grant
     const escalated = grant?.scopeKind === "sandbox-escalation" && isExecutionMethod(operation);
-    // a call that asked to run outside the sandbox under a restricted profile runs escalated or
-    // not at all: a missed grant (the device, ceiling or scope changed since the approval) or a
-    // ceiling that no longer allows it is a pre-effect refusal, never a sandboxed run
+    // a call that asked to run outside the sandbox runs escalated or not at all: a missed grant
+    // (the device, ceiling or scope changed since the approval) or a ceiling that no longer allows
+    // it is a pre-effect refusal, never a sandboxed run
     if (
       requested === "escalated" &&
-      f.profile !== "full-access" &&
       isExecutionMethod(operation) &&
       (!escalated || f.escalationRefusal)
     )
@@ -424,11 +456,12 @@ export class SandboxOperationAuthority {
         throw new ApiError("forbidden", "Permission expansion exceeds the current ceiling");
     }
     // an accepted host addition the applied cloud outer boundary does not cover cannot be
-    // reached: cut like the base hosts, so admission never names more than the context (B-15)
-    const expansionHosts = hostsWithinOuter(
-      grant?.expansion.hosts ?? [],
-      f.outerNetwork ?? undefined,
-    );
+    // reached: cut like the base hosts, so admission never names more than the context (B-15);
+    // an open sandbox network needs none, and an instance-boundary device takes none per call
+    const expansionHosts =
+      f.network === "allowlist" && f.boundary !== "instance"
+        ? hostsWithinOuter(grant?.expansion.hosts ?? [], f.outerNetwork ?? undefined)
+        : [];
     const scope = this.scopeOf(
       ctx,
       operation,
@@ -522,10 +555,13 @@ export class SandboxOperationAuthority {
     // the recorded runtime support decides the route: restricted when enforced, Full access only
     // on an isolated Full-only runtime, nothing on a host machine without restricted enforcement
     const availability = f.availability as PermissionAvailability;
+    // a runtime that cannot enforce its sandbox (one that only runs outside it) gets no read
+    if (availability.state === "unsupported") throw new KernelReadUnsupported();
     let route: KernelReadRoute = "restricted";
     if (availability.state === "supported") {
       route = kernelReadRoute({
-        restricted: availability.report.restricted !== null,
+        restricted:
+          availability.report.restricted !== null || availability.report.boundary === "instance",
         fullAccess: availability.report.outsideSandbox,
         isolated: await this.isolatedRuntime(ctx.orgId, ctx.deviceId),
       });
@@ -604,8 +640,10 @@ export class SandboxOperationAuthority {
       readRoots: f.baseReadDirectories,
       writeRoots: f.baseWriteDirectories,
       allowedHosts: isExecutionMethod(operation) ? f.baseHosts : [],
+      // a native method reaches no network: only executions carry the sandbox network
+      network: isExecutionMethod(operation) ? (f.network ?? "none") : "none",
+      boundary: f.boundary ?? "operation",
       outsideSandboxCeiling: f.outsideSandboxCeiling,
-      fullConsent: f.fullConsent,
       ...(escalated ? { escalated: true } : {}),
     });
   }
@@ -673,7 +711,7 @@ export class SandboxOperationAuthority {
       runId: ctx.actor.runId,
       ...opts,
     });
-    const { policy, device, workingRoot, projectRoot, grant } = base;
+    const { policy, device, workingRoot, projectRoot, grant, sandbox } = base;
     const applied = await this.facts.readAppliedEnvironmentLocked({
       orgId: ctx.orgId,
       deviceId: ctx.deviceId,
@@ -695,28 +733,21 @@ export class SandboxOperationAuthority {
     // lease creates the instance and records its evidence before the first operation is admitted
     const withheld = withheldScope({
       availability: view.availability,
-      effectiveProfile,
       location: device.source === "local" ? "local" : "cloud",
       workingRoot,
       projectPath: projectRoot,
       applied,
     });
-    // whether this call could run outside the sandbox (per-call escalation): the Full access
-    // ceiling and the runtime's Full support, judged as for Full access itself
-    const fullWithheld = withheldScope({
-      availability: view.availability,
-      effectiveProfile: "full-access",
-      location: device.source === "local" ? "local" : "cloud",
-      workingRoot,
-      projectPath: projectRoot,
-      applied,
-    });
+    // whether this call could run outside the sandbox (per-call escalation): the device's
+    // outside-sandbox ceiling, which already holds the provider's support for it
     const escalationRefusal = unattended
       ? ESCALATION_UNATTENDED_WHY
-      : !view.outsideSandboxCeiling
-        ? ESCALATION_CEILING_WHY
-        : fullWithheld
-          ? escalationRuntimeWhy(fullWithheld.reason)
+      : withheld
+        ? escalationRuntimeWhy(withheld.reason)
+        : !view.outsideSandboxCeiling
+          ? sandbox.layer.outsideSandbox === "provider"
+            ? escalationRuntimeWhy("This device's runtime cannot run a command outside its sandbox")
+            : ESCALATION_CEILING_WHY
           : null;
     const vector = await this.epochs.readLocked(subject);
     signal.throwIfAborted();
@@ -738,6 +769,8 @@ export class SandboxOperationAuthority {
       baseReadDirectories: restrictedReadRoots(workingRoot, applied),
       baseWriteDirectories: [workingRoot],
       baseHosts: allowedHosts,
+      network: sandboxNetworkOf(sandbox, applied?.outerNetwork),
+      boundary: sandbox.boundary,
       outsideSandboxCeiling: view.outsideSandboxCeiling,
       broadProjectReach: view.broadProjectReach,
       fullConsent:
@@ -748,10 +781,9 @@ export class SandboxOperationAuthority {
       admissionRefusal: withheld?.reason ?? null,
       outerNetwork: applied?.outerNetwork ?? null,
       escalationRefusal,
-      policy:
-        device.source === "local"
-          ? { ...policy, network: { kind: "allowlist", hosts: policy.localAllowedDomains } }
-          : policy,
+      // the host ceiling a per-call grant is checked against (`open-public`: the kernel's bounds
+      // only), the one rule the candidate builder, grant issuance and admission read
+      policy: { ...policy, network: base.hostCeiling },
     };
   }
 
@@ -797,7 +829,7 @@ export class SandboxOperationAuthority {
     projectUsable?: true;
   }) {
     const { orgId, deviceId } = input;
-    const { policy, owner } = await this.facts.readDevice(orgId, deviceId);
+    const { policy, owner, sandbox, limits } = await this.facts.readDevice(orgId, deviceId);
     const device = await this.db
       .selectFrom("devices")
       .select("source")
@@ -811,16 +843,23 @@ export class SandboxOperationAuthority {
     const grant = input.runId
       ? await this.grants.forExec({ orgId, deviceId, runId: input.runId })
       : undefined;
-    const baseHosts = owner ? owner.allowedDomains : policy.localAllowedDomains;
-    const requested = [...baseHosts, ...(grant?.hosts ?? [])];
-    const allowedHosts = requested.filter(
-      (host) =>
-        (policy.localAllowedDomains.some((pattern) => coversHost(pattern, host)) ||
-          grant?.hosts.includes(host)) &&
-        (policy.network.kind === "open-public" ||
-          policy.network.hosts.some((pattern) => coversHost(pattern, host))),
-    );
-    return { policy, device, workingRoot, projectRoot, grant, allowedHosts };
+    const hostCeiling = hostGrantCeiling(sandbox, limits, device.source === "local" ? owner : null);
+    // the device sandbox's allowlist, plus the run's or task's explicit host grants within the
+    // per-call ceiling; an open or closed network names no hosts
+    const allowedHosts =
+      sandbox.networkMode !== "allowlist"
+        ? []
+        : [
+            ...new Set([
+              ...sandbox.hosts,
+              ...(grant?.hosts ?? []).filter(
+                (host) =>
+                  hostCeiling.kind === "open-public" ||
+                  hostCeiling.hosts.some((pattern) => coversHost(pattern, host)),
+              ),
+            ]),
+          ];
+    return { policy, device, workingRoot, projectRoot, grant, allowedHosts, sandbox, hostCeiling };
   }
 
   /**
@@ -963,8 +1002,7 @@ export class SandboxOperationAuthority {
       root.scheduled_task_id !== null;
     const header = {
       version: 2 as const,
-      // interim: no device sandbox block yet (T5 records it), so the context keeps its
-      // profile-level policy line
+      // only a supported context carries the device sandbox block (below)
       sandbox: null,
       rootConversationId: root.id,
       execution: scheduled ? ("scheduled" as const) : ("interactive" as const),
@@ -972,6 +1010,10 @@ export class SandboxOperationAuthority {
     };
     const parse = (payload: PermissionContextV2) => {
       signal.throwIfAborted();
+      // every supported context this producer records carries its device sandbox block: the
+      // block-less form exists only as a stored version 1 context read as version 2
+      if ((payload.availability.state === "supported") !== (payload.sandbox !== null))
+        throw new Error("A supported permission context must record its device sandbox");
       return PermissionContextV2Schema.parse(payload);
     };
     if (foreign && root.device_id !== null)
@@ -1093,7 +1135,6 @@ export class SandboxOperationAuthority {
     // the verdict admission refuses with (B-16)
     const withheld = withheldScope({
       availability,
-      effectiveProfile,
       location,
       workingRoot: base.workingRoot,
       projectPath: base.projectRoot,
@@ -1101,33 +1142,48 @@ export class SandboxOperationAuthority {
     });
     if (withheld) return without(withheld.state, withheld.reason);
     if (applied === null) throw new Error("A supported context needs its applied environment");
-    const full = effectiveProfile === "full-access";
     if (
-      full &&
-      (!view.outsideSandboxCeiling ||
-        view.consentScope?.deviceId !== deviceId ||
+      effectiveProfile === "full-access" &&
+      (view.consentScope?.deviceId !== deviceId ||
         view.consentScope.scopeRevision !== scopeRevision)
     )
-      throw new Error("Full access lost its ceiling or consent inside one authority read");
-    const hosts = [...new Set(allowedHosts)].sort(permissionCodePointCompare);
+      throw new Error("Full access lost its consent inside one authority read");
+    const box = base.sandbox;
+    const kind = sandboxNetworkOf(box, applied.outerNetwork);
+    const hosts =
+      kind === "allowlist" ? [...new Set(allowedHosts)].sort(permissionCodePointCompare) : [];
+    // the same scope admission builds for every profile ({@link intersectPermissionScope})
+    const network =
+      kind === "open-public"
+        ? ({ kind: "open-public" } as const)
+        : hosts.length
+          ? ({ kind: "allowlist", hosts } as const)
+          : ({ kind: "none" } as const);
+    const directories =
+      box.boundary === "instance"
+        ? instanceRoots(base.workingRoot)
+        : restrictedReadRoots(base.workingRoot, applied);
     return parse({
       ...known,
       availability: { state: "supported" },
       scope: {
         location,
         workingRoot: base.workingRoot,
-        filesystem: full
-          ? { kind: "device" }
-          : {
-              kind: "scoped",
-              readDirectories: restrictedReadRoots(base.workingRoot, applied),
-              writeDirectories: [base.workingRoot],
-            },
-        network: full
-          ? { kind: "environment" }
-          : hosts.length
-            ? { kind: "allowlist", hosts }
-            : { kind: "none" },
+        filesystem: {
+          kind: "scoped",
+          readDirectories: directories,
+          writeDirectories: box.boundary === "instance" ? directories : [base.workingRoot],
+        },
+        network,
+        outerNetwork: applied.outerNetwork,
+      },
+      sandbox: {
+        boundary: box.boundary,
+        location,
+        workingRoot: base.workingRoot,
+        network: { kind: network.kind, hostsCount: hosts.length },
+        // a cloud device has no outside: its provider's instance is the outermost boundary
+        outsideSandbox: location === "local" && box.outsideSandbox,
         outerNetwork: applied.outerNetwork,
       },
     });

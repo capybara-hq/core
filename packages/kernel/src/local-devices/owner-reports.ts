@@ -143,16 +143,19 @@ export class OwnerReports {
     const domainsChanged =
       JSON.stringify([...before.restrictedAllowedDomains].sort()) !==
       JSON.stringify([...after.restrictedAllowedDomains].sort());
+    // the owner's sandbox network: narrowing it to the allowlist takes open-network work, and
+    // any change moves the crossing ceilings Full access consented to
+    const networkChanged = before.network !== after.network;
     const roots = machineRootList(row.roots);
     // a new revision with the same visible facts is no new authority: nothing is published
-    if (fullChanged || reachChanged || domainsChanged || meta.rootsChanged)
+    if (fullChanged || reachChanged || domainsChanged || networkChanged || meta.rootsChanged)
       await this.ceilings.publishLocked(
         subject,
         "device",
         (scope, intent) =>
           meta.rootsChanged === true ||
           ownerReportRevokes(after, scope, intent.method, intent.granted_hosts, roots),
-        fullChanged || meta.rootsChanged === true,
+        fullChanged || networkChanged || meta.rootsChanged === true,
       );
     // the op whose change this is: its answer names it, else (the machine's own report of it, a
     // policy frame or a reconnect hello, landing first) a live pending op of the platform's that
@@ -172,7 +175,7 @@ export class OwnerReports {
         opId: pending.id,
         ...(pending.actorTokenId !== undefined && { actorTokenId: pending.actorTokenId }),
       });
-    if (before.state !== "missing" && (fullChanged || reachChanged))
+    if (before.state !== "missing" && (fullChanged || reachChanged || networkChanged))
       await audit(this.db.db, {
         actorAccountId: by?.accountId ?? row.account_id,
         ...(by?.actorTokenId !== undefined && { actorTokenId: by.actorTokenId }),
@@ -180,13 +183,16 @@ export class OwnerReports {
         action: "device.owner_ceiling_changed",
         target: row.device_id,
         detail: {
+          // the network appears when it changed (the rows of other changes keep their shape)
           from: {
             fullAccess: before.fullAccess,
             restrictedProjectReach: before.restrictedProjectReach,
+            ...(networkChanged && { network: before.network }),
           },
           to: {
             fullAccess: after.fullAccess,
             restrictedProjectReach: after.restrictedProjectReach,
+            ...(networkChanged && { network: after.network }),
           },
           sequence: report.sequence,
           by: by?.accountId ?? row.account_id,
