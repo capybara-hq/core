@@ -77,6 +77,7 @@ import { CONVERSATION_PAGE_BLOCKS } from "./conversation-page-blocks";
 import { DEVICE_BLOCKS } from "./device-blocks";
 import { COMMANDS } from "./fixtures";
 import { headRhythmBlocks } from "./head-rhythm-blocks";
+import { SHEET_BLOCKS } from "./overlays";
 import { OVERVIEW_SECTION_BLOCKS } from "./overview-section-blocks";
 import { RefBlock } from "./ref-block";
 import { SCHEDULE_CALENDAR_BLOCKS } from "./schedule-calendar-blocks";
@@ -1313,6 +1314,7 @@ export const REFERENCE_BLOCKS = {
   ...THEME_SWATCH_BLOCKS,
   ...DEVICE_BLOCKS,
   ...COMPACT_SHELL_BLOCKS,
+  ...SHEET_BLOCKS,
   ...SHARE_BLOCKS,
   "list-detail": listDetailBlocks,
 } as const;

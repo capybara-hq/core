@@ -167,6 +167,8 @@ export const REFERENCE_COMPONENTS = [
   "me-panel",
   // the two-level stack and the two panes (mobile layout spec §5.2, design spec §6.47)
   "list-detail",
+  // the follow-finger bottom sheet's drag states (spec §6.7; mobile layout spec §7.4)
+  "sheet",
 ] as const;
 
 export type ReferenceComponent = (typeof REFERENCE_COMPONENTS)[number];

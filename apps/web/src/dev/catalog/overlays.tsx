@@ -1,4 +1,5 @@
 import {
+  BottomSheetFrame,
   Button,
   Checkbox,
   CommandPalette,
@@ -12,15 +13,18 @@ import {
   Menu,
   Popover,
   Sheet,
+  SheetOptionList,
   Stack,
   StatusMark,
   Tabs,
   Text,
   useToast,
 } from "@capybara-hq/design";
+import { SHEET_FIXTURE } from "@capybara-hq/design/fixtures";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 import { COMMANDS, RERUN_IDS, RUN_MENU, SHEET_PROPS, STATUS_FILTERS } from "./fixtures";
 import { CatalogPage, Row, Section } from "./frame";
+import { RefBlock } from "./ref-block";
 import type { OverlayRoute } from "./routes";
 
 const noop = () => {};
@@ -154,6 +158,58 @@ function SheetDemo() {
     </Backdrop>
   );
 }
+
+/**
+ * The bottom sheet's follow-finger states (spec §6.7), a Filter sheet over a list page at the phone
+ * size: the same ids and boxes as docs/design/reference/src/sheet.html. `dragging` is the sheet at
+ * 24 % of its height with the scrim fading by the same share; `settling` is a release past the
+ * 40 % threshold, here at 60 % on its way off.
+ */
+function sheetBlocks(): ReactNode {
+  const F = SHEET_FIXTURE;
+  const page = (
+    <Stack gap={12}>
+      <Text variant="h2">智能体</Text>
+      <Text tone="muted">support-triage · 已连接</Text>
+      <Text tone="muted">release-notes · 需要授权</Text>
+      <Text tone="muted">weekly-report · 出错</Text>
+    </Stack>
+  );
+  const frame = (state: "dragging" | "settling", share: number) => (
+    <BottomSheetFrame
+      title={F.title}
+      state={state}
+      share={share}
+      closeLabel={F.close}
+      handleLabel={F.handle}
+      page={page}
+    >
+      <SheetOptionList
+        label={F.title}
+        options={F.options.map((o) => ({
+          id: o.label,
+          label: o.label,
+          count: o.count,
+          ...(o.checked ? { checked: true } : {}),
+        }))}
+      />
+    </BottomSheetFrame>
+  );
+  return (
+    <>
+      <RefBlock id="sheet-dragging" width={390} height={844}>
+        {frame("dragging", F.dragging)}
+      </RefBlock>
+      <RefBlock id="sheet-settling" width={390} height={844}>
+        {frame("settling", F.settling)}
+      </RefBlock>
+    </>
+  );
+}
+
+export const SHEET_BLOCKS = {
+  sheet: sheetBlocks,
+} as const;
 
 function SheetProp({ k, v }: { k: string; v: string }) {
   return (

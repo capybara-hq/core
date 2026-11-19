@@ -1,11 +1,12 @@
 import * as RD from "@radix-ui/react-dialog";
-import { type ReactNode, useState } from "react";
+import { type ReactNode, useRef, useState } from "react";
 import { Button, IconButton } from "../controls/index";
 import { ObjectMark } from "../display/object-mark";
 import { Icon } from "../icons/icon";
 import { BoxScope } from "../layout/box";
 import { useDesignLink, useDesignT } from "../provider";
 import { Dialog } from "./dialog";
+import { useDragDismiss } from "./drag";
 import { useFocusReturn } from "./focus-return";
 
 export type SheetProps = {
@@ -47,6 +48,13 @@ export function Sheet({
     if (dirty) setConfirming(true);
     else onOpenChange(false);
   };
+  const panel = useRef<HTMLDivElement | null>(null);
+  // The head drags the sheet toward its edge; a release past 40 % closes it as the close button does.
+  const drag = useDragDismiss({
+    axis: "x",
+    size: () => panel.current?.offsetWidth ?? 0,
+    onDismiss: requestClose,
+  });
   return (
     <>
       <RD.Root
@@ -59,6 +67,7 @@ export function Sheet({
       >
         <RD.Portal>
           <RD.Content
+            ref={panel}
             className="cb-sheet"
             data-cap-part="dialog"
             data-width={width}
@@ -66,8 +75,9 @@ export function Sheet({
             onOpenAutoFocus={focusReturn.capture}
             onCloseAutoFocus={focusReturn.restore}
             onInteractOutside={(e) => e.preventDefault()}
+            {...drag.panelProps}
           >
-            <div className="cb-sheet-head">
+            <div className="cb-sheet-head" {...drag.handleProps}>
               {mark ? <ObjectMark text={mark.text} image={mark.image ?? null} size={28} /> : null}
               <RD.Title className="cb-sheet-title">{title}</RD.Title>
               {meta ? <span className="cb-sheet-meta">{meta}</span> : null}

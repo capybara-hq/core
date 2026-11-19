@@ -179,6 +179,10 @@ export const ACCEPTED: string[] = [
   "html-frame",
   "copy-field",
   "shared-file-page",
+  // the follow-finger bottom sheet and the app-icon preview (mobile layout spec §7.4, §10.2.1):
+  // blocks and size tables in place; the reference PNGs and the side-by-side review wait for the
+  // reference-update and visual-update workflows
+  "sheet",
 ];
 
 /**

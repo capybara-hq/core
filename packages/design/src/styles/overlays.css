@@ -151,6 +151,10 @@
   display: inline-flex;
   gap: 4px;
 }
+/* The head drags a side sheet toward its edge (§6.7). */
+.cb-sheet-head {
+  touch-action: none;
+}
 .cb-sheet-tabs {
   padding: 0 16px;
 }

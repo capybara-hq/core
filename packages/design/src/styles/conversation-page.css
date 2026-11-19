@@ -546,13 +546,68 @@ span.cb-title-btn {
   outline: none;
   animation: cb-fade-in var(--cb-motion) ease-out;
 }
+/* The grab handle and the head drag the sheet (§6.7): touch-action none on them only. */
+.cb-bsheet-grab {
+  flex: none;
+  display: flex;
+  justify-content: center;
+  padding-top: var(--cb-space-2);
+  touch-action: none;
+}
+.cb-bsheet-handle {
+  width: var(--cb-space-7);
+  height: var(--cb-space-1);
+  border-radius: var(--cb-radius-sm);
+  background: var(--cb-line-strong);
+}
+.cb-bsheet[data-state="dragging"] .cb-bsheet-handle {
+  background: var(--cb-muted);
+}
 .cb-bsheet-head {
   flex: none;
   display: flex;
   align-items: center;
   gap: var(--cb-space-2);
-  padding: var(--cb-space-2) var(--cb-space-1) var(--cb-space-2) var(--cb-space-4);
+  height: var(--cb-row-roomy);
+  padding: 0 var(--cb-space-1) 0 var(--cb-space-4);
   border-bottom: 1px solid var(--cb-line-soft);
+  touch-action: none;
+}
+/* Dragging follows the finger with no transition; a release travels over motion.expand (§6.7). */
+.cb-bsheet[data-state="dragging"],
+.cb-sheet[data-state="dragging"] {
+  animation: none;
+  transition: none;
+}
+.cb-bsheet[data-state="settling"],
+.cb-sheet[data-state="settling"] {
+  animation: none;
+  transition: transform var(--cb-motion-expand) ease-out;
+}
+.cb-bsheet-scrim[data-drag="dragging"] {
+  animation: none;
+}
+.cb-bsheet-scrim[data-drag="settling"] {
+  animation: none;
+  transition: opacity var(--cb-motion-expand) ease-out;
+}
+/* A sheet drawn in a fixed drag state over a page, clipped by its stage (the reference blocks). */
+.cb-bsheet-stage {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+.cb-bsheet-page {
+  height: 100%;
+}
+.cb-bsheet-scrim.cb-bsheet-static {
+  position: absolute;
+  animation: none;
+}
+.cb-bsheet.cb-bsheet-static {
+  position: absolute;
+  animation: none;
 }
 .cb-bsheet .cb-grow {
   flex: 1;
@@ -575,6 +630,40 @@ span.cb-title-btn {
   overflow-y: auto;
   overscroll-behavior: contain;
   padding: var(--cb-space-2) var(--cb-space-2) calc(var(--cb-space-4) + env(safe-area-inset-bottom));
+}
+/* A Filter sheet's single-choice options (§6.7). */
+.cb-sheet-option {
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-2);
+  height: 40px;
+  padding: 0 var(--cb-space-2);
+  border-radius: var(--cb-radius-sm);
+  color: var(--cb-ink);
+  cursor: pointer;
+}
+.cb-sheet-option[data-checked="true"] {
+  background: var(--cb-selected);
+}
+.cb-sheet-option:has(:focus-visible) {
+  outline: 1px solid var(--cb-accent);
+  outline-offset: -1px;
+}
+.cb-sheet-option-check {
+  display: inline-flex;
+  flex: none;
+  width: 14px;
+  height: 14px;
+}
+.cb-sheet-option-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cb-sheet-option-count {
+  color: var(--cb-muted);
 }
 .cb-options-group + .cb-options-group {
   margin-top: var(--cb-space-2);
