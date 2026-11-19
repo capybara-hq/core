@@ -747,6 +747,17 @@ describe("local devices (environments spec §6, §9)", () => {
       expect(within(dialog).getAllByRole("button", { name: E.create.copy })).toHaveLength(3);
     });
 
+    it("connected to another org of this person: the note and the terminal steps", async () => {
+      installShell({
+        status: vi.fn().mockResolvedValue({ ...CONNECTED, orgId: "o2" }),
+        onStatus: () => () => {},
+      });
+      const { dialog } = await openLocal();
+      expect(await within(dialog).findByText(E.create.thisMachineOtherOrg)).toBeTruthy();
+      expect(within(dialog).queryByRole("button", { name: E.create.connectMachine })).toBeNull();
+      expect(within(dialog).getAllByRole("button", { name: E.create.copy })).toHaveLength(3);
+    });
+
     it("onStatus refreshes the status", async () => {
       let push: (s: unknown) => void = () => {};
       const status = vi.fn().mockResolvedValue({ state: "not_connected" });

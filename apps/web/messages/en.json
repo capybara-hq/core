@@ -1823,6 +1823,30 @@
       "deleteDangerDefault": "Deleting {name} also deletes its files and ends its processes, with no way back. A new empty device is created the next time one is needed.",
       "deleteDangerLocal": "Deleting {name} disconnects its machine, with no way back. The files on the machine stay."
     },
+    "thisMachine": {
+      "title": "This machine",
+      "mark": "This machine",
+      "running": "Running now",
+      "runningEmpty": "Nothing is running.",
+      "isolation": { "restricted": "Restricted", "full": "Full access" },
+      "pause": "Pause",
+      "resume": "Resume",
+      "disconnect": "Disconnect",
+      "wakeNote": "The computer was asleep",
+      "keepAwake": {
+        "title": "Keep awake",
+        "off": "Off",
+        "whileBusy": "While running",
+        "connected": "Always",
+        "held": "Holding the computer awake.",
+        "unavailable": "Cannot keep the computer awake: {reason}",
+        "cannot": "Keep awake cannot prevent: closing the lid of a Mac on battery without an external display still puts it to sleep; so do choosing Sleep, a critically low battery and thermal emergencies. On Linux, the lid switch is handled by logind, which this service cannot override."
+      },
+      "widenReach": "Allow reading what the user can read",
+      "widened": "This computer's access ceiling was widened.",
+      "failed": "That did not go through. Try again."
+    },
+
     "ceiling": {
       "title": "Access ceiling",
       "sectionLocal": "The most an agent may do on this computer. Only its owner widens it, on the computer; here it can only be narrowed.",
@@ -2185,6 +2209,16 @@
       }
     }
   },
+  "shellNotify": {
+    "title": "Needs your attention",
+    "tool_approval": "A tool call is waiting for your approval",
+    "skill_change": "A skill change is waiting for your decision",
+    "catalog_request": "A catalog request is waiting for you",
+    "catalog_request_decided": "Your request has been decided",
+    "schedule_attention": "A scheduled task needs you",
+    "other": "There is something new in your inbox"
+  },
+
   "inbox": {
     "title": "Inbox",
     "listLabel": "Pending items",

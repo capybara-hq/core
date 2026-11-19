@@ -32,6 +32,7 @@ import { ErrorFrame } from "../../../../components/ErrorFrame";
 import { FormError } from "../../../../components/form-error";
 import { NoAccess } from "../../../../components/NoAccess";
 import { usePagePath } from "../../../../components/shell/path";
+import { ThisMachineSection } from "../../../../components/ThisMachineSection";
 import { useDeviceName } from "../../../../components/use-device-name";
 import { useRouter } from "../../../../i18n/navigation";
 import {
@@ -241,6 +242,7 @@ function Detail({
         )}
         {tab === "overview" ? (
           <Stack gap={12}>
+            <ThisMachineSection orgId={orgId} device={e} />
             <DeviceOverview device={e} onOpenSettings={() => setTab("settings")} />
             <DeviceProjectsOverview
               orgId={orgId}

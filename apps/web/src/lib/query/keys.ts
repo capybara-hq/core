@@ -513,6 +513,8 @@ export const keys = {
       all: all as readonly unknown[],
       /** This machine's status for the deployment (`device@1` `status()`). */
       deviceStatus: (): readonly unknown[] => [...all, "device-status"],
+      /** What runs on this machine now (`device@1` `running()`). */
+      running: (): readonly unknown[] => [...all, "running"],
     };
   },
   deployment() {

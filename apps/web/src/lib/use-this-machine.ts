@@ -31,3 +31,31 @@ export function useThisMachine(): {
   }, [cap, qc]);
   return { cap, status: cap === undefined ? undefined : q.data };
 }
+
+export type Connected = Extract<ThisMachineStatus, { state: "connected" }>;
+
+/**
+ * The shell's status when this machine is the device `deviceId` of the org `orgId` (the device
+ * page and the list mark it 本机), else `undefined`: a browser, another device, another org.
+ */
+export function useIsThisMachine(
+  orgId: string,
+  deviceId: string,
+): { cap: DeviceCapabilityV1; status: Connected } | undefined {
+  const { cap, status } = useThisMachine();
+  if (
+    cap === undefined ||
+    status?.state !== "connected" ||
+    status.orgId !== orgId ||
+    status.deviceId !== deviceId
+  ) {
+    return undefined;
+  }
+  return { cap, status };
+}
+
+/** The id of this machine's device in the org `orgId`, when the shell says it is connected there. */
+export function useThisMachineDeviceId(orgId: string): string | undefined {
+  const { status } = useThisMachine();
+  return status?.state === "connected" && status.orgId === orgId ? status.deviceId : undefined;
+}

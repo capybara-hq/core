@@ -1811,6 +1811,30 @@
       "deleteDangerDefault": "删除 {name} 会同时删除它的文件并结束其中的进程，且无法恢复。下次需要时会新建一个空的设备。",
       "deleteDangerLocal": "删除 {name} 会断开它的机器，且无法恢复。机器上的文件会保留。"
     },
+    "thisMachine": {
+      "title": "本机",
+      "mark": "本机",
+      "running": "正在运行",
+      "runningEmpty": "目前没有正在运行的任务。",
+      "isolation": { "restricted": "受限", "full": "完全访问" },
+      "pause": "暂停",
+      "resume": "恢复",
+      "disconnect": "断开",
+      "wakeNote": "电脑曾休眠",
+      "keepAwake": {
+        "title": "保持唤醒",
+        "off": "关闭",
+        "whileBusy": "运行时",
+        "connected": "始终",
+        "held": "正在保持电脑唤醒。",
+        "unavailable": "无法保持唤醒：{reason}",
+        "cannot": "保持唤醒无法阻止：没有外接显示器、使用电池的 Mac 合上盖子仍会休眠；手动选择睡眠、电量极低和过热保护也会休眠。在 Linux 上，合盖由 logind 处理，本服务无权覆盖。"
+      },
+      "widenReach": "允许读取用户可读的位置",
+      "widened": "已放宽这台电脑的访问上限。",
+      "failed": "操作没有完成，请重试。"
+    },
+
     "ceiling": {
       "title": "访问上限",
       "sectionLocal": "智能体在这台电脑上最多能做什么。只有电脑的所有者能在电脑上放宽，这里只能收窄。",
@@ -2173,6 +2197,16 @@
       }
     }
   },
+  "shellNotify": {
+    "title": "需要你处理",
+    "tool_approval": "一个工具调用在等你批准",
+    "skill_change": "一项技能变更在等你决定",
+    "catalog_request": "一个目录申请在等你处理",
+    "catalog_request_decided": "你的申请有了结果",
+    "schedule_attention": "一个定时任务需要你处理",
+    "other": "收件箱里有新消息"
+  },
+
   "inbox": {
     "title": "收件箱",
     "listLabel": "待处理事项",

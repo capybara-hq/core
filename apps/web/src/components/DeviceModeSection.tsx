@@ -33,6 +33,7 @@ import { allowHostProblem, normalizeHost } from "../lib/network-hosts";
 import { keys } from "../lib/query/keys";
 import { useAppMutation } from "../lib/query/mutation";
 import { ApiErrorDetail } from "./ApiErrorDetail";
+import { WidenCeiling } from "./ThisMachineSection";
 
 /**
  * The only CLI line a device page shows: the owner widens (or sets) a machine's ceiling on the
@@ -255,7 +256,12 @@ export function DeviceSettings({
             <CloudControls device={e} pending={pending} onChoose={setConfirming} />
           )}
           {local && e.machine !== null && (
-            <KeycapCommand command={CEILING_COMMAND} hint={t("ceiling.widenLocal")} />
+            <WidenCeiling
+              orgId={orgId}
+              device={e}
+              invalidates={invalidates}
+              fallback={<KeycapCommand command={CEILING_COMMAND} hint={t("ceiling.widenLocal")} />}
+            />
           )}
         </Stack>
       </FormSection>

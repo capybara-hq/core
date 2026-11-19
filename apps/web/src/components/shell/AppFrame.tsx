@@ -47,6 +47,7 @@ import { logout, type Me, type Membership, setCurrentOrg } from "../../lib/sessi
 import { broadcastSession, useSessionSync } from "../../lib/session-sync";
 import { sidebarCookie } from "../../lib/sidebar-cookie";
 import { useErrorMessage } from "../../lib/use-error-message";
+import { useShellNotifications } from "../../lib/use-shell-notifications";
 import { useAdminExtensionPages } from "../admin-nav";
 import { CreateOrgDialog } from "../CreateOrgDialog";
 import { useShellBanner } from "../client-ext/registry";
@@ -272,6 +273,8 @@ function OrgFrame({
   });
   const pending = usePendingApprovals(orgId);
   const extensions = useExtensions(orgId, locale);
+  // native notifications for new inbox items, in the desktop shell only
+  useShellNotifications(orgId);
   // Persistent sections never remount, so `refetchOnMount` never fires for them: each path change
   // refetches their stale queries (fresh ones stay as they are). A read already in flight (the
   // poll's) is reused, not cancelled and sent again.

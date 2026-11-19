@@ -217,23 +217,17 @@ function LocalSteps({
       onConnected(fresh);
     }
   }, [list.data, onConnected]);
-  if (status?.state === "connected") {
+  if (status?.state === "connected" && status.orgId === orgId) {
     return (
       <Stack gap={12}>
-        {status.orgId === orgId ? (
-          <>
-            <Text variant="prose">
-              {t("thisMachineConnected", { state: t(`connection.${status.connection}`) })}
-            </Text>
-            <Stack direction="row">
-              <Button variant="primary" onClick={() => onOpen(status.deviceId)}>
-                {t("openDevice")}
-              </Button>
-            </Stack>
-          </>
-        ) : (
-          <Text variant="prose">{t("thisMachineOtherOrg")}</Text>
-        )}
+        <Text variant="prose">
+          {t("thisMachineConnected", { state: t(`connection.${status.connection}`) })}
+        </Text>
+        <Stack direction="row">
+          <Button variant="primary" onClick={() => onOpen(status.deviceId)}>
+            {t("openDevice")}
+          </Button>
+        </Stack>
       </Stack>
     );
   }
@@ -253,6 +247,12 @@ function LocalSteps({
           </Stack>
           {connectError !== undefined && <FormError message={connectError} />}
         </Stack>
+      )}
+      {status?.state === "connected" && (
+        // connected to another org of this person: the terminal steps attach a second org
+        <Text variant="prose" tone="muted">
+          {t("thisMachineOtherOrg")}
+        </Text>
       )}
       {status?.state === "connected_elsewhere" && (
         <Text variant="prose" tone="muted">
