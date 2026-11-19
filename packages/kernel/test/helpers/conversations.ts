@@ -66,7 +66,7 @@ export function attachmentsFor(d: {
     viewer: string,
   ) => Promise<boolean>;
   log: Pick<KernelLogger, "info" | "warn">;
-  cache?: ConstructorParameters<typeof AttachmentsService>[6];
+  cache?: ConstructorParameters<typeof AttachmentsService>[6] | undefined;
 }): AttachmentsService {
   const h = d.db === undefined ? undefined : handlesFor(d.db);
   return new AttachmentsService(
