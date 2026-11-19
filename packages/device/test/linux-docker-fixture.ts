@@ -93,10 +93,10 @@ export interface FixtureNetworks {
   /** The server's public-class and private addresses, and the device's own public-class one. */
   readonly server: { readonly public: string; readonly private: string };
   readonly self: string;
-  /** The port the server listens on at both addresses, and its web port (public only). */
+  /** The port the server listens on at both addresses (and the web port 80 at both). */
   readonly port: number;
   /** Connections the server accepted at an address (receipts the device cannot write). */
-  accepted(name: "public" | "public80" | "private"): number;
+  accepted(name: "public" | "public80" | "private" | "private80"): number;
   /** Names the device resolves: each to the address in its key. */
   readonly names: Readonly<Record<string, string>>;
   /**
@@ -324,6 +324,7 @@ export async function startLinuxDevice(
         public: [`${net.publicBase}.10`, NETWORK_PORT],
         public80: [`${net.publicBase}.10`, 80],
         private: [`${net.privateBase}.10`, NETWORK_PORT],
+        private80: [`${net.privateBase}.10`, 80],
       };
       spawn("docker", [
         "exec",

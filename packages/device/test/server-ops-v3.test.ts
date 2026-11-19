@@ -3,6 +3,7 @@ import {
   SandboxOperationOutcomeUnknownError,
   SandboxPermissionUnsupportedError,
   SandboxScopeDeniedError,
+  SandboxScopeValidationError,
 } from "@capybara-hq/plugin-sdk";
 import { describe, expect, it, vi } from "vitest";
 import type { MacOperationBackend } from "../src/exec/mac-operation-backend.js";
@@ -88,6 +89,7 @@ describe("dormant v3 dispatch", () => {
       [new SandboxScopeDeniedError("denied"), "denied"],
       [new SandboxPermissionUnsupportedError("unsupported"), "unsupported"],
       [new SandboxOperationOutcomeUnknownError("unknown"), "unknown"],
+      [new SandboxScopeValidationError("invalid"), "invalid"],
     ] as const) {
       const raw = vi.fn();
       const backend = {
@@ -106,6 +108,22 @@ describe("dormant v3 dispatch", () => {
       ).toMatchObject({ ok: false, error: { kind } });
       expect(raw).not.toHaveBeenCalled();
     }
+  });
+  it("refuses a scope the contract makes invalid with the typed invalid kind, before any factory", async () => {
+    const operation = vi.fn();
+    const backend = { operation } as unknown as MacOperationBackend;
+    // the environment network is legal only with the device filesystem (the escalated pair)
+    const response = await serveOperationV3(
+      backend,
+      handle,
+      request("stat", { scope: { ...scope, network: { kind: "environment" } }, path: "/work/f" }),
+      signal,
+    );
+    expect(response).toMatchObject({
+      ok: false,
+      error: { kind: "invalid", message: expect.stringMatching(/environment/) },
+    });
+    expect(operation).not.toHaveBeenCalled();
   });
   it("preparation exposes its own narrow factory and encodes native bytes", async () => {
     const readFile = vi.fn(async () => ({ data: new Uint8Array([65]), truncated: false })),

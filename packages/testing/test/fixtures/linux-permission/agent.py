@@ -117,9 +117,10 @@ def launch(request, endpoints):
     limit = request.get("maxOutputBytes", 65536)
     env = dict(ENV, **request.get("env", {}))
     if grant["filesystem"]["kind"] == "device":
-        if grant["profile"] != "full-access" or grant["network"]["kind"] != "environment":
-            raise ValueError("This fixture runs device scope only as Full access")
-        # Full access: the OS user's ordinary authority, no restricted filters at all.
+        if grant["network"]["kind"] != "environment":
+            raise ValueError("The device filesystem comes only with the environment network")
+        # The escalated pair (under any profile): the OS user's ordinary authority, no restricted
+        # filters at all.
         env.setdefault("HOME", "/home/sandbox")
         process = subprocess.Popen(["/bin/sh", "-c", request["command"]], cwd=request.get("cwd"),
                                    env=env, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,

@@ -25,6 +25,18 @@ const scope = {
 const frame = (op: string, args: unknown) =>
   JSON.stringify({ type: "req", id: "request", op, args, deadlineMs: 1000 });
 describe("protocol 4 operations", () => {
+  it("carries every typed operation failure, an invalid scope included", () => {
+    for (const kind of ["denied", "unsupported", "unknown", "invalid", "gone", "fs_gone"]) {
+      const res = { type: "res", id: "request", ok: false, error: { kind, message: "m" } };
+      expect(parseDeviceFrame(JSON.stringify(res), "device")).toEqual(res);
+    }
+    expect(() =>
+      parseDeviceFrame(
+        JSON.stringify({ type: "res", id: "r", ok: false, error: { kind: "bogus", message: "m" } }),
+        "device",
+      ),
+    ).toThrow(DeviceProtocolError);
+  });
   it("speaks protocol 4 and requires fresh user scopes", () => {
     expect(DEVICE_PROTOCOL_VERSION).toBe(4);
     expect(LEGACY_DEVICE_PROTOCOL_VERSION).toBe(3);

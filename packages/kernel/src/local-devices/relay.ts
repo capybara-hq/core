@@ -18,6 +18,7 @@ import {
   SandboxOperationOutcomeUnknownError,
   SandboxPermissionUnsupportedError,
   SandboxScopeDeniedError,
+  SandboxScopeValidationError,
   ToolError,
 } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
@@ -638,6 +639,8 @@ export class LocalDeviceRelay {
         throw new SandboxPermissionUnsupportedError(message);
       case "unknown":
         throw new SandboxOperationOutcomeUnknownError(message);
+      case "invalid":
+        throw new SandboxScopeValidationError(message);
       case "gone":
         throw new SandboxGoneError(message);
       case "fs_gone":

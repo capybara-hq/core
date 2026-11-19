@@ -235,8 +235,11 @@ export {
 } from "./sandbox-native-conformance.js";
 export {
   runSandboxPermissionConformance,
+  type SandboxPermissionConformancePart,
   type SandboxPermissionEndpoint,
   type SandboxPermissionFixture,
   type SandboxPermissionGrant,
+  type SandboxPermissionOpenNetwork,
+  type SandboxPermissionTarget,
 } from "./sandbox-permission-conformance.js";
 export { openSse, type SseClient, type SseMessage } from "./sse.js";

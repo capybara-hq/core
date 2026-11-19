@@ -495,23 +495,30 @@ attempt("clone3", lambda: raw(435, 0, 0))
         expect(device.run("pgrep -f 'sleep 200[123]' || true").trim()).toBe("");
       });
 
-      it("passes the full permission conformance", async (context) => {
-        requireSupport(context);
-        const fixture = await dockerPermissionFixture(device, agent, async () => {});
-        await runSandboxPermissionConformance(fixture);
-      });
+      // in its three parts (one test each keeps every part within the test timeout)
+      for (const part of ["filesystem", "network", "processes"] as const) {
+        it(`passes the permission conformance: ${part}`, async (context) => {
+          requireSupport(context);
+          const fixture = await dockerPermissionFixture(device, agent, async () => {});
+          const report = await runSandboxPermissionConformance(fixture, { parts: [part] });
+          for (const { item, reason } of report.unavailable)
+            await context.annotate(`unavailable: ${item}: ${reason}`);
+        });
 
-      it("passes the full permission conformance with allowlist traffic through a proxy", async (context) => {
-        requireSupport(context);
-        const proxied = new Agent(device, { candidateArch: true, access: "proxy" });
-        await proxied.ready;
-        try {
-          const fixture = await dockerPermissionFixture(device, proxied, async () => {});
-          await runSandboxPermissionConformance(fixture);
-        } finally {
-          proxied.close();
-        }
-      });
+        it(`passes the permission conformance with allowlist traffic through a proxy: ${part}`, async (context) => {
+          requireSupport(context);
+          const proxied = new Agent(device, { candidateArch: true, access: "proxy" });
+          await proxied.ready;
+          try {
+            const fixture = await dockerPermissionFixture(device, proxied, async () => {});
+            const report = await runSandboxPermissionConformance(fixture, { parts: [part] });
+            for (const { item, reason } of report.unavailable)
+              await context.annotate(`unavailable: ${item}: ${reason}`);
+          } finally {
+            proxied.close();
+          }
+        });
+      }
     });
 
     describe("fails closed", () => {
@@ -604,7 +611,9 @@ attempt("clone3", lambda: raw(435, 0, 0))
           const scope = Number(
             device.run("cat /proc/sys/kernel/yama/ptrace_scope 2>/dev/null || echo 0").trim(),
           );
-          await expect(runSandboxPermissionConformance(fixture)).rejects.toThrow(
+          await expect(
+            runSandboxPermissionConformance(fixture, { parts: ["processes"] }),
+          ).rejects.toThrow(
             scope === 0
               ? /a same-uid outsider must not ptrace.*"target": \{"mem": "ALLOWED", "environ": "ALLOWED", "attach": "ALLOWED"\}/
               : /a same-uid outsider must not ptrace.*"target": \{"mem": "EACCES", "environ": "ALLOWED", "attach": "EPERM"\}/,

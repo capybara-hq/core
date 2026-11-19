@@ -5,6 +5,7 @@ import {
   isSandboxOperationOutcomeUnknownError,
   isSandboxPermissionUnsupportedError,
   isSandboxScopeDeniedError,
+  isSandboxScopeValidationError,
   type Logger,
   type SandboxHandle,
   type SandboxPreparation,
@@ -539,6 +540,13 @@ export const DEVICE_REQUEST_NOT_SENT_TOOL_TEXT =
 /** The device cannot enforce the conversation's profile (`SandboxPermissionUnsupportedError`). */
 export const PERMISSION_UNSUPPORTED_TOOL_TEXT =
   "This device cannot enforce this conversation's permission profile, so nothing ran. Ask the user to choose another permission profile for the conversation, or to start a new conversation on a device that supports it.";
+/**
+ * A device refused an operation scope as invalid (`SandboxScopeValidationError`): the kernel only
+ * sends scopes it validated, so this is a kernel invariant break (or a skewed device), never the
+ * model's doing; whether anything ran is not proven.
+ */
+export const SCOPE_INVALID_TOOL_TEXT =
+  "The device refused this operation as malformed, which points to a problem in Capybara itself, not in the request. Tell the user the device rejected the operation and that it should be reported; do not retry it unchanged.";
 /** A managed operation whose outcome could not be confirmed (`SandboxOperationOutcomeUnknownError`). */
 export const OUTCOME_UNKNOWN_TOOL_TEXT =
   "The device may or may not have run this operation: its outcome could not be confirmed. Check the device's state (for example with Read, Glob or TaskList) before retrying, and do not repeat an operation that must not run twice.";
@@ -595,6 +603,12 @@ export function mapSandboxError(e: unknown, log: Pick<Logger, "warn"> | undefine
   if (isEscalationGrantMissing(e)) {
     log?.warn("sandbox escalation grant no longer matches", { err: e });
     return new ToolError(ESCALATION_GRANT_MISSING_TEXT);
+  }
+  if (isSandboxScopeValidationError(e)) {
+    log?.warn("kernel invariant broken: the device refused an operation scope as invalid", {
+      err: e,
+    });
+    return new ToolError(SCOPE_INVALID_TOOL_TEXT);
   }
   if (isSandboxScopeDeniedError(e)) {
     log?.warn("sandbox operation outside its scope", { err: e });
