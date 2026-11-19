@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  effectiveCompact,
   parseSlotRef,
   UI_ARRANGEABLE_SLOTS,
   UI_COMPONENT_SLOTS,
@@ -9,6 +10,7 @@ import {
   UI_SLOTS,
   uiContributionKey,
   uiSlot,
+  validateUiContributions,
 } from "../src/index.js";
 
 describe("ui slot catalog", () => {
@@ -176,5 +178,38 @@ describe("component kind and single slots", () => {
       const text = [s?.description.zh, s?.builtin?.zh].join(" ");
       expect(text).not.toMatch(/企业|agent/i);
     }
+  });
+
+  it("every slot declares a compact form", () => {
+    for (const id of UI_SLOT_IDS) {
+      expect(["kept", "drawer", "hidden"]).toContain(uiSlot(id)?.compact);
+    }
+    expect(uiSlot("conversation.panel")?.compact).toBe("drawer");
+    expect(uiSlot("shell.brand")?.compact).toBe("hidden");
+    const others = UI_SLOTS.filter((s) => s.id !== "conversation.panel" && s.id !== "shell.brand");
+    for (const s of others) expect(s.compact).toBe("kept");
+  });
+
+  it("effectiveCompact only narrows, never widens", () => {
+    expect(effectiveCompact("kept", "hidden")).toBe("hidden");
+    expect(effectiveCompact("hidden", "kept")).toBe("hidden");
+    expect(effectiveCompact("drawer", undefined)).toBe("drawer");
+    expect(effectiveCompact("kept", "drawer")).toBe("drawer");
+    expect(effectiveCompact("drawer", "kept")).toBe("drawer");
+  });
+
+  it("a contribution with an unknown compact form is rejected naming the field", () => {
+    const title = { zh: "x", en: "x" };
+    const errs = validateUiContributions(
+      [{ id: "a", title, slot: "org.page", kind: "view", compact: "sideways" }],
+      { ui: { views: ["a"] } },
+    );
+    expect(errs.join("\n")).toMatch(/compact/);
+    expect(
+      validateUiContributions(
+        [{ id: "a", title, slot: "org.page", kind: "view", compact: "drawer" }],
+        { ui: { views: ["a"] } },
+      ),
+    ).toEqual([]);
   });
 });

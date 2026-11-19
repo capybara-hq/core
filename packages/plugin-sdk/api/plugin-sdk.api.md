@@ -238,6 +238,28 @@ export const BUILTIN_TOOL_NAME_RE: RegExp;
 export function canonicalThemeValue(group: "color" | "shadow", value: unknown): string | undefined;
 
 // @public
+export interface CapybaraShell {
+    readonly capabilities: Readonly<Record<string, object>>;
+    readonly controls?: {
+        x: number;
+        y: number;
+        width: number;
+        height: number;
+    } | null;
+    readonly insets: {
+        top: number;
+        right: number;
+        bottom: number;
+        left: number;
+    };
+    readonly kind: "desktop" | "mobile";
+    on(event: "change", listener: () => void): () => void;
+    readonly platform: "macos" | "windows" | "linux" | "ios" | "android";
+    readonly shellVersion: string;
+    readonly version: 1;
+}
+
+// @public
 export interface CardAction {
     action: "approve" | "deny" | "answer";
     answer?: FormAnswer;
@@ -471,6 +493,9 @@ export function clientCssProblem(css: string, assets: ReadonlySet<string>): stri
 
 // @public
 export function clipMediaName(name: string, max?: number): string;
+
+// @public
+export type CompactForm = "kept" | "drawer" | "hidden";
 
 // @public
 export function compositeOver(color: string, ground: string): string | undefined;
@@ -1153,6 +1178,9 @@ export interface DroppedUiContribution {
     reason: UiDropReason;
     ref: string;
 }
+
+// @public
+export function effectiveCompact(slot: CompactForm, contribution?: CompactForm): CompactForm;
 
 // @public
 export type Effort = "low" | "medium" | "high" | "xhigh" | "max";
@@ -2012,6 +2040,9 @@ export function isAttachmentId(s: unknown): s is string;
 
 // @public
 export function isChannelSendError(e: unknown): e is ChannelSendError;
+
+// @public
+export function isCompactForm(v: unknown): v is CompactForm;
 
 // @public
 export function isDeviceBootId(v: unknown): v is string;
@@ -3707,6 +3738,12 @@ export interface ShareEmbedClaims extends EmbedClaimsBase {
 }
 
 // @public
+export const SHELL_CAPABILITIES: readonly {
+    key: string;
+    owner: string;
+}[];
+
+// @public
 export const SKILL_ENTRY_FILE = "SKILL.md";
 
 // @public
@@ -4385,6 +4422,7 @@ export type UiBlock = {
 // @public
 export interface UiContribution {
     after?: string;
+    compact?: CompactForm;
     icon?: UiIcon;
     id: string;
     kind: UiKind;
@@ -4505,6 +4543,7 @@ export interface UiSlotSpec {
         zh: string;
     };
     cardinality: "list" | "single";
+    compact: CompactForm;
     density: "dense" | "regular";
     description: {
         en: string;
