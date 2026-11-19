@@ -1,6 +1,6 @@
 import type { Locale } from "./cards.js";
 import { type FormAnswer, type InputForm, validateInputForm } from "./tool.js";
-import type { UiSlotId, UiSlotScope } from "./ui-slots.js";
+import type { CompactForm, UiSlotId, UiSlotScope } from "./ui-slots.js";
 import { isHttpUrl } from "./url.js";
 
 /**
@@ -64,6 +64,11 @@ export interface UiContribution {
   path?: string;
   /** Icon from {@link UI_ICONS}; default `puzzle`. */
   icon?: UiIcon;
+  /**
+   * The form on a compact screen; may only narrow the slot's own (`kept` -> `drawer` -> `hidden`),
+   * see `effectiveCompact`. Omitted = the slot's form.
+   */
+  compact?: CompactForm;
 }
 
 /**
