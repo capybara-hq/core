@@ -33,6 +33,9 @@ const PUBLIC_ROUTES = new Set([
   "GET /api/v1/themes/:id/:version/:revision/theme.css",
   "GET /api/v1/themes/:id/:version/assets/:file",
   "GET /api/v1/platform/theme",
+  // Mobile layout spec §10.2.1: the platform icon for the manifest, favicons and native clients,
+  // before sign-in; an icon is not sensitive
+  "GET /api/v1/platform/icon/:purpose",
   // Device sign-in (environments spec §13.3): the program has no credential yet
   "POST /api/v1/device/authorize",
   "POST /api/v1/device/token",

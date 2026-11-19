@@ -31,6 +31,7 @@ import { SETUP_CHECK_ROUTES } from "../setup/setup-checks.schemas.js";
 import { SETUP_GUIDE_ROUTES } from "../setup/setup-guides.schemas.js";
 import { SHARE_ROUTES } from "../shares/shares.schemas.js";
 import { SKILL_ROUTES } from "../skills/skills.schemas.js";
+import { PLATFORM_ICON_ROUTES } from "../themes/platform-icon.schemas.js";
 import { THEME_ROUTES } from "../themes/themes.schemas.js";
 import { APPROVAL_ROUTES } from "../tools/approvals.schemas.js";
 import { CONNECTOR_ROUTES } from "../tools/connectors.schemas.js";
@@ -88,6 +89,8 @@ export const ROUTE_SCHEMAS: readonly RouteSchemas[] = [
   ...ME_ROUTES,
   // themes (themes spec §9)
   ...THEME_ROUTES,
+  // the platform icon (mobile layout spec §10.2.1)
+  ...PLATFORM_ICON_ROUTES,
   // a plugin's suggested appearance (client extensions spec §6.5)
   ...APPEARANCE_ROUTES,
   // setup guide checks (setup guides v2 §10.3, §12)

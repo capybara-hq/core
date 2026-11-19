@@ -46,6 +46,7 @@ import { OrgSettingsOperations } from "./ops/org-settings.ops.js";
 import { OrgsOperations } from "./ops/orgs.ops.js";
 import { OutboxOperations } from "./ops/outbox.ops.js";
 import { PlatformOperationsProvider } from "./ops/platform.ops.js";
+import { PlatformIconsOperations } from "./ops/platform-icons.ops.js";
 import { PluginsOperations } from "./ops/plugins.ops.js";
 import { PreviewersOperations } from "./ops/previewers.ops.js";
 import { RequestsOperations } from "./ops/requests.ops.js";
@@ -109,6 +110,8 @@ export const PLATFORM_OPERATION_PROVIDERS = [
   OutboxOperations,
   // shared file links (file sharing spec §10)
   SharesOperations,
+  // the platform icon (mobile layout spec §10.2.1)
+  PlatformIconsOperations,
 ] as const;
 
 /**
