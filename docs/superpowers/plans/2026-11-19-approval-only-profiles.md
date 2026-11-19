@@ -209,6 +209,13 @@ protocol 3: one temporary mapping in `owner-report.ts` reports the old shape, an
 
 **Gate:** `pnpm exec vitest run packages/device/test --maxWorkers=2`.
 
+**Note for T5 and T10 (from the T3 review, ruling 2).** On a local device the owner's `network:
+"allowlist"` is a ceiling: the device keeps a per-call host grant only where the owner's
+`allowedDomains` cover it (`effectiveEgress`); under the owner's `open` network grants stay bounded
+by the kernel only. The kernel therefore reports a host crossing beyond the owner's list on a local
+device as unavailable, naming the fix: "the device owner adds it on the machine: capybara-device
+policy add allowedDomains <host>".
+
 ### T4: replay context
 
 **Owns:**
@@ -244,6 +251,11 @@ One mechanical commit on `perm/r3-int`, behaviour kept wherever a later task own
   support report (`boundary: "operation"`, `outsideSandbox` = the old `fullAccess`), the testing
   conformance and fixtures, the kernel fake machines, and the `apps/web/src/lib/devices.ts` type.
   Remove T3's temporary wire mapping.
+- Under protocol 4 the device's `policy` op refuses `add` for local devices ("widening happens only
+  on the machine"; T3 keeps it only while the wire is protocol 3, see the comment in
+  `packages/device/src/server-ops.ts`), with a RED test that a protocol 4 `add` is refused and
+  writes nothing. An approval's "always allow" for a host becomes a per-call grant instead of a
+  `policy` op `add`.
 - Rename the facts field `fullAccessCeiling` → `outsideSandboxCeiling` (kernel sources, the
   conversation permission view, tests, `apps/web`), so T5 and T6 share it in W2.
 - Gate: `CAPYBARA_TEST_WORKERS=4 pnpm verify --full`. Review: solo (protocol, TB).

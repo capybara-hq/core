@@ -151,13 +151,13 @@ async function stagedDevice(deviceId: string) {
       runtimeHash: "a".repeat(64),
       readOwnerCeiling: async () => ({
         revision: "owner-1",
-        fullAccess: true,
+        outsideSandbox: true,
+        network: "allowlist",
         roots,
         restrictedProjectReach: "os-user",
-        restrictedAllowedDomains: [],
+        allowedDomains: [],
         restrictedDeniedReadRoots: [],
         preparation: { skillsRoot: roots.skills, attachmentsBase: join(roots.workspace, "a") },
-        fullNetwork: "environment",
       }),
     },
     {

@@ -133,13 +133,13 @@ describe.runIf(darwin)("capybara-device macOS operation backend", () => {
 
     ceiling = {
       revision: "one",
-      fullAccess: true,
+      outsideSandbox: true,
+      network: "allowlist",
       roots,
       restrictedProjectReach: "os-user",
-      restrictedAllowedDomains: [NAMES.granted],
+      allowedDomains: [NAMES.granted],
       restrictedDeniedReadRoots: [stateDir],
       preparation: { skillsRoot: roots.skills, attachmentsBase: join(roots.workspace, "a") },
-      fullNetwork: "environment",
     };
     backend = await createMacOperationBackend(
       {
@@ -327,7 +327,7 @@ describe.runIf(darwin)("capybara-device macOS operation backend", () => {
       });
     expect((await run()).stdout).toBe("full-ok");
     const allowed = ceiling;
-    ceiling = { ...ceiling, revision: "two", fullAccess: false };
+    ceiling = { ...ceiling, revision: "two", outsideSandbox: false };
     try {
       await expect(run()).rejects.toThrow();
     } finally {

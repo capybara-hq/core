@@ -15,11 +15,12 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { runCli } from "../src/cli.js";
 import {
-  FULL_ACCESS_NOT_ALLOWED_LOGIN_LINE,
-  FULL_ACCESS_RISK_TEXT,
-  FULL_CEILING_LOGIN_LINE,
-  RESTRICTED_CEILING_LOGIN_LINE,
+  networkLoginLine,
+  OUTSIDE_SANDBOX_LOGIN_LINE,
+  OUTSIDE_SANDBOX_NOT_ALLOWED_LOGIN_LINE,
+  OUTSIDE_SANDBOX_RISK_TEXT,
   restrictedUnavailableLoginLine,
+  SANDBOX_ONLY_LOGIN_LINE,
 } from "../src/commands/login.js";
 import { logout } from "../src/commands/logout.js";
 
@@ -29,7 +30,14 @@ import { policySummary } from "../src/server-ops.js";
 import { policyLockPath, policyMode, policyPath, readPolicy } from "../src/state.js";
 
 /** The owner ceiling a new setup writes (B-14). */
-const RESTRICTED = { fullAccess: false, restrictedProjectReach: "workspace" };
+/** A new install's owner ceiling: in the sandbox only, the open network, the workspace reach. */
+const NEW_INSTALL = { outsideSandbox: false, network: "open", restrictedProjectReach: "workspace" };
+/** An old `mode: sandbox` file, converted never wider: the allowlist network kept. */
+const OLD_SANDBOX = {
+  outsideSandbox: false,
+  network: "allowlist",
+  restrictedProjectReach: "workspace",
+};
 /** An old (version 1) policy file with `mode: auto`. */
 const writeOldAutoPolicy = (dir: string) => {
   mkdirSync(dir, { recursive: true, mode: 0o700 });
@@ -192,47 +200,49 @@ describe("login", () => {
     expect(JSON.parse(readFileSync(credFile(), "utf8")).maxFrameBytes).toBe(4_194_304);
   });
 
-  it("a new setup writes the restricted default ceiling and says how to widen it (B-14)", async () => {
+  it("a new install writes the sandbox-only, open-network default and says how to widen it", async () => {
     tokenAnswers = [granted];
     expect(await run(["login", "--url", base])).toBe(0);
-    // written, not just defaulted: version 2 with no Full access and the workspace reach
+    // written, not just defaulted: version 3, in the sandbox only, the open network
     const file = JSON.parse(readFileSync(policyPath(stateDir()), "utf8"));
-    expect(file).toMatchObject({ version: 2, ownerCeiling: RESTRICTED });
-    expect(readPolicy(stateDir()).ownerCeiling).toEqual(RESTRICTED);
+    expect(file).toMatchObject({ version: 3, ownerCeiling: NEW_INSTALL });
+    expect(readPolicy(stateDir()).ownerCeiling).toEqual(NEW_INSTALL);
     expect(helloMode()).toBe("sandbox");
-    expect(out.filter((l) => l === RESTRICTED_CEILING_LOGIN_LINE)).toHaveLength(1);
-    expect(RESTRICTED_CEILING_LOGIN_LINE).toContain(
-      "capybara-device ceiling set --full-access allow --project-reach os-user",
-    );
-    expect(out).not.toContain(FULL_CEILING_LOGIN_LINE);
-    expect(out).not.toContain(FULL_ACCESS_RISK_TEXT);
+    expect(out.filter((l) => l === SANDBOX_ONLY_LOGIN_LINE)).toHaveLength(1);
+    expect(SANDBOX_ONLY_LOGIN_LINE).toContain("capybara-device ceiling set --outside-sandbox on");
+    expect(out).toContain(networkLoginLine("open"));
+    expect(networkLoginLine("open")).toContain("--network allowlist");
+    expect(out).not.toContain(OUTSIDE_SANDBOX_LOGIN_LINE);
+    expect(out).not.toContain(OUTSIDE_SANDBOX_RISK_TEXT);
   });
 
-  it("an organization without Full access gets the same restricted default", async () => {
+  it("an organization without outside-sandbox runs gets the same default", async () => {
     tokenAnswers = [{ status: 200, body: { ...granted.body, fullAccess: "off" } }];
     expect(await run(["login", "--url", base])).toBe(0);
-    expect(readPolicy(stateDir()).ownerCeiling).toEqual(RESTRICTED);
-    expect(out).toContain(RESTRICTED_CEILING_LOGIN_LINE);
-    expect(out).not.toContain(FULL_ACCESS_NOT_ALLOWED_LOGIN_LINE);
-    expect(out).not.toContain(FULL_ACCESS_RISK_TEXT);
+    expect(readPolicy(stateDir()).ownerCeiling).toEqual(NEW_INSTALL);
+    expect(out).toContain(SANDBOX_ONLY_LOGIN_LINE);
+    expect(out).not.toContain(OUTSIDE_SANDBOX_NOT_ALLOWED_LOGIN_LINE);
+    expect(out).not.toContain(OUTSIDE_SANDBOX_RISK_TEXT);
   });
 
-  it("keeps an existing old auto policy (exact mapping) and says the org does not allow Full access", async () => {
+  it("keeps an existing old auto policy (converted never wider) and says the org does not allow it", async () => {
     writeOldAutoPolicy(stateDir());
     tokenAnswers = [{ status: 200, body: { ...granted.body, fullAccess: "off" } }];
     expect(await run(["login", "--url", base])).toBe(0);
-    // an existing policy is the owner's choice: login never rewrites it; it reads exactly as Full
+    // an existing policy is the owner's choice: login never rewrites it; old auto reads as
+    // outside the sandbox on with the open network
     expect(JSON.parse(readFileSync(policyPath(stateDir()), "utf8")).mode).toBe("auto");
     expect(readPolicy(stateDir()).ownerCeiling).toEqual({
-      fullAccess: true,
+      outsideSandbox: true,
+      network: "open",
       restrictedProjectReach: "os-user",
     });
-    expect(out).toContain(FULL_CEILING_LOGIN_LINE);
-    expect(out).toContain(FULL_ACCESS_NOT_ALLOWED_LOGIN_LINE);
-    expect(out).not.toContain(FULL_ACCESS_RISK_TEXT);
+    expect(out).toContain(OUTSIDE_SANDBOX_LOGIN_LINE);
+    expect(out).toContain(OUTSIDE_SANDBOX_NOT_ALLOWED_LOGIN_LINE);
+    expect(out).not.toContain(OUTSIDE_SANDBOX_RISK_TEXT);
   });
 
-  it("keeps an existing old sandbox policy (exact mapping)", async () => {
+  it("keeps an existing old sandbox policy (converted never wider: the allowlist kept)", async () => {
     mkdirSync(stateDir(), { recursive: true, mode: 0o700 });
     writeFileSync(policyPath(stateDir()), `${JSON.stringify({ mode: "sandbox" })}\n`, {
       mode: 0o600,
@@ -240,23 +250,25 @@ describe("login", () => {
     tokenAnswers = [granted];
     expect(await run(["login", "--url", base])).toBe(0);
     expect(JSON.parse(readFileSync(policyPath(stateDir()), "utf8"))).toEqual({ mode: "sandbox" });
-    expect(readPolicy(stateDir()).ownerCeiling).toEqual(RESTRICTED);
-    expect(out).toContain(RESTRICTED_CEILING_LOGIN_LINE);
-    expect(out).not.toContain(FULL_ACCESS_RISK_TEXT);
+    expect(readPolicy(stateDir()).ownerCeiling).toEqual(OLD_SANDBOX);
+    expect(out).toContain(SANDBOX_ONLY_LOGIN_LINE);
+    expect(out).toContain(networkLoginLine("allowlist"));
+    expect(networkLoginLine("allowlist")).toContain("capybara-device ceiling set --network open");
+    expect(out).not.toContain(OUTSIDE_SANDBOX_RISK_TEXT);
   });
 
-  it("prints the Full line and the risk text once when the owner allows Full access", async () => {
+  it("prints the outside-sandbox line and the risk text once when the owner allows it", async () => {
     writeOldAutoPolicy(stateDir());
     tokenAnswers = [granted];
     expect(await run(["login", "--url", base])).toBe(0);
-    expect(out).toContain(FULL_CEILING_LOGIN_LINE);
-    expect(out.filter((l) => l === FULL_ACCESS_RISK_TEXT)).toHaveLength(1);
-    expect(out).not.toContain(RESTRICTED_CEILING_LOGIN_LINE);
+    expect(out).toContain(OUTSIDE_SANDBOX_LOGIN_LINE);
+    expect(out.filter((l) => l === OUTSIDE_SANDBOX_RISK_TEXT)).toHaveLength(1);
+    expect(out).not.toContain(SANDBOX_ONLY_LOGIN_LINE);
     expect(policyMode(readPolicy(stateDir()))).toBe("auto");
     expect(helloMode()).toBe("auto");
   });
 
-  it("reports a policy-lock failure, keeps the restricted line and still writes the credential", async () => {
+  it("reports a policy-lock failure, keeps the sandbox-only line and still writes the credential", async () => {
     // A live holder (this test process) keeps policy.json.lock fresh, so login waits about 2 s
     // for it instead of taking it over, then fails to write the default policy.
     mkdirSync(stateDir(), { recursive: true, mode: 0o700 });
@@ -264,10 +276,10 @@ describe("login", () => {
     tokenAnswers = [granted];
     expect(await run(["login", "--url", base])).toBe(0);
     expect(err.join("\n")).toContain("Cannot set the local policy");
-    // the program's default without a file is the same restricted ceiling
-    expect(out).toContain(RESTRICTED_CEILING_LOGIN_LINE);
+    // the program's default without a file is the same ceiling
+    expect(out).toContain(SANDBOX_ONLY_LOGIN_LINE);
     expect(existsSync(policyPath(stateDir()))).toBe(false);
-    expect(readPolicy(stateDir()).ownerCeiling).toEqual(RESTRICTED);
+    expect(readPolicy(stateDir()).ownerCeiling).toEqual(NEW_INSTALL);
     expect(JSON.parse(readFileSync(credFile(), "utf8")).deviceId).toBe("env-1");
   }, 10_000);
 
@@ -292,30 +304,30 @@ describe("login", () => {
     expect(existsSync(join(dir, "skills"))).toBe(true);
   });
 
-  it("says restricted work cannot run when the OS sandbox is unavailable, and what to do", async () => {
+  it("says sandboxed work cannot run when the OS sandbox is unavailable, and what to do", async () => {
     sandbox = { ok: false, reason: "bubblewrap is missing" };
     tokenAnswers = [granted];
     expect(await run(["login", "--url", base])).toBe(0);
-    expect(readPolicy(stateDir()).ownerCeiling).toEqual(RESTRICTED);
-    expect(out).toContain(RESTRICTED_CEILING_LOGIN_LINE);
+    expect(readPolicy(stateDir()).ownerCeiling).toEqual(NEW_INSTALL);
+    expect(out).toContain(SANDBOX_ONLY_LOGIN_LINE);
     expect(out).toContain(restrictedUnavailableLoginLine("bubblewrap is missing"));
     expect(JSON.parse(readFileSync(credFile(), "utf8")).deviceId).toBe("env-1");
   });
 
-  it("--mode docker: the restricted default without the OS sandbox check, no risk text for Full", async () => {
+  it("--mode docker: the default without the OS sandbox check, no risk text outside the sandbox", async () => {
     sandbox = { ok: false, reason: "not needed in docker" };
     tokenAnswers = [granted];
     expect(await run(["login", "--url", base, "--mode", "docker"])).toBe(0);
-    expect(readPolicy(stateDir()).ownerCeiling).toEqual(RESTRICTED);
-    expect(out).toContain(RESTRICTED_CEILING_LOGIN_LINE);
+    expect(readPolicy(stateDir()).ownerCeiling).toEqual(NEW_INSTALL);
+    expect(out).toContain(SANDBOX_ONLY_LOGIN_LINE);
     expect(out.some((l) => l.includes("not needed in docker"))).toBe(false);
     expect(await run(["logout"])).toBe(0);
     out.length = 0;
     writeOldAutoPolicy(stateDir());
     tokenAnswers = [granted];
     expect(await run(["login", "--url", base, "--mode", "docker"])).toBe(0);
-    expect(out).toContain(FULL_CEILING_LOGIN_LINE);
-    expect(out).not.toContain(FULL_ACCESS_RISK_TEXT);
+    expect(out).toContain(OUTSIDE_SANDBOX_LOGIN_LINE);
+    expect(out).not.toContain(OUTSIDE_SANDBOX_RISK_TEXT);
   });
 
   it("points at the installed login service instead of start", async () => {

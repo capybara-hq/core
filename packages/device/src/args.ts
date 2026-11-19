@@ -1,4 +1,5 @@
 import { type ParseArgsOptionsConfig, parseArgs } from "node:util";
+import type { DeviceNetworkMode } from "@capybara-hq/plugin-sdk";
 import type { RestrictedProjectReach } from "./state.js";
 
 export type DeviceMode = "os" | "docker";
@@ -28,8 +29,12 @@ export type Command =
   | {
       command: "ceiling";
       action: "set";
-      fullAccess: boolean;
-      projectReach: RestrictedProjectReach;
+      /** `--outside-sandbox on|off`; absent keeps the current value. */
+      outsideSandbox?: boolean;
+      /** `--network open|allowlist`; absent keeps the current value. */
+      network?: DeviceNetworkMode;
+      /** `--project-reach workspace|os-user`; absent keeps the current value. */
+      projectReach?: RestrictedProjectReach;
       /** `--yes`: confirms a widening without asking. */
       yes?: true;
     }
@@ -49,14 +54,17 @@ export const USAGE = `Usage:
   capybara-device drain [--wait] [--timeout <seconds>]
                                   Finish running commands, accept no new ones, then stop;
                                   --wait returns once it has stopped (default limit 600 s)
-  capybara-device ceiling show    Show this machine's owner ceiling (Full access, project reach)
-  capybara-device ceiling set --full-access allow|deny --project-reach workspace|os-user [--yes]
-                                  Set the owner ceiling; widening needs --yes or a y at the prompt
+  capybara-device ceiling show    Show this machine's owner ceiling (outside the sandbox, network,
+                                  project reach)
+  capybara-device ceiling set [--outside-sandbox on|off] [--network open|allowlist]
+                              [--project-reach workspace|os-user] [--yes]
+                                  Change the owner ceiling (at least one field; the others stay);
+                                  widening needs --yes or a y at the prompt
   capybara-device policy [show]   Show the local policy
   capybara-device policy set <key> <value>
                                   Replace one field (cpu, memoryMb, allowCredentials)
   capybara-device policy add|remove allowedDomains <host>
-                                  Allow or stop allowing a domain for restricted work
+                                  Allow or stop allowing a domain on the sandbox allowlist
   capybara-device policy add|remove allowCredentials <name>
                                   Allow or stop allowing a credential for restricted work
   capybara-device service install|uninstall
@@ -153,30 +161,44 @@ export function parseCommandLine(argv: string[]): Command {
     }
     case "ceiling": {
       const { values, positionals } = parse(rest, {
-        "full-access": { type: "string" },
+        "outside-sandbox": { type: "string" },
+        network: { type: "string" },
         "project-reach": { type: "string" },
+        "full-access": { type: "string" },
         yes: { type: "boolean", short: "y" },
       });
       const [action, ...extra] = positionals;
       const usage =
-        "usage: ceiling show | ceiling set --full-access allow|deny --project-reach workspace|os-user [--yes]";
+        "usage: ceiling show | ceiling set [--outside-sandbox on|off] [--network open|allowlist] " +
+        "[--project-reach workspace|os-user] [--yes]";
+      if (values["full-access"] !== undefined)
+        throw new UsageError(
+          `--full-access is gone: Full access always runs in the sandbox now; use --outside-sandbox on|off. ${usage}`,
+        );
       if (extra.length > 0) throw new UsageError(usage);
+      const outside = values["outside-sandbox"];
+      const network = values.network;
+      const reach = values["project-reach"];
       if (action === "show" || action === undefined) {
-        if (values["full-access"] !== undefined || values["project-reach"] !== undefined)
+        if (outside !== undefined || network !== undefined || reach !== undefined)
           throw new UsageError(usage);
         return { command: "ceiling", action: "show" };
       }
       if (action !== "set") throw new UsageError(usage);
-      const full = values["full-access"];
-      const reach = values["project-reach"];
-      // both fields: one explicit atomic target
-      if (full !== "allow" && full !== "deny") throw new UsageError(usage);
-      if (reach !== "workspace" && reach !== "os-user") throw new UsageError(usage);
+      if (outside === undefined && network === undefined && reach === undefined)
+        throw new UsageError(usage);
+      if (outside !== undefined && outside !== "on" && outside !== "off")
+        throw new UsageError(usage);
+      if (network !== undefined && network !== "open" && network !== "allowlist")
+        throw new UsageError(usage);
+      if (reach !== undefined && reach !== "workspace" && reach !== "os-user")
+        throw new UsageError(usage);
       return {
         command: "ceiling",
         action: "set",
-        fullAccess: full === "allow",
-        projectReach: reach,
+        ...(outside !== undefined && { outsideSandbox: outside === "on" }),
+        ...(network !== undefined && { network }),
+        ...(reach !== undefined && { projectReach: reach }),
         ...(values.yes === true && { yes: true as const }),
       };
     }

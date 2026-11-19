@@ -34,16 +34,16 @@ async function setup(
   const roots = { workspace: join(dir, "w"), skills: join(dir, "s"), tmp: join(dir, "t") };
   const ceiling: DeviceOwnerCeiling = {
     revision: "one",
-    fullAccess: true,
+    outsideSandbox: true,
+    network: "allowlist",
     roots,
     restrictedProjectReach: "workspace",
-    restrictedAllowedDomains: [],
+    allowedDomains: [],
     restrictedDeniedReadRoots: [],
     preparation: {
       skillsRoot: roots.skills,
       attachmentsBase: join(roots.workspace, "attachments"),
     },
-    fullNetwork: "environment",
   };
   const launched: MacWorkerRequest[] = [];
   const startWorker = async (request: MacWorkerRequest) => {
@@ -189,19 +189,20 @@ describe("local-Docker operation backend paths", () => {
   it("maps the owner's ceiling to the container's mounted roots", () => {
     const mapped = containerCeiling({
       revision: "one",
-      fullAccess: false,
+      outsideSandbox: false,
+      network: "allowlist",
       roots: hostRoots,
       restrictedProjectReach: "workspace",
-      restrictedAllowedDomains: ["a.example"],
+      allowedDomains: ["a.example"],
       restrictedDeniedReadRoots: ["/home/u/.ssh"],
       preparation: { skillsRoot: "/h/s", attachmentsBase: "/h/w/attachments" },
-      fullNetwork: "environment",
     });
     expect(mapped).toMatchObject({
       revision: "one",
-      fullAccess: false,
+      outsideSandbox: false,
+      network: "allowlist",
       roots: { workspace: "/workspace", skills: "/skills", tmp: "/tmp" },
-      restrictedAllowedDomains: ["a.example"],
+      allowedDomains: ["a.example"],
       restrictedDeniedReadRoots: [],
       preparation: { skillsRoot: "/skills", attachmentsBase: "/workspace/attachments" },
     });
@@ -226,13 +227,13 @@ describe("local-Docker operation backend paths", () => {
         hostRoots,
         readOwnerCeiling: async () => ({
           revision: "one",
-          fullAccess: true,
+          outsideSandbox: true,
+          network: "allowlist",
           roots: hostRoots,
           restrictedProjectReach: "workspace",
-          restrictedAllowedDomains: [],
+          allowedDomains: [],
           restrictedDeniedReadRoots: [],
           preparation: { skillsRoot: "/h/s", attachmentsBase: "/h/w/attachments" },
-          fullNetwork: "environment",
         }),
         container: {
           operationContainer: async () => {

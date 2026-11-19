@@ -27,6 +27,7 @@ import {
   type DeviceOwnerCeiling,
   digest,
   freezeAuthority,
+  grantStillHolds,
   intersectOperation,
   type LocalExecAuthority,
   type LocalOperationGrant,
@@ -484,7 +485,7 @@ export async function createLocalOperationBackend(
         restricted: restricted
           ? { filesystem: true, network: true, native: true, concurrentScopes: true }
           : null,
-        fullAccess: host.fullAccess && c.fullAccess,
+        fullAccess: host.fullAccess && c.outsideSandbox,
         background: host.background,
         ...(!restricted
           ? { unavailableReason: host.proof?.failure() ?? host.unavailableReason ?? host.pending }
@@ -550,11 +551,7 @@ export async function createLocalOperationBackend(
                   record.kind === "native",
                 )
               : auxiliaryGrant(record.scope, ceiling);
-          return record.grant.full
-            ? next.full
-            : record.grant.hosts.every((h) => next.hosts.includes(h)) &&
-                record.grant.deniedReadRoots.every((r) => next.deniedReadRoots.includes(r)) &&
-                next.deniedReadRoots.every((r) => record.grant.deniedReadRoots.includes(r));
+          return grantStillHolds(record.grant, next);
         } catch {
           return false;
         }

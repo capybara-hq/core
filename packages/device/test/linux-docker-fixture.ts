@@ -311,16 +311,16 @@ export function scopeFor(
 export function fixtureCeiling(roots: DeviceOwnerCeiling["roots"]): DeviceOwnerCeiling {
   return {
     revision: "one",
-    fullAccess: true,
+    outsideSandbox: true,
+    network: "allowlist",
     roots,
     restrictedProjectReach: "workspace",
-    restrictedAllowedDomains: [NAMES.granted],
+    allowedDomains: [NAMES.granted],
     restrictedDeniedReadRoots: [],
     preparation: {
       skillsRoot: roots.skills,
       attachmentsBase: join(roots.workspace, "attachments"),
     },
-    fullNetwork: "environment",
   };
 }
 

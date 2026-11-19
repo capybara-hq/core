@@ -1,6 +1,10 @@
 import { closeSync, existsSync, fsyncSync, openSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { type DeviceOwnerCeiling, parseOwnerCeilingReport } from "@capybara-hq/plugin-sdk";
+import {
+  type DeviceOwnerCeiling,
+  type DeviceOwnerCeilingV3,
+  parseOwnerCeilingReport,
+} from "@capybara-hq/plugin-sdk";
 import { readStrictOwnerCeilingSync } from "./exec/operation-types.js";
 import { withPolicyLock, writePrivate } from "./state.js";
 
@@ -81,9 +85,26 @@ function writeState(stateDir: string, state: OwnerReportState): void {
 }
 
 /**
+ * The protocol 3 owner report of a version 3 owner ceiling: the one temporary wire mapping while
+ * the wire stays protocol 3 (`fullAccess` <- `outsideSandbox`, `restrictedAllowedDomains` <-
+ * `allowedDomains`). The protocol 3 report has no network field, so a deployment still reads the
+ * old shape. W1.M removes this mapping with the protocol 4 cutover.
+ */
+export function protocol3OwnerReport(v3: DeviceOwnerCeilingV3): DeviceOwnerCeiling {
+  return {
+    version: 2,
+    revision: v3.revision,
+    sequence: v3.sequence,
+    fullAccess: v3.outsideSandbox,
+    restrictedProjectReach: v3.restrictedProjectReach,
+    restrictedAllowedDomains: [...v3.allowedDomains],
+  };
+}
+
+/**
  * The strict owner report for the policy now (B2), used as the hello, `policy` frame, policy
  * answers and bind answer `ownerCeiling`. Under the policy lock: the strict reader validates the
- * version-2 policy; a newly observed revision advances the sequence, durably written before the
+ * version-3 policy; a newly observed revision advances the sequence, durably written before the
  * report is returned (a crash before that emits no report). A missing, old-format or invalid policy
  * and a corrupt sidecar throw: no report, no widening.
  */
@@ -102,13 +123,16 @@ export function issueOwnerReport(input: {
       if (!Number.isSafeInteger(sequence)) throw new Error("Owner report sequence exhausted");
       writeState(input.stateDir, { sequence, lastPublishedRevision: ceiling.revision });
     }
-    return parseOwnerCeilingReport({
-      version: 2,
-      revision: ceiling.revision,
-      sequence,
-      fullAccess: ceiling.fullAccess,
-      restrictedProjectReach: ceiling.restrictedProjectReach,
-      restrictedAllowedDomains: [...ceiling.restrictedAllowedDomains],
-    });
+    return parseOwnerCeilingReport(
+      protocol3OwnerReport({
+        version: 3,
+        revision: ceiling.revision,
+        sequence,
+        outsideSandbox: ceiling.outsideSandbox,
+        network: ceiling.network,
+        allowedDomains: [...ceiling.allowedDomains],
+        restrictedProjectReach: ceiling.restrictedProjectReach,
+      }),
+    );
   });
 }

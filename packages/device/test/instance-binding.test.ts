@@ -81,13 +81,13 @@ async function fixture() {
         pythonPath: "/usr/bin/python3",
         readOwnerCeiling: async () => ({
           revision: "r",
-          fullAccess: true,
+          outsideSandbox: true,
+          network: "allowlist",
           roots,
           restrictedProjectReach: "os-user",
-          restrictedAllowedDomains: [],
+          allowedDomains: [],
           restrictedDeniedReadRoots: [],
           preparation: { skillsRoot: roots.skills, attachmentsBase: join(roots.workspace, "a") },
-          fullNetwork: "environment",
         }),
       },
       {

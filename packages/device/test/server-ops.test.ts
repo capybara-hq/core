@@ -6,7 +6,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { CommandLog } from "../src/command-log.js";
 import type { MacOperationBackend } from "../src/exec/mac-operation-backend.js";
 import { PolicyStore } from "../src/policy-store.js";
-import { policySummary, serveOperationV3 } from "../src/server-ops.js";
+import { ownerCeilingNarrowing, policySummary, serveOperationV3 } from "../src/server-ops.js";
 import {
   DEFAULT_POLICY,
   FULL_OWNER_CEILING,
@@ -19,7 +19,7 @@ import {
   writePolicy,
 } from "../src/state.js";
 
-/** The policy these tests were written against: the owner allows Full access (old auto). */
+/** The policy these tests were written against: outside the sandbox on, the open network. */
 const FULL_POLICY = { ...DEFAULT_POLICY, ownerCeiling: { ...FULL_OWNER_CEILING } };
 let opSeq = 0;
 /** A request; a `policy` op gets a fresh op id unless it names one (each is a new change). */
@@ -143,6 +143,84 @@ describe("the policy op", () => {
     expect(both.res).toMatchObject({ ok: false });
     expect(readFileSync(policyPath(dir), "utf8")).toBe(before);
     expect(policyMode(readPolicy(dir))).toBe("sandbox");
+  });
+
+  it("a kernel narrowing op cannot widen: each field only narrows, the network is kept", async () => {
+    seed({ allowedDomains: ["a.com", "b.com"] });
+    // protocol 3: Full access off is outside the sandbox off; the network stays open
+    const off = await policyOp({ ownerCeiling: { fullAccess: false } });
+    expect(off.res).toMatchObject({ ok: true });
+    expect(readPolicy(dir).ownerCeiling).toEqual({
+      outsideSandbox: false,
+      network: "open",
+      restrictedProjectReach: "os-user",
+    });
+    // protocol 2's mode sandbox: no escalation and the workspace reach, the network kept
+    seed({ allowedDomains: ["a.com"] });
+    await policyOp({ mode: "sandbox" });
+    expect(readPolicy(dir).ownerCeiling).toEqual({
+      outsideSandbox: false,
+      network: "open",
+      restrictedProjectReach: "workspace",
+    });
+    // nothing a narrowing says turns a narrowed field back on
+    seed({
+      ownerCeiling: {
+        outsideSandbox: false,
+        network: "allowlist",
+        restrictedProjectReach: "workspace",
+      },
+    });
+    const before = readFileSync(policyPath(dir), "utf8");
+    for (const ownerCeiling of [
+      { fullAccess: true },
+      { outsideSandbox: true },
+      { network: "open" },
+      { restrictedProjectReach: "os-user" },
+      { addAllowedDomains: ["c.com"] },
+    ]) {
+      const { res } = await policyOp({ ownerCeiling });
+      expect(res, JSON.stringify(ownerCeiling)).toMatchObject({ ok: false });
+    }
+    expect(readFileSync(policyPath(dir), "utf8")).toBe(before);
+  });
+
+  it("reads the protocol 4 narrowing fields as narrowings only", () => {
+    expect(
+      ownerCeilingNarrowing({
+        outsideSandbox: false,
+        network: "allowlist",
+        removeAllowedDomains: ["A.com", "a.com"],
+        restrictedProjectReach: "workspace",
+      }),
+    ).toEqual({
+      outsideSandboxOff: true,
+      networkAllowlist: true,
+      workspaceReach: true,
+      removeAllowedDomains: ["a.com"],
+    });
+    expect(ownerCeilingNarrowing(undefined)).toEqual({
+      outsideSandboxOff: false,
+      networkAllowlist: false,
+      workspaceReach: false,
+      removeAllowedDomains: [],
+    });
+    for (const widening of [
+      null,
+      [],
+      "allowlist",
+      { outsideSandbox: true },
+      { outsideSandbox: "false" },
+      { network: "open" },
+      { network: null },
+      { fullAccess: true },
+      { restrictedProjectReach: "os-user" },
+      { removeAllowedDomains: "a.com" },
+      { removeAllowedDomains: [1] },
+      { allowedDomains: ["a.com"] },
+      { addAllowedDomains: ["a.com"] },
+    ])
+      expect(ownerCeilingNarrowing(widening), JSON.stringify(widening)).toBeUndefined();
   });
 
   it("applies mode sandbox even when the summary already says sandbox", async () => {

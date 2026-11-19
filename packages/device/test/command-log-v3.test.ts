@@ -370,8 +370,8 @@ describe("policy changes in the command log", () => {
         await cli([
           "ceiling",
           "set",
-          "--full-access",
-          "allow",
+          "--outside-sandbox",
+          "on",
           "--project-reach",
           "os-user",
           "--yes",
@@ -389,7 +389,7 @@ describe("policy changes in the command log", () => {
         }),
         expect.objectContaining({
           op: "policy",
-          detail: `ceiling set fullAccess allow, projectReach os-user by ${user} via cli`,
+          detail: `ceiling set outsideSandbox on, network open, projectReach os-user by ${user} via cli`,
         }),
       ]);
     } finally {

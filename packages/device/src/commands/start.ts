@@ -7,7 +7,12 @@ import { rotateServiceLog } from "../service/launchd.js";
 import { startedByServiceManager } from "../service/manager.js";
 import { connectStaged } from "../staged-connect.js";
 import type { StagedDevice } from "../staged-device.js";
-import { type Credential, convertPolicyFile, policyMode, readCredential } from "../state.js";
+import {
+  type Credential,
+  convertPolicyFile,
+  type OwnerCeilingPolicy,
+  readCredential,
+} from "../state.js";
 import { PROGRAM_VERSION } from "../version.js";
 
 export interface StartDeps {
@@ -30,11 +35,18 @@ export interface StartDeps {
   connectStaged?: typeof connectStaged;
 }
 
-/** Printed once when start converted an old-format policy.json to version 2. */
-export function legacyPolicyNotice(mode: "auto" | "sandbox"): string {
+/**
+ * Printed once when start converted an old-format policy.json to version 3 (never wider). A device
+ * that kept the allowlist learns how to open the network.
+ */
+export function legacyPolicyNotice(ceiling: OwnerCeilingPolicy): string {
   return (
-    "policy.json now uses the version 2 owner ceiling; this machine runs in " +
-    `${mode} mode; see \`capybara-device ceiling show\`.`
+    "policy.json now uses the version 3 owner ceiling: commands run in the sandbox under every " +
+    `profile; outside the sandbox ${ceiling.outsideSandbox ? "on" : "off"}, network ` +
+    `${ceiling.network}; see \`capybara-device ceiling show\`.` +
+    (ceiling.network === "allowlist"
+      ? " To open the sandbox network: capybara-device ceiling set --network open"
+      : "")
   );
 }
 
@@ -132,7 +144,7 @@ async function serveStaged(
   try {
     const converted = convertPolicyFile(stateDir) === "converted";
     const policy = new PolicyStore(stateDir);
-    if (converted) out(legacyPolicyNotice(policyMode(policy.current())));
+    if (converted) out(legacyPolicyNotice(policy.current().ownerCeiling));
     device = await (deps.createStaged as NonNullable<StartDeps["createStaged"]>)(cred, policy);
   } catch (e) {
     err(`Cannot start: ${(e as Error).message}`);
