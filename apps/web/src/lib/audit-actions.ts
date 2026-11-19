@@ -100,6 +100,7 @@ export const AUDIT_ACTION_KEYS: Readonly<Record<string, string>> = {
   "device.machine_revoked": "deviceMachineRevoked",
   "device.mode_changed": "deviceModeChanged",
   "device.network_allowed": "deviceNetworkAllowed",
+  "device.network_changed": "deviceNetworkChanged",
   "device.network_denied": "deviceNetworkDenied",
   "device.policy_changed": "devicePolicyChanged",
   "device.policy_failed": "devicePolicyFailed",

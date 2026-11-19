@@ -4256,6 +4256,7 @@
         "deviceMachineRevoked": "断开了本地设备",
         "deviceModeChanged": "修改了设备模式",
         "deviceNetworkAllowed": "允许了网络访问",
+        "deviceNetworkChanged": "更改了云端设备的沙箱网络",
         "deviceNetworkDenied": "拒绝了网络访问",
         "devicePolicyChanged": "修改了设备策略",
         "devicePolicyFailed": "设备策略修改失败",

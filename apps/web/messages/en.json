@@ -4268,6 +4268,7 @@
         "deviceMachineRevoked": "Disconnected a local device",
         "deviceModeChanged": "Changed a device's mode",
         "deviceNetworkAllowed": "Allowed network access",
+        "deviceNetworkChanged": "Changed a cloud device's sandbox network",
         "deviceNetworkDenied": "Denied network access",
         "devicePolicyChanged": "Changed a device's policy",
         "devicePolicyFailed": "A device policy change failed",
