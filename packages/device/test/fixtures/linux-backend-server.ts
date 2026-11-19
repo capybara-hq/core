@@ -60,6 +60,9 @@ async function handle(message: Record<string, unknown>): Promise<unknown> {
         ...(message.restrictedSupported === false ? { restrictedSupported: false } : {}),
         // the fixture's endpoints are local addresses
         allowPrivateProxyTargets: message.privateProxyTargets !== false,
+        ...(message.dohTest
+          ? { fakeIpDnsTest: message.dohTest as { endpoints: string[]; caPem: string } }
+          : {}),
       };
       if (message.mode === "docker") {
         const container = String(message.container);

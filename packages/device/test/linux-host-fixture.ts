@@ -177,6 +177,8 @@ export async function hostBackend(
     /** The owner's sandbox network (default the fixture's allowlist) and allowed domains. */
     network?: "open" | "allowlist";
     allowedDomains?: string[];
+    /** A fixture DoH server that re-resolves fake-IP answers (the backend's test seam). */
+    fakeIpDns?: { endpoints: string[]; caPem: string };
     /** The owner's restricted project reach (default the workspace). */
     restrictedProjectReach?: "workspace" | "os-user";
     /** A local-Docker device: the server runs here, its agents in this container. */
@@ -203,6 +205,7 @@ export async function hostBackend(
     runtimeHash: RUNTIME_HASH,
     ...(options.restrictedSupported === false ? { restrictedSupported: false } : {}),
     ...(options.privateProxyTargets === false ? { privateProxyTargets: false } : {}),
+    ...(options.fakeIpDns ? { dohTest: options.fakeIpDns } : {}),
     ...(options.docker
       ? {
           mode: "docker",

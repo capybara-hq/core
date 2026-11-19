@@ -99,7 +99,51 @@ export interface FixtureNetworks {
   accepted(name: "public" | "public80" | "private"): number;
   /** Names the device resolves: each to the address in its key. */
   readonly names: Readonly<Record<string, string>>;
+  /**
+   * A DoH server (RFC 8484) on the server's public-class address with a certificate for that IP:
+   * the encrypted DNS behind the fake-IP names (`fake*.permission.test`, which the device's
+   * resolver answers with 198.18.0.0/15 addresses, as a fake-IP router does).
+   */
+  readonly doh: { readonly endpoints: string[]; readonly caPem: string };
 }
+
+/** A DoH server (RFC 8484 GET, wire format) answering from a JSON map; "fail" answers 503. */
+const DOH_SERVER = String.raw`
+import base64, http.server, ipaddress, json, ssl, struct, sys, urllib.parse
+cert, key, host, answers = sys.argv[1], sys.argv[2], sys.argv[3], json.loads(sys.argv[4])
+class Handler(http.server.BaseHTTPRequestHandler):
+    def do_GET(self):
+        query = urllib.parse.parse_qs(urllib.parse.urlsplit(self.path).query)["dns"][0]
+        data = base64.urlsafe_b64decode(query + "=" * (-len(query) % 4))
+        at, labels = 12, []
+        while data[at]:
+            labels.append(data[at + 1:at + 1 + data[at]].decode())
+            at += 1 + data[at]
+        qtype = struct.unpack(">H", data[at + 1:at + 3])[0]
+        entry = answers.get(".".join(labels).lower(), [])
+        if entry == "fail":
+            self.send_response(503)
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+            return
+        records = [a for a in entry if (":" in a) == (qtype == 28)]
+        out = data[:2] + struct.pack(">HHHHH", 0x8180, 1, len(records), 0, 0) + data[12:at + 5]
+        for address in records:
+            packed = ipaddress.ip_address(address).packed
+            out += b"\xc0\x0c" + struct.pack(">HHIH", qtype, 1, 60, len(packed)) + packed
+        self.send_response(200)
+        self.send_header("Content-Type", "application/dns-message")
+        self.send_header("Content-Length", str(len(out)))
+        self.end_headers()
+        self.wfile.write(out)
+    def log_message(self, *args):
+        pass
+server = http.server.ThreadingHTTPServer((host, 443), Handler)
+context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+context.load_cert_chain(cert, key)
+server.socket = context.wrap_socket(server.socket, server_side=True)
+server.serve_forever()
+`;
 
 const NETWORK_PORT = 18090;
 const SERVER_RECEIPTS = "/opt/capybara-receipts";
@@ -177,6 +221,11 @@ export async function startLinuxDevice(
         "cgnat.permission.test": "100.64.0.1",
         "nat64.permission.test": `64:ff9b::${net.privateBase}.10`,
         "mapped.permission.test": `::ffff:${net.privateBase}.10`,
+        // a fake-IP resolver's answers; the DoH server knows the real addresses
+        "fake.permission.test": "198.18.0.10",
+        "fakeallow.permission.test": "198.18.0.13",
+        "fakepriv.permission.test": "198.19.0.11",
+        "fakedown.permission.test": "198.18.0.12",
       }
     : {};
   // Docker rewrites an IPv4-mapped --add-host entry as plain IPv4 and the root is read only, so
@@ -299,6 +348,59 @@ for host, port in ${JSON.stringify(Object.values(endpoints))}:
         except OSError:
             pass`,
       ]);
+      // the DoH server, with a certificate for its IP address
+      const dohHost = `${net.publicBase}.10`;
+      docker([
+        "exec",
+        server,
+        "openssl",
+        "req",
+        "-x509",
+        "-newkey",
+        "rsa:2048",
+        "-nodes",
+        "-days",
+        "1",
+        "-subj",
+        "/CN=doh",
+        "-addext",
+        `subjectAltName=IP:${dohHost}`,
+        "-keyout",
+        `${SERVER_RECEIPTS}/doh-key.pem`,
+        "-out",
+        `${SERVER_RECEIPTS}/doh-cert.pem`,
+      ]);
+      const caPem = docker(["exec", server, "cat", `${SERVER_RECEIPTS}/doh-cert.pem`]);
+      spawn("docker", [
+        "exec",
+        server,
+        "python3",
+        "-I",
+        "-c",
+        DOH_SERVER,
+        `${SERVER_RECEIPTS}/doh-cert.pem`,
+        `${SERVER_RECEIPTS}/doh-key.pem`,
+        dohHost,
+        JSON.stringify({
+          "fake.permission.test": [dohHost],
+          "fakeallow.permission.test": [dohHost],
+          "fakepriv.permission.test": [`${net.privateBase}.10`],
+          "fakedown.permission.test": "fail",
+        }),
+      ]).unref();
+      docker([
+        "exec",
+        server,
+        "python3",
+        "-c",
+        `import socket
+while True:
+    try:
+        socket.create_connection(("${dohHost}", 443)).close()
+        break
+    except OSError:
+        pass`,
+      ]);
       const counted = (key: string) => {
         const out = spawnSync("docker", ["exec", server, "cat", `${SERVER_RECEIPTS}/${key}`], {
           encoding: "utf8",
@@ -315,6 +417,7 @@ for host, port in ${JSON.stringify(Object.values(endpoints))}:
         port: NETWORK_PORT,
         accepted: (key) => counted(key) - (baseline[key] ?? 0),
         names,
+        doh: { endpoints: [`https://${dohHost}/dns-query`], caPem },
       };
     }
     docker(

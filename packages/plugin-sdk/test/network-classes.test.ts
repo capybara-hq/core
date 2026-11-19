@@ -5,6 +5,7 @@ import {
   classifyAddress,
   OPEN_PUBLIC_DENIED_CIDRS,
   OPEN_PUBLIC_DENIED_CLASSES,
+  SANDBOX_FAKE_IP_DNS,
 } from "../src/index.js";
 
 /** The table of the approval-only profiles design, section "Open network". */
@@ -248,3 +249,22 @@ function cidrEnds(cidr: string): string[] {
         ).join(":");
   return [show(net.v), show(last)];
 }
+
+describe("SANDBOX_FAKE_IP_DNS", () => {
+  it("names a closed fake-IP range and public IP-literal HTTPS endpoints, short limits", () => {
+    const [network = "", prefix] = SANDBOX_FAKE_IP_DNS.fakeIpCidr.split("/");
+    expect(prefix).toBe("15");
+    expect(classifyAddress(network)).toBe("reserved");
+    expect(classifyAddress("198.19.255.255")).toBe("reserved");
+    expect(SANDBOX_FAKE_IP_DNS.endpoints).toEqual([
+      "https://1.1.1.1/dns-query",
+      "https://1.0.0.1/dns-query",
+      "https://8.8.8.8/dns-query",
+    ]);
+    for (const endpoint of SANDBOX_FAKE_IP_DNS.endpoints)
+      expect(classifyAddress(new URL(endpoint).hostname)).toBe("public");
+    expect(SANDBOX_FAKE_IP_DNS.timeoutMs).toBeLessThanOrEqual(5000);
+    expect(SANDBOX_FAKE_IP_DNS.cacheTtlCapSeconds).toBeLessThanOrEqual(600);
+    expect(Object.isFrozen(SANDBOX_FAKE_IP_DNS)).toBe(true);
+  });
+});

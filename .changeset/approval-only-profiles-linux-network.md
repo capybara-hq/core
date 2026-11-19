@@ -24,3 +24,10 @@ Linux open network and own loopback listeners (approval-only profiles).
   `.claude`), lists a moved directory's entries from its own descriptor and undoes a move that a
   concurrent write turned into a deny, and takes `writeDenies` (absolute paths denied like the
   system spools).
+- Fake-IP resolvers: when the system resolver answers a name with an address in `198.18.0.0/15`
+  (a router running a fake-IP proxy such as OpenClash), the Linux forwarder re-resolves it (A and
+  AAAA) through DNS-over-HTTPS at IP-literal endpoints with TLS verified against their IP SAN, and
+  classifies and dials the real address like any resolved one; if encrypted DNS fails the request
+  is refused with a 403 naming the fake-IP resolver, and the fake address is never dialled. The
+  same holds for allowlisted names. SDK: `SANDBOX_FAKE_IP_DNS` holds the shared range, endpoints
+  (Cloudflare `1.1.1.1`, `1.0.0.1`, then Google `8.8.8.8`), timeout and cache TTL cap.

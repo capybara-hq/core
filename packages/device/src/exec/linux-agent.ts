@@ -1,3 +1,5 @@
+import { SANDBOX_FAKE_IP_DNS } from "@capybara-hq/plugin-sdk";
+
 /**
  * The trusted Linux operation agent of capybara-device, run as `python3 -I -c <source>` (never from
  * a file another process could change). One agent process runs one operation; it never decides
@@ -51,6 +53,7 @@ import errno
 import fcntl
 import hashlib
 import hmac
+import http.client
 import importlib.machinery
 import importlib.util
 import ipaddress
@@ -59,10 +62,13 @@ import os
 import select
 import signal
 import socket
+import ssl
 import stat
+import struct
 import subprocess
 import threading
 import time
+import urllib.parse
 
 CHUNK = 65536
 RUNTIME_FILES = ("linux-sandbox.py", "native-files.py")
@@ -401,6 +407,10 @@ def classify_address(address):
 # ---- end of address classes ----------------------------------------------------------------
 
 
+# ---- resolution ----------------------------------------------------------------------------
+# Which resolved addresses the forwarder may dial, and the encrypted DNS it uses when the network's
+# resolver answers with fake IPs. Self-contained (a device test runs it with the class block).
+
 def local_address(address):
     """Whether address is one of this host's own (a socket can bind to it). Any answer but "not
     available" counts as own, so a host that allows binding any address (ip_nonlocal_bind) closes
@@ -425,6 +435,162 @@ def public_address(address):
         return False
     plain = ip.ipv4_mapped if ip.version == 6 and ip.ipv4_mapped else ip
     return plain.is_global and not local_address(str(ip))
+
+
+# The SDK's SANDBOX_FAKE_IP_DNS (the macOS worker uses the same endpoints and limits).
+FAKE_IP_DNS = json.loads(r"""${JSON.stringify(SANDBOX_FAKE_IP_DNS)}""")
+FAKE_IP_NETWORK = ipaddress.ip_network(FAKE_IP_DNS["fakeIpCidr"])
+FAKE_IP_REFUSAL = ("The network's DNS resolver answers with fake IPs (198.18.0.0/15, a fake-IP "
+                   "resolver such as a router's proxy) and encrypted DNS did not answer; the fake "
+                   "address is never dialled")
+
+
+class FakeIpUnresolved(PermissionError):
+    """The system resolver gave a fake IP and encrypted DNS failed: refused, never dialled."""
+
+
+def fake_ip(address):
+    ip = ipaddress.ip_address(address.split("%")[0])
+    if ip.version == 6 and ip.ipv4_mapped:
+        ip = ip.ipv4_mapped
+    return ip in FAKE_IP_NETWORK
+
+
+def dns_query(name, qtype):
+    """A recursive DNS query in wire format (ID 0, as RFC 8484 recommends) for name and qtype."""
+    out = struct.pack(">HHHHHH", 0, 0x0100, 1, 0, 0, 0)
+    for label in name.rstrip(".").split("."):
+        data = label.encode("ascii")
+        if not 0 < len(data) < 64:
+            raise ValueError("Not a DNS name")
+        out += bytes([len(data)]) + data
+    return out + b"\0" + struct.pack(">HH", qtype, 1)
+
+
+def _skip_name(data, at):
+    while True:
+        length = data[at]
+        if length == 0:
+            return at + 1
+        if length & 0xC0 == 0xC0:
+            return at + 2
+        at += 1 + length
+
+
+def dns_answers(data, qtype):
+    """(addresses, smallest TTL) of a DNS response's records of qtype (A or AAAA, class IN). An
+    error response or a malformed message raises ValueError; a missing name answers nothing."""
+    try:
+        _, flags, questions, answers, _, _ = struct.unpack_from(">HHHHHH", data)
+        if not flags & 0x8000 or flags & 0xF not in (0, 3):
+            raise ValueError("DNS error response")
+        at = 12
+        for _ in range(questions):
+            at = _skip_name(data, at) + 4
+        found, ttl = [], None
+        for _ in range(answers):
+            at = _skip_name(data, at)
+            rtype, rclass, record_ttl, length = struct.unpack_from(">HHIH", data, at)
+            at += 10
+            record = data[at:at + length]
+            at += length
+            if len(record) != length:
+                raise ValueError("Truncated DNS answer")
+            if rclass == 1 and rtype == qtype and length == (4 if qtype == 1 else 16):
+                found.append(str(ipaddress.ip_address(record)))
+                ttl = record_ttl if ttl is None else min(ttl, record_ttl)
+        return found, ttl
+    except (struct.error, IndexError):
+        raise ValueError("Malformed DNS message")
+
+
+class EncryptedDns:
+    """DNS-over-HTTPS (RFC 8484, GET, wire format) at FAKE_IP_DNS's IP-literal endpoints, in order;
+    TLS is verified against the endpoint's IP SAN, so reaching it needs no DNS. Answers (A and
+    AAAA) are cached for their TTL, capped. Raises FakeIpUnresolved when no endpoint answers. A
+    test fixture's seam replaces the endpoints and the trusted certificate (or fetch itself)."""
+
+    def __init__(self, endpoints=None, ca_pem=None, fetch=None, clock=time.monotonic):
+        self.endpoints = list(endpoints or FAKE_IP_DNS["endpoints"])
+        self.timeout = FAKE_IP_DNS["timeoutMs"] / 1000
+        self.cap = FAKE_IP_DNS["cacheTtlCapSeconds"]
+        self.ca_pem = ca_pem
+        self.fetch = fetch or self.https
+        self.clock = clock
+        self.cache = {}
+        self.lock = threading.Lock()
+
+    def https(self, url, query):
+        parts = urllib.parse.urlsplit(url)
+        context = ssl.create_default_context(cadata=self.ca_pem) if self.ca_pem \
+            else ssl.create_default_context()
+        connection = http.client.HTTPSConnection(parts.hostname, parts.port or 443,
+                                                 timeout=self.timeout, context=context)
+        try:
+            dns = base64.urlsafe_b64encode(query).decode().rstrip("=")
+            connection.request("GET", "%s?dns=%s" % (parts.path, dns),
+                               headers={"Accept": "application/dns-message"})
+            response = connection.getresponse()
+            body = response.read(65536)
+            if response.status != 200:
+                raise OSError(errno.EPROTO, "DoH answered %d" % response.status)
+            return body
+        finally:
+            connection.close()
+
+    def resolve(self, name):
+        key = name.lower().rstrip(".")
+        with self.lock:
+            cached = self.cache.get(key)
+            if cached and cached[0] > self.clock():
+                return list(cached[1])
+        for url in self.endpoints:
+            try:
+                addresses, ttl = [], self.cap
+                for qtype in (1, 28):
+                    found, record_ttl = dns_answers(self.fetch(url, dns_query(key, qtype)), qtype)
+                    addresses += found
+                    if record_ttl is not None:
+                        ttl = min(ttl, record_ttl)
+            except (OSError, ValueError, http.client.HTTPException):
+                continue
+            with self.lock:
+                self.cache[key] = (self.clock() + ttl, list(addresses))
+            return addresses
+        raise FakeIpUnresolved(errno.EACCES, FAKE_IP_REFUSAL)
+
+
+def vetted_addresses(host, port, doh, allow_private=False, resolve=socket.getaddrinfo):
+    """The getaddrinfo entries of host the forwarder may dial. When the system resolver answers a
+    name with a fake IP, the name is resolved again through encrypted DNS (doh) and only those
+    answers count: the fake address is never dialled. Raises PermissionError when every address
+    is refused (FakeIpUnresolved when encrypted DNS failed)."""
+    entries = resolve(host, port, 0, socket.SOCK_STREAM)
+    literal = True
+    try:
+        ipaddress.ip_address(host.split("%")[0])
+    except ValueError:
+        literal = False
+    if not literal and any(fake_ip(e[4][0]) for e in entries):
+        try:
+            answers = doh.resolve(host)
+        except PermissionError:
+            raise
+        except (OSError, ValueError):
+            raise FakeIpUnresolved(errno.EACCES, FAKE_IP_REFUSAL)
+        entries = []
+        for address in answers:
+            if ":" in address:
+                entries.append((socket.AF_INET6, socket.SOCK_STREAM, 6, "", (address, port, 0, 0)))
+            else:
+                entries.append((socket.AF_INET, socket.SOCK_STREAM, 6, "", (address, port)))
+        if not entries:
+            raise OSError(errno.EHOSTUNREACH, "Encrypted DNS has no address for the name")
+    permitted = [e for e in entries if allow_private or public_address(e[4][0])]
+    if not permitted:
+        raise PermissionError(errno.EACCES, "No permitted address")
+    return permitted
+# ---- end of resolution ---------------------------------------------------------------------
 
 
 # ---- per-operation proxy (allowlist or open) ----------------------------------------------
@@ -476,10 +642,12 @@ class Forwarder:
     authenticate with the operation's token. A test fixture's seam (allow_private) lifts the
     address and port rules."""
 
-    def __init__(self, hosts, allow_private=False, open_network=False):
+    def __init__(self, hosts, allow_private=False, open_network=False, doh=None):
         self.hosts = hosts
         self.allow_private = allow_private
         self.open = open_network
+        # encrypted DNS for a network whose resolver answers with fake IPs (one per operation)
+        self.doh = doh or EncryptedDns()
         # Only this operation knows the token: another local process cannot use the proxy.
         self.token = os.urandom(16).hex()
         self.authorization = "Basic " + base64.b64encode(
@@ -567,10 +735,13 @@ class Forwarder:
                 return
             try:
                 up = self.connect(host, port)
-            except PermissionError:
-                # every address of the name is closed: refused before any connect
-                client.sendall(b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n"
-                               b"Connection: close\r\n\r\n")
+            except PermissionError as error:
+                # every address of the name is closed: refused before any connect (a fake-IP
+                # resolver without an encrypted DNS answer says so)
+                reason = FAKE_IP_REFUSAL.encode() if isinstance(error, FakeIpUnresolved) else b""
+                client.sendall(b"HTTP/1.1 403 Forbidden\r\nContent-Type: text/plain\r\n"
+                               b"Content-Length: %d\r\nConnection: close\r\n\r\n"
+                               % len(reason) + reason)
                 client.close()
                 return
             except OSError:
@@ -595,11 +766,8 @@ class Forwarder:
 
     def connect(self, host, port):
         """Connects to a vetted address of host (never resolved again, so never rebound). Raises
-        PermissionError when public_address refuses every address (none is dialled)."""
-        candidates = [c for c in socket.getaddrinfo(host, port, 0, socket.SOCK_STREAM)
-                      if self.allow_private or public_address(c[4][0])]
-        if not candidates:
-            raise PermissionError(errno.EACCES, "No permitted address")
+        PermissionError when every address is refused (none is dialled); see vetted_addresses."""
+        candidates = vetted_addresses(host, port, self.doh, self.allow_private)
         for family, kind, proto, _, address in candidates:
             sock = socket.socket(family, kind, proto)
             try:
@@ -776,8 +944,11 @@ def run_sealed(request, control, runtime):
         if kind != "open" and (kind != "allowlist" or not network.get("hosts")):
             launcher_network = {"kind": "none"}
         else:
+            seam = request.get("dohTest")  # a test fixture's DoH server and certificate
+            doh = EncryptedDns(seam["endpoints"], seam["caPem"]) if isinstance(seam, dict) \
+                else EncryptedDns()
             forwarder = Forwarder(list(network["hosts"]) if kind == "allowlist" else [],
-                                  request.get("allowPrivate") is True, kind == "open")
+                                  request.get("allowPrivate") is True, kind == "open", doh)
             proxy = "http://capybara:%s@127.0.0.1:%d" % (forwarder.token, forwarder.port)
             for key in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy", "ALL_PROXY",
                         "all_proxy"):

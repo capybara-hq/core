@@ -1,5 +1,9 @@
 import { spawnSync } from "node:child_process";
-import { ADDRESS_CLASS_RANGES, classifyAddress } from "@capybara-hq/plugin-sdk";
+import {
+  ADDRESS_CLASS_RANGES,
+  classifyAddress,
+  SANDBOX_FAKE_IP_DNS,
+} from "@capybara-hq/plugin-sdk";
 import { describe, expect, it } from "vitest";
 import { LINUX_DEVICE_AGENT } from "../src/exec/linux-agent.js";
 
@@ -114,4 +118,147 @@ describe("Linux forwarder address classes", () => {
     expect(mismatches).toEqual([]);
     expect(addresses.length).toBeGreaterThan(5000);
   });
+});
+
+const RESOLUTION_START = "# ---- resolution";
+const RESOLUTION_END = "# ---- end of resolution";
+
+/** Runs a Python program after the agent's address-class and resolution blocks; returns its JSON. */
+function withResolution(program: string): unknown {
+  const source = [
+    "import base64, errno, http.client, ipaddress, json, socket, ssl, struct, sys, threading, time",
+    "import urllib.parse",
+    between(LINUX_DEVICE_AGENT, BLOCK_START, BLOCK_END),
+    between(LINUX_DEVICE_AGENT, RESOLUTION_START, RESOLUTION_END),
+    program,
+  ].join("\n");
+  const run = spawnSync("python3", ["-I", "-c", source], { encoding: "utf8" });
+  if (run.status !== 0) throw new Error(run.stderr);
+  return JSON.parse(run.stdout);
+}
+
+// A DNS answer in wire format for the name, with compression pointers, as a DoH server sends it.
+const ANSWER = String.raw`
+def answer(name, qtype, records, rcode=0):
+    labels = b"".join(bytes([len(l)]) + l.encode() for l in name.split(".")) + b"\0"
+    out = struct.pack(">HHHHHH", 0, 0x8180 | rcode, 1, len(records), 0, 0) + labels
+    out += struct.pack(">HH", qtype, 1)
+    for rtype, ttl, address in records:
+        data = ipaddress.ip_address(address).packed
+        out += b"\xc0\x0c" + struct.pack(">HHIH", rtype, 1, ttl, len(data)) + data
+    return out
+`;
+
+describe("Linux forwarder fake-IP resolvers", () => {
+  it("uses the SDK's endpoints, timeout and cache cap", () => {
+    expect(withResolution("print(json.dumps(FAKE_IP_DNS))")).toEqual(
+      JSON.parse(JSON.stringify(SANDBOX_FAKE_IP_DNS)),
+    );
+  });
+
+  it.runIf(python)("re-resolves a fake-IP answer through DoH and checks the real address", () => {
+    const out = withResolution(String.raw`
+class Doh:
+    def __init__(self, answers):
+        self.answers, self.asked = answers, []
+    def resolve(self, name):
+        self.asked.append(name)
+        if isinstance(self.answers, Exception):
+            raise self.answers
+        return self.answers
+def system(addresses):
+    return lambda host, port, *a: [(socket.AF_INET6 if ":" in x else socket.AF_INET,
+                                    socket.SOCK_STREAM, 6, "", (x, port)) for x in addresses]
+def attempt(addresses, doh):
+    try:
+        found = vetted_addresses("example.test", 443, doh, resolve=system(addresses))
+        return {"dialled": [c[4][0] for c in found], "asked": doh.asked}
+    except PermissionError as error:
+        return {"refused": type(error).__name__, "message": str(error), "asked": doh.asked}
+print(json.dumps({
+    "fake": attempt(["198.18.0.7"], Doh(["8.8.8.8", "2606:4700::1111"])),
+    "mixed": attempt(["198.19.3.4", "9.9.9.9"], Doh(["8.8.4.4"])),
+    "private": attempt(["198.18.0.7"], Doh(["10.0.0.1"])),
+    "metadata": attempt(["198.18.0.7"], Doh(["169.254.169.254"])),
+    "fakeAgain": attempt(["198.18.0.7"], Doh(["198.18.0.9"])),
+    "failed": attempt(["198.18.0.7"], Doh(OSError(errno.ETIMEDOUT, "timed out"))),
+    "plain": attempt(["9.9.9.9"], Doh(["10.0.0.1"])),
+    "plainPrivate": attempt(["10.0.0.1"], Doh(["8.8.8.8"])),
+}))
+`) as Record<string, Record<string, unknown>>;
+    // the fake address is never dialled: the DoH answer, checked like any resolved address
+    expect(out.fake).toEqual({
+      dialled: ["8.8.8.8", "2606:4700::1111"],
+      asked: ["example.test"],
+    });
+    expect(out.mixed).toEqual({ dialled: ["8.8.4.4"], asked: ["example.test"] });
+    for (const key of ["private", "metadata", "fakeAgain"])
+      expect(out[key], key).toMatchObject({ refused: "PermissionError", asked: ["example.test"] });
+    expect(out.failed).toMatchObject({ refused: "FakeIpUnresolved", asked: ["example.test"] });
+    expect(String(out.failed?.message)).toMatch(/fake-IP resolver/);
+    // without a fake-IP answer DoH is never asked
+    expect(out.plain).toEqual({ dialled: ["9.9.9.9"], asked: [] });
+    expect(out.plainPrivate).toMatchObject({ refused: "PermissionError", asked: [] });
+  });
+
+  it.runIf(python)(
+    "asks the endpoints in order, parses A and AAAA, caches within the TTL cap",
+    () => {
+      const out = withResolution(String.raw`
+${ANSWER}
+calls = []
+now = [1000.0]
+def fetch(url, query):
+    name_end = query.index(b"\0", 12)
+    qtype = struct.unpack(">H", query[name_end + 1:name_end + 3])[0]
+    calls.append([url, qtype])
+    if "1.1.1.1" in url:
+        raise OSError(errno.ECONNREFUSED, "refused")
+    if qtype == 1:
+        return answer("example.test", 1, [(1, 30, "8.8.8.8"), (5, 30, "1.2.3.4")])
+    return answer("example.test", 28, [(28, 100000, "2606:4700::1111")])
+doh = EncryptedDns(fetch=fetch, clock=lambda: now[0])
+first = doh.resolve("Example.Test.")
+cached = len(calls)
+doh.resolve("example.test")
+again = len(calls)
+now[0] += 31
+doh.resolve("example.test")
+expired = len(calls)
+def broken(url, query):
+    calls.append([url, 0])
+    raise OSError(errno.ETIMEDOUT, "timed out")
+try:
+    EncryptedDns(fetch=broken).resolve("other.test")
+    failure = None
+except FakeIpUnresolved as error:
+    failure = str(error)
+long = EncryptedDns(fetch=lambda url, q: answer("x.test", struct.unpack(">H", q[q.index(b"\0", 12) + 1:q.index(b"\0", 12) + 3])[0], [(1, 999999, "8.8.8.8")]))
+long.resolve("x.test")
+print(json.dumps({"first": first, "calls": calls[:cached], "cachedCalls": again - cached,
+                  "expiredCalls": expired - again, "failure": failure,
+                  "brokenUrls": [c[0] for c in calls if c[1] == 0],
+                  "cap": long.cache["x.test"][0] - time.monotonic(), "query": base64.b64encode(dns_query("a.b", 28)).decode()}))
+`) as Record<string, unknown>;
+      const [primary, secondary, fallback] = SANDBOX_FAKE_IP_DNS.endpoints;
+      expect(out.first).toEqual(["8.8.8.8", "2606:4700::1111"]);
+      // the first endpoint refused: the next one answered both queries
+      expect(out.calls).toEqual([
+        [primary, 1],
+        [secondary, 1],
+        [secondary, 28],
+      ]);
+      expect(out.cachedCalls).toBe(0);
+      expect(out.expiredCalls).toBeGreaterThan(0);
+      expect(out.brokenUrls).toEqual([primary, secondary, fallback]);
+      expect(String(out.failure)).toMatch(/fake-IP resolver/);
+      // a long TTL is capped
+      expect(out.cap).toBeLessThanOrEqual(SANDBOX_FAKE_IP_DNS.cacheTtlCapSeconds);
+      expect(out.cap).toBeGreaterThan(SANDBOX_FAKE_IP_DNS.cacheTtlCapSeconds - 60);
+      // RD set, one question, a.b, AAAA, class IN
+      expect(Buffer.from(String(out.query), "base64").subarray(2).toString("hex")).toBe(
+        "010000010000000000000161016200001c0001",
+      );
+    },
+  );
 });

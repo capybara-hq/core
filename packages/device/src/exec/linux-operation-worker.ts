@@ -60,6 +60,12 @@ export interface LinuxWorkerOptions {
    * addresses, as a conformance fixture's local endpoints need.
    */
   allowPrivateProxyTargets?: boolean;
+  /**
+   * Test seam (trusted construction only): the encrypted DNS a fake-IP answer is re-resolved
+   * through (a fixture's DoH endpoint and the certificate it presents) instead of the SDK's
+   * `SANDBOX_FAKE_IP_DNS` endpoints, which a test network cannot reach.
+   */
+  fakeIpDnsTest?: { endpoints: string[]; caPem: string };
 }
 
 /**
@@ -191,6 +197,7 @@ export function linuxOperationWorker(
             ...(toolHomes?.readFiles.length ? { readFiles: toolHomes.readFiles } : {}),
             // background output is one merged stream; its stderr is the launcher's diagnostics
             ...(options.allowPrivateProxyTargets ? { allowPrivate: true } : {}),
+            ...(options.fakeIpDnsTest ? { dohTest: options.fakeIpDnsTest } : {}),
             command: request.managedOutput
               ? `exec /bin/bash -c ${shellQuote(args.command)} 2>&1`
               : args.command,

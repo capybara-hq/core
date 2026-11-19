@@ -651,6 +651,7 @@ import base64, json, os, socket, sys, urllib.parse
 proxy = urllib.parse.urlsplit(os.environ["https_proxy"])
 auth = "Proxy-Authorization: Basic " + base64.b64encode(
     ("%s:%s" % (proxy.username, proxy.password)).encode()).decode()
+bodies = {}
 def status(line):
     try:
         s = socket.create_connection((proxy.hostname, proxy.port), 10)
@@ -661,11 +662,25 @@ def status(line):
             if not chunk:
                 break
             reply += chunk
+        code = reply.split(b" ")[1].decode()
+        if code == "403":
+            # a refusal's reason, when it gives one
+            s.settimeout(5)
+            while True:
+                chunk = s.recv(4096)
+                if not chunk:
+                    break
+                reply += chunk
+            body = reply.partition(b"\r\n\r\n")[2]
+            if body:
+                bodies[line] = body.decode()
         s.close()
-        return reply.split(b" ")[1].decode()
+        return code
     except (OSError, IndexError) as error:
         return "error:%s" % getattr(error, "errno", error)
 out = {line: status(line) for line in json.loads(sys.argv[1])}
+for line, body in bodies.items():
+    out[line + " body"] = body
 try:
     socket.create_connection((sys.argv[2], int(sys.argv[3])), 5).close()
     out["direct"] = "ok"
@@ -835,6 +850,7 @@ describe.skipIf(unavailable !== null)("Linux host operation backend: open networ
       allowedDomains: [],
       // production forwarder rules: the fixture's local addresses are closed like any other
       privateProxyTargets: false,
+      fakeIpDns: net.doh,
       // a write root outside the workspace (the crontab spool's stand-in)
       restrictedProjectReach: "os-user",
     });
@@ -1097,5 +1113,51 @@ print(json.dumps(out))
     } finally {
       device.run(`rm -f ${home}/.config ${home}/.bashrc`);
     }
+  });
+
+  it("re-resolves a fake-IP resolver's answers through encrypted DNS and checks the real address", async () => {
+    const root = project("fake-ip");
+    const before = { public: net.accepted("public"), public80: net.accepted("public80") };
+    const lines = [
+      `CONNECT fake.permission.test:${net.port} HTTP/1.1`,
+      `GET http://fake.permission.test:${net.port}/ HTTP/1.1`,
+      `CONNECT fakepriv.permission.test:${net.port} HTTP/1.1`,
+      `CONNECT fakedown.permission.test:${net.port} HTTP/1.1`,
+      // a fake-IP literal is only a reserved address
+      `CONNECT 198.18.0.10:${net.port} HTTP/1.1`,
+    ];
+    const open = await exec(
+      root,
+      python(PROXY_PROBE, JSON.stringify(lines), net.server.public, String(net.port)),
+    );
+    expect(open.exitCode, open.stderr).toBe(0);
+    const statuses = JSON.parse(open.stdout) as Record<string, string>;
+    expect(lines.map((line) => statuses[line])).toEqual(["200", "200", "403", "403", "403"]);
+    // the refusal after a failed DoH names the fake-IP resolver; a private real address is a
+    // plain refusal
+    expect(statuses[`${lines[3]} body`]).toMatch(/fake-IP resolver/);
+    expect(statuses[`${lines[2]} body`]).toBeUndefined();
+    expect(net.accepted("public") - before.public).toBe(2);
+    expect(net.accepted("private")).toBe(0);
+    // a granted name the resolver answers with a fake IP takes the same path
+    const allow = await exec(
+      root,
+      python(
+        PROXY_PROBE,
+        JSON.stringify([
+          "GET http://fakeallow.permission.test/ HTTP/1.1",
+          "GET http://fakepriv.permission.test/ HTTP/1.1",
+        ]),
+        net.server.public,
+        "80",
+      ),
+      { kind: "allowlist", hosts: ["fakeallow.permission.test", "fakepriv.permission.test"] },
+    );
+    expect(allow.exitCode, allow.stderr).toBe(0);
+    expect(JSON.parse(allow.stdout)).toMatchObject({
+      "GET http://fakeallow.permission.test/ HTTP/1.1": "200",
+      "GET http://fakepriv.permission.test/ HTTP/1.1": "403",
+    });
+    expect(net.accepted("public80") - before.public80).toBe(1);
   });
 });

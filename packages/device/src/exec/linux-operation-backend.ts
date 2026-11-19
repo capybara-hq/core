@@ -43,6 +43,8 @@ export interface LinuxBackendDependencies {
    * addresses, as a conformance fixture's local endpoints need. Production never sets it.
    */
   allowPrivateProxyTargets?: boolean;
+  /** Test seam (trusted construction only): see the worker's `fakeIpDnsTest`. */
+  fakeIpDnsTest?: { endpoints: string[]; caPem: string };
   /** Called with a reap failure of a lost supervisor's session (default: ignored). */
   onReapError?: (error: unknown) => void;
 }
@@ -120,6 +122,7 @@ export async function createLinuxOperationBackend(
       baseEnv: dependencies.baseEnv ?? hostCommandEnv,
       toolHome: dependencies.toolHome ?? { home: homedir(), env: process.env },
       ...(dependencies.allowPrivateProxyTargets ? { allowPrivateProxyTargets: true } : {}),
+      ...(dependencies.fakeIpDnsTest ? { fakeIpDnsTest: dependencies.fakeIpDnsTest } : {}),
       ...(dependencies.acquireRuntime ? { acquireRuntime: dependencies.acquireRuntime } : {}),
     });
   return createLocalOperationBackend(

@@ -328,6 +328,7 @@ export async function createDockerOperationBackend(
       baseEnv: containerBaseEnv,
       acquireRuntime: acquire,
       ...(dependencies.allowPrivateProxyTargets ? { allowPrivateProxyTargets: true } : {}),
+      ...(dependencies.fakeIpDnsTest ? { fakeIpDnsTest: dependencies.fakeIpDnsTest } : {}),
     });
   const startWorker = async (
     request: MacWorkerRequest,
