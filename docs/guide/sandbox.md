@@ -58,6 +58,12 @@ Full access takes a short confirmation bound to the device and its ceilings: swi
 widening a ceiling returns the conversation to Approve for me until you confirm again (a narrowing
 keeps it). Scheduled tasks run as Request approval with every ask refused, and never escalate.
 
+A profile change applies to the next crossing only: it never revokes work already started or a
+call already running outside the sandbox (an escalation granted under Full access keeps running
+after you switch to Request approval). To stop such work, cancel the run or stop the command; a
+narrowed device setting (the network, running outside the sandbox) does revoke the started work it
+no longer allows.
+
 **Cloud devices**: the container or microVM is the sandbox. Its whole file system is the scope and
 its network, which the sandbox extension enforces, is the sandbox network. There are no directory
 crossings and nothing runs outside it; the profiles differ only in sensitive-command consent. A new
@@ -92,6 +98,8 @@ Who sets the sandbox (each layer can only narrow the one above):
   never add one. Through an API token or the Platform tool (`devices.set-network`) it only narrows.
   The change applies on the device's next use (files kept), or after a file reset where the
   provider applies limits to the file system; the page says which, and lists recent changes.
+  The platform's and org's outside-sandbox setting never touches a cloud device (it has no outside
+  of its sandbox), so toggling it updates no running instance.
 
 A crossing beyond a ceiling is unavailable under every profile, with an error naming who can
 change it (the device owner on the machine, an org admin, or the super admin). If the device
