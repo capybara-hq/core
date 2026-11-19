@@ -1,11 +1,13 @@
 import { homedir } from "node:os";
 import type { Connection } from "../client.js";
+import type { LiveStatus } from "../control/protocol.js";
+import { startControlServer } from "../control/server.js";
 import { type ProcessLookup, readRunningPid, removePid, writePid } from "../pid.js";
 import { PolicyStore } from "../policy-store.js";
 import { hasLoginService } from "../service/installed.js";
 import { rotateServiceLog } from "../service/launchd.js";
 import { startedByServiceManager } from "../service/manager.js";
-import { connectStaged } from "../staged-connect.js";
+import { connectStaged, type StagedConnectOptions } from "../staged-connect.js";
 import type { StagedDevice } from "../staged-device.js";
 import { type Credential, convertPolicyFile, policyMode, readCredential } from "../state.js";
 import { PROGRAM_VERSION } from "../version.js";
@@ -84,12 +86,41 @@ export async function start(deps: StartDeps): Promise<number> {
   let conn: Connection | undefined;
   let stopRequested = false;
   let drainRequested = false;
+  let device: StagedDevice | undefined;
+  // the live status the control socket answers: built from the credential, then followed through
+  // the connection's state changes (never the credential itself)
+  let live: LiveStatus = {
+    pid: proc.pid,
+    version: PROGRAM_VERSION,
+    url: cred.url,
+    orgId: cred.orgId,
+    deviceId: cred.deviceId,
+    mode: cred.mode,
+    connection: "starting",
+    since: new Date().toISOString(),
+  };
+  let publish: (s: LiveStatus) => void = () => {};
+  const setState = (s: { connection: LiveStatus["connection"]; reason?: string }): void => {
+    if (live.connection === "draining" && s.connection !== "draining") return;
+    const { offlineReason: _old, ...rest } = live;
+    const next: LiveStatus = {
+      ...rest,
+      connection: s.connection,
+      ...(s.connection === "offline" && s.reason !== undefined && { offlineReason: s.reason }),
+      since: s.connection === live.connection ? live.since : new Date().toISOString(),
+    };
+    if (JSON.stringify(next) === JSON.stringify(live)) return;
+    live = next;
+    publish(live);
+  };
   const onStop = (): void => {
     stopRequested = true;
     conn?.stop();
   };
   const onDrain = (): void => {
+    if (drainRequested) return;
     drainRequested = true;
+    setState({ connection: "draining" });
     out("Draining: no new commands; stopping when the running ones finish.");
     conn?.drain();
   };
@@ -97,15 +128,31 @@ export async function start(deps: StartDeps): Promise<number> {
   proc.on("SIGINT", onStop);
   proc.on("SIGUSR2", onDrain);
   writePid(stateDir, proc.pid, PROGRAM_VERSION);
+  // the local control socket (decision 3): a path it cannot use leaves the program serving
+  const control = await startControlServer({
+    stateDir,
+    status: () => live,
+    running: () => device?.owner?.running?.list() ?? [],
+    drain: onDrain,
+    stop: onStop,
+  }).catch((e: unknown) => ({ unavailable: (e as Error).message }));
+  if ("unavailable" in control)
+    err(`capybara-device: control socket unavailable: ${control.unavailable}`);
+  else publish = (s) => control.publish(s);
   try {
     return await serveStaged(deps, cred, {
       stopRequested: () => stopRequested,
       drainRequested: () => drainRequested,
+      built: (d) => {
+        device = d;
+      },
       connected: (c) => {
         conn = c;
       },
+      onState: setState,
     });
   } finally {
+    if (!("unavailable" in control)) await control.close();
     proc.off("SIGTERM", onStop);
     proc.off("SIGINT", onStop);
     proc.off("SIGUSR2", onDrain);
@@ -124,7 +171,9 @@ async function serveStaged(
   signals: {
     stopRequested: () => boolean;
     drainRequested: () => boolean;
+    built: (device: StagedDevice) => void;
     connected: (conn: Connection) => void;
+    onState: NonNullable<StagedConnectOptions["onState"]>;
   },
 ): Promise<number> {
   const { stateDir, out, err } = deps;
@@ -138,6 +187,7 @@ async function serveStaged(
     err(`Cannot start: ${(e as Error).message}`);
     return 1;
   }
+  signals.built(device);
   try {
     // a persisted binding of this credential comes back for same-generation journal recovery
     await device.binder.recover();
@@ -152,6 +202,7 @@ async function serveStaged(
   }
   const conn = (deps.connectStaged ?? connectStaged)(device, {
     err,
+    onState: signals.onState,
     // read before each reconnect only: a new login while running discards the old credential's
     // state (B-3)
     credential: () => {

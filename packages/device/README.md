@@ -159,6 +159,36 @@ they left running survive the upgrade. Restart the machine, or kill such leftove
 upgrade yourself; this version never searches for them. In Docker mode the old container is
 recreated at the first operation, which ends whatever it still ran.
 
+## Control socket
+
+While `start` serves, it answers on `<stateDir>/control.sock` (next to `credential.json`): a unix
+socket of mode 0600, made only when the state directory belongs to you and has no group or other
+permissions (mode 0700). A socket left by a program that crashed (nothing listens on it) is
+replaced; one another running program answers on is never touched. When the path is longer than
+103 bytes (a long `XDG_CONFIG_HOME`) or the directory is open to other users, the program keeps
+serving without the socket and says why once.
+
+The protocol is JSON lines. A request is `{"id":<positive integer>,"op":"<op>"}`; each answer
+carries the request's id: `{"id":1,"ok":true,"result":...}` or
+`{"id":1,"ok":false,"error":{"code":"...","message":"..."}}` (`bad_request`, with id 0 for a line
+without a usable id, `unknown_op`). A malformed line keeps the connection open.
+
+| Op | Result |
+|---|---|
+| `status` | The live status: `pid`, `version`, `url`, `orgId`, `deviceId`, `mode` (`os` or `docker`), `connection` (`starting`, `online`, `offline` or `draining`), `offlineReason` (while offline), `since` (when `connection` last changed) |
+| `running` | The operations executing now: `tag`, `conversationId`, `accountId`, `isolation` (`restricted` or `full`), `startedAt`; never a command's text, environment or output |
+| `subscribe` | The live status now; afterwards the connection receives `{"event":"status","status":{...}}` after each change |
+| `drain` | `null`; drains as `capybara-device drain` does |
+| `stop` | `null`; stops as `capybara-device stop` does |
+
+`status --json` asks the socket (for at most 500 ms) and adds:
+
+- `control`: `ok` (the running program answered), `absent` (no program runs) or `unavailable`
+  (a program runs but has no socket, with the reason in `controlReason`);
+- `live`: the live status above, or `null`.
+
+The credential is never part of any answer.
+
 ## Docker mode
 
 `login --mode docker` runs every operation in one container per device
