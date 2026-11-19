@@ -11,6 +11,7 @@ import { EventLog } from "../../src/conversations/event-log.js";
 import type { ConversationEvent, EventPayload } from "../../src/conversations/events.js";
 import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
+import { usageTokens } from "../../src/evals/budget.js";
 import { ExtensionHost } from "../../src/extensions/host.js";
 import { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
 import { ModelPurposesService } from "../../src/models/purposes.js";
@@ -179,6 +180,17 @@ const visionUsage = (events: ConversationEvent[]) =>
 const visionRequests = () =>
   capture.sent.filter((r) => r.system.some((s) => s.text === VISION_SYSTEM_PROMPT));
 
+const subagentTokens = async (runId: string): Promise<number> =>
+  Number(
+    (
+      await db
+        .selectFrom("runs")
+        .select("subagent_tokens_used")
+        .where("id", "=", runId)
+        .executeTakeFirstOrThrow()
+    ).subagent_tokens_used,
+  );
+
 /** A conversation with one finished run: the tool call's context in that run. */
 async function callContext(callId = "vision-call"): Promise<BuiltinCallContext> {
   const conversationId = await createConv(owner, orgId, agentId);
@@ -198,13 +210,13 @@ async function callContext(callId = "vision-call"): Promise<BuiltinCallContext> 
   };
 }
 
-const read = (ctx: BuiltinCallContext, prompt?: string) =>
+const read = (ctx: BuiltinCallContext, prompt?: string, signal = ctx.signal) =>
   readImageWithVisionModel(deps, ctx, {
     name: "cat.png",
     mediaType: "image/png",
     data: PNG,
     ...(prompt !== undefined && { prompt }),
-    signal: ctx.signal,
+    signal,
   });
 
 describe("vision read", () => {
@@ -238,7 +250,8 @@ describe("vision read", () => {
     expect((req as ModelRequest).tools).toEqual([]);
     expect((req as ModelRequest).toolChoice).toBe("none");
     const cap = k.app.get(KernelConfigService).get().models.visionMaxOutputTokens;
-    expect((req as ModelRequest).maxOutputTokens).toBeLessThanOrEqual(cap);
+    // model-fake declares maxOutputTokens 4096 for every model
+    expect((req as ModelRequest).maxOutputTokens).toBe(Math.min(cap, 4096));
 
     // usage: purpose vision, the call id, the run, idempotent per call
     const events = await eventsOf(db, ctx.conversationId);
@@ -360,6 +373,36 @@ describe("vision read", () => {
       outcome: "failed",
       errorCode: "model.server",
     });
+  });
+
+  it("the caller's abort ends a sent call; its estimated usage is logged", async () => {
+    await mapVision(VISION);
+    const ctx = await callContext();
+    const caller = new AbortController();
+    const pending = read(ctx, "stall", caller.signal).catch((e: unknown) => e);
+    await waitFor(async () => visionRequests().length === 1, 30_000, "vision request sent");
+    caller.abort();
+    const err = await pending;
+    expect(err).toBeInstanceOf(ToolError);
+    expect((err as ToolError).message).toBe(VISION_READ_FAILED_TEXT);
+    const usage = visionUsage(await eventsOf(db, ctx.conversationId));
+    expect(usage.map((e) => e.payload)).toEqual([
+      expect.objectContaining({ purpose: "vision", outputTokens: 0, model: "fake-vision" }),
+    ]);
+    expect((usage[0]?.payload.inputTokens ?? 0) > 0).toBe(true);
+  });
+
+  it("a sub-agent's call: its tokens count on the parent run", async () => {
+    await mapVision(VISION);
+    const parent = await callContext("parent-call");
+    const ctx = { ...(await callContext()), conversationKind: "subagent" as const };
+    const before = await subagentTokens(parent.runId as string);
+    await read({ ...ctx, parentRunId: parent.runId as string }, "describe it");
+    const [usage] = visionUsage(await eventsOf(db, ctx.conversationId));
+    expect(usage).toBeDefined();
+    const tokens = usageTokens(usage?.payload as EventPayload<"usage">);
+    expect(tokens).toBeGreaterThan(0);
+    expect((await subagentTokens(parent.runId as string)) - before).toBe(tokens);
   });
 
   it("a stalled call is aborted at models.visionTimeoutMs", async () => {
