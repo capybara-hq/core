@@ -1,6 +1,6 @@
 import { formatCompact } from "@capybara-hq/design";
 import { describeNestedBox, findNestedBoxes } from "@capybara-hq/design/reference";
-import { cleanup, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
@@ -2261,6 +2261,7 @@ describe("org-owned plugins in the admin console (phase 3)", () => {
       "GET /api/v1/admin/inbox/count": () => json(200, { total: 2 }),
       "POST /api/v1/admin/inbox/notices/n1/dismiss": () => new Response(null, { status: 204 }),
     });
+    window.history.replaceState(null, "", "/admin/inbox");
     await renderRouteWithCache("/admin/inbox", lastStubRoutes());
     // the selected item's card says who uploaded what
     expect(
@@ -2285,10 +2286,21 @@ describe("org-owned plugins in the admin console (phase 3)", () => {
     );
     expect(await screen.findByText(transferred)).toBeTruthy();
     expect(await screen.findByText("2 organizations still use it.")).toBeTruthy();
+    // the system back closes the opened item; the decision after it never steps out of the page
+    await act(async () => {
+      window.history.back();
+      await waitFor(() => expect(window.location.hash).toBe(""));
+      window.dispatchEvent(new PopStateEvent("popstate"));
+    });
+    const back = vi.spyOn(window.history, "back");
     await user.click(screen.getByRole("button", { name: I.transferred.dismiss }));
     await waitFor(() =>
       expect(calls.some((c) => c.url.endsWith("/notices/n1/dismiss"))).toBe(true),
     );
+    expect(back).not.toHaveBeenCalled();
+    expect(window.location.pathname).toBe("/admin/inbox");
+    back.mockRestore();
+    window.history.replaceState(null, "", "/");
   });
 
   it("zh copy of the owner, the share gate and the inbox", () => {

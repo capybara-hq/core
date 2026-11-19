@@ -182,6 +182,35 @@ describe("收件箱（InboxPage）", () => {
     expect(window.location.hash).toBe("");
   });
 
+  it("open, then the system back, then a decision stays on /inbox (no stale history step)", async () => {
+    window.history.replaceState(null, "", "/inbox");
+    let pending = [approval("a"), approval("b")];
+    await renderInbox({
+      [LIST]: () => json(200, inbox(pending)),
+      "POST /api/v1/orgs/o1/approvals/a/decision": () => {
+        pending = pending.filter((x) => x.id !== "a");
+        return json(200, { approval: { ...approval("a"), status: "approved", scope: "once" } });
+      },
+    });
+    const table = await screen.findByRole("list", { name: msgs.en.inbox.listLabel });
+    const user = userEvent.setup();
+    await user.click(within(table).getByText("Fixture [tool_a]"));
+    expect(window.location.hash).toBe("#item=a");
+    await act(async () => {
+      window.history.back();
+      await waitFor(() => expect(window.location.hash).toBe(""));
+      window.dispatchEvent(new PopStateEvent("popstate"));
+    });
+    const back = vi.spyOn(window.history, "back");
+    const row = screen.getByRole("region", { name: "Pending changes" });
+    await user.click(within(row).getByRole("button", { name: msgs.en.approval.approve }));
+    expect(await screen.findByText(msgs.en.inbox.approved)).toBeTruthy();
+    expect(back).not.toHaveBeenCalled();
+    expect(window.location.pathname).toBe("/inbox");
+    back.mockRestore();
+    window.history.replaceState(null, "", "/");
+  });
+
   it("/inbox#item=<id> deep-links to the item", async () => {
     window.history.replaceState(null, "", "/inbox#item=b");
     const { container } = await renderInbox({

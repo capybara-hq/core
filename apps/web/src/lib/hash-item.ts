@@ -27,7 +27,12 @@ export function useHashItem(key = "item"): {
   const [id, setId] = useState<string | null>(null);
   const pushed = useRef(false);
   useEffect(() => {
-    const read = () => setId(parse(window.location.hash, key));
+    const read = () => {
+      const next = parse(window.location.hash, key);
+      // The system back (or a link) left the item's entry: the next close has no entry to step out of
+      if (next === null) pushed.current = false;
+      setId(next);
+    };
     read();
     window.addEventListener("hashchange", read);
     window.addEventListener("popstate", read);
@@ -51,6 +56,12 @@ export function useHashItem(key = "item"): {
     [key],
   );
   const close = useCallback(() => {
+    // Nothing is open (the system back already closed it): never step the history out of the page
+    if (parse(window.location.hash, key) === null) {
+      pushed.current = false;
+      setId(null);
+      return;
+    }
     setId(null);
     if (pushed.current) {
       pushed.current = false;
@@ -59,6 +70,6 @@ export function useHashItem(key = "item"): {
     }
     const url = new URL(window.location.href);
     window.history.replaceState(window.history.state, "", url.pathname + url.search);
-  }, []);
+  }, [key]);
   return { id, open, close };
 }
