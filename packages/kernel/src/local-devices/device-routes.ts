@@ -105,17 +105,23 @@ export async function registerDeviceConnectRoute(
           const spoken = req.headers[DEVICE_PROTOCOL_HEADER];
           if (spoken !== String(DEVICE_PROTOCOL_VERSION)) {
             // the program's own protocol, named only when it is a plain number (header input)
+            const number =
+              typeof spoken === "string" && /^[0-9]{1,3}$/.test(spoken) ? Number(spoken) : null;
             const theirs =
-              typeof spoken === "string" && /^[0-9]{1,3}$/.test(spoken)
-                ? `this capybara-device protocol ${spoken}`
+              number !== null
+                ? `this capybara-device protocol ${number}`
                 : "this capybara-device an older protocol";
+            // a newer program than this deployment: the deployment is the one to upgrade
+            const fix =
+              number !== null && number > DEVICE_PROTOCOL_VERSION
+                ? "This deployment is older than the program; ask the platform's super admin to upgrade Capybara, or install the capybara-device release that matches this deployment."
+                : "Update capybara-device on the machine (npm install -g @capybara-hq/device@next), then start it again.";
             return reply
               .code(426)
               .send(
                 errorBody(
                   "device.program_outdated",
-                  `This kernel speaks device protocol ${DEVICE_PROTOCOL_VERSION}, ${theirs}. ` +
-                    "Update capybara-device on the machine (npm install -g @capybara-hq/device@next), then start it again.",
+                  `This kernel speaks device protocol ${DEVICE_PROTOCOL_VERSION}, ${theirs}. ${fix}`,
                 ),
               );
           }

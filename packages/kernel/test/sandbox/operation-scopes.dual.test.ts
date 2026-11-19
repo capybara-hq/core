@@ -82,6 +82,8 @@ function replica(pool: ReturnType<typeof createDb>) {
         readRoots: ["/work"],
         writeRoots: ["/work"],
         allowedHosts: [],
+        network: "none",
+        boundary: "operation",
         outsideSandboxCeiling: false,
       });
     },

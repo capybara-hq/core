@@ -4,6 +4,7 @@ import { audit } from "../identity/audit.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
+import { coversHost } from "../sandbox/modes.js";
 import { PermissionCeilingWrites } from "../sandbox/permission-ceiling-writes.js";
 import {
   decideOwnerReport,
@@ -143,16 +144,33 @@ export class OwnerReports {
     const domainsChanged =
       JSON.stringify([...before.restrictedAllowedDomains].sort()) !==
       JSON.stringify([...after.restrictedAllowedDomains].sort());
+    // the owner's sandbox network: narrowing it to the allowlist takes open-network work
+    const networkChanged = before.network !== after.network;
+    // only a widening resets Full consent (Full access would auto-approve more): running outside
+    // allowed again, the open network, the os-user reach, or a host added to an allowlist the
+    // owner keeps; a narrowing keeps what the consent covered. A machine's first report is no
+    // network widening (the missing state's allowlist is only failing closed)
+    const reported = before.state !== "missing";
+    const widened =
+      (!before.fullAccess && after.fullAccess) ||
+      (before.restrictedProjectReach === "workspace" &&
+        after.restrictedProjectReach === "os-user") ||
+      (reported && before.network === "allowlist" && after.network === "open") ||
+      (reported &&
+        after.network === "allowlist" &&
+        after.restrictedAllowedDomains.some(
+          (h) => !before.restrictedAllowedDomains.some((p) => coversHost(p, h)),
+        ));
     const roots = machineRootList(row.roots);
     // a new revision with the same visible facts is no new authority: nothing is published
-    if (fullChanged || reachChanged || domainsChanged || meta.rootsChanged)
+    if (fullChanged || reachChanged || domainsChanged || networkChanged || meta.rootsChanged)
       await this.ceilings.publishLocked(
         subject,
         "device",
         (scope, intent) =>
           meta.rootsChanged === true ||
           ownerReportRevokes(after, scope, intent.method, intent.granted_hosts, roots),
-        fullChanged || meta.rootsChanged === true,
+        widened || meta.rootsChanged === true,
       );
     // the op whose change this is: its answer names it, else (the machine's own report of it, a
     // policy frame or a reconnect hello, landing first) a live pending op of the platform's that
@@ -172,7 +190,7 @@ export class OwnerReports {
         opId: pending.id,
         ...(pending.actorTokenId !== undefined && { actorTokenId: pending.actorTokenId }),
       });
-    if (before.state !== "missing" && (fullChanged || reachChanged))
+    if (before.state !== "missing" && (fullChanged || reachChanged || networkChanged))
       await audit(this.db.db, {
         actorAccountId: by?.accountId ?? row.account_id,
         ...(by?.actorTokenId !== undefined && { actorTokenId: by.actorTokenId }),
@@ -180,13 +198,16 @@ export class OwnerReports {
         action: "device.owner_ceiling_changed",
         target: row.device_id,
         detail: {
+          // the network appears when it changed (the rows of other changes keep their shape)
           from: {
             fullAccess: before.fullAccess,
             restrictedProjectReach: before.restrictedProjectReach,
+            ...(networkChanged && { network: before.network }),
           },
           to: {
             fullAccess: after.fullAccess,
             restrictedProjectReach: after.restrictedProjectReach,
+            ...(networkChanged && { network: after.network }),
           },
           sequence: report.sequence,
           by: by?.accountId ?? row.account_id,

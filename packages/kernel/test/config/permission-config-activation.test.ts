@@ -296,7 +296,8 @@ async function consentFixture() {
   const a = readers();
   await a.publication.initialize();
   const preview = await a.facts.preview(orgId, accountId, deviceId);
-  expect(preview.outsideSandboxCeiling).toBe(true);
+  // a cloud device has no outside of its sandbox; Full access needs none (it keeps the sandbox)
+  expect(preview.outsideSandboxCeiling).toBe(false);
   const consent = { deviceId, scopeRevision: preview.scopeRevision };
   await db
     .updateTable("conversations")
@@ -349,7 +350,7 @@ it("unrelated-config-preserves-full-consent", async () => {
 
 it("restricted-network-activation-preserves-full-consent", async () => {
   const f = await consentFixture();
-  const b = readers(config("allowed", ["b.example"]));
+  const b = readers(config("allowed", []));
   const before = await f.row();
   const fullScope = await f.a.facts.scope(f.orgId, f.deviceId, null, null);
   expect((await f.a.facts.readDevice(f.orgId, f.deviceId)).policy.network).toEqual({
@@ -532,7 +533,7 @@ async function intent(
   return scope.operationId;
 }
 it.each(["exec", "backgroundStart"] as const)(
-  "restricted activation revokes only affected %s intents with one epoch and durable outbox",
+  "a host removal revokes the affected %s intents under every profile with one epoch and durable outbox",
   async (method) => {
     const full = await consentFixture(),
       restricted = await consentFixture();
@@ -543,7 +544,7 @@ it.each(["exec", "backgroundStart"] as const)(
       .selectAll()
       .where("kind", "=", "platform")
       .executeTakeFirstOrThrow();
-    await publisher(config("allowed", ["b.example"])).initialize({
+    await publisher(config("allowed", [])).initialize({
       activation: { expectedActiveHash: permissionConfigFingerprint(config()) },
     });
     const after = await db
@@ -561,7 +562,8 @@ it.each(["exec", "backgroundStart"] as const)(
           .where("operation_id", "=", fullId)
           .executeTakeFirstOrThrow()
       ).state,
-    ).toBe("admitted");
+      // the sandbox is the same under every profile: Full access work used the removed host too
+    ).toBe("revoked");
     expect(
       (
         await db
@@ -665,7 +667,7 @@ it("already aborted startup leaves an absent or matching publication untouched",
 });
 
 it.each(["exec", "backgroundStart"] as const)(
-  "actual org writer narrows restricted %s authority while preserving Full",
+  "actual org writer narrows %s authority under every profile",
   async (method) => {
     const f = await consentFixture();
     const fullId = await intent(f, false, method);
@@ -682,13 +684,14 @@ it.each(["exec", "backgroundStart"] as const)(
       .select(["operation_id", "state"])
       .where("operation_id", "in", [fullId, restrictedId])
       .execute();
-    expect(rows.find((r) => r.operation_id === fullId)?.state).toBe("admitted");
+    // the sandbox is the same under every profile: Full access work loses the host too
+    expect(rows.find((r) => r.operation_id === fullId)?.state).toBe("revoked");
     expect(rows.find((r) => r.operation_id === restrictedId)?.state).toBe("revoked");
   },
 );
 
 it.each(["exec", "backgroundStart"] as const)(
-  "actual owner writer narrows %s baseline but preserves recorded additions and Full",
+  "actual owner writer narrows %s baseline under every profile but preserves recorded additions",
   async (method) => {
     const f = await consentFixture();
     const fullId = await intent(f, false, method);
@@ -719,8 +722,29 @@ it.each(["exec", "backgroundStart"] as const)(
       .select(["operation_id", "state"])
       .where("operation_id", "in", [fullId, revokedId, grantedId])
       .execute();
-    expect(rows.find((r) => r.operation_id === fullId)?.state).toBe("admitted");
+    // the sandbox is the same under every profile: Full access work loses the host too
+    expect(rows.find((r) => r.operation_id === fullId)?.state).toBe("revoked");
     expect(rows.find((r) => r.operation_id === grantedId)?.state).toBe("admitted");
     expect(rows.find((r) => r.operation_id === revokedId)?.state).toBe("revoked");
   },
 );
+
+it("a platform host list that grows resets Full consent; one that only shrinks keeps it", async () => {
+  const f = await consentFixture();
+  await publisher(config("allowed", [])).initialize({
+    activation: { expectedActiveHash: permissionConfigFingerprint(config()) },
+  });
+  expect((await f.row()).permission_profile).toBe("full-access");
+  expect((await f.view()).profile).toBe("full-access");
+  await publisher(config("allowed", ["b.example"])).initialize({
+    activation: { expectedActiveHash: permissionConfigFingerprint(config("allowed", [])) },
+  });
+  expect((await f.row()).permission_profile).toBe("approve-for-me");
+  const changed = await db
+    .selectFrom("conversation_events")
+    .select("payload")
+    .where("conversation_id", "=", f.conversationId)
+    .where("type", "=", "permission_profile_changed")
+    .execute();
+  expect(changed.at(-1)?.payload).toMatchObject({ newProfile: "approve-for-me" });
+});

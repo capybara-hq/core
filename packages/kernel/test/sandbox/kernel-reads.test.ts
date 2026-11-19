@@ -71,7 +71,7 @@ const files = new Map<string, string>();
 /** Symbolic links: a path → the file it points at. */
 const links = new Map<string, string>();
 /** Set: the cloud runtime reports Full access only (E2B's support). */
-let fullOnly = false;
+let instanceBoundary = false;
 /** Every provider entry reached: the route, the method, the path and the operation's scope. */
 const seen: {
   route: "operation" | "browse" | "raw";
@@ -153,7 +153,7 @@ beforeAll(async () => {
       return [{ path: APP, suggestedName: "app" }];
     },
     async permissionSupport() {
-      return fullOnly ? REPORTS["full-only"] : REPORTS.both;
+      return instanceBoundary ? REPORTS.instance : REPORTS.both;
     },
     async revokeOperation() {},
     async operation(h, scope) {
@@ -223,7 +223,7 @@ beforeEach(async () => {
   seen.length = 0;
   files.clear();
   links.clear();
-  fullOnly = false;
+  instanceBoundary = false;
   files.set(`${APP}/AGENTS.md`, "Be kind to the build.");
   files.set(
     `${APP}/.agents/skills/fix/SKILL.md`,
@@ -661,8 +661,8 @@ describe("the kernel read's route follows the device's recorded runtime support"
   const profilesOf = async (f: Fixture) =>
     (await intentsOf(f)).map((r) => (r.scope as unknown as SandboxOperationScope).profile);
 
-  it("a cloud Full-only runtime reads under Full access, still on the narrowed paths", async () => {
-    fullOnly = true;
+  it("a cloud instance-boundary runtime reads under the restricted scope, on the narrowed paths", async () => {
+    instanceBoundary = true;
     const f = await seed();
     await bindProject(f);
     await fullAccess(f);
@@ -674,22 +674,22 @@ describe("the kernel read's route follows the device's recorded runtime support"
     });
     const profiles = await profilesOf(f);
     expect(profiles.length).toBeGreaterThan(0);
-    expect(new Set(profiles)).toEqual(new Set(["full-access"]));
+    expect(new Set(profiles)).toEqual(new Set(["request-approval"]));
     expect(seen.some((x) => x.path.endsWith("secret.txt"))).toBe(false);
     for (const x of seen.filter((y) => y.route === "operation"))
       expect(x.readRoots?.[0]?.startsWith(APP)).toBe(true);
   });
 
-  it("a local Docker-mode Full-only runtime reads under Full access", async () => {
+  it("a local runtime that can only run outside the sandbox gets no read, Docker mode included", async () => {
     const f = await seedLocal("docker", "full-only");
     await bindProject(f);
     await fullAccess(f);
     const run = await claimRun(f);
     expect(await recordKnowledge(f, run)).toBe(true);
     expect(await latestProjectRoot(f.conversationId)).toMatchObject({
-      agentsMd: "Be kind to the build.",
+      unavailable: { reason: "unreadable" },
     });
-    expect(new Set(await profilesOf(f))).toEqual(new Set(["full-access"]));
+    expect(seen.filter((x) => x.route === "operation")).toEqual([]);
   });
 
   it("a host machine without restricted enforcement gets no read: unreadable with the reason, the run goes on", async () => {

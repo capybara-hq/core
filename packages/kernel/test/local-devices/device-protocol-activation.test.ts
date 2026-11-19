@@ -146,6 +146,19 @@ describe("the production route speaks protocol 4 only", () => {
     }
   });
 
+  it("a newer program is told this deployment is older and must be upgraded", async () => {
+    const m = await connected();
+    const r = await refusal(url, {
+      Authorization: `Bearer ${m.credential}`,
+      "X-Capybara-Device-Protocol": "5",
+    });
+    expect(r?.status).toBe(426);
+    expect(codeOf(r?.body ?? "")).toBe("device.program_outdated");
+    expect(r?.body).toContain("device protocol 4");
+    expect(r?.body).toContain("older");
+    expect(r?.body).not.toContain("Update capybara-device");
+  });
+
   it("a protocol 2 hello on a protocol 4 connection closes 4400 and claims nothing", async () => {
     const m = await connected();
     const { ws, closed } = await rawSocket(m.credential);

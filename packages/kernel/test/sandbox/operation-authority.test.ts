@@ -16,6 +16,8 @@ describe("operation authority intersection", () => {
     readRoots: ["/work"],
     writeRoots: ["/work"],
     allowedHosts: ["api.example.com"],
+    network: "allowlist" as const,
+    boundary: "operation" as const,
     outsideSandboxCeiling: true,
   };
   it("both restricted profiles keep independently bounded roots and hosts", () => {
@@ -26,21 +28,15 @@ describe("operation authority intersection", () => {
         network: { kind: "allowlist", hosts: ["api.example.com"] },
       });
   });
-  it("Full uses the environment only with explicit matching consent and current ceiling", () => {
-    expect(() =>
-      intersectPermissionScope({ ...base, profile: "full-access", fullConsent: false }),
-    ).toThrow();
-    expect(() =>
-      intersectPermissionScope({
-        ...base,
+  it("Full access keeps the sandbox: the same scoped roots and hosts, whatever its ceiling", () => {
+    for (const outsideSandboxCeiling of [true, false])
+      expect(
+        intersectPermissionScope({ ...base, profile: "full-access", outsideSandboxCeiling }),
+      ).toMatchObject({
         profile: "full-access",
-        fullConsent: true,
-        outsideSandboxCeiling: false,
-      }),
-    ).toThrow();
-    expect(
-      intersectPermissionScope({ ...base, profile: "full-access", fullConsent: true }),
-    ).toMatchObject({ filesystem: { kind: "device" }, network: { kind: "environment" } });
+        filesystem: { kind: "scoped", readRoots: ["/work"], writeRoots: ["/work"] },
+        network: { kind: "allowlist", hosts: ["api.example.com"] },
+      });
   });
   it("empty restricted allowance denies network and returned grants are immutable copies", () => {
     const readRoots = ["/work"];
@@ -48,6 +44,7 @@ describe("operation authority intersection", () => {
       ...base,
       profile: "approve-for-me",
       allowedHosts: [],
+      network: "none",
       readRoots,
     });
     readRoots.push("/secret");
@@ -93,10 +90,12 @@ describe("per-call sandbox escalation", () => {
     readRoots: ["/work"],
     writeRoots: ["/work"],
     allowedHosts: [],
+    network: "none" as const,
+    boundary: "operation" as const,
     outsideSandboxCeiling: true,
   };
-  it("an escalated restricted operation gets full execution and keeps its profile", () => {
-    for (const profile of ["request-approval", "approve-for-me"] as const)
+  it("an escalated operation runs outside the sandbox and keeps its profile", () => {
+    for (const profile of ["request-approval", "approve-for-me", "full-access"] as const)
       expect(intersectPermissionScope({ ...base, profile, escalated: true })).toMatchObject({
         profile,
         filesystem: { kind: "device" },

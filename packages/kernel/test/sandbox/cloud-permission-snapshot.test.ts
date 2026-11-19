@@ -320,6 +320,8 @@ it("a stricter applied instance is never widened to the inferred default", async
     owner_full_access: false,
     outer_network: { kind: "allowlist", hosts: [] },
   });
+  // an empty snapshot allowlist ran closed: the device's own network is closed (`none`), which
+  // the instance gets as an empty allowlist (approval-only profiles design, "Migration")
   expect(await policy(f)).toMatchObject({
     mode: "sandbox",
     network: { kind: "allowlist", hosts: [] },

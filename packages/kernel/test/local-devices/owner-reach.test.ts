@@ -70,7 +70,8 @@ const report = (
   revision,
   sequence,
   outsideSandbox: fullAccess,
-  network: "allowlist",
+  // as the fixture's stored report: an owner who allows running outside keeps the open network
+  network: fullAccess ? "open" : "allowlist",
   restrictedProjectReach,
   allowedDomains: restrictedAllowedDomains,
 });
@@ -365,27 +366,63 @@ describe("reordered carriers (fix round 1)", () => {
 });
 
 describe("Full consent and revocation follow only actual Full changes", () => {
-  it("restricted-only changes keep Full consent; removing Full resets it; widening needs fresh consent", async () => {
+  it("narrowing changes keep Full consent; only a widening needs fresh consent", async () => {
     const f = await fixture();
     await f.record(report(1, true, "os-user", ["a.test"]));
     await f.consentFull();
     expect((await f.profileView()).profile).toBe("full-access");
-    // reach and domains only: Full consent stays
-    await f.record(report(2, true, "workspace", []));
+    // domains only: Full consent stays
+    await f.record(report(2, true, "os-user", []));
     expect((await f.profileView()).profile).toBe("full-access");
     // a new revision with the same facts publishes nothing
-    await f.record(report(3, true, "workspace", [], "rev-touched"));
+    await f.record(report(3, true, "os-user", [], "rev-touched"));
     expect((await f.profileView()).profile).toBe("full-access");
-    // Full removed: consent is reset
-    await f.record(report(4, false, "workspace"));
-    expect((await f.profileView()).profile).toBe("approve-for-me");
-    // widening back is not the old consent
-    await f.record(report(5, true, "workspace"));
+    // a narrower reach and running outside removed are narrowings: the consent still covers them
+    await f.record(report(31, true, "workspace", []));
+    expect((await f.profileView()).profile).toBe("full-access");
+    await f.record(report(32, false, "workspace"));
+    expect((await f.profileView()).profile).toBe("full-access");
+    // widening back resets it with a recorded profile change: not the old consent
+    await f.record(report(33, true, "workspace"));
     const v = await f.profileView();
     expect(v.profile).not.toBe("full-access");
+    const changed = await f.db
+      .selectFrom("conversation_events")
+      .select("payload")
+      .where("conversation_id", "=", f.conversationId)
+      .where("type", "=", "permission_profile_changed")
+      .execute();
+    expect(changed.at(-1)?.payload).toMatchObject({ newProfile: "approve-for-me" });
   });
 
-  it("an org that turns Full off over an owner report with Full: the profile drops Full, admission narrows", async () => {
+  it("an owner network narrowing publishes, audits, keeps Full consent and revokes open work", async () => {
+    const f = await fixture();
+    await f.record(report(1, true, "workspace"));
+    await f.consentFull();
+    expect((await f.profileView()).profile).toBe("full-access");
+    const operationId = randomUUID();
+    await f.db.insertInto("sandbox_operation_intents").values(openIntent(f, operationId)).execute();
+    await f.record({ ...report(2, true, "workspace"), network: "allowlist" });
+    // open to allowlist only narrows: the consent still covers it
+    expect((await f.profileView()).profile).toBe("full-access");
+    const intent = await f.db
+      .selectFrom("sandbox_operation_intents")
+      .select("state")
+      .where("operation_id", "=", operationId)
+      .executeTakeFirstOrThrow();
+    expect(intent.state).toBe("revoked");
+    const audits = await f.db
+      .selectFrom("audit_events")
+      .select("detail")
+      .where("action", "=", "device.owner_ceiling_changed")
+      .execute();
+    expect(audits.at(-1)?.detail).toMatchObject({
+      from: { network: "open" },
+      to: { network: "allowlist" },
+    });
+  });
+
+  it("an org that turns running outside off keeps the Full consent (a narrowing); admission stays sandboxed", async () => {
     const f = await fixture();
     await f.record(report(1, true, "os-user"));
     await f.consentFull();
@@ -401,18 +438,20 @@ describe("Full consent and revocation follow only actual Full changes", () => {
         "exec",
         new AbortController().signal,
       );
+    // Full access keeps the sandbox: a scoped filesystem, never the device pair
     const full = await admit();
-    expect(full).toMatchObject({ profile: "full-access", filesystem: { kind: "device" } });
+    expect(full).toMatchObject({ profile: "full-access", filesystem: { kind: "scoped" } });
     // the org turns Full off; the machine still reports a Full owner ceiling
     await k.app.get(OrgSettingsService).update(f.orgId, { outsideSandbox: "off" }, f.accountId);
-    expect((await f.profileView()).profile).not.toBe("full-access");
+    expect((await f.profileView()).profile).toBe("full-access");
+    expect((await f.profileView()).outsideSandboxCeiling).toBe(false);
     const narrowed = await admit();
-    expect(narrowed.profile).not.toBe("full-access");
+    expect(narrowed.profile).toBe("full-access");
     expect(narrowed.filesystem.kind).toBe("scoped");
     expect(narrowed.network.kind).not.toBe("environment");
   });
 
-  it("a disconnected owner narrowing arrives with the reconnect hello and resets Full", async () => {
+  it("a disconnected owner narrowing arrives with the reconnect hello and keeps Full consent", async () => {
     const f = await fixture();
     const roots = { ...DEFAULT_SANDBOX_ROOTS, workspace: "/work" };
     await f.db
@@ -430,7 +469,7 @@ describe("Full consent and revocation follow only actual Full changes", () => {
     };
     await k.app.get(MachinesService).recordHelloV3(f.machineId, hello, "c-reconnect");
     expect(await f.view()).toMatchObject({ fullAccess: false, restrictedProjectReach: "os-user" });
-    expect((await f.profileView()).profile).toBe("approve-for-me");
+    expect((await f.profileView()).profile).toBe("full-access");
     // a stale report on a reconnect blocks instead of reverting
     await k.app
       .get(MachinesService)
@@ -652,3 +691,44 @@ describe("cloud owner ceiling PATCH", () => {
     ).rejects.toMatchObject({ code: "device.mode_on_device" });
   });
 });
+
+/** An admitted exec on the open public network (what an owner allowlist narrowing revokes). */
+function openIntent(
+  f: { orgId: string; accountId: string; deviceId: string; conversationId: string },
+  operationId: string,
+) {
+  return {
+    operation_id: operationId,
+    org_id: f.orgId,
+    account_id: f.accountId,
+    device_id: f.deviceId,
+    root_conversation_id: f.conversationId,
+    ordinal: 0,
+    method: "exec" as const,
+    input_hash: "i",
+    admission_hash: "a",
+    granted_hosts: "[]",
+    input: "{}",
+    scope: JSON.stringify({
+      operationId,
+      admitBeforeMs: Date.now() + 30000,
+      deviceId: f.deviceId,
+      rootConversationId: f.conversationId,
+      profileRevision: 0,
+      ceilingRevision: "c",
+      profile: "full-access",
+      actor: { accountId: f.accountId, conversationId: f.conversationId },
+      tag: operationId,
+      filesystem: { kind: "scoped", readRoots: ["/work"], writeRoots: ["/work"] },
+      network: { kind: "open-public" },
+    }),
+    epochs: JSON.stringify({ platform: 0, org: 0, device: 0, root: 0 }),
+    provider: "@local",
+    provider_version: "0.1.0",
+    instance_generation: "1",
+    execution_id: randomUUID(),
+    deadline: new Date(Date.now() + 60000),
+    retain_until: new Date(Date.now() + 60000),
+    state: "admitted" as const,
+  };
+}

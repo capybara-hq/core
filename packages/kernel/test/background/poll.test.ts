@@ -992,7 +992,8 @@ describe("exact background revocation through the outbox and the worker", () => 
       revision: `owner-${sequence}`,
       sequence,
       outsideSandbox: o.fullAccess,
-      network: o.fullAccess ? "open" : "allowlist",
+      // the owner's baseline is its allowlist (a local owner's allowlist is the machine's ceiling)
+      network: "allowlist",
       restrictedProjectReach: o.reach ?? "os-user",
       allowedDomains: o.domains,
     },
@@ -1109,7 +1110,7 @@ describe("exact background revocation through the outbox and the worker", () => 
     expect((await intentOf(grantedTask)).state).toBe("background-running");
   });
 
-  it("the B2 owner writer: a restricted-only change keeps Full work and consent; Full narrowing revokes only Full work", async () => {
+  it("the B2 owner writer narrows sandboxed work under every profile; the consent follows the reach", async () => {
     const f = await managedTaskFixture({
       kernels: [k],
       raw,
@@ -1162,46 +1163,33 @@ describe("exact background revocation through the outbox and the worker", () => 
         .select(["status", "launch_state"])
         .where("id", "=", id)
         .executeTakeFirstOrThrow();
+    // the sandbox is the same under every profile: both tasks run on the owner's allowlist
+    for (const task of [fullTask, restrictedTask])
+      expect((await intentOf(task)).scope).toMatchObject({
+        filesystem: { kind: "scoped" },
+        network: { kind: "allowlist", hosts: [HOST] },
+      });
     expect((await intentOf(fullTask)).scope).toMatchObject({ profile: "full-access" });
-    expect((await intentOf(restrictedTask)).scope).toMatchObject({
-      profile: "approve-for-me",
-      network: { kind: "allowlist", hosts: [HOST] },
-    });
     await f.db.updateTable("runs").set({ status: "completed" }).where("id", "=", f.runId).execute();
     const consentAt = (await facts.scope(f.orgId, f.deviceId, null, null)).scopeRevision;
-    // restricted-only owner change (baseline host and reach): only restricted work it narrows
+    // the owner removes the baseline host and narrows the reach: work under every profile using
+    // the host is revoked; the reach is a crossing ceiling of the Full consent
     await machines.recordPolicyV3(
       machine.id,
       ownerFrame(2, { fullAccess: true, domains: [], reach: "workspace" }),
       "connection-1",
     );
     expect((await intentOf(restrictedTask)).state).toBe("revoked");
-    expect((await intentOf(fullTask)).state).toBe("background-running");
-    // the Full consent scope is untouched by a restricted-only change
-    expect((await facts.scope(f.orgId, f.deviceId, null, null)).scopeRevision).toBe(consentAt);
-    await drainOutbox(k.app, { jobName: "sandbox-operation-revoke" });
-    await waitFor(
-      async () => (await intentOf(restrictedTask)).revoke_acknowledged,
-      30_000,
-      "the worker's exact revoke of the restricted task",
-    );
-    expect(await taskOf(restrictedTask)).toEqual({ status: "stopped", launch_state: "terminal" });
-    expect(await taskOf(fullTask)).toEqual({ status: "running", launch_state: "acknowledged" });
-    expect(f.provider.calls.stop).toHaveLength(1);
-    // the owner removes Full: only the Full task is revoked and stopped exactly
-    await machines.recordPolicyV3(
-      machine.id,
-      ownerFrame(3, { fullAccess: false, domains: [], reach: "workspace" }),
-      "connection-1",
-    );
     expect((await intentOf(fullTask)).state).toBe("revoked");
     expect((await facts.scope(f.orgId, f.deviceId, null, null)).scopeRevision).not.toBe(consentAt);
     await drainOutbox(k.app, { jobName: "sandbox-operation-revoke" });
-    await waitFor(
-      async () => (await intentOf(fullTask)).revoke_acknowledged,
-      30_000,
-      "the worker's exact revoke of the Full task",
-    );
+    for (const task of [fullTask, restrictedTask])
+      await waitFor(
+        async () => (await intentOf(task)).revoke_acknowledged,
+        30_000,
+        "the worker's exact revoke",
+      );
+    expect(await taskOf(restrictedTask)).toEqual({ status: "stopped", launch_state: "terminal" });
     expect(await taskOf(fullTask)).toEqual({ status: "stopped", launch_state: "terminal" });
     expect(f.provider.calls.stop).toHaveLength(2);
   });
@@ -1363,7 +1351,7 @@ describe("exact background revocation through the outbox and the worker", () => 
     expect((await intentOf(sibling)).state).toBe("background-running");
   });
 
-  it("the real org writer turning Full off revokes only the task admitted under Full; the worker stops it exactly", async () => {
+  it("the real org writer turning running outside the sandbox off keeps sandboxed Full work running", async () => {
     const f = await managedTaskFixture({
       kernels: [k],
       raw,
@@ -1406,25 +1394,10 @@ describe("exact background revocation through the outbox and the worker", () => 
     await k.app
       .get(OrgSettingsService)
       .update(f.orgId, { outsideSandbox: "off" }, ownerAccount().id);
-    expect((await intentOf(fullTask)).state).toBe("revoked");
+    // Full access never removed the sandbox: running outside it going off takes no sandboxed
+    // work, under any profile (only an escalated call needs it)
+    expect((await intentOf(fullTask)).state).toBe("background-running");
     expect((await intentOf(restrictedTask)).state).toBe("background-running");
-    await drainOutbox(k.app, { jobName: "sandbox-operation-revoke" });
-    await waitFor(
-      async () => (await intentOf(fullTask)).revoke_acknowledged,
-      30_000,
-      "the worker's exact revoke",
-    );
-    const taskOf = (id: string) =>
-      f.db
-        .selectFrom("background_tasks")
-        .select(["status", "launch_state"])
-        .where("id", "=", id)
-        .executeTakeFirstOrThrow();
-    expect(await taskOf(fullTask)).toEqual({ status: "stopped", launch_state: "terminal" });
-    expect(f.provider.calls.stop).toHaveLength(1);
-    expect(await taskOf(restrictedTask)).toEqual({
-      status: "running",
-      launch_state: "acknowledged",
-    });
+    expect(f.provider.calls.stop).toEqual([]);
   });
 });

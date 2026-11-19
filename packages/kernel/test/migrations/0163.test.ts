@@ -84,12 +84,13 @@ describe("0163 device network columns", () => {
       network_mode: "allowlist",
       network_hosts: ["github.com", "*.npmjs.org"],
     });
-    expect(await rowOf("d_empty")).toEqual({ network_mode: "allowlist", network_hosts: [] });
+    // an empty allowlist ran with the network closed
+    expect(await rowOf("d_empty")).toEqual({ network_mode: "none", network_hosts: [] });
   });
 
-  it("an allowlist whose hosts are unreadable becomes an empty allowlist (never wider)", async () => {
-    expect(await rowOf("d_badhosts")).toEqual({ network_mode: "allowlist", network_hosts: [] });
-    expect(await rowOf("d_mixedhosts")).toEqual({ network_mode: "allowlist", network_hosts: [] });
+  it("an allowlist whose hosts are unreadable becomes a closed network (never wider)", async () => {
+    expect(await rowOf("d_badhosts")).toEqual({ network_mode: "none", network_hosts: [] });
+    expect(await rowOf("d_mixedhosts")).toEqual({ network_mode: "none", network_hosts: [] });
   });
 
   it("an open, missing or local snapshot follows the org", async () => {

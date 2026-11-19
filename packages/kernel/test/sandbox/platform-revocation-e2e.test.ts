@@ -31,19 +31,26 @@ import { SandboxService } from "../../src/sandbox/sandbox.service.js";
 import { runInBackgroundManaged } from "../../src/tools/builtins/sandbox/bash.js";
 import { truncateTables } from "../helpers/db.js";
 import { accountsFor } from "../helpers/identity.js";
-import { barrier, managedTaskFixture } from "../helpers/managed-background.js";
+import {
+  barrier,
+  managedOutputProvider,
+  managedTaskFixture,
+} from "../helpers/managed-background.js";
 import { MODEL_PLUGINS_CONFIG } from "../helpers/model-plugins.js";
 import { drainOutbox } from "../helpers/outbox.js";
+import { storedOwnerReport } from "../helpers/owner-report.js";
 import { startKernel, type TestKernel, waitFor } from "../helpers/runs.js";
 import { seedDevice } from "../helpers/sandbox.js";
 import { seedConversation } from "../helpers/tool-fixtures.js";
 import { stagedHello } from "../local-devices/fake-machine-v3.js";
 
 /**
- * B3 evidence end to end (permission activation B-6): the platform's Full switch turned off by the
- * super admin goes through the real writer (`SettingsService` → `PermissionCeilingWrites`), its
- * outbox row, the outbox relay and the maintenance worker's revoke, to the exact `backgroundStop`
- * of the Full task by its recorded ref. Restricted work keeps its grant. A duplicate delivery of
+ * B3 evidence end to end (permission activation B-6): the platform's network ceiling narrowed to
+ * the allowlist by the super admin (approval-only profiles: Full access runs in the sandbox, on
+ * the device's open network) goes through the real writer (`SettingsService` →
+ * `PermissionCeilingWrites`), its outbox row, the outbox relay and the maintenance worker's
+ * revoke, to the exact `backgroundStop` of the open-network task by its recorded ref. Allowlist
+ * work keeps its grant. A duplicate delivery of
  * the same revoke (again, or two at once) changes nothing. Stop before start: a revocation landing
  * before the start is dispatched never sends it; one landing while the start is in flight stops it
  * by its ref once known. A crashed holder's revocation is durable too (W5-P3a): owed in an outbox
@@ -110,8 +117,18 @@ beforeEach(async () => {
   });
 });
 
-/** The owner's machine allows Full; the conversation consents to Full on it. */
+/**
+ * The owner's machine allows Full and keeps the open network, which its runtime enforces; the
+ * conversation consents to Full on it, so its commands run sandboxed on the open public network.
+ */
 async function fullAccessFixture() {
+  const provider = managedOutputProvider();
+  const support = provider.impl.permissionSupport?.bind(provider.impl);
+  if (!support) throw new Error("the managed provider reports no permission support");
+  provider.impl.permissionSupport = async (h, signal) => ({
+    ...(await support(h, signal)),
+    network: { openPublic: true, allowlist: true, perOperationHosts: true },
+  });
   const f = await managedTaskFixture({
     kernels: [k],
     raw,
@@ -119,6 +136,7 @@ async function fullAccessFixture() {
     password: PW,
     accountId: owner.id,
     launch: false,
+    provider,
   });
   const machine = await f.db
     .selectFrom("device_machines")
@@ -162,9 +180,9 @@ async function fullAccessFixture() {
   return { ...f, intent, taskOf, profileRevision: revision };
 }
 
-/** The super admin turns the platform's Full switch off (the real platform writer). */
-const platformFullOff = () =>
-  k.app.get(SettingsService).update({ devicesOutsideSandbox: { permission: "off" } }, admin.id);
+/** The super admin narrows the platform's network ceiling to the allowlist (the real writer). */
+const platformNetworkNarrowed = () =>
+  k.app.get(SettingsService).update({ devicesNetwork: { ceiling: "allowlist" } }, admin.id);
 
 const revokeJobId = (operationId: string, suffix = "") =>
   `sandbox-operation-revoke-${operationId}${suffix}`;
@@ -193,19 +211,22 @@ const redeliver = (operationId: string, jobId: string) =>
     }),
   );
 
-it("a platform Full-off write reaches the exact backgroundStop through the outbox and the worker", async () => {
+it("a platform network narrowing reaches the exact backgroundStop through the outbox and the worker", async () => {
   const f = await fullAccessFixture();
   await runInBackgroundManaged(f.depsOf(k), await f.ctxFor(), {
     command: "npm run dev",
     description: "Serve",
     run_in_background: true,
   });
-  expect((await f.intent()).scope).toMatchObject({ profile: "full-access" });
+  expect((await f.intent()).scope).toMatchObject({
+    profile: "full-access",
+    network: { kind: "open-public" },
+  });
   expect(await f.taskRow()).toMatchObject({ status: "running", launch_state: "acknowledged" });
   const ref = f.provider.only().ref;
 
   await k.app.get(TransactionHost).run(async () => {
-    await platformFullOff();
+    await platformNetworkNarrowed();
     // inside the writer's transaction: the intent revoked, the task's cancellation owed and the
     // revoke queued as an outbox row; nothing can reach the device before the commit
     const tx = k.app.get(KernelDb);
@@ -266,7 +287,7 @@ it("a revocation that arrives before the start is acknowledged stops it by its r
   await entered.promise;
   expect((await f.intent()).state).toBe("dispatching");
 
-  await platformFullOff();
+  await platformNetworkNarrowed();
   // dispatched but unacknowledged: revoked with an unknown outcome, the exact revoke owed
   expect(await f.intent()).toMatchObject({ state: "revoked", outcome_unknown: true });
   await revokeJobRan(revokeJobId(f.operationId));
@@ -357,40 +378,56 @@ it.each([
   },
 );
 
-it("Full-off revokes only Full work: a restricted sibling keeps its grant and keeps running", async () => {
+it("a network narrowing revokes only open-network work: an allowlist sibling keeps its grant and keeps running", async () => {
   const f = await fullAccessFixture();
-  // the machine reports every root of the instance, so restricted work stays within its reach
+  // the machine reports every root of the instance, so sandboxed work stays within its reach
   await f.db
     .updateTable("device_machines")
     .set({ roots: JSON.stringify({ workspace: "/work", skills: "/skills", tmp: "/tmp" }) })
     .where("device_id", "=", f.deviceId)
     .execute();
-  const fullTask = await f.launchAnother();
+  const openTask = await f.launchAnother();
+  // the owner's network on the allowlist from here on (setup only: the next task's admission
+  // reads it; the owner writer is covered elsewhere)
+  await f.db
+    .updateTable("device_machines")
+    .set({
+      owner_report: storedOwnerReport({
+        network: "allowlist",
+        allowedDomains: ["registry.npmjs.org"],
+        sequence: 2,
+      }),
+    })
+    .where("device_id", "=", f.deviceId)
+    .execute();
   await k.app.get(PermissionProfilesService).set(f.orgId, f.conversationId, owner.id, {
     profile: "approve-for-me",
     expectedRevision: f.profileRevision,
   });
-  const restrictedTask = await f.launchAnother();
+  const allowlistTask = await f.launchAnother();
   const opOf = async (id: string) => (await f.taskOf(id)).operation_id as string;
-  expect((await f.intent(await opOf(fullTask))).scope).toMatchObject({ profile: "full-access" });
-  expect((await f.intent(await opOf(restrictedTask))).scope).toMatchObject({
+  expect((await f.intent(await opOf(openTask))).scope).toMatchObject({
+    network: { kind: "open-public" },
+  });
+  expect((await f.intent(await opOf(allowlistTask))).scope).toMatchObject({
     profile: "approve-for-me",
+    network: { kind: "allowlist" },
   });
 
-  await platformFullOff();
-  expect((await f.intent(await opOf(fullTask))).state).toBe("revoked");
-  expect((await f.intent(await opOf(restrictedTask))).state).toBe("background-running");
-  await revokeJobRan(revokeJobId(await opOf(fullTask)));
-  expect(await f.intent(await opOf(fullTask))).toMatchObject({ revoke_acknowledged: true });
+  await platformNetworkNarrowed();
+  expect((await f.intent(await opOf(openTask))).state).toBe("revoked");
+  expect((await f.intent(await opOf(allowlistTask))).state).toBe("background-running");
+  await revokeJobRan(revokeJobId(await opOf(openTask)));
+  expect(await f.intent(await opOf(openTask))).toMatchObject({ revoke_acknowledged: true });
   expect(f.provider.calls.stop).toEqual([{ graceMs: 5000 }]);
-  expect(f.provider.executions.get(await opOf(fullTask))?.cancelled).toBe(true);
-  expect(f.provider.executions.get(await opOf(restrictedTask))?.cancelled).toBeUndefined();
-  expect(await f.taskOf(fullTask)).toMatchObject({ status: "stopped", launch_state: "terminal" });
-  expect(await f.taskOf(restrictedTask)).toMatchObject({
+  expect(f.provider.executions.get(await opOf(openTask))?.cancelled).toBe(true);
+  expect(f.provider.executions.get(await opOf(allowlistTask))?.cancelled).toBeUndefined();
+  expect(await f.taskOf(openTask)).toMatchObject({ status: "stopped", launch_state: "terminal" });
+  expect(await f.taskOf(allowlistTask)).toMatchObject({
     status: "running",
     launch_state: "acknowledged",
   });
-  expect(await f.intent(await opOf(restrictedTask))).toMatchObject({
+  expect(await f.intent(await opOf(allowlistTask))).toMatchObject({
     state: "background-running",
     revoke_acknowledged: false,
   });
@@ -404,7 +441,7 @@ it("a revocation that lands before the start is dispatched: the start is never s
   const spy = vi
     .spyOn(intents, "claimDispatch")
     .mockImplementationOnce(async (...args: Parameters<typeof claim>) => {
-      await platformFullOff();
+      await platformNetworkNarrowed();
       return claim(...args);
     });
   await expect(
@@ -446,7 +483,7 @@ it("two deliveries of the revoke running at once stop the task exactly once", as
   };
   const jobs = [revokeJobId(f.operationId), revokeJobId(f.operationId, "-again")];
   await k.app.get(TransactionHost).run(async () => {
-    await platformFullOff();
+    await platformNetworkNarrowed();
     // a second copy of the same obligation under another job id (a redelivery)
     await k.app.get(OutboxService).add({
       queue: "cap-kernel-maintenance",
@@ -480,20 +517,20 @@ it("two deliveries of the revoke running at once stop the task exactly once", as
   expect(await f.taskRow()).toMatchObject({ status: "stopped", launch_state: "terminal" });
 });
 
-it("turning Full off again writes no new revocation", async () => {
+it("narrowing the network again writes no new revocation", async () => {
   const f = await fullAccessFixture();
   await runInBackgroundManaged(f.depsOf(k), await f.ctxFor(), {
     command: "npm run dev",
     description: "Serve",
     run_in_background: true,
   });
-  await platformFullOff();
+  await platformNetworkNarrowed();
   await revokeJobRan(revokeJobId(f.operationId));
   expect(await f.intent()).toMatchObject({ revoke_acknowledged: true });
   const before = await f.intent();
   const publish = vi.spyOn(k.app.get(PermissionCeilingWrites), "publishLocked");
   const queued = vi.spyOn(k.app.get(OutboxService), "add");
-  await platformFullOff();
+  await platformNetworkNarrowed();
   // no publication and no revoke job: the stored choice did not change
   expect(publish).not.toHaveBeenCalled();
   expect(queued.mock.calls.filter(([job]) => job.name === "sandbox-operation-revoke")).toEqual([]);

@@ -303,6 +303,18 @@ One mechanical commit on `perm/r3-int`, behaviour kept wherever a later task own
 - `operation-scopes.dual`, `permission-profiles.dual`, `background/permission-lifetime.dual`, run
   sequentially
 
+**Notes from T5 for W2/W3 (security review rulings).**
+
+- T6: grant issuance and the candidate builder use the snapshot's `hostCeiling` / `hostRefusal`
+  (`device-sandbox.ts` `hostGrantCeiling`, `hostGrantRefusal`): the org's network ceiling is a hard
+  ceiling for per-call hosts under every profile (Full access does not auto-grant beyond it and
+  nothing beyond it is proposed), and the reply names who adds the host. Full consent is the view's
+  `consentHolds` (a narrowing keeps it), so the auto-grant reads `fullConsent` from the view.
+  Host proposals under an open-public sandbox network are already skipped there (m8).
+- T10 and T13: the cloud network PATCH revokes with `needsOpenNetwork` and resets consent only on a
+  widening; a person who saves an empty allowlist means "follow the org" (`allowlist` with `[]`),
+  a closed network is `network_mode: none`; providers report `boundary: "instance"` (m7).
+
 ### T6: review, grants and auto-grant audit (TB+MR+MIG)
 
 **Owns:**

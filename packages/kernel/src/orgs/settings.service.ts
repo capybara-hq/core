@@ -23,7 +23,11 @@ import { TransactionHost, withOrderedLocks } from "../infra/database/transaction
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
-import type { DeviceNetworkMode } from "../sandbox/device-sandbox.js";
+import {
+  type DeviceNetworkMode,
+  hostGrantable,
+  hostGrantCeiling,
+} from "../sandbox/device-sandbox.js";
 import {
   type DevicesNetworkView,
   type DevicesOutsideSandboxView,
@@ -38,11 +42,13 @@ import {
   orgEffectiveHosts,
   orgHostOutsideCeiling,
 } from "../sandbox/modes.js";
-import { isExecutionMethod } from "../sandbox/operation-authority-types.js";
 import { PermissionAuthorityModule } from "../sandbox/permission-authority.module.js";
 import {
+  cloudDevicesFollowingDefault,
+  hostsNarrowed,
   localMachineRoots,
   needsFullCeiling,
+  needsOpenNetwork,
   needsWiderDeviceCeiling,
   PermissionCeilingWrites,
 } from "../sandbox/permission-ceiling-writes.js";
@@ -1000,17 +1006,41 @@ export class OrgSettingsService {
       const effOutside = (o: OrgSettings) =>
         platform.outsideSandbox.permission === "off" ? "off" : (o.outsideSandbox ?? "allowed");
       const reread = parseOrgSettings(written);
+      const prevNet = effectiveOrgNetwork(platform.network, before.deviceNetwork);
+      const nextNet = effectiveOrgNetwork(platform.network, reread.deviceNetwork);
+      // only a widening resets Full consent (running outside allowed again, a network or host
+      // list opening): a narrowing keeps what the consent covered
       const resetConsent =
-        effOutside(before) !== effOutside(reread) ||
-        effectiveNetworkWidens(
-          effectiveOrgNetwork(platform.network, before.deviceNetwork),
-          effectiveOrgNetwork(platform.network, reread.deviceNetwork),
-        ) !== null;
+        (effOutside(before) === "off" && effOutside(reread) === "allowed") ||
+        effectiveNetworkWidens(prevNet, nextNet) !== null ||
+        deviceNetworkHostsWiden(before.deviceNetwork, reread.deviceNetwork);
       const machineRoots = await localMachineRoots(this.db.db, orgId);
+      // a network ceiling narrowed to the allowlist takes running open-network work; a default
+      // narrowed to the allowlist takes it from the cloud devices that follow the default
+      const networkNarrowed = prevNet.ceiling === "open" && nextNet.ceiling === "allowlist";
+      const following =
+        !networkNarrowed && prevNet.default === "open" && nextNet.default === "allowlist"
+          ? await cloudDevicesFollowingDefault(this.db.db, orgId)
+          : null;
+      // the per-call hosts the org's new ceiling still allows (its hard allowlist ceiling and its
+      // exclusions): an independent grant keeps a removed host only within it
+      const lim = this.config.get().sandbox.limits;
+      const grantCeiling = hostGrantCeiling(
+        { boundary: "operation", networkMode: "allowlist", networkCeiling: nextNet.ceiling },
+        lim,
+        reread.deviceNetwork === undefined ? {} : { deviceNetwork: reread.deviceNetwork },
+        null,
+      );
+      const orgHosts = orgEffectiveHosts(lim, reread.deviceNetwork);
       await this.ceilings.publishLocked(
         { orgId },
         "org",
         (scope, row) => {
+          if (
+            needsOpenNetwork(scope) &&
+            (networkNarrowed || following?.has(row.device_id) === true)
+          )
+            return true;
           // outside off takes escalated work and restricted work outside the machine's roots;
           // anything else still goes through the host check below
           if (
@@ -1019,18 +1049,7 @@ export class OrgSettingsService {
           )
             return true;
           if (needsFullCeiling(scope)) return after.outsideSandbox === "off";
-          if (
-            !("network" in scope) ||
-            !isExecutionMethod(row.method) ||
-            scope.network.kind !== "allowlist"
-          )
-            return false;
-          const hosts = this.effectiveNetwork(after).hosts;
-          return scope.network.hosts.some(
-            (host) =>
-              !hosts.some((pattern) => coversHost(pattern, host)) &&
-              !(this.effectiveNetwork(after).mode === "open" && row.granted_hosts.includes(host)),
-          );
+          return hostsNarrowed(scope, row, orgHosts, (host) => hostGrantable(grantCeiling, host));
         },
         resetConsent,
       );

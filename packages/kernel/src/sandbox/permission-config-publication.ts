@@ -1,14 +1,17 @@
 import { createHash } from "node:crypto";
 import { SandboxScopeDeniedError, validateAllowHost } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable, Optional } from "@nestjs/common";
+import { sql } from "kysely";
 import { z } from "zod";
 import type { KernelConfig } from "../config/schema.js";
+import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
+import { hostGrantable, hostGrantCeiling } from "./device-sandbox.js";
 import {
   type ConfiguredDeviceSandbox,
   convertStoredPermissionKeys,
@@ -24,10 +27,12 @@ import {
   effectiveDevicePolicy,
   orgEffectiveHosts,
 } from "./modes.js";
-import { isExecutionMethod } from "./operation-authority-types.js";
 import {
+  cloudDevicesFollowingDefault,
+  hostsNarrowed,
   localMachineRoots,
   needsFullCeiling,
+  needsOpenNetwork,
   needsWiderDeviceCeiling,
   PermissionCeilingWrites,
 } from "./permission-ceiling-writes.js";
@@ -365,6 +370,9 @@ export class PermissionConfigPublication {
     pinDevices: boolean,
   ): Promise<void> {
     const configuredCeiling = configuredOf(projection.network.ceiling);
+    // a B1 snapshot an older replica wrote after migration 0165 becomes the device's own network
+    // at every activation, before anything reads it (as 0163 and 0165 copy it: never wider)
+    await copyCloudSnapshotNetworks(this.db.db);
     if (pinDevices) {
       const stored = await readStoredDeviceSandbox(this.db.db, this.log, configuredCeiling);
       const view = resolveDeviceSandboxSettings(configuredView(projection), stored);
@@ -475,14 +483,56 @@ export class PermissionConfigPublication {
     const devices = await this.db.selectFrom("devices").select(["id", "source"]).execute();
     const machineRoots = await localMachineRoots(this.db.db);
     const sources = new Map(devices.map((device) => [device.id, device.source]));
-    if (before.egress !== next.egress)
+    // the kill switch lifted is a widening for every cloud device (closing it only narrows)
+    if (before.egress === "none" && next.egress !== "none")
       await this.ceilings.invalidateDeviceConsentUnderPlatform(
         devices.filter((device) => device.source === "cloud").map((device) => device.id),
       );
+    // a network ceiling narrowed to the allowlist, or closed by the kill switch, takes running
+    // open-network work
+    const networkNarrowed =
+      (beforeView.network.ceiling === "open" && nextView.network.ceiling === "allowlist") ||
+      (before.egress !== "none" && next.egress === "none");
+    // a default narrowed to the allowlist takes it from the cloud devices following it
+    const following =
+      !networkNarrowed &&
+      beforeView.network.default === "open" &&
+      nextView.network.default === "allowlist"
+        ? new Set(
+            [...(await cloudDevicesFollowingDefault(this.db.db))]
+              .filter(([, org]) => settings.get(org)?.default === undefined)
+              .map(([id]) => id),
+          )
+        : null;
+    // the per-call host list widened: hosts the platform list did not cover, or orgs allowed
+    // beyond it again (`within` to `extend`)
+    const hostsWidened =
+      (before.orgHosts === "within" && next.orgHosts === "extend") ||
+      next.allowHosts.some(
+        (h) => !before.allowHosts.some((p) => coversHost(p.toLowerCase(), h.toLowerCase())),
+      );
+    const grantable = (orgId: string, host: string) => {
+      const org = settings.get(orgId);
+      const ceiling =
+        nextView.network.ceiling === "allowlist" || org?.ceiling === "allowlist"
+          ? "allowlist"
+          : "open";
+      return hostGrantable(
+        hostGrantCeiling(
+          { boundary: "operation", networkMode: "allowlist", networkCeiling: ceiling },
+          next,
+          org === undefined ? {} : { deviceNetwork: org },
+          null,
+        ),
+        host,
+      );
+    };
     await this.ceilings.publishLocked(
       {},
       "platform",
       (scope, row) => {
+        if (needsOpenNetwork(scope) && (networkNarrowed || following?.has(row.device_id) === true))
+          return true;
         // Full off also narrows restricted reach to the workspace (B2): running restricted work
         // outside a machine's roots goes with Full work, as the owner writer decides
         if (nextMode === "off" && needsWiderDeviceCeiling(scope, machineRoots.get(row.device_id)))
@@ -494,24 +544,15 @@ export class PermissionConfigPublication {
               before.egress !== "none" &&
               next.egress === "none")
           );
-        if (
-          !isExecutionMethod(row.method) ||
-          !("network" in scope) ||
-          scope.network.kind !== "allowlist"
-        )
-          return false;
-        const hosts = orgEffectiveHosts(next, settings.get(row.org_id));
-        return scope.network.hosts.some(
-          (host) =>
-            !hosts.some((pattern) => coversHost(pattern, host)) &&
-            !(
-              next.egress !== "none" &&
-              next.orgHosts !== "within" &&
-              row.granted_hosts.includes(host)
-            ),
+        return hostsNarrowed(
+          scope,
+          row,
+          orgEffectiveHosts(next, settings.get(row.org_id)),
+          (host) => next.egress !== "none" && grantable(row.org_id, host),
         );
       },
-      beforeMode !== nextMode || networkWidened,
+      // only a widening resets Full consent: a narrowing keeps what the consent covered
+      (beforeMode === "off" && nextMode === "allowed") || networkWidened || hostsWidened,
     );
     return "activated";
   }
@@ -526,4 +567,31 @@ export class PermissionConfigPublication {
         "This replica has not applied the current permission configuration",
       );
   }
+}
+
+/**
+ * Copies a cloud device's B1 snapshot network into its own sandbox network while it has none
+ * (migrations 0163 and 0165, the snapshot writer): an allowlist with a non-empty list of strings
+ * stays that allowlist, an empty or unreadable one ran closed and becomes `none`; an open snapshot
+ * follows the org. Idempotent: only rows still following the org are written.
+ */
+export async function copyCloudSnapshotNetworks(db: KernelSchemaDb): Promise<void> {
+  const readable = sql<boolean>`jsonb_typeof(outer_network -> 'hosts') = 'array'
+    AND NOT EXISTS (
+      SELECT 1 FROM jsonb_array_elements(outer_network -> 'hosts') AS h(v)
+      WHERE jsonb_typeof(h.v) <> 'string'
+    )`;
+  await db
+    .updateTable("devices")
+    .set({
+      network_mode: sql<"allowlist" | "none">`CASE
+        WHEN ${readable} AND jsonb_array_length(outer_network -> 'hosts') > 0 THEN 'allowlist'
+        ELSE 'none' END`,
+      network_hosts: sql<string>`CASE WHEN ${readable} THEN outer_network -> 'hosts'
+        ELSE '[]'::jsonb END`,
+    })
+    .where("source", "=", "cloud")
+    .where("network_mode", "is", null)
+    .where(sql<boolean>`outer_network ->> 'kind' = 'allowlist'`)
+    .execute();
 }

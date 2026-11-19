@@ -1,4 +1,5 @@
 import type { PermissionProfile } from "@capybara-hq/plugin-sdk";
+import type { HostGrantCeiling } from "./device-sandbox.js";
 import type { EffectiveDevicePolicy } from "./modes.js";
 import type { AppliedOuterNetwork } from "./permission-context-types.js";
 
@@ -84,6 +85,13 @@ export type PermissionReviewSnapshot = Readonly<
     baseWriteDirectories: readonly string[];
     baseHosts: readonly string[];
     workingRoot: string;
+    /**
+     * The call's sandbox network (the device sandbox within the applied outer boundary): `open-public`,
+     * `allowlist` (the base hosts plus accepted host grants) or `none`. Absent reads as `none`.
+     */
+    network?: "open-public" | "allowlist" | "none";
+    /** The provider's boundary; absent reads as `operation`. */
+    boundary?: "operation" | "instance";
     outsideSandboxCeiling: boolean;
     /** Restricted directory expansions beyond the working root (B2 broad project reach). */
     broadProjectReach: boolean;
@@ -102,6 +110,13 @@ export type PermissionReviewSnapshot = Readonly<
      */
     outerNetwork?: AppliedOuterNetwork | null;
     policy: EffectiveDevicePolicy;
+    /**
+     * The per-call host grant ceiling (`device-sandbox.ts` `hostGrantCeiling`): the org's
+     * exclusions and its hard allowlist ceiling. Absent: read `policy.network`.
+     */
+    hostCeiling?: HostGrantCeiling;
+    /** Why a host is unavailable per call, naming who can add it; null when grantable. */
+    hostRefusal?: (host: string) => string | null;
     /**
      * Why this call could not run outside the sandbox (per-call escalation): an unattended run, a
      * device, org or platform Full access ceiling that forbids it, or a runtime that cannot run

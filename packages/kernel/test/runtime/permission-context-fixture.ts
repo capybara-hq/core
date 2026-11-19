@@ -51,6 +51,15 @@ export const REPORTS = {
     outsideSandbox: true,
     background: false,
   },
+  /** An instance-boundary provider: the instance is the sandbox, nothing runs outside it. */
+  instance: {
+    version: 2,
+    restricted: null,
+    boundary: "instance",
+    network: { openPublic: true, allowlist: true, perOperationHosts: false },
+    outsideSandbox: false,
+    background: false,
+  },
   neither: {
     version: 2,
     restricted: null,
@@ -151,12 +160,20 @@ export async function toCloudDevice(
   } = {},
 ) {
   const spy = spyProvider(k, { plugin: CLOUD_PROVIDER, version: CLOUD_VERSION });
+  // a network-off cloud device: its own allowlist over an org whose allowlist is empty
+  await f.db
+    .updateTable("orgs")
+    .set({ settings: JSON.stringify({ deviceNetwork: { base: "none" } }) })
+    .where("id", "=", f.orgId)
+    .execute();
   await f.db
     .updateTable("devices")
     .set({
       source: "cloud",
       provider: CLOUD_PROVIDER,
       outer_network: JSON.stringify({ kind: "allowlist", hosts: [] }),
+      network_mode: "allowlist",
+      network_hosts: "[]",
       ...(opts.sandboxMode && { mode: "sandbox" as const }),
     })
     .where("id", "=", f.deviceId)
@@ -213,6 +230,13 @@ export async function seedContext(k: TestKernel, raw: Kysely<unknown>, seed: Con
   await db
     .insertInto("memberships")
     .values({ org_id: s.orgId, account_id: s.accountId, role: "owner" })
+    .execute();
+  // the org's allowlist is empty: the base authority names no hosts until a grant adds one (the
+  // device's runtime cannot enforce the open network, so the sandbox network is the allowlist)
+  await db
+    .updateTable("orgs")
+    .set({ settings: JSON.stringify({ deviceNetwork: { base: "none" } }) })
+    .where("id", "=", s.orgId)
     .execute();
   let deviceOwner = s.accountId;
   if (seed.foreignDevice) {

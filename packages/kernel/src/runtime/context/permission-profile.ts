@@ -141,9 +141,9 @@ function approverLines(p: PermissionContextV2, box: PermissionContextSandbox): s
 }
 
 /**
- * The policy line of a supported context that records no sandbox block. Interim: the producer
- * (`readContextLocked`) still writes `sandbox: null`; T5 removes this branch, and the Full access
- * device + environment allowance in the schema, once every supported context records its block.
+ * The policy line of a supported context that records no sandbox block: only a stored version 1
+ * context read as version 2 (the producer always records the block). It renders the bytes that
+ * context rendered as version 1, so replaying a stored log never drifts.
  */
 function unsandboxedPolicyLine(p: PermissionContextV2): string {
   return p.execution === "scheduled"

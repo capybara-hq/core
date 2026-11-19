@@ -149,7 +149,8 @@ export const stagedHello = (
     restrictedProjectReach: "workspace",
     revision: "test-owner-1",
     outsideSandbox: false,
-    network: "allowlist",
+    // a new install's default (approval-only profiles design, "Settings model"): the open network
+    network: "open",
     allowedDomains: [],
   },
   instanceGeneration: identity?.instanceGeneration ?? "test-instance-1",

@@ -21,6 +21,8 @@ import {
   MANAGED_DEVICE_CONTEXT_STALE_TEXT,
   ManagedDeviceContextRecorder,
 } from "../../src/sandbox/managed-device-context.js";
+import { SandboxOperationAuthority } from "../../src/sandbox/operation-authority.js";
+import { PermissionAuthorityLock } from "../../src/sandbox/permission-authority-lock.js";
 import { SandboxService } from "../../src/sandbox/sandbox.service.js";
 import {
   OUTCOME_UNKNOWN_TOOL_TEXT,
@@ -349,14 +351,82 @@ describe("local devices through the sandbox tools", () => {
     );
   });
 
+  it.each([
+    ["open", { network: "open" as const, allowedDomains: [] }, false],
+    ["open, the runtime enforcing it", { network: "open" as const, allowedDomains: [] }, true],
+    ["allowlist", { network: "allowlist" as const, allowedDomains: ["example.com"] }, true],
+  ])(
+    "the exec frames carry the network the recorded context names (owner network %s)",
+    async (_name, owner, openPublic) => {
+      const m = await member();
+      const { machine } = await signIn(m.deviceId, m.accountId, ROOTS_A);
+      // the first call binds the instance and records the machine's runtime report; the report
+      // then says whether it enforces the open public network
+      await m.run("Bash", { command: "true" });
+      await sql`UPDATE capybara.device_permission_reports
+        SET report = jsonb_set(report, '{network,openPublic}', ${JSON.stringify(openPublic)}::jsonb)
+        WHERE device_id = ${m.deviceId}`.execute(raw);
+      // the owner's ceiling as the machine reports it (setup: its sequence is higher than the
+      // hello's, so the report stands)
+      await sql`UPDATE capybara.device_machines
+        SET owner_report = jsonb_set(jsonb_set(jsonb_set(owner_report,
+          '{report,network}', ${JSON.stringify(owner.network)}::jsonb),
+          '{report,allowedDomains}', ${JSON.stringify(owner.allowedDomains)}::jsonb),
+          '{report,sequence}', '1000')
+        WHERE device_id = ${m.deviceId} AND revoked_at IS NULL`.execute(raw);
+      await m.run("Bash", { command: "true" });
+      const exec = machine.frames
+        .filter((f) => f.type === "req" && f.op === "exec")
+        .at(-1) as KernelReq;
+      const args = exec.args as {
+        scope: { network: { kind: string; hosts?: string[] } };
+        limits: { network: { kind: string; hosts: string[] } };
+      };
+      const recorded = await txHost.run(async () => {
+        await k.app
+          .get(PermissionAuthorityLock)
+          .acquire(
+            { orgId, deviceId: m.deviceId, rootConversationId: m.conversationId },
+            { kind: "admit" },
+          );
+        return k.app
+          .get(SandboxOperationAuthority)
+          .readContextLocked(
+            { orgId, conversationId: m.conversationId, accountId: m.accountId, runId: m.runId },
+            new AbortController().signal,
+          );
+      });
+      // the scope the device enforces is the one the model is told about
+      expect(recorded.scope?.network).toEqual(args.scope.network);
+      expect(recorded.sandbox?.network.kind).toBe(args.scope.network.kind);
+      // and the limits the machine intersects carry the device sandbox network, never wider
+      if (args.scope.network.kind === "open-public")
+        expect(args.limits.network.kind).toBe("open-public");
+      else {
+        expect(args.limits.network.kind).toBe("allowlist");
+        for (const host of args.scope.network.hosts ?? [])
+          expect(args.limits.network.hosts).toContain(host);
+      }
+    },
+  );
+
   it("every exec carries the org's sandbox allowlist of the moment (R27)", async () => {
     const m = await member();
     const { machine } = await signIn(m.deviceId, m.accountId, ROOTS_A);
+    // an owner who keeps the open network narrows nothing: the runtime enforces no open network
+    // here, so the device sandbox network is the org's allowlist
+    await sql`UPDATE capybara.device_machines
+      SET owner_report = jsonb_set(jsonb_set(owner_report, '{report,network}', '"open"'),
+        '{report,sequence}', '1000')
+      WHERE device_id = ${m.deviceId} AND revoked_at IS NULL`.execute(raw);
     await m.run("Bash", { command: "true" });
     const execs = () => machine.frames.filter((f) => f.type === "req" && f.op === "exec");
     expect((execs()[0] as KernelReq).args).toMatchObject({
-      limits: { mode: "auto", network: { kind: "allowlist", hosts: ["example.com"] } },
+      limits: { network: { kind: "allowlist", hosts: ["example.com"] } },
     });
+    // the kernel's mode tier never goes on the wire (protocol 4 limits: resources and network)
+    const sent = (execs()[0] as KernelReq).args as { limits: object };
+    expect(Object.keys(sent.limits)).not.toContain("mode");
     await sql`UPDATE capybara.orgs SET settings = ${JSON.stringify({
       deviceNetwork: { ceiling: "allowlist", base: "none", extraHosts: ["other.example.com"] },
     })}::jsonb WHERE id = ${orgId}`.execute(raw);

@@ -102,6 +102,7 @@ import {
   CloudPermissionSnapshots,
   type CloudSnapshotOutcome,
 } from "./cloud-permission-snapshot.js";
+import type { HostGrantCeiling } from "./device-sandbox.js";
 import {
   isKernelReadMethod,
   type KernelReadInvocation,
@@ -132,7 +133,7 @@ import {
   sameAppliedExactly,
 } from "./modes.js";
 import type { HeldDeviceContextEvidence } from "./permission-context-types.js";
-import { PermissionFacts } from "./permission-facts.js";
+import { networkOfSandbox, PermissionFacts } from "./permission-facts.js";
 import { cloudReportOwed, cloudSupportOf } from "./permission-runtime-reports.js";
 import {
   isInternalProvider,
@@ -681,7 +682,11 @@ export class SandboxService {
     @Inject(PermissionFacts)
     private readonly facts: Pick<
       PermissionFacts,
-      "devicePolicy" | "assertCloudReconciled" | "readHeldEnvironment"
+      | "devicePolicy"
+      | "assertCloudReconciled"
+      | "readHeldEnvironment"
+      | "readDevice"
+      | "deviceSandbox"
     >,
     @Inject(SandboxOperationIntents) private readonly operationIntents: SandboxOperationIntents,
     @Inject(SandboxOperationAuthority) private readonly authority: SandboxOperationAuthority,
@@ -767,6 +772,11 @@ export class SandboxService {
     return this.facts.devicePolicy(device);
   }
 
+  /** The device's per-call host grant ceiling (`PermissionFacts.readDevice`). */
+  async hostGrantCeiling(device: { orgId: string; deviceId: string }): Promise<HostGrantCeiling> {
+    return (await this.facts.readDevice(device.orgId, device.deviceId)).hostCeiling;
+  }
+
   /** The device's source (`local` for a connected machine, else `cloud`); cloud when unknown. */
   private async deviceSource(device: {
     orgId: string;
@@ -785,10 +795,9 @@ export class SandboxService {
   /**
    * The device's effective sandbox limits (spec §8.4; auto mode spec §4.2): the deployment's
    * `sandbox.limits` resources, cpu / memory per the super admin's org override (C19 / Ruling
-   * M16), the effective mode and the network ({@link devicePolicy}). A local device always gets the
-   * sandbox-mode allowlist: its device intersects it with its own list in sandbox mode and ignores
-   * it in auto mode. `opts.policy` / `opts.source`: what the caller already read (avoids the
-   * policy and source queries).
+   * M16), the effective mode and the device sandbox network ({@link devicePolicy}), for a local
+   * device too: the machine intersects it with its owner's ceiling. `opts.policy` / `opts.source`:
+   * what the caller already read (avoids the policy and source queries).
    */
   async deviceLimits(
     device: { orgId: string; deviceId?: string },
@@ -801,9 +810,12 @@ export class SandboxService {
       opts.source ?? this.deviceSource(device),
     ]);
     const local = source === "local";
-    const network: DeviceNetwork = local
-      ? { kind: "allowlist", hosts: [...policy.localAllowedDomains] }
-      : policy.network;
+    // a local device's commands carry its device sandbox network (under the machine's current
+    // runtime report, as admission reads it); the machine intersects it with its owner's ceiling
+    const network: DeviceNetwork =
+      local && device.deviceId !== undefined
+        ? networkOfSandbox(await this.facts.deviceSandbox(device.orgId, device.deviceId))
+        : policy.network;
     return effectiveSandboxLimits(
       {
         cpu: cfg.limits.cpu,

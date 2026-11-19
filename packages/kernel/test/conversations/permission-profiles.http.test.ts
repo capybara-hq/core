@@ -533,18 +533,16 @@ describe("Conversation permission profiles", () => {
       "readFile",
       new AbortController().signal,
     );
-    expect(scope).toMatchObject({
-      profile: "full-access",
-      filesystem: { kind: "device" },
-      network: { kind: "environment" },
-    });
+    // Full access keeps the sandbox: a scoped filesystem, never the device pair
+    expect(scope).toMatchObject({ profile: "full-access", filesystem: { kind: "scoped" } });
     await kernelDb(raw)
       .updateTable("device_machines")
       .set({ owner_report: storedOwnerReport({ outsideSandbox: false, sequence: 1 }) })
       .where("device_id", "=", deviceId)
       .execute();
+    // running outside removed is a narrowing: the consent still covers the device
     expect((await req({ method: "GET", url })).json()).toMatchObject({
-      profile: "approve-for-me",
+      profile: "full-access",
       outsideSandboxCeiling: false,
     });
     expect(

@@ -231,34 +231,35 @@ describe("组织云网络设置（auto mode spec §4.3）", () => {
     });
   });
 
-  it("auto mode ignores the org's network; sandbox mode applies it; a kind change recreates", async () => {
+  it("the org's network ceiling applies whatever running outside allows; a kind change recreates", async () => {
     const s = service();
-    // auto mode ignores the org's allowlist: the cloud device's network is open
+    // a cloud device has no outside: the org's allowlist ceiling is its sandbox network
     await setOrg({
       outsideSandbox: "allowed",
       deviceNetwork: { ceiling: "allowlist", base: "none", extraHosts: ["example.com"] },
     });
     const first = await use(s);
     expect((await fakeSandboxMeta(root, first.h.id))?.limits).toMatchObject({
-      network: { kind: "open-public" },
+      network: { kind: "allowlist", hosts: ["example.com"] },
     });
-    // a host change under the same (ignored) network changes nothing
+    // an added host under the same network kind reaches only later instances
     await setOrg({
       outsideSandbox: "allowed",
-      deviceNetwork: { ceiling: "allowlist", base: "none", extraHosts: ["other.example.com"] },
+      deviceNetwork: {
+        ceiling: "allowlist",
+        base: "none",
+        extraHosts: ["example.com", "other.example.com"],
+      },
     });
     const same = await use(s);
     expect(same.h).toEqual(first.h);
-    // switching to sandbox mode applies the org's allowlist: the instance is recreated
-    await setOrg({
-      outsideSandbox: "off",
-      deviceNetwork: { ceiling: "allowlist", base: "none", extraHosts: ["other.example.com"] },
-    });
+    // opening the org's network changes the kind: the instance is recreated on the open network
+    await setOrg({ outsideSandbox: "allowed" });
     const again = await use(s);
     expect(again.h).not.toEqual(first.h);
     expect(again.info).toMatchObject({ fresh: true, restarted: true });
     expect((await fakeSandboxMeta(root, again.h.id))?.limits).toMatchObject({
-      network: { kind: "allowlist", hosts: ["other.example.com"] },
+      network: { kind: "open-public" },
     });
   });
 });

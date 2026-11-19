@@ -126,10 +126,11 @@ describe("owner report ordering (B2)", () => {
     expect(ownerReportRevokes(facts({ outsideSandbox: false }), op(), "exec", [], roots)).toBe(
       false,
     );
-    expect(ownerReportRevokes(facts({ allowedDomains: [] }), op(), "exec", [], roots)).toBe(true);
-    expect(ownerReportRevokes(facts({ allowedDomains: [] }), op(), "exec", ["a.test"], roots)).toBe(
-      false,
-    );
+    const allowlist = facts({ network: "allowlist", allowedDomains: [] });
+    expect(ownerReportRevokes(allowlist, op(), "exec", [], roots)).toBe(true);
+    expect(ownerReportRevokes(allowlist, op(), "exec", ["a.test"], roots)).toBe(false);
+    // an owner who keeps the open network bounds no host
+    expect(ownerReportRevokes(facts({ allowedDomains: [] }), op(), "exec", [], roots)).toBe(false);
     const outside = op({
       filesystem: { kind: "scoped", readRoots: ["/home/o/p"], writeRoots: ["/home/o/p"] },
     } as never);
@@ -155,6 +156,21 @@ describe("owner report ordering (B2)", () => {
         roots,
       ),
     ).toBe(true);
+  });
+});
+
+describe("the owner's sandbox network", () => {
+  const facts = (over: Record<string, unknown>) => ownerFactsOfReport(stored(report(1, over)));
+  const open = op({ profile: "full-access", network: { kind: "open-public" } } as never);
+  it("narrowing to the allowlist revokes open-network executions, under every profile", () => {
+    expect(ownerReportRevokes(facts({ network: "allowlist" }), open, "exec", [], ["/work"])).toBe(
+      true,
+    );
+    expect(ownerReportRevokes(facts({ network: "open" }), open, "exec", [], ["/work"])).toBe(false);
+    // a sandboxed Full access call is not running outside the sandbox
+    expect(ownerReportRevokes(facts({ outsideSandbox: false }), open, "exec", [], ["/work"])).toBe(
+      false,
+    );
   });
 });
 
