@@ -22,6 +22,7 @@ const PUBLIC_ROUTES = new Set([
   "POST /api/v1/auth/logout",
   "GET /api/v1/invitations/:token",
   "POST /api/v1/invitations/:token/accept",
+  "GET /api/v1/meta",
   "GET /api/v1/setup",
   "POST /api/v1/setup",
   "GET /api/v1/oauth/callback",

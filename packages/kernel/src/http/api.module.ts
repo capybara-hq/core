@@ -126,10 +126,12 @@ import { AdminUiController } from "../ui/admin-ui.controller.js";
 import { SlotsController } from "../ui/slots.controller.js";
 import { UiModule } from "../ui/ui.module.js";
 import { UiController } from "../ui/views.controller.js";
+import { MetaController } from "./meta.controller.js";
 
 /** Every controller of the kernel API. */
 const CONTROLLERS: Type[] = [
   AuthController,
+  MetaController,
   MeController,
   InitialPasswordsController,
   OrgsController,

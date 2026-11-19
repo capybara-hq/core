@@ -25,6 +25,7 @@
   "config/auth-trust.test.ts",
   "config/channels-webhook.test.ts",
   "config/devices-local.test.ts",
+  "config/platform.test.ts",
   "config/env.test.ts",
   "config/fields.test.ts",
   "config/full-access.test.ts",

@@ -8,6 +8,7 @@ The defaults of secret fields do not appear in this document.
 
 | Key | Env var | Type | Default | Hot | Secret | Description |
 | --- | --- | --- | --- | --- | --- | --- |
+| `platform.name` | `CAPYBARA_PLATFORM__NAME` | `string` | optional | yes | no | The platform's display name (1 to 64 characters), shown by native clients and the installed web app before sign-in (GET /api/v1/meta); unset: clients show their own name |
 | `db.url` | `CAPYBARA_DB__URL` | `string` | required | no | yes | PostgreSQL connection URL |
 | `db.poolMax` | `CAPYBARA_DB__POOL_MAX` | `number` | `10` | no | no | Maximum PostgreSQL pool size |
 | `db.connectTimeoutMs` | `CAPYBARA_DB__CONNECT_TIMEOUT_MS` | `number` | `5000` | no | no | PostgreSQL connect timeout in milliseconds |
