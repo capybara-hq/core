@@ -1032,7 +1032,7 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
       model: z.string(),
       ...ModelUsageShape,
       purpose: z
-        .enum(["compaction", "title", "web_fetch", "review", "image", "suggestion"])
+        .enum(["compaction", "title", "web_fetch", "review", "image", "vision", "suggestion"])
         .optional(),
       /**
        * The chunk a chunked compaction call summarised (1-based), with the number of calls the

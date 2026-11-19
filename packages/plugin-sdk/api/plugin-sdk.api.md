@@ -2375,7 +2375,7 @@ export interface ModelCallOptions {
 }
 
 // @public
-export type ModelCallPurpose = "step" | "compaction" | "title" | "web_fetch" | "review" | "image" | "suggestion";
+export type ModelCallPurpose = "step" | "compaction" | "title" | "web_fetch" | "review" | "image" | "vision" | "suggestion";
 
 // @public
 export interface ModelCallRequestHookPayload extends HookScope {
