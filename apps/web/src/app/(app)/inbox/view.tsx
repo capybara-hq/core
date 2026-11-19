@@ -17,6 +17,7 @@ import {
   StatusMark,
   Text,
   Textarea,
+  TextLink,
   useStatusBar,
   useTimeZone,
   useToast,
@@ -792,7 +793,11 @@ function toolApprovalDetail({
             { label: ta("command.reason"), value: command.reason },
           ]),
       { label: ta("agent"), value: approval.agent.name },
-      { label: t("conversation"), value: approval.conversationId },
+      // a link, never the raw id
+      {
+        label: t("conversation"),
+        value: <TextLink href={approval.conversationPath}>{t("openConversation")}</TextLink>,
+      },
       { label: t("requested"), value: <DateTime value={approval.createdAt} /> },
       { label: ta("expires"), value: <DateTime value={approval.expiresAt} /> },
     ],
@@ -889,7 +894,16 @@ function skillChangeDetail({
     facts: [
       { label: t("skillChange.agent"), value: change.agent.name },
       { label: t("skillChange.requester"), value: requesterOf(change) },
-      { label: t("conversation"), value: change.requestedInConversation },
+      // a link where the reader may open it (the requester), else a dash, never the raw id
+      {
+        label: t("conversation"),
+        value:
+          change.conversationPath === null ? (
+            "—"
+          ) : (
+            <TextLink href={change.conversationPath}>{t("openConversation")}</TextLink>
+          ),
+      },
       { label: t("requested"), value: <DateTime value={change.createdAt} /> },
     ],
     actionRow: {

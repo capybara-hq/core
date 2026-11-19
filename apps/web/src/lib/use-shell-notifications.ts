@@ -73,11 +73,11 @@ export function useShellNotifications(orgId: string): void {
       return;
     }
     const fresh = showable.filter((i) => !seen.has(i.id));
-    memory.current = { orgId, seen };
-    if (fresh.length === 0) return;
-    const hidden = document.visibilityState === "hidden";
-    for (const i of fresh) seen.add(i.id);
-    if (hidden) {
+    // what is handled is what still waits: decided items leave the set, so it never grows
+    const next = new Set(showable.map((i) => i.id));
+    memory.current = { orgId, seen: next };
+    if (fresh.length === 0 && next.size === seen.size) return;
+    if (document.visibilityState === "hidden" && fresh.length > 0) {
       // a burst is one notification with the neutral body, not one per item
       const bodies = fresh.length > BURST ? [t("other")] : fresh.map((i) => t(bodyKey(i)));
       for (const body of bodies) {
@@ -86,7 +86,7 @@ export function useShellNotifications(orgId: string): void {
         void Promise.resolve(sent).catch(() => {});
       }
     }
-    writeSeen(orgId, seen);
+    writeSeen(orgId, next);
   }, [cap, items, orgId, t]);
 }
 

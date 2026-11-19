@@ -2220,10 +2220,6 @@
     "openConversation": "打开会话",
     "approved": "已批准",
     "denied": "已拒绝",
-    "columns": {
-      "item": "事项",
-      "time": "时间"
-    },
     "truncated": "只显示最新的事项，处理掉一些后可看到其余的。",
     "skillChange": {
       "kind": {
@@ -4152,10 +4148,6 @@
       "truncated": "只显示最新的事项。处理一些后可以看到其余的。",
       "filtered": "只显示：{type}",
       "clearFilter": "显示全部",
-      "columns": {
-        "item": "事项",
-        "time": "时间"
-      },
       "open": "前往处理",
       "org": "组织",
       "plugin": "插件",

@@ -74,13 +74,13 @@ function Section({ cap, status }: { cap: DeviceCapabilityV1; status: Connected }
     refetchInterval: RUNNING_POLL_MS,
     retry: false,
   });
-  useEffect(
-    () =>
-      cap.onStatus(() => {
-        void qc.invalidateQueries({ queryKey: keys.shell().running() });
-      }),
-    [cap, qc],
-  );
+  useEffect(() => {
+    const off = cap.onStatus(() => {
+      void qc.invalidateQueries({ queryKey: keys.shell().running() });
+    });
+    // a shell that returns no unsubscribe must not break the effect's cleanup
+    return typeof off === "function" ? off : undefined;
+  }, [cap, qc]);
   const invalidates = () => [keys.shell().deviceStatus(), keys.shell().running()];
   const run = useAppMutation({
     fn: (call: (c: DeviceCapabilityV1) => Promise<unknown>) => call(cap),

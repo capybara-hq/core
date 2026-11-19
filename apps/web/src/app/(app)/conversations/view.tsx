@@ -93,7 +93,8 @@ function Groups({
   const seen = new Set<string>();
   const groups = pages.rows.filter((g) => !seen.has(g.agent.id) && seen.add(g.agent.id));
   const [extra, setExtra] = useState<Record<string, Extra>>({});
-  const [moreError, setMoreError] = useState<string | null>(null);
+  // a failed "more" read is shown on that group's row only (keyed by agent id)
+  const [moreError, setMoreError] = useState<Record<string, string>>({});
   const loadRows = async (g: ConversationGroup, rows: Conversation[]) => {
     const key = g.agent.id;
     const last = rows.at(-1);
@@ -102,7 +103,7 @@ function Groups({
       const page = await qc.fetchQuery(
         moreConversationsQuery(orgId, { agentId: key, ...(last ? { after: last.id } : {}) }),
       );
-      setMoreError(null);
+      setMoreError(({ [key]: _, ...rest }) => rest);
       setExtra((e) => ({
         ...e,
         [key]: {
@@ -112,7 +113,7 @@ function Groups({
         },
       }));
     } catch (e) {
-      setMoreError(errorMessage(e));
+      setMoreError((m) => ({ ...m, [key]: errorMessage(e) }));
       setExtra((x) => ({ ...x, [key]: { rows: x[key]?.rows ?? [], done: false, loading: false } }));
     }
   };
@@ -160,7 +161,9 @@ function Groups({
                   loading: more?.loading === true,
                   onSelect: () => void loadRows(g, rows),
                 }}
-                {...(moreError !== null ? { description: moreError } : {})}
+                {...(moreError[g.agent.id] !== undefined
+                  ? { description: moreError[g.agent.id] }
+                  : {})}
               />,
             ]
           : items;

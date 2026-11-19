@@ -81,7 +81,7 @@ for (const kind of ["vertical", "horizontal"] as const) {
         `/dev/ui/templates/conversation${right === "panel-slot" ? "" : "#properties"}`,
         kind,
       );
-      const sel = right === "panel-slot" ? '[data-part="panel-slot"]' : ".cb-properties";
+      const sel = right === "panel-slot" ? '[data-part="panel-slot"]' : '[data-part="properties"]';
       await expect(page.locator(sel).first()).toBeVisible();
       const p = await rect(page, sel);
       const main = await rect(page, '[data-part="conv-main"]');

@@ -206,8 +206,9 @@ export type StreamCloser = (() => void) & { isClosed(): boolean };
  * the same-origin proxy). After a drop the browser reconnects by itself with `Last-Event-ID` (the
  * kernel prefers it over `after`); an `event: error` frame from the server closes it for good, with
  * no reconnect. Returns the closer.
- * The closer's `isClosed()` is true once the stream is closed for any reason, including a
- * connection the browser dropped silently (a suspended background page, {@link onForeground}).
+ * The closer's `isClosed()` is true once the stream is closed by the caller, by an error frame or
+ * by the browser (`readyState` CLOSED). A connection dropped silently (a suspended background page)
+ * may still read as open: {@link onForeground} reopens on return rather than relying on it.
  * Live drafts (`event: draft`, delta offsets) go through {@link LiveDrafts}: a reconnect resumes a
  * streaming reply without a gap or a repeat.
  */

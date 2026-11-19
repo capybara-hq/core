@@ -2232,10 +2232,6 @@
     "openConversation": "Open conversation",
     "approved": "Approved",
     "denied": "Denied",
-    "columns": {
-      "item": "Item",
-      "time": "Requested"
-    },
     "truncated": "Only the newest items are shown. Handle some to see the rest.",
     "skillChange": {
       "kind": {
@@ -4164,10 +4160,6 @@
       "truncated": "Only the newest items are shown. Handle some to see the rest.",
       "filtered": "Showing only: {type}",
       "clearFilter": "Show all",
-      "columns": {
-        "item": "Item",
-        "time": "Time"
-      },
       "open": "Open",
       "org": "Organization",
       "plugin": "Plugin",

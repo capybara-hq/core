@@ -25,9 +25,11 @@ export function useThisMachine(): {
   });
   useEffect(() => {
     if (cap === undefined) return;
-    return cap.onStatus(() => {
+    const off = cap.onStatus(() => {
       void qc.invalidateQueries({ queryKey: keys.shell().deviceStatus() });
     });
+    // a shell that returns no unsubscribe must not break the effect's cleanup
+    return typeof off === "function" ? off : undefined;
   }, [cap, qc]);
   return { cap, status: cap === undefined ? undefined : q.data };
 }
