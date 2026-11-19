@@ -51,6 +51,7 @@ import {
   requestSubject,
   requestVersion,
 } from "../../../lib/catalog";
+import { useHashItem } from "../../../lib/hash-item";
 import {
   dismissNotice,
   hasNotice,
@@ -114,9 +115,10 @@ function Inbox({
   const rows = (inbox?.items ?? []).filter((i) => isShowable(i) && !decided.has(subjectOf(i)));
   const truncated = inbox?.truncated === true;
   const [activeId, setActiveId] = useState<string>();
-  // The two-level stack (spec §6.47): the list is the page until an item is opened.
-  const [open, setOpen] = useState(false);
-  const active = rows.find((a) => a.id === activeId) ?? rows[0];
+  // The two-level stack (spec §6.47): the list is the page until an item is opened; the open item
+  // is in the URL hash, so the system back closes it and `#item=<id>` deep-links.
+  const hashItem = useHashItem();
+  const active = rows.find((a) => a.id === (hashItem.id ?? activeId)) ?? rows[0];
   const [scope, setScope] = useState<ApprovalScope>("once");
   const approvals = useDecide(orgId);
   const changes = useDecideSkillChange(orgId);
@@ -237,7 +239,7 @@ function Inbox({
     if (message !== null) toast.success(message);
     setDecided((s) => new Set(s).add(id));
     setActiveId(undefined);
-    setOpen(false);
+    hashItem.close();
     if (message === null) {
       for (const queryKey of inboxChangeKeys(orgId)) void qc.invalidateQueries({ queryKey });
     }
@@ -453,8 +455,8 @@ function Inbox({
           count: `${rows.length}${truncated ? "+" : ""}`,
         }}
         {...(rows.length === 0 ? { empty: { text: t("empty"), hint: t("emptyHint") } } : {})}
-        open={open && active !== undefined}
-        onBack={() => setOpen(false)}
+        open={hashItem.id !== null && rows.some((a) => a.id === hashItem.id)}
+        onBack={hashItem.close}
         list={
           <DataTable<InboxItem>
             label={t("listLabel")}
@@ -467,7 +469,7 @@ function Inbox({
             {...(active ? { activeKey: active.id } : {})}
             onOpen={(a) => {
               setActiveId(a.id);
-              setOpen(true);
+              hashItem.open(a.id);
             }}
             state="ready"
             empty={{ title: t("empty"), hint: t("emptyHint") }}

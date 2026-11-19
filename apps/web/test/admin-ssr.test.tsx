@@ -8,7 +8,6 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import { bodyOf, json, stubApi } from "./support/api";
 import { resetNavigation, router } from "./support/navigation";
-import { widePanes } from "./support/panes";
 import {
   hydrateRouteWithCache,
   renderRouteEmptyCache,
@@ -366,7 +365,6 @@ const ROUTES: Routes = {
 };
 
 beforeEach(() => {
-  widePanes();
   resetNavigation("/admin");
 });
 afterEach(cleanup);

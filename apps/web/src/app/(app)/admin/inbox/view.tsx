@@ -38,6 +38,7 @@ import {
   requestSubject,
   requestVersion,
 } from "../../../../lib/catalog";
+import { useHashItem } from "../../../../lib/hash-item";
 import { adminInboxQuery } from "../../../../lib/query/admin";
 import { keys } from "../../../../lib/query/keys";
 import { useAppMutation } from "../../../../lib/query/mutation";
@@ -92,9 +93,10 @@ function AdminInbox({
     [inbox, type],
   );
   const [activeId, setActiveId] = useState<string>();
-  // The two-level stack (spec §6.47): the list is the page until an item is opened.
-  const [opened, setOpened] = useState(false);
-  const active = rows.find((i) => i.id === activeId) ?? rows[0];
+  // The two-level stack (spec §6.47): the list is the page until an item is opened; the open item
+  // is in the URL hash, so the system back closes it and `#item=<id>` deep-links.
+  const hashItem = useHashItem();
+  const active = rows.find((i) => i.id === (hashItem.id ?? activeId)) ?? rows[0];
   // Nothing while the inbox loads (not "0 pending")
   // The total, not the shown rows: the list stops at 100
   useStatusBar(inbox === null ? null : `· ${t("pendingCount", { n: inbox.total })}`);
@@ -175,8 +177,8 @@ function AdminInbox({
         count: `${type === null ? inbox.total : (inbox.byType[type] ?? rows.length)}`,
       }}
       {...(rows.length === 0 ? { empty: { text: t("empty"), hint: t("emptyHint") } } : {})}
-      open={opened && active !== undefined}
-      onBack={() => setOpened(false)}
+      open={hashItem.id !== null && rows.some((i) => i.id === hashItem.id)}
+      onBack={hashItem.close}
       list={
         <DataTable<PlatformInboxItem>
           label={t("listLabel")}
@@ -189,7 +191,7 @@ function AdminInbox({
           {...(active ? { activeKey: active.id } : {})}
           onOpen={(i) => {
             setActiveId(i.id);
-            setOpened(true);
+            hashItem.open(i.id);
           }}
           state="ready"
           empty={{ title: t("empty"), hint: t("emptyHint") }}

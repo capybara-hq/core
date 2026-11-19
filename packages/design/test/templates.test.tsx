@@ -312,7 +312,6 @@ describe("widths, stat cards and the form without anchors", () => {
   ];
   for (const [name, el, w] of widths) {
     it(`${name} is data-width="${w}" (frame templates share the content width)`, () => {
-      widePanes();
       zh(el);
       expect(width()).toBe(w);
     });
@@ -421,12 +420,8 @@ describe("WizardPage", () => {
   });
 });
 
-/** jsdom measures nothing: give every element a width, so a ListDetail draws its two panes. */
-const widePanes = () => vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
-
 describe("其他模板行为", () => {
   it("InboxPage passes onInspectorClose through", async () => {
-    widePanes();
     const onClose = vi.fn();
     zh(
       <InboxPage
@@ -837,7 +832,6 @@ describe("PendingState (the neutral loading state)", () => {
 
 describe("InboxPage list column", () => {
   it("the list is a 320 column beside a detail of at least 360 (ListDetail)", () => {
-    widePanes();
     render(
       <DesignProvider locale="zh">
         <InboxPage header={{ path: [{ label: "admin" }], title: "收件箱" }} list={<div>l</div>}>
@@ -846,7 +840,7 @@ describe("InboxPage list column", () => {
       </DesignProvider>,
     );
     const list = document.querySelector('[data-part="list-detail"]') as HTMLElement;
-    expect(list.getAttribute("data-mode")).toBe("two-pane");
+    expect(list.getAttribute("data-fit")).toBe("680");
     expect(list.style.getPropertyValue("--cb-ld-list")).toBe("320px");
     expect(document.querySelector('[data-part="list-pane"]')?.textContent).toBe("l");
   });

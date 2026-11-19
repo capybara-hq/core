@@ -18,7 +18,6 @@ import {
 import type { Me } from "../src/lib/session";
 import { bodyOf, json, lastStubRoutes, stubApi as stubApiOnly } from "./support/api";
 import { resetNavigation, router } from "./support/navigation";
-import { widePanes } from "./support/panes";
 import { renderRouteEmptyCache, renderRouteWithCache } from "./support/query";
 import { ME } from "./support/render";
 import { expectNoFirstPaintFetch, type Routes } from "./support/server";
@@ -130,7 +129,6 @@ const MEMBER: Me = {
 };
 
 beforeEach(() => {
-  widePanes();
   resetNavigation("/");
   params.current = {};
   window.history.replaceState(null, "", "/");

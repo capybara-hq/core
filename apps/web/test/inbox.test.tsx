@@ -1,4 +1,4 @@
-import { act, cleanup, screen, within } from "@testing-library/react";
+import { act, cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
@@ -6,7 +6,6 @@ import zh from "../messages/zh.json";
 import { keys } from "../src/lib/query/keys";
 import { bodyOf, json, lastStubRoutes, noContent, stubApi } from "./support/api";
 import { resetNavigation, router } from "./support/navigation";
-import { widePanes } from "./support/panes";
 import { renderRouteEmptyCache, renderRouteWithCache } from "./support/query";
 import type { renderPage } from "./support/render";
 import { expectNoFirstPaintFetch } from "./support/server";
@@ -117,13 +116,11 @@ const skillChange = (id: string, over: Record<string, unknown> = {}) => ({
 });
 
 beforeEach(() => {
-  widePanes();
   resetNavigation("/inbox");
   statusBar.mockClear();
 });
 afterEach(() => {
   cleanup();
-  vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
 
@@ -168,19 +165,35 @@ describe("收件箱（InboxPage）", () => {
     },
   );
 
-  it("narrower than list + detail the list is the page: an item opens full screen, back returns", async () => {
-    widePanes(500);
+  it("the open item is in the URL hash: opening closes the list's page, back (and the system back) returns", async () => {
     const { container } = await renderInbox({
       [LIST]: () => json(200, inbox([approval("a"), approval("b")])),
     });
     const table = await screen.findByRole("table", { name: msgs.en.inbox.listLabel });
-    expect(container.querySelector('[data-approval-id="a"]')).toBeNull();
+    const region = () => container.querySelector('[data-part="list-detail"]');
+    expect(region()?.getAttribute("data-open")).toBe("false");
     const user = userEvent.setup();
     await user.click(within(table).getByText("Fixture [tool_b]"));
+    expect(window.location.hash).toBe("#item=b");
+    expect(region()?.getAttribute("data-open")).toBe("true");
     expect(container.querySelector('[data-approval-id="b"]')).not.toBeNull();
-    expect(screen.getByRole("region", { name: "Pending changes" })).toBeTruthy();
-    await user.click(screen.getByRole("button", { name: "Back" }));
-    expect(container.querySelector('[data-approval-id="b"]')).toBeNull();
+    await user.click(screen.getAllByRole("button", { name: "Back" })[0] as HTMLElement);
+    await waitFor(() => expect(region()?.getAttribute("data-open")).toBe("false"));
+    expect(window.location.hash).toBe("");
+  });
+
+  it("/inbox#item=<id> deep-links to the item", async () => {
+    window.history.replaceState(null, "", "/inbox#item=b");
+    const { container } = await renderInbox({
+      [LIST]: () => json(200, inbox([approval("a"), approval("b")])),
+    });
+    await waitFor(() =>
+      expect(container.querySelector('[data-part="list-detail"]')?.getAttribute("data-open")).toBe(
+        "true",
+      ),
+    );
+    expect(container.querySelector('[data-approval-id="b"]')).not.toBeNull();
+    window.history.replaceState(null, "", "/");
   });
 
   it.each(LOCALES)("选中第二条、选「以后都允许」批准 → POST 后重读列表（%s）", async (locale) => {
@@ -777,7 +790,7 @@ describe("the inbox from the cache", () => {
     expect(screen.queryByText("Fixture [tool_a]")).toBeNull();
     // the loaded inbox opens its first item: the inspector's four facts and the decision row,
     // its buttons disabled until the item is here
-    expect(document.querySelector(".cb-body-inspector")).not.toBeNull();
+    expect(document.querySelector('[data-part="inbox-facts"]')).not.toBeNull();
     expect(document.querySelectorAll('[data-part="loading-inspector-row"]')).toHaveLength(4);
     expect(document.querySelectorAll('[data-part="action-row"]')).toHaveLength(1);
     const approve = screen.getByRole("button", { name: en.approval.approve }) as HTMLButtonElement;

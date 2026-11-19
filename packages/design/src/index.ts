@@ -5,12 +5,7 @@ export * from "./display/index";
 export type { DesignKey, Locale } from "./i18n";
 export * from "./icons/index";
 export { Card, type Gap, Grid, Stack, Text } from "./layout/index";
-export {
-  ListDetail,
-  type ListDetailMode,
-  type ListDetailProps,
-  useListDetailMode,
-} from "./layout/list-detail";
+export { LIST_DETAIL_FITS, ListDetail, type ListDetailProps } from "./layout/list-detail";
 export { type ForcedPseudo, ReferenceBlock } from "./layout/reference-block";
 export { ReferenceBoard } from "./layout/reference-board";
 export * from "./overlays/index";

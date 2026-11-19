@@ -27,8 +27,6 @@ afterEach(() => {
   cleanup();
   vi.restoreAllMocks();
 });
-/** jsdom measures nothing: give every element a width, so a ListDetail draws its two panes. */
-const widePanes = () => vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
 const zh = (ui: React.ReactElement) => render(<DesignProvider locale="zh">{ui}</DesignProvider>);
 
 const header = { path: [{ label: "capybara" }, { label: "agents" }], title: "研究助手" };
@@ -292,7 +290,6 @@ describe("DataTable loading announcement", () => {
 
 describe("InboxPage loading", () => {
   it("InboxPage loading draws the frame and no children", () => {
-    widePanes();
     zh(
       <InboxPage header={header} list={<p>REAL LIST</p>} filters={<p>REAL FILTERS</p>} loading={{}}>
         <p>REAL CONTENT</p>
@@ -350,7 +347,6 @@ describe("InboxPage loading", () => {
   });
 
   it("inspector draws KeyValue placeholders in the inspector column; the action row stays disabled", () => {
-    widePanes();
     zh(
       <InboxPage
         header={header}
@@ -362,7 +358,7 @@ describe("InboxPage loading", () => {
         loading={{ rows: 2, inspector: { rows: 3, keyWidth: "10ch" } }}
       />,
     );
-    expect(count(".cb-body-inspector")).toBe(1);
+    expect(count('[data-part="inbox-facts"]')).toBe(1);
     expect(parts("loading-inspector-row")).toHaveLength(3);
     const key = document.querySelector('[data-part="loading-inspector-row"] dt') as HTMLElement;
     expect(key.style.width).toBe("10ch");

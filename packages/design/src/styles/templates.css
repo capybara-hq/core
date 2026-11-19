@@ -1342,35 +1342,46 @@ a.cb-object-name:hover {
   }
 }
 
-/* ListDetail (spec §6.47): two panes while the frame fits list + detail, else the two-level stack. */
-.cb-listdetail {
+/* ListDetail (spec §6.47): two panes while the region (`.cb-ld`, a container) fits list + detail,
+   else the two-level stack. Both forms are always drawn; the container query below picks one, one
+   rule set per fit (`data-fit` = listMin + detailMin, LIST_DETAIL_FITS). */
+.cb-ld {
+  container: cb-ld / inline-size;
   display: flex;
   flex: 1;
+  min-width: 0;
   min-height: 0;
-  width: 100%;
+}
+.cb-listdetail {
+  display: grid;
+  flex: 1;
+  grid-template-columns: var(--cb-ld-list) minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr) auto;
+  min-width: 0;
+  min-height: 0;
 }
 .cb-listdetail-list {
-  flex: 1;
+  grid-column: 1;
+  grid-row: 1;
   min-width: 0;
   overflow: auto;
-}
-.cb-listdetail-list[hidden] {
-  display: none;
-}
-.cb-listdetail[data-mode="two-pane"] .cb-listdetail-list {
-  flex: none;
-  width: var(--cb-ld-list);
   border-right: 1px solid var(--cb-line-soft);
 }
 .cb-listdetail-detail {
   display: flex;
-  flex: 1;
+  grid-column: 2;
+  grid-row: 1;
   flex-direction: column;
   min-width: 0;
   min-height: 0;
 }
+.cb-listdetail-footer {
+  grid-column: 1 / -1;
+  grid-row: 2;
+  min-width: 0;
+}
 .cb-listdetail-bar {
-  display: flex;
+  display: none;
   flex: none;
   align-items: center;
   height: var(--cb-row-roomy);
@@ -1383,8 +1394,47 @@ a.cb-object-name:hover {
   flex-direction: column;
   min-height: 0;
 }
-.cb-listdetail-empty {
-  padding: var(--cb-space-4);
+@container cb-ld (max-width: 579px) {
+  .cb-listdetail[data-fit="580"] {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .cb-listdetail[data-fit="580"] > .cb-listdetail-list,
+  .cb-listdetail[data-fit="580"] > .cb-listdetail-detail {
+    grid-column: 1;
+    border-right: 0;
+  }
+  .cb-listdetail[data-fit="580"][data-open="true"] > .cb-listdetail-list,
+  .cb-listdetail[data-fit="580"][data-open="false"] > .cb-listdetail-detail,
+  .cb-listdetail[data-fit="580"][data-open="false"] > .cb-listdetail-footer {
+    display: none;
+  }
+  .cb-listdetail[data-fit="580"] > .cb-listdetail-detail > .cb-listdetail-bar {
+    display: flex;
+  }
+}
+@container cb-ld (max-width: 679px) {
+  .cb-listdetail[data-fit="680"] {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .cb-listdetail[data-fit="680"] > .cb-listdetail-list,
+  .cb-listdetail[data-fit="680"] > .cb-listdetail-detail {
+    grid-column: 1;
+    border-right: 0;
+  }
+  .cb-listdetail[data-fit="680"][data-open="true"] > .cb-listdetail-list,
+  .cb-listdetail[data-fit="680"][data-open="false"] > .cb-listdetail-detail,
+  .cb-listdetail[data-fit="680"][data-open="false"] > .cb-listdetail-footer {
+    display: none;
+  }
+  .cb-listdetail[data-fit="680"] > .cb-listdetail-detail > .cb-listdetail-bar {
+    display: flex;
+  }
+}
+/* Inside the shell on compact the top bar is the one back (the open item is a pushed page). */
+@media (max-width: 599px) {
+  .cb-shell .cb-listdetail[data-fit] > .cb-listdetail-detail > .cb-listdetail-bar {
+    display: none;
+  }
 }
 /* InboxPage: the pane pair is capped at the content width inside the content padding, like every
    frame, and reserves the head's scrollbar gutter, so its left edge is the head's. */
@@ -1404,6 +1454,9 @@ a.cb-object-name:hover {
   max-width: var(--cb-layout-content);
   margin: 0 auto;
 }
+/* The open item: its content, and its facts (the inspector) beside it as a 400 column while the
+   region has room for the 320 list, the content and that column (expanded, "Rail + Content +
+   Inspector" as today), else below the content. */
 .cb-inbox-detail {
   display: flex;
   flex: 1;
@@ -1412,4 +1465,22 @@ a.cb-object-name:hover {
   min-height: 0;
   padding: var(--cb-space-4);
   overflow: auto;
+}
+.cb-inbox-main {
+  min-width: 0;
+}
+.cb-inbox-facts {
+  min-width: 0;
+}
+@container cb-ld (min-width: 1100px) {
+  .cb-inbox-detail[data-facts="true"] {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 400px;
+    gap: 0 var(--cb-space-4);
+    align-content: start;
+  }
+  .cb-inbox-detail[data-facts="true"] > .cb-inbox-facts {
+    padding-left: var(--cb-space-4);
+    border-left: 1px solid var(--cb-line-soft);
+  }
 }

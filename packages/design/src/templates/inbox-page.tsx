@@ -1,4 +1,5 @@
 import type { ReactNode } from "react";
+import { IconButton } from "../controls/index";
 import {
   EmptyState,
   type EmptyStateProps,
@@ -6,7 +7,8 @@ import {
   SkeletonGroup,
   SkeletonText,
 } from "../display/index";
-import { ListDetail, useListDetailMode } from "../layout/list-detail";
+import { Icon } from "../icons/icon";
+import { ListDetail } from "../layout/list-detail";
 import { useDesignT } from "../provider";
 import { ActionRow, type ActionRowProps, Body, type PageHeaderProps } from "../shell/index";
 import { type Column, DataTable } from "../table/index";
@@ -78,45 +80,49 @@ type InboxPageProps = {
 } & ({ loading?: undefined; list: ReactNode } | { loading: InboxLoading; list?: ReactNode });
 
 /**
- * The open item: its content and facts, then the decision row at the bottom of the pane. In two
- * panes the facts are the inspector (a column from 1280, a sheet below); in the stack the item is
- * its own page, so its facts follow the content and nothing sits in a sheet.
+ * The open item: its content, and its facts (the inspector) as a 400 column beside it while the
+ * region has room (expanded) or below it (CSS, a container query on the region): the facts are
+ * always inline, never in a sheet, so the decision they belong to is whole on one page.
  */
 function InboxDetail({
   inspector,
   inspectorTitle,
   onInspectorClose,
-  actionRow,
   children,
 }: {
   inspector: ReactNode;
   inspectorTitle: string | undefined;
   onInspectorClose: (() => void) | undefined;
-  actionRow: ActionRowProps | undefined;
   children: ReactNode;
 }) {
-  const mode = useListDetailMode();
+  const t = useDesignT();
   return (
-    <>
-      {mode === "stack" ? (
-        <div className="cb-inbox-detail" data-part="inbox-detail">
-          {children}
-          {inspector}
-        </div>
-      ) : (
-        <Body
-          layout={inspector != null ? "inspector" : "single"}
-          contentPadded
-          width="content"
-          inspector={inspector}
-          {...(inspectorTitle !== undefined ? { inspectorTitle } : {})}
-          {...(onInspectorClose ? { onInspectorClose } : {})}
+    <div
+      className="cb-inbox-detail"
+      data-part="inbox-detail"
+      data-facts={inspector != null ? "true" : undefined}
+    >
+      <div className="cb-inbox-main" data-part="inbox-main">
+        {children}
+      </div>
+      {inspector != null ? (
+        <aside
+          className="cb-inbox-facts"
+          data-part="inbox-facts"
+          {...(inspectorTitle !== undefined ? { "aria-label": inspectorTitle } : {})}
         >
-          {children}
-        </Body>
-      )}
-      {actionRow ? <ActionRow {...actionRow} /> : null}
-    </>
+          {onInspectorClose ? (
+            <IconButton
+              label={t("shell.inspectorClose")}
+              icon={<Icon name="x" />}
+              density="default"
+              onClick={onInspectorClose}
+            />
+          ) : null}
+          {inspector}
+        </aside>
+      ) : null}
+    </div>
   );
 }
 
@@ -207,7 +213,6 @@ export function InboxPage({
       inspector={inspectorNode}
       inspectorTitle={inspectorTitle}
       onInspectorClose={onInspectorClose}
-      actionRow={actionRow ? (loading ? loadingActionRow(actionRow) : actionRow) : undefined}
     >
       {loading ? <LoadingCards count={1} /> : children}
     </InboxDetail>
@@ -225,6 +230,11 @@ export function InboxPage({
             }
             detail={open && !loading ? detail : null}
             preview={detail}
+            footer={
+              actionRow ? (
+                <ActionRow {...(loading ? loadingActionRow(actionRow) : actionRow)} />
+              ) : undefined
+            }
             onBack={onBack ?? (() => {})}
             listMin={LIST_MIN}
             detailMin={DETAIL_MIN}

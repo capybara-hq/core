@@ -12,7 +12,7 @@ export type TopBarProps = {
    * Pushed pages: where back goes ({@link backTarget}): `"history"` is the previous in-app entry,
    * a string the page's last linked path segment. Absent on a tab root (no back button).
    */
-  back?: "history" | string | undefined;
+  back?: "history" | string | (() => void) | undefined;
   /** Opens the command palette; absent: no search button (the setup frame has no palette). */
   onSearch?: (() => void) | undefined;
   /** The page's overflow menu; empty or absent: no button is drawn (spec §6.7 "no menu of one"). */
@@ -73,7 +73,14 @@ export function TopBar({ title, back, onSearch, menu, steps, menuOpen }: TopBarP
   const hasMenu = menu !== undefined && menu.length > 0;
   return (
     <header className="cb-topbar" data-part="top-bar" data-pushed={pushed ? "true" : "false"}>
-      {back === undefined ? null : back === "history" ? (
+      {back === undefined ? null : typeof back === "function" ? (
+        <IconButton
+          label={t("shell.back")}
+          icon={<Icon name="chevron-left" />}
+          part="back"
+          onClick={back}
+        />
+      ) : back === "history" ? (
         <IconButton
           label={t("shell.back")}
           icon={<Icon name="chevron-left" />}

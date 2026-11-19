@@ -6,6 +6,11 @@ export type ShellPage = {
   title?: string;
   path?: { label: string; href?: string | undefined }[];
   menu?: ConvMenuEntry[];
+  /**
+   * An open item of a list-detail region (spec §6.47): the page is pushed while it is set, so the
+   * compact top bar shows back (calling this) and the bottom navigation hides.
+   */
+  onBack?: () => void;
 };
 
 type Register = (id: symbol, page: ShellPage | null) => void;
@@ -25,7 +30,7 @@ export function useRegisterShellPage(page: ShellPage): void {
   // biome-ignore lint/correctness/useExhaustiveDependencies: `key` stands for title and path
   useEffect(() => {
     register?.(id.current, page);
-  }, [register, key, page.menu]);
+  }, [register, key, page.menu, page.onBack]);
   useEffect(() => {
     const own = id.current;
     return () => register?.(own, null);
