@@ -79,7 +79,7 @@ describe("AgentsChip (§6.16.29, acceptance item AC3)", () => {
       resolve(import.meta.dirname, "../src/styles/conversation-page.css"),
       "utf8",
     );
-    const phone = css.slice(css.indexOf("@media (max-width: 639px) {\n  .cb-agents-chip-label"));
+    const phone = css.slice(css.indexOf("@media (max-width: 599px) {\n  .cb-agents-chip-label"));
     expect(phone).toMatch(
       /\.cb-agents-chip-label,\n\s*\.cb-agents-chip-activity \{\s*display: none;/,
     );

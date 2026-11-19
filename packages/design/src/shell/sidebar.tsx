@@ -20,7 +20,8 @@ import { LinkPendingMark, useDesignLink, useDesignT } from "../provider";
 import { SIZES } from "../tokens";
 import { type PreferenceBarProps, ThemeToggle } from "./preference-bar";
 import { Conversations, type SidebarConversations, useRoving } from "./sidebar-conversations";
-import { useHydrated, useMediaQuery } from "./use-media-query";
+import { type SizeClass, useSizeClass } from "./size-class";
+import { useHydrated } from "./use-media-query";
 
 export {
   type SidebarActivity,
@@ -138,8 +139,20 @@ export type SidebarProps = {
    */
   theme?: PreferenceBarProps["theme"];
   onOpenCommands(): void;
-  /** Default from media queries: below 1280 `rail`, below 960 `drawer`. */
+  /**
+   * Default from the size class (spec §4.1): `full` from 841 unless `collapsed`, `rail` on medium
+   * (and collapsed), `drawer` below 600 until the compact shell's bottom navigation replaces it.
+   */
   mode?: "full" | "rail" | "drawer";
+  /**
+   * The person's choice of the rail on the expanded class (the `cb-sidebar` cookie, read by the
+   * app layout so the first paint draws it); the full sidebar's collapse toggle and the rail's
+   * expand button call `onCollapsedChange`.
+   */
+  collapsed?: boolean;
+  onCollapsedChange?(collapsed: boolean): void;
+  /** Draw the rail of the medium class (no expand button, a 会话 button): the reference set only. */
+  railMedium?: boolean;
   /**
    * The drawer's open state (rail and drawer modes). AppShell controls it from its menu button;
    * without it the sidebar keeps its own (the rail's expand button opens it).
@@ -161,18 +174,25 @@ const countText = (n: { count?: number; countMore?: boolean }): string =>
 
 type Variant = "full" | "rail" | "panel";
 
-/**
- * The sidebar's breakpoints (spec §6.13): the rail below 1280, the drawer below 960. The one place
- * the sidebar and the App Shell read them from (sidebar.css uses the same widths).
- */
-export const SIDEBAR_RAIL_QUERY = "(max-width: 1279px)";
-export const SIDEBAR_DRAWER_QUERY = "(max-width: 959px)";
+/** The collapse / expand shortcut, shown in the toggle's tooltip (the key handler is AppShell's). */
+export const COLLAPSE_SHORTCUT = "⌘\\";
 
-/** The sidebar mode the window width gives: `full` before hydration (both panels drawn then). */
-export function useSidebarWidthMode(): "full" | "rail" | "drawer" {
-  const rail = useMediaQuery(SIDEBAR_RAIL_QUERY);
-  const narrow = useMediaQuery(SIDEBAR_DRAWER_QUERY);
-  return narrow ? "drawer" : rail ? "rail" : "full";
+/**
+ * The sidebar mode the size class gives (spec §4.1): the full sidebar on the expanded class unless
+ * the person collapsed it, the rail on medium, the drawer below 600. The one place the sidebar and
+ * the App Shell read it from; `full` before hydration (both panels are drawn then, CSS shows one).
+ */
+export function sidebarModeOf(
+  sizeClass: SizeClass | null,
+  collapsed: boolean,
+): "full" | "rail" | "drawer" {
+  if (sizeClass === "compact") return "drawer";
+  if (sizeClass === "medium") return "rail";
+  return sizeClass === "expanded" && collapsed ? "rail" : "full";
+}
+
+export function useSidebarWidthMode(collapsed: boolean): "full" | "rail" | "drawer" {
+  return sidebarModeOf(useSizeClass(), collapsed);
 }
 
 /**
@@ -185,10 +205,14 @@ export function useSidebarWidthMode(): "full" | "rail" | "drawer" {
  */
 export function Sidebar(p: SidebarProps) {
   const hydrated = useHydrated();
-  const widthMode = useSidebarWidthMode();
+  const sizeClass = useSizeClass();
+  const widthMode = useSidebarWidthMode(p.collapsed ?? false);
   const responsive = p.mode === undefined && !hydrated;
   const mode = p.mode ?? widthMode;
+  // The medium rail has no expand button; both rails open the conversations as a side sheet.
+  const mediumRail = p.railMedium ?? (p.mode === undefined && sizeClass === "medium");
   const [ownOpen, setOwnOpen] = useState(false);
+  const [sheetOpen, setSheetOpen] = useState(false);
   const open = p.drawer?.open ?? ownOpen;
   const setOpen = (o: boolean) => {
     if (p.drawer) p.drawer.onOpenChange(o);
@@ -205,10 +229,29 @@ export function Sidebar(p: SidebarProps) {
     if (p.drawer) {
       if (p.drawer.open) p.drawer.onOpenChange(false);
     } else setOwnOpen(false);
+    setSheetOpen(false);
   }, [route]);
+  // The sheet belongs to the rail: leaving it (another class, the sidebar expanded) closes it.
+  useEffect(() => {
+    if (mode !== "rail") setSheetOpen(false);
+  }, [mode]);
+
+  const hasSessions = p.context.kind === "work" && p.conversations !== undefined;
+  const sessions = hasSessions
+    ? { open: sheetOpen, onToggle: () => setSheetOpen((v) => !v) }
+    : undefined;
+
+  const sheet =
+    sessions !== undefined && mode === "rail" && !responsive ? (
+      <RD.Root open={sheetOpen} onOpenChange={setSheetOpen} modal={false}>
+        <RD.Portal>
+          <SheetLayer p={p} onClose={() => setSheetOpen(false)} />
+        </RD.Portal>
+      </RD.Root>
+    ) : null;
 
   const drawer =
-    mode === "full" || responsive ? null : (
+    mode !== "drawer" || responsive ? null : (
       <RD.Root open={open} onOpenChange={setOpen} modal={!p.drawerInline}>
         {p.drawerInline ? (
           open ? (
@@ -229,9 +272,16 @@ export function Sidebar(p: SidebarProps) {
         <SidebarPanel p={p} variant="full" responsive={responsive} />
       ) : null}
       {responsive || mode === "rail" ? (
-        <SidebarPanel p={p} variant="rail" responsive={responsive} onExpand={() => setOpen(true)} />
+        <SidebarPanel
+          p={p}
+          variant="rail"
+          responsive={responsive}
+          mediumRail={mediumRail}
+          sessions={sessions}
+        />
       ) : null}
       {drawer}
+      {sheet}
     </>
   );
 }
@@ -277,18 +327,65 @@ function DrawerLayer({
   );
 }
 
+/**
+ * The rail's 会话 sheet (spec §6.13): the conversation section over the content from the
+ * rail's edge, `layout.sidebar` wide, with no scrim. Esc, the close button, a choice of a
+ * conversation and a click outside dismiss it.
+ */
+function SheetLayer({ p, onClose }: { p: SidebarProps; onClose(): void }) {
+  const t = useDesignT();
+  const focusReturn = useFocusReturn();
+  const conversations = p.conversations;
+  if (conversations === undefined) return null;
+  return (
+    <div className="cb-sidebar-layer" data-sheet="true">
+      <RD.Content
+        className="cb-sidebar-drawer"
+        data-part="conversations-sheet"
+        aria-describedby={undefined}
+        onOpenAutoFocus={focusReturn.capture}
+        onCloseAutoFocus={focusReturn.restore}
+        onInteractOutside={(e) => {
+          // The rail's 会话 button toggles the sheet itself.
+          if ((e.target as HTMLElement | null)?.closest('[data-part="conversations-button"]'))
+            e.preventDefault();
+        }}
+        onEscapeKeyDown={(e) => {
+          const target = e.target as HTMLElement | null;
+          if (target?.closest('[data-part="rename"], [data-part="filter"]')) e.preventDefault();
+        }}
+        onClick={(e: MouseEvent<HTMLElement>) => {
+          if ((e.target as HTMLElement).closest("a[href]")) onClose();
+        }}
+      >
+        <div className="cb-sidebar" data-mode="full" data-variant="sheet">
+          <div className="cb-sidebar-top" data-part="sheet-head">
+            <RD.Title className="cb-sidebar-sheet-title">{t("sidebar.conversations")}</RD.Title>
+            <IconButton label={t("sidebar.close")} icon={<Icon name="x" />} onClick={onClose} />
+          </div>
+          <Conversations c={conversations} newHref={p.newConversation?.href ?? "/"} />
+        </div>
+      </RD.Content>
+    </div>
+  );
+}
+
 function SidebarPanel({
   p,
   variant,
   responsive,
-  onExpand,
+  mediumRail,
+  sessions,
   onClose,
 }: {
   p: SidebarProps;
   variant: Variant;
   /** Drawn before hydration next to the other variant; CSS media queries pick one. */
   responsive?: boolean;
-  onExpand?: () => void;
+  /** The rail of the medium class: no expand button. */
+  mediumRail?: boolean;
+  /** The rail's 会话 button (work context with conversations). */
+  sessions?: { open: boolean; onToggle(): void } | undefined;
   onClose?: () => void;
 }) {
   const t = useDesignT();
@@ -304,7 +401,12 @@ function SidebarPanel({
       {ctx.kind === "setup" ? (
         <SetupNav p={p} ctx={ctx} rail={rail} />
       ) : (
-        <SidebarNav p={p} rail={rail} inDrawer={variant === "panel"} />
+        <SidebarNav
+          p={p}
+          rail={rail}
+          inDrawer={variant === "panel"}
+          sessions={rail ? sessions : undefined}
+        />
       )}
       {ctx.kind === "work" && !rail && p.conversations ? (
         <Conversations c={p.conversations} newHref={p.newConversation?.href ?? "/"} />
@@ -320,6 +422,7 @@ function SidebarPanel({
       data-cap-part="sidebar"
       data-mode={rail ? "rail" : "full"}
       data-context={ctx.kind}
+      data-collapsed={p.collapsed ? "true" : undefined}
       data-responsive={responsive ? "true" : undefined}
     >
       <div className="cb-sidebar-top" data-part="brand-row" data-cap-part="sidebar.brand">
@@ -334,6 +437,16 @@ function SidebarPanel({
         {rail ? null : (
           <span className="cb-sidebar-top-tools">
             {ctx.kind === "work" ? <BrandTools p={p} rail={false} /> : null}
+            {variant === "full" && p.onCollapsedChange ? (
+              <IconButton
+                label={t("sidebar.collapse")}
+                title={`${t("sidebar.collapse")} ${COLLAPSE_SHORTCUT}`}
+                icon={<Icon name="panel-left" />}
+                part="collapse-toggle"
+                aria-pressed={false}
+                onClick={() => p.onCollapsedChange?.(true)}
+              />
+            ) : null}
             {variant === "panel" ? (
               <IconButton
                 label={t("sidebar.close")}
@@ -346,13 +459,18 @@ function SidebarPanel({
       </div>
       {rail ? (
         <div className="cb-sidebar-rail-tools">
-          <Tooltip content={t("sidebar.expand")}>
-            <IconButton
-              label={t("sidebar.expand")}
-              icon={<Icon name="panel-left" />}
-              onClick={() => onExpand?.()}
-            />
-          </Tooltip>
+          {mediumRail && !responsive ? null : (
+            <Tooltip content={`${t("sidebar.expand")} ${COLLAPSE_SHORTCUT}`}>
+              <IconButton
+                label={t("sidebar.expand")}
+                icon={<Icon name="panel-left" />}
+                part="expand-toggle"
+                aria-pressed={true}
+                data-rail-for={responsive ? "expanded" : undefined}
+                onClick={() => p.onCollapsedChange?.(false)}
+              />
+            </Tooltip>
+          )}
           {ctx.kind === "work" ? <BrandTools p={p} rail /> : null}
         </div>
       ) : null}
@@ -593,7 +711,18 @@ function AdminEntry({ href, rail }: { href: string; rail: boolean }) {
  * scrim and past the screen's edge; maintainer decision 2026-11-09); the full sidebar and the
  * rail keep the flyout.
  */
-function SidebarNav({ p, rail, inDrawer }: { p: SidebarProps; rail: boolean; inDrawer?: boolean }) {
+function SidebarNav({
+  p,
+  rail,
+  inDrawer,
+  sessions,
+}: {
+  p: SidebarProps;
+  rail: boolean;
+  inDrawer?: boolean;
+  /** The rail's 会话 button: toggles the side sheet. */
+  sessions?: { open: boolean; onToggle(): void } | undefined;
+}) {
   const t = useDesignT();
   const Link = useDesignLink();
   const ctx = p.context;
@@ -611,6 +740,7 @@ function SidebarNav({ p, rail, inDrawer }: { p: SidebarProps; rail: boolean; inD
   const newHref = work ? p.newConversation?.href : undefined;
   const keys = [
     ...(newHref !== undefined ? ["new"] : []),
+    ...(sessions ? ["conversations"] : []),
     ...primary.map((n) => n.id),
     ...(hasMore ? ["more"] : []),
     ...sub.map((n) => n.id),
@@ -717,6 +847,23 @@ function SidebarNav({ p, rail, inDrawer }: { p: SidebarProps; rail: boolean; inD
       {newHref !== undefined
         ? item("new", { label: t("sidebar.new"), href: newHref, icon: "plus" }, "new-conversation")
         : null}
+      {sessions ? (
+        <RailTip label={t("sidebar.conversations")}>
+          <button
+            type="button"
+            className="cb-sidebar-item"
+            data-part="conversations-button"
+            data-rove="conversations"
+            tabIndex={roving.tabIndexOf("conversations", keys)}
+            aria-label={t("sidebar.conversations")}
+            aria-expanded={sessions.open}
+            aria-haspopup="dialog"
+            onClick={sessions.onToggle}
+          >
+            <Icon name="chats" size={16} />
+          </button>
+        </RailTip>
+      ) : null}
       {primary.map((n) => item(n.id, n))}
       {hasMore && inDrawer ? (
         <>

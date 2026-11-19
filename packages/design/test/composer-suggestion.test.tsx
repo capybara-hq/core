@@ -137,7 +137,7 @@ describe("ComposerBox suggestion: the placeholder", () => {
     wrap(<ComposerBox {...props({ suggestion: { text: TEXT, onDismiss: noop } })} />);
     expect(input().getAttribute("data-suggestion")).toBe("true");
     const css = readFileSync(resolve(__dirname, "../src/styles/conversation-page.css"), "utf8");
-    const phone = [...css.matchAll(/@media \(max-width: 639px\) \{([\s\S]*?)\n\}/g)]
+    const phone = [...css.matchAll(/@media \(max-width: 599px\) \{([\s\S]*?)\n\}/g)]
       .map((m) => m[1])
       .join("\n");
     const rule = phone.match(

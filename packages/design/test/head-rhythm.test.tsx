@@ -214,7 +214,10 @@ const ALLOWED: Record<string, Record<string, string[]>> = {
   '.cb-template-head-frame[data-width="content"]': { margin: ["0 auto"] },
   ".cb-pageheader-path": { gap: ["var(--cb-space-2)"] },
   ".cb-pageheader-row": { gap: ["var(--cb-space-3)"] },
-  ".cb-pageheader-path + .cb-pageheader-row": { "margin-top": ["var(--cb-layout-head-path)"] },
+  // `0`: a short window drops the path row, so the title row has no row above it (spec §4.7)
+  ".cb-pageheader-path + .cb-pageheader-row": {
+    "margin-top": ["var(--cb-layout-head-path)", "0"],
+  },
   ".cb-pageheader-notice": { "margin-top": ["var(--cb-layout-head-tabs)"] },
   ".cb-pageheader-description": { margin: ["var(--cb-layout-head-description) 0 0"] },
   ".cb-pageheader-tabs": {

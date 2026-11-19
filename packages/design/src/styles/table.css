@@ -49,7 +49,7 @@
 .cb-table-bulk strong {
   font-weight: 600;
 }
-/* The narrow bar (select-all, sort) exists only below 640, where the header row is hidden. */
+/* The narrow bar (select-all, sort) exists only below 600, where the header row is hidden. */
 .cb-table-narrow-bar {
   display: none;
 }
@@ -361,14 +361,14 @@
 }
 
 /*
- * Phones (below 640, spec §6.6 "Narrow"): every table becomes stacked rows. The header row is
+ * Phones (below 600, spec §6.6 "Narrow"): every table becomes stacked rows. The header row is
  * visually hidden (screen readers still read it), its select-all and sort move to the narrow bar;
  * each row is a card: the first column's cell is its title line (with the checkbox before
  * it and the row menu after it), every other cell a "label: value" line whose label is the
  * column header (`data-label`). Nothing sticks; the selected row keeps its 2px accent bar.
  * Selectors carry `.cb-table … tbody .cb-table-row > td` so they outrank the wide rules above.
  */
-@media (max-width: 639px) {
+@media (max-width: 599px) {
   .cb-table-toolbar {
     flex-wrap: wrap;
   }

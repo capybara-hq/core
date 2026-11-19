@@ -15,8 +15,6 @@ export { SafeModeBanner } from "./safe-mode-banner";
 export {
   initialOf,
   type SetupStep,
-  SIDEBAR_DRAWER_QUERY,
-  SIDEBAR_RAIL_QUERY,
   Sidebar,
   type SidebarActivity,
   type SidebarBrandVariant,
@@ -28,6 +26,17 @@ export {
   type SidebarNavItem,
   type SidebarOrg,
   type SidebarProps,
+  sidebarModeOf,
   untitledLabel,
 } from "./sidebar";
+export {
+  INLINE_RIGHT_AREA_BELOW,
+  INLINE_RIGHT_AREA_QUERY,
+  SHORT_WINDOW_QUERY,
+  SIZE_CLASS_QUERIES,
+  type SizeClass,
+  sizeClassOf,
+  useShortWindow,
+  useSizeClass,
+} from "./size-class";
 export { StatusBar, type StatusBarProps, useStatusBar } from "./status-bar";

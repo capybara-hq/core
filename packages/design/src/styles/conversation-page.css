@@ -415,7 +415,7 @@ span.cb-title-btn {
   color: var(--cb-ink);
 }
 /* The agents chip (§6.16.29): a picker-styled ghost button whose status dot leads the label;
- * below 640 the dot (or the agent icon) and the count alone. */
+ * below 600 the dot (or the agent icon) and the count alone. */
 .cb-agents-chip.cb-btn .cb-btn-body {
   gap: var(--cb-space-2);
 }
@@ -457,7 +457,7 @@ span.cb-title-btn {
 .cb-composer-bar .cb-picker.cb-btn[data-short="true"] {
   flex: none;
 }
-/* 640 and up the pickers sit in the row; the options button is a phone's (§6.16.2). */
+/* 600 and up the pickers sit in the row; the options button is a phone's (§6.16.2). */
 .cb-composer-pickers {
   display: contents;
 }
@@ -499,7 +499,7 @@ span.cb-title-btn {
 .cb-composer-bar > .cb-composer-suggestion-use.cb-btn {
   flex: none;
 }
-@media (max-width: 639px) {
+@media (max-width: 599px) {
   .cb-composer-pickers {
     display: none;
   }
@@ -678,7 +678,7 @@ span.cb-title-btn {
   margin: var(--cb-space-1) 0 0;
   padding: 0 var(--cb-space-2);
 }
-@media (max-width: 639px) {
+@media (max-width: 599px) {
   .cb-agents-chip-label,
   .cb-agents-chip-activity {
     display: none;
@@ -1089,7 +1089,7 @@ button.cb-property-row {
 .cb-conv-new-composer > .cb-file-drop {
   margin-top: var(--cb-space-3);
 }
-/* The quick actions listed on the page are a phone's (below); 640 and up the zap menu offers them. */
+/* The quick actions listed on the page are a phone's (below); 600 and up the zap menu offers them. */
 .cb-conv-new-quick {
   display: none;
 }
@@ -1132,12 +1132,12 @@ button.cb-property-row {
   }
 }
 /*
- * Phones (below 640, spec §5.4): the middle column has no minimum and fills the window, with 16 px
+ * Phones (below 600, spec §5.4): the middle column has no minimum and fills the window, with 16 px
  * gutters for the title bar, the thread and the composer, so the composer, its send button and
  * the user bubbles never run past the right edge. Title-bar buttons are 40 px tap targets; the
  * right padding is space.1 so an icon's glyph lines up with the 16 px content edge.
  */
-@media (max-width: 639px) {
+@media (max-width: 599px) {
   .cb-conv-main {
     min-width: 0;
   }

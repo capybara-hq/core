@@ -12,6 +12,7 @@ import { Icon } from "../icons/icon";
 import type { IconName } from "../icons/paths";
 import { Menu, type MenuItem, menuActions, menuLone } from "../overlays/index";
 import { LinkPendingMark, useDesignLink, useDesignT } from "../provider";
+import { SIZE_CLASS_QUERIES } from "./size-class";
 import { useHydrated, useMediaQuery } from "./use-media-query";
 
 type HeaderButton = {
@@ -111,7 +112,7 @@ export function hasTabRow(p: PageHeaderProps): boolean {
 
 /**
  * The page header (spec §4.2): row 1 the path, row 2 the title (+ count / status) and the
- * description, actions on the right. No line, no ground. Below 640 the actions other than the
+ * description, actions on the right. No line, no ground. Below 600 the actions other than the
  * primary fold into a `more-horizontal` menu. The vertical rhythm is the head tokens (spec §4.2
  * "Head rhythm"): `layout.head-path` between the path and the title row, `layout.head-description`
  * between the title and the description, `layout.head-tabs` above the notice and the tab row.
@@ -120,7 +121,7 @@ export function PageHeader(p: PageHeaderProps) {
   assertHeader(p);
   const t = useDesignT();
   const Link = useDesignLink();
-  const narrow = useMediaQuery("(max-width: 639px)");
+  const narrow = useMediaQuery(SIZE_CLASS_QUERIES.compact);
   const announces = useSkeletonAnnounces();
   const segments = p.path;
   const tabItems = p.tabs ?? [];
@@ -153,13 +154,13 @@ export function PageHeader(p: PageHeaderProps) {
       });
     }
   }
-  // One action besides the primary stays a button below 640 too.
+  // One action besides the primary stays a button below 600 too.
   const more: HeaderAction | null =
     folded.length > 1 ? { label: t("shell.moreActions"), menu: folded } : null;
   const rest = actions.filter((a) => !isPrimary(a));
   const primaries = actions.filter(isPrimary);
   // Before hydration both the inline actions and the fold menu are drawn and CSS media queries
-  // show one (m6), so the first paint below 640 never lays every action out in one row.
+  // show one (m6), so the first paint below 600 never lays every action out in one row.
   const pre = !useHydrated();
   const renderAction = (a: HeaderAction) => {
     if ("menu" in a) {

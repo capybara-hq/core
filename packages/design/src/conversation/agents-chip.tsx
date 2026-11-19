@@ -37,7 +37,7 @@ function withNumber(text: string, n: number, part: string): JSX.Element {
  * while a sub-agent runs (`accent`, pulsing) or waits for a person (`warn`), else the `agent`
  * icon. While some are active a short activity part follows ("· 1 个运行中", else "· 2 个等待中";
  * the dot carries the color, the text stays `muted` / `ink`). Its accessible name and tooltip add
- * the running count ("3 个智能体，1 个运行中"). Below 640 it shrinks to the mark and the count.
+ * the running count ("3 个智能体，1 个运行中"). Below 600 it shrinks to the mark and the count.
  */
 export function AgentsChip({
   count,
@@ -89,7 +89,7 @@ export function AgentsChip({
             : withNumber(t("agentsChip.waiting"), waiting, "agents-chip-activity-number")}
         </span>
       ) : null}
-      {/* below 640: the count alone (the full label stays the name and the tooltip) */}
+      {/* below 600: the count alone (the full label stays the name and the tooltip) */}
       <span className="cb-agents-chip-count" data-part="agents-chip-count" aria-hidden="true">
         {count}
       </span>

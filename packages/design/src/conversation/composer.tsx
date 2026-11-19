@@ -350,7 +350,7 @@ function ComposerTokenChip({
  * The composer (§6.16.2): the frame, the attachment strip, the textarea (grows to 8 lines) and the
  * control row: ＋ · agent · device · model · effort (hidden without efforts) · quick actions
  * (only when the agent has some) · the agents chip (once the conversation has a sub-agent) · send /
- * stop. Below 640 the device, model and effort pickers are one options button
+ * stop. Below 600 the device, model and effort pickers are one options button
  * (`ComposerOptions`) opening a bottom sheet with the three groups.
  */
 export function ComposerBox({
@@ -569,7 +569,7 @@ export function ComposerBox({
           }}
         />
         {pickers.agent ? <Picker {...pickers.agent} /> : null}
-        {/* 640 and up: individual pickers; phones: one options button and its bottom sheet (CSS). */}
+        {/* 600 and up: individual pickers; phones: one options button and its bottom sheet (CSS). */}
         <span className="cb-composer-pickers" data-part="composer-pickers">
           {pickers.device ? <Picker {...pickers.device} /> : null}
           {pickers.permission ? <Picker {...pickers.permission} /> : null}

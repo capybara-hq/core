@@ -21,6 +21,7 @@ import { Icon } from "../icons/icon";
 import { BoxScope } from "../layout/box";
 import { useFocusReturn } from "../overlays/focus-return";
 import { useDesignT } from "../provider";
+import { INLINE_RIGHT_AREA_BELOW } from "../shell/size-class";
 import { StatusBar } from "../shell/status-bar";
 import { useMediaQuery } from "../shell/use-media-query";
 import { useFollowBottom } from "./follow-bottom";
@@ -86,7 +87,7 @@ export type ConversationPageProps = {
    * A new conversation (nothing created yet; spec §5.4, agent profile design §4): top to bottom
    * the greeting (else the agent's name and description), the agents row and the composer (the
    * selected agent's quick actions are a button in the composer's control row, §6.16.27). Below
-   * 640 the greeting and the agents row (one scrolling line) sit at the top, the quick actions are
+   * 600 the greeting and the agents row (one scrolling line) sit at the top, the quick actions are
    * listed under them and the composer is pinned at the bottom, as on a conversation.
    */
   newConversation?: {
@@ -98,8 +99,8 @@ export type ConversationPageProps = {
     agents?: ReactNode;
     /**
      * `QuickActionList` (§6.16.27): the selected agent's quick actions listed between the agents
-     * row and the composer, below 640 only (a phone, where the composer has no `zap` button);
-     * 640 and up the composer's `zap` menu offers them. Absent when the agent has none.
+     * row and the composer, below 600 only (a phone, where the composer has no `zap` button);
+     * 600 and up the composer's `zap` menu offers them. Absent when the agent has none.
      */
     quickActions?: ReactNode;
   };
@@ -241,7 +242,7 @@ export function ConversationPage({
   reference,
 }: ConversationPageProps) {
   const t = useDesignT();
-  const narrowWindow = useMediaQuery("(max-width: 1279px)");
+  const narrowWindow = useMediaQuery(INLINE_RIGHT_AREA_BELOW);
   const sheet = layout === "sheet" || (layout === "auto" && narrowWindow);
   const scroll = useFollowBottom<HTMLDivElement>();
   const root = useRef<HTMLDivElement>(null);

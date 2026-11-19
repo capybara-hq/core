@@ -13,6 +13,7 @@ import { matchRoute } from "../../lib/query/routes";
 import { HOME_PATH } from "../../lib/routes";
 import { clientHost } from "../../lib/server/client-host";
 import {
+  currentCookie,
   currentCookieHeader,
   currentNonce,
   currentPath,
@@ -23,6 +24,7 @@ import { dehydrateFor, prefetchRoute, serverQueryClient } from "../../lib/server
 import { getShell } from "../../lib/server/session";
 import { workspaceThemeMetadata } from "../../lib/server/theme";
 import { setupRouteOf } from "../../lib/setup-routes";
+import { isSidebarCollapsed, SIDEBAR_COOKIE } from "../../lib/sidebar-cookie";
 
 /** The viewer's theme icon, when the theme has one (themes spec §4.3). */
 export const generateMetadata = workspaceThemeMetadata;
@@ -35,7 +37,8 @@ export const generateMetadata = workspaceThemeMetadata;
  * §8). The page's client extensions (client extensions spec §11): unless safe mode
  * (`?safe-ui=1` or its session cookie), their import map, preloads and stylesheets, and
  * `ClientHost` around the frame, which imports them after hydration. The first workspace document
- * of a sign-in tells the frame (`sign-in=new`, spec §7.3). Client navigations don't
+ * of a sign-in tells the frame (`sign-in=new`, spec §7.3), and the `cb-sidebar` cookie the form of
+ * the sidebar the person chose (spec §4.1), so the first paint draws it. Client navigations don't
  * re-render it. The URL has no `(app)`.
  */
 export default async function AppLayout({ children }: { children: ReactNode }) {
@@ -64,11 +67,12 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
   if (prefetched.route === "unknown" && matchRoute(pathname) === null) notFound();
   // Safe mode: `?safe-ui=1` or its session cookie, so a refresh after a client navigation (the URL
   // without the parameter) still renders no client code.
-  const [safe, host, nonce, newSignIn] = await Promise.all([
+  const [safe, host, nonce, newSignIn, sidebarCookie] = await Promise.all([
     currentSafeUi(),
     clientHost(),
     currentNonce(),
     currentSignInIsNew(),
+    currentCookie(SIDEBAR_COOKIE),
   ]);
   const source = shell.clientSource;
   return (
@@ -83,7 +87,11 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
           scope={source.kind === "admin" ? "admin" : "org"}
         />
         <ClientHostRoot source={source} safe={safe} hostReady={host !== null}>
-          <AppFrame version={`v${pkg.version}`} newSignIn={newSignIn}>
+          <AppFrame
+            version={`v${pkg.version}`}
+            newSignIn={newSignIn}
+            sidebarCollapsed={isSidebarCollapsed(sidebarCookie)}
+          >
             {children}
           </AppFrame>
         </ClientHostRoot>

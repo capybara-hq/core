@@ -632,6 +632,10 @@ function sidebarBlocks(): ReactNode {
       <SidebarBlock id="sidebar-many-groups" active="agents" groups="many" />
       <SidebarBlock id="sidebar-guest" {...base} level="guest" />
       <SidebarBlock id="sidebar-admin" context="admin" active="accounts" />
+      {/* The rail of the medium class: no expand button, 会话 opens the conversations as a sheet */}
+      <RefBlock id="sidebar-rail-medium" width={200} height={SIDEBAR_H}>
+        <Sidebar {...sidebarProps({ active: "agents" }, here)} mode="rail" railMedium />
+      </RefBlock>
       <RefBlock
         id="sidebar-rail"
         width={200}

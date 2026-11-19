@@ -176,7 +176,7 @@
   > .cb-repeater-actions {
   margin-top: 0;
 }
-@media (max-width: 639px) {
+@media (max-width: 599px) {
   .cb-repeater[data-variant="rows"] .cb-repeater-li:first-child .cb-repeater-handle,
   .cb-repeater[data-variant="rows"] .cb-repeater-li:first-child .cb-repeater-actions {
     margin-top: 0;

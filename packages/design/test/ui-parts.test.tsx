@@ -13,8 +13,7 @@ import {
   ImagePlaceholder,
   Input,
   Segmented,
-  SIDEBAR_DRAWER_QUERY,
-  SIDEBAR_RAIL_QUERY,
+  SIZE_CLASS_QUERIES,
   Sidebar,
   type SidebarProps,
   StatCards,
@@ -22,6 +21,7 @@ import {
   UserBubble,
 } from "../src/index";
 import { UI_PART_NAMES } from "../src/ui-parts.generated";
+import { matchMediaFor } from "./width";
 
 afterEach(cleanup);
 
@@ -111,12 +111,16 @@ describe("data-cap-part (client extensions spec §7.1)", () => {
     render(
       <DesignProvider locale="zh">
         <Sidebar
-          {...sidebarProps({ brand, mode: "rail", drawer: { open: true, onOpenChange: () => {} } })}
+          {...sidebarProps({
+            brand,
+            mode: "drawer",
+            drawer: { open: true, onOpenChange: () => {} },
+          })}
           drawerInline
         />
       </DesignProvider>,
     );
-    expect(screen.getByTestId("brand-rail").textContent).toBe("true");
+    expect(screen.queryByTestId("brand-rail")).toBeNull();
     expect(screen.getByTestId("brand-drawer").textContent).toBe("false");
   });
 
@@ -135,23 +139,15 @@ describe("data-cap-part (client extensions spec §7.1)", () => {
     expect(shell.getAttribute("data-cap-state")).toBe("run=idle theme=builtin sidebar=full");
   });
 
-  it("AppShell publishes the sidebar mode as sidebar=rail|full (the drawer counts as full)", () => {
+  it("AppShell publishes the sidebar mode and the size class: sidebar=rail|full, size=...", () => {
     const real = window.matchMedia;
-    const widthOf = (px: number) =>
-      ((query: string) => {
-        const max = /max-width: (\d+)px/.exec(query)?.[1];
-        return {
-          matches: max !== undefined && px <= Number(max),
-          addEventListener: () => {},
-          removeEventListener: () => {},
-        };
-      }) as unknown as typeof window.matchMedia;
-    const stateAt = (px: number) => {
-      window.matchMedia = widthOf(px);
+    const stateAt = (px: number, collapsed?: boolean) => {
+      window.matchMedia = matchMediaFor(px).matchMedia;
       const { container, unmount } = render(
         <DesignProvider locale="zh">
           <AppShell
             sidebar={sidebarProps()}
+            {...(collapsed === undefined ? {} : { collapsed })}
             status={{ context: "demo", version: "0.1.0", timeZone: "UTC" }}
           />
         </DesignProvider>,
@@ -163,16 +159,15 @@ describe("data-cap-part (client extensions spec §7.1)", () => {
       return v;
     };
     try {
-      expect(stateAt(1440)).toBe("sidebar=full");
-      expect(stateAt(1100)).toBe("sidebar=rail");
-      expect(stateAt(800)).toBe("sidebar=full");
-      // the sidebar and the shell read one set of breakpoints, the ones sidebar.css uses too
-      expect([SIDEBAR_RAIL_QUERY, SIDEBAR_DRAWER_QUERY]).toEqual([
-        "(max-width: 1279px)",
-        "(max-width: 959px)",
-      ]);
-      const css = readFileSync(resolve(import.meta.dirname, "../src/styles/sidebar.css"), "utf8");
-      for (const q of [SIDEBAR_RAIL_QUERY, SIDEBAR_DRAWER_QUERY]) expect(css).toContain(q);
+      expect(stateAt(1440)).toBe("sidebar=full size=expanded");
+      // the person's choice makes the expanded class the rail; the sidebar never does it by itself
+      expect(stateAt(1100)).toBe("sidebar=full size=expanded");
+      expect(stateAt(1100, true)).toBe("sidebar=rail size=expanded");
+      expect(stateAt(700)).toBe("sidebar=rail size=medium");
+      // the drawer (until the compact shell) counts as full
+      expect(stateAt(500)).toBe("sidebar=full size=compact");
+      // the shell reads the class queries from one place
+      expect(SIZE_CLASS_QUERIES.compact).toBe("(max-width: 599px)");
       const shellSrc = readFileSync(
         resolve(import.meta.dirname, "../src/shell/app-shell.tsx"),
         "utf8",

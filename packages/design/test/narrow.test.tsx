@@ -6,7 +6,7 @@ import { type Column, DataTable, DesignProvider } from "../src/index";
 
 /**
  * Phone widths (spec §4.3 "Narrow windows"): jsdom cannot lay anything out, so these tests read
- * the stylesheets' rules (inside `@media (max-width: 639px)` where the behaviour is narrow-only)
+ * the stylesheets' rules (inside `@media (max-width: 599px)` where the behaviour is narrow-only)
  * and the DOM the stacked table needs.
  */
 afterEach(cleanup);
@@ -15,7 +15,7 @@ const STYLES = resolve(import.meta.dirname, "../src/styles");
 const css = (file: string) => readFileSync(resolve(STYLES, file), "utf8");
 
 /** The bodies of every `@media <query> {…}` block in `text`, joined. */
-function media(text: string, query = "(max-width: 639px)"): string {
+function media(text: string, query = "(max-width: 599px)"): string {
   const open = `@media ${query} {`;
   let out = "";
   let at = text.indexOf(open);
@@ -151,9 +151,38 @@ describe("SettingsPage sub-nav below 640", () => {
     expect(nav).toContain("overflow-x: auto;");
   });
 
-  it("is sticky only on phones (the 200 px rail above 640 is not)", () => {
+  it("is sticky only on phones (the 200 px rail from 600 is not)", () => {
     const wide = css("templates.css").replace(/@media[^{]*\{(?:[^{}]*\{[^{}]*\})*[^{}]*\}/g, "");
     expect(decls(wide, ".cb-settings-nav")).not.toContain("position: sticky;");
+  });
+});
+
+describe("size-class widths in the stylesheets", () => {
+  it("a label column that does not fit stacks by a container query on the body, and below 841", () => {
+    const templates = css("templates.css");
+    const shell = css("shell.css");
+    expect(decls(shell, ".cb-body-content")).toContain("container: cb-body / inline-size;");
+    for (const [sel, width] of [
+      [".cb-form-section", "791px"],
+      [".cb-settings-grid", "751px"],
+    ] as const) {
+      expect(media(templates, "(max-width: 840px)")).toContain(sel);
+      expect(media(templates, `(max-width: 840px)`)).not.toContain("959");
+      expect(templates).toContain(`@container cb-body (max-width: ${width}) {`);
+    }
+  });
+
+  it("the phone rules end at 599 and the drawer bar is for compact only", () => {
+    const shell = css("shell.css");
+    expect(media(shell, "(min-width: 600px)")).toContain(
+      '.cb-shell-drawerbar[data-responsive="true"]',
+    );
+  });
+
+  it("a short window hides the status bar and the path row", () => {
+    const hidden = media(css("shell.css"), "(max-height: 479px)");
+    expect(decls(hidden, ".cb-statusbar")).toContain("display: none;");
+    expect(decls(hidden, ".cb-pageheader-path")).toContain("display: none;");
   });
 });
 

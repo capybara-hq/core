@@ -7,6 +7,7 @@ import { Icon } from "../icons/icon";
 import type { IconName } from "../icons/paths";
 import { Dialog } from "../overlays/dialog";
 import { useDesignLink, useDesignT } from "../provider";
+import { SIZE_CLASS_QUERIES } from "../shell/size-class";
 import { useMediaQuery } from "../shell/use-media-query";
 import { ConvMenu, type ConvMenuEntry } from "./menu";
 
@@ -71,13 +72,13 @@ function pathSegment(c: { label: string; avatar?: AvatarValue }) {
 const SLOT = 28 + 4;
 /** What the bar keeps besides group 2: paddings, a readable title, the toggle, separator, More. */
 const RESERVED = 20 + 12 + 200 + SLOT + 9 + 4 + SLOT;
-/** Below 640 (spec §6.16.1): 40 px tap targets, 16 + 4 paddings and a shorter readable title. */
+/** Below 600 (spec §6.16.1): 40 px tap targets, 16 + 4 paddings and a shorter readable title. */
 const TOUCH_SLOT = 40 + 4;
 const TOUCH_RESERVED = 16 + 4 + 160 + TOUCH_SLOT + 9 + 4 + TOUCH_SLOT;
 
 /**
  * How many of `count` panel icons fit in a title bar `width` wide (the rest go into More);
- * `touch` is the phone form (below 640), whose buttons are 40 px tap targets.
+ * `touch` is the phone form (below 600), whose buttons are 40 px tap targets.
  */
 export function titleBarFit(width: number, count: number, touch = false): number {
   if (width <= 0) return count;
@@ -111,7 +112,7 @@ export function TitleBar({
     ro.observe(el);
     return () => ro.disconnect();
   }, []);
-  const touch = useMediaQuery("(max-width: 639px)");
+  const touch = useMediaQuery(SIZE_CLASS_QUERIES.compact);
   const measured = reference?.visiblePanels ?? titleBarFit(width, panels.length, touch);
   // No menu of one (spec §6.7): a single icon that doesn't fit takes More's slot instead.
   const fit = panels.length - measured === 1 ? panels.length : measured;

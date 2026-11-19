@@ -659,7 +659,7 @@
   background: var(--cb-line-soft);
 }
 
-/* Rail: icons only; conversations behind the expand button (it opens the drawer). */
+/* Rail: icons only; the conversations behind the 会话 button (a side sheet on medium). */
 .cb-sidebar[data-mode="rail"] {
   align-items: center;
   width: var(--cb-layout-sidebar-rail);
@@ -740,6 +740,22 @@
   padding: 0;
 }
 
+/* The rail's 会话 sheet (spec §6.13): beside the rail over the content, no scrim; the layer
+   lets clicks through, only the sheet takes them. */
+.cb-sidebar-layer[data-sheet="true"] {
+  pointer-events: none;
+}
+.cb-sidebar-layer[data-sheet="true"] .cb-sidebar-drawer {
+  inset: 0 auto 0 var(--cb-layout-sidebar-rail);
+  pointer-events: auto;
+}
+.cb-sidebar[data-variant="sheet"] .cb-sidebar-sheet-title {
+  margin: 0;
+  padding-left: var(--cb-pad-dense-x);
+  font-size: var(--cb-type-body-size);
+  font-weight: 600;
+}
+
 /* Drawer: the full sidebar over a scrim, from the left. */
 .cb-sidebar-layer {
   position: fixed;
@@ -761,7 +777,7 @@
   box-shadow: var(--cb-shadow-float);
   outline: none;
 }
-/* The drawer is the touch form of the sidebar (below 960, phones included): its rows are 40 px
+/* The drawer is the touch form of the sidebar (below 600, until the compact shell replaces it): its rows are 40 px
    tap targets (spec §6.13), and a conversation row's menu is a 40 px square. */
 .cb-sidebar-drawer .cb-sidebar .cb-sidebar-item,
 .cb-sidebar-drawer .cb-sidebar .cb-sidebar-row,
@@ -841,16 +857,27 @@
 }
 
 /*
- * Before hydration (no explicit mode) both the full and the rail panel are drawn; the window width
- * picks one, so the first paint is right: full from 1280, rail 960–1279, neither below 960 (the
- * drawer opens from AppShell's menu bar).
+ * Before hydration (no explicit mode) both the full and the rail panel are drawn; the size class
+ * and the person's choice (`data-collapsed`, from the cb-sidebar cookie) pick one, so the first
+ * paint is right: the full sidebar from 841 unless collapsed, the rail on medium and when
+ * collapsed, neither below 600 (the drawer opens from AppShell's menu bar). The rail's expand
+ * button is for the expanded class only.
  */
-@media (max-width: 1279px) {
+@media (max-width: 840px) {
   .cb-sidebar[data-responsive="true"][data-mode="full"] {
     display: none;
   }
+  .cb-sidebar[data-responsive="true"] [data-rail-for="expanded"] {
+    display: none;
+  }
 }
-@media (min-width: 1280px), (max-width: 959px) {
+@media (min-width: 841px) {
+  .cb-sidebar[data-responsive="true"][data-mode="full"][data-collapsed="true"],
+  .cb-sidebar[data-responsive="true"][data-mode="rail"]:not([data-collapsed="true"]) {
+    display: none;
+  }
+}
+@media (max-width: 599px) {
   .cb-sidebar[data-responsive="true"][data-mode="rail"] {
     display: none;
   }
@@ -918,7 +945,7 @@
   bottom: 16px;
   display: flex;
 }
-@media (max-width: 639px) {
+@media (max-width: 599px) {
   .cb-auth-prefs {
     right: 16px;
   }

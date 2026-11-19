@@ -109,7 +109,7 @@ export type FormSectionLayout = "columns" | "stacked";
  * row placeholders in a flush card (a section that lists items, spec §5.8); a section whose data
  * is ready renders for real next to loading ones. Outside a loading page it announces itself.
  * `layout="stacked"` puts the head above a fields card across the full width, for content that
- * needs it (an editor); below 960 every section is stacked anyway.
+ * needs it (an editor); below 841 every section is stacked anyway.
  */
 export function FormSection({
   id,

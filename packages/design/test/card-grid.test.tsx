@@ -687,7 +687,7 @@ describe("CardGrid states", () => {
     );
     expect(rule).toMatch(/gap:\s*var\(--cb-space-3\)/);
     expect(css).toMatch(
-      /@media \(max-width: 639px\)\s*\{[^@]*\.cb-card-grid\s*\{\s*grid-template-columns:\s*1fr;/,
+      /@media \(max-width: 599px\)\s*\{[^@]*\.cb-card-grid\s*\{\s*grid-template-columns:\s*1fr;/,
     );
   });
 });

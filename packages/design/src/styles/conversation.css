@@ -2048,7 +2048,7 @@ button.cb-file-card:focus-visible {
   max-height: min(
     320px,
     calc(
-      var(--radix-popover-content-available-height, 100vh) -
+      var(--radix-popover-content-available-height, 100dvh) -
       var(--cb-control-default) -
       3 *
       var(--cb-space-2) -

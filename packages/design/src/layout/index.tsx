@@ -39,7 +39,7 @@ type GridColumns = 1 | 2 | 3 | 4 | "form" | "list-detail";
 export type GridProps = {
   /**
    * `list-detail`: a 220 px list beside a flexible detail (a file list and the open file's
-   * editor), top-aligned; one column below 640, the list above the detail.
+   * editor), top-aligned; one column below 600, the list above the detail.
    */
   columns: GridColumns;
   gap?: Gap;
@@ -50,7 +50,7 @@ export type GridProps = {
       /**
        * A `line-soft` column divider between the list and the detail, `space.4` from each (a list
        * beside the open item's fields in one box, spec §5.8 "List + editor"); a row divider once
-       * they stack below 640. Only for `list-detail`: its two children make one row.
+       * they stack below 600. Only for `list-detail`: its two children make one row.
        */
       divided?: boolean;
     }

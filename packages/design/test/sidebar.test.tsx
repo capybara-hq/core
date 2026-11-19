@@ -995,17 +995,74 @@ describe("Sidebar rail", () => {
     expect(screen.getAllByRole("menuitem").map((i) => i.textContent)).toEqual(["插件", "组织设置"]);
   });
 
-  it("expand opens the drawer with the full sidebar; Esc closes it and returns focus", async () => {
-    const user = userEvent.setup();
-    zh(<Sidebar {...props()} mode="rail" />);
+  it("the collapsed rail's expand button is pressed and expands the sidebar (the person's choice)", async () => {
+    const onCollapsedChange = vi.fn();
+    zh(<Sidebar {...props()} mode="rail" collapsed onCollapsedChange={onCollapsedChange} />);
     const expand = screen.getByRole("button", { name: "展开侧栏" });
-    await user.click(expand);
-    const drawer = await screen.findByRole("dialog");
-    expect(within(drawer).getByRole("region", { name: "会话" })).toBeTruthy();
-    expect(within(drawer).getByText("Agents")).toBeTruthy();
+    expect(expand.getAttribute("aria-pressed")).toBe("true");
+    expect(expand.getAttribute("data-part")).toBe("expand-toggle");
+    await userEvent.click(expand);
+    expect(onCollapsedChange).toHaveBeenCalledWith(false);
+    // the rail holds no conversation list: 会话 opens it, and nothing is open yet
+    expect(screen.getByRole("button", { name: "会话" })).toBeTruthy();
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("the full sidebar's collapse toggle ends the brand row, unpressed, and collapses it", async () => {
+    const onCollapsedChange = vi.fn();
+    zh(<Sidebar {...props()} mode="full" onCollapsedChange={onCollapsedChange} />);
+    const top = document.querySelector('[data-part="brand-row"]') as HTMLElement;
+    const tools = top.querySelector(".cb-sidebar-top-tools") as HTMLElement;
+    const toggle = within(tools).getByRole("button", { name: "收起侧栏" });
+    expect(tools.lastElementChild).toBe(toggle);
+    expect(toggle.getAttribute("aria-pressed")).toBe("false");
+    expect(toggle.getAttribute("title")).toBe("收起侧栏 ⌘\\");
+    await userEvent.click(toggle);
+    expect(onCollapsedChange).toHaveBeenCalledWith(true);
+  });
+
+  it("without onCollapsedChange (an inert sidebar) there is no collapse toggle", () => {
+    zh(<Sidebar {...props()} mode="full" />);
+    expect(screen.queryByRole("button", { name: "收起侧栏" })).toBeNull();
+  });
+
+  it("the medium rail has no expand button; 会话 opens the conversations as a side sheet without a scrim", async () => {
+    const user = userEvent.setup();
+    zh(<Sidebar {...props()} mode="rail" railMedium />);
+    expect(screen.queryByRole("button", { name: "展开侧栏" })).toBeNull();
+    const chats = within(mainNav()).getByRole("button", { name: "会话" });
+    // under 新会话, before the primary items
+    const labels = [...mainNav().querySelectorAll(".cb-sidebar-item")].map(
+      (e) => e.getAttribute("aria-label") ?? e.textContent,
+    );
+    expect(labels.slice(0, 3)).toEqual(["新会话", "会话", "Agents"]);
+    expect(chats.getAttribute("aria-expanded")).toBe("false");
+    await user.click(chats);
+    const sheet = await screen.findByRole("dialog");
+    expect(chats.getAttribute("aria-expanded")).toBe("true");
+    expect(within(sheet).getByRole("region", { name: "会话" })).toBeTruthy();
+    expect(document.querySelector(".cb-sidebar-scrim")).toBeNull();
+    // the same button closes it again
+    await user.click(chats);
+    expect(screen.queryByRole("dialog")).toBeNull();
+    await user.click(chats);
+    await screen.findByRole("dialog");
     await user.keyboard("{Escape}");
     expect(screen.queryByRole("dialog")).toBeNull();
-    expect(document.activeElement).toBe(expand);
+    expect(document.activeElement).toBe(chats);
+  });
+
+  it("choosing a conversation in the sheet closes it; its close button too", async () => {
+    const user = userEvent.setup();
+    zh(<Sidebar {...props()} mode="rail" railMedium />);
+    await user.click(within(mainNav()).getByRole("button", { name: "会话" }));
+    let sheet = await screen.findByRole("dialog");
+    await user.click(within(sheet).getByRole("link", { name: "研究助手 会话 2" }));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    await user.click(within(mainNav()).getByRole("button", { name: "会话" }));
+    sheet = await screen.findByRole("dialog");
+    await user.click(within(sheet).getByRole("button", { name: "关闭导航" }));
+    expect(screen.queryByRole("dialog")).toBeNull();
   });
 
   it("Esc in the drawer's rename or filter input stays with the input", async () => {
@@ -1158,6 +1215,17 @@ describe("Sidebar first paint and remembered state", () => {
     expect(html).toContain('data-mode="full"');
     expect(html).toContain('data-mode="rail"');
     expect(html.match(/data-responsive="true"/g)?.length).toBe(2);
+  });
+
+  it("the rail's expand button is drawn on the server for CSS to show on the expanded class", () => {
+    const html = renderToString(
+      <DesignProvider locale="zh">
+        <Sidebar {...props()} collapsed />
+      </DesignProvider>,
+    );
+    expect(html).toContain('data-rail-for="expanded"');
+    // the person's choice reaches both panels, so CSS can draw the right one before hydration
+    expect(html.match(/data-collapsed="true"/g)?.length).toBe(2);
   });
 
   it("an explicit mode server-renders that variant only", () => {

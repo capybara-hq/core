@@ -191,7 +191,7 @@ describe("FormPage", () => {
     expect(rule).toContain("margin-left: calc(240px + var(--cb-space-7))");
     const narrow =
       css.match(
-        /@media \(max-width: 959px\) \{[^@]*\.cb-form-section ~ \.cb-danger-zone \{[^}]*\}/,
+        /@media \(max-width: 840px\) \{[^@]*\.cb-form-section ~ \.cb-danger-zone \{[^}]*\}/,
       )?.[0] ?? "";
     expect(narrow).toContain("margin-left: 0");
   });
@@ -517,7 +517,7 @@ describe("其他模板行为", () => {
 
   it("SettingsPage on phones: the scrolling sub-nav draws its focus ring inside the item", () => {
     const css = readFileSync(resolve(import.meta.dirname, "../src/styles/templates.css"), "utf8");
-    const phone = css.slice(css.indexOf("@media (max-width: 639px) {\n  .cb-settings-nav {") + 1);
+    const phone = css.slice(css.indexOf("@media (max-width: 599px) {\n  .cb-settings-nav {") + 1);
     expect(phone).toMatch(/^[^@]*\.cb-settings-nav-item:focus-visible \{\s*outline-offset: -2px;/);
   });
 

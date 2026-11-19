@@ -42,6 +42,7 @@ import { markSigningOut, resetSession } from "../../lib/query/workspace";
 import { HOME_PATH } from "../../lib/routes";
 import { logout, type Me, type Membership, setCurrentOrg } from "../../lib/session";
 import { broadcastSession, useSessionSync } from "../../lib/session-sync";
+import { sidebarCookie } from "../../lib/sidebar-cookie";
 import { useErrorMessage } from "../../lib/use-error-message";
 import { useAdminExtensionPages } from "../admin-nav";
 import { CreateOrgDialog } from "../CreateOrgDialog";
@@ -110,6 +111,12 @@ function useMotionToken(): "full" | "reduced" | null {
   );
 }
 
+/** The person's sidebar form (the rail or the full sidebar), and the setter that remembers it. */
+const SidebarChoiceContext = createContext<{
+  collapsed: boolean;
+  choose(collapsed: boolean): void;
+}>({ collapsed: false, choose: () => {} });
+
 /** Whether the document is the first workspace document of the sign-in (the layout's flag). */
 const NewSignInContext = createContext(false);
 
@@ -174,18 +181,31 @@ const under = (pathname: string, prefix: string) =>
 export function AppFrame({
   version,
   newSignIn = false,
+  sidebarCollapsed = false,
   children,
 }: {
   version: string;
   /** The first workspace document of the sign-in (`sign-in=new`, client extensions spec §7.3). */
   newSignIn?: boolean;
+  /** The `cb-sidebar` cookie the layout read: the person chose the rail (spec §4.1). */
+  sidebarCollapsed?: boolean;
   children: ReactNode;
 }) {
+  // Held here, which stays mounted across navigations; the cookie keeps it for the next document.
+  const [collapsed, setCollapsed] = useState(sidebarCollapsed);
+  const choose = useCallback((next: boolean) => {
+    setCollapsed(next);
+    // biome-ignore lint/suspicious/noDocumentCookie: written in the event handler; the Cookie Store API is async and not everywhere
+    document.cookie = sidebarCookie(next);
+  }, []);
+  const sidebar = useMemo(() => ({ collapsed, choose }), [collapsed, choose]);
   return (
     <NewSignInContext.Provider value={newSignIn}>
-      <RunStateProvider>
-        <Frame version={version}>{children}</Frame>
-      </RunStateProvider>
+      <SidebarChoiceContext.Provider value={sidebar}>
+        <RunStateProvider>
+          <Frame version={version}>{children}</Frame>
+        </RunStateProvider>
+      </SidebarChoiceContext.Provider>
     </NewSignInContext.Provider>
   );
 }
@@ -295,6 +315,7 @@ function ShellFrame({
   const errorMessage = useErrorMessage();
   const toast = useToast();
   const capState = useCapState();
+  const sidebarChoice = useContext(SidebarChoiceContext);
   // Safe mode's banner (from the client host): a row of the shell, so nothing is clipped
   const banner = useShellBanner();
   const orgId = currentOrg?.orgId ?? null;
@@ -643,6 +664,8 @@ function ShellFrame({
   return (
     // The conversation page draws its own status bar under its middle column (spec §5.2).
     <AppShell
+      collapsed={sidebarChoice.collapsed}
+      onCollapsedChange={sidebarChoice.choose}
       sidebar={{
         context,
         // A new conversation starts at the composer; nothing is created before the first send.

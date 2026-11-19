@@ -6,6 +6,7 @@ import {
   ScheduleCalendar,
   type ScheduleCalendarCollapsed,
   type ScheduleCalendarItem,
+  SIZE_CLASS_QUERIES,
   useNow,
   useTimeZone,
 } from "@capybara-hq/design";
@@ -307,8 +308,8 @@ export function ScheduleCalendarView({
           {...(answer?.truncated && horizonDay !== null ? { notLoadedFrom: horizonDay } : {})}
           onDay={(day) => {
             // A month's day number opens its week; a phone's agenda day button only picks the day
-            // (read at the tap: the agenda is the CSS layout below 640).
-            const phone = window.matchMedia("(max-width: 639px)").matches;
+            // (read at the tap: the agenda is the CSS layout below 600).
+            const phone = window.matchMedia(SIZE_CLASS_QUERIES.compact).matches;
             go(phone || url.range === "week" ? { date: day } : { range: "week", date: day });
           }}
           day={date}

@@ -56,7 +56,7 @@ export type ScheduleCalendarCollapsed = {
 };
 
 export type ScheduleCalendarProps = {
-  /** `agenda` forces the phone's day list at every width; below 640 CSS shows it anyway. */
+  /** `agenda` forces the phone's day list at every width; below 600 CSS shows it anyway. */
   range: "week" | "month" | "agenda";
   /** The viewer-local days shown (YYYY-MM-DD): 7 for a week, 42 (6 × 7, Monday first) for a month. */
   days: string[];
@@ -219,7 +219,7 @@ function StateIcon({ state }: { state: ScheduleCalendarState }) {
  * a week time grid (Monday first, 00–24, the now line, blocks of half an hour, two side by side
  * then 「+N」, the dense lane), a 6 × 7 month grid (three lines then 「+N 项」) and the phone's
  * agenda (seven day buttons over the day's rows). The grid and the agenda are both drawn and CSS
- * shows the agenda below 640 (`range="agenda"` forces it). Plain props: the page places every
+ * shows the agenda below 600 (`range="agenda"` forces it). Plain props: the page places every
  * item in the viewer's zone; the component reads no clock and no zone of its own.
  */
 export function ScheduleCalendar(props: ScheduleCalendarProps) {

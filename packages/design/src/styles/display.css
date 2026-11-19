@@ -619,7 +619,7 @@
 .cb-kv[data-columns="2"] > .cb-kv-row:nth-child(2n) > .cb-kv-key {
   margin-left: calc(var(--cb-space-7) - var(--cb-space-3));
 }
-@media (max-width: 639px) {
+@media (max-width: 599px) {
   .cb-kv[data-columns="2"] {
     grid-template-columns: max-content minmax(0, 1fr);
   }
@@ -1953,7 +1953,7 @@ a.cb-attachment:hover {
   font-size: var(--cb-type-small-size);
   line-height: var(--cb-type-small-line);
 }
-@media (max-width: 639px) {
+@media (max-width: 599px) {
   .cb-nameplate {
     flex-direction: column;
     align-items: flex-start;

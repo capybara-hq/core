@@ -6,7 +6,7 @@ import { Icon } from "../icons/icon";
 import { useDesignT } from "../provider";
 import type { PickerProps } from "./composer";
 
-// The composer's options button (spec §6.16.2, phones): below 640 the device, permission, model
+// The composer's options button (spec §6.16.2, phones): below 600 the device, permission, model
 // and effort pickers collapse into one compact button with a bottom sheet group per picker.
 
 /**

@@ -1,6 +1,6 @@
 /*
  * App Shell (spec §4): Sidebar | content column. The content column holds the drawer menu bar
- * (below 960), the page (template) and the StatusBar; the ActionRow sits at the template's bottom.
+ * (below 600), the page (template) and the StatusBar; the ActionRow sits at the template's bottom.
  */
 
 /* 以链接渲染的按钮（Link 组件不能带 data-*） */
@@ -58,7 +58,7 @@
 /* A shell-wide banner (safe mode) is the shell's first row, across both columns; the sidebar and
    the content column share the second row, so the shell keeps the window height and nothing at its
    bottom (the status bar, the composer) is clipped. The content column keeps the second column
-   when no sidebar panel is drawn (the drawer below 960). */
+   when no sidebar panel is drawn (the drawer below 600). */
 .cb-shell[data-banner="true"] {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
@@ -90,7 +90,7 @@
   min-height: 0;
 }
 
-/* Drawer menu bar: below 960 only (spec §4). */
+/* Drawer menu bar: below 600 only (spec §4). */
 .cb-shell-drawerbar {
   display: flex;
   flex: none;
@@ -104,7 +104,7 @@
   color: var(--cb-muted);
 }
 /* Phones: 40 px tap targets, the icons' glyphs on the 16 px content edge. */
-@media (max-width: 639px) {
+@media (max-width: 599px) {
   .cb-shell-drawerbar {
     padding: 0 var(--cb-space-1);
   }
@@ -124,7 +124,7 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-@media (min-width: 960px) {
+@media (min-width: 600px) {
   .cb-shell-drawerbar[data-responsive="true"] {
     display: none;
   }
@@ -159,9 +159,9 @@
   width: 240px;
   max-width: 100%;
 }
-/* Phones (below 640): the search takes its own full-width line above the tabs, and the tabs
+/* Phones (below 600): the search takes its own full-width line above the tabs, and the tabs
    scroll on theirs; the tabs are 40 px tap targets. */
-@media (max-width: 639px) {
+@media (max-width: 599px) {
   /* The placeholders follow the loaded parts' phone sizes (40 px tabs), so nothing moves. */
   .cb-pageheader-tabs .cb-pageheader-tab-slots {
     height: 40px;
@@ -187,12 +187,12 @@
 .cb-template {
   --cb-content-pad: var(--cb-layout-content-pad);
 }
-@media (max-width: 639px) {
+@media (max-width: 599px) {
   .cb-template {
     --cb-content-pad: 16px;
   }
 }
-/* One head for every template (spec §4.3): side padding 32 (16 below 640), top 20, so the head
+/* One head for every template (spec §4.3): side padding 32 (16 below 600), top 20, so the head
    sits at the same x and y on every page. Head rhythm (spec §4.2): the body starts
    layout.head-content below the head, or layout.head-tabs-content below its tab row; the body
    adds no space of its own above its first block, so these are the only head-to-content gaps. */
@@ -353,11 +353,11 @@ a.cb-pageheader-path-seg:hover {
 .cb-pageheader-fold {
   display: contents;
 }
-/* Phones (below 640, spec §4.2, §4.3): the title and the description take the full width (the
+/* Phones (below 600, spec §4.2, §4.3): the title and the description take the full width (the
    description wraps), and the actions go under them, start-aligned: the primary as a button, the
    others folded into ⋯ when there are several. The buttons keep their default height and reach a
    40 px tap target through an invisible ring around them. */
-@media (max-width: 639px) {
+@media (max-width: 599px) {
   .cb-pageheader-actions[data-responsive="true"] [data-fold="inline"] {
     display: none;
   }
@@ -395,7 +395,7 @@ a.cb-pageheader-path-seg:hover {
     min-width: 40px;
   }
 }
-@media (min-width: 640px) {
+@media (min-width: 600px) {
   .cb-pageheader-actions[data-responsive="true"] [data-fold="menu"] {
     display: none;
   }
@@ -406,8 +406,8 @@ a.cb-pageheader-path-seg:hover {
   display: flex;
   gap: var(--cb-space-2);
 }
-/* Phones (below 640): two columns, so four metrics are 2 × 2 and their labels keep their words. */
-@media (max-width: 639px) {
+/* Phones (below 600): two columns, so four metrics are 2 × 2 and their labels keep their words. */
+@media (max-width: 599px) {
   .cb-stat-cards {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -515,8 +515,10 @@ a.cb-stat-card:focus-visible {
   border-left: 1px solid var(--cb-line-soft);
 }
 .cb-body-content {
+  /* The template frame's fit queries (spec §4.3): `@container cb-body`. */
+  container: cb-body / inline-size;
   flex: 1;
-  min-width: min(560px, 100%);
+  min-width: min(var(--cb-layout-content-min), 100%);
   overflow: auto;
   /* Same gutter as .cb-template-head: the column keeps its x whether or not the page scrolls. */
   scrollbar-gutter: stable;
@@ -526,7 +528,7 @@ a.cb-stat-card:focus-visible {
   display: flex;
   flex: 1;
   flex-direction: column;
-  min-width: min(560px, 100%);
+  min-width: min(var(--cb-layout-content-min), 100%);
   min-height: 0;
 }
 .cb-body-main > .cb-body-content {
@@ -693,16 +695,6 @@ a.cb-stat-card:focus-visible {
 .cb-body-tool {
   display: contents;
 }
-@media (max-width: 959px) {
-  .cb-body [data-responsive="from-960"] {
-    display: none;
-  }
-}
-@media (min-width: 960px) {
-  .cb-body [data-responsive="below-960"] {
-    display: none;
-  }
-}
 @media (max-width: 1279px) {
   .cb-body [data-responsive="from-1280"] {
     display: none;
@@ -789,4 +781,17 @@ a.cb-stat-card:focus-visible {
   border-bottom: 1px solid var(--cb-line);
   background: var(--cb-panel);
   color: var(--cb-ink);
+}
+
+/* A short window (height below 480, spec §4.7; the shell's `data-short`): the StatusBar is hidden
+   and the PageHeader drops its path row, whatever the width. The query is the first paint's; the
+   attribute follows it after hydration for plugin CSS. */
+@media (max-height: 479px) {
+  .cb-statusbar,
+  .cb-pageheader-path {
+    display: none;
+  }
+  .cb-pageheader-path + .cb-pageheader-row {
+    margin-top: 0;
+  }
 }

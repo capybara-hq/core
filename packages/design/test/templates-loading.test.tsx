@@ -890,7 +890,7 @@ describe("SettingsPage loading", () => {
     expect(controls.slice(wide, controls.indexOf("}", wide))).toContain(
       "grid-template-columns: 220px minmax(0, 1fr)",
     );
-    const narrow = controls.indexOf("@media (max-width: 639px)", wide);
+    const narrow = controls.indexOf("@media (max-width: 599px)", wide);
     expect(narrow).toBeGreaterThan(wide);
     expect(controls.slice(narrow, controls.indexOf("}\n}", narrow))).toContain(
       "grid-template-columns: minmax(0, 1fr)",

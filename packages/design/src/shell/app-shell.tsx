@@ -5,21 +5,31 @@ import { type CommandGroup, CommandPalette } from "../overlays/index";
 import { useDesignT } from "../provider";
 import { keyboardInset } from "./pointer";
 import { Sidebar, type SidebarProps, useSidebarWidthMode } from "./sidebar";
+import { useShortWindow, useSizeClass } from "./size-class";
 import { StatusBar, type StatusBarProps, StatusBarSetterContext } from "./status-bar";
 import { useHydrated } from "./use-media-query";
 
 export type AppShellProps = {
-  sidebar: Omit<SidebarProps, "onOpenCommands" | "mode" | "drawer" | "drawerInline">;
+  sidebar: Omit<
+    SidebarProps,
+    "onOpenCommands" | "mode" | "drawer" | "drawerInline" | "collapsed" | "onCollapsedChange"
+  >;
+  /**
+   * The person's choice of the rail on the expanded class (the `cb-sidebar` cookie, spec §4.1).
+   * Controlled with `onCollapsedChange`; without `collapsed` the shell keeps its own state.
+   */
+  collapsed?: boolean;
+  onCollapsedChange?(collapsed: boolean): void;
   /**
    * The command palette's groups (⌘K, the sidebar's and the drawer bar's search). Without them
    * there is no palette and no search (the setup frame, T13).
    */
   commands?: CommandGroup[];
   status: Pick<StatusBarProps, "context" | "version" | "timeZone" | "system">;
-  /** The page title in the drawer menu bar (below 960); defaults to none. */
+  /** The page title in the drawer menu bar (below 600); defaults to none. */
   title?: string;
   /**
-   * Draw the shell as below 960 whatever the window width, with the drawer open in place (the
+   * Draw the shell as below 600 whatever the window width, with the drawer open in place (the
    * reference set and the catalog only).
    */
   reference?: { drawer: true } | { rail: true };
@@ -31,8 +41,8 @@ export type AppShellProps = {
   /**
    * The state tokens for plugin CSS (`run=idle`, `motion=full`, `theme=builtin`, space-separated),
    * rendered as `data-cap-state` on the shell element. The shell appends its own `sidebar=rail`
-   * or `sidebar=full` after hydration (the drawer below 960 counts as `full`: it is the full
-   * panel).
+   * or `sidebar=full` after hydration (the drawer below 600 counts as `full`: it is the full
+   * panel), then `size=compact|medium|expanded`.
    */
   capState?: string;
   /**
@@ -46,11 +56,13 @@ export type AppShellProps = {
 
 /**
  * The App Shell (spec §4): Sidebar | content column. The content column holds, top to bottom,
- * the drawer menu bar (below 960 only), the page (a template, with its ActionRow at its bottom)
+ * the drawer menu bar (below 600 only), the page (a template, with its ActionRow at its bottom)
  * and the StatusBar. ⌘K opens the command palette.
  */
 export function AppShell({
   sidebar,
+  collapsed: collapsedProp,
+  onCollapsedChange,
   commands,
   status,
   title,
@@ -68,8 +80,16 @@ export function AppShell({
   const [drawerOpen, setDrawerOpen] = useState(drawerRef);
   const [pageStatus, setPageStatus] = useState<ReactNode>(null);
   const hydrated = useHydrated();
-  // the sidebar's own breakpoints (one place: sidebar.tsx)
-  const widthMode = useSidebarWidthMode();
+  const sizeClass = useSizeClass();
+  const short = useShortWindow();
+  const [ownCollapsed, setOwnCollapsed] = useState(false);
+  const collapsed = collapsedProp ?? ownCollapsed;
+  const setCollapsed = (next: boolean) => {
+    if (collapsedProp === undefined) setOwnCollapsed(next);
+    onCollapsedChange?.(next);
+  };
+  // the sidebar's mode by size class (one place: sidebar.tsx)
+  const widthMode = useSidebarWidthMode(collapsed);
   const narrow = widthMode === "drawer";
   const railWidth = widthMode === "rail";
   // Public mirror of the sidebar's mode (`data-mode` is internal); none before hydration, when
@@ -79,18 +99,31 @@ export function AppShell({
     : railRef || (reference === undefined && railWidth)
       ? "rail"
       : "full";
-  const stateTokens =
-    sidebarMode === null
-      ? capState
-      : [capState, `sidebar=${sidebarMode}`].filter(Boolean).join(" ");
+  const stateTokens = !hydrated
+    ? capState
+    : [
+        capState,
+        sidebarMode === null ? null : `sidebar=${sidebarMode}`,
+        sizeClass && `size=${sizeClass}`,
+      ]
+        .filter(Boolean)
+        .join(" ");
 
   const searchable = commands !== undefined;
+  // ⌘K opens the palette; ⌘\ / Ctrl+\ collapses or expands the sidebar (the expanded class only:
+  // medium has the rail alone, compact no sidebar). A ref keeps one listener for the latest state.
+  const collapseKey = useRef<(() => void) | null>(null);
+  collapseKey.current =
+    sizeClass === "expanded" && reference === undefined ? () => setCollapsed(!collapsed) : null;
   useEffect(() => {
-    if (!searchable) return;
     const onKey = (e: KeyboardEvent) => {
-      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+      if (!(e.metaKey || e.ctrlKey)) return;
+      if (searchable && e.key.toLowerCase() === "k") {
         e.preventDefault();
         setPaletteOpen(true);
+      } else if (e.key === "\\" && collapseKey.current) {
+        e.preventDefault();
+        collapseKey.current();
       }
     };
     document.addEventListener("keydown", onKey);
@@ -149,7 +182,7 @@ export function AppShell({
     };
   }, [reference]);
 
-  // Before hydration the bar is drawn and CSS shows it below 960 only.
+  // Before hydration the bar is drawn and CSS shows it below 600 only.
   const bar = drawerRef || (!railRef && (!hydrated || narrow));
 
   return (
@@ -160,6 +193,7 @@ export function AppShell({
         data-cap-part="shell"
         data-cap-state={stateTokens}
         data-banner={banner ? "true" : undefined}
+        data-short={short ? "true" : undefined}
       >
         {/* The first tab stop: past the sidebar to the page (m9); visible only when focused. */}
         <a className="cb-skip-link" href={`#${mainId}`}>
@@ -172,6 +206,8 @@ export function AppShell({
         ) : null}
         <Sidebar
           {...sidebar}
+          collapsed={collapsed}
+          onCollapsedChange={setCollapsed}
           onOpenCommands={() => setPaletteOpen(true)}
           // A drawn-in-place reference drawer stays open (Esc closes the topmost real overlay only).
           drawer={{ open: drawerOpen, onOpenChange: drawerRef ? () => {} : setDrawerOpen }}

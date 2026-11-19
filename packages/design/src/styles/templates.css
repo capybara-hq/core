@@ -39,7 +39,7 @@
   display: flex;
   gap: var(--cb-space-5);
 }
-@media (max-width: 639px) {
+@media (max-width: 599px) {
   .cb-detail-band-skeleton {
     flex-direction: column;
     align-items: flex-start;
@@ -99,7 +99,15 @@
   grid-template-columns: minmax(0, 1fr);
   gap: var(--cb-space-3);
 }
-@media (max-width: 959px) {
+/* A label column beside its fields needs the body to leave content-min for the fields (spec §4.3
+   "side columns fit"): a container query on the body's content box, and always below 841. */
+@media (max-width: 840px) {
+  .cb-form-section {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--cb-space-3);
+  }
+}
+@container cb-body (max-width: 791px) {
   .cb-form-section {
     grid-template-columns: minmax(0, 1fr);
     gap: var(--cb-space-3);
@@ -137,7 +145,13 @@
 .cb-settings-content > .cb-form-section + .cb-form-section {
   margin-top: 0;
 }
-@media (max-width: 959px) {
+@media (max-width: 840px) {
+  .cb-settings-grid {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--cb-space-4);
+  }
+}
+@container cb-body (max-width: 751px) {
   .cb-settings-grid {
     grid-template-columns: minmax(0, 1fr);
     gap: var(--cb-space-4);
@@ -191,7 +205,7 @@
    content, so the content starts on the first screen. It sticks to the top of the scrolling body
    (right under the fixed head) on the page ground with its hairline, so the sections stay one tap
    away and the row never slides out half clipped (maintainer decision 2026-11-09). */
-@media (max-width: 639px) {
+@media (max-width: 599px) {
   .cb-settings-nav {
     position: sticky;
     top: 0;
@@ -353,7 +367,7 @@
 .cb-auth-footer {
   color: var(--cb-muted);
 }
-@media (max-width: 639px) {
+@media (max-width: 599px) {
   /* both columns: the right one's [data-side] rule is more specific than a bare .cb-auth-side */
   .cb-auth-side,
   .cb-auth-side[data-side="right"] {
@@ -695,7 +709,7 @@ a.cb-object-name:hover {
 .cb-object-trailing {
   color: var(--cb-faint);
 }
-/* The row's buttons: one group on phones (below), laid out by the row itself above 640. */
+/* The row's buttons: one group on phones (below), laid out by the row itself from 600. */
 .cb-object-actions {
   display: contents;
 }
@@ -703,14 +717,14 @@ a.cb-object-name:hover {
 .cb-object-meta[data-empty="true"] {
   display: none;
 }
-/* Phones (below 640, spec §4.3, §6.17): line 1 is the mark, the name and chips, and the ⋯ menu at
+/* Phones (below 600, spec §4.3, §6.17): line 1 is the mark, the name and chips, and the ⋯ menu at
    the right; the description and the meta line sit under the name, and the state closes the meta
    line in its tone (read from the meta's data-state, so the label is one node); the row action,
    dense, sits at the right of the meta line, or under it as a whole when both do not fit. The text
    column dissolves into the row (display: contents), so its lines and the row's buttons wrap as
    one flex row; DOM (and tab) order stays name, action, menu. The skeleton rows keep the mark and
    the text column side by side. */
-@media (max-width: 639px) {
+@media (max-width: 599px) {
   .cb-object-row {
     flex-wrap: wrap;
   }
@@ -725,7 +739,7 @@ a.cb-object-name:hover {
     display: contents;
   }
   /* The mark overhangs line 1 (a dense control high) into the indent of the lines below, as the
-     text column sits beside it above 640. */
+     text column sits beside it from 600. */
   .cb-object-row:not([data-skeleton="true"]) > .cb-object-mark {
     align-self: flex-start;
     margin-bottom: calc(var(--cb-control-dense) - 36px);
@@ -1012,7 +1026,12 @@ a.cb-object-name:hover {
 .cb-settings-content .cb-form-section ~ .cb-danger-zone {
   margin-left: 0;
 }
-@media (max-width: 959px) {
+@media (max-width: 840px) {
+  .cb-form-section ~ .cb-danger-zone {
+    margin-left: 0;
+  }
+}
+@container cb-body (max-width: 791px) {
   .cb-form-section ~ .cb-danger-zone {
     margin-left: 0;
   }

@@ -3,6 +3,7 @@ import { Button, IconButton } from "../controls/index";
 import { Icon } from "../icons/icon";
 import { Sheet } from "../overlays/index";
 import { useDesignT } from "../provider";
+import { INLINE_RIGHT_AREA_BELOW } from "./size-class";
 import { useHydrated, useMediaQuery } from "./use-media-query";
 
 export type BodyProps = {
@@ -47,8 +48,10 @@ export function Body({
   children,
 }: BodyProps) {
   const t = useDesignT();
-  const narrowInspector = useMediaQuery("(max-width: 1279px)");
-  const narrowRail = useMediaQuery("(max-width: 959px)");
+  // One fit threshold for both side columns: with the full sidebar beside it, the body leaves
+  // room for a 240 rail or a 400 inspector from 1280 (spec §4.3).
+  const narrowInspector = useMediaQuery(INLINE_RIGHT_AREA_BELOW);
+  const narrowRail = narrowInspector;
   const [railOpen, setRailOpen] = useState(false);
   const [inspectorOpen, setInspectorOpen] = useState(false);
   const [railCollapsed, setRailCollapsed] = useState(false);
@@ -57,7 +60,7 @@ export function Body({
   const railInSheet = hasRail && narrowRail;
   const inspectorInSheet = hasInspector && narrowInspector;
   // Before hydration both forms are drawn and CSS media queries show one (`data-responsive`), so
-  // the first paint is right at every width (no 240 rail beside the content below 960).
+  // the first paint is right at every width (no 240 rail beside the content below 1280).
   const pre = !useHydrated();
   const railInline = hasRail && (pre || !railInSheet);
   const railButton = hasRail && (pre || railInSheet);
@@ -98,12 +101,9 @@ export function Body({
   return (
     <div className="cb-body" data-layout={layout}>
       {railButton || inspectorButton ? (
-        <div
-          className="cb-body-tools"
-          data-responsive={resp(hasInspector ? "below-1280" : "below-960")}
-        >
+        <div className="cb-body-tools" data-responsive={resp("below-1280")}>
           {railButton ? (
-            <span className="cb-body-tool" data-responsive={resp("below-960")}>
+            <span className="cb-body-tool" data-responsive={resp("below-1280")}>
               <Button onClick={() => setRailOpen(true)}>{t("shell.filter")}</Button>
             </span>
           ) : null}
@@ -117,7 +117,7 @@ export function Body({
       <div className="cb-body-row">
         {railInline ? (
           railCollapsed ? (
-            <div className="cb-body-rail-collapsed" data-responsive={resp("from-960")}>
+            <div className="cb-body-rail-collapsed" data-responsive={resp("from-1280")}>
               <IconButton
                 label={t("shell.railExpand")}
                 icon={<Icon name="chevrons-right" />}
@@ -126,7 +126,7 @@ export function Body({
               />
             </div>
           ) : (
-            <aside className="cb-body-rail" data-part="rail" data-responsive={resp("from-960")}>
+            <aside className="cb-body-rail" data-part="rail" data-responsive={resp("from-1280")}>
               {railCollapsible ? (
                 <div className="cb-body-rail-head">
                   <IconButton
