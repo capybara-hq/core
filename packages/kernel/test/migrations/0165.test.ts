@@ -129,7 +129,9 @@ describe("0165 and 0166 add their checks without a scan under the add's lock", (
     for (const add of adds) {
       const name = / ADD CONSTRAINT (\S+) /.exec(add)?.[1];
       expect(add, name).toMatch(/ NOT VALID$/);
-      expect(statements, name).toContainEqual(expect.stringMatching(` VALIDATE CONSTRAINT ${name}$`));
+      expect(statements, name).toContainEqual(
+        expect.stringMatching(` VALIDATE CONSTRAINT ${name}$`),
+      );
     }
   });
 
