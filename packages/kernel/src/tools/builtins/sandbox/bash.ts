@@ -440,11 +440,11 @@ const isRefusal = (e: unknown): boolean =>
 /**
  * Sandbox-specific signals in a command's output: the EPERM a Seatbelt or Landlock write denial
  * gives, the read-only bind of the Linux sandbox, Seatbelt's own deny report, and the sandbox
- * proxy refusing a host or a tunnel. A plain "Permission denied" (EACCES) is not one: ssh
- * publickey failures, git 403s and file modes print it too.
+ * proxy refusing a host or a tunnel (in curl 7's and curl 8's wording). A plain "Permission
+ * denied" (EACCES) is not one: ssh publickey failures, git 403s and file modes print it too.
  */
 const SANDBOX_DENIED_RE =
-  /Operation not permitted|Read-only file system|Sandbox: \S+\(\d+\) deny\(\d+\)|Connection blocked by network allowlist|blocked-by-allowlist|HTTP code 403 from proxy after CONNECT/;
+  /Operation not permitted|Read-only file system|Sandbox: \S+\(\d+\) deny\(\d+\)|Connection blocked by network allowlist|blocked-by-allowlist|HTTP code 403 from proxy after CONNECT|CONNECT tunnel failed, response 403/;
 /**
  * Credential and auth failures: never a reason to run outside the sandbox, so they never get the
  * escalation hint, whatever else the output says.

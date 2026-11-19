@@ -26,8 +26,26 @@ describe("the sandbox denial signal", () => {
     ["Seatbelt's own deny report", "Sandbox: bash(4242) deny(1) file-write-create /etc/x"],
     ["the proxy's allowlist refusal", "curl: (56) Connection blocked by network allowlist"],
     ["the proxy refusing a tunnel", "curl: (56) Received HTTP code 403 from proxy after CONNECT"],
+    // curl 8 (macOS /usr/bin/curl) words the same refusal differently (R3 Mac dogfood)
+    ["the proxy refusing a tunnel (curl 8)", "curl: (56) CONNECT tunnel failed, response 403"],
   ])("%s is a sandbox signal", (_name, stderr) => {
     expect(sandboxDenied(failed(stderr))).toBe(true);
+  });
+
+  // Open finding (R3 Mac dogfood, 2026-11-20): the macOS sandbox runtime sets NO_PROXY to the
+  // private, link-local and loopback ranges, so `curl http://192.168.3.1` connects directly,
+  // Seatbelt refuses the connect, and curl prints only "Couldn't connect to server": no EPERM text
+  // and no `network.blocked` entry (the proxy never saw it). The model gets no escalation hint for
+  // the very case the hint is for (a service on the LAN). Remove `.fails` with the fix.
+  it.fails("a LAN address the sandbox closed (direct connect, curl) is a sandbox signal", () => {
+    expect(
+      sandboxDenied(
+        failed(
+          "curl: (7) Failed to connect to 192.168.3.1 port 80 after 0 ms: Couldn't connect to server",
+          { exitCode: 7 },
+        ),
+      ),
+    ).toBe(true);
   });
 
   it("a host the device refused (network.blocked) is a sandbox signal", () => {
