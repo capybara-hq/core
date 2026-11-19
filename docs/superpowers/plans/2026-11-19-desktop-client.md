@@ -142,7 +142,7 @@ check). Where a task needs them and they are not merged yet, the task waits.
 
 ## Manual steps (maintainer)
 
-- **M1:** create `capybara-hq/clients` (public, Apache-2.0).
+- **M1 (done 2026-11-19):** create `capybara-hq/clients` (public, Apache-2.0).
   - Rulesets: `ci-ok` and `issue-linked` required, no pushes to `main`.
   - Labels; a CODEOWNERS file naming `@capybara-hq/maintainers`.
 - **M2:** Apple signing credentials, stored as `capybara-hq/clients` secrets:
@@ -737,7 +737,9 @@ they test without Electron. `pnpm e2e` runs Playwright `_electron` on macOS CI.
 - [ ] **Step 1:** Add a smoke test `packages/shell/test/smoke.test.ts` (imports the package
   entry). Run `pnpm install && pnpm test`. Expected: PASS.
 - [ ] **Step 2:** Run `pnpm lint && pnpm typecheck`. Expected: PASS. Open the first PR and
-  confirm `ci-ok` runs.
+  confirm `ci-ok` runs. This PR must add `.github/workflows/ci.yml` with the `ci-ok` job: the
+  repository's `main-quality` ruleset requires `ci-ok` and `issue-linked` with no bypass, so no
+  PR merges until it exists (the gate workflows pr-event / cla / community are already on `main`).
 - [ ] **Step 3:** Commit: `chore: scaffold the clients monorepo`.
 
 ### Task 13a: `packages/shell`
