@@ -75,6 +75,12 @@ export const PLATFORM_EXCLUSIONS: readonly {
     reason:
       "Fetches an extension package and returns its permission review; installing it means confirming those permissions, which only a person does (spec §6.4)",
   },
+  // meta
+  {
+    route: "GET /api/v1/meta",
+    category: "transport",
+    reason: "Pre-sign-in discovery for native clients: platform name, icon and protocol ranges",
+  },
   // setup
   {
     route: "GET /api/v1/setup",

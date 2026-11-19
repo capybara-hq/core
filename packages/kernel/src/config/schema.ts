@@ -328,6 +328,22 @@ export function trustProxyEntryProblem(entry: string): string | undefined {
 }
 
 export const KernelConfigSchema = z.strictObject({
+  platform: z
+    .strictObject({
+      name: z
+        .string()
+        .min(1)
+        .max(64)
+        .optional()
+        .meta(
+          meta({
+            hot: true,
+            description:
+              "The platform's display name (1 to 64 characters), shown by native clients and the installed web app before sign-in (GET /api/v1/meta); unset: clients show their own name",
+          }),
+        ),
+    })
+    .prefault({} as never),
   db: z
     .strictObject({
       url: z
