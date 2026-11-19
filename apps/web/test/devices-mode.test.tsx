@@ -237,27 +237,106 @@ describe("a local device's sandbox", () => {
     expect(document.body.textContent).not.toMatch(/完全访问|企业/);
   });
 
-  it("shows the machine's widening commands as keycaps and never offers to widen", async () => {
-    stubApi(detail(local()));
-    await renderDetail();
-    await openSettings();
-    await sandboxSection();
-    const caps = [...document.querySelectorAll('[data-part="keycap-command-caps"]')].map((c) =>
+  /** The keycap commands on the page, each as one line. */
+  const keycaps = () =>
+    [...document.querySelectorAll('[data-part="keycap-command-caps"]')].map((c) =>
       [...c.querySelectorAll('[data-part="keycap-command-cap"]')]
         .map((x) => x.textContent)
         .join(" "),
     );
-    expect(caps).toEqual(
-      expect.arrayContaining([
-        "capybara-device ceiling set --network open",
-        "capybara-device ceiling set --outside-sandbox on",
-        "capybara-device policy add allowedDomains <host>",
-      ]),
-    );
-    expect(Object.values(SANDBOX_COMMANDS)).toContain("capybara-device ceiling set --network open");
+  /** A machine the device itself narrowed everywhere: allowlist, outside off, workspace reach. */
+  const narrowed = () =>
+    local({
+      ownerCeiling: report({
+        outsideSandbox: false,
+        network: "allowlist",
+        restrictedProjectReach: "workspace",
+      }),
+      sandbox: sandbox({
+        network: "allowlist",
+        outsideSandbox: false,
+        restrictedProjectReach: "workspace",
+        layer: { network: "device", outsideSandbox: "device" },
+      }),
+    });
+
+  it("shows the machine's widening commands as keycaps and never offers to widen", async () => {
+    stubApi(detail(narrowed()));
+    await renderDetail();
+    await openSettings();
+    await sandboxSection();
+    expect(keycaps()).toEqual(Object.values(SANDBOX_COMMANDS));
+    expect(screen.getByText(S.widenLocal)).toBeTruthy();
     // no add-host control: the local host editor only removes
     expect(screen.queryByRole("button", { name: /^add (a )?(host|domain)/i })).toBeNull();
     expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  // R3 Mac acceptance: `--network open` was offered on a machine already open
+  it("offers only the commands that would change something", async () => {
+    stubApi(detail(local()));
+    await renderDetail();
+    await openSettings();
+    await sandboxSection();
+    // open, outside allowed, the user's reach: nothing to widen, so no command and no lead
+    expect(keycaps()).toEqual([]);
+    expect(screen.queryByText(S.widenLocal)).toBeNull();
+  });
+
+  it("an open machine with running outside the sandbox off offers only that command", async () => {
+    stubApi(
+      detail(
+        local({
+          ownerCeiling: report({ outsideSandbox: false }),
+          sandbox: sandbox({
+            outsideSandbox: false,
+            layer: { network: null, outsideSandbox: "device" },
+          }),
+        }),
+      ),
+    );
+    await renderDetail();
+    await openSettings();
+    await sandboxSection();
+    expect(keycaps()).toEqual([SANDBOX_COMMANDS.outside]);
+  });
+
+  it("a limit the platform or org set is not offered as a machine command", async () => {
+    stubApi(
+      detail(
+        local({
+          ownerCeiling: report({ network: "allowlist", outsideSandbox: false }),
+          sandbox: sandbox({
+            network: "allowlist",
+            outsideSandbox: false,
+            layer: { network: "platform", outsideSandbox: "org" },
+          }),
+        }),
+      ),
+    );
+    await renderDetail();
+    await openSettings();
+    await sandboxSection();
+    // adding a host still changes the allowlist the machine runs
+    expect(keycaps()).toEqual([SANDBOX_COMMANDS.host]);
+  });
+
+  // R3 Mac acceptance: an empty allowlist panel showed while the network was open
+  it("the open network shows no host list; an allowlist shows it, empty or not", async () => {
+    stubApi(detail(local()));
+    await renderDetail();
+    await openSettings();
+    await sandboxSection();
+    expect(screen.queryByRole("list", { name: S.hosts })).toBeNull();
+    expect(screen.queryByText(S.hostsEmpty)).toBeNull();
+    expect(screen.queryByText(S.localHostsHelp)).toBeNull();
+    cleanup();
+    stubApi(detail(narrowed()));
+    await renderDetail();
+    await openSettings();
+    await sandboxSection();
+    expect(screen.getByText(S.hostsEmpty)).toBeTruthy();
+    expect(screen.getByText(S.localHostsHelp)).toBeTruthy();
   });
 
   it("narrows the network, outside the sandbox and the reach through the policy op only", async () => {
@@ -616,6 +695,15 @@ describe("the network on 概览", () => {
     expect(within(list).getByText("files.example.com")).toBeTruthy();
     await userEvent.setup().click(screen.getByRole("button", { name: E.overview.editNetwork }));
     expect(await screen.findByRole("radiogroup", { name: S.network })).toBeTruthy();
+  });
+
+  it("a local machine on the open network has no network block", async () => {
+    stubApi(detail(local()));
+    await renderDetail();
+    await screen.findByRole("tab", { name: E.detail.tabOverview });
+    await sandboxSection();
+    expect(screen.queryByRole("heading", { name: E.network.title })).toBeNull();
+    expect(screen.queryByRole("list", { name: E.network.domains })).toBeNull();
   });
 
   it("a cloud device on the open network has no network block", async () => {

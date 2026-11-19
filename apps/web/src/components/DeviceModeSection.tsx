@@ -125,9 +125,9 @@ export function DeviceOverview({
   const local = e.source === "local";
   const sandbox = deviceCeilingOf(e).sandbox;
   const hosts = sandbox?.hosts ?? [];
+  // the hosts matter only under an allowlist: the open network has none to list
   const showNetwork =
-    (local && e.machine !== null && sandbox !== null) ||
-    (sandbox?.network === "allowlist" && hosts.length > 0);
+    sandbox?.network === "allowlist" && ((local && e.machine !== null) || hosts.length > 0);
   return (
     <Stack gap={12}>
       <ContentSection title={t("sandbox.title")}>
@@ -301,6 +301,28 @@ export function DeviceSettings({
 }
 
 /**
+ * The widening commands that would change something on this machine: the open network while the
+ * device itself keeps it narrower (a platform, org or provider limit is not lifted on the
+ * machine), running outside the sandbox likewise, adding a host while the network is an
+ * allowlist, and the wider project reach while it is the workspace. Every command while the
+ * sandbox is unknown.
+ */
+export function wideningCommands(
+  s: DeviceSandboxView | null,
+  reach: "workspace" | "os-user" | null,
+): (keyof typeof SANDBOX_COMMANDS)[] {
+  if (s === null) return Object.keys(SANDBOX_COMMANDS) as (keyof typeof SANDBOX_COMMANDS)[];
+  const byDevice = (layer: DeviceSandboxView["layer"]["network"]) =>
+    layer === null || layer === "device";
+  return [
+    ...(s.network !== "open" && byDevice(s.layer.network) ? (["network"] as const) : []),
+    ...(!s.outsideSandbox && byDevice(s.layer.outsideSandbox) ? (["outside"] as const) : []),
+    ...(s.network === "allowlist" ? (["host"] as const) : []),
+    ...(reach !== "os-user" ? (["reach"] as const) : []),
+  ];
+}
+
+/**
  * A local machine's sandbox controls: the network (only the allowlist can be chosen here, its hosts
  * only removed), running outside the sandbox (only off) and the project reach (only the
  * workspace), each sent to the machine through the policy op. A machine that cannot take the change
@@ -326,13 +348,14 @@ function LocalSandbox({
     !owner.stale &&
     (e.network?.features.includes("policyOpId") ?? false);
   const disabled = !canApply || pending;
+  const widening = wideningCommands(s, owner === null ? null : owner.restrictedProjectReach);
   const commands =
-    e.machine === null ? null : (
+    e.machine === null || widening.length === 0 ? null : (
       <Stack gap={8}>
         <Text variant="prose" tone="muted">
           {t("widenLocal")}
         </Text>
-        {(Object.keys(SANDBOX_COMMANDS) as (keyof typeof SANDBOX_COMMANDS)[]).map((k) => (
+        {widening.map((k) => (
           <KeycapCommand key={k} command={SANDBOX_COMMANDS[k]} hint={t(`command.${k}`)} />
         ))}
       </Stack>
@@ -373,31 +396,35 @@ function LocalSandbox({
               { value: "allowlist", label: networkText(t, "allowlist") },
             ]}
           />
-          <ItemList
-            label={t("hosts")}
-            rows={hosts.map((h) => ({
-              id: h,
-              title: h,
-              ...(canApply
-                ? {
-                    actions: (
-                      <Button
-                        density="dense"
-                        disabled={pending}
-                        aria-label={t("removeLabel", { host: h })}
-                        onClick={() => onSend({ remove: [h] }, t("removed", { host: h }))}
-                      >
-                        {t("remove")}
-                      </Button>
-                    ),
-                  }
-                : {}),
-            }))}
-            empty={t("hostsEmpty")}
-          />
-          <Text variant="prose" tone="muted">
-            {t("localHostsHelp")}
-          </Text>
+          {(s.network !== "open" || hosts.length > 0) && (
+            <ItemList
+              label={t("hosts")}
+              rows={hosts.map((h) => ({
+                id: h,
+                title: h,
+                ...(canApply
+                  ? {
+                      actions: (
+                        <Button
+                          density="dense"
+                          disabled={pending}
+                          aria-label={t("removeLabel", { host: h })}
+                          onClick={() => onSend({ remove: [h] }, t("removed", { host: h }))}
+                        >
+                          {t("remove")}
+                        </Button>
+                      ),
+                    }
+                  : {}),
+              }))}
+              empty={t("hostsEmpty")}
+            />
+          )}
+          {(s.network !== "open" || hosts.length > 0) && (
+            <Text variant="prose" tone="muted">
+              {t("localHostsHelp")}
+            </Text>
+          )}
         </Stack>
       </Subsection>
       <Subsection title={t("outside")}>
