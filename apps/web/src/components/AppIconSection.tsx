@@ -1,6 +1,14 @@
 "use client";
 
-import { Button, Callout, FormSection, ItemList, useToast } from "@capybara-hq/design";
+import {
+  Button,
+  Callout,
+  FormSection,
+  IconPreview,
+  ItemList,
+  ItemListItem,
+  useToast,
+} from "@capybara-hq/design";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
 import { type ChangeEvent, useRef } from "react";
@@ -38,7 +46,7 @@ const ROW = { lines: 2, buttons: 1 } as const;
  * The app icon section (mobile layout spec §10.2.1): the installed app's icon for the whole
  * deployment, on the super admin's `/admin/settings` (the page is the super admin's alone, so
  * nobody else sees it). A row per purpose (the app icon, its maskable variant, the SVG favicon)
- * with its current picture (the upload, else the web's default), an upload button (the file goes
+ * with its current picture on a light and a dark ground (the upload, else the web's default), an upload button (the file goes
  * as base64 JSON; the kernel checks the type and the PNG's 512 × 512) and, for an upload, a
  * restore-default button. Each action saves at once, apart from the page's ActionRow.
  */
@@ -92,46 +100,47 @@ export function AppIconSection() {
 
   return (
     <FormSection {...head} flush>
-      <ItemList
-        label={t("title")}
-        inset="flush"
-        rows={PLATFORM_ICON_PURPOSES.map((purpose) => {
+      <ItemList label={t("title")} inset="flush">
+        {PLATFORM_ICON_PURPOSES.map((purpose) => {
           const icon = uploaded.find((i) => i.purpose === purpose);
           const title = t(`${purpose}.title`);
-          return {
-            id: purpose,
-            mark: { text: title, image: icon?.url ?? DEFAULT_PLATFORM_ICONS[purpose] },
-            title,
-            meta: `${t(`${purpose}.hint`)} · ${icon !== undefined ? t("custom") : t("default")}`,
-            actions: (
-              <>
-                <Button
-                  variant="default"
-                  disabled={busy}
-                  onClick={() => inputs.current[purpose]?.click()}
-                >
-                  {t("upload")}
-                </Button>
-                {icon !== undefined && (
-                  <Button variant="ghost" disabled={busy} onClick={() => restore.mutate(purpose)}>
-                    {t("restore")}
+          return (
+            <ItemListItem
+              key={purpose}
+              title={title}
+              meta={`${t(`${purpose}.hint`)} · ${icon !== undefined ? t("custom") : t("default")}`}
+              actions={
+                <>
+                  <Button
+                    variant="default"
+                    disabled={busy}
+                    onClick={() => inputs.current[purpose]?.click()}
+                  >
+                    {t("upload")}
                   </Button>
-                )}
-                <input
-                  ref={(el) => {
-                    inputs.current[purpose] = el;
-                  }}
-                  type="file"
-                  hidden
-                  aria-label={t("uploadLabel", { name: title })}
-                  accept={PLATFORM_ICON_TYPE[purpose]}
-                  onChange={onFile(purpose)}
-                />
-              </>
-            ),
-          };
+                  {icon !== undefined && (
+                    <Button variant="ghost" disabled={busy} onClick={() => restore.mutate(purpose)}>
+                      {t("restore")}
+                    </Button>
+                  )}
+                  <input
+                    ref={(el) => {
+                      inputs.current[purpose] = el;
+                    }}
+                    type="file"
+                    hidden
+                    aria-label={t("uploadLabel", { name: title })}
+                    accept={PLATFORM_ICON_TYPE[purpose]}
+                    onChange={onFile(purpose)}
+                  />
+                </>
+              }
+            >
+              <IconPreview src={icon?.url ?? DEFAULT_PLATFORM_ICONS[purpose]} />
+            </ItemListItem>
+          );
         })}
-      />
+      </ItemList>
     </FormSection>
   );
 }

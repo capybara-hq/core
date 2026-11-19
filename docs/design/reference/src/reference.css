@@ -7045,3 +7045,43 @@ span.r-scal-daynum {
 .r-sh-count {
   color: var(--cb-muted);
 }
+
+/* IconPreview (§6.49): one icon on a light and a dark ground, the same in both themes. */
+.r-ip {
+  display: flex;
+  column-gap: var(--cb-space-3);
+}
+.r-ip-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  row-gap: var(--cb-space-1);
+  margin: 0;
+}
+.r-ip-tile {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 64px;
+  height: 64px;
+  border: 1px solid var(--cb-line);
+  border-radius: var(--cb-radius-md);
+}
+.r-ip-tile[data-ground="light"] {
+  background: var(--cb-preview-light);
+  color: var(--cb-accent);
+}
+.r-ip-tile[data-ground="dark"] {
+  background: var(--cb-preview-dark);
+  color: var(--cb-accent);
+}
+.r-ip-image {
+  width: var(--cb-space-8);
+  height: var(--cb-space-8);
+  fill: currentColor;
+}
+.r-ip-label {
+  color: var(--cb-muted);
+  font-size: var(--cb-type-micro-size);
+  line-height: var(--cb-type-micro-line);
+}

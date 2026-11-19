@@ -29,6 +29,8 @@ export const TOKEN_NAMES = [
   "fail",
   "warn",
   "scrim",
+  "preview-light",
+  "preview-dark",
   "lightbox",
   "diff-add",
   "diff-del",

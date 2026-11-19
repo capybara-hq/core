@@ -3726,6 +3726,36 @@ States: `member`, `admin`, `super-admin`, `admin-context`
 | back-row | admin-context | height | row.roomy |
 | back-row | admin-context | color | color.ink |
 
+### 6.49 IconPreview
+
+`IconPreview({ src, labels? })` (mobile layout spec §10.2.1): one icon drawn twice, on a light and on a dark ground side by side, so an uploaded app icon is judged on both whichever theme the page is in. It is the picture in an app-icon row of the super admin's 外观 settings; it takes no action.
+
+- **Two tiles**, `space.3` apart, each a square 64 wide and high, `radius.md`, a 1px `line` border, the icon centered at `space.8` (40) with `object-fit: contain`, no filter or mask (the picture is shown as uploaded). The **light** tile is on `color.preview-light`, the **dark** tile on `color.preview-dark`: two fixed grounds, the same in both themes (not `panel` or `bg`, which move with the theme, and not overridable by a theme). The tiles are decorative (`alt=""`, `aria-hidden`) unless `labels` is given.
+- **Labels** (`labels: { light, dark }`, optional): a `micro` `muted` caption centered under each tile, `space.1` below it, and the tile takes the label as its accessible name (`role="img"`). Without `labels` no caption is drawn.
+- No hover, focus or selected state (it is not interactive). A picture that fails to load leaves the ground empty.
+
+<!-- states: icon-preview -->
+States: `default`, `labelled`
+
+<!-- size-table: icon-preview -->
+| Part | State | Property | Value |
+|---|---|---|---|
+| icon-preview | default | column-gap | space.3 |
+| icon-preview-tile[data-ground=light] | default | width | 64 |
+| icon-preview-tile[data-ground=light] | default | height | 64 |
+| icon-preview-tile[data-ground=light] | default | border-radius | radius.md |
+| icon-preview-tile[data-ground=light] | default | background-color | color.preview-light |
+| icon-preview-tile[data-ground=light] | default | border-top-color | color.line |
+| icon-preview-tile[data-ground=dark] | default | width | 64 |
+| icon-preview-tile[data-ground=dark] | default | height | 64 |
+| icon-preview-tile[data-ground=dark] | default | background-color | color.preview-dark |
+| icon-preview-image | default | width | space.8 |
+| icon-preview-image | default | height | space.8 |
+| icon-preview-tile[data-ground=light] | labelled | background-color | color.preview-light |
+| icon-preview-tile[data-ground=dark] | labelled | background-color | color.preview-dark |
+| icon-preview-label | labelled | color | color.muted |
+| icon-preview-label | labelled | font-size | type.micro |
+
 ## 7. Copy and internationalization
 - All UI text goes through next-intl, in both Chinese and English. Text shown to the model (prompts, tool descriptions) is always English, and the prompt field in a form must say so.
 - Thousands separators for numbers; amounts `¥412.80`; relative time ("2 hours ago") for lists, absolute time (`10-18 14:02:11`) for records and logs.

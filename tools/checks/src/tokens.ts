@@ -376,7 +376,7 @@ export function renderThemeTokensTs(t: DesignTokens): string {
       .join("\n");
   const list = (names: string[]) => names.map((n) => `    ${json(n)},`).join("\n");
   const overridable = Object.entries(t.color)
-    .filter(([n, v]) => !n.startsWith("avatar-") && !isDerived(v))
+    .filter(([n, v]) => !n.startsWith("avatar-") && !n.startsWith("preview-") && !isDerived(v))
     .map(([n]) => n);
   const radius = t.size.radius;
   return [

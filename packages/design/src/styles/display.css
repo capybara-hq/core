@@ -2016,3 +2016,41 @@ a.cb-attachment:hover {
   font-size: var(--cb-type-small-size);
   line-height: var(--cb-type-small-line);
 }
+
+/* IconPreview (§6.49): one icon on a light and a dark ground, the grounds the same in both themes. */
+.cb-icon-preview {
+  display: flex;
+  column-gap: var(--cb-space-3);
+}
+.cb-icon-preview-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  row-gap: var(--cb-space-1);
+  margin: 0;
+}
+.cb-icon-preview-tile {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 64px;
+  height: 64px;
+  border: 1px solid var(--cb-line);
+  border-radius: var(--cb-radius-md);
+}
+.cb-icon-preview-tile[data-ground="light"] {
+  background: var(--cb-preview-light);
+}
+.cb-icon-preview-tile[data-ground="dark"] {
+  background: var(--cb-preview-dark);
+}
+.cb-icon-preview-image {
+  width: var(--cb-space-8);
+  height: var(--cb-space-8);
+  object-fit: contain;
+}
+.cb-icon-preview-label {
+  color: var(--cb-muted);
+  font-size: var(--cb-type-micro-size);
+  line-height: var(--cb-type-micro-line);
+}

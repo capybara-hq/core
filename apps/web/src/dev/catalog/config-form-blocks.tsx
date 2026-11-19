@@ -6,6 +6,7 @@ import {
   FieldRow,
   FieldRowGroup,
   FormSection,
+  IconPreview,
   Input,
   KeyValueEditor,
   Repeater,
@@ -445,7 +446,22 @@ function keyValueEditorBlocks(): ReactNode {
   );
 }
 
+// IconPreview (spec §6.49): an app icon on a light and a dark ground, with and without captions.
+function iconPreviewBlocks(): ReactNode {
+  return (
+    <>
+      <RefBlock id="icon-preview-default" width={240} pad>
+        <IconPreview src="/icon-512.png" />
+      </RefBlock>
+      <RefBlock id="icon-preview-labelled" width={240} pad>
+        <IconPreview src="/icon-512.png" labels={{ light: "浅色背景", dark: "深色背景" }} />
+      </RefBlock>
+    </>
+  );
+}
+
 export const CONFIG_FORM_BLOCKS = {
+  "icon-preview": iconPreviewBlocks,
   repeater: repeaterBlocks,
   "field-row": fieldRowBlocks,
   "key-value-editor": keyValueEditorBlocks,

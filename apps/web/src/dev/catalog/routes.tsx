@@ -169,6 +169,8 @@ export const REFERENCE_COMPONENTS = [
   "list-detail",
   // the follow-finger bottom sheet's drag states (spec §6.7; mobile layout spec §7.4)
   "sheet",
+  // the app icon on a light and a dark ground (spec §6.49; mobile layout spec §10.2.1)
+  "icon-preview",
 ] as const;
 
 export type ReferenceComponent = (typeof REFERENCE_COMPONENTS)[number];

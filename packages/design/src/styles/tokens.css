@@ -127,6 +127,8 @@
   --cb-fail: #FF5C52;
   --cb-warn: #F2C14B;
   --cb-scrim: rgba(0,0,0,.60);
+  --cb-preview-light: #FAF9F6;
+  --cb-preview-dark: #0A0A0A;
   --cb-lightbox: rgba(0,0,0,.88);
   --cb-diff-add: rgba(63,212,131,.08);
   --cb-diff-del: rgba(255,92,82,.08);
@@ -194,6 +196,8 @@
   --cb-fail: #C8302A;
   --cb-warn: #8F6500;
   --cb-scrim: rgba(10,10,10,.25);
+  --cb-preview-light: #FAF9F6;
+  --cb-preview-dark: #0A0A0A;
   --cb-lightbox: rgba(10,10,10,.80);
   --cb-diff-add: rgba(22,128,63,.10);
   --cb-diff-del: rgba(207,34,46,.08);

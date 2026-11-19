@@ -183,6 +183,7 @@ export const ACCEPTED: string[] = [
   // blocks and size tables in place; the reference PNGs and the side-by-side review wait for the
   // reference-update and visual-update workflows
   "sheet",
+  "icon-preview",
 ];
 
 /**
