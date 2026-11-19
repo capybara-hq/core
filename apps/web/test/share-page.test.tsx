@@ -141,6 +141,9 @@ describe("the share page /s/[code]", () => {
         ),
       [`POST ${S}/embed-token/file-preview/docx`]: () =>
         json(200, { token: "tok-s", src: "/plugin-ui/file-preview/app", expiresIn: 300 }),
+      // the snapshot the embed reads after its init: without it the read fails and, if it lands
+      // before the toast below, the frame gives way to "Word failed to load"
+      [`GET ${S}/content`]: () => new Response(new Uint8Array([0x50, 0x4b, 0x03, 0x04])),
     });
     await renderAuthRouteWithCache(PAGE, lastStubRoutes());
     const frame = (await screen.findByTitle("Word")) as HTMLIFrameElement;
@@ -160,6 +163,10 @@ describe("the share page /s/[code]", () => {
     });
     expect(sent[0]).toEqual(
       expect.objectContaining({ type: "init", token: "tok-s", context: { scope: "share" } }),
+    );
+    // the file follows the init (read through the share's content route)
+    await vi.waitFor(() =>
+      expect(sent[1]).toEqual(expect.objectContaining({ type: "file", name: "report.docx" })),
     );
     const fromFrame = (data: unknown) =>
       act(() => {
