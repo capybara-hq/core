@@ -207,6 +207,46 @@ it.runIf(process.platform === "darwin")(
   },
 );
 
+// Darwin's kill(-pgid) fails with EPERM, not ESRCH, while the group holds only dead members.
+// Under load the processes an abort killed stay zombies until launchd reaps them, so the group
+// signal after the command's exit saw EPERM: the call failed ("Owned group cleanup pending:
+// EPERM"), or the worker's own stop failed the same way and the call never completed. Here a
+// zombie stays in the group for as long as the test wants: its parent left the group and never
+// reaps it.
+it.runIf(process.platform === "darwin")(
+  "a restricted command whose group holds only an unreaped zombie at exit completes",
+  async () => {
+    const zombieMaker = python([
+      "import os, time",
+      "r, w = os.pipe()",
+      "if os.fork() == 0:",
+      "    os._exit(0)",
+      "os.close(w)",
+      "os.setpgid(0, 0)",
+      "os.read(r, 1)",
+      "open('parent.tmp', 'w').write(str(os.getpid()))",
+      "os.rename('parent.tmp', 'parent')",
+      "time.sleep(120)",
+    ]);
+    const { worker, project, runtimePid } = await launch(
+      "zombie-group",
+      `/usr/bin/python3 -c '${zombieMaker}' >/dev/null 2>&1 & until [ -e parent ]; do sleep 0.01; done`,
+      new AbortController().signal,
+    );
+    const pids: number[] = [runtimePid()];
+    try {
+      await waitFile(project, "parent");
+      pids.push(readPid(project, "parent"));
+      expect(await worker.completion).toMatchObject({ exitCode: 0, timedOut: false });
+      expect(alive(runtimePid())).toBe(false);
+    } finally {
+      sweep(pids);
+      void worker.cancel("cleanup").catch(() => {});
+      await worker.completion.catch(() => {});
+    }
+  },
+);
+
 it.runIf(process.platform === "darwin")(
   "a timed-out restricted command completes although a process reparented to launchd holds its stdout",
   async () => {
