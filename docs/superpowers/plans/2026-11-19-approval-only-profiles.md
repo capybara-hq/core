@@ -63,13 +63,16 @@ fills in only its own part.
 | W0 | Controller: cut `perm/r3-int`, stub commit, baselines | — | 1 h |
 | W1 | T1 SDK contract (TB) · T2 kernel settings and config (MIG) · T3 device policy and CLI (TB) · T4 replay context | T1, T2, T3 solo; T4 alone in its batch | 4–5 h |
 | W2 | T5 kernel device sandbox and admission (TB+MR) · T6 review, grants and audit (TB+MR+MIG) · T7 macOS open network (TB) · T8 Linux open network and own loopback (TB) | all four solo | 6–7 h |
-| W3 | T9 conformance suite (TB) · T10 device view, cloud network and network asks · T11 web UI · T12 dual-replica matrix (MR) + docs | T9, T12 solo; T10 and T11 batched | 4–5 h |
+| W3 | T9 conformance suite (TB) · T10 device view, cloud network and network asks · T11 web UI · T12 dual-replica matrix (MR) + docs · T13 cloud providers, plugins repo (TB) | T9, T12, T13 solo; T10 and T11 batched | 5–6 h |
 | W4 | Controller: integrated verification, two final solo reviews, dogfood | — | 2–3 h |
+| W5 | Controller: release R3 in order (SDK/kernel rc, providers, bootstrap pins), cloud smoke | — | 3–4 h |
 
-The total is about 17–21 hours of wall time, roughly two working days, if each wave's fix rounds
-stay within one pass. The cloud providers (plugins repo) follow the R3 SDK release and are outside
-this window. Until a provider declares support v2, its cloud devices read `unprobed`, never a
-fallback.
+The total is about 21–26 hours of wall time, roughly two and a half working days, if each wave's
+fix rounds stay within one pass. W3 runs five tasks; T13 lives in the plugins repo, so it shares no
+files with the core tasks, and four core implementers plus one plugins implementer stay within the
+concurrency limit only if T10 and T11 start after T9's first pass (otherwise add half a day). The
+release in W5 includes the providers: a released kernel paired with the released providers never
+leaves a cloud device `unprobed`.
 
 ## W0: controller
 
@@ -273,9 +276,9 @@ and the drift rule against fixture contexts.
 - Open mode refuses `10.0.0.1`, `169.254.169.254`, another loopback port, an IP literal and a
   rebinding name.
 - The sentinel `AWS_SECRET_ACCESS_KEY` is absent.
-- The command reaches its own TCP loopback listener. This needs the separate macOS
-  loopback-listening fix. If that fix has not merged yet, the case is `it.fails` naming the
-  dependency, and W4 gates on it.
+- Any listen is refused under every profile (`allowLocalBinding: false` stays: Seatbelt cannot
+  limit a bind to loopback, verified on 0.0.81). No own-listener case on macOS; a dev server uses the
+  per-call escalation (spec "Known limitations").
 
 **Gates:** the device suite on macOS, then the macOS conformance run.
 
@@ -328,7 +331,8 @@ the device suite.
 - A new block, "every profile is sandboxed".
 - A new open-network block, with a fixture knob for the public target.
 - An environment sentinel case.
-- An own-loopback case.
+- An own-loopback case, Linux fixtures only; the macOS fixture keeps `restrictedLoopbackListen:
+  "refused"`.
 - An instance-boundary fixture profile.
 
 **Gate:** the macOS and Linux conformance both pass against T7 and T8.
@@ -408,6 +412,32 @@ by the `visual-update` workflow.
 
 **Gates:** the new dual file, then `pnpm check` (synced skills, terms, agent-docs).
 
+### T13: cloud providers (plugins repo, TB)
+
+**Repo:** `/Users/grant/Capybara/plugins`, its own worktree and branch. It develops against the W1
+SDK and testing changes (T1, T9's instance-boundary fixture) through a local pack for iteration
+only; the PR that merges installs the published R3 rc (no file, link or workspace substitution).
+The single plugin-sdk instance rule applies (pnpm override).
+
+**Owns:** `plugins/sandbox-docker/src/**`, `plugins/sandbox-e2b/src/**`, their tests and changesets.
+
+**Interfaces:**
+
+- `permissionSupport` v2: `{ version: 2, boundary: "instance", restricted: null, network: {
+  openPublic: true, allowlist: true, perOperationHosts: false }, outsideSandbox: false, background:
+  true }`.
+- `operation()` over the existing exec and file methods, with the durable `(instanceGeneration,
+  operationId)` consume record, `revokeOperation`, and `background` per the operation contract.
+- No `mode` in the lifecycle limits; the outer network is the sandbox network (Docker egress proxy
+  with the closed ranges, E2B `denyOut` plus the recorded metadata caveat).
+
+**RED first:** the testing conformance's instance-boundary profile fails on the current providers
+(no factory); a duplicate operation ID never repeats effects; a revoked operation never starts; one
+background task stops while its sibling survives.
+
+**Gates:** the conformance on Docker (sequential), and on a live E2B template with the credential
+file loaded only inside the test command, never printed; the VM is recorded and deleted.
+
 ## W4: integrated verification (controller)
 
 1. Extend `test/runtime/permission-activation.test.ts` to cover a local staged device and a fake
@@ -421,8 +451,27 @@ by the `visual-update` workflow.
    - (a) the trust boundary: fixed denies, open network, environment, escalation;
    - (b) lifecycle, revocation and replay.
 4. Run the single integrated `CAPYBARA_TEST_WORKERS=4 pnpm verify --full`.
-5. Dogfood on the maintainer's Mac:
+5. Run a cloud device on the T13 provider branches (Docker locally, E2B live) with each profile.
+6. Dogfood on the maintainer's Mac:
    - each profile;
    - `pnpm install` over the open network;
    - a LAN request refused with the escalation hint;
    - an escalation under Full access visible in the audit.
+   - a dev server on macOS started through an escalation.
+
+## W5: release (controller)
+
+R3 is done only after all of these, in order:
+
+1. Merge `perm/r3-int` to `main` and publish the rc of `@capybara-hq/plugin-sdk`,
+   `@capybara-hq/testing`, `@capybara-hq/kernel` and `@capybara-hq/device` (the version PR).
+2. In the plugins repo, bump `sandbox-docker` and `sandbox-e2b` to the published SDK and testing rc,
+   rerun their conformance (Docker, live E2B) against the published packages, merge T13 and release
+   the providers (and the Docker image).
+3. In core, pin the released providers in `packages/kernel/bootstrap.json` and the compose files
+   (`check:bootstrap`), then release the kernel rc and the images that carry the pins.
+4. Smoke: a fresh deployment from the released images creates a Docker cloud device that reads
+   `supported` and runs one call under each profile.
+
+Between steps 1 and 3 no image is announced: the kernel rc from step 1 is not deployed on its own
+with cloud devices, because its pins still name the old providers.

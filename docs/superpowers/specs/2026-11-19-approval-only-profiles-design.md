@@ -265,9 +265,9 @@ Closed in open mode, and reachable only by running outside the sandbox:
 - private and LAN ranges: `10/8`, `172.16/12`, `192.168/16`, CGNAT `100.64/10`, IPv6 ULA `fc00::/7`;
 - link-local and metadata: `169.254/16` (including `169.254.169.254`), `fe80::/10`, `fd00:ec2::254`;
 - loopback and this host's own interface addresses, so another process's localhost port is closed.
-  The command's **own** TCP loopback listener stays reachable within the operation. On Linux the
-  broker allows a connect to ports the operation itself bound. On macOS this comes with the separate
-  loopback-listening fix;
+  On Linux the command's **own** TCP loopback listener stays reachable within the operation: the
+  broker allows a connect to ports the operation itself bound. On macOS a restricted command cannot
+  listen at all (section "Known limitations");
 - the Docker and kernel sockets: UNIX sockets outside the write roots stay refused
   (`/var/run/docker.sock`, `~/.docker/run/docker.sock`, `/run/containerd`), and so does TCP to them
   over loopback;
@@ -456,13 +456,25 @@ The migration never widens.
 - **Call grants:** a migration adds `full-access` to the grant `source` check, numbered after
   `0162`.
 
+## Known limitations
+
+- **macOS: no TCP listening inside the sandbox.** Seatbelt cannot restrict a bind to loopback: any
+  listen grant also opens `0.0.0.0`, and inbound connections are not filtered by peer (verified on
+  sandbox-runtime 0.0.81). Restricted macOS operations therefore keep `allowLocalBinding: false`
+  under every profile. A dev server or test server that must listen on macOS runs through the
+  per-call outside-sandbox escalation (the person, the review model or a Full access auto-grant,
+  within the outside-sandbox ceiling). Linux allows a loopback listener and its own connect.
+- **Proxy-unaware clients** (plain `ssh`) do not reach the network from the sandbox (section "Open
+  network").
+
 ## Later (cut from R3)
 
 - Per-call private-endpoint grants (`privateEndpoints`), and the platform, org and device
   `privateNetwork` settings. Until then, private and LAN ranges and the host's other loopback ports
   are closed in open mode and need outside-sandbox escalation.
 - Showing project reach in the new device settings layout, and renaming `restrictedProjectReach`.
-- Restricted UNIX-socket listening on macOS.
+- Restricted UNIX-socket listening on macOS (TCP listening there is a known limitation, not a
+  later item).
 - Operation-scoped (`boundary: "operation"`) cloud providers on the Linux runtime.
 - Per-call host grants on instance-boundary devices (they need per-operation proxy credentials).
 
@@ -522,8 +534,10 @@ The migration never widens.
 **Docs and skills:** `AGENTS.md`, writing-sandbox-providers, writing-tools, writing-web-ui,
 writing-kernel-api, replay-evals, `docs/config.md`, `docs/deploy/upgrade.md`.
 
-**Plugins repo:** `sandbox-docker` and `sandbox-e2b` get an instance-boundary operation factory and
-support v2. This follows the R3 SDK release.
+**Plugins repo** (part of R3): `sandbox-docker` and `sandbox-e2b` get an instance-boundary operation
+factory and support v2, built against the published R3 SDK rc. R3 is done only when they are
+released and pinned in `packages/kernel/bootstrap.json`. A released kernel paired with the released
+providers never leaves a cloud device `unprobed`.
 
 **Tests that encode the old coupling and change:**
 
@@ -545,12 +559,12 @@ support v2. This follows the R3 SDK release.
 |---|---|
 | Full access silently keeps unsandboxed execution | Admission table test: every profile × device kind gives a scoped filesystem and a non-`environment` network unless an `outside-sandbox` grant exists. Conformance: a Full-profile call cannot read `~/.ssh`, write `~/.zshrc` or reach `10.0.0.1` |
 | A review-model allow crosses a fixed deny | A classifier fake that always allows: every fixed-deny class still denies under all profiles. A directory proposal covering a protected path is `unsupported` before review |
-| Open network reaches private networks or host services | Device conformance on macOS SRT and on Linux (Docker harness). A public test target is reachable. Refused: `10/8`, `100.64/10`, `fc00::/7`, `169.254.169.254`, another loopback port, `docker.sock`, an IP literal, and a name that resolves to a private address (rebinding fixture). The command's own TCP loopback listener is reachable |
+| Open network reaches private networks or host services | Device conformance on macOS SRT and on Linux (Docker harness). A public test target is reachable. Refused: `10/8`, `100.64/10`, `fc00::/7`, `169.254.169.254`, another loopback port, `docker.sock`, an IP literal, and a name that resolves to a private address (rebinding fixture). On Linux the command's own TCP loopback listener is reachable; on macOS any listen is refused |
 | Secrets leak through the environment | Conformance: a device env variable (`AWS_SECRET_ACCESS_KEY=sentinel`) is absent inside a sandboxed command under every profile |
 | An auto-grant is issued twice or after narrowing | Dual-replica: two replicas race the same Full access crossing and produce one grant row and one audit row. A ceiling narrowing races an auto-grant: either the grant is refused or the started work is revoked. Network `open → allowlist` revokes running open-network work, while sibling allowlist work survives |
 | A profile change races a crossing | Dual: Approve for me → Full access while a card waits. The card is superseded, re-evaluated as an auto-grant, and executed once |
 | An unattended run or a sub-agent escalates | An unattended run is refused, as merged. A sub-agent's escalation under Full access goes to the review model, never auto. Task-grant hosts still work |
-| Cloud devices are misrepresented | A fake instance-boundary provider: all three profiles are available, no directory or outside crossings are offered, and an allowlist host request answers "add it to the device's list" |
+| Cloud devices are misrepresented or stuck | The real providers' conformance (Docker, live E2B) reports support v2 and runs each profile; a kernel with the pinned providers reads `supported`, never `unprobed`. A fake instance-boundary provider: all three profiles are available, no directory or outside crossings are offered, and an allowlist host request answers "add it to the device's list" |
 | Replay drift | `reconstruct.test.ts` and `run-replay` before and after. A settings change between runs logs `device_sandbox_changed` |
 | UI | Web unit tests for the picker copy and the device section. Playwright `permission-profiles.spec.ts`: the picker rows, the Full access dialog with and without outside, the network toggle, allowlist editing, and the auto-granted line |
 
