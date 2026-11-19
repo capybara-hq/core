@@ -461,9 +461,19 @@ interface CapybaraShell {
    * (macOS traffic lights with `titleBarStyle: hiddenInset`, a native title bar overlay).
    */
   readonly insets: { top: number; right: number; bottom: number; left: number };
+  /**
+   * The rectangle the shell's window controls occupy over the web view, in CSS px from the web
+   * view's top-left corner (macOS traffic lights, a Windows caption-button overlay at the right);
+   * null when there are none or they are hidden (fullscreen). Modelled on Window Controls
+   * Overlay's `titlebar-area-*`. Optional: a shell without overlaid controls omits it.
+   */
+  readonly controls?: { x: number; y: number; width: number; height: number } | null;
   /** Capabilities by `name@major` (as extension points are named, `channel@1`). */
   readonly capabilities: Readonly<Record<string, object>>;
-  /** Insets or capabilities changed (fullscreen hides the traffic lights). Returns unsubscribe. */
+  /**
+   * Insets, controls or capabilities changed (fullscreen hides the traffic lights; a capability
+   * appears after load). Returns unsubscribe.
+   */
   on(event: "change", listener: () => void): () => void;
 }
 
@@ -480,6 +490,13 @@ declare global {
 - The type lives in `@capybara-hq/plugin-sdk` (types only, `shell-environment.ts`): it is a
   public contract shared with `capybara-hq/clients` (`packages/shell` implements it), and
   plugin-sdk is the package that imports nothing from Capybara (designer's call).
+- **`controls` versus `insets`** (designer's call): `insets` reserves whole bands at the edges;
+  `controls` says exactly where the window controls sit inside the top band, so the AppShell
+  keeps that rectangle clear (the sidebar head starts after it, the top bar's leading or
+  trailing items move aside) without hard-coding Apple's traffic-light width or assuming a
+  Windows overlay on the right. The design CSS reads it only through tokens (§9.3); a shell that
+  reports `controls` may still report a `top` inset for the band height. `data-shell-platform`
+  stays for platform conventions only (back gesture, title placement), never for geometry.
 
 ### 9.2 Capabilities and versioning
 
@@ -503,6 +520,11 @@ declare global {
   | `push@1` | Mobile app spec (later) | Register the app's native push token (APNs, a vendor channel) as a notification target (§10.4) |
   | `chrome@1` | This spec | The web tells the shell its scheme and background token so native chrome (status bar, window background, title bar overlay) matches the theme: `setAppearance({ scheme, background })` |
 
+  Which shells offer `chrome@1`: the **desktop shell** always (window background and title bar
+  follow the theme, desktop spec §7.3); the **mobile shell** later, only if it needs the native
+  status bar's appearance (the web's `theme-color` and `black-translucent` status bar may be
+  enough in a WebView). Without it the native chrome keeps the shell's defaults.
+
   A new capability is added here (name, owner) by the spec that defines it.
 
 ### 9.3 How the web uses it (no flash, no styles in apps/web)
@@ -512,21 +534,28 @@ declare global {
   script carries it today). It reads `window.capybaraShell` (Electron's preload and Capacitor's
   document-start user script run before any page script) and sets on `<html>`:
   `data-shell="desktop|mobile"`, `data-shell-platform="<platform>"` and the CSS properties
-  `--cb-shell-inset-top|right|bottom|left`. No shell: nothing is set. The server render never
+  `--cb-shell-inset-top|right|bottom|left`, and from `controls` the properties
+  `--cb-shell-controls-x|y|width|height` (unset when `controls` is absent or null). No shell: nothing is set. The server render never
   depends on the shell, so hydration cannot mismatch (`<html>` already has
   `suppressHydrationWarning`).
 - **The AppShell** subscribes to `change` after hydration and updates the same attributes and
   properties (fullscreen, a moved title bar), and sends `chrome@1.setAppearance` on theme
   changes.
 - **Design CSS does the rest**, under `[data-shell]` selectors: the insets join the safe areas in
-  `--cb-inset-*` (§7.5), so the top bar and sidebar head clear the macOS traffic lights; window
+  `--cb-inset-*` (§7.5), and the controls rectangle in `--cb-shell-controls-*` decides which
+  leading or trailing space the top bar and sidebar head keep clear (the traffic lights on macOS,
+  a caption overlay on Windows) with no platform-specific widths in CSS; window
   **drag regions** (`app-region: drag`) on the sidebar head, the drawer bar / top bar and the
   conversation title bar, with `app-region: no-drag` on every interactive element inside them.
   Desktop-specific choices beyond that (which region drags, how wide) are the desktop spec's,
   realized in design CSS.
 - **Features** that use a capability live in one small adapter in apps/web
   (`lib/shell.ts`: typed accessors returning `undefined` without the capability), so a page asks
-  "can I connect this machine" and never reads `window.capybaraShell` itself. A check
+  "can I connect this machine" and never reads `window.capybaraShell` itself. The adapter reads
+  capabilities **reactively**: a `useShellCapability(key)` hook subscribes to `on("change")`
+  (through `useSyncExternalStore`, `undefined` on the server and during hydration), because a
+  shell may add a capability after the page loaded (the desktop offers `device@1` only once it
+  has read the deployment's `/api/v1/meta`) or remove one; a page never caches a one-time read. A check
   (`web-shell-access`, §11.4) rejects other reads of the global in apps/web.
 - **`data-cap-state`** gains `shell=desktop|mobile` (after hydration) for plugin CSS.
 
@@ -544,6 +573,14 @@ declare global {
   what the machine allows. A capability never returns a secret (a device credential, a push
   token is registered with the kernel by the shell's call, not handed back to the page; see
   §10.4).
+- **User activation and one dialog at a time.** A capability call that needs a native
+  confirmation is refused unless the page has a transient user activation at the moment of the
+  call (`navigator.userActivation.isActive`, checked by the shell's injected code before it
+  forwards the call), so a page cannot raise native dialogs on its own. A shell shows **at most
+  one native dialog at a time per profile and origin**; further confirming calls fail with
+  `busy` until it is answered. This applies to every confirming capability alike: the desktop's
+  `device@1` (connect, resume, a widening ceiling request) and the mobile app's `push@1`
+  (register).
 - Client extensions (L2 / L3) run in the page with full trust (client extensions spec §9.6), so
   they can reach the global like the web can. This is accepted: approval is governance, and the
   native confirmation is the barrier for anything dangerous. `@capybara-hq/plugin-client` does
