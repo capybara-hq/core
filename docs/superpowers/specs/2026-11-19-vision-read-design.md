@@ -209,8 +209,10 @@ An image is data whose sniffed type is PNG, JPEG, GIF or WebP. The sniff runs be
      named an attachment. It is always a copy, so every `Read` has its own id, and request
      building, replay and the media cap see exactly one block per id.
    - A per-conversation cap, `attachments.readMaxBytesPerConversation` (hot, default 512 MiB),
-     applies. Past it, the image is still described or shown for this call, but not stored. The
-     result says so and says the image will not stay in the history. The cap is soft: Reads running
+     applies. Past it, nothing is stored: a model without vision still gets the vision purpose's
+     answer, while a model with vision is not shown the image (rendering needs a stored copy). The
+     result says the image is not stored and will not stay in the history. A device read with no
+     object store behaves the same way. The cap is soft: Reads running
      at the same time may pass it by at most one image each.
 5. **Log.** The `tool_result` event gains `media?: [{ attachmentId, name, mediaType, size }]`.
    - Only the builtin `Read` sets it, through a kernel-internal result field; a plugin cannot.
@@ -413,7 +415,7 @@ append-only:
 | Sub-agent `Read` | The copy belongs to the sub-agent's conversation; its own model decides vision. A `file_id` of the root's attachment works, as a copy. |
 | Agent without a device | Listed if an object store exists. `file_id` works; `file_path` gives the no-device text. |
 | Same image read twice | Two copies, two blocks, both counted. |
-| Conversation cap reached | Shown or described for this call, not stored. The result says it will not stay in the history. |
+| Conversation cap reached (or no object store) | Nothing stored. A model without vision still gets the vision answer; a model with vision is not shown the image. The result says so. |
 | Org whose image model has only 2K sizes | `standard` returns the closest size it has, and the result says `at 2048x2048`. |
 | `resolution: "high"` on ark | The largest size at that ratio, for example 2816×1584 for 16:9. |
 | Conversation deleted | Its `read` copies, and those of its sub-agent conversations (16 levels), are purged `readPurgeAfterHours` later. |
