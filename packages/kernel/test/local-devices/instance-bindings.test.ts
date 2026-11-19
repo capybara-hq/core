@@ -396,7 +396,7 @@ it("a delayed answer for a replaced generation cannot populate the replacement",
   expect((await f.report()).state).toBe("supported");
 });
 
-it("bound hellos re-report only the installed identity; a changed one stops admission", async () => {
+it("bound hellos re-report only the installed identity; a lost or changed one replaces the instance", async () => {
   const f = await localDevice();
   const g = await f.create();
   deviceAnswers();
@@ -412,7 +412,22 @@ it("bound hellos re-report only the installed identity; a changed one stops admi
   await machines.recordHelloV3(f.machineId, stagedHello(identityFor(g)));
   expect((await f.report()).state).toBe("supported");
   expect(await f.fullRevision()).toEqual(base);
-  // an unbound hello (a process that lost its binding) attests nothing
+  // the machine no longer attesting its installed generation replaces the instance: the row
+  // forgets it (its fence moves on), the device epoch fences old work, and a new generation is
+  // bound on the next use (a restarted program whose runtime changed comes back unbound)
+  const rebind = async () => {
+    const row = await f.db
+      .selectFrom("device_instances")
+      .select(["status", "handle", "generation"])
+      .where("device_id", "=", f.deviceId)
+      .executeTakeFirstOrThrow();
+    expect(row).toMatchObject({ status: "none", handle: null });
+    f.setFence(row.generation);
+    const next = await f.create();
+    await k.app.get(LocalInstanceBindings).bind(f.deviceId, AbortSignal.timeout(5000));
+    expect((await f.report()).state).toBe("supported");
+    return next;
+  };
   const unbound = {
     ...fakeHello(),
     roots: ROOTS,
@@ -429,29 +444,36 @@ it("bound hellos re-report only the installed identity; a changed one stops admi
   };
   await machines.recordHelloV3(f.machineId, unbound);
   expect((await f.report()).state).toBe("unprobed");
+  const afterUnbound = await f.fullRevision();
+  expect(afterUnbound.revision).toBeGreaterThan(base.revision);
+  // nothing proves the new environment yet: consent stays until the install compares it
+  expect(afterUnbound.full_revision).toBe(base.full_revision);
+  // the old generation's identity never attests again: it stays replaced
   await machines.recordHelloV3(f.machineId, stagedHello(identityFor(g)));
-  expect((await f.report()).state).toBe("supported");
-  // a changed helper under the same binding: report invalid, admissions fenced, consent kept
+  expect((await f.report()).state).toBe("unprobed");
+  let current = await rebind();
+  // a changed helper under the same binding: replaced, admissions fenced, consent kept
+  const beforeHelper = await f.fullRevision();
   await machines.recordHelloV3(
     f.machineId,
-    stagedHello(identityFor(g, { helperHash: "d".repeat(64) })),
+    stagedHello(identityFor(current, { helperHash: "d".repeat(64) })),
   );
   expect((await f.report()).state).toBe("unprobed");
   const afterHelper = await f.fullRevision();
-  expect(afterHelper.revision).toBeGreaterThan(base.revision);
-  expect(afterHelper.full_revision).toBe(base.full_revision);
-  // the verified identity is back: supported again without another reset
-  await machines.recordHelloV3(f.machineId, stagedHello(identityFor(g)));
-  expect((await f.report()).state).toBe("supported");
+  expect(afterHelper.revision).toBeGreaterThan(beforeHelper.revision);
+  expect(afterHelper.full_revision).toBe(beforeHelper.full_revision);
+  current = await rebind();
   // a changed environment (interpreter, OS, boundary) resets Full consent
+  const beforeEnv = await f.fullRevision();
   await machines.recordHelloV3(
     f.machineId,
-    stagedHello(identityFor(g, { imageFingerprint: "e".repeat(64) })),
+    stagedHello(identityFor(current, { imageFingerprint: "e".repeat(64) })),
   );
   expect((await f.report()).state).toBe("unprobed");
-  expect((await f.fullRevision()).full_revision).toBe(base.full_revision + 1);
+  expect((await f.fullRevision()).full_revision).toBe(beforeEnv.full_revision + 1);
+  current = await rebind();
   // a hello asserting another generation never attests this instance
-  await machines.recordHelloV3(f.machineId, stagedHello(identityFor(String(Number(g) + 5))));
+  await machines.recordHelloV3(f.machineId, stagedHello(identityFor(String(Number(current) + 5))));
   expect((await f.report()).state).toBe("unprobed");
 });
 

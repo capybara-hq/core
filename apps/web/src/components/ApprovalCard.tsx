@@ -301,7 +301,19 @@ export function ApprovalCard({
     ((platformKey ?? item.toolKey) === `${PLATFORM_PREFIX}${CREATE_ACCOUNT_OPERATION}` ||
       (item.toolKey === "Platform" && input.operation === CREATE_ACCOUNT_OPERATION));
   const network = networkAskOf(item, view);
-  const command = commandAskOf(item, view);
+  const asked = commandAskOf(item, view);
+  const lead = asked === undefined ? undefined : commandLeadOf(item, view);
+  // the card words the ask in the UI's language; the kernel's reason stays model-facing text
+  const command =
+    asked === undefined || lead === undefined
+      ? asked
+      : {
+          ...asked,
+          lead: t(`command.lead.${lead.key}`, lead.values),
+          // a crossing's reach and an escalation's justification are drawn below the card; a
+          // review rule's own reason says what the lead cannot, so it stays as detail text
+          ...(lead.detail ? { detail: asked.reason } : {}),
+        };
   const scope = permissionScopeOf(item, view);
   const escalation = escalationOf(item, view);
   const detail = view?.kind === "network" ? (view.detail ?? null) : null;
@@ -367,7 +379,13 @@ export function ApprovalCard({
       return (
         <div data-role="approval" data-approval-id={item.approvalId}>
           <Text variant="small" tone="muted">
-            {t(command.kind === "write" ? "command.otherApproverWrite" : "command.otherApprover")}
+            {t(
+              command.kind === "write"
+                ? "command.otherApproverWrite"
+                : command.kind === "read"
+                  ? "command.otherApproverRead"
+                  : "command.otherApprover",
+            )}
           </Text>
         </div>
       );
@@ -456,6 +474,62 @@ export function commandAskOf(
     };
   }
   return item.command;
+}
+
+/** The `approval.command.lead.*` key of a command ask, and its values. */
+export interface CommandLead {
+  key:
+    | "read"
+    | "write"
+    | "directory"
+    | "host"
+    | "escalation"
+    | "rule"
+    | "reviewModel"
+    | "readUnsure"
+    | "writeUnsure"
+    | "directoryUnsure"
+    | "hostUnsure"
+    | "escalationUnsure";
+  values: Record<string, string>;
+  /** The review's reason is worth showing under the lead (a rule's or the review model's ask). */
+  detail?: true;
+}
+
+/**
+ * What a command ask asks, from its structured facts only (kind, reach, escalation, rule and the
+ * profile it was reviewed under), never from the kernel's English reason: a file read or write
+ * outside the scope, a directory or host a command needs, running outside the sandbox, or a
+ * sensitive command a review rule (or the review model) held. Under Approve for me a crossing
+ * reaches the person only when the review model could not decide it, and the lead says so.
+ */
+export function commandLeadOf(
+  item: Pick<ApprovalItem, "command">,
+  view: Approval | null | undefined,
+): CommandLead | undefined {
+  const detail = view?.kind === "command" ? (view.command ?? null) : null;
+  const from = detail ?? item.command;
+  if (from === undefined || from === null) return undefined;
+  const profile = detail?.permissionCandidate?.binding.profile ?? item.command?.profile;
+  const unsure = profile === "approve-for-me";
+  const crossing = (key: "read" | "write" | "directory" | "host" | "escalation"): CommandLead => ({
+    key: unsure ? `${key}Unsure` : key,
+    values: {},
+  });
+  if (from.escalation !== undefined) return crossing("escalation");
+  const reach = from.permissionScope;
+  if (reach !== undefined) {
+    if (from.kind === "read") return crossing("read");
+    if (from.kind === "write") return crossing("write");
+    return crossing(
+      reach.readDirectories.length === 0 && reach.writeDirectories.length === 0
+        ? "host"
+        : "directory",
+    );
+  }
+  return from.rule === null
+    ? { key: "reviewModel", values: {}, detail: true }
+    : { key: "rule", values: { rule: from.rule }, detail: true };
 }
 
 /**

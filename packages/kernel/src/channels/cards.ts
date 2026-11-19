@@ -279,12 +279,13 @@ export function gitCardText(
 
 /**
  * A command review ask's card text (auto mode spec §5.4): the title asks to run the command (a
- * write: to write the file), the preview is the review's reason and the held command clipped to
- * {@link CARD_SUMMARY_MAX} (a write: its target path). The scopes are the approval's; `session` is
+ * write or read: to write or read the file), the preview is the review's reason (a directory
+ * crossing of a file: a line in the card's language) and the held command clipped to
+ * {@link CARD_SUMMARY_MAX} (a file ask: its target path). The scopes are the approval's; `session` is
  * labelled only when offered. Model-controlled values are redacted by `redact`.
  */
 export function commandCardText(
-  detail: Pick<CommandAskDetail, "kind" | "command" | "reason"> & {
+  detail: Pick<CommandAskDetail, "kind" | "command" | "reason" | "permissionScope"> & {
     path?: string;
     escalation?: PermissionEscalation;
     workingRoot?: string;
@@ -294,10 +295,17 @@ export function commandCardText(
   redact: (s: string) => string = (s) => s,
 ): NetworkCardText {
   const write = detail.kind === "write";
-  const text = write ? (detail.path ?? detail.command) : detail.command;
+  // a file ask (write or read) names its target path; the command text there is the tool key
+  const file = detail.kind !== "command";
+  const text = file ? (detail.path ?? detail.command) : detail.command;
   const shown = cut(redact(text.trim()), CARD_SUMMARY_MAX);
-  const reason = cut(redact(detail.reason.trim()), CARD_SUMMARY_MAX);
-  const escalation = write ? undefined : detail.escalation;
+  // a file crossing (a directory outside the scope) is worded from its kind in the card's
+  // language; the kernel's English reason is model-facing text, kept for every other ask
+  const reason =
+    file && detail.permissionScope !== undefined
+      ? phrase(write ? "commandWriteLine" : "commandReadLine", locale)
+      : cut(redact(detail.reason.trim()), CARD_SUMMARY_MAX);
+  const escalation = file ? undefined : detail.escalation;
   // an escalation states the crossing from its own facts, never from the reason alone (a review
   // model's ask may word the reason any way); the reason follows only when it adds something
   const lines = escalation
@@ -327,11 +335,13 @@ export function commandCardText(
     title: phrase(
       write
         ? "commandWriteTitle"
-        : escalation?.background === true
-          ? "escalationBackgroundTitle"
-          : escalation
-            ? "escalationTitle"
-            : "commandTitle",
+        : file
+          ? "commandReadTitle"
+          : escalation?.background === true
+            ? "escalationBackgroundTitle"
+            : escalation
+              ? "escalationTitle"
+              : "commandTitle",
       locale,
     ),
     inputPreview: [...lines, ...(shown !== "" ? ["", shown] : [])].join("\n"),

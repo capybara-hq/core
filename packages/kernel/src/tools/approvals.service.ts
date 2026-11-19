@@ -166,11 +166,14 @@ export interface CommandAskDetail {
   deviceId: string;
   deviceName: string;
   mode: "auto" | "sandbox";
-  /** A shell command (`Bash`) or a file write outside the workspace (`Write` / `Edit`). */
-  kind: "command" | "write";
-  /** The command text (clipped), or the tool key of the write. */
+  /**
+   * A shell command (`Bash`), a file write outside the scope (`Write` / `Edit`) or a file read
+   * outside it (`Read`).
+   */
+  kind: "command" | "write" | "read";
+  /** The command text (clipped), or the tool key of the write or read. */
   command: string;
-  /** A write's target path. */
+  /** A write's or read's target path. */
   path?: string;
   /**
    * The working root the call was reviewed against (project root spec §4.3), always recorded (the
@@ -388,12 +391,24 @@ const NETWORK_ASK_SPEC_HASH = "network";
 export const GIT_ASK_TOOL_KEY = "Bash";
 /** The spec hash of a git ask (no tool definition is approved). */
 const GIT_ASK_SPEC_HASH = "git";
-/** The tool key a command ask is recorded under (a command runs in `Bash`; a write under `Write`). */
+/**
+ * The tool key a command ask is recorded under (a command runs in `Bash`; a write under `Write`, a
+ * read under `Read`).
+ */
 export const COMMAND_ASK_TOOL_KEY = "Bash";
 /** The spec hash of a command ask (no tool definition is approved). */
 const COMMAND_ASK_SPEC_HASH = "command";
 /** The tool key a file-write ask is recorded under. */
 export const COMMAND_WRITE_TOOL_KEY = "Write";
+/** The tool key a file-read ask is recorded under. */
+export const COMMAND_READ_TOOL_KEY = "Read";
+/** The tool key of a command ask of `kind`. */
+const commandAskToolKey = (kind: CommandAskDetail["kind"]): string =>
+  kind === "write"
+    ? COMMAND_WRITE_TOOL_KEY
+    : kind === "read"
+      ? COMMAND_READ_TOOL_KEY
+      : COMMAND_ASK_TOOL_KEY;
 
 /** A new git push ask (sandbox git credentials spec §7), made by the tool pipeline. */
 export interface GitAskInput {
@@ -924,7 +939,7 @@ export class ApprovalsService {
         attempt: input.attempt ?? Number(last?.attempt ?? 0) + 1,
         kind: "command",
         detail: JSON.stringify(detail),
-        tool_key: detail.kind === "write" ? COMMAND_WRITE_TOOL_KEY : COMMAND_ASK_TOOL_KEY,
+        tool_key: commandAskToolKey(detail.kind),
         spec_hash: COMMAND_ASK_SPEC_HASH,
         connector_id: null,
         input: JSON.stringify({}),
@@ -969,6 +984,11 @@ export class ApprovalsService {
                 }
               : {}),
             kind: detail.kind,
+            // the profile the call was reviewed under: the card words the ask from it, never from
+            // the kernel's English reason
+            ...(detail.permissionCandidate && {
+              profile: detail.permissionCandidate.binding.profile,
+            }),
             // the approval's detail holds the whole command; the event is display only and clamped
             command: clipText(detail.command, COMMAND_ASK_TEXT_MAX_CHARS),
             ...(detail.path !== undefined && { path: detail.path }),

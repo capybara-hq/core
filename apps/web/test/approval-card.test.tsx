@@ -98,7 +98,11 @@ describe("ApprovalCard: a command review ask (auto mode §5.4)", () => {
     expect(
       await screen.findByRole("group", { name: "智能体想运行这条命令，允许吗？" }),
     ).toBeTruthy();
+    // the ask is worded in the UI's language; the rule's own reason stays as detail text
     expect(container.querySelector('[data-part="command-reason"]')?.textContent).toBe(
+      "审查规则 rm:forced 要求你确认这次调用。",
+    );
+    expect(container.querySelector('[data-part="command-detail"]')?.textContent).toBe(
       "Deletes files outside the workspace",
     );
     expect(container.querySelector('[data-part="code-block"]')?.textContent).toBe("rm -rf build");
@@ -250,7 +254,88 @@ describe("ApprovalCard: a command review ask (auto mode §5.4)", () => {
       screen.getByRole("button", { name: "Allow this kind for this conversation" }),
     ).toBeTruthy();
     expect(screen.getByRole("button", { name: "Deny" })).toBeTruthy();
+    expect(
+      screen.getByText("The review rule rm:forced asks you to confirm this call."),
+    ).toBeTruthy();
     expect(screen.getByText("Deletes files outside the workspace")).toBeTruthy();
+  });
+
+  it("a Read crossing asks to read, worded from its facts, never the kernel's English reason", async () => {
+    const reason =
+      "Approve the exact proposed directory and host access for this call. File-only grants are not supported.";
+    const readDetail = {
+      ...DETAIL,
+      kind: "read" as const,
+      command: "Read",
+      path: "/tmp/r3df/outside.txt",
+      targetPath: "/tmp/r3df/outside.txt",
+      rule: null,
+      reason,
+      permissionScope: { readDirectories: ["/tmp/r3df"], writeDirectories: [], hosts: [] },
+      permissionCandidate: { binding: { profile: "request-approval" as const } },
+    };
+    stubApi({
+      "GET /api/v1/orgs/o1/approvals/ap1": () =>
+        json(200, {
+          approval: APPROVAL_COMMAND({ toolKey: "Read", scopes: ["once"], command: readDetail }),
+        }),
+    });
+    const { container } = renderPage(
+      <ApprovalCard
+        orgId="o1"
+        item={item({
+          toolKey: "Read",
+          command: eventCommand({
+            kind: "read",
+            command: "Read",
+            path: "/tmp/r3df/outside.txt",
+            rule: null,
+            reason,
+            permissionScope: readDetail.permissionScope,
+            targetPath: "/tmp/r3df/outside.txt",
+            profile: "request-approval",
+          }),
+        })}
+      />,
+      { locale: "zh" },
+    );
+    expect(
+      await screen.findByRole("group", { name: "智能体想读取这个文件，允许吗？" }),
+    ).toBeTruthy();
+    expect(container.querySelector('[data-part="command-reason"]')?.textContent).toBe(
+      zh.approval.command.lead.read,
+    );
+    expect(container.querySelector('[data-part="command-detail"]')).toBeNull();
+    expect(container.textContent).not.toContain(reason);
+    const code = container.querySelector('[data-part="code-block"]') as Element;
+    expect(code.textContent).toContain("/tmp/r3df/outside.txt");
+  });
+
+  it("under Approve for me a crossing says the review model could not decide it", async () => {
+    stubApi({ "GET /api/v1/orgs/o1/approvals/ap1": () => new Promise<Response>(() => {}) });
+    const { container } = renderPage(
+      <ApprovalCard
+        orgId="o1"
+        item={item({
+          toolKey: "Write",
+          command: eventCommand({
+            kind: "write",
+            command: "Write",
+            path: "/outside/a.txt",
+            permissionScope: { readDirectories: [], writeDirectories: ["/outside"], hosts: [] },
+            targetPath: "/outside/a.txt",
+            profile: "approve-for-me",
+          }),
+        })}
+      />,
+      { locale: "en" },
+    );
+    expect(
+      await screen.findByRole("group", { name: "The agent wants to write this file. Allow?" }),
+    ).toBeTruthy();
+    expect(container.querySelector('[data-part="command-reason"]')?.textContent).toBe(
+      "The review model couldn't decide this for you. This file is outside what the agent can write now; if you allow it, only this call may write in the directory listed below.",
+    );
   });
 
   it("while the approval read is pending: the event's clipped command, disabled buttons, no session scope", async () => {

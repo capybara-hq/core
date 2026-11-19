@@ -200,7 +200,9 @@ fails closed.
   model-visible) and a `usage` event with the same purpose and the call's `callId`.
 - **File tools in auto mode.** `Read` / `Write` / `Edit` reach any absolute path on a local device;
   inside the workspace a write is allowed by a rule, outside it the rule asks (or denies for a
-  secret path). Path validation still applies first. Existing `ctx.hooks` policy hooks run after
+  secret path). Path validation still applies first. Under a permission profile a file outside the
+  scope is a `directory` crossing: a `Read` asks as a read (kind `read`, tool key `Read`), a
+  `Write` / `Edit` as a write. Existing `ctx.hooks` policy hooks run after
   the review and can add their own deny.
 
 ## Display metadata: `title`, `keyArgs`, kinds and views
@@ -314,9 +316,13 @@ the same transaction as the business rows.
   and a provider that can't be reached (`SandboxProviderUnreachableError`, see writing-sandbox-providers) into `SANDBOX_UNREACHABLE_TEXT` (never connected: nothing ran,
   retrying won't help) or `SANDBOX_CONNECTION_DROPPED_TEXT` (broke mid-call: check before retrying), `kind: "unavailable"`, the raw error warned
   as `sandbox provider unreachable`.
-  Paths go through `checkToolPath`: the instance's roots (`validateSandboxPath`) in sandbox mode,
-  any clean absolute path on the machine in auto mode (shape checks only; the review judges a write
-  outside the workspace), and `write` / `edit` reject the skills root in both modes
+  Paths go through `checkToolPath`, which follows `SandboxSession.pathBound` (`sessionPathBound`),
+  never the device's tier or its outside-sandbox setting: on the managed route (`scope`) the
+  operation's admitted scope bounds every path, as for `Bash` (project roots plus directory grants,
+  protected paths excluded; the device enforces it per native request, the review proposes a
+  crossing for a path outside it), so the kernel checks only the shape; the instance's roots
+  (`validateSandboxPath`, `roots`) bound them only on the legacy route in sandbox mode. `Deliver`
+  and project skill reads use the same check, and `write` / `edit` reject the skills root either way
   (`checkToolWritable`). **The working root** (`SandboxSession.workingRoot`, set by `inSandbox` with
   `sessionWorkingRoot`; a session built elsewhere, such as a person's project skill invocation, uses
   the same helper, never its own rule): `Bash` runs there (a background command `cd`s into it while its
@@ -346,8 +352,9 @@ the same transaction as the business rows.
 - Default policy is allow; the device sandbox holds every call under every profile, and the
   **command review** above judges commands and writes before they run. When the org setting `sandboxToolPolicy: "ask"`
   is set, bash / write / edit / deliver need approval, the setting is read **at the moment of
-  execution**, and the read-only read / glob / grep are unaffected. The file tools reach any
-  absolute path on a local device in auto mode (`checkToolPath`).
+  execution**, and the read-only read / glob / grep are unaffected. The file tools reach what the
+  operation's admitted scope reaches (`checkToolPath`), under every profile and whatever the
+  device's outside-sandbox setting.
 - `Deliver` puts a file into object storage (`kernel/<orgId>/artifacts/<conversation>/<id>`, limit `sandbox.deliverMaxBytes`),
   appends an `artifact_created` event, and the web "Artifacts" tab is rebuilt from the log.
 - Delivery scope: `storeArtifacts` delivers the same bytes once per run since the person last spoke (`user_message`, answered /

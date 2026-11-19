@@ -287,6 +287,24 @@ describe("device binding", () => {
     );
   });
 
+  it("an upgraded runtime binds the kernel's replacement generation under the new identity", async () => {
+    const f = await fixture();
+    await f.binder().bind(request(G1, B1, null), signal());
+    // an upgrade replaces the runtime bytes: the restarted program cannot recover G1 and starts
+    // unbound; the kernel replaces the instance and sends the next generation after G1
+    const upgraded = { ...verified, runtimeHash: "e".repeat(64) };
+    f.setRuntime(upgraded);
+    const restarted = f.binder();
+    expect(await restarted.recover()).toBeUndefined();
+    const answer = await restarted.bind(request(G2, B2, G1), signal());
+    expect(answer).toMatchObject({
+      instanceGeneration: G2,
+      bindingId: B2,
+      runtimeIdentity: { ...upgraded, instanceGeneration: G2 },
+    });
+    expect(restarted.current()?.binding.previousGeneration).toBe(G1);
+  });
+
   it("live foreground work of an older generation blocks a newer one", async () => {
     const f = await fixture();
     const b = f.binder();

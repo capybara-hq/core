@@ -255,6 +255,35 @@ describe("the command review variant (auto mode spec §5.4)", () => {
     expect(code.textContent).not.toBe("Write");
   });
 
+  it("a read asks to read its path; a lead replaces the reason, a detail follows it", () => {
+    const { container } = wrap(
+      <ApprovalBlock
+        {...ask({
+          tool: "Read",
+          toolKey: "Read",
+          command: {
+            kind: "read",
+            command: "Read",
+            path: "/tmp/outside.txt",
+            reason: "Approve the exact proposed directory",
+            lead: "这个文件不在智能体现在可以读取的范围内。",
+            detail: "Rule detail",
+          },
+        })}
+      />,
+    );
+    expect(screen.getByRole("group", { name: "智能体想读取这个文件，允许吗？" })).toBeTruthy();
+    expect(container.querySelector('[data-part="command-reason"]')?.textContent).toBe(
+      "这个文件不在智能体现在可以读取的范围内。",
+    );
+    expect(container.querySelector('[data-part="command-detail"]')?.textContent).toBe(
+      "Rule detail",
+    );
+    expect(container.textContent).not.toContain("Approve the exact proposed directory");
+    const code = container.querySelector('[data-part="code-block"]') as Element;
+    expect(code.textContent).toBe("路径/tmp/outside.txt");
+  });
+
   it("clips the command to the card's 300 characters", () => {
     const long = `echo ${"x".repeat(500)}`;
     const { container } = wrap(

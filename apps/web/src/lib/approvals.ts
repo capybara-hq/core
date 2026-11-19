@@ -57,10 +57,14 @@ export interface CommandAskDetail {
   deviceId: string;
   deviceName: string;
   mode: "auto" | "sandbox";
-  kind: "command" | "write";
-  /** The command text (or the tool key of a write). */
+  /** The exact candidate a permission ask approves: the profile the call was reviewed under. */
+  permissionCandidate?: {
+    binding: { profile: "request-approval" | "approve-for-me" | "full-access" };
+  };
+  kind: "command" | "write" | "read";
+  /** The command text (or the tool key of a write or read). */
   command: string;
-  /** A write's target path. */
+  /** A write's or read's target path. */
   path?: string;
   /** The rule that asked, or null for a classifier ask (offers `once` only). */
   rule: string | null;

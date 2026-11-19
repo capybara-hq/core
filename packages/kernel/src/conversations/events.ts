@@ -501,11 +501,13 @@ export const CommandAskSchema = z
     escalation: PermissionEscalationSchema.optional(),
     /** The directory the command runs in (an escalation shows it). */
     workingRoot: z.string().max(4096).optional(),
-    /** A shell command or a file write. */
-    kind: z.enum(["command", "write"]),
-    /** The command text, or the tool key of the write. */
+    /** A shell command, a file write or a file read. */
+    kind: z.enum(["command", "write", "read"]),
+    /** The profile the call was reviewed under (a permission ask), for the card's wording. */
+    profile: z.enum(["request-approval", "approve-for-me", "full-access"]).optional(),
+    /** The command text, or the tool key of the write or read. */
     command: z.string().max(COMMAND_ASK_TEXT_MAX_CHARS),
-    /** A file write's target path. */
+    /** A file write's or read's target path. */
     path: z.string().max(4096).optional(),
     rule: z.string().max(200).nullable(),
     reason: z.string().max(COMMAND_ASK_TEXT_MAX_CHARS),

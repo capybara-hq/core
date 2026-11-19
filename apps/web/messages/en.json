@@ -2058,11 +2058,27 @@
     "command": {
       "title": "The agent wants to run this command. Allow?",
       "titleWrite": "The agent wants to write this file. Allow?",
+      "titleRead": "The agent wants to read this file. Allow?",
       "device": "Device",
       "reason": "Why it is held",
       "path": "File",
       "otherApprover": "The agent wants to run a command; waiting for the device owner.",
-      "otherApproverWrite": "The agent wants to write a file; waiting for the device owner."
+      "otherApproverWrite": "The agent wants to write a file; waiting for the device owner.",
+      "otherApproverRead": "The agent wants to read a file; waiting for the device owner.",
+      "lead": {
+        "read": "This file is outside what the agent can read now. If you allow it, only this call may read the directory listed below.",
+        "write": "This file is outside what the agent can write now. If you allow it, only this call may write in the directory listed below.",
+        "directory": "This command needs a directory outside what the agent can reach now. If you allow it, only this call gets the access listed below.",
+        "host": "This command needs a host the sandbox network doesn't allow. If you allow it, only this call may reach the hosts listed below.",
+        "escalation": "The agent wants to run this command once outside the sandbox: it would run as you on this device.",
+        "readUnsure": "The review model couldn't decide this for you. This file is outside what the agent can read now; if you allow it, only this call may read the directory listed below.",
+        "writeUnsure": "The review model couldn't decide this for you. This file is outside what the agent can write now; if you allow it, only this call may write in the directory listed below.",
+        "directoryUnsure": "The review model couldn't decide this for you. This command needs a directory outside what the agent can reach now; if you allow it, only this call gets the access listed below.",
+        "hostUnsure": "The review model couldn't decide this for you. This command needs a host the sandbox network doesn't allow; if you allow it, only this call may reach the hosts listed below.",
+        "escalationUnsure": "The review model couldn't decide this for you. The agent wants to run this command once outside the sandbox: it would run as you on this device.",
+        "rule": "The review rule {rule} asks you to confirm this call.",
+        "reviewModel": "The review model isn't sure about this call and asks you to confirm."
+      }
     },
     "policy": {
       "agent": "The agent's settings ask for approval",

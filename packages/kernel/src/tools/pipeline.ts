@@ -167,22 +167,26 @@ export const approvalExpiredText = (hours: number) =>
   `Approval timed out after ${hours}h; treated as denied.`;
 /** 等待审批期间 run 被中止。 */
 export const APPROVAL_CANCELLED_TEXT = "The run was stopped while waiting for approval.";
+/** What the review held: a shell command, a file write, or a file read outside the scope. */
+export type ReviewKind = "command" | "write" | "read";
 /**
  * The command review's deny text (auto mode spec §5.4, P-D12): the model-visible reason and what it
- * can do instead. `kind` says whether a shell command or a file write was held.
+ * can do instead. `kind` says whether a shell command, a file write or a file read was held.
  */
-export const commandDeniedText = (reason: string, kind: "command" | "write"): string =>
+export const commandDeniedText = (reason: string, kind: ReviewKind): string =>
   kind === "write"
     ? `This write is blocked by review: ${reason}. Write it another way or ask the user to allow it.`
-    : `Command blocked by review: ${reason}. Do the work another way or ask the user to run it.`;
+    : kind === "read"
+      ? `This read is blocked by review: ${reason}. Read another file or ask the user to allow it.`
+      : `Command blocked by review: ${reason}. Do the work another way or ask the user to run it.`;
 /**
- * A command (or write) the review held in an unattended run: no one can answer, so it is a deny at
- * once — no approval, no grant (P-D3).
+ * A command (or write, or read) the review held in an unattended run: no one can answer, so it is a
+ * deny at once — no approval, no grant (P-D3).
  */
-export const commandUnattendedText = (reason: string, kind: "command" | "write"): string =>
-  kind === "write"
-    ? `This write needs approval (${reason}), and no one can approve it now; do it another way or leave it for the person.`
-    : `This command needs approval (${reason}), and no one can approve it now; do the work another way or leave it for the person.`;
+export const commandUnattendedText = (reason: string, kind: ReviewKind): string =>
+  kind === "command"
+    ? `This command needs approval (${reason}), and no one can approve it now; do the work another way or leave it for the person.`
+    : `This ${kind} needs approval (${reason}), and no one can approve it now; do it another way or leave it for the person.`;
 /**
  * A command longer than the ask ceiling (`COMMAND_ASK_MAX_CHARS`): it cannot be shown for approval,
  * and an approval must bind the whole text, so the call is refused before any approval exists.
@@ -192,9 +196,10 @@ export const commandTooLongReason = (chars: number): string =>
 /** The model-visible result of a command over the ask ceiling (actionable, English). */
 export const commandTooLongText = (chars: number): string =>
   `This command is too long to review (${chars} characters; the limit is ${COMMAND_ASK_MAX_CHARS}). Split it into shorter commands; long inline scripts are reviewed as code the review cannot read.`;
-/** The person declined a held command or write (P-D12); `reason` is what they said, if anything. */
-export const commandDeclinedText = (reason: string | null, kind: "command" | "write"): string => {
-  const what = kind === "write" ? "this write" : "to run this command";
+/** The person declined a held command, write or read (P-D12); `reason` is what they said, if any. */
+export const commandDeclinedText = (reason: string | null, kind: ReviewKind): string => {
+  const what =
+    kind === "write" ? "this write" : kind === "read" ? "this read" : "to run this command";
   return reason === null
     ? `The user declined ${what}. Continue without it or ask the user.`
     : `The user declined ${what}: ${reason}. Continue without it or ask the user.`;
@@ -617,9 +622,16 @@ const entersDevice = (toolKey: string, input: unknown): boolean => {
   return toolKey !== BUILTIN.GenerateImage || generateImagePaths(input).length > 0;
 };
 
-/** Whether the review holds a shell command or a file write, for the texts and the ask's detail. */
-const reviewKindOf = (toolKey: string): "command" | "write" =>
-  toolKey === "Bash" ? "command" : "write";
+/**
+ * What the review holds, for the texts and the ask's detail: a shell command, a file read (a read
+ * tool's crossing asks to read, never to write) or a file write.
+ */
+const reviewKindOf = (toolKey: string): ReviewKind =>
+  toolKey === BUILTIN.Bash
+    ? "command"
+    : toolKey === BUILTIN.Read || toolKey === BUILTIN.Glob || toolKey === BUILTIN.Grep
+      ? "read"
+      : "write";
 
 /** What the review stage found for one call (auto mode spec §5.4). */
 type ReviewOutcome =
