@@ -56,15 +56,21 @@ describe("AgentMapTree (§6.16.28)", () => {
       expect(metas).toHaveLength(1);
       expect(metas[0]?.textContent).toMatch(/^\w+ 5\.5 · (\d+ 分 )?[\d.]+ 秒 · [\d.]+k tokens$/);
     }
-    expect(
-      within(all[0] as HTMLElement).getByText("opus 5.5 · 42 分 18 秒 · 392.7k tokens"),
-    ).toBeTruthy();
-    // Equal height: one fixed height for every node, and both lines one line with an ellipsis.
-    expect(rule(".cb-amap-node")).toMatch(/height: 62px;/);
-    for (const line of [".cb-amap-node-name", ".cb-amap-node-meta"]) {
-      expect(rule(line)).toMatch(/white-space: nowrap;/);
-      expect(rule(line)).toMatch(/text-overflow: ellipsis;/);
-    }
+    expect(all[0]?.querySelector('[data-part="agent-node-meta"]')?.textContent).toBe(
+      "opus 5.5 · 42 分 18 秒 · 392.7k tokens",
+    );
+    // Equal height: one compact row (row.roomy) for every node, both lines one line.
+    expect(rule(".cb-amap-node")).toMatch(/height: var\(--cb-row-roomy\);/);
+    expect(rule(".cb-amap-node")).toMatch(/width: 336px;/);
+    expect(rule(".cb-amap-node-name")).toMatch(/white-space: nowrap;/);
+    expect(rule(".cb-amap-node-name")).toMatch(/text-overflow: ellipsis;/);
+    expect(rule(".cb-amap-node-meta")).toMatch(/white-space: nowrap;/);
+    // The model gives way first: time and tokens never take the ellipsis.
+    const meta = all[1]?.querySelector('[data-part="agent-node-meta"]') as HTMLElement;
+    expect(meta.querySelector(".cb-amap-node-model")?.textContent).toMatch(/^\w+ 5\.5$/);
+    expect(meta.querySelector(".cb-amap-node-cost")?.textContent).toMatch(/^ · .+ tokens$/);
+    expect(rule(".cb-amap-node-model")).toMatch(/text-overflow: ellipsis;/);
+    expect(rule(".cb-amap-node-cost")).toMatch(/flex: none;/);
     // The full text on hover.
     expect(all[0]?.getAttribute("title")).toBe(
       "整理季度经营报告\nopus 5.5 · 42 分 18 秒 · 392.7k tokens",
@@ -130,7 +136,7 @@ describe("AgentMapTree (§6.16.28)", () => {
     );
     // Under the tree, as wide as a node (the root column), not inside the branches.
     expect(section.closest('[data-part="agent-branch"]')).toBeNull();
-    expect(rule(".cb-amap-background")).toMatch(/width: 320px;/);
+    expect(rule(".cb-amap-background")).toMatch(/width: 336px;/);
     cleanup();
     wrap(<AgentMapTree root={root} background={[]} onOpen={() => {}} now={NOW} />);
     expect(screen.queryByRole("region", { name: /后台任务/ })).toBeNull();
@@ -198,6 +204,25 @@ describe("AgentMapTree (§6.16.28)", () => {
       .querySelector('[data-part="agent-node"][data-id="am_d1"]')
       ?.closest('[data-part="agent-branch"]');
     expect(branch?.querySelector(':scope > [data-part="agent-kids"]')).toBeTruthy();
+  });
+
+  it("anchors a parent level with its first child, the connectors at the rows' centre", () => {
+    // A long column of children never pushes its parent away from the first of them.
+    expect(rule(".cb-amap-branch")).toMatch(/align-items: flex-start;/);
+    const centre = "top: calc(var(--cb-row-roomy) / 2);";
+    for (const r of [
+      ".cb-amap-kids::before",
+      ".cb-amap-kid::before",
+      ".cb-amap-kid:first-child::after",
+    ]) {
+      expect(rule(r)).toContain(centre);
+    }
+    expect(rule(".cb-amap-kid:last-child::after")).toContain(
+      "height: calc(var(--cb-row-roomy) / 2);",
+    );
+    // siblings space.1 apart, the gap under each but the last (so every node tops its box)
+    expect(rule(".cb-amap-kid")).not.toMatch(/padding/);
+    expect(rule(".cb-amap-kid:not(:last-child)")).toMatch(/padding-bottom: var\(--cb-space-1\);/);
   });
 
   it("draws siblings newest first: the agent dispatched last is on top", () => {
@@ -377,13 +402,13 @@ describe("AgentMapDialog (§6.16.28)", () => {
     );
   });
 
-  it("pads in the compact dialog rhythm: head space.2 space.4, body space.4, footer space.3 space.4 (AC6)", () => {
+  it("pads compactly: head space.2 space.4, body space.3 space.4, footer space.2 space.4", () => {
     expect(rule(".cb-amap-dialog")).toMatch(/padding: 0;/);
     expect(rule(".cb-amap-head")).toMatch(/padding: var\(--cb-space-2\) var\(--cb-space-4\);/);
-    expect(rule(".cb-amap-content")).toMatch(/padding: var\(--cb-space-4\);/);
+    expect(rule(".cb-amap-content")).toMatch(/padding: var\(--cb-space-3\) var\(--cb-space-4\);/);
     expect(rule(".cb-amap")).not.toMatch(/padding/);
-    expect(rule(".cb-amap-detail")).toMatch(/padding: var\(--cb-space-4\);/);
-    expect(rule(".cb-amap-foot")).toMatch(/padding: var\(--cb-space-3\) var\(--cb-space-4\);/);
+    expect(rule(".cb-amap-detail")).toMatch(/padding: var\(--cb-space-3\) var\(--cb-space-4\);/);
+    expect(rule(".cb-amap-foot")).toMatch(/padding: var\(--cb-space-2\) var\(--cb-space-4\);/);
     // the transcript's thread fills the dialog: no layout gutter on either side
     expect(rule(".cb-amap-transcript")).toMatch(/padding: var\(--cb-space-4\);/);
   });
@@ -481,12 +506,16 @@ describe("AgentDetail (§6.16.28, level 2)", () => {
     wrap(detail({ onBack, onClose, onOpenParent }));
     expect(screen.getByRole("heading", { name: "核对供应商发票与付款记录" })).toBeTruthy();
     expect(screen.getByText("运行中 · 财务助手 · opus 5.5 · 后台")).toBeTruthy();
-    expect(screen.getByText("16 分 25 秒 · 266.5k tokens")).toBeTruthy();
     expect(screen.getByText(D.latestText)).toBeTruthy();
     const spawned = screen.getByText(
       (_, el) => (el as HTMLElement | null)?.dataset.part === "agent-spawned-by",
     );
     expect(spawned.textContent).toBe("由 整理季度经营报告 派出");
+    // two meta lines: the kind, then the spawner and the cost on one line
+    expect(document.querySelectorAll(".cb-amap-meta")).toHaveLength(2);
+    expect(spawned.closest(".cb-amap-meta")?.textContent).toBe(
+      "由 整理季度经营报告 派出 · 16 分 25 秒 · 266.5k tokens",
+    );
     await userEvent.click(within(spawned).getByRole("button", { name: "整理季度经营报告" }));
     expect(onOpenParent).toHaveBeenCalledWith("am_root");
     await userEvent.click(screen.getByRole("button", { name: "返回智能体图" }));

@@ -1,5 +1,12 @@
 # @capybara-hq/kernel
 
+## 0.1.0-rc.51
+
+### Patch Changes
+
+- 7e44853: Bootstrap pins skills-core 0.1.0-rc.2 (skill-guide states the package requirements instead of a `zip -r`
+  recipe); the official marketplace commit and the compose sandbox build contexts move with it.
+
 ## 0.1.0-rc.50
 
 ### Minor Changes
