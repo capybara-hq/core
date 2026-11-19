@@ -2092,7 +2092,7 @@ export function isSafePackagePath(p: string): boolean;
 export function isSandboxGoneError(e: unknown): e is SandboxGoneError;
 
 // @public
-export function isSandboxMoveDenied(source: string, destination: string, sourceIsDirectory: boolean): boolean;
+export function isSandboxMoveDenied(source: string, destination: string, sourceIsDirectory: boolean, sourceEntries?: readonly string[]): boolean;
 
 // @public
 export function isSandboxOperationOutcomeUnknownError(e: unknown): e is SandboxOperationOutcomeUnknownError;
@@ -2666,6 +2666,9 @@ export interface ObjectStore {
 
 // @public
 export function oklabL(hex: string): number;
+
+// @public
+export const OPEN_PUBLIC_DENIED_CIDRS: readonly string[];
 
 // @public
 export const OPEN_PUBLIC_DENIED_CLASSES: readonly AddressClass[];
@@ -3369,7 +3372,7 @@ export type SandboxNetworkScope = {
 | {
     readonly kind: "open-public";
 }
-/** Only with `filesystem: { kind: "device" }`: that pair is the escalated (outside) call. */
+/** Only with `filesystem: { kind: "device" }` (and the reverse): the escalated (outside) call. */
 | {
     readonly kind: "environment";
 };

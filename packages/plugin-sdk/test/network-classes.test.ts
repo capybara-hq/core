@@ -3,6 +3,7 @@ import {
   ADDRESS_CLASS_RANGES,
   type AddressClass,
   classifyAddress,
+  OPEN_PUBLIC_DENIED_CIDRS,
   OPEN_PUBLIC_DENIED_CLASSES,
 } from "../src/index.js";
 
@@ -37,6 +38,9 @@ const CASES: readonly [string, AddressClass][] = [
   ["169.254.255.255", "link-local"],
   ["169.254.169.254", "metadata"],
   ["100.100.100.200", "metadata"],
+  ["168.63.129.16", "metadata"], // Azure WireServer
+  ["168.63.129.15", "public"],
+  ["168.63.129.17", "public"],
   // loopback and unspecified
   ["127.0.0.1", "loopback"],
   ["127.255.255.254", "loopback"],
@@ -80,6 +84,15 @@ const CASES: readonly [string, AddressClass][] = [
   ["2001:db8::1", "reserved"],
   ["fec0::1", "reserved"],
   ["4000::1", "reserved"],
+  // 2001::/23 (Teredo, ORCHID, the other IETF assignments) and 3fff::/20 (documentation)
+  ["2001::1", "reserved"],
+  ["2001:0:4136:e378:8000:63bf:3fff:fdd2", "reserved"],
+  ["2001:20::1", "reserved"],
+  ["2001:1ff:ffff::1", "reserved"],
+  ["2001:200::1", "public"],
+  ["3fff::1", "reserved"],
+  ["3fff:fff:ffff::1", "reserved"],
+  ["3fff:1000::1", "public"],
   ["::2", "unspecified"],
   // v4-mapped and the other forms that embed an IPv4 address: judged by that address
   ["::ffff:10.0.0.1", "private"],
@@ -156,6 +169,32 @@ describe("classifyAddress", () => {
     expect(() => classifyAddress(value)).toThrow(/not an IP address/);
   });
 
+  it("expands the closed classes into one CIDR deny list, embedded forms included", () => {
+    expect(Object.isFrozen(OPEN_PUBLIC_DENIED_CIDRS)).toBe(true);
+    // closed blocks are merged where they touch; these stand alone between public neighbours
+    for (const cidr of [
+      "10.0.0.0/8",
+      "168.63.129.16/32",
+      "2001::/23",
+      "3fff::/20",
+      "::ffff:a00:0/104",
+      "::ffff:7f00:0/104",
+      "2002:a00::/24",
+      "2002:c0a8::/32",
+      "2002:a9fe::/32",
+    ])
+      expect(OPEN_PUBLIC_DENIED_CIDRS, cidr).toContain(cidr);
+    const inList = (ip: string) => OPEN_PUBLIC_DENIED_CIDRS.some((c) => cidrContains(c, ip));
+    for (const [ip] of CASES) {
+      const plain = ip.split("%")[0] as string;
+      expect(inList(plain), ip).toBe(OPEN_PUBLIC_DENIED_CLASSES.includes(classifyAddress(ip)));
+    }
+    // every listed block is closed at both ends
+    for (const cidr of OPEN_PUBLIC_DENIED_CIDRS)
+      for (const ip of cidrEnds(cidr))
+        expect(OPEN_PUBLIC_DENIED_CLASSES, `${cidr} ${ip}`).toContain(classifyAddress(ip));
+  });
+
   it("is pure data: the ranges are frozen CIDRs, most specific first within a family", () => {
     expect(Object.isFrozen(ADDRESS_CLASS_RANGES)).toBe(true);
     for (const range of ADDRESS_CLASS_RANGES) {
@@ -170,3 +209,42 @@ describe("classifyAddress", () => {
     }
   });
 });
+
+function value(ip: string): { v: bigint; bits: number } {
+  if (!ip.includes(":"))
+    return { v: ip.split(".").reduce((a, o) => (a << 8n) | BigInt(o), 0n), bits: 32 };
+  let text = ip;
+  const dotted = /^(.*:)(\d+\.\d+\.\d+\.\d+)$/.exec(ip);
+  if (dotted) {
+    const v4 = value(dotted[2] as string).v;
+    text = `${dotted[1]}${(v4 >> 16n).toString(16)}:${(v4 & 0xffffn).toString(16)}`;
+  }
+  const [head = "", tail] = text.split("::");
+  const a = head ? head.split(":") : [];
+  const b = tail ? tail.split(":") : [];
+  const groups = [...a, ...Array<string>(8 - a.length - b.length).fill("0"), ...b];
+  return {
+    v: groups.reduce((acc, g) => (acc << 16n) | BigInt(Number.parseInt(g, 16)), 0n),
+    bits: 128,
+  };
+}
+function cidrContains(cidr: string, ip: string): boolean {
+  const [base = "", p = ""] = cidr.split("/");
+  const net = value(base);
+  const addr = value(ip);
+  if (net.bits !== addr.bits) return false;
+  const shift = BigInt(net.bits - Number(p));
+  return net.v >> shift === addr.v >> shift;
+}
+function cidrEnds(cidr: string): string[] {
+  const [base = "", p = ""] = cidr.split("/");
+  const net = value(base);
+  const last = net.v | ((1n << BigInt(net.bits - Number(p))) - 1n);
+  const show = (v: bigint) =>
+    net.bits === 32
+      ? [24n, 16n, 8n, 0n].map((s) => ((v >> s) & 0xffn).toString()).join(".")
+      : Array.from({ length: 8 }, (_, i) =>
+          ((v >> BigInt(112 - 16 * i)) & 0xffffn).toString(16),
+        ).join(":");
+  return [show(net.v), show(last)];
+}

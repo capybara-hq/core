@@ -114,7 +114,7 @@ export type SandboxNetworkScope =
    * (`network-classes.ts`): every class in `OPEN_PUBLIC_DENIED_CLASSES` stays closed.
    */
   | { readonly kind: "open-public" }
-  /** Only with `filesystem: { kind: "device" }`: that pair is the escalated (outside) call. */
+  /** Only with `filesystem: { kind: "device" }` (and the reverse): the escalated (outside) call. */
   | { readonly kind: "environment" };
 
 /** An operation locator for idempotent admission and revocation, never a credential. */
@@ -456,7 +456,7 @@ export function parseSandboxOperationRef(value: unknown): SandboxOperationRef {
  * IDs and ceiling revisions are bounded to 128 characters; roots to 64 paths of at most 4096 characters;
  * hosts to 100 entries passing validateAllowHost. Empty grants stay empty, including deny-all.
  * Performs no I/O, authority lookup or deadline refresh. Unknown fields are rejected at every level.
- * The `environment` network is accepted only together with the `device` filesystem.
+ * The `environment` network and the `device` filesystem are accepted only together.
  */
 export function parseSandboxOperationScope(value: unknown): SandboxOperationScope {
   const v = record(
@@ -480,11 +480,17 @@ export function parseSandboxOperationScope(value: unknown): SandboxOperationScop
     return invalid("profile", "expected request-approval, approve-for-me or full-access");
   const filesystem = fileScope(v.filesystem);
   const network = networkScope(v.network);
-  // The environment network is the escalated call's half: it never pairs with a sandboxed filesystem.
+  // The device filesystem and the environment network are the two halves of the escalated call:
+  // neither ever pairs with a sandboxed counterpart.
   if (network.kind === "environment" && filesystem.kind !== "device")
     return invalid(
       "network.kind: environment requires the device filesystem",
       "a scoped filesystem takes none, allowlist or open-public",
+    );
+  if (filesystem.kind === "device" && network.kind !== "environment")
+    return invalid(
+      "filesystem.kind: device requires the environment network",
+      "the device filesystem is only the escalated call's",
     );
   return Object.freeze({
     ...operationRef(v),

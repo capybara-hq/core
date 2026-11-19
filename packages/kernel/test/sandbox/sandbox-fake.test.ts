@@ -352,7 +352,8 @@ function scopeOf(
     actor,
     tag: operationId,
     filesystem,
-    network: { kind: "none" },
+    // the device filesystem pairs only with the environment network (the escalated call)
+    network: filesystem.kind === "device" ? { kind: "environment" } : { kind: "none" },
   };
 }
 const scoped = (write: string[], read: string[] = []): SandboxOperationScope["filesystem"] => ({

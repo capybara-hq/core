@@ -72,6 +72,10 @@ function corpus(): string[] {
     "64:ff9b::808:808",
     "fd00:ec2::254",
     "100.100.100.200",
+    "168.63.129.16",
+    "2001::1",
+    "2001:0:4136:e378:8000:63bf:3fff:fdd2",
+    "3fff::1",
     "fe80::1%eth0",
   ])
     out.add(ip);
@@ -100,6 +104,13 @@ describe("sandbox address classes against the kernel's public-address checks", (
   });
 
   // The kernel unwraps all of `64:ff9b::/32` as NAT64; the SDK closes it as nat64 or reserved.
+  it("forbids the Azure WireServer whatever the exemptions, like the other metadata endpoints", () => {
+    expect(isForbiddenAddress("168.63.129.16")).toBe(true);
+    expect(isLinkLocalAddress("168.63.129.16")).toBe(true);
+    expect(isLinkLocalAddress("::ffff:168.63.129.16")).toBe(true);
+    expect(classifyAddress("168.63.129.16")).toBe("metadata");
+  });
+
   it("agrees on the never-allowed and loopback subsets", () => {
     const sixOnly = (ip: string) => (ip.includes(":") ? STRICTER : []);
     for (const ip of ips) {

@@ -92,6 +92,16 @@ describe("parseSandboxPermissionSupportV2", () => {
     );
   });
 
+  it.each([
+    ["the open network", { openPublic: true, allowlist: false, perOperationHosts: false }],
+    ["the allowlist", { openPublic: false, allowlist: true, perOperationHosts: false }],
+    ["per-operation hosts", { openPublic: false, allowlist: true, perOperationHosts: true }],
+  ])("rejects an operation boundary without restricted support claiming %s", (_name, network) => {
+    expect(() =>
+      parseSandboxPermissionSupportV2({ ...operationSupport(), restricted: null, network }),
+    ).toThrow(DeviceProtocolError);
+  });
+
   it("rejects non-plain objects and accessors", () => {
     for (const bad of [null, [], "x", 1, new (class Report {})()])
       expect(() => parseSandboxPermissionSupportV2(bad)).toThrow(DeviceProtocolError);
@@ -202,5 +212,21 @@ describe("parseOwnerCeilingNarrowingV3", () => {
   it("rejects non-objects", () => {
     for (const bad of [null, [], "allowlist", false])
       expect(() => parseOwnerCeilingNarrowingV3(bad)).toThrow(DeviceProtocolError);
+  });
+});
+
+describe("host lists are read once", () => {
+  it("snapshots the length of an allowedDomains array", () => {
+    const hosts = ["example.com"];
+    let reads = 0;
+    const tricky = new Proxy(hosts, {
+      get(target, key, receiver) {
+        if (key === "length") return reads++ === 0 ? 1 : 1000;
+        return Reflect.get(target, key, receiver);
+      },
+    });
+    const parsed = parseOwnerCeilingReportV3({ ...ceiling(), allowedDomains: tricky });
+    expect(parsed.allowedDomains).toEqual(["example.com"]);
+    expect(reads).toBe(1);
   });
 });

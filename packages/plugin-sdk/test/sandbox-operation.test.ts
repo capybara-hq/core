@@ -282,16 +282,19 @@ describe("immutable operation scope parsing", () => {
       ).toThrow(/network\.kind: environment requires the device filesystem/);
   });
 
-  it("accepts the device filesystem with a sandbox network (only the pair is escalation)", () => {
+  it("rejects the device filesystem without the environment network (the pair goes both ways)", () => {
     for (const network of [
       { kind: "none" },
       { kind: "open-public" },
       { kind: "allowlist", hosts: ["example.com"] },
     ])
-      expect(
-        parseSandboxOperationScope({ ...operationScope(), filesystem: { kind: "device" }, network })
-          .network,
-      ).toEqual(network);
+      expect(() =>
+        parseSandboxOperationScope({
+          ...operationScope(),
+          filesystem: { kind: "device" },
+          network,
+        }),
+      ).toThrow(/filesystem\.kind: device requires the environment network/);
   });
 
   it.each(["request-approval", "approve-for-me"])(

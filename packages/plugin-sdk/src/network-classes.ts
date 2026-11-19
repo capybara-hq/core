@@ -77,11 +77,18 @@ const embedded = (cidr: string, at: number): AddressClassRange =>
 /**
  * The address-class table, most specific range first within each family (longest prefix wins).
  * IPv4 follows the kernel's `net/public-address.ts` (and the sandbox-docker egress proxy); IPv6
- * does too, plus two closures the design adds: the NAT64 prefixes (`64:ff9b::/96`,
- * `64:ff9b:1::/48`) whatever they embed, and everything outside global unicast `2000::/3`.
+ * does too, plus closures the design adds: the well-known NAT64 prefixes (`64:ff9b::/96`,
+ * `64:ff9b:1::/48`) whatever they embed, `2001::/23` (Teredo, ORCHID and the other IETF
+ * assignments), `3fff::/20`, and everything outside global unicast `2000::/3`.
+ *
+ * Not covered: an operator-specific NAT64 prefix (a network-specific prefix, RFC 6052, announced
+ * by the local DNS64) is ordinary global unicast here, so a private IPv4 address reached through
+ * it classifies as public. A worker on such a network resolves through a resolver it trusts or adds
+ * the prefix to its own deny list.
  */
 export const ADDRESS_CLASS_RANGES: readonly AddressClassRange[] = Object.freeze([
   range("ipv4", "100.100.100.200/32", "metadata"), // Alibaba Cloud, inside CGNAT
+  range("ipv4", "168.63.129.16/32", "metadata"), // Azure WireServer
   range("ipv4", "169.254.169.254/32", "metadata"),
   range("ipv4", "255.255.255.255/32", "broadcast"),
   range("ipv4", "192.0.0.0/24", "reserved"), // IETF protocol assignments
@@ -110,6 +117,8 @@ export const ADDRESS_CLASS_RANGES: readonly AddressClassRange[] = Object.freeze(
   range("ipv6", "100::/64", "reserved"), // discard-only
   range("ipv6", "64:ff9b:1::/48", "nat64"), // local-use NAT64
   range("ipv6", "2001:db8::/32", "reserved"), // documentation
+  range("ipv6", "2001::/23", "reserved"), // IETF protocol assignments: Teredo, ORCHID, …
+  range("ipv6", "3fff::/20", "reserved"), // documentation (RFC 9637)
   embedded("2002::/16", 16), // 6to4
   range("ipv6", "fe80::/10", "link-local"),
   range("ipv6", "fec0::/10", "reserved"), // deprecated site-local
@@ -218,3 +227,77 @@ export function classifyAddress(ip: string): AddressClass {
 function notAnAddress(ip: string): never {
   throw new Error(`${JSON.stringify(ip.slice(0, 64))} is not an IP address`);
 }
+
+const formatAddress = (bits: 32 | 128, v: bigint): string => {
+  if (bits === 32) return [24n, 16n, 8n, 0n].map((sh) => ((v >> sh) & 0xffn).toString()).join(".");
+  const groups = Array.from({ length: 8 }, (_, i) => Number((v >> BigInt(112 - 16 * i)) & 0xffffn));
+  // RFC 5952: the first longest run of two or more zero groups becomes "::"
+  let best = -1;
+  let bestLength = 1;
+  for (let i = 0; i < 8; ) {
+    if (groups[i] !== 0) {
+      i++;
+      continue;
+    }
+    let j = i;
+    while (j < 8 && groups[j] === 0) j++;
+    if (j - i > bestLength) {
+      best = i;
+      bestLength = j - i;
+    }
+    i = j;
+  }
+  const hex = (gs: number[]) => gs.map((g) => g.toString(16)).join(":");
+  if (best < 0) return hex(groups);
+  return `${hex(groups.slice(0, best))}::${hex(groups.slice(best + bestLength))}`;
+};
+
+/** The class shared by every address of the block, or null when the table splits it. */
+function blockClass(bits: 32 | 128, network: bigint, prefix: number): AddressClass | null {
+  let containing: CompiledRange | undefined;
+  for (const r of compiled) {
+    if (r.bits !== bits) continue;
+    if (r.prefix > prefix) {
+      const shift = BigInt(bits - prefix);
+      if (r.network >> shift === network >> shift) return null; // a range inside the block
+    } else if (containing === undefined) {
+      const shift = BigInt(bits - r.prefix);
+      if (r.network >> shift === network >> shift) containing = r;
+    }
+  }
+  if (containing === undefined) return null;
+  const e = containing.entry;
+  if ("class" in e) return e.class;
+  const at = e.embeddedIpv4At;
+  const v4 = (network >> BigInt(128 - 32 - at)) & 0xffffffffn;
+  return blockClass(32, v4, Math.min(32, Math.max(0, prefix - at)));
+}
+
+/** The closed CIDRs of a block, merged where both halves are closed ("full" = all closed). */
+function closedOf(bits: 32 | 128, network: bigint, prefix: number): "full" | string[] {
+  const cls = blockClass(bits, network, prefix);
+  if (cls !== null) return OPEN_PUBLIC_DENIED_CLASSES.includes(cls) ? "full" : [];
+  const half = 1n << BigInt(bits - prefix - 1);
+  const halves = [network, network | half].map((n) => ({
+    n,
+    closed: closedOf(bits, n, prefix + 1),
+  }));
+  if (halves.every((h) => h.closed === "full")) return "full";
+  return halves.flatMap((h) =>
+    h.closed === "full" ? [`${formatAddress(bits, h.n)}/${prefix + 1}`] : h.closed,
+  );
+}
+
+/**
+ * Every address closed in `open-public` mode as one CIDR list (IPv4, then IPv6), computed from
+ * {@link ADDRESS_CLASS_RANGES}: for a consumer that can only deny ranges (the macOS runtime's
+ * resolved-address deny list). Embedded forms are expanded (the v4-mapped, SIIT, v4-compatible and
+ * 6to4 sub-ranges of every closed IPv4 range), and adjacent closed blocks are merged. An address
+ * is in a listed CIDR exactly when {@link classifyAddress} gives it a closed class.
+ */
+export const OPEN_PUBLIC_DENIED_CIDRS: readonly string[] = Object.freeze(
+  ([32, 128] as const).flatMap((bits) => {
+    const closed = closedOf(bits, 0n, 0);
+    return closed === "full" ? [`${formatAddress(bits, 0n)}/0`] : closed;
+  }),
+);
