@@ -236,6 +236,7 @@ describe("the sandbox tools in a bound conversation", () => {
       storage: {} as any,
       eventLog: {
         append: async () => [],
+        readDeliveryScope: async () => ({ boundary: 0, artifacts: [] }),
         latestFileState: async (_c: string, path: string) => states.get(path) ?? null,
       },
       config: { get: () => cfg },

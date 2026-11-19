@@ -107,10 +107,11 @@ export interface SandboxToolDeps {
   attachments: Pick<AttachmentsService, "listForConversation" | "openForConversation">;
   storage: Pick<StorageService, "kernel" | "deployment" | "available">;
   /**
-   * `publishChanged`: `Deliver` announces `changed: files` (UI refresh B). `latestOfType` reads the
+   * `readDeliveryScope`: `Deliver`'s delivery scope (truthful delivery spec §2). `publishChanged`:
+   * `Deliver` announces `changed: files` (UI refresh B). `latestOfType` reads the
    * conversation's latest `device_paths` (absent in test stubs, which record none).
    */
-  eventLog: Pick<EventLog, "append" | "latestFileState"> &
+  eventLog: Pick<EventLog, "append" | "latestFileState" | "readDeliveryScope"> &
     Partial<Pick<EventLog, "publishChanged" | "latestOfType" | "findByIdem">>;
   config: Pick<KernelConfigService, "get">;
   /** Where a mapped provider failure keeps its raw error (warn); absent in test stubs. */

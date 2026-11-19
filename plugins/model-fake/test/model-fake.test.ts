@@ -317,6 +317,56 @@ describe("model-fake", () => {
     expect(c.content).toEqual([{ type: "text", text: `Summary: ${"y".repeat(200)}` }]);
   });
 
+  describe("suggestion purpose", () => {
+    const user = (text: string): ModelRequest["messages"][number] => ({
+      role: "user",
+      content: [{ type: "text", text }],
+    });
+    const assistant = (text: string): ModelRequest["messages"][number] => ({
+      role: "assistant",
+      content: [{ type: "text", text }],
+    });
+    const sugg = (texts: string[]): ModelRequest =>
+      req("", {
+        purpose: "suggestion",
+        messages: texts.flatMap((t, i) => (i === 0 ? [user(t)] : [assistant("ok"), user(t)])),
+      });
+
+    it("replies with the first 40 chars of the earliest user text", async () => {
+      const c = complete(
+        await run(mk(), sugg(["a".repeat(60), "second", "Suggest the next message"])),
+      );
+      expect(c.content).toEqual([{ type: "text", text: `Suggestion: ${"a".repeat(40)}` }]);
+    });
+
+    it("replies exactly with the text of an earlier suggest: line", async () => {
+      const c = complete(await run(mk(), sugg(["suggest:NONE", "later", "Suggest"])));
+      expect(c.content).toEqual([{ type: "text", text: "NONE" }]);
+    });
+
+    it("turns suggest:tool: into a tool call", async () => {
+      const c = complete(await run(mk(), sugg(['suggest:tool:Bash:{"command":"ls"}', "Suggest"])));
+      expect(c.stopReason).toBe("tool_use");
+      expect(c.content).toMatchObject([
+        { type: "tool_call", name: "Bash", input: { command: "ls" } },
+      ]);
+    });
+
+    it("suggest-fail:<kind> fails the suggestion call with that kind", async () => {
+      const err = await run(mk(), sugg(["suggest-fail:overloaded", "Suggest"])).catch(
+        (e: unknown) => e,
+      );
+      expect(isModelError(err) && err.kind).toBe("overloaded");
+    });
+
+    it("leaves the main run's replies to these lines unchanged", async () => {
+      const a = complete(await run(mk(), req("suggest:NONE")));
+      expect(a.content).toEqual([{ type: "text", text: "You said: suggest:NONE" }]);
+      const b = complete(await run(mk(), req("suggest-fail:server")));
+      expect(b.content).toEqual([{ type: "text", text: "You said: suggest-fail:server" }]);
+    });
+  });
+
   it("unknown model is invalid_request", async () => {
     const err = await run(mk(), req("hi", { model: "nope" })).catch((e: unknown) => e);
     expect(isModelError(err) && err.kind).toBe("invalid_request");
@@ -508,9 +558,15 @@ describe("model-fake image generation", () => {
     expect(models.find((m) => m.id === "fake-1")?.imageGeneration).toBeUndefined();
   });
 
-  it("generates n scripted images", async () => {
+  it("returns n distinct valid PNGs, the first the shared sample", async () => {
     const res = await provider().generateImage?.(imgReq("a cat", 3), sig());
-    expect(res?.images).toEqual(Array(3).fill({ mediaType: "image/png", data: FAKE_PNG_BASE64 }));
+    const data = (res?.images ?? []).map((i) => i.data);
+    expect(data[0]).toBe(FAKE_PNG_BASE64);
+    expect(new Set(data).size).toBe(3);
+    for (const d of data) {
+      expect(Buffer.from(d, "base64").subarray(1, 4).toString()).toBe("PNG");
+    }
+    expect(res?.images.every((i) => i.mediaType === "image/png")).toBe(true);
     expect(res?.usage.outputImages).toBe(3);
     expect(res?.revisedPrompt).toBe("revised: a cat");
   });

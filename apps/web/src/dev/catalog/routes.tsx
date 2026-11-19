@@ -16,6 +16,7 @@ export const TEMPLATE_ROUTES = [
   "templates/status",
   "templates/onboarding",
   "templates/setup",
+  "templates/shared-file",
 ] as const;
 
 export const OVERLAY_ROUTES = [
@@ -95,6 +96,10 @@ export const REFERENCE_COMPONENTS = [
   "file-outputs",
   "attachment-strip",
   "file-preview",
+  // file sharing: the HTML document frame, the copy field and the shared file page (T14)
+  "html-frame",
+  "copy-field",
+  "shared-file-page",
   "subagent-group",
   "title-bar",
   "composer",

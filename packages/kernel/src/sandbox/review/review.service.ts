@@ -23,6 +23,7 @@ import {
   REVIEW_PURPOSE,
   runClassifier,
 } from "./classifier.js";
+import { approverForProfile, ESCALATION_RETRY_HINT } from "./permission-candidate.js";
 import { reviewRules, reviewWrite, writtenPaths } from "./rules.js";
 import {
   applySessionGrants,
@@ -39,6 +40,12 @@ import {
 const SCOPE_ASK_RULES: ReadonlySet<string> = new Set(["ask.outside-write", "ask.outside-link"]);
 /** The consent a file read keeps: reading a credential file or SSH keys. */
 const CREDENTIAL_READ_RULES: ReadonlySet<string> = new Set(["ask.secret-file", "ask.ssh"]);
+/**
+ * What an ask about a per-call sandbox escalation tells the person (and the review model): the
+ * crossing, the model's justification and, when the command is also sensitive, that consent too.
+ */
+export const escalationAskReason = (justification: string, sensitive?: string): string =>
+  `Run this command outside the sandbox for this call only (full access to the device's files and network). Justification: ${justification.trim()}${sensitive ? ` It is also a sensitive command: ${sensitive}` : ""}`;
 /** What an ask about a proposed expansion tells the person. */
 const EXPANSION_ASK_REASON =
   "Approve the exact proposed directory and host access for this call. File-only grants are not supported: directory approval covers its descendants; otherwise choose an in-project path.";
@@ -67,6 +74,11 @@ export interface ReviewVerdict {
 export interface ReviewInput {
   permissionProfile?: PermissionProfile;
   permissionCandidate?: PermissionCandidate;
+  /**
+   * A restricted `Bash` call on a device and org whose ceiling allows running outside the sandbox:
+   * a refusal of its outside reach tells the model it may retry with `sandbox: "escalated"`.
+   */
+  escalationAvailable?: boolean;
   orgId: string;
   /**
    * The root conversation of the run's tree: where the person's messages (the classifier's bounded
@@ -234,8 +246,14 @@ export class CommandReviewService implements CommandReview {
       rootOf: () => Promise<string>;
     },
   ): Promise<ReviewVerdict> {
-    if (input.permissionProfile === "full-access")
-      return allow("Current Full access covers discretionary review.", null);
+    // no approver (Full access): nothing discretionary is asked; a crossing the candidate names is
+    // granted for this call within the ceiling the candidate builder already checked
+    const approver = approverForProfile(input.permissionProfile ?? "approve-for-me");
+    if (approver === "none") return allow("Current Full access covers discretionary review.", null);
+    const escalation =
+      input.permissionCandidate?.scopeKind === "sandbox-escalation"
+        ? input.permissionCandidate.escalation
+        : undefined;
     // a command writing or linking outside the working directory with no proposal (only a
     // literal `cd <dir>` proposes a command's directory): no approval could let the enforced scope
     // run it, so it is refused now with what works instead
@@ -248,7 +266,7 @@ export class CommandReviewService implements CommandReview {
         decision: "deny",
         by: "rule",
         rule: commandScopeHit.id,
-        reason: `${commandScopeHit.reason.replace(/[.;]?\s*this needs approval\.?$/i, "")}, which this conversation's permission profile does not reach, and a command's own outside write cannot be approved; write the file with Write or Edit (its directory can be approved), run the command after a literal \`cd\` into that directory, or keep it inside ${facts.workspace}`,
+        reason: `${commandScopeHit.reason.replace(/[.;]?\s*this needs approval\.?$/i, "")}, which this conversation's permission profile does not reach, and a command's own outside write cannot be approved inside the sandbox; write the file with Write or Edit (its directory can be approved), run the command after a literal \`cd\` into that directory, or keep it inside ${facts.workspace}${input.escalationAvailable ? `; ${ESCALATION_RETRY_HINT.trim().replace(/^If/, "if")}` : ""}`,
       };
     // the consent cases: the fixed asks and the unsure findings (an interpreter's inline code, an
     // unparsed or uncovered line), which keep the profile's review. A read keeps only the
@@ -286,11 +304,13 @@ export class CommandReviewService implements CommandReview {
         ? undefined
         : result.hits.find((h) => h.outcome === "ask" && SCOPE_ASK_RULES.has(h.id));
     const rule = consent?.id ?? (candidate ? (scopeHit?.id ?? null) : null);
-    const reason =
-      consent?.reason ??
-      (scopeHit?.reason ? `${scopeHit.reason} ${EXPANSION_ASK_REASON}` : EXPANSION_ASK_REASON);
+    // an escalation's one ask states both what it crosses and any sensitive consent it carries
+    const reason = escalation
+      ? escalationAskReason(escalation.justification, consent?.reason)
+      : (consent?.reason ??
+        (scopeHit?.reason ? `${scopeHit.reason} ${EXPANSION_ASK_REASON}` : EXPANSION_ASK_REASON));
     const ask: ReviewVerdict = { decision: "ask", by: "rule", rule, reason };
-    if (input.permissionProfile === "request-approval") return ask;
+    if (approver === "person") return ask;
     if (!(await this.classifierMapped(input.orgId))) return ask;
     const answer = await runClassifier(
       {

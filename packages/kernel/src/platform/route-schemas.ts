@@ -29,6 +29,7 @@ import { ORG_ROUTES, ORG_SETTINGS_ROUTES } from "../orgs/orgs.schemas.js";
 import { SCHEDULE_ROUTES } from "../schedules/schedules.schemas.js";
 import { SETUP_CHECK_ROUTES } from "../setup/setup-checks.schemas.js";
 import { SETUP_GUIDE_ROUTES } from "../setup/setup-guides.schemas.js";
+import { SHARE_ROUTES } from "../shares/shares.schemas.js";
 import { SKILL_ROUTES } from "../skills/skills.schemas.js";
 import { THEME_ROUTES } from "../themes/themes.schemas.js";
 import { APPROVAL_ROUTES } from "../tools/approvals.schemas.js";
@@ -105,4 +106,6 @@ export const ROUTE_SCHEMAS: readonly RouteSchemas[] = [
   ...OUTBOX_DEAD_ROUTES,
   // org network allowances (plugin safe fetch spec)
   ...ORG_NETWORK_ROUTES,
+  // shares of conversation files (file sharing spec §10)
+  ...SHARE_ROUTES,
 ];

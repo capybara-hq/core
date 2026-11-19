@@ -1,5 +1,23 @@
 # @capybara-hq/testing
 
+## 0.1.0-rc.27
+
+### Minor Changes
+
+- 057c5aa: The fake channel server records file uploads (`POST /send-file`: `sentFiles`, `duplicateFiles`, `failNext` / `delayNext` accept the path) and `fake-im` implements `sendFile` with `features.files`. The dual-replica harness stops one replica gracefully with `stopReplica(index)`.
+- 708dc7c: The fake Slack, Lark and Telegram servers accept file uploads (`files` / `uploads` records, multipart `sendPhoto` / `sendDocument`, Lark `im/v1/images` and `im/v1/files`).
+  
+  `startFakeSlack`'s `failNext("upload", …)` and `delay("upload", …)` also reach the `POST /upload/<id>` step of the external upload flow.
+
+### Patch Changes
+
+- Updated dependencies [bc6def9]
+- Updated dependencies [40d039f]
+- Updated dependencies [45ff51f]
+  - @capybara-hq/kernel@0.1.0-rc.48
+  - @capybara-hq/plugin-sdk@0.1.0-rc.34
+  - @capybara-hq/plugin-tools@0.1.0-rc.17
+
 ## 0.1.0-rc.26
 
 ### Patch Changes

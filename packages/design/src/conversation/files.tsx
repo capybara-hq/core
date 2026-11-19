@@ -3,7 +3,10 @@ import { IconButton } from "../controls/button";
 import { formatBytes, isSafeAttachmentHref } from "../display/attachments";
 import { Icon } from "../icons/icon";
 import { useDesignT } from "../provider";
+import type { ImageRatio } from "./image-ratios";
 import { fillCopy } from "./tool-copy";
+
+export { type ImageRatio, INLINE_IMAGE_RATIOS, isImageRatio } from "./image-ratios";
 
 // Files in the conversation (spec §6.16.19–§6.16.21): file cards for what the agent delivered
 // (UI copy says "files", never "artifacts"), inline image and text outputs, path chips, and the
@@ -194,6 +197,48 @@ export function FileOutputs({
 }
 
 /**
+ * The placeholder drawn while an image is being generated: a still-sized frame with a slowly
+ * flowing colour field, and the same caption line as `ImageOutput`. `index` is 0-based.
+ */
+export function ImagePlaceholder({
+  ratio,
+  index,
+  count,
+}: {
+  ratio: ImageRatio | null;
+  index: number;
+  count: number;
+}): JSX.Element {
+  const t = useDesignT();
+  const label =
+    count > 1
+      ? fillCopy(t("files.generatingOf"), { index: String(index + 1), count: String(count) })
+      : t("files.generating");
+  const full = ratio ? fillCopy(t("files.generatingRatio"), { label, ratio }) : label;
+  return (
+    <figure className="cb-image-output">
+      <div
+        className="cb-image-placeholder"
+        data-part="image-placeholder"
+        data-cap-part="image-placeholder"
+        role="img"
+        aria-busy="true"
+        aria-label={full}
+        data-ratio={ratio ?? "1:1"}
+      >
+        <Icon name="image" size={16} />
+      </div>
+      <figcaption className="cb-tool-line" data-part="tool-line" aria-hidden="true">
+        <span className="cb-tool-label">
+          <span className="cb-ink">{label}</span>
+          {ratio ? <span className="cb-faint">{` · ${ratio}`}</span> : null}
+        </span>
+      </figcaption>
+    </figure>
+  );
+}
+
+/**
  * An image file shown inline (§6.16.20): `layout.inline-image` wide at its own aspect ratio, enlarge
  * and download on hover, and a caption with the name, the natural size once loaded and the bytes.
  * `src` must be a bitmap served inline (`?inline=1`); SVG never renders inline.
@@ -202,12 +247,15 @@ export function ImageOutput({
   src,
   name,
   size,
+  ratio,
   onOpen,
   onDownload,
 }: {
   src: string;
   name: string;
   size: number;
+  /** The producing call's aspect ratio: the frame's box until the bitmap loads (else 16:9). */
+  ratio?: ImageRatio;
   onOpen(): void;
   onDownload(): void;
 }): JSX.Element {
@@ -220,6 +268,7 @@ export function ImageOutput({
         className="cb-image-frame"
         data-part="image-frame"
         data-loaded={dims ? "true" : undefined}
+        data-ratio={dims ? undefined : ratio}
       >
         {safe ? (
           <button

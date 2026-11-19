@@ -25,6 +25,8 @@ export interface FileOutput {
    * inline through the attachment route).
    */
   origin: "delivered" | "uploaded";
+  /** The viewer has a live share of this file (any version of its source path, or the upload). */
+  shared: boolean;
   /**
    * Set by the page, never by the kernel: a sub-agent's delivery listed in its parent, read from
    * (and previewed through) the child conversation.
@@ -61,16 +63,27 @@ export const TEXT_PREVIEW_BYTES = 1024 * 1024;
  * The first bytes of a text file version as text; `truncated` when cut. Not text →
  * `conversation.artifact_not_previewable`; gone → `conversation.artifact_removed`.
  */
-export async function fileText(
+export function fileText(
   orgId: string,
   conversationId: string,
   fileId: string,
   signal?: AbortSignal,
 ): Promise<{ text: string; truncated: boolean }> {
-  const res = await fetch(
+  return readTextPreview(
     `${one(orgId, conversationId)}/files/${encodeURIComponent(fileId)}/content?limit=${TEXT_PREVIEW_BYTES}`,
-    { credentials: "same-origin", ...(signal ? { signal } : {}) },
+    signal,
   );
+}
+
+/**
+ * Reads a text preview route (the panel's or a share's): the body as text, `truncated` from
+ * `x-content-truncated`; a failure throws the kernel's error code.
+ */
+export async function readTextPreview(
+  url: string,
+  signal?: AbortSignal,
+): Promise<{ text: string; truncated: boolean }> {
+  const res = await fetch(url, { credentials: "same-origin", ...(signal ? { signal } : {}) });
   if (!res.ok) {
     let code = "http_error";
     try {
@@ -85,21 +98,37 @@ export async function fileText(
 }
 
 /** A built-in previewer for a file, or null (the file card and Download). */
-export type BuiltinPreview = "image" | "markdown" | "csv" | "tsv" | "text";
+export type BuiltinPreview = "html" | "image" | "markdown" | "csv" | "tsv" | "text";
 
 const ext = (name: string) => {
   const i = name.lastIndexOf(".");
   return i < 0 ? "" : name.slice(i + 1).toLowerCase();
 };
 
-/** Which built-in previewer takes a file (spec §5.8): bitmaps, text and code, Markdown, CSV / TSV. */
+/** The content type without its parameters, lower case (`text/html; charset=gbk` → `text/html`). */
+const baseType = (contentType: string) => (contentType.split(";")[0] ?? "").trim().toLowerCase();
+
+/**
+ * An HTML file (file sharing design §5): base type `text/html`, or a name ending in `.html` /
+ * `.htm` (any case). The panel renders it as a whole document, ahead of extension previewers.
+ */
+export const isHtmlFile = (f: { name: string; contentType: string }): boolean => {
+  const e = ext(f.name);
+  return baseType(f.contentType) === "text/html" || e === "html" || e === "htm";
+};
+
+/**
+ * Which built-in previewer takes a file (spec §5.8): HTML documents first (file sharing design
+ * §5), then bitmaps, text and code, Markdown, CSV / TSV.
+ */
 export function builtinPreview(
   f: Pick<FileOutput, "name" | "contentType" | "previewable">,
 ): BuiltinPreview | null {
+  if (isHtmlFile(f)) return "html";
   if (f.previewable === "image") return "image";
   if (f.previewable !== "text") return null;
   const e = ext(f.name);
-  const type = (f.contentType.split(";")[0] ?? "").trim().toLowerCase();
+  const type = baseType(f.contentType);
   if (e === "md" || e === "markdown" || type === "text/markdown") return "markdown";
   if (e === "csv" || type === "text/csv") return "csv";
   if (e === "tsv" || type === "text/tab-separated-values") return "tsv";

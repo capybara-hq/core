@@ -95,6 +95,60 @@ export function acceptCompaction(
   return next;
 }
 
+/**
+ * SSE `event: suggestion` (prompt suggestions spec §4): the person's likely next message after the
+ * run `runId`, whose `run_finished` is `afterSeq`. A display-only hint, never in the log; the
+ * reader's rule ({@link visibleSuggestion}) decides whether it still shows.
+ */
+export interface PromptSuggestion {
+  runId: string;
+  afterSeq: number;
+  text: string;
+}
+
+/**
+ * The suggestion kept after a frame: one for an older run (a lower `afterSeq`) never replaces a
+ * newer one.
+ */
+export function acceptSuggestion(
+  current: PromptSuggestion | null,
+  next: PromptSuggestion,
+): PromptSuggestion | null {
+  if (current !== null && next.afterSeq < current.afterSeq) return current;
+  if (
+    current !== null &&
+    current.runId === next.runId &&
+    current.afterSeq === next.afterSeq &&
+    current.text === next.text
+  )
+    return current;
+  return next;
+}
+
+/**
+ * The reader's rule (prompt suggestions spec §4): the suggestion shows only while its run is the
+ * latest finished run in the client's log, the log holds no `user_message` and no `run_started`
+ * after its `afterSeq`, and no run is going (`active`). Anything else hides it; nothing is deleted.
+ */
+export function visibleSuggestion(
+  suggestion: PromptSuggestion | null,
+  events: readonly ConversationEvent[],
+  active: boolean,
+): PromptSuggestion | null {
+  if (suggestion === null || active) return null;
+  let finished: ConversationEvent | undefined;
+  for (let i = events.length - 1; i >= 0; i--) {
+    const e = events[i] as ConversationEvent;
+    if (e.seq > suggestion.afterSeq && (e.type === "user_message" || e.type === "run_started"))
+      return null;
+    if (e.type === "run_finished") {
+      finished = e;
+      break;
+    }
+  }
+  return finished?.runId === suggestion.runId ? suggestion : null;
+}
+
 export interface StreamHandlers {
   onEvent(e: ConversationEvent): void;
   /**
@@ -107,6 +161,8 @@ export interface StreamHandlers {
   onSubagentProgress?(p: SubagentProgress): void;
   /** `event: compaction`: a run of this conversation is compacting (ephemeral). */
   onCompaction?(p: CompactionProgress): void;
+  /** `event: suggestion`: a prompt suggestion after a finished run (ephemeral). */
+  onSuggestion?(s: PromptSuggestion): void;
   /** `event: ui`：插件的某个对话视图变了（去重新取）。 */
   onUi?(r: UiRefresh): void;
   /** `event: changed`: a part of the conversation outside the log changed (title, queue, …). */
@@ -212,6 +268,18 @@ export function openConversationStream(
     )
       return;
     handlers.onCompaction?.(data as CompactionProgress);
+  });
+  es.addEventListener("suggestion", (e) => {
+    const data = parse(e) as Partial<PromptSuggestion> | undefined;
+    if (
+      closed ||
+      typeof data?.runId !== "string" ||
+      typeof data.afterSeq !== "number" ||
+      typeof data.text !== "string" ||
+      data.text === ""
+    )
+      return;
+    handlers.onSuggestion?.({ runId: data.runId, afterSeq: data.afterSeq, text: data.text });
   });
   es.addEventListener("ui", (e) => {
     const r = parseUiRefresh(parse(e));

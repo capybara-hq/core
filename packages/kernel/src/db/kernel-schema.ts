@@ -16,7 +16,11 @@ import type { ModelRef } from "../agents/definition.js";
 import type { DeviceNetwork } from "../sandbox/modes.js";
 import type { StartingExecutionGrants } from "../sandbox/operation-authority-types.js";
 import type { AuthorityEpochVector } from "../sandbox/permission-authority-epochs.js";
-import type { PermissionExpansion } from "../sandbox/permission-call-types.js";
+import type {
+  PermissionEscalation,
+  PermissionExpansion,
+  PermissionScopeKind,
+} from "../sandbox/permission-call-types.js";
 import type { PermissionConfigProjection } from "../sandbox/permission-config-publication.js";
 import type { PermissionRuntimeIdentity } from "../sandbox/permission-runtime-reports.js";
 import type {
@@ -59,7 +63,9 @@ export interface PermissionCallGrantsTable {
   expansion_hash: string;
   candidate_hash: string;
   target_path: string | null;
-  scope_kind: "directories-and-hosts";
+  scope_kind: PermissionScopeKind;
+  /** A per-call sandbox escalation's justification (`scope_kind = 'sandbox-escalation'` only). */
+  escalation: ColumnType<PermissionEscalation | null, string | null | undefined, string | null>;
   source: "human" | "review-model";
   approval_id: string | null;
   review_event_seq: number | null;
@@ -1614,6 +1620,46 @@ export interface ScheduledTasksTable {
   deleted_at: NullableTs;
 }
 
+/** Why a file share was revoked (0161). */
+export type FileShareRevokeReason =
+  | "creator"
+  | "admin"
+  | "conversation_deleted"
+  | "member_offboarded"
+  | "creator_lost_access";
+
+/**
+ * 0161: a link to a frozen snapshot of one conversation file (file sharing spec §1). The row stays
+ * after a revoke or expiry; `object_key` is null once the snapshot is freed.
+ */
+export interface FileSharesTable {
+  id: string;
+  org_id: string;
+  code: string;
+  conversation_id: string;
+  file_id: string;
+  source_path: NullableText;
+  created_by: string;
+  audience: "internal" | "external";
+  name: string;
+  content_type: string;
+  /** bigint: pg returns it as a string. */
+  size: ColumnType<string, number | string, number | string>;
+  object_key: NullableText;
+  generation: ColumnType<number, number | undefined, number>;
+  expires_at: NullableTs;
+  revoked_at: NullableTs;
+  revoked_by: NullableText;
+  revoke_reason: ColumnType<
+    FileShareRevokeReason | null,
+    FileShareRevokeReason | null | undefined,
+    FileShareRevokeReason | null
+  >;
+  last_opened_at: NullableTs;
+  created_at: Ts;
+  updated_at: Ts;
+}
+
 /** 0113: one tick (or trial run) of a scheduled task; unique per (task, tick) when not trial. */
 export interface ScheduledTaskRunsTable {
   id: string;
@@ -1850,6 +1896,7 @@ export interface KernelDatabase {
   scheduled_tasks: ScheduledTasksTable;
   scheduled_task_runs: ScheduledTaskRunsTable;
   scheduled_task_grants: ScheduledTaskGrantsTable;
+  file_shares: FileSharesTable;
   skills: SkillsTable;
   skill_versions: SkillVersionsTable;
   skill_change_requests: SkillChangeRequestsTable;

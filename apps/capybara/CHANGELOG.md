@@ -1,5 +1,79 @@
 # @capybara-hq/capybara
 
+## 0.1.0-rc.57
+
+### Patch Changes
+
+- eea8ef6: Model-facing text states mechanisms, contracts and limits only. Bash keeps the proxy rule general
+  (no browser flag) and says "keep results in files" once; Deliver states the one-file contract and
+  that an HTML file is shown on its own (no tar or CDN recipe); the skill registration errors state
+  the zip package format instead of a `zip -r` recipe; Read / Glob / Grep drop the write-approval
+  sentence; the ToolSearch catalog header, WebSearch (cite once, in the description), the WebFetch
+  extraction prompt, Agent / SendMessage results and the Platform tool and operations lose
+  duplicated or one-slip warnings ("never guess", "there is no all", "agents never decide" in every
+  hint, "never remembered", old field-name hints). Platform text names pages by their English
+  labels. Agent docs: `concepts.md` describes devices instead of "a sandbox per conversation", and
+  the docker socket rule leaves the model-facing sandbox doc (it stays in the contributor skills).
+  The new-agent AGENTS.md starter no longer repeats the platform's behaviour rules.
+- 4e9bc7e: The web shows prompt suggestions in the conversation composer (Tab fills, Esc or typing dismisses
+  for that run), with a 输入建议 / Prompt suggestions switch on the admin and organization settings
+  pages, and labels the `cap-kernel-suggestions` queue on the admin overview.
+- df19d51: The timeline shows one image placeholder per requested image up to the configured maximum of 10
+  (it stopped at 4).
+- Updated dependencies [b8e2313]
+- Updated dependencies [2577900]
+- Updated dependencies [5de7182]
+- Updated dependencies [95fed18]
+- Updated dependencies [bb2b304]
+  - @capybara-hq/kernel@0.1.0-rc.49
+
+## 0.1.0-rc.56
+
+### Patch Changes
+
+- dba64f6: Bash, its run_in_background field, TaskOutput and the background launch result now tell the model
+  when the background is the right place (servers, watchers, long jobs it does not need yet) and to run
+  a command whose result it needs in the foreground instead; TaskOutput is for reading logs (block
+  false for servers and watchers) and collecting output after the notification.
+
+## 0.1.0-rc.55
+
+### Patch Changes
+
+- ff84575: A background Bash launch no longer shows as failed in the conversation: it has no exit code yet,
+  and its task's end is reported on its own.
+- d3fe7c3: TaskOutput and TaskList calls get their own tool kind: a group waiting on a background task says
+  "Waiting on a background task" instead of "Reading file", and done ones count as background task
+  checks, not file reads.
+- adb0b31: While GenerateImage runs, the conversation shows one placeholder per requested image, shaped by
+  the requested aspect ratio, and the images replace them in place.
+- Updated dependencies [bc6def9]
+  - @capybara-hq/kernel@0.1.0-rc.48
+
+## 0.1.0-rc.54
+
+No changes in this release.
+
+## 0.1.0-rc.53
+
+### Patch Changes
+
+- 228db64: The file-preview bootstrap pin moves to rc.3 (capybara-hq/plugins#129): the plugin drops its `html` previewer, since the kernel's built-in previewer renders HTML. The marketplace pin and the sandbox-docker build contexts move to capybara-hq/plugins 84a5307; every other pin already matches that commit's marketplace.
+- Updated dependencies [228db64]
+  - @capybara-hq/kernel@0.1.0-rc.47
+
+## 0.1.0-rc.52
+
+### Patch Changes
+
+- Updated dependencies [909442f]
+- Updated dependencies [909442f]
+- Updated dependencies [909442f]
+- Updated dependencies [909442f]
+- Updated dependencies [909442f]
+- Updated dependencies [909442f]
+  - @capybara-hq/kernel@0.1.0-rc.46
+
 ## 0.1.0-rc.51
 
 ### Patch Changes

@@ -51,6 +51,7 @@ import type { ModelEmbeddings } from "../models/embeddings.js";
 import type { ModelImages } from "../models/images.js";
 import type { OrgRole } from "../orgs/roles.js";
 import type { HookRunner } from "../runtime/hook-calls.js";
+import type { ShareLiveness } from "../shares/liveness.js";
 import { PrefixedStorage } from "../storage/storage.service.js";
 import type { EmbedTokens } from "../ui/embed-token.js";
 import {
@@ -105,6 +106,12 @@ export interface KernelDeps {
    * construction); only a ctx built alone in a test passes `undefined` (no hooks fire).
    */
   hooks: HookRunner | undefined;
+  /**
+   * The live check of a share-scoped embed token (the one `ShareLiveness`, file sharing spec §7).
+   * A required key like `hooks`, so no builder drops it by omission; `undefined` (a ctx built alone
+   * in a test) verifies no share token (fail closed).
+   */
+  shares: Pick<ShareLiveness, "embedLive"> | undefined;
   runWorkers: boolean;
   /** 内核 logger（`debug` 可选：插件 Logger 没有它，测试可不给）。 */
   log: Logger & { debug?(msg: string, fields?: Record<string, unknown>): void };
@@ -532,8 +539,10 @@ export function createExtensionContext(
   // extension is switched off, the member leaves or the account is disabled). The returned role is
   // the current one; a token whose current role is below the minRole of its contribution's slot is
   // refused (A38, UI slots spec §7). A platform token: the contribution is a `platform.page` and the
-  // account is still an active super admin. A token of one scope never verifies for the other's
-  // slots. Anything else is null.
+  // account is still an active super admin. A share token (file sharing spec §7): the contribution
+  // is a `file.preview` and the share is live at the token's generation in its org with this
+  // extension enabled there (`ShareLiveness.embedLive`); returned as is (no account, no role). A
+  // token of one scope never verifies for another's slots. Anything else is null.
   const verifyEmbedToken = async (token: string): Promise<VerifiedEmbedClaims | null> => {
     const claims = embedTokens.verify(token, name);
     if (claims === null) return null;
@@ -541,6 +550,10 @@ export function createExtensionContext(
     if (claims.scope === "platform") {
       if (slot?.id !== "platform.page") return null;
       return (await currentPlatformAccount(deps.db, claims.accountId)) ? claims : null;
+    }
+    if (claims.scope === "share") {
+      if (slot?.id !== "file.preview" || deps.shares === undefined) return null;
+      return (await deps.shares.embedLive(name, claims)) ? claims : null;
     }
     if (claims.scope !== "org" || claims.orgId === undefined) return null;
     // the contribution's slot as loaded now: never `platform.page` through an org token, and the

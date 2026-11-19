@@ -5,6 +5,7 @@ import type { Redis } from "ioredis";
 import { sql } from "kysely";
 import { PLUGIN_SCOPE_QUEUE } from "../catalog/scope-sync.js";
 import { CHANNEL_QUEUE_NAME } from "../channels/jobs.js";
+import { PROMPT_SUGGESTION_QUEUE } from "../conversations/prompt-suggestions.js";
 import { TITLE_QUEUE } from "../conversations/titles.js";
 import { EVAL_QUEUE_NAME } from "../evals/jobs.js";
 import { LIFECYCLE_QUEUE } from "../extensions/lifecycle-hooks.js";
@@ -25,6 +26,7 @@ export const KERNEL_QUEUE_NAMES = [
   MAINTENANCE_QUEUE_NAME,
   PLUGIN_SCOPE_QUEUE,
   TITLE_QUEUE,
+  PROMPT_SUGGESTION_QUEUE,
   USAGE_REPORT_QUEUE,
   EVAL_QUEUE_NAME,
   LIFECYCLE_QUEUE,
@@ -148,6 +150,7 @@ export class AdminHealthService {
     @Inject(getQueueToken(MAINTENANCE_QUEUE_NAME)) maintenance: Queue,
     @Inject(getQueueToken(PLUGIN_SCOPE_QUEUE)) pluginScope: Queue,
     @Inject(getQueueToken(TITLE_QUEUE)) titles: Queue,
+    @Inject(getQueueToken(PROMPT_SUGGESTION_QUEUE)) suggestions: Queue,
     @Inject(getQueueToken(USAGE_REPORT_QUEUE)) usageReport: Queue,
     @Inject(getQueueToken(EVAL_QUEUE_NAME)) evals: Queue,
     @Inject(getQueueToken(LIFECYCLE_QUEUE)) lifecycle: Queue,
@@ -160,6 +163,7 @@ export class AdminHealthService {
       maintenance,
       pluginScope,
       titles,
+      suggestions,
       usageReport,
       evals,
       lifecycle,

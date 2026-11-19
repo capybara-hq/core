@@ -54,15 +54,17 @@ const SPEC: ToolSpec = {
   // Display only (the tool row; not in the fingerprint, never sent to the model).
   keyArgs: ["task_id"],
   description:
-    "Read the status and output of a background task started with Bash and run_in_background. " +
-    "The result has the status (running, completed, failed, stopped, timed out or lost), the " +
-    "exit code and the elapsed time, then the output the task wrote since the last TaskOutput " +
-    "call for it. With block (the default) it waits until the task finishes or timeout " +
-    "milliseconds pass, checking every 2 seconds; prefer this over sleeping in Bash. Each call " +
-    "returns a bounded slice of new output; the task's whole output file (its path is in the Bash " +
-    "result) can also be read with Read. A background task that waits for a person (an " +
-    "interactive login, a prompt) prints its prompt here; read it while the task waits. You are " +
-    "told when a task finishes, so there is no need to poll for that.",
+    "Read the status and new output of a background task started with Bash and run_in_background: " +
+    "the status (running, completed, failed, stopped, timed out or lost), the exit code and the " +
+    "elapsed time, then the output the task wrote since the last TaskOutput call for it (a " +
+    "bounded slice; the task's whole output file, whose path is in the Bash result, can also be " +
+    "read with Read). Use it to check a server's or watcher's log (is it up, did it print an " +
+    "error) with block false, or to collect a task's output once you were told it finished. " +
+    "With block (the default) it waits until the task finishes or timeout milliseconds pass, " +
+    "checking every 2 seconds; a task that never finishes (a server, a watcher) always takes the " +
+    "whole timeout, so pass block false for those. A background task that waits for a person (an " +
+    "interactive login, a prompt) prints its prompt here; read it while the task waits. Stop a " +
+    "task you no longer need with TaskStop.",
   inputSchema: {
     type: "object",
     properties: {
@@ -136,10 +138,10 @@ const notFound = (id: string): ToolError =>
 
 /**
  * A sub-agent's agentId passed as a task id (as Claude Code's TaskOutput allows for background
- * agents): its report arrives on its own, so polling or sleeping for it only wastes the run.
+ * agents): its report arrives on its own as a notification.
  */
 export const subagentNotTaskText = (id: string): string =>
-  `${clip(id, 40)} is a sub-agent, not a background task. Its report arrives in this conversation as a notification when it hands back or finishes. Don't poll or sleep for it: keep working or end your turn. Use SendMessage to give it more instructions.`;
+  `${clip(id, 40)} is a sub-agent, not a background task. Its report arrives in this conversation as a notification when it hands back or finishes. Use SendMessage to give it more instructions.`;
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 

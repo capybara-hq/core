@@ -8,11 +8,16 @@ import {
   EventLog,
 } from "../conversations/event-log.js";
 import type { ConversationEvent } from "../conversations/events.js";
+import {
+  PROMPT_SUGGESTION_BUS_KIND,
+  PromptSuggestionStore,
+} from "../conversations/prompt-suggestion-store.js";
 import { ApiError, type ErrorCode } from "../errors.js";
 import type { CredentialCheck } from "../identity/credential-check.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { GracefulShutdown } from "../infra/lifecycle/graceful-shutdown.service.js";
 import { KERNEL_BUS, KERNEL_LOGGER } from "../infra/tokens.js";
+import { OrgSettingsService } from "../orgs/settings.service.js";
 import { isUiBusMessage, uiFrame } from "../ui/registry.js";
 import { type LiveDraft, RunDrafts } from "./run-drafts.js";
 
@@ -41,6 +46,10 @@ export interface ConversationStreamsDeps {
   log: Pick<Logger, "warn">;
   /** The live drafts of the conversation's running run (sent once, after the open catch-up). */
   drafts(conversationId: string): Promise<LiveDraft[]>;
+  /** The stored prompt suggestion of the conversation (the Redis key), freshness not applied. */
+  suggestions: Pick<PromptSuggestionStore, "get" | "delete" | "isFresh">;
+  /** Whether prompt suggestions are on for the org. */
+  suggestionsEnabled(orgId: string): Promise<boolean>;
 }
 
 export interface StreamParams {
@@ -119,6 +128,21 @@ function isBusMessage(m: unknown): m is ConversationBusMessage {
       (x.phase === "preparing" || x.phase === "summarizing" || x.phase === "writing")
     );
   }
+  if (k === PROMPT_SUGGESTION_BUS_KIND) {
+    const x = m as {
+      conversationId?: unknown;
+      runId?: unknown;
+      afterSeq?: unknown;
+      text?: unknown;
+    };
+    return (
+      typeof x.conversationId === "string" &&
+      typeof x.runId === "string" &&
+      typeof x.text === "string" &&
+      typeof x.afterSeq === "number" &&
+      Number.isInteger(x.afterSeq)
+    );
+  }
   return k === "delta" && typeof (m as { runId?: unknown }).runId === "string";
 }
 
@@ -127,6 +151,9 @@ const eventFrame = (e: ConversationEvent): string =>
 
 const draftFrame = (d: LiveDraft): string =>
   `event: draft\ndata: ${JSON.stringify({ runId: d.runId, step: d.step, text: d.text, thinking: d.thinking })}\n\n`;
+
+const suggestionFrame = (s: { runId: string; afterSeq: number; text: string }): string =>
+  `event: suggestion\ndata: ${JSON.stringify({ runId: s.runId, afterSeq: s.afterSeq, text: s.text })}\n\n`;
 
 /**
  * 会话事件流（SSE）：本进程持有的连接集合，停机时一并关闭。
@@ -153,6 +180,9 @@ export class ConversationStreams {
     @Inject(KernelConfigService) config: Pick<KernelConfigService, "get">,
     @Inject(KERNEL_LOGGER) log: Pick<Logger, "warn">,
     @Inject(RunDrafts) drafts: Pick<RunDrafts, "live">,
+    @Inject(PromptSuggestionStore)
+    suggestions: Pick<PromptSuggestionStore, "get" | "delete" | "isFresh">,
+    @Inject(OrgSettingsService) settings: Pick<OrgSettingsService, "promptSuggestionsEnabled">,
     @Optional() @Inject(GracefulShutdown) shutdown?: Pick<GracefulShutdown, "signal">,
   ) {
     this.d = {
@@ -162,6 +192,8 @@ export class ConversationStreams {
       config,
       log,
       drafts: (conversationId) => drafts.live(conversationId),
+      suggestions,
+      suggestionsEnabled: (orgId) => settings.promptSuggestionsEnabled(orgId),
     };
     if (shutdown?.signal.aborted) this.closeAll();
     else shutdown?.signal.addEventListener("abort", () => this.closeAll(), { once: true });
@@ -248,6 +280,8 @@ class Connection implements StreamHandle {
     // live drafts (spec 2026-11-07 §3.2): after the catch-up, before any delta (deltas are queued
     // behind this); a delta also in the draft is dropped by the client by its offset
     this.enqueue(() => this.sendDrafts());
+    // the stored prompt suggestion (spec 2026-11-19 §4): last, once the client is caught up
+    this.enqueue(() => this.sendSuggestion());
   }
 
   async subscribe(): Promise<void> {
@@ -329,6 +363,12 @@ class Connection implements StreamHandle {
       this.enqueue(() => this.write(frame));
       return;
     }
+    if (m.kind === PROMPT_SUGGESTION_BUS_KIND) {
+      // a new prompt suggestion for this conversation: display-only, never in the log
+      // (the switch is checked by the job at write time; a frame racing a switch-off is harmless)
+      this.enqueue(() => this.write(suggestionFrame(m)));
+      return;
+    }
     const { kind: _kind, ...delta } = m;
     this.enqueue(() => this.write(`event: delta\ndata: ${JSON.stringify(delta)}\n\n`));
   }
@@ -376,6 +416,31 @@ class Connection implements StreamHandle {
       return;
     }
     for (const d of drafts) this.write(draftFrame(d));
+  }
+
+  /**
+   * The conversation's stored prompt suggestion when it is fresh and the org's switch is on; a
+   * stale key is deleted. A failure is logged: the suggestion is a convenience.
+   */
+  private async sendSuggestion(): Promise<void> {
+    const { conversationId, orgId } = this.p;
+    let frame: string | null = null;
+    try {
+      const stored = await this.d.suggestions.get(conversationId);
+      if (stored === null) return;
+      if (!(await this.d.suggestions.isFresh(conversationId, stored))) {
+        await this.d.suggestions.delete(conversationId, stored);
+        return;
+      }
+      if (await this.d.suggestionsEnabled(orgId)) frame = suggestionFrame(stored);
+    } catch (err) {
+      this.d.log.warn("conversation stream cannot read the prompt suggestion", {
+        conversationId,
+        err,
+      });
+      return;
+    }
+    if (frame !== null) this.write(frame);
   }
 
   /** 发最后一帧错误并关闭（未发完的排队输出随关闭丢弃）。 */

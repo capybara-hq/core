@@ -175,8 +175,9 @@ describe.runIf(darwin)("capybara-device macOS operation backend", () => {
       foldedNames: "filesystem",
       // the worker runs its runtime with local binding off: no listener at all, loopback included
       restrictedLoopbackListen: "refused",
-      // macOS ends the owned process group only; a regrouped descendant is outside the contract
-      // and, today, also holds the aborted call open (device mac-abort-escape records that bug)
+      // macOS also ends a regrouped descendant it still finds by parent pid, but not one already
+      // reparented to launchd (contract, "Explicit background supervision"); the aborted call
+      // completes either way (device mac-abort-escape.test.ts)
       regroupedDescendants: "not-promised",
       // no hosts-file entry may lead the allowlisted name here, and the operation's proxy
       // refuses a name resolving to loopback: the positive allowlist reach is proved by the

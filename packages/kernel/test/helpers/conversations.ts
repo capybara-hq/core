@@ -154,6 +154,8 @@ export function conversationsFor(
     { emit: async () => {} },
     h.txHost,
     ceilingWritesOver(h),
+    // owed share snapshot deletions are dropped here
+    { add: async () => true },
   );
 }
 

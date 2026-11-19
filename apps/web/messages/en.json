@@ -134,7 +134,8 @@
       "full_access_not_allowed": "Full access cannot be allowed: the platform has it off, or an org admin must allow it in the organization settings on the web.",
       "network_allowance_invalid": "The internal endpoint is not valid: use a hostname, a *.domain wildcard, an IP address or CIDR, or an origin such as http://host:8080. Link-local, loopback (including localhost) and unspecified addresses are never allowed, nor wildcards over a public suffix.",
       "network_allowance_not_found": "The organization has no such internal endpoint (it may have been removed already).",
-      "network_allowance_widen_not_allowed": "Only a super admin in the admin console on the web can allow an internal endpoint, not an API token or the Platform tool."
+      "network_allowance_widen_not_allowed": "Only a super admin in the admin console on the web can allow an internal endpoint, not an API token or the Platform tool.",
+      "external_sharing_not_allowed": "External sharing cannot be turned on: the platform does not allow it, or the change was made with an API token or the Platform tool. An org admin turns it on in the organization settings on the web once a super admin allows it."
     },
     "setup": {
       "already_completed": "Setup has already been completed.",
@@ -554,7 +555,16 @@
     },
     "deployment": {
       "setting_readonly": "This setting is set in the deployment's startup config (environment, file or Nacos) and can only be changed there.",
-      "full_access_not_allowed": "An API token or the Platform tool can only turn the platform's Full access off; a super admin allows it in the admin console."
+      "full_access_not_allowed": "An API token or the Platform tool can only turn the platform's Full access off; a super admin allows it in the admin console.",
+      "external_sharing_not_allowed": "An API token or the Platform tool can only turn external sharing off; a super admin allows it in the admin console.",
+      "sharing_widen_not_allowed": "An API token or the Platform tool can only lower the share expiry maximum and remove CDN origins; a super admin raises or adds them in the admin console."
+    },
+    "share": {
+      "not_found": "This link does not exist, was revoked or has expired.",
+      "sign_in_required": "Sign in with an account of this organization to open the file.",
+      "external_not_allowed": "External sharing is not allowed for this organization right now.",
+      "expiry_too_long": "The expiry is longer than the platform allows; choose a shorter one.",
+      "file_unavailable": "The file is no longer available; it may have been removed."
     }
   },
   "agents": {
@@ -2071,6 +2081,11 @@
       "hosts": "Network hosts",
       "target": "Target file (for reference)"
     },
+    "escalation": {
+      "intro": "Approving runs this command outside the sandbox for this call only, with full access to this device's files and network. The next call runs in the sandbox again.",
+      "cwd": "Runs in",
+      "justification": "Why the agent asks"
+    },
     "superseded": {
       "user": "A permission change replaced this request before anyone decided it. Nothing was approved; if still needed, a new request appears.",
       "authorityChanged": "A device or organization permission change replaced this request before anyone decided it. Nothing was approved.",
@@ -2576,7 +2591,9 @@
       "preferences": "Preferences",
       "appearance": "Appearance",
       "schedules": "Scheduled tasks",
-      "audit": "Audit log"
+      "audit": "Audit log",
+      "shares": "Shares",
+      "myShares": "My shares"
     },
     "empty": "No connector needs your own credential.",
     "emptyHint": "Connectors that use personal credentials show up here.",
@@ -2700,6 +2717,11 @@
       "title": "Default time zone",
       "description": "Agents use this time zone to tell what day it is for messages without a time zone of their own: members who set none and write from an IM, and anonymous guests.",
       "label": "Default time zone"
+    },
+    "externalSharing": {
+      "label": "External sharing",
+      "help": "Members may share conversation files with anyone who has the link. Links always expire.",
+      "platformDenied": "The platform does not allow external sharing."
     }
   },
   "orgNetwork": {
@@ -2719,6 +2741,11 @@
     "empty": "No internal endpoints are allowed.",
     "loadFailed": "The internal endpoints could not be read.",
     "retry": "Retry"
+  },
+  "promptSuggestions": {
+    "title": "Prompt suggestions",
+    "description": "After the agent replies, the input box suggests the next message you might send. Each suggestion is one extra call to the same model, mostly served from the prompt cache.",
+    "platformOff": "Turned off by the platform"
   },
   "compaction": {
     "title": "Conversation compaction",
@@ -3972,6 +3999,7 @@
           "maintenance": "Maintenance",
           "pluginScope": "Plugin scope sync",
           "titles": "Titles",
+          "suggestions": "Prompt suggestions",
           "usageReport": "Usage reports",
           "evals": "Evals",
           "lifecycle": "Lifecycle notices"
@@ -4276,6 +4304,10 @@
         "scheduleResumed": "Resumed a scheduled task",
         "scheduleRunNow": "Ran a scheduled task now",
         "scheduleUpdated": "Updated a scheduled task",
+        "shareCreated": "Shared a file",
+        "shareOpened": "Opened a shared file",
+        "shareRefreshed": "Updated a shared file to its latest version",
+        "shareRevoked": "Revoked a file share",
         "skillChangeDecided": "Decided a skill change",
         "skillChangeRequested": "Proposed a skill change",
         "skillCreated": "Created a skill",
@@ -4475,6 +4507,19 @@
         "previewPr": "Pull request ending",
         "off": "(off)",
         "restore": "Restore defaults"
+      },
+      "sharing": {
+        "external": "External sharing",
+        "maxExpiryDays": "Longest link expiry (days)",
+        "cdnAllowlist": "Script and style sources for HTML files",
+        "cdnHelp": "https:// origins (scheme and host, optional port; no paths, no wildcards) that rendered HTML files may load scripts, styles, fonts and images from.",
+        "readonly": "Set by the deployment's configuration; change it there.",
+        "title": "External sharing",
+        "description": "Whether members may share conversation files with anyone who has the link, how long such links may last, and where rendered HTML files may load resources from.",
+        "externalHelp": "Off by default. An organization turns it on in its own settings only while this is allowed.",
+        "maxExpiryHelp": "Share links cannot last longer than this (1 to 365 days).",
+        "maxExpiryInvalid": "Enter a whole number of days from 1 to 365.",
+        "invalidOrigin": "\"{origin}\" is not an https:// origin: use scheme and host, an optional port, and no path or wildcard."
       }
     },
     "extensions": {
@@ -6762,5 +6807,76 @@
     "empty": "No actions recorded yet.",
     "emptyHint": "Changes made in this organization show up here.",
     "loadMore": "Load more"
+  },
+  "shares": {
+    "dialog": {
+      "title": "Share {name}",
+      "audience": "Who can open it",
+      "internal": "Organization members",
+      "internalHint": "Members of this organization open it after signing in.",
+      "external": "Anyone with the link",
+      "externalHint": "No sign-in needed. The link must expire.",
+      "externalOffPlatform": "The platform does not allow external sharing.",
+      "externalOffOrg": "External sharing is off for this organization; an org admin can turn it on in organization settings.",
+      "expiry": "Expires",
+      "days1": "In 1 day",
+      "days7": "In 7 days",
+      "days30": "In 30 days",
+      "never": "Never",
+      "create": "Create link",
+      "link": "Link",
+      "copy": "Copy",
+      "copied": "Link copied",
+      "live": "Active links",
+      "updateToLatest": "Update to latest",
+      "updated": "The link now shows the latest version.",
+      "revoke": "Revoke",
+      "revoked": "Revoked",
+      "expired": "Expired",
+      "suspended": "Paused",
+      "recent": "Recent links",
+      "expiresOn": "expires {date}",
+      "noExpiry": "no expiry",
+      "snapshot": "Links show the file as it is now; later versions appear only after Update to latest.",
+      "done": "Done"
+    },
+    "panel": {
+      "share": "Share",
+      "shared": "Shared",
+      "rendered": "Rendered",
+      "source": "Source",
+      "htmlTooLarge": "HTML files larger than 20 MiB are not rendered; download the file to open it."
+    },
+    "page": {
+      "sharedBy": "Shared by {name}",
+      "expires": "expires {date}",
+      "neverExpires": "never expires",
+      "download": "Download",
+      "invalidTitle": "This link is invalid or has expired",
+      "invalidBody": "Ask the person who shared it for a new link.",
+      "signIn": "Sign in to open this file",
+      "sharedFile": "Shared file"
+    },
+    "list": {
+      "title": "Shares",
+      "mineTitle": "My shares",
+      "file": "File",
+      "owner": "Shared by",
+      "audience": "Audience",
+      "expiry": "Expires",
+      "lastOpened": "Last opened",
+      "revoke": "Revoke",
+      "empty": "No shared links.",
+      "description": "Every shared link in this organization. Revoke one to stop it working at once.",
+      "mineDescription": "The links you shared. Revoke one to stop it working at once.",
+      "neverOpened": "Never opened",
+      "revokeTitle": "Revoke this link?",
+      "revokeDescription": "Anyone who opens the link to \"{name}\" will get an error. This cannot be undone.",
+      "revokeConfirm": "Revoke link",
+      "revokedToast": "Link revoked.",
+      "stateLive": "Active",
+      "state": "State",
+      "actions": "Actions"
+    }
   }
 }

@@ -122,4 +122,22 @@ describe("independent owner ceiling", () => {
     const narrowed = await f.read();
     expect(() => intersectOperation(s, narrowed)).toThrow();
   });
+  it("an escalated call under a restricted profile is full once, the next scope restricted", async () => {
+    const f = await fixture();
+    const escalated = {
+      ...scope(f.roots),
+      filesystem: { kind: "device" as const },
+      network: { kind: "environment" as const },
+    };
+    const a = { operationId: "op", orgNetwork: { kind: "open-public" as const, hosts: [] } };
+    expect(intersectOperation(escalated, await f.read()).full).toBe(true);
+    expect(intersectOperation(scope(f.roots), await f.read(), a).full).toBe(false);
+    // the owner's Full ceiling bounds it exactly as it bounds Full access
+    writePolicy(join(f.dir, "state"), {
+      ...FULL_POLICY,
+      ownerCeiling: ownerCeilingOfMode("sandbox"),
+    });
+    const narrowed = await f.read();
+    expect(() => intersectOperation(escalated, narrowed)).toThrow();
+  });
 });

@@ -14,6 +14,7 @@ import {
   readClientExtensions,
   SettingsService,
 } from "../../src/identity/settings.js";
+import { HTML_CDN_ALLOWLIST_DEFAULT } from "../../src/shares/settings.js";
 import {
   accountsFor,
   adminLockFor,
@@ -99,6 +100,7 @@ describe("SettingsService", () => {
         reserveTokens: 8000,
         maxOutputTokens: 20_000,
       },
+      htmlRenderCdnAllowlist: [...HTML_CDN_ALLOWLIST_DEFAULT],
     });
     expect(warns).toHaveLength(1);
     expect(warns[0]?.fields).toMatchObject({ key: "orgCreation" });
@@ -321,7 +323,7 @@ describe("SettingsService devicesFullAccess (B1)", () => {
       adminLockFor(db),
       { warn: () => {} },
       {
-        get: () => ({ devices: { fullAccess }, attribution: {} }) as never,
+        get: () => ({ devices: { fullAccess }, attribution: {}, sharing: {} }) as never,
         fieldSource: () => source,
       },
       ceilingWritesFor(db),

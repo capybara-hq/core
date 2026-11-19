@@ -329,9 +329,10 @@ export interface ModelRequest {
    */
   params: Record<string, ParamValue>;
   /**
-   * What this call is for, when the kernel says so: `"compaction"` for a conversation summary call.
-   * Absent on ordinary step calls. Informational (a scripted test model keys on it); real providers
-   * ignore it and must not forward it to a vendor API.
+   * What this call is for, when the kernel says so: `"compaction"` for a conversation summary call,
+   * `"suggestion"` for a prompt suggestion call. Absent on ordinary step calls. Informational (a
+   * scripted test model keys on it); real providers ignore it and must not forward it to a vendor
+   * API.
    */
   purpose?: ModelCallPurpose;
 }

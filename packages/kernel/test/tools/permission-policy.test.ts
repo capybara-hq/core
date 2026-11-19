@@ -235,6 +235,7 @@ it("a reused grant records its real source: the person's approval", async () => 
       writeDirectories: ["/outside/reports"],
       hosts: [],
     },
+    scopeKind: "directories-and-hosts",
     source: "human",
   });
   await k.app.get(RunExecution).withClaim(

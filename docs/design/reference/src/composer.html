@@ -10,7 +10,7 @@
 <body>
 <main class="r-page">
 <h1>Composer</h1>
-<p>Raised, 1px line, radius md, float shadow. Bottom row: attach, agent (locked after the first message), model, effort (hidden when the model declares none), send / stop. Running: the hint names ↵ and ⌘↵. Skill (phase D): the picked skill's chip before the text, its argument hint as the placeholder. Device: the device picker between the agent and the model, locked after the first message.</p>
+<p>Raised, 1px line, radius md, float shadow. Bottom row: attach, agent (locked after the first message), model, effort (hidden when the model declares none), send / stop. Running: the hint names ↵ and ⌘↵. Skill (phase D): the picked skill's chip before the text, its argument hint as the placeholder. Device: the device picker between the agent and the model, locked after the first message. Suggestion: the prompt suggestion as the placeholder, Tab fills it; the touch button 使用建议 before send (drawn here; a touch device only).</p>
 <div class="r-blocks">
 <section data-ref-block="composer-idle" style="width:752px" data-pad>
   <template data-fixture="composer" data-opts='{"state": "idle"}'></template>
@@ -38,6 +38,9 @@
 </section>
 <section data-ref-block="composer-device-locked" style="width:752px" data-pad>
   <template data-fixture="composer" data-opts='{"state": "idle", "device": "locked"}'></template>
+</section>
+<section data-ref-block="composer-suggestion" style="width:752px" data-pad>
+  <template data-fixture="composer" data-opts='{"state": "suggestion"}'></template>
 </section>
 </div>
 </main>

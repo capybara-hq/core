@@ -45,7 +45,7 @@ const pendingRow = (r: CatalogRequestView) => ({
   kind: r.kind,
   requestedBy: r.requestedByName,
   note: r.note,
-  next: "Decide it on the web, in the inbox; agents never decide requests.",
+  next: "Decide it on the web, in the inbox.",
 });
 
 /**

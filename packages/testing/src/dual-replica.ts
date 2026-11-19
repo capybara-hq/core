@@ -127,6 +127,14 @@ export interface Harness {
    */
   kill(index: number): Promise<void>;
   /**
+   * Stops replica `index` gracefully, through the kernel's own shutdown (as `stop()` does for all of
+   * them), and waits for it to exit; the other replicas keep working. A stop stuck for 10 s ends
+   * with the replica's own forced exit (code 1), and the harness SIGKILLs it after 15 s. Like after
+   * `kill`, `request()` keeps rotating to the stopped replica and requests to it throw. A no-op
+   * when it already exited.
+   */
+  stopReplica(index: number): Promise<void>;
+  /**
    * 停两个副本（15s 后 SIGKILL）、删临时库、关自有容器；幂等。Before the replicas stop it asserts
    * that they left no queued run without its job (neither in the outbox nor in BullMQ: the "queue
    * lost jobs" canary of the kernel's run-orphan-check, transactional outbox spec §11); after the
@@ -434,6 +442,7 @@ export async function createDualReplicaHarness(opts: DualReplicaOptions): Promis
       redisUrl,
       stop,
       kill,
+      stopReplica: (index) => stopRunner(runnerAt(index).runner),
       startExtraReplica(extraRoles) {
         // Extra starts run one at a time: the index is the next free slot when the start begins,
         // and a failed start appends nothing, so there are never holes in the replica indexes

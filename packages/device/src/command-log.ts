@@ -14,6 +14,12 @@ export interface CommandLogEntry {
   /** How an operation ran: restricted (the permission sandbox) or full (Full access). */
   isolation?: "restricted" | "full";
   /**
+   * Why a full operation ran without the sandbox when its conversation's profile is restricted:
+   * a per-call sandbox escalation the person or the review model approved for that one call.
+   * Absent for Full access and restricted operations.
+   */
+  grantSource?: "call approval";
+  /**
    * An audit line: a policy change from the deployment (`policy add a.com by <name> (<id>) via
    * web, approval <id>`) or the machine (`policy add allowedDomains a.com by <user> via cli`), the
    * grants an exec was given (`grants run <id> by <id>: a.com`) or a failure's kind.

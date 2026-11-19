@@ -34,12 +34,21 @@ export function codeForStatus(status: number): ErrorCode {
 /**
  * 记日志用的请求路径：去掉查询串，公开邀请路由 `/api/v1/invitations/<token>` 的令牌段换成 `:token`，
  * 其他任何以 `cap_` 开头的路径段（内核各类令牌的前缀）换成 `:redacted`，令牌不落日志。
+ * The HTML document route `/api/v1/html/<token>` becomes `/api/v1/html/:token` too, and a share
+ * link's code (a bearer secret: `/api/v1/s/<code>…`, the web's `/s/<code>`) becomes `:code`.
  */
 export function redactPath(url: string): string {
   const path = url.split("?")[0] ?? "";
-  return path
-    .replace(/^\/api\/v1\/invitations\/[^/]+/, "/api/v1/invitations/:token")
-    .replace(/\/cap_[^/]*/g, "/:redacted");
+  return (
+    path
+      .replace(/^\/api\/v1\/invitations\/[^/]+/, "/api/v1/invitations/:token")
+      // the HTML document token (file sharing spec §4) loads a document while it lives
+      .replace(/^\/api\/v1\/html\/.+/, "/api/v1/html/:token")
+      // a share link's code (file sharing spec §3) opens the share while it is live
+      .replace(/^\/api\/v1\/s\/[^/]+/, "/api/v1/s/:code")
+      .replace(/^\/s\/[^/]+/, "/s/:code")
+      .replace(/\/cap_[^/]*/g, "/:redacted")
+  );
 }
 
 /**

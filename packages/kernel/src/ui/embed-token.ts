@@ -1,5 +1,10 @@
 import { createHmac, timingSafeEqual } from "node:crypto";
-import type { EmbedClaims, OrgEmbedClaims, PlatformEmbedClaims } from "@capybara-hq/plugin-sdk";
+import type {
+  EmbedClaims,
+  OrgEmbedClaims,
+  PlatformEmbedClaims,
+  ShareEmbedClaims,
+} from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable, Module, Optional } from "@nestjs/common";
 import type { Keyring } from "../ctx/secrets.js";
 import { KEYRING } from "../infra/tokens.js";
@@ -26,6 +31,8 @@ const CLAIM_KEYS = new Set([
   "conversationId",
   "agentId",
   "fileId",
+  "shareId",
+  "generation",
   "contribution",
   "exp",
 ]);
@@ -47,15 +54,21 @@ function decodeStrict(s: string): Buffer | null {
 /**
  * 逐字段核对声明：只认已知字段、类型正确，返回只含已知字段的新对象。The scope decides the shape:
  * `"platform"` exactly when `orgId` is absent and `role` is `"superAdmin"`, with no
- * `conversationId` / `agentId` / `fileId`; `"org"` needs an `orgId` and one of the org roles.
+ * `conversationId` / `agentId` / `fileId`; `"org"` needs an `orgId` and one of the org roles;
+ * `"share"` (file sharing spec §7) see {@link parseShareClaims}. `shareId` / `generation` only in
+ * the share scope.
  */
 function parseClaims(v: unknown): EmbedClaims | null {
   if (typeof v !== "object" || v === null || Array.isArray(v)) return null;
   const c = v as Record<string, unknown>;
   if (Object.keys(c).some((k) => !CLAIM_KEYS.has(k))) return null;
   if (typeof c.plugin !== "string" || !PLUGIN_RE.test(c.plugin)) return null;
-  if (!isId(c.accountId) || !isId(c.contribution)) return null;
+  if (!isId(c.contribution)) return null;
   if (typeof c.exp !== "number" || !Number.isSafeInteger(c.exp)) return null;
+  if (c.scope === "share") return parseShareClaims(c, c.plugin, c.contribution, c.exp);
+  // the share fields belong to the share scope only
+  if (c.shareId !== undefined || c.generation !== undefined) return null;
+  if (!isId(c.accountId)) return null;
   if (c.scope === "platform") {
     if (c.orgId !== undefined || c.role !== "superAdmin") return null;
     if (c.conversationId !== undefined || c.agentId !== undefined || c.fileId !== undefined) {
@@ -88,6 +101,33 @@ function parseClaims(v: unknown): EmbedClaims | null {
   };
 }
 
+/**
+ * A share token's claims: `orgId`, `shareId` and a positive safe integer `generation`, and none of
+ * an account, role, conversation, agent or file (the share's snapshot is the only file it names).
+ */
+function parseShareClaims(
+  c: Record<string, unknown>,
+  plugin: string,
+  contribution: string,
+  exp: number,
+): ShareEmbedClaims | null {
+  if (!isId(c.orgId) || !isId(c.shareId)) return null;
+  if (typeof c.generation !== "number" || !Number.isSafeInteger(c.generation)) return null;
+  if (c.generation < 1) return null;
+  for (const k of ["accountId", "role", "conversationId", "agentId", "fileId"]) {
+    if (c[k] !== undefined) return null;
+  }
+  return {
+    plugin,
+    scope: "share",
+    orgId: c.orgId,
+    shareId: c.shareId,
+    generation: c.generation,
+    contribution,
+    exp,
+  };
+}
+
 /** Optional provider: the clock {@link EmbedTokens} issues and checks with (default `Date.now`; tests). */
 export const EMBED_TOKEN_CLOCK = Symbol("EMBED_TOKEN_CLOCK");
 
@@ -115,7 +155,12 @@ export class EmbedTokens {
   }
 
   /** 签发：`exp` = 现在 + {@link EMBED_TOKEN_TTL_SECONDS}。 */
-  issue(c: Omit<OrgEmbedClaims, "exp"> | Omit<PlatformEmbedClaims, "exp">): {
+  issue(
+    c:
+      | Omit<OrgEmbedClaims, "exp">
+      | Omit<PlatformEmbedClaims, "exp">
+      | Omit<ShareEmbedClaims, "exp">,
+  ): {
     token: string;
     claims: EmbedClaims;
     expiresAt: Date;

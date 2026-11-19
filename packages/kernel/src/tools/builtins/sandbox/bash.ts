@@ -18,6 +18,11 @@ import { taskReasonText } from "../../../background/render.js";
 import type { BackgroundTaskRow } from "../../../background/store.js";
 import { isDeviceRequestNotSent } from "../../../local-devices/relay.js";
 import { launchRefusedText, operationIdFor } from "../../../sandbox/operation-intents.js";
+import {
+  ESCALATION_JUSTIFICATION_MAX_CHARS,
+  ESCALATION_RETRY_HINT,
+  SANDBOX_ESCALATED,
+} from "../../../sandbox/review/permission-candidate.js";
 import type { BuiltinCallContext, BuiltinResult, BuiltinTool } from "../../registry.js";
 import {
   clip,
@@ -27,6 +32,7 @@ import {
   runBudgetNote,
   runTimeLeftMs,
   type SandboxToolDeps,
+  SCOPE_DENIED_TOOL_TEXT,
   sandboxBaseTimeoutMs,
   sandboxConversationOf,
   unavailableWhenNoSandbox,
@@ -67,22 +73,32 @@ const SPEC: ToolSpec = {
     "call ends, depending on the device, so use run_in_background for a dev server, a watcher or " +
     "anything that must keep running after the call.\n\n" +
     "You can use the run_in_background parameter to run the command in the background, which " +
-    "allows you to continue working while the command runs, e.g. a dev server, a long build or a " +
-    "test suite. The call returns at once with a task id and the command's output goes to a file " +
-    "under .capybara/tasks in the workspace directory. Read the output with TaskOutput and stop the " +
-    "task with TaskStop; you will be told when it finishes. TaskList lists this conversation's " +
-    "background tasks and their ids, running ones first. You do not need to use '&' at the end " +
-    "of the command when using this parameter. A command that waits for a person (an interactive " +
+    "allows you to continue working while the command runs: use it for what must keep running " +
+    "(a dev server, a watcher) or for a long job whose result you do not need yet while you do " +
+    "other work. If you need the result before you can go on, run it in the foreground with a " +
+    "larger timeout instead: starting it in the background and then waiting on it with TaskOutput " +
+    "gains nothing. The call " +
+    "returns at once with a task id and the command's output goes to a file under .capybara/tasks " +
+    "in the workspace directory; you will be told when it finishes, so keep working meanwhile. " +
+    "Read its new output with TaskOutput (block false to check a server's or watcher's log) and " +
+    "stop it with TaskStop. TaskList lists this conversation's background tasks and their ids, " +
+    "running ones first. TaskOutput shows what the command has written to that file so far. A " +
+    "command that waits for a person (an interactive " +
     "login, a prompt) should run in the background so its output, such as a one-time code to " +
     "enter, can be read with TaskOutput while it waits. In the background, timeout defaults to the " +
     "deployment's background maximum (7200000 by default). A background task ends when its " +
     "command exits, and processes it left running are stopped. A background task is lost if the " +
     "sandbox is suspended (it is suspended after it has been running for a while, " +
-    "sandbox.limits.maxRunningMinutes), so keep its results in files under the workspace directory.\n\n" +
+    "sandbox.limits.maxRunningMinutes).\n\n" +
+    "Commands run inside an OS sandbox that limits which directories they may write and which " +
+    "hosts they may reach. When the sandbox blocks a command you need (for example 'Operation not " +
+    "permitted' writing outside the project, or a dev tool that must reach the machine), retry " +
+    'that one call with sandbox: "escalated" and a justification saying why; the user or a review ' +
+    "model decides, and only that call runs outside the sandbox. Do not escalate by default: try " +
+    "inside the sandbox first. Some devices and organizations do not allow it.\n\n" +
     "Network access goes through a proxy set in HTTP_PROXY / HTTPS_PROXY / ALL_PROXY; a tool " +
-    "that ignores them fails with 'Operation not permitted' or cannot resolve names. Such tools, " +
-    "browsers for example, need the proxy passed explicitly: for Chromium (also headless, as " +
-    "Playwright or Puppeteer launch it) pass --proxy-server=$HTTPS_PROXY. A blocked domain is " +
+    "that ignores them fails with 'Operation not permitted' or cannot resolve names; such a tool " +
+    "needs the proxy passed explicitly through its own proxy option. A blocked domain is " +
     "reported after the output.",
   inputSchema: {
     type: "object",
@@ -107,7 +123,20 @@ const SPEC: ToolSpec = {
       run_in_background: {
         type: "boolean",
         description:
-          "Set to true to run this command in the background. Use TaskOutput to read the output later.",
+          "Set to true to run this command in the background (see the description for when).",
+      },
+      sandbox: {
+        type: "string",
+        enum: [SANDBOX_ESCALATED],
+        description:
+          'Set to "escalated" to ask to run this one call outside the OS sandbox (also in the background). Requires justification; the user or a review model approves it first.',
+      },
+      justification: {
+        type: "string",
+        minLength: 1,
+        maxLength: ESCALATION_JUSTIFICATION_MAX_CHARS,
+        description:
+          'With sandbox: "escalated": one sentence saying why this command must run outside the sandbox, e.g. "The dev server must bind port 3000 on the machine". Shown to the approver.',
       },
     },
     required: ["command", "description"],
@@ -122,6 +151,9 @@ interface BashInput {
   /** Milliseconds. */
   timeout?: number;
   run_in_background?: boolean;
+  /** `escalated`: run this one call outside the OS sandbox once approved. */
+  sandbox?: typeof SANDBOX_ESCALATED;
+  justification?: string;
 }
 
 /** This command's timeout in milliseconds: the given value or the default, at most the maximum. */
@@ -390,6 +422,31 @@ const isRefusal = (e: unknown): boolean =>
   !isSandboxOperationOutcomeUnknownError(e) &&
   (isSandboxScopeDeniedError(e) || isSandboxPermissionUnsupportedError(e));
 
+/** The errors a sandbox denial produces in a command's output (macOS Seatbelt, Linux Landlock). */
+const SANDBOX_DENIED_RE = /Operation not permitted|Read-only file system|Permission denied/;
+/** Whether a finished command failed in a way the OS sandbox may have caused. */
+const sandboxDenied = (r: ExecResult): boolean =>
+  r.exitCode !== null && r.exitCode !== 0 && SANDBOX_DENIED_RE.test(`${r.stdout}\n${r.stderr}`);
+/**
+ * A restricted call the scope refused ({@link SCOPE_DENIED_TOOL_TEXT}) where running outside the
+ * sandbox is allowed: the refusal also says the call may be retried escalated.
+ */
+async function withEscalationHint<T>(ctx: BuiltinCallContext, fn: () => Promise<T>): Promise<T> {
+  try {
+    return await fn();
+  } catch (e) {
+    if (
+      ctx.sandboxEscalation === "available" &&
+      e instanceof ToolError &&
+      e.message === SCOPE_DENIED_TOOL_TEXT
+    )
+      throw new ToolError(
+        `${SCOPE_DENIED_TOOL_TEXT} If this command must reach outside the sandbox, retry the same Bash call with sandbox: "escalated" and justification: one sentence saying why; the user or the review model decides whether it may run outside the sandbox for this call only.`,
+      );
+    throw e;
+  }
+}
+
 /** 内置工具 `Bash`：在本对话的沙箱里执行命令。 */
 export function sandboxBashTool(deps: SandboxToolDeps): BuiltinTool {
   return {
@@ -423,20 +480,22 @@ export function sandboxBashTool(deps: SandboxToolDeps): BuiltinTool {
       let workspace = DEFAULT_SANDBOX_ROOTS.workspace;
       // the device the command ran on (a refused network host is asked about there)
       let deviceId = "";
-      const { value: r, notices } = await inToolSandbox(deps, ctx, (s) => {
-        const left = Math.floor(runTimeLeftMs(ctx.runDeadline) / 1000) * 1000;
-        ms = Math.max(1000, Math.min(askedMs, left));
-        workspace = s.roots.workspace;
-        deviceId = s.deviceId;
-        return s.p.exec(s.h, {
-          command,
-          // the working root: a bound project's root, else the workspace
-          cwd: s.workingRoot,
-          timeoutMs: ms,
-          maxOutputBytes: MAX_OUTPUT_BYTES,
-          signal: s.signal,
-        });
-      });
+      const { value: r, notices } = await withEscalationHint(ctx, () =>
+        inToolSandbox(deps, ctx, (s) => {
+          const left = Math.floor(runTimeLeftMs(ctx.runDeadline) / 1000) * 1000;
+          ms = Math.max(1000, Math.min(askedMs, left));
+          workspace = s.roots.workspace;
+          deviceId = s.deviceId;
+          return s.p.exec(s.h, {
+            command,
+            // the working root: a bound project's root, else the workspace
+            cwd: s.workingRoot,
+            timeoutMs: ms,
+            maxOutputBytes: MAX_OUTPUT_BYTES,
+            signal: s.signal,
+          });
+        }),
+      );
       const blocked = r.network?.blocked ?? [];
       // kernel-internal (auto mode spec §6, P-D13): `gh auth login --web`'s device code, which the
       // pipeline shows to the person. It never becomes part of the result the model sees.
@@ -448,7 +507,12 @@ export function sandboxBashTool(deps: SandboxToolDeps): BuiltinTool {
         requested !== undefined && requested > maxMs
           ? `\n[timeout ${requested} ms is over the deployment maximum; it was lowered to ${maxMs} ms.]`
           : "";
-      const text = formatExec(r, seconds, clamped, workspace) + lowered;
+      const text =
+        formatExec(r, seconds, clamped, workspace) +
+        lowered +
+        (ctx.sandboxEscalation === "available" && sandboxDenied(r)
+          ? `\n[sandbox] The OS sandbox may have blocked this command.${ESCALATION_RETRY_HINT}`
+          : "");
       return {
         content: [{ type: "text", text: withNotices(notices, text) }],
         isError: r.timedOut || r.exitCode === null,

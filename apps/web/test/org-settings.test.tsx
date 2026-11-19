@@ -171,3 +171,52 @@ describe("组织设置（SettingsPage）", () => {
     expect(actionRow("en")).toBeNull();
   });
 });
+
+describe("External sharing switch", () => {
+  const stubSharing = (platform: "allow" | "deny", org?: "on" | "off") =>
+    stubApi({
+      [`GET ${SETTINGS}`]: () =>
+        json(200, {
+          settings: { toolSearch: "on", ...(org === undefined ? {} : { externalSharing: org }) },
+          deployment: { externalSharing: { value: platform, source: "default" } },
+        }),
+      [`GET ${CONTRIBUTIONS}`]: () => json(200, { items: [] }),
+      [`GET ${NETWORK}`]: () => json(200, { allowances: [] }),
+      [`PATCH ${SETTINGS}`]: (c) => json(200, { settings: bodyOf(c) }),
+    });
+
+  it.each(LOCALES)(
+    "the platform denies it: the switch is off and disabled with the reason (%s)",
+    async (locale) => {
+      const o = msgs[locale].orgSettings.externalSharing;
+      stubSharing("deny", "on");
+      await renderRouteWithCache("/settings/organization", lastStubRoutes(), { locale });
+      const sw = await screen.findByRole("switch", { name: o.label });
+      expect(sw).toHaveProperty("disabled", true);
+      expect(sw.getAttribute("aria-checked")).toBe("false");
+      expect(screen.getByText(o.platformDenied)).toBeTruthy();
+      expect(actionRow(locale)).toBeNull();
+    },
+  );
+
+  it("turning it on saves PATCH { externalSharing: on }", async () => {
+    const calls = stubSharing("allow", "off");
+    await renderRouteWithCache("/settings/organization", lastStubRoutes());
+    const sw = await screen.findByRole("switch", { name: en.orgSettings.externalSharing.label });
+    expect(sw.getAttribute("aria-checked")).toBe("false");
+    const user = userEvent.setup();
+    await user.click(sw);
+    const row = actionRow("en");
+    expect(row).not.toBeNull();
+    await user.click(within(row as HTMLElement).getByRole("button", { name: en.orgSettings.save }));
+    expect(bodyOf(calls.find((c) => c.method === "PATCH"))).toEqual({ externalSharing: "on" });
+  });
+
+  it("a member sees it read-only", async () => {
+    stubSharing("allow", "on");
+    await renderRouteWithCache("/settings/organization", lastStubRoutes(), { me: MEMBER });
+    const sw = await screen.findByRole("switch", { name: en.orgSettings.externalSharing.label });
+    expect(sw.getAttribute("aria-checked")).toBe("true");
+    expect(sw).toHaveProperty("disabled", true);
+  });
+});

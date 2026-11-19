@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<title>Shared file page · reference</title>
+<link rel="stylesheet" href="/design/styles/fonts.css">
+<link rel="stylesheet" href="/design/styles/tokens.css">
+<link rel="stylesheet" href="reference.css">
+</head>
+<body>
+<main class="r-page">
+<h1>Shared file page</h1>
+<p>The page behind a shared file's link (spec §5.12, T14): no Shell; a top bar with the type, the name, who shared it and the expiry and Download, over the file rendered across the full width exactly as in the right panel. Loading keeps the bar and shows the panel's loading line.</p>
+<div class="r-blocks">
+<section data-ref-block="shared-file-page-loading" style="width:960px;height:560px">
+  <template data-fixture="shared-file-page" data-opts='{"state": "loading"}'></template>
+</section>
+<section data-ref-block="shared-file-page-ready" style="width:960px;height:560px">
+  <template data-fixture="shared-file-page" data-opts='{"state": "ready"}'></template>
+</section>
+<section data-ref-block="shared-file-page-ready-no-download" style="width:960px;height:560px">
+  <template data-fixture="shared-file-page" data-opts='{"state": "ready-no-download"}'></template>
+</section>
+</div>
+</main>
+<script src="conversation.js"></script>
+<script src="fill.js"></script>
+</body>
+</html>

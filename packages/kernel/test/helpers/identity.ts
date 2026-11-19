@@ -108,9 +108,15 @@ export function settingsFor(
   log: Pick<KernelLogger, "warn"> = quiet,
 ): SettingsService {
   const h = handlesFor(db);
-  // no startup config sets the auto-mode switch or the attribution: the stored choice decides
+  // no startup config sets the auto-mode switch, the attribution or the sharing switches: the
+  // stored choice decides
   const config = {
-    get: () => ({ devices: { fullAccess: undefined }, attribution: {} }) as unknown as KernelConfig,
+    get: () =>
+      ({
+        devices: { fullAccess: undefined },
+        attribution: {},
+        sharing: {},
+      }) as unknown as KernelConfig,
     fieldSource: () => undefined,
   };
   return new SettingsService(h.db, h.txHost, adminLockFor(db), log, config, ceilingWritesFor(db));
@@ -267,7 +273,8 @@ export function orgSettingsFor(db: Kysely<any>, config: () => unknown): OrgSetti
     h.txHost,
     orgLockFor(db),
     {
-      get: () => config() as never,
+      // no test config sets the sharing switches unless it says so
+      get: () => ({ sharing: {}, ...(config() as object) }) as never,
       // a field the test's config sets reads as set in the config file (it wins over PG)
       fieldSource: (path: string) =>
         path

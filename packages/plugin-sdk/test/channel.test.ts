@@ -1,5 +1,10 @@
-import { describe, expect, it } from "vitest";
-import { ChannelSendError, isChannelSendError } from "../src/index.js";
+import { describe, expect, expectTypeOf, it } from "vitest";
+import {
+  type Channel,
+  ChannelSendError,
+  type ChannelSendFileArgs,
+  isChannelSendError,
+} from "../src/index.js";
 
 describe("ChannelSendError", () => {
   it("带可重试标记与建议等待时长；鸭子类型识别", () => {
@@ -24,5 +29,34 @@ describe("ChannelSendError", () => {
     });
     expect(e.reason).toBe("target_gone");
     expect(new ChannelSendError("x", { retryable: false }).reason).toBeUndefined();
+  });
+
+  it("a channel may implement sendFile and declare features.files", () => {
+    const base = {
+      connectionSchema: {} as Channel["connectionSchema"],
+      verify: async () => ({ botUserId: "b", botName: "b", tenantId: "t" }),
+      connect: async () => {},
+      send: async () => ({ messageId: "m" }),
+      update: async () => {},
+    };
+    const withFiles: Channel = {
+      ...base,
+      features: {
+        cards: true,
+        edit: true,
+        threads: true,
+        files: { maxBytes: 10, imageMaxBytes: 5 },
+      },
+      sendFile: async () => ({}),
+    };
+    const without: Channel = {
+      ...base,
+      features: { cards: false, edit: false, threads: false },
+    };
+    expectTypeOf<
+      Parameters<NonNullable<Channel["sendFile"]>>[0]
+    >().toEqualTypeOf<ChannelSendFileArgs>();
+    expect(withFiles.features.files?.maxBytes).toBe(10);
+    expect(without.sendFile).toBeUndefined();
   });
 });

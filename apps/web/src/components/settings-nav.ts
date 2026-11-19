@@ -10,7 +10,7 @@ type NavGroup = { group: string; items: { id: string; label: string; href: strin
 
 /**
  * The organization settings' second-level navigation (`/settings/*`): Organization [General,
- * Appearance, Members, Models, Service tokens, Audit log] and Capabilities [Sandbox, Scheduled
+ * Appearance, Members, Models, Service tokens, Shares, Audit log] and Capabilities [Sandbox, Scheduled
  * tasks] (plugins and extensions are the workspace's Plugins and Extensions pages). Members see General,
  * Appearance, Members and Sandbox (read-only); the rest is for admins; guests never open these
  * pages. This only hides items, the kernel decides. Groups without items are dropped.
@@ -33,6 +33,8 @@ export function useOrgSettingsNav(): NavGroup[] {
         ...(admin ? [{ id: "models", label: t("models"), href: "/settings/models" }] : []),
         // org.tokens.manage: admins
         ...(admin ? [{ id: "tokens", label: t("tokens"), href: "/settings/tokens" }] : []),
+        // every shared link of the org: admins (members see their own under Personal)
+        ...(admin ? [{ id: "shares", label: t("shares"), href: "/settings/shares" }] : []),
         // org.update: admins (the org's audit log)
         ...(admin ? [{ id: "audit", label: t("audit"), href: "/settings/audit" }] : []),
       ],
@@ -63,6 +65,7 @@ export function useAccountNav(): NavGroup[] {
         { id: "connections", label: t("connections"), href: "/account/connections" },
         { id: "grants", label: t("grants"), href: "/account/grants" },
         { id: "identities", label: t("identities"), href: "/account/identities" },
+        { id: "myShares", label: t("myShares"), href: "/account/shares" },
       ],
     },
   ];

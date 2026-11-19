@@ -3,6 +3,7 @@ import { APP_INTERCEPTOR } from "@nestjs/core";
 import { ADMIN_USAGE_TIMINGS, type AdminUsageTimings } from "./admin/usage.service.js";
 import { SCOPE_ORG_CHUNK_SIZE } from "./catalog/scope-jobs.js";
 import { CHANNEL_WEBHOOK_TIMINGS, type ChannelWebhookTimings } from "./channels/webhook.js";
+import { PROMPT_SUGGESTION_TIMEOUT } from "./conversations/prompt-suggestions.js";
 import { EXTENSION_NET_SEAMS, type ExtensionNetSeams } from "./ctx/net.js";
 import type { EvalReplayHooks } from "./evals/run-replay.js";
 import { EVAL_REPLAY_HOOKS } from "./evals/worker.js";
@@ -11,6 +12,7 @@ import { USAGE_SUBSCRIBERS_CLOCK } from "./extensions/usage-subscribers.js";
 import { FILE_PREVIEW_TIMEOUT } from "./files/previewers.js";
 import { GIT_UPSTREAM_ORIGIN, type GitUpstreamOrigin } from "./git/gateway.js";
 import { GIT_IDENTITY_API_BASE, type GitIdentityApiBase } from "./git/identity.js";
+import { HTML_TOKEN_CLOCK } from "./html/html-token.js";
 import { PLUGIN_PUBLIC_WRITE_LIMIT } from "./http/plugin-route-access.js";
 import { OUTBOX_DISPATCH_FAILS } from "./infra/outbox/outbox.dispatcher.js";
 import { OUTBOX_FAST_PATH_SETTLED } from "./infra/outbox/outbox.module.js";
@@ -47,6 +49,7 @@ import { EMBED_TOKEN_CLOCK } from "./ui/embed-token.js";
  *   `PRESENCE_INTERVAL_MS`: shorter timings;
  * - `ADMIN_USAGE_TIMINGS`: the usage aggregate's statement timeout and clock;
  * - `EMBED_TOKEN_CLOCK`: the clock embed tokens are issued and checked with;
+ * - `HTML_TOKEN_CLOCK`: the clock HTML document tokens are issued and checked with;
  * - `RUN_CONTEXT_CLOCK`: the clock run start reads the run context's date from, and the
  *   `CurrentTime` builtin the time;
  * - `GIT_IDENTITY_API_BASE`: the API base of a git host for the commit identity (a loopback fake);
@@ -61,6 +64,8 @@ import { EMBED_TOKEN_CLOCK } from "./ui/embed-token.js";
  *   recorded (throwing stands for a crash between the call and the resolve transaction);
  * - `PROJECT_KNOWLEDGE_TIMEOUT`: the run-start read of a bound project's time limit, read at every
  *   read (a test shortens it for one run);
+ * - `PROMPT_SUGGESTION_TIMEOUT`: the prompt suggestion call's time limit, read at every call (a test
+ *   shortens it for one call);
  * - `PLUGIN_PUBLIC_WRITE_LIMIT`: a lower limit for unsafe methods on `public` extension routes;
  * - `SCOPE_ORG_CHUNK_SIZE`: fewer orgs per plugin scope sync chunk job (several chunks in a test);
  * - `EXTENSION_NET_SEAMS`: `ctx.net`'s DNS and dispatcher (a hostname resolving to a private address
@@ -85,6 +90,7 @@ interface KernelSeams {
   [PRESENCE_INTERVAL_MS]: number;
   [ADMIN_USAGE_TIMINGS]: Partial<AdminUsageTimings>;
   [EMBED_TOKEN_CLOCK]: () => number;
+  [HTML_TOKEN_CLOCK]: () => number;
   [RUN_CONTEXT_CLOCK]: () => number;
   [GIT_IDENTITY_API_BASE]: GitIdentityApiBase;
   [GIT_UPSTREAM_ORIGIN]: GitUpstreamOrigin;
@@ -94,6 +100,7 @@ interface KernelSeams {
   [ENSURE_RUN_FAILS]: () => boolean;
   [SCOPE_ORG_CHUNK_SIZE]: number;
   [PROJECT_KNOWLEDGE_TIMEOUT]: () => number;
+  [PROMPT_SUGGESTION_TIMEOUT]: () => number;
   [PLUGIN_PUBLIC_WRITE_LIMIT]: number;
   [DEVICE_POLICY_AFTER_CALL]: (opId: string) => void;
   [EXTENSION_NET_SEAMS]: ExtensionNetSeams;
@@ -127,6 +134,7 @@ const SEAM_TOKENS = [
   PRESENCE_INTERVAL_MS,
   ADMIN_USAGE_TIMINGS,
   EMBED_TOKEN_CLOCK,
+  HTML_TOKEN_CLOCK,
   RUN_CONTEXT_CLOCK,
   GIT_IDENTITY_API_BASE,
   GIT_UPSTREAM_ORIGIN,
@@ -135,6 +143,7 @@ const SEAM_TOKENS = [
   ENSURE_RUN_FAILS,
   SCOPE_ORG_CHUNK_SIZE,
   PROJECT_KNOWLEDGE_TIMEOUT,
+  PROMPT_SUGGESTION_TIMEOUT,
   PLUGIN_PUBLIC_WRITE_LIMIT,
   DEVICE_POLICY_AFTER_CALL,
   EXTENSION_NET_SEAMS,

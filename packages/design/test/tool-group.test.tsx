@@ -112,6 +112,28 @@ describe("summarizeTools (spec §7 verb table)", () => {
   });
 });
 
+describe("summarizeTools: background task reads (§7 task row)", () => {
+  it("waiting on a background task is not reading a file", () => {
+    const rows = [row({ kind: "command" }), row({ kind: "task", status: "running" })];
+    expect(summarizeTools(rows, "zh")).toBe("正在等待后台任务 · 已完成 1 个");
+    expect(summarizeTools(rows, "en")).toBe("Waiting on a background task · 1 done");
+  });
+
+  it("done task reads count on their own, after commands", () => {
+    const rows = [
+      row({ kind: "read", keyArg: "a.ts" }),
+      row({ kind: "task" }),
+      row({ kind: "command" }),
+      row({ kind: "task" }),
+    ];
+    expect(summarizeTools(rows, "zh")).toBe("已运行 1 个命令，已查看 2 次后台任务，已读取 a.ts");
+    expect(summarizeTools(rows, "en")).toBe(
+      "Ran 1 command, checked background tasks 2 times, read a.ts",
+    );
+    expect(summarizeTools([row({ kind: "task" })], "zh")).toBe("已查看 1 次后台任务");
+  });
+});
+
 describe("ToolRow (§6.16.9)", () => {
   it("a connector row: bold display name and [tool], the title as tooltip, then the key argument", () => {
     const { container } = wrap(<ToolRow row={row({ tooltip: "搜索工单", keyArg: "#反馈" })} />);

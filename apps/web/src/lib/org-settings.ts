@@ -78,6 +78,16 @@ export interface OrgSettings {
    * follows the platform.
    */
   compaction?: CompactionSettingsPatch;
+  /**
+   * Whether members may share conversation files with anyone who has the link (file sharing spec
+   * §8); absent = off. Turning it on needs the platform to allow it.
+   */
+  externalSharing?: "on" | "off";
+  /**
+   * Prompt suggestions after a completed run (prompt suggestions spec §6); absent = on (following
+   * the platform). The org cannot turn on what the platform turned off.
+   */
+  promptSuggestions?: "on" | "off";
 }
 
 /** The org level of the themes (`orgs.settings.theme`). */
@@ -108,6 +118,15 @@ export interface OrgSettingsDeployment {
   publicUrl: boolean;
   /** The platform's conversation compaction settings. */
   compaction: CompactionSettings;
+  /** The platform's external sharing switch (`deny`: the org cannot turn it on) and its source. */
+  externalSharing?: {
+    value: "allow" | "deny";
+    source: "env" | "file" | "nacos" | "db" | "default";
+  };
+  /** The longest expiry a share may take, in days. */
+  shareMaxExpiryDays?: number;
+  /** The platform's prompt suggestion switch (`off`: the org's switch is off and locked). */
+  promptSuggestions?: "on" | "off";
 }
 
 /** 组织实际生效的沙箱 cpu / 内存（只读：超级管理员在部署设置里按组织覆盖；旧内核不返回）。 */
@@ -129,7 +148,13 @@ export interface OrgSettingsResponse {
 export type OrgSettingsPatch = Partial<
   Omit<
     OrgSettings,
-    "fullAccess" | "cloudNetwork" | "timeZone" | "theme" | "scheduledTasks" | "compaction"
+    | "fullAccess"
+    | "cloudNetwork"
+    | "timeZone"
+    | "theme"
+    | "scheduledTasks"
+    | "compaction"
+    | "promptSuggestions"
   >
 > & {
   /** The scheduled-task fields to change; the rest keep their value. */
@@ -146,6 +171,8 @@ export type OrgSettingsPatch = Partial<
   uiArrangement?: Record<string, UiArrangementEntry | null>;
   /** The fields to override; null clears the whole override (follow the platform again). */
   compaction?: CompactionSettingsPatch | null;
+  /** null clears it (on again, following the platform). */
+  promptSuggestions?: "on" | "off" | null;
 };
 
 const path = (orgId: string) => `/api/v1/orgs/${encodeURIComponent(orgId)}/settings`;

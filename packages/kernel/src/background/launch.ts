@@ -50,6 +50,12 @@ export function newTaskId(): string {
 export const TASK_ID_RE = /^bt_[a-z2-7]{6}$/;
 
 /**
+ * The launch result's last line: how the task's end is reported and how to read and stop it.
+ */
+export const LAUNCH_NEXT_STEP =
+  "You will be told when it finishes. Read its output with TaskOutput (or Read), stop it with TaskStop.";
+
+/**
  * The artifact of a managed task (permission runtime cutover §"Artifact location decision"):
  * `${workingRoot}/.capybara/tasks/${taskId}.out`, where the working root is the trusted root the
  * command executes in (the selected project's root, else the device workspace). Never a
@@ -108,6 +114,6 @@ export function managedStartedText(id: string, description: string, outputPath: 
   return [
     `Started background task ${id} ("${description}").`,
     `Output: ${outputPath}`,
-    "Read it with TaskOutput (or Read), stop it with TaskStop. You will be told when it finishes.",
+    LAUNCH_NEXT_STEP,
   ].join("\n");
 }

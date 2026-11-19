@@ -20,6 +20,7 @@ import { MAINTENANCE_QUEUE_NAME } from "../runtime/maintenance-queue.js";
 import { RunControl } from "../runtime/run-control.js";
 import { oweDeviceDestroy } from "../sandbox/jobs.js";
 import { PermissionCeilingWrites } from "../sandbox/permission-ceiling-writes.js";
+import { revokeSharesIn } from "../shares/revoke.js";
 import { ApprovalsService } from "../tools/approvals.service.js";
 import { Credentials } from "../tools/credentials.js";
 import { QuestionsService } from "../tools/questions.service.js";
@@ -149,7 +150,9 @@ export class Offboarding {
    * 9. Soft-deletes the person's devices in the org and clears their default row, and owes the
    *    destruction of each (instance and files, `device-destroy-<deviceId>`);
    * 10. Owes the `org.member_removed` lifecycle hook deliveries (outbox jobs, one per subscribing
-   *    plugin).
+   *    plugin);
+   * 11. Revokes the person's file shares in the org (`member_offboarded`) and owes the deletion of
+   *    each snapshot (`share-object-delete-<shareId>-<generation>`, file sharing spec §9).
    */
   @Transactional({ propagation: "mandatory" })
   async offboard(
@@ -388,6 +391,14 @@ export class Offboarding {
       .where("account_id", "=", accountId)
       .execute();
 
+    // after the conversations above (the share rows come last, as in every other share write)
+    const sharesRevoked = await revokeSharesIn(
+      this.db.db,
+      this.outbox,
+      { orgId, createdBy: accountId },
+      "member_offboarded",
+    );
+
     await audit(this.db.db, {
       ...(actor.actorAccountId !== undefined && { actorAccountId: actor.actorAccountId }),
       ...(actor.actorTokenId !== undefined && { actorTokenId: actor.actorTokenId }),
@@ -410,6 +421,7 @@ export class Offboarding {
         ...(excluded.length > 0 && { directoryExcluded: excluded }),
         ...(devices.length > 0 && { devicesDeleted: devices.length }),
         ...(queued.length > 0 && { queuedMessagesDeleted: queued.length }),
+        ...(sharesRevoked > 0 && { sharesRevoked }),
       },
     });
     await this.lifecycle.recordIn("org.member_removed", {

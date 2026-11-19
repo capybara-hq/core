@@ -136,9 +136,19 @@ export class PermissionCallGrants {
     const b = candidate.binding;
     await this.assertCurrent(b);
     const { candidateHash, ...presentation } = candidate;
+    const escalation = candidate.scopeKind === "sandbox-escalation";
     if (
-      candidate.scopeKind !== "directories-and-hosts" ||
-      permissionCandidateHash(presentation) !== candidateHash
+      !["directories-and-hosts", "sandbox-escalation"].includes(candidate.scopeKind) ||
+      permissionCandidateHash(presentation) !== candidateHash ||
+      // an escalation names its justification and no expansion; an expansion names no escalation
+      (escalation
+        ? typeof candidate.escalation?.justification !== "string" ||
+          candidate.escalation.justification.trim() === "" ||
+          candidate.permissionScope.readDirectories.length > 0 ||
+          candidate.permissionScope.writeDirectories.length > 0 ||
+          candidate.permissionScope.hosts.length > 0 ||
+          candidate.targetPath !== undefined
+        : candidate.escalation !== undefined)
     )
       throw new ApiError(
         "forbidden",
@@ -151,6 +161,21 @@ export class PermissionCallGrants {
       throw new ApiError("forbidden", "This profile cannot issue an automated expansion grant");
     const root = await this.profiles.readOwnedRoot(b.orgId, b.conversationId, b.accountId);
     const view = await this.facts.view(b.orgId, b.accountId, root);
+    if (escalation) {
+      // the same ceiling as Full access: owner, org and platform, and a runtime that runs Full
+      if (
+        b.toolKey !== "Bash" ||
+        !view.fullAccessCeiling ||
+        view.availability.state !== "supported" ||
+        !view.availability.report.fullAccess
+      )
+        throw new ApiError(
+          "forbidden",
+          "Running this call outside the sandbox is outside the current Full access ceiling",
+        );
+      await this.verifyEvidence(candidate, decision);
+      return this.insertGrant(candidate, decision);
+    }
     const working = await this.facts.readWorkingFacts({
       orgId: b.orgId,
       rootConversationId: b.rootConversationId,
@@ -194,6 +219,15 @@ export class PermissionCallGrants {
     if (permissionScopeHash(normalized) !== permissionScopeHash(candidate.permissionScope))
       throw new ApiError("forbidden", "Permission scope is not normalized");
     await this.verifyEvidence(candidate, decision);
+    return this.insertGrant(candidate, decision);
+  }
+  /** One immutable row per binding; an exact retry returns it, anything else conflicts. */
+  private async insertGrant(
+    candidate: PermissionCandidate,
+    decision: PermissionGrantDecision,
+  ): Promise<{ id: string }> {
+    const b = candidate.binding;
+    const { candidateHash } = candidate;
     const bindingHash = permissionScopeHash(b),
       expansionHash = permissionScopeHash(candidate.permissionScope);
     await this.db
@@ -221,6 +255,7 @@ export class PermissionCallGrants {
         candidate_hash: candidateHash,
         target_path: candidate.targetPath ?? null,
         scope_kind: candidate.scopeKind,
+        escalation: candidate.escalation ? JSON.stringify(candidate.escalation) : null,
         source: decision.source,
         approval_id: decision.source === "human" ? decision.approvalId : null,
         review_event_seq: decision.source === "review-model" ? decision.reviewEventSeq : null,
@@ -239,6 +274,7 @@ export class PermissionCallGrants {
       row.candidate_hash !== candidateHash ||
       row.target_path !== (candidate.targetPath ?? null) ||
       row.scope_kind !== candidate.scopeKind ||
+      permissionScopeHash(row.escalation) !== permissionScopeHash(candidate.escalation ?? null) ||
       row.source !== decision.source ||
       row.approval_id !== (decision.source === "human" ? decision.approvalId : null) ||
       row.review_event_seq !==
@@ -310,6 +346,7 @@ export class PermissionCallGrants {
   async findForAdmission(binding: PermissionCallBinding): Promise<{
     id: string;
     expansion: PermissionCandidate["permissionScope"];
+    scopeKind: PermissionCandidate["scopeKind"];
     source: "human" | "review-model";
   } | null> {
     const hash = permissionScopeHash(binding);
@@ -330,13 +367,14 @@ export class PermissionCallGrants {
         permissionScope: row.expansion,
         ...(row.target_path ? { targetPath: row.target_path } : {}),
         scopeKind: row.scope_kind,
+        ...(row.escalation ? { escalation: row.escalation } : {}),
         candidateHash: row.candidate_hash,
       },
       row.source === "human"
         ? { source: "human", approvalId: row.approval_id ?? "", decidedBy: row.decided_by ?? "" }
         : { source: "review-model", reviewEventSeq: row.review_event_seq ?? -1, decidedBy: null },
     );
-    return { id: row.id, expansion: row.expansion, source: row.source };
+    return { id: row.id, expansion: row.expansion, scopeKind: row.scope_kind, source: row.source };
   }
   /** Starting authority belongs to this admitted exec, never to another call or native method. */
   async forExecution(

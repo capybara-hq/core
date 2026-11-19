@@ -31,6 +31,7 @@ import {
 } from "../runtime/conversation-lock.js";
 import type { StreamBus } from "../runtime/stream.js";
 import { ScheduledTasksService } from "../schedules/scheduled-tasks.service.js";
+import { StorageService } from "../storage/storage.service.js";
 import { ApprovalsService } from "../tools/approvals.service.js";
 import { QuestionsService } from "../tools/questions.service.js";
 import { ToolRegistry } from "../tools/registry.js";
@@ -42,7 +43,21 @@ import {
   questionCard,
   webBase,
 } from "./cards.js";
-import { ChannelConnections, type ChannelOutboundSession } from "./connections.service.js";
+import {
+  ChannelConnections,
+  type ChannelOutboundSession,
+  FILE_CALL_TIMEOUT_MS,
+} from "./connections.service.js";
+import {
+  type FileDeliveryPlan,
+  FileSlots,
+  fileKind,
+  fileLinkText,
+  fileRootText,
+  planFileDelivery,
+  pluginFileName,
+  readArtifactCapped,
+} from "./file-delivery.js";
 import { ChannelInbound } from "./inbound.js";
 import {
   type ChannelJobData,
@@ -138,6 +153,14 @@ class DeliveryLostError extends Error {
   override name = "DeliveryLostError";
 }
 
+/** The replica stops while a delivery waits for a file slot: the job is handed back as it is. */
+class DeliveryShutdownError extends Error {
+  override name = "DeliveryShutdownError";
+}
+
+type ArtifactCreated = Extract<ConversationEvent, { type: "artifact_created" }>;
+type ArtifactPayload = ArtifactCreated["payload"];
+
 const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 
 /** 编辑草稿被平台不可重试地拒绝（凭据失效、目标已不存在除外：那两种改发新消息同样会失败）。 */
@@ -213,11 +236,16 @@ interface DeliveryDeps {
   questions: Pick<QuestionsService, "forCall">;
   config: Pick<KernelConfigService, "get">;
   log: Pick<Logger, "error" | "warn" | "info">;
+  /** Conversation files are read under the connection's org (`kernel(orgId)`, spec §4.7). */
+  storage: Pick<StorageService, "kernel">;
+  /** At most `channels.fileConcurrency` file reads and uploads at once in this process (§4.2). */
+  fileSlots: FileSlots;
   /**
-   * The conditional `last_seq` advance ({@link ChannelOutbound.advanceIn}) and the binding of a
-   * scheduled group run's thread ({@link ChannelOutbound.bindThreadIn}).
+   * The conditional `last_seq` advance ({@link ChannelOutbound.advanceIn}), the binding of a
+   * scheduled group run's thread ({@link ChannelOutbound.bindThreadIn}) and the connection's
+   * `last_error` ({@link ChannelOutbound.recordError}: a file the platform refused).
    */
-  writes: Pick<ChannelOutbound, "advanceIn" | "bindThreadIn">;
+  writes: Pick<ChannelOutbound, "advanceIn" | "bindThreadIn" | "recordError">;
 }
 
 /** One `last_seq` advance of a delivery (see {@link ChannelOutbound.advanceIn}). */
@@ -279,6 +307,8 @@ export class ChannelOutbound {
     /** Pauses the task of a scheduled run whose chat is gone (scheduled tasks spec §8). */
     @Inject(ScheduledTasksService)
     private readonly schedules: Pick<ScheduledTasksService, "pauseFor">,
+    /** Conversation files sent into the chat (channel file delivery spec §4.2). */
+    @Inject(StorageService) storage: Pick<StorageService, "kernel">,
   ) {
     this.lock = lock.scoped(DELIVER_LOCK_PREFIX);
     this.d = {
@@ -293,6 +323,9 @@ export class ChannelOutbound {
       questions,
       config,
       log,
+      storage,
+      // one per process: it bounds this replica's memory (not shared state)
+      fileSlots: new FileSlots(config.get().channels.fileConcurrency),
       writes: this,
     };
   }
@@ -475,8 +508,8 @@ export class ChannelOutbound {
       await this.jobs.enqueue(conversationId, { followUp: true });
   }
 
-  /** 不可重试（或重试用尽）的发送失败：记连接 `last_error`（已打码）。 */
-  private async recordError(connectionId: string, message: string): Promise<void> {
+  /** A non-retryable (or finally failed) send: the connection's `last_error` (already redacted). */
+  async recordError(connectionId: string, message: string): Promise<void> {
     const text = `delivery failed: ${message}`.slice(0, MAX_ERROR_CHARS);
     this.log.warn("channel delivery failed", { connectionId, error: text });
     await this.kdb
@@ -734,6 +767,7 @@ class Delivery {
       return await this.loop();
     } catch (err) {
       if (err instanceof DeliveryLostError) return { kind: "lost" };
+      if (err instanceof DeliveryShutdownError) return { kind: "shutdown" };
       if (isChannelSendError(err) && !err.retryable) {
         const message = this.redact(errMsg(err));
         // Ruling A22：机器人被移出群 / 会话不存在 → 停止本轮，不计毒事件（不是连接的问题，不记 last_error）
@@ -1106,6 +1140,8 @@ class Delivery {
         if (await this.closeDraft(e.seq, "failed")) return;
         await this.send({ text: phrase("runFailed", this.locale) }, this.key(e.seq));
         return this.advance(e.seq);
+      case "artifact_created":
+        return this.deliverArtifact(e);
       case "run_aborted":
         // 中止时还挂着的草稿：加「已停止」并清掉，避免下一次回复去编辑它
         await this.closeDraft(e.seq, "stopped");
@@ -1130,6 +1166,140 @@ class Delivery {
     await this.recordCard("approval", card.id);
     const { messageId } = await this.send(cardMessage(card.title, card), this.key(seq));
     return this.advance(seq, { card: { kind: "approval", id: card.id, messageId } });
+  }
+
+  /**
+   * A conversation file (channel file delivery spec §4.2-§4.5): sent into the target as a native
+   * file or image when the channel can take it, else as one link line. The object is read under the
+   * connection's org within the cap (the stored size is authoritative); a missing object, an
+   * unavailable store and a platform `too_large` / `rejected` (or a non-retryable failure without
+   * a reason) become the link line, so the event is delivered and never counts towards poisoning;
+   * `rejected` and no reason also record `last_error`. `auth`, `target_gone` and retryable failures
+   * go to `run()` as for text. A scheduled group run whose first post is this file gets a text root
+   * first (`sendFile` need not return a message id to bind the thread to).
+   */
+  private async deliverArtifact(e: ArtifactCreated): Promise<void> {
+    const a = e.payload;
+    const plan = planFileDelivery({
+      conversationId: this.conversationId,
+      artifact: a,
+      features: this.s.features,
+      canSendFile: this.s.sendFile !== undefined,
+      fileMaxBytes: this.d.config.get().channels.fileMaxBytes,
+    });
+    if (plan.mode === "link") {
+      if (plan.reason === "foreign_key") {
+        this.d.log.warn("channel file outside the conversation's artifacts sent as a link", {
+          conversationId: this.conversationId,
+          seq: e.seq,
+        });
+      }
+      return this.linkLine(e.seq, a);
+    }
+    let release: () => void;
+    try {
+      release = await this.d.fileSlots.acquire(this.stopping);
+    } catch (err) {
+      // stopping while waiting for a slot: hand the job back (another replica resumes it)
+      if (this.stopping.aborted) throw new DeliveryShutdownError();
+      throw err;
+    }
+    let sent: boolean;
+    try {
+      sent = await this.sendNative(e.seq, a, plan);
+    } finally {
+      release();
+    }
+    if (!sent) return this.linkLine(e.seq, a);
+    return this.advance(e.seq);
+  }
+
+  /**
+   * Reads and sends one file while holding a file slot; false when the link line stands in for it
+   * (see {@link deliverArtifact}).
+   */
+  private async sendNative(
+    seq: number,
+    a: ArtifactPayload,
+    plan: Extract<FileDeliveryPlan, { mode: "native" }>,
+  ): Promise<boolean> {
+    // the replica stopped while this delivery waited for its slot: hand the job back untouched
+    if (this.stopping.aborted) throw new DeliveryShutdownError();
+    if (this.lease.lost) throw new DeliveryLostError();
+    const sendFile = this.s.sendFile;
+    const files = this.s.features.files;
+    // cannot happen: the plan is `native` only when both exist (narrows the types)
+    if (sendFile === undefined || files === undefined) return false;
+    let read: Awaited<ReturnType<typeof readArtifactCapped>>;
+    try {
+      // the read stops with the replica: nothing has reached the platform yet
+      read = await readArtifactCapped(
+        this.d.storage.kernel(this.s.row.orgId),
+        a.objectKey,
+        plan.cap,
+        AbortSignal.any([this.stopping, AbortSignal.timeout(FILE_CALL_TIMEOUT_MS)]),
+      );
+    } catch (err) {
+      if (this.stopping.aborted) throw new DeliveryShutdownError();
+      throw err;
+    }
+    if (this.stopping.aborted) throw new DeliveryShutdownError();
+    if (read.kind !== "ok") {
+      const meta = { conversationId: this.conversationId, seq, reason: read.kind };
+      if (read.kind === "too_large")
+        this.d.log.info("channel file over the cap sent as a link", meta);
+      else this.d.log.warn("channel file unreadable, sent as a link", meta);
+      return false;
+    }
+    if (this.threadPending) {
+      await this.send({ text: fileRootText(a.name, this.locale) }, this.key(seq, "-root"));
+    }
+    const file = {
+      name: pluginFileName(a.name),
+      contentType: a.contentType,
+      kind: fileKind(a.contentType, read.data.byteLength, files),
+      data: read.data,
+    };
+    // As before a card send (recordCard): a read of up to 120 s can outlast the lease; a new holder
+    // then delivers this event, so do not post the file a second time
+    if (this.lease.lost) throw new DeliveryLostError();
+    try {
+      // Not aborted on shutdown: an upload cut off midway may already have reached the platform,
+      // and the retry posts it again on platforms without idempotent uploads (Slack, Telegram).
+      // It finishes or times out (FILE_CALL_TIMEOUT_MS); one longer than the stop budget is
+      // abandoned with the process and comes back by stalled detection, the window spec §4.6
+      // accepts for a crash between send and advance.
+      await sendFile(this.target, file, this.key(seq), this.locale);
+    } catch (err) {
+      if (!isChannelSendError(err) || err.retryable) throw err;
+      if (err.reason === "too_large") {
+        this.d.log.info("channel file refused as too large, sent as a link", {
+          conversationId: this.conversationId,
+          seq,
+        });
+        return false;
+      }
+      if (err.reason === "rejected" || err.reason === undefined) {
+        await this.d.writes.recordError(this.s.row.id, this.redact(errMsg(err)));
+        return false;
+      }
+      throw err;
+    }
+    return true;
+  }
+
+  /** The line standing in for a file that is not sent natively, then the advance past its event. */
+  private async linkLine(seq: number, a: ArtifactPayload): Promise<void> {
+    const text = fileLinkText({
+      name: a.name,
+      size: a.size,
+      artifactId: a.artifactId,
+      conversationId: this.conversationId,
+      base: this.base,
+      locale: this.locale,
+    });
+    await this.send({ text }, this.key(seq, "-link"));
+    return this.advance(seq);
   }
 
   /**

@@ -134,7 +134,8 @@
       "full_access_not_allowed": "无法允许完全访问：平台已关闭它，或者需要组织管理员在网页的组织设置中允许。",
       "network_allowance_invalid": "内部端点无效：请填写主机名、*.domain 通配符、IP 地址或 CIDR，或 http://host:8080 这样的源。链路本地、回环（包括 localhost）和未指定地址始终不允许，覆盖整个公共后缀的通配符也不允许。",
       "network_allowance_not_found": "该组织没有这个内部端点（可能已被移除）。",
-      "network_allowance_widen_not_allowed": "只有超级管理员能在 Web 上的管理控制台里放行内部端点，API 令牌或 Platform 工具不可以。"
+      "network_allowance_widen_not_allowed": "只有超级管理员能在 Web 上的管理控制台里放行内部端点，API 令牌或 Platform 工具不可以。",
+      "external_sharing_not_allowed": "无法开启对外分享：平台不允许，或这次修改来自 API 令牌或平台工具。超级管理员允许后，由组织管理员在 Web 上的组织设置里开启。"
     },
     "setup": {
       "already_completed": "系统已完成初始化。",
@@ -554,7 +555,16 @@
     },
     "deployment": {
       "setting_readonly": "这项设置由部署的启动配置（环境变量、配置文件或 Nacos）设定，只能在那里修改。",
-      "full_access_not_allowed": "通过 API 令牌或平台工具只能关闭平台的完全访问；要重新允许，请超级管理员在管理后台设置。"
+      "full_access_not_allowed": "通过 API 令牌或平台工具只能关闭平台的完全访问；要重新允许，请超级管理员在管理后台设置。",
+      "external_sharing_not_allowed": "通过 API 令牌或平台工具只能关闭对外分享；要允许，请超级管理员在后台设置。",
+      "sharing_widen_not_allowed": "通过 API 令牌或平台工具只能调低分享有效期上限、移除 CDN 来源；要调高或添加，请超级管理员在后台设置。"
+    },
+    "share": {
+      "not_found": "这个链接不存在、已撤销或已过期。",
+      "sign_in_required": "请用这个组织的账号登录后打开文件。",
+      "external_not_allowed": "这个组织目前不允许对外分享。",
+      "expiry_too_long": "有效期超过了平台允许的上限，请选短一些。",
+      "file_unavailable": "文件已不可用，可能已被删除。"
     }
   },
   "agents": {
@@ -2059,6 +2069,11 @@
       "hosts": "网络主机",
       "target": "目标文件（仅供参考）"
     },
+    "escalation": {
+      "intro": "批准后，仅本次调用在沙箱外运行此命令，可完整访问此设备的文件和网络；下一次调用仍在沙箱内运行。",
+      "cwd": "运行目录",
+      "justification": "智能体给出的理由"
+    },
     "superseded": {
       "user": "在有人处理之前，权限更改取代了此请求，未获批准；如仍需要，会出现新的请求。",
       "authorityChanged": "在有人处理之前，设备或组织的权限变化取代了此请求，未获批准。",
@@ -2564,7 +2579,9 @@
       "preferences": "偏好设置",
       "appearance": "外观",
       "schedules": "定时任务",
-      "audit": "审计日志"
+      "audit": "审计日志",
+      "shares": "分享",
+      "myShares": "我的分享"
     },
     "empty": "没有需要你个人凭据的连接器。",
     "emptyHint": "使用个人凭据的连接器会出现在这里。",
@@ -2688,6 +2705,11 @@
       "title": "默认时区",
       "description": "成员没有设置自己的时区、又不是从浏览器发消息时（如 IM 里的消息、匿名访客），智能体按这个时区判断「今天」。",
       "label": "默认时区"
+    },
+    "externalSharing": {
+      "label": "对外分享",
+      "help": "成员可以把对话中的文件分享给任何拿到链接的人，链接总有有效期。",
+      "platformDenied": "平台不允许对外分享。"
     }
   },
   "orgNetwork": {
@@ -2707,6 +2729,11 @@
     "empty": "没有放行任何内部端点。",
     "loadFailed": "无法读取内部端点。",
     "retry": "重试"
+  },
+  "promptSuggestions": {
+    "title": "输入建议",
+    "description": "智能体回复后，在输入框里给出你可能想发的下一条消息。每次会额外调用一次同一模型，通常大部分由缓存提供。",
+    "platformOff": "平台已关闭"
   },
   "compaction": {
     "title": "对话压缩",
@@ -3960,6 +3987,7 @@
           "maintenance": "维护",
           "pluginScope": "插件范围同步",
           "titles": "会话标题",
+          "suggestions": "输入建议",
           "usageReport": "用量上报",
           "evals": "评测",
           "lifecycle": "生命周期通知"
@@ -4264,6 +4292,10 @@
         "scheduleResumed": "恢复了定时任务",
         "scheduleRunNow": "立即运行了定时任务",
         "scheduleUpdated": "修改了定时任务",
+        "shareCreated": "分享了文件",
+        "shareOpened": "打开了分享的文件",
+        "shareRefreshed": "把分享的文件更新到最新版本",
+        "shareRevoked": "撤销了文件分享",
         "skillChangeDecided": "处理了技能变更",
         "skillChangeRequested": "提出了技能变更",
         "skillCreated": "创建了技能",
@@ -4463,6 +4495,19 @@
         "previewPr": "PR 结尾",
         "off": "（关闭）",
         "restore": "恢复默认"
+      },
+      "sharing": {
+        "external": "对外分享",
+        "maxExpiryDays": "链接最长有效期（天）",
+        "cdnAllowlist": "HTML 文件的脚本和样式来源",
+        "cdnHelp": "渲染的 HTML 文件可以从这些 https:// 源（协议和主机，可带端口；不含路径和通配符）加载脚本、样式、字体和图片。",
+        "readonly": "由部署配置设定，请在配置中修改。",
+        "title": "对外分享",
+        "description": "成员是否可以把对话中的文件分享给任何拿到链接的人、这类链接最长的有效期，以及渲染的 HTML 文件可以从哪里加载资源。",
+        "externalHelp": "默认关闭。组织只有在这里允许时，才能在自己的设置中开启。",
+        "maxExpiryHelp": "分享链接的有效期不能超过这个值（1 到 365 天）。",
+        "maxExpiryInvalid": "请输入 1 到 365 之间的整数天数。",
+        "invalidOrigin": "“{origin}”不是 https:// 源：只写协议和主机，可带端口，不含路径和通配符。"
       }
     },
     "extensions": {
@@ -6750,5 +6795,76 @@
     "empty": "还没有操作记录。",
     "emptyHint": "在本组织内所做的更改会显示在这里。",
     "loadMore": "加载更多"
+  },
+  "shares": {
+    "dialog": {
+      "title": "分享 {name}",
+      "audience": "谁可以打开",
+      "internal": "组织成员",
+      "internalHint": "本组织成员登录后打开。",
+      "external": "任何拿到链接的人",
+      "externalHint": "无需登录，链接必须设有效期。",
+      "externalOffPlatform": "平台不允许对外分享。",
+      "externalOffOrg": "本组织未开启对外分享，组织管理员可以在组织设置中开启。",
+      "expiry": "有效期",
+      "days1": "1 天",
+      "days7": "7 天",
+      "days30": "30 天",
+      "never": "永久",
+      "create": "创建链接",
+      "link": "链接",
+      "copy": "复制",
+      "copied": "链接已复制",
+      "live": "有效链接",
+      "updateToLatest": "更新到最新版本",
+      "updated": "链接已显示最新版本。",
+      "revoke": "撤销",
+      "revoked": "已撤销",
+      "expired": "已过期",
+      "suspended": "已暂停",
+      "recent": "近期链接",
+      "expiresOn": "{date} 过期",
+      "noExpiry": "永久有效",
+      "snapshot": "链接显示文件当前的内容；之后的新版本要点「更新到最新版本」才会出现。",
+      "done": "完成"
+    },
+    "panel": {
+      "share": "分享",
+      "shared": "已分享",
+      "rendered": "渲染",
+      "source": "源码",
+      "htmlTooLarge": "超过 20 MiB 的 HTML 文件不渲染，请下载后打开。"
+    },
+    "page": {
+      "sharedBy": "{name} 分享",
+      "expires": "{date} 过期",
+      "neverExpires": "永久有效",
+      "download": "下载",
+      "invalidTitle": "链接无效或已过期",
+      "invalidBody": "请向分享者索取新的链接。",
+      "signIn": "登录后打开这个文件",
+      "sharedFile": "分享的文件"
+    },
+    "list": {
+      "title": "分享",
+      "mineTitle": "我的分享",
+      "file": "文件",
+      "owner": "分享者",
+      "audience": "范围",
+      "expiry": "有效期至",
+      "lastOpened": "最近打开",
+      "revoke": "撤销",
+      "empty": "没有分享链接。",
+      "description": "本组织的所有分享链接。撤销后链接立即失效。",
+      "mineDescription": "你分享的链接。撤销后链接立即失效。",
+      "neverOpened": "从未打开",
+      "revokeTitle": "撤销这个链接？",
+      "revokeDescription": "之后任何人打开“{name}”的链接都会看到错误。此操作无法撤销。",
+      "revokeConfirm": "撤销链接",
+      "revokedToast": "链接已撤销。",
+      "stateLive": "有效",
+      "state": "状态",
+      "actions": "操作"
+    }
   }
 }

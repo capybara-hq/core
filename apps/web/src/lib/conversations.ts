@@ -100,6 +100,13 @@ export interface PermissionScope {
 export interface CommandAsk {
   /** The exact reach this ask grants (absent on an ask without one: an auto-mode command ask). */
   permissionScope?: PermissionScope;
+  /**
+   * The command asks to run outside the sandbox for this call only (per-call escalation): the
+   * agent's justification. The card shows it instead of a directory scope.
+   */
+  escalation?: { justification: string };
+  /** The directory the command runs in (shown with an escalation). */
+  workingRoot?: string;
   /** The file the call targets, informational only: the scope names its directory. */
   targetPath?: string;
   candidateHash?: string;
@@ -249,9 +256,10 @@ type EventBody =
         /**
          * Set when the usage is not the step's call: `compaction`, `title`, `web_fetch` (a
          * `WebFetch` extraction call, with that call's `callId`) or `review` (the command-review
-         * classifier, also with the reviewed call's `callId`).
+         * classifier, also with the reviewed call's `callId`) or `suggestion` (a prompt suggestion
+         * after a completed run).
          */
-        purpose?: "compaction" | "title" | "web_fetch" | "review";
+        purpose?: "compaction" | "title" | "web_fetch" | "review" | "image" | "suggestion";
         /** A chunked compaction call's 1-based chunk and the calls the compaction attempted. */
         chunk?: number;
         chunks?: number;
@@ -1082,7 +1090,7 @@ export const resumeQueue = (orgId: string, id: string) =>
 export interface ToolInfo {
   key: string;
   title: string | null;
-  kind: "command" | "read" | "edit" | "search" | "connector" | "meta" | "tool";
+  kind: "command" | "read" | "edit" | "search" | "connector" | "meta" | "task" | "tool";
   /** True exactly for the builtin tools that run in the conversation's sandbox. */
   sandbox: boolean;
   keyArgs: string[];

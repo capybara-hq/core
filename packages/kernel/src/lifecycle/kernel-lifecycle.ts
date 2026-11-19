@@ -15,6 +15,7 @@ import { PluginImport } from "../catalog/plugin-import.js";
 import { ChannelJobs } from "../channels/jobs.js";
 import { ChannelOutbound } from "../channels/outbound.js";
 import type { KernelConfig } from "../config/schema.js";
+import { PromptSuggestionQueue } from "../conversations/prompt-suggestions.js";
 import { TitleQueue } from "../conversations/titles.js";
 import { migrate } from "../db/migrator.js";
 import { ExtensionBlobs } from "../extensions/blobs.js";
@@ -142,6 +143,7 @@ export class KernelLifecycle
     // the producers closed on every role (their consumers are the worker role's)
     @Inject(UsageReporter) private readonly usageReport: UsageReporter,
     @Inject(TitleQueue) private readonly titles: TitleQueue,
+    @Inject(PromptSuggestionQueue) private readonly suggestions: PromptSuggestionQueue,
     @Inject(ChannelJobs) private readonly channelJobs: ChannelJobs,
     @Inject(ChannelOutbound) private readonly channelOutbound: ChannelOutbound,
     // this process's presence beat, on every role (admin overview spec §5.1)
@@ -519,6 +521,12 @@ export class KernelLifecycle
     );
     // titles before usage.report: a finishing title call enqueues its usage report
     await within("titles", this.titles.stop(), Math.max(0, runsDeadline - Date.now()));
+    // prompt suggestions likewise: the call in flight is aborted and its job dropped
+    await within(
+      "prompt-suggestions",
+      this.suggestions.stop(),
+      Math.max(0, runsDeadline - Date.now()),
+    );
     // usage.report: in-flight deliveries are aborted and retried by any replica; before the plugins close
     await within("usage-report", this.usageReport.stop(), Math.max(0, runsDeadline - Date.now()));
     // 出站投递：进行中的任务交还队列（由其他副本从 last_seq 续投），必须在插件关闭之前

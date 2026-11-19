@@ -170,6 +170,10 @@ Each line is the rule you must not miss; the skill has the rest.
   the `gateway` role. [writing-channels](.agents/skills/writing-channels/SKILL.md)
 - **Extension UI:** schema views or approved embeds; embed tokens never valid for `/api`.
   [writing-extension-ui](.agents/skills/writing-extension-ui/SKILL.md)
+- **File sharing:** a share is a snapshot; external links need the platform and org switches;
+  shared and rendered HTML is served only with the sandbox CSP and the CDN allowlist, never from a
+  presigned URL on the app origin.
+  [file-sharing](docs/superpowers/specs/2026-11-18-file-sharing-design.md)
 - **SDK public API:** changing it means `pnpm gen:sdk-api` plus a changeset bumping
   `@capybara-hq/plugin-sdk` (`check:sdk-api`, `check:sdk-api-changeset`).
 - **Before 0.1.0:** no real users yet, so change formats, names and APIs directly; don't add

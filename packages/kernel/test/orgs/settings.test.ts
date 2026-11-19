@@ -5,9 +5,10 @@ import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
 import type { ApiError } from "../../src/errors.js";
-import { COMPACTION_SETTINGS } from "../../src/identity/settings.js";
+import { COMPACTION_SETTINGS, readPromptSuggestions } from "../../src/identity/settings.js";
 import {
   type CloudNetworkSetting,
+  effectivePromptSuggestions,
   type OrgSettings,
   OrgSettingsPatchSchema,
   type OrgSettingsService,
@@ -428,7 +429,49 @@ describe("org cloudNetwork", () => {
       publicUrl: false,
       // the platform's compaction defaults the org page follows (context compaction spec §4.8)
       compaction: COMPACTION_SETTINGS.parse({}),
+      externalSharing: { value: "deny", source: "default" },
+      shareMaxExpiryDays: 30,
+      promptSuggestions: "on",
     });
+  });
+});
+
+describe("prompt suggestions (effective)", () => {
+  const storePlatform = (value: unknown) =>
+    db
+      .insertInto("deployment_settings")
+      .values({ key: "promptSuggestions", value: JSON.stringify(value) })
+      .execute();
+
+  it("effectivePromptSuggestions: the platform on and the org not off", () => {
+    expect(effectivePromptSuggestions("on", undefined)).toBe(true);
+    expect(effectivePromptSuggestions("on", "on")).toBe(true);
+    expect(effectivePromptSuggestions("on", "off")).toBe(false);
+    expect(effectivePromptSuggestions("off", undefined)).toBe(false);
+    expect(effectivePromptSuggestions("off", "on")).toBe(false);
+  });
+
+  it("readPromptSuggestions: absent on, stored off, invalid off with a warning", async () => {
+    expect(await readPromptSuggestions(db)).toBe("on");
+    await storePlatform("off");
+    expect(await readPromptSuggestions(db)).toBe("off");
+    await db.deleteFrom("deployment_settings").execute();
+    await storePlatform("maybe");
+    const warns: string[] = [];
+    expect(await readPromptSuggestions(db, { warn: (m: string) => warns.push(m) })).toBe("off");
+    expect(warns).toHaveLength(1);
+  });
+
+  it("promptSuggestionsEnabled follows the platform and the org", async () => {
+    const s = settingsWith();
+    expect(await s.promptSuggestionsEnabled(orgId)).toBe(true);
+    await s.update(orgId, { promptSuggestions: "off" }, accountId);
+    expect(await s.promptSuggestionsEnabled(orgId)).toBe(false);
+    await s.update(orgId, { promptSuggestions: null }, accountId);
+    expect(await s.promptSuggestionsEnabled(orgId)).toBe(true);
+    await s.update(orgId, { promptSuggestions: "on" }, accountId);
+    await storePlatform("off");
+    expect(await s.promptSuggestionsEnabled(orgId)).toBe(false);
   });
 });
 

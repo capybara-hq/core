@@ -65,6 +65,16 @@ export interface FakeLarkDepartment {
   parent: string;
 }
 
+/** An image or file the bot uploaded (`im/v1/images`, `im/v1/files`); `key` is what a message names. */
+export interface FakeLarkUpload {
+  kind: "image" | "file";
+  key: string;
+  fileType?: string;
+  fileName?: string;
+  data: Buffer;
+  at: number;
+}
+
 /** 机器人发出（或更新后）的一条消息。 */
 export interface FakeLarkMessage {
   messageId: string;
@@ -133,7 +143,9 @@ export type FakeLarkApi =
   | "oauth_token"
   | "user_info"
   | "departments"
-  | "find_by_department";
+  | "find_by_department"
+  | "image_upload"
+  | "file_upload";
 
 export interface FakeLarkServer {
   /** 开放平台根地址（插件的 `apiUrl` / SDK 的 `domain`）。 */
@@ -145,6 +157,8 @@ export interface FakeLarkServer {
   botName: string;
   messages: FakeLarkMessage[];
   updates: FakeLarkMessage[];
+  /** Successful image and file uploads, in order. */
+  uploads: FakeLarkUpload[];
   calls: FakeLarkCall[];
   acks: FakeLarkAck[];
   users: Map<string, FakeLarkUser>;
@@ -244,12 +258,10 @@ const decodeFrame = (b: Uint8Array) =>
   Frame.toObject(Frame.decode(b), { longs: Number, bytes: Buffer }) as FrameData;
 
 const readBody = (req: IncomingMessage) =>
-  new Promise<string>((resolve) => {
-    let body = "";
-    req.on("data", (c: Buffer) => {
-      body += c.toString();
-    });
-    req.on("end", () => resolve(body));
+  new Promise<Buffer>((resolve) => {
+    const chunks: Buffer[] = [];
+    req.on("data", (c: Buffer) => chunks.push(c));
+    req.on("end", () => resolve(Buffer.concat(chunks)));
   });
 
 const obj = (v: unknown): Record<string, unknown> | undefined =>
@@ -285,6 +297,7 @@ export async function startFakeLark(opts: FakeLarkOptions = {}): Promise<FakeLar
   const botName = opts.botName ?? "Capybara";
   const messages: FakeLarkMessage[] = [];
   const updates: FakeLarkMessage[] = [];
+  const uploads: FakeLarkUpload[] = [];
   const calls: FakeLarkCall[] = [];
   const acks: FakeLarkAck[] = [];
   const users = new Map<string, FakeLarkUser>();
@@ -345,6 +358,14 @@ export async function startFakeLark(opts: FakeLarkOptions = {}): Promise<FakeLar
       fail(res, 230001, "invalid content");
       return undefined;
     }
+    if (msgType === "image" || msgType === "file") {
+      const kind = msgType === "image" ? "image" : "file";
+      const key = str(obj(card)?.[`${kind}_key`]);
+      if (key === undefined || !uploads.some((x) => x.kind === kind && x.key === key)) {
+        fail(res, 230001, `invalid ${kind}_key`);
+        return undefined;
+      }
+    }
     if (msgType === "interactive") {
       const c = obj(card);
       if (c?.schema !== "2.0" || obj(c.config)?.update_multi === false || !obj(c.body)) {
@@ -356,12 +377,29 @@ export async function startFakeLark(opts: FakeLarkOptions = {}): Promise<FakeLar
   };
 
   const api = async (req: IncomingMessage, res: ServerResponse, u: URL) => {
-    const raw = await readBody(req);
+    const rawBytes = await readBody(req);
+    const raw = rawBytes.toString();
+    const contentType = req.headers["content-type"] ?? "";
     let body: Record<string, unknown> = {};
-    try {
-      body = raw === "" ? {} : (JSON.parse(raw) as Record<string, unknown>);
-    } catch {
-      return fail(res, 9499, "bad request");
+    let blob: { data: Buffer; field: string } | undefined;
+    if (contentType.includes("multipart/form-data")) {
+      try {
+        const form = await new Response(new Uint8Array(rawBytes), {
+          headers: { "content-type": contentType },
+        }).formData();
+        for (const [k, v] of form) {
+          if (typeof v === "string") body[k] = v;
+          else blob = { data: Buffer.from(await v.arrayBuffer()), field: k };
+        }
+      } catch {
+        return fail(res, 9499, "bad request");
+      }
+    } else {
+      try {
+        body = raw === "" ? {} : (JSON.parse(raw) as Record<string, unknown>);
+      } catch {
+        return fail(res, 9499, "bad request");
+      }
     }
     const path = u.pathname;
     const method = req.method ?? "GET";
@@ -378,6 +416,8 @@ export async function startFakeLark(opts: FakeLarkOptions = {}): Promise<FakeLar
     else if (path === "/open-apis/bot/v3/info" && method === "GET") name = "bot";
     else if (path === "/open-apis/tenant/v2/tenant/query" && method === "GET") name = "tenant";
     else if (path === "/open-apis/im/v1/messages" && method === "POST") name = "create";
+    else if (path === "/open-apis/im/v1/images" && method === "POST") name = "image_upload";
+    else if (path === "/open-apis/im/v1/files" && method === "POST") name = "file_upload";
     else if (reply$ && method === "POST") name = "reply";
     else if (msg$ && method === "PATCH") name = "patch";
     else if (user$ && method === "GET") name = "user";
@@ -511,6 +551,28 @@ export async function startFakeLark(opts: FakeLarkOptions = {}): Promise<FakeLar
             },
           },
         });
+      }
+      case "image_upload": {
+        if (str(body.image_type) !== "message" || blob?.field !== "image" || blob.data.length === 0)
+          return fail(res, 234001, "Invalid request param.");
+        const key = `img_v3_${hex(10)}`;
+        uploads.push({ kind: "image", key, data: blob.data, at: Date.now() });
+        return reply(res, { code: 0, msg: "success", data: { image_key: key } });
+      }
+      case "file_upload": {
+        const fileType = str(body.file_type);
+        const fileName = str(body.file_name);
+        if (
+          !fileType ||
+          !["opus", "mp4", "pdf", "doc", "xls", "ppt", "stream"].includes(fileType) ||
+          !fileName ||
+          blob?.field !== "file" ||
+          blob.data.length === 0
+        )
+          return fail(res, 234001, "Invalid request param.");
+        const key = `file_v3_${hex(10)}`;
+        uploads.push({ kind: "file", key, fileType, fileName, data: blob.data, at: Date.now() });
+        return reply(res, { code: 0, msg: "success", data: { file_key: key } });
       }
       case "create":
       case "reply": {
@@ -853,6 +915,7 @@ export async function startFakeLark(opts: FakeLarkOptions = {}): Promise<FakeLar
     botName,
     messages,
     updates,
+    uploads,
     calls,
     acks,
     users,

@@ -43,6 +43,14 @@ const SCOPE_JOB_OPTS = {
  * name without one does not type-check as an `OutboxJobName` (`add` does not check it at runtime).
  */
 export const OUTBOX_JOBS = {
+  // `shares/share-objects.ts` SHARE_OBJECT_DELETE_JOB: owed by a share's refresh (the previous
+  // generation) and revoke (the current one), under `shareObjectDeleteJobId` (file sharing spec §2)
+  "share-object-delete": {
+    queue: "cap-kernel-maintenance",
+    idempotent: "Deletes one object key; deleting a missing object is a no-op",
+    processedIn: "packages/kernel/src/runtime/maintenance.ts",
+    opts: { attempts: 10, backoff: { type: "exponential", delay: 5000 }, removeOnComplete: true },
+  },
   "permission-approval-recheck": {
     queue: "cap-kernel-maintenance",
     idempotent:

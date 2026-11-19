@@ -221,7 +221,7 @@ export class SchedulesOperations implements OnModuleInit {
       defineOperation({
         id: "schedules.create",
         description:
-          "Create a scheduled task: an agent runs the prompt on a 5-field cron (or once at a local date-time) as you, unattended. The task's time zone is yours; timeZone is only the fallback when you have none set. mode: new (a conversation per run), conversation (post into one conversation) or chat (an IM chat). model ({ provider, model } like an agent definition's), effort and deviceId are for mode new only; a conversation or chat task runs with that conversation's model. Without expiresAt a cron task ends after the org's default expiry, when the org sets one. grants pre-approve tools the unattended run may use. The person confirms every creation; it is never remembered.",
+          "Create a scheduled task: an agent runs the prompt on a 5-field cron (or once at a local date-time) as you, unattended. The task's time zone is yours; timeZone is only the fallback when you have none set. mode: new (a conversation per run), conversation (post into one conversation) or chat (an IM chat). model ({ provider, model } like an agent definition's), effort and deviceId are for mode new only; a conversation or chat task runs with that conversation's model. Without expiresAt a cron task ends after the org's default expiry, when the org sets one. grants pre-approve tools the unattended run may use.",
         input: CreateBody,
         example: {
           agentId: "4e8a0c1d-6b2f-4a37-8d19-3c5e7f9a1b20",
@@ -270,7 +270,7 @@ export class SchedulesOperations implements OnModuleInit {
       defineOperation({
         id: "schedules.update",
         description:
-          "Change one of your own scheduled tasks (name, prompt, schedule, time zone, target, model, effort, device, expiry; null clears an optional field, and a null expiry on a cron task takes the org's default expiry when set). model, effort and deviceId are for mode new only; switching to another mode clears them. Only the creator can; an org admin can pause it instead. The person confirms every change; it is never remembered. Takes the id from schedules.list.",
+          "Change one of your own scheduled tasks (name, prompt, schedule, time zone, target, model, effort, device, expiry; null clears an optional field, and a null expiry on a cron task takes the org's default expiry when set). model, effort and deviceId are for mode new only; switching to another mode clears them. Only the creator can; an org admin can pause it instead. Takes the id from schedules.list.",
         input: UpdateBody.extend({ scheduleId: Id }).strict(),
         example: { scheduleId: EXAMPLE_ID, prompt: "Summarize the last two days." },
         authz: { orgAction: "schedules.use" },
@@ -314,7 +314,7 @@ export class SchedulesOperations implements OnModuleInit {
       defineOperation({
         id: "schedules.delete",
         description:
-          "Delete a scheduled task (yours; an org admin can delete any). The person confirms every delete; it is never remembered. Takes the id from schedules.list.",
+          "Delete a scheduled task (yours; an org admin can delete any). Takes the id from schedules.list.",
         input: TaskId,
         example: { scheduleId: EXAMPLE_ID },
         authz: { orgAction: "org.read" },
@@ -364,7 +364,7 @@ export class SchedulesOperations implements OnModuleInit {
       defineOperation({
         id: "schedules.resume",
         description:
-          "Resume a paused scheduled task: the next run is computed from now (missed ticks are not caught up). An ended task cannot be resumed. The person confirms every resume; it is never remembered. Takes the id from schedules.list.",
+          "Resume a paused scheduled task: the next run is computed from now (missed ticks are not caught up). An ended task cannot be resumed. Takes the id from schedules.list.",
         input: TaskId,
         example: { scheduleId: EXAMPLE_ID },
         authz: { orgAction: "schedules.use" },
@@ -401,7 +401,7 @@ export class SchedulesOperations implements OnModuleInit {
       defineOperation({
         id: "schedules.run",
         description:
-          "Run one of your own scheduled tasks now, outside its schedule (the schedule does not move). trial=true is an attended trial: you approve its tool calls and they become the task's approved tools. Counts toward the hourly run limit. The person confirms every run; it is never remembered. Takes the id from schedules.list.",
+          "Run one of your own scheduled tasks now, outside its schedule (the schedule does not move). trial=true is an attended trial: you approve its tool calls and they become the task's approved tools. Counts toward the hourly run limit. Takes the id from schedules.list.",
         input: RunBody.extend({ scheduleId: Id }).strict(),
         example: { scheduleId: EXAMPLE_ID, trial: true },
         authz: { orgAction: "schedules.use" },
@@ -483,7 +483,7 @@ export class SchedulesOperations implements OnModuleInit {
       defineOperation({
         id: "schedules.grants-add",
         description:
-          "Approve tools in advance for one of your own scheduled tasks: an unattended run may then call them without asking. Only tools you could approve with always-allow yourself; never a Platform operation (each is decided per call) and nothing the org forbids. Returns the task's approved tools as { toolKey, connectorId }. The person confirms every change; it is never remembered. Takes the id from schedules.list.",
+          "Approve tools in advance for one of your own scheduled tasks: an unattended run may then call them without asking. Only tools you could approve with always-allow yourself; never a Platform operation (each is decided per call) and nothing the org forbids. Returns the task's approved tools as { toolKey, connectorId }. Takes the id from schedules.list.",
         input: GrantsBody.extend({ scheduleId: Id }).strict(),
         example: { scheduleId: EXAMPLE_ID, grants: [{ toolKey: "WebFetch" }] },
         authz: { orgAction: "schedules.use" },

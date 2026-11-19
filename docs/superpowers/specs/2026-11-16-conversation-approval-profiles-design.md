@@ -264,3 +264,126 @@ fall back to Full access. All UI copy is bilingual and uses design-system compon
 The project-reading and skill metadata fixes were merged in PRs #314 and #315. They are baseline,
 not part of this feature. Multi-source projects, external connector permission policy and scheduled
 Full access opt-in are separate features. This branch currently contains design documentation only.
+
+## Per-call sandbox escalation (2026-11-19 maintainer decision)
+
+Status: decided by the maintainer on 2026-11-19, implemented on `perm/call-escalation`. It
+follows Codex (`sandbox_permissions: "require_escalated"` with a justification) and Claude Code
+(`dangerouslyDisableSandbox`). The same day the maintainer fixed the target profile model this
+section is written for; the profile-semantics refactor that implements it lands in the same
+release (see "Target model" below).
+
+### Target model
+
+The three profiles are **approval policy only**. The sandbox (directories, network) is a device
+setting and is the same under every profile; Full access means "no approvals", not "no sandbox".
+Commands always run in the device's sandbox, and a boundary crossing (a per-call escalation, a
+directory or host proposal) is decided by the profile's **approver**:
+
+| Profile | Approver of a crossing and of a sensitive command |
+|---|---|
+| Request approval | the person |
+| Approve for me | the review model; it asks the person when it cannot decide |
+| Full access | none: granted for that call, within the device's ceiling for running outside the sandbox |
+
+The ceiling is today's Full access ceiling: the owner's ceiling, the org's `fullAccess` and the
+platform's `devices.fullAccess`. A separate refactor in the same release renames it to "outside
+the sandbox" and stops Full access from removing the sandbox. Until it lands, Full access still
+runs every call unsandboxed, so an escalation under Full access is a no-op that asks nobody. The
+code already expresses the target: `approverForProfile` maps the profile to person / review model
+/ none, and "none" grants within the ceiling (the escalation is refused past it).
+
+### Input
+
+`Bash` gains two optional inputs: `sandbox: "escalated"` asks to run this one call outside the OS
+sandbox, and `justification` (1–500 characters) says why. Both foreground and background calls
+(`run_in_background`) may escalate, under the same review: a dev server is a key use. The file
+tools do not take it; a directory proposal covers them. An escalated call without a usable
+justification is refused before any review with a text that says what to pass. The `Bash`
+description tells the model to try inside the sandbox first and to escalate only the call the
+sandbox blocked.
+
+### Review
+
+The order in `CommandReviewService.decidePermission` and `ToolPipeline.reviewPermissionCall`:
+
+1. Fixed denies and the mandatory tool asks come first and stay authoritative for an escalated
+   call too (`rm -rf /` stays a deny, a `requiresUserInteraction` tool still asks).
+2. The candidate builder (`buildPermissionCandidate`) turns an escalated `Bash` call into one
+   `sandbox-escalation` candidate: the exact call binding (run, call, tool spec, raw and resolved
+   input hashes, profile and its revision, scope and authority revisions), an empty expansion and
+   the justification. It never also proposes directories or hosts for that call.
+3. Request approval asks the person once. The ask's detail and `approval_requested.command`
+   carry the command, the working directory (`workingRoot`) and `escalation.justification`; the
+   reason states the crossing and, when the line is also sensitive (credential reads, sudo,
+   persistent changes), that consent as well: one card, both reasons. Only `once` is offered.
+4. Approve for me sends the candidate to the review model, with a dedicated block naming the
+   escalation and the justification as untrusted data. Unavailable, unmapped, unsure, failing,
+   truncated or unparseable means ask; the model's deny stays a deny; its allow issues the grant.
+   The verdict is recorded as `permission_reviewed` (`scopeKind: "sandbox-escalation"`,
+   `escalation`, outcome, decision source).
+5. Full access (approver none) asks nobody (see "Target model").
+
+An approval (the person's or the review model's) issues an immutable `permission_call_grants` row
+with `scope_kind = 'sandbox-escalation'` and the justification (migration 0162), bound to exactly
+this call by the existing binding hash. It is never a session grant: a replay or another call
+with a changed input has another binding and finds nothing. Issuance re-checks the Full access
+ceiling and the runtime's Full support; a session grant of a consent class never covers the
+escalation itself.
+
+### Ceilings and who may escalate
+
+Escalation is possible only where Full access would be: the owner ceiling, the org `fullAccess`
+and the platform `devices.fullAccess` (`fullAccessCeiling`), and a runtime that runs Full access
+now (the same `withheldScope` verdict Full access gets). The consent scope is the grant's binding
+to the current scope and authority revisions: a ceiling or scope change invalidates it. Admission
+checks the same at every operation: `SandboxOperationAuthority.resolveInvocation` refuses an
+escalation grant when the snapshot's `escalationRefusal` is set, and `intersectPermissionScope`
+refuses `escalated` without the ceiling. Otherwise the model gets an actionable text naming why
+(the device or org does not allow it, the runtime cannot, the run is unattended) and what to do
+instead (run it in the sandbox, ask the user to run it or to allow Full access on the device).
+
+Unattended runs (scheduled tasks) cannot escalate; a sub-agent can ask, but only the person or
+the review model approves (never the agent itself); another account's run never reaches the
+owner's device. These are the rules Full access already follows.
+
+### Device and providers
+
+An admitted escalated command gets an operation scope with the conversation's restricted
+`profile` and full reach (`filesystem: device`, `network: environment`); its native methods keep
+the base scope, and the next call is restricted again. The device decides full execution from the
+scope's reach (`intersectOperation`), so local macOS, Linux and Docker-mode devices run it with
+their existing `full` grant; the owner's Full ceiling still refuses it. Kernel checks that used the
+profile name as "needs Full" now also count a full reach under a restricted profile
+(`isFullExecutionScope`: the provider support check, the Full ceiling revocation predicates), so revoking the Full ceiling cancels an
+escalated command too. E2B is Full only, so escalation does not apply there. `commands.log` records
+`isolation: "full"` and `grantSource: "call approval"` for an escalated operation, never the
+command text. No SDK or protocol change.
+
+### Model-facing texts
+
+When a restricted `Bash` call is stopped by the restricted scope (a command's own outside write,
+an unbounded `cd`, the device's scope refusal) or fails with a sandbox denial (`Operation not
+permitted`, `Read-only file system`, `Permission denied`), the text the model gets says it may
+retry the same call with `sandbox: "escalated"` and a justification, only where escalation is
+possible on that device and org (`ToolStepContext` carries `sandboxEscalation: available`).
+
+### Replay and log
+
+The new inputs are part of `Bash`'s tool schema: definitions are fetched by spec hash, so no
+`DriftReason` (the replay-evals tool-definition rule). The escalation decision is in the log:
+`approval_requested.command.escalation`, `approval_decided`, `permission_reviewed`, and
+`tool_result.review.sandbox: "escalated"` on a call that ran escalated (display only).
+
+### Web
+
+The approval card shows an escalation request distinctly (`SandboxEscalationDetail`): that only
+this call runs outside the sandbox with full access to the device's files and network, the
+directory it runs in and the agent's justification, under the command; no empty directory scope.
+The inbox shows the same.
+
+### AGENTS.md rules touched
+
+Runtime and replay (no `DriftReason`: tool definitions by spec hash; the decision in the log),
+Tools (`Bash` inputs, actionable refusals), Sandboxes (the command review still fails closed; full
+execution only within the Full access ceiling) and Migrations (0162, expand-only).

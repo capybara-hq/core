@@ -579,6 +579,7 @@ describe("path leases in the sandbox tools", () => {
       // only latestFileState is called
       eventLog: {
         append: async () => [],
+        readDeliveryScope: async () => ({ boundary: 0, artifacts: [] }),
         latestFileState: async (_conv: string, path: string) =>
           s.withSandbox(
             ctx(),

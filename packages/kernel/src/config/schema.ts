@@ -1298,6 +1298,28 @@ export const KernelConfigSchema = z.strictObject({
               "Largest channel webhook request body in bytes; a larger request is rejected with 413",
           }),
         ),
+      fileMaxBytes: z
+        .number()
+        .int()
+        .nonnegative()
+        .default(20_971_520)
+        .meta(
+          meta({
+            description:
+              "Largest conversation file a channel delivery sends into the IM chat as a native file or image, in bytes; larger files, and every file when 0, become one line linking to the web conversation. Each worker replica holds at most fileConcurrency such files in memory at once",
+          }),
+        ),
+      fileConcurrency: z
+        .number()
+        .int()
+        .positive()
+        .default(4)
+        .meta(
+          meta({
+            description:
+              "How many conversation files one worker replica reads and uploads to IM platforms at the same time; further file deliveries wait for a slot",
+          }),
+        ),
     })
     // 续租周期必须明显短于 TTL：至少能在租约过期前续两次，偶尔一次 Redis 抖动不至于丢租约
     .refine((c) => c.scanIntervalMs <= c.leaseTtlMs / 2, {
@@ -1312,6 +1334,8 @@ export const KernelConfigSchema = z.strictObject({
       deliveryConcurrency: 100,
       deliveryIdleMs: 15000,
       webhookMaxBodyBytes: 1_048_576,
+      fileMaxBytes: 20_971_520,
+      fileConcurrency: 4,
     }),
   storage: z
     .strictObject({
@@ -1398,6 +1422,39 @@ export const KernelConfigSchema = z.strictObject({
     .refine((c) => c.maxBytes <= c.requestMediaBytes, {
       message: "attachments.maxBytes must be at most attachments.requestMediaBytes",
       path: ["maxBytes"],
+    })
+    .prefault({} as never),
+  /**
+   * File sharing governance (file sharing spec §8). Both fields are also deployment settings the
+   * super admin changes in the admin console (`externalSharing`, `shareMaxExpiryDays`); a field
+   * set here wins and is read-only there, so neither has a schema default (an unset field means
+   * no config source sets it).
+   */
+  sharing: z
+    .strictObject({
+      external: z
+        .enum(["allow", "deny"])
+        .optional()
+        .meta(
+          meta({
+            hot: true,
+            description:
+              "Whether organizations may share conversation files with people outside the deployment through public links (default deny): allow lets each organization turn external sharing on in its own settings (it is off until it does); deny stops every external link at once. Internal links (for signed-in members) are not affected. Set here, it is read-only in the admin console",
+          }),
+        ),
+      maxExpiryDays: z
+        .number()
+        .int()
+        .min(1)
+        .max(365)
+        .optional()
+        .meta(
+          meta({
+            hot: true,
+            description:
+              "The longest expiry a file share may be given, in days (1 to 365, default 30); an external share always expires, an internal one may also never expire. Set here, it is read-only in the admin console",
+          }),
+        ),
     })
     .prefault({} as never),
   subagents: z

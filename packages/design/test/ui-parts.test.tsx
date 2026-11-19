@@ -10,6 +10,7 @@ import {
   CodeBlock,
   DesignProvider,
   IconButton,
+  ImagePlaceholder,
   Input,
   Segmented,
   SIDEBAR_DRAWER_QUERY,
@@ -284,5 +285,17 @@ describe("data-cap-part (client extensions spec §7.1)", () => {
       ["助手", "false"],
       ["塞尔达", "true"],
     ]);
+  });
+});
+
+describe("image-placeholder part", () => {
+  it("its token is in the catalog", () => {
+    render(
+      <DesignProvider locale="en">
+        <ImagePlaceholder ratio={null} index={0} count={1} />
+      </DesignProvider>,
+    );
+    expect(UI_PART_NAMES as readonly string[]).toContain("image-placeholder");
+    expect([...parts()]).toEqual(["image-placeholder"]);
   });
 });

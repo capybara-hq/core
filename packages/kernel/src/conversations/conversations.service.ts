@@ -21,6 +21,7 @@ import {
 } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { KernelEvents } from "../infra/events/kernel-events.js";
+import { OutboxService } from "../infra/outbox/outbox.service.js";
 import { ProviderRegistry } from "../runtime/providers.js";
 import { RunControl as RunControlService } from "../runtime/run-control.js";
 import { RunDeletion } from "../runtime/run-deletion.js";
@@ -28,6 +29,7 @@ import { rootConversationOf } from "../runtime/subagents/child.js";
 import { PermissionCeilingWrites } from "../sandbox/permission-ceiling-writes.js";
 import { permissionScopeHash } from "../sandbox/permission-facts.js";
 import type { ScheduleMarker } from "../schedules/types.js";
+import { revokeSharesIn } from "../shares/revoke.js";
 import { type RenderedInvocation, SkillInvoker } from "../skills/invoke.js";
 import { type ApprovalRecord, ApprovalsService } from "../tools/approvals.service.js";
 import { ConnectorContent } from "../tools/connector-content.js";
@@ -479,6 +481,8 @@ export class ConversationsService {
     @Inject(KernelEvents) private readonly events: Pick<KernelEvents, "emit">,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
     @Inject(PermissionCeilingWrites) private readonly ceilings: PermissionCeilingWrites,
+    /** Owes the snapshot deletions of the shares a deletion revokes (file sharing spec §9). */
+    @Inject(OutboxService) private readonly outbox: Pick<OutboxService, "add">,
   ) {}
 
   /**
@@ -923,6 +927,9 @@ export class ConversationsService {
       .where("conversation_id", "=", conversationId)
       .execute();
     await unbindConversation(this.db.db, conversationId);
+    // its shares stop with it and their snapshots are owed for deletion (file sharing spec §9);
+    // a share being created waits on the row lock above (`FOR SHARE`) and then finds it deleted
+    await revokeSharesIn(this.db.db, this.outbox, { conversationId }, "conversation_deleted");
   }
 
   /** 读会话：非所有者、或 agent 已对所有者不可用 → `conversation.not_found`。 */

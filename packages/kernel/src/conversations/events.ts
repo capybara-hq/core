@@ -341,6 +341,10 @@ export const PermissionCallBindingSchema = z
     authorityRevision: z.string(),
   })
   .strict();
+/** A per-call sandbox escalation's justification, as the person and the review model saw it. */
+export const PermissionEscalationSchema = z
+  .object({ justification: z.string().min(1).max(500) })
+  .strict();
 export const ReviewRecordSchema = z
   .object({
     profile: z.enum(["request-approval", "approve-for-me", "full-access"]).optional(),
@@ -358,6 +362,8 @@ export const ReviewRecordSchema = z
       .string()
       .regex(/^[a-f0-9]{64}$/)
       .optional(),
+    /** The call was allowed to run outside the OS sandbox (a per-call escalation). */
+    sandbox: z.literal("escalated").optional(),
   })
   .strict();
 
@@ -367,6 +373,10 @@ export const CommandAskSchema = z
     permissionScope: PermissionExpansionSchema.optional(),
     targetPath: z.string().max(4096).optional(),
     candidateHash: z.string().optional(),
+    /** The command asks to run outside the OS sandbox for this call (its justification). */
+    escalation: PermissionEscalationSchema.optional(),
+    /** The directory the command runs in (an escalation shows it). */
+    workingRoot: z.string().max(4096).optional(),
     /** A shell command or a file write. */
     kind: z.enum(["command", "write"]),
     /** The command text, or the tool key of the write. */
@@ -691,7 +701,9 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
       binding: PermissionCallBindingSchema,
       permissionScope: PermissionExpansionSchema,
       targetPath: z.string().max(4096).optional(),
-      scopeKind: z.literal("directories-and-hosts"),
+      scopeKind: z.enum(["directories-and-hosts", "sandbox-escalation"]),
+      /** A per-call sandbox escalation: the model's justification (its scope is empty). */
+      escalation: PermissionEscalationSchema.optional(),
       candidateHash: z.string(),
       outcome: z.enum(["allow", "ask", "deny"]),
       reason: z.string(),
@@ -997,7 +1009,9 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
    * `review` = the command-review classifier's call (auto mode spec §5.3: not model-visible, billed
    * and reported, `callId` = the reviewed tool call); `image` = a `GenerateImage` call (image
    * generation spec §7: the tool call's run and step, `callId` = the call, `outputImages` = the
-   * images produced; not model-visible, billed and reported, counted on a sub-agent's parent).
+   * images produced; not model-visible, billed and reported, counted on a sub-agent's parent);
+   * `suggestion` = the prompt suggestion call after a completed run (prompt suggestions spec §7: no
+   * run, `step` 0, one per run, not model-visible, billed and reported).
    */
   ev(
     "usage",
@@ -1006,7 +1020,9 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
       provider: z.string(),
       model: z.string(),
       ...ModelUsageShape,
-      purpose: z.enum(["compaction", "title", "web_fetch", "review", "image"]).optional(),
+      purpose: z
+        .enum(["compaction", "title", "web_fetch", "review", "image", "suggestion"])
+        .optional(),
       /**
        * The chunk a chunked compaction call summarised (1-based), with the number of calls the
        * compaction attempted (the full chunk count on a completed one; on a failed or hook-denied
@@ -1354,6 +1370,15 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
       objectKey: z.string().min(1),
       sourcePath: z.string().min(1),
       callId: z.string(),
+      /**
+       * The hex sha256 of the bytes (truthful delivery spec §2): the same bytes are delivered once
+       * per delivery scope. Optional only because earlier events cannot be backfilled; an event
+       * without it never matches.
+       */
+      sha256: z
+        .string()
+        .regex(/^[0-9a-f]{64}$/)
+        .optional(),
     }),
   ),
   /**

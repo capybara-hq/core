@@ -24,6 +24,8 @@ describe("configFields", () => {
       "auth.trustedIdentitySources",
       "runtime.orgConcurrency",
       "tools.git.enabled",
+      "sharing.external",
+      "sharing.maxExpiryDays",
       "subagents.maxDepth",
       "subagents.maxConcurrentPerConversation",
       "subagents.maxDispatchesPerRun",

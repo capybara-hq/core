@@ -6,6 +6,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vites
 import type { KernelConfig } from "../../src/config/schema.js";
 import { conversationTopic, EventLog } from "../../src/conversations/event-log.js";
 import type { ConversationEvent } from "../../src/conversations/events.js";
+import { PromptSuggestionStore } from "../../src/conversations/prompt-suggestion-store.js";
 import { createBus, createBusSubscriber } from "../../src/ctx/bus.js";
 import { createKeyring } from "../../src/ctx/secrets.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
@@ -145,6 +146,22 @@ const deltasIn = (msgs: SseMessage[]) =>
     );
 const finishedCount = (msgs: SseMessage[]) =>
   eventsIn(msgs).filter((e) => e.type === "run_finished").length;
+/**
+ * The log once the conversation's `n`th prompt suggestion usage event is written: that event
+ * follows `run_finished`, so a replay compared with the log must wait for it too.
+ */
+const suggestionSettled = (db: KernelSchemaDb, convId: string, n: number) =>
+  waitFor(
+    async () => {
+      const evs = await eventsOf(db, convId);
+      const count = evs.filter(
+        (e) => e.type === "usage" && e.payload.purpose === "suggestion",
+      ).length;
+      return count >= n ? evs : null;
+    },
+    15_000,
+    `${n} suggestion usage event(s)`,
+  );
 const textOf = (e: ConversationEvent | undefined) =>
   e?.type === "assistant_message"
     ? e.payload.content.flatMap((b) => (b.type === "text" ? [b.text] : [])).join("")
@@ -359,6 +376,8 @@ describe("会话 SSE（单副本 api+worker）", () => {
           return [];
         },
       },
+      k.app.get(PromptSuggestionStore),
+      { promptSuggestionsEnabled: async () => true },
     );
     vi.useFakeTimers({ toFake: ["setInterval", "clearInterval"] });
     try {
@@ -436,7 +455,7 @@ describe("会话 SSE（单副本 api+worker）", () => {
       expect(deltas.length).toBeGreaterThan(1);
       expect(deltas.map((d) => d.text).join("")).toBe("hello world");
       expect(textOf(evs[iAssistant])).toBe("hello world");
-      // delta 出现在 assistant_message 之前
+      // the deltas come before the assistant_message
       const firstDelta = s.messages.findIndex((m) => m.event === "delta");
       const assistantMsg = s.messages.findIndex(
         (m) => m.event === "event" && JSON.parse(m.data as string).type === "assistant_message",
@@ -445,6 +464,136 @@ describe("会话 SSE（单副本 api+worker）", () => {
     } finally {
       s.close();
     }
+  });
+
+  describe("prompt suggestions", () => {
+    const suggestionsIn = (msgs: SseMessage[]) =>
+      msgs
+        .filter((m) => m.event === "suggestion")
+        .map(
+          (m) => JSON.parse(m.data as string) as { runId: string; afterSeq: number; text: string },
+        );
+    const publish = (message: unknown) =>
+      redis.publish(`cap:kernel:${conversationTopic(convId)}`, JSON.stringify(message));
+    /** Resolves once the stream has processed everything queued before a `changed` hint. */
+    const drained = async (s: SseClient) => {
+      await publish({ kind: "changed", what: "title" });
+      await s.until((m) => m.some((x) => x.event === "changed"), 10_000, "changed frame");
+    };
+    /** A completed run whose suggestion is stored (the model-fake `suggest:` line). */
+    async function suggested(): Promise<{ runId: string; afterSeq: number }> {
+      await postMessage(owner.req, orgId, convId, "suggest:Next step");
+      const stored = await waitFor(
+        async () => k.app.get(PromptSuggestionStore).get(convId),
+        15_000,
+        "stored suggestion",
+      );
+      return { runId: stored.runId, afterSeq: stored.afterSeq };
+    }
+
+    it("a published prompt_suggestion reaches an open stream as `event: suggestion`", async () => {
+      const s = await openSse(streamUrl(k, orgId, convId), { cookie: owner.cookie() });
+      try {
+        await publish({
+          kind: "prompt_suggestion",
+          conversationId: convId,
+          runId: "run-x",
+          afterSeq: 7,
+          text: "Run the tests",
+        });
+        await s.until((m) => m.some((x) => x.event === "suggestion"), 10_000, "suggestion frame");
+        expect(suggestionsIn(s.messages)).toEqual([
+          { runId: "run-x", afterSeq: 7, text: "Run the tests" },
+        ]);
+      } finally {
+        s.close();
+      }
+    });
+
+    it("drops a malformed prompt_suggestion message", async () => {
+      const s = await openSse(streamUrl(k, orgId, convId), { cookie: owner.cookie() });
+      try {
+        const base = { kind: "prompt_suggestion", conversationId: convId, runId: "r", text: "t" };
+        await publish({ ...base, afterSeq: 1.5 });
+        await publish({ ...base, afterSeq: "3" });
+        await publish({ ...base, afterSeq: 3, text: 5 });
+        await publish({
+          kind: "prompt_suggestion",
+          conversationId: convId,
+          afterSeq: 3,
+          text: "t",
+        });
+        await drained(s);
+        expect(suggestionsIn(s.messages)).toEqual([]);
+      } finally {
+        s.close();
+      }
+    });
+
+    it("sends a fresh stored suggestion after the catch-up on open", async () => {
+      const { runId, afterSeq } = await suggested();
+      const s = await openSse(streamUrl(k, orgId, convId), { cookie: owner.cookie() });
+      try {
+        await s.until((m) => m.some((x) => x.event === "suggestion"), 10_000, "suggestion frame");
+        expect(suggestionsIn(s.messages)).toEqual([{ runId, afterSeq, text: "Next step" }]);
+        const frame = s.messages.findIndex((x) => x.event === "suggestion");
+        const finished = s.messages.findIndex(
+          (x) => x.event === "event" && JSON.parse(x.data as string).type === "run_finished",
+        );
+        expect(finished).toBeGreaterThanOrEqual(0);
+        expect(finished).toBeLessThan(frame);
+      } finally {
+        s.close();
+      }
+    });
+
+    it("a stale stored suggestion is not sent and its key is deleted", async () => {
+      const { runId } = await suggested();
+      const store = k.app.get(PromptSuggestionStore);
+      // afterSeq 0: the log has a user_message above it
+      await store.put(convId, { runId, afterSeq: 0, text: "Old", createdAt: Date.now() });
+      const s = await openSse(streamUrl(k, orgId, convId), { cookie: owner.cookie() });
+      try {
+        await waitFor(async () => (await store.get(convId)) === null, 10_000, "key deleted");
+        await drained(s);
+        expect(suggestionsIn(s.messages)).toEqual([]);
+      } finally {
+        s.close();
+      }
+    });
+
+    it("deleting a stale suggestion keeps a newer one written since the read", async () => {
+      const { runId } = await suggested();
+      const store = k.app.get(PromptSuggestionStore);
+      const stale = { runId, afterSeq: 0, text: "Old", createdAt: 1 };
+      const newer = { runId, afterSeq: 1, text: "New", createdAt: 2 };
+      await store.put(convId, newer);
+      await store.delete(convId, stale);
+      expect(await store.get(convId)).toEqual(newer);
+      await store.delete(convId, newer);
+      expect(await store.get(convId)).toBeNull();
+    });
+
+    it("sends nothing on open while the org switch is off", async () => {
+      const { runId, afterSeq } = await suggested();
+      const res = await owner.req({
+        method: "PATCH",
+        url: `/api/v1/orgs/${orgId}/settings`,
+        payload: { promptSuggestions: "off" },
+      });
+      expect(res.statusCode, res.body).toBe(200);
+      const s = await openSse(streamUrl(k, orgId, convId), { cookie: owner.cookie() });
+      try {
+        await drained(s);
+        expect(suggestionsIn(s.messages)).toEqual([]);
+        expect(await k.app.get(PromptSuggestionStore).get(convId)).toMatchObject({
+          runId,
+          afterSeq,
+        });
+      } finally {
+        s.close();
+      }
+    });
   });
 
   it("a compaction progress bus message reaches the stream as `event: compaction`", async () => {
@@ -485,45 +634,49 @@ describe("会话 SSE（单副本 api+worker）", () => {
     }
   });
 
-  it("after=<seq> 只回放其后的事件；Last-Event-ID 优先于 after，重连不重复不遗漏", async () => {
+  it("after=<seq> replays only later events; Last-Event-ID wins over after; a reconnect neither repeats nor misses", async () => {
+    // a manual title: no title call, whose usage event would land after run_finished too
+    const renamed = await owner.req({
+      method: "PATCH",
+      url: `/api/v1/orgs/${orgId}/conversations/${convId}`,
+      payload: { title: "Replay" },
+    });
+    expect(renamed.statusCode, renamed.body).toBe(200);
     await postMessage(owner.req, orgId, convId, "echo:one");
-    await waitForTerminal(db, convId, 1);
-    const all = await eventsOf(db, convId);
+    const all = await suggestionSettled(db, convId, 1);
     const mid = all[2]?.seq as number;
 
     const a = await openSse(streamUrl(k, orgId, convId, `?after=${mid}`), {
       cookie: owner.cookie(),
     });
     try {
-      await a.until((m) => finishedCount(m) === 1, 10_000, "replay");
-      expect(eventsIn(a.messages).map((e) => e.seq)).toEqual(
-        all.filter((e) => e.seq > mid).map((e) => e.seq),
-      );
+      const want = all.filter((e) => e.seq > mid).map((e) => e.seq);
+      await a.until((m) => eventsIn(m).length >= want.length, 10_000, "replay");
+      expect(eventsIn(a.messages).map((e) => e.seq)).toEqual(want);
     } finally {
       a.close();
     }
 
-    // 断线：期间又有一轮运行
+    // disconnected: another run happens meanwhile
     const lastSeen = all.at(-1)?.seq as number;
     await postMessage(owner.req, orgId, convId, "echo:two");
-    await waitForTerminal(db, convId, 2);
+    const now = await suggestionSettled(db, convId, 2);
     const b = await openSse(streamUrl(k, orgId, convId, "?after=0"), {
       cookie: owner.cookie(),
       "last-event-id": String(lastSeen),
     });
     try {
-      await b.until((m) => finishedCount(m) === 1, 10_000, "reconnect replay");
-      const now = await eventsOf(db, convId);
-      expect(eventsIn(b.messages).map((e) => e.seq)).toEqual(
-        now.filter((e) => e.seq > lastSeen).map((e) => e.seq),
-      );
-      // 继续实时推送，且不重复
+      const replay = now.filter((e) => e.seq > lastSeen).map((e) => e.seq);
+      await b.until((m) => eventsIn(m).length >= replay.length, 10_000, "reconnect replay");
+      expect(eventsIn(b.messages).map((e) => e.seq)).toEqual(replay);
+      // live pushes continue without repeats
       await postMessage(owner.req, orgId, convId, "echo:three");
-      await b.until((m) => finishedCount(m) === 2, 15_000, "live after replay");
+      const final = await suggestionSettled(db, convId, 3);
+      const live = final.filter((e) => e.seq > lastSeen).map((e) => e.seq);
+      await b.until((m) => eventsIn(m).length >= live.length, 15_000, "live after replay");
       const seqs = eventsIn(b.messages).map((e) => e.seq);
       expect(new Set(seqs).size).toBe(seqs.length);
-      const final = await eventsOf(db, convId);
-      expect(seqs).toEqual(final.filter((e) => e.seq > lastSeen).map((e) => e.seq));
+      expect(seqs).toEqual(live);
     } finally {
       b.close();
     }

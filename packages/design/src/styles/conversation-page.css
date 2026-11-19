@@ -495,9 +495,20 @@ span.cb-title-btn {
 .cb-composer-options.cb-btn .cb-icon {
   flex: none;
 }
+/* The prompt suggestion's touch button (§6.16.2, state `suggestion`): before send, keeps its size. */
+.cb-composer-bar > .cb-composer-suggestion-use.cb-btn {
+  flex: none;
+}
 @media (max-width: 639px) {
   .cb-composer-pickers {
     display: none;
+  }
+  /* A prompt suggestion is one line on a phone, cut with an ellipsis (§6.16.2). */
+  .cb-composer-input[data-suggestion="true"],
+  .cb-composer-input[data-suggestion="true"]::placeholder {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
   .cb-composer-bar > .cb-composer-options.cb-btn {
     display: inline-flex;

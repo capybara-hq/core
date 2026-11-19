@@ -1,7 +1,13 @@
 import { MEDIA_NAME_MAX_CHARS, ToolError, type ToolSpec } from "@capybara-hq/plugin-sdk";
 import { isValidArtifactName } from "../../../conversations/events.js";
 import type { BuiltinTool } from "../../registry.js";
-import { NO_STORAGE, NO_STORAGE_REASON, storeArtifacts } from "../artifacts.js";
+import {
+  NO_STORAGE,
+  NO_STORAGE_REASON,
+  REPEAT_TEXT,
+  type StoredArtifact,
+  storeArtifacts,
+} from "../artifacts.js";
 import {
   checkPath,
   checkPathShape,
@@ -21,9 +27,11 @@ const SPEC: ToolSpec = {
   description:
     "Deliver a file from this conversation's sandbox to the user as a downloadable artifact. Use " +
     "it when the user should receive a file you produced (a report, chart, spreadsheet, archive " +
-    "and so on); files that stay in the sandbox are not visible to the user. Delivers one file " +
-    "per call; archive a directory first (e.g. tar -czf with Bash). The file size is " +
-    "limited (100 MB by default). Do not use it for intermediate files the user does not need.",
+    "and so on); files that stay in the sandbox are not visible to the user. Each call delivers " +
+    "only that one file, so a directory must first be packed into one archive. The file size is " +
+    "limited (100 MB by default). Do not use it for intermediate files the user does not need. " +
+    "An HTML file is shown on its own: files it references by relative path are not delivered " +
+    "with it, so inline or embed them.",
   inputSchema: {
     type: "object",
     properties: {
@@ -95,7 +103,7 @@ export function contentTypeFor(name: string): string {
 
 const notFound = (path: string) => `File not found: ${clip(path, 200)}. Check the path with Glob.`;
 const isDirectory = (path: string) =>
-  `${clip(path, 200)} is a directory; deliver one file, e.g. archive the directory first with Bash (tar -czf) and retry.`;
+  `${clip(path, 200)} is a directory; pass one file (pack the directory into one archive first).`;
 const tooLarge = (path: string, size: number, max: number) =>
   `File ${clip(path, 200)} is ${size} bytes, over the delivery limit of ${max} bytes; compress or split it with Bash and retry.`;
 const BAD_NAME =
@@ -155,7 +163,16 @@ export function sandboxDeliverTool(deps: SandboxToolDeps): BuiltinTool {
       const [stored] = await storeArtifacts(deps, ctx, [
         { name, contentType, data, sourcePath: path },
       ]);
-      const artifactId = (stored as { artifactId: string }).artifactId;
+      const { artifactId, repeatOf } = stored as StoredArtifact;
+      if (repeatOf !== undefined) {
+        return {
+          content: [{ type: "text", text: withNotices(notices, REPEAT_TEXT(name, repeatOf)) }],
+          display: display(
+            `已交付过（内容相同）${clip(name, 160)}`,
+            `Already delivered (same content): ${clip(name, 160)}`,
+          ),
+        };
+      }
       const text = `Delivered ${name} (${data.byteLength} bytes, ${contentType}) to the user as artifact ${artifactId}; the user can download it from the conversation.`;
       return {
         content: [{ type: "text", text: withNotices(notices, text) }],

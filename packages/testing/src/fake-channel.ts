@@ -60,6 +60,22 @@ export interface FakeChannelSent {
   at: number;
 }
 
+/** A file the bot uploaded (`POST /send-file`). */
+export interface FakeChannelSentFile {
+  appId: string;
+  target: ChannelTarget;
+  name: string;
+  contentType: string;
+  kind: "image" | "file";
+  data: Buffer;
+  sha256: string;
+  messageId: string;
+  pid: number;
+  idempotencyKey?: string;
+  locale?: "zh" | "en";
+  at: number;
+}
+
 /** 平台上的一个用户（OAuth 登录时可用 `as=<externalId>` 选中）。 */
 export interface FakeChannelUser {
   externalId: string;
@@ -86,10 +102,10 @@ export interface FakeDirectoryBook {
   starts(): number;
 }
 
-/** Which `/send` or `/update` requests a {@link FakeChannelServer.failNext} failure applies to. */
+/** Which `/send`, `/update` or `/send-file` requests a {@link FakeChannelServer.failNext} failure applies to. */
 export interface FakeChannelFailMatch {
   chatId?: string;
-  /** The message's text contains it. */
+  /** The message's text (for `/send-file`: the file name) contains it. */
   textIncludes?: string;
 }
 
@@ -127,6 +143,10 @@ export interface FakeChannelServer {
   updated: FakeChannelSent[];
   /** 命中幂等键、被平台去重的发送请求（没有产生新消息）。 */
   duplicateSends: FakeChannelSent[];
+  /** Files the bot uploaded (`/send-file`), after dedupe. */
+  sentFiles: FakeChannelSentFile[];
+  /** `/send-file` requests that hit an idempotency key already seen (no new message). */
+  duplicateFiles: FakeChannelSentFile[];
   /** 插件工具发的公告。 */
   posts: FakeChannelPost[];
   /** Calls of `fake-im` setup checks (`POST /checks`). */
@@ -144,7 +164,7 @@ export interface FakeChannelServer {
    * fail, so a late delivery from an earlier test can take the failure meant for the request under test.
    */
   failNext(
-    path: "/send" | "/update",
+    path: "/send" | "/update" | "/send-file",
     status: number,
     count?: number,
     retryAfterMs?: number,
@@ -159,7 +179,7 @@ export interface FakeChannelServer {
    * `onlyCards`: count and delay only requests whose message carries cards.
    */
   delayNext(
-    path: "/send" | "/update",
+    path: "/send" | "/update" | "/send-file",
     delayMs: number,
     opts?: { count?: number; onlyCards?: boolean },
   ): void;
@@ -204,6 +224,8 @@ export async function startFakeChannelServer(
   const sent: FakeChannelSent[] = [];
   const updated: FakeChannelSent[] = [];
   const duplicateSends: FakeChannelSent[] = [];
+  const sentFiles: FakeChannelSentFile[] = [];
+  const duplicateFiles: FakeChannelSentFile[] = [];
   const posts: FakeChannelPost[] = [];
   const checks: FakeChannelCheckCall[] = [];
   let checkHold: Promise<void> | null = null;
@@ -214,6 +236,7 @@ export async function startFakeChannelServer(
     { user: FakeChannelUser; nonce: string; clientId: string; challenge: string | null }
   >();
   const byKey = new Map<string, string>();
+  const fileByKey = new Map<string, string>();
   const failures: {
     path: string;
     status: number;
@@ -266,16 +289,57 @@ export async function startFakeChannelServer(
     const parsed = JSON.parse(body) as {
       target?: { chatId?: string };
       message?: { text?: string };
+      file?: { name?: string };
     };
     const matches = (m: FakeChannelFailMatch | undefined) =>
       m === undefined ||
       ((m.chatId === undefined || m.chatId === parsed.target?.chatId) &&
-        (m.textIncludes === undefined || (parsed.message?.text ?? "").includes(m.textIncludes)));
+        (m.textIncludes === undefined ||
+          (parsed.message?.text ?? parsed.file?.name ?? "").includes(m.textIncludes)));
     const f = failures.find((x) => x.path === path && x.left > 0 && matches(x.match));
     if (f) {
       f.left--;
       if (f.delayMs !== undefined) await new Promise((r) => setTimeout(r, f.delayMs));
       json(res, f.status, { retryAfterMs: f.retryAfterMs ?? null, reason: f.reason ?? null });
+      return;
+    }
+    if (path === "/send-file") {
+      const fb = JSON.parse(body) as {
+        appId: string;
+        target: ChannelTarget;
+        file: { name: string; contentType: string; kind: "image" | "file"; data: string };
+        idempotencyKey?: string;
+        locale?: "zh" | "en";
+      };
+      const data = Buffer.from(fb.file.data, "base64");
+      const fkey = fb.idempotencyKey ? `${fb.appId}\u0000${fb.idempotencyKey}` : undefined;
+      const fseen = fkey !== undefined ? fileByKey.get(fkey) : undefined;
+      const fid = fseen ?? `of_${++seq}`;
+      const frec: FakeChannelSentFile = {
+        appId: fb.appId,
+        target: fb.target,
+        name: fb.file.name,
+        contentType: fb.file.contentType,
+        kind: fb.file.kind,
+        data,
+        sha256: createHash("sha256").update(data).digest("hex"),
+        messageId: fid,
+        pid: pidOf(req),
+        ...(fb.idempotencyKey !== undefined && { idempotencyKey: fb.idempotencyKey }),
+        ...(fb.locale !== undefined && { locale: fb.locale }),
+        at: Date.now(),
+      };
+      if (fseen !== undefined && dedupe) duplicateFiles.push(frec);
+      else {
+        sentFiles.push(frec);
+        if (fkey !== undefined && fseen === undefined) fileByKey.set(fkey, fid);
+      }
+      const fd = delays.find((x) => x.path === path && x.left > 0);
+      if (fd) {
+        fd.left--;
+        await new Promise((r) => setTimeout(r, fd.delayMs));
+      }
+      json(res, 200, { messageId: fid });
       return;
     }
     const b = JSON.parse(body) as Omit<FakeChannelSent, "messageId" | "pid" | "at"> & {
@@ -374,7 +438,7 @@ export async function startFakeChannelServer(
       const u = new URL(req.url ?? "/", "http://x");
       const route = `${req.method} ${u.pathname}`;
       if (route === "GET /connect") return connect(req, res, u);
-      if (route === "POST /send" || route === "POST /update") {
+      if (route === "POST /send" || route === "POST /update" || route === "POST /send-file") {
         return sendOrUpdate(req, res, u.pathname);
       }
       if (route === "POST /bot/verify") {
@@ -431,6 +495,8 @@ export async function startFakeChannelServer(
     sent,
     updated,
     duplicateSends,
+    sentFiles,
+    duplicateFiles,
     posts,
     checks,
     holdChecks(hold) {

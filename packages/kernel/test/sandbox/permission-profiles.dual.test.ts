@@ -673,3 +673,58 @@ describe("a device whose runtime cannot enforce the restricted profiles", () => 
     }
   });
 });
+
+describe("a per-call sandbox escalation across replicas", () => {
+  it("approved on replica B, it runs on replica A outside the sandbox once; the next call is sandboxed", async () => {
+    const deviceId = await cloudDevice();
+    const conv = await conversation(deviceId);
+    const bound = await call(conv, "Bash", { command: "echo bound", description: "Bind" }, 1);
+    expect(bound.payload.isError, bound.payload.content).toBe(false);
+    await setProfile(conv, "request-approval");
+    const justification = "The build writes the system cache outside the project.";
+    await postMessage(
+      ownerA,
+      orgId,
+      conv,
+      `tool:Bash:${JSON.stringify({
+        command: "echo escalated",
+        description: "Escalate",
+        sandbox: "escalated",
+        justification,
+      })}`,
+    );
+    const ask = await pendingAsk(conv);
+    expect(ask.detail as Record<string, unknown>).toMatchObject({
+      kind: "command",
+      command: "echo escalated",
+      escalation: { justification },
+      workingRoot: "/workspace",
+    });
+    const res = await ownerB({
+      method: "POST",
+      url: `/api/v1/orgs/${orgId}/approvals/${ask.id}/decision`,
+      payload: { decision: "approve", scope: "once" },
+    });
+    expect(res.statusCode, res.body).toBe(200);
+    await waitForTerminal(db, conv, 2, 60_000);
+    const ran = (await results(conv)).at(-1) as ToolResult;
+    expect(ran.payload.isError, ran.payload.content).toBe(false);
+    expect(ran.payload.content).toContain("escalated");
+    expect(ran.payload.review).toMatchObject({ by: "person", sandbox: "escalated" });
+    const execs = (await intentsOf(conv)).filter((i) => i.method === "exec");
+    const escalatedExec = execs.at(-1);
+    expect(escalatedExec?.scope).toMatchObject({
+      profile: "request-approval",
+      filesystem: { kind: "device" },
+      network: { kind: "environment" },
+    });
+    expect(escalatedExec?.permission_grant_id).not.toBeNull();
+    // the next call of the conversation runs in the sandbox again: the grant was that call's only
+    const next = await call(conv, "Bash", { command: "echo again", description: "Again" }, 3);
+    expect(next.payload.isError, next.payload.content).toBe(false);
+    const last = (await intentsOf(conv)).filter((i) => i.method === "exec").at(-1);
+    expect(last?.scope.filesystem).toEqual(scopedTo("/workspace"));
+    expect(last?.permission_grant_id).toBeNull();
+    expect((await approvalsOf(conv)).filter((a) => a.status === "pending")).toEqual([]);
+  });
+});

@@ -19,6 +19,7 @@ import {
   type ForcedPseudo,
   Greeting,
   ImageOutput,
+  ImagePlaceholder,
   ImagePreview,
   MarkdownPreview,
   NetworkBlockedFacts,
@@ -969,6 +970,30 @@ function ChartOutput({ id, hover }: { id: string; hover?: boolean }) {
   );
 }
 
+/** A wide placeholder above the delivered 16:9 image of the same call. */
+function GeneratingWide({ id }: { id: string }) {
+  const src = useChartImage(360, 202.5, 1280 / 360);
+  return (
+    <Block id={id}>
+      <Stack gap={8}>
+        <ImagePlaceholder ratio={FI.generating.wide.ratio} index={0} count={1} />
+        {src ? (
+          <ImageOutput
+            src={src}
+            name={FI.image.name}
+            size={bytes(FI.image.size)}
+            ratio="16:9"
+            onOpen={noop}
+            onDownload={noop}
+          />
+        ) : (
+          <RefPending />
+        )}
+      </Stack>
+    </Block>
+  );
+}
+
 function fileOutputsBlocks(): ReactNode {
   return (
     <>
@@ -980,6 +1005,24 @@ function fileOutputsBlocks(): ReactNode {
       </Block>
       <ChartOutput id="file-outputs-image" />
       <ChartOutput id="file-outputs-image-hover" hover />
+      <Block id="file-outputs-generating">
+        <ImagePlaceholder ratio={FI.generating.ratio} index={0} count={1} />
+      </Block>
+      <Block id="file-outputs-generating-several">
+        <Stack gap={8}>
+          <ImagePlaceholder
+            ratio={FI.generating.several.ratio}
+            index={0}
+            count={FI.generating.several.count}
+          />
+          <ImagePlaceholder
+            ratio={FI.generating.several.ratio}
+            index={1}
+            count={FI.generating.several.count}
+          />
+        </Stack>
+      </Block>
+      <GeneratingWide id="file-outputs-generating-wide" />
       <Block id="file-outputs-text">
         <TextOutput
           name={FI.text.name}
@@ -1052,11 +1095,14 @@ function PreviewBlock({
   id,
   file,
   state = "ready",
+  share,
   children,
 }: {
   id: string;
   file: FixtureFile;
   state?: "ready" | "failed";
+  /** The Share action (§6.16.22): offered, or offered with the shared marker. */
+  share?: "unshared" | "shared";
   children: ReactNode;
 }) {
   return (
@@ -1069,6 +1115,7 @@ function PreviewBlock({
           files: FI.many.map((f) => ({ id: f.id, name: f.name })),
           current: file.id,
           onSwitch: noop,
+          ...(share ? { onShare: noop, shared: share === "shared" } : {}),
           onDownload: noop,
           onFullscreen: noop,
           onClose: noop,
@@ -1117,6 +1164,12 @@ function filePreviewBlocks(): ReactNode {
           hint={false}
           onDownload={noop}
         />
+      </PreviewBlock>
+      <PreviewBlock id="file-preview-unshared" file={FI.text} share="unshared">
+        <MarkdownPreview text={FI.markdownPreview} />
+      </PreviewBlock>
+      <PreviewBlock id="file-preview-shared" file={FI.text} share="shared">
+        <MarkdownPreview text={FI.markdownPreview} />
       </PreviewBlock>
     </>
   );

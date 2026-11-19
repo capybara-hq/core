@@ -106,6 +106,13 @@ export interface BuiltinCallContext extends ToolCallContext {
    * runs. Absent for a call the review does not cover.
    */
   reviewedAgainstRoot?: string;
+  /**
+   * A reviewed `Bash` call under a restricted profile (per-call sandbox escalation): `escalated`
+   * when this call was approved to run outside the OS sandbox, `available` when it runs sandboxed
+   * but could be retried with `sandbox: "escalated"` on this device. Absent otherwise (Full access,
+   * an unattended run, a device or org that forbids it): no escalation hint is given.
+   */
+  sandboxEscalation?: "available" | "escalated";
   /** The parent run of a sub-agent's run (absent for a top-level run). */
   parentRunId?: string;
   /**
@@ -172,6 +179,12 @@ export interface BuiltinTool {
    * per-org extension-point default). See {@link ToolListingScope} for what a listing passes.
    */
   unavailable?: (ctx: ToolListingScope) => Promise<string | null> | string | null;
+  /**
+   * The spec to list for this org now (kernel-internal; only the agent builtins loop calls it, after
+   * `unavailable` returned null), when it depends on the org: the listing shows it, and its hash is
+   * the spec's hash. Absent: {@link BuiltinTool.spec}.
+   */
+  specFor?: (scope: ToolListingScope) => Promise<ToolSpec> | ToolSpec;
   /**
    * A policy key derived from the validated input (Platform tool spec §6.2), or null to use the
    * tool key. With a key, agent and parent policies, grants and approvals are keyed by it (an
@@ -679,7 +692,7 @@ export class ToolRegistry {
       }
       // `Agent`: the description lists this definition's roster (sub-agents spec §4.3); with an
       // empty roster there is nothing to dispatch, so the tool is not offered at all
-      let spec = b.spec;
+      let spec = b.specFor ? await b.specFor(scope) : b.spec;
       if (name === AGENT_TOOL) {
         const roster = await resolveRoster(this.db.db, orgId, { subagents: def.subagents });
         if (roster.length === 0) continue;

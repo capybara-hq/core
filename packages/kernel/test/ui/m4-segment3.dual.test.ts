@@ -263,6 +263,7 @@ describe("M4 第三段验收（双副本）", () => {
       keyring: createKeyring(Buffer.alloc(32, 9), []),
       embedTokens: new EmbedTokens(createKeyring(Buffer.alloc(32, 9), [])),
       hooks: undefined,
+      shares: undefined,
       runWorkers: false,
       log: { info: () => {}, warn: () => {}, error: () => {} },
     };

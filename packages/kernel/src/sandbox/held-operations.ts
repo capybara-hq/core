@@ -9,6 +9,7 @@ import {
   SandboxScopeDeniedError,
 } from "@capybara-hq/plugin-sdk";
 import { assertManagedArtifactAdmitted } from "../background/launch.js";
+import { isFullExecutionScope } from "./operation-authority-types.js";
 
 /** A callback can use native operations; it cannot obtain a new authority or change lifecycle. */
 export type HeldProvider = Pick<
@@ -64,7 +65,7 @@ export async function assertPermissionSupport(
   if (
     support.version !== 1 ||
     (method === "backgroundStart" && (!support.background || !provider.background)) ||
-    (scope.profile === "full-access"
+    (isFullExecutionScope(scope)
       ? !support.fullAccess
       : !support.restricted?.filesystem ||
         !support.restricted.network ||

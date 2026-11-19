@@ -12,7 +12,8 @@ import { fillCopy } from "./tool-copy";
 
 // The file preview in the right panel (spec §6.16.22): the frame (header and body) and the built-in
 // previewers (image, text, Markdown, CSV / TSV, none). Previewers never run in the stream; a slow or
-// failing one affects only this panel. There is no Share (sharing belongs to Artifacts).
+// failing one affects only this panel. Share (file sharing design §5) is an icon button before
+// Download when the caller passes `onShare`.
 
 /** An extension block that failed to load (§6.16): the name, the reason and Retry, in place. */
 export function LoadFailed({
@@ -60,6 +61,13 @@ export type FilePreviewHeader = {
   previewers?: { id: string; title: string }[];
   previewer?: string;
   onPreviewer?(id: string): void;
+  /**
+   * Opens the share dialog: a Share icon button right before Download. Only for the
+   * conversation's owner and a file that is not removed (the caller decides).
+   */
+  onShare?(): void;
+  /** The file has a live share: the Share button carries the marker and reads "Shared". */
+  shared?: boolean;
   onDownload(): void;
   onFullscreen(): void;
   onClose(): void;
@@ -154,6 +162,22 @@ export function FilePreviewFrame({
           {h.version ? <span className="cb-faint cb-small cb-rpanel-meta">{h.version}</span> : null}
           <span className="cb-rpanel-grow" />
           {previewerSwitch}
+          {h.onShare ? (
+            <IconButton
+              className="cb-share-btn"
+              data-share="true"
+              icon={
+                <>
+                  <Icon name="share" size={16} />
+                  {h.shared ? (
+                    <span className="cb-share-marker" data-part="share-marker" aria-hidden="true" />
+                  ) : null}
+                </>
+              }
+              label={t(h.shared ? "files.shared" : "files.share")}
+              onClick={h.onShare}
+            />
+          ) : null}
           <IconButton
             icon={<Icon name="download" size={16} />}
             label={t("files.download")}

@@ -77,7 +77,13 @@ import {
   isSessionGrantableRule,
   type ReviewVerdict,
 } from "../sandbox/review/index.js";
-import { buildPermissionCandidate } from "../sandbox/review/permission-candidate.js";
+import {
+  buildPermissionCandidate,
+  ESCALATION_RETRY_HINT,
+  ESCALATION_UNATTENDED_WHY,
+  escalationRefusedText,
+  isEscalatedCall,
+} from "../sandbox/review/permission-candidate.js";
 import { CommandReviewService } from "../sandbox/review/review.service.js";
 import { SandboxService } from "../sandbox/sandbox.service.js";
 import {
@@ -615,6 +621,8 @@ type ReviewOutcome =
        * the managed route refuses as stale when the held device context names another root.
        */
       reviewedAgainst?: string | undefined;
+      /** A restricted `Bash` call's escalation state, for the tool's sandbox hints. */
+      sandboxEscalation?: "available" | "escalated" | undefined;
     }
   /** The run waits on the call's `command` approval. */
   | { kind: "wait"; wait: WaitingFor }
@@ -1282,7 +1290,11 @@ export class ToolPipeline {
       return fail(reviewed.content, outKey);
     }
     review = reviewed.review;
-    const reviewedRoots = { workingRoot: reviewed.workingRoot, against: reviewed.reviewedAgainst };
+    const reviewedRoots = {
+      workingRoot: reviewed.workingRoot,
+      against: reviewed.reviewedAgainst,
+      ...(reviewed.sandboxEscalation !== undefined && { escalation: reviewed.sandboxEscalation }),
+    };
     if (reviewed.commandAsk !== undefined)
       authorization = approvalAuthorization(reviewed.commandAsk);
 
@@ -1851,12 +1863,29 @@ export class ToolPipeline {
       entersDevice(tool.key, input)
     );
   }
-  /** This branch is unreachable for production legacy handlers until the caller cutover. */
+  /**
+   * The permission review of a managed call, with the escalation state a continued restricted
+   * `Bash` call carries to its tool (its sandbox hints: retry with `sandbox: "escalated"` only
+   * where this device and org allow it).
+   */
   private async reviewPermissionCall(
     ctx: ToolStepContext,
     call: ToolCall,
     tool: ResolvedTool,
     input: unknown,
+  ): Promise<ReviewOutcome | null> {
+    const note: { escalation?: "available" | "escalated" } = {};
+    const outcome = await this.reviewPermissionCallWith(ctx, call, tool, input, note);
+    return outcome?.kind === "continue" && note.escalation !== undefined
+      ? { ...outcome, sandboxEscalation: note.escalation }
+      : outcome;
+  }
+  private async reviewPermissionCallWith(
+    ctx: ToolStepContext,
+    call: ToolCall,
+    tool: ResolvedTool,
+    input: unknown,
+    note: { escalation?: "available" | "escalated" },
   ): Promise<ReviewOutcome | null> {
     if (
       !this.permissionAuthority ||
@@ -1916,7 +1945,14 @@ export class ToolPipeline {
         });
       }
     }
-    if (facts.unattended) return null;
+    if (facts.unattended) {
+      // an unattended run never runs a call outside the sandbox: no one could approve it
+      if (isEscalatedCall(tool.key, input)) {
+        const content = escalationRefusedText(ESCALATION_UNATTENDED_WHY, facts.workingRoot);
+        return { kind: "result", content, review: denyRecord("rule", null, content) };
+      }
+      return null;
+    }
     if (facts.availability.state !== "supported") {
       // still unverified: the conservative command review decides (Full access too), but a call
       // that needs more reach is refused now: admission could never run what an approval allowed
@@ -1937,8 +1973,13 @@ export class ToolPipeline {
         content: commandTooLongText(textField(input, "command").length),
         review: denyRecord("rule", null, "The command exceeds the review limit"),
       };
+    const escalated = isEscalatedCall(tool.key, input);
+    // the escalation state the tool's hints read: only a restricted Bash call on a device and
+    // org whose ceiling allows running outside the sandbox
+    if (tool.key === "Bash" && facts.profile !== "full-access" && !facts.escalationRefusal)
+      note.escalation = escalated ? "escalated" : "available";
     const built =
-      facts.profile === "full-access"
+      facts.profile === "full-access" && !escalated
         ? { kind: "in-scope" as const }
         : buildPermissionCandidate(
             {
@@ -1950,12 +1991,14 @@ export class ToolPipeline {
             facts,
             [device.home, device.deviceHome],
           );
-    if (built.kind === "unsupported")
-      return {
-        kind: "result",
-        content: built.message,
-        review: denyRecord("rule", null, built.message),
-      };
+    if (built.kind === "unsupported") {
+      // a Bash reach the restricted scope cannot grant: retrying outside the sandbox may
+      const content =
+        note.escalation === "available"
+          ? `${built.message}${ESCALATION_RETRY_HINT}`
+          : built.message;
+      return { kind: "result", content, review: denyRecord("rule", null, content) };
+    }
     const candidate = built.kind === "proposal" ? built.candidate : undefined;
     // a sensitive-command consent the person settled (no proposed reach): the call runs under
     // the base scope it was asked under; the approval adds nothing
@@ -2014,8 +2057,9 @@ export class ToolPipeline {
       );
       if (existingGrant) {
         if (
+          existingGrant.scopeKind !== candidate.scopeKind ||
           permissionScopeHash(existingGrant.expansion) !==
-          permissionScopeHash(candidate.permissionScope)
+            permissionScopeHash(candidate.permissionScope)
         )
           return {
             kind: "result",
@@ -2037,6 +2081,7 @@ export class ToolPipeline {
             profileRevision: facts.profileRevision,
             scopeRevision: facts.scopeRevision,
             decisionSource: existingGrant.source === "human" ? "human" : "review-model",
+            ...(candidate.escalation ? { sandbox: "escalated" as const } : {}),
           },
         };
       }
@@ -2062,6 +2107,7 @@ export class ToolPipeline {
       ...(ctx.conversationKind ? { conversationKind: ctx.conversationKind } : {}),
       permissionProfile: facts.profile,
       ...(candidate ? { permissionCandidate: candidate } : {}),
+      ...(note.escalation === "available" ? { escalationAvailable: true } : {}),
     });
     if (candidate && facts.profile === "approve-for-me") {
       await withTransactionFencePrelude(
@@ -2102,6 +2148,10 @@ export class ToolPipeline {
               : verdict.by === "classifier"
                 ? "review-model"
                 : "scope",
+          // the review model's allow issued this call's escalation grant: it runs unsandboxed
+          ...(candidate?.escalation && verdict.by === "classifier"
+            ? { sandbox: "escalated" as const }
+            : {}),
         },
       };
     // an ask: the sensitive-command consent (no proposed reach: approved, the call runs under the
@@ -2135,6 +2185,7 @@ export class ToolPipeline {
               ...(candidate.targetPath
                 ? { targetPath: candidate.targetPath, path: candidate.targetPath }
                 : {}),
+              ...(candidate.escalation ? { escalation: candidate.escalation } : {}),
             }
           : filePaths.length > 0
             ? {
@@ -2217,7 +2268,9 @@ export class ToolPipeline {
    */
   private personAllowRecord(ask: ApprovalRecord): ReviewRecord {
     const binding = ask.command?.permissionCandidate?.binding;
+    const escalated = ask.command?.permissionCandidate?.scopeKind === "sandbox-escalation";
     return {
+      ...(escalated ? { sandbox: "escalated" as const } : {}),
       ...(binding
         ? {
             profile: binding.profile,
@@ -2461,7 +2514,11 @@ export class ToolPipeline {
     callId: string,
     resume?: ToolResume,
     stepTools?: readonly ResolvedTool[],
-    reviewed?: { workingRoot?: string | undefined; against?: string | undefined },
+    reviewed?: {
+      workingRoot?: string | undefined;
+      against?: string | undefined;
+      escalation?: "available" | "escalated" | undefined;
+    },
   ): Promise<ExecOutcome> {
     const reviewedWorkingRoot = reviewed?.workingRoot;
     const reviewedAgainstRoot = reviewed?.against;
@@ -2495,6 +2552,8 @@ export class ToolPipeline {
       // and the root it was judged against, workspace included (B-18, the managed route)
       ...(tool.source.kind === "builtin" &&
         reviewedAgainstRoot !== undefined && { reviewedAgainstRoot }),
+      ...(tool.source.kind === "builtin" &&
+        reviewed?.escalation !== undefined && { sandboxEscalation: reviewed.escalation }),
       // a sub-agent works in its root conversation's sandbox (spec §10.1, at every depth)
       ...(tool.source.kind === "builtin" &&
         ctx.parent !== undefined && { sandboxConversationId: ctx.parent.rootConversationId }),

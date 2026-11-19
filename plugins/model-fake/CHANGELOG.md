@@ -1,5 +1,30 @@
 # @capybara-hq/plugin-model-fake
 
+## 0.1.0-rc.36
+
+### Patch Changes
+
+- 78000ea: Image generation returns distinct bytes per image index.
+- 9f8c8d5: The scripted model answers the `suggestion` purpose: `Suggestion: <first 40 chars of the earliest user text>`, `suggest:<text>` (exact reply, or a tool call for `suggest:tool:…`) and `suggest-fail:<kind>`.
+- Updated dependencies [eea8ef6]
+- Updated dependencies [9f8c8d5]
+  - @capybara-hq/plugin-sdk@0.1.0-rc.35
+
+## 0.1.0-rc.35
+
+### Patch Changes
+
+- Updated dependencies [40d039f]
+- Updated dependencies [45ff51f]
+  - @capybara-hq/plugin-sdk@0.1.0-rc.34
+
+## 0.1.0-rc.34
+
+### Patch Changes
+
+- Updated dependencies [909442f]
+  - @capybara-hq/plugin-sdk@0.1.0-rc.33
+
 ## 0.1.0-rc.33
 
 ### Patch Changes

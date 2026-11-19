@@ -194,8 +194,23 @@ describe("AgentMapTree (§6.16.28)", () => {
     expect(depth("复查发票核对结果")).toBe("2");
     expect(depth("抽查十张大额发票")).toBe("3");
     // A branch is a node followed by its children's column.
-    const branch = nodes()[1]?.closest('[data-part="agent-branch"]');
+    const branch = document
+      .querySelector('[data-part="agent-node"][data-id="am_d1"]')
+      ?.closest('[data-part="agent-branch"]');
     expect(branch?.querySelector(':scope > [data-part="agent-kids"]')).toBeTruthy();
+  });
+
+  it("draws siblings newest first: the agent dispatched last is on top", () => {
+    wrap(<AgentMapTree root={root} background={[]} onOpen={() => {}} now={NOW} />);
+    const kids = document.querySelector('[data-part="agent-kids"]') as HTMLElement;
+    const order = [
+      ...kids.querySelectorAll(
+        ':scope > .cb-amap-kid > [data-part="agent-branch"] > [data-part="agent-node"]',
+      ),
+    ].map((n) => n.getAttribute("data-id"));
+    // The fixture lists them in dispatch order, oldest first.
+    expect(order).toEqual(root.children.map((c) => c.id).reverse());
+    expect(order[0]).toBe("am_appendix");
   });
 
   it("formats tokens as the mockup does", () => {

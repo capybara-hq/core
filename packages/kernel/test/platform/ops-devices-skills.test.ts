@@ -556,7 +556,7 @@ describe("skills.get-change", () => {
       files: [{ path: "SKILL.md", size: expect.any(Number) }],
     });
     expect(JSON.stringify(r)).not.toContain("Steps.");
-    expect(String(r.skillChange.next)).toContain("agents never decide");
+    expect(String(r.skillChange.next)).toContain("decide it on the web, in the inbox");
     // another org admin and the requester read it; a member who did not ask does not
     await run("skills.get-change", { changeId }, ctxOf(adminId));
     await run("skills.get-change", { changeId }, ctxOf(memberId));
