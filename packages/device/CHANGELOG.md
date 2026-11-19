@@ -1,5 +1,114 @@
 # @capybara-hq/device
 
+## 0.1.0-rc.15
+
+### Minor Changes
+
+- 7f86c80: Permission profiles are active: the kernel and `capybara-device` speak device protocol 3 only,
+  every builtin enters a device through the managed operation route, and each run records its
+  permission context. A restricted profile also reads the instance's staged skills root
+  (read-only); the working root comes from the held instance's committed roots; an instance gone
+  after a dispatched operation keeps the outcome unknown and is rebuilt for the next call; a run
+  another member triggers in an owner's conversation runs without the owner's device. A
+  `GenerateImage` call with `file_path` takes the same permission review as `Write`: an outside
+  directory is asked about (or reviewed) and granted for that call only. The testing helpers run on
+  the activated kernel.
+  
+  The old public permission inputs are gone. The config key `devices.autoMode` and
+  `CAPYBARA_DEVICES__AUTO_MODE` now fail validation with a message that names `devices.fullAccess`
+  and `capybara config migrate-permissions`. The admin settings no longer read or write
+  `devicesAutoMode`, and the org settings no longer read or write `autoMode` (including
+  `deployment.autoMode`); use `devicesFullAccess` and `fullAccess`. The refusals are renamed
+  `org.full_access_not_allowed` and `deployment.full_access_not_allowed`. Stored old keys are still
+  converted by the permission configuration publication.
+  
+  Kernel: the old background launcher is gone. A background `Bash` task starts, is polled, stopped
+  and read only by its exact device reference; no session-id script runs any more. Tasks left from
+  the old launcher are handed to the legacy retirement and never signalled or read live. A refused
+  background start, and an old task's failed launch, are reported in actionable words instead of
+  the device's raw message.
+  
+  `capybara-device` drops its protocol 2 surface: the old connection and dispatch (`killTagged`,
+  `killAll` and unscoped operations are refused as unknown), the host and switching executors, the
+  daily `capybara-device mode` command (use `capybara-device ceiling set`), the Docker executor's
+  own commands and its startup marker reaper (the container now only hosts permission operations),
+  and the last-good fallback of a broken `policy.json` (it is refused until fixed).
+  Under protocol 3 the local `commands.log` records each exec and background start again (tag,
+  account, conversation, restricted or full isolation, exit code, the grants' source; never the
+  command or its environment) and every policy change from the deployment or the CLI.
+  Upgrading from a protocol 2 `capybara-device`: processes the old auto mode left running are not
+  searched for; restart the machine or kill leftovers from before the upgrade. A Docker-mode
+  device's old container is recreated at its first operation (a container format version), and a
+  container found without its bridge is recreated, never reconnected.
+  
+  The kernel never kills device work broadly any more: a crashed holder's operations are revoked
+  exactly (owed in the outbox before its record is forgotten, so a failed revoke is retried), and a
+  resumed, failed-update or quarantined instance revokes its started-or-unknown operations instead of
+  `killAll`; no stored background session id is signalled after a resume or a rebuild.
+
+### Patch Changes
+
+- c30ec7c: `commands.log` records an approved per-call sandbox escalation as `isolation: "full"` with
+  `grantSource: "call approval"` (decided by the operation's reach, never the command text).
+- 86b1422: `capybara-device`: on macOS, a restricted command whose write root contains an owner-denied path
+  (a project bound at the home directory, an approved `cd ~`) can no longer write the denied secret
+  paths (`~/.ssh`, `~/.aws`, `~/.netrc`, …) or the device's own state directory: their files cannot
+  be written, created, renamed or deleted, and the directories cannot be moved, removed or replaced
+  by a symbolic link. Before, those paths were only hidden from reads. On Linux such a grant stays
+  refused, and the refusal now names the root and the denied path and says to run from a narrower
+  directory.
+  
+  A `capybara-device` newer than its deployment no longer tells the person to upgrade the program
+  when the deployment refuses it as outdated (HTTP 426): it reads the deployment's device protocol
+  from the refusal and, when the deployment's is older, says to upgrade the deployment first.
+  
+  The macOS restricted self-check first proves that a granted file reads: a read probe that fails
+  for any reason no longer counts as a refused read.
+- 0ce1ab0: `capybara-device`: an aborted or timed-out restricted command on macOS always completes. A
+  descendant that left the command's process group (`fork` + `setpgid`) could hold its output pipe
+  open, so the call never ended and the operation worker, its proxy and its private temporary
+  directory stayed behind. Cancellation now stops and kills the command's descendants found by
+  parent pid (including those in another group or session; one already reparented to launchd is
+  not found), and once the owned group is gone the worker closes the pipes after a short grace.
+- 413c495: `capybara-device`: restricted commands and file operations on macOS (Request approval, Approve
+  for me) can no longer read files outside what they were granted. Before, every parent directory
+  of a granted root, `/` included, was opened for reading with its whole subtree, so a restricted
+  command could read almost any file of the machine except the denied secret paths. Reads are now
+  limited to the granted roots, the system and developer tool directories (`/System`, `/usr`,
+  `/bin`, `/sbin`, `/private/etc`, Homebrew, Xcode and the Command Line Tools, `/Library/Apple`,
+  `/Library/Frameworks`, installed JDKs, the time zone data), the version managers' data and a few
+  exact paths (`/tmp`, `/var` and `/etc` links, the random and terminal devices, the Xcode
+  selection, license and tool cache); parent directories can still be passed through but not
+  listed. The restricted self-check now also proves that an ordinary file it never granted stays
+  unreadable, and reports restricted execution unavailable otherwise.
+  
+  Restricted commands and background tasks on macOS also get a working temporary directory again:
+  each gets its own empty, private one (`TMPDIR`, `TMP`, `TEMP`), removed when it ends (a crashed
+  device's are removed at the next launch). The runtime used to point `TMPDIR` at a shared
+  `/tmp/claude` the device refuses, so `pnpm`, `cc`, Python's and Node's temp files failed. `mktemp`
+  without a template still writes to macOS's shared user temporary directory, which stays closed:
+  pass `"$TMPDIR/x.XXXXXX"`.
+- cba5078: `capybara-device`: restricted commands on macOS and Linux hosts find version managers again
+  (asdf, nvm, pyenv, rbenv, mise, volta, sdkman, rustup). Their variables are set from the device's
+  real home and environment, as the protocol 2 OS sandbox did, and the directories they name are
+  granted read only, with asdf's global `~/.tool-versions` as a single read-only file; nothing
+  that is `/`, is, lies under or holds an owner-denied path is granted.
+  Commands in the local-Docker container keep the image's home.
+- 3cb0cf5: Kernel: the `device.auto_mode_not_allowed` refusal is gone with the protocol 2 machine-mode check
+  (a protocol 3 device's owner ceiling refuses with `device.full_access_not_allowed`). A device held
+  by the legacy retirement (`device.unavailable`, `device.restart_required`,
+  `device.recreate_required`, `device.replace_required`) now tells the model what clears it instead
+  of the inactive-provider text. Messages that named the removed `capybara-device mode` command name
+  `capybara-device ceiling set` instead.
+  
+  `capybara-device`: unused protocol 2 helpers (the sandbox-runtime config, the network violation
+  parser, host file access) are removed. Design: the `KeycapCommand` example names
+  `capybara-device ceiling set`.
+  
+  The device sign-in token response names its field `fullAccess` (was `autoMode`; same values
+  `allowed` / `off`), and `capybara-device login` reads it to say that the org does not allow Full
+  access. A kernel and a device program upgrade together.
+
 ## 0.1.0-rc.14
 
 ### Minor Changes
