@@ -341,9 +341,20 @@ export const PermissionCallBindingSchema = z
     authorityRevision: z.string(),
   })
   .strict();
-/** A per-call sandbox escalation's justification, as the person and the review model saw it. */
+/**
+ * A per-call sandbox escalation's justification, as the person and the review model saw it (at
+ * most 500 code points, as the tool schema counts), and for a background start that it keeps
+ * running outside the sandbox for at most `maxSeconds`.
+ */
 export const PermissionEscalationSchema = z
-  .object({ justification: z.string().min(1).max(500) })
+  .object({
+    justification: z
+      .string()
+      .min(1)
+      .refine((s) => [...s].length <= 500, "justification must be at most 500 characters"),
+    background: z.literal(true).optional(),
+    maxSeconds: z.number().int().positive().optional(),
+  })
   .strict();
 export const ReviewRecordSchema = z
   .object({

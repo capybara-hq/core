@@ -23,7 +23,14 @@ import {
   REVIEW_PURPOSE,
   runClassifier,
 } from "./classifier.js";
-import { approverForProfile, ESCALATION_RETRY_HINT } from "./permission-candidate.js";
+import {
+  approverForProfile,
+  ESCALATION_RETRY_HINT,
+  escalationAskReason,
+} from "./permission-candidate.js";
+
+export { escalationAskReason, quotedJustification } from "./permission-candidate.js";
+
 import { reviewRules, reviewWrite, writtenPaths } from "./rules.js";
 import {
   applySessionGrants,
@@ -41,11 +48,11 @@ const SCOPE_ASK_RULES: ReadonlySet<string> = new Set(["ask.outside-write", "ask.
 /** The consent a file read keeps: reading a credential file or SSH keys. */
 const CREDENTIAL_READ_RULES: ReadonlySet<string> = new Set(["ask.secret-file", "ask.ssh"]);
 /**
- * What an ask about a per-call sandbox escalation tells the person (and the review model): the
- * crossing, the model's justification and, when the command is also sensitive, that consent too.
+ * Every ask about an escalation keeps its statement first: an ask the review model made, or one
+ * the review fell back to (failed, unparseable, truncated), adds its own reason after it.
  */
-export const escalationAskReason = (justification: string, sensitive?: string): string =>
-  `Run this command outside the sandbox for this call only (full access to the device's files and network). Justification: ${justification.trim()}${sensitive ? ` It is also a sensitive command: ${sensitive}` : ""}`;
+const withEscalation = (statement: string, reason: string): string =>
+  reason === statement ? statement : `${statement} Review: ${reason}`;
 /** What an ask about a proposed expansion tells the person. */
 const EXPANSION_ASK_REASON =
   "Approve the exact proposed directory and host access for this call. File-only grants are not supported: directory approval covers its descendants; otherwise choose an in-project path.";
@@ -221,7 +228,18 @@ export class CommandReviewService implements CommandReview {
         toolKey: input.toolKey,
         err,
       });
-      return { decision: "ask", by: "rule", reason: REVIEW_ASK_REASON, rule: null };
+      const escalation =
+        input.permissionCandidate?.scopeKind === "sandbox-escalation"
+          ? input.permissionCandidate.escalation
+          : undefined;
+      return {
+        decision: "ask",
+        by: "rule",
+        reason: escalation
+          ? withEscalation(escalationAskReason(escalation), REVIEW_ASK_REASON)
+          : REVIEW_ASK_REASON,
+        rule: null,
+      };
     }
   }
 
@@ -306,7 +324,7 @@ export class CommandReviewService implements CommandReview {
     const rule = consent?.id ?? (candidate ? (scopeHit?.id ?? null) : null);
     // an escalation's one ask states both what it crosses and any sensitive consent it carries
     const reason = escalation
-      ? escalationAskReason(escalation.justification, consent?.reason)
+      ? escalationAskReason(escalation, consent?.reason)
       : (consent?.reason ??
         (scopeHit?.reason ? `${scopeHit.reason} ${EXPANSION_ASK_REASON}` : EXPANSION_ASK_REASON));
     const ask: ReviewVerdict = { decision: "ask", by: "rule", rule, reason };
@@ -353,7 +371,12 @@ export class CommandReviewService implements CommandReview {
       },
     );
     // the review model's ask still shows the rule the person is asked about
-    if (answer.decision === "ask") return { ...ask, by: "classifier", reason: answer.reason };
+    if (answer.decision === "ask")
+      return {
+        ...ask,
+        by: "classifier",
+        reason: escalation ? withEscalation(reason, answer.reason) : answer.reason,
+      };
     return { decision: answer.decision, by: "classifier", reason: answer.reason, rule: null };
   }
 

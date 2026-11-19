@@ -7,11 +7,13 @@ import {
   validateAllowHost,
 } from "@capybara-hq/plugin-sdk";
 import { ApiError } from "../../errors.js";
+import { HIDDEN_FORMAT_RE } from "../../text.js";
 import { generateImagePaths } from "../../tools/builtins/image/paths.js";
 import { coversHost } from "../modes.js";
 import type {
   PermissionCandidate,
   PermissionCandidateResult,
+  PermissionEscalation,
   PermissionExpansion,
   PermissionReviewSnapshot,
 } from "../permission-call-types.js";
@@ -80,6 +82,42 @@ export function permissionCandidateHash(
 export const SANDBOX_ESCALATED = "escalated";
 /** The longest justification an escalated call may give (the tool schema says the same). */
 export const ESCALATION_JUSTIFICATION_MAX_CHARS = 500;
+/** A background escalation's sentence (empty for a foreground one), for the reason and the review. */
+export function escalationBackgroundText(
+  escalation: Pick<PermissionEscalation, "background" | "maxSeconds">,
+): string {
+  if (escalation.background !== true) return "";
+  const limit =
+    escalation.maxSeconds !== undefined
+      ? `, at most ${Math.ceil(escalation.maxSeconds / 60)} minutes`
+      : "";
+  return ` It starts a background process that keeps running outside the sandbox until it exits or is stopped${limit}.`;
+}
+/**
+ * The agent's justification as one quoted line: line breaks and other control characters become
+ * spaces, bidi and other hidden format characters are removed (ZWNJ / ZWJ stay), spaces collapse.
+ * It is the agent's text inside a reason written in the kernel's voice, so it is always quoted.
+ */
+export function quotedJustification(text: string): string {
+  const clean = text
+    .replace(HIDDEN_FORMAT_RE, "")
+    .replace(/\p{Cc}/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+  return `"${clean}"`;
+}
+/**
+ * What an ask about a per-call sandbox escalation tells the person (and the review model): the
+ * crossing, that a background start keeps running outside the sandbox (and for how long at most),
+ * the agent's quoted justification and, when the command is also sensitive, that consent too.
+ */
+export const escalationAskReason = (escalation: PermissionEscalation, sensitive?: string): string =>
+  `Run this command outside the sandbox for this call only (full access to the device's files and network).${escalationBackgroundText(escalation)} Justification (from the agent): ${quotedJustification(escalation.justification)}${sensitive ? ` It is also a sensitive command: ${sensitive}` : ""}`;
+/** The length of a justification as the tool schema counts it: Unicode code points. */
+export const justificationLength = (text: string): number => [...text].length;
+/** An escalated call whose justification is over the limit: refused before any review. */
+export const ESCALATION_JUSTIFICATION_TOO_LONG_TEXT =
+  'This Bash call asked to run outside the sandbox (sandbox: "escalated") with a justification longer than 500 characters, so it did not run. Retry with a justification of one short sentence saying why this command must run outside the sandbox.';
 /** Whether a validated call asks to run outside the OS sandbox (only `Bash` can). */
 export const isEscalatedCall = (toolKey: string, input: unknown): boolean =>
   toolKey === "Bash" &&
@@ -133,6 +171,25 @@ function ownerDeniedPath(target: string, homes: readonly string[]): string | und
 }
 const ownerDeniedText = (denied: string, target: string) =>
   `${target} is under ${denied}, which the device never opens to this conversation's permission profile (a credential location or the device's own state), so this call cannot be approved and did not run. Ask the user to provide what is needed from it, or to choose Full access for this conversation if it must be used there.`;
+/**
+ * A background escalation's disclosure: it starts a process that keeps running outside the
+ * sandbox until it exits or is stopped, at most the task's deadline (the requested timeout
+ * lowered to the background maximum, as the launch computes it). Empty for a foreground call.
+ */
+function backgroundOf(
+  input: unknown,
+  maxSeconds: number | undefined,
+): { background?: true; maxSeconds?: number } {
+  const i = input as { run_in_background?: unknown; timeout?: unknown } | null;
+  if (i?.run_in_background !== true) return {};
+  if (maxSeconds === undefined || !(maxSeconds > 0)) return { background: true };
+  const maxMs = maxSeconds * 1000;
+  const requested = typeof i.timeout === "number" && i.timeout > 0 ? i.timeout : maxMs;
+  return {
+    background: true,
+    maxSeconds: Math.max(1, Math.ceil(Math.min(requested, maxMs) / 1000)),
+  };
+}
 /** The exact call binding of a candidate: server identity from the facts, the call's own digests. */
 function bindingOf(
   call: { toolKey: string; specHash: string; rawInput: unknown; validatedInput: unknown },
@@ -165,6 +222,10 @@ export function buildPermissionCandidate(
   call: { toolKey: string; specHash: string; rawInput: unknown; validatedInput: unknown },
   facts: PermissionReviewSnapshot,
   homes: readonly (string | null | undefined)[] = [],
+  opts: {
+    /** The deployment's background task maximum: the most a background escalation may run. */
+    backgroundMaxSeconds?: number;
+  } = {},
 ): PermissionCandidateResult {
   const homeRoots = [
     ...new Set(
@@ -194,15 +255,17 @@ export function buildPermissionCandidate(
           }
         : { kind: "in-scope" };
     const justification = (input as { justification?: unknown }).justification;
-    if (
-      typeof justification !== "string" ||
-      justification.trim() === "" ||
-      justification.length > ESCALATION_JUSTIFICATION_MAX_CHARS
-    )
+    if (typeof justification !== "string" || justification.trim() === "")
       return {
         kind: "unsupported",
         code: "escalation-unavailable",
         message: ESCALATION_JUSTIFICATION_MISSING_TEXT,
+      };
+    if (justificationLength(justification) > ESCALATION_JUSTIFICATION_MAX_CHARS)
+      return {
+        kind: "unsupported",
+        code: "escalation-unavailable",
+        message: ESCALATION_JUSTIFICATION_TOO_LONG_TEXT,
       };
     if (facts.unattended || facts.escalationRefusal)
       return {
@@ -217,7 +280,7 @@ export function buildPermissionCandidate(
       binding: bindingOf(call, facts),
       permissionScope: { readDirectories: [], writeDirectories: [], hosts: [] },
       scopeKind: "sandbox-escalation" as const,
-      escalation: { justification },
+      escalation: { justification, ...backgroundOf(input, opts.backgroundMaxSeconds) },
     };
     return {
       kind: "proposal",

@@ -34,8 +34,16 @@ export type PermissionGrantDecision =
  * call only, within the device's Full access ceiling).
  */
 export type PermissionScopeKind = "directories-and-hosts" | "sandbox-escalation";
-/** The model's stated reason for one escalated call, shown to the person and the review model. */
-export type PermissionEscalation = Readonly<{ justification: string }>;
+/**
+ * The model's stated reason for one escalated call, shown to the person and the review model. A
+ * background start (`run_in_background`) also says so: its process keeps running outside the
+ * sandbox until it exits or is stopped, at most `maxSeconds` (the task's deadline).
+ */
+export type PermissionEscalation = Readonly<{
+  justification: string;
+  background?: true;
+  maxSeconds?: number;
+}>;
 export type PermissionCandidate = Readonly<{
   binding: PermissionCallBinding;
   /** Empty for an escalation: the call runs with full execution, no expansion is named. */

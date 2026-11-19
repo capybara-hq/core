@@ -14,6 +14,7 @@ import {
 } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable, Optional } from "@nestjs/common";
 import type { AgentDefinition } from "../agents/definition.js";
+import { backgroundMaxSeconds } from "../background/launch.js";
 import { type AppendEvent, EventLog } from "../conversations/event-log.js";
 import {
   COMMAND_ASK_MAX_CHARS,
@@ -1961,6 +1962,7 @@ export class ToolPipeline {
         { toolKey: tool.key, specHash: tool.specHash, rawInput: call.input, validatedInput: input },
         facts,
         [device.home, device.deviceHome],
+        { backgroundMaxSeconds: backgroundMaxSeconds(this.config.get()) },
       );
       if (unverified.kind === "in-scope") return null;
       const content =
@@ -1990,6 +1992,7 @@ export class ToolPipeline {
             },
             facts,
             [device.home, device.deviceHome],
+            { backgroundMaxSeconds: backgroundMaxSeconds(this.config.get()) },
           );
     if (built.kind === "unsupported") {
       // a Bash reach the restricted scope cannot grant: retrying outside the sandbox may
