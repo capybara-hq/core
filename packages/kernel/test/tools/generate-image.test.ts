@@ -941,7 +941,8 @@ describe("GenerateImage on the activated permission review", () => {
     const dir = `/etc/capybara-img-${randomUUID().slice(0, 6)}`;
     const r = await call(conv, { prompt: "a fox", file_path: `${dir}/fox.png` }, 2);
     expect(r.payload.isError, r.payload.content).toBe(false);
-    const [made] = ofType(await eventsOf(db, conv), "artifact_created");
+    // the binding copy made the first artifact; this call's is the latest
+    const made = ofType(await eventsOf(db, conv), "artifact_created").at(-1);
     expect(r.payload.content.split("\n").at(-1)).toBe(
       `Also written to the device (same bytes as artifact ${made?.payload.artifactId}): ${dir}/fox.png`,
     );
