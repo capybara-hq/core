@@ -204,6 +204,7 @@ describe("recorded permission context recorder", () => {
         network: { kind: "none", hostsCount: 0 },
         outsideSandbox: true,
         outerNetwork: { kind: "host-environment" },
+        perCallHosts: true,
       },
       rootConversationId: f.rootId,
       profileRevision: 0,
@@ -998,14 +999,15 @@ describe("permission context projection", () => {
     // applied limits more permissive than the desired ones are never installed authority (spec
     // §124): unprobed until the next use's lifecycle lease applies the narrowing
     [
-      "cloud applied wider: Full mode on a device narrowed to sandbox",
+      // the kernel-only mode is no dimension: a cloud device has no outside of its sandbox
+      "cloud applied mode only: auto on a device narrowed to sandbox is not wider",
       {},
       cloud({
         evidence: true,
         sandboxMode: true,
         limits: (desired) => ({ ...desired, mode: "auto" }),
       }),
-      "unprobed",
+      "supported",
     ],
     [
       "cloud applied wider: public network where the device wants an allowlist",
