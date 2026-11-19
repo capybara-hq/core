@@ -176,7 +176,10 @@ test("登录 → 新建 agent → 流式回复、停止、插话、刷新后历�
   expect(missing?.status()).toBe(404);
   await expect(page.locator('[data-template="StatusPage"][data-kind="404"]')).toBeVisible();
   await expect(page.getByRole("navigation", { name: "主导航" })).toBeVisible();
-  await expect(page.getByText(zh.notFound.title).first()).toBeVisible();
+  // the page's own title, not the compact top bar's copy of it (hidden at this width)
+  await expect(
+    page.locator('[data-template="StatusPage"]').getByText(zh.notFound.title),
+  ).toBeVisible();
 
   // 8. A missing object (a conversation that does not exist) is the not-found state inside the
   //    App Shell with HTTP 200 (web query cache spec §3.3); only an unknown route is a 404

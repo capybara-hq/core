@@ -82,7 +82,10 @@ test("connect a machine: authorize → confirm on /devices/link → token → th
     await expect(
       page.locator('[data-part="device-nameplate-status"]').getByText(zh.devices.state.offline),
     ).toBeVisible();
-    await expect(page.getByText(machine).first()).toBeVisible();
+    // inside the page, not the compact top bar's copy of the title (hidden at this width)
+    await expect(
+      page.locator('[data-template="DetailPage"]').getByText(machine).first(),
+    ).toBeVisible();
 
     // clean up: delete the device (设置 → danger zone, typing its name)
     await page.getByRole("tab", { name: zh.devices.detail.tabSettings }).click();
