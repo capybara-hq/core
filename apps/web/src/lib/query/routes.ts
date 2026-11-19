@@ -559,9 +559,9 @@ export const ROUTES: readonly RouteEntry[] = [
   },
   {
     pattern: "/admin/settings",
-    // The settings, the themes (外观's eligible ones, with their names and swatches), the uploaded
-    // platform icons (应用图标), the platform arrangement and the extensions (插件界面代码 lists
-    // those with client code).
+    // The settings, the themes (the appearance section's eligible ones, with their names and
+    // swatches), the uploaded platform icons (the app icon section), the platform arrangement and
+    // the extensions (the plugin UI code section lists those with client code).
     queries: ({ me }) =>
       superAdmin(me)
         ? [

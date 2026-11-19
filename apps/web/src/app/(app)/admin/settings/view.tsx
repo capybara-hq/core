@@ -79,10 +79,10 @@ import NotFound from "../../not-found";
  * `/admin/settings`：部署设置（超级管理员，SettingsPage）——谁能建组织、价格币种、
  * 组织能否自建连接器 / 技能（`deny` 时只能从平台目录安装）, and 外观: the platform default theme
  * (themes spec §7, §10), 内置主题 or a platform-owned theme whose scope is `all` and that is not
- * disabled; the kernel refuses one off in some org with the orgs (shown). 应用图标: the platform
- * icon (mobile layout spec §10.2.1, `AppIconSection`), saved per action. 插件界面代码: the client
- * code kill switch and the plugins whose client code alone is stopped (client extensions spec
- * §10.2); a save that changes it marks every cached client set stale. Full access: the
+ * disabled; the kernel refuses one off in some org with the orgs (shown). The app icon: the
+ * platform icon (mobile layout spec §10.2.1, `AppIconSection`), saved per action. Plugin UI
+ * code: the client code kill switch and the plugins whose client code alone is stopped (client
+ * extensions spec §10.2); a save that changes it marks every cached client set stale. Full access: the
  * platform's switch (`devicesFullAccess`), read with where it comes from; a value set in the startup
  * config is shown read-only with its source. 按组织的限额在「组织」页；
  * 组织自己的设置仍在 `/settings/*`。有改动时出现 ActionRow，只提交改过的项。
