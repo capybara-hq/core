@@ -51,14 +51,24 @@ export const NETWORK_COMMAND_MAX = 300;
  * drawn as code, never markup, and clipped to {@link NETWORK_COMMAND_MAX} characters.
  */
 export type CommandAsk = {
-  /** A shell command (`Bash`) or a file write outside the workspace (`Write` / `Edit`). */
-  kind: "command" | "write";
-  /** The command text (display-clipped), or the tool key of the write. */
+  /**
+   * A shell command (`Bash`), a file write outside the scope (`Write` / `Edit`) or a file read
+   * outside it (`Read`).
+   */
+  kind: "command" | "write" | "read";
+  /** The command text (display-clipped), or the tool key of the write or read. */
   command: string;
-  /** A write's target path. */
+  /** A write's or read's target path. */
   path?: string;
-  /** The review's reason: why this command is held. */
+  /** The review's reason: why this command is held (the kernel's English, model-facing text). */
   reason: string;
+  /**
+   * What the person is asked, worded in the UI's language from the ask's structured facts: shown
+   * in place of {@link reason} when given.
+   */
+  lead?: string;
+  /** Detail text under the lead (the review's own reason where it adds what the lead cannot). */
+  detail?: string;
 };
 
 export type ApprovalBlockProps = {
@@ -593,8 +603,14 @@ function CommandApproval(p: ApprovalBlockProps & { command: CommandAsk }): JSX.E
   const [reason, setReason] = useState(p.defaultDeny?.reason ?? "");
   const inputId = useId();
   const s = p.state;
-  const write = p.command.kind === "write";
-  const title = write ? t("hitl.command.titleWrite") : t("hitl.command.title");
+  // a file ask (write or read) names its target path
+  const file = p.command.kind !== "command";
+  const title =
+    p.command.kind === "write"
+      ? t("hitl.command.titleWrite")
+      : p.command.kind === "read"
+        ? t("hitl.command.titleRead")
+        : t("hitl.command.title");
 
   if (s.kind === "decided") {
     const approved = s.decision === "approved";
@@ -632,8 +648,8 @@ function CommandApproval(p: ApprovalBlockProps & { command: CommandAsk }): JSX.E
   }
 
   const busy = s.busy === true;
-  // a write names its target path; the command text there is the tool key, which says nothing
-  const shown = write ? (p.command.path ?? p.command.command) : p.command.command;
+  // a file ask names its target path; the command text there is the tool key, which says nothing
+  const shown = file ? (p.command.path ?? p.command.command) : p.command.command;
   const label = (scope: ApprovalScope) =>
     p.scopeLabels?.[scope] ??
     t(
@@ -719,12 +735,17 @@ function CommandApproval(p: ApprovalBlockProps & { command: CommandAsk }): JSX.E
         </span>
       </div>
       <div className="cb-small" data-part="command-reason">
-        {p.command.reason}
+        {p.command.lead ?? p.command.reason}
       </div>
+      {p.command.lead !== undefined && p.command.detail ? (
+        <div className="cb-faint cb-small" data-part="command-detail">
+          {p.command.detail}
+        </div>
+      ) : null}
       <CodeBlock
         text={clipCommand(shown)}
         framed={false}
-        {...(write ? { title: t("hitl.command.path") } : {})}
+        {...(file ? { title: t("hitl.command.path") } : {})}
       />
       {actions}
     </div>

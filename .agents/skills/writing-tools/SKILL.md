@@ -200,7 +200,9 @@ fails closed.
   model-visible) and a `usage` event with the same purpose and the call's `callId`.
 - **File tools in auto mode.** `Read` / `Write` / `Edit` reach any absolute path on a local device;
   inside the workspace a write is allowed by a rule, outside it the rule asks (or denies for a
-  secret path). Path validation still applies first. Existing `ctx.hooks` policy hooks run after
+  secret path). Path validation still applies first. Under a permission profile a file outside the
+  scope is a `directory` crossing: a `Read` asks as a read (kind `read`, tool key `Read`), a
+  `Write` / `Edit` as a write. Existing `ctx.hooks` policy hooks run after
   the review and can add their own deny.
 
 ## Display metadata: `title`, `keyArgs`, kinds and views

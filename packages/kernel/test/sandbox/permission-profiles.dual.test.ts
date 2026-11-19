@@ -396,11 +396,9 @@ describe("profile × operation matrix through the owner API on two replicas", ()
     await matrix("full-access");
   });
 
-  // Open finding (R3 Mac dogfood, 2026-11-20): the pipeline's reviewKindOf maps every non-Bash
-  // tool to "write", so the ask for a Read outside the scope is recorded with detail kind "write"
-  // under tool key Write, and the card says the agent "wants to write this file"
-  // above a read-only scope. Remove `.fails` with the fix.
-  it.fails("an outside Read asks as a read: its detail and tool key name a read, not a write", async () => {
+  // R3 Mac dogfood (2026-11-20): a Read outside the scope asked as a write (detail kind "write",
+  // tool key Write), so the card said the agent wanted to write the file above a read-only scope
+  it("an outside Read asks as a read: its detail and tool key name a read, not a write", async () => {
     const deviceId = await cloudDevice();
     const conv = await conversation(deviceId);
     const bound = await call(conv, "Bash", { command: "echo bound", description: "Bind" }, 1);
@@ -791,13 +789,11 @@ describe("a local device's project outside its fixed workspace", () => {
 
     // a directory crossing: Request approval and Approve for me (no review model here) ask the
     // person, Full access grants it; then the call runs with the granted directory
-    const crossing = async (key: string, input: { file_path: string }) => {
+    const crossing = async (key: string, input: unknown, kind: "read" | "write") => {
       await postMessage(ownerA, orgId, conv, `tool:${key}:${JSON.stringify(input)}`);
       if (profile !== "full-access") {
         const ask = await pendingAsk(conv);
-        expect(ask.detail as Record<string, unknown>).toMatchObject({
-          targetPath: input.file_path,
-        });
+        expect(ask.detail as Record<string, unknown>).toMatchObject({ kind });
         await approveThrough(ask.id);
       }
       await waitForTerminal(db, conv, ++n, 60_000);
@@ -806,24 +802,20 @@ describe("a local device's project outside its fixed workspace", () => {
       expect(r.payload.isError, r.payload.content).toBe(false);
       return r;
     };
-    const outsideRead = await crossing("Read", { file_path: `${NOTES}/todo.txt` });
+    const outsideRead = await crossing("Read", { file_path: `${NOTES}/todo.txt` }, "read");
     expect(outsideRead.payload.content).toContain("buy milk");
     const readReq = native("readFile", `${NOTES}/todo.txt`).at(-1);
     expect(readReq).toBeDefined();
     expect(((readReq as KernelReq).args as { scope: Scope }).scope.filesystem).toEqual(
       readsWithin(NOTES),
     );
-    await crossing("Edit", {
-      file_path: `${NOTES}/todo.txt`,
-      old_string: "milk",
-      new_string: "tea",
-    } as {
-      file_path: string;
-    });
+    await crossing(
+      "Edit",
+      { file_path: `${NOTES}/todo.txt`, old_string: "milk", new_string: "tea" },
+      "write",
+    );
     expect(files.get(`${NOTES}/todo.txt`)).toBe("buy tea\n");
-    await crossing("Write", { file_path: `${NOTES}/new.txt`, content: "x" } as {
-      file_path: string;
-    });
+    await crossing("Write", { file_path: `${NOTES}/new.txt`, content: "x" }, "write");
     expect(files.get(`${NOTES}/new.txt`)).toBe("x");
     const writeReq = native("writeFile", `${NOTES}/new.txt`).at(-1);
     expect(((writeReq as KernelReq).args as { scope: Scope }).scope.filesystem).toMatchObject({
