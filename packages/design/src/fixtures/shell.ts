@@ -2,7 +2,7 @@
  * Mobile-layout fixtures (mobile and foldable layout spec §4–§5, design spec §6.45–§6.48): the fixed
  * sample data of the BottomNav, TopBar, ListDetail, MePanel and sheet reference blocks
  * (docs/design/reference/src). Pure data, no React. The nav items are the real ones
- * (`apps/web/src/components/shell/nav.tsx`); the names are placeholders (示例组织, 研究助手, Acme…).
+ * (`apps/web/src/components/shell/nav.tsx`); the names are placeholders (sample org, sample agents, Acme…).
  */
 
 /**
@@ -45,7 +45,7 @@ export type FixtureMeItem = {
   audience: "all" | "member" | "admin";
 };
 
-/** The Me page: what the sidebar's 更多 holds plus the primary items the bottom nav has no room for. */
+/** The Me page: what the sidebar's More group holds plus the primary items the bottom nav has no room for. */
 export const ME_PANEL_FIXTURE = {
   title: "我",
   more: "更多",

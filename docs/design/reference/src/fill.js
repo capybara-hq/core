@@ -280,7 +280,7 @@
       const flyout = o.moreOpen
         ? `<div class="r-menu r-nav-flyout" role="menu" aria-label="${esc(F.MORE_LABEL)}">${more.map(flyItem).join("")}${more.length > 0 && ext.length > 0 ? '<div class="r-menu-sep"></div>' : ""}${ext.map(flyItem).join("")}</div>`
         : "";
-      // The rail holds no conversation list: 会话 opens it as a side sheet (spec §6.13).
+      // The rail holds no conversation list: the Conversations button opens it as a side sheet (spec §6.13).
       const chats = rail
         ? navItem({ id: "conversations", label: C.conversations, icon: "chats" }, o)
         : "";
