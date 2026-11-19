@@ -57,7 +57,6 @@ const LIMITS = {
   cpu: 1,
   memoryMb: 512,
   diskMb: 1024,
-  mode: "sandbox" as const,
   network: { kind: "allowlist" as const, hosts: [] },
 };
 /** A protocol 3 exec request: the command under an admitted scope on `deviceId`. */
@@ -421,10 +420,7 @@ describe("boot identity evidence for local legacy retirement", () => {
 });
 
 describe("the hello's policy summary and the reported mode", () => {
-  const SUMMARY = {
-    mode: "auto" as const,
-    allowedDomains: [],
-  };
+  const SUMMARY = { allowedDomains: [] };
 
   /** Connects a machine of a new device that says `hello`; resolves once it is recorded. */
   async function helloWith(hello: Record<string, unknown>) {
@@ -451,10 +447,10 @@ describe("the hello's policy summary and the reported mode", () => {
   it("an unreadable summary is stored as none", async () => {
     const { m, machine } = await helloWith({
       programVersion: "0.9.0",
-      features: ["networkReport", "policyOp", "mode"],
+      features: ["networkReport", "policyOp"],
       policy: { ...SUMMARY, allowedDomains: "not-a-list" },
     });
-    // fail closed: a program that applies modes but sent no readable summary is sandbox
+    // fail closed: a program that sent no readable summary (nor a report of its own) is sandbox
     expect(await k.app.get(NetworkGrants).reportedMode(m.deviceId)).toBe("sandbox");
     expect((await machines.activeFor(m.deviceId))?.localPolicy).toBeNull();
     machine.close();
@@ -463,36 +459,32 @@ describe("the hello's policy summary and the reported mode", () => {
   it("a policy frame after the hello replaces the stored summary and owner report, in order", async () => {
     const { m, machine } = await helloWith({
       programVersion: "0.9.0",
-      features: ["networkReport", "policyOp", "mode"],
+      features: ["networkReport", "policyOp"],
       policy: SUMMARY,
-      ownerCeiling: ownerReportFor(SUMMARY, { fullAccess: true }),
+      ownerCeiling: ownerReportFor(SUMMARY, { outsideSandbox: true }),
     });
     expect(await k.app.get(NetworkGrants).reportedMode(m.deviceId)).toBe("auto");
     // the owner turns Full off on the machine (`capybara-device ceiling set`)
-    const narrowed = { ...SUMMARY, mode: "sandbox" as const };
+    // (protocol 4: the summary carries the allowlist only; Full is the owner report's)
+    const narrowed = { allowedDomains: [] };
     machine.send({
       type: "policy",
       policy: narrowed,
-      ownerCeiling: ownerReportFor(narrowed, { fullAccess: false }),
+      ownerCeiling: ownerReportFor(narrowed, { outsideSandbox: false }),
     });
     await waitFor(
-      async () => (await machines.activeFor(m.deviceId))?.localPolicy?.mode === "sandbox",
+      async () => (await k.app.get(NetworkGrants).reportedMode(m.deviceId)) === "sandbox",
       10_000,
       "policy recorded",
     );
     expect((await machines.activeFor(m.deviceId))?.localPolicy).toEqual(narrowed);
-    expect(await k.app.get(NetworkGrants).reportedMode(m.deviceId)).toBe("sandbox");
     // the frame's change is listed as made on the machine, once, as the owner report's
     expect(
       await db
         .selectFrom("audit_events")
         .select(["action", "detail"])
         .where("target", "=", m.deviceId)
-        .where("action", "in", [
-          "device.mode_changed",
-          "device.policy_changed",
-          "device.owner_ceiling_changed",
-        ])
+        .where("action", "in", ["device.policy_changed", "device.owner_ceiling_changed"])
         .orderBy("at")
         .orderBy("id")
         .execute(),
@@ -514,18 +506,18 @@ describe("the hello's policy summary and the reported mode", () => {
   it("the reported mode follows the owner report's Full ceiling", async () => {
     const full = await helloWith({
       programVersion: "0.9.0",
-      features: ["networkReport", "policyOp", "mode"],
+      features: ["networkReport", "policyOp"],
       policy: SUMMARY,
-      ownerCeiling: ownerReportFor(SUMMARY, { fullAccess: true }),
+      ownerCeiling: ownerReportFor(SUMMARY, { outsideSandbox: true }),
     });
     expect(await k.app.get(NetworkGrants).reportedMode(full.m.deviceId)).toBe("auto");
     full.machine.close();
     // fail closed: a restricted owner ceiling is sandbox, whatever its summary says
     const restricted = await helloWith({
       programVersion: "0.9.0",
-      features: ["networkReport", "policyOp", "mode"],
+      features: ["networkReport", "policyOp"],
       policy: SUMMARY,
-      ownerCeiling: ownerReportFor(SUMMARY, { fullAccess: false }),
+      ownerCeiling: ownerReportFor(SUMMARY, { outsideSandbox: false }),
     });
     expect(await k.app.get(NetworkGrants).reportedMode(restricted.m.deviceId)).toBe("sandbox");
     restricted.machine.close();

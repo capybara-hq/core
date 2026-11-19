@@ -28,6 +28,7 @@ import { accountsFor, apiTokensFor } from "../helpers/identity.js";
 import { seedInstalledEvidence } from "../helpers/installed-evidence.js";
 import { testMembers } from "../helpers/members.js";
 import { MODEL_PLUGINS_CONFIG } from "../helpers/model-plugins.js";
+import { storedOwnerReport } from "../helpers/owner-report.js";
 import { enableModelProviders, startKernel, type TestKernel } from "../helpers/runs.js";
 
 let pgc: TestContainer;
@@ -173,10 +174,11 @@ async function localDevice(orgId: string, name = "Laptop") {
       name: "Laptop",
       os: "darwin",
       arch: "arm64",
-      features: ["mode", "projects"],
+      features: ["projects"],
       roots: JSON.stringify({ workspace: "/work" }),
       home: "/home/owner",
-      local_policy: JSON.stringify({ mode: "auto", allowedDomains: [] }),
+      local_policy: JSON.stringify({ allowedDomains: [] }),
+      owner_report: storedOwnerReport(),
     })
     .execute();
   return id;
@@ -360,7 +362,7 @@ describe("Conversation permission profiles", () => {
     });
     expect(view.json()).toMatchObject({
       profile: "approve-for-me",
-      fullAccessCeiling: false,
+      outsideSandboxCeiling: false,
       availability: { state: "unsupported" },
     });
     await expect(
@@ -384,7 +386,7 @@ describe("Conversation permission profiles", () => {
       deviceId = await localDevice(orgId);
     await kernelDb(raw)
       .updateTable("device_machines")
-      .set({ local_policy: JSON.stringify({ mode: "sandbox", allowedDomains: [] }) })
+      .set({ owner_report: storedOwnerReport({ outsideSandbox: false, sequence: 1 }) })
       .where("device_id", "=", deviceId)
       .execute();
     for (const migration of [
@@ -419,7 +421,7 @@ describe("Conversation permission profiles", () => {
           method: "GET",
           url: `/api/v1/orgs/${orgId}/conversation-permission-preview?deviceId=${deviceId}`,
         })
-      ).json().fullAccessCeiling,
+      ).json().outsideSandboxCeiling,
     ).toBe(false);
   });
   it("racing profile changes use revision CAS and one atomic audit/event", async () => {
@@ -462,7 +464,7 @@ describe("Conversation permission profiles", () => {
     const preview = await req({ method: "GET", url: previewUrl });
     expect(preview.statusCode, preview.body).toBe(200);
     expect(preview.json()).toMatchObject({
-      fullAccessCeiling: true,
+      outsideSandboxCeiling: true,
       availability: { state: "unprobed" },
     });
     expect(
@@ -538,12 +540,12 @@ describe("Conversation permission profiles", () => {
     });
     await kernelDb(raw)
       .updateTable("device_machines")
-      .set({ local_policy: JSON.stringify({ mode: "sandbox", allowedDomains: [] }) })
+      .set({ owner_report: storedOwnerReport({ outsideSandbox: false, sequence: 1 }) })
       .where("device_id", "=", deviceId)
       .execute();
     expect((await req({ method: "GET", url })).json()).toMatchObject({
       profile: "approve-for-me",
-      fullAccessCeiling: false,
+      outsideSandboxCeiling: false,
     });
     expect(
       (
@@ -571,7 +573,7 @@ describe("Conversation permission profiles", () => {
     });
     await kernelDb(raw)
       .updateTable("device_machines")
-      .set({ local_policy: JSON.stringify({ mode: "sandbox", allowedDomains: [] }) })
+      .set({ owner_report: storedOwnerReport({ outsideSandbox: false, sequence: 1 }) })
       .where("device_id", "=", deviceId)
       .execute();
     const first = await req({

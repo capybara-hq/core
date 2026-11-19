@@ -82,7 +82,7 @@ function replica(pool: ReturnType<typeof createDb>) {
         readRoots: ["/work"],
         writeRoots: ["/work"],
         allowedHosts: [],
-        fullAccessCeiling: false,
+        outsideSandboxCeiling: false,
       });
     },
   } as unknown as SandboxOperationAuthority;

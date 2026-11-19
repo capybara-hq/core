@@ -126,7 +126,7 @@ export async function start(deps: StartDeps): Promise<number> {
 }
 
 /**
- * The start proper (device protocol 3): the policy store, the program's parts (binder,
+ * The start proper (device protocol 4): the policy store, the program's parts (binder,
  * per-generation backends, per-credential session state), recovery of a persisted binding, then
  * {@link connectStaged}.
  */

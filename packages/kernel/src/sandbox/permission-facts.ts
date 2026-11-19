@@ -105,8 +105,7 @@ export class PermissionFacts {
     const facts = machine ? ownerFactsOf(machine) : null;
     return {
       policy,
-      // the owner's authenticated facts (B2), or its protocol 2 summary translated exactly; null
-      // when the machine reported nothing readable
+      // the owner's authenticated facts (B2); null when the machine reported nothing readable
       owner:
         facts === null || facts.state === "missing"
           ? null
@@ -348,10 +347,8 @@ export class PermissionFacts {
           allowedMode === "auto" && owner.restrictedProjectReach === "os-user"
             ? "os-user"
             : "workspace",
-        // protocol 2 only: an owner auto machine under an org that forbids it is not read unasked
-        // (its wire reads unsandboxed); an authenticated report bounds browsing by scope instead
-        widerThanAllowed:
-          owner.state !== "report" && allowedMode === "sandbox" && ownerModeOf(row) === "auto",
+        // an authenticated report bounds browsing by scope: never wider than the device allows
+        widerThanAllowed: false,
         workspace: row.machine_workspace ?? DEFAULT_SANDBOX_ROOTS.workspace,
         home: row.home,
         supported: deviceFeaturesOf(row.features).includes("projects"),
@@ -468,7 +465,7 @@ export class PermissionFacts {
       project,
       scopeRevision,
       availability,
-      fullAccessCeiling: policy.mode === "auto" && policy.allowedMode === "auto",
+      outsideSandboxCeiling: policy.mode === "auto" && policy.allowedMode === "auto",
       // B2: broad restricted reach (directories outside the working root) is the owner's reach
       // within the platform and org device ceiling, never the owner's Full permission; a cloud
       // device keeps its previous rule (its Full ceiling over its own files)
@@ -517,7 +514,7 @@ export class PermissionFacts {
     const consent = row.permission_consent as { deviceId: string; scopeRevision: string } | null;
     const profile: PermissionProfile =
       row.permission_profile === "full-access" &&
-      (!preview?.fullAccessCeiling ||
+      (!preview?.outsideSandboxCeiling ||
         preview.availability.state === "unsupported" ||
         consent?.deviceId !== row.device_id ||
         consent?.scopeRevision !== preview.scopeRevision)
@@ -536,7 +533,7 @@ export class PermissionFacts {
           state: "unsupported" as const,
           reason: unavailableReason,
         },
-        fullAccessCeiling: preview?.fullAccessCeiling ?? false,
+        outsideSandboxCeiling: preview?.outsideSandboxCeiling ?? false,
         broadProjectReach: preview?.broadProjectReach ?? false,
         startingWorkNotice: notice,
       },

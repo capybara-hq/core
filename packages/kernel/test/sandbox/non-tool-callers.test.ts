@@ -179,11 +179,9 @@ describe("device projects (owner browse)", () => {
     await projects(false).candidates(ORG, ACC, DEV);
     expect(raw()).toBe(1);
     expect(sb.withBrowse).not.toHaveBeenCalled();
-    expect(sb.held.scan).toHaveBeenCalledWith(
-      H,
-      WS,
-      expect.objectContaining({ limits: { mode: "sandbox" } }),
-    );
+    expect(sb.held.scan).toHaveBeenCalledWith(H, WS, {
+      signal: expect.any(AbortSignal),
+    });
   });
 });
 

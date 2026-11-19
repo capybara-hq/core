@@ -17,7 +17,6 @@ import {
   ownerCeilingOfMode,
   type Policy,
   policyLockPath,
-  policyMode,
   policyPath,
   readPolicy,
   withPolicyLock,
@@ -43,7 +42,7 @@ describe("PolicyStore", () => {
     writeFileSync(policyPath(dir), JSON.stringify({ tier: "open" }));
     const store = new PolicyStore(dir);
     expect(store.legacy).toBe(true);
-    expect(policyMode(store.current())).toBe("auto");
+    expect(store.current().ownerCeiling.outsideSandbox).toBe(true);
     const first = store.current();
     expect(store.current()).toBe(first);
     writePolicy(dir, withDomains(["a.com"]));

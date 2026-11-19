@@ -13,6 +13,7 @@ import { createDb } from "../../src/db/pool.js";
 import type { DeviceView } from "../../src/devices/devices.service.js";
 import { DevicesService } from "../../src/devices/devices.service.js";
 import { TransactionHost } from "../../src/infra/database/transaction-host.js";
+import { HOSTS_ON_MACHINE_MESSAGE } from "../../src/local-devices/device-policy.service.js";
 import { deviceLeaseKey } from "../../src/local-devices/keys.js";
 import { MachinesService } from "../../src/local-devices/machines.js";
 import { legacyDbFor } from "../helpers/conversations.js";
@@ -33,22 +34,21 @@ import type { Answer } from "../local-devices/test-holder.js";
 
 /**
  * The device owner changes the machine's policy from the web (network ask-to-allow spec §7, §13
- * Q6; auto mode spec §4.1): `POST /devices/:id/policy` with hosts or `mode: "sandbox"`, owner only,
- * web session only, delivered with the `policy` op to a fake machine on a real WebSocket, and the
- * recent changes on the device view.
+ * Q6; auto mode spec §4.1): `POST /devices/:id/policy` removing hosts or with `mode: "sandbox"`,
+ * owner only, web session only, delivered with the `policy` op to a fake machine on a real
+ * WebSocket, and the recent changes on the device view. Under device protocol 4 an `add` is
+ * refused before anything is sent or recorded: hosts are added on the machine only.
  */
 
 const POLICY: DeviceLocalPolicySummary = {
-  mode: "auto",
   allowedDomains: ["pypi.org"],
 };
 const FEATURES: Partial<LegacyDeviceHello> = {
-  features: ["networkReport", "policyOp", "policyOpId", "mode"],
+  features: ["networkReport", "policyOp", "policyOpId"],
   policy: POLICY,
 };
 
-const DOCKER_MESSAGE =
-  "This device runs commands in Docker mode, which cannot limit network access per domain; switch the device to OS mode to allow single domains.";
+const MACHINE_REFUSAL = "This device's local policy is managed by its administrator.";
 
 let pgc: TestContainer;
 let rd: TestContainer;
@@ -132,16 +132,17 @@ async function connect(
   d: { deviceId: string; machineId: string; credential: string },
   answer: (req: KernelReq) => Answer,
   hello: Partial<LegacyDeviceHello> = FEATURES,
+  outsideSandbox = true,
 ) {
   const machine = new FakeMachine(url, d.credential, answer, { hello: false });
   open.push(machine);
   await machine.opened;
   // the hello reports a fresh owner report (a reconnect never regresses its sequence)
   machine.hello({
-    // an auto-mode machine reports a Full owner ceiling (auto became Full at the activation)
+    // by default the machine's owner allows running outside the sandbox (Full)
     ownerCeiling: ownerReportFor(
       { allowedDomains: hello.policy?.allowedDomains ?? [] },
-      { fullAccess: hello.policy?.mode === "auto" },
+      { outsideSandbox },
     ),
     ...hello,
   });
@@ -165,26 +166,26 @@ async function connect(
   return machine;
 }
 
-/** A machine that applies `policy` ops the way capybara-device does. */
-function applying(start: DeviceLocalPolicySummary): (req: KernelReq) => Answer {
+/** A machine (Full by default) that applies `policy` ops the way capybara-device does. */
+function applying(
+  start: DeviceLocalPolicySummary,
+  outsideSandbox = true,
+): (req: KernelReq) => Answer {
   let now = start;
-  let ceiling: Partial<DeviceOwnerCeiling> = { fullAccess: start.mode === "auto" };
+  let ceiling: Partial<DeviceOwnerCeiling> = { outsideSandbox };
   return (req) => {
     if (req.op !== "policy") return { ok: true, result: null };
-    const a = req.args as { add?: string[]; remove?: string[]; mode?: "sandbox" };
-    const domains = new Set(now.allowedDomains);
-    for (const h of a.add ?? []) domains.add(h);
-    for (const h of a.remove ?? []) domains.delete(h);
-    now = {
-      ...now,
-      allowedDomains: [...domains],
-      ...(a.mode !== undefined && { mode: a.mode }),
+    const a = req.args as {
+      remove?: string[];
+      ownerCeiling?: Pick<Partial<DeviceOwnerCeiling>, "outsideSandbox" | "restrictedProjectReach">;
     };
-    // a v3 answer carries the owner report issued for the change (a narrowing applied)
-    const narrowing = (a as { ownerCeiling?: Partial<DeviceOwnerCeiling> }).ownerCeiling ?? {};
-    ceiling = { ...ceiling, ...narrowing };
-    // as capybara-device does: the summary's mode follows the owner's Full ceiling
-    if (ceiling.fullAccess === false) now = { ...now, mode: "sandbox" };
+    const domains = new Set(now.allowedDomains);
+    for (const h of a.remove ?? []) domains.delete(h);
+    now = { ...now, allowedDomains: [...domains] };
+    // the answer carries the owner report issued for the change (a narrowing applied)
+    if (a.ownerCeiling?.outsideSandbox === false) ceiling = { ...ceiling, outsideSandbox: false };
+    if (a.ownerCeiling?.restrictedProjectReach !== undefined)
+      ceiling = { ...ceiling, restrictedProjectReach: a.ownerCeiling.restrictedProjectReach };
     return {
       ok: true,
       result: { policy: now, ownerCeiling: ownerReportFor(now, ceiling) },
@@ -215,39 +216,47 @@ async function view(req: Req, deviceId: string): Promise<DeviceView> {
 }
 
 describe("POST /devices/:id/policy", () => {
-  it("the owner adds (a wildcard too), removes, and narrows to sandbox (the owner ceiling); each change is audited", async () => {
+  it("an add is refused (nothing sent or recorded); the owner removes and narrows to sandbox (the owner ceiling); each change is audited", async () => {
     const d = await owned();
-    const machine = await connect(d, applying(POLICY));
+    const start: DeviceLocalPolicySummary = {
+      allowedDomains: ["pypi.org", "files.slack.com", "*.npmjs.org"],
+    };
+    const machine = await connect(d, applying(start), { ...FEATURES, policy: start });
 
-    const added = await post(d.req, d.deviceId, { add: ["files.slack.com", "*.npmjs.org"] });
-    expect(added.statusCode, added.body).toBe(200);
-    expect(added.json()).toEqual({
-      policy: { ...POLICY, allowedDomains: ["pypi.org", "files.slack.com", "*.npmjs.org"] },
-    });
-    const [req] = policyReqs(machine);
-    expect(req?.args).toEqual({
-      add: ["files.slack.com", "*.npmjs.org"],
-      opId: expect.any(String),
-      // the owner's own change: no approval, so the machine accepts a wildcard
-      source: { accountId: d.accountId, accountName: `Name ${d.login}`, via: "web" },
-    });
+    // protocol 4: the platform never widens a local device's sandbox; hosts are added on the machine
+    const added = await post(d.req, d.deviceId, { add: ["files.example.com"] });
+    expect(added.statusCode, added.body).toBe(409);
+    expect(errCode(added)).toBe("device.policy_refused");
+    expect(errMessage(added)).toBe(HOSTS_ON_MACHINE_MESSAGE);
+    expect(policyReqs(machine)).toEqual([]);
+    expect(await auditsOf(d.deviceId, "device.policy_requested")).toEqual([]);
+    expect(await auditsOf(d.deviceId, "device.policy_failed")).toEqual([]);
 
     const removed = await post(d.req, d.deviceId, { remove: ["pypi.org"] });
     expect(removed.statusCode, removed.body).toBe(200);
+    expect(removed.json()).toEqual({
+      policy: { allowedDomains: ["files.slack.com", "*.npmjs.org"] },
+    });
+    const [req] = policyReqs(machine);
+    expect(req?.args).toEqual({
+      remove: ["pypi.org"],
+      opId: expect.any(String),
+      source: { accountId: d.accountId, accountName: `Name ${d.login}`, via: "web" },
+    });
+
     const narrowed = await post(d.req, d.deviceId, { mode: "sandbox" });
     expect(narrowed.statusCode, narrowed.body).toBe(200);
     expect(narrowed.json()).toEqual({
-      policy: { mode: "sandbox", allowedDomains: ["files.slack.com", "*.npmjs.org"] },
+      policy: { allowedDomains: ["files.slack.com", "*.npmjs.org"] },
     });
-    // protocol 3: the narrowing reaches the machine as the owner-ceiling narrowing it stands for
+    // the narrowing reaches the machine as the owner-ceiling narrowing it stands for
     expect(policyReqs(machine).at(-1)?.args).toMatchObject({
-      ownerCeiling: { fullAccess: false, restrictedProjectReach: "workspace" },
+      ownerCeiling: { outsideSandbox: false, restrictedProjectReach: "workspace" },
     });
     expect(policyReqs(machine).at(-1)?.args).not.toHaveProperty("mode");
 
     expect((await auditsOf(d.deviceId)).map((a) => a.detail)).toEqual([
-      expect.objectContaining({ add: ["files.slack.com", "*.npmjs.org"], via: "web" }),
-      expect.objectContaining({ remove: ["pypi.org"] }),
+      expect.objectContaining({ remove: ["pypi.org"], via: "web" }),
     ]);
     // the Full change is the owner report's, audited once by its writer; no daily mode audit
     expect(
@@ -267,7 +276,7 @@ describe("POST /devices/:id/policy", () => {
       reported: "sandbox",
       allowedDomains: ["files.slack.com", "*.npmjs.org"],
     });
-    expect(v.mode.recent).toHaveLength(3);
+    expect(v.mode.recent).toHaveLength(2);
     expect(v.mode.recent[0]).toMatchObject({
       kind: "ceiling",
       ceiling: {
@@ -277,9 +286,11 @@ describe("POST /devices/:id/policy", () => {
       by: `Name ${d.login}`,
       via: "web",
     });
-    expect(v.mode.recent[1]).toMatchObject({ kind: "policy", add: [], remove: ["pypi.org"] });
-    expect(v.mode.recent[2]).toMatchObject({
-      add: ["files.slack.com", "*.npmjs.org"],
+    expect(v.mode.recent[1]).toMatchObject({
+      kind: "policy",
+      add: [],
+      remove: ["pypi.org"],
+      by: `Name ${d.login}`,
     });
     expect(v.mode).toMatchObject({
       mode: "sandbox",
@@ -291,13 +302,16 @@ describe("POST /devices/:id/policy", () => {
 
   it("lists only the last ten changes", async () => {
     const d = await owned();
-    await connect(d, applying(POLICY));
+    const start: DeviceLocalPolicySummary = {
+      allowedDomains: Array.from({ length: 11 }, (_, i) => `h${i}.example.com`),
+    };
+    await connect(d, applying(start), { ...FEATURES, policy: start });
     for (let i = 0; i < 11; i++) {
-      const res = await post(d.req, d.deviceId, { add: [`h${i}.example.com`] });
+      const res = await post(d.req, d.deviceId, { remove: [`h${i}.example.com`] });
       expect(res.statusCode, res.body).toBe(200);
     }
     const recent = (await view(d.req, d.deviceId)).mode.recent;
-    expect(recent.map((r) => r.add[0])).toEqual(
+    expect(recent.map((r) => r.remove[0])).toEqual(
       Array.from({ length: 10 }, (_, i) => `h${10 - i}.example.com`),
     );
     // the list view carries them too
@@ -310,7 +324,7 @@ describe("POST /devices/:id/policy", () => {
     const d = await owned();
     const machine = await connect(d, applying(POLICY));
     const other = await owned();
-    const res = await post(other.req, d.deviceId, { add: ["files.slack.com"] });
+    const res = await post(other.req, d.deviceId, { remove: ["pypi.org"] });
     expect(res.statusCode, res.body).toBe(404);
     expect(errCode(res)).toBe("device.not_found");
     const admin = await session(k, "owner");
@@ -342,7 +356,7 @@ describe("POST /devices/:id/policy", () => {
       method: "POST",
       url: `${base()}/${d.deviceId}/policy`,
       headers: { authorization: `Bearer ${token}`, "x-capybara-csrf": "1" },
-      payload: { add: ["files.slack.com"] },
+      payload: { remove: ["pypi.org"] },
     });
     expect(viaService.statusCode, viaService.body).toBe(403);
     expect(policyReqs(machine)).toEqual([]);
@@ -386,7 +400,7 @@ describe("POST /devices/:id/policy", () => {
       15_000,
       "lease released",
     );
-    const res = await post(d.req, d.deviceId, { add: ["files.slack.com"] });
+    const res = await post(d.req, d.deviceId, { remove: ["pypi.org"] });
     expect(res.statusCode, res.body).toBe(503);
     expect(errCode(res)).toBe("device.offline");
     expect(await auditsOf(d.deviceId)).toEqual([]);
@@ -401,20 +415,17 @@ describe("POST /devices/:id/policy", () => {
     expect(policyReqs(machine)).toEqual([]);
   });
 
-  it("the machine's own refusal (Docker mode) → 409 device.policy_refused with its message", async () => {
+  it("the machine's own refusal → 409 device.policy_refused with its message", async () => {
     const d = await owned();
-    const machine = await connect(
-      d,
-      (req) =>
-        req.op === "policy"
-          ? { ok: false, error: { kind: "policy", message: DOCKER_MESSAGE } }
-          : { ok: true, result: null },
-      { ...FEATURES, mode: "docker" },
+    const machine = await connect(d, (req) =>
+      req.op === "policy"
+        ? { ok: false, error: { kind: "policy", message: MACHINE_REFUSAL } }
+        : { ok: true, result: null },
     );
-    const res = await post(d.req, d.deviceId, { add: ["files.slack.com"] });
+    const res = await post(d.req, d.deviceId, { remove: ["pypi.org"] });
     expect(res.statusCode, res.body).toBe(409);
     expect(errCode(res)).toBe("device.policy_refused");
-    expect(errMessage(res)).toBe(DOCKER_MESSAGE);
+    expect(errMessage(res)).toBe(MACHINE_REFUSAL);
     expect(policyReqs(machine)).toHaveLength(1);
     expect(await auditsOf(d.deviceId)).toEqual([]);
   });

@@ -11,6 +11,7 @@ import {
   type KernelRequest,
   type LegacyDevicePolicyArgs,
   type LegacyDevicePolicyStatus,
+  POLICY_ADD_REFUSED,
   type SandboxHandle,
   type SandboxLimits,
   validateAllowHost,
@@ -22,12 +23,15 @@ import { DeviceOpError } from "./exec/types.js";
 import { grantedHosts } from "./policy.js";
 import type { PolicyOpRecord } from "./policy-ops.js";
 import type { PolicyStore } from "./policy-store.js";
-import { publicSuffixWildcard } from "./public-suffix.js";
-import { type Policy, policyMode } from "./state.js";
+import type { Policy } from "./state.js";
 
 /** The refusal of a `policy` op that tries to widen the owner's ceiling from the deployment. */
 export const MODE_ON_DEVICE_MESSAGE =
   "The owner ceiling is widened on the machine only: run `capybara-device ceiling set`.";
+
+/** The refusal of a protocol 3 `mode` in a `policy` op: protocol 4 narrows through `ownerCeiling`. */
+export const MODE_REMOVED_MESSAGE =
+  'A policy op carries no mode in device protocol 4: the deployment narrows through "ownerCeiling".';
 
 /** What the summary describes besides the policy file. */
 export interface SummaryFacts {
@@ -35,14 +39,11 @@ export interface SummaryFacts {
 }
 
 /**
- * The summary the kernel keeps of a local policy (hello, `policy` op result): the owner's mode and
- * the device's restricted allowlist.
+ * The summary the kernel keeps of a local policy (hello, `policy` op result): the device's sandbox
+ * allowlist. The owner ceiling travels in the owner report.
  */
 export function policySummary(p: Policy, _facts: SummaryFacts): DeviceLocalPolicySummary {
-  return {
-    mode: policyMode(p),
-    allowedDomains: [...p.allowedDomains],
-  };
+  return { allowedDomains: [...p.allowedDomains] };
 }
 
 /** A refused `policy` op, with the local audit line that records the attempt. */
@@ -62,27 +63,17 @@ function clean(s: unknown, max: number): string {
     .slice(0, max);
 }
 
-/** Lowercased hosts of a `policy` op field; throws a `policy` error naming the first bad one. */
-function opHosts(list: unknown, key: "add" | "remove", fromApproval: boolean): string[] {
+/** Lowercased hosts of a `policy` op's `remove`; throws a `policy` error naming the first bad one. */
+function opHosts(list: unknown): string[] {
   if (list === undefined) return [];
-  if (!Array.isArray(list)) throw new DeviceOpError("policy", `${key} must be a list of hosts`);
+  if (!Array.isArray(list)) throw new DeviceOpError("policy", "remove must be a list of hosts");
   return list.map((raw) => {
     if (typeof raw !== "string")
-      throw new DeviceOpError("policy", `${key} must be a list of hosts`);
+      throw new DeviceOpError("policy", "remove must be a list of hosts");
     const host = raw.toLowerCase();
-    // A device-page wildcard over a whole public suffix is close to an open network, unconfirmed.
-    const tooBroad = key === "add" ? publicSuffixWildcard(host) : null;
-    if (tooBroad !== null) throw new DeviceOpError("policy", tooBroad);
     const errors = validateAllowHost(host);
     if (errors.length > 0) {
       throw new DeviceOpError("policy", `${JSON.stringify(raw)}: ${errors.join("; ")}`);
-    }
-    // An approval grants the exact host it asked about; wildcards come only from the device page.
-    if (key === "add" && fromApproval && host.startsWith("*.")) {
-      throw new DeviceOpError(
-        "policy",
-        `${JSON.stringify(raw)}: an approval grants an exact host, not a wildcard`,
-      );
     }
     return host;
   });
@@ -90,13 +81,13 @@ function opHosts(list: unknown, key: "add" | "remove", fromApproval: boolean): s
 
 /**
  * Applies a `policy` op to the local policy (a trust boundary: the deployment is not the owner).
+ * Protocol 4: the deployment only narrows; widening happens only on the machine.
  *
- * - `mode`: only `"sandbox"` (narrowing: no escalation, the workspace reach) is ever applied;
- *   `"auto"` is refused, so the deployment can never widen the owner's ceiling. Only
- *   `capybara-device ceiling set` on the machine does.
+ * - `add` is refused ({@link POLICY_ADD_REFUSED}) and writes nothing: the owner adds hosts on the
+ *   machine (`capybara-device policy add allowedDomains`).
+ * - `mode` (protocol 3) is refused: `ownerCeiling` names each narrowing.
  * - `ownerCeiling`: a narrowing only ({@link ownerCeilingNarrowing}); anything else is refused.
- * - `add` / `remove` change the sandbox allowlist; every host is validated (an approval adds an
- *   exact host, never a wildcard).
+ * - `remove` removes hosts from the sandbox allowlist; every host is validated.
  *
  * The op is idempotent. Returns the result and the local audit line; a refusal carries its audit
  * line too ({@link PolicyRefused}).
@@ -113,32 +104,35 @@ function applyPolicyOp(
     `by ${clean(source.accountName, 100)} (${clean(source.accountId, 100)}) ` +
     `via ${clean(source.via, 10)}`;
   const approval = fromApproval ? `, approval ${clean(source.approvalId, 100)}` : "";
-  let add: string[];
+  // Read as unknown: the frame parser may have been bypassed, so nothing is assumed of the shape.
+  const rawAdd: unknown = (args as { add?: unknown }).add;
+  const rawMode: unknown = (args as { mode?: unknown }).mode;
+  if (rawAdd !== undefined) {
+    // widening the allowlist from the deployment: refused before anything is read or written
+    const asked = Array.isArray(rawAdd) ? rawAdd.map((h) => clean(h, 253)).join(", ") : "?";
+    throw new PolicyRefused(
+      POLICY_ADD_REFUSED,
+      `policy refused add ${clean(asked, 200)} ${by}${approval}`,
+    );
+  }
   let remove: string[];
   try {
-    // `add` widens the owner's allowlist from the deployment. It stays only while the wire is
-    // protocol 3 (the program cannot tell protocol 4 here yet); W1.M refuses it for local devices
-    // under protocol 4, where an approval's "always allow" for a host becomes a per-call grant.
-    add = [...new Set(opHosts(args.add, "add", fromApproval))];
-    remove = [...new Set(opHosts(args.remove, "remove", fromApproval))];
+    remove = [...new Set(opHosts(args.remove))];
   } catch (e) {
     // an invalid host is a refused change too, audited with who asked for it
     const message = e instanceof Error ? e.message : String(e);
     throw new PolicyRefused(message, `policy refused (${clean(message, 200)}) ${by}${approval}`);
   }
-  // Read as unknown: the frame parser may have been bypassed, so nothing is assumed of the shape.
-  const rawMode: unknown = (args as { mode?: unknown }).mode;
   const parts: string[] = [];
-  if (add.length > 0) parts.push(`add ${add.join(", ")}`);
   if (remove.length > 0) parts.push(`remove ${remove.join(", ")}`);
   if (rawMode !== undefined) parts.push(`mode ${clean(String(rawMode), 40)}`);
   const ceilingArg: unknown = (args as { ownerCeiling?: unknown }).ownerCeiling;
   if (ceilingArg !== undefined) parts.push(`ownerCeiling ${clean(JSON.stringify(ceilingArg), 80)}`);
   const what = parts.length > 0 ? parts.join("; ") : "unchanged";
   const refused = `policy refused ${what} ${by}${approval}`;
-  if (rawMode !== undefined && rawMode !== "sandbox") {
-    // Widening the owner's ceiling is decided on the machine only.
-    throw new PolicyRefused(MODE_ON_DEVICE_MESSAGE, refused);
+  if (rawMode !== undefined) {
+    // protocol 3's mode: protocol 4 names each narrowing in `ownerCeiling`, never a mode
+    throw new PolicyRefused(MODE_REMOVED_MESSAGE, refused);
   }
   const narrowing = ownerCeilingNarrowing((args as { ownerCeiling?: unknown }).ownerCeiling);
   if (narrowing === undefined)
@@ -148,31 +142,17 @@ function applyPolicyOp(
     );
   // removing a host from the sandbox allowlist is a narrowing as well
   for (const h of narrowing.removeAllowedDomains) if (!remove.includes(h)) remove.push(h);
-  const both = add.find((h) => remove.includes(h));
-  if (both !== undefined) {
-    throw new PolicyRefused(`${both} is both added and removed`, refused);
-  }
-  const change = (p: Policy): Policy => {
-    const kept = p.allowedDomains.filter((d) => !remove.includes(d.toLowerCase()));
-    const present = new Set(kept.map((d) => d.toLowerCase()));
-    // protocol 2's `mode: "sandbox"` stands for no escalation and the workspace reach at once.
-    // Under protocol 3 it keeps the owner's network as it is: the mode never named a network, and
-    // keeping a field unchanged never widens it (an explicit `network: "allowlist"` narrows it)
-    const legacySandbox = rawMode === "sandbox";
-    return {
-      ...p,
-      ownerCeiling: {
-        outsideSandbox:
-          p.ownerCeiling.outsideSandbox && !narrowing.outsideSandboxOff && !legacySandbox,
-        network: narrowing.networkAllowlist ? "allowlist" : p.ownerCeiling.network,
-        restrictedProjectReach:
-          narrowing.workspaceReach || legacySandbox
-            ? "workspace"
-            : p.ownerCeiling.restrictedProjectReach,
-      },
-      allowedDomains: [...kept, ...add.filter((h) => !present.has(h))],
-    };
-  };
+  const change = (p: Policy): Policy => ({
+    ...p,
+    ownerCeiling: {
+      outsideSandbox: p.ownerCeiling.outsideSandbox && !narrowing.outsideSandboxOff,
+      network: narrowing.networkAllowlist ? "allowlist" : p.ownerCeiling.network,
+      restrictedProjectReach: narrowing.workspaceReach
+        ? "workspace"
+        : p.ownerCeiling.restrictedProjectReach,
+    },
+    allowedDomains: p.allowedDomains.filter((d) => !remove.includes(d.toLowerCase())),
+  });
   const next = store.update(change, { written });
   return {
     result: { policy: policySummary(next, facts) },
@@ -189,12 +169,11 @@ interface CeilingNarrowing {
 }
 
 /**
- * The staged owner-ceiling narrowing of a `policy` op (a trust boundary), read as unknown: the
- * frame parser may have been bypassed. It takes the protocol 3 fields (`fullAccess: false`,
- * `restrictedProjectReach: "workspace"`) and those of `DeviceOwnerCeilingNarrowingV3`
- * (`outsideSandbox: false`, `network: "allowlist"`, `removeAllowedDomains`), so the protocol 4
- * cutover only switches the frame parser. Undefined for anything that could widen: another value,
- * another key or another shape. W1.M drops the protocol 3 `fullAccess` key.
+ * The owner-ceiling narrowing of a `policy` op (a trust boundary), read as unknown: the frame
+ * parser may have been bypassed. It takes the fields of `DeviceOwnerCeilingNarrowing`
+ * (`outsideSandbox: false`, `network: "allowlist"`, `removeAllowedDomains`,
+ * `restrictedProjectReach: "workspace"`). Undefined for anything that could widen: another value,
+ * another key (the protocol 3 `fullAccess` among them) or another shape.
  */
 export function ownerCeilingNarrowing(raw: unknown): CeilingNarrowing | undefined {
   const none: CeilingNarrowing = {
@@ -206,15 +185,8 @@ export function ownerCeilingNarrowing(raw: unknown): CeilingNarrowing | undefine
   if (raw === undefined) return none;
   if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return undefined;
   const o = raw as Record<string, unknown>;
-  const allowed = [
-    "fullAccess",
-    "outsideSandbox",
-    "network",
-    "restrictedProjectReach",
-    "removeAllowedDomains",
-  ];
+  const allowed = ["outsideSandbox", "network", "restrictedProjectReach", "removeAllowedDomains"];
   if (Object.keys(o).some((k) => !allowed.includes(k))) return undefined;
-  if (o.fullAccess !== undefined && o.fullAccess !== false) return undefined;
   if (o.outsideSandbox !== undefined && o.outsideSandbox !== false) return undefined;
   if (o.network !== undefined && o.network !== "allowlist") return undefined;
   if (o.restrictedProjectReach !== undefined && o.restrictedProjectReach !== "workspace")
@@ -227,7 +199,7 @@ export function ownerCeilingNarrowing(raw: unknown): CeilingNarrowing | undefine
     removeAllowedDomains = [...new Set((list as string[]).map((h) => h.toLowerCase()))];
   }
   return {
-    outsideSandboxOff: o.fullAccess === false || o.outsideSandbox === false,
+    outsideSandboxOff: o.outsideSandbox === false,
     networkAllowlist: o.network === "allowlist",
     workspaceReach: o.restrictedProjectReach === "workspace",
     removeAllowedDomains,
@@ -420,10 +392,12 @@ function operationEntry(
 }
 
 /**
- * A `policy` / `policyStatus` op: the op log, idempotence and narrowing only, then, after a successful write, live owners are reconciled at once and the answer carries
- * the owner report issued for the written revision. An applied status carries the current report.
+ * A `policy` / `policyStatus` op: the op log, idempotence and narrowing only, then, after a
+ * successful write, live owners are reconciled at once and the answer carries the owner report
+ * issued for the written revision. An applied status carries the current report. Exported for the
+ * trust-boundary tests, which call it with a request the frame parser would refuse.
  */
-async function serveOwnerPolicyV3(
+export async function serveOwnerPolicyV3(
   owner: StagedOwnerPolicy,
   req: KernelReq,
   signal: AbortSignal,
@@ -474,7 +448,7 @@ async function serveOwnerPolicyV3(
 }
 
 /**
- * The device's one operation dispatch (protocol 3): every request is parsed strictly first, so an
+ * The device's one operation dispatch (protocol 4): every request is parsed strictly first, so an
  * operation the protocol does not define (the old `killTagged` / `killAll`, an unscoped read) is
  * refused before anything on the machine is reached.
  */

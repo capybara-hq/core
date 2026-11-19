@@ -1,4 +1,4 @@
-import { policyMode, readCredential, readPolicy, type SandboxMode } from "../state.js";
+import { type OwnerCeilingPolicy, readCredential, readPolicy } from "../state.js";
 
 /** `status`: exit 0 when logged in, 1 when not (or the credential file is unusable). */
 export function status(
@@ -19,16 +19,17 @@ export function status(
     return 1;
   }
   // An unreadable policy file is reported by `start` and `policy show`; status still answers.
-  let sandboxMode: SandboxMode | undefined;
+  let ceiling: OwnerCeilingPolicy | undefined;
   try {
-    sandboxMode = policyMode(readPolicy(stateDir));
+    ceiling = readPolicy(stateDir).ownerCeiling;
   } catch {
-    sandboxMode = undefined;
+    ceiling = undefined;
   }
+  const sandbox = ceiling && { network: ceiling.network, outsideSandbox: ceiling.outsideSandbox };
   // The credential itself is never printed.
   const { credential: _secret, ...shown } = cred;
   if (json) {
-    out(JSON.stringify({ loggedIn: true, ...shown, ...(sandboxMode && { sandboxMode }) }));
+    out(JSON.stringify({ loggedIn: true, ...shown, ...(sandbox && { sandbox }) }));
   } else {
     out(
       [
@@ -37,7 +38,12 @@ export function status(
         `  organization: ${cred.orgId}`,
         `  device:       ${cred.deviceId}`,
         `  directory:    ${cred.dir}`,
-        `  mode:         ${cred.mode} | ${sandboxMode ?? "unknown"}`,
+        `  mode:         ${cred.mode}`,
+        `  sandbox:      ${
+          sandbox
+            ? `network ${sandbox.network}, outside the sandbox ${sandbox.outsideSandbox ? "allowed" : "off"}`
+            : "unknown"
+        }`,
       ].join("\n"),
     );
   }

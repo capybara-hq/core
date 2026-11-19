@@ -1,6 +1,5 @@
-import type { DeviceLocalPolicySummary } from "@capybara-hq/plugin-sdk";
 import { describe, expect, it } from "vitest";
-import { deviceModeViewOf } from "../../src/devices/devices.service.js";
+import { deviceModeViewOf, type LocalReport } from "../../src/devices/devices.service.js";
 import { type DeploymentDevicePolicy, effectiveDevicePolicy } from "../../src/sandbox/modes.js";
 
 /** A device's mode view on its page (auto mode spec §4.3). */
@@ -13,8 +12,9 @@ const deployment = (
   limits: { egress, allowHosts: ["pypi.org"], orgHosts: "extend" },
 });
 
-const summary = (s: Partial<DeviceLocalPolicySummary> = {}): DeviceLocalPolicySummary => ({
-  mode: "auto",
+/** What a local machine reported: the mode its owner report encodes and its allowlist. */
+const summary = (s: Partial<LocalReport> = {}): LocalReport => ({
+  reported: "auto",
   allowedDomains: [],
   ...s,
 });
@@ -138,8 +138,8 @@ describe("deviceModeViewOf", () => {
 
   it("a local device reports its own mode and allowlist; the org explicitly allowing auto names the org", () => {
     const org = { outsideSandbox: "allowed" as const };
-    const s = summary({ mode: "sandbox", allowedDomains: ["a.com"] });
-    const policy = effectiveDevicePolicy(deployment(), org, s.mode);
+    const s = summary({ reported: "sandbox", allowedDomains: ["a.com"] });
+    const policy = effectiveDevicePolicy(deployment(), org, s.reported);
     expect(deviceModeViewOf(policy, org, true, s, extra)).toMatchObject({
       mode: "sandbox",
       allowedMode: "auto",

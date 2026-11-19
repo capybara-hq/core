@@ -98,7 +98,7 @@ export class PermissionProfilesService {
       );
     const preview = await this.facts.scope(orgId, deviceId, projectPath, project);
     if (
-      !preview.fullAccessCeiling ||
+      !preview.outsideSandboxCeiling ||
       preview.availability.state === "unsupported" ||
       preview.scopeRevision !== selection.consentScopeRevision
     )

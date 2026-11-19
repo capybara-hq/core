@@ -51,7 +51,6 @@ const LIMITS: SandboxLimits = {
   cpu: 2,
   memoryMb: 1024,
   diskMb: 2048,
-  mode: "sandbox",
   network: { kind: "allowlist", hosts: ["example.com"] },
 };
 const ROOTS = {
@@ -264,10 +263,9 @@ describe("LocalDeviceProvider", () => {
       provider.stat(handle, ROOTS.workspace, signal()),
       provider.list(handle, ROOTS.workspace, {
         limit: 10,
-        limits: { mode: "sandbox" },
         signal: signal(),
       }),
-      provider.scan(handle, ROOTS.workspace, { limits: { mode: "sandbox" }, signal: signal() }),
+      provider.scan(handle, ROOTS.workspace, { signal: signal() }),
     ];
     for (const r of await Promise.allSettled(refused)) {
       expect(r).toMatchObject({ status: "rejected" });
@@ -351,9 +349,11 @@ it("a staged readFile asks for no more than fits in one frame (ruling R26)", asy
       return null;
     },
     permissionSupport: async () => ({
-      version: 1,
+      version: 2,
       restricted: null,
-      fullAccess: false,
+      boundary: "operation",
+      network: { openPublic: false, allowlist: false, perOperationHosts: false },
+      outsideSandbox: false,
       background: false,
     }),
   });
@@ -401,9 +401,11 @@ it.each(["exec", "backgroundStart"] as const)(
         return { exitCode: 0, stdout: "", stderr: "", truncated: false, timedOut: false };
       },
       permissionSupport: async () => ({
-        version: 1,
+        version: 2,
         restricted: null,
-        fullAccess: false,
+        boundary: "operation",
+        network: { openPublic: false, allowlist: false, perOperationHosts: false },
+        outsideSandbox: false,
         background: false,
       }),
     });
@@ -468,9 +470,11 @@ it("staged exec re-layers the machine's refused hosts against the limits it carr
       },
     }),
     permissionSupport: async () => ({
-      version: 1,
+      version: 2,
       restricted: null,
-      fullAccess: false,
+      boundary: "operation",
+      network: { openPublic: false, allowlist: false, perOperationHosts: false },
+      outsideSandbox: false,
       background: false,
     }),
   });
@@ -503,9 +507,11 @@ it("staged exec: a wildcard the machine calls its own is an address, a bad name 
   const staged = provider.stagedOperations({
     call: async () => ({ ...EXEC_RESULT, ...answer }),
     permissionSupport: async () => ({
-      version: 1,
+      version: 2,
       restricted: null,
-      fullAccess: false,
+      boundary: "operation",
+      network: { openPublic: false, allowlist: false, perOperationHosts: false },
+      outsideSandbox: false,
       background: false,
     }),
   });

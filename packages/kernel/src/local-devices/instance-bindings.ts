@@ -127,9 +127,11 @@ export class LocalInstanceBindings implements SandboxInstanceBinder {
     );
     if (availability.state === "supported") return availability.report;
     return {
-      version: 1,
+      version: 2,
+      boundary: "operation",
       restricted: null,
-      fullAccess: false,
+      network: { openPublic: false, allowlist: false, perOperationHosts: false },
+      outsideSandbox: false,
       background: false,
       unavailableReason:
         availability.state === "unsupported"

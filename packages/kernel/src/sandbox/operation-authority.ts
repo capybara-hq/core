@@ -87,7 +87,7 @@ export interface PermissionScopeFacts {
   readRoots: readonly string[];
   writeRoots: readonly string[];
   allowedHosts: readonly string[];
-  fullAccessCeiling: boolean;
+  outsideSandboxCeiling: boolean;
   fullConsent?: boolean;
   /**
    * An approved per-call sandbox escalation of this exact call (its immutable call grant): the
@@ -126,7 +126,7 @@ function withheldScope(input: {
   )
     return { state: "unprobed", reason: UNPROVED_ENVIRONMENT };
   if (input.effectiveProfile === "full-access") {
-    if (!availability.report.fullAccess)
+    if (!availability.report.outsideSandbox)
       return { state: "unsupported", reason: "This device's runtime cannot run Full access" };
   } else if (availability.report.restricted === null)
     return {
@@ -142,14 +142,14 @@ function withheldScope(input: {
 const KERNEL_READ_PROFILE: PermissionProfile = "request-approval";
 /** Only server-resolved facts enter this constructor; callers never submit roots or profile. */
 export function intersectPermissionScope(f: PermissionScopeFacts): SandboxOperationScope {
-  if (f.profile === "full-access" && (!f.fullConsent || !f.fullAccessCeiling))
+  if (f.profile === "full-access" && (!f.fullConsent || !f.outsideSandboxCeiling))
     throw new ApiError(
       "forbidden",
       "Full access requires current device authority and matching consent",
     );
   // an escalated call runs with full execution: the same device, org and platform ceiling as Full
   // access, its consent the exact call grant (bound to the scope revision) instead of the profile's
-  if (f.escalated && (f.profile === "full-access" || !f.fullAccessCeiling))
+  if (f.escalated && (f.profile === "full-access" || !f.outsideSandboxCeiling))
     throw new ApiError(
       "forbidden",
       "A sandbox escalation requires a restricted profile and the current Full access ceiling",
@@ -526,7 +526,7 @@ export class SandboxOperationAuthority {
     if (availability.state === "supported") {
       route = kernelReadRoute({
         restricted: availability.report.restricted !== null,
-        fullAccess: availability.report.fullAccess,
+        fullAccess: availability.report.outsideSandbox,
         isolated: await this.isolatedRuntime(ctx.orgId, ctx.deviceId),
       });
       if (route === "refused") throw new KernelReadUnsupported();
@@ -604,7 +604,7 @@ export class SandboxOperationAuthority {
       readRoots: f.baseReadDirectories,
       writeRoots: f.baseWriteDirectories,
       allowedHosts: isExecutionMethod(operation) ? f.baseHosts : [],
-      fullAccessCeiling: f.fullAccessCeiling,
+      outsideSandboxCeiling: f.outsideSandboxCeiling,
       fullConsent: f.fullConsent,
       ...(escalated ? { escalated: true } : {}),
     });
@@ -713,7 +713,7 @@ export class SandboxOperationAuthority {
     });
     const escalationRefusal = unattended
       ? ESCALATION_UNATTENDED_WHY
-      : !view.fullAccessCeiling
+      : !view.outsideSandboxCeiling
         ? ESCALATION_CEILING_WHY
         : fullWithheld
           ? escalationRuntimeWhy(fullWithheld.reason)
@@ -738,7 +738,7 @@ export class SandboxOperationAuthority {
       baseReadDirectories: restrictedReadRoots(workingRoot, applied),
       baseWriteDirectories: [workingRoot],
       baseHosts: allowedHosts,
-      fullAccessCeiling: view.fullAccessCeiling,
+      outsideSandboxCeiling: view.outsideSandboxCeiling,
       broadProjectReach: view.broadProjectReach,
       fullConsent:
         view.profile === "full-access" && view.consentScope?.scopeRevision === view.scopeRevision,
@@ -1104,7 +1104,7 @@ export class SandboxOperationAuthority {
     const full = effectiveProfile === "full-access";
     if (
       full &&
-      (!view.fullAccessCeiling ||
+      (!view.outsideSandboxCeiling ||
         view.consentScope?.deviceId !== deviceId ||
         view.consentScope.scopeRevision !== scopeRevision)
     )

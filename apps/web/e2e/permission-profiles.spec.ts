@@ -35,9 +35,9 @@ type Permissions = {
   deviceId: string | null;
   consentScope: { deviceId: string; scopeRevision: string } | null;
   availability:
-    | { state: "supported"; report: { restricted: unknown; fullAccess: boolean } }
+    | { state: "supported"; report: { restricted: unknown; outsideSandbox: boolean } }
     | { state: "unsupported" | "unprobed"; reason: string };
-  fullAccessCeiling: boolean;
+  outsideSandboxCeiling: boolean;
 };
 
 /** The owner's authoritative read of a conversation's permission state. */
@@ -272,9 +272,11 @@ test.describe("permission profiles", () => {
       // The provider reports Full access and background ownership but no restricted runtime; a
       // new device records it when its instance first starts.
       await setPermissionSupport({
-        version: 1,
+        version: 2,
+        boundary: "operation",
         restricted: null,
-        fullAccess: true,
+        network: { openPublic: false, allowlist: false, perOperationHosts: false },
+        outsideSandbox: true,
         background: true,
         unavailableReason: "This e2e runtime cannot confine execution",
       });
@@ -312,7 +314,7 @@ test.describe("permission profiles", () => {
       expect(view.profile).toBe("request-approval");
       expect(view.availability).toMatchObject({
         state: "supported",
-        report: { restricted: null, fullAccess: true },
+        report: { restricted: null, outsideSandbox: true },
       });
 
       // The existing conversation's picker: both restricted rows unavailable with the reason,

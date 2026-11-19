@@ -2,6 +2,7 @@ import { homedir } from "node:os";
 import { resolve } from "node:path";
 import {
   DEFAULT_SANDBOX_ROOTS,
+  DEVICE_PROTOCOL_VERSION,
   type DeviceFeature,
   type DeviceHello,
   FileSystemGoneError,
@@ -50,9 +51,11 @@ const UNBOUND_REASON =
 
 /** The permission support an unbound program reports: nothing runs until the bind. */
 export const UNBOUND_SUPPORT: SandboxPermissionSupport = Object.freeze({
-  version: 1,
+  version: 2,
+  boundary: "operation",
   restricted: null,
-  fullAccess: false,
+  network: Object.freeze({ openPublic: false, allowlist: false, perOperationHosts: false }),
+  outsideSandbox: false,
   background: false,
   unavailableReason: UNBOUND_REASON,
 });
@@ -81,7 +84,7 @@ const IDLE_LIFECYCLE: MacOperationBackend["lifecycle"] = {
   dispose: () => {},
 };
 
-/** Trusted construction input of a staged (protocol 3) program; nothing here comes off the wire. */
+/** Trusted construction input of a staged (protocol 4) program; nothing here comes off the wire. */
 export interface StagedDeviceOptions {
   cred: Credential;
   stateDir: string;
@@ -295,10 +298,10 @@ export function createStagedDevice(o: StagedDeviceOptions): StagedDevice {
       const ownerHome = r.home ?? home;
       const features: DeviceFeature[] = [];
       if (mode === "os") features.push("networkReport");
-      features.push("policyOp", "policyOpId", "mode", "projects");
+      features.push("policyOp", "policyOpId", "projects");
       return {
         type: "hello",
-        protocol: 3,
+        protocol: DEVICE_PROTOCOL_VERSION,
         programVersion: r.programVersion ?? PROGRAM_VERSION,
         os: platform === "darwin" ? "darwin" : "linux",
         arch: process.arch,

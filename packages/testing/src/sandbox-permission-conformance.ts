@@ -6,6 +6,7 @@ import {
   type ExecResult,
   isSandboxPermissionUnsupportedError,
   isSandboxScopeDeniedError,
+  isSandboxScopeValidationError,
   type PermissionProfile,
   type SandboxFileScope,
   type SandboxNetworkScope,
@@ -785,7 +786,7 @@ export async function runSandboxPermissionConformance(
     ])
       assert.equal(await fixture.inspect.mode(at(root, path)), null, `mandatory deny: ${path}`);
 
-    if (support.fullAccess) {
+    if (support.outsideSandbox) {
       // ordinary git work in a restricted repository keeps working under these rules
       await exec(
         full,
@@ -912,7 +913,7 @@ export async function runSandboxPermissionConformance(
 
     // Pathname UNIX sockets: a service outside the roots is unreachable under every network kind
     // (including environment, which lifts only the network filter); one inside the root works.
-    if (support.fullAccess) {
+    if (support.outsideSandbox) {
       const server = new AbortController();
       const outside = exec(
         full,
@@ -924,10 +925,18 @@ export async function runSandboxPermissionConformance(
         { path: at(root, "srv-link.sock"), kind: "symlink", target: at(sibling, "srv.sock") },
       ]);
       if (fixture.restrictedEnvironment === "refused") {
-        // the policy refusal is the result: a typed scope denial before anything runs
-        await denied(
+        // the refusal is the result, before anything runs: the scope contract makes the
+        // environment network legal only with the device filesystem (the escalated pair), so the
+        // scope is refused as invalid (typed, or by its message over the device wire); a backend
+        // that parses it may still refuse it with a typed scope denial
+        await assert.rejects(
           exec(restricted({ kind: "environment" }), `printf ran > ${quote(at(root, "env-ran"))}`),
-          "a restricted environment-network operation must be refused by policy",
+          (error) =>
+            isSandboxScopeDeniedError(error) ||
+            isSandboxScopeValidationError(error) ||
+            (error instanceof Error &&
+              /environment requires the device filesystem/.test(error.message)),
+          "a restricted environment-network operation must be refused before it runs",
         );
         assert.equal(await fixture.inspect.readFile(at(root, "env-ran")), null);
       }
@@ -1018,7 +1027,7 @@ export async function runSandboxPermissionConformance(
     }
 
     // Full access controls on the same device: no restricted filters apply.
-    if (support.fullAccess) {
+    if (support.outsideSandbox) {
       const control = await exec(
         full,
         `cat ${quote(at(sibling, "secret"))} && printf full > ${quote(at(sibling, "full"))} && ${connect(ungranted[0] ?? granted)}`,
@@ -1034,7 +1043,7 @@ export async function runSandboxPermissionConformance(
     }
 
     // Both overlap orders: a live Full operation never widens a restricted one, and vice versa.
-    if (support.fullAccess) {
+    if (support.outsideSandbox) {
       const first = exec(
         restricted(),
         `printf r > ready-a; until [ -e barrier-a ]; do sleep 0.01; done; ` +
@@ -1061,7 +1070,7 @@ export async function runSandboxPermissionConformance(
     }
 
     // Component swaps during native and shell access never escape.
-    if (support.fullAccess) {
+    if (support.outsideSandbox) {
       const race = at(root, "race");
       const swapper = exec(
         full,

@@ -248,7 +248,9 @@ describe.runIf(darwin)("capybara-device macOS operation backend", () => {
     const support = await fixture.support();
     expect(support).toMatchObject({
       restricted: { filesystem: true, network: true, native: true, concurrentScopes: true },
-      fullAccess: true,
+      boundary: "operation",
+      network: { openPublic: false, allowlist: true, perOperationHosts: true },
+      outsideSandbox: true,
       background: true,
     });
   });

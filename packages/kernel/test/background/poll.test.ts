@@ -986,14 +986,15 @@ describe("exact background revocation through the outbox and the worker", () => 
     o: { fullAccess: boolean; domains: string[]; reach?: "workspace" | "os-user" },
   ) => ({
     type: "policy",
-    policy: { mode: o.fullAccess ? "auto" : "sandbox", allowedDomains: o.domains },
+    policy: { allowedDomains: o.domains },
     ownerCeiling: {
-      version: 2,
+      version: 3,
       revision: `owner-${sequence}`,
       sequence,
-      fullAccess: o.fullAccess,
+      outsideSandbox: o.fullAccess,
+      network: o.fullAccess ? "open" : "allowlist",
       restrictedProjectReach: o.reach ?? "os-user",
-      restrictedAllowedDomains: o.domains,
+      allowedDomains: o.domains,
     },
   });
   let current: { account: Account; login: string } | undefined;

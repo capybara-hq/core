@@ -6,7 +6,6 @@ import {
 } from "@capybara-hq/plugin-sdk";
 import { coversHost } from "../sandbox/modes.js";
 import { isExecutionMethod, isFullExecutionScope } from "../sandbox/operation-authority-types.js";
-import { localModeOf, localPolicyOf } from "./policy-summary.js";
 
 /** How far restricted (non-Full) operations and project browsing may reach on a machine. */
 export type RestrictedProjectReach = "workspace" | "os-user";
@@ -77,24 +76,31 @@ const canonicalReport = (r: DeviceOwnerCeiling) => ({
   version: r.version,
   revision: r.revision,
   sequence: r.sequence,
-  fullAccess: r.fullAccess,
+  outsideSandbox: r.outsideSandbox,
+  network: r.network,
+  allowedDomains: [...r.allowedDomains],
   restrictedProjectReach: r.restrictedProjectReach,
-  restrictedAllowedDomains: [...r.restrictedAllowedDomains],
 });
 
 /**
  * The owner facts the kernel decides with (B2), never inferred wider than reported:
- * - `report`: an authenticated version-2 report (Full and reach independent);
+ * - `report`: an authenticated version 3 report (protocol 4);
  * - `blocked`: a stale or conflicting report arrived: fail closed, admission refused;
- * - `legacy`: only a protocol 2 summary (the active wire until activation): its `mode` translates
- *   exactly (auto: Full + OS-user reach; sandbox: neither);
- * - `missing`: nothing readable: fail closed.
+ * - `missing`: nothing readable (no report, or one of an older protocol): fail closed.
+ *
+ * The report maps onto the facts the kernel decides with today: `fullAccess` is the report's
+ * `outsideSandbox`, `restrictedAllowedDomains` its `allowedDomains`; `network` is carried for the
+ * device sandbox the kernel computes next.
  */
 export interface OwnerFacts {
-  state: "report" | "blocked" | "legacy" | "missing";
+  state: "report" | "blocked" | "missing";
+  /** The owner allows running outside the sandbox (the report's `outsideSandbox`). */
   fullAccess: boolean;
   restrictedProjectReach: RestrictedProjectReach;
+  /** The owner's sandbox allowlist (the report's `allowedDomains`). */
   restrictedAllowedDomains: string[];
+  /** The owner's sandbox network (`allowlist` when failing closed). */
+  network: "open" | "allowlist";
   revision: string | null;
   sequence: number | null;
   observedAt: string | null;
@@ -104,6 +110,7 @@ const FAIL_CLOSED = {
   fullAccess: false,
   restrictedProjectReach: "workspace" as const,
   restrictedAllowedDomains: [],
+  network: "allowlist" as const,
 };
 
 /** The facts of a stored report alone (a successful record). */
@@ -118,31 +125,21 @@ export function ownerFactsOfReport(stored: StoredOwnerReport): OwnerFacts {
     };
   return {
     state: "report",
-    fullAccess: stored.report.fullAccess,
+    fullAccess: stored.report.outsideSandbox,
     restrictedProjectReach: stored.report.restrictedProjectReach,
-    restrictedAllowedDomains: [...stored.report.restrictedAllowedDomains],
+    restrictedAllowedDomains: [...stored.report.allowedDomains],
+    network: stored.report.network,
     revision: stored.report.revision,
     sequence: stored.report.sequence,
     observedAt: stored.observedAt,
   };
 }
 
-/** A machine row's owner facts: its authenticated report, else its protocol 2 summary. */
-export function ownerFactsOf(row: { owner_report?: unknown; local_policy?: unknown }): OwnerFacts {
+/** A machine row's owner facts: its authenticated report, else missing (fail closed). */
+export function ownerFactsOf(row: { owner_report?: unknown }): OwnerFacts {
   const stored = storedOwnerReportOf(row.owner_report);
   if (stored !== null) return ownerFactsOfReport(stored);
-  const summary = localPolicyOf(row.local_policy);
-  if (summary === null)
-    return { state: "missing", ...FAIL_CLOSED, revision: null, sequence: null, observedAt: null };
-  return {
-    state: "legacy",
-    fullAccess: summary.mode === "auto",
-    restrictedProjectReach: summary.mode === "auto" ? "os-user" : "workspace",
-    restrictedAllowedDomains: [...summary.allowedDomains],
-    revision: null,
-    sequence: null,
-    observedAt: null,
-  };
+  return { state: "missing", ...FAIL_CLOSED, revision: null, sequence: null, observedAt: null };
 }
 
 /** True when `path` lies in one of `roots` (absolute, normalized). */
@@ -205,16 +202,10 @@ export function machineRootList(roots: unknown): string[] {
 }
 
 /**
- * The protocol-2 mode encoding of a machine's owner Full permission (the kernel's internal
- * lifecycle ceiling encoding; never re-encodes reach): its authenticated report when there is one
- * (a blocked report fails closed), else the protocol 2 derivation ({@link localModeOf}).
+ * The mode encoding of a machine's owner outside-sandbox permission (the kernel's internal ceiling
+ * encoding; never re-encodes reach): `auto` only for an authenticated report that allows running
+ * outside the sandbox; a blocked, missing or older report fails closed.
  */
-export function ownerModeOf(row: {
-  features: unknown;
-  local_policy: unknown;
-  owner_report?: unknown;
-}): "auto" | "sandbox" {
-  const stored = storedOwnerReportOf(row.owner_report);
-  if (stored === null) return localModeOf(row.features, row.local_policy);
-  return ownerFactsOfReport(stored).fullAccess ? "auto" : "sandbox";
+export function ownerModeOf(row: { owner_report?: unknown }): "auto" | "sandbox" {
+  return ownerFactsOf(row).fullAccess ? "auto" : "sandbox";
 }

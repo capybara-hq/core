@@ -93,9 +93,11 @@ export function permissionAvailability(
     return {
       state,
       report: {
-        version: 1,
+        version: 2,
         restricted: { filesystem: true, network: true, native: true, concurrentScopes: true },
-        fullAccess: true,
+        boundary: "operation",
+        network: { openPublic: false, allowlist: true, perOperationHosts: true },
+        outsideSandbox: true,
         background: true,
       },
     };
@@ -114,7 +116,7 @@ export const permissionPreview = (over: Partial<PermissionPreview> = {}): Permis
   project: null,
   scopeRevision: "scope-1",
   availability: permissionAvailability(),
-  fullAccessCeiling: true,
+  outsideSandboxCeiling: true,
   ...over,
 });
 
@@ -129,7 +131,7 @@ export const permissionsView = (
   consentScope: null,
   scopeRevision: null,
   availability: { state: "unsupported", reason: "Choose a device to run device operations" },
-  fullAccessCeiling: false,
+  outsideSandboxCeiling: false,
   startingWorkNotice:
     "Changes apply to new operations. Work already started keeps its starting permissions.",
   ...over,

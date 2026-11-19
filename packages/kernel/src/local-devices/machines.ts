@@ -37,7 +37,6 @@ import { OwnerReports } from "./owner-reports.js";
 import { DEVICE_OP_RESOLVE_JOB, deviceOpReportedJobId } from "./policy-op-jobs.js";
 import {
   deviceFeaturesOf,
-  legacyPolicyOf,
   localPolicyDiff,
   localPolicyOf,
   opExplains,
@@ -239,8 +238,8 @@ export class MachinesService {
    * never said hello has no known roots: nothing to compare. The reported features (known ones
    * only) and local policy summary (null when absent or malformed) replace the stored ones, so a
    * program downgraded to one without them is no longer sent what it cannot do. The summary is the
-   * device's mode and sandbox-mode allowlist; a change of what the owner sets, made on the machine
-   * while it was away, is audited `device.policy_changed` / `device.mode_changed`
+   * device's sandbox allowlist; a change of what the owner sets, made on the machine while it was
+   * away, is audited `device.policy_changed` (the owner ceiling's, `device.owner_ceiling_changed`)
    * ({@link reportedPolicy}). The outcomes of its recent policy ops (`recentOps`) backfill the
    * platform's ops still pending on the row ({@link backfillOps}). The owner's home directory
    * (`home`) replaces the stored one too (null when the hello has none).
@@ -249,8 +248,7 @@ export class MachinesService {
   async recordHello(
     machineId: string,
     hello: LegacyDeviceHello,
-    rawPolicy: unknown = hello.policy,
-    /** A v3 hello's authenticated owner report (B2): it, not the summary, decides publication. */
+    /** A protocol 4 hello's authenticated owner report (B2): it, not the summary, decides publication. */
     owner?: { report: DeviceOwnerCeiling; connectionId: string | null },
   ): Promise<void> {
     const subject = await this.db
@@ -307,13 +305,7 @@ export class MachinesService {
           .execute();
       }
     }
-    const policy = await this.reportedPolicy(
-      machineId,
-      self,
-      hello.policy,
-      rawPolicy,
-      owner !== undefined,
-    );
+    const policy = await this.reportedPolicy(machineId, self, hello.policy);
     // jsonb returns keys in its own order: compare roots canonically, or every reconnect would
     // look like a changed reach and reset Full consent (B4 consent stability)
     const rootsChanged = canonicalRoots(self.roots) !== canonicalRoots(hello.roots);
@@ -333,7 +325,7 @@ export class MachinesService {
         (scope, row) =>
           rootsChanged ||
           ownerPolicyRevokes(localPolicyOf(policy), scope, row.method, row.granted_hosts),
-        localPolicyOf(self.local_policy)?.mode !== localPolicyOf(policy)?.mode || rootsChanged,
+        rootsChanged,
       );
     await this.db
       .updateTable("device_machines")
@@ -425,7 +417,7 @@ export class MachinesService {
   ): Promise<void> {
     const parsed = parseDeviceFrame(JSON.stringify(hello), "device");
     if (parsed.type !== "hello") throw new Error("Expected a validated operation hello");
-    await this.recordHello(machineId, parsed, parsed.policy, {
+    await this.recordHello(machineId, parsed, {
       report: parsed.ownerCeiling,
       connectionId,
     });
@@ -493,9 +485,9 @@ export class MachinesService {
 
   /**
    * Stores the local policy summary a connected program pushed after its hello (a `policy` frame:
-   * its policy file changed on the machine: its mode or its sandbox-mode allowlist), read and
-   * audited as the hello's ({@link recordHello}). A change the owner made on the machine is
-   * audited `device.policy_changed` / `device.mode_changed`. The next sandbox call then records a
+   * its policy file changed on the machine: its sandbox allowlist), read and audited as the hello's
+   * ({@link recordHello}). A change the owner made on the machine is audited
+   * `device.policy_changed`. The next sandbox call then records a
    * new `device_paths` event when the facts the model is told changed. A revoked machine is left
    * alone.
    */
@@ -503,7 +495,6 @@ export class MachinesService {
   async recordPolicy(
     machineId: string,
     summary: DeviceLocalPolicySummary | undefined,
-    rawPolicy: unknown = summary,
   ): Promise<void> {
     const subject = await this.db
       .selectFrom("device_machines")
@@ -523,14 +514,14 @@ export class MachinesService {
       .forUpdate()
       .executeTakeFirst();
     if (self === undefined) return;
-    const policy = await this.reportedPolicy(machineId, self, summary, rawPolicy);
+    const policy = await this.reportedPolicy(machineId, self, summary);
     if (JSON.stringify(localPolicyOf(self.local_policy)) !== JSON.stringify(policy))
       await this.ceilings.publishLocked(
         { orgId: self.org_id, deviceId: self.device_id },
         "device",
         (scope, row) =>
           ownerPolicyRevokes(localPolicyOf(policy), scope, row.method, row.granted_hosts),
-        localPolicyOf(self.local_policy)?.mode !== localPolicyOf(policy)?.mode,
+        false,
       );
     await this.db
       .updateTable("device_machines")
@@ -564,8 +555,6 @@ export class MachinesService {
       machineId,
       { ...subject, device_id: subject.device_id },
       parsed.policy,
-      parsed.policy,
-      true,
     );
     await this.db
       .updateTable("device_machines")
@@ -600,14 +589,7 @@ export class MachinesService {
       pending_policy_ops: unknown;
     },
     reported: DeviceLocalPolicySummary | undefined,
-    rawPolicy: unknown,
-    /**
-     * A staged (v3) report: the authenticated owner report carries the Full change and is audited
-     * once, `device.owner_ceiling_changed` ({@link OwnerReports}); the summary's derived mode is
-     * not audited a second time as `device.mode_changed`.
-     */
-    ownerReported = false,
-  ): Promise<DeviceLocalPolicySummary | { isolation: "sandbox" | "none" } | null> {
+  ): Promise<DeviceLocalPolicySummary | null> {
     const summary = localPolicyOf(reported);
     const prev = localPolicyOf(self.local_policy);
     const diff = summary !== null && prev !== null ? localPolicyDiff(prev, summary) : null;
@@ -636,24 +618,9 @@ export class MachinesService {
           },
         });
       }
-      if (diff.mode !== undefined && !ownerReported) {
-        await audit(this.db.db, {
-          ...base,
-          action: "device.mode_changed",
-          detail: {
-            from: diff.mode.from,
-            to: diff.mode.to,
-            by: self.account_id,
-            via: "device",
-            machineId,
-          },
-        });
-      }
       return summary;
     }
-    // a pre-auto-mode payload the frame parser drops: keep its isolation so an unsandboxed old
-    // program is still recognized (and refused where auto mode is not allowed)
-    return summary ?? legacyPolicyOf(rawPolicy);
+    return summary;
   }
 
   /** Marks the machine seen (a ping); writes at most once every 60 seconds. */
@@ -822,7 +789,7 @@ export class MachinesService {
   ): Promise<void> {
     try {
       if (reason !== null && (await this.relay.holderLive(deviceId))) {
-        // fenced to this machine: on a staged connection it goes out as a protocol 3 `stop`
+        // fenced to this machine: on a staged connection it goes out as a protocol 4 `stop`
         await this.relay.send(deviceId, "stop", { reason }, STOP_DEADLINE_MS, machineId);
       }
     } catch (err) {

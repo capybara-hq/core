@@ -52,6 +52,7 @@ import { asUser, cookieJar } from "../helpers/http.js";
 import { accountsFor } from "../helpers/identity.js";
 import { seedInstalledEvidence } from "../helpers/installed-evidence.js";
 import { MODEL_PLUGINS_CONFIG } from "../helpers/model-plugins.js";
+import { storedOwnerReport } from "../helpers/owner-report.js";
 import { enableModelProviders, startKernel, type TestKernel } from "../helpers/runs.js";
 
 /**
@@ -191,9 +192,11 @@ function managedProvider() {
     concurrentExec: true,
     async permissionSupport() {
       return {
-        version: 1,
+        version: 2,
         restricted: { filesystem: true, network: true, native: true, concurrentScopes: true },
-        fullAccess: true,
+        boundary: "operation",
+        network: { openPublic: false, allowlist: true, perOperationHosts: true },
+        outsideSandbox: true,
         background: true,
       };
     },
@@ -304,10 +307,11 @@ async function fixture(opts: { project?: string } = {}) {
       name: "Laptop",
       os: "darwin",
       arch: "arm64",
-      features: ["mode", "projects"],
+      features: ["projects"],
       roots: JSON.stringify({ workspace: "/work" }),
       home: "/home/owner",
-      local_policy: JSON.stringify({ mode: "auto", allowedDomains: [] }),
+      local_policy: JSON.stringify({ allowedDomains: [] }),
+      owner_report: storedOwnerReport(),
     })
     .execute();
   await db

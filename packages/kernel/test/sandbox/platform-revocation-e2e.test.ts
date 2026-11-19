@@ -129,14 +129,15 @@ async function fullAccessFixture() {
     machine.id,
     {
       type: "policy",
-      policy: { mode: "auto", allowedDomains: [] },
+      policy: { allowedDomains: [] },
       ownerCeiling: {
-        version: 2,
+        version: 3,
         revision: "owner-1",
         sequence: 1,
-        fullAccess: true,
+        outsideSandbox: true,
+        network: "open",
         restrictedProjectReach: "os-user",
-        restrictedAllowedDomains: [],
+        allowedDomains: [],
       },
     },
     "connection-1",
@@ -513,9 +514,11 @@ const db = () => kernelDb(raw);
 const signal = () => AbortSignal.timeout(20_000);
 const ROOTS = { ...DEFAULT_SANDBOX_ROOTS, workspace: "/Users/owner/capybara" };
 const support = {
-  version: 1 as const,
+  version: 2 as const,
   restricted: null,
-  fullAccess: true,
+  boundary: "operation",
+  network: { openPublic: false, allowlist: false, perOperationHosts: false },
+  outsideSandbox: true,
   background: true,
   unavailableReason: "Restricted per-instance validation pending",
 };

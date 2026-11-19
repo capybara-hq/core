@@ -105,14 +105,6 @@ export function convertV2OwnerCeiling(v2: {
   };
 }
 
-/**
- * The protocol 3 mode of a policy for the policy summary: `auto` exactly when the owner allows
- * running outside the sandbox. W1.M removes it with the protocol 3 summary.
- */
-export function policyMode(p: Pick<Policy, "ownerCeiling">): SandboxMode {
-  return p.ownerCeiling.outsideSandbox ? "auto" : "sandbox";
-}
-
 const DEFAULT_RECONNECT_GRACE_SECONDS = 120;
 export const DEFAULT_MAX_FRAME_BYTES = 16 * 1024 * 1024;
 

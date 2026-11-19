@@ -29,7 +29,6 @@ const DEPLOYMENT: SandboxLimits = {
   cpu: 1,
   memoryMb: 1024,
   diskMb: 2048,
-  mode: "sandbox",
   network: { kind: "allowlist", hosts: ["registry.npmjs.org"] },
 };
 
@@ -176,7 +175,6 @@ describe("创建沙箱时按组织覆盖 cpu / memoryMb", () => {
       cpu: 2.5,
       memoryMb: 3072,
       diskMb: config.sandbox.limits.diskMb,
-      mode: "auto",
       network: { kind: "open-public" },
     });
     expect(await limitsOf(s, await newDevice(other), other)).toMatchObject({

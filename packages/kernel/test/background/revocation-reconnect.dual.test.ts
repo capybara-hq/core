@@ -106,9 +106,11 @@ afterEach(async () => {
 });
 
 const SUPPORT: SandboxPermissionSupport = {
-  version: 1,
+  version: 2,
   restricted: { filesystem: true, network: true, native: true, concurrentScopes: true },
-  fullAccess: true,
+  boundary: "operation",
+  network: { openPublic: false, allowlist: true, perOperationHosts: true },
+  outsideSandbox: true,
   background: true,
 };
 
@@ -209,7 +211,7 @@ async function stagedDevice(deviceId: string) {
   const states = new StagedSessionStates();
   const hello: Omit<DeviceHello, "transport"> = {
     type: "hello",
-    protocol: 3,
+    protocol: 4,
     programVersion: "fixture",
     os: "darwin",
     arch: "arm64",
@@ -218,12 +220,13 @@ async function stagedDevice(deviceId: string) {
     sessionIsolation: false,
     permissionSupport: SUPPORT,
     ownerCeiling: {
-      version: 2,
+      version: 3,
       sequence: 1,
       restrictedProjectReach: "os-user",
       revision: "owner-1",
-      fullAccess: true,
-      restrictedAllowedDomains: [],
+      outsideSandbox: true,
+      network: "open",
+      allowedDomains: [],
     },
     instanceGeneration: generation,
   };

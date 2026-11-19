@@ -2,11 +2,7 @@ import { DeviceProtocolError } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable, Optional } from "@nestjs/common";
 import { EventLog } from "../../conversations/event-log.js";
 import { ConversationDevices } from "../../devices/conversation-devices.js";
-import {
-  DeviceProjectsService,
-  readModeOf,
-  withinMode,
-} from "../../devices/device-projects.service.js";
+import { DeviceProjectsService, withinMode } from "../../devices/device-projects.service.js";
 import { aboveHome } from "../../devices/working-root.js";
 import { ApiError } from "../../errors.js";
 import { KernelDb } from "../../infra/database/kernel-db.js";
@@ -266,8 +262,7 @@ export class ProjectKnowledgeService {
             stat: (path) => p.stat(h, path, sig),
             readFile: (path, maxBytes) => p.readFile(h, path, { maxBytes, signal: sig }),
             ...(list !== undefined && {
-              list: (path: string, limit: number) =>
-                list.call(p, h, path, { limit, limits: { mode: readModeOf(scope) }, signal: sig }),
+              list: (path: string, limit: number) => list.call(p, h, path, { limit, signal: sig }),
             }),
           };
           try {

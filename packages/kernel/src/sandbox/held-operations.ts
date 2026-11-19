@@ -63,10 +63,10 @@ export async function assertPermissionSupport(
     );
   const support = await provider.permissionSupport(handle, signal);
   if (
-    support.version !== 1 ||
+    support.version !== 2 ||
     (method === "backgroundStart" && (!support.background || !provider.background)) ||
     (isFullExecutionScope(scope)
-      ? !support.fullAccess
+      ? !support.outsideSandbox
       : !support.restricted?.filesystem ||
         !support.restricted.network ||
         !support.restricted.native ||

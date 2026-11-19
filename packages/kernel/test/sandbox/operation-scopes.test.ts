@@ -80,9 +80,11 @@ it("resolves once per actual native method and exposes no lifecycle or authority
   const provider = {
     async permissionSupport() {
       return {
-        version: 1,
+        version: 2,
         restricted: { filesystem: true, network: true, native: true, concurrentScopes: true },
-        fullAccess: false,
+        boundary: "operation",
+        network: { openPublic: false, allowlist: true, perOperationHosts: true },
+        outsideSandbox: false,
         background: false,
       };
     },
@@ -120,7 +122,14 @@ it("missing factories and unsupported runtime never fall back to raw exec", asyn
       },
       async revokeOperation() {},
       async permissionSupport() {
-        return { version: 1, restricted: null, fullAccess: true, background: false };
+        return {
+          version: 2,
+          restricted: null,
+          boundary: "operation",
+          network: { openPublic: false, allowlist: false, perOperationHosts: false },
+          outsideSandbox: true,
+          background: false,
+        };
       },
     },
   ]) {
@@ -150,7 +159,7 @@ it("owner baseline removal preserves Full and explicit additions but revokes bas
     ...scope(1),
     network: { kind: "allowlist" as const, hosts: ["api.example.com"] },
   };
-  const next = { mode: "auto" as const, allowedDomains: [] };
+  const next = { allowedDomains: [] };
   expect(ownerPolicyRevokes(next, restricted, "exec", [])).toBe(true);
   expect(ownerPolicyRevokes(next, restricted, "exec", ["api.example.com"])).toBe(false);
   expect(ownerPolicyRevokes(next, restricted, "stat", [])).toBe(false);
@@ -160,11 +169,9 @@ it("owner baseline removal preserves Full and explicit additions but revokes bas
     filesystem: { kind: "device" as const },
     network: { kind: "environment" as const },
   };
+  // the summary never revokes it: a lost outside-sandbox ceiling is revoked by the owner report
   for (const profile of ["full-access", "approve-for-me"] as const) {
     expect(ownerPolicyRevokes(next, { ...full, profile }, "exec", [])).toBe(false);
-    expect(ownerPolicyRevokes({ ...next, mode: "sandbox" }, { ...full, profile }, "exec", [])).toBe(
-      true,
-    );
   }
 });
 

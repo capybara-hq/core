@@ -545,7 +545,7 @@ it("B-12: an instance whose applied mode is the OS sandbox reads Full as unsuppo
   const availability = await readRuntimeReport(db.db, f.deviceId, PROVIDER, "test");
   expect(availability).toMatchObject({
     state: "supported",
-    report: { fullAccess: false, restricted: { network: true } },
+    report: { outsideSandbox: false, restricted: { network: true } },
   });
   // the same provider report on an instance applied without the OS sandbox keeps Full
   await db
@@ -561,7 +561,7 @@ it("B-12: an instance whose applied mode is the OS sandbox reads Full as unsuppo
   });
   expect(await readRuntimeReport(db.db, f.deviceId, PROVIDER, "test")).toMatchObject({
     state: "supported",
-    report: { fullAccess: true },
+    report: { outsideSandbox: true },
   });
 });
 

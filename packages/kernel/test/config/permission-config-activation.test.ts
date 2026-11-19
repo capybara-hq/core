@@ -296,7 +296,7 @@ async function consentFixture() {
   const a = readers();
   await a.publication.initialize();
   const preview = await a.facts.preview(orgId, accountId, deviceId);
-  expect(preview.fullAccessCeiling).toBe(true);
+  expect(preview.outsideSandboxCeiling).toBe(true);
   const consent = { deviceId, scopeRevision: preview.scopeRevision };
   await db
     .updateTable("conversations")
@@ -709,11 +709,11 @@ it.each(["exec", "backgroundStart"] as const)(
         name: "fixture",
         os: "darwin",
         arch: "arm64",
-        local_policy: JSON.stringify({ mode: "auto", allowedDomains: ["a.example"] }),
+        local_policy: JSON.stringify({ allowedDomains: ["a.example"] }),
       })
       .returning("id")
       .executeTakeFirstOrThrow();
-    await k.app.get(MachinesService).recordPolicy(machine.id, { mode: "auto", allowedDomains: [] });
+    await k.app.get(MachinesService).recordPolicy(machine.id, { allowedDomains: [] });
     const rows = await db
       .selectFrom("sandbox_operation_intents")
       .select(["operation_id", "state"])

@@ -186,10 +186,11 @@ async function localDevice(orgId: string, name = "Laptop") {
       name: "Laptop",
       os: "darwin",
       arch: "arm64",
-      features: ["mode", "projects"],
+      features: ["projects"],
       roots: JSON.stringify({ workspace: "/work" }),
       home: "/home/owner",
-      local_policy: JSON.stringify({ mode: "auto", allowedDomains: [] }),
+      local_policy: JSON.stringify({ allowedDomains: [] }),
+      owner_report: storedOwnerReport(),
     })
     .execute();
   return id;
@@ -479,6 +480,7 @@ import {
   PermissionRuntimeReports,
   readRuntimeReport,
 } from "../../src/sandbox/permission-runtime-reports.js";
+import { storedOwnerReport } from "../helpers/owner-report.js";
 
 function barrier() {
   let resolve!: () => void;
@@ -549,9 +551,11 @@ async function operationFixture(
   const provider = {
     async permissionSupport() {
       return {
-        version: 1,
+        version: 2,
         restricted: { filesystem: true, network: true, native: true, concurrentScopes: true },
-        fullAccess: true,
+        boundary: "operation",
+        network: { openPublic: false, allowlist: true, perOperationHosts: true },
+        outsideSandbox: true,
         background: false,
       };
     },
@@ -724,9 +728,11 @@ it("runtime report reads never probe and invalidate every provenance dimension",
     instanceGeneration: "1700000000000",
   };
   const support = {
-    version: 1 as const,
+    version: 2 as const,
     restricted: null,
-    fullAccess: false,
+    boundary: "operation" as const,
+    network: { openPublic: false, allowlist: false, perOperationHosts: false },
+    outsideSandbox: false,
     background: false,
     unavailableReason: "per-instance proof pending",
   };
@@ -1220,7 +1226,7 @@ it("sandbox egress changes preserve local Full while revoking cloud Full at its 
     for (const f of [local, cloud]) {
       const preview = await facts.preview(f.orgId, owner.id, f.deviceId);
       if (f === local) {
-        expect(preview.fullAccessCeiling).toBe(true);
+        expect(preview.outsideSandboxCeiling).toBe(true);
         expect(preview.scopeRevision).toBe(initial.get(f.deviceId));
       }
       const row = await f.db

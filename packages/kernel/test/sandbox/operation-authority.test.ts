@@ -16,7 +16,7 @@ describe("operation authority intersection", () => {
     readRoots: ["/work"],
     writeRoots: ["/work"],
     allowedHosts: ["api.example.com"],
-    fullAccessCeiling: true,
+    outsideSandboxCeiling: true,
   };
   it("both restricted profiles keep independently bounded roots and hosts", () => {
     for (const profile of ["request-approval", "approve-for-me"] as const)
@@ -35,7 +35,7 @@ describe("operation authority intersection", () => {
         ...base,
         profile: "full-access",
         fullConsent: true,
-        fullAccessCeiling: false,
+        outsideSandboxCeiling: false,
       }),
     ).toThrow();
     expect(
@@ -93,7 +93,7 @@ describe("per-call sandbox escalation", () => {
     readRoots: ["/work"],
     writeRoots: ["/work"],
     allowedHosts: [],
-    fullAccessCeiling: true,
+    outsideSandboxCeiling: true,
   };
   it("an escalated restricted operation gets full execution and keeps its profile", () => {
     for (const profile of ["request-approval", "approve-for-me"] as const)
@@ -109,7 +109,7 @@ describe("per-call sandbox escalation", () => {
         ...base,
         profile: "approve-for-me",
         escalated: true,
-        fullAccessCeiling: false,
+        outsideSandboxCeiling: false,
       }),
     ).toThrow(/ceiling/);
   });
@@ -135,7 +135,7 @@ describe("per-call sandbox escalation", () => {
     baseWriteDirectories: ["/work"],
     baseHosts: [],
     workingRoot: "/work",
-    fullAccessCeiling: true,
+    outsideSandboxCeiling: true,
     broadProjectReach: false,
     unattended: false,
     fullConsent: false,

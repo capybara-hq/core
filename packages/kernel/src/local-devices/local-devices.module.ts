@@ -71,7 +71,7 @@ export class LocalDevicesModule implements OnModuleInit {
 }
 
 /**
- * The `@local` registration: the protocol 3 provider ({@link LocalDeviceProvider.staged}: scoped
+ * The `@local` registration: the protocol 4 provider ({@link LocalDeviceProvider.staged}: scoped
  * operations, no broad kill) with its instance binder, which binds every committed generation
  * before shared use (B-8).
  */

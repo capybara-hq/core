@@ -1,7 +1,11 @@
 import { mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { DeviceOwnerCeiling, KernelRequest } from "@capybara-hq/plugin-sdk";
+import {
+  type DeviceOwnerCeiling,
+  type KernelRequest,
+  validateAllowHost,
+} from "@capybara-hq/plugin-sdk";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { MacOperationBackend } from "../src/exec/mac-operation-backend.js";
 import {
@@ -11,7 +15,7 @@ import {
 } from "../src/policy-ops.js";
 import { PolicyStore } from "../src/policy-store.js";
 import { type StagedOwnerPolicy, serveOperationV3 } from "../src/server-ops.js";
-import { policyOpsPath, policyPath } from "../src/state.js";
+import { DEFAULT_POLICY, policyOpsPath, policyPath, writePolicy } from "../src/state.js";
 
 const never = new AbortController().signal;
 const source = { accountId: "acc_1", accountName: "Ada", via: "web" as const };
@@ -19,16 +23,19 @@ const r = (op: string, args: unknown, id = "x") =>
   ({ type: "req", id, op, args, deadlineMs: 1000 }) as KernelRequest;
 /** A valid owner report; its content is not what these tests are about. */
 const REPORT: DeviceOwnerCeiling = {
-  version: 2,
+  version: 3,
   sequence: 0,
   revision: "rev",
-  fullAccess: false,
+  outsideSandbox: false,
+  network: "allowlist",
   restrictedProjectReach: "workspace",
-  restrictedAllowedDomains: [],
+  allowedDomains: [],
 };
-/** A policy op the device itself refuses (the frame is valid): a host both added and removed. */
-const refusedArgs = (opId: string) => ({ opId, add: ["a.com"], remove: ["a.com"], source });
-const REFUSED_MESSAGE = "a.com is both added and removed";
+/** A policy op the device itself refuses (the frame is valid): a host to remove that is none. */
+const refusedArgs = (opId: string) => ({ opId, remove: ["not a host"], source });
+const REFUSED_MESSAGE = `"not a host": ${validateAllowHost("not a host").join("; ")}`;
+/** Seeds the policy file with these sandbox hosts. */
+const seed = (allowedDomains: string[]) => writePolicy(dir, { ...DEFAULT_POLICY, allowedDomains });
 
 let dir: string;
 let store: PolicyStore;
@@ -56,8 +63,9 @@ describe("policy ops by op id", () => {
         duringUpdate = logged();
         return change(p);
       }, opts);
-    const { res } = await serve(r("policy", { opId: "op_1", add: ["a.com"], source }));
-    expect(res).toMatchObject({ ok: true, result: { policy: { allowedDomains: ["a.com"] } } });
+    seed(["a.com", "b.com"]);
+    const { res } = await serve(r("policy", { opId: "op_1", remove: ["a.com"], source }));
+    expect(res).toMatchObject({ ok: true, result: { policy: { allowedDomains: ["b.com"] } } });
     expect(duringUpdate).toEqual([{ opId: "op_1", outcome: "started", time: expect.any(String) }]);
     expect(logged()).toEqual([{ opId: "op_1", outcome: "applied", time: expect.any(String) }]);
     expect((statSync(policyOpsPath(dir)).mode & 0o777).toString(8)).toBe("600");
@@ -79,31 +87,32 @@ describe("policy ops by op id", () => {
       },
     ]);
     // refused before the file is touched (an invalid host) is recorded the same way
-    const bad = await serve(r("policy", { opId: "op_3", add: ["not a host"], source }));
+    const bad = await serve(r("policy", { opId: "op_3", remove: ["10.0.0.1"], source }));
     expect(bad.res).toMatchObject({ ok: false, error: { kind: "policy" } });
     expect(new PolicyOpLog(dir).get("op_3")).toMatchObject({ outcome: "refused" });
   });
 
   it("a repeated opId is answered from the log and policy.json is not rewritten", async () => {
-    const first = await serve(r("policy", { opId: "op_1", add: ["a.com"], source }, "r1"));
+    seed(["a.com", "b.com"]);
+    const first = await serve(r("policy", { opId: "op_1", remove: ["a.com"], source }, "r1"));
     const before = statSync(policyPath(dir));
     // the same op id again (another request id), with different content: nothing is applied
-    const again = await serve(r("policy", { opId: "op_1", add: ["b.com"], source }, "r2"));
+    const again = await serve(r("policy", { opId: "op_1", remove: ["b.com"], source }, "r2"));
     expect(again.res).toEqual({ ...first.res, id: "r2" });
     const after = statSync(policyPath(dir));
     expect(after.ino).toBe(before.ino);
     expect(after.mtimeMs).toBe(before.mtimeMs);
-    expect(store.current().allowedDomains).toEqual(["a.com"]);
+    expect(store.current().allowedDomains).toEqual(["b.com"]);
     // a refusal is answered with its stored message
     const refused = await serve(r("policy", refusedArgs("op_2"), "r3"));
     const repeat = await serve(r("policy", refusedArgs("op_2"), "r4"));
     expect(repeat.res).toEqual({ ...refused.res, id: "r4" });
-    expect(store.current().allowedDomains).toEqual(["a.com"]);
+    expect(store.current().allowedDomains).toEqual(["b.com"]);
   });
 
   it("a policy op without a valid opId is refused and applies nothing", async () => {
     for (const opId of [undefined, "", "a:b", 1]) {
-      const { res } = await serve(r("policy", { opId, add: ["a.com"], source }));
+      const { res } = await serve(r("policy", { opId, remove: ["a.com"], source }));
       expect(res, String(opId)).toMatchObject({ ok: false, error: { kind: "error" } });
     }
     expect(store.current().allowedDomains).toEqual([]);
@@ -116,13 +125,14 @@ describe("policy ops by op id", () => {
       type: "res",
       id: "x",
       ok: true,
-      result: { outcome: "unknown", policy: { mode: "sandbox", allowedDomains: [] } },
+      result: { outcome: "unknown", policy: { allowedDomains: [] } },
     });
-    await serve(r("policy", { opId: "op_1", add: ["a.com"], source }));
+    seed(["a.com", "b.com"]);
+    await serve(r("policy", { opId: "op_1", remove: ["a.com"], source }));
     const applied = await serve(r("policyStatus", { opId: "op_1" }));
     expect(applied.res).toMatchObject({
       ok: true,
-      result: { outcome: "applied", policy: { allowedDomains: ["a.com"] } },
+      result: { outcome: "applied", policy: { allowedDomains: ["b.com"] } },
     });
     await serve(r("policy", refusedArgs("op_2")));
     const refused = await serve(r("policyStatus", { opId: "op_2" }));
@@ -171,7 +181,7 @@ describe("policy ops by op id", () => {
     const { writeFileSync } = await import("node:fs");
     writeFileSync(policyOpsPath(dir), "{not json");
     expect(new PolicyOpLog(dir).entries()).toEqual([]);
-    await serve(r("policy", { opId: "op_1", add: ["a.com"], source }));
+    await serve(r("policy", { opId: "op_1", remove: ["a.com"], source }));
     expect(new PolicyOpLog(dir).get("op_1")).toMatchObject({ outcome: "applied" });
   });
 });
@@ -188,7 +198,7 @@ describe("the op outcomes the hello carries", () => {
     expect(recent[0]).toEqual({ opId: "op6", outcome: "applied" });
     expect(recent.at(-1)).toEqual({ opId: "op_started", outcome: "started" });
     // an op answered now shows in the next report
-    await serve(r("policy", { opId: "op_new", add: ["a.com"], source }, "p1"));
+    await serve(r("policy", { opId: "op_new", remove: ["a.com"], source }, "p1"));
     expect(store.ops.recent().at(-1)).toEqual({ opId: "op_new", outcome: "applied" });
     expect(store.ops.recent()).toHaveLength(100);
   });

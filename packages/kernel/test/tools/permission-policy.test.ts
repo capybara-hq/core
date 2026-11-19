@@ -398,9 +398,11 @@ it.each(["full-access", "request-approval"] as const)(
         return op === "readFile" ? { dataB64: "YQ==", truncated: false } : null;
       },
       permissionSupport: async () => ({
-        version: 1,
+        version: 2,
         restricted: null,
-        fullAccess: false,
+        boundary: "operation",
+        network: { openPublic: false, allowlist: false, perOperationHosts: false },
+        outsideSandbox: false,
         background: false,
       }),
     });
@@ -580,9 +582,11 @@ it("explicit operation hosts reach only the matching admitted exec envelope", as
       return { exitCode: 0, stdout: "", stderr: "", truncated: false, timedOut: false };
     },
     permissionSupport: async () => ({
-      version: 1,
+      version: 2,
       restricted: null,
-      fullAccess: false,
+      boundary: "operation",
+      network: { openPublic: false, allowlist: false, perOperationHosts: false },
+      outsideSandbox: false,
       background: false,
     }),
   });

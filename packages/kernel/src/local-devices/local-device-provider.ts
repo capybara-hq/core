@@ -57,11 +57,11 @@ const refuseRaw =
   (method: string) =>
   async (..._args: unknown[]): Promise<never> => {
     throw new SandboxPermissionUnsupportedError(
-      `${method} without an operation scope is not available on a protocol 3 device; run it through an admitted operation scope`,
+      `${method} without an operation scope is not available on a protocol 4 device; run it through an admitted operation scope`,
     );
   };
 
-/** What the staged provider sends through: the relay's protocol 3 call and the attested support. */
+/** What the staged provider sends through: the relay's protocol 4 call and the attested support. */
 export interface StagedDeviceTransport {
   call(
     deviceId: string,
@@ -124,10 +124,10 @@ export class LocalDeviceProvider implements SandboxProvider {
   ) {}
 
   /**
-   * The `@local` provider as the staged (protocol 3) registration hands it out
+   * The `@local` provider as the staged (protocol 4) registration hands it out
    * (`LocalDevicesModule`): the protocol 2 lifecycle methods that send no frame (file system,
    * resume, suspend, destroy), the v3 operation adapter ({@link stagedOperations}), `create` as a
-   * protocol 3 request, no raw protocol 2 call and no broad kill. Dormant until the protocol gate
+   * protocol 4 request, no raw protocol 2 call and no broad kill. Dormant until the protocol gate
    * selects it.
    *
    * The raw methods (`exec`, `readFile`, `writeFile`, `stat`, `list`, `scan`) refuse before

@@ -41,7 +41,6 @@ describe("dormant v3 dispatch", () => {
       cpu: 1,
       memoryMb: 512,
       diskMb: 1024,
-      mode: "sandbox",
       network: { kind: "allowlist", hosts: ["api.example.com"] },
     };
     const grants = {

@@ -223,7 +223,6 @@ describe("组织云网络设置（auto mode spec §4.3）", () => {
       deviceNetwork: { ceiling: "allowlist", base: "none", extraHosts: ["example.com"] },
     });
     expect(await limitsOf(s, await newDevice())).toMatchObject({
-      mode: "sandbox",
       network: { kind: "allowlist", hosts: ["example.com"] },
     });
     await setOrg({ outsideSandbox: "off", deviceNetwork: { ceiling: "allowlist" } });
@@ -241,7 +240,6 @@ describe("组织云网络设置（auto mode spec §4.3）", () => {
     });
     const first = await use(s);
     expect((await fakeSandboxMeta(root, first.h.id))?.limits).toMatchObject({
-      mode: "auto",
       network: { kind: "open-public" },
     });
     // a host change under the same (ignored) network changes nothing
@@ -260,7 +258,6 @@ describe("组织云网络设置（auto mode spec §4.3）", () => {
     expect(again.h).not.toEqual(first.h);
     expect(again.info).toMatchObject({ fresh: true, restarted: true });
     expect((await fakeSandboxMeta(root, again.h.id))?.limits).toMatchObject({
-      mode: "sandbox",
       network: { kind: "allowlist", hosts: ["other.example.com"] },
     });
   });
@@ -278,7 +275,6 @@ describe("lazy creation", () => {
       cpu: 1,
       memoryMb: 2048,
       diskMb: 5120,
-      mode: "auto",
       network: { kind: "open-public", hosts: [] },
     };
     const meta = await fakeSandboxMeta(root, a.h.id);
@@ -1172,7 +1168,6 @@ describe("leftovers of interrupted creates and of other providers (fix round 1)"
     cpu: 1,
     memoryMb: 1,
     diskMb: 1,
-    mode: "sandbox",
     network: { kind: "allowlist", hosts: [] },
   };
   const name = () => `cap-device-${envId}`;
@@ -1250,7 +1245,6 @@ describe("provider switch during a create", () => {
     cpu: 1,
     memoryMb: 1,
     diskMb: 1,
-    mode: "sandbox",
     network: { kind: "allowlist", hosts: [] },
   };
   const name = () => `cap-device-${envId}`;

@@ -66,12 +66,13 @@ const report = (
   restrictedAllowedDomains: string[] = [],
   revision = `rev-${sequence}`,
 ): DeviceOwnerCeiling => ({
-  version: 2,
+  version: 3,
   revision,
   sequence,
-  fullAccess,
+  outsideSandbox: fullAccess,
+  network: "allowlist",
   restrictedProjectReach,
-  restrictedAllowedDomains,
+  allowedDomains: restrictedAllowedDomains,
 });
 
 async function fixture() {
@@ -143,7 +144,7 @@ describe("all four owner combinations over authenticated reports", () => {
       expect(await f.record(report(1, fullAccess, reach))).toBe("recorded");
       const p = await f.preview();
       // Full execution follows Full permission alone; broad restricted reach follows the reach
-      expect(p.fullAccessCeiling).toBe(fullAccess);
+      expect(p.outsideSandboxCeiling).toBe(fullAccess);
       expect(p.broadProjectReach).toBe(reach === "os-user");
       expect((await f.browse()).readRoots).toEqual(reach === "os-user" ? ["/"] : ["/work"]);
       if (reach === "os-user")
@@ -167,7 +168,7 @@ describe("all four owner combinations over authenticated reports", () => {
     await f.record(report(1, true, "os-user"));
     await k.app.get(OrgSettingsService).update(f.orgId, { outsideSandbox: "off" }, f.accountId);
     const p = await f.preview();
-    expect(p.fullAccessCeiling).toBe(false);
+    expect(p.outsideSandboxCeiling).toBe(false);
     expect(p.broadProjectReach).toBe(false);
     expect((await f.browse()).readRoots).toEqual(["/work"]);
     await expect(f.bindOutside()).rejects.toMatchObject({ code: "device.project_outside_mode" });
@@ -184,7 +185,7 @@ describe("stale, missing and out-of-order reports", () => {
     expect(await f.record(report(3, true, "os-user"))).toBe("stale");
     expect(await f.view()).toMatchObject({ state: "blocked", fullAccess: false, stale: true });
     await expect(f.browse()).rejects.toMatchObject({ code: "device.owner_report_stale" });
-    expect((await f.preview()).fullAccessCeiling).toBe(false);
+    expect((await f.preview()).outsideSandboxCeiling).toBe(false);
     // the current report again clears the block
     expect(await f.record(report(5, true, "os-user"))).toBe("same");
     expect((await f.browse()).readRoots).toEqual(["/"]);
@@ -198,7 +199,7 @@ describe("stale, missing and out-of-order reports", () => {
     const f = await fixture();
     await f.db
       .updateTable("device_machines")
-      .set({ local_policy: null })
+      .set({ owner_report: null })
       .where("id", "=", f.machineId)
       .execute();
     expect(await f.view()).toMatchObject({ state: "missing", fullAccess: false });
@@ -226,7 +227,7 @@ describe("stale, missing and out-of-order reports", () => {
         name: "Laptop",
         os: "darwin",
         arch: "arm64",
-        features: ["mode", "projects"],
+        features: ["projects"],
         roots: JSON.stringify({ workspace: "/work" }),
       })
       .returning("id")
@@ -268,7 +269,7 @@ describe("the device view's recent changes", () => {
 });
 
 describe("the device view's effective owner Full access", () => {
-  it("an old program without a report follows its reported mode, as admission does", async () => {
+  it("a machine row without a report never infers Full from an older summary, as admission does", async () => {
     const f = await fixture();
     const setOld = (features: string[], localPolicy: unknown) =>
       f.db
@@ -276,13 +277,15 @@ describe("the device view's effective owner Full access", () => {
         .set({ owner_report: null, features, local_policy: JSON.stringify(localPolicy) })
         .where("id", "=", f.machineId)
         .execute();
-    // a pre-auto-mode program that runs unsandboxed: admission derives auto mode from it
+    // protocol 4 has no legacy owner state: an old isolation or mode is ignored, fail closed
     await setOld([], { isolation: "none" });
-    expect(await f.view()).toMatchObject({ fullAccess: false, effectiveFullAccess: true });
-    await setOld([], { isolation: "sandbox" });
-    expect(await f.view()).toMatchObject({ effectiveFullAccess: false });
+    expect(await f.view()).toMatchObject({
+      state: "missing",
+      fullAccess: false,
+      effectiveFullAccess: false,
+    });
     await setOld(["networkReport"], { mode: "auto", allowedDomains: [] });
-    expect(await f.view()).toMatchObject({ state: "legacy", effectiveFullAccess: true });
+    expect(await f.view()).toMatchObject({ state: "missing", effectiveFullAccess: false });
   });
 });
 
@@ -322,7 +325,7 @@ describe("reordered carriers (fix round 1)", () => {
         { machineId: f.machineId, opId: "op-late" },
         {
           outcome: "applied",
-          policy: { mode: "auto", allowedDomains: [] },
+          policy: { allowedDomains: [] },
           ownerCeiling: report(3, true, "os-user"),
         },
       ),
@@ -451,7 +454,7 @@ describe("web writes only narrow", () => {
     // sent (protocol 2 programs are refused at the upgrade since the activation)
     await f.db
       .updateTable("device_machines")
-      .set({ features: ["mode", "projects", "policyOp", "policyOpId"], owner_report: null })
+      .set({ features: ["projects", "policyOp", "policyOpId"], owner_report: null })
       .where("id", "=", f.machineId)
       .execute();
     const relay = k.app.get(LocalDeviceRelay);
@@ -499,7 +502,7 @@ describe("web writes only narrow", () => {
           { machineId: f.machineId, opId: "op-1" },
           {
             outcome: "applied",
-            policy: { mode: "sandbox", allowedDomains: [] },
+            policy: { allowedDomains: [] },
             ownerCeiling,
           },
         ),

@@ -862,7 +862,7 @@ export const DEVICE_DEFAULT_STATE_PATH = "~/.config/capybara-device";
 export const DEVICE_DENIED_SECRET_PATHS: readonly string[];
 
 // @public
-export const DEVICE_PROTOCOL_VERSION = 3;
+export const DEVICE_PROTOCOL_VERSION = 4;
 
 // @public
 export const DEVICE_SCAN_SKIPPED_BASE_DIRS: readonly string[];
@@ -910,7 +910,7 @@ export interface DeviceExecGrants {
 export type DeviceExecResult = ExecResult;
 
 // @public
-export type DeviceFeature = "networkReport" | "policyOp" | "policyOpId" | "mode" | "projects";
+export type DeviceFeature = "networkReport" | "policyOp" | "policyOpId" | "projects";
 
 // @public
 export type DeviceFrame = DeviceHello | KernelReady | KernelRequest | KernelCancel | DeviceResponse | DevicePolicyChanged;
@@ -920,7 +920,7 @@ export interface DeviceHello extends LegacyDeviceHello {
     instanceGeneration: string | null;
     ownerCeiling: DeviceOwnerCeiling;
     permissionSupport: SandboxPermissionSupport;
-    protocol: 3;
+    protocol: 4;
     runtimeIdentity?: DeviceRuntimeIdentity;
     transport: {
         maxFrameBytes: number;
@@ -938,7 +938,6 @@ export interface DeviceKillTaggedArgs {
 // @public
 export interface DeviceListArgs {
     limit: number;
-    limits: DeviceRequestCeiling;
     path: string;
 }
 
@@ -957,7 +956,6 @@ export type DeviceListResult = {
 // @public
 export interface DeviceLocalPolicySummary {
     allowedDomains: string[];
-    mode: "auto" | "sandbox";
 }
 
 // @public
@@ -987,30 +985,6 @@ export interface DeviceOpResults {
 
 // @public
 export interface DeviceOwnerCeiling {
-    readonly fullAccess: boolean;
-    readonly restrictedAllowedDomains: readonly string[];
-    readonly restrictedProjectReach: "workspace" | "os-user";
-    readonly revision: string;
-    readonly sequence: number;
-    readonly version: 2;
-}
-
-// @public
-export interface DeviceOwnerCeilingNarrowing {
-    readonly fullAccess?: false;
-    readonly restrictedProjectReach?: "workspace";
-}
-
-// @public
-export interface DeviceOwnerCeilingNarrowingV3 {
-    readonly network?: "allowlist";
-    readonly outsideSandbox?: false;
-    readonly removeAllowedDomains?: readonly string[];
-    readonly restrictedProjectReach?: "workspace";
-}
-
-// @public
-export interface DeviceOwnerCeilingV3 {
     readonly allowedDomains: readonly string[];
     readonly network: DeviceNetworkMode;
     readonly outsideSandbox: boolean;
@@ -1018,6 +992,14 @@ export interface DeviceOwnerCeilingV3 {
     readonly revision: string;
     readonly sequence: number;
     readonly version: 3;
+}
+
+// @public
+export interface DeviceOwnerCeilingNarrowing {
+    readonly network?: "allowlist";
+    readonly outsideSandbox?: false;
+    readonly removeAllowedDomains?: readonly string[];
+    readonly restrictedProjectReach?: "workspace";
 }
 
 // @public
@@ -1070,7 +1052,6 @@ export class DeviceProtocolError extends Error {
 
 // @public
 export interface DeviceReadFileArgs {
-    limits: DeviceRequestCeiling;
     maxBytes: number;
     path: string;
 }
@@ -1080,9 +1061,6 @@ export type DeviceReadFileResult = {
     dataB64: string;
     truncated: boolean;
 } | null;
-
-// @public
-export type DeviceRequestCeiling = Pick<SandboxLimits, "mode">;
 
 // @public
 export type DeviceRes = {
@@ -1124,7 +1102,6 @@ export interface DeviceRuntimeIdentity {
 // @public
 export interface DeviceScanArgs {
     base: string;
-    limits: DeviceRequestCeiling;
 }
 
 // @public
@@ -1132,7 +1109,6 @@ export type DeviceScanResult = DeviceProjectCandidate[];
 
 // @public
 export interface DeviceStatArgs {
-    limits: DeviceRequestCeiling;
     path: string;
 }
 
@@ -2170,7 +2146,7 @@ export interface Lease {
 }
 
 // @public
-export const LEGACY_DEVICE_PROTOCOL_VERSION = 2;
+export const LEGACY_DEVICE_PROTOCOL_VERSION = 3;
 
 // @public
 export type LegacyDeviceFrame = LegacyDeviceHello | DeviceRes | LegacyDevicePolicyChanged | KernelReq | KernelCancel;
@@ -2194,8 +2170,6 @@ export interface LegacyDeviceHello {
 
 // @public
 export interface LegacyDevicePolicyArgs {
-    add?: string[];
-    mode?: "sandbox";
     opId: string;
     remove?: string[];
     source: {
@@ -2820,13 +2794,10 @@ export function parseOperationResult(op: DeviceOperation, result: unknown, reque
 export function parseOpResult<Op extends DeviceOp>(op: Op, result: unknown): DeviceOpResults[Op];
 
 // @public
-export function parseOwnerCeilingNarrowingV3(value: unknown): DeviceOwnerCeilingNarrowingV3;
+export function parseOwnerCeilingNarrowing(value: unknown): DeviceOwnerCeilingNarrowing;
 
 // @public
 export function parseOwnerCeilingReport(value: unknown): DeviceOwnerCeiling;
-
-// @public
-export function parseOwnerCeilingReportV3(value: unknown): DeviceOwnerCeilingV3;
 
 // @public
 export function parsePluginManifest(json: unknown): PluginManifest | {
@@ -2846,7 +2817,7 @@ export function parseSandboxOperationRef(value: unknown): SandboxOperationRef;
 export function parseSandboxOperationScope(value: unknown): SandboxOperationScope;
 
 // @public
-export function parseSandboxPermissionSupportV2(value: unknown): SandboxPermissionSupportV2;
+export function parseSandboxPermissionSupport(value: unknown): SandboxPermissionSupport;
 
 // @public
 export function parseSandboxPreparationScope(value: unknown): SandboxPreparationScope;
@@ -3024,6 +2995,9 @@ export interface PluginSkillRef {
 export interface PluginThemeRef {
     path: string;
 }
+
+// @public
+export const POLICY_ADD_REFUSED = "The deployment may not add hosts to a device's sandbox allowlist: widening happens only on the machine (capybara-device policy add allowedDomains <host>)";
 
 // @public
 export const POLICY_HOOKS: readonly ["model.request", "tool.preExecute"];
@@ -3351,7 +3325,6 @@ export interface SandboxLimits {
     cpu: number;
     diskMb: number;
     memoryMb: number;
-    mode: "auto" | "sandbox";
     network: {
         kind: "open-public" | "allowlist";
         hosts: string[];
@@ -3438,20 +3411,6 @@ export interface SandboxOperationScope extends SandboxOperationRef {
 // @public
 export interface SandboxPermissionSupport {
     readonly background: boolean;
-    readonly fullAccess: boolean;
-    readonly restricted: {
-        readonly filesystem: true;
-        readonly network: true;
-        readonly native: true;
-        readonly concurrentScopes: true;
-    } | null;
-    readonly unavailableReason?: string;
-    readonly version: 1;
-}
-
-// @public
-export interface SandboxPermissionSupportV2 {
-    readonly background: boolean;
     readonly boundary: SandboxBoundary;
     readonly network: {
         readonly openPublic: boolean;
@@ -3523,7 +3482,6 @@ export interface SandboxProvider {
     readonly limitsApplyAt?: "instance" | "fileSystem";
     list?(h: SandboxHandle, path: string, opts: {
         limit: number;
-        limits: Pick<SandboxLimits, "mode">;
         signal: AbortSignal;
     }): Promise<{
         entries: {
@@ -3545,7 +3503,6 @@ export interface SandboxProvider {
     resume(h: SandboxHandle, signal: AbortSignal): Promise<"resumed" | "gone">;
     revokeOperation?(h: SandboxHandle, ref: SandboxOperationRef, signal: AbortSignal): Promise<void>;
     scan?(h: SandboxHandle, base: string, opts: {
-        limits: Pick<SandboxLimits, "mode">;
         signal: AbortSignal;
     }): Promise<{
         path: string;

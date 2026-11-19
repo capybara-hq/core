@@ -356,7 +356,7 @@ export async function createDockerOperationBackend(
     {
       restricted: unavailableReason === undefined,
       ...(unavailableReason ? { unavailableReason } : {}),
-      fullAccess: probe.agentAvailable !== false,
+      outsideSandbox: probe.agentAvailable !== false,
       background: probe.agentAvailable !== false,
       pending: unavailableReason ?? "Restricted execution in the device container is unavailable",
       startWorker,

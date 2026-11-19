@@ -312,6 +312,48 @@ it("owned idle watcher revokes a removed owner host, a granted sibling with it (
   await f.backend.background.stop({ id: "d" }, granted, { graceMs: 0, signal });
   expect(f.stoppedWatcher()).toBe(1);
 });
+it("owner reconcile revokes a running open-network grant once the owner narrows to an allowlist", async () => {
+  const f = await fixture();
+  f.hold();
+  f.setCeiling({ network: "open" });
+  const start = (
+    id: string,
+    network:
+      | (typeof f.scope)["network"]
+      | { kind: "open-public" }
+      | {
+          kind: "allowlist";
+          hosts: string[];
+        },
+  ) =>
+    f.backend
+      .forExecution({ operationId: id, orgNetwork: { kind: "open-public", hosts: [] } })
+      .background.start(
+        { id: "d" },
+        { ...f.scope, operationId: id, network },
+        {
+          command: "fixture command",
+          timeoutMs: 10000,
+          maxOutputBytes: 1000,
+          taskId: id,
+          outputPath: join(f.roots.tmp, id),
+          retainUntilMs: Date.now() + 60000,
+          signal,
+        },
+      );
+  const open = await start("open", { kind: "open-public" });
+  const listed = await start("listed", { kind: "allowlist", hosts: ["a.example.com"] });
+  // the owner keeps a.example.com on the list but closes the open network
+  f.setCeiling({ revision: "two", network: "allowlist", allowedDomains: ["a.example.com"] });
+  await f.backend.reconcileOwnerCeiling(signal);
+  // grantStillHolds through the backend: the open-network work is revoked, its allowlisted
+  // sibling keeps running
+  expect(f.cancellations).toEqual(["open"]);
+  expect(await f.backend.background.stop({ id: "d" }, open, { graceMs: 0, signal })).toEqual({
+    outcome: "stopped",
+  });
+  await f.backend.background.stop({ id: "d" }, listed, { graceMs: 0, signal });
+});
 it("Full owner narrowing cancels Full without a websocket or another tool call", async () => {
   const f = await fixture();
   f.hold();

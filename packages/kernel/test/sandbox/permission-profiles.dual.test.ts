@@ -547,14 +547,14 @@ describe("a local device's project outside its fixed workspace", () => {
     const hello: Partial<LegacyDeviceHello> = {
       roots: ROOTS,
       home: HOME,
-      features: ["networkReport", "policyOp", "policyOpId", "mode", "projects"],
-      policy: { mode: "auto", allowedDomains: [] },
+      features: ["networkReport", "policyOp", "policyOpId", "projects"],
+      policy: { allowedDomains: [] },
     };
     machine.hello({
       ...hello,
       ownerCeiling: ownerReportFor(
         { allowedDomains: [] },
-        { fullAccess: true, restrictedProjectReach: "os-user" },
+        { outsideSandbox: true, restrictedProjectReach: "os-user" },
       ),
     });
     await machine.ready;
@@ -624,9 +624,11 @@ describe("a local device's project outside its fixed workspace", () => {
 describe("a device whose runtime cannot enforce the restricted profiles", () => {
   it("restricted profiles refuse truthfully before any effect; Full access still runs", async () => {
     await setFakeSandboxPermissionSupport(sandboxRoot, {
-      version: 1,
+      version: 2,
       restricted: null,
-      fullAccess: true,
+      boundary: "operation",
+      network: { openPublic: false, allowlist: false, perOperationHosts: false },
+      outsideSandbox: true,
       background: true,
       unavailableReason: "No restricted runtime on this test provider",
     });

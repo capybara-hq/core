@@ -4,7 +4,6 @@ import type {
   SandboxBrowseScope,
   SandboxOperationScope,
 } from "@capybara-hq/plugin-sdk";
-import type { SandboxMode } from "../sandbox/modes.js";
 import { coversHost } from "../sandbox/modes.js";
 import { isExecutionMethod, isFullExecutionScope } from "../sandbox/operation-authority-types.js";
 
@@ -12,7 +11,6 @@ const KNOWN_FEATURES: readonly DeviceFeature[] = [
   "networkReport",
   "policyOp",
   "policyOpId",
-  "mode",
   "projects",
 ];
 
@@ -33,51 +31,19 @@ export function deviceFeaturesOf(v: unknown): DeviceFeature[] {
 export function localPolicyOf(v: unknown): DeviceLocalPolicySummary | null {
   if (typeof v !== "object" || v === null || Array.isArray(v)) return null;
   const o = v as Record<string, unknown>;
-  if (o.mode !== "auto" && o.mode !== "sandbox") return null;
   if (!Array.isArray(o.allowedDomains)) return null;
   if (!o.allowedDomains.every((d): d is string => typeof d === "string")) return null;
-  return { mode: o.mode, allowedDomains: [...o.allowedDomains] };
-}
-
-/** The isolation of a summary recorded before auto mode, if `v` is one (no `mode` field). */
-export function legacyIsolationOf(v: unknown): "sandbox" | "none" | null {
-  if (typeof v !== "object" || v === null || Array.isArray(v)) return null;
-  const o = v as Record<string, unknown>;
-  if (o.mode !== undefined) return null;
-  return o.isolation === "none" || o.isolation === "sandbox" ? o.isolation : null;
-}
-
-/**
- * The legacy part of a summary a program reported (a pre-auto-mode payload the frame parser drops):
- * its isolation alone, kept so an unsandboxed old program is still recognized. Null for a summary
- * in the current shape, a malformed one, or a program whose summary is unreadable.
- */
-export function legacyPolicyOf(v: unknown): { isolation: "sandbox" | "none" } | null {
-  const isolation = legacyIsolationOf(v);
-  return isolation === null ? null : { isolation };
-}
-
-/**
- * The mode a local device runs at, from its reported features and stored policy (auto mode spec
- * §4.2), failing closed: a program that applies modes but sent no readable summary is sandbox; an
- * older program (no `mode` feature) is auto only when its legacy summary was unsandboxed.
- */
-export function localModeOf(features: unknown, localPolicy: unknown): SandboxMode {
-  const summary = localPolicyOf(localPolicy);
-  if (summary !== null) return summary.mode;
-  if (deviceFeaturesOf(features).includes("mode")) return "sandbox";
-  return legacyIsolationOf(localPolicy) === "none" ? "auto" : "sandbox";
+  return { allowedDomains: [...o.allowedDomains] };
 }
 
 /**
  * What changed between two local policy summaries, in the owner's terms (the device page's change
- * list): hosts added to and removed from the allowlist, and the mode. Each field is present only
- * when it changed.
+ * list): hosts added to and removed from the allowlist. The owner ceiling's changes come from the
+ * owner report.
  */
 export interface LocalPolicyDiff {
   add: string[];
   remove: string[];
-  mode?: { from: "auto" | "sandbox"; to: "auto" | "sandbox" };
 }
 
 /** The {@link LocalPolicyDiff} from `prev` to `next`; null when nothing the owner sets changed. */
@@ -91,9 +57,7 @@ export function localPolicyDiff(
     add: [...after].filter((h) => !before.has(h)).sort(),
     remove: [...before].filter((h) => !after.has(h)).sort(),
   };
-  if (prev.mode !== next.mode) d.mode = { from: prev.mode, to: next.mode };
-  const changed = d.add.length > 0 || d.remove.length > 0 || d.mode !== undefined;
-  return changed ? d : null;
+  return d.add.length > 0 || d.remove.length > 0 ? d : null;
 }
 
 /** Who asked for a `policy` op: the deciding account, where, and the network ask it answers. */
@@ -123,15 +87,19 @@ export interface ReportedPolicyOp {
  */
 export interface PendingPolicyOp {
   id: string;
+  /** Always empty for an op sent under protocol 4 (the platform never adds hosts). */
   add: string[];
   remove: string[];
-  /** Present when the op turned the sandbox back on (the only mode the platform may set). */
-  mode?: "sandbox";
   /**
-   * The owner-ceiling narrowing the op asked a staged (v3) machine for: only `false` / `workspace`
-   * (the platform never widens). It explains the machine's own owner report of the change.
+   * The owner-ceiling narrowing the op asked the machine for: only `false` / `allowlist` /
+   * `workspace` (the platform never widens). It explains the machine's own owner report of the
+   * change.
    */
-  ownerCeiling?: { fullAccess?: false; restrictedProjectReach?: "workspace" };
+  ownerCeiling?: {
+    outsideSandbox?: false;
+    network?: "allowlist";
+    restrictedProjectReach?: "workspace";
+  };
   source: PolicyOpSource;
   actorTokenId?: string;
   status: "sent" | "unknown";
@@ -172,7 +140,6 @@ export function pendingPolicyOpsOf(v: unknown): PendingPolicyOp[] {
       id: o.id,
       add: hosts(o.add),
       remove: hosts(o.remove),
-      ...(o.mode === "sandbox" && { mode: "sandbox" as const }),
       ...ownerNarrowingOf(o.ownerCeiling),
       source: {
         accountId: src.accountId,
@@ -191,14 +158,13 @@ export function pendingPolicyOpsOf(v: unknown): PendingPolicyOp[] {
 }
 
 /**
- * Whether the change of `op` is in `policy`: its hosts added and removed, and its mode. Tells an
- * op the machine logged only as `started` (it stopped between the log and the answer) that was
- * written from one that was not.
+ * Whether the change of `op` is in `policy`: its hosts added and removed. Tells an op the machine
+ * logged only as `started` (it stopped between the log and the answer) that was written from one
+ * that was not.
  */
 export function opVisibleIn(op: PendingPolicyOp, policy: DeviceLocalPolicySummary): boolean {
   if (!op.add.every((h) => policy.allowedDomains.includes(h))) return false;
-  if (op.remove.some((h) => policy.allowedDomains.includes(h))) return false;
-  return op.mode === undefined || policy.mode === op.mode;
+  return !op.remove.some((h) => policy.allowedDomains.includes(h));
 }
 
 /** A stored op's owner narrowing: kept only while it narrows (anything wider is dropped). */
@@ -206,7 +172,8 @@ function ownerNarrowingOf(v: unknown): Pick<PendingPolicyOp, "ownerCeiling"> {
   if (typeof v !== "object" || v === null) return {};
   const o = v as Record<string, unknown>;
   const narrowing = {
-    ...(o.fullAccess === false && { fullAccess: false as const }),
+    ...(o.outsideSandbox === false && { outsideSandbox: false as const }),
+    ...(o.network === "allowlist" && { network: "allowlist" as const }),
     ...(o.restrictedProjectReach === "workspace" && {
       restrictedProjectReach: "workspace" as const,
     }),
@@ -228,7 +195,7 @@ export function opExplainsOwnerChange(
   const fullChanged = before.fullAccess !== after.fullAccess;
   const reachChanged = before.restrictedProjectReach !== after.restrictedProjectReach;
   if (!fullChanged && !reachChanged) return false;
-  if (fullChanged && (op.ownerCeiling?.fullAccess !== false || after.fullAccess)) return false;
+  if (fullChanged && (op.ownerCeiling?.outsideSandbox !== false || after.fullAccess)) return false;
   if (
     reachChanged &&
     (op.ownerCeiling?.restrictedProjectReach !== "workspace" ||
@@ -240,17 +207,19 @@ export function opExplainsOwnerChange(
 
 /**
  * Whether `diff` is what the platform's `op` did (its answer, or the machine's own report of it
- * before the answer was recorded): hosts within the op's, and the mode the op set. The device page
- * then lists the change once, as the platform's.
+ * before the answer was recorded): hosts within the op's. The device page then lists the change
+ * once, as the platform's.
  */
 export function opExplains(op: PendingPolicyOp, diff: LocalPolicyDiff): boolean {
   if (!diff.add.every((h) => op.add.includes(h))) return false;
-  if (!diff.remove.every((h) => op.remove.includes(h))) return false;
-  if (diff.mode !== undefined && (op.mode === undefined || diff.mode.to !== op.mode)) return false;
-  return true;
+  return diff.remove.every((h) => op.remove.includes(h));
 }
 
-/** Revoke only authority removed from a starting grant; explicit additions are not owner baseline. */
+/**
+ * Revoke only authority removed from a starting grant; explicit additions are not owner baseline.
+ * The summary carries the sandbox allowlist only: the owner ceiling (outside the sandbox, the
+ * reach) is revoked by the owner report's writer (`ownerReportRevokes`).
+ */
 export function ownerPolicyRevokes(
   next: DeviceLocalPolicySummary | null,
   scope: SandboxOperationScope | SandboxBrowseScope,
@@ -258,8 +227,7 @@ export function ownerPolicyRevokes(
   grantedHosts: readonly string[],
 ): boolean {
   if (!next) return true;
-  if (!("profile" in scope)) return next.mode !== "auto" && scope.readRoots.includes("/");
-  if (isFullExecutionScope(scope)) return next.mode !== "auto";
+  if (!("profile" in scope) || isFullExecutionScope(scope)) return false;
   if (!isExecutionMethod(method) || scope.network.kind !== "allowlist") return false;
   return scope.network.hosts.some(
     (host) =>

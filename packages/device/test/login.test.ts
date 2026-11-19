@@ -26,8 +26,7 @@ import { logout } from "../src/commands/logout.js";
 
 import { pidPath, writePid } from "../src/pid.js";
 import { PolicyStore } from "../src/policy-store.js";
-import { policySummary } from "../src/server-ops.js";
-import { policyLockPath, policyMode, policyPath, readPolicy } from "../src/state.js";
+import { policyLockPath, policyPath, readPolicy } from "../src/state.js";
 
 /** The owner ceiling a new setup writes (B-14). */
 /** A new install's owner ceiling: in the sandbox only, the open network, the workspace reach. */
@@ -154,8 +153,8 @@ const granted = {
 };
 const stateDir = () => join(home, "cfg", "capybara-device");
 const credFile = () => join(stateDir(), "credential.json");
-/** The mode the hello reports before the first exec: `policySummary` with no ceiling seen. */
-const helloMode = () => policySummary(new PolicyStore(stateDir()).current(), { mode: "os" }).mode;
+/** Whether the owner allows running outside the sandbox, as the hello's owner report says. */
+const helloOutside = () => new PolicyStore(stateDir()).current().ownerCeiling.outsideSandbox;
 
 describe("login", () => {
   it("polls until approved and writes a 0600 credential", async () => {
@@ -207,7 +206,7 @@ describe("login", () => {
     const file = JSON.parse(readFileSync(policyPath(stateDir()), "utf8"));
     expect(file).toMatchObject({ version: 3, ownerCeiling: NEW_INSTALL });
     expect(readPolicy(stateDir()).ownerCeiling).toEqual(NEW_INSTALL);
-    expect(helloMode()).toBe("sandbox");
+    expect(helloOutside()).toBe(false);
     expect(out.filter((l) => l === SANDBOX_ONLY_LOGIN_LINE)).toHaveLength(1);
     expect(SANDBOX_ONLY_LOGIN_LINE).toContain("capybara-device ceiling set --outside-sandbox on");
     expect(out).toContain(networkLoginLine("open"));
@@ -217,7 +216,7 @@ describe("login", () => {
   });
 
   it("an organization without outside-sandbox runs gets the same default", async () => {
-    tokenAnswers = [{ status: 200, body: { ...granted.body, fullAccess: "off" } }];
+    tokenAnswers = [{ status: 200, body: { ...granted.body, outsideSandbox: "off" } }];
     expect(await run(["login", "--url", base])).toBe(0);
     expect(readPolicy(stateDir()).ownerCeiling).toEqual(NEW_INSTALL);
     expect(out).toContain(SANDBOX_ONLY_LOGIN_LINE);
@@ -227,7 +226,7 @@ describe("login", () => {
 
   it("keeps an existing old auto policy (converted never wider) and says the org does not allow it", async () => {
     writeOldAutoPolicy(stateDir());
-    tokenAnswers = [{ status: 200, body: { ...granted.body, fullAccess: "off" } }];
+    tokenAnswers = [{ status: 200, body: { ...granted.body, outsideSandbox: "off" } }];
     expect(await run(["login", "--url", base])).toBe(0);
     // an existing policy is the owner's choice: login never rewrites it; old auto reads as
     // outside the sandbox on with the open network
@@ -264,8 +263,8 @@ describe("login", () => {
     expect(out).toContain(OUTSIDE_SANDBOX_LOGIN_LINE);
     expect(out.filter((l) => l === OUTSIDE_SANDBOX_RISK_TEXT)).toHaveLength(1);
     expect(out).not.toContain(SANDBOX_ONLY_LOGIN_LINE);
-    expect(policyMode(readPolicy(stateDir()))).toBe("auto");
-    expect(helloMode()).toBe("auto");
+    expect(readPolicy(stateDir()).ownerCeiling.outsideSandbox).toBe(true);
+    expect(helloOutside()).toBe(true);
   });
 
   it("reports a policy-lock failure, keeps the sandbox-only line and still writes the credential", async () => {

@@ -89,9 +89,11 @@ async function fixture(clientCap = 69632, serverCap = 100000) {
   };
   const backend = {
     permissionSupport: async () => ({
-      version: 1 as const,
+      version: 2 as const,
       restricted: null,
-      fullAccess: false,
+      boundary: "operation" as const,
+      network: { openPublic: false, allowlist: false, perOperationHosts: false },
+      outsideSandbox: false,
       background: false,
     }),
     background: {
@@ -156,7 +158,7 @@ async function fixture(clientCap = 69632, serverCap = 100000) {
   let beforeReply = async () => {};
   const hello: DeviceHello = {
     type: "hello",
-    protocol: 3,
+    protocol: 4,
     programVersion: "fixture",
     os: "darwin",
     arch: "arm64",
@@ -164,14 +166,22 @@ async function fixture(clientCap = 69632, serverCap = 100000) {
     roots,
     sessionIsolation: false,
     transport: { maxFrameBytes: clientCap },
-    permissionSupport: { version: 1, restricted: null, fullAccess: false, background: false },
-    ownerCeiling: {
+    permissionSupport: {
       version: 2,
+      restricted: null,
+      boundary: "operation" as const,
+      network: { openPublic: false, allowlist: false, perOperationHosts: false },
+      outsideSandbox: false,
+      background: false,
+    },
+    ownerCeiling: {
+      version: 3,
       sequence: 0,
       restrictedProjectReach: "workspace",
       revision: "r",
-      fullAccess: false,
-      restrictedAllowedDomains: [],
+      outsideSandbox: false,
+      network: "allowlist",
+      allowedDomains: [],
     },
     instanceGeneration: "g",
   };

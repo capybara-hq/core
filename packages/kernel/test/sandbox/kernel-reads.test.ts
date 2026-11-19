@@ -36,6 +36,7 @@ import { createFakeSandbox } from "../fixtures/plugins/sandbox-fake/index.js";
 import { legacyDbFor } from "../helpers/conversations.js";
 import { truncateTables } from "../helpers/db.js";
 import { accountsFor } from "../helpers/identity.js";
+import { storedOwnerReport } from "../helpers/owner-report.js";
 import {
   createOrg,
   PW,
@@ -519,10 +520,7 @@ describe("a run start's project knowledge read (withKernelRead)", () => {
     ).rejects.toThrow();
     await expect(read((h, p) => p.readFile(h, APP, { maxBytes: 9, signal }))).rejects.toThrow();
     await expect(
-      read(
-        (h, p) =>
-          p.list?.(h, APP, { limit: 9, limits: { mode: "sandbox" }, signal }) as Promise<unknown>,
-      ),
+      read((h, p) => p.list?.(h, APP, { limit: 9, signal }) as Promise<unknown>),
     ).rejects.toThrow();
     await expect(read((h, p) => p.stat(h, `${APP}/../app/secret.txt`, signal))).rejects.toThrow();
     await expect(
@@ -608,10 +606,11 @@ async function seedLocal(mode: "os" | "docker", report: ReportKind): Promise<Fix
         arch: "x64",
         program_version: "0.1.0",
         mode,
-        features: ["mode", "projects"],
+        features: ["projects"],
         roots: JSON.stringify(DEFAULT_SANDBOX_ROOTS),
         home: "/home/owner",
-        local_policy: JSON.stringify({ mode: "auto", allowedDomains: [] }),
+        local_policy: JSON.stringify({ allowedDomains: [] }),
+        owner_report: storedOwnerReport(),
       })
       .returning("id")
       .executeTakeFirstOrThrow()

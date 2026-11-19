@@ -15,6 +15,7 @@ import { PermissionAuthorityLock } from "../../src/sandbox/permission-authority-
 import { PermissionFacts } from "../../src/sandbox/permission-facts.js";
 import { PermissionRuntimeReports } from "../../src/sandbox/permission-runtime-reports.js";
 import { SandboxProviders } from "../../src/sandbox/providers.js";
+import { storedOwnerReport } from "../helpers/owner-report.js";
 import type { TestKernel } from "../helpers/runs.js";
 import { seedConversation } from "../helpers/tool-fixtures.js";
 
@@ -26,13 +27,36 @@ const RESTRICTED = {
   concurrentScopes: true,
 } as const;
 export const REPORTS = {
-  both: { version: 1, restricted: RESTRICTED, fullAccess: true, background: false },
-  "restricted-only": { version: 1, restricted: RESTRICTED, fullAccess: false, background: false },
-  "full-only": { version: 1, restricted: null, fullAccess: true, background: false },
-  neither: {
-    version: 1,
+  both: {
+    version: 2,
+    restricted: RESTRICTED,
+    boundary: "operation",
+    network: { openPublic: false, allowlist: true, perOperationHosts: true },
+    outsideSandbox: true,
+    background: false,
+  },
+  "restricted-only": {
+    version: 2,
+    restricted: RESTRICTED,
+    boundary: "operation",
+    network: { openPublic: false, allowlist: true, perOperationHosts: true },
+    outsideSandbox: false,
+    background: false,
+  },
+  "full-only": {
+    version: 2,
     restricted: null,
-    fullAccess: false,
+    boundary: "operation",
+    network: { openPublic: false, allowlist: false, perOperationHosts: false },
+    outsideSandbox: true,
+    background: false,
+  },
+  neither: {
+    version: 2,
+    restricted: null,
+    boundary: "operation",
+    network: { openPublic: false, allowlist: false, perOperationHosts: false },
+    outsideSandbox: false,
     background: false,
     unavailableReason: "No enforcement on this machine",
   },
@@ -228,10 +252,11 @@ export async function seedContext(k: TestKernel, raw: Kysely<unknown>, seed: Con
           os: "darwin",
           arch: "arm64",
           program_version: "0.1.0",
-          features: ["mode", "projects"],
+          features: ["projects"],
           roots: JSON.stringify(ROOTS),
           home: "/home/owner",
-          local_policy: JSON.stringify({ mode: "auto", allowedDomains: [] }),
+          local_policy: JSON.stringify({ allowedDomains: [] }),
+          owner_report: storedOwnerReport(),
         })
         .returning("id")
         .executeTakeFirstOrThrow()

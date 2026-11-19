@@ -165,9 +165,9 @@ export class PermissionCallGrants {
       // the same ceiling as Full access: owner, org and platform, and a runtime that runs Full
       if (
         b.toolKey !== "Bash" ||
-        !view.fullAccessCeiling ||
+        !view.outsideSandboxCeiling ||
         view.availability.state !== "supported" ||
-        !view.availability.report.fullAccess
+        !view.availability.report.outsideSandbox
       )
         throw new ApiError(
           "forbidden",

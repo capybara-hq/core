@@ -205,7 +205,7 @@ describe("live profile change of an interactive root (Task 10D)", () => {
       deviceId: "d1",
       scopeRevision: "scope-9",
       availability: permissionAvailability("supported"),
-      fullAccessCeiling: true,
+      outsideSandboxCeiling: true,
     });
     const device = {
       [`GET ${BASE}/c1/device`]: () => json(200, { device: envView("d1", "Build box") }),
@@ -351,7 +351,7 @@ describe("fix round 1 (10D review minors)", () => {
         deviceId: "d1",
         scopeRevision: "scope-9",
         availability: permissionAvailability("supported"),
-        fullAccessCeiling: true,
+        outsideSandboxCeiling: true,
       });
     const routes = {
       ...chatRoutes("c1", { deviceId: "d1" }, view(2)),
@@ -427,7 +427,7 @@ describe("fix round 1 (10D review minors)", () => {
       deviceId: "d1",
       scopeRevision: "scope-9",
       availability: permissionAvailability("supported"),
-      fullAccessCeiling: true,
+      outsideSandboxCeiling: true,
     });
     const routes = {
       ...chatRoutes("c1", { deviceId: "d1" }, view),

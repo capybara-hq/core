@@ -104,8 +104,8 @@ import { z } from "zod";
  *   projects unless a test asks): lists one directory as `SandboxProvider.list` does, with the
  *   instance's directories mapped as for `readFile`, and adds a `scan` that suggests nothing.
  * - `root/refuse-open-egress` (optional, {@link setFakeSandboxRefuseOpenEgress}; read at each
- *   call): like sandbox-docker with `refuseOpenNetwork: true`, limits with mode `auto` and
- *   the open public network make `create`, `update` and (with `limitsApplyAt: "fileSystem"`)
+ *   call): like sandbox-docker with `refuseOpenNetwork: true`, limits with the open public
+ *   network make `create`, `update` and (with `limitsApplyAt: "fileSystem"`)
  *   `createFileSystem` throw an ordinary error whose message carries {@link FAKE_REFUSAL_SECRET},
  *   so tests can check that it never reaches the model.
  *
@@ -571,7 +571,7 @@ export function createFakeSandbox(
   const binDir = join(root, "bin");
   /** Throws the open-network refusal when the fake is set to refuse it (see the file header). */
   const refuseOpen = async (limits: SandboxLimits) => {
-    if (limits.mode !== "auto" || limits.network.kind !== "open-public") return;
+    if (limits.network.kind !== "open-public") return;
     if (
       await stat(join(root, "refuse-open-egress")).then(
         () => true,
@@ -669,8 +669,8 @@ export function createFakeSandbox(
   };
   /**
    * The host path of a device path. `/workspace`, `/skills` and `/tmp` map to the instance's
-   * directories; in auto mode any other clean absolute path maps under the instance's `machine`
-   * directory (the machine's file system, auto mode spec §4.1); sandbox mode keeps the roots.
+   * directories; any other clean absolute path maps under the instance's `machine` directory (the
+   * instance's whole file system: the operation's scope, never the lifecycle limits, bounds it).
    */
   const real = async (h: SandboxHandle, p: string) => {
     const errors = validateSandboxPathShape(p);
@@ -678,9 +678,7 @@ export function createFakeSandbox(
     const m = await mounts(h);
     const r = Object.keys(m).find((k) => p === k || p.startsWith(`${k}/`));
     if (r !== undefined) return join(m[r] as string, p.slice(r.length));
-    const meta = await fakeSandboxMeta(root, h.id);
-    if (meta?.limits.mode === "auto") return join(instanceDir(root, h.id), "machine", p.slice(1));
-    throw new Error(`Sandbox path must be under /workspace, /skills or /tmp: ${p}`);
+    return join(instanceDir(root, h.id), "machine", p.slice(1));
   };
 
   const provider: SandboxProvider = {
@@ -1033,14 +1031,16 @@ interface FakeInternals {
 
 /** The fake's default permission support: both profiles and background ownership. */
 export const FAKE_PERMISSION_SUPPORT: SandboxPermissionSupport = Object.freeze({
-  version: 1,
+  version: 2,
   restricted: Object.freeze({
     filesystem: true,
     network: true,
     native: true,
     concurrentScopes: true,
   }),
-  fullAccess: true,
+  boundary: "operation",
+  network: { openPublic: false, allowlist: true, perOperationHosts: true },
+  outsideSandbox: true,
   background: true,
 }) as SandboxPermissionSupport;
 
@@ -1127,10 +1127,6 @@ function managedSurface(
     join(instanceDir(h), "executions", sha256(operationId));
   const revoked = (operationId: string) =>
     exists(join(f.root, "operation-revoked", sha256(operationId)));
-  /** The mode the instance was created in (the raw `list` / `scan` read in it). */
-  const modeOf = async (h: SandboxHandle): Promise<Pick<SandboxLimits, "mode">> => ({
-    mode: (await fakeSandboxMeta(f.root, h.id))?.limits.mode ?? "sandbox",
-  });
   const deny = (what: string): never => {
     throw new SandboxScopeDeniedError(`${what} is outside this operation's permitted scope`);
   };
@@ -1215,7 +1211,6 @@ function managedSurface(
             return once({ method: "list", path, limit: opts.limit }, async () =>
               (raw.list as NonNullable<SandboxProvider["list"]>)(h, path, {
                 ...opts,
-                limits: await modeOf(h),
                 signal: AbortSignal.any([signal, opts.signal]),
               }),
             );
@@ -1224,7 +1219,6 @@ function managedSurface(
             readable(fs, base);
             return once({ method: "scan", base }, async () =>
               (raw.scan as NonNullable<SandboxProvider["scan"]>)(h, base, {
-                limits: await modeOf(h),
                 signal: AbortSignal.any([signal, opts.signal]),
               }),
             );

@@ -23,7 +23,6 @@ import {
   convertPolicyFile,
   DEFAULT_POLICY,
   FULL_OWNER_CEILING,
-  policyMode,
   policyPath,
   readPolicyFile,
   SANDBOX_OWNER_CEILING,
@@ -166,7 +165,7 @@ describe("version-3 local owner policy", () => {
       network: "open",
       restrictedProjectReach: "workspace",
     });
-    expect(policyMode(readPolicyFile(state).policy)).toBe("auto");
+    expect(readPolicyFile(state).policy.ownerCeiling.outsideSandbox).toBe(true);
   });
 
   it("the strict reader refuses an unconverted old-format policy", async () => {
@@ -213,7 +212,7 @@ describe("owner report sequence sidecar", () => {
     expect({ ...edited, revision: first.revision, sequence: 0 }).toEqual(first);
   });
 
-  it("reports owner fields exactly, mapped to the protocol 3 report until W1.M", async () => {
+  it("reports owner fields exactly in the protocol 4 report", async () => {
     writePolicy(state, {
       ...FULL_POLICY,
       allowedDomains: ["*.example.com"],
@@ -224,10 +223,11 @@ describe("owner report sequence sidecar", () => {
       },
     });
     expect(report()).toMatchObject({
-      version: 2,
-      fullAccess: false,
+      version: 3,
+      outsideSandbox: false,
+      network: "allowlist",
       restrictedProjectReach: "os-user",
-      restrictedAllowedDomains: ["*.example.com"],
+      allowedDomains: ["*.example.com"],
     });
     writePolicy(state, {
       ...FULL_POLICY,
@@ -235,10 +235,11 @@ describe("owner report sequence sidecar", () => {
       ownerCeiling: { outsideSandbox: true, network: "open", restrictedProjectReach: "workspace" },
     });
     expect(report()).toMatchObject({
-      version: 2,
-      fullAccess: true,
+      version: 3,
+      outsideSandbox: true,
+      network: "open",
       restrictedProjectReach: "workspace",
-      restrictedAllowedDomains: ["a.test"],
+      allowedDomains: ["a.test"],
     });
   });
 
@@ -424,7 +425,7 @@ describe("staged policy op with owner reports", () => {
     const res = await serveOperationV3(
       backend,
       { id: "dev" },
-      policyReq({ opId: "op1", source, ownerCeiling: { fullAccess: false } }),
+      policyReq({ opId: "op1", source, ownerCeiling: { outsideSandbox: false } }),
       new AbortController().signal,
       undefined,
       owner,
@@ -432,8 +433,13 @@ describe("staged policy op with owner reports", () => {
     expect(res).toMatchObject({
       ok: true,
       result: {
-        policy: { mode: "sandbox" },
-        ownerCeiling: { fullAccess: false, restrictedProjectReach: "os-user", sequence: 0 },
+        policy: { allowedDomains: [] },
+        ownerCeiling: {
+          outsideSandbox: false,
+          network: "open",
+          restrictedProjectReach: "os-user",
+          sequence: 0,
+        },
       },
     });
     expect(calls).toEqual(["reconcile", "report"]);
@@ -447,7 +453,7 @@ describe("staged policy op with owner reports", () => {
     );
     expect(status).toMatchObject({
       ok: true,
-      result: { outcome: "applied", ownerCeiling: { fullAccess: false } },
+      result: { outcome: "applied", ownerCeiling: { outsideSandbox: false } },
     });
   });
 

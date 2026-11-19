@@ -84,7 +84,7 @@ export type PermissionReviewSnapshot = Readonly<
     baseWriteDirectories: readonly string[];
     baseHosts: readonly string[];
     workingRoot: string;
-    fullAccessCeiling: boolean;
+    outsideSandboxCeiling: boolean;
     /** Restricted directory expansions beyond the working root (B2 broad project reach). */
     broadProjectReach: boolean;
     unattended: boolean;

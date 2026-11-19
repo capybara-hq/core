@@ -121,7 +121,7 @@ export async function createLinuxOperationBackend(
     {
       restricted: unavailableReason === undefined,
       ...(unavailableReason ? { unavailableReason } : {}),
-      fullAccess: probe.agentAvailable !== false,
+      outsideSandbox: probe.agentAvailable !== false,
       background: probe.agentAvailable !== false,
       pending: unavailableReason ?? "Restricted Linux execution is unavailable",
       startWorker,

@@ -17,7 +17,6 @@ import {
   credentialPath,
   DEFAULT_POLICY,
   ownerCeilingOfMode,
-  policyMode,
   readCredential,
   readPolicy,
   readPolicyFile,
@@ -250,15 +249,15 @@ describe("state", () => {
     for (const [body, mode] of table) {
       writeFileSync(file, JSON.stringify(body));
       const got = readPolicyFile(dir);
-      expect(policyMode(got.policy), JSON.stringify(body)).toBe(mode);
+      expect(got.policy.ownerCeiling.outsideSandbox, JSON.stringify(body)).toBe(mode === "auto");
       expect(got.legacy, JSON.stringify(body)).toBe(true);
     }
     // a file with `mode` is the old format too: it translates exactly and is converted later
     writeFileSync(file, JSON.stringify({ mode: "sandbox" }));
     expect(readPolicyFile(dir).legacy).toBe(true);
-    expect(policyMode(readPolicyFile(dir).policy)).toBe("sandbox");
+    expect(readPolicyFile(dir).policy.ownerCeiling.outsideSandbox).toBe(false);
     writeFileSync(file, JSON.stringify({ mode: "auto" }));
-    expect(policyMode(readPolicyFile(dir).policy)).toBe("auto");
+    expect(readPolicyFile(dir).policy.ownerCeiling.outsideSandbox).toBe(true);
   });
 
   it("drops the legacy keys at the next write and keeps unknown ones", () => {

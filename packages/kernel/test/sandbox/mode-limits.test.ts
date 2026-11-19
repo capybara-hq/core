@@ -181,7 +181,6 @@ describe("creation records the effective mode and network", () => {
     const s = service();
     const a = await use(s);
     expect((await fakeSandboxMeta(root, a.h.id))?.limits).toMatchObject({
-      mode: "auto",
       network: { kind: "open-public" },
     });
     expect(await modeOf()).toBe("auto");
@@ -191,7 +190,6 @@ describe("creation records the effective mode and network", () => {
     await setAutoMode("off");
     const b = await use(s, undefined, other);
     expect((await fakeSandboxMeta(root, b.h.id))?.limits).toMatchObject({
-      mode: "sandbox",
       network: { kind: "allowlist" },
     });
     expect(await modeOf(other)).toBe("sandbox");
@@ -215,9 +213,7 @@ describe("a changed mode on use", () => {
     expect(again.info).toMatchObject({ fresh: false, restarted: false });
     expect(await ops("update")).toEqual([["update", first.h.id, "updated"]]);
     const updates = (await readFakeSandboxLimits(root)).filter((e) => e.op === "update");
-    expect(updates.map((e) => [e.limits.mode, e.limits.network.kind])).toEqual([
-      ["sandbox", "allowlist"],
-    ]);
+    expect(updates.map((e) => e.limits.network.kind)).toEqual(["allowlist"]);
     expect(await modeOf()).toBe("sandbox");
     expect((await s.limitsState({ orgId, deviceId })).pendingNextUse).toBe(false);
     // applied once: the next use takes a shared lease and changes nothing
@@ -240,7 +236,7 @@ describe("a changed mode on use", () => {
     expect(await ops("create-fs")).toHaveLength(1);
     const meta = await fakeSandboxMeta(root, again.h.id);
     expect(meta?.fileSystem).toBe(fs);
-    expect(meta?.limits).toMatchObject({ mode: "sandbox", network: { kind: "allowlist" } });
+    expect(meta?.limits).toMatchObject({ network: { kind: "allowlist" } });
     expect(await modeOf()).toBe("sandbox");
   });
 
@@ -470,7 +466,7 @@ describe("a failed limits change", () => {
     expect(await ops("update")).toEqual([["update", first.h.id, "throw"]]);
     // recorded by the create that applied it
     expect(await modeOf()).toBe("sandbox");
-    expect((await fakeSandboxMeta(root, again.h.id))?.limits.mode).toBe("sandbox");
+    expect((await fakeSandboxMeta(root, again.h.id))?.limits.network.kind).toBe("allowlist");
     expect(warned.some((m) => m.includes("update failed"))).toBe(true);
   });
 

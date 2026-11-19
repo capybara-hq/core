@@ -115,9 +115,11 @@ describe("local operation backend selection", () => {
     const { backend, exec, launched } = await setup("linux", SUPPORTED);
     const support = await backend.permissionSupport({ id: "d" }, signal);
     expect(support).toEqual({
-      version: 1,
+      version: 2,
       restricted: { filesystem: true, network: true, native: true, concurrentScopes: true },
-      fullAccess: true,
+      boundary: "operation",
+      network: { openPublic: false, allowlist: true, perOperationHosts: true },
+      outsideSandbox: true,
       background: true,
     });
     await expect(exec(false)).resolves.toMatchObject({ exitCode: 0 });
@@ -132,7 +134,7 @@ describe("local operation backend selection", () => {
     const support = await backend.permissionSupport({ id: "d" }, signal);
     expect(support.restricted).toBeNull();
     expect(support.unavailableReason).toMatch(/Landlock ABI 4/);
-    expect(support.fullAccess).toBe(true);
+    expect(support.outsideSandbox).toBe(true);
     await expect(exec(false)).rejects.toMatchObject({ name: "SandboxPermissionUnsupportedError" });
     expect(launched).toEqual([]);
     await expect(exec(true)).resolves.toMatchObject({ exitCode: 0 });

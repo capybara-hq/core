@@ -380,7 +380,6 @@ describe("acceptance: auto mode on a real kernel", () => {
       30_000,
       "the created device's limits",
     );
-    expect(created.limits.mode).toBe("sandbox");
     expect(created.limits.network.kind).toBe("allowlist");
   });
 
@@ -581,7 +580,20 @@ async function localDevice(): Promise<{ deviceId: string; machine: FakeMachine }
     { hello: false },
   );
   await machine.opened;
-  machine.hello({ features: ["mode"], policy: { mode: "auto", allowedDomains: [] } });
+  // the owner allows work outside the sandbox (what the `auto` mode reported before protocol 4)
+  machine.hello({
+    features: [],
+    policy: { allowedDomains: [] },
+    ownerCeiling: {
+      version: 3,
+      sequence: 1,
+      revision: "test-owner-outside",
+      outsideSandbox: true,
+      network: "open",
+      allowedDomains: [],
+      restrictedProjectReach: "os-user",
+    },
+  });
   // the policy frame is recorded before the conversation can use the device
   await waitFor(
     async () =>

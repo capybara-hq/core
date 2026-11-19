@@ -26,11 +26,13 @@ import {
   startKernel,
   type TestKernel,
 } from "../helpers/runs.js";
+import { ownerReportFor } from "../local-devices/fake-machine-v3.js";
 
 /**
  * The mode and network the model is told (`DevicesService.modeLevel`, auto mode spec §4.2): a
- * local device's reported mode cut to the org's switch, its sandbox-mode allowlist, a policy the
- * machine pushes afterwards, and a cloud device whose new limits wait for a file reset.
+ * local device's mode from its owner report (Full: auto) cut to the org's switch, its sandbox-mode
+ * allowlist, an owner report the machine pushes afterwards, and a cloud device whose new limits
+ * wait for a file reset.
  */
 
 let pgc: TestContainer;
@@ -85,16 +87,18 @@ const HELLO: LegacyDeviceHello = {
   mode: "os",
   roots: { workspace: "/w", skills: "/s", tmp: "/t" },
   sessionIsolation: false,
-  features: ["networkReport", "policyOp", "mode"],
+  features: ["networkReport", "policyOp"],
 };
 
 const SUMMARY = (p: Partial<DeviceLocalPolicySummary> = {}): DeviceLocalPolicySummary => ({
-  mode: "auto",
   allowedDomains: [],
   ...p,
 });
 
-/** A local device of the owner whose machine said hello with `policy`. */
+/**
+ * A local device of the owner whose machine said hello with `policy` and an owner report allowing
+ * running outside the sandbox (Full, the auto mode).
+ */
 async function localDevice(policy: Partial<DeviceLocalPolicySummary> = {}): Promise<string> {
   const { deviceId, machineId } = await k.app.get(TransactionHost).run(async () => {
     const { id } = await devices.createLocal(orgId, ownerId, `Box ${randomUUID().slice(0, 6)}`);
@@ -109,15 +113,18 @@ async function localDevice(policy: Partial<DeviceLocalPolicySummary> = {}): Prom
     });
     return { deviceId: id, machineId: issued.machineId };
   });
-  await k.app.get(MachinesService).recordHello(machineId, {
-    ...HELLO,
-    policy: SUMMARY(policy),
-  });
+  await k.app
+    .get(MachinesService)
+    .recordHello(
+      machineId,
+      { ...HELLO, policy: SUMMARY(policy) },
+      { report: ownerReportFor(SUMMARY(policy), { outsideSandbox: true }), connectionId: null },
+    );
   return deviceId;
 }
 
-/** A local device whose machine is an older program with no `mode` feature. */
-async function legacyLocalDevice(isolation: "none" | "sandbox"): Promise<string> {
+/** A local device whose machine said hello without an authenticated owner report. */
+async function unreportedLocalDevice(): Promise<string> {
   const { deviceId, machineId } = await k.app.get(TransactionHost).run(async () => {
     const { id } = await devices.createLocal(orgId, ownerId, `Old ${randomUUID().slice(0, 6)}`);
     const issued = await k.app.get(MachinesService).issue({
@@ -131,19 +138,7 @@ async function legacyLocalDevice(isolation: "none" | "sandbox"): Promise<string>
     });
     return { deviceId: id, machineId: issued.machineId };
   });
-  await k.app.get(MachinesService).recordHello(
-    machineId,
-    { ...HELLO, features: [] },
-    {
-      tier: "open",
-      effectiveTier: "open",
-      isolation,
-      localhost: "on",
-      unixSockets: "roots",
-      allowedDomains: [],
-      remoteGrants: "owner",
-    },
-  );
+  await k.app.get(MachinesService).recordHello(machineId, { ...HELLO, features: [] });
   return deviceId;
 }
 
@@ -158,21 +153,17 @@ describe("DevicesService.modeLevel", () => {
     });
   });
 
-  it("an older program's mode is derived fail-closed: unsandboxed auto, otherwise sandbox", async () => {
-    const unsandboxed = await legacyLocalDevice("none");
-    expect(await devices.modeLevel(orgId, unsandboxed)).toMatchObject({
-      mode: "auto",
-      local: true,
-    });
-    const sandboxed = await legacyLocalDevice("sandbox");
-    expect(await devices.modeLevel(orgId, sandboxed)).toMatchObject({
+  it("a machine without an owner report fails closed: sandbox", async () => {
+    const unreported = await unreportedLocalDevice();
+    expect(await k.app.get(NetworkGrants).reportedMode(unreported)).toBe("sandbox");
+    expect(await devices.modeLevel(orgId, unreported)).toMatchObject({
       mode: "sandbox",
       local: true,
     });
   });
 
-  it("an unsandboxed old program is refused where auto mode is not allowed (one derivation)", async () => {
-    const deviceId = await legacyLocalDevice("none");
+  it("a reported Full owner ceiling is cut where auto mode is not allowed (one derivation)", async () => {
+    const deviceId = await localDevice();
     await sql`UPDATE capybara.orgs SET settings = ${JSON.stringify({ outsideSandbox: "off" })}::jsonb
       WHERE id = ${orgId}`.execute(raw);
     // the machine reports auto mode while the policy's ceiling is sandbox
@@ -205,9 +196,14 @@ describe("DevicesService.modeLevel", () => {
     expect(devicePathsText(first?.payload as DevicePathsPayload)).toContain(
       "Mode: auto. Commands run as the user on this machine",
     );
-    // the owner ran `capybara-device ceiling set --full-access deny` and allowed a host: the program pushes it
-    const summary: DeviceLocalPolicySummary = { mode: "sandbox", allowedDomains: ["a.com"] };
-    await machines.recordPolicy(machineId, summary);
+    // the owner ran `capybara-device ceiling set --full-access deny` and allowed a host: the
+    // program pushes the new owner report with its summary
+    const summary: DeviceLocalPolicySummary = { allowedDomains: ["a.com"] };
+    await machines.recordPolicyV3(machineId, {
+      type: "policy",
+      policy: summary,
+      ownerCeiling: ownerReportFor(summary, { outsideSandbox: false }),
+    });
     expect((await machines.activeFor(deviceId))?.localPolicy).toEqual(summary);
     const after = await devices.modeLevel(orgId, deviceId);
     expect(after).toMatchObject({
@@ -226,15 +222,24 @@ describe("DevicesService.modeLevel", () => {
     expect(devicePathsText(next?.payload as DevicePathsPayload)).toContain(
       "Mode: sandbox. Only the workspace, skills and temporary files are writable",
     );
-    // a change made on the machine is audited as a mode change
+    // a change made on the machine is audited as an owner-ceiling change, never a mode change
     const audits = await db
       .selectFrom("audit_events")
-      .select("detail")
+      .select(["action", "detail"])
       .where("target", "=", deviceId)
-      .where("action", "=", "device.mode_changed")
+      .where("action", "in", ["device.owner_ceiling_changed", "device.mode_changed"])
       .execute();
     expect(audits).toEqual([
-      { detail: { from: "auto", to: "sandbox", by: ownerId, via: "device", machineId } },
+      {
+        action: "device.owner_ceiling_changed",
+        detail: expect.objectContaining({
+          from: { fullAccess: true, restrictedProjectReach: "workspace" },
+          to: { fullAccess: false, restrictedProjectReach: "workspace" },
+          by: ownerId,
+          via: "device",
+          machineId,
+        }),
+      },
     ]);
     // unchanged facts: none
     expect(

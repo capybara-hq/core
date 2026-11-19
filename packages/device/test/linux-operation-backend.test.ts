@@ -108,7 +108,7 @@ describe.skipIf(unavailable !== null)("Linux host operation backend", () => {
   it("selects the Linux backend on Linux: restricted from the launcher's probe, Full, background", async () => {
     const support = await backend.support();
     if (required) expect(support.restricted).not.toBeNull();
-    expect(support.fullAccess).toBe(true);
+    expect(support.outsideSandbox).toBe(true);
     expect(support.background).toBe(true);
   });
 
@@ -602,7 +602,7 @@ describe.skipIf(unavailable !== null)("Linux host operation backend without pidf
   it("reports restricted unavailable (the launcher needs pidfds) but keeps Full", async () => {
     const support = await backend.support();
     expect(support.restricted).toBeNull();
-    expect(support.fullAccess).toBe(true);
+    expect(support.outsideSandbox).toBe(true);
   });
 
   it("a Full timeout ends the command and its session", async () => {

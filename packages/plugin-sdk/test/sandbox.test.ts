@@ -170,14 +170,14 @@ describe("validateSandboxPathShape", () => {
 });
 
 describe("SandboxLimits", () => {
-  it("carries the mode and the network, and no tier or egress fields", () => {
+  it("carries resources and the network, and no mode, tier or egress fields", () => {
     expectTypeOf<SandboxLimits>().toMatchTypeOf<{
       cpu: number;
       memoryMb: number;
       diskMb: number;
-      mode: "auto" | "sandbox";
       network: { kind: "open-public" | "allowlist"; hosts: string[] };
     }>();
+    expectTypeOf<"mode" extends keyof SandboxLimits ? true : false>().toEqualTypeOf<false>();
     expectTypeOf<"tier" extends keyof SandboxLimits ? true : false>().toEqualTypeOf<false>();
     expectTypeOf<"egress" extends keyof SandboxLimits ? true : false>().toEqualTypeOf<false>();
     expectTypeOf<"allowHosts" extends keyof SandboxLimits ? true : false>().toEqualTypeOf<false>();

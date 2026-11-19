@@ -88,7 +88,6 @@ describe("device protocol", () => {
     cpu: 1,
     memoryMb: 512,
     diskMb: 1024,
-    mode: "auto",
     network: { kind: "allowlist", hosts: [] },
   };
   const exec = {
@@ -163,8 +162,7 @@ describe("device protocol", () => {
       ["exec", { ...exec, maxOutputBytes: 1.5 }],
       ["exec", { ...exec, tag: 1 }],
       ["exec", { ...exec, actor: { accountId: "a" } }],
-      ["exec", { ...exec, limits: { ...limits, mode: undefined } }],
-      ["exec", { ...exec, limits: { ...limits, mode: "wide" } }],
+      ["exec", { ...exec, limits: { ...limits, cpu: undefined } }],
       ["exec", { ...exec, limits: { ...limits, network: undefined } }],
       ["exec", { ...exec, limits: { ...limits, network: { ...limits.network, kind: "x" } } }],
       [
@@ -182,9 +180,6 @@ describe("device protocol", () => {
       ["readFile", { path: 1, maxBytes: 1 }],
       ["writeFile", { path: "/a" }],
       ["stat", {}],
-      ["stat", { path: "/a" }],
-      ["readFile", { path: "/a", maxBytes: 100 }],
-      ["stat", { path: "/a", limits: { mode: "wide" } }],
       ["killTagged", { tags: [1] }],
       ["killAll", []],
       ["create", {}],
@@ -195,9 +190,9 @@ describe("device protocol", () => {
     }
     const goods: [string, unknown][] = [
       ["exec", { ...exec, cwd: "/w", env: { A: "b" } }],
-      ["readFile", { path: "/a", maxBytes: 0, limits: { mode: "auto" } }],
+      ["readFile", { path: "/a", maxBytes: 0 }],
       ["writeFile", { path: "/a", dataB64: "" }],
-      ["stat", { path: "/a", limits: { mode: "sandbox" } }],
+      ["stat", { path: "/a" }],
       ["killTagged", { tags: ["a"] }],
       ["create", { limits }],
       [
@@ -206,7 +201,6 @@ describe("device protocol", () => {
           ...exec,
           limits: {
             ...limits,
-            mode: "sandbox",
             network: { kind: "allowlist", hosts: ["registry.npmjs.org"] },
           },
         },
@@ -317,10 +311,7 @@ describe("device protocol", () => {
   });
 
   describe("hello features and policy summary", () => {
-    const summary = {
-      mode: "sandbox",
-      allowedDomains: ["files.slack.com", "*.github.com"],
-    };
+    const summary = { allowedDomains: ["files.slack.com", "*.github.com"] };
     const parseHello = (o: unknown) =>
       parseLegacyDeviceFrame(JSON.stringify(o), "device") as LegacyDeviceHello;
 
@@ -333,13 +324,16 @@ describe("device protocol", () => {
     it("keeps known features and a valid policy summary", () => {
       const h = parseHello({
         ...hello,
+        // `mode` (protocol 3: the device applied limits.mode) is no feature any more
         features: ["networkReport", "teleport", "policyOp", "mode", "projects", 3],
         policy: summary,
       });
-      expect(h.features).toEqual(["networkReport", "policyOp", "mode", "projects"]);
+      expect(h.features).toEqual(["networkReport", "policyOp", "projects"]);
       expect(h.policy).toEqual(summary);
-      const auto = { ...summary, mode: "auto" };
-      expect(parseHello({ ...hello, policy: auto }).policy).toEqual(auto);
+      // a protocol 3 summary's mode is not part of the summary: dropped
+      expect(parseHello({ ...hello, policy: { ...summary, mode: "auto" } }).policy).toEqual(
+        summary,
+      );
     });
 
     it("drops the tiers feature and unreadable or legacy policy summaries (old devices)", () => {
@@ -348,20 +342,9 @@ describe("device protocol", () => {
       for (const policy of [
         "x",
         null,
-        { ...summary, mode: "wide" },
-        { ...summary, mode: undefined },
         { ...summary, allowedDomains: [1] },
         { ...summary, allowedDomains: "a.com" },
-        { allowedDomains: ["a.example.com"] },
-        // the old summary shape: no `mode`, so the kernel learns the policy later
-        {
-          effectiveTier: "strict",
-          isolation: "sandbox",
-          localhost: "off",
-          unixSockets: "roots",
-          allowedDomains: [],
-          remoteGrants: "owner",
-        },
+        { mode: "sandbox" },
       ]) {
         expect(parseHello({ ...hello, policy }).policy, JSON.stringify(policy)).toBeUndefined();
       }
@@ -374,7 +357,7 @@ describe("device protocol", () => {
         policy: summary,
       });
       // an unreadable summary is dropped, never failing the connection
-      expect(frame({ type: "policy", policy: { ...summary, mode: "wide" } })).toEqual({
+      expect(frame({ type: "policy", policy: { ...summary, allowedDomains: [1] } })).toEqual({
         type: "policy",
       });
       expect(frame({ type: "policy" })).toEqual({ type: "policy" });
@@ -385,7 +368,7 @@ describe("device protocol", () => {
   });
 
   describe("no projects on the policy summary", () => {
-    const summary = { mode: "sandbox", allowedDomains: ["files.slack.com"] };
+    const summary = { allowedDomains: ["files.slack.com"] };
     const parseHello = (o: unknown) =>
       parseLegacyDeviceFrame(JSON.stringify(o), "device") as LegacyDeviceHello;
 
@@ -462,35 +445,25 @@ describe("device protocol", () => {
   });
 
   describe("the list op", () => {
-    const limits = { mode: "sandbox" };
-
-    it("parses the request, which carries the kernel's current ceiling", () => {
-      const args = { path: "/w/core/.agents/skills", limit: 200, limits };
+    it("parses the request", () => {
+      const args = { path: "/w/core/.agents/skills", limit: 200 };
       expect(parse(req("list", args), "kernel")()).toMatchObject({ op: "list", args });
       expect(
-        parse(
-          req("list", { path: "/w", limit: MAX_DEVICE_LIST_ENTRIES, limits: { mode: "auto" } }),
-          "kernel",
-        )(),
+        parse(req("list", { path: "/w", limit: MAX_DEVICE_LIST_ENTRIES }), "kernel")(),
       ).toMatchObject({ op: "list" });
     });
 
     it("rejects malformed args", () => {
       for (const args of [
         {},
-        { path: "/w", limits },
-        { limit: 10, limits },
-        { path: "w", limit: 10, limits },
-        { path: "/w/../etc", limit: 10, limits },
-        { path: "/w//a", limit: 10, limits },
-        { path: "/w", limit: 0, limits },
-        { path: "/w", limit: 1.5, limits },
-        { path: "/w", limit: MAX_DEVICE_LIST_ENTRIES + 1, limits },
-        // the ceiling is required
-        { path: "/w", limit: 10 },
-        { path: "/w", limit: 10, limits: {} },
-        { path: "/w", limit: 10, limits: { mode: "open" } },
-        { path: "/w", limit: 10, limits: "sandbox" },
+        { path: "/w" },
+        { limit: 10 },
+        { path: "w", limit: 10 },
+        { path: "/w/../etc", limit: 10 },
+        { path: "/w//a", limit: 10 },
+        { path: "/w", limit: 0 },
+        { path: "/w", limit: 1.5 },
+        { path: "/w", limit: MAX_DEVICE_LIST_ENTRIES + 1 },
       ]) {
         expect(parse(req("list", args), "kernel"), JSON.stringify(args)).toThrow(
           DeviceProtocolError,
@@ -544,23 +517,18 @@ describe("device protocol", () => {
   });
 
   describe("the scan op", () => {
-    const limits = { mode: "auto" };
-
-    it("parses the request, which carries the kernel's current ceiling", () => {
-      const args = { base: "/Users/ann", limits };
+    it("parses the request", () => {
+      const args = { base: "/Users/ann" };
       expect(parse(req("scan", args), "kernel")()).toMatchObject({ op: "scan", args });
     });
 
     it("rejects malformed args", () => {
       for (const args of [
         {},
-        { limits },
-        { base: "", limits },
-        { base: "Users/ann", limits },
-        { base: "/Users/../ann", limits },
-        { base: "/Users/a\nn", limits },
-        { base: "/Users/ann" },
-        { base: "/Users/ann", limits: { mode: "wide" } },
+        { base: "" },
+        { base: "Users/ann" },
+        { base: "/Users/../ann" },
+        { base: "/Users/a\nn" },
       ]) {
         expect(parse(req("scan", args), "kernel"), JSON.stringify(args)).toThrow(
           DeviceProtocolError,
@@ -610,10 +578,8 @@ describe("device protocol", () => {
     it("validates the args", () => {
       const goods: unknown[] = [
         { opId, source },
-        { opId, add: ["a.example.com"], source: { ...source, approvalId: "ap_1", via: "im" } },
-        { opId, remove: ["a.example.com"], source },
-        { opId, mode: "sandbox", source },
-        { opId, add: Array.from({ length: 100 }, (_, i) => `h${i}.example.com`), source },
+        { opId, remove: ["a.example.com"], source: { ...source, approvalId: "ap_1", via: "im" } },
+        { opId, remove: Array.from({ length: 100 }, (_, i) => `h${i}.example.com`), source },
       ];
       for (const args of goods) {
         expect(parse(req("policy", args), "kernel")().type, JSON.stringify(args)).toBe("req");
@@ -621,16 +587,16 @@ describe("device protocol", () => {
       const bads: unknown[] = [
         {},
         { opId },
-        { opId, add: ["a.example.com"] },
-        { opId, add: "a.example.com", source },
-        { opId, add: [1], source },
+        { opId, remove: ["a.example.com"] },
+        { opId, remove: "a.example.com", source },
         { opId, remove: [null], source },
-        { opId, add: Array.from({ length: 101 }, (_, i) => `h${i}.example.com`), source },
         { opId, remove: Array.from({ length: 101 }, (_, i) => `h${i}.example.com`), source },
-        // the kernel may narrow to sandbox only; auto mode is decided on the machine
+        // protocol 4: the deployment never adds hosts (widening happens on the machine) and
+        // narrows through ownerCeiling, never a mode
+        { opId, add: ["a.example.com"], source: { ...source, approvalId: "ap_1", via: "im" } },
+        { opId, add: [], source },
+        { opId, mode: "sandbox", source },
         { opId, mode: "auto", source },
-        { opId, mode: 1, source },
-        { opId, mode: null, source },
         { opId, source: { ...source, via: "pat" } },
         { opId, source: { ...source, accountId: 1 } },
         { opId, source: { accountId: "acc_1", via: "web" } },
@@ -668,10 +634,7 @@ describe("device protocol", () => {
           DeviceProtocolError,
         );
       }
-      const policy: DeviceLocalPolicySummary = {
-        mode: "sandbox",
-        allowedDomains: ["a.example.com"],
-      };
+      const policy: DeviceLocalPolicySummary = { allowedDomains: ["a.example.com"] };
       const goods: LegacyDevicePolicyStatus[] = [
         { outcome: "applied", policy },
         { outcome: "refused", message: "This device does not accept network changes." },
@@ -686,7 +649,6 @@ describe("device protocol", () => {
         null,
         {},
         { outcome: "maybe" },
-        { outcome: "applied", policy: { ...policy, mode: "x" } },
         { outcome: "applied", policy: { ...policy, allowedDomains: [1] } },
         { outcome: "refused", message: 1 },
       ]) {
@@ -751,16 +713,11 @@ describe("device protocol", () => {
     });
 
     it("validates the result", () => {
-      const policy = {
-        mode: "auto",
-        allowedDomains: ["a.example.com"],
-      };
+      const policy = { allowedDomains: ["a.example.com"] };
       expect(parseOpResult("policy", { policy })).toEqual({ policy });
       for (const bad of [
         null,
         {},
-        { policy: { ...policy, mode: "x" } },
-        { policy: { ...policy, mode: undefined } },
         { policy: { ...policy, allowedDomains: [1] } },
         { policy: { ...policy, allowedDomains: undefined } },
       ]) {

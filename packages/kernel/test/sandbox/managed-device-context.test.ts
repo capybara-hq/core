@@ -73,6 +73,7 @@ import {
 } from "../fixtures/plugins/sandbox-fake/index.js";
 import { truncateTables } from "../helpers/db.js";
 import { MODEL_PLUGINS_CONFIG } from "../helpers/model-plugins.js";
+import { storedOwnerReport } from "../helpers/owner-report.js";
 import { startKernel, type TestKernel } from "../helpers/runs.js";
 import { seedConversation } from "../helpers/tool-fixtures.js";
 import { identityFor, REPORTS, startRun } from "../runtime/permission-context-fixture.js";
@@ -175,10 +176,11 @@ async function seed(opts: { project?: string } = {}) {
         os: "darwin",
         arch: "arm64",
         program_version: "0.1.0",
-        features: ["mode", "projects"],
+        features: ["projects"],
         roots: JSON.stringify(ROOTS),
         home: "/home/owner",
-        local_policy: JSON.stringify({ mode: "auto", allowedDomains: [] }),
+        local_policy: JSON.stringify({ allowedDomains: [] }),
+        owner_report: storedOwnerReport(),
       })
       .returning("id")
       .executeTakeFirstOrThrow()
@@ -1050,7 +1052,7 @@ describe("cloud installed evidence in the real lifecycle", () => {
       .executeTakeFirstOrThrow();
     return (await readFakeSandboxLimits(root))
       .filter((e) => e.op === "update" && e.id === row.handle?.id)
-      .map((e) => ({ mode: e.limits.mode, network: e.limits.network }));
+      .map((e) => ({ network: e.limits.network }));
   };
   const reconcileMarked = (f: Fixture) =>
     k.app.get(SandboxService).reconcileLimits(f.deviceId, AbortSignal.timeout(30_000));
@@ -1075,9 +1077,7 @@ describe("cloud installed evidence in the real lifecycle", () => {
     );
     expect(await admission(f)).toMatch(/established again/);
     expect(await reconcileMarked(f)).toMatchObject({ state: "bound" });
-    expect(await updates(f)).toEqual([
-      { mode: "auto", network: { kind: "allowlist", hosts: ["a.example"] } },
-    ]);
+    expect(await updates(f)).toEqual([{ network: { kind: "allowlist", hosts: ["a.example"] } }]);
     expect(await marked(f)).toBe(false);
     expect(await appliedLimits(f)).toMatchObject({
       mode: "auto",
@@ -1102,9 +1102,7 @@ describe("cloud installed evidence in the real lifecycle", () => {
       },
     );
     expect(await reconcileMarked(f)).toMatchObject({ state: "bound" });
-    expect(await updates(f)).toEqual([
-      { mode: "sandbox", network: { kind: "allowlist", hosts: ["a.example"] } },
-    ]);
+    expect(await updates(f)).toEqual([{ network: { kind: "allowlist", hosts: ["a.example"] } }]);
     expect(
       await f.db
         .selectFrom("devices")

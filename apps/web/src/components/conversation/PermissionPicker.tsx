@@ -117,9 +117,9 @@ export function unavailableReasons(
       : a.state === "supported" && a.report.restricted === null
         ? "restrictedUnsupported"
         : undefined;
-  const full: Reason | undefined = !p.fullAccessCeiling
+  const full: Reason | undefined = !p.outsideSandboxCeiling
     ? "ceiling"
-    : a.state === "unsupported" || (a.state === "supported" && !a.report.fullAccess)
+    : a.state === "unsupported" || (a.state === "supported" && !a.report.outsideSandbox)
       ? "unsupported"
       : undefined;
   return { "request-approval": restricted, "approve-for-me": restricted, "full-access": full };
@@ -486,7 +486,7 @@ export function useConversationPermission(o: {
               project: project ?? null,
               scopeRevision: view.scopeRevision,
               availability: view.availability,
-              fullAccessCeiling: view.fullAccessCeiling,
+              outsideSandboxCeiling: view.outsideSandboxCeiling,
             }
           : undefined,
       failed: view?.deviceId != null && view.scopeRevision === null,

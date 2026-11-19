@@ -2,9 +2,9 @@
  * The device protocol: the WebSocket frames between the kernel and a `capybara-device` program
  * (a connected machine that serves as a device). Pure types and hand-written guards.
  *
- * Protocol 3 (the scope-bearing operations, `parseDeviceFrame`) is defined in the second half of
- * this file. Protocol 2's frames keep a `Legacy` prefix where a protocol 3 name replaced them
- * (`LegacyDeviceHello`, `parseLegacyDeviceFrame`, ...); protocol 3 reuses their value guards, and
+ * Protocol 4 (the scope-bearing operations, `parseDeviceFrame`) is defined in the second half of
+ * this file. Protocol 2's frames keep a `Legacy` prefix where a newer name replaced them
+ * (`LegacyDeviceHello`, `parseLegacyDeviceFrame`, ...); protocol 4 reuses their value guards, and
  * they go with the legacy device surface.
  */
 import {
@@ -28,17 +28,17 @@ import {
   parseSandboxOperationScope,
   parseSandboxPreparationScope,
   type SandboxPermissionSupport,
-  type SandboxPermissionSupportV2,
 } from "./sandbox-operation.js";
 
 /** The protocol version carried in `X-Capybara-Device-Protocol` and the hello frame. */
-export const DEVICE_PROTOCOL_VERSION = 3;
+export const DEVICE_PROTOCOL_VERSION = 4;
 
 /**
- * Protocol 2's version, which a deployment speaking {@link DEVICE_PROTOCOL_VERSION} refuses (426
- * on the header, a protocol close on the hello). Kept only for the legacy device surface.
+ * Protocol 3's version, which a deployment speaking {@link DEVICE_PROTOCOL_VERSION} refuses (426
+ * on the header, a protocol close on the hello): its owner report and runtime support describe the
+ * removed Full access ceiling, so a protocol 3 program must be updated.
  */
-export const LEGACY_DEVICE_PROTOCOL_VERSION = 2;
+export const LEGACY_DEVICE_PROTOCOL_VERSION = 3;
 
 /** The operations the kernel asks a device to run. */
 export type DeviceOp =
@@ -74,29 +74,28 @@ const DEVICE_OPS: readonly DeviceOp[] = [
  * Optional capabilities a device announces in its hello. `policyOp`: the device takes the `policy`
  * op; `policyOpId`: it also logs each `policy` op's outcome by its `opId`, answers `policyStatus`
  * and reports recent outcomes in its hello (`recentOps`); `networkReport` means exec results may
- * carry `network`; `mode` means the device applies `limits.mode` / `limits.network` (without it
- * the device behaves as an allowlisted sandbox); `projects` means the device serves `list` and
+ * carry `network`; `projects` means the device serves `list` and
  * `scan` (the kernel keeps a device's projects itself and asks the device only what it can read).
  * The kernel gates each op on its feature, as it gates `policy` on `policyOp` / `policyOpId`: it
  * never sends `list` or `scan` to a device that did not announce `projects`.
  */
-export type DeviceFeature = "networkReport" | "policyOp" | "policyOpId" | "mode" | "projects";
+export type DeviceFeature = "networkReport" | "policyOp" | "policyOpId" | "projects";
 const DEVICE_FEATURES: readonly DeviceFeature[] = [
   "networkReport",
   "policyOp",
   "policyOpId",
-  "mode",
   "projects",
 ];
 
 /** The most entries a `list` op may ask for and its result may carry. */
 export const MAX_DEVICE_LIST_ENTRIES = 1000;
 
-/** What a device knows of its local policy and reports (in the hello or a `policy` op). */
+/**
+ * What a device knows of its local policy and reports (in the hello or a `policy` op). The owner
+ * ceiling travels separately, in the owner report ({@link DeviceOwnerCeiling}).
+ */
 export interface DeviceLocalPolicySummary {
-  /** `auto` = no OS sandbox (the owner's machine); `sandbox` = the OS sandbox. */
-  mode: "auto" | "sandbox";
-  /** The device's sandbox-mode allowlist; meaningful in sandbox mode only. */
+  /** The device's sandbox allowlist (the owner's `allowedDomains`). */
   allowedDomains: string[];
 }
 
@@ -110,18 +109,18 @@ export interface DeviceProjectCandidate {
   suggestedName: string;
 }
 
-/**
- * The kernel's current ceiling on a request that reads the device's file system outside a command
- * (`readFile`, `stat`, `list`, `scan`): the device answers in the mode it would run this request in, the owner's
- * choice cut to `mode`, never by a ceiling it saw on an earlier command.
- */
-export type DeviceRequestCeiling = Pick<SandboxLimits, "mode">;
-
 /** The most blocked hosts an exec result reports; the parser cuts longer lists. */
 export const MAX_NETWORK_BLOCKED_HOSTS = 20;
 
-/** The most hosts a `policy` op's `add` / `remove` or an exec's `grants` may carry. */
+/** The most hosts a `policy` op's `remove` or an exec's `grants` may carry. */
 const MAX_POLICY_HOSTS = 100;
+
+/**
+ * Why a `policy` op naming hosts to `add` is refused: the deployment may only narrow a local
+ * device's sandbox; its owner widens it on the machine.
+ */
+export const POLICY_ADD_REFUSED =
+  "The deployment may not add hosts to a device's sandbox allowlist: widening happens only on the machine (capybara-device policy add allowedDomains <host>)";
 
 /** The longest `opId` a `policy` / `policyStatus` op may carry. */
 export const MAX_POLICY_OP_ID_LENGTH = 128;
@@ -249,7 +248,6 @@ export interface DeviceExecGrants {
 export type DeviceExecResult = ExecResult;
 export interface DeviceReadFileArgs {
   path: string;
-  limits: DeviceRequestCeiling;
   maxBytes: number;
 }
 export type DeviceReadFileResult = { dataB64: string; truncated: boolean } | null;
@@ -260,7 +258,6 @@ export interface DeviceWriteFileArgs {
 export type DeviceWriteFileResult = null;
 export interface DeviceStatArgs {
   path: string;
-  limits: DeviceRequestCeiling;
 }
 export type DeviceStatResult = { size: number; isDir: boolean } | null;
 export interface DeviceKillTaggedArgs {
@@ -277,9 +274,10 @@ export interface DeviceStopArgs {
   reason: "revoked" | "deleted";
 }
 /**
- * Edits the device's local policy. The kernel may only narrow: `mode` may turn the sandbox back on
- * (`"sandbox"`), never off (turning auto mode on is decided on the machine), and `add` extends the
- * sandbox-mode allowlist only. Narrowing is always accepted.
+ * Edits the device's local policy. The kernel may only narrow: it removes hosts from the sandbox
+ * allowlist and narrows the owner ceiling ({@link DevicePolicyArgs}). Widening happens only on the
+ * machine (`capybara-device policy add`, `capybara-device ceiling set`): the frame parser refuses
+ * an `add` and the protocol 3 `mode`.
  */
 export interface LegacyDevicePolicyArgs {
   /**
@@ -288,12 +286,8 @@ export interface LegacyDevicePolicyArgs {
    * `recentOps`.
    */
   opId: string;
-  /** Hosts to add to `allowedDomains`. */
-  add?: string[];
   /** Hosts to remove from `allowedDomains`. */
   remove?: string[];
-  /** Only `"sandbox"`: the kernel may narrow, never turn auto mode on. */
-  mode?: "sandbox";
   /** Who decided, for the device's local audit line. */
   source: { approvalId?: string; accountId: string; accountName: string; via: "web" | "im" };
 }
@@ -317,13 +311,12 @@ export interface LegacyDevicePolicyStatus {
 }
 /**
  * Lists one directory (absolute `path`, {@link validateSandboxPathShape}): at most `limit` entries
- * (at most {@link MAX_DEVICE_LIST_ENTRIES}), read in the mode `limits` gives. See
+ * (at most {@link MAX_DEVICE_LIST_ENTRIES}), read within the operation's scope. See
  * `SandboxProvider.list` for the semantics.
  */
 export interface DeviceListArgs {
   path: string;
   limit: number;
-  limits: DeviceRequestCeiling;
 }
 /**
  * One entry of a listed directory: `name` is never empty, `.` or `..` and holds no `/`. `isDir`
@@ -343,13 +336,12 @@ export interface DeviceListEntry {
 export type DeviceListResult = { entries: DeviceListEntry[]; truncated: boolean } | null;
 /**
  * Looks for project-like directories under `base` (absolute, {@link validateSandboxPathShape}),
- * read in the mode `limits` gives. A `base` that does not exist answers `[]`; a `base` that is a
- * file, unreadable, or outside the request's mode is an error. See `SandboxProvider.scan` for the
+ * read within the operation's scope. A `base` that does not exist answers `[]`; a `base` that is a
+ * file, unreadable, or outside the request's scope is an error. See `SandboxProvider.scan` for the
  * traversal.
  */
 export interface DeviceScanArgs {
   base: string;
-  limits: DeviceRequestCeiling;
 }
 /**
  * `base` itself and the directories at most {@link MAX_DEVICE_SCAN_DEPTH} levels below it that
@@ -409,6 +401,7 @@ function strArray(o: Record<string, unknown>, k: string, label: string = k): str
   return v as string[];
 }
 
+/** The exec `limits`: resources and the outer network (no mode: protocol 4 removed it). */
 function parseLimits(v: unknown): SandboxLimits {
   const o = obj(v, 'field "limits"');
   const network = obj(o.network, 'field "network"');
@@ -424,7 +417,6 @@ function parseLimits(v: unknown): SandboxLimits {
     cpu: num(o, "cpu"),
     memoryMb: num(o, "memoryMb"),
     diskMb: num(o, "diskMb"),
-    mode: oneOf(o, "mode", ["auto", "sandbox"] as const),
     network: { kind, hosts },
   };
 }
@@ -502,11 +494,6 @@ function absolutePath(v: unknown, what: string): string {
   return v;
 }
 
-/** A request's ceiling (`limits` of `list` / `scan`): only its mode. */
-function parseCeiling(v: unknown): DeviceRequestCeiling {
-  return { mode: oneOf(obj(v, 'field "limits"'), "mode", ["auto", "sandbox"] as const) };
-}
-
 /** A `list` result: null, or at most {@link MAX_DEVICE_LIST_ENTRIES} named entries. */
 function parseListResult(result: unknown): DeviceListResult {
   if (result === null) return null;
@@ -548,10 +535,7 @@ function parseScanResult(v: unknown): DeviceScanResult {
 
 function parsePolicySummary(v: unknown): DeviceLocalPolicySummary {
   const o = obj(v, 'field "policy"');
-  return {
-    mode: oneOf(o, "mode", ["auto", "sandbox"] as const),
-    allowedDomains: strArray(o, "allowedDomains"),
-  };
+  return { allowedDomains: strArray(o, "allowedDomains") };
 }
 
 /**
@@ -724,7 +708,6 @@ function validateArgs(op: DeviceOp, a: Record<string, unknown>): void {
     }
     case "readFile": {
       str(a, "path");
-      parseCeiling(a.limits);
       const m = a.maxBytes;
       if (typeof m !== "number" || !Number.isInteger(m) || m < 0) {
         throw new DeviceProtocolError('field "maxBytes" must be a non-negative integer');
@@ -737,7 +720,6 @@ function validateArgs(op: DeviceOp, a: Record<string, unknown>): void {
       return;
     case "stat":
       str(a, "path");
-      parseCeiling(a.limits);
       return;
     case "killTagged":
       strArray(a, "tags");
@@ -756,11 +738,12 @@ function validateArgs(op: DeviceOp, a: Record<string, unknown>): void {
     }
     case "policy": {
       opId(a);
-      if (a.add !== undefined) hostArray(a, "add");
+      if (a.add !== undefined) throw new DeviceProtocolError(POLICY_ADD_REFUSED);
+      if (a.mode !== undefined)
+        throw new DeviceProtocolError(
+          'field "mode" is not part of device protocol 4; narrow with "ownerCeiling" instead',
+        );
       if (a.remove !== undefined) hostArray(a, "remove");
-      if (a.mode !== undefined && a.mode !== "sandbox") {
-        throw new DeviceProtocolError('field "mode" may only be "sandbox"');
-      }
       const src = obj(a.source, 'field "source"');
       nonEmptyStr(src, "accountId");
       str(src, "accountName");
@@ -778,12 +761,10 @@ function validateArgs(op: DeviceOp, a: Record<string, unknown>): void {
       if (limit > MAX_DEVICE_LIST_ENTRIES) {
         throw new DeviceProtocolError(`field "limit" must be at most ${MAX_DEVICE_LIST_ENTRIES}`);
       }
-      parseCeiling(a.limits);
       return;
     }
     case "scan":
       absolutePath(a.base, 'field "base"');
-      parseCeiling(a.limits);
       return;
   }
 }
@@ -890,10 +871,10 @@ export function parseLegacyDeviceFrame(raw: string, from: "device" | "kernel"): 
   }
 }
 
-// ---- Protocol 3: scope-bearing operations ----
+// ---- Protocol 4: scope-bearing operations ----
 
 /**
- * The operations the kernel asks a protocol 3 device to run: every user operation carries its
+ * The operations the kernel asks a protocol 4 device to run: every user operation carries its
  * admitted scope; there is no broad kill (`killTagged` / `killAll`).
  */
 export type DeviceOperation =
@@ -911,25 +892,14 @@ export type DeviceOperation =
   | "backgroundStop"
   | "revokeOperation"
   | "bindInstance";
-export interface DeviceOwnerCeiling {
-  readonly version: 2;
-  readonly sequence: number;
-  readonly restrictedProjectReach: "workspace" | "os-user";
-  readonly revision: string;
-  readonly fullAccess: boolean;
-  readonly restrictedAllowedDomains: readonly string[];
-}
 /** The sandbox network of a device: the open public internet or an allowlist. */
 export type DeviceNetworkMode = "open" | "allowlist";
 /**
  * The owner ceiling of protocol 4 (approval-only profiles design, "Settings model"): the device
  * sandbox for every profile. `outsideSandbox` is whether a call may be granted escalation outside
  * the sandbox; `network` and `allowedDomains` are the sandbox network.
- *
- * W0 interface stub: replaces {@link DeviceOwnerCeiling} at the protocol 4 cutover, which then takes
- * this name.
  */
-export interface DeviceOwnerCeilingV3 {
+export interface DeviceOwnerCeiling {
   readonly version: 3;
   readonly sequence: number;
   readonly revision: string;
@@ -940,23 +910,14 @@ export interface DeviceOwnerCeilingV3 {
 }
 /**
  * The narrowing of protocol 4: the kernel may switch the network to `allowlist`, remove hosts, turn
- * `outsideSandbox` off or narrow the project reach. Never a widening.
- *
- * W0 interface stub: replaces {@link DeviceOwnerCeilingNarrowing} at the protocol 4 cutover.
+ * `outsideSandbox` off or narrow the project reach. Never a widening: widening is decided on the
+ * machine by its owner (`capybara-device ceiling set`), never over the wire.
  */
-export interface DeviceOwnerCeilingNarrowingV3 {
+export interface DeviceOwnerCeilingNarrowing {
   readonly outsideSandbox?: false;
   readonly network?: "allowlist";
   /** Hosts to remove from `allowedDomains`; a host not on the list is ignored. */
   readonly removeAllowedDomains?: readonly string[];
-  readonly restrictedProjectReach?: "workspace";
-}
-/**
- * The only owner-ceiling change the kernel may ask of a machine (B2): narrowing. Widening is decided
- * on the machine by its owner (`capybara-device ceiling set`), never over the wire.
- */
-export interface DeviceOwnerCeilingNarrowing {
-  readonly fullAccess?: false;
   readonly restrictedProjectReach?: "workspace";
 }
 /** A staged `policy` op: the protocol 2 change plus an optional owner-ceiling narrowing. */
@@ -979,7 +940,7 @@ export interface DevicePolicyChanged {
   ownerCeiling: DeviceOwnerCeiling;
 }
 export interface DeviceHello extends LegacyDeviceHello {
-  protocol: 3;
+  protocol: 4;
   permissionSupport: SandboxPermissionSupport;
   ownerCeiling: DeviceOwnerCeiling;
   instanceGeneration: string | null;
@@ -1080,57 +1041,6 @@ function freeze<T>(value: T): T {
   }
   return value;
 }
-function support(value: unknown): SandboxPermissionSupport {
-  const o = object(value);
-  keys(o, ["version", "restricted", "fullAccess", "background", "unavailableReason"]);
-  if (o.version !== 1 || typeof o.fullAccess !== "boolean" || typeof o.background !== "boolean")
-    throw new DeviceProtocolError("Invalid runtime permission report");
-  if (o.restricted !== null) {
-    const r = object(o.restricted);
-    keys(r, ["filesystem", "network", "native", "concurrentScopes"]);
-    for (const k of ["filesystem", "network", "native", "concurrentScopes"])
-      if (r[k] !== true) throw new DeviceProtocolError("Incomplete restricted runtime report");
-  }
-  if (o.unavailableReason !== undefined) string(o.unavailableReason, 4096);
-  return o as unknown as SandboxPermissionSupport;
-}
-/** Strictly parses one authenticated owner-ceiling report (B2); throws {@link DeviceProtocolError}. */
-export function parseOwnerCeilingReport(value: unknown): DeviceOwnerCeiling {
-  return freeze(structuredClone(owner(value)));
-}
-function narrowing(value: unknown): DeviceOwnerCeilingNarrowing {
-  const o = object(value);
-  keys(o, ["fullAccess", "restrictedProjectReach"]);
-  if (
-    (o.fullAccess !== undefined && o.fullAccess !== false) ||
-    (o.restrictedProjectReach !== undefined && o.restrictedProjectReach !== "workspace")
-  )
-    throw new DeviceProtocolError("The deployment may only narrow the owner ceiling");
-  return o as DeviceOwnerCeilingNarrowing;
-}
-function owner(value: unknown): DeviceOwnerCeiling {
-  const o = object(value);
-  keys(o, [
-    "version",
-    "sequence",
-    "revision",
-    "fullAccess",
-    "restrictedProjectReach",
-    "restrictedAllowedDomains",
-  ]);
-  integer(o.sequence);
-  if (o.version !== 2 || !["workspace", "os-user"].includes(String(o.restrictedProjectReach)))
-    throw new DeviceProtocolError("Invalid owner ceiling report version or project reach");
-  string(o.revision, 512);
-  if (
-    typeof o.fullAccess !== "boolean" ||
-    !Array.isArray(o.restrictedAllowedDomains) ||
-    o.restrictedAllowedDomains.length > 100 ||
-    o.restrictedAllowedDomains.some((h) => typeof h !== "string" || validateAllowHost(h).length)
-  )
-    throw new DeviceProtocolError("Invalid owner ceiling");
-  return o as unknown as DeviceOwnerCeiling;
-}
 /**
  * A strict copy of a wire object for the protocol 4 shapes: a plain object of own data properties
  * only (no accessor is ever invoked, so a value cannot change between check and use), each key in
@@ -1184,7 +1094,7 @@ function strictBoolean(o: Record<string, unknown>, key: string, what: string): b
  * instance boundary is the whole instance: it claims no restricted per-operation scope, no
  * outside-sandbox escalation and no per-operation hosts (a host joins the device's list instead).
  */
-export function parseSandboxPermissionSupportV2(value: unknown): SandboxPermissionSupportV2 {
+export function parseSandboxPermissionSupport(value: unknown): SandboxPermissionSupport {
   const what = "runtime permission report";
   const o = strictRecord(
     value,
@@ -1202,7 +1112,7 @@ export function parseSandboxPermissionSupportV2(value: unknown): SandboxPermissi
   if (o.version !== 2) throw new DeviceProtocolError(`Invalid ${what}: expected version 2`);
   if (o.boundary !== "operation" && o.boundary !== "instance")
     throw new DeviceProtocolError(`Invalid ${what}: boundary must be operation or instance`);
-  let restricted: SandboxPermissionSupportV2["restricted"] = null;
+  let restricted: SandboxPermissionSupport["restricted"] = null;
   if (o.restricted !== null) {
     const claims = ["filesystem", "network", "native", "concurrentScopes"] as const;
     const r = strictRecord(o.restricted, claims, `${what} restricted claims`);
@@ -1258,7 +1168,7 @@ export function parseSandboxPermissionSupportV2(value: unknown): SandboxPermissi
  * throws {@link DeviceProtocolError}. Unknown fields (the protocol 3 `fullAccess` and
  * `restrictedAllowedDomains` among them) are refused.
  */
-export function parseOwnerCeilingReportV3(value: unknown): DeviceOwnerCeilingV3 {
+export function parseOwnerCeilingReport(value: unknown): DeviceOwnerCeiling {
   const what = "owner ceiling report";
   const o = strictRecord(
     value,
@@ -1295,7 +1205,7 @@ export function parseOwnerCeilingReportV3(value: unknown): DeviceOwnerCeilingV3 
  * `network` only to `allowlist`, the project reach only to `workspace`, and hosts only removed.
  * There is no way to name a host to add or a list to replace.
  */
-export function parseOwnerCeilingNarrowingV3(value: unknown): DeviceOwnerCeilingNarrowingV3 {
+export function parseOwnerCeilingNarrowing(value: unknown): DeviceOwnerCeilingNarrowing {
   const what = "owner ceiling narrowing";
   const o = strictRecord(
     value,
@@ -1358,7 +1268,8 @@ function request(o: Record<string, unknown>): KernelRequest {
     a = object(o.args),
     deadlineMs = integer(o.deadlineMs, 1);
   if (legacy.includes(op)) {
-    if (op === "policy" && a.ownerCeiling !== undefined) narrowing(a.ownerCeiling);
+    if (op === "policy" && a.ownerCeiling !== undefined)
+      a.ownerCeiling = parseOwnerCeilingNarrowing(a.ownerCeiling);
     const parsed = parseLegacyDeviceFrame(JSON.stringify(o), "kernel");
     if (parsed.type !== "req") throw new DeviceProtocolError("Expected request");
     return freeze({ ...parsed, op: op as DeviceOperation, args: object(parsed.args) });
@@ -1426,8 +1337,8 @@ function request(o: Record<string, unknown>): KernelRequest {
         delete validated.outputPath;
         delete validated.retainUntilMs;
       }
-    } else if (native !== "writeFile") validated.limits = { mode: "sandbox" };
-    // Reuse v2's pure value guards; inserted mode is never returned or used as authority.
+    }
+    // Reuse the legacy pure value guards on the native fields.
     parseLegacyDeviceFrame(
       JSON.stringify({ type: "req", id, op: native, args: validated, deadlineMs }),
       "kernel",
@@ -1441,7 +1352,7 @@ function request(o: Record<string, unknown>): KernelRequest {
   }
   return freeze({ type: "req", id, op: op as DeviceOperation, args: a, deadlineMs });
 }
-/** Strictly parses one protocol 3 frame; throws {@link DeviceProtocolError}. */
+/** Strictly parses one protocol 4 frame; throws {@link DeviceProtocolError}. */
 export function parseDeviceFrame(
   raw: string,
   from: "device" | "kernel",
@@ -1475,17 +1386,20 @@ export function parseDeviceFrame(
     return request(o);
   }
   if (o.type === "hello") {
-    if (from !== "device" || o.protocol !== 3)
-      throw new DeviceProtocolError("Expected protocol 3 hello");
+    if (from !== "device" || o.protocol !== DEVICE_PROTOCOL_VERSION)
+      throw new DeviceProtocolError(`Expected protocol ${DEVICE_PROTOCOL_VERSION} hello`);
     const transport = object(o.transport);
     keys(transport, ["maxFrameBytes"]);
     const maxFrameBytes = integer(transport.maxFrameBytes, 1024);
-    const permissionSupport = support(o.permissionSupport);
+    const permissionSupport = parseSandboxPermissionSupport(o.permissionSupport);
     if (
       o.instanceGeneration === null &&
       (o.runtimeIdentity !== undefined ||
         permissionSupport.restricted !== null ||
-        permissionSupport.fullAccess ||
+        permissionSupport.outsideSandbox ||
+        permissionSupport.network.openPublic ||
+        permissionSupport.network.allowlist ||
+        permissionSupport.network.perOperationHosts ||
         permissionSupport.background ||
         !permissionSupport.unavailableReason)
     )
@@ -1500,10 +1414,10 @@ export function parseDeviceFrame(
     }
     return freeze({
       ...base,
-      protocol: 3,
+      protocol: DEVICE_PROTOCOL_VERSION,
       permissionSupport,
       transport: { maxFrameBytes },
-      ownerCeiling: owner(o.ownerCeiling),
+      ownerCeiling: parseOwnerCeilingReport(o.ownerCeiling),
       instanceGeneration: o.instanceGeneration === null ? null : string(o.instanceGeneration),
       ...(runtimeIdentity && { runtimeIdentity }),
     });
@@ -1513,7 +1427,7 @@ export function parseDeviceFrame(
     keys(o, ["type", "policy", "ownerCeiling"]);
     const base = parseLegacyDeviceFrame(JSON.stringify({ type: "policy", policy: o.policy }), from);
     if (base.type !== "policy") throw new DeviceProtocolError("Expected policy");
-    return freeze({ ...base, ownerCeiling: owner(o.ownerCeiling) });
+    return freeze({ ...base, ownerCeiling: parseOwnerCeilingReport(o.ownerCeiling) });
   }
   if (o.type === "res" && o.ok === false) {
     if (from !== "device") throw new DeviceProtocolError("Response must come from device");
@@ -1571,8 +1485,8 @@ export function parseOperationResult(
       instanceGeneration: request.instanceGeneration,
       bindingId: request.bindingId,
       runtimeIdentity,
-      permissionSupport: support(o.permissionSupport),
-      ownerCeiling: owner(o.ownerCeiling),
+      permissionSupport: parseSandboxPermissionSupport(o.permissionSupport),
+      ownerCeiling: parseOwnerCeilingReport(o.ownerCeiling),
     } satisfies BindInstanceResult);
   }
   if (op === "backgroundReadOutput") {
@@ -1647,7 +1561,7 @@ export function parseOperationResult(
     keys(o, ["policy", "ownerCeiling"]);
     return freeze({
       ...parseOpResult("policy", { policy: o.policy }),
-      ownerCeiling: owner(o.ownerCeiling),
+      ownerCeiling: parseOwnerCeilingReport(o.ownerCeiling),
     } satisfies DevicePolicyResult);
   }
   if (op === "policyStatus") {
@@ -1657,7 +1571,7 @@ export function parseOperationResult(
     const status: DevicePolicyStatus = parseOpResult("policyStatus", rest);
     if (status.outcome === "applied" && ownerCeiling === undefined)
       throw new DeviceProtocolError("An applied policy status carries the owner report");
-    if (ownerCeiling !== undefined) status.ownerCeiling = owner(ownerCeiling);
+    if (ownerCeiling !== undefined) status.ownerCeiling = parseOwnerCeilingReport(ownerCeiling);
     return freeze(status);
   }
   if (op === "revokeOperation") {

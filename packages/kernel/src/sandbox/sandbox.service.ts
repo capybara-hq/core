@@ -121,9 +121,11 @@ import {
   type AppliedLimits,
   appliedOf,
   appliedWider,
+  type DeviceLimits,
   type DeviceNetwork,
   type EffectiveDevicePolicy,
   instanceLimitsJson,
+  providerLimits,
   readInstanceLimits,
   sameApplied,
   sameAppliedExact,
@@ -791,7 +793,7 @@ export class SandboxService {
   async deviceLimits(
     device: { orgId: string; deviceId?: string },
     opts: { policy?: EffectiveDevicePolicy; source?: "cloud" | "local" } = {},
-  ): Promise<SandboxLimits> {
+  ): Promise<DeviceLimits> {
     const cfg = this.config.get().sandbox;
     const [policy, override, source] = await Promise.all([
       opts.policy ?? this.devicePolicy(device),
@@ -817,8 +819,7 @@ export class SandboxService {
   }
 
   /**
-   * The org's sandbox-mode limits ({@link deviceLimits} with the sandbox-mode allowlist and mode
-   * `sandbox`): what a local device's sandbox mode may reach at most, so what a network grant,
+   * The org's sandbox-mode limits ({@link deviceLimits} with the sandbox-mode allowlist): what a local device's sandbox mode may reach at most, so what a network grant,
    * approval or request is checked against.
    */
   async ceilingLimits(orgId: string): Promise<SandboxLimits> {
@@ -832,7 +833,6 @@ export class SandboxService {
         cpu: cfg.limits.cpu,
         memoryMb: cfg.limits.memoryMb,
         diskMb: cfg.limits.diskMb,
-        mode: "sandbox",
         network: { kind: "allowlist", hosts: [...policy.localAllowedDomains] },
       },
       override,
@@ -907,7 +907,7 @@ export class SandboxService {
    * until the reset, never silently supported). `want` null: a local device (the mode travels
    * with each command).
    */
-  private mustApply(row: Row, p: SandboxProviderEntry, want: SandboxLimits | null): boolean {
+  private mustApply(row: Row, p: SandboxProviderEntry, want: DeviceLimits | null): boolean {
     if (want === null) return false;
     const rec = readInstanceLimits(row.instance_limits);
     const target = appliedOf(want);
@@ -1429,7 +1429,7 @@ export class SandboxService {
     _ctx: SandboxUseContext,
     p: SandboxProviderEntry,
     _row?: Row,
-  ): Promise<SandboxLimits | null> {
+  ): Promise<DeviceLimits | null> {
     if (p.plugin === LOCAL_PROVIDER) return null;
     const policy = await this.devicePolicy(_ctx);
     return await this.deviceLimits(_ctx, { policy, source: "cloud" });
@@ -1940,7 +1940,7 @@ export class SandboxService {
     p: SandboxProviderEntry,
     signal: AbortSignal,
     gone: Instance | null,
-    wantNow: () => Promise<SandboxLimits | null>,
+    wantNow: () => Promise<DeviceLimits | null>,
   ): Promise<Entered> {
     const env = ctx.deviceId;
     const deadline = Date.now() + this.config.get().sandbox.lockWaitSeconds * 1000;
@@ -2793,7 +2793,7 @@ export class SandboxService {
               sig,
               false,
             );
-          answer = await update(handle, want, sig);
+          answer = await update(handle, providerLimits(want), sig);
         }
       } catch (err) {
         if (sig.aborted) throw err;
@@ -3599,7 +3599,7 @@ export class SandboxService {
     row: Row,
     fence: Fence,
     signal: AbortSignal,
-    want: SandboxLimits | null,
+    want: DeviceLimits | null,
   ): Promise<Instance> {
     const id = ctx.deviceId;
     const name = deviceResourceName(id);
@@ -3619,14 +3619,16 @@ export class SandboxService {
     });
     // the device's effective limits apply at creation (a changed mode or network kind is applied
     // on use, see applyLimits; other changes reach only instances created afterwards)
-    const limits =
+    const wanted =
       want ??
       (await this.deviceLimits(ctx, {
         source: p.plugin === LOCAL_PROVIDER ? "local" : "cloud",
       }));
     // the record says what is in force: a provider whose limits are fixed at its file system
     // records them with the file system, any other with the instance (spec §7.1)
-    const record = instanceLimitsJson(appliedOf(limits));
+    const record = instanceLimitsJson(appliedOf(wanted));
+    // the provider gets resources and the outer network only
+    const limits = providerLimits(wanted);
     const atFileSystem = p.impl.limitsApplyAt === "fileSystem";
     const cfg = this.config.get().sandbox;
     let fs: FileSystemHandle | null =
@@ -3749,7 +3751,7 @@ export class SandboxService {
     handle: SandboxHandle,
     fence: Fence,
     signal: AbortSignal,
-    want: SandboxLimits,
+    want: DeviceLimits,
   ): Promise<Instance | null> {
     const id = ctx.deviceId;
     const target = appliedOf(want);
@@ -3758,7 +3760,7 @@ export class SandboxService {
     let gone = false;
     if (p.impl.update) {
       try {
-        if ((await p.impl.update(handle, want, signal)) === "updated") {
+        if ((await p.impl.update(handle, providerLimits(want), signal)) === "updated") {
           await this.fenced(held, id, fence, { instance_limits: instanceLimitsJson(target) });
           this.log.info("sandbox instance limits updated", facts);
           return null;

@@ -69,7 +69,6 @@ const LIMITS = {
   cpu: 1,
   memoryMb: 512,
   diskMb: 1024,
-  mode: "sandbox",
   network: { kind: "allowlist", hosts: [] },
 };
 const request = (instanceGeneration: string, bindingId: string, previous: string | null) => ({
@@ -235,9 +234,11 @@ describe("staged device parts (W3-M)", () => {
       signal(),
     )) as BindInstanceResult;
     expect(answer.permissionSupport).toEqual({
-      version: 1,
+      version: 2,
       restricted: { filesystem: true, network: true, native: true, concurrentScopes: true },
-      fullAccess: true,
+      boundary: "operation",
+      network: { openPublic: false, allowlist: true, perOperationHosts: true },
+      outsideSandbox: true,
       background: true,
     });
   });
@@ -246,9 +247,11 @@ describe("staged device parts (W3-M)", () => {
     const s = staged({ selfCheck: "Restricted macOS execution does not hold here (exit 3)" });
     const answer = await s.device.binder.bind(request(G1, B1, null), signal());
     expect(answer.permissionSupport).toEqual({
-      version: 1,
+      version: 2,
       restricted: null,
-      fullAccess: true,
+      boundary: "operation",
+      network: { openPublic: false, allowlist: false, perOperationHosts: false },
+      outsideSandbox: true,
       background: true,
       unavailableReason: "Restricted macOS execution does not hold here (exit 3)",
     });
@@ -287,7 +290,7 @@ describe("staged device parts (W3-M)", () => {
     const support = (await s.device.binder.bind(request(G1, B1, null), signal())).permissionSupport;
     expect(support.restricted).toBeNull();
     expect(support.unavailableReason).toContain("Landlock ABI 2");
-    expect(support.fullAccess).toBe(true);
+    expect(support.outsideSandbox).toBe(true);
   });
 
   it("an unbound hello reports no capability; a bound one its generation and verified identity", async () => {
@@ -300,7 +303,7 @@ describe("staged device parts (W3-M)", () => {
       );
     const unbound = await s.device.report({ bootId: "boot-1" });
     expect(unbound).toMatchObject({
-      protocol: 3,
+      protocol: 4,
       instanceGeneration: null,
       permissionSupport: UNBOUND_SUPPORT,
       bootId: "boot-1",
@@ -375,7 +378,7 @@ describe("staged device: the local command log", () => {
         op: "policy",
         args: {
           opId: "op_log",
-          add: ["files.slack.com"],
+          remove: ["files.slack.com"],
           source: { accountId: "acc_1", accountName: "Ada", via: "web" },
         },
         deadlineMs: 1000,
@@ -386,7 +389,7 @@ describe("staged device: the local command log", () => {
     );
     expect(res).toMatchObject({ ok: true });
     expect(readFileSync(join(state, "commands.log"), "utf8")).toContain(
-      "policy add files.slack.com by Ada (acc_1) via web",
+      "policy remove files.slack.com by Ada (acc_1) via web",
     );
   });
 });
@@ -466,7 +469,7 @@ describe("staged connection (W3-M)", () => {
   const send = (k: FakeKernel, conn: number, id: string, op: string, args: object) =>
     k.send(conn, { type: "req", id, op, args, deadlineMs: 5000 });
 
-  it("speaks protocol 3: an unbound hello, then the binding and lifecycle over the socket", async () => {
+  it("speaks protocol 4: an unbound hello, then the binding and lifecycle over the socket", async () => {
     const k = await kernel();
     const s = staged({ cred: credential({ connectUrl: k.url }) });
     const conn = connectStaged(s.device, { err: () => {}, bootId: null });
@@ -475,10 +478,10 @@ describe("staged connection (W3-M)", () => {
       return conn.done;
     });
     const hello = await k.waitFor("hello", () => k.of("hello")[0]);
-    expect(k.headers[0]?.["x-capybara-device-protocol"]).toBe("3");
+    expect(k.headers[0]?.["x-capybara-device-protocol"]).toBe("4");
     expect(k.headers[0]?.authorization).toBe("Bearer cap_dev_a");
     expect(hello).toMatchObject({
-      protocol: 3,
+      protocol: 4,
       instanceGeneration: null,
       transport: { maxFrameBytes: 69632 },
     });

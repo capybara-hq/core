@@ -66,9 +66,11 @@ beforeEach(async () => {
 
 const ROOTS = { ...DEFAULT_SANDBOX_ROOTS, workspace: "/Users/owner/capybara" };
 const support = {
-  version: 1 as const,
+  version: 2 as const,
   restricted: null,
-  fullAccess: true,
+  boundary: "operation" as const,
+  network: { openPublic: false, allowlist: false, perOperationHosts: false },
+  outsideSandbox: true,
   background: true,
   unavailableReason: "Restricted per-instance validation pending",
 };
@@ -376,12 +378,13 @@ it("a delayed answer for a replaced generation cannot populate the replacement",
         runtimeIdentity: identityFor(replacement),
         permissionSupport: support,
         ownerCeiling: {
-          version: 2,
+          version: 3,
           sequence: 1,
           revision: "owner-1",
-          fullAccess: true,
+          outsideSandbox: true,
+          network: "open",
           restrictedProjectReach: "workspace",
-          restrictedAllowedDomains: [],
+          allowedDomains: [],
         },
       },
     ),
@@ -415,9 +418,11 @@ it("bound hellos re-report only the installed identity; a changed one stops admi
     roots: ROOTS,
     instanceGeneration: null,
     permissionSupport: {
-      version: 1 as const,
+      version: 2 as const,
       restricted: null,
-      fullAccess: false,
+      boundary: "operation" as const,
+      network: { openPublic: false, allowlist: false, perOperationHosts: false },
+      outsideSandbox: false,
       background: false,
       unavailableReason: "Instance is not bound yet",
     },
@@ -548,12 +553,13 @@ async function realDevice(deviceId: string, credential: string, stateDir?: strin
       imageFingerprint: "c".repeat(64),
     }),
     ownerReport: async () => ({
-      version: 2,
+      version: 3,
       sequence: 1,
       revision: "owner-1",
-      fullAccess: true,
+      outsideSandbox: true,
+      network: "open",
       restrictedProjectReach: "workspace",
-      restrictedAllowedDomains: [],
+      allowedDomains: [],
     }),
   });
   return { binder, dir };

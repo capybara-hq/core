@@ -17,9 +17,11 @@ function unsupportedFixture(
 ) {
   let disposed = false;
   const support: SandboxPermissionSupport = {
-    version: 1,
+    version: 2,
     restricted: null,
-    fullAccess: true,
+    boundary: "operation",
+    network: { openPublic: false, allowlist: false, perOperationHosts: false },
+    outsideSandbox: true,
     background: false,
     unavailableReason: "test runtime without restricted primitives",
   };

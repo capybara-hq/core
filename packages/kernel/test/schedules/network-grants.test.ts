@@ -59,7 +59,6 @@ import { FakeMachine, HELLO } from "../local-devices/fake-machine-v3.js";
  */
 
 const POLICY: DeviceLocalPolicySummary = {
-  mode: "auto",
   allowedDomains: [],
 };
 const OPEN = { network: { kind: "allowlist" as const, hosts: ["*.example.com"] } };

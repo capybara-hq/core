@@ -118,8 +118,8 @@ export interface LocalBackendHost {
   restricted: boolean;
   /** Why restricted operations are unavailable, when they are. */
   unavailableReason?: string;
-  /** Full access and background work run on this platform. */
-  fullAccess: boolean;
+  /** Escalated calls (outside the sandbox) and background work run on this platform. */
+  outsideSandbox: boolean;
   background: boolean;
   /** The message a refused restricted operation carries. */
   pending: string;
@@ -161,7 +161,7 @@ export async function createMacOperationBackend(
               : "Restricted Linux/local-Docker validation remains pending"),
         }
       : {}),
-    fullAccess: platform === "darwin",
+    outsideSandbox: platform === "darwin",
     background: platform === "darwin",
     pending: (!restricted && dependencies.unavailableReason) || PENDING,
     ...(dependencies.startWorker ? { startWorker: dependencies.startWorker } : {}),
@@ -480,12 +480,16 @@ export async function createLocalOperationBackend(
       await host.proof?.refresh();
       const c = await read();
       const restricted = restrictedNow();
+      // an operation boundary: the sandbox network (the allowlist, with per-operation hosts) only
+      // with restricted support; the open public network is not enforced by these workers yet
       return {
-        version: 1,
+        version: 2,
+        boundary: "operation",
         restricted: restricted
           ? { filesystem: true, network: true, native: true, concurrentScopes: true }
           : null,
-        fullAccess: host.fullAccess && c.outsideSandbox,
+        network: { openPublic: false, allowlist: restricted, perOperationHosts: restricted },
+        outsideSandbox: host.outsideSandbox && c.outsideSandbox,
         background: host.background,
         ...(!restricted
           ? { unavailableReason: host.proof?.failure() ?? host.unavailableReason ?? host.pending }

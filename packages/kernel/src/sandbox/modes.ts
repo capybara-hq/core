@@ -1,3 +1,4 @@
+import type { SandboxLimits } from "@capybara-hq/plugin-sdk";
 import type { KernelConfig } from "../config/schema.js";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import type { KernelConfigService } from "../infra/config/kernel-config.service.js";
@@ -266,6 +267,22 @@ export const cloudChosenMode = (row: {
   owner_full_access: boolean | null;
 }): SandboxMode | null =>
   row.mode === "sandbox" || row.owner_full_access === false ? "sandbox" : null;
+
+/**
+ * The limits the kernel wants for a device: what lifecycle create and update carry
+ * ({@link SandboxLimits}: resources and the outer network) plus the mode the kernel records with a
+ * cloud instance's applied limits ({@link AppliedLimits}). The mode never reaches a provider:
+ * {@link providerLimits} drops it.
+ */
+export interface DeviceLimits extends SandboxLimits {
+  mode: SandboxMode;
+}
+
+/** What a provider's create and update get of {@link DeviceLimits}: resources and the network. */
+export function providerLimits(limits: DeviceLimits): SandboxLimits {
+  const { mode: _kernelOnly, ...rest } = limits;
+  return { ...rest, network: { kind: rest.network.kind, hosts: [...rest.network.hosts] } };
+}
 
 /**
  * What decides whether a running cloud instance must change (auto mode spec §4.2): its mode and

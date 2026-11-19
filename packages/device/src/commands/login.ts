@@ -253,8 +253,8 @@ export async function login(
         out(`Logged in. Device ${granted.deviceId}, working directory ${dir}`);
         if (ceiling.outsideSandbox) {
           out(OUTSIDE_SANDBOX_LOGIN_LINE);
-          // the token's `fullAccess` is the platform and organization outside-sandbox setting
-          if (granted.fullAccess === "off") out(OUTSIDE_SANDBOX_NOT_ALLOWED_LOGIN_LINE);
+          // the token's `outsideSandbox` is the platform and organization outside-sandbox setting
+          if (granted.outsideSandbox === "off") out(OUTSIDE_SANDBOX_NOT_ALLOWED_LOGIN_LINE);
           // the risk text is shown once at login, and only when an escalated call runs as the
           // owner on this machine (outside Docker)
           else if (cmd.mode !== "docker") out(OUTSIDE_SANDBOX_RISK_TEXT);

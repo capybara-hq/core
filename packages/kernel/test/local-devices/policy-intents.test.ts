@@ -51,15 +51,15 @@ import type { Answer } from "./test-holder.js";
  * resolver with the owed row's data, no sleeps.
  */
 
+/** The ops remove `files.slack.com` (protocol 4: the platform never adds hosts). */
 const POLICY: DeviceLocalPolicySummary = {
-  mode: "auto",
-  allowedDomains: ["pypi.org"],
+  allowedDomains: ["pypi.org", "files.slack.com"],
 };
 const GRACE_S = 2;
 /** How long after the intent the op can no longer reach the machine. */
 const T = POLICY_DEADLINE_MS + GRACE_S * 1000 + LIST_TTL_MARGIN_MS + 5000;
 const FEATURES: Partial<LegacyDeviceHello> = {
-  features: ["networkReport", "policyOp", "policyOpId", "mode"],
+  features: ["networkReport", "policyOp", "policyOpId"],
   policy: POLICY,
 };
 
@@ -270,11 +270,11 @@ const source = (accountId: string) => ({
   via: "web" as const,
 });
 
-const apply = (d: Dev, add = ["files.slack.com"]) =>
+const apply = (d: Dev, remove = ["files.slack.com"]) =>
   policies.apply({
     orgId,
     deviceId: d.deviceId,
-    change: { add },
+    change: { remove },
     source: source(d.accountId),
   });
 
@@ -354,8 +354,8 @@ describe("device policy intents", () => {
         actor_account_id: d.accountId,
         detail: {
           opId,
-          add: ["files.slack.com"],
-          remove: [],
+          add: [],
+          remove: ["files.slack.com"],
           by: d.accountId,
           via: "web",
           approvalId: "ap-1",
@@ -363,7 +363,7 @@ describe("device policy intents", () => {
       },
     ]);
     const [entry] = await entries(d.machineId);
-    expect(entry).toMatchObject({ id: opId, status: "sent", add: ["files.slack.com"] });
+    expect(entry).toMatchObject({ id: opId, status: "sent", remove: ["files.slack.com"] });
     const job = await owed(`device-op-resolve-${opId}`);
     expect(job).toMatchObject({
       job_name: "device-op-resolve",
@@ -399,7 +399,7 @@ describe("device policy intents", () => {
     expect((await auditsOf(d.deviceId)).map((a) => a.action)).toEqual(["device.policy_requested"]);
     const job = await owed(`device-op-resolve-${opId}`);
     await resolver.resolve(jobData(job));
-    const want = { ...POLICY, allowedDomains: ["pypi.org", "files.slack.com"] };
+    const want = { allowedDomains: ["pypi.org"] };
     expect((await policies.summary(d.deviceId))?.policy).toEqual(want);
     expect(await entries(d.machineId)).toEqual([]);
     const audits = await auditsOf(d.deviceId);
@@ -409,8 +409,8 @@ describe("device policy intents", () => {
     ]);
     expect(audits[1]?.detail).toEqual({
       opId,
-      add: ["files.slack.com"],
-      remove: [],
+      add: [],
+      remove: ["files.slack.com"],
       by: d.accountId,
       via: "web",
       approvalId: "ap-1",
@@ -482,23 +482,20 @@ describe("device policy intents", () => {
       "device.policy_unknown",
       "device.policy_changed",
     ]);
-    expect(audits[2]?.detail).toMatchObject({ opId, add: ["files.slack.com"], late: true });
-    expect((await policies.summary(d.deviceId))?.policy?.allowedDomains).toEqual([
-      "pypi.org",
-      "files.slack.com",
-    ]);
+    expect(audits[2]?.detail).toMatchObject({ opId, remove: ["files.slack.com"], late: true });
+    expect((await policies.summary(d.deviceId))?.policy?.allowedDomains).toEqual(["pypi.org"]);
     // the device page lists the change once applied, after the unconfirmed attempt
     const recent = (await devices.get(orgId, d.accountId, d.deviceId)).mode.recent;
     expect(recent).toEqual([
       expect.objectContaining({
         kind: "policy",
-        add: ["files.slack.com"],
+        remove: ["files.slack.com"],
         via: "web",
         outcome: "applied",
       }),
       expect.objectContaining({
         kind: "policy",
-        add: ["files.slack.com"],
+        remove: ["files.slack.com"],
         via: "web",
         outcome: "unknown",
       }),
@@ -571,7 +568,6 @@ describe("device policy intents", () => {
       "networkReport",
       "policyOp",
       "policyOpId",
-      "mode",
     ]);
   });
 
@@ -579,7 +575,7 @@ describe("device policy intents", () => {
     const d = await device();
     const sim = new Sim();
     sim.refuse = "This device does not accept network changes from the deployment";
-    await connect(d, sim, { policy: { ...POLICY, mode: "sandbox" as const } });
+    await connect(d, sim);
     expect(await apply(d)).toEqual({ applied: false, reason: "refused", message: sim.refuse });
     expect(await entries(d.machineId)).toEqual([]);
     const audits = await auditsOf(d.deviceId);
@@ -588,11 +584,15 @@ describe("device policy intents", () => {
       "device.policy_failed",
     ]);
     expect(audits[1]?.detail).toMatchObject({ reason: "refused", message: sim.refuse });
-    expect((await policies.summary(d.deviceId))?.policy?.mode).toBe("sandbox");
+    expect((await policies.summary(d.deviceId))?.policy).toEqual(POLICY);
     // the device page lists the change that did not take effect
     const recent = (await devices.get(orgId, d.accountId, d.deviceId)).mode.recent;
     expect(recent).toEqual([
-      expect.objectContaining({ kind: "policy", add: ["files.slack.com"], outcome: "failed" }),
+      expect.objectContaining({
+        kind: "policy",
+        remove: ["files.slack.com"],
+        outcome: "failed",
+      }),
     ]);
   });
 
@@ -604,7 +604,7 @@ describe("device policy intents", () => {
       const begun = await policies.begin({
         orgId,
         deviceId: d.deviceId,
-        change: { add: ["files.slack.com"] },
+        change: { remove: ["files.slack.com"] },
         source: source(d.accountId),
       });
       if ("outcome" in begun) throw new Error("nothing was sent");
@@ -649,10 +649,7 @@ describe("device policy intents", () => {
         "device.policy_changed",
       ]);
       expect(audits[2]?.detail).toMatchObject({ opId, late: true });
-      expect((await policies.summary(d.deviceId))?.policy?.allowedDomains).toEqual([
-        "pypi.org",
-        "files.slack.com",
-      ]);
+      expect((await policies.summary(d.deviceId))?.policy?.allowedDomains).toEqual(["pypi.org"]);
       expect(policyReqs(machine)).toHaveLength(1);
     }
   });

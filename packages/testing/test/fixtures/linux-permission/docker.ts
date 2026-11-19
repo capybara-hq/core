@@ -461,10 +461,15 @@ export async function support(agent: Agent): Promise<SandboxPermissionSupport> {
   const evidence = agent.candidateArch && probe.restricted === null ? probe.candidate : undefined;
   const restricted = evidence ? evidence.restricted : probe.restricted;
   const reason = evidence ? evidence.reason : probe.reason;
+  // an operation boundary: the sandbox network (allowlist, per-operation hosts) only with
+  // restricted support
+  const sandboxed = restricted !== null;
   return {
-    version: 1,
+    version: 2,
+    boundary: "operation",
     restricted,
-    fullAccess: true,
+    network: { openPublic: false, allowlist: sandboxed, perOperationHosts: sandboxed },
+    outsideSandbox: true,
     background: false,
     ...(reason ? { unavailableReason: reason } : {}),
   };

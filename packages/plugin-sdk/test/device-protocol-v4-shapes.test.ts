@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   DeviceProtocolError,
-  parseOwnerCeilingNarrowingV3,
-  parseOwnerCeilingReportV3,
-  parseSandboxPermissionSupportV2,
+  parseOwnerCeilingNarrowing,
+  parseOwnerCeilingReport,
+  parseSandboxPermissionSupport,
 } from "../src/index.js";
 
 const RESTRICTED = { filesystem: true, network: true, native: true, concurrentScopes: true };
@@ -26,11 +26,11 @@ const instanceSupport = () => ({
   background: true,
 });
 
-describe("parseSandboxPermissionSupportV2", () => {
+describe("parseSandboxPermissionSupport", () => {
   it("accepts an operation-boundary and an instance-boundary report and freezes a copy", () => {
     for (const make of [operationSupport, instanceSupport]) {
       const input = make();
-      const parsed = parseSandboxPermissionSupportV2(input);
+      const parsed = parseSandboxPermissionSupport(input);
       expect(parsed).toEqual(make());
       input.network.openPublic = false;
       expect(parsed.network.openPublic).toBe(true);
@@ -38,7 +38,7 @@ describe("parseSandboxPermissionSupportV2", () => {
       expect(Object.isFrozen(parsed.network)).toBe(true);
     }
     expect(
-      parseSandboxPermissionSupportV2({
+      parseSandboxPermissionSupport({
         ...operationSupport(),
         restricted: null,
         network: { openPublic: false, allowlist: false, perOperationHosts: false },
@@ -76,7 +76,7 @@ describe("parseSandboxPermissionSupportV2", () => {
   ])("rejects %s", (_name, patch) => {
     const value: Record<string, unknown> = { ...operationSupport(), ...patch };
     for (const [k, v] of Object.entries(patch)) if (v === undefined) delete value[k];
-    expect(() => parseSandboxPermissionSupportV2(value)).toThrow(DeviceProtocolError);
+    expect(() => parseSandboxPermissionSupport(value)).toThrow(DeviceProtocolError);
   });
 
   it.each([
@@ -87,7 +87,7 @@ describe("parseSandboxPermissionSupportV2", () => {
       { network: { openPublic: true, allowlist: true, perOperationHosts: true } },
     ],
   ])("rejects an instance boundary claiming %s", (_name, patch) => {
-    expect(() => parseSandboxPermissionSupportV2({ ...instanceSupport(), ...patch })).toThrow(
+    expect(() => parseSandboxPermissionSupport({ ...instanceSupport(), ...patch })).toThrow(
       DeviceProtocolError,
     );
   });
@@ -98,20 +98,20 @@ describe("parseSandboxPermissionSupportV2", () => {
     ["per-operation hosts", { openPublic: false, allowlist: true, perOperationHosts: true }],
   ])("rejects an operation boundary without restricted support claiming %s", (_name, network) => {
     expect(() =>
-      parseSandboxPermissionSupportV2({ ...operationSupport(), restricted: null, network }),
+      parseSandboxPermissionSupport({ ...operationSupport(), restricted: null, network }),
     ).toThrow(DeviceProtocolError);
   });
 
   it("rejects non-plain objects and accessors", () => {
     for (const bad of [null, [], "x", 1, new (class Report {})()])
-      expect(() => parseSandboxPermissionSupportV2(bad)).toThrow(DeviceProtocolError);
+      expect(() => parseSandboxPermissionSupport(bad)).toThrow(DeviceProtocolError);
     const tricky = operationSupport();
     let reads = 0;
     Object.defineProperty(tricky, "outsideSandbox", {
       enumerable: true,
       get: () => reads++ === 0,
     });
-    expect(() => parseSandboxPermissionSupportV2(tricky)).toThrow(DeviceProtocolError);
+    expect(() => parseSandboxPermissionSupport(tricky)).toThrow(DeviceProtocolError);
   });
 });
 
@@ -125,17 +125,17 @@ const ceiling = () => ({
   restrictedProjectReach: "workspace",
 });
 
-describe("parseOwnerCeilingReportV3", () => {
+describe("parseOwnerCeilingReport", () => {
   it("accepts both network modes and freezes a copy", () => {
     const input = ceiling();
-    const parsed = parseOwnerCeilingReportV3(input);
+    const parsed = parseOwnerCeilingReport(input);
     expect(parsed).toEqual(ceiling());
     input.allowedDomains.push("evil.example");
     expect(parsed.allowedDomains).toEqual(["example.com", "*.example.org"]);
     expect(Object.isFrozen(parsed)).toBe(true);
     expect(Object.isFrozen(parsed.allowedDomains)).toBe(true);
     expect(
-      parseOwnerCeilingReportV3({
+      parseOwnerCeilingReport({
         ...ceiling(),
         network: "allowlist",
         allowedDomains: [],
@@ -165,11 +165,11 @@ describe("parseOwnerCeilingReportV3", () => {
   ])("rejects %s", (_name, patch) => {
     const value: Record<string, unknown> = { ...ceiling(), ...patch };
     for (const [k, v] of Object.entries(patch)) if (v === undefined) delete value[k];
-    expect(() => parseOwnerCeilingReportV3(value)).toThrow(DeviceProtocolError);
+    expect(() => parseOwnerCeilingReport(value)).toThrow(DeviceProtocolError);
   });
 });
 
-describe("parseOwnerCeilingNarrowingV3", () => {
+describe("parseOwnerCeilingNarrowing", () => {
   it("accepts every narrowing, alone and together, and freezes a copy", () => {
     for (const narrowing of [
       {},
@@ -185,7 +185,7 @@ describe("parseOwnerCeilingNarrowingV3", () => {
         restrictedProjectReach: "workspace",
       },
     ]) {
-      const parsed = parseOwnerCeilingNarrowingV3(narrowing);
+      const parsed = parseOwnerCeilingNarrowing(narrowing);
       expect(parsed).toEqual(narrowing);
       expect(Object.isFrozen(parsed)).toBe(true);
     }
@@ -206,12 +206,12 @@ describe("parseOwnerCeilingNarrowingV3", () => {
     ["a revision", { revision: "r" }],
     ["null field", { network: null }],
   ])("rejects %s", (_name, narrowing) => {
-    expect(() => parseOwnerCeilingNarrowingV3(narrowing)).toThrow(DeviceProtocolError);
+    expect(() => parseOwnerCeilingNarrowing(narrowing)).toThrow(DeviceProtocolError);
   });
 
   it("rejects non-objects", () => {
     for (const bad of [null, [], "allowlist", false])
-      expect(() => parseOwnerCeilingNarrowingV3(bad)).toThrow(DeviceProtocolError);
+      expect(() => parseOwnerCeilingNarrowing(bad)).toThrow(DeviceProtocolError);
   });
 });
 
@@ -225,7 +225,7 @@ describe("host lists are read once", () => {
         return Reflect.get(target, key, receiver);
       },
     });
-    const parsed = parseOwnerCeilingReportV3({ ...ceiling(), allowedDomains: tricky });
+    const parsed = parseOwnerCeilingReport({ ...ceiling(), allowedDomains: tricky });
     expect(parsed.allowedDomains).toEqual(["example.com"]);
     expect(reads).toBe(1);
   });

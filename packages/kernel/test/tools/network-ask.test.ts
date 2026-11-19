@@ -25,9 +25,7 @@ import { ScheduledTaskStore } from "../../src/schedules/store.js";
 import { NETWORK_ASK_CANCELLED_NOTE } from "../../src/tools/approvals.service.js";
 import {
   addressLayerNote,
-  allowedAlwaysNote,
   allowedOnceNote,
-  alwaysRefusedNote,
   deniedNote,
   expiredNote,
   orgLayerNote,
@@ -55,7 +53,7 @@ import {
   waitForTerminal,
 } from "../helpers/runs.js";
 import { webCaller } from "../helpers/step-context.js";
-import { FakeMachine, HELLO, policyAnswer } from "../local-devices/fake-machine-v3.js";
+import { FakeMachine, HELLO } from "../local-devices/fake-machine-v3.js";
 
 /**
  * The network ask in the tool pipeline (network ask-to-allow spec §6.2, §6.6–§6.9, §8.3, P1.7):
@@ -64,7 +62,7 @@ import { FakeMachine, HELLO, policyAnswer } from "../local-devices/fake-machine-
  * again. Model-fake drives the runs; a fake machine answers the exec with `network.blocked`.
  */
 
-const POLICY: DeviceLocalPolicySummary = { mode: "auto", allowedDomains: [] };
+const POLICY: DeviceLocalPolicySummary = { allowedDomains: [] };
 const CURL_ERR = "curl: (56) CONNECT tunnel failed, response 403";
 
 let pgc: TestContainer;
@@ -114,10 +112,8 @@ afterAll(async () => {
 /** What the fake device refuses: host → layer it reports (hosts it was granted pass). */
 interface Device {
   blocking: Map<string, NetworkBlockLayer>;
-  /** The device's local allowlist (the policy op adds to it). */
+  /** The device's local allowlist (only its owner adds to it, on the machine). */
   allowed: Set<string>;
-  /** Answer the policy op with a refusal. */
-  refusePolicy: boolean;
   features: string[];
   policy: DeviceLocalPolicySummary;
 }
@@ -164,16 +160,6 @@ function answer(dev: Device) {
             ...(blocked.length > 0 && { network: { blocked } }),
           },
         } as const;
-      }
-      case "policy": {
-        if (dev.refusePolicy) {
-          return {
-            ok: false,
-            error: { kind: "policy", message: "This device does not accept network changes." },
-          } as const;
-        }
-        for (const h of (a.add as string[] | undefined) ?? []) dev.allowed.add(h);
-        return policyAnswer({ ...dev.policy, allowedDomains: [...dev.allowed] });
       }
       default:
         return { ok: true, result: null } as const;
@@ -230,7 +216,6 @@ async function setup(over: Partial<Device> = {}, tools = ["Bash"]): Promise<Setu
   const dev: Device = {
     blocking: new Map(),
     allowed: new Set(),
-    refusePolicy: false,
     features: ["networkReport", "policyOp", "policyOpId"],
     policy: POLICY,
     ...over,
@@ -378,31 +363,31 @@ describe("the ask and its outcomes", () => {
     expect(called).toHaveLength(2);
   });
 
-  it("「一直允许」: the device applies the policy op; the always note", async () => {
-    await post([curl(["files.example.com"])]);
-    const ask = await nextAsk();
-    expect((await decide(ask.id, { decision: "approve", scope: "always" })).statusCode).toBe(200);
-    await waitForTerminal(db, s.conversationId, 1, 20_000);
-    const [r] = await results();
-    expect(r?.content.endsWith(`\n\n${allowedAlwaysNote(["files.example.com"])}`)).toBe(true);
-    expect(s.dev.allowed.has("files.example.com")).toBe(true);
-    expect(curlExecs()).toHaveLength(1);
-  });
-
-  it("「一直允许」 the device refuses: nothing granted, the refused note with the local command", async () => {
-    s.dev.refusePolicy = true;
+  // Device protocol 4: "Always allow" sends no `policy` op (so a device refusing one is never
+  // reached): the hosts are a run grant with the refusal as its reason, and the model gets the once
+  // note.
+  it("Always allow: nothing is sent to the device; a run grant and the once note", async () => {
     await post([curl(["files.example.com"])]);
     const ask = await nextAsk();
     const res = await decide(ask.id, { decision: "approve", scope: "always" });
+    expect(res.statusCode, res.body).toBe(200);
     expect((res.json() as { approval: unknown }).approval).toMatchObject({
-      detail: { outcome: "refused" },
+      scope: "once",
+      detail: {
+        outcome: "once_fallback",
+        fallback: "refused",
+        grantedHosts: ["files.example.com"],
+      },
     });
     await waitForTerminal(db, s.conversationId, 1, 20_000);
     const [r] = await results();
-    expect(r?.content.endsWith(`\n\n${alwaysRefusedNote(["files.example.com"])}`)).toBe(true);
+    expect(r?.content.endsWith(`\n\n${allowedOnceNote(["files.example.com"])}`)).toBe(true);
+    expect(s.dev.allowed.has("files.example.com")).toBe(false);
+    expect(s.machine.frames.filter((f) => f.type === "req" && f.op === "policy")).toEqual([]);
+    expect(curlExecs()).toHaveLength(1);
   });
 
-  it("「一直允许」 with the device offline: once fallback, the once note", async () => {
+  it("Always allow with the device offline: the same run grant, the once note", async () => {
     await post([curl(["files.example.com"])]);
     const ask = await nextAsk();
     s.machine.close();
@@ -413,7 +398,7 @@ describe("the ask and its outcomes", () => {
     );
     const res = await decide(ask.id, { decision: "approve", scope: "always" });
     expect((res.json() as { approval: unknown }).approval).toMatchObject({
-      detail: { outcome: "once_fallback", fallback: "offline" },
+      detail: { outcome: "once_fallback", fallback: "refused" },
     });
     await waitForTerminal(db, s.conversationId, 1, 20_000);
     const [r] = await results();

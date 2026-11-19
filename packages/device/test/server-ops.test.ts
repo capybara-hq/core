@@ -1,19 +1,28 @@
 import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { DeviceOwnerCeiling, KernelRequest } from "@capybara-hq/plugin-sdk";
+import {
+  type DeviceOwnerCeiling,
+  type KernelReq,
+  type KernelRequest,
+  POLICY_ADD_REFUSED,
+} from "@capybara-hq/plugin-sdk";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { CommandLog } from "../src/command-log.js";
 import type { MacOperationBackend } from "../src/exec/mac-operation-backend.js";
 import { PolicyStore } from "../src/policy-store.js";
-import { ownerCeilingNarrowing, policySummary, serveOperationV3 } from "../src/server-ops.js";
+import {
+  ownerCeilingNarrowing,
+  policySummary,
+  serveOperationV3,
+  serveOwnerPolicyV3,
+} from "../src/server-ops.js";
 import {
   DEFAULT_POLICY,
   FULL_OWNER_CEILING,
   ownerCeilingOfMode,
   type Policy,
   policyLockPath,
-  policyMode,
   policyPath,
   readPolicy,
   writePolicy,
@@ -36,12 +45,13 @@ const r = (op: string, args: unknown) =>
   }) as KernelRequest;
 /** A valid owner report; its content is not what these tests are about. */
 const REPORT: DeviceOwnerCeiling = {
-  version: 2,
+  version: 3,
   sequence: 0,
   revision: "rev",
-  fullAccess: false,
+  outsideSandbox: false,
+  network: "allowlist",
   restrictedProjectReach: "workspace",
-  restrictedAllowedDomains: [],
+  allowedDomains: [],
 };
 
 describe("the policy op", () => {
@@ -77,54 +87,82 @@ describe("the policy op", () => {
     }),
   });
   const policyOp = (args: Record<string, unknown>) => serve(r("policy", { source, ...args }));
+  /** The owner policy op behind the frame parser (a request that bypassed it). */
+  const serveOperationPolicyDirect = (args: Record<string, unknown>) =>
+    serveOwnerPolicyV3(
+      { store, report: () => REPORT, reconcile: async () => {} },
+      r("policy", { source, ...args }) as unknown as KernelReq,
+      never,
+    );
 
   it("answers unsupported without the owner policy controls", async () => {
     const res = await serveOperationV3(
       {} as MacOperationBackend,
       { id: "dev" },
-      r("policy", { source, add: ["a.com"] }),
+      r("policy", { source, remove: ["a.com"] }),
       never,
     );
     expect(res).toMatchObject({ ok: false, error: { kind: "unsupported" } });
   });
 
-  it("adds a host, writes the file and returns the summary", async () => {
-    seed({ allowedDomains: ["a.com"], allowCredentials: ["GH"] });
-    const { res } = await policyOp({ add: ["Files.Slack.com"] });
+  it("refuses an add and writes nothing: widening happens only on the machine", async () => {
+    seed({ allowedDomains: ["a.com"] });
+    const before = readFileSync(policyPath(dir), "utf8");
+    for (const args of [
+      { add: ["b.com"] },
+      { add: [] },
+      { add: ["b.com"], remove: ["a.com"] },
+      { add: ["b.com"], ownerCeiling: { outsideSandbox: false } },
+    ]) {
+      const { res } = await policyOp(args);
+      expect(res, JSON.stringify(args)).toMatchObject({
+        ok: false,
+        error: { message: expect.stringMatching(/widening happens only on the machine/) },
+      });
+    }
+    expect(readFileSync(policyPath(dir), "utf8")).toBe(before);
+    expect(store.current().allowedDomains).toEqual(["a.com"]);
+  });
+
+  it("refuses an add that bypassed the frame parser, before anything is written", async () => {
+    seed({ allowedDomains: ["a.com"] });
+    const before = readFileSync(policyPath(dir), "utf8");
+    const res = await serveOperationPolicyDirect({ add: ["b.com"], remove: ["a.com"] });
+    expect(res).toMatchObject({
+      ok: false,
+      error: { kind: "policy", message: POLICY_ADD_REFUSED },
+    });
+    expect(readFileSync(policyPath(dir), "utf8")).toBe(before);
+  });
+
+  it("removes hosts ignoring case, writes the file and returns the summary", async () => {
+    seed({ allowedDomains: ["A.com", "b.com"], allowCredentials: ["GH"] });
+    const { res } = await policyOp({ remove: ["a.com"] });
     expect(res).toEqual({
       type: "res",
       id: "x",
       ok: true,
-      result: {
-        policy: { mode: "auto", allowedDomains: ["a.com", "files.slack.com"] },
-        ownerCeiling: REPORT,
-      },
+      result: { policy: { allowedDomains: ["b.com"] }, ownerCeiling: REPORT },
     });
-    expect(readPolicy(dir)).toMatchObject({
-      allowedDomains: ["a.com", "files.slack.com"],
-      allowCredentials: ["GH"],
-    });
-    expect(store.current().allowedDomains).toEqual(["a.com", "files.slack.com"]);
+    expect(readPolicy(dir)).toMatchObject({ allowedDomains: ["b.com"], allowCredentials: ["GH"] });
+    expect(store.current().allowedDomains).toEqual(["b.com"]);
   });
 
   it("is idempotent", async () => {
-    seed({ allowedDomains: ["a.com"] });
-    await policyOp({ add: ["a.com", "b.com"] });
-    const { res } = await policyOp({ add: ["b.com", "A.COM"], remove: ["zz.com"] });
-    expect(res).toMatchObject({
-      ok: true,
-      result: { policy: { allowedDomains: ["a.com", "b.com"] } },
-    });
+    seed({ allowedDomains: ["a.com", "b.com"] });
+    await policyOp({ remove: ["a.com"] });
+    const { res } = await policyOp({ remove: ["A.COM", "zz.com"] });
+    expect(res).toMatchObject({ ok: true, result: { policy: { allowedDomains: ["b.com"] } } });
   });
 
-  it("removes hosts ignoring case and narrows the mode", async () => {
-    seed({ allowedDomains: ["A.com", "b.com"], mode: "auto" });
-    const { res } = await policyOp({ remove: ["a.com"], mode: "sandbox" });
-    expect(res).toMatchObject({
-      ok: true,
-      result: { policy: { mode: "sandbox", allowedDomains: ["b.com"] } },
-    });
-    expect(policyMode(readPolicy(dir))).toBe("sandbox");
+  it("refuses the protocol 3 mode: protocol 4 narrows through ownerCeiling", async () => {
+    seed({ allowedDomains: ["a.com"] });
+    const before = readFileSync(policyPath(dir), "utf8");
+    for (const mode of ["sandbox", "auto"]) {
+      const { res } = await policyOp({ remove: ["a.com"], mode });
+      expect(res, mode).toMatchObject({ ok: false });
+    }
+    expect(readFileSync(policyPath(dir), "utf8")).toBe(before);
   });
 
   it("never widens the owner ceiling, whatever the op is shaped like", async () => {
@@ -134,46 +172,48 @@ describe("the policy op", () => {
       const { res } = await policyOp({ mode });
       expect(res, JSON.stringify(mode)).toMatchObject({ ok: false });
     }
-    for (const ownerCeiling of [{ fullAccess: true }, { restrictedProjectReach: "os-user" }]) {
+    for (const ownerCeiling of [
+      { outsideSandbox: true },
+      { network: "open" },
+      { restrictedProjectReach: "os-user" },
+    ]) {
       const { res } = await policyOp({ ownerCeiling });
       expect(res, JSON.stringify(ownerCeiling)).toMatchObject({ ok: false });
     }
     // Bundled with an allowed change, the whole op is refused.
-    const both = await policyOp({ remove: ["a.com"], add: ["b.com"], mode: "auto" });
+    const both = await policyOp({ remove: ["a.com"], ownerCeiling: { outsideSandbox: true } });
     expect(both.res).toMatchObject({ ok: false });
     expect(readFileSync(policyPath(dir), "utf8")).toBe(before);
-    expect(policyMode(readPolicy(dir))).toBe("sandbox");
+    expect(readPolicy(dir).ownerCeiling.outsideSandbox).toBe(false);
   });
 
   it("a kernel narrowing op cannot widen: each field only narrows, the network is kept", async () => {
     seed({ allowedDomains: ["a.com", "b.com"] });
-    // protocol 3: Full access off is outside the sandbox off; the network stays open
-    const off = await policyOp({ ownerCeiling: { fullAccess: false } });
+    // outside the sandbox off; the network stays open, the reach as it was
+    const off = await policyOp({ ownerCeiling: { outsideSandbox: false } });
     expect(off.res).toMatchObject({ ok: true });
     expect(readPolicy(dir).ownerCeiling).toEqual({
       outsideSandbox: false,
       network: "open",
       restrictedProjectReach: "os-user",
     });
-    // protocol 2's mode sandbox: no escalation and the workspace reach, the network kept
-    seed({ allowedDomains: ["a.com"] });
-    await policyOp({ mode: "sandbox" });
+    // the network to the allowlist and the reach to the workspace, each on its own
+    await policyOp({ ownerCeiling: { network: "allowlist", restrictedProjectReach: "workspace" } });
     expect(readPolicy(dir).ownerCeiling).toEqual({
       outsideSandbox: false,
-      network: "open",
+      network: "allowlist",
       restrictedProjectReach: "workspace",
     });
+    // removing hosts through the narrowing
+    const removed = await policyOp({ ownerCeiling: { removeAllowedDomains: ["b.com"] } });
+    expect(removed.res).toMatchObject({ ok: true });
+    expect(readPolicy(dir).allowedDomains).toEqual(["a.com"]);
     // nothing a narrowing says turns a narrowed field back on
-    seed({
-      ownerCeiling: {
-        outsideSandbox: false,
-        network: "allowlist",
-        restrictedProjectReach: "workspace",
-      },
-    });
     const before = readFileSync(policyPath(dir), "utf8");
     for (const ownerCeiling of [
+      // the protocol 3 key is gone, in either direction
       { fullAccess: true },
+      { fullAccess: false },
       { outsideSandbox: true },
       { network: "open" },
       { restrictedProjectReach: "os-user" },
@@ -214,6 +254,7 @@ describe("the policy op", () => {
       { network: "open" },
       { network: null },
       { fullAccess: true },
+      { fullAccess: false },
       { restrictedProjectReach: "os-user" },
       { removeAllowedDomains: "a.com" },
       { removeAllowedDomains: [1] },
@@ -223,16 +264,7 @@ describe("the policy op", () => {
       expect(ownerCeilingNarrowing(widening), JSON.stringify(widening)).toBeUndefined();
   });
 
-  it("applies mode sandbox even when the summary already says sandbox", async () => {
-    seed({ mode: "auto", allowedDomains: ["a.com", "b.com"] });
-    const { res } = await policyOp({ remove: ["a.com"], mode: "sandbox" });
-    expect(res).toMatchObject({
-      ok: true,
-      result: { policy: { mode: "sandbox", allowedDomains: ["b.com"] } },
-    });
-  });
-
-  it("validates every host", async () => {
+  it("validates every host to remove", async () => {
     for (const bad of [
       "10.0.0.1",
       "intranet",
@@ -242,64 +274,26 @@ describe("the policy op", () => {
       "",
       "a\nb.com",
     ]) {
-      for (const key of ["add", "remove"]) {
-        const { res } = await policyOp({ [key]: [bad] });
-        expect(res, `${key} ${JSON.stringify(bad)}`).toMatchObject({ ok: false });
-      }
+      const { res } = await policyOp({ remove: [bad] });
+      expect(res, JSON.stringify(bad)).toMatchObject({ ok: false });
     }
     expect(store.current().allowedDomains).toEqual([]);
   });
 
-  it("refuses a wildcard from an approval, accepts one from the device page", async () => {
-    const { res } = await policyOp({ add: ["*.slack.com"] });
-    expect(res).toMatchObject({
-      ok: false,
-      error: { kind: "policy", message: expect.stringMatching(/exact host/) },
-    });
+  it("removes a wildcard covering a whole public suffix", async () => {
+    seed({ allowedDomains: ["*.co.uk"] });
     const page = await serve(
       r("policy", {
         source: { accountId: "acc_1", accountName: "Ada", via: "web" },
-        add: ["*.slack.com"],
+        remove: ["*.co.uk"],
       }),
     );
-    expect(page.res).toMatchObject({
-      ok: true,
-      result: { policy: { allowedDomains: ["*.slack.com"] } },
-    });
-  });
-
-  it("refuses a page wildcard covering a whole public suffix; removing one is fine", async () => {
-    const page = (args: Record<string, unknown>) =>
-      serve(
-        r("policy", { source: { accountId: "acc_1", accountName: "Ada", via: "web" }, ...args }),
-      );
-    for (const pattern of ["*.com", "*.co.uk", "*.github.io", "*.COM.cn"]) {
-      const { res } = await page({ add: [pattern] });
-      expect(res).toMatchObject({
-        ok: false,
-        error: {
-          kind: "policy",
-          message: `Use a narrower domain; ${pattern.toLowerCase()} covers a whole public suffix.`,
-        },
-      });
-    }
-    expect(readPolicy(dir).allowedDomains).toEqual([]);
-    expect((await page({ add: ["*.example.co.uk"] })).res).toMatchObject({ ok: true });
-    seed({ allowedDomains: ["*.co.uk"] });
-    expect((await page({ remove: ["*.co.uk"] })).res).toMatchObject({
-      ok: true,
-      result: { policy: { allowedDomains: [] } },
-    });
-  });
-
-  it("refuses a host both added and removed", async () => {
-    const { res } = await policyOp({ add: ["a.com"], remove: ["A.com"] });
-    expect(res).toMatchObject({ ok: false, error: { kind: "policy" } });
+    expect(page.res).toMatchObject({ ok: true, result: { policy: { allowedDomains: [] } } });
   });
 
   it("writes under policy.json.lock: a held lock fails the op without writing", async () => {
     writeFileSync(policyLockPath(dir), String(process.pid));
-    const { res } = await policyOp({ add: ["a.com"] });
+    const { res } = await policyOp({ remove: ["a.com"] });
     expect(res).toMatchObject({
       ok: false,
       error: { kind: "error", message: expect.stringMatching(/is held/) },
@@ -323,15 +317,15 @@ describe("CommandLog", () => {
 });
 
 describe("the policy summary", () => {
-  it("reports the owner's mode, on the machine and in a container", () => {
+  it("reports the sandbox allowlist only, on the machine and in a container", () => {
     expect(
       policySummary({ ...FULL_POLICY, ownerCeiling: ownerCeilingOfMode("auto") }, { mode: "os" }),
-    ).toEqual({ mode: "auto", allowedDomains: [] });
+    ).toEqual({ allowedDomains: [] });
     expect(
       policySummary(
         { ...FULL_POLICY, ownerCeiling: ownerCeilingOfMode("sandbox") },
         { mode: "docker" },
       ),
-    ).toEqual({ mode: "sandbox", allowedDomains: [] });
+    ).toEqual({ allowedDomains: [] });
   });
 });

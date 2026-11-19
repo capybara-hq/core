@@ -28,6 +28,7 @@ import { truncateTables } from "../helpers/db.js";
 import { accountsFor } from "../helpers/identity.js";
 import { SUPPORTS_BOTH, seedInstalledEvidence } from "../helpers/installed-evidence.js";
 import { MODEL_PLUGINS_CONFIG } from "../helpers/model-plugins.js";
+import { storedOwnerReport } from "../helpers/owner-report.js";
 import { permissionFixture } from "../helpers/permission-policy.js";
 import { startKernel, type TestKernel } from "../helpers/runs.js";
 
@@ -499,7 +500,7 @@ it("an owner ceiling of sandbox refuses the escalation before any review", async
   const f = await escalated("request-approval");
   await f.db
     .updateTable("device_machines")
-    .set({ local_policy: JSON.stringify({ mode: "sandbox", allowedDomains: [] }) })
+    .set({ owner_report: storedOwnerReport({ outsideSandbox: false }) })
     .where("device_id", "=", f.deviceId)
     .execute();
   const review = vi.spyOn(k.app.get(CommandReviewService), "review");
@@ -532,7 +533,7 @@ it("a runtime that cannot run Full access refuses the escalation with its reason
     deviceId: f.deviceId,
     provider: "@permission-policy-test",
     version: "test-1",
-    report: { ...SUPPORTS_BOTH, fullAccess: false },
+    report: { ...SUPPORTS_BOTH, outsideSandbox: false },
   });
   const review = vi.spyOn(k.app.get(CommandReviewService), "review");
   await f.step();

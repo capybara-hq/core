@@ -204,7 +204,7 @@ describe("devices", () => {
       expect(rename.safeParse({ deviceId, name: "X", mode }).success).toBe(false);
     }
     // B2: nor its owner ceiling (session-only)
-    for (const ownerCeiling of [{ fullAccess: true }, { fullAccess: false }])
+    for (const ownerCeiling of [{ outsideSandbox: true }, { outsideSandbox: false }])
       expect(rename.safeParse({ deviceId, name: "X", ownerCeiling }).success).toBe(false);
     expect(op("devices.rename").omits).toEqual(["mode", "ownerCeiling", "confirmWidening"]);
   });

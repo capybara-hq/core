@@ -34,12 +34,13 @@ afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
 const never = new AbortController().signal;
 const REPORT: DeviceOwnerCeiling = {
-  version: 2,
+  version: 3,
   sequence: 0,
   revision: "rev",
-  fullAccess: true,
+  outsideSandbox: true,
+  network: "open",
   restrictedProjectReach: "workspace",
-  restrictedAllowedDomains: [],
+  allowedDomains: [],
 };
 const scope = (profile: "approve-for-me" | "full-access", tag = "t1") => ({
   operationId: `op-${tag}`,
@@ -61,7 +62,6 @@ const limits = {
   cpu: 1,
   memoryMb: 512,
   diskMb: 1024,
-  mode: "sandbox",
   network: { kind: "allowlist", hosts: ["api.example.com"] },
 };
 const request = (op: string, args: unknown, id = "q") =>
@@ -285,7 +285,7 @@ describe("policy changes in the command log", () => {
     await serveOperationV3(
       {} as MacOperationBackend,
       { id: "d" },
-      request("policy", { opId: "op_1", add: ["files.slack.com"], source }),
+      request("policy", { opId: "op_1", remove: ["files.slack.com"], source }),
       never,
       undefined,
       o,
@@ -293,7 +293,16 @@ describe("policy changes in the command log", () => {
     await serveOperationV3(
       {} as MacOperationBackend,
       { id: "d" },
-      request("policy", { opId: "op_2", add: ["a.com"], remove: ["a.com"], source }),
+      request("policy", { opId: "op_2", remove: ["not a host"], source }),
+      never,
+      undefined,
+      o,
+    );
+    // an add (protocol 4: widening happens only on the machine) is refused and audited too
+    await serveOperationV3(
+      {} as MacOperationBackend,
+      { id: "d" },
+      request("policy", { opId: "op_5", add: ["a.com"], source }),
       never,
       undefined,
       o,
@@ -303,11 +312,18 @@ describe("policy changes in the command log", () => {
         op: "policy",
         tag: null,
         actor: { accountId: "acc_1" },
-        detail: "policy add files.slack.com by Ada (acc_1) via web, approval apr_1",
+        detail: "policy remove files.slack.com by Ada (acc_1) via web, approval apr_1",
       }),
       expect.objectContaining({
         op: "policy",
-        detail: expect.stringMatching(/^policy refused add a\.com; remove a\.com by Ada/),
+        detail: expect.stringMatching(/^policy refused \("not a host": .*\) by Ada/),
+      }),
+      expect.objectContaining({
+        op: "policy",
+        actor: { accountId: "acc_1" },
+        detail: expect.stringMatching(
+          /^policy failed \(The deployment may not add hosts.*\) by Ada/,
+        ),
       }),
     ]);
   });
@@ -319,7 +335,7 @@ describe("policy changes in the command log", () => {
     const held = await serveOperationV3(
       {} as MacOperationBackend,
       { id: "d" },
-      request("policy", { opId: "op_3", add: ["b.com"], source }),
+      request("policy", { opId: "op_3", remove: ["b.com"], source }),
       never,
       undefined,
       o,

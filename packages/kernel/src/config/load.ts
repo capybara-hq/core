@@ -184,7 +184,8 @@ function refuseDefaultAboveCeiling(
 }
 
 /**
- * 原始配置深合并环境变量覆盖（优先级最高）后校验；热更新与启动共用。错误只列路径不列值。
+ * Deep-merges the environment overrides (highest precedence) into the raw configuration, then
+ * validates it; hot reload and startup share it. Errors name only paths, never values.
  * `previous` (a hot reload: the applied config) lets a change that only narrows the device network
  * through ({@link refuseDefaultAboveCeiling}).
  */

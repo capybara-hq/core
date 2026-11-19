@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type {
   DeviceLocalPolicySummary,
+  DeviceOwnerCeilingNarrowing,
   LocalizedName,
   SandboxLimits,
 } from "@capybara-hq/plugin-sdk";
@@ -131,7 +132,7 @@ export interface DeviceView {
 
 /** {@link DeviceView.ownerCeiling}. */
 export interface DeviceOwnerCeilingView {
-  state: "report" | "blocked" | "legacy" | "missing" | "cloud";
+  state: "report" | "blocked" | "missing" | "cloud";
   revision: string | null;
   sequence: number | null;
   /** The owner's ceiling as stored or reported (a cloud device: the raw B1 ceiling). */
@@ -705,7 +706,7 @@ export class DevicesService {
         availability = await readRuntimeReport(this.db.db, id, provider.plugin, provider.version);
       if (
         availability.state === "unsupported" ||
-        (availability.state === "supported" && !availability.report.fullAccess)
+        (availability.state === "supported" && !availability.report.outsideSandbox)
       )
         throw new ApiError(
           "device.full_access_not_allowed",
@@ -1370,16 +1371,19 @@ export class DevicesService {
       readOrgSettings(this.db.db, orgId),
       readDeploymentDevicePolicy(this.db.db, this.config),
     ]);
-    const summaryOf = (r: (typeof all)[number]) =>
-      r.source === "local" ? localPolicyOf(r.machine_local_policy) : null;
+    const summaryOf = (r: (typeof all)[number]): LocalReport | null => {
+      const summary = r.source === "local" ? localPolicyOf(r.machine_local_policy) : null;
+      if (summary === null) return null;
+      const owner = ownerFactsOf({ owner_report: r.machine_owner_report });
+      return {
+        reported: owner.state === "report" ? (owner.fullAccess ? "auto" : "sandbox") : null,
+        allowedDomains: summary.allowedDomains,
+      };
+    };
     /** The mode the device chose: its machine's report (local) or its switch (cloud: sandbox, or null to follow the org). */
     const chosenOf = (r: (typeof all)[number]): SandboxMode | null =>
       r.source === "local"
-        ? ownerModeOf({
-            features: r.machine_features,
-            local_policy: r.machine_local_policy,
-            owner_report: r.machine_owner_report,
-          })
+        ? ownerModeOf({ owner_report: r.machine_owner_report })
         : cloudChosenMode(r);
     const policyOf = (r: (typeof all)[number]): EffectiveDevicePolicy =>
       effectiveDevicePolicy(
@@ -1703,15 +1707,24 @@ function modeChangeOf(
 }
 
 /**
- * The mode view of one device (auto mode spec §4.3): its effective policy with the mode its
- * machine reported (`summary`, local devices only), the network and where it comes from, and the
+ * What a local machine reported, as the mode view shows it: the mode its owner report encodes
+ * (null without an authenticated report) and its sandbox allowlist.
+ */
+export interface LocalReport {
+  reported: SandboxMode | null;
+  allowedDomains: string[];
+}
+
+/**
+ * The mode view of one device (auto mode spec §4.3): its effective policy with what its machine
+ * reported (`summary`, local devices only), the network and where it comes from, and the
  * instance's pending change with the recent changes.
  */
 export function deviceModeViewOf(
   policy: EffectiveDevicePolicy,
   settings: OrgDeviceSettings,
   local: boolean,
-  summary: DeviceLocalPolicySummary | null,
+  summary: LocalReport | null,
   extra: {
     pendingNextUse: boolean;
     pendingFilesReset: boolean;
@@ -1770,7 +1783,7 @@ export function deviceModeViewOf(
     network,
     local: local
       ? {
-          reported: summary?.mode ?? null,
+          reported: summary?.reported ?? null,
           allowedDomains: [...(summary?.allowedDomains ?? [])],
         }
       : null,
@@ -1809,22 +1822,14 @@ function ownerCeilingViewOf(
           stale: false,
         };
   if (r.machine_id === null) return null;
-  const f = ownerFactsOf({
-    owner_report: r.machine_owner_report,
-    local_policy: r.machine_local_policy,
-  });
+  const f = ownerFactsOf({ owner_report: r.machine_owner_report });
   return {
     state: f.state,
     revision: f.revision,
     sequence: f.sequence,
     fullAccess: f.fullAccess,
-    // the mode admission derives (an old program without a report included), fail closed
-    effectiveFullAccess:
-      ownerModeOf({
-        features: r.machine_features,
-        local_policy: r.machine_local_policy,
-        owner_report: r.machine_owner_report,
-      }) === "auto",
+    // the mode admission derives, fail closed
+    effectiveFullAccess: ownerModeOf({ owner_report: r.machine_owner_report }) === "auto",
     restrictedProjectReach: f.restrictedProjectReach,
     restrictedAllowedDomains: f.restrictedAllowedDomains,
     observedAt: f.observedAt,
@@ -1833,10 +1838,10 @@ function ownerCeilingViewOf(
 }
 
 /** The owner ceiling narrowing the web may send (B2): anything wider is refused, never sent. */
-function narrowOnly(c: { fullAccess?: unknown; restrictedProjectReach?: unknown }): {
-  fullAccess?: false;
-  restrictedProjectReach?: "workspace";
-} {
+function narrowOnly(c: {
+  fullAccess?: unknown;
+  restrictedProjectReach?: unknown;
+}): DeviceOwnerCeilingNarrowing {
   if (
     (c.fullAccess !== undefined && c.fullAccess !== false) ||
     (c.restrictedProjectReach !== undefined && c.restrictedProjectReach !== "workspace")
@@ -1846,7 +1851,8 @@ function narrowOnly(c: { fullAccess?: unknown; restrictedProjectReach?: unknown 
       "The device page can only narrow a machine's owner ceiling; widen it on the machine with capybara-device ceiling set",
     );
   return {
-    ...(c.fullAccess === false && { fullAccess: false as const }),
+    // the device page's `fullAccess: false` (until T11) is the protocol 4 `outsideSandbox: false`
+    ...(c.fullAccess === false && { outsideSandbox: false as const }),
     ...(c.restrictedProjectReach === "workspace" && {
       restrictedProjectReach: "workspace" as const,
     }),

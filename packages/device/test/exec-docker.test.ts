@@ -131,7 +131,7 @@ describe.skipIf(!hasDocker)("DockerContainer", () => {
       { acquireRuntime: async () => ({ release: () => {} }) },
     );
     const support = await backend.permissionSupport({ id: envId }, live);
-    expect(support).toMatchObject({ fullAccess: true, background: true });
+    expect(support).toMatchObject({ outsideSandbox: true, background: true });
 
     const scope = (full: boolean, n: number) => ({
       operationId: `op-${n}`,

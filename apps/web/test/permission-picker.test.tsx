@@ -236,7 +236,7 @@ describe("unavailable choices and their reasons", () => {
   it.each([
     [
       "the owner's ceiling forbids Full",
-      { fullAccessCeiling: false, availability: permissionAvailability("supported") },
+      { outsideSandboxCeiling: false, availability: permissionAvailability("supported") },
       "Not allowed on this device",
     ],
     [
@@ -246,7 +246,7 @@ describe("unavailable choices and their reasons", () => {
           state: "supported" as const,
           report: {
             ...(permissionAvailability("supported") as { report: object }).report,
-            fullAccess: false,
+            outsideSandbox: false,
           },
         },
       },

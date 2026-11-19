@@ -22,6 +22,7 @@ import { type ResolvedTool, specHash, ToolRegistry } from "../../src/tools/regis
 import { seedInstalledEvidence } from "../helpers/installed-evidence.js";
 import type { TestKernel } from "../helpers/runs.js";
 import { seedConversation } from "../helpers/tool-fixtures.js";
+import { storedOwnerReport } from "./owner-report.js";
 
 export async function permissionFixture(
   k: TestKernel,
@@ -62,10 +63,11 @@ export async function permissionFixture(
       name: "Laptop",
       os: "darwin",
       arch: "arm64",
-      features: ["mode", "projects"],
+      features: ["projects"],
       roots: JSON.stringify({ workspace: "/work" }),
       home: "/home/owner",
-      local_policy: JSON.stringify({ mode: "auto", allowedDomains: [] }),
+      local_policy: JSON.stringify({ allowedDomains: [] }),
+      owner_report: storedOwnerReport(),
     })
     .execute();
   await db
@@ -113,9 +115,11 @@ export async function permissionFixture(
   const provider = {
     async permissionSupport() {
       return {
-        version: 1,
+        version: 2,
         restricted: { filesystem: true, network: true, native: true, concurrentScopes: true },
-        fullAccess: true,
+        boundary: "operation",
+        network: { openPublic: false, allowlist: true, perOperationHosts: true },
+        outsideSandbox: true,
         background: false,
       };
     },

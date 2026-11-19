@@ -342,10 +342,10 @@ export function effectiveWakeOnBackgroundTask(
  * setting `sandboxLimitOverrides[orgId]`) replaces the deployment's cpu / memoryMb; fields it does
  * not give, disk and the network, stay as in `deployment`. Read only when an instance is created.
  */
-export function effectiveSandboxLimits(
-  deployment: SandboxLimits,
+export function effectiveSandboxLimits<L extends SandboxLimits>(
+  deployment: L,
   override: { cpu?: number | undefined; memoryMb?: number | undefined } | undefined,
-): SandboxLimits {
+): L {
   return {
     ...deployment,
     network: { ...deployment.network, hosts: [...deployment.network.hosts] },

@@ -55,7 +55,7 @@ export const POLICY_REFUSAL_PREFIX = "Refused by the machine's local policy: ";
 export const ON_MACHINE_PREFIX = "On the connected machine: ";
 
 /**
- * The text of a staged (protocol 3) request refused because the machine's connection changed.
+ * The text of a staged (protocol 4) request refused because the machine's connection changed.
  * Only an output read has an offset to retry from; every other operation is simply retried.
  */
 export const connectionChangedMessage = (op: string): string =>
@@ -80,7 +80,7 @@ const heldOperation = (op: string): boolean =>
 
 /**
  * Whether a staged operation's result is fenced to the connection its request was sent on.
- * Protocol 3 (spec B5) fences every request to its connection, so an old capacity is never used on
+ * Protocol 4 (spec B5) fences every request to its connection, so an old capacity is never used on
  * a replacement socket. For results, only an output read is fenced: its range was sized for the
  * old connection's capacity and an in-flight read that meets a reconnect fails so the reader
  * retries from the same offset. Every other operation keeps protocol 2's grace semantics: the
@@ -226,7 +226,7 @@ export class LocalDeviceRelay {
 
   /**
    * The negotiated transport of the device's connection for the platform's own controls (policy
-   * ops): every connection speaks protocol 3, so this is {@link connection} (a missing or unready
+   * ops): every connection speaks protocol 4, so this is {@link connection} (a missing or unready
    * one throws its typed error).
    */
   async stagedTransport(
@@ -252,9 +252,9 @@ export class LocalDeviceRelay {
    * Queues `stop` for the machine without waiting for an answer (ruling R14). The caller checks
    * {@link holderLive} first; the frame waits on the list for the grace like any request. It is
    * fenced to the machine `machineId` ({@link STOP_MACHINE}): a holder hands it only to that
-   * machine's connection (on a staged connection as a protocol 3 `stop`, across a socket blip
+   * machine's connection (on a staged connection as a protocol 4 `stop`, across a socket blip
    * too), never to a newer machine of the device. Only `stop` is ever queued this way: a broad
-   * kill (`killAll` / `killTagged`) has no frame on protocol 3.
+   * kill (`killAll` / `killTagged`) has no frame on protocol 4.
    */
   async send(
     deviceId: string,
@@ -291,8 +291,8 @@ export class LocalDeviceRelay {
   }
 
   /**
-   * Runs a protocol 3 operation on the device's machine over its current staged connection and
-   * returns its validated result; the request is checked against the protocol 3 codec first.
+   * Runs a protocol 4 operation on the device's machine over its current staged connection and
+   * returns its validated result; the request is checked against the protocol 4 codec first.
    */
   async callV3(
     deviceId: string,
