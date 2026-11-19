@@ -264,3 +264,20 @@ export function intersectOperation(
     revision: ceiling.revision,
   });
 }
+
+/**
+ * Whether a live operation's grant still holds against the grant the fresh owner ceiling gives the
+ * same scope (owner reconcile): a full grant only while the next one is full; a sandboxed grant
+ * only while every host, the open network if it had one, and exactly the same denied read roots
+ * remain. Anything narrower revokes the operation.
+ */
+export function grantStillHolds(grant: LocalOperationGrant, next: LocalOperationGrant): boolean {
+  if (grant.full) return next.full;
+  return (
+    !next.full &&
+    (!grant.openNetwork || next.openNetwork === true) &&
+    grant.hosts.every((h) => next.hosts.includes(h)) &&
+    grant.deniedReadRoots.every((r) => next.deniedReadRoots.includes(r)) &&
+    next.deniedReadRoots.every((r) => grant.deniedReadRoots.includes(r))
+  );
+}

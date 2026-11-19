@@ -269,7 +269,7 @@ it("rejects a revision change during trusted startup before effects", async () =
   );
   expect(f.launched).toHaveLength(0);
 });
-it("owned idle watcher revokes removed baseline while preserving independent granted sibling", async () => {
+it("owned idle watcher revokes a removed owner host, a granted sibling with it (owner ceiling)", async () => {
   const f = await fixture();
   f.hold();
   const start = async (id: string, approved: boolean) => {
@@ -302,12 +302,10 @@ it("owned idle watcher revokes removed baseline while preserving independent gra
   };
   const removed = await start("baseline", false);
   const granted = await start("granted", true);
+  // the owner's allowlist is a ceiling: a grant it no longer covers is revoked too
   f.setCeiling({ revision: "two", allowedDomains: [] });
   await f.tick();
-  expect(f.cancellations).toEqual(["baseline"]);
-  expect(await f.backend.background.status({ id: "d" }, granted, signal)).toEqual({
-    state: "running",
-  });
+  expect(f.cancellations.sort()).toEqual(["baseline", "granted"]);
   expect(await f.backend.background.stop({ id: "d" }, removed, { graceMs: 0, signal })).toEqual({
     outcome: "stopped",
   });

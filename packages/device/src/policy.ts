@@ -76,8 +76,9 @@ export type SandboxEgress =
  * - Owner `open` and a kernel allowlist: the kernel's hosts.
  * - Owner `allowlist`: the owner's `allowedDomains`, cut to the kernel's allowlist when it has one.
  *
- * Granted hosts are added within the kernel's network ({@link grantedHosts}). An empty allowlist
- * allows nothing.
+ * Granted hosts are added within the kernel's network ({@link grantedHosts}); under an owner
+ * allowlist only those the owner's `allowedDomains` cover, so a grant never widens the owner's
+ * ceiling. An empty allowlist allows nothing.
  */
 export function effectiveEgress(
   policy: Pick<Policy, "allowedDomains"> & { ownerCeiling: Pick<OwnerCeilingPolicy, "network"> },
@@ -102,6 +103,8 @@ export function effectiveEgress(
       else if (covers(host, p)) out.add(p);
     }
   }
-  for (const h of grantedHosts(limits, grants)) out.add(h);
+  // The owner's allowlist is a ceiling on this machine: a grant counts only where the owner's own
+  // list covers it ("widening happens only on the machine").
+  for (const h of grantedHosts(limits, grants)) if (local.some((p) => covers(p, h))) out.add(h);
   return { kind: "allowlist", hosts: [...out] };
 }

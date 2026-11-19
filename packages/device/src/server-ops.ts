@@ -116,6 +116,9 @@ function applyPolicyOp(
   let add: string[];
   let remove: string[];
   try {
+    // `add` widens the owner's allowlist from the deployment. It stays only while the wire is
+    // protocol 3 (the program cannot tell protocol 4 here yet); W1.M refuses it for local devices
+    // under protocol 4, where an approval's "always allow" for a host becomes a per-call grant.
     add = [...new Set(opHosts(args.add, "add", fromApproval))];
     remove = [...new Set(opHosts(args.remove, "remove", fromApproval))];
   } catch (e) {
@@ -152,7 +155,9 @@ function applyPolicyOp(
   const change = (p: Policy): Policy => {
     const kept = p.allowedDomains.filter((d) => !remove.includes(d.toLowerCase()));
     const present = new Set(kept.map((d) => d.toLowerCase()));
-    // protocol 2's `mode: "sandbox"` stands for no escalation and the workspace reach at once
+    // protocol 2's `mode: "sandbox"` stands for no escalation and the workspace reach at once.
+    // Under protocol 3 it keeps the owner's network as it is: the mode never named a network, and
+    // keeping a field unchanged never widens it (an explicit `network: "allowlist"` narrows it)
     const legacySandbox = rawMode === "sandbox";
     return {
       ...p,

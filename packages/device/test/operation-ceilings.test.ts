@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  grantStillHolds,
   intersectOperation,
   OUTSIDE_SANDBOX_REFUSAL,
   readStrictOwnerCeiling,
@@ -63,32 +64,56 @@ describe("independent owner ceiling", () => {
     await writeFile(join(f.dir, "state", "policy.json"), "{} nope");
     await expect(f.read()).rejects.toThrow();
   });
-  it("retains independently approved additions, never scope-only hosts", async () => {
+  it("an owner allowlist is a ceiling: grants count only where the owner's list covers them", async () => {
     const f = await fixture();
-    writePolicy(join(f.dir, "state"), {
-      ...FULL_POLICY,
-      allowedDomains: ["*.example.com"],
-      ownerCeiling: { ...FULL_OWNER_CEILING, network: "allowlist" },
-    });
-    const c = await f.read();
-    const a = {
+    const allowlist = (allowedDomains: string[]) =>
+      writePolicy(join(f.dir, "state"), {
+        ...FULL_POLICY,
+        allowedDomains,
+        ownerCeiling: { ...FULL_OWNER_CEILING, network: "allowlist" },
+      });
+    const a = (hosts: string[]) => ({
       operationId: "op",
       orgNetwork: { kind: "open-public" as const, hosts: [] },
+      grants: { hosts, source: { kind: "run" as const, id: "run", accountId: "a" } },
+    });
+    allowlist(["*.example.com"]);
+    // a grant beyond the owner's list never widens it, and no scope-only host gets in
+    expect(intersectOperation(scope(f.roots), await f.read(), a(["approved.test"])).hosts).toEqual([
+      "a.example.com",
+    ]);
+    // owner ["a.com"] with a grant for evil.example.com: only a.com
+    allowlist(["a.com"]);
+    const probe = {
+      ...scope(f.roots),
+      network: { kind: "allowlist" as const, hosts: ["a.com", "evil.example.com"] },
+    };
+    expect(intersectOperation(probe, await f.read(), a(["evil.example.com"])).hosts).toEqual([
+      "a.com",
+    ]);
+    const open = { ...scope(f.roots), network: { kind: "open-public" as const } };
+    expect(intersectOperation(open, await f.read(), a(["evil.example.com"])).hosts).toEqual([
+      "a.com",
+    ]);
+    // an empty owner allowlist with a grant: nothing
+    allowlist([]);
+    expect(intersectOperation(probe, await f.read(), a(["evil.example.com"])).hosts).toEqual([]);
+    expect(intersectOperation(open, await f.read(), a(["a.com"])).hosts).toEqual([]);
+  });
+  it("under the open owner network, grants stay bounded by the kernel only", async () => {
+    const f = await fixture();
+    const a = {
+      operationId: "op",
+      orgNetwork: { kind: "allowlist" as const, hosts: ["a.example.com", "approved.test"] },
       grants: {
-        hosts: ["approved.test"],
+        hosts: ["approved.test", "evil.test"],
         source: { kind: "run" as const, id: "run", accountId: "a" },
       },
     };
-    expect(intersectOperation(scope(f.roots), c, a).hosts).toEqual([
+    expect([...intersectOperation(scope(f.roots), await f.read(), a).hosts].sort()).toEqual([
       "a.example.com",
       "approved.test",
     ]);
-    writePolicy(join(f.dir, "state"), {
-      ...FULL_POLICY,
-      allowedDomains: [],
-      ownerCeiling: { ...FULL_OWNER_CEILING, network: "allowlist" },
-    });
-    expect(intersectOperation(scope(f.roots), await f.read(), a).hosts).toEqual(["approved.test"]);
   });
   it("requires matching provenance and intersects org host patterns", async () => {
     const f = await fixture();
@@ -230,5 +255,29 @@ describe("approval-only profiles: the sandbox under every profile", () => {
     expect(() =>
       intersectOperation(half, c, authority({ kind: "open-public", hosts: [] })),
     ).toThrow(/only together/);
+  });
+
+  it("reconcile: an open-network grant does not survive the owner narrowing to an allowlist", async () => {
+    const f = await fixture();
+    const open = { ...scope(f.roots), network: { kind: "open-public" as const } };
+    const a = authority({ kind: "open-public", hosts: [] });
+    const before = intersectOperation(open, await f.read(), a);
+    expect(before.openNetwork).toBe(true);
+    expect(grantStillHolds(before, intersectOperation(open, await f.read(), a))).toBe(true);
+    writePolicy(join(f.dir, "state"), {
+      ...FULL_POLICY,
+      allowedDomains: ["a.example.com"],
+      ownerCeiling: { ...FULL_OWNER_CEILING, network: "allowlist" },
+    });
+    const narrowed = intersectOperation(open, await f.read(), a);
+    expect(grantStillHolds(before, narrowed)).toBe(false);
+    // an allowlist grant whose hosts stay is kept; one that loses a host is not
+    const listed = intersectOperation(scope(f.roots), await f.read(), a);
+    expect(grantStillHolds(listed, listed)).toBe(true);
+    expect(grantStillHolds({ ...listed, hosts: ["a.example.com", "b.test"] }, listed)).toBe(false);
+    // a full grant holds only while the next one is full
+    const full = { ...listed, full: true };
+    expect(grantStillHolds(full, listed)).toBe(false);
+    expect(grantStillHolds(full, full)).toBe(true);
   });
 });

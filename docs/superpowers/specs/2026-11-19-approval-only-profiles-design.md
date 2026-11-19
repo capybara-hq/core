@@ -182,7 +182,7 @@ every `CAPYBARA_*` variable and the device credential.
 |---|---|---|---|
 | Platform | the super admin: startup config (env > file / Nacos), else the admin console | `devices.outsideSandbox`, `devices.network.default`, `devices.network.ceiling`; the host list `sandbox.limits.allowHosts` with `orgHosts`; the kill switch `sandbox.limits.egress` | `allowed`, `open`, `open` |
 | Org | an org admin in a web session (only narrowing through the Platform tool or an API token, as today) | `outsideSandbox`, `deviceNetwork { default?, ceiling?, base?, extraHosts?, excludedHosts? }` | absent = follow the platform |
-| Device, local | the owner on the machine (`capybara-device ceiling set`) widens; the owner in a web session narrows | on-disk `ownerCeiling { outsideSandbox, restrictedProjectReach, network }` and `allowedDomains` | new install: `outsideSandbox: false`, `network: "open"`, reach as today |
+| Device, local | the owner on the machine (`capybara-device ceiling set`, `capybara-device policy add allowedDomains`) widens; the owner in a web session narrows | on-disk `ownerCeiling { outsideSandbox, restrictedProjectReach, network }` and `allowedDomains`; with `network: "allowlist"` the owner's `allowedDomains` is a ceiling, so a per-call host grant counts only where that list covers it (under `open`, grants are bounded by the kernel only) | new install: `outsideSandbox: false`, `network: "open"`, reach as today |
 | Device, cloud | the device owner or an org admin in a web session, both directions within the org and platform ceilings | `devices.network_mode`, `devices.network_hosts` | absent = follow the org |
 
 The effective values come from one pure function, `effectiveDeviceSandbox(platform, org, device,
@@ -200,7 +200,10 @@ provider)`, in the new `packages/kernel/src/sandbox/device-sandbox.ts`. The devi
 - **Allowlist hosts when the ceiling forces `allowlist`:** the org's effective hosts, plus those of
   the owner's hosts the org's list covers.
 - **Per-call host grant:** possible under `orgHosts: extend`. Under `within`, only for hosts the list
-  covers; otherwise it is unavailable ("an admin adds the host").
+  covers; otherwise it is unavailable ("an admin adds the host"). On a local device whose owner
+  network is `allowlist`, only for hosts the owner's `allowedDomains` cover; otherwise it is
+  unavailable ("the device owner adds it on the machine: capybara-device policy add allowedDomains
+  <host>").
 
 The local device intersects every request with its on-disk ceiling even when the kernel's view is
 stale; that rule is unchanged.
@@ -440,6 +443,8 @@ The migration never widens.
   - `fullAccess: true` → `outsideSandbox: true, network: "open"`.
   - `fullAccess: false` → `outsideSandbox: false, network: "allowlist"` with the old
     `allowedDomains`.
+  - Converting `fullAccess: true` to the open network is intended: that device already had the
+    environment network under Full access, so its sandboxed calls gain nothing it could not reach.
   - No device gains reach it did not have before. The CLI prints how to open the network
     (`capybara-device ceiling set --network open`).
   - New installs get the open default.

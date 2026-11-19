@@ -85,12 +85,26 @@ describe("effectiveEgress", () => {
     ]);
   });
 
-  it("adds a command's grants within the kernel's network", () => {
+  it("adds a command's grants within the kernel's network under the open owner network", () => {
     const grants = { hosts: ["a.com", "evil.com"] };
-    expect(hostsOf(effectiveEgress(allowlistPolicy([]), net(["a.com"]), grants))).toEqual([
-      "a.com",
-    ]);
     expect(hostsOf(effectiveEgress(openPolicy(), net(["a.com"]), grants))).toEqual(["a.com"]);
+  });
+
+  it("an owner allowlist bounds the grants: only hosts the owner's list covers", () => {
+    const open = net([], "open-public");
+    expect(
+      hostsOf(effectiveEgress(allowlistPolicy(["a.com"]), open, { hosts: ["evil.example.com"] })),
+    ).toEqual(["a.com"]);
+    expect(hostsOf(effectiveEgress(allowlistPolicy([]), open, { hosts: ["a.com"] }))).toEqual([]);
+    expect(
+      hostsOf(effectiveEgress(allowlistPolicy(["*.b.com"]), open, { hosts: ["x.b.com", "c.com"] })),
+    ).toEqual(["*.b.com", "x.b.com"]);
+    // and still within the kernel's allowlist
+    expect(
+      hostsOf(
+        effectiveEgress(allowlistPolicy(["*.b.com"]), net(["y.b.com"]), { hosts: ["x.b.com"] }),
+      ),
+    ).toEqual(["y.b.com"]);
   });
 });
 
