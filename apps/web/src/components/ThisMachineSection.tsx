@@ -51,9 +51,9 @@ function useLastView(deviceId: string): string | null {
 const isCancelled = (e: unknown) => (e as { code?: unknown } | null)?.code === "cancelled";
 
 /**
- * 本机 on the device page of the device the shell says is this machine (desktop client spec §9.6):
- * the live running list (`device@1.running`, no command text), 暂停 / 断开 or 恢复 when stopped, the
- * keep-awake choice with what it cannot prevent (§9.7), and 「电脑曾休眠」 when the machine woke
+ * "This machine" on the device page of the device the shell says is this machine (desktop client spec §9.6):
+ * the live running list (`device@1.running`, no command text), pause / disconnect or resume when stopped, the
+ * keep-awake choice with what it cannot prevent (§9.7), and the "computer was asleep" note when the machine woke
  * since the person last looked. Every action is a mutation that invalidates the shell status;
  * a native confirmation the person declines (`cancelled`) shows nothing. Nothing renders in a
  * browser or on another device.

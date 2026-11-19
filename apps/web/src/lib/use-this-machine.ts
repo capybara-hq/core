@@ -36,7 +36,7 @@ export type Connected = Extract<ThisMachineStatus, { state: "connected" }>;
 
 /**
  * The shell's status when this machine is the device `deviceId` of the org `orgId` (the device
- * page and the list mark it 本机), else `undefined`: a browser, another device, another org.
+ * page and the list mark it "this machine"), else `undefined`: a browser, another device, another org.
  */
 export function useIsThisMachine(
   orgId: string,

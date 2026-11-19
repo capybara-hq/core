@@ -242,7 +242,7 @@ export function useDeviceChoice(orgId: string, list: DeviceList | undefined): De
   const t = useTranslations("chat");
   const te = useTranslations("devices");
   const nameOf = useDeviceName();
-  // the device the shell says this machine is (the desktop client): marked 本机 in the menu
+  // the device the shell says this machine is (the desktop client): marked "this machine" in the menu
   const thisMachine = useThisMachineDeviceId(orgId);
   const [picked, setPicked] = useState<string | null>(null);
   /** The project picked, with the device it belongs to. */
