@@ -6773,6 +6773,7 @@ span.r-scal-daynum {
 }
 .r-ld-row {
   display: flex;
+  box-sizing: border-box;
   align-items: center;
   gap: var(--cb-space-3);
   height: 64px;
@@ -6822,7 +6823,7 @@ span.r-scal-daynum {
   margin: 0 0 var(--cb-space-3);
   font-size: var(--cb-type-h2-size);
   line-height: var(--cb-type-h2-line);
-  font-weight: 600;
+  font-weight: 500;
 }
 .r-ld-facts {
   display: grid;
@@ -6905,6 +6906,27 @@ span.r-scal-daynum {
   height: var(--cb-row-roomy);
   font-weight: 600;
 }
+/* The initial avatar: 24, round, on selected (spec §6.48). */
+.r-me-account .r-avatar {
+  border-radius: 50%;
+  font-size: var(--cb-type-small-size);
+}
+/* The ThemeToggle's options (control.dense − 6), the chosen one on selected. */
+.r-me-theme {
+  padding: 2px;
+}
+.r-me-theme-opt {
+  display: inline-grid;
+  place-items: center;
+  width: calc(var(--cb-control-dense) - 6px);
+  height: calc(var(--cb-control-dense) - 6px);
+  border-radius: var(--cb-radius-sm);
+  color: var(--cb-muted);
+}
+.r-me-theme-opt[aria-checked="true"] {
+  background: var(--cb-selected);
+  color: var(--cb-ink);
+}
 .r-me-group {
   display: flex;
   flex-direction: column;
@@ -6951,6 +6973,9 @@ span.r-scal-daynum {
 }
 .r-me-value {
   color: var(--cb-muted);
+}
+.r-me-row .r-me-theme-opt .cb-icon {
+  color: inherit;
 }
 .r-me-system {
   margin: 0;

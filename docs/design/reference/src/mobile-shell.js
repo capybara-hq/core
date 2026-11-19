@@ -72,8 +72,8 @@ window.__CB_EXTRA__ = ({ F, esc, icon, table }) => {
       .join("")}</dl></div>`;
   }
 
-  function decisionButton(d, part) {
-    return `<button class="r-btn" data-variant="${d.variant}" data-part="${part}">${esc(d.label)}</button>`;
+  function decisionButton(d) {
+    return `<button class="r-btn" data-variant="${d.variant}">${esc(d.label)}</button>`;
   }
 
   // Compact (§4.4): the secondary decisions side by side on one line, the primary alone on the
@@ -81,15 +81,18 @@ window.__CB_EXTRA__ = ({ F, esc, icon, table }) => {
   function decisionRow(o = {}) {
     const ds = L.detail.decisions;
     if (!o.compact) {
-      return `<div class="r-actionrow r-ld-actions" data-part="decision-row"><span class="r-actionrow-text"></span>${ds
-        .map((d) => decisionButton(d, d.variant === "primary" ? "decision-primary" : "decision-secondary"))
+      return `<div class="r-actionrow r-ld-actions" data-part="action-row"><span class="r-actionrow-text"></span>${ds
+        .map((d) => decisionButton(d))
         .join("")}</div>`;
     }
     const primary = ds.filter((d) => d.variant === "primary");
     const others = ds.filter((d) => d.variant !== "primary");
+    // The ActionRow's own parts (spec §4.4): the secondaries' line and the primary's line.
     const line = (list, part) =>
-      list.length ? `<div class="r-actionrow-line">${list.map((d) => decisionButton(d, part)).join("")}</div>` : "";
-    return `<div class="r-actionrow r-ld-actions" data-part="decision-row" data-compact>${line(others, "decision-secondary")}${line(primary, "decision-primary")}</div>`;
+      list.length
+        ? `<div class="r-actionrow-line" data-part="${part}">${list.map((d) => decisionButton(d)).join("")}</div>`
+        : "";
+    return `<div class="r-actionrow r-ld-actions" data-part="action-row" data-compact>${line(others, "action-secondary")}${line(primary, "action-primary")}</div>`;
   }
 
   function listDetail(o) {
@@ -111,7 +114,8 @@ window.__CB_EXTRA__ = ({ F, esc, icon, table }) => {
     const trailing = it.value
       ? `<span class="r-me-value">${esc(it.value)}</span>`
       : it.id === "theme"
-        ? `<span class="r-theme">${icon("sun", 12)}${icon("moon", 12)}</span>`
+        ? // The ThemeToggle (spec §6.13 account row): light / dark icon radio, the chosen one on `selected`.
+          `<span class="r-theme r-me-theme" role="radiogroup"><span class="r-me-theme-opt" role="radio" aria-checked="true">${icon("sun", 14)}</span><span class="r-me-theme-opt" role="radio" aria-checked="false">${icon("moon", 14)}</span></span>`
         : it.external
           ? icon("arrow-up-right", 14)
           : it.id === "sign-out"
