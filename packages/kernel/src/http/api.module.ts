@@ -67,6 +67,7 @@ import { FilePreviewersController } from "../files/previewers.controller.js";
 import { GitModule } from "../git/git.module.js";
 import { HtmlModule } from "../html/html.module.js";
 import { HtmlDocumentController } from "../html/html-document.controller.js";
+import { AppAuthController } from "../identity/app-auth.controller.js";
 import { AuthController } from "../identity/auth.controller.js";
 import { AuthGuard } from "../identity/auth.guard.js";
 import { IdentityModule } from "../identity/identity.module.js";
@@ -131,6 +132,7 @@ import { MetaController } from "./meta.controller.js";
 /** Every controller of the kernel API. */
 const CONTROLLERS: Type[] = [
   AuthController,
+  AppAuthController,
   MetaController,
   MeController,
   InitialPasswordsController,

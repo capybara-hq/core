@@ -81,6 +81,17 @@ export const PLATFORM_EXCLUSIONS: readonly {
     category: "transport",
     reason: "Pre-sign-in discovery for native clients: platform name, icon and protocol ranges",
   },
+  // native-app sign-in (desktop client spec §6.5)
+  {
+    route: "POST /api/v1/app-auth/authorize",
+    category: "human-only",
+    reason: "A person consents in the browser to sign a native app in",
+  },
+  {
+    route: "POST /api/v1/app-auth/token",
+    category: "transport",
+    reason: "A native app exchanges a one-time sign-in code; nothing for an agent",
+  },
   // setup
   {
     route: "GET /api/v1/setup",
