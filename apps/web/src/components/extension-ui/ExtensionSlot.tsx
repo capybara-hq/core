@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  ClassSwap,
   DecorationLayer,
   FormSection,
   InlineCard,
@@ -10,6 +11,7 @@ import {
   type SidebarBrandVariant,
   Stack,
   Text,
+  useSizeClass,
 } from "@capybara-hq/design";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
@@ -144,6 +146,26 @@ type AnySlotProps = {
 const NONE: UiContributionItem[] = [];
 
 /**
+ * A contribution's compact form (mobile layout spec §5.6): `hidden` is drawn only on the other
+ * classes. The server does not know the width, so it draws the content in the region CSS hides
+ * on the compact class; once the window is known to be compact the content is not rendered at all
+ * (no client code or reads for what nobody sees). `kept` is drawn in place; `drawer` is drawn
+ * where the slot's owner puts it: the `conversation.panel` area is the pushed right area on
+ * compact, and any other slot has no sheet of its own, so its contribution stays in place.
+ */
+function CompactGate({
+  c,
+  children,
+}: {
+  c: Pick<UiContributionItem, "compact">;
+  children: ReactNode;
+}) {
+  const sizeClass = useSizeClass();
+  if (c.compact !== "hidden") return children;
+  return <ClassSwap compact={null}>{sizeClass === "compact" ? null : children}</ClassSwap>;
+}
+
+/**
  * The org's contributions of one slot, in the kernel's (arranged) order. A failed read (not read
  * again on mount) lists none; `pending` while the first read is on its way. `enabled` false: no
  * read, only what the cache holds (the shell slots read only when the document has client code
@@ -250,13 +272,9 @@ function OverlaySlot({ args }: { args: SlotArgs["shell.overlay"] }) {
   return (
     <DecorationLayer>
       {shown.map((c) => (
-        <ClientComponentBlock
-          key={uiKey(c.plugin, c.id)}
-          c={c}
-          args={{ orgId: args.orgId }}
-          hostProps={NO_PROPS}
-          quiet
-        />
+        <CompactGate key={uiKey(c.plugin, c.id)} c={c}>
+          <ClientComponentBlock c={c} args={{ orgId: args.orgId }} hostProps={NO_PROPS} quiet />
+        </CompactGate>
       ))}
     </DecorationLayer>
   );
@@ -330,13 +348,15 @@ function PanelSlot({
   if (!c) return null;
   if (c.kind === "component") {
     return (
-      <ComponentPanel
-        key={`${uiKey(c.plugin, c.id)}/${args.item ?? ""}`}
-        c={c}
-        title={c.title[uiLocale(locale)]}
-        args={args}
-        host={host}
-      />
+      <CompactGate c={c}>
+        <ComponentPanel
+          key={`${uiKey(c.plugin, c.id)}/${args.item ?? ""}`}
+          c={c}
+          title={c.title[uiLocale(locale)]}
+          args={args}
+          host={host}
+        />
+      </CompactGate>
     );
   }
   const ctx: BlockContext = {
@@ -345,15 +365,17 @@ function PanelSlot({
     onOpen: host.onOpenTarget,
   };
   return (
-    <ExtensionPanel
-      key={`${uiKey(c.plugin, c.id)}/${args.item ?? ""}`}
-      ctx={ctx}
-      c={c}
-      item={args.item}
-      {...(host.switcher ? { switcher: host.switcher } : {})}
-      onClose={host.onClose}
-      onFullscreen={host.onFullscreen}
-    />
+    <CompactGate c={c}>
+      <ExtensionPanel
+        key={`${uiKey(c.plugin, c.id)}/${args.item ?? ""}`}
+        ctx={ctx}
+        c={c}
+        item={args.item}
+        {...(host.switcher ? { switcher: host.switcher } : {})}
+        onClose={host.onClose}
+        onFullscreen={host.onFullscreen}
+      />
+    </CompactGate>
   );
 }
 
@@ -381,23 +403,24 @@ function SectionSlot({
   };
   return (
     <>
-      {shown.map((c) =>
-        c.kind === "component" ? (
-          <ClientComponentBlock
-            key={uiKey(c.plugin, c.id)}
-            c={c}
-            args={{ orgId: args.orgId, conversationId: args.conversationId }}
-            hostProps={{ conversationId: args.conversationId }}
-            frame={(block) => (
-              <div data-extension-section={uiKey(c.plugin, c.id)}>
-                <PropertySection title={c.title[locale]}>{block}</PropertySection>
-              </div>
-            )}
-          />
-        ) : (
-          <ExtensionSection key={uiKey(c.plugin, c.id)} ctx={ctx} c={c} />
-        ),
-      )}
+      {shown.map((c) => (
+        <CompactGate key={uiKey(c.plugin, c.id)} c={c}>
+          {c.kind === "component" ? (
+            <ClientComponentBlock
+              c={c}
+              args={{ orgId: args.orgId, conversationId: args.conversationId }}
+              hostProps={{ conversationId: args.conversationId }}
+              frame={(block) => (
+                <div data-extension-section={uiKey(c.plugin, c.id)}>
+                  <PropertySection title={c.title[locale]}>{block}</PropertySection>
+                </div>
+              )}
+            />
+          ) : (
+            <ExtensionSection ctx={ctx} c={c} />
+          )}
+        </CompactGate>
+      ))}
     </>
   );
 }
@@ -422,18 +445,20 @@ function CardSlot({
       ...(args.card.key !== undefined && { key: args.card.key }),
     };
     return (
-      <ClientComponentBlock
-        c={c}
-        args={{ orgId: args.orgId, conversationId: args.conversationId, card }}
-        hostProps={{ conversationId: args.conversationId, card }}
-        frame={(block) => (
-          <div data-extension-card={uiKey(c.plugin, c.id)}>
-            <InlineCard source={c.title[locale]} state="ready">
-              {block}
-            </InlineCard>
-          </div>
-        )}
-      />
+      <CompactGate c={c}>
+        <ClientComponentBlock
+          c={c}
+          args={{ orgId: args.orgId, conversationId: args.conversationId, card }}
+          hostProps={{ conversationId: args.conversationId, card }}
+          frame={(block) => (
+            <div data-extension-card={uiKey(c.plugin, c.id)}>
+              <InlineCard source={c.title[locale]} state="ready">
+                {block}
+              </InlineCard>
+            </div>
+          )}
+        />
+      </CompactGate>
     );
   }
   const ctx: BlockContext = {
@@ -442,13 +467,15 @@ function CardSlot({
     onOpen: host.onOpenTarget,
   };
   return (
-    <ExtensionCard
-      ctx={ctx}
-      c={c}
-      panel={panels.find((x) => x.plugin === c.plugin)}
-      callId={args.card.callId}
-      {...(args.card.key !== undefined ? { cardKey: args.card.key } : {})}
-    />
+    <CompactGate c={c}>
+      <ExtensionCard
+        ctx={ctx}
+        c={c}
+        panel={panels.find((x) => x.plugin === c.plugin)}
+        callId={args.card.callId}
+        {...(args.card.key !== undefined ? { cardKey: args.card.key } : {})}
+      />
+    </CompactGate>
   );
 }
 
@@ -471,22 +498,26 @@ function OrgPageSlot({
   const key = uiKey(c.plugin, c.id);
   if (c.kind === "component")
     return (
-      <ClientComponentBody
-        key={key}
-        c={c}
-        args={{ orgId: args.orgId }}
-        hostProps={NO_PROPS}
-        size="page"
-      />
+      <CompactGate c={c}>
+        <ClientComponentBody
+          key={key}
+          c={c}
+          args={{ orgId: args.orgId }}
+          hostProps={NO_PROPS}
+          size="page"
+        />
+      </CompactGate>
     );
   return (
-    <BlockBoundary name={c.title[locale]}>
-      {c.kind === "embed" ? (
-        <OrgPageEmbed key={key} orgId={args.orgId} c={c} />
-      ) : (
-        <OrgPageView key={key} orgId={args.orgId} c={c} />
-      )}
-    </BlockBoundary>
+    <CompactGate c={c}>
+      <BlockBoundary name={c.title[locale]}>
+        {c.kind === "embed" ? (
+          <OrgPageEmbed key={key} orgId={args.orgId} c={c} />
+        ) : (
+          <OrgPageView key={key} orgId={args.orgId} c={c} />
+        )}
+      </BlockBoundary>
+    </CompactGate>
   );
 }
 
@@ -522,22 +553,26 @@ function PlatformPageSlot({
   const key = uiKey(c.plugin, c.id);
   if (c.kind === "component")
     return (
-      <ClientComponentBody
-        key={key}
-        c={c}
-        args={{ orgId: null }}
-        hostProps={NO_PROPS}
-        size="page"
-      />
+      <CompactGate c={c}>
+        <ClientComponentBody
+          key={key}
+          c={c}
+          args={{ orgId: null }}
+          hostProps={NO_PROPS}
+          size="page"
+        />
+      </CompactGate>
     );
   return (
-    <BlockBoundary name={c.title[locale]}>
-      {c.kind === "embed" ? (
-        <OrgPageEmbed key={key} orgId={null} c={c} />
-      ) : (
-        <OrgPageView key={key} orgId={null} c={c} />
-      )}
-    </BlockBoundary>
+    <CompactGate c={c}>
+      <BlockBoundary name={c.title[locale]}>
+        {c.kind === "embed" ? (
+          <OrgPageEmbed key={key} orgId={null} c={c} />
+        ) : (
+          <OrgPageView key={key} orgId={null} c={c} />
+        )}
+      </BlockBoundary>
+    </CompactGate>
   );
 }
 
@@ -551,7 +586,9 @@ function OrgSettingsSlot({ args }: { args: SlotArgs["org.settings.section"] }) {
   return (
     <>
       {items.map((c) => (
-        <OrgSettingsSection key={uiKey(c.plugin, c.id)} orgId={args.orgId} c={c} />
+        <CompactGate key={uiKey(c.plugin, c.id)} c={c}>
+          <OrgSettingsSection orgId={args.orgId} c={c} />
+        </CompactGate>
       ))}
     </>
   );
@@ -612,38 +649,42 @@ function AgentSectionSlot({
   if (c.kind === "component") {
     // the section always draws its frame, with the component's state inside
     return (
-      <FormSection id={`ext-${c.plugin}-${c.id}`} title={title} flush>
-        <div data-extension-section={key}>
-          <ClientComponentBody
-            key={`${key}/${args.agentId}`}
-            c={c}
-            args={{ orgId: args.orgId, agentId: args.agentId }}
-            hostProps={{ agentId: args.agentId }}
-            size="panel"
-          />
-        </div>
-      </FormSection>
+      <CompactGate c={c}>
+        <FormSection id={`ext-${c.plugin}-${c.id}`} title={title} flush>
+          <div data-extension-section={key}>
+            <ClientComponentBody
+              key={`${key}/${args.agentId}`}
+              c={c}
+              args={{ orgId: args.orgId, agentId: args.agentId }}
+              hostProps={{ agentId: args.agentId }}
+              size="panel"
+            />
+          </div>
+        </FormSection>
+      </CompactGate>
     );
   }
   return (
-    <FormSection id={`ext-${c.plugin}-${c.id}`} title={title} flush>
-      <div data-extension-section={key}>
-        <BlockBoundary name={title}>
-          {c.kind === "embed" ? (
-            <EmbedTab
-              key={`${key}/${args.agentId}`}
-              orgId={args.orgId}
-              plugin={c.plugin}
-              id={c.id}
-              title={title}
-              agentId={args.agentId}
-            />
-          ) : (
-            <AgentSectionView key={`${key}/${args.agentId}`} args={args} c={c} />
-          )}
-        </BlockBoundary>
-      </div>
-    </FormSection>
+    <CompactGate c={c}>
+      <FormSection id={`ext-${c.plugin}-${c.id}`} title={title} flush>
+        <div data-extension-section={key}>
+          <BlockBoundary name={title}>
+            {c.kind === "embed" ? (
+              <EmbedTab
+                key={`${key}/${args.agentId}`}
+                orgId={args.orgId}
+                plugin={c.plugin}
+                id={c.id}
+                title={title}
+                agentId={args.agentId}
+              />
+            ) : (
+              <AgentSectionView key={`${key}/${args.agentId}`} args={args} c={c} />
+            )}
+          </BlockBoundary>
+        </div>
+      </FormSection>
+    </CompactGate>
   );
 }
 

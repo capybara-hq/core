@@ -7,7 +7,9 @@ import type {
   JsonValue,
   RunState,
   SignIn,
+  SizeClass,
   UiView,
+  ViewportSegment,
 } from "./types.js";
 
 /** Thrown by a hook used outside a component the host rendered. */
@@ -50,6 +52,10 @@ export interface HostApi {
   storage: ClientStorage;
   assetUrl(path: string): string;
   signIn: SignIn;
+  /** The window's size class; null while the host does not know it (server render). */
+  sizeClass: SizeClass | null;
+  /** The two segments of a window spanning two screens, else null. */
+  viewportSegments: ViewportSegment[] | null;
   /** Subscribes to client events; returns the unsubscribe function. */
   subscribe(handler: (e: CapybaraEvent) => void): () => void;
 }

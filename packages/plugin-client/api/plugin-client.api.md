@@ -247,6 +247,9 @@ export interface SignIn {
 }
 
 // @public
+export type SizeClass = "compact" | "medium" | "expanded";
+
+// @public
 export interface SlotComponentProps {
     "agent.detail.section": {
         agentId: string;
@@ -388,6 +391,9 @@ export function useRunState(): {
 export function useSignIn(): SignIn;
 
 // @public
+export function useSizeClass(): SizeClass | null;
+
+// @public
 export function useTheme(): {
     key: string | null;
     scheme: "dark" | "light";
@@ -395,6 +401,11 @@ export function useTheme(): {
 
 // @public
 export function useView(): ViewState;
+
+// Warning: (ae-forgotten-export) The symbol "ViewportSegment" needs to be exported by the entry point index.d.ts
+//
+// @public
+export function useViewportSegments(): ViewportSegment[] | null;
 
 // @public
 export const ViewBlocks: ComponentType<ViewBlocksProps>;

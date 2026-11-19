@@ -10,6 +10,8 @@ import {
   useLocale,
   useRunState,
   useSignIn,
+  useSizeClass,
+  useViewportSegments,
 } from "../src/index.js";
 import { renderWithFakeHost } from "../src/testing/index.js";
 
@@ -170,5 +172,41 @@ describe("hooks, more", () => {
   it("every design name is a package export", () => {
     expect(DESIGN_NAMES.length).toBe(13);
     expect(DESIGN_NAMES.filter((n) => !(n in exports))).toEqual([]);
+  });
+});
+
+describe("window hooks", () => {
+  it("useSizeClass and useViewportSegments return what the fake host is given", () => {
+    const segments = [
+      { x: 0, y: 0, width: 400, height: 800 },
+      { x: 420, y: 0, width: 400, height: 800 },
+    ];
+    function Probe() {
+      return (
+        <p>
+          {String(useSizeClass())}/{String(useViewportSegments()?.length ?? null)}
+        </p>
+      );
+    }
+    const given = renderWithFakeHost(<Probe />, {
+      slot: "org.page",
+      sizeClass: "compact",
+      viewportSegments: segments,
+    });
+    expect(screen.getByText("compact/2")).toBeTruthy();
+    given.unmount();
+    const none = renderWithFakeHost(<Probe />, { slot: "org.page" });
+    expect(screen.getByText("null/null")).toBeTruthy();
+    none.unmount();
+  });
+
+  it("useSizeClass throws PluginClientContextError outside the host", () => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    function Probe() {
+      useSizeClass();
+      return null;
+    }
+    expect(() => render(<Probe />)).toThrow(PluginClientContextError);
+    spy.mockRestore();
   });
 });

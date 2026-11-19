@@ -18,6 +18,9 @@ import {
   Stack,
   Text,
   Tooltip,
+  useSizeClass,
+  useViewportSegments,
+  type ViewportSegment,
 } from "@capybara-hq/design";
 import { useQuery } from "@tanstack/react-query";
 import { useLocale as useIntlLocale } from "next-intl";
@@ -91,6 +94,8 @@ export interface HostServices {
   storage: ClientApi["storage"];
   assetUrl(path: string): string;
   signIn: ClientApi["signIn"];
+  sizeClass: "compact" | "medium" | "expanded" | null;
+  viewportSegments: ViewportSegment[] | null;
   subscribe(handler: (e: CapybaraEvent) => void): () => void;
 }
 
@@ -216,6 +221,8 @@ export function useHostServices(plugin: string, contribution: string | null): Ho
   const run = useRunStateValue();
   const reducedMotion = useReducedMotion();
   const themeKey = useResolvedTheme()?.key ?? null;
+  const sizeClass = useSizeClass();
+  const viewportSegments = useViewportSegments();
   const scheme = useSyncExternalStore(subscribeScheme, schemeNow, () => "dark" as const);
   const member = me?.memberships.find((m) => m.orgId === orgId)?.role;
   const role: ClientRole = scope === "admin" ? "superAdmin" : isOrgRole(member) ? member : "guest";
@@ -251,9 +258,25 @@ export function useHostServices(plugin: string, contribution: string | null): Ho
       storage,
       assetUrl,
       signIn,
+      sizeClass,
+      viewportSegments,
       subscribe,
     }),
-    [scope, orgId, role, locale, run, reducedMotion, theme, storage, assetUrl, signIn, subscribe],
+    [
+      scope,
+      orgId,
+      role,
+      locale,
+      run,
+      reducedMotion,
+      theme,
+      storage,
+      assetUrl,
+      signIn,
+      sizeClass,
+      viewportSegments,
+      subscribe,
+    ],
   );
 }
 
@@ -351,4 +374,6 @@ export const PLUGIN_CLIENT: Record<string, unknown> = {
   useClientStorage: () => useHost("useClientStorage").api.storage,
   useAssetUrl: () => useHost("useAssetUrl").api.assetUrl,
   useSignIn: () => useHost("useSignIn").api.signIn,
+  useSizeClass: () => useHost("useSizeClass").api.sizeClass,
+  useViewportSegments: () => useHost("useViewportSegments").api.viewportSegments,
 };

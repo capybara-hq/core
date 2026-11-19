@@ -15,6 +15,7 @@ const item = (plugin: string, id: string, after?: string): UiContributionItem =>
   ...(after !== undefined && { after }),
   kind: "view",
   icon: "puzzle",
+  compact: "kept",
 });
 const keys = (items: UiContributionItem[]) => items.map((i) => `${i.plugin}/${i.id}`);
 const entry = (e: Partial<UiListEntry>): UiListEntry => ({

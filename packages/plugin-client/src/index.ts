@@ -47,8 +47,10 @@ export {
   usePrefersReducedMotion,
   useRunState,
   useSignIn,
+  useSizeClass,
   useTheme,
   useView,
+  useViewportSegments,
 } from "./hooks.js";
 export type { ComponentSlotId } from "./slots.generated.js";
 export type {
@@ -63,6 +65,7 @@ export type {
   JsonValue,
   RunState,
   SignIn,
+  SizeClass,
   SlotComponentProps,
   UiView,
 } from "./types.js";

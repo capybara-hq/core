@@ -21,6 +21,17 @@ export interface UiView {
   data?: JsonValue;
 }
 
+/** The window's size class, by width only (mobile layout spec §3). */
+export type SizeClass = "compact" | "medium" | "expanded";
+
+/** One screen of a window that spans two (folded or dual-screen display), in CSS px. */
+export interface ViewportSegment {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
 export type RunState = "idle" | "running" | "waiting" | "failed";
 
 export type ClientRole = "owner" | "admin" | "member" | "guest" | "superAdmin";
