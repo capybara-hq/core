@@ -460,7 +460,7 @@ it("a grant missed at admission fails with an actionable text, never a silent sa
   expect(ESCALATION_GRANT_MISSING_TEXT).toMatch(/no longer matches.*ask again/);
   // the record names what was admitted, not what was asked: nothing ran outside the sandbox
   expect(result?.review).toMatchObject({ decision: "allow", decisionSource: "review-model" });
-  expect((result?.review as { sandbox?: unknown }).sandbox).toBeUndefined();
+  expect((result?.review as { sandbox?: unknown } | undefined)?.sandbox).toBeUndefined();
 });
 
 it.each(["approve-for-me", "request-approval"] as const)(
@@ -491,7 +491,7 @@ it.each(["approve-for-me", "request-approval"] as const)(
     const [result] = await f.results();
     expect(result?.isError).toBe(true);
     expect(result?.content).toBe(ESCALATION_GRANT_MISSING_TEXT);
-    expect((result?.review as { sandbox?: unknown }).sandbox).toBeUndefined();
+    expect((result?.review as { sandbox?: unknown } | undefined)?.sandbox).toBeUndefined();
   },
 );
 

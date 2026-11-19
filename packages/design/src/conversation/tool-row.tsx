@@ -61,8 +61,8 @@ export type ToolRowData = {
   notice?: ToolNotice;
   /**
    * A command the command review admitted to run outside the OS sandbox (a per-call escalation):
-   * a done or failed row adds the neutral word "在沙箱外运行" / "Ran outside the sandbox" in
-   * `muted` (§6.16.9).
+   * a done or failed row adds the neutral word "Ran outside the sandbox" (`tool.outsideSandbox`)
+   * in `muted` (§6.16.9).
    */
   outsideSandbox?: boolean;
   /** The error; its first line is shown after "Failed". */
