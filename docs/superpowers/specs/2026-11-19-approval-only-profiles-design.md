@@ -262,7 +262,25 @@ by the operation's own proxy: macOS SRT, the Linux forwarder, or a provider's eg
 dials the address it checked, so DNS rebinding cannot swap it.
 
 An IP literal is classified by the same rules as a resolved name. SRT skips its resolved-address
-guard for literals, so the macOS worker adds explicit `deniedDomains` CIDR rules.
+guard for literals and gives `localhost` a loopback carve-out, so the patched runtime's
+`resolvedAddressStrict` (set by the macOS worker) runs literals through the same guard, the host's
+own addresses included, and drops the carve-out. (SRT's `deniedDomains` takes no CIDR rules.)
+
+**Fake-IP resolvers** (maintainer decision 2026-11-19). A router or local proxy in fake-IP mode
+(OpenClash and the like) intercepts every DNS query, port 53 to any server included, and answers
+each name with an address in `198.18.0.0/15`, which is closed (`reserved`). An answer containing such
+an address is taken as the signal: the operation's proxy re-resolves the name through
+DNS-over-HTTPS (JSON API, A and AAAA) to IP-literal endpoints, Cloudflare `https://1.1.1.1/dns-query`
+and `https://1.0.0.1/dns-query`, then Google `https://8.8.8.8/resolve` and `https://8.8.4.4/resolve`,
+TLS verified against the endpoint's IP certificate, so no DNS is needed to reach them. The real
+answer is judged and dialed like any resolved address (closed classes and the host's own addresses
+refused, the checked address dialed). The lookup runs in the proxy, outside the sandbox, within a
+5-second deadline, and is cached per operation for its TTL (at most 300 s). When it fails the
+connection is refused with a reason naming the fake-IP resolver; the fake address is never dialed.
+The allowlist network uses the same path, so an allow-listed name works on such networks too. This
+lives in the patched runtime's guard (`fakeIpDoh`), so the rebinding protection holds. macOS only
+in R3; the Linux forwarder (T8) needs the same before it reports `openPublic`. A device setting to
+override or switch off the endpoints is later work.
 
 Closed in open mode, and reachable only by running outside the sandbox:
 

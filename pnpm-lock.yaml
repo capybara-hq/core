@@ -6,7 +6,7 @@ settings:
 
 patchedDependencies:
   '@anthropic-ai/sandbox-runtime@0.0.81':
-    hash: e4eabc8eec93262b541f8d83021912270eb83bb95f7f6c84352a5219d1e4d00c
+    hash: 09cee5147703dbfe7475b342ca588e03fdb2ae90d2f7fa62b3e681ddc4972eb9
     path: patches/@anthropic-ai__sandbox-runtime@0.0.81.patch
 
 importers:
@@ -225,7 +225,7 @@ importers:
     devDependencies:
       '@anthropic-ai/sandbox-runtime':
         specifier: 0.0.81
-        version: 0.0.81(patch_hash=e4eabc8eec93262b541f8d83021912270eb83bb95f7f6c84352a5219d1e4d00c)
+        version: 0.0.81(patch_hash=09cee5147703dbfe7475b342ca588e03fdb2ae90d2f7fa62b3e681ddc4972eb9)
       '@capybara-hq/plugin-sdk':
         specifier: workspace:^
         version: link:../plugin-sdk
@@ -5638,7 +5638,7 @@ packages:
 
 snapshots:
 
-  '@anthropic-ai/sandbox-runtime@0.0.81(patch_hash=e4eabc8eec93262b541f8d83021912270eb83bb95f7f6c84352a5219d1e4d00c)':
+  '@anthropic-ai/sandbox-runtime@0.0.81(patch_hash=09cee5147703dbfe7475b342ca588e03fdb2ae90d2f7fa62b3e681ddc4972eb9)':
     dependencies:
       '@pondwader/socks5-server': 1.0.10
       commander: 12.1.0

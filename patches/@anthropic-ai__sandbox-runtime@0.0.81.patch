@@ -61,10 +61,166 @@ index 0e598b612d84d24b09ec2ab0d7ccc9b009c9457b..10c4bd0b6518f6b968a105b0ed70838b
          '  (sysctl-name "hw.ncpu")',
          '  (sysctl-name "hw.nperflevels")',
 diff --git a/dist/sandbox/resolved-address-guard.js b/dist/sandbox/resolved-address-guard.js
-index 54970f754e71188fb6ab98971b39560b0b8f8724..4ee3cee6dde61363d97ff1ca77818102eb7a269f 100644
+index 54970f754e71188fb6ab98971b39560b0b8f8724..3887f78d7c5eeb665496444cd8fd913fc9bc0ada 100644
 --- a/dist/sandbox/resolved-address-guard.js
 +++ b/dist/sandbox/resolved-address-guard.js
-@@ -131,6 +131,10 @@ export function createResolvedAddressGuard(opts = {}) {
+@@ -25,6 +25,8 @@
+ import { lookup as dnsLookup } from 'node:dns';
+ import { BlockList, isIP } from 'node:net';
+ import { networkInterfaces } from 'node:os';
++// capybara patch: DNS-over-HTTPS behind a fake-IP resolver
++import { get as httpsGet } from 'node:https';
+ import { logForDebugging } from '../utils/debug.js';
+ import { ipLiteralRules } from './domain-pattern.js';
+ import { addRange, addressInSet, embeddedIPv4, isLoopbackAddress, isLoopbackName, LOOPBACK_RANGES, } from './address.js';
+@@ -86,6 +88,146 @@ export function localInterfaceAddresses() {
+         .flat()
+         .flatMap(i => (i ? [i.address] : []));
+ }
++/**
++ * capybara patch: DNS-over-HTTPS for names a fake-IP resolver answered. A router or local proxy in
++ * fake-IP mode (OpenClash and the like) intercepts every DNS query, port 53 to any server
++ * included, and answers each name with an address in 198.18.0.0/15, which it maps back on
++ * connect. The guard cannot judge such an answer, so with `fakeIpDoh` it re-resolves the name
++ * through DNS-over-HTTPS to IP-literal endpoints (TLS verified against the endpoint's IP
++ * certificate; no DNS is needed to reach them) and judges and dials the real answer like any
++ * resolved address. A failed lookup refuses the connection: the fake address is never dialed.
++ */
++const FAKE_IP_RANGES = ['198.18.0.0/15'];
++/** The whole DNS-over-HTTPS lookup of one name (A and AAAA, every endpoint) ends within this. */
++const DOH_DEADLINE_MS = 5000;
++/** Answers are cached for their TTL, at most this long, and at most this many names. */
++const DOH_TTL_CAP_SECONDS = 300;
++const DOH_CACHE_MAX = 256;
++const DOH_ANSWER_MAX_BYTES = 65536;
++function dohEndpoint(entry) {
++    let url;
++    try {
++        url = new URL(entry);
++    }
++    catch { }
++    const host = url?.hostname.replace(/^\[(.*)\]$/, '$1');
++    if (!url || url.protocol !== 'https:' || !isIP(host ?? '') || url.username || url.password || url.search || url.hash)
++        throw new Error(`A DNS-over-HTTPS endpoint must be an https URL with an IP-literal host and no query: ${JSON.stringify(entry)}`);
++    return url;
++}
++/** One JSON DNS-over-HTTPS request (`application/dns-json`, the Cloudflare and Google format). */
++function defaultDohRequest(url, timeoutMs) {
++    return new Promise((resolve, reject) => {
++        const req = httpsGet(url, { headers: { accept: 'application/dns-json' }, agent: false, timeout: timeoutMs }, res => {
++            if (res.statusCode !== 200) {
++                res.resume();
++                reject(new Error(`HTTP ${res.statusCode}`));
++                return;
++            }
++            const chunks = [];
++            let size = 0;
++            res.on('data', chunk => {
++                size += chunk.length;
++                if (size > DOH_ANSWER_MAX_BYTES)
++                    req.destroy(new Error('answer too large'));
++                else
++                    chunks.push(chunk);
++            });
++            res.on('end', () => {
++                try {
++                    resolve(JSON.parse(Buffer.concat(chunks).toString('utf8')));
++                }
++                catch (error) {
++                    reject(error);
++                }
++            });
++            res.on('error', reject);
++        });
++        req.on('timeout', () => req.destroy(new Error('timed out')));
++        req.on('error', reject);
++    });
++}
++function withDeadline(promise, ms) {
++    let timer;
++    return Promise.race([
++        promise,
++        new Promise((_, reject) => {
++            timer = setTimeout(() => reject(new Error('timed out')), ms);
++        }),
++    ]).finally(() => clearTimeout(timer));
++}
++/** The addresses of one JSON answer for `type`, the fake-IP range dropped, and their TTL. */
++function dohAnswer(body, type) {
++    if (!body || typeof body !== 'object' || !Number.isInteger(body.Status))
++        throw new Error('malformed answer');
++    // NXDOMAIN is an answer: the name does not exist
++    if (body.Status === 3)
++        return { addresses: [], ttl: 0 };
++    if (body.Status !== 0)
++        throw new Error(`DNS status ${body.Status}`);
++    const want = type === 'A' ? 1 : 28;
++    const family = type === 'A' ? 4 : 6;
++    const addresses = [];
++    let ttl = DOH_TTL_CAP_SECONDS;
++    for (const record of Array.isArray(body.Answer) ? body.Answer : []) {
++        if (record?.type !== want || typeof record.data !== 'string' || isIP(record.data) !== family)
++            continue;
++        if (addressInSet(FAKE_IP_SET, record.data))
++            continue;
++        addresses.push({ address: record.data, family });
++        if (Number.isFinite(record.TTL))
++            ttl = Math.min(ttl, Math.max(0, Math.floor(record.TTL)));
++    }
++    return { addresses, ttl };
++}
++const FAKE_IP_SET = new BlockList();
++for (const range of FAKE_IP_RANGES)
++    addRange(FAKE_IP_SET, range);
++function createDohResolver(config, request) {
++    const endpoints = (config.endpoints ?? []).map(dohEndpoint);
++    if (!endpoints.length)
++        throw new Error('A DNS-over-HTTPS endpoint list must not be empty');
++    const deadlineMs = config.timeoutMs ?? DOH_DEADLINE_MS;
++    const cache = new Map();
++    const query = async (name, type, deadline) => {
++        let last;
++        for (const endpoint of endpoints) {
++            const remaining = deadline - Date.now();
++            if (remaining <= 0)
++                break;
++            const url = new URL(endpoint.href);
++            url.searchParams.set('name', name);
++            url.searchParams.set('type', type);
++            try {
++                return dohAnswer(await withDeadline(Promise.resolve().then(() => request(url.href, remaining)), remaining), type);
++            }
++            catch (error) {
++                last = error;
++            }
++        }
++        throw last ?? new Error('timed out');
++    };
++    return async (hostname) => {
++        const name = hostname.toLowerCase().replace(/\.$/, '');
++        const hit = cache.get(name);
++        if (hit && hit.expires > Date.now())
++            return hit.addresses;
++        cache.delete(name);
++        const deadline = Date.now() + deadlineMs;
++        const answers = await Promise.allSettled([query(name, 'A', deadline), query(name, 'AAAA', deadline)]);
++        const ok = answers.filter(a => a.status === 'fulfilled').map(a => a.value);
++        if (!ok.length)
++            throw answers[0].reason;
++        const addresses = ok.flatMap(a => a.addresses);
++        const ttl = Math.min(...ok.map(a => a.ttl));
++        if (ttl > 0) {
++            if (cache.size >= DOH_CACHE_MAX)
++                cache.delete(cache.keys().next().value);
++            cache.set(name, { addresses, expires: Date.now() + ttl * 1000 });
++        }
++        return addresses;
++    };
++}
+ export class ResolvedAddressDeniedError extends Error {
+     /**
+      * @param reason parenthetical for the violation line and the client, e.g.
+@@ -131,6 +273,14 @@ export function createResolvedAddressGuard(opts = {}) {
          ['a listed address', buildRuleSet(opts.deniedResolvedAddresses ?? [])],
      ];
      const resolve = opts.resolve ?? dnsLookup;
@@ -72,10 +228,14 @@ index 54970f754e71188fb6ab98971b39560b0b8f8724..4ee3cee6dde61363d97ff1ca77818102
 +    // literal by the same rules as a resolved name (see `literalDenial`), and the reserved
 +    // loopback names without their loopback carve-out
 +    const strict = opts.resolvedAddressStrict === true;
++    // capybara patch: the DNS-over-HTTPS resolver for fake-IP answers (`fakeIpDoh`)
++    const doh = opts.fakeIpDoh
++        ? createDohResolver(opts.fakeIpDoh, opts.dohRequest ?? defaultDohRequest)
++        : undefined;
      /** This host's addresses right now; a malformed entry from the seam is skipped. */
      const localSet = () => {
          const list = new BlockList();
-@@ -140,8 +144,8 @@ export function createResolvedAddressGuard(opts = {}) {
+@@ -140,8 +290,8 @@ export function createResolvedAddressGuard(opts = {}) {
          return list;
      };
      /** Why `hostname:port` may not use resolved `address`, or undefined if it may. */
@@ -86,7 +246,7 @@ index 54970f754e71188fb6ab98971b39560b0b8f8724..4ee3cee6dde61363d97ff1ca77818102
              return undefined;
          if (!isIP(address))
              return 'an unparsable address';
-@@ -159,7 +163,7 @@ export function createResolvedAddressGuard(opts = {}) {
+@@ -159,7 +309,7 @@ export function createResolvedAddressGuard(opts = {}) {
              return 'a deny-listed address';
          if (inRuleSet(allowed, address, port))
              return undefined;
@@ -95,7 +255,38 @@ index 54970f754e71188fb6ab98971b39560b0b8f8724..4ee3cee6dde61363d97ff1ca77818102
              return isLoopbackAddress(address) ? undefined : 'a non-loopback address';
          }
          const why = denied.find(([, set]) => denies(set))?.[0];
-@@ -215,6 +219,9 @@ export function createResolvedAddressGuard(opts = {}) {
+@@ -171,11 +321,24 @@ export function createResolvedAddressGuard(opts = {}) {
+         return undefined;
+     };
+     const lookupFor = (port) => (hostname, options, callback) => {
+-        resolve(hostname, { ...options, all: true }, (err, addresses) => {
++        resolve(hostname, { ...options, all: true }, (err, answer) => {
+             if (err) {
+                 callback(err, []);
+                 return;
+             }
++            // capybara patch: a fake-IP answer is re-resolved through DNS-over-HTTPS, and only
++            // the real answer is judged; when that fails, the connection is refused
++            if (doh && answer.some(a => isIP(a.address) && addressInSet(FAKE_IP_SET, a.address))) {
++                doh(hostname).then(judge, error => {
++                    const fake = answer.map(a => a.address);
++                    logForDebugging(`DNS-over-HTTPS failed for ${hostname}:${port} behind a fake-IP resolver: ${error?.message ?? error}`);
++                    callback(new ResolvedAddressDeniedError(hostname, `resolved by a fake-IP resolver (198.18.0.0/15) and the DNS-over-HTTPS lookup failed (${error?.message ?? 'unknown error'})`, fake), []);
++                });
++                return;
++            }
++            judge(answer);
++        });
++        function judge(addresses) {
+             const local = localSet();
+             const kept = [];
+             const dropped = [];
+@@ -211,10 +374,13 @@ export function createResolvedAddressGuard(opts = {}) {
+                 callback(null, kept);
+             else
+                 callback(null, first.address, first.family);
+-        });
++        }
      };
      return {
          permits: (hostname, address, port) => denial(hostname, address, port, localSet()) === undefined,
@@ -106,10 +297,10 @@ index 54970f754e71188fb6ab98971b39560b0b8f8724..4ee3cee6dde61363d97ff1ca77818102
      };
  }
 diff --git a/dist/sandbox/sandbox-config.js b/dist/sandbox/sandbox-config.js
-index 76b00b1dc82a2d42a451a9f58068cbbd5e68da75..863561d2847efcd218114453899bb9e001477e54 100644
+index 76b00b1dc82a2d42a451a9f58068cbbd5e68da75..be19f45db63f7962e69a7fd4f973db19e12ad3c3 100644
 --- a/dist/sandbox/sandbox-config.js
 +++ b/dist/sandbox/sandbox-config.js
-@@ -608,6 +608,11 @@ export const NetworkConfigSchema = z.object({
+@@ -608,6 +608,20 @@ export const NetworkConfigSchema = z.object({
          'deniedDomains. A permitted name that resolves only into these is refused instead of dialed. A name may ' +
          'resolve to a denied address only if that IP literal (and port) is itself in allowedDomains. Not evaluated ' +
          'for connections routed through parentProxy (including one taken from HTTP_PROXY/HTTPS_PROXY) or mitmProxy (that hop resolves the name).'),
@@ -118,10 +309,19 @@ index 76b00b1dc82a2d42a451a9f58068cbbd5e68da75..863561d2847efcd218114453899bb9e0
 +        .boolean()
 +        .optional()
 +        .describe('If true, an IP-literal destination is judged by the resolved-address rules like a resolved name (the built-in classes, deniedResolvedAddresses, deniedDomains literals, this host\'s addresses), and localhost names get no loopback carve-out.'),
++    // capybara patch: DNS-over-HTTPS for names a fake-IP resolver answered (198.18.0.0/15)
++    fakeIpDoh: z
++        .object({
++        endpoints: z.array(z.string()).min(1),
++        timeoutMs: z.number().int().min(1).max(30000).optional(),
++    })
++        .strict()
++        .optional()
++        .describe('When the system resolver answers a name with a fake-IP address (198.18.0.0/15), re-resolve it through these DNS-over-HTTPS endpoints (https URLs with IP-literal hosts, JSON API) and judge and dial the real answer; a failed lookup refuses the connection.'),
      allowUnixSockets: z
          .array(z.string())
          .optional()
-@@ -832,6 +837,22 @@ export const FilesystemConfigSchema = z.object({
+@@ -832,6 +846,22 @@ export const FilesystemConfigSchema = z.object({
          .boolean()
          .optional()
          .describe('Allow writes to .git/config files (default: false). Enables git remote URL updates while keeping .git/hooks protected.'),

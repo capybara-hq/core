@@ -8,7 +8,9 @@ through the operation's own proxy, which decides every connection on the resolve
 the address it checked. Private and LAN, CGNAT, ULA, link-local, cloud metadata (Azure
 `168.63.129.16` included), NAT64, loopback (another process's localhost port, `localhost` itself)
 and this host's own addresses stay closed, for names and IP literals alike (the patched sandbox
-runtime's `resolvedAddressStrict`). The device reports `openPublic: true` on macOS. Listening stays
+runtime's `resolvedAddressStrict`). Behind a fake-IP resolver (a router answering every name with
+`198.18.0.0/15`), the proxy re-resolves the name through DNS-over-HTTPS to Cloudflare and then
+Google by IP, judges the real answer, and refuses when that lookup fails. The device reports `openPublic: true` on macOS. Listening stays
 refused on macOS. The write rules gain the system persistence paths (`SANDBOX_SYSTEM_WRITE_DENIES`,
 now exported by the SDK) and, at operation start, the resolved target of every protected home
 location reached through a symbolic link (a dotfile manager's `~/.config` or `~/.zshrc`). Only the

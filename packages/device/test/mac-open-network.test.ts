@@ -1,15 +1,10 @@
-import { lookup } from "node:dns/promises";
 import { existsSync } from "node:fs";
 import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { createServer, type Server } from "node:http";
 import { connect } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import {
-  classifyAddress,
-  type ExecResult,
-  type SandboxOperationScope,
-} from "@capybara-hq/plugin-sdk";
+import { type ExecResult, type SandboxOperationScope } from "@capybara-hq/plugin-sdk";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import {
   type DeviceOwnerCeiling,
@@ -24,10 +19,10 @@ import { sealWorkspaceRuntime } from "./runtime-seal.js";
 // address; private, CGNAT, ULA, link-local, metadata, NAT64 and loopback destinations stay closed,
 // for IP literals and for names resolving there. Real Seatbelt, real proxy.
 //
-// The positive reach needs the internet: it runs only when this process reaches a public address
-// itself (a public IP literal, and a public name only when the local resolver answers with a public
-// address: a fake-IP resolver such as a Clash gateway answers 198.18/15, which is closed). The
-// decisions for names are also covered offline in mac-srt-network-patch.test.ts.
+// The positive reach needs the internet: it runs only when this process reaches https://1.1.1.1
+// itself. A public name is reached also behind a fake-IP resolver (a router answering every name
+// with 198.18/15): the proxy re-resolves it through DNS-over-HTTPS. The decisions for names are
+// also covered offline in mac-srt-network-patch.test.ts.
 
 const darwin = process.platform === "darwin";
 const workspace = { runtimeHash: "", cleanup: async () => {} };
@@ -36,7 +31,6 @@ let server: Server | undefined;
 let port = 0;
 const receipts: string[] = [];
 let internet = false;
-let publicName: string | undefined;
 
 /** Whether this process connects to `host:port` within 3 s. */
 function reachable(host: string, to: number): Promise<boolean> {
@@ -65,10 +59,6 @@ beforeAll(async () => {
   if (!address || typeof address === "string") throw Error("Missing fixture port");
   port = address.port;
   internet = await reachable("1.1.1.1", 443);
-  try {
-    const answer = await lookup("one.one.one.one", { family: 4 });
-    if (internet && classifyAddress(answer.address) === "public") publicName = "one.one.one.one";
-  } catch {}
 });
 afterAll(async () => {
   server?.closeAllConnections();
@@ -206,12 +196,14 @@ it.runIf(darwin)("the open network reaches a public address literal", async (con
   expect(statuses(result.stdout).literal, result.stderr).toMatch(/^[23]\d\d$/);
 });
 
-it.runIf(darwin)("the open network reaches a public name", async (context) => {
-  if (!publicName)
-    context.skip("the local resolver answers no public address (offline or a fake-IP resolver)");
-  const result = await run(probes({ name: `https://${publicName}/` }));
-  expect(statuses(result.stdout).name, result.stderr).toMatch(/^[23]\d\d$/);
-});
+it.runIf(darwin)(
+  "the open network reaches a public name, behind a fake-IP resolver too",
+  async (context) => {
+    if (!internet) context.skip("no internet: https://1.1.1.1 is unreachable from this process");
+    const result = await run(probes({ name: "https://one.one.one.one/" }));
+    expect(statuses(result.stdout).name, result.stderr).toMatch(/^[23]\d\d$/);
+  },
+);
 
 it.runIf(darwin)(
   "a protected home location linked into a write root is not writable at its target",

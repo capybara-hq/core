@@ -137,6 +137,19 @@ export function mandatoryDenyPatterns(root: string): string[] {
   ];
 }
 /**
+ * The DNS-over-HTTPS endpoints the operation's proxy asks when the system resolver is a fake-IP
+ * resolver (it answered a name with 198.18.0.0/15, as an OpenClash-style router does for every
+ * name): Cloudflare, then Google, each an IP literal whose TLS certificate names that address, so
+ * reaching them needs no DNS. JSON API (`application/dns-json`), A and AAAA.
+ */
+export const MAC_DOH_ENDPOINTS: readonly string[] = Object.freeze([
+  "https://1.1.1.1/dns-query",
+  "https://1.0.0.1/dns-query",
+  "https://8.8.8.8/resolve",
+  "https://8.8.4.4/resolve",
+]);
+
+/**
  * The sandbox runtime's network configuration for one restricted grant (approval-only profiles
  * design, "Open network"), and whether the worker answers the runtime's ask callback with allow.
  *
@@ -151,6 +164,11 @@ export function mandatoryDenyPatterns(root: string): string[] {
  *   patched runtime's `resolvedAddressStrict` judges an IP literal by the same rules (upstream skips
  *   literals) and gives `localhost` no loopback carve-out.
  *
+ * In both networks a name the system resolver answers with a fake-IP address (198.18.0.0/15) is
+ * re-resolved through DNS-over-HTTPS ({@link MAC_DOH_ENDPOINTS}, the patched runtime's `fakeIpDoh`)
+ * and the real answer judged and dialed as above; when that lookup fails the connection is refused
+ * with a reason naming the fake-IP resolver, never dialed to the fake address.
+ *
  * Listening stays refused (`allowLocalBinding: false`) under every profile: Seatbelt cannot limit a
  * bind to loopback (spec "Known limitations"), and with it the command could reach every local
  * port. The grant's hosts are not used in the open network: a private destination needs the
@@ -163,7 +181,12 @@ export function macNetworkConfig(grant: Pick<LocalOperationGrant, "hosts" | "ope
   if (!grant.openNetwork)
     return {
       askAll: false,
-      network: { allowedDomains: [...grant.hosts], deniedDomains: [], allowLocalBinding: false },
+      network: {
+        allowedDomains: [...grant.hosts],
+        deniedDomains: [],
+        fakeIpDoh: { endpoints: [...MAC_DOH_ENDPOINTS] },
+        allowLocalBinding: false,
+      },
     };
   return {
     askAll: true,
@@ -172,6 +195,7 @@ export function macNetworkConfig(grant: Pick<LocalOperationGrant, "hosts" | "ope
       deniedDomains: [],
       deniedResolvedAddresses: [...OPEN_PUBLIC_DENIED_CIDRS],
       resolvedAddressStrict: true,
+      fakeIpDoh: { endpoints: [...MAC_DOH_ENDPOINTS] },
       allowLocalBinding: false,
     },
   };

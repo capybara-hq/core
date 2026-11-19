@@ -7,6 +7,7 @@ import { OPEN_PUBLIC_DENIED_CIDRS, SANDBOX_SYSTEM_WRITE_DENIES } from "@capybara
 import { afterEach, describe, expect, it } from "vitest";
 import {
   escalatedEnvironment,
+  MAC_DOH_ENDPOINTS,
   macNetworkConfig,
   macProtectedWriteDenies,
 } from "../src/exec/operation-worker.js";
@@ -35,8 +36,23 @@ interface Guard {
   literalDenial(address: string, port: number): string | undefined;
 }
 
-/** A guard configured as the macOS worker's open network, resolving names through `answers`. */
-async function openGuard(answers: Record<string, string[]>, localAddresses: string[] = []) {
+/** One DNS-over-HTTPS request as the guard's seam sees it: the URL and the time it may take. */
+type DohRequest = (url: string, timeoutMs: number) => Promise<unknown>;
+/** The default seam of these tests: no DNS-over-HTTPS service is reachable. */
+const noDoh: DohRequest = async () => {
+  throw new Error("no DNS-over-HTTPS in this test");
+};
+
+/**
+ * A guard configured as the macOS worker's network (open unless `openNetwork` is false), resolving
+ * names through `answers` and DNS-over-HTTPS through `dohRequest`.
+ */
+async function openGuard(
+  answers: Record<string, string[]>,
+  localAddresses: string[] = [],
+  dohRequest: DohRequest = noDoh,
+  openNetwork = true,
+) {
   const { createResolvedAddressGuard } = await load("resolved-address-guard.js");
   const resolve: Lookup = (host, _options, callback) => {
     const list = answers[host];
@@ -48,9 +64,10 @@ async function openGuard(answers: Record<string, string[]>, localAddresses: stri
       );
   };
   return createResolvedAddressGuard({
-    ...macNetworkConfig({ hosts: [], openNetwork: true }).network,
+    ...macNetworkConfig({ hosts: [], openNetwork }).network,
     resolve,
     localAddresses: () => localAddresses,
+    dohRequest,
   }) as Guard;
 }
 
@@ -75,7 +92,6 @@ describe("the patched runtime's strict resolved-address guard", () => {
       "azure.test": ["168.63.129.16"],
       "loopback.test": ["127.0.0.1"],
       "nat64.test": ["64:ff9b::5db8:d70e"],
-      "fake-ip.test": ["198.18.0.7"],
       // a mixed answer: the closed address is dropped, the public one dialed
       "mixed.test": ["10.0.0.1", "93.184.215.14"],
     });
@@ -90,7 +106,6 @@ describe("the patched runtime's strict resolved-address guard", () => {
       "azure.test",
       "loopback.test",
       "nat64.test",
-      "fake-ip.test",
     ])
       expect(await dial(guard, host), host).toMatch(/^refused: resolved to/);
   });
@@ -147,6 +162,105 @@ describe("the patched runtime's strict resolved-address guard", () => {
   });
 });
 
+// A fake-IP resolver (an OpenClash-style router intercepting every DNS query) answers each name
+// with an address in 198.18.0.0/15: the guard re-resolves such a name through DNS-over-HTTPS to
+// IP-literal endpoints and judges the real answer like any resolved address.
+describe("the guard's DNS-over-HTTPS fallback for a fake-IP resolver", () => {
+  /** A DoH JSON answer (the Cloudflare / Google format) per query type. */
+  const json = (records: Record<"A" | "AAAA", string[]>, ttl = 60) => {
+    const calls: string[] = [];
+    const request: DohRequest = async (url) => {
+      calls.push(url);
+      const query = new URL(url);
+      const type = query.searchParams.get("type") as "A" | "AAAA";
+      return {
+        Status: 0,
+        Answer: [
+          { name: query.searchParams.get("name"), type: 5, TTL: ttl, data: "alias.example." },
+          ...records[type].map((data) => ({
+            name: "alias.example.",
+            type: type === "A" ? 1 : 28,
+            TTL: ttl,
+            data,
+          })),
+        ],
+      };
+    };
+    return { calls, request };
+  };
+
+  it("re-resolves a fake-IP answer through DNS-over-HTTPS and dials the real address", async () => {
+    const doh = json({ A: ["93.184.215.14"], AAAA: [] });
+    const guard = await openGuard({ "site.test": ["198.18.0.9"] }, [], doh.request);
+    expect(await dial(guard, "site.test")).toBe("93.184.215.14");
+    // A and AAAA from the first endpoint, an IP literal over HTTPS
+    expect(doh.calls.map((u) => new URL(u).searchParams.get("type")).sort()).toEqual(["A", "AAAA"]);
+    for (const url of doh.calls) expect(url).toMatch(/^https:\/\/1\.1\.1\.1\/dns-query\?/);
+    expect(new URL(doh.calls[0] as string).searchParams.get("name")).toBe("site.test");
+  });
+
+  it("refuses a DNS-over-HTTPS answer in a closed class, or this host's own address", async () => {
+    const doh = json({ A: ["10.0.0.5"], AAAA: ["fd12::5"] });
+    const guard = await openGuard({ "intranet.test": ["198.18.0.3"] }, [], doh.request);
+    expect(await dial(guard, "intranet.test")).toMatch(/^refused: resolved to/);
+    const own = await openGuard(
+      { "self.test": ["198.18.0.4"] },
+      ["93.184.215.20"],
+      json({ A: ["93.184.215.20"], AAAA: [] }).request,
+    );
+    expect(await dial(own, "self.test")).toMatch(/^refused: resolved to/);
+  });
+
+  it("refuses, naming the fake-IP resolver, when DNS-over-HTTPS fails; never the fake address", async () => {
+    const guard = await openGuard({ "site.test": ["198.18.0.9", "198.18.0.10"] });
+    const answer = await dial(guard, "site.test");
+    expect(answer).toMatch(/^refused: .*fake-IP resolver/);
+    expect(answer).toContain("DNS-over-HTTPS");
+  });
+
+  it("falls back to the next endpoint", async () => {
+    const good = json({ A: ["93.184.215.14"], AAAA: [] });
+    const tried: string[] = [];
+    const guard = await openGuard({ "site.test": ["198.18.0.9"] }, [], async (url, timeoutMs) => {
+      tried.push(new URL(url).host);
+      expect(timeoutMs).toBeGreaterThan(0);
+      if (new URL(url).host === "1.1.1.1") throw new Error("timeout");
+      return good.request(url, timeoutMs);
+    });
+    expect(await dial(guard, "site.test")).toBe("93.184.215.14");
+    expect(tried).toContain("1.0.0.1");
+  });
+
+  it("caches an answer for its TTL", async () => {
+    const doh = json({ A: ["93.184.215.14"], AAAA: [] });
+    const guard = await openGuard({ "site.test": ["198.18.0.9"] }, [], doh.request);
+    expect(await dial(guard, "site.test")).toBe("93.184.215.14");
+    expect(await dial(guard, "site.test")).toBe("93.184.215.14");
+    expect(doh.calls).toHaveLength(2);
+  });
+
+  it("leaves a name the system resolver answers without a fake-IP address alone", async () => {
+    const doh = json({ A: ["10.0.0.1"], AAAA: [] });
+    const guard = await openGuard({ "site.test": ["93.184.215.14"] }, [], doh.request);
+    expect(await dial(guard, "site.test")).toBe("93.184.215.14");
+    expect(doh.calls).toEqual([]);
+  });
+
+  it("also serves an allow-listed name in the allowlist network", async () => {
+    const doh = json({ A: ["93.184.215.14"], AAAA: [] });
+    const guard = await openGuard({ "granted.test": ["198.18.0.9"] }, [], doh.request, false);
+    expect(await dial(guard, "granted.test")).toBe("93.184.215.14");
+  });
+
+  it("refuses an endpoint that is not an HTTPS IP literal", async () => {
+    const { createResolvedAddressGuard } = await load("resolved-address-guard.js");
+    for (const endpoint of ["https://dns.google/resolve", "http://1.1.1.1/dns-query"])
+      expect(() => createResolvedAddressGuard({ fakeIpDoh: { endpoints: [endpoint] } })).toThrow(
+        /DNS-over-HTTPS endpoint/,
+      );
+  });
+});
+
 describe("the macOS worker's network configuration", () => {
   it("opens the network through the address guard only", async () => {
     const open = macNetworkConfig({ hosts: ["a.example.com"], openNetwork: true });
@@ -157,6 +271,7 @@ describe("the macOS worker's network configuration", () => {
         deniedDomains: [],
         deniedResolvedAddresses: [...OPEN_PUBLIC_DENIED_CIDRS],
         resolvedAddressStrict: true,
+        fakeIpDoh: { endpoints: [...MAC_DOH_ENDPOINTS] },
         allowLocalBinding: false,
       },
     });
@@ -168,7 +283,12 @@ describe("the macOS worker's network configuration", () => {
   it("keeps the allowlist as before", () => {
     expect(macNetworkConfig({ hosts: ["a.example.com"] })).toEqual({
       askAll: false,
-      network: { allowedDomains: ["a.example.com"], deniedDomains: [], allowLocalBinding: false },
+      network: {
+        allowedDomains: ["a.example.com"],
+        deniedDomains: [],
+        fakeIpDoh: { endpoints: [...MAC_DOH_ENDPOINTS] },
+        allowLocalBinding: false,
+      },
     });
   });
 });

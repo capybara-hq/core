@@ -108,9 +108,19 @@ plus the system and developer tool directories (on macOS `/System`, `/usr`, `/bi
 installed JDKs) and the data of the version managers your home uses, read only; other files of the
 machine, such as the rest of your home, are not readable. Secret paths (`~/.ssh`, cloud CLI
 credentials, `~/.netrc`, `~/.gnupg`, browser profiles, this program's state directory) stay
-unreadable even inside those, and the network reaches only hosts in the local `allowedDomains` that
-the organization's allowlist also admits (plus a run's or a task's grants, within that allowlist),
-through a proxy that refuses loopback, private addresses and internal names. Restricted work also
+unreadable even inside those. The network is the owner ceiling's: `open` reaches the public
+internet, `allowlist` only hosts in the local `allowedDomains` that the organization's allowlist
+also admits (plus a run's or a task's grants, within that allowlist). Either way traffic goes
+through the operation's own proxy, which decides each connection on the resolved address and dials
+the address it checked: loopback (another program's localhost port), private and LAN, CGNAT, IPv6
+ULA, link-local, cloud metadata and NAT64 addresses and this machine's own addresses stay closed,
+for names and IP literals alike. A client that ignores the proxy variables (plain `ssh`) does not
+connect; a restricted command cannot listen on macOS (a dev server needs an approved call outside
+the sandbox). Behind a fake-IP resolver (a router or proxy in OpenClash-style fake-IP mode answers
+every name with an address in `198.18.0.0/15`), the macOS proxy re-resolves such a name through
+DNS-over-HTTPS to Cloudflare (`1.1.1.1`, `1.0.0.1`) and then Google (`8.8.8.8`, `8.8.4.4`), reached
+by IP over verified TLS, and judges the real answer; when that lookup fails the connection is
+refused with a reason naming the fake-IP resolver, never dialed to the fake address. Restricted work also
 follows one write policy (below). On macOS each restricted command also gets its own empty temporary
 directory (`TMPDIR`, `TMP`, `TEMP`), removed when the command ends; `mktemp` without a template
 writes to the user's shared temporary directory instead, which stays closed, so give it one (`mktemp
