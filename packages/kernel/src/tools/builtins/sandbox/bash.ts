@@ -362,8 +362,15 @@ export async function runInBackgroundManaged(
     // the recorded reason may hold a provider's words: the model gets kernel text only
     const why =
       launch.kind === "refused" ? launch.why : "it was stopped or refused before it started";
+    // a scope refusal where running outside the sandbox is allowed: say the call may escalate
+    const hint =
+      launch.kind === "refused" &&
+      ctx.sandboxEscalation === "available" &&
+      why === launchRefusedText("denied")
+        ? ESCALATION_RETRY_HINT
+        : "";
     throw new ToolError(
-      `The background task was not started: ${why}. Nothing runs; fix the cause, or call Bash without run_in_background.`,
+      `The background task was not started: ${why}. Nothing runs; fix the cause, or call Bash without run_in_background.${hint}`,
     );
   }
   if (!started && task.launchState === "cancel-pending" && task.executionRef !== null) {
@@ -422,11 +429,36 @@ const isRefusal = (e: unknown): boolean =>
   !isSandboxOperationOutcomeUnknownError(e) &&
   (isSandboxScopeDeniedError(e) || isSandboxPermissionUnsupportedError(e));
 
-/** The errors a sandbox denial produces in a command's output (macOS Seatbelt, Linux Landlock). */
-const SANDBOX_DENIED_RE = /Operation not permitted|Read-only file system|Permission denied/;
-/** Whether a finished command failed in a way the OS sandbox may have caused. */
-const sandboxDenied = (r: ExecResult): boolean =>
-  r.exitCode !== null && r.exitCode !== 0 && SANDBOX_DENIED_RE.test(`${r.stdout}\n${r.stderr}`);
+/**
+ * Sandbox-specific signals in a command's output: the EPERM a Seatbelt or Landlock write denial
+ * gives, the read-only bind of the Linux sandbox, Seatbelt's own deny report, and the sandbox
+ * proxy refusing a host or a tunnel. A plain "Permission denied" (EACCES) is not one: ssh
+ * publickey failures, git 403s and file modes print it too.
+ */
+const SANDBOX_DENIED_RE =
+  /Operation not permitted|Read-only file system|Sandbox: \S+\(\d+\) deny\(\d+\)|Connection blocked by network allowlist|blocked-by-allowlist|HTTP code 403 from proxy after CONNECT/;
+/**
+ * Credential and auth failures: never a reason to run outside the sandbox, so they never get the
+ * escalation hint, whatever else the output says.
+ */
+const AUTH_FAILURE_RE =
+  /Permission denied \(publickey|Host key verification failed|Authentication failed|authentication required|could not read (?:Username|Password)|Bad credentials|invalid credentials|remote: Permission to \S+ denied|The requested URL returned error: 40[13]|\b401 Unauthorized\b/i;
+/**
+ * Whether a finished command failed in a way the OS sandbox may have caused: a host the device
+ * refused (`network.blocked`) or a sandbox-specific message, and no credential or auth failure.
+ */
+export const sandboxDenied = (r: ExecResult): boolean => {
+  if (r.exitCode === null || r.exitCode === 0) return false;
+  const out = `${r.stdout}\n${r.stderr}`;
+  if (AUTH_FAILURE_RE.test(out)) return false;
+  return (r.network?.blocked.length ?? 0) > 0 || SANDBOX_DENIED_RE.test(out);
+};
+/**
+ * {@link SCOPE_DENIED_TOOL_TEXT} followed by {@link ESCALATION_RETRY_HINT}, written out as a literal
+ * for the tool design check (a unit test keeps the two copies equal).
+ */
+export const SCOPE_DENIED_ESCALATION_TEXT =
+  'This operation reaches outside what this conversation\'s permission profile allows on the device (a path outside the directories it may read or write, or a host it may not reach), so it did not run. Keep the call inside the working directory and the directories already granted, or ask the user to grant the directory or choose a broader permission profile, then retry. If this command must reach outside the sandbox, retry the same Bash call with sandbox: "escalated" and justification: one sentence saying why; the user or the review model decides whether it may run outside the sandbox for this call only.';
 /**
  * A restricted call the scope refused ({@link SCOPE_DENIED_TOOL_TEXT}) where running outside the
  * sandbox is allowed: the refusal also says the call may be retried escalated.
@@ -440,9 +472,7 @@ async function withEscalationHint<T>(ctx: BuiltinCallContext, fn: () => Promise<
       e instanceof ToolError &&
       e.message === SCOPE_DENIED_TOOL_TEXT
     )
-      throw new ToolError(
-        `${SCOPE_DENIED_TOOL_TEXT} If this command must reach outside the sandbox, retry the same Bash call with sandbox: "escalated" and justification: one sentence saying why; the user or the review model decides whether it may run outside the sandbox for this call only.`,
-      );
+      throw new ToolError(SCOPE_DENIED_ESCALATION_TEXT);
     throw e;
   }
 }
@@ -467,7 +497,7 @@ export function sandboxBashTool(deps: SandboxToolDeps): BuiltinTool {
     async run(input, ctx) {
       if ((input as BashInput).run_in_background === true) {
         // the managed launch only: it refuses before any effect where it cannot run
-        return runInBackgroundManaged(deps, ctx, input as BashInput);
+        return withEscalationHint(ctx, () => runInBackgroundManaged(deps, ctx, input as BashInput));
       }
       const { command, description } = input as BashInput;
       const max = deps.config.get().sandbox.limits.maxCommandSeconds;

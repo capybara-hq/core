@@ -132,6 +132,7 @@
   "tools/generate-image-spec.test.ts",
   "tools/sandbox/device-errors.test.ts",
   "tools/sandbox/fetch-attachment.test.ts",
+  "tools/sandbox/escalation-hints.test.ts",
   "tools/sandbox/sandbox-helpers.test.ts",
   "tools/sandbox/working-root.test.ts",
   "tools/skill-project.unit.test.ts",
