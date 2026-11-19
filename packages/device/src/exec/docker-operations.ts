@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import { constants } from "node:fs";
 import { type FileHandle, open, realpath } from "node:fs/promises";
+import { networkInterfaces } from "node:os";
 import { basename, dirname, join } from "node:path";
 import {
   DEFAULT_SANDBOX_ROOTS,
@@ -49,9 +50,12 @@ export interface OperationContainerHost {
 const CONTAINER_PYTHON = "/usr/bin/python3";
 const CONTAINER_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
 
-/** A container command's starting environment: the image's ordinary one, never this host's. */
-export function containerBaseEnv(full: boolean): Record<string, string> {
-  return full
+/**
+ * A container command's starting environment: the image's ordinary one, never this host's (so an
+ * escalated call carries none of the device's variables either).
+ */
+export function containerBaseEnv(escalated: boolean): Record<string, string> {
+  return escalated
     ? {
         PATH: CONTAINER_PATH,
         LANG: "C.UTF-8",
@@ -60,6 +64,20 @@ export function containerBaseEnv(full: boolean): Record<string, string> {
         TERM: "dumb",
       }
     : { PATH: CONTAINER_PATH, LANG: "C.UTF-8" };
+}
+
+/**
+ * This host's own interface addresses (loopback aside, which the container's forwarder closes as a
+ * class). A container reaches its host through NAT, so the forwarder in the container closes these
+ * explicitly: a service on the host is not reachable at the host's public address either.
+ */
+export function hostAddresses(
+  interfaces: ReturnType<typeof networkInterfaces> = networkInterfaces(),
+): string[] {
+  const out: string[] = [];
+  for (const entries of Object.values(interfaces))
+    for (const entry of entries ?? []) if (!entry.internal) out.push(entry.address);
+  return out;
 }
 
 /**
@@ -324,7 +342,10 @@ export async function createDockerOperationBackend(
       transport,
       baseEnv: containerBaseEnv,
       acquireRuntime: acquire,
+      closedAddresses: () => hostAddresses(),
       ...(dependencies.allowPrivateProxyTargets ? { allowPrivateProxyTargets: true } : {}),
+      ...(dependencies.fakeIpDnsTest ? { fakeIpDnsTest: dependencies.fakeIpDnsTest } : {}),
+      ...(dependencies.faultInjection ? { faultInjection: dependencies.faultInjection } : {}),
     });
   const startWorker = async (
     request: MacWorkerRequest,
@@ -356,6 +377,8 @@ export async function createDockerOperationBackend(
     {
       restricted: unavailableReason === undefined,
       ...(unavailableReason ? { unavailableReason } : {}),
+      // the operation's forwarder enforces the open public network on the resolved address
+      openPublic: true,
       outsideSandbox: probe.agentAvailable !== false,
       background: probe.agentAvailable !== false,
       pending: unavailableReason ?? "Restricted execution in the device container is unavailable",

@@ -10,6 +10,7 @@ import {
   isSandboxWriteDenied,
   SANDBOX_MANDATORY_WRITE_DENIES,
   SANDBOX_PROTECTED_PATH_NAMES,
+  SANDBOX_RESERVED_NAME_PREFIX,
   SANDBOX_SYSTEM_WRITE_DENIES,
   SANDBOX_WRITE_POLICY_PYTHON,
   sandboxFoldName,
@@ -104,6 +105,11 @@ const PERSISTENCE_ALLOWED = [
 ];
 
 const DENIED = [
+  // the broker's reserved staging names, in every spelling, and everything beneath them
+  "/w/.capybara-staging-3f9a",
+  "/w/.capybara-staging-3f9a/commands/x.md",
+  "/w/.Capybara-Staging-quarantine-1/x",
+  "/w/src/.capybara-staging-",
   "/w/.git/config",
   "/w/.git/hooks/pre-commit",
   "/w/.git/hooks",
@@ -157,6 +163,8 @@ const DENIED = [
   ...PERSISTENCE_DENIED,
 ];
 const ALLOWED = [
+  "/w/capybara-staging-3f9a",
+  "/w/.capybara-stagingx",
   "/w/src/a.ts",
   "/w/.git",
   "/w/.git/HEAD",
@@ -190,6 +198,9 @@ const ALLOWED = [
 const FOLDS = ["Straße", "ſ", "\u212A", "ΣΑΣ", "ς", "ǰ", "ŉ", "ᏸ", "Ꭰ", "ﬃ", "ＡＢＣ", "İ"];
 /** [source, destination, source is a directory, refused, the source directory's entries]. */
 const MOVES: [string, string, boolean, boolean, string[]?][] = [
+  // nothing sandboxed moves into or out of a reserved staging name
+  ["/w/d", "/w/.capybara-staging-1", true, true, []],
+  ["/w/.capybara-staging-1", "/w/d", true, true, []],
   ["/w/.git/index.lock", "/w/.git/index", false, false],
   ["/w/.git/objects/ab/tmp_obj", "/w/.git/objects/ab/cdef", false, false],
   ["/w/.git", "/w/g2", true, true],
@@ -232,7 +243,11 @@ const MOVES: [string, string, boolean, boolean, string[]?][] = [
   ["/w/link", "/Users/u/Library", false, true],
   ["/w/link", "/home/u/.config/fish", false, true],
   // the system spools are anchored absolute paths
-  ["/var/spool", "/var/sp2", true, false, ["cron"]],
+  // an anchored deny's ancestor never moves away (a link resolved into it would dangle)
+  ["/var/spool", "/var/sp2", true, true, ["mail"]],
+  ["/var", "/v2", true, true, []],
+  ["/private/var/at", "/private/var/at2", true, true, []],
+  ["/var/spool/mail", "/var/spool/mail2", true, false, []],
   ["/var/sp2", "/var/spool", true, true, ["cron"]],
   ["/var/sp2", "/var/spool", true, false, ["mail"]],
   ["/tmp/prep", "/var", true, true, ["at"]],
@@ -243,6 +258,11 @@ describe("restricted write policy", () => {
   it("denies git internals beyond the allowlist, rc and editor files, bare lookalikes", () => {
     for (const path of DENIED) expect(isSandboxWriteDenied(path), path).toBe(true);
     for (const path of ALLOWED) expect(isSandboxWriteDenied(path), path).toBe(false);
+  });
+
+  it("reserves the broker's staging prefix, folded", () => {
+    expect(SANDBOX_RESERVED_NAME_PREFIX).toBe(".capybara-staging-");
+    expect(sandboxFoldName(SANDBOX_RESERVED_NAME_PREFIX)).toBe(SANDBOX_RESERVED_NAME_PREFIX);
   });
 
   it("writes every mandatory entry already folded (the TypeScript side compares folded names)", () => {

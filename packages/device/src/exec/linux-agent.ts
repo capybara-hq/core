@@ -1,3 +1,5 @@
+import { SANDBOX_FAKE_IP_DNS } from "@capybara-hq/plugin-sdk";
+
 /**
  * The trusted Linux operation agent of capybara-device, run as `python3 -I -c <source>` (never from
  * a file another process could change). One agent process runs one operation; it never decides
@@ -12,9 +14,15 @@
  * base64, at most 64 KiB), `native`, `probe`, `reaped`, `refused`, `exit`.
  *
  * - restricted exec: pins every granted root once (no-follow, canonical), runs the SDK launcher on
- *   those descriptors (Landlock rules, the seccomp broker), and for an allowlist gives it exactly
- *   one endpoint, a loopback proxy owned by this operation that tunnels only the allowlisted names.
- *   Whatever ends the launcher, the agent then reaps its closed session (exact SID plus start time).
+ *   those descriptors (Landlock rules, the seccomp broker), and for an allowlist or the open
+ *   network gives it exactly one endpoint, a loopback proxy owned by this operation: it tunnels
+ *   only the allowlisted names, or (open) any name and address literal on any port, and dials only
+ *   resolved addresses the SDK's address-class table calls public (a copy kept equal by a test),
+ *   never this host's own nor one of the request's extra closed addresses (a local-Docker
+ *   device's host), re-resolving a fake-IP resolver's answers through encrypted DNS. A command
+ *   connects to nothing else, not even its own loopback listener. Whatever ends the launcher, the agent then reaps its closed session (exact SID plus
+ *   start time). Write denies the device resolved for this operation (protected home locations
+ *   reached through links) go to the launcher and to native work.
  * - Full exec: no restricted filters; the command runs as the OS user in a session of its own, and
  *   the agent ends that session (exact SID plus start time) when it exits, is cancelled or times out.
  * - native: the SDK native helper on pinned descriptors (descriptor-relative, no-follow), in this
@@ -46,6 +54,7 @@ import errno
 import fcntl
 import hashlib
 import hmac
+import http.client
 import importlib.machinery
 import importlib.util
 import ipaddress
@@ -54,13 +63,17 @@ import os
 import select
 import signal
 import socket
+import ssl
 import stat
+import struct
 import subprocess
 import threading
 import time
+import urllib.parse
 
 CHUNK = 65536
-NAT64 = ipaddress.ip_network("64:ff9b::/96")
+# Concurrent proxy connections per operation (each holds two threads); more get a 503.
+MAX_PROXY_CONNECTIONS = 128
 RUNTIME_FILES = ("linux-sandbox.py", "native-files.py")
 NR_PIDFD_OPEN = 434
 NR_PIDFD_SEND_SIGNAL = 424
@@ -330,7 +343,286 @@ def pin_roots(request, create_for=None):
     return read, write, missing
 
 
-# ---- per-operation allowlist proxy --------------------------------------------------------
+# ---- address classes (a copy of the SDK's network-classes.ts) ------------------------------
+# ADDRESS_CLASS_RANGES is the SDK's table, copied exactly, and classify_address its lookup: an
+# address has the class of the first (most specific) range containing it; an embedded range
+# classifies the IPv4 address at its bit offset. A device test (linux-agent-network.test.ts)
+# compares this copy with the SDK's table and this lookup with classifyAddress, so the classes
+# cannot drift between the SDK, the macOS worker, the cloud proxies and this forwarder.
+ADDRESS_CLASS_RANGES = json.loads(r'''
+[
+    {"family":"ipv4","cidr":"100.100.100.200/32","class":"metadata"},
+    {"family":"ipv4","cidr":"168.63.129.16/32","class":"metadata"},
+    {"family":"ipv4","cidr":"169.254.169.254/32","class":"metadata"},
+    {"family":"ipv4","cidr":"255.255.255.255/32","class":"broadcast"},
+    {"family":"ipv4","cidr":"192.0.0.0/24","class":"reserved"},
+    {"family":"ipv4","cidr":"192.0.2.0/24","class":"reserved"},
+    {"family":"ipv4","cidr":"192.88.99.0/24","class":"reserved"},
+    {"family":"ipv4","cidr":"198.51.100.0/24","class":"reserved"},
+    {"family":"ipv4","cidr":"203.0.113.0/24","class":"reserved"},
+    {"family":"ipv4","cidr":"169.254.0.0/16","class":"link-local"},
+    {"family":"ipv4","cidr":"192.168.0.0/16","class":"private"},
+    {"family":"ipv4","cidr":"198.18.0.0/15","class":"reserved"},
+    {"family":"ipv4","cidr":"172.16.0.0/12","class":"private"},
+    {"family":"ipv4","cidr":"100.64.0.0/10","class":"cgnat"},
+    {"family":"ipv4","cidr":"0.0.0.0/8","class":"unspecified"},
+    {"family":"ipv4","cidr":"10.0.0.0/8","class":"private"},
+    {"family":"ipv4","cidr":"127.0.0.0/8","class":"loopback"},
+    {"family":"ipv4","cidr":"224.0.0.0/4","class":"multicast"},
+    {"family":"ipv4","cidr":"240.0.0.0/4","class":"reserved"},
+    {"family":"ipv4","cidr":"0.0.0.0/0","class":"public"},
+    {"family":"ipv6","cidr":"::/128","class":"unspecified"},
+    {"family":"ipv6","cidr":"::1/128","class":"loopback"},
+    {"family":"ipv6","cidr":"fd00:ec2::254/128","class":"metadata"},
+    {"family":"ipv6","cidr":"::ffff:0:0/96","embeddedIpv4At":96},
+    {"family":"ipv6","cidr":"::ffff:0:0:0/96","embeddedIpv4At":96},
+    {"family":"ipv6","cidr":"64:ff9b::/96","class":"nat64"},
+    {"family":"ipv6","cidr":"::/96","embeddedIpv4At":96},
+    {"family":"ipv6","cidr":"100::/64","class":"reserved"},
+    {"family":"ipv6","cidr":"64:ff9b:1::/48","class":"nat64"},
+    {"family":"ipv6","cidr":"2001:db8::/32","class":"reserved"},
+    {"family":"ipv6","cidr":"2001::/23","class":"reserved"},
+    {"family":"ipv6","cidr":"3fff::/20","class":"reserved"},
+    {"family":"ipv6","cidr":"2002::/16","embeddedIpv4At":16},
+    {"family":"ipv6","cidr":"fe80::/10","class":"link-local"},
+    {"family":"ipv6","cidr":"fec0::/10","class":"reserved"},
+    {"family":"ipv6","cidr":"ff00::/8","class":"multicast"},
+    {"family":"ipv6","cidr":"fc00::/7","class":"ula"},
+    {"family":"ipv6","cidr":"2000::/3","class":"public"},
+    {"family":"ipv6","cidr":"::/0","class":"reserved"}
+]
+''')
+_CLASS_RANGES = [(ipaddress.ip_network(r["cidr"]), r.get("class"), r.get("embeddedIpv4At"))
+                 for r in ADDRESS_CLASS_RANGES]
+
+
+def classify_address(address):
+    """The class of an IPv4 or IPv6 address (a string, optionally with a zone, or an address)."""
+    if isinstance(address, str):
+        address = ipaddress.ip_address(address.split("%")[0])
+    for network, cls, at in _CLASS_RANGES:
+        if network.version != address.version or address not in network:
+            continue
+        if cls is not None:
+            return cls
+        return classify_address(ipaddress.IPv4Address((int(address) >> (96 - at)) & 0xFFFFFFFF))
+    raise ValueError("The address-class table is not total")
+# ---- end of address classes ----------------------------------------------------------------
+
+
+# ---- resolution ----------------------------------------------------------------------------
+# Which resolved addresses the forwarder may dial, and the encrypted DNS it uses when the network's
+# resolver answers with fake IPs. Self-contained (a device test runs it with the class block).
+
+def local_address(address):
+    """Whether address is one of this host's own (a socket can bind to it). Any answer but "not
+    available" counts as own, so a host that allows binding any address (ip_nonlocal_bind) closes
+    every address instead of opening its own."""
+    probe = socket.socket(socket.AF_INET6 if ":" in address else socket.AF_INET,
+                          socket.SOCK_STREAM)
+    try:
+        probe.bind((address, 0))
+        return True
+    except OSError as error:
+        return error.errno != errno.EADDRNOTAVAIL
+    finally:
+        probe.close()
+
+
+def closed_set(addresses):
+    """Extra closed addresses (a local-Docker device's host addresses), normalized: an IPv4-mapped
+    form is its IPv4 address."""
+    out = set()
+    for address in addresses:
+        ip = ipaddress.ip_address(address.split("%")[0])
+        out.add(ip.ipv4_mapped if ip.version == 6 and ip.ipv4_mapped else ip)
+    return frozenset(out)
+
+
+def public_address(address, closed=frozenset()):
+    """Whether the forwarder may dial a resolved address: the class table calls it public,
+    Python's own registry calls it global too (a stricter second opinion: Python versions differ
+    at the edges, which can only refuse more), it is not this host's own, and not one of the extra
+    closed addresses (the host of a device's container: its own addresses are not the
+    container's)."""
+    ip = ipaddress.ip_address(address.split("%")[0])
+    if classify_address(ip) != "public":
+        return False
+    plain = ip.ipv4_mapped if ip.version == 6 and ip.ipv4_mapped else ip
+    return plain.is_global and plain not in closed and not local_address(str(ip))
+
+
+# The SDK's SANDBOX_FAKE_IP_DNS (the macOS worker uses the same endpoints and limits).
+FAKE_IP_DNS = json.loads(r"""${JSON.stringify(SANDBOX_FAKE_IP_DNS)}""")
+FAKE_IP_NETWORK = ipaddress.ip_network(FAKE_IP_DNS["fakeIpCidr"])
+FAKE_IP_REFUSAL = ("The network's DNS resolver answers with fake IPs (198.18.0.0/15, a fake-IP "
+                   "resolver such as a router's proxy) and encrypted DNS did not answer; the fake "
+                   "address is never dialled")
+
+
+class FakeIpUnresolved(PermissionError):
+    """The system resolver gave a fake IP and encrypted DNS failed: refused, never dialled."""
+
+
+def fake_ip(address):
+    ip = ipaddress.ip_address(address.split("%")[0])
+    if ip.version == 6 and ip.ipv4_mapped:
+        ip = ip.ipv4_mapped
+    return ip in FAKE_IP_NETWORK
+
+
+def dns_query(name, qtype):
+    """A recursive DNS query in wire format (ID 0, as RFC 8484 recommends) for name and qtype."""
+    out = struct.pack(">HHHHHH", 0, 0x0100, 1, 0, 0, 0)
+    for label in name.rstrip(".").split("."):
+        data = label.encode("ascii")
+        if not 0 < len(data) < 64:
+            raise ValueError("Not a DNS name")
+        out += bytes([len(data)]) + data
+    return out + b"\0" + struct.pack(">HH", qtype, 1)
+
+
+def _skip_name(data, at):
+    while True:
+        length = data[at]
+        if length == 0:
+            return at + 1
+        if length & 0xC0 == 0xC0:
+            return at + 2
+        at += 1 + length
+
+
+def dns_answers(data, qtype):
+    """(addresses, smallest TTL) of a DNS response's records of qtype (A or AAAA, class IN). An
+    error response or a malformed message raises ValueError; a missing name answers nothing."""
+    try:
+        _, flags, questions, answers, _, _ = struct.unpack_from(">HHHHHH", data)
+        if not flags & 0x8000 or flags & 0xF not in (0, 3):
+            raise ValueError("DNS error response")
+        at = 12
+        for _ in range(questions):
+            at = _skip_name(data, at) + 4
+        found, ttl = [], None
+        for _ in range(answers):
+            at = _skip_name(data, at)
+            rtype, rclass, record_ttl, length = struct.unpack_from(">HHIH", data, at)
+            at += 10
+            record = data[at:at + length]
+            at += length
+            if len(record) != length:
+                raise ValueError("Truncated DNS answer")
+            if rclass == 1 and rtype == qtype and length == (4 if qtype == 1 else 16):
+                found.append(str(ipaddress.ip_address(record)))
+                ttl = record_ttl if ttl is None else min(ttl, record_ttl)
+        return found, ttl
+    except (struct.error, IndexError):
+        raise ValueError("Malformed DNS message")
+
+
+class EncryptedDns:
+    """DNS-over-HTTPS (RFC 8484, GET, wire format) at FAKE_IP_DNS's IP-literal endpoints, in order;
+    TLS is verified against the endpoint's IP SAN, so reaching it needs no DNS. One deadline per
+    name covers A and AAAA at every endpoint; each endpoint gets an equal share of the time left,
+    which its two queries share. An answer is cached only when both queries succeeded at one
+    endpoint, for its TTL (capped), at most cacheMaxNames names (the oldest goes first). Raises
+    FakeIpUnresolved when no endpoint answers in time. A test fixture's seam replaces the endpoints
+    and the trusted certificate (or fetch itself)."""
+
+    def __init__(self, endpoints=None, ca_pem=None, fetch=None, clock=time.monotonic):
+        self.endpoints = list(endpoints or FAKE_IP_DNS["endpoints"])
+        self.deadline = FAKE_IP_DNS["timeoutMs"] / 1000
+        self.cap = FAKE_IP_DNS["cacheTtlCapSeconds"]
+        self.max_names = FAKE_IP_DNS["cacheMaxNames"]
+        self.ca_pem = ca_pem
+        self.fetch = fetch or self.https
+        self.clock = clock
+        self.cache = {}
+        self.lock = threading.Lock()
+
+    def https(self, url, query, timeout):
+        parts = urllib.parse.urlsplit(url)
+        context = ssl.create_default_context(cadata=self.ca_pem) if self.ca_pem \
+            else ssl.create_default_context()
+        connection = http.client.HTTPSConnection(parts.hostname, parts.port or 443,
+                                                 timeout=timeout, context=context)
+        try:
+            dns = base64.urlsafe_b64encode(query).decode().rstrip("=")
+            connection.request("GET", "%s?dns=%s" % (parts.path, dns),
+                               headers={"Accept": "application/dns-message"})
+            response = connection.getresponse()
+            body = response.read(65536)
+            if response.status != 200:
+                raise OSError(errno.EPROTO, "DoH answered %d" % response.status)
+            return body
+        finally:
+            connection.close()
+
+    def resolve(self, name):
+        key = name.lower().rstrip(".")
+        with self.lock:
+            cached = self.cache.get(key)
+            if cached and cached[0] > self.clock():
+                return list(cached[1])
+        end = self.clock() + self.deadline
+        for index, url in enumerate(self.endpoints):
+            share_end = self.clock() + (end - self.clock()) / (len(self.endpoints) - index)
+            try:
+                addresses, ttl = [], self.cap
+                for qtype in (1, 28):
+                    left = share_end - self.clock()
+                    if left <= 0:
+                        raise OSError(errno.ETIMEDOUT, "The endpoint's share of the deadline ran out")
+                    answer = self.fetch(url, dns_query(key, qtype), left)
+                    found, record_ttl = dns_answers(answer, qtype)
+                    addresses += found
+                    if record_ttl is not None:
+                        ttl = min(ttl, record_ttl)
+            except (OSError, ValueError, http.client.HTTPException):
+                continue
+            with self.lock:
+                self.cache.pop(key, None)
+                while len(self.cache) >= self.max_names:
+                    del self.cache[next(iter(self.cache))]
+                self.cache[key] = (self.clock() + ttl, list(addresses))
+            return addresses
+        raise FakeIpUnresolved(errno.EACCES, FAKE_IP_REFUSAL)
+
+
+def vetted_addresses(host, port, doh, allow_private=False, resolve=socket.getaddrinfo,
+                     closed=frozenset()):
+    """The getaddrinfo entries of host the forwarder may dial. When the system resolver answers a
+    name with a fake IP, the name is resolved again through encrypted DNS (doh) and only those
+    answers count: the fake address is never dialled. Raises PermissionError when every address
+    is refused (FakeIpUnresolved when encrypted DNS failed)."""
+    entries = resolve(host, port, 0, socket.SOCK_STREAM)
+    literal = True
+    try:
+        ipaddress.ip_address(host.split("%")[0])
+    except ValueError:
+        literal = False
+    if not literal and any(fake_ip(e[4][0]) for e in entries):
+        try:
+            answers = doh.resolve(host)
+        except PermissionError:
+            raise
+        except (OSError, ValueError):
+            raise FakeIpUnresolved(errno.EACCES, FAKE_IP_REFUSAL)
+        entries = []
+        for address in answers:
+            if ":" in address:
+                entries.append((socket.AF_INET6, socket.SOCK_STREAM, 6, "", (address, port, 0, 0)))
+            else:
+                entries.append((socket.AF_INET, socket.SOCK_STREAM, 6, "", (address, port)))
+        if not entries:
+            raise OSError(errno.EHOSTUNREACH, "Encrypted DNS has no address for the name")
+    permitted = [e for e in entries if allow_private or public_address(e[4][0], closed)]
+    if not permitted:
+        raise PermissionError(errno.EACCES, "No permitted address")
+    return permitted
+# ---- end of resolution ---------------------------------------------------------------------
+
+
+# ---- per-operation proxy (allowlist or open) ----------------------------------------------
 
 def host_allowed(host, hosts):
     host = host.lower().rstrip(".")
@@ -343,10 +635,21 @@ def host_allowed(host, hosts):
     return False
 
 
-def split_target(target, default_port):
+def split_target(target, default_port, literals=False):
+    """(host, port) of a request target; an IPv6 literal in brackets only when literals is set
+    (allowlist hosts are names, never address literals)."""
     if target.startswith("["):
-        return None, None  # allowlist hosts are names, never address literals
-    host, _, port = target.partition(":")
+        end = target.find("]")
+        if not literals or end < 0 or (len(target) > end + 1 and target[end + 1] != ":"):
+            return None, None
+        host, port = target[1:end], target[end + 2:]
+        try:
+            if ipaddress.ip_address(host).version != 6:
+                return None, None
+        except ValueError:
+            return None, None
+    else:
+        host, _, port = target.partition(":")
     try:
         number = int(port) if port else default_port
     except ValueError:
@@ -357,16 +660,27 @@ def split_target(target, default_port):
 
 
 class Forwarder:
-    """A loopback HTTP proxy owned by one operation: CONNECT and absolute http:// requests for the
-    operation's allowlisted names are tunnelled; every other name is refused without connecting.
-    The launcher's broker grants the restricted command this endpoint and nothing else. Clients
-    authenticate with the operation's token; CONNECT reaches ports 80 and 443 and plain requests
-    port 80 only (allowlist entries name no port); a name is reached only at a globally routable
-    address. A test fixture's seam (allow_private) lifts the address and port rules."""
+    """A loopback HTTP proxy owned by one operation. Allowlist: CONNECT and absolute http://
+    requests for the operation's allowlisted names are tunnelled, CONNECT to ports 80 and 443 and
+    plain requests to port 80 only (allowlist entries name no port); every other name is refused
+    without connecting. Open (the open public network): any name or address literal, on any
+    port. Either way a connection is made only to a resolved address public_address allows,
+    checked on the address dialled, which is never resolved again (so never rebound); when every
+    address is refused the answer is 403, before any connect. The launcher's broker grants the
+    restricted command this endpoint and nothing else. At most MAX_PROXY_CONNECTIONS connections
+    are served at once (more get a 503). Clients
+    authenticate with the operation's token. A test fixture's seam (allow_private) lifts the
+    address and port rules."""
 
-    def __init__(self, hosts, allow_private=False):
+    def __init__(self, hosts, allow_private=False, open_network=False, doh=None,
+                 closed=frozenset()):
         self.hosts = hosts
+        self.closed = closed
+        self.slots = threading.BoundedSemaphore(MAX_PROXY_CONNECTIONS)
         self.allow_private = allow_private
+        self.open = open_network
+        # encrypted DNS for a network whose resolver answers with fake IPs (one per operation)
+        self.doh = doh or EncryptedDns()
         # Only this operation knows the token: another local process cannot use the proxy.
         self.token = os.urandom(16).hex()
         self.authorization = "Basic " + base64.b64encode(
@@ -383,7 +697,22 @@ class Forwarder:
                 client, _ = self.server.accept()
             except OSError:
                 return
-            threading.Thread(target=self.handle, args=(client,), daemon=True).start()
+            # a bounded number of connections per operation (each holds two threads)
+            if not self.slots.acquire(blocking=False):
+                try:
+                    client.sendall(b"HTTP/1.1 503 Service Unavailable\r\nContent-Length: 0\r\n"
+                                   b"Connection: close\r\n\r\n")
+                except OSError:
+                    pass
+                client.close()
+                continue
+            threading.Thread(target=self.serve, args=(client,), daemon=True).start()
+
+    def serve(self, client):
+        try:
+            self.handle(client)
+        finally:
+            self.slots.release()
 
     @staticmethod
     def splice(a, b):
@@ -429,15 +758,17 @@ class Forwarder:
                 client.close()
                 return
             rewritten = None
+            any_port = self.open or self.allow_private
             if method == "CONNECT":
-                host, port = split_target(target, 443)
-                # allowlist entries name no port: web ports only (any port for a test fixture)
-                if port not in (80, 443) and not self.allow_private:
+                host, port = split_target(target, 443, self.open)
+                # allowlist entries name no port: web ports only (any port when open, or for a
+                # test fixture)
+                if port not in (80, 443) and not any_port:
                     host = None
             elif target.startswith("http://"):
                 authority, _, path = target[7:].partition("/")
-                host, port = split_target(authority, 80)
-                if port != 80 and not self.allow_private:
+                host, port = split_target(authority, 80, self.open)
+                if port != 80 and not any_port:
                     host = None
                 headers = [line for line in lines[1:]
                            if not line.lower().startswith((b"proxy-", b"connection:"))]
@@ -445,14 +776,24 @@ class Forwarder:
                     headers + [b"Connection: close"]) + b"\r\n\r\n"
             else:
                 host, port = None, None
-            if host is None or not host_allowed(host, self.hosts):
+            if host is None or not (self.open or host_allowed(host, self.hosts)):
                 client.sendall(b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n"
                                b"Connection: close\r\n\r\n")
                 client.close()
                 return
             try:
                 up = self.connect(host, port)
-            except OSError:
+            except PermissionError as error:
+                # every address of the name is closed: refused before any connect (a fake-IP
+                # resolver without an encrypted DNS answer says so)
+                reason = FAKE_IP_REFUSAL.encode() if isinstance(error, FakeIpUnresolved) else b""
+                client.sendall(b"HTTP/1.1 403 Forbidden\r\nContent-Type: text/plain\r\n"
+                               b"Content-Length: %d\r\nConnection: close\r\n\r\n"
+                               % len(reason) + reason)
+                client.close()
+                return
+            except (OSError, ValueError):
+                # a failed lookup or dial; ValueError: a name the resolver cannot encode (IDNA)
                 client.sendall(b"HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\n"
                                b"Connection: close\r\n\r\n")
                 client.close()
@@ -466,23 +807,18 @@ class Forwarder:
             else:
                 up.sendall(rewritten + body)
             self.splice(client, up)
-        except OSError:
+        except (OSError, ValueError):
             try:
                 client.close()
             except OSError:
                 pass
 
     def connect(self, host, port):
-        """Connects to a vetted address of host (never resolved again, so never rebound)."""
-        for family, kind, proto, _, address in socket.getaddrinfo(host, port, 0,
-                                                                  socket.SOCK_STREAM):
-            ip = ipaddress.ip_address(address[0].split("%")[0])
-            if getattr(ip, "ipv4_mapped", None):
-                ip = ip.ipv4_mapped
-            # only globally routable addresses (not loopback, private, link-local, shared
-            # 100.64/10, unique-local or NAT64) unless a test fixture allows its local endpoints
-            if not self.allow_private and (not ip.is_global or ip in NAT64):
-                continue
+        """Connects to a vetted address of host (never resolved again, so never rebound). Raises
+        PermissionError when every address is refused (none is dialled); see vetted_addresses."""
+        candidates = vetted_addresses(host, port, self.doh, self.allow_private,
+                                      closed=self.closed)
+        for family, kind, proto, _, address in candidates:
             sock = socket.socket(family, kind, proto)
             try:
                 sock.settimeout(30)
@@ -634,20 +970,39 @@ def run_restricted(request, control):
         close_fds(runtime.values())
 
 
+def write_denies(request):
+    """The write denies the device resolved for this operation: absolute, normalized paths."""
+    paths = request.get("writeDenies", [])
+    if not isinstance(paths, list) or not all(
+            isinstance(p, str) and p.startswith("/") and os.path.normpath(p) == p for p in paths):
+        raise Refused("INVALID_REQUEST", "Supply absolute normalized write denies")
+    return list(paths)
+
+
 def run_sealed(request, control, runtime):
     env = dict(validated_env(request["env"]))
     for key in PROXY_KEYS:
         env.pop(key, None)
+    denies = write_denies(request)
     read, write, _ = pin_roots(request)
     forwarder = None
     try:
         if not write:
             raise Refused("SCOPE_DENIED", "Restricted execution needs an existing writable root")
         network = request["network"]
-        if network.get("kind") != "allowlist" or not network.get("hosts"):
+        kind = network.get("kind")
+        if kind != "open" and (kind != "allowlist" or not network.get("hosts")):
             launcher_network = {"kind": "none"}
         else:
-            forwarder = Forwarder(list(network["hosts"]), request.get("allowPrivate") is True)
+            seam = request.get("dohTest")  # a test fixture's DoH server and certificate
+            doh = EncryptedDns(seam["endpoints"], seam["caPem"]) if isinstance(seam, dict) \
+                else EncryptedDns()
+            try:
+                closed = closed_set(request.get("closedAddresses", []))
+            except (TypeError, ValueError, AttributeError):
+                raise Refused("INVALID_REQUEST", "Supply closed addresses as IP addresses")
+            forwarder = Forwarder(list(network["hosts"]) if kind == "allowlist" else [],
+                                  request.get("allowPrivate") is True, kind == "open", doh, closed)
             proxy = "http://capybara:%s@127.0.0.1:%d" % (forwarder.token, forwarder.port)
             for key in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy", "ALL_PROXY",
                         "all_proxy"):
@@ -660,7 +1015,10 @@ def run_sealed(request, control, runtime):
         body = {"mode": "exec", "roots": {"read": read, "write": write},
                 "network": launcher_network, "reportFd": report_w, "env": env,
                 "cwd": request["cwd"], "argv": ["/bin/bash", "-c", request["command"]],
-                "timeoutMs": request["timeoutMs"], "nativeFd": runtime["native-files.py"]}
+                "timeoutMs": request["timeoutMs"], "nativeFd": runtime["native-files.py"],
+                "writeDenies": denies}
+        if isinstance(request.get("faultInjection"), dict):
+            body["faultInjection"] = request["faultInjection"]  # a test fixture's seam
         if files:
             body["systemRoots"] = list(LAUNCHER_SYSTEM_ROOTS) + files
         if control.cancel is not None:
@@ -760,8 +1118,13 @@ def supervise(launcher, report_r, body, request, control):
               "cancelled": state["cancelled"], "supervisorLost": not state["cancelled"]})
         return
     stopped = exit_event.get("exitCode") is None or exit_event.get("cancelled")
-    send({"event": "exit", "exitCode": None if stopped or state["cancelled"] else exit_event["exitCode"],
-          "timedOut": bool(exit_event.get("timedOut")), "cancelled": state["cancelled"]})
+    final = {"event": "exit",
+             "exitCode": None if stopped or state["cancelled"] else exit_event["exitCode"],
+             "timedOut": bool(exit_event.get("timedOut")), "cancelled": state["cancelled"]}
+    if isinstance(exit_event.get("fatal"), str):
+        # the broker could not undo a refused change and ended the operation
+        final["fatal"] = exit_event["fatal"]
+    send(final)
 
 
 # ---- native -------------------------------------------------------------------------------
@@ -789,7 +1152,11 @@ def run_native(request):
                 # The permitted root does not exist yet, so neither does anything below it.
                 send({"event": "native", "response": {"result": [] if body["method"] == "scan" else None}})
                 return
-            # restricted native writes honour the mandatory write denies (as the broker does)
+            # restricted native writes honour the mandatory write denies (as the broker does) and
+            # the operation's resolved ones (this agent serves one operation)
+            folded = [native._fold_parts(p) for p in write_denies(request)]
+            native.SYSTEM_WRITE_DENIES.extend(folded)
+            native.PREFIX_GUARDED.extend((names, True) for names in folded)
             roots = {"read": [{"path": e["path"], "fd": e["fd"]} for e in read],
                      "write": [{"path": e["path"], "fd": e["fd"]} for e in write],
                      "denyWrites": True}

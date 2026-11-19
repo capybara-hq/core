@@ -3211,6 +3211,9 @@ export const SANDBOX_MANDATORY_WRITE_DENIES: readonly (readonly string[])[];
 export const SANDBOX_PROTECTED_PATH_NAMES: readonly string[];
 
 // @public
+export const SANDBOX_RESERVED_NAME_PREFIX = ".capybara-staging-";
+
+// @public
 export const SANDBOX_ROOTS: readonly ["/workspace", "/skills", "/tmp"];
 
 // @public

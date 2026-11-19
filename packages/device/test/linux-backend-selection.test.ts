@@ -10,6 +10,7 @@ import {
 import {
   checkLinuxRestrictedGrant,
   createHostOperationBackend,
+  hostCommandEnv,
 } from "../src/exec/linux-operation-backend.js";
 import type { LinuxProbe } from "../src/exec/linux-runtime.js";
 import type { DeviceOwnerCeiling } from "../src/exec/operation-types.js";
@@ -118,7 +119,8 @@ describe("local operation backend selection", () => {
       version: 2,
       restricted: { filesystem: true, network: true, native: true, concurrentScopes: true },
       boundary: "operation",
-      network: { openPublic: false, allowlist: true, perOperationHosts: true },
+      // the forwarder enforces the open public network on the resolved address
+      network: { openPublic: true, allowlist: true, perOperationHosts: true },
       outsideSandbox: true,
       background: true,
     });
@@ -183,6 +185,28 @@ describe("Linux restricted grant checks", () => {
   });
   it("leaves native grants to the agent's per-path check", () => {
     expect(() => checkLinuxRestrictedGrant(grant, "native")).not.toThrow();
+  });
+});
+
+describe("Linux host command environment", () => {
+  it("restricted commands start from a fixed set; escalated ones lose CAPYBARA_* variables", () => {
+    const saved = { ...process.env };
+    try {
+      process.env.CAPYBARA_DEVICE_TOKEN = "sentinel-token";
+      process.env.CAPYBARA_STATE_DIR = "/state";
+      process.env.AWS_SECRET_ACCESS_KEY = "sentinel-aws";
+      process.env.PATH = "/usr/bin:/bin";
+      const restricted = hostCommandEnv(false);
+      expect(Object.keys(restricted).sort()).toEqual(["LANG", "PATH"]);
+      const escalated = hostCommandEnv(true);
+      // an escalated call runs as the owner: the owner's environment minus the device's own
+      expect(escalated.PATH).toBe("/usr/bin:/bin");
+      expect(escalated.AWS_SECRET_ACCESS_KEY).toBe("sentinel-aws");
+      expect(Object.keys(escalated).filter((k) => k.startsWith("CAPYBARA_"))).toEqual([]);
+    } finally {
+      for (const key of Object.keys(process.env)) if (!(key in saved)) delete process.env[key];
+      Object.assign(process.env, saved);
+    }
   });
 });
 

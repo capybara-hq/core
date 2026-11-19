@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -6,6 +7,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { shellQuote } from "../src/exec/shared.js";
 import {
   dockerUnavailable,
+  type FixtureNetworks,
   inspect,
   type LinuxDevice,
   NAMES,
@@ -18,6 +20,7 @@ import {
   HostServer,
   hostBackend,
   installServer,
+  openAuthorityFor,
 } from "./linux-host-fixture.js";
 
 const unavailable = dockerUnavailable();
@@ -475,7 +478,7 @@ print(get(80), ask(("CONNECT NAME:18080 HTTP/1.1" + CRLF + auth + CRLF + CRLF).e
       });
     };
     // production rules: no token 407, CONNECT to another port 403, plain request to another port
-    // 403, and the loopback the name resolves to is refused (502)
+    // 403, and the loopback the name resolves to is refused before any connect (403)
     device.run("mkdir -m 700 /home/sandbox/state-private");
     const strict = new HostServer(device);
     servers.push(strict);
@@ -485,7 +488,7 @@ print(get(80), ask(("CONNECT NAME:18080 HTTP/1.1" + CRLF + auth + CRLF + CRLF).e
       privateProxyTargets: false,
     });
     const refused = await ask(production);
-    expect(refused.stdout.trim(), refused.stderr).toBe("407 403 403 502");
+    expect(refused.stdout.trim(), refused.stderr).toBe("407 403 403 403");
     // the fixture seam lifts only the address and port rules: the same target is then reached
     const seamed = await ask(backend);
     expect(seamed.stdout.trim(), seamed.stderr).toBe("407 200 200 200");
@@ -640,5 +643,829 @@ describe.skipIf(unavailable !== null)("Linux host operation backend without pidf
     abort.abort();
     await running;
     expect(await inspect(device, { what: "alive", pids: [child] })).toEqual([]);
+  });
+});
+
+/** Asks the operation's proxy for each request line; prints a JSON map of status codes. */
+const PROXY_PROBE = String.raw`
+import base64, json, os, socket, sys, urllib.parse
+proxy = urllib.parse.urlsplit(os.environ["https_proxy"])
+auth = "Proxy-Authorization: Basic " + base64.b64encode(
+    ("%s:%s" % (proxy.username, proxy.password)).encode()).decode()
+bodies = {}
+def status(line):
+    try:
+        s = socket.create_connection((proxy.hostname, proxy.port), 10)
+        s.sendall((line + "\r\n" + auth + "\r\n\r\n").encode())
+        reply = b""
+        while b"\r\n" not in reply:
+            chunk = s.recv(256)
+            if not chunk:
+                break
+            reply += chunk
+        code = reply.split(b" ")[1].decode()
+        if code == "403":
+            # a refusal's reason, when it gives one
+            s.settimeout(5)
+            while True:
+                chunk = s.recv(4096)
+                if not chunk:
+                    break
+                reply += chunk
+            body = reply.partition(b"\r\n\r\n")[2]
+            if body:
+                bodies[line] = body.decode()
+        s.close()
+        return code
+    except (OSError, IndexError) as error:
+        return "error:%s" % getattr(error, "errno", error)
+out = {line: status(line) for line in json.loads(sys.argv[1])}
+for line, body in bodies.items():
+    out[line + " body"] = body
+try:
+    socket.create_connection((sys.argv[2], int(sys.argv[3])), 5).close()
+    out["direct"] = "ok"
+except OSError as error:
+    out["direct"] = "denied:%d" % error.errno
+print(json.dumps(out))
+`;
+
+/** Connects to each address; prints a JSON map of ok / denied:<errno>. */
+const CONNECT_PROBE = String.raw`
+import json, socket, sys
+def attempt(host, port):
+    family = socket.AF_INET6 if ":" in host else socket.AF_INET
+    s = socket.socket(family, socket.SOCK_STREAM)
+    s.settimeout(5)
+    try:
+        s.connect((host, port))
+        return "ok"
+    except OSError as error:
+        return "denied:%s" % error.errno
+    finally:
+        s.close()
+out = {}
+for host, port in json.loads(sys.argv[1]):
+    out["%s:%d" % (host, port)] = attempt(host, port)
+print(json.dumps(out))
+`;
+
+/**
+ * The command's own loopback listeners: its own connects to them are refused, while a client
+ * outside the sandbox reaches them (the port is written to `port`; one connection is accepted).
+ */
+const OWN_LISTENER = String.raw`
+import json, socket, sys
+def attempt(host, port):
+    family = socket.AF_INET6 if ":" in host else socket.AF_INET
+    s = socket.socket(family, socket.SOCK_STREAM)
+    s.settimeout(5)
+    try:
+        s.connect((host, port))
+        return "ok"
+    except OSError as error:
+        return "denied:%s" % error.errno
+    finally:
+        s.close()
+out = {}
+servers = []
+for family, host in ((socket.AF_INET, "127.0.0.1"), (socket.AF_INET6, "::1")):
+    server = socket.socket(family, socket.SOCK_STREAM)
+    server.bind((host, 0))
+    server.listen(4)
+    servers.append(server)
+    out["own " + host] = attempt(host, server.getsockname()[1])
+for name, port in json.loads(sys.argv[1]).items():
+    out[name] = attempt("127.0.0.1", port)
+out["other6"] = attempt("::1", 18082)
+# a listener whose reading side was shut down and listened again (the review's vector) is no
+# more reachable than any other
+server = servers[0]
+server.shutdown(socket.SHUT_RD)
+try:
+    server.listen(4)
+except OSError:
+    pass
+out["relistened"] = attempt("127.0.0.1", server.getsockname()[1])
+listener = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+listener.bind(("127.0.0.1", 0))
+listener.listen(4)
+open("port.tmp", "w").write(str(listener.getsockname()[1]))
+import os
+os.rename("port.tmp", "port")
+listener.settimeout(30)
+try:
+    peer, _ = listener.accept()
+    out["outsideClient"] = peer.recv(4).decode()
+except OSError as error:
+    out["outsideClient"] = "none:%s" % error
+print(json.dumps(out))
+`;
+
+// The open public network (approval-only profiles design, "Open network") under the production
+// forwarder rules, and the fixed denies around it. The device sits on two internal Docker
+// networks, a globally routable subnet standing in for the internet and a private one.
+describe.skipIf(unavailable !== null)("Linux host operation backend: open network", () => {
+  let device: LinuxDevice;
+  let backend: HostBackend;
+  let net: FixtureNetworks;
+  const servers: HostServer[] = [];
+  const signal = () => new AbortController().signal;
+  const read = async (path: string) => {
+    const value = (await inspect(device, { what: "read", path })) as string | null;
+    return value === null ? null : Buffer.from(value, "base64").toString();
+  };
+  const project = (name: string) => {
+    const root = `/workspace/${name}-${Math.random().toString(36).slice(2, 8)}`;
+    device.run(`mkdir -p ${root}`);
+    return root;
+  };
+  type Network =
+    | { kind: "open-public" }
+    | { kind: "allowlist"; hosts: string[] }
+    | { kind: "none" };
+  const exec = async (
+    root: string,
+    command: string,
+    network: Network = { kind: "open-public" },
+  ) => {
+    const scope = scopeFor(backend.deviceId, {
+      profile: "approve-for-me",
+      filesystem: { kind: "scoped", readRoots: [], writeRoots: [root] },
+      network,
+    });
+    return backend.operation(scope, openAuthorityFor(scope.operationId)).exec({
+      command,
+      cwd: root,
+      timeoutMs: 60_000,
+      maxOutputBytes: 1 << 16,
+      signal: signal(),
+    });
+  };
+  const python = (program: string, ...args: string[]) =>
+    `python3 -c ${shellQuote(program)} ${args.map(shellQuote).join(" ")}`;
+  /** Starts a background command (Full: outside the sandbox) and waits for its ready file. */
+  const background = async (root: string, command: string, outside: boolean) => {
+    const scope = scopeFor(
+      backend.deviceId,
+      outside
+        ? {
+            profile: "full-access",
+            filesystem: { kind: "device" },
+            network: { kind: "environment" },
+          }
+        : {
+            profile: "approve-for-me",
+            filesystem: { kind: "scoped", readRoots: [], writeRoots: [root] },
+            network: { kind: "none" },
+          },
+    );
+    await backend.background("start", {
+      scope,
+      authority: openAuthorityFor(scope.operationId),
+      args: {
+        command: `cd ${root} && ${command}`,
+        cwd: root,
+        timeoutMs: 600_000,
+        maxOutputBytes: 1024,
+        taskId: `task-${scope.operationId}`,
+        outputPath: `${root}/out-${scope.operationId}.log`,
+        retainUntilMs: Date.now() + 3_600_000,
+      },
+    });
+    while ((await read(`${root}/ready`)) === null)
+      await new Promise((resolve) => setImmediate(resolve));
+  };
+
+  beforeAll(async () => {
+    device = await startLinuxDevice({ networks: true, tmpfs: ["/var/spool"] });
+    net = device.networks as FixtureNetworks;
+    await installServer(device);
+    device.run("mkdir -m 700 /home/sandbox/state");
+    const server = new HostServer(device);
+    servers.push(server);
+    backend = await hostBackend(server, {
+      stateDir: "/home/sandbox/state",
+      network: "open",
+      allowedDomains: [],
+      // production forwarder rules: the fixture's local addresses are closed like any other
+      privateProxyTargets: false,
+      fakeIpDns: net.doh,
+      // a write root outside the workspace (the crontab spool's stand-in)
+      restrictedProjectReach: "os-user",
+    });
+  });
+  afterAll(() => {
+    for (const s of servers) s.close();
+    device?.remove();
+  });
+
+  it("reports the open public network as enforced", async () => {
+    expect((await backend.support()).network).toEqual({
+      openPublic: true,
+      allowlist: true,
+      perOperationHosts: true,
+    });
+  });
+
+  it("reaches public addresses through its proxy on any port; every closed class is refused", async () => {
+    const root = project("open");
+    const receipts = async () =>
+      Promise.all(["ungranted4", "ungranted6"].map((n) => read(`/opt/capybara-receipts/${n}`)));
+    const before = await receipts();
+    // a service on this device's own (public-class) interface address, outside the sandbox
+    await background(
+      root,
+      `printf r > ready; exec python3 -m http.server 18083 --bind ${net.self}`,
+      true,
+    );
+    const s = net.server;
+    const connect = (target: string) => `CONNECT ${target} HTTP/1.1`;
+    const open = [
+      connect(`public.permission.test:${net.port}`),
+      `GET http://public.permission.test:${net.port}/ HTTP/1.1`,
+      connect(`${s.public}:${net.port}`),
+    ];
+    const closed = [
+      connect(`private.permission.test:${net.port}`),
+      connect(`${s.private}:${net.port}`),
+      connect(`[::ffff:${s.private}]:${net.port}`),
+      connect(`mapped.permission.test:${net.port}`),
+      connect(`nat64.permission.test:${net.port}`),
+      connect(`[64:ff9b::${s.private}]:${net.port}`),
+      connect("metadata.permission.test:80"),
+      connect("169.254.169.254:80"),
+      connect("[::ffff:169.254.169.254]:80"),
+      connect("azure.permission.test:80"),
+      connect("168.63.129.16:80"),
+      connect("cgnat.permission.test:80"),
+      connect("100.64.0.1:80"),
+      connect("192.0.2.1:80"),
+      connect("loop.permission.test:18081"),
+      connect("localhost:18081"),
+      connect("127.0.0.1:18081"),
+      connect("[::1]:18082"),
+      connect("0.0.0.0:18081"),
+      connect("self.permission.test:18083"),
+      connect(`${net.self}:18083`),
+      `GET http://${s.private}:${net.port}/ HTTP/1.1`,
+    ];
+    const result = await exec(
+      root,
+      python(PROXY_PROBE, JSON.stringify([...open, ...closed]), s.public, String(net.port)),
+    );
+    expect(result.exitCode, result.stderr).toBe(0);
+    const statuses = JSON.parse(result.stdout) as Record<string, string>;
+    expect(Object.fromEntries(open.map((line) => [line, statuses[line]]))).toEqual(
+      Object.fromEntries(open.map((line) => [line, "200"])),
+    );
+    // refused by the forwarder before any connect (403), never a failed dial (502)
+    expect(Object.fromEntries(closed.map((line) => [line, statuses[line]]))).toEqual(
+      Object.fromEntries(closed.map((line) => [line, "403"])),
+    );
+    // only the proxy dials: the command's own connect to a public address is refused
+    expect(statuses.direct).toBe("denied:13");
+    expect(net.accepted("public")).toBe(3);
+    expect(net.accepted("private")).toBe(0);
+    // the device's own loopback services saw no connection (only the fixture's readiness probe)
+    expect(await receipts()).toEqual(before);
+  });
+
+  it("an allowlist grant still reaches exactly its names, on web ports, at public addresses", async () => {
+    const root = project("allow");
+    const lines = [
+      "GET http://allowed.permission.test/ HTTP/1.1",
+      "CONNECT allowed.permission.test:80 HTTP/1.1",
+      "CONNECT public.permission.test:80 HTTP/1.1",
+      `CONNECT allowed.permission.test:${net.port} HTTP/1.1`,
+      "GET http://private.permission.test/ HTTP/1.1",
+      `CONNECT ${net.server.public}:80 HTTP/1.1`,
+    ];
+    const result = await exec(
+      root,
+      python(PROXY_PROBE, JSON.stringify(lines), net.server.public, "80"),
+      { kind: "allowlist", hosts: ["allowed.permission.test", "private.permission.test"] },
+    );
+    expect(result.exitCode, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual({
+      [lines[0] as string]: "200",
+      [lines[1] as string]: "200",
+      [lines[2] as string]: "403",
+      [lines[3] as string]: "403",
+      [lines[4] as string]: "403",
+      [lines[5] as string]: "403",
+      direct: "denied:13",
+    });
+    expect(net.accepted("public80")).toBe(2);
+  });
+
+  it("never connects to a loopback listener, its own included; clients outside reach its own", async () => {
+    const root = project("listen");
+    const before = await read("/opt/capybara-receipts/ungranted4");
+    // another process outside the sandbox (a TCP service such as a Docker daemon on 2375) and
+    // another restricted operation, both listening on loopback
+    await background(
+      root,
+      `${python(
+        "import socket\nfor port in (2375, 18084):\n    s = socket.socket(); s.bind(('127.0.0.1', port)); s.listen(8); globals()['k%d' % port] = s\nopen('ready', 'w').close()\nimport time\ntime.sleep(1000)",
+      )}`,
+      true,
+    );
+    const otherRoot = project("listen-other");
+    await background(
+      otherRoot,
+      python(
+        "import socket, time\ns = socket.socket(); s.bind(('127.0.0.1', 0)); s.listen(8)\nopen('port', 'w').write(str(s.getsockname()[1]))\nopen('ready', 'w').close()\ntime.sleep(1000)",
+      ),
+      false,
+    );
+    const otherPort = Number(await read(`${otherRoot}/port`));
+    const running = exec(
+      root,
+      python(
+        OWN_LISTENER,
+        JSON.stringify({ outside: 2375, outside2: 18084, otherOperation: otherPort, root4: 18081 }),
+      ),
+      { kind: "none" },
+    );
+    // a client outside the sandbox (Full access) reaches the command's listener
+    while ((await read(`${root}/port`)) === null)
+      await new Promise((resolve) => setImmediate(resolve));
+    const port = Number(await read(`${root}/port`));
+    const client = scopeFor(backend.deviceId, {
+      profile: "full-access",
+      filesystem: { kind: "device" },
+      network: { kind: "environment" },
+    });
+    await backend.operation(client, openAuthorityFor(client.operationId)).exec({
+      command: python(
+        "import socket, sys\ns = socket.create_connection(('127.0.0.1', int(sys.argv[1])), 10)\ns.sendall(b'from')\ns.close()",
+        String(port),
+      ),
+      timeoutMs: 30_000,
+      maxOutputBytes: 1024,
+      signal: signal(),
+    });
+    const result = await running;
+    expect(result.exitCode, result.stderr).toBe(0);
+    const out = JSON.parse(result.stdout) as Record<string, string>;
+    expect(out.outsideClient).toBe("from");
+    for (const key of [
+      "own 127.0.0.1",
+      "own ::1",
+      "outside",
+      "outside2",
+      "otherOperation",
+      "root4",
+      "other6",
+      "relistened",
+    ])
+      expect(out[key], key).toMatch(/^denied:/);
+    expect(await read("/opt/capybara-receipts/ungranted4")).toBe(before);
+    // the same holds in open mode
+    const open = await exec(
+      root,
+      python(
+        CONNECT_PROBE,
+        JSON.stringify([
+          ["127.0.0.1", 2375],
+          ["127.0.0.1", otherPort],
+        ]),
+      ),
+    );
+    expect(Object.values(JSON.parse(open.stdout))).toEqual([
+      expect.stringMatching(/^denied:/),
+      expect.stringMatching(/^denied:/),
+    ]);
+  });
+
+  it("the review's listener probes: no foreign listener is ever reached", async () => {
+    const root = project("probes");
+    const shut = await exec(
+      root,
+      python(readFileSync(new URL("./fixtures/linux-probe-shut2.py", import.meta.url), "utf8")),
+      { kind: "none" },
+    );
+    // every run fails at its first connect: no "hits" line, the foreign listener X gets nothing
+    expect(shut.stdout, shut.stderr).not.toMatch(/hits|'X'|\{/);
+    expect(shut.stdout.trim().split("\n")).toHaveLength(4);
+    for (const line of shut.stdout.trim().split("\n")) expect(line).toMatch(/\[Errno \d+\]/);
+    const reuse = await exec(
+      root,
+      python(readFileSync(new URL("./fixtures/linux-probe-reuseport.py", import.meta.url), "utf8")),
+      { kind: "none" },
+    );
+    // SO_REUSEPORT is refused before any group exists
+    expect(reuse.exitCode).not.toBe(0);
+    expect(reuse.stderr).toMatch(/PermissionError: \[Errno 1\]/);
+  });
+
+  it("never joins a foreign service's SO_REUSEPORT group", async () => {
+    const root = project("reuseport");
+    // a service outside the sandbox in a reuseport group on loopback, counting its connections
+    await background(
+      root,
+      python(
+        "import socket, threading, time\ns = socket.socket(); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1)\ns.bind(('127.0.0.1', 18085)); s.listen(64)\nopen('ready', 'w').close()\nn = 0\nwhile True:\n    s.accept()[0].close(); n += 1\n    open('count.tmp', 'w').write(str(n))\n    import os; os.rename('count.tmp', 'count')",
+      ),
+      true,
+    );
+    const attacker = String.raw`
+import ctypes, json, socket, struct
+out = {}
+def attempt(name, action):
+    try:
+        action()
+        out[name] = "ok"
+    except OSError as error:
+        out[name] = "denied:%d" % error.errno
+s = socket.socket()
+attempt("reuseport", lambda: s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEPORT, 1))
+# a classic BPF program (return 0) as SO_ATTACH_REUSEPORT_CBPF
+program = struct.pack("HBBI", 0x06, 0, 0, 0)
+buffer = ctypes.create_string_buffer(program)
+fprog = struct.pack("HxxxxxxQ", 1, ctypes.addressof(buffer))
+attempt("cbpf", lambda: s.setsockopt(socket.SOL_SOCKET, 51, fprog))
+attempt("ebpf", lambda: s.setsockopt(socket.SOL_SOCKET, 52, struct.pack("i", 3)))
+attempt("bind", lambda: s.bind(("127.0.0.1", 18085)))
+print(json.dumps(out))
+`;
+    const result = await exec(root, python(attacker), { kind: "none" });
+    expect(result.exitCode, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual({
+      reuseport: "denied:1",
+      cbpf: "denied:1",
+      ebpf: "denied:1",
+      bind: "denied:98",
+    });
+    // the service still gets every connection made to it from outside
+    const client = scopeFor(backend.deviceId, {
+      profile: "full-access",
+      filesystem: { kind: "device" },
+      network: { kind: "environment" },
+    });
+    await backend.operation(client, openAuthorityFor(client.operationId)).exec({
+      command: python(
+        "import socket\nfor _ in range(20):\n    socket.create_connection(('127.0.0.1', 18085), 5).close()",
+      ),
+      timeoutMs: 30_000,
+      maxOutputBytes: 1024,
+      signal: signal(),
+    });
+    while (Number(await read(`${root}/count`)) < 20)
+      await new Promise((resolve) => setImmediate(resolve));
+    expect(Number(await read(`${root}/count`))).toBe(20);
+  });
+
+  it("refuses the Docker socket and any UNIX socket outside its roots", async () => {
+    const root = project("docker-sock");
+    const daemon = project("daemon");
+    await background(
+      daemon,
+      python(
+        "import socket, time\ns = socket.socket(socket.AF_UNIX); s.bind('docker.sock'); s.listen(8)\nopen('ready', 'w').close()\ntime.sleep(1000)",
+      ),
+      true,
+    );
+    const probe = String.raw`
+import json, socket, sys
+out = {}
+for path in sys.argv[1:]:
+    s = socket.socket(socket.AF_UNIX)
+    try:
+        s.connect(path)
+        out[path] = "ok"
+    except OSError as error:
+        out[path] = "denied:%d" % error.errno
+print(json.dumps(out))
+`;
+    const result = await exec(
+      root,
+      python(
+        probe,
+        `${daemon}/docker.sock`,
+        "/var/run/docker.sock",
+        "/run/containerd/containerd.sock",
+      ),
+    );
+    expect(result.exitCode, result.stderr).toBe(0);
+    for (const value of Object.values(JSON.parse(result.stdout) as Record<string, string>))
+      expect(value).toMatch(/^denied:/);
+  });
+
+  it("refuses links and moves that would redirect a protected path, and the system spools", async () => {
+    const root = project("links");
+    const script = [
+      "ln -s /tmp .claude 2>/dev/null && echo claude-link",
+      "ln -s /tmp .config 2>/dev/null && echo config-link",
+      "ln -s /tmp Library 2>/dev/null && echo library-link",
+      "ln -s /tmp notes && echo notes-link",
+      "mkdir -p d/commands && touch d/commands/x.md",
+      "mv d .claude 2>/dev/null && echo moved-prepared",
+      "mkdir e && touch e/readme && mv e .claude && echo moved-plain",
+      "mkdir /var/spool/cron 2>/dev/null && echo cron",
+      "mkdir /var/spool/at 2>/dev/null && echo at",
+      "mkdir -p /var/spool/stage/crontabs && mv /var/spool/stage /var/spool/cron 2>/dev/null && echo cron-move",
+      "mkdir /var/spool/mail && printf m > /var/spool/mail/x && echo mail",
+      "true",
+    ].join("; ");
+    const scope = scopeFor(backend.deviceId, {
+      profile: "approve-for-me",
+      filesystem: { kind: "scoped", readRoots: [], writeRoots: [root, "/var/spool"] },
+      network: { kind: "none" },
+    });
+    const result = await backend.operation(scope, openAuthorityFor(scope.operationId)).exec({
+      command: script,
+      cwd: root,
+      timeoutMs: 30_000,
+      maxOutputBytes: 4096,
+      signal: signal(),
+    });
+    expect(result.exitCode, result.stderr).toBe(0);
+    expect(result.stdout.trim().split("\n")).toEqual(["notes-link", "moved-plain", "mail"]);
+    expect(await read(`${root}/.claude/readme`)).toBe("");
+    expect(await read(`${root}/d/commands/x.md`)).toBe("");
+  });
+
+  it("denies writes at a protected home location's resolved target (a dotfile manager's links)", async () => {
+    const home = device.run(`node -e "process.stdout.write(require('os').homedir())"`).trim();
+    const dotfiles = project("dotfiles");
+    device.run(
+      `mkdir -p ${dotfiles}/config && printf rc > ${dotfiles}/bashrc && ln -s ${dotfiles}/config ${home}/.config && ln -s ${dotfiles}/bashrc ${home}/.bashrc`,
+    );
+    try {
+      const result = await exec(
+        dotfiles,
+        [
+          "mkdir -p config/systemd/user 2>/dev/null && echo systemd",
+          "mkdir -p config/autostart 2>/dev/null && echo autostart",
+          "(printf x >> bashrc) 2>/dev/null && echo bashrc",
+          "printf ok > config/app.conf && echo app",
+          "true",
+        ].join("; "),
+        { kind: "none" },
+      );
+      expect(result.exitCode, result.stderr).toBe(0);
+      expect(result.stdout.trim()).toBe("app");
+      expect(await read(`${dotfiles}/bashrc`)).toBe("rc");
+    } finally {
+      device.run(`rm -f ${home}/.config ${home}/.bashrc`);
+    }
+  });
+
+  it("a dotfile link's target cannot be moved away, and a dangling link is still followed", async () => {
+    const home = device.run(`node -e "process.stdout.write(require('os').homedir())"`).trim();
+    const root = project("dangling");
+    device.run(`mkdir -p ${root}/dotfiles/config && ln -s ${root}/dotfiles/config ${home}/.config`);
+    try {
+      // call 1: moving the target's ancestor away (an anchored deny's ancestor) is refused
+      const first = await exec(root, "mv dotfiles gone 2>/dev/null && echo moved; true", {
+        kind: "none",
+      });
+      expect(first.stdout.trim(), first.stderr).toBe("");
+      // the move done outside the sandbox: the link dangles, and call 2 still denies its target
+      device.run(`mv ${root}/dotfiles ${root}/gone`);
+      const second = await exec(
+        root,
+        "mkdir -p dotfiles/config/systemd/user 2>/dev/null && echo systemd; mkdir -p dotfiles/config/app && echo app; true",
+        { kind: "none" },
+      );
+      expect(second.stdout.trim(), second.stderr).toBe("app");
+    } finally {
+      device.run(`rm -f ${home}/.config`);
+    }
+  });
+
+  it("every link of a dotfile chain is denied: a middle link cannot be retargeted", async () => {
+    const home = device.run(`node -e "process.stdout.write(require('os').homedir())"`).trim();
+    const root = project("chain");
+    device.run(
+      `mkdir -p ${root}/v1 ${root}/v2 && printf rc > ${root}/v1/zshrc && printf rc > ${root}/v2/zshrc && ln -s v1 ${root}/current && ln -s ${root}/current/zshrc ${home}/.zshrc`,
+    );
+    try {
+      const first = await exec(
+        root,
+        [
+          "ln -sfn v2 current 2>/dev/null && echo retargeted",
+          "mv current c2 2>/dev/null && echo moved",
+          "rm current 2>/dev/null && echo removed",
+          "(printf x >> v1/zshrc) 2>/dev/null && echo wrote",
+          "true",
+        ].join("; "),
+        { kind: "none" },
+      );
+      expect(first.stdout.trim(), first.stderr).toBe("");
+      // retargeted outside the sandbox: the next operation denies the new target
+      device.run(`ln -sfn v2 ${root}/current`);
+      const second = await exec(root, "(printf x >> v2/zshrc) 2>/dev/null && echo wrote; true", {
+        kind: "none",
+      });
+      expect(second.stdout.trim(), second.stderr).toBe("");
+      expect(await read(`${root}/v1/zshrc`)).toBe("rc");
+      expect(await read(`${root}/v2/zshrc`)).toBe("rc");
+    } finally {
+      device.run(`rm -f ${home}/.zshrc`);
+    }
+  });
+
+  it("a directory move into a guarded prefix is atomic against the operation's own writes", async () => {
+    const root = project("race");
+    // one thread moves d to .claude and back while another adds and removes d/commands and a
+    // third watches for .claude/commands: the move's check, rename and recheck exclude the writes
+    const race = String.raw`
+import os, threading, time
+stop = time.monotonic() + 6
+seen = [0]
+moves = [0]
+def mover():
+    while time.monotonic() < stop:
+        os.makedirs("d", exist_ok=True)
+        try:
+            os.rename("d", ".claude")
+            moves[0] += 1
+            os.rename(".claude", "d")
+        except OSError:
+            pass
+def writer():
+    while time.monotonic() < stop:
+        try:
+            os.mkdir("d/commands")
+            os.rmdir("d/commands")
+        except OSError:
+            pass
+def watcher():
+    while time.monotonic() < stop:
+        if os.path.isdir(".claude/commands"):
+            seen[0] += 1
+threads = [threading.Thread(target=f) for f in (mover, writer, watcher)]
+for t in threads:
+    t.start()
+for t in threads:
+    t.join()
+print(seen[0], moves[0])
+`;
+    const result = await exec(root, python(race), { kind: "none" });
+    expect(result.exitCode, result.stderr).toBe(0);
+    const [seen, moves] = result.stdout.trim().split(" ").map(Number);
+    expect(moves).toBeGreaterThan(0);
+    expect(seen).toBe(0);
+  });
+
+  it("a directory move into a guarded prefix is checked in a staging name no other operation can write", async () => {
+    const root = project("race2");
+    // operation A moves d to .claude and back; operation B, sharing the write root, adds and
+    // removes d/commands, recreates d, and watches for .claude/commands
+    const mover = String.raw`
+import os, time
+stop = time.monotonic() + 6
+moves = 0
+while time.monotonic() < stop:
+    os.makedirs("d", exist_ok=True)
+    try:
+        os.rename("d", ".claude")
+        moves += 1
+        os.rename(".claude", "d")
+    except OSError:
+        pass
+print(moves)
+`;
+    const writer = String.raw`
+import os, threading, time
+stop = time.monotonic() + 6
+seen = [0]
+def write():
+    while time.monotonic() < stop:
+        for action in (lambda: os.mkdir("d/commands"), lambda: os.rmdir("d/commands"),
+                       lambda: os.mkdir("d")):
+            try:
+                action()
+            except OSError:
+                pass
+def watch():
+    while time.monotonic() < stop:
+        if os.path.isdir(".claude/commands"):
+            seen[0] += 1
+threads = [threading.Thread(target=write), threading.Thread(target=watch)]
+for t in threads:
+    t.start()
+for t in threads:
+    t.join()
+print(seen[0])
+`;
+    const [a, b] = await Promise.allSettled([
+      exec(root, python(mover), { kind: "none" }),
+      exec(root, python(writer), { kind: "none" }),
+    ]);
+    // A either finishes, or (B took d while A's prepared directory sat in staging, so it could
+    // not go back) ends with its directory in quarantine: never at the guarded place
+    if (a.status === "fulfilled") {
+      expect(a.value.exitCode, a.value.stderr).toBe(0);
+      expect(Number(a.value.stdout.trim())).toBeGreaterThan(0);
+    } else expect(String(a.reason)).toMatch(/ended the operation.*quarantine/);
+    expect(b.status).toBe("fulfilled");
+    if (b.status !== "fulfilled") return;
+    expect(b.value.exitCode, b.value.stderr).toBe(0);
+    expect(Number(b.value.stdout.trim())).toBe(0);
+    expect(await read(`${root}/.claude/commands`)).toBeNull();
+    expect(
+      device.run(`test -d ${root}/.claude/commands && echo present || echo absent`).trim(),
+    ).toBe("absent");
+  });
+
+  it("a guarded move that cannot be finished nor undone is quarantined and ends the operation", async () => {
+    device.run("mkdir -m 700 /home/sandbox/state-fault");
+    const faulty = new HostServer(device);
+    servers.push(faulty);
+    const failing = await hostBackend(faulty, {
+      stateDir: "/home/sandbox/state-fault",
+      deviceId: "device-fault",
+      network: "open",
+      allowedDomains: [],
+      privateProxyTargets: false,
+      restrictedProjectReach: "os-user",
+      // test seam: the final rename and the move back both fail
+      faultInjection: { stagedMove: "fail" },
+    });
+    const root = project("fault");
+    const scope = scopeFor(failing.deviceId, {
+      profile: "approve-for-me",
+      filesystem: { kind: "scoped", readRoots: [], writeRoots: [root] },
+      network: { kind: "none" },
+    });
+    await expect(
+      failing.operation(scope, openAuthorityFor(scope.operationId)).exec({
+        command: "mkdir -p d/x && mv d .claude; sleep 30",
+        cwd: root,
+        timeoutMs: 60_000,
+        maxOutputBytes: 4096,
+        signal: signal(),
+      }),
+    ).rejects.toThrow(/ended the operation.*quarantine/);
+    const listing = device.run(`ls -a ${root}`).split("\n");
+    expect(listing).not.toContain(".claude");
+    expect(listing).not.toContain("d");
+    const quarantined = listing.filter((name) => name.startsWith(".capybara-staging-quarantine-"));
+    expect(quarantined).toHaveLength(1);
+    expect(device.run(`ls ${root}/${quarantined[0]}`).trim()).toBe("x");
+  });
+
+  it("a guarded move waits a bounded time for the operation's other writes (EBUSY)", async () => {
+    const root = project("busy");
+    // a FIFO open without a reader holds the broker's shared files lock
+    const started = Date.now();
+    const result = await exec(
+      root,
+      "mkfifo f && (printf x > f &) && sleep 0.3 && mkdir d && (mv d .claude 2>&1 || true); true",
+      { kind: "none" },
+    );
+    expect(result.stdout).toMatch(/Device or resource busy/);
+    expect(Date.now() - started).toBeLessThan(40_000);
+    expect(device.run(`test -d ${root}/d && echo d`).trim()).toBe("d");
+  });
+
+  it("re-resolves a fake-IP resolver's answers through encrypted DNS and checks the real address", async () => {
+    const root = project("fake-ip");
+    const before = { public: net.accepted("public"), public80: net.accepted("public80") };
+    const lines = [
+      `CONNECT fake.permission.test:${net.port} HTTP/1.1`,
+      `GET http://fake.permission.test:${net.port}/ HTTP/1.1`,
+      `CONNECT fakepriv.permission.test:${net.port} HTTP/1.1`,
+      `CONNECT fakedown.permission.test:${net.port} HTTP/1.1`,
+      // a fake-IP literal is only a reserved address
+      `CONNECT 198.18.0.10:${net.port} HTTP/1.1`,
+    ];
+    const open = await exec(
+      root,
+      python(PROXY_PROBE, JSON.stringify(lines), net.server.public, String(net.port)),
+    );
+    expect(open.exitCode, open.stderr).toBe(0);
+    const statuses = JSON.parse(open.stdout) as Record<string, string>;
+    expect(lines.map((line) => statuses[line])).toEqual(["200", "200", "403", "403", "403"]);
+    // the refusal after a failed DoH names the fake-IP resolver; a private real address is a
+    // plain refusal
+    expect(statuses[`${lines[3]} body`]).toMatch(/fake-IP resolver/);
+    expect(statuses[`${lines[2]} body`]).toBeUndefined();
+    expect(net.accepted("public") - before.public).toBe(2);
+    expect(net.accepted("private")).toBe(0);
+    // a granted name the resolver answers with a fake IP takes the same path
+    const allow = await exec(
+      root,
+      python(
+        PROXY_PROBE,
+        JSON.stringify([
+          "GET http://fakeallow.permission.test/ HTTP/1.1",
+          "GET http://fakepriv.permission.test/ HTTP/1.1",
+        ]),
+        net.server.public,
+        "80",
+      ),
+      { kind: "allowlist", hosts: ["fakeallow.permission.test", "fakepriv.permission.test"] },
+    );
+    expect(allow.exitCode, allow.stderr).toBe(0);
+    expect(JSON.parse(allow.stdout)).toMatchObject({
+      "GET http://fakeallow.permission.test/ HTTP/1.1": "200",
+      "GET http://fakepriv.permission.test/ HTTP/1.1": "403",
+    });
+    expect(net.accepted("public80") - before.public80).toBe(1);
   });
 });

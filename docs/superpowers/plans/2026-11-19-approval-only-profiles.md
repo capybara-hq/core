@@ -391,8 +391,8 @@ One mechanical commit on `perm/r3-int`, behaviour kept wherever a later task own
 
 - `packages/device/src/exec/{linux-agent,linux-operation-worker,linux-operation-backend,
   docker-operations}.ts`
-- `packages/plugin-sdk/src/sandbox-linux-runtime-source.ts` (loopback connect only to ports the
-  operation itself bound)
+- `packages/plugin-sdk/src/sandbox-linux-runtime-source.ts` (no loopback connect beyond the
+  granted endpoints, `SO_REUSEPORT` refused; ruling 2026-11-19 after the security review)
 - their tests
 - a changeset (sdk, device)
 
@@ -417,7 +417,10 @@ T1 does not touch this SDK file.
 **RED first:**
 
 - The network matrix from T7, run in the hardened Docker harness.
-- A connect to the command's own listener passes; a connect to another process's listener fails.
+- A connect to any loopback listener fails, the command's own included (ruling 2026-11-19: no
+  own-listener connect on either platform); a client outside the sandbox reaches the command's
+  listener; the review's probes (`shutdown` + foreign `SO_REUSEADDR` + re-listen, and
+  `SO_REUSEPORT`) reach no foreign listener.
 - `docker.sock` is refused.
 
 **Gates:** the Linux conformance with `CAPYBARA_TEST_REQUIRE_LINUX_RESTRICTED=1` (sequential), then

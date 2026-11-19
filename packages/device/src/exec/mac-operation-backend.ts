@@ -118,14 +118,14 @@ export interface LocalBackendHost {
   restricted: boolean;
   /** Why restricted operations are unavailable, when they are. */
   unavailableReason?: string;
+  /**
+   * Restricted operations enforce the open public network (the closed address classes refused on
+   * the resolved address); reported only while restricted operations run.
+   */
+  openPublic?: boolean;
   /** Escalated calls (outside the sandbox) and background work run on this platform. */
   outsideSandbox: boolean;
   background: boolean;
-  /**
-   * The platform's restricted worker enforces the open public network (a grant's `openNetwork`,
-   * decided on the resolved address). Absent: only the allowlist is reported.
-   */
-  openPublic?: boolean;
   /** The message a refused restricted operation carries. */
   pending: string;
   startWorker?: (request: MacWorkerRequest, signal: AbortSignal) => Promise<MacWorkerHandle>;
