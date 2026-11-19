@@ -1,5 +1,27 @@
 # @capybara-hq/plugin-sdk
 
+## 0.1.0-rc.36
+
+### Minor Changes
+
+- dcfc62e: The device protocol's scope-bearing operations move into `device-protocol.ts` under their
+  canonical names (`DeviceHello`, `parseDeviceFrame`, `parseOperationResult`, `DeviceOwnerCeiling`,
+  `KernelRequest`, `DeviceResponse`, `BindInstanceRequest`, ...; the `V3` suffixes and
+  `device-protocol-v3` are gone). Protocol 2's frames that a protocol 3 name replaced keep a `Legacy`
+  prefix (`LegacyDeviceHello`, `parseLegacyDeviceFrame`, `LegacyDevicePolicyArgs`, ...).
+- 3cb0cf5: `BACKGROUND_LAUNCH_LINE` and `isBackgroundLaunch` are removed. They marked the old session-id
+  background launcher's command, which no kernel sends any more: a background task starts through
+  the device's `backgroundStart` operation.
+
+### Patch Changes
+
+- 1c6ca44: `SandboxBackground.start` takes an optional `instanceGeneration`: the kernel passes its generation
+  of the held instance to a cloud provider, which cannot know it otherwise (it is allocated after
+  `create` returns) yet must name it in the reference the kernel acknowledges. Without it no cloud
+  background start could ever be acknowledged. A bound local device is not told; it knows its own.
+- 1d3eb12: `DEVICE_DENIED_SECRET_PATHS` and `DEVICE_DEFAULT_STATE_PATH`: the paths a local device never
+  opens to restricted work, one source for the device and the kernel.
+
 ## 0.1.0-rc.35
 
 ### Patch Changes

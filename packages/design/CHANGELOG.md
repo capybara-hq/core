@@ -1,5 +1,29 @@
 # @capybara-hq/design
 
+## 0.2.0-rc.20
+
+### Patch Changes
+
+- 3cb0cf5: Kernel: the `device.auto_mode_not_allowed` refusal is gone with the protocol 2 machine-mode check
+  (a protocol 3 device's owner ceiling refuses with `device.full_access_not_allowed`). A device held
+  by the legacy retirement (`device.unavailable`, `device.restart_required`,
+  `device.recreate_required`, `device.replace_required`) now tells the model what clears it instead
+  of the inactive-provider text. Messages that named the removed `capybara-device mode` command name
+  `capybara-device ceiling set` instead.
+  
+  `capybara-device`: unused protocol 2 helpers (the sandbox-runtime config, the network violation
+  parser, host file access) are removed. Design: the `KeycapCommand` example names
+  `capybara-device ceiling set`.
+  
+  The device sign-in token response names its field `fullAccess` (was `autoMode`; same values
+  `allowed` / `off`), and `capybara-device login` reads it to say that the org does not allow Full
+  access. A kernel and a device program upgrade together.
+- 32dd711: The sandbox escalation approval card (conversation and inbox) says when approving starts a
+  background process: it keeps running outside the sandbox until it exits or is stopped, at most
+  its deadline in minutes. A command the command review admitted outside the OS sandbox now shows
+  " · Ran outside the sandbox" / " · 在沙箱外运行" on its tool row (design `ToolRowData.outsideSandbox`,
+  part `sandbox-word`), on done and failed rows.
+
 ## 0.2.0-rc.19
 
 ### Patch Changes

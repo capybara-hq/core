@@ -1,5 +1,121 @@
 # @capybara-hq/kernel
 
+## 0.1.0-rc.50
+
+### Minor Changes
+
+- 7f86c80: Permission profiles are active: the kernel and `capybara-device` speak device protocol 3 only,
+  every builtin enters a device through the managed operation route, and each run records its
+  permission context. A restricted profile also reads the instance's staged skills root
+  (read-only); the working root comes from the held instance's committed roots; an instance gone
+  after a dispatched operation keeps the outcome unknown and is rebuilt for the next call; a run
+  another member triggers in an owner's conversation runs without the owner's device. A
+  `GenerateImage` call with `file_path` takes the same permission review as `Write`: an outside
+  directory is asked about (or reviewed) and granted for that call only. The testing helpers run on
+  the activated kernel.
+  
+  The old public permission inputs are gone. The config key `devices.autoMode` and
+  `CAPYBARA_DEVICES__AUTO_MODE` now fail validation with a message that names `devices.fullAccess`
+  and `capybara config migrate-permissions`. The admin settings no longer read or write
+  `devicesAutoMode`, and the org settings no longer read or write `autoMode` (including
+  `deployment.autoMode`); use `devicesFullAccess` and `fullAccess`. The refusals are renamed
+  `org.full_access_not_allowed` and `deployment.full_access_not_allowed`. Stored old keys are still
+  converted by the permission configuration publication.
+  
+  Kernel: the old background launcher is gone. A background `Bash` task starts, is polled, stopped
+  and read only by its exact device reference; no session-id script runs any more. Tasks left from
+  the old launcher are handed to the legacy retirement and never signalled or read live. A refused
+  background start, and an old task's failed launch, are reported in actionable words instead of
+  the device's raw message.
+  
+  `capybara-device` drops its protocol 2 surface: the old connection and dispatch (`killTagged`,
+  `killAll` and unscoped operations are refused as unknown), the host and switching executors, the
+  daily `capybara-device mode` command (use `capybara-device ceiling set`), the Docker executor's
+  own commands and its startup marker reaper (the container now only hosts permission operations),
+  and the last-good fallback of a broken `policy.json` (it is refused until fixed).
+  Under protocol 3 the local `commands.log` records each exec and background start again (tag,
+  account, conversation, restricted or full isolation, exit code, the grants' source; never the
+  command or its environment) and every policy change from the deployment or the CLI.
+  Upgrading from a protocol 2 `capybara-device`: processes the old auto mode left running are not
+  searched for; restart the machine or kill leftovers from before the upgrade. A Docker-mode
+  device's old container is recreated at its first operation (a container format version), and a
+  container found without its bridge is recreated, never reconnected.
+  
+  The kernel never kills device work broadly any more: a crashed holder's operations are revoked
+  exactly (owed in the outbox before its record is forgotten, so a failed revoke is retried), and a
+  resumed, failed-update or quarantined instance revokes its started-or-unknown operations instead of
+  `killAll`; no stored background session id is signalled after a resume or a rebuild.
+
+### Patch Changes
+
+- 1c6ca44: `SandboxBackground.start` takes an optional `instanceGeneration`: the kernel passes its generation
+  of the held instance to a cloud provider, which cannot know it otherwise (it is allocated after
+  `create` returns) yet must name it in the reference the kernel acknowledges. Without it no cloud
+  background start could ever be acknowledged. A bound local device is not told; it knows its own.
+- c30ec7c: `Bash` can ask to run one call outside the OS sandbox (`sandbox: "escalated"` with a
+  `justification`, foreground or background). Request approval asks the person, Approve for me asks
+  the review model (it asks the person when it cannot decide), Full access asks nobody; fixed denies
+  and mandatory asks stay first. An approval grants full execution for exactly that call, only
+  within the device's Full access ceiling; unattended runs cannot escalate. Restricted `Bash`
+  refusals now tell the model it may retry escalated where the device and org allow it.
+  
+  Escalation hardening: every escalation ask keeps the escalation statement first (a review model's
+  or fallback reason follows it), quotes the agent's justification (cleaned of line breaks and bidi
+  controls; 500 code points), and a background start discloses that it keeps running outside the
+  sandbox for at most its deadline. IM approval cards of an escalation have their own title and
+  lines. A call that asked for escalation runs escalated or is refused at admission with an
+  actionable text, and `tool_result.review.sandbox` comes from the admitted scope only. The retry
+  hint appears only on sandbox signals, never on credential or auth failures, and also for a
+  background start the scope refused.
+- cbf2c8f: A background `Bash` call whose launch was revoked or given up before its start was confirmed no
+  longer says the task was not started and that nothing runs: the process may have started, so the
+  call says so, that any process it started is being stopped, and to check its effects before
+  calling `Bash` again. `TaskList`, `TaskOutput` and the finished-task message show such a task's
+  reason (`launch_unknown`, `launch_revoked`) as text, not as a raw code.
+  
+  The `permission_reviewed` record of an Approve for me review names who decided: `review-model`
+  only for the review model's own verdicts, `rule` for a fixed rule's deny, a rule ask and the
+  fail-closed ask.
+  
+  A file call (`Read`, `Write`, `Edit`, `GenerateImage`) or a `cd` under a path a local device never
+  opens to restricted work (`~/.ssh`, `~/.aws` and the other secret paths, the device's state
+  directory) is refused at once with what to do instead, rather than asking the person to approve a
+  directory or a credential consent the device would always refuse.
+- 2fcd0c0: A sandbox tool call on a device whose runtime cannot enforce the conversation's permission profile
+  (for example a restricted profile on a provider that runs Full access only) now tells the model
+  that nothing ran and to ask for another profile or device, instead of the generic "may not have
+  completed" failure.
+- 3cb0cf5: Kernel: the `device.auto_mode_not_allowed` refusal is gone with the protocol 2 machine-mode check
+  (a protocol 3 device's owner ceiling refuses with `device.full_access_not_allowed`). A device held
+  by the legacy retirement (`device.unavailable`, `device.restart_required`,
+  `device.recreate_required`, `device.replace_required`) now tells the model what clears it instead
+  of the inactive-provider text. Messages that named the removed `capybara-device mode` command name
+  `capybara-device ceiling set` instead.
+  
+  `capybara-device`: unused protocol 2 helpers (the sandbox-runtime config, the network violation
+  parser, host file access) are removed. Design: the `KeycapCommand` example names
+  `capybara-device ceiling set`.
+  
+  The device sign-in token response names its field `fullAccess` (was `autoMode`; same values
+  `allowed` / `off`), and `capybara-device login` reads it to say that the org does not allow Full
+  access. A kernel and a device program upgrade together.
+- 32851e9: Replay on the activated tree: the recorded permission context, never the live gate, decides what a rebuilt request
+  renders; zero-drift cases cover activated runs and logs written before the activation.
+- a45db84: Revocation lifecycle fixes: a background start revoked (or given up) before its reference was
+  known, whose reference arrives later, is stopped by that exact reference before its revocation
+  is acknowledged; a `lost` task record is no proof the process ended.
+  Owed revocation jobs (a crashed holder's, each revoked operation's and their retries) carry the
+  device's org, so deleting the org removes them with its other owed jobs.
+  A revoked exec, read or write on an incarnation that no longer runs is acknowledged once that
+  incarnation provably ended (its confirmed destruction recorded, or the operation past its
+  admission deadline plus `sandbox.limits.maxCommandSeconds`), instead of being retried hourly for
+  ever and keeping its local instance binding from being pruned.
+- Updated dependencies [1c6ca44]
+- Updated dependencies [dcfc62e]
+- Updated dependencies [1d3eb12]
+- Updated dependencies [3cb0cf5]
+  - @capybara-hq/plugin-sdk@0.1.0-rc.36
+
 ## 0.1.0-rc.49
 
 ### Patch Changes

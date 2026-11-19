@@ -1,5 +1,20 @@
 # @capybara-hq/web
 
+## 0.1.0-rc.58
+
+### Patch Changes
+
+- c30ec7c: The approval card and the inbox show a per-call sandbox escalation distinctly: the command, the
+  directory it runs in, the agent's justification, and that only this call runs outside the sandbox.
+- 32dd711: The sandbox escalation approval card (conversation and inbox) says when approving starts a
+  background process: it keeps running outside the sandbox until it exits or is stopped, at most
+  its deadline in minutes. A command the command review admitted outside the OS sandbox now shows
+  " · Ran outside the sandbox" / " · 在沙箱外运行" on its tool row (design `ToolRowData.outsideSandbox`,
+  part `sandbox-word`), on done and failed rows.
+- Updated dependencies [3cb0cf5]
+- Updated dependencies [32dd711]
+  - @capybara-hq/design@0.2.0-rc.20
+
 ## 0.1.0-rc.57
 
 ### Patch Changes
