@@ -5,6 +5,7 @@ import { OrgLockModule } from "../orgs/org-lock.js";
 import { PermissionAuthorityModule } from "../sandbox/permission-authority.module.js";
 import { AccountsModule } from "./accounts.js";
 import { ApiTokenService } from "./api-tokens.js";
+import { AppAuthService } from "./app-auth.js";
 import { IdentityBinding } from "./binding.js";
 import { ExternalIdentities } from "./external.js";
 import { ExternalIdentityLock } from "./external-identity-lock.js";
@@ -16,7 +17,7 @@ import { SuperAdminLockModule } from "./super-admin.js";
 
 /**
  * Identity: accounts, sessions, API tokens, deployment settings and the super admin lock,
- * external identities with IM binding and third-party sign-in.
+ * external identities with IM binding and third-party sign-in, native-app sign-in.
  */
 @Module({
   imports: [
@@ -36,6 +37,7 @@ import { SuperAdminLockModule } from "./super-admin.js";
     IdentityBinding,
     SsoFlow,
     InitialPasswords,
+    AppAuthService,
   ],
   exports: [
     AccountsModule,
@@ -47,6 +49,7 @@ import { SuperAdminLockModule } from "./super-admin.js";
     IdentityBinding,
     SsoFlow,
     InitialPasswords,
+    AppAuthService,
   ],
 })
 export class IdentityModule {}

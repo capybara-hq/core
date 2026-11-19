@@ -28,6 +28,15 @@ export const ERROR_CODES = {
   "auth.rate_limited": 429,
   "auth.session_required": 403,
   "auth.password_change_required": 403,
+  /** Native-app sign-in: the redirect URI is not one of `auth.appRedirectUris` (exact match). */
+  "app_auth.redirect_uri_invalid": 400,
+  /**
+   * Native-app sign-in: the code is unknown, used, expired, for another redirect URI or verifier,
+   * or its account or browser session is no longer valid; start the sign-in again.
+   */
+  "app_auth.code_invalid": 400,
+  /** Native-app sign-in needs `http.publicUrl` (the issuer the app checks). */
+  "app_auth.unavailable": 503,
   "token.not_found": 404,
   "org.not_found": 404,
   "org.creation_disabled": 403,

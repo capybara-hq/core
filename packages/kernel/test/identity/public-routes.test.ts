@@ -36,6 +36,8 @@ const PUBLIC_ROUTES = new Set([
   // Device sign-in (environments spec §13.3): the program has no credential yet
   "POST /api/v1/device/authorize",
   "POST /api/v1/device/token",
+  // Native-app sign-in (desktop client spec §6.5): the app has only its one-time code
+  "POST /api/v1/app-auth/token",
   // Gateway role: raw Fastify route outside Nest (P-4); the channel plugin verifies signatures
   "POST /channels/webhook/:connectionId",
   // Gateway role: the device WebSocket checks its machine credential itself (environments §13.4)

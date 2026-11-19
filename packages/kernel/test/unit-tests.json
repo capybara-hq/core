@@ -58,6 +58,7 @@
   "html/html-token.test.ts",
   "http/error-filter.test.ts",
   "http/plugin-route-access-config.test.ts",
+  "identity/app-auth.unit.test.ts",
   "identity/insecure-public-url.test.ts",
   "identity/login.test.ts",
   "identity/passwords.test.ts",
