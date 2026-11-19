@@ -291,7 +291,8 @@ code already expresses the target: `approverForProfile` maps the profile to pers
 ### Input
 
 `Bash` gains two optional inputs: `sandbox: "escalated"` asks to run this one call outside the OS
-sandbox, and `justification` (1–500 characters) says why. Both foreground and background calls
+sandbox, and `justification` (1–500 characters, counted in code points like the tool schema; an
+overlong one gets its own refusal text) says why. Both foreground and background calls
 (`run_in_background`) may escalate, under the same review: a dev server is a key use. The file
 tools do not take it; a directory proposal covers them. An escalated call without a usable
 justification is refused before any review with a text that says what to pass. The `Bash`
@@ -309,12 +310,20 @@ The order in `CommandReviewService.decidePermission` and `ToolPipeline.reviewPer
    input hashes, profile and its revision, scope and authority revisions), an empty expansion and
    the justification. It never also proposes directories or hosts for that call.
 3. Request approval asks the person once. The ask's detail and `approval_requested.command`
-   carry the command, the working directory (`workingRoot`) and `escalation.justification`; the
-   reason states the crossing and, when the line is also sensitive (credential reads, sudo,
-   persistent changes), that consent as well: one card, both reasons. Only `once` is offered.
+   carry the command, the working directory (`workingRoot`) and `escalation.justification`; a
+   background start also carries `escalation.background: true` and `maxSeconds` (its deadline:
+   the timeout lowered to the background maximum). The reason states the crossing, for a
+   background start that its process keeps running outside the sandbox until it exits or is
+   stopped (at most N minutes), the justification quoted as the agent's (`Justification (from
+   the agent): "…"`, line breaks and bidi or other control characters removed) and, when the line
+   is also sensitive (credential reads, sudo, persistent changes), that consent as well: one
+   card, both reasons. Only `once` is offered.
 4. Approve for me sends the candidate to the review model, with a dedicated block naming the
-   escalation and the justification as untrusted data. Unavailable, unmapped, unsure, failing,
-   truncated or unparseable means ask; the model's deny stays a deny; its allow issues the grant.
+   escalation (and a background start's disclosure) and the justification as untrusted data.
+   Unavailable, unmapped, unsure, failing, truncated or unparseable means ask; the model's deny
+   stays a deny; its allow issues the grant. Every such ask keeps the escalation statement first
+   and appends the review's own reason after it (`Review: …`), so no ask hides that the command
+   runs outside the sandbox.
    The verdict is recorded as `permission_reviewed` (`scopeKind: "sandbox-escalation"`,
    `escalation`, outcome, decision source).
 5. Full access (approver none) asks nobody (see "Target model").
@@ -334,7 +343,12 @@ now (the same `withheldScope` verdict Full access gets). The consent scope is th
 to the current scope and authority revisions: a ceiling or scope change invalidates it. Admission
 checks the same at every operation: `SandboxOperationAuthority.resolveInvocation` refuses an
 escalation grant when the snapshot's `escalationRefusal` is set, and `intersectPermissionScope`
-refuses `escalated` without the ceiling. Otherwise the model gets an actionable text naming why
+refuses `escalated` without the ceiling. A call that asked for escalation (`tool_call_started.
+permissionInput.sandbox: "escalated"`) runs escalated or not at all: when admission finds no
+matching grant (the device, ceiling or scope changed after the approval) or the ceiling no longer
+allows it, the operation is refused before any effect (`EscalationGrantMissingError`) and the model
+is told the approval no longer matches and to ask again; it never runs silently in the restricted
+scope. Otherwise the model gets an actionable text naming why
 (the device or org does not allow it, the runtime cannot, the run is unattended) and what to do
 instead (run it in the sandbox, ask the user to run it or to allow Full access on the device).
 
@@ -358,24 +372,38 @@ command text. No SDK or protocol change.
 ### Model-facing texts
 
 When a restricted `Bash` call is stopped by the restricted scope (a command's own outside write,
-an unbounded `cd`, the device's scope refusal) or fails with a sandbox denial (`Operation not
-permitted`, `Read-only file system`, `Permission denied`), the text the model gets says it may
-retry the same call with `sandbox: "escalated"` and a justification, only where escalation is
-possible on that device and org (`ToolStepContext` carries `sandboxEscalation: available`).
+an unbounded `cd`, the device's scope refusal, also of a background start) or fails with a
+sandbox signal (a host the device refused, `network.blocked`; `Operation not permitted`,
+`Read-only file system`, Seatbelt's `deny(…)` report, the sandbox proxy's refusal), the text the
+model gets says it may retry the same call with `sandbox: "escalated"` and a justification, only
+where escalation is possible on that device and org (`ToolStepContext` carries
+`sandboxEscalation: available`). A plain `Permission denied` and every credential or auth failure
+(ssh publickey, git 401/403, missing credentials) never invite it.
 
 ### Replay and log
 
 The new inputs are part of `Bash`'s tool schema: definitions are fetched by spec hash, so no
 `DriftReason` (the replay-evals tool-definition rule). The escalation decision is in the log:
 `approval_requested.command.escalation`, `approval_decided`, `permission_reviewed`, and
-`tool_result.review.sandbox: "escalated"` on a call that ran escalated (display only).
+`tool_result.review.sandbox: "escalated"` on a call whose execution admission gave the escalated
+scope (display only; set from the admitted intent, not from the approval).
 
 ### Web
 
 The approval card shows an escalation request distinctly (`SandboxEscalationDetail`): that only
 this call runs outside the sandbox with full access to the device's files and network, the
 directory it runs in and the agent's justification, under the command; no empty directory scope.
-The inbox shows the same.
+A background start adds that it keeps running outside the sandbox until it exits or is stopped,
+at most N minutes. The inbox shows the same. A tool row whose review says it ran escalated shows
+the neutral word "Ran outside the sandbox". An IM approval card of an escalation has its own
+title and lines built from `escalation` (outside the sandbox, a background start's limit, the
+working directory, the quoted justification), never only the reason.
+
+### Accepted by design
+
+A permission profile change does not revoke a running escalated operation (only the Full ceiling
+writers do); under Approve for me the review model's allow stands in for the person's Full
+consent; and escalated calls skip the owner-denied path refusals, as Full access does.
 
 ### AGENTS.md rules touched
 

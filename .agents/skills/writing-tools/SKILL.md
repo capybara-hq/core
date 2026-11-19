@@ -149,11 +149,19 @@ fails closed.
   sensitive line keeps its consent in the same single ask (the reason states both); only `once`.
   An approval issues a call grant bound to that call (never a session grant), admission gives that
   command full execution under the restricted profile, and the next call is sandboxed again. No
-  ceiling, an unattended run or no justification is an actionable refusal before any review. A
-  restricted `Bash` refusal or sandbox denial tells the model it may retry escalated only where
-  it is possible (`BuiltinCallContext.sandboxEscalation`). The record: `approval_requested.command.
-  escalation` / `workingRoot`, `permission_reviewed` with `scopeKind: "sandbox-escalation"`,
-  `tool_result.review.sandbox: "escalated"`; the schema change needs no `DriftReason`.
+  ceiling, an unattended run or no justification (or one over 500 code points) is an actionable
+  refusal before any review. Every escalation ask keeps the escalation statement first (a review
+  model's or fallback reason is appended), quotes the justification as the agent's, and a
+  background start discloses that it keeps running outside the sandbox (`escalation.background`,
+  `maxSeconds`); IM cards build their lines from `escalation`. A call that asked for escalation
+  (`tool_call_started.permissionInput.sandbox`) runs escalated or is refused at admission
+  (`EscalationGrantMissingError`, `ESCALATION_GRANT_MISSING_TEXT`), never sandboxed silently. A
+  restricted `Bash` refusal or a sandbox signal (`network.blocked`, EPERM, a read-only bind,
+  Seatbelt's deny, the proxy's refusal; never a credential or auth failure) tells the model it may
+  retry escalated only where it is possible (`BuiltinCallContext.sandboxEscalation`). The record:
+  `approval_requested.command.escalation` / `workingRoot`, `permission_reviewed` with `scopeKind:
+  "sandbox-escalation"`, `tool_result.review.sandbox: "escalated"` (from the admitted scope only);
+  the schema change needs no `DriftReason`.
 - **Code it cannot read.** Inline interpreter code, stdin or URL scripts, fetched packages and files
   the conversation wrote are `unsure.interpreter`; `review-guarantees.test.ts` (acts × spellings that
   must never be `allow`) is the authority over the ordered-hit corpus.
