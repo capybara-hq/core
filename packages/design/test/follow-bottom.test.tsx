@@ -416,6 +416,30 @@ describe("a resize is not a scroll (the keyboard opening, a sheet closing)", () 
     expect(onUnseen).toHaveBeenLastCalledWith(false);
   });
 
+  it("the intrinsic size is the content box: a padded row is not grown by its padding at each measure", async () => {
+    mockPlainLayout({ h: 100 });
+    vi.spyOn(HTMLElement.prototype, "getBoundingClientRect").mockReturnValue({
+      height: 120,
+      width: 300,
+      top: 0,
+      bottom: 120,
+      left: 0,
+      right: 300,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    });
+    const fire = stubResizeObserver();
+    const r = render(<Plain n={1} />);
+    const row = r.getByTestId("s").querySelector("p") as HTMLElement;
+    row.style.padding = "10px 0";
+    row.style.border = "2px solid";
+    fire();
+    expect(row.getAttribute("style")).toMatch(/contain-intrinsic-size:\s*none auto 96px/);
+    fire();
+    expect(row.getAttribute("style")).toMatch(/contain-intrinsic-size:\s*none auto 96px/);
+  });
+
   it("history prepended above while away raises nothing", async () => {
     mockPlainLayout({ h: 100 });
     mockRects();
@@ -543,7 +567,7 @@ describe("a resize is not a scroll (the keyboard opening, a sheet closing)", () 
     fire();
     for (const p of items) {
       expect(p.getAttribute("style")).toMatch(/content-visibility:\s*auto/);
-      expect(p.getAttribute("style")).toMatch(/contain-intrinsic-size:\s*auto 120px/);
+      expect(p.getAttribute("style")).toMatch(/contain-intrinsic-size:\s*none auto 120px/);
     }
   });
 });

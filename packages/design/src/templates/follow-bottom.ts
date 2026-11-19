@@ -60,12 +60,31 @@ function lightenItems(wrapper: Element | null, onAdded: (row: HTMLElement) => vo
   const apply = (item: HTMLElement, height: number) => {
     if (!(height > 0)) return;
     item.style.setProperty("content-visibility", "auto");
-    item.style.setProperty("contain-intrinsic-size", `auto ${Math.round(height)}px`);
+    item.style.setProperty("contain-intrinsic-size", `none auto ${Math.round(height)}px`);
+  };
+  // `contain-intrinsic-size` is the content box: a border-box height would grow the row by its
+  // padding and border at every measure.
+  const contentHeight = (item: HTMLElement, entry: ResizeObserverEntry) => {
+    const box = entry.contentBoxSize?.[0]?.blockSize;
+    if (box !== undefined) return box;
+    const cs = getComputedStyle(item);
+    const frame = ["paddingTop", "paddingBottom", "borderTopWidth", "borderBottomWidth"].reduce(
+      (sum, k) => sum + (Number.parseFloat(cs[k as "paddingTop"]) || 0),
+      0,
+    );
+    return item.getBoundingClientRect().height - frame;
   };
   const measure = new ResizeObserver((entries) => {
     for (const e of entries) {
       const item = e.target as HTMLElement;
-      apply(item, e.borderBoxSize?.[0]?.blockSize ?? item.getBoundingClientRect().height);
+      // a skipped row reports its intrinsic size, not its own: only rendered rows are measured
+      if (
+        typeof item.checkVisibility === "function" &&
+        !item.checkVisibility({ contentVisibilityAuto: true })
+      ) {
+        continue;
+      }
+      apply(item, contentHeight(item, e));
     }
   });
   let items: MutationObserver;
