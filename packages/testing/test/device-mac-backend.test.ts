@@ -249,7 +249,7 @@ describe.runIf(darwin)("capybara-device macOS operation backend", () => {
     expect(support).toMatchObject({
       restricted: { filesystem: true, network: true, native: true, concurrentScopes: true },
       boundary: "operation",
-      network: { openPublic: false, allowlist: true, perOperationHosts: true },
+      network: { openPublic: true, allowlist: true, perOperationHosts: true },
       outsideSandbox: true,
       background: true,
     });

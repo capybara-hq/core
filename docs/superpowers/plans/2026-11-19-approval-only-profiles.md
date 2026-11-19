@@ -364,7 +364,8 @@ One mechanical commit on `perm/r3-int`, behaviour kept wherever a later task own
   - `deniedDomains` CIDR rules for IP literals.
 - **Execution paths:**
   - The unwrapped full branch runs only for the escalated pair.
-  - An escalated call's environment drops `CAPYBARA_*` and the device credential.
+  - An escalated call's environment drops `CAPYBARA_*`. The device credential file stays readable
+    to it (it runs as the owner outside the sandbox; inherent, see the spec).
   - The restricted environment is used for every profile.
 - **Protected locations:** at operation start the worker resolves the protected home locations
   (`~/Library`, `~/.config`, `~/.local/share` and the secret paths) and adds each resolved target

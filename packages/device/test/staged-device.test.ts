@@ -237,7 +237,7 @@ describe("staged device parts (W3-M)", () => {
       version: 2,
       restricted: { filesystem: true, network: true, native: true, concurrentScopes: true },
       boundary: "operation",
-      network: { openPublic: false, allowlist: true, perOperationHosts: true },
+      network: { openPublic: true, allowlist: true, perOperationHosts: true },
       outsideSandbox: true,
       background: true,
     });
