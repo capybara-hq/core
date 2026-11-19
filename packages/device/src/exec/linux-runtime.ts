@@ -213,12 +213,14 @@ export async function reapLinuxSession(
  * A functional self-check of restricted execution on `root` (an existing directory the device
  * user owns): a restricted command must list it and create and remove a file in it. Landlock
  * rules attach to inodes, and some file systems (Docker Desktop's file sharing, for one) do not
- * keep them, which would deny every restricted operation there. Returns why it failed, or null.
+ * keep them, which would deny every restricted operation there. `filesLock` is the device's files
+ * lock, which every restricted launch takes. Returns why it failed, or null.
  */
 export async function checkRestrictedRoot(
   transport: LinuxAgentTransport,
   root: string,
   env: Record<string, string>,
+  filesLock: string,
 ): Promise<string | null> {
   const name = `.capybara-restricted-check-${randomUUID()}`;
   try {
@@ -234,6 +236,7 @@ export async function checkRestrictedRoot(
         cwd: root,
         env,
         timeoutMs: 20_000,
+        filesLock,
       },
       "exit",
       60_000,

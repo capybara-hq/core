@@ -48,6 +48,8 @@ export interface OperationContainerHost {
 
 /** The image's interpreter, by absolute path (never looked up through a PATH). */
 const CONTAINER_PYTHON = "/usr/bin/python3";
+/** The device's files lock inside its container (see the worker's `filesLock`). */
+export const CONTAINER_FILES_LOCK = "/dev/shm/capybara-device-files.lock";
 const CONTAINER_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
 
 /**
@@ -324,6 +326,7 @@ export async function createDockerOperationBackend(
       transport,
       DEFAULT_SANDBOX_ROOTS.tmp,
       containerBaseEnv(false),
+      CONTAINER_FILES_LOCK,
     );
     if (failure) probe = { restricted: null, reason: failure };
   }
@@ -340,6 +343,9 @@ export async function createDockerOperationBackend(
     dependencies.startWorker ??
     linuxOperationWorker({
       transport,
+      // one container per device holds every operation's agent: its private /dev/shm is the
+      // device's, and outside every root a restricted grant can name (workspace, tmp, skills)
+      filesLock: CONTAINER_FILES_LOCK,
       baseEnv: containerBaseEnv,
       acquireRuntime: acquire,
       closedAddresses: () => hostAddresses(),

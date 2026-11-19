@@ -14,6 +14,7 @@ import {
   createHostOperationBackend,
   type LocalOperationBackend,
 } from "../../src/exec/linux-operation-backend.js";
+import type { LinuxFaultInjection } from "../../src/exec/linux-operation-worker.js";
 import type { DeviceOwnerCeiling, LocalExecAuthority } from "../../src/exec/operation-types.js";
 
 let backend: LocalOperationBackend | undefined;
@@ -61,7 +62,7 @@ async function handle(message: Record<string, unknown>): Promise<unknown> {
         // the fixture's endpoints are local addresses
         allowPrivateProxyTargets: message.privateProxyTargets !== false,
         ...(message.faultInjection
-          ? { faultInjection: message.faultInjection as { stagedMove: "fail" } }
+          ? { faultInjection: message.faultInjection as LinuxFaultInjection }
           : {}),
         ...(message.dohTest
           ? { fakeIpDnsTest: message.dohTest as { endpoints: string[]; caPem: string } }

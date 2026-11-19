@@ -37,6 +37,15 @@ const CANCEL_SETTLE_MS = 15_000;
 export interface LinuxWorkerOptions {
   transport: LinuxAgentTransport;
   /**
+   * The device's files lock, as the agent sees it: one file per device, outside every sandbox
+   * (on a host, in the device's state directory, which restricted work is denied; in the device's
+   * container, on its private /dev/shm, which no Landlock rule grants). Every restricted
+   * operation's broker holds it shared from a write's check to its effect, and exclusively for a
+   * directory move into a guarded place, so no operation's move can slip between another
+   * operation's check and write.
+   */
+  filesLock: string;
+  /**
    * The environment a command starts from: an escalated call (outside the sandbox) gets the OS
    * user's own environment without the device's own variables (on the host, this process's minus
    * every `CAPYBARA_*`; in the container, the image's), a sandboxed one only a fixed outer set.
@@ -75,9 +84,16 @@ export interface LinuxWorkerOptions {
   /**
    * Test seam (trusted construction only): faults the launcher injects, so a test can drive a
    * path no real kernel produces on demand (`stagedMove: "fail"`: a guarded directory move whose
-   * final rename and move back both fail, which quarantines it and ends the operation).
+   * final rename and move back both fail, which quarantines it and ends the operation;
+   * `pauseBeforeMkdir`: a mkdir of that name pauses between its check and its effect).
    */
-  faultInjection?: { stagedMove: "fail" };
+  faultInjection?: LinuxFaultInjection;
+}
+
+/** The launcher's test-only faults; see {@link LinuxWorkerOptions.faultInjection}. */
+export interface LinuxFaultInjection {
+  stagedMove?: "fail";
+  pauseBeforeMkdir?: string;
 }
 
 /**
@@ -219,6 +235,7 @@ export function linuxOperationWorker(
             ...(options.fakeIpDnsTest ? { dohTest: options.fakeIpDnsTest } : {}),
             ...(options.closedAddresses ? { closedAddresses: options.closedAddresses() } : {}),
             ...(options.faultInjection ? { faultInjection: options.faultInjection } : {}),
+            filesLock: options.filesLock,
             command: request.managedOutput
               ? `exec /bin/bash -c ${shellQuote(args.command)} 2>&1`
               : args.command,

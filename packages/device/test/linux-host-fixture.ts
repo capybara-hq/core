@@ -15,6 +15,7 @@ import {
   SandboxScopeDeniedError,
 } from "@capybara-hq/plugin-sdk";
 import { build } from "esbuild";
+import type { LinuxFaultInjection } from "../src/exec/linux-operation-worker.js";
 import type { DeviceOwnerCeiling, LocalExecAuthority } from "../src/exec/operation-types.js";
 import { fixtureCeiling, type LinuxDevice, NAMES } from "./linux-docker-fixture.js";
 
@@ -179,8 +180,8 @@ export async function hostBackend(
     allowedDomains?: string[];
     /** A fixture DoH server that re-resolves fake-IP answers (the backend's test seam). */
     fakeIpDns?: { endpoints: string[]; caPem: string };
-    /** Test seam: faults the launcher injects (a staged directory move that cannot finish). */
-    faultInjection?: { stagedMove: "fail" };
+    /** Test seam: faults the launcher injects (a staged move that cannot finish, a paused mkdir). */
+    faultInjection?: LinuxFaultInjection;
     /** The owner's restricted project reach (default the workspace). */
     restrictedProjectReach?: "workspace" | "os-user";
     /** A local-Docker device: the server runs here, its agents in this container. */

@@ -156,6 +156,24 @@ describe.skipIf(unavailable !== null)("capybara-device Linux operation backends"
     const support = await backend.support();
     if (required) expect(support.restricted).not.toBeNull();
     await runSandboxPermissionConformance(fixture(device, backend));
+    // every operation's agent shares the container's files lock, which no restricted grant reaches
+    const lock = "/dev/shm/capybara-device-files.lock";
+    expect(device.run(`stat -c %a ${lock}`).trim()).toBe("600");
+    const root = `/workspace/lock-${randomUUID().slice(0, 8)}`;
+    device.run(`mkdir ${root}`);
+    const scope = scopeFor(backend.deviceId, {
+      profile: "approve-for-me",
+      filesystem: { kind: "scoped", readRoots: [], writeRoots: [root] },
+      network: { kind: "none" },
+    });
+    const probe = await backend.operation(scope, authorityFor(scope.operationId)).exec({
+      command: `cat ${lock} 2>&1; echo $?`,
+      cwd: root,
+      timeoutMs: 10_000,
+      maxOutputBytes: 1000,
+      signal: new AbortController().signal,
+    });
+    expect(probe.stdout).toMatch(/Permission denied\n1\n$/);
   });
 
   // The executor's real layout: workspace and tmp are host directories bind-mounted into the

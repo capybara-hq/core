@@ -112,7 +112,7 @@ async function fakeTransport(behaviour: string) {
       .split("\n")
       .filter(Boolean)
       .map((l) => JSON.parse(l) as Record<string, unknown>);
-  return { transport, lines, spawned: () => spawned };
+  return { transport, lines, spawned: () => spawned, filesLock: "/state/operation-files.lock" };
 }
 
 const grant = (full: boolean) => ({
@@ -176,6 +176,7 @@ describe("Linux operation worker", () => {
       network: { kind: "allowlist", hosts: [] },
       env: { PATH: "/bin", HOME: "/work", TMPDIR: "/work" },
       expect: { "linux-sandbox.py": "x" },
+      filesLock: "/state/operation-files.lock",
     });
   });
 

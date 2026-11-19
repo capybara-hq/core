@@ -22,7 +22,9 @@ import { SANDBOX_FAKE_IP_DNS } from "@capybara-hq/plugin-sdk";
  *   device's host), re-resolving a fake-IP resolver's answers through encrypted DNS. A command
  *   connects to nothing else, not even its own loopback listener. Whatever ends the launcher, the agent then reaps its closed session (exact SID plus
  *   start time). Write denies the device resolved for this operation (protected home locations
- *   reached through links) go to the launcher and to native work.
+ *   reached through links) go to the launcher and to native work. The agent opens the device's
+ *   files lock (a private file at the path the device chose, outside every sandbox) and hands its
+ *   descriptor to the launcher only, so every operation of the device shares one write lock.
  * - Full exec: no restricted filters; the command runs as the OS user in a session of its own, and
  *   the agent ends that session (exact SID plus start time) when it exits, is cancelled or times out.
  * - native: the SDK native helper on pinned descriptors (descriptor-relative, no-follow), in this
@@ -979,6 +981,26 @@ def write_denies(request):
     return list(paths)
 
 
+def files_lock(request):
+    """Opens the device's files lock (created on first use): a private regular file of this user
+    outside every sandbox, at the path the device chose ("filesLock"). The launcher takes it shared
+    for every brokered write and exclusively for a guarded directory move, so that exclusion spans
+    every operation of the device, and refuses it inside a granted root."""
+    path = request.get("filesLock")
+    if not isinstance(path, str) or not path.startswith("/") or os.path.normpath(path) != path:
+        raise Refused("INVALID_REQUEST", "Supply the device's files lock as an absolute path")
+    try:
+        fd = os.open(path, os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC, 0o600)
+    except OSError as error:
+        raise Refused("UNAVAILABLE", "The device's files lock cannot be opened: %s"
+                      % error.strerror)
+    info = os.fstat(fd)
+    if not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid() or info.st_mode & 0o077:
+        os.close(fd)
+        raise Refused("UNAVAILABLE", "The device's files lock is not a private regular file")
+    return fd
+
+
 def run_sealed(request, control, runtime):
     env = dict(validated_env(request["env"]))
     for key in PROXY_KEYS:
@@ -986,7 +1008,9 @@ def run_sealed(request, control, runtime):
     denies = write_denies(request)
     read, write, _ = pin_roots(request)
     forwarder = None
+    lock = None
     try:
+        lock = files_lock(request)
         if not write:
             raise Refused("SCOPE_DENIED", "Restricted execution needs an existing writable root")
         network = request["network"]
@@ -1016,7 +1040,7 @@ def run_sealed(request, control, runtime):
                 "network": launcher_network, "reportFd": report_w, "env": env,
                 "cwd": request["cwd"], "argv": ["/bin/bash", "-c", request["command"]],
                 "timeoutMs": request["timeoutMs"], "nativeFd": runtime["native-files.py"],
-                "writeDenies": denies}
+                "writeDenies": denies, "filesLockFd": lock}
         if isinstance(request.get("faultInjection"), dict):
             body["faultInjection"] = request["faultInjection"]  # a test fixture's seam
         if files:
@@ -1029,16 +1053,21 @@ def run_sealed(request, control, runtime):
             launcher = subprocess.Popen(
                 [sys.executable, "-I", "/proc/self/fd/%d" % runtime["linux-sandbox.py"]],
                 stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                pass_fds=[report_w, runtime["linux-sandbox.py"], runtime["native-files.py"]]
+                pass_fds=[report_w, runtime["linux-sandbox.py"], runtime["native-files.py"], lock]
                 + [e["fd"] for e in read + write],
                 env=LAUNCHER_ENV, preexec_fn=pdeathsig)
         finally:
             os.close(report_w)
             close_pinned(read + write)
             read, write = [], []
+            # only the launcher holds the lock from here on (and never hands it to the command)
+            os.close(lock)
+            lock = None
         return supervise(launcher, report_r, body, request, control)
     finally:
         close_pinned(read + write)
+        if lock is not None:
+            os.close(lock)
         if forwarder is not None:
             forwarder.close()
 

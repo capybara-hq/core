@@ -1,6 +1,11 @@
 import { homedir } from "node:os";
+import { join } from "node:path";
 import { SandboxScopeDeniedError } from "@capybara-hq/plugin-sdk";
-import { DEVICE_PROCESS_TOKEN, linuxOperationWorker } from "./linux-operation-worker.js";
+import {
+  DEVICE_PROCESS_TOKEN,
+  type LinuxFaultInjection,
+  linuxOperationWorker,
+} from "./linux-operation-worker.js";
 import {
   hostLinuxTransport,
   type LinuxAgentTransport,
@@ -46,7 +51,7 @@ export interface LinuxBackendDependencies {
   /** Test seam (trusted construction only): see the worker's `fakeIpDnsTest`. */
   fakeIpDnsTest?: { endpoints: string[]; caPem: string };
   /** Test seam (trusted construction only): see the worker's `faultInjection`. */
-  faultInjection?: { stagedMove: "fail" };
+  faultInjection?: LinuxFaultInjection;
   /** Called with a reap failure of a lost supervisor's session (default: ignored). */
   onReapError?: (error: unknown) => void;
 }
@@ -70,6 +75,14 @@ export function hostCommandEnv(escalated: boolean): Record<string, string> {
     PATH: process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin",
     LANG: process.env.LANG ?? "C.UTF-8",
   };
+}
+
+/**
+ * A host device's files lock (see the worker's `filesLock`): in its state directory, which every
+ * restricted grant is denied (`restrictedDeniedReadRoots`) and the launcher refuses inside a root.
+ */
+export function hostFilesLock(stateDir: string): string {
+  return join(stateDir, "operation-files.lock");
 }
 
 /**
@@ -121,6 +134,7 @@ export async function createLinuxOperationBackend(
     dependencies.startWorker ??
     linuxOperationWorker({
       transport,
+      filesLock: hostFilesLock(options.stateDir),
       baseEnv: dependencies.baseEnv ?? hostCommandEnv,
       toolHome: dependencies.toolHome ?? { home: homedir(), env: process.env },
       ...(dependencies.allowPrivateProxyTargets ? { allowPrivateProxyTargets: true } : {}),

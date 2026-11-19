@@ -1409,6 +1409,140 @@ print(seen[0])
     expect(device.run(`ls ${root}/${quarantined[0]}`).trim()).toBe("x");
   });
 
+  describe("a write checked against a parent descriptor that moves before its effect", () => {
+    let pausing: HostBackend;
+    // the seam's marker, created by the broker in the parent once the check passed
+    const marker = ".capybara-test-paused";
+
+    beforeAll(async () => {
+      device.run("mkdir -m 700 /home/sandbox/state-pause");
+      const paused = new HostServer(device);
+      servers.push(paused);
+      pausing = await hostBackend(paused, {
+        stateDir: "/home/sandbox/state-pause",
+        deviceId: "device-pause",
+        network: "open",
+        allowedDomains: [],
+        privateProxyTargets: false,
+        restrictedProjectReach: "os-user",
+        // test seam: a mkdir of "commands" pauses after its check, before the mkdir
+        faultInjection: { pauseBeforeMkdir: "commands" },
+      });
+    });
+    const run = (root: string, command: string) => {
+      const scope = scopeFor(pausing.deviceId, {
+        profile: "approve-for-me",
+        filesystem: { kind: "scoped", readRoots: [], writeRoots: [root] },
+        network: { kind: "none" },
+      });
+      return pausing.operation(scope, openAuthorityFor(scope.operationId)).exec({
+        command,
+        cwd: root,
+        timeoutMs: 60_000,
+        maxOutputBytes: 4096,
+        signal: signal(),
+      });
+    };
+    /** Starts `mkdir d/commands` in its own operation and waits until it is paused. */
+    const pausedWrite = async (root: string) => {
+      device.run(`mkdir ${root}/d`);
+      const writer = run(root, "mkdir d/commands 2>&1; echo $?");
+      let settled = false;
+      void writer.finally(() => {
+        settled = true;
+      });
+      while ((await read(`${root}/d/${marker}`)) === null) {
+        if (settled)
+          throw new Error(`the write ended before it paused: ${JSON.stringify(await writer)}`);
+        await new Promise((resolve) => setImmediate(resolve));
+      }
+      // wrapped: an async function returning the promise itself would wait for it
+      return { writer };
+    };
+
+    it("another operation's guarded move waits for the write it checked (the device files lock)", async () => {
+      const root = project("held");
+      const { writer } = await pausedWrite(root);
+      // operation A moves d to .claude while B holds d's descriptor between check and mkdir
+      const mover = await run(root, "mv d .claude 2>&1; echo $?");
+      const written = await writer;
+      expect(written.stdout.trim()).toBe("0");
+      // A waited for B's write, then found commands in staging and refused the move
+      expect(mover.stdout).toMatch(/Permission denied\n1\n?$/);
+      expect(device.run(`ls -A ${root}`).trim()).toBe("d");
+      expect(device.run(`ls -A ${root}/d`).trim().split("\n").sort()).toEqual([marker, "commands"]);
+    });
+
+    it("a create that lands at a protected path through a move outside the sandbox is undone and refused", async () => {
+      const root = project("outside");
+      const { writer } = await pausedWrite(root);
+      // a process outside every sandbox takes no files lock
+      device.run(`mv ${root}/d ${root}/.claude`);
+      const written = await writer;
+      expect(written.stdout).toMatch(/Permission denied\n1\n?$/);
+      expect(
+        device.run(`test -e ${root}/.claude/commands && echo present || echo absent`).trim(),
+      ).toBe("absent");
+      expect(device.run(`ls -A ${root}/.claude`).trim()).toBe(marker);
+    });
+  });
+
+  it("the device's files lock is out of every sandbox's reach", async () => {
+    const lock = "/home/sandbox/state/operation-files.lock";
+    const root = project("lock");
+    // the agent created it at the first restricted launch
+    await exec(root, "true", { kind: "none" });
+    expect(device.run(`test -f ${lock} && echo file`).trim()).toBe("file");
+    // neither its path nor a descriptor any process holds on it opens from inside
+    const probe = String.raw`
+import json, os, sys
+lock = sys.argv[1]
+result = {"direct": None, "found": 0, "reopened": 0}
+try:
+    os.close(os.open(lock, os.O_RDONLY))
+    result["direct"] = "opened"
+except OSError as error:
+    result["direct"] = error.errno
+for pid in filter(str.isdigit, os.listdir("/proc")):
+    try:
+        fds = os.listdir("/proc/%s/fd" % pid)
+    except OSError:
+        continue
+    for fd in fds:
+        path = "/proc/%s/fd/%s" % (pid, fd)
+        try:
+            if os.readlink(path) != lock:
+                continue
+        except OSError:
+            continue
+        result["found"] += 1
+        try:
+            os.close(os.open(path, os.O_RDONLY))
+            result["reopened"] += 1
+        except OSError:
+            pass
+print(json.dumps(result))
+`;
+    const result = await exec(root, python(probe, lock), { kind: "none" });
+    expect(result.exitCode, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual({ direct: 13, found: 0, reopened: 0 });
+    // a grant that would make it readable is refused before anything runs
+    const scope = scopeFor(backend.deviceId, {
+      profile: "approve-for-me",
+      filesystem: { kind: "scoped", readRoots: ["/home/sandbox/state"], writeRoots: [root] },
+      network: { kind: "none" },
+    });
+    await expect(
+      backend.operation(scope, openAuthorityFor(scope.operationId)).exec({
+        command: `cat ${lock}`,
+        cwd: root,
+        timeoutMs: 10_000,
+        maxOutputBytes: 100,
+        signal: signal(),
+      }),
+    ).rejects.toMatchObject({ name: "SandboxScopeDeniedError" });
+  });
+
   it("a guarded move waits a bounded time for the operation's other writes (EBUSY)", async () => {
     const root = project("busy");
     // a FIFO open without a reader holds the broker's shared files lock
