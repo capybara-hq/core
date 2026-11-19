@@ -235,15 +235,10 @@ export const LOADING_TEMPLATES: {
         loading: "loading",
         dataOnly: {
           card: "the inbox content is one card-shaped block while loading (spec §5.7); the loaded page has its own sections",
-        },
-      },
-      {
-        loaded: "default-records",
-        loading: "loading-records",
-        dataOnly: {
-          row: "the loaded table rows; the loading DataTable draws its own skeleton rows",
-          cell: "the loaded table cells; the loading DataTable draws its own skeleton rows",
-          card: "the inbox content is one card-shaped block while loading (spec §5.7); the loaded page has its own sections",
+          "list-dot": "a loaded row's state dot; the loading row keeps the dot slot without a part",
+          "list-title": "a loaded row's title text; the loading row holds a bar in its place",
+          "list-meta": "a loaded row's meta text; the loading row holds a bar in its place",
+          "list-time": "a loaded row's time; the loading row holds a bar in its place",
         },
       },
     ],
@@ -316,6 +311,19 @@ export const VARIABLE_HEIGHT: Record<string, string> = {
   table: "the loaded table has the fixture's rows; the loading DataTable draws its own row count",
   card: "a loaded section card is as tall as its content; the loading card is the three-line shape",
   rail: "the inbox rail is as tall as its list: the fixture's items, or the loading list's own skeleton rows",
+  // the inbox's list-detail region (spec §5.7, §6.47): as tall as its taller pane, the list or
+  // the open item's content, which differ between the fixture and the loading shapes
+  "inbox-frame": "the inbox region is as tall as its taller pane (the list or the open item)",
+  "list-detail-frame": "the inbox region is as tall as its taller pane (the list or the open item)",
+  "list-detail": "the inbox region is as tall as its taller pane (the list or the open item)",
+  "list-pane": "the inbox region is as tall as its taller pane (the list or the open item)",
+  "detail-pane": "the inbox region is as tall as its taller pane (the list or the open item)",
+  "list-detail-item":
+    "the open item is as tall as its content (fixture sections or the loading card)",
+  "list-detail-body":
+    "the open item is as tall as its content (fixture sections or the loading card)",
+  "list-detail-content":
+    "the page's own sections: the loading card block and the fixture sections differ",
 };
 
 /**
@@ -346,6 +354,9 @@ export const LOADING_ALIASES: Record<string, string> = {
   "loading-item-list": "item-list",
   "loading-item-group": "item-list",
   "loading-item-row": "item-list-row",
+  // the inbox list (spec §5.7, §6.47): the ListDetailList's own list and rows
+  "loading-list": "list",
+  "loading-row": "list-row",
   // `<ancestor part> > <part>`: a placeholder box whose own part name is the generic skeleton-box
   "page-header-action-slots > skeleton-box": "button",
   "loading-switch-row > skeleton-box": "switch",

@@ -1,9 +1,6 @@
 import {
   ActionRow,
   BottomNav,
-  Card,
-  type Column,
-  DataTable,
   InboxPage,
   ListDetail,
   ListDetailItem,
@@ -22,7 +19,6 @@ import { bottomItems, overflow } from "../compact-shell-blocks";
 import { FixtureShell } from "../frame";
 import { RefBlock } from "../ref-block";
 import { TraceSummary } from "../table";
-import { DetailInspector } from "./detail";
 
 const noop = () => {};
 
@@ -35,25 +31,10 @@ const QUEUE: Approval[] = [
   { id: "run_8f2hx4", agent: "kb-ingest", action: "index.write · 覆盖索引", at: "12:58:02" },
 ];
 
-const COLUMNS: Column<Approval>[] = [
-  {
-    key: "agent",
-    header: "待审批",
-    cell: (a) => (
-      <Stack gap={0}>
-        <Text>{a.agent}</Text>
-        <Text variant="small" tone="muted">
-          {a.action}
-        </Text>
-      </Stack>
-    ),
-  },
-  { key: "at", header: "时间", tone: "muted", cell: (a) => a.at },
-];
-
 function InboxBody() {
   useStatusBar("7 项待审批");
   const [active, setActive] = useState("run_8f2j9p");
+  const item = QUEUE.find((a) => a.id === active) ?? QUEUE[0];
   return (
     <InboxPage
       header={{
@@ -62,36 +43,38 @@ function InboxBody() {
         count: "7",
       }}
       list={
-        <DataTable<Approval>
+        <ListDetailList
           label="审批队列"
-          rowHeight="dense"
-          framed={false}
-          columns={COLUMNS}
-          rows={QUEUE}
-          rowKey={(a) => a.id}
-          rowLabel={(a) => a.agent}
-          activeKey={active}
-          onOpen={(a) => setActive(a.id)}
+          items={QUEUE.map((a) => ({
+            id: a.id,
+            title: a.action,
+            meta: a.agent,
+            at: a.at,
+            waiting: true,
+          }))}
+          current={active}
+          onOpen={setActive}
         />
       }
-      inspector={<DetailInspector />}
-      inspectorTitle="智能体属性"
+      title={item?.action ?? ""}
+      status={<StatusMark status="waiting" />}
+      facts={[
+        { label: "智能体", value: item?.agent ?? "" },
+        { label: "键", value: "ticket.reply", mono: true },
+        { label: "运行", value: item?.id ?? "" },
+        { label: "时间", value: item?.at ?? "" },
+      ]}
+      factsLabel="详情"
       actionRow={{
         cancel: { label: "跳过", onSelect: noop },
         secondary: { label: "拒绝", onSelect: noop },
         primary: { label: "批准", shortcut: "⌘↵", onSelect: noop },
       }}
     >
-      <Stack gap={16}>
-        <Card title={`support-triage · ${active}`} actions={<StatusMark status="waiting" />}>
-          <Stack gap={8}>
-            <Text>ticket.reply（需审批 &gt; ¥500）</Text>
-            <Text tone="muted">客户申请退款 ¥820，超过自动审批上限 ¥500。</Text>
-          </Stack>
-        </Card>
-        <Card title="执行链路">
-          <TraceSummary />
-        </Card>
+      <Stack gap={8}>
+        <Text>ticket.reply（需审批 &gt; ¥500）</Text>
+        <Text tone="muted">客户申请退款 ¥820，超过自动审批上限 ¥500。</Text>
+        <TraceSummary />
       </Stack>
     </InboxPage>
   );
