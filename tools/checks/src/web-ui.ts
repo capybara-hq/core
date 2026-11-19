@@ -11,6 +11,7 @@ import {
   parseFile,
   walk,
 } from "./source.js";
+import { shellAccessFindings } from "./web-shell-access.js";
 
 export { BOX_PENDING, type BoxPending } from "./box-in-box.js";
 export type { Finding };
@@ -343,6 +344,7 @@ function checkWebFile(
   if (isParseError(p)) return [p];
   const out: Finding[] = [];
   const segs0 = relative(webSrcDir, file).split(sep);
+  if (relative(webSrcDir, file) !== join("lib", "shell.ts")) out.push(...shellAccessFindings(p));
 
   for (const imp of collectImports(p.program)) {
     const line = p.lineOf(imp.start);
@@ -1377,7 +1379,11 @@ function checkDesign(designSrcDir: string): Finding[] {
     if (isParseError(p)) out.push(p);
     else {
       out.push(...colorFindings(p, rule, message));
-      if (!isTest) out.push(...charIconFindings(p), ...formMethodFindings(p));
+      if (!isTest) {
+        out.push(...charIconFindings(p), ...formMethodFindings(p));
+        if (relative(designSrcDir, file) !== join("shell", "shell-environment.tsx"))
+          out.push(...shellAccessFindings(p));
+      }
     }
   }
   return out;
