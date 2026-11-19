@@ -382,6 +382,36 @@ describe("profile × operation matrix through the owner API on two replicas", ()
   it("Full access: in-project work runs with its scope; outside work follows the profile", async () => {
     await matrix("full-access");
   });
+
+  // Open finding (R3 Mac dogfood, 2026-11-20): the pipeline's reviewKindOf maps every non-Bash
+  // tool to "write", so the ask for a Read outside the scope is recorded with detail kind "write"
+  // under tool key Write, and the card says 智能体想写入这个文件 ("wants to write this file")
+  // above a read-only scope. Remove `.fails` with the fix.
+  it.fails("an outside Read asks as a read: its detail and tool key name a read, not a write", async () => {
+    const deviceId = await cloudDevice();
+    const conv = await conversation(deviceId);
+    const bound = await call(conv, "Bash", { command: "echo bound", description: "Bind" }, 1);
+    expect(bound.payload.isError, bound.payload.content).toBe(false);
+    await setProfile(conv, "request-approval");
+    const outside = "/etc/capybara-read/note.txt";
+    await postMessage(ownerA, orgId, conv, `tool:Read:${JSON.stringify({ file_path: outside })}`);
+    const ask = await pendingAsk(conv);
+    const row = await db
+      .selectFrom("approvals")
+      .select("tool_key")
+      .where("id", "=", ask.id)
+      .executeTakeFirstOrThrow();
+    try {
+      expect(ask.detail as Record<string, unknown>).toMatchObject({
+        targetPath: outside,
+        permissionScope: { readDirectories: ["/etc/capybara-read"], writeDirectories: [] },
+      });
+      expect((ask.detail as { kind?: string }).kind).toBe("read");
+      expect(row.tool_key).toBe("Read");
+    } finally {
+      await denyThrough(conv, ask.id, 2);
+    }
+  });
 });
 
 describe("a profile change applies to following operations only", () => {
