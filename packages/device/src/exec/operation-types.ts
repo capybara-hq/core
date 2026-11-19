@@ -154,13 +154,9 @@ export function checkRoots(
     if (ceiling.restrictedDeniedReadRoots.some((r) => within(root, r)))
       throw new SandboxScopeDeniedError("Root is denied by the owner");
   }
-  if (
-    !preparation &&
-    write.some((r) => within(r, ceiling.roots.skills) || within(ceiling.roots.skills, r))
-  )
-    throw new SandboxScopeDeniedError("Skills remain read only");
   // the kernel's candidate builder and admission refuse the same roots: another process's socket
-  // there would let a sandboxed command act outside the sandbox
+  // there would let a sandboxed command act outside the sandbox. Checked before the skills rule so
+  // the refusal names the real reason wherever the skills root lives (under /tmp on Linux)
   for (const root of write) {
     const runtime = sandboxRuntimeDirectoryOf(root);
     if (runtime !== null)
@@ -168,6 +164,11 @@ export function checkRoots(
         `Write root ${root} is a system runtime or socket directory (${runtime}), where other programs keep their sockets; grant a directory of its own (such as /tmp/<name>) or one inside the project instead`,
       );
   }
+  if (
+    !preparation &&
+    write.some((r) => within(r, ceiling.roots.skills) || within(ceiling.roots.skills, r))
+  )
+    throw new SandboxScopeDeniedError("Skills remain read only");
 }
 export function freezeAuthority(a: LocalExecAuthority): LocalExecAuthority {
   if (
