@@ -9,8 +9,9 @@ import { createDb } from "../../src/db/pool.js";
 import { KERNEL_MIGRATIONS_DIR } from "../../src/kernel.js";
 
 /**
- * 0163_read_attachments.sql: the attachments purpose check gains 'read'. Migrates up to the file
- * (where 'read' is refused), applies it, then runs it again (idempotent).
+ * 0163_read_attachments.sql: the attachments purpose check gains 'read', and conversations get a
+ * partial index on deleted_at for the read purge. Migrates up to the file (where 'read' is
+ * refused), applies it, then runs it again (idempotent).
  */
 const FILE = "0163_read_attachments.sql";
 
@@ -34,6 +35,12 @@ const insert = (id: string, purpose: string) =>
     db,
   );
 
+const deletedIndex = async () =>
+  (
+    await sql<{ indexdef: string }>`select indexdef from pg_indexes
+      where schemaname = 'capybara' and indexname = 'conversations_deleted_idx'`.execute(db)
+  ).rows;
+
 beforeAll(async () => {
   pg = await startTestPostgres();
   db = createDb(pg.url, 3);
@@ -51,10 +58,13 @@ afterAll(async () => {
 describe("0163_read_attachments", () => {
   it("refuses 'read' before the file and accepts it after", async () => {
     await expect(insert("r0", "read")).rejects.toThrow(/attachments_purpose_check/);
+    expect(await deletedIndex()).toEqual([]);
     await migrate(pg.url, { schema: "capybara", dir: copyMigrations((f) => f <= FILE) });
     await insert("r1", "read");
     for (const p of ["chat", "skill-package", "agent-avatar"]) await insert(`p-${p}`, p);
     await expect(insert("bad", "other")).rejects.toThrow(/attachments_purpose_check/);
+    const [idx] = await deletedIndex();
+    expect(idx?.indexdef).toMatch(/\(deleted_at\) WHERE \(deleted_at IS NOT NULL\)/);
   });
 
   it("is idempotent", async () => {
@@ -64,5 +74,6 @@ describe("0163_read_attachments", () => {
     const n = await sql<{ n: string }>`select count(*) as n from capybara.attachments
       where purpose = 'read'`.execute(db);
     expect(Number(n.rows[0]?.n)).toBe(2);
+    expect(await deletedIndex()).toHaveLength(1);
   });
 });

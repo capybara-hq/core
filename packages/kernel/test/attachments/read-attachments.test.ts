@@ -14,6 +14,7 @@ import { KERNEL_MIGRATIONS_DIR } from "../../src/kernel.js";
 import { PrefixedStorage } from "../../src/storage/storage.service.js";
 import { attachmentsFor } from "../helpers/conversations.js";
 import { truncateTables } from "../helpers/db.js";
+import { handlesFor } from "../helpers/identity.js";
 import { MemoryObjectStore } from "../storage/memory-store.js";
 
 /**
@@ -23,6 +24,7 @@ import { MemoryObjectStore } from "../storage/memory-store.js";
  */
 
 const ORG = "00000000-0000-4000-8000-0000000000a1";
+const ORG2 = "00000000-0000-4000-8000-0000000000a2";
 const PNG = new Uint8Array(Buffer.from("89504e470d0a1a0a0000000d49484452", "hex"));
 
 let pg: TestContainer;
@@ -54,9 +56,15 @@ const file = (size = PNG.length) => ({
   data: size === PNG.length ? PNG : new Uint8Array(size),
 });
 
-const conversation = async (id: string, deletedHoursAgo?: number) => {
-  await sql`insert into capybara.conversations (id, org_id, agent_id, account_id)
-    values (${id}, ${ORG}, 'ag1', 'a1')`.execute(raw);
+const conversation = async (id: string, deletedHoursAgo?: number, parent?: string) => {
+  if (parent === undefined) {
+    await sql`insert into capybara.conversations (id, org_id, agent_id, account_id)
+      values (${id}, ${ORG}, 'ag1', 'a1')`.execute(raw);
+  } else {
+    await sql`insert into capybara.conversations
+      (id, org_id, agent_id, account_id, kind, parent_conversation_id, subagent_type)
+      values (${id}, ${ORG}, 'ag1', 'a1', 'subagent', ${parent}, 'general')`.execute(raw);
+  }
   if (deletedHoursAgo !== undefined) {
     await sql`update capybara.conversations
       set deleted_at = now() - make_interval(hours => ${deletedHoursAgo}) where id = ${id}`.execute(
@@ -96,7 +104,8 @@ beforeEach(async () => {
   attachments = {};
   mem = new MemoryObjectStore();
   await sql`insert into capybara.accounts (id, display_name) values ('a1', 'A')`.execute(raw);
-  await sql`insert into capybara.orgs (id, slug, name) values (${ORG}, 'o1', 'O')`.execute(raw);
+  await sql`insert into capybara.orgs (id, slug, name)
+    values (${ORG}, 'o1', 'O'), (${ORG2}, 'o2', 'O2')`.execute(raw);
   await sql`insert into capybara.agents (id, org_id, owner_account_id, visibility, current_version)
     values ('ag1', ${ORG}, 'a1', 'org', 1)`.execute(raw);
   await conversation("c1");
@@ -180,6 +189,49 @@ describe("storeRead", () => {
     expect(left?.expires_at).not.toBeNull();
   });
 
+  it("refuses a conversation of another org and stores nothing", async () => {
+    await expect(service().storeRead(ORG2, "c1", "a1", file())).rejects.toThrow(/not found/);
+    expect(await db.selectFrom("attachments").select("id").execute()).toEqual([]);
+    expect(mem.objects.size).toBe(0);
+    // the media lookups are org-scoped too
+    const r = await storeOk("c1");
+    const svc = service();
+    expect((await svc.mediaInfo(ORG2, "c1", [r.attachmentId])).size).toBe(0);
+    expect((await svc.fetchMedia(ORG2, "c1", [r.attachmentId])).get(r.attachmentId)).toBeNull();
+  });
+
+  it("commits the unbound intent row even when the caller's transaction rolls back", async () => {
+    const svc = service();
+    await expect(
+      handlesFor(raw).txHost.run(async () => {
+        await svc.storeRead(ORG, "c1", "a1", file());
+        throw new Error("caller rolls back");
+      }),
+    ).rejects.toThrow("caller rolls back");
+    const rows = await db.selectFrom("attachments").selectAll().execute();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ conversation_id: null, status: "pending", purpose: "read" });
+    expect(rows[0]?.expires_at).not.toBeNull();
+    expect(stored(`read-images/${rows[0]?.id}`)).toBe(true);
+  });
+
+  it("finalize refuses a read row like an unknown id", async () => {
+    const r = await storeOk("c1");
+    await expect(service().finalize(ORG, "a1", r.attachmentId)).rejects.toMatchObject({
+      code: "attachment.not_found",
+    });
+    // an in-flight (pending, unbound) read row cannot be flipped to ready either
+    await db
+      .updateTable("attachments")
+      .set({ status: "pending", conversation_id: null })
+      .where("id", "=", r.attachmentId)
+      .execute();
+    await expect(service().finalize(ORG, "a1", r.attachmentId)).rejects.toMatchObject({
+      code: "attachment.not_found",
+    });
+    expect((await row(r.attachmentId))?.status).toBe("pending");
+  });
+
   it("a crash after put leaves an unbound row that deleteExpired removes", async () => {
     const id = "00000000-0000-4000-8000-00000000c0de";
     await db
@@ -242,6 +294,27 @@ describe("read purge", () => {
       where id = 'recent'`.execute(raw);
     expect(await service().purgeRead()).toBe(1);
     expect(await row(kept.attachmentId)).toBeUndefined();
+  });
+
+  it("purges the copies of sub-agent conversations below a root deleted long enough ago", async () => {
+    await conversation("root", 25);
+    await conversation("child", undefined, "root");
+    await conversation("grandchild", undefined, "child");
+    await conversation("liveChild", undefined, "c1");
+    await conversation("recentRoot", 1);
+    await conversation("recentChild", undefined, "recentRoot");
+    const gone = [await storeOk("child"), await storeOk("grandchild")];
+    const kept = [await storeOk("liveChild"), await storeOk("recentChild")];
+
+    expect(await service().purgeRead()).toBe(2);
+    for (const r of gone) {
+      expect(await row(r.attachmentId)).toBeUndefined();
+      expect(stored(`read-images/${r.attachmentId}`)).toBe(false);
+    }
+    for (const r of kept) {
+      expect(await row(r.attachmentId)).toBeDefined();
+      expect(stored(`read-images/${r.attachmentId}`)).toBe(true);
+    }
   });
 
   it("keeps a row whose object delete failed and retries it on the next run", async () => {

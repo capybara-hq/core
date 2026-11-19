@@ -63,6 +63,11 @@ const CLEANUP_BATCH = 100;
 export const ATTACHMENT_READ_PURGE_JOB = "attachments-read-purge";
 /** Rows one claim of the read purge takes. */
 const READ_PURGE_BATCH = 500;
+/**
+ * How many sub-agent levels below a deleted conversation the read purge walks (the bound of
+ * `conversations/tree.ts`: far above `subagents.maxDepth`, so a corrupt chain cannot loop).
+ */
+const READ_PURGE_TREE_LEVELS = 16;
 /** finalize 时读取开头多少字节核对文件签名。 */
 const SNIFF_BYTES = 1024;
 
@@ -364,6 +369,8 @@ export class AttachmentsService {
       .where("org_id", "=", orgId)
       .where("account_id", "=", accountId)
       .where("status", "in", ["pending", "ready"])
+      // read copies are the kernel's own (storeRead binds them); nobody finalizes them
+      .where("purpose", "<>", "read")
       .executeTakeFirst();
     if (!row) throw notFound();
     const view: AttachmentView = {
@@ -953,8 +960,35 @@ export class AttachmentsService {
     const id = randomUUID();
     const key = objectKey(id, "read");
     const contentType = normalizeContentType(file.contentType);
+    await this.insertReadIntent(orgId, conversationId, accountId, {
+      id,
+      key,
+      name: file.name,
+      contentType,
+      size,
+    });
+    const head = await this.storage
+      .kernel(orgId)
+      .put(key, file.data, { contentType: contentType || "application/octet-stream" });
+    await this.bindRead(id, conversationId, head.size, head.etag ?? null);
+    return { ok: true, attachmentId: id, size: head.size };
+  }
+
+  /**
+   * Step 2 of {@link storeRead}: the unbound intent row, in its own transaction so it is committed
+   * before the put even when the caller holds one (a rollback must never leave an object with no
+   * row). The INSERT ... SELECT proves the conversation is in the org; with no `accountId` the row
+   * is the conversation owner's.
+   */
+  @Transactional({ propagation: "requires_new" })
+  private async insertReadIntent(
+    orgId: string,
+    conversationId: string,
+    accountId: string | null,
+    r: { id: string; key: string; name: string; contentType: string; size: number },
+  ): Promise<void> {
     const { unboundTtlHours } = this.config.get().attachments;
-    const inserted = await this.db
+    const inserted = await this.db.db
       .insertInto("attachments")
       .columns([
         "id",
@@ -972,13 +1006,13 @@ export class AttachmentsService {
         eb
           .selectFrom("conversations")
           .select([
-            sql.lit(id).as("id"),
+            sql.val(r.id).as("id"),
             "org_id",
-            accountId === null ? "account_id" : sql.lit(accountId).as("account_id"),
-            sql.val(file.name).as("name"),
-            sql.val(contentType).as("content_type"),
-            sql.val(size).as("size"),
-            sql.val(key).as("object_key"),
+            accountId === null ? "account_id" : sql.val(accountId).as("account_id"),
+            sql.val(r.name).as("name"),
+            sql.val(r.contentType).as("content_type"),
+            sql.val(r.size).as("size"),
+            sql.val(r.key).as("object_key"),
             sql.lit("pending").as("status"),
             sql.lit("read").as("purpose"),
             sql<Date>`now() + make_interval(hours => ${unboundTtlHours})`.as("expires_at"),
@@ -990,11 +1024,6 @@ export class AttachmentsService {
     if (Number(inserted.numInsertedOrUpdatedRows ?? 0) !== 1) {
       throw new Error(`conversation ${conversationId} not found in org ${orgId}`);
     }
-    const head = await this.storage
-      .kernel(orgId)
-      .put(key, file.data, { contentType: contentType || "application/octet-stream" });
-    await this.bindRead(id, conversationId, head.size, head.etag ?? null);
-    return { ok: true, attachmentId: id, size: head.size };
   }
 
   /** Step 4 of {@link storeRead}: binds the unbound row in one transaction. */
@@ -1020,7 +1049,8 @@ export class AttachmentsService {
 
   /**
    * Purges the `read` copies of conversations deleted more than `attachments.readPurgeAfterHours`
-   * ago (read at run time): claims up to {@link READ_PURGE_BATCH} rows at a time as `deleting`
+   * ago (read at run time), and of the sub-agent conversations below them (a sub-agent
+   * conversation keeps `deleted_at` null when its root is deleted): claims up to {@link READ_PURGE_BATCH} rows at a time as `deleting`
    * (`FOR UPDATE SKIP LOCKED`, so concurrent runs never share a row), deletes each object, then the
    * row. A row whose object delete fails stays `deleting` and is claimed again on the next run.
    * Chat attachments of deleted conversations are not touched. Does nothing without an object
@@ -1045,10 +1075,17 @@ export class AttachmentsService {
             .where(
               "conversation_id",
               "in",
-              this.db
-                .selectFrom("conversations")
-                .select("id")
-                .where("deleted_at", "<", sql<Date>`now() - make_interval(hours => ${hours})`),
+              sql<string>`(
+                WITH RECURSIVE gone(id, level) AS (
+                  SELECT c.id, 0 FROM capybara.conversations c
+                  WHERE c.deleted_at < now() - make_interval(hours => ${hours})
+                  UNION ALL
+                  SELECT c.id, g.level + 1
+                  FROM capybara.conversations c JOIN gone g ON c.parent_conversation_id = g.id
+                  WHERE c.kind = 'subagent' AND g.level < ${READ_PURGE_TREE_LEVELS}
+                )
+                SELECT id FROM gone
+              )`,
             )
             .$if(failed.length > 0, (q) => q.where("id", "not in", failed))
             .orderBy("created_at")
