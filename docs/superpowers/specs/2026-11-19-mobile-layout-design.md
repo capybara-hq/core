@@ -190,6 +190,9 @@ settings under 更多), the inbox is where approvals and notices wait:
 技能 / 连接器 / 定时任务 are reached from
 Me (and from the agents' pages), as 更多 items are on the sidebar.
 
+`/me` is built on the `OverviewPage` template with a design `MePanel` component, so it passes
+`web-ui-template` **(decided)**.
+
 ### 4.3 Medium: the rail (designer's call)
 
 Today's rail, unchanged in look, gains one button: **conversations**, which opens the
@@ -313,6 +316,8 @@ Each slot in `UI_SLOTS` (`packages/plugin-sdk/src/ui-slots.ts`) gains a required
 - `drawer` means "the slot's content moves into a sheet or pushed page"; `hidden` means the slot
   is not rendered on compact. A **contribution may narrow** its slot's form in its manifest
   (`ui.<contribution>.compact`, `kept` → `drawer` → `hidden`), never widen it (designer's call).
+  The field is `compact?` on the SDK's `UiContribution`, where contributions are declared, not a
+  separate manifest key **(decided)**.
 - Adding the field changes the catalog contract: the slot versions stay (the field is additive
   for plugins), `pnpm gen:ui-slots` regenerates `docs/guide/ui-slots.md` and the web's copy, and
   `check:ui-slots` covers it.
@@ -549,7 +554,8 @@ declare global {
   `--cb-shell-inset-top|right|bottom|left`, and from `controls` the properties
   `--cb-shell-controls-x|y|width|height` (unset when `controls` is absent or null). No shell: nothing is set. The server render never
   depends on the shell, so hydration cannot mismatch (`<html>` already has
-  `suppressHydrationWarning`).
+  `suppressHydrationWarning`). The root layout does not read `x-nonce` today; it starts reading
+  it to give `ShellEnvironmentScript` the nonce **(decided)**.
 - **The AppShell** subscribes to `change` after hydration and updates the same attributes and
   properties (fullscreen, a moved title bar), and sends `chrome@1.setAppearance` on theme
   changes.
@@ -615,8 +621,12 @@ declare global {
   kernel config `platform.name` (`CAPYBARA_PLATFORM__NAME`, introduced by the desktop spec,
   PR #407, and read through `GET /api/v1/meta`), "Capybara" when unset; the icons from the
   platform icon setting (§10.2.1); `display: "standalone"`, `start_url: "/"`, `scope: "/"`,
-  `theme_color` / `background_color` from the platform default theme's tokens. The document
+  `theme_color` / `background_color` from the built-in theme's token values, never a plugin
+  theme's (a theme is CSS, which the manifest cannot read) **(decided)**. The document
   `<title>` default and the `apple-mobile-web-app-title` follow the same name.
+- **Signed out**: the web proxy's matcher (`apps/web/src/proxy.ts`) excludes
+  `/manifest.webmanifest` and the default icons, so a signed-out request is not redirected to
+  `/login` **(decided)**; this widens the unauthenticated surface and is reviewed as such.
 - iOS: `appleWebApp` metadata (capable, `black-translucent` status bar with the safe areas of
   §7.5).
 - **No service worker in this design** (designer's call): installability rests on the manifest
@@ -638,6 +648,8 @@ declare global {
   safe zone (Android launchers crop it to their shape), and an **SVG favicon**. Each at most
   1 MB; the kernel checks the PNG header's size and the type (no image library: nothing is
   resized). Without a maskable variant the manifest lists the app icon with purpose `any` only.
+- **Upload** is a JSON body with the file as base64, not multipart, so the Platform tool mirrors
+  it as `platform.icons.set` (no exclusion needed) **(decided)**.
 - **Stored** in object storage under the kernel's `deployment/` prefix, with a row in PG
   (`capybara.platform_icons`: purpose, object key, SHA-256, updated at); served by a public
   route `GET /api/v1/platform/icon/<purpose>?v=<sha256>` with an immutable cache (the hash in the
