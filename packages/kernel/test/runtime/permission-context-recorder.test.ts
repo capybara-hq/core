@@ -246,6 +246,40 @@ describe("recorded permission context recorder", () => {
     expect(notify).not.toHaveBeenCalled();
   });
 
+  // deployments hold v1 rows: the recorder reads them as v2 with a null sandbox, never rewrites them
+  it("a stored v1 prior runs fine: identical content appends nothing, a changed profile appends v2", async () => {
+    const f = await seedContext(k, raw);
+    await record(f);
+    const [first] = await contexts(raw, f.rootId);
+    const { sandbox: _sandbox, ...v1 } = { ...must(first).payload, version: 1 };
+    await f.db
+      .updateTable("conversation_events")
+      .set({ payload: JSON.stringify(v1) })
+      .where("conversation_id", "=", f.rootId)
+      .where("seq", "=", must(first).seq as never)
+      .execute();
+    await record(f);
+    let events = await contexts(raw, f.rootId);
+    expect(events).toHaveLength(1);
+    expect(events[0]?.payload).toEqual(v1);
+    await k.app.get(PermissionProfilesService).set(f.orgId, f.rootId, f.accountId, {
+      profile: "approve-for-me",
+      expectedRevision: 0,
+    });
+    await record(f);
+    events = await contexts(raw, f.rootId);
+    expect(events).toHaveLength(2);
+    expect(events[0]?.payload).toEqual(v1);
+    expect(events[1]?.payload).toMatchObject({
+      version: 2,
+      sandbox: null,
+      selectedProfile: "approve-for-me",
+    });
+    expect(events[1]?.idemKey).toBe(
+      permissionContextIdemKey(must(events[1]).payload, must(events[0]).seq),
+    );
+  });
+
   it("appends profile changes A to B to A from the persisted log and restricted-only authority changes", async () => {
     const f = await seedContext(k, raw);
     const profiles = k.app.get(PermissionProfilesService);

@@ -27,6 +27,7 @@ import {
   type LegacyDevicePathsPayload,
 } from "../../src/runtime/context/device-paths.js";
 import {
+  assertRecordedPermissionEvents,
   canonicalPermissionJson,
   managedDevicePathsHash,
   managedDevicePathsIdemKey,
@@ -38,6 +39,7 @@ import {
   permissionQuote,
   permissionSandboxHash,
   RecordedPermissionContextError,
+  readRecordedPermissionContext,
 } from "../../src/runtime/context/permission-profile.js";
 import { coversHost } from "../../src/sandbox/modes.js";
 
@@ -154,7 +156,7 @@ describe("recorded permission context", () => {
       [event("device_paths", { roots: paths.roots, permissionContextVersion: "1" }, 1)],
     ],
     [
-      "a permission_context version 1",
+      "a permission_context version 1 carrying a sandbox key",
       [event("permission_context", { ...supported, version: 1 }, 1)],
     ],
     [
@@ -173,7 +175,7 @@ describe("recorded permission context", () => {
       ],
     ],
     [
-      "a covered superseded permission_context version 1",
+      "a covered superseded permission_context version 1 carrying a sandbox key",
       [
         event("permission_context", { ...supported, version: 1 }, 1),
         event("permission_context", supported, 2),
@@ -1082,7 +1084,7 @@ describe("ordered history, summaries and original request metadata", () => {
       (p) => Object.assign(p, { permissionContextVersion: "1" }),
     ],
     [
-      "a covered superseded permission context with version 1",
+      "a covered superseded permission context with version 1 and a sandbox key",
       [...changes.slice(0, 2), summaryAt(3, 4)],
       1,
       (p) => Object.assign(p, { version: 1 }),
@@ -1761,13 +1763,101 @@ describe("permission context v2: the device sandbox and the approver per crossin
     mutate(p);
     expect(PermissionContextV2Schema.safeParse(p).success).toBe(false);
   });
-  it("accepts an empty allowlist sandbox as a scope without hosts", () => {
+  // a scope without hosts is `none` in the sandbox block too: one canonical form
+  it("rejects an empty allowlist sandbox and accepts none for a scope without hosts", () => {
     const p = sandboxed("request-approval", false);
     if (p.scope && p.sandbox) {
       p.scope.network = { kind: "none" };
       p.sandbox.network = { kind: "allowlist", hostsCount: 0 };
     }
+    expect(PermissionContextV2Schema.safeParse(p).success).toBe(false);
+    if (p.sandbox) p.sandbox.network = { kind: "none", hostsCount: 0 };
     expect(PermissionContextV2Schema.safeParse(p).success).toBe(true);
+  });
+  const cloud = (
+    network: NonNullable<PermissionContextV2["scope"]>["network"],
+    outerNetwork: NonNullable<PermissionContextV2["scope"]>["outerNetwork"],
+    outsideSandbox = false,
+  ): PermissionContextV2 =>
+    sandboxed("request-approval", outsideSandbox, {
+      scope: {
+        location: "cloud",
+        workingRoot: "/project",
+        filesystem: {
+          kind: "scoped",
+          readDirectories: ["/project"],
+          writeDirectories: ["/project"],
+        },
+        network,
+        outerNetwork,
+      },
+      sandbox: {
+        boundary: "operation",
+        location: "cloud",
+        workingRoot: "/project",
+        network: {
+          kind: network.kind === "environment" ? "none" : network.kind,
+          hostsCount: network.kind === "allowlist" ? network.hosts.length : 0,
+        },
+        outsideSandbox,
+        outerNetwork,
+      },
+    });
+  it("accepts the open public internet inside a cloud open-public outer boundary", () => {
+    expect(
+      PermissionContextV2Schema.safeParse(cloud({ kind: "open-public" }, { kind: "open-public" }))
+        .success,
+    ).toBe(true);
+  });
+  it.each<[string, PermissionContextV2]>([
+    [
+      "an open network inside a cloud outer allowlist",
+      cloud({ kind: "open-public" }, { kind: "allowlist", hosts: ["api.example.com"] }),
+    ],
+    [
+      "an open network inside a disabled cloud outer boundary",
+      cloud({ kind: "open-public" }, { kind: "none" }),
+    ],
+    [
+      "running outside the sandbox on a cloud device",
+      cloud({ kind: "open-public" }, { kind: "open-public" }, true),
+    ],
+    [
+      "Full access without a block on a scoped filesystem",
+      sandboxed("full-access", true, { sandbox: null }),
+    ],
+    [
+      "Full access without a block on a device filesystem with restricted networking",
+      sandboxed("full-access", true, {
+        sandbox: null,
+        scope: {
+          location: "local",
+          workingRoot: "/project",
+          filesystem: { kind: "device" },
+          network: { kind: "none" },
+          outerNetwork: { kind: "host-environment" },
+        },
+      }),
+    ],
+  ])("rejects %s", (_name, p) => {
+    expect(PermissionContextV2Schema.safeParse(p).success).toBe(false);
+  });
+  it("tells the model who approves a host when none is authorized yet, per profile", () => {
+    const none = (profile: PermissionProfile) => {
+      const p = sandboxed(profile, false);
+      if (p.scope && p.sandbox) {
+        p.scope.network = { kind: "none" };
+        p.sandbox.network = { kind: "none", hostsCount: 0 };
+      }
+      return permissionContextText(p).split("\n");
+    };
+    expect(none("request-approval")).toContain(
+      "Network hosts (none authorized yet): the person approves, where this device allows network access.",
+    );
+    expect(none("approve-for-me")).toContain(
+      "Network hosts (none authorized yet): a separate reviewer approves; uncertainty asks the person, where this device allows network access.",
+    );
+    expect(none("full-access")).toContain(fullWithout);
   });
 
   function runCall(runId: string, seq: number, events: ConversationEvent[]): ConversationEvent {
@@ -1850,5 +1940,84 @@ describe("permission context v2: the device sandbox and the approver per crossin
     expect(
       build([event("permission_context", supported, 1)]).meta.permissionContext,
     ).not.toHaveProperty("sandbox");
+  });
+});
+
+// Real deployments hold v1 rows: the log is never rewritten, a reader up-converts them to v2 with
+// `sandbox: null`, and the text, the hash and replay stay those of the up-converted form.
+describe("a stored v1 permission context", () => {
+  const v1 = (p: PermissionContextV2) => {
+    const { sandbox: _sandbox, ...rest } = structuredClone(p);
+    return { ...rest, version: 1 } as unknown as PermissionContextV2;
+  };
+  const preBranch = {
+    "request-approval": expected,
+    "approve-for-me":
+      'Permission context for new operations: Approve for me.\nThis context supersedes earlier device-mode descriptions for new operations.\nWorking directory: "/project".\nReadable directories: ["/project"].\nWritable directories: ["/project"].\nNetwork: no destinations are authorized for new commands.\nOuter network boundary: the host environment.\nA separate reviewer may approve eligible extra scope; uncertainty asks the person.\nChanges apply to new operations. Work already started keeps its starting permissions. Actual owner or organization revocation may still stop affected work.',
+    "full-access":
+      'Permission context for new operations: Full access.\nThis context supersedes earlier device-mode descriptions for new operations.\nWorking directory: "/project".\nFilesystem: this device as the existing OS user; no additional OS privileges.\nNetwork: the host environment; restricted-profile host lists do not restrict Full access.\nOuter network boundary: the host environment.\nNo discretionary command approval; explicit policy, device-owner limits and OS permissions still apply.\nChanges apply to new operations. Work already started keeps its starting permissions. Actual owner or organization revocation may still stop affected work.',
+  } satisfies Record<PermissionProfile, string>;
+  it.each(Object.keys(preBranch) as PermissionProfile[])(
+    "a v2 context without a sandbox block and its v1 form render the pre-branch bytes: %s",
+    (profile) => {
+      const p = snapshot(profile, "local");
+      expect(permissionContextText(p)).toBe(preBranch[profile]);
+      expect(permissionContextText(v1(p))).toBe(preBranch[profile]);
+    },
+  );
+  it("reads as v2 with a null sandbox and hashes as that form", () => {
+    expect(readRecordedPermissionContext(v1(supported))).toEqual(supported);
+    expect(permissionContextHash(readRecordedPermissionContext(v1(supported)))).toBe(
+      permissionContextHash(supported),
+    );
+    expect(() => readRecordedPermissionContext({ ...v1(supported), version: 3 })).toThrow();
+    // a v1 payload never carried the block: one with the key is no v1 payload
+    expect(() => readRecordedPermissionContext({ ...v1(supported), sandbox: null })).toThrow();
+    // v1's own rules hold: Full access was device + environment
+    const scopedFull = v1({
+      ...supported,
+      selectedProfile: "full-access",
+      effectiveProfile: "full-access",
+    });
+    expect(() => readRecordedPermissionContext(scopedFull)).toThrow();
+  });
+  it("renders in live build and after a summary, and a step replay has zero drift", () => {
+    const events = [
+      event("permission_context", v1(supported), 1),
+      event("permission_context", v1(snapshot("approve-for-me", "local")), 2),
+      event("compaction_summary", { coversUpToSeq: 1, text: "Summary" }, 3),
+    ];
+    expect(() => assertRecordedPermissionEvents(events)).not.toThrow();
+    const built = build(events);
+    expect(built.request.messages.slice(1).map((m) => m.content)).toEqual([
+      expected,
+      preBranch["approve-for-me"],
+    ]);
+    expect(built.meta.permissionContext).not.toHaveProperty("sandbox");
+    const callSeq = 4;
+    const call = event(
+      "model_call",
+      {
+        step: 1,
+        attempt: 1,
+        provider: "fake",
+        model: "fake",
+        fallback: false,
+        request: { ...built.meta, maxOutputTokens: 4096 },
+      },
+      callSeq,
+    );
+    const snap: CaseSnapshot = structuredClone({
+      version: 1,
+      orgId: root,
+      conversationId: root,
+      runId: root,
+      agentId: root,
+      agentVersion: 1,
+      definitions: { "1": agent },
+      toolSpecs: {},
+      events: [...events, call].map((e) => ({ ...e, createdAt: e.createdAt.toISOString() })),
+    });
+    expect(reconstructRequest(snap, callSeq, { model }).drift).toEqual([]);
   });
 });

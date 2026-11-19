@@ -2689,7 +2689,7 @@ describe("reconstructRequest：漂移原因", () => {
         boundary: "operation" as const,
         location: "local" as const,
         workingRoot: "/project",
-        network: { kind: "allowlist" as const, hostsCount: 0 },
+        network: { kind: "none" as const, hostsCount: 0 },
         outsideSandbox,
         outerNetwork: { kind: "host-environment" as const },
       },

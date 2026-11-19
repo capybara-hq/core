@@ -242,14 +242,15 @@ export const PermissionContextV2Schema = z
       reject("Only supported context carries a sandbox");
     const s = p.scope;
     if (!s) return;
-    // every profile may record a scoped sandbox; a device filesystem or environment networking
-    // is never a restricted profile's, and never under a recorded sandbox block. Interim: Full
-    // access without a block may still record device + environment until T5's producer writes
-    // the block, then T5 drops that allowance
-    if (
-      (p.effectiveProfile !== "full-access" || p.sandbox !== null) &&
-      (s.filesystem.kind !== "scoped" || s.network.kind === "environment")
-    )
+    // every profile records a scoped sandbox under a block; a device filesystem or environment
+    // networking is never a restricted profile's. Interim: Full access without a block is exactly
+    // device + environment (v1 and the producer before T5 writes the block); T5 drops that form
+    if (p.effectiveProfile === "full-access" && p.sandbox === null) {
+      if (s.filesystem.kind !== "device" || s.network.kind !== "environment")
+        reject(
+          "Full access without a sandbox requires device filesystem and environment networking",
+        );
+    } else if (s.filesystem.kind !== "scoped" || s.network.kind === "environment")
       reject("A sandboxed context requires scoped filesystem and restricted networking");
     if (p.sandbox !== null) {
       const box = p.sandbox;
@@ -257,15 +258,15 @@ export const PermissionContextV2Schema = z
         reject("The sandbox must match the scope's location and working root");
       if (canonicalOuter(box.outerNetwork) !== canonicalOuter(s.outerNetwork))
         reject("The sandbox must match the scope's outer network");
+      // one canonical form: a scope without hosts is `none` in the block too
       const hosts = s.network.kind === "allowlist" ? s.network.hosts.length : 0;
-      const kindMatches =
-        box.network.kind === "allowlist"
-          ? s.network.kind === "allowlist" || s.network.kind === "none"
-          : box.network.kind === s.network.kind;
-      if (!kindMatches || box.network.hostsCount !== hosts)
+      if (box.network.kind !== s.network.kind || box.network.hostsCount !== hosts)
         reject("The sandbox network must match the scope's network");
-      if (box.boundary === "instance" && (box.location !== "cloud" || box.outsideSandbox))
-        reject("An instance boundary is a cloud device's, with nothing outside it");
+      if (box.boundary === "instance" && box.location !== "cloud")
+        reject("An instance boundary is a cloud device's");
+      // a cloud device has no outside: the provider's instance is the outermost boundary
+      if (box.location === "cloud" && box.outsideSandbox)
+        reject("A cloud device cannot run outside its sandbox");
     }
     if (s.filesystem.kind === "scoped") {
       const { readDirectories, writeDirectories } = s.filesystem;
@@ -280,8 +281,11 @@ export const PermissionContextV2Schema = z
     }
     if ((s.location === "local") !== (s.outerNetwork.kind === "host-environment"))
       reject("Outer boundary must match the device location");
-    if (s.network.kind === "open-public" && s.outerNetwork.kind === "none")
-      reject("An open network exceeds the disabled outer boundary");
+    if (
+      s.network.kind === "open-public" &&
+      (s.outerNetwork.kind === "none" || s.outerNetwork.kind === "allowlist")
+    )
+      reject("An open network exceeds a disabled or allowlisted outer boundary");
     if (s.location === "cloud" && s.network.kind === "allowlist") {
       if (s.outerNetwork.kind === "none")
         reject("Network hosts exceed the disabled outer boundary");
@@ -293,6 +297,28 @@ export const PermissionContextV2Schema = z
     }
   });
 export type PermissionContextV2 = z.infer<typeof PermissionContextV2Schema>;
+
+/**
+ * Reads a recorded payload as version 2. Stored v1 rows exist on deployments and the log is never
+ * rewritten: a v1 payload (`version: 1`, never a `sandbox` key) reads as v2 with `sandbox: null`,
+ * which v2 accepts under exactly v1's rules. Anything else is left for the v2 schema to judge.
+ */
+export function upconvertPermissionContext(payload: unknown): unknown {
+  if (
+    typeof payload === "object" &&
+    payload !== null &&
+    !Array.isArray(payload) &&
+    (payload as { version?: unknown }).version === 1 &&
+    !Object.hasOwn(payload, "sandbox")
+  )
+    return { ...payload, version: 2, sandbox: null };
+  return payload;
+}
+/** A recorded `permission_context` payload as every reader parses it (v1 up-converted). */
+export const RecordedPermissionContextSchema = z.preprocess(
+  upconvertPermissionContext,
+  PermissionContextV2Schema,
+);
 
 /** Order-independent identity of an outer network value (host lists are already sorted). */
 function canonicalOuter(value: { kind: string; hosts?: readonly string[] }): string {

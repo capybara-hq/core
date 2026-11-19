@@ -1,7 +1,7 @@
 import { SandboxScopeDeniedError } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
 import { EventLog } from "../conversations/event-log.js";
-import { PermissionContextV2Schema } from "../conversations/events.js";
+import { RecordedPermissionContextSchema } from "../conversations/events.js";
 import { PermissionProfileStore } from "../conversations/permission-profile-store.js";
 import { ApiError } from "../errors.js";
 import { afterCommit } from "../infra/database/after-commit.js";
@@ -277,9 +277,11 @@ export class PermissionContextRecorder {
       .executeTakeFirst();
     const previousSeq = latest ? Number(latest.seq) : 0;
     if (latest) {
-      const prior = PermissionContextV2Schema.safeParse(latest.payload);
+      const prior = RecordedPermissionContextSchema.safeParse(latest.payload);
       if (!prior.success)
         throw new RecordedPermissionContextError(previousSeq, "permission_context");
+      // a stored v1 prior compares as its up-converted form (v2, sandbox null): identical
+      // content appends nothing, whatever version the row was written in
       if (permissionContextHash(prior.data) === permissionContextHash(payload)) return null;
     }
     signal.throwIfAborted();

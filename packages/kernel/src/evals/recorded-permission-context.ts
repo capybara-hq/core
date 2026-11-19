@@ -1,6 +1,7 @@
 import type { AppendEvent, EventLog } from "../conversations/event-log.js";
 import type { ConversationEvent } from "../conversations/events.js";
 import { ApiError } from "../errors.js";
+import { readRecordedPermissionContext } from "../runtime/context/permission-profile.js";
 import type {
   PermissionContextPort,
   PermissionContextRequestInput,
@@ -215,7 +216,8 @@ export function recordedPermissionContext(
               type: "permission_context",
               runId: target.runId,
               idemKey: replayPermissionContextIdemKey(target.runId, c.seq),
-              payload: structuredClone(c.payload),
+              // the eval log is new: a stored v1 context is written as its v2 form (same text)
+              payload: readRecordedPermissionContext(c.payload),
             }) as AppendEvent,
         ),
       );

@@ -8,6 +8,7 @@ import {
   type PermissionContextV2,
   PermissionContextV2Schema,
   permissionCodePointCompare,
+  RecordedPermissionContextSchema,
 } from "../../conversations/events.js";
 
 /** A recorded log carries a present marker or version that its strict schema rejects. */
@@ -124,11 +125,15 @@ function approverLines(p: PermissionContextV2, box: PermissionContextSandbox): s
   const lines: string[] = [];
   if (!instance)
     lines.push(`Directories outside the readable or writable directories: ${approver}.`);
-  if (box.network.kind === "allowlist")
+  // `none` is both an allowlist without hosts and the kill switch, which the block does not tell
+  // apart: the line names the approver and leaves the device's network switch to the device
+  if (box.network.kind !== "open-public")
     lines.push(
       instance
-        ? "Hosts outside the network allowlist: not approvable per call on this device; the device's host list must include them."
-        : `Hosts outside the network allowlist: ${approver}.`,
+        ? `${box.network.kind === "none" ? "Network hosts" : "Hosts outside the network allowlist"}: not approvable per call on this device; the device's host list must include them.`
+        : box.network.kind === "none"
+          ? `Network hosts (none authorized yet): ${approver}, where this device allows network access.`
+          : `Hosts outside the network allowlist: ${approver}.`,
     );
   if (escalation) lines.push(`Running a command outside the sandbox: ${approver}; ${ESCALATE}.`);
   lines.push(`Sensitive commands: ${approver}.`);
@@ -156,7 +161,8 @@ function unsandboxedPolicyLine(p: PermissionContextV2): string {
  * keeps the profile-level policy line.
  */
 export function permissionContextText(payload: PermissionContextV2): string {
-  const p = PermissionContextV2Schema.parse(payload);
+  // a stored v1 payload renders as its up-converted form: the same bytes it rendered as v1
+  const p = readRecordedPermissionContext(payload);
   const s = p.scope;
   const box = p.sandbox;
   const lines = [
@@ -199,6 +205,10 @@ export function permissionContextText(payload: PermissionContextV2): string {
 export function managedDevicePathsText(payload: ManagedDevicePathsV1): string {
   const p = ManagedDevicePathsV1Schema.parse(payload);
   return `Device directories: workspace ${permissionQuote(p.roots.workspace)}, skills ${permissionQuote(p.roots.skills)}, temporary files ${permissionQuote(p.roots.tmp)}.\nSelected working directory: ${permissionQuote(p.workingRoot)}. These paths do not grant access; the current permission context governs new operations.`;
+}
+/** A recorded payload read as v2 (a stored v1 one up-converted with `sandbox: null`); throws. */
+export function readRecordedPermissionContext(payload: unknown): PermissionContextV2 {
+  return RecordedPermissionContextSchema.parse(payload);
 }
 /** The canonical hash of a recorded device sandbox block (request metadata `sandbox`). */
 export const permissionSandboxHash = (sandbox: PermissionContextSandbox): string =>
@@ -245,7 +255,7 @@ export function permissionContextAt(
 export function assertRecordedPermissionEvents(events: readonly ConversationEvent[]): void {
   for (const e of events) {
     if (e.type === "permission_context") {
-      if (!PermissionContextV2Schema.safeParse(e.payload).success)
+      if (!RecordedPermissionContextSchema.safeParse(e.payload).success)
         throw new RecordedPermissionContextError(e.seq, e.type);
     } else if (
       e.type === "device_paths" &&

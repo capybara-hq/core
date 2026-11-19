@@ -1006,7 +1006,7 @@ describe("整轮回放", () => {
             boundary: "operation",
             location: "local",
             workingRoot: "/project",
-            network: { kind: "allowlist", hostsCount: 0 },
+            network: { kind: "none", hostsCount: 0 },
             outsideSandbox: false,
             outerNetwork: { kind: "host-environment" },
           }
@@ -1431,6 +1431,27 @@ describe("整轮回放", () => {
     expect(moved.status, JSON.stringify(moved.error)).toBe("done");
     expect(moved.drift).toEqual(["permission_profile_changed", "device_sandbox_changed"]);
     expect((moved.candidate as RunReplayResult).deviceSandboxDrift).toBe(true);
+    // only the recorded metadata names another block: the reason alone
+    const metaOnly = await tamper(
+      "perm-sandbox-meta",
+      (p) => {
+        const request = p.request as { permissionContext?: Record<string, unknown> };
+        if (request.permissionContext) request.permissionContext.sandbox = "a".repeat(64);
+      },
+      "model_call",
+      true,
+    );
+    expect(metaOnly.status, JSON.stringify(metaOnly.error)).toBe("done");
+    expect(metaOnly.drift).toEqual(["device_sandbox_changed"]);
+    expect((metaOnly.candidate as RunReplayResult).deviceSandboxDrift).toBe(true);
+    expect((metaOnly.candidate as RunReplayResult).permissionContextDrift).toBeUndefined();
+    // a v1-era recording (stored rows never rewritten) replays with zero drift
+    const v1 = await tamper("perm-v1", (p) => {
+      p.version = 1;
+      delete p.sandbox;
+    });
+    expect(v1.status, JSON.stringify(v1.error)).toBe("done");
+    expect(v1.drift).toEqual([]);
     const corrupt = await tamper("perm-corrupt", (p) => {
       Object.assign(p, { version: 3 });
     });

@@ -74,7 +74,10 @@ see `.agents/skills/writing-web-ui`). Design basis: overall design §6 principle
   escalation clause (`sandbox: "escalated"`) only where escalation is available (operation boundary,
   `outsideSandbox`, interactive). A supported context without a block (the producer before it records one) keeps the
   profile-level policy line. `sandbox` in the metadata is the canonical hash of the located context's block, absent
-  when it has none.
+  when it has none. Stored v1 rows are never rewritten: every reader (recorder prior,
+  `assertRecordedPermissionEvents`, rendering, replay, the full-run feeder) reads them through
+  `RecordedPermissionContextSchema` / `readRecordedPermissionContext` as v2 with `sandbox: null` (same bytes, same
+  hash as that form), so a v1-era run replays with zero drift and an identical v1 prior appends nothing.
   `permissionContextHistory` refuses a present marker or version its strict schema rejects
   (`RecordedPermissionContextError`) in live build and replay alike; in a case snapshot that is
   `eval.snapshot_invalid` (422), never a provider error. `permission_profile_changed` (after
