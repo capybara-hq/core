@@ -79,6 +79,7 @@ const facts: PermissionReviewSnapshot = {
   fullConsent: false,
   unattended: false,
   availability: { state: "supported" },
+  network: "open-public",
   policy: {
     mode: "auto",
     allowedMode: "auto",
@@ -89,6 +90,7 @@ const facts: PermissionReviewSnapshot = {
 /** The facts of a device whose sandbox network is an allowlist (host crossings exist only there). */
 const allowlistFacts: PermissionReviewSnapshot = {
   ...facts,
+  network: "allowlist",
   policy: {
     ...facts.policy,
     network: { kind: "allowlist", hosts: ["example.com", "*.example.com"] },
@@ -659,5 +661,169 @@ describe("candidate building under every profile", () => {
     });
     for (const url of ["http://localhost:3000/", "http://app.localhost/", "http://10.0.0.1/"])
       expect(build("Bash", curl(url), allowlistFacts), url).toEqual({ kind: "in-scope" });
+  });
+});
+
+import { sql } from "kysely";
+import {
+  type DeviceSandboxOrgLayer,
+  type DeviceSandboxPlatformLayer,
+  hostGrantCeiling,
+  hostGrantRefusal,
+} from "../../src/sandbox/device-sandbox.js";
+
+// The per-call host ceiling (approval-only profiles design, "Per-call host grant"): the candidate
+// builder and grant issuance read the device sandbox's one rule, under every profile
+describe("per-call hosts within the device sandbox's host ceiling", () => {
+  const profiles = ["request-approval", "approve-for-me", "full-access"] as const;
+  const platform: Pick<DeviceSandboxPlatformLayer, "egress" | "allowHosts" | "orgHosts"> = {
+    egress: "allowlist",
+    allowHosts: ["example.com"],
+    orgHosts: "extend",
+  };
+  const ceilingFacts = (
+    profile: (typeof profiles)[number],
+    ceiling: "open" | "allowlist",
+    org: DeviceSandboxOrgLayer = {},
+    owner: { network: "open" | "allowlist"; allowedDomains: string[] } | null = null,
+    network: "allowlist" | "open-public" = "allowlist",
+  ): PermissionReviewSnapshot => {
+    const box = {
+      boundary: "operation" as const,
+      networkMode: network === "allowlist" ? ("allowlist" as const) : ("open" as const),
+      networkCeiling: ceiling,
+      layer: { network: ceiling === "allowlist" ? ("org" as const) : null },
+    };
+    return {
+      ...facts,
+      profile,
+      network,
+      hostCeiling: hostGrantCeiling(box, platform, org, owner),
+      hostRefusal: (host) => hostGrantRefusal(host, box, platform, org, owner),
+    };
+  };
+  const curl = (url: string) => ({ command: `curl ${url}` });
+  const build = (input: unknown, f: PermissionReviewSnapshot) =>
+    buildPermissionCandidate(
+      { toolKey: "Bash", specHash: "spec", rawInput: input, validatedInput: input },
+      f,
+    );
+
+  it.each(profiles)("%s: an org allowlist ceiling is hard and names the org admin", (p) => {
+    const f = ceilingFacts(p, "allowlist", { deviceNetwork: { ceiling: "allowlist" } });
+    const result = build(curl("https://evil.test/x"), f);
+    expect(result).toMatchObject({ kind: "unsupported", code: "unbounded-scope" });
+    expect((result as { message: string }).message).toContain(
+      "an organization admin adds evil.test to the organization's device network list",
+    );
+    expect((result as { message: string }).message).not.toMatch(/limits do not allow/);
+    // within the org's hosts it is a proposal
+    expect(build(curl("https://example.com/x"), f)).toMatchObject({
+      kind: "proposal",
+      candidate: { permissionScope: { hosts: ["example.com"] } },
+    });
+  });
+
+  it.each(profiles)("%s: a host beyond the local owner's list names the owner", (p) => {
+    const f = ceilingFacts(
+      p,
+      "open",
+      {},
+      { network: "allowlist", allowedDomains: ["example.com"] },
+    );
+    const result = build(curl("https://api.test/x"), f);
+    expect(result).toMatchObject({ kind: "unsupported", code: "unbounded-scope" });
+    expect((result as { message: string }).message).toContain(
+      "the device owner adds it on the machine: capybara-device policy add allowedDomains api.test",
+    );
+  });
+
+  it.each(profiles)("%s: an org's excluded host is never grantable", (p) => {
+    const f = ceilingFacts(p, "open", { deviceNetwork: { excludedHosts: ["bad.test"] } });
+    expect(build(curl("https://bad.test/x"), f)).toMatchObject({ kind: "unsupported" });
+    // under an open ceiling any other host is a proposal
+    expect(build(curl("https://other.test/x"), f)).toMatchObject({ kind: "proposal" });
+  });
+
+  it.each(profiles)("%s: an open-public sandbox network proposes no host", (p) => {
+    for (const ceiling of ["open", "allowlist"] as const)
+      expect(
+        build(curl("https://evil.test/x"), ceilingFacts(p, ceiling, {}, null, "open-public")),
+      ).toEqual({ kind: "in-scope" });
+  });
+
+  it("issuance re-checks the live host ceiling: beyond an org allowlist ceiling it refuses", async () => {
+    const f = await fixture("Bash", { command: "curl https://evil.test/x" });
+    await sql`UPDATE capybara.orgs SET settings = ${JSON.stringify({
+      deviceNetwork: { ceiling: "allowlist" },
+    })}::jsonb WHERE id = ${f.orgId}`.execute(raw);
+    const tx = k.app.get(TransactionHost),
+      grants = k.app.get(PermissionCallGrants);
+    await tx.run(async () => {
+      const subject = {
+        orgId: f.orgId,
+        deviceId: f.deviceId,
+        rootConversationId: f.conversationId,
+      };
+      await k.app.get(PermissionAuthorityLock).acquire(subject, { kind: "admit" });
+      const root = await k.app
+        .get(PermissionProfileStore)
+        .readOwnedRoot(f.orgId, f.conversationId, f.accountId);
+      const view = await k.app.get(PermissionFacts).view(f.orgId, f.accountId, root);
+      const vector = await k.app.get(PermissionAuthorityEpochStore).readLocked(subject);
+      const { policy } = await k.app.get(PermissionFacts).readDevice(f.orgId, f.deviceId);
+      const input = { command: "curl https://evil.test/x" };
+      await k.app.get(EventLog).appendIn(f.conversationId, [
+        {
+          type: "assistant_message",
+          runId: f.runId,
+          payload: {
+            step: 2,
+            stopReason: "tool_use",
+            content: [{ type: "tool_call", id: "host", name: "Bash", input }],
+          },
+        },
+      ]);
+      // stale facts that still allowed any host: issuance reads the live ceiling
+      const result = buildPermissionCandidate(
+        { toolKey: "Bash", specHash: "bash-spec", rawInput: input, validatedInput: input },
+        {
+          orgId: f.orgId,
+          rootConversationId: f.conversationId,
+          conversationId: f.conversationId,
+          deviceId: f.deviceId,
+          accountId: f.accountId,
+          runId: f.runId,
+          callId: "host",
+          profile: view.profile,
+          profileRevision: view.revision,
+          scopeRevision: view.scopeRevision ?? "",
+          authorityRevision: permissionScopeHash({ scopeRevision: view.scopeRevision, vector }),
+          baseReadDirectories: ["/work"],
+          baseWriteDirectories: ["/work"],
+          baseHosts: [],
+          workingRoot: "/work",
+          network: "allowlist",
+          outsideSandboxCeiling: view.outsideSandboxCeiling,
+          broadProjectReach: view.broadProjectReach,
+          unattended: false,
+          fullConsent: false,
+          availability: view.availability,
+          policy,
+          hostCeiling: { kind: "any", excluded: [] },
+        },
+      );
+      if (result.kind !== "proposal")
+        throw new Error(`Expected proposal: ${JSON.stringify(result)}`);
+      await expect(
+        grants.issueLocked(result.candidate, {
+          source: "human",
+          approvalId: randomUUID(),
+          decidedBy: f.accountId,
+        }),
+      ).rejects.toThrow(
+        "an organization admin adds evil.test to the organization's device network list",
+      );
+    });
   });
 });

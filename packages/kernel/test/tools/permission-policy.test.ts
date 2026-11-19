@@ -18,6 +18,7 @@ import { permissionCheckFailedText, ToolPipeline } from "../../src/tools/pipelin
 import { ToolRegistry } from "../../src/tools/registry.js";
 import { truncateTables } from "../helpers/db.js";
 import { MODEL_PLUGINS_CONFIG } from "../helpers/model-plugins.js";
+import { storedOwnerReport } from "../helpers/owner-report.js";
 import { permissionFixture } from "../helpers/permission-policy.js";
 import { startKernel, type TestKernel } from "../helpers/runs.js";
 
@@ -388,8 +389,10 @@ it.each(["full-access", "request-approval"] as const)(
       () => k.app.get(ToolPipeline).runStep(f.ctx),
     );
     const scope = f.scopes[0]!;
-    expect(scope.network).toEqual({ kind: profile === "full-access" ? "environment" : "none" });
-    expect(scope.filesystem.kind).toBe(profile === "full-access" ? "device" : "scoped");
+    // every profile is sandboxed (approval-only profiles): Full access gets the same scoped
+    // filesystem and sandbox network (an allowlist with no hosts here), never the device pair
+    expect(scope.network).toEqual({ kind: "none" });
+    expect(scope.filesystem.kind).toBe("scoped");
     const forExecution = vi.spyOn(k.app.get(PermissionCallGrants), "forExecution");
     const sent: Record<string, unknown>[] = [];
     const adapter = k.app.get(LocalDeviceProvider).stagedOperations({
@@ -568,7 +571,9 @@ it("owner refuses a directory proposal for file-only intent without lending pare
   expect(await f.db.selectFrom("permission_call_grants").selectAll().execute()).toEqual([]);
 });
 it("explicit operation hosts reach only the matching admitted exec envelope", async () => {
-  const f = await fixture("Bash", { command: "curl https://registry.npmjs.org/data" }, true);
+  // a host outside the platform's list: the device sandbox's allowlist (the org's hosts, the
+  // owner's open network adding no narrowing) already covers registry.npmjs.org
+  const f = await fixture("Bash", { command: "curl https://api.example.org/data" }, true);
   vi.spyOn(k.app.get(CommandReviewService), "review").mockResolvedValue({
     decision: "allow",
     by: "classifier",
@@ -594,7 +599,7 @@ it("explicit operation hosts reach only the matching admitted exec envelope", as
     expect(method).toBe("exec");
     const exec = async (actual: SandboxOperationScope) =>
       (await adapter.operation({ id: f.deviceId }, actual, f.ctx.signal)).exec({
-        command: "curl https://registry.npmjs.org/data",
+        command: "curl https://api.example.org/data",
         cwd: "/work",
         timeoutMs: 1000,
         maxOutputBytes: 100,
@@ -605,7 +610,7 @@ it("explicit operation hosts reach only the matching admitted exec envelope", as
       exec({
         ...scope,
         operationId: randomUUID(),
-        network: { kind: "allowlist", hosts: ["registry.npmjs.org"] },
+        network: { kind: "allowlist", hosts: ["api.example.org"] },
       }),
     ).rejects.toThrow("no current admitted execution identity");
     expect(
@@ -621,7 +626,7 @@ it("explicit operation hosts reach only the matching admitted exec envelope", as
   expect(f.effects()).toBe(1);
   expect(sent).toHaveLength(1);
   expect(sent[0]?.grants).toEqual({
-    hosts: ["registry.npmjs.org"],
+    hosts: ["api.example.org"],
     source: { kind: "run", id: f.runId, accountId: f.accountId },
   });
   const ledger = await f.db
@@ -630,7 +635,7 @@ it("explicit operation hosts reach only the matching admitted exec envelope", as
     .where("run_id", "=", f.runId)
     .executeTakeFirstOrThrow();
   expect(ledger.permission_grant_id).toBeTruthy();
-  expect(ledger.granted_hosts).toEqual(["registry.npmjs.org"]);
+  expect(ledger.granted_hosts).toEqual(["api.example.org"]);
 });
 
 it.each([false, true])(
@@ -749,6 +754,18 @@ it("local current host ceiling refuses an unapproved host before independent rev
     { command: "curl https://not-in-org-ceiling.example/data" },
     true,
   );
+  // the local ceiling: the owner's allowlist network (an open owner network adds no narrowing,
+  // and under the org's open ceiling any host would be grantable per call)
+  await f.db
+    .updateTable("device_machines")
+    .set({
+      owner_report: storedOwnerReport({
+        network: "allowlist",
+        allowedDomains: ["registry.npmjs.org"],
+      }),
+    })
+    .where("device_id", "=", f.deviceId)
+    .execute();
   const review = vi.spyOn(k.app.get(CommandReviewService), "review");
   await k.app.get(RunExecution).withClaim(
     f.claim,
@@ -758,6 +775,16 @@ it("local current host ceiling refuses an unapproved host before independent rev
   expect(review).not.toHaveBeenCalled();
   expect(f.effects()).toBe(0);
   expect(await f.db.selectFrom("permission_call_grants").selectAll().execute()).toEqual([]);
+  const [refused] = await f.db
+    .selectFrom("conversation_events")
+    .select("payload")
+    .where("type", "=", "tool_result")
+    .where("run_id", "=", f.runId)
+    .execute();
+  // the reply names who adds the host: the machine's owner
+  expect((refused?.payload as { content?: string }).content).toContain(
+    "capybara-device policy add allowedDomains not-in-org-ceiling.example",
+  );
 });
 
 it.each([

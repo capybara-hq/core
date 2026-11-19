@@ -936,6 +936,7 @@ it("a proposed host outside the applied cloud outer allowlist is cut like admiss
     availability: { state: "supported" },
     outerNetwork,
     // a host is a crossing only while the sandbox network is an allowlist
+    network: "allowlist",
     policy: {
       mode: "auto",
       allowedMode: "auto",
@@ -951,12 +952,7 @@ it("a proposed host outside the applied cloud outer allowlist is cut like admiss
     );
   // the open sandbox network reaches every public host: no host crossing is proposed
   const open = facts({ kind: "open-public" });
-  expect(
-    build(
-      { kind: "open-public" },
-      { ...open, policy: { ...open.policy, network: { kind: "open-public", hosts: [] } } },
-    ).kind,
-  ).toBe("in-scope");
+  expect(build({ kind: "open-public" }, { ...open, network: "open-public" }).kind).toBe("in-scope");
   const hostsOf = (r: ReturnType<typeof build>) =>
     r.kind === "proposal" ? r.candidate.permissionScope.hosts : r.kind;
   expect(hostsOf(build({ kind: "open-public" }))).toEqual(["a.example", "b.example"]);

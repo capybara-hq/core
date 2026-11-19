@@ -12,7 +12,7 @@ import { ApiError } from "../errors.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
-import { coversHost } from "./modes.js";
+import { hostGrantable } from "./device-sandbox.js";
 import { isExecutionMethod, parseStartingExecutionGrants } from "./operation-authority-types.js";
 import { describeOperationPayload } from "./operation-payloads.js";
 import { PermissionAuthorityEpochStore } from "./permission-authority-epochs.js";
@@ -201,39 +201,34 @@ export class PermissionCallGrants {
       holderConversationId: b.conversationId,
       deviceId: b.deviceId,
     });
-    const { policy, owner } = await this.facts.readDevice(b.orgId, b.deviceId);
-    const device = await this.db
-      .selectFrom("devices")
-      .select("source")
-      .where("id", "=", b.deviceId)
-      .executeTakeFirstOrThrow();
-    const network =
-      device.source === "local"
-        ? { kind: "allowlist", hosts: policy.localAllowedDomains }
-        : policy.network;
+    // the device sandbox's per-call host ceiling, read live (`device-sandbox.ts`
+    // `hostGrantCeiling`): the one rule the candidate builder and admission read, so Full access
+    // never auto-grants beyond it
+    const { sandbox, hostCeiling, hostRefusal } = await this.facts.readDevice(b.orgId, b.deviceId);
     if (
-      (!view.broadProjectReach &&
-        (candidate.permissionScope.readDirectories.length ||
-          candidate.permissionScope.writeDirectories.length)) ||
-      candidate.permissionScope.hosts.some(
-        (host) =>
-          network.kind !== "open-public" &&
-          !network.hosts.some((pattern) => coversHost(pattern, host)),
-      )
+      !view.broadProjectReach &&
+      (candidate.permissionScope.readDirectories.length ||
+        candidate.permissionScope.writeDirectories.length)
     )
       throw new ApiError(
         "forbidden",
-        "Permission proposal exceeds the current owner or organization ceiling",
+        "Permission proposal exceeds the device owner's project reach",
+      );
+    const refused = candidate.permissionScope.hosts.flatMap((host) =>
+      hostGrantable(hostCeiling, host)
+        ? []
+        : [`${host}: ${hostRefusal(host) ?? "it is beyond the device's network limits"}`],
+    );
+    if (refused.length)
+      throw new ApiError(
+        "forbidden",
+        `Permission proposal exceeds the device's per-call host ceiling (${refused.join("; ")})`,
       );
     const baseRoot = root.project_path ?? working.workspace;
     const normalized = normalizePermissionExpansion(candidate.permissionScope, {
       baseReadDirectories: [baseRoot],
       baseWriteDirectories: [baseRoot],
-      baseHosts: (owner?.allowedDomains ?? policy.localAllowedDomains).filter(
-        (host) =>
-          network.kind === "open-public" ||
-          network.hosts.some((pattern) => coversHost(pattern, host)),
-      ),
+      baseHosts: sandbox.networkMode === "allowlist" ? sandbox.hosts : [],
     });
     if (permissionScopeHash(normalized) !== permissionScopeHash(candidate.permissionScope))
       throw new ApiError("forbidden", "Permission scope is not normalized");

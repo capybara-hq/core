@@ -10,6 +10,7 @@ import {
 import { ApiError } from "../../errors.js";
 import { HIDDEN_FORMAT_RE } from "../../text.js";
 import { generateImagePaths } from "../../tools/builtins/image/paths.js";
+import { hostGrantable } from "../device-sandbox.js";
 import { coversHost } from "../modes.js";
 import type {
   PermissionCandidate,
@@ -244,6 +245,22 @@ function backgroundOf(
     maxSeconds: Math.max(1, Math.ceil(Math.min(requested, maxMs) / 1000)),
   };
 }
+/**
+ * Why a per-call grant for `host` is unavailable under `facts`, naming who can add it, or null when
+ * it is grantable: the device sandbox's host ceiling (`device-sandbox.ts` `hostGrantRefusal`), the
+ * one rule the candidate builder, grant issuance and admission read. Facts without the ceiling
+ * (built outside admission) fall back to `policy.network`.
+ */
+export function perCallHostRefusal(facts: PermissionReviewSnapshot, host: string): string | null {
+  if (facts.hostRefusal) return facts.hostRefusal(host);
+  if ((facts.network ?? "none") === "none")
+    return "network access is turned off for this device's sandbox";
+  const grantable = facts.hostCeiling
+    ? hostGrantable(facts.hostCeiling, host)
+    : facts.policy.network.kind === "open-public" ||
+      facts.policy.network.hosts.some((pattern) => coversHost(pattern, host));
+  return grantable ? null : "it is beyond the device's network limits";
+}
 /** The exact call binding of a candidate: server identity from the facts, the call's own digests. */
 function bindingOf(
   call: { toolKey: string; specHash: string; rawInput: unknown; validatedInput: unknown },
@@ -383,9 +400,9 @@ export function buildPermissionCandidate(
       targetPath = resolved.join(", ");
       if (targetPath.length > 4096) throw new Error("Invalid target path");
     } else if (call.toolKey === "Bash" && typeof input?.command === "string") {
-      // a host is a crossing only while the sandbox network is an allowlist: the open network
+      // a host is a crossing only while the sandbox network is not the open one: the open network
       // already reaches every public host, and private ones only outside the sandbox
-      const allowlist = facts.policy.network.kind !== "open-public";
+      const allowlist = facts.network !== "open-public";
       const parsed = parseCommand(input.command);
       for (const command of parsed?.commands ?? []) {
         if (command.argv[0] === "cd" && command.argv.length === 2 && command.argv[1])
@@ -424,22 +441,26 @@ export function buildPermissionCandidate(
       { readDirectories: reads, writeDirectories: writes, hosts },
       facts,
     );
-    if (
-      (!facts.broadProjectReach && (reads.length || writes.length)) ||
-      hosts.some(
-        (host) =>
-          facts.policy.network.kind !== "open-public" &&
-          !facts.policy.network.hosts.some((pattern) => coversHost(pattern, host)),
-      )
-    )
+    if (!facts.broadProjectReach && (reads.length || writes.length))
       throw new Error(
         `This call needs access outside the working directory ${facts.workingRoot} (${[
           ...writes,
           ...reads,
-          ...hosts,
         ].join(
           ", ",
-        )}), which the device owner's or the organization's limits do not allow, so it did not run. Keep the call inside ${facts.workingRoot}, or ask the user to have the device's limits widened.`,
+        )}), which the device owner's limits do not allow, so it did not run. Keep the call inside ${facts.workingRoot}, or ask the user to have the device's limits widened.`,
+      );
+    // a host beyond the per-call host ceiling is never proposed (so never auto-granted): the reply
+    // names who can add it
+    const refused = hosts.flatMap((host) => {
+      const why = perCallHostRefusal(facts, host);
+      return why ? [`${host}: ${why}`] : [];
+    });
+    if (refused.length)
+      throw new Error(
+        `This call needs network access this device's sandbox cannot be granted per call, so it did not run (${refused.join(
+          "; ",
+        )}). Run it without those hosts, or ask the user to have the host added.`,
       );
     const candidate = {
       binding: bindingOf(call, facts),
