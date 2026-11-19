@@ -10,6 +10,7 @@ import {
   SANDBOX_FAKE_IP_DNS,
   SANDBOX_GIT_DENIED_INTERNALS,
   SANDBOX_MANDATORY_WRITE_DENIES,
+  SANDBOX_RESERVED_NAME_PREFIX,
   SANDBOX_SYSTEM_WRITE_DENIES,
   type SandboxBrowseScope,
   type SandboxExecOptions,
@@ -263,6 +264,14 @@ function protectedWriteRules(denies: {
   for (const path of [...denies.subtrees, ...denies.links])
     for (let up = dirname(path); up !== dirname(up); up = dirname(up)) ancestors.add(up);
   return [
+    // a component starting with the reserved staging prefix (the Linux broker's staging and
+    // quarantine names; SDK `sandbox-write-denies.ts` rule 6), with everything beneath it, at any
+    // depth and in any case: nothing sandboxed creates, writes, removes or renames one
+    {
+      action: "deny",
+      operations: ["file-write*", "file-write-create", "file-write-unlink"],
+      regex: `^/(.*/)?${ci(SANDBOX_RESERVED_NAME_PREFIX)}[^/]*(/.*)?$`,
+    },
     ...denies.subtrees.map((path) => rule(path, true)),
     ...denies.links.map((path) => rule(path, false)),
     ...[...ancestors].map((path) => ({
