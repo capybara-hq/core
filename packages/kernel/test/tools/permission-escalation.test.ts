@@ -5,7 +5,11 @@ import { KernelConfigSchema } from "../../src/config/schema.js";
 import { EventLog } from "../../src/conversations/event-log.js";
 import { PermissionProfilesService } from "../../src/conversations/permission-profiles.service.js";
 import { createDb } from "../../src/db/pool.js";
-import { TransactionHost } from "../../src/infra/database/transaction-host.js";
+import { SettingsService } from "../../src/identity/settings.js";
+import {
+  runOutsideTransaction,
+  TransactionHost,
+} from "../../src/infra/database/transaction-host.js";
 import { OUTBOX_DISPATCH_FAILS } from "../../src/infra/outbox/outbox.dispatcher.js";
 import { createLogger } from "../../src/log.js";
 import { OrgSettingsService } from "../../src/orgs/settings.service.js";
@@ -14,10 +18,15 @@ import { RunExecution } from "../../src/runtime/run-execution.js";
 import { SandboxOperationAuthority } from "../../src/sandbox/operation-authority.js";
 import { PermissionAuthorityLock } from "../../src/sandbox/permission-authority-lock.js";
 import { PermissionCallGrants } from "../../src/sandbox/permission-call-grants.js";
+import { PermissionCeilingWrites } from "../../src/sandbox/permission-ceiling-writes.js";
 import { CommandReviewService } from "../../src/sandbox/review/review.service.js";
 import { ApprovalsService } from "../../src/tools/approvals.service.js";
+import { ESCALATION_GRANT_MISSING_TEXT } from "../../src/tools/builtins/sandbox/common.js";
 import { ToolPipeline } from "../../src/tools/pipeline.js";
+import { ToolRegistry } from "../../src/tools/registry.js";
 import { truncateTables } from "../helpers/db.js";
+import { accountsFor } from "../helpers/identity.js";
+import { SUPPORTS_BOTH, seedInstalledEvidence } from "../helpers/installed-evidence.js";
 import { MODEL_PLUGINS_CONFIG } from "../helpers/model-plugins.js";
 import { permissionFixture } from "../helpers/permission-policy.js";
 import { startKernel, type TestKernel } from "../helpers/runs.js";
@@ -347,4 +356,318 @@ it("a restricted command's outside write is refused with the escalation hint whe
   expect(JSON.stringify((await f.results())[0]?.content)).toMatch(
     /sandbox: \\"escalated\\" and justification/,
   );
+});
+
+/** The escalated call's admitted intents (an escalated one has full reach). */
+const intentsOf = (f: { db: Awaited<ReturnType<typeof escalated>>["db"]; runId: string }) =>
+  f.db
+    .selectFrom("sandbox_operation_intents")
+    .selectAll()
+    .where("run_id", "=", f.runId)
+    .orderBy("created_at")
+    .execute();
+
+/** Runs `before` inside the tool's handler, after the review and before admission. */
+function beforeAdmission(run: () => Promise<void>) {
+  const registry = k.app.get(ToolRegistry);
+  const handler = registry.handler({} as never);
+  if (!handler) throw new Error("the fixture has no handler");
+  vi.mocked(registry.handler).mockReturnValue(async (input, ctx) => {
+    await run();
+    return handler(input, ctx);
+  });
+}
+
+const reviewAllows = () =>
+  vi.spyOn(k.app.get(CommandReviewService), "review").mockResolvedValue({
+    decision: "allow",
+    by: "classifier",
+    reason: "Starting the requested dev server.",
+    rule: null,
+  });
+
+/** The super admin turns the platform's Full switch off (restored by `platformFullBack`). */
+async function platformFull(permission: "off" | "allowed") {
+  const admin = await accountsFor(raw as never).createLocal({
+    login: `admin-${randomUUID().slice(0, 8)}`,
+    password: "Passw0rd!Passw0rd",
+    displayName: "Admin",
+    superAdmin: true,
+  });
+  await k.app.get(SettingsService).update({ devicesFullAccess: { permission } }, admin.id);
+}
+
+it("a background escalation discloses that it keeps running outside the sandbox, at most its deadline", async () => {
+  const f = await escalated("request-approval", {
+    ...ESCALATED,
+    run_in_background: true,
+    timeout: 600_000,
+  });
+  await f.step();
+  expect(f.effects()).toBe(0);
+  const ask = await k.app.get(ApprovalsService).commandForCall(f.runId, f.callId);
+  expect(ask?.command?.escalation).toEqual({
+    justification: JUSTIFICATION,
+    background: true,
+    maxSeconds: 600,
+  });
+  expect(ask?.command?.reason).toMatch(
+    /starts a background process that keeps running outside the sandbox until it exits or is stopped, at most 10 minutes/,
+  );
+  const requested = await f.db
+    .selectFrom("conversation_events")
+    .select("payload")
+    .where("type", "=", "approval_requested")
+    .where("run_id", "=", f.runId)
+    .executeTakeFirstOrThrow();
+  expect((requested.payload as { command?: unknown }).command).toMatchObject({
+    escalation: { justification: JUSTIFICATION, background: true, maxSeconds: 600 },
+  });
+});
+
+it("a second escalated call with the same command but another callId asks again", async () => {
+  const f = await escalated("request-approval");
+  await f.step();
+  const first = (await k.app.get(ApprovalsService).commandForCall(f.runId, f.callId))!;
+  await k.app
+    .get(ApprovalsService)
+    .decide(f.orgId, first.id, f.accountId, { decision: "approve", scope: "once" });
+  await f.step();
+  expect(f.effects()).toBe(1);
+  expect((await f.nextCall(ESCALATED)).kind).toBe("suspended");
+  expect(f.effects()).toBe(1);
+  const asks = await f.db
+    .selectFrom("approvals")
+    .select(["call_id", "status"])
+    .where("run_id", "=", f.runId)
+    .orderBy("created_at")
+    .execute();
+  expect(asks).toHaveLength(2);
+  expect(asks[1]).toMatchObject({ status: "pending" });
+  expect(asks[1]?.call_id).not.toBe(f.callId);
+  expect(await f.db.selectFrom("permission_call_grants").selectAll().execute()).toHaveLength(1);
+});
+
+it("a grant missed at admission fails with an actionable text, never a silent sandboxed run", async () => {
+  const f = await escalated("approve-for-me");
+  reviewAllows();
+  vi.spyOn(k.app.get(PermissionCallGrants), "findForAdmission").mockResolvedValue(null);
+  await f.step();
+  expect(f.effects()).toBe(0);
+  const [result] = await f.results();
+  expect(result?.isError).toBe(true);
+  expect(result?.content).toBe(ESCALATION_GRANT_MISSING_TEXT);
+  expect(ESCALATION_GRANT_MISSING_TEXT).toMatch(/no longer matches.*ask again/);
+  // the record names what was admitted, not what was asked: nothing ran outside the sandbox
+  expect(result?.review).toMatchObject({ decision: "allow", decisionSource: "review-model" });
+  expect((result?.review as { sandbox?: unknown }).sandbox).toBeUndefined();
+});
+
+it.each(["approve-for-me", "request-approval"] as const)(
+  "%s: the device authority changing after the review refuses at admission",
+  async (profile) => {
+    const f = await escalated(profile);
+    if (profile === "approve-for-me") reviewAllows();
+    else {
+      await f.step();
+      const ask = (await k.app.get(ApprovalsService).commandForCall(f.runId, f.callId))!;
+      await k.app
+        .get(ApprovalsService)
+        .decide(f.orgId, ask.id, f.accountId, { decision: "approve", scope: "once" });
+    }
+    // a device-level authority change between the review and admission (an owner ceiling or
+    // root change publishes the same way): the call's grant no longer matches
+    beforeAdmission(() =>
+      runOutsideTransaction(() =>
+        k.app.get(TransactionHost).run(async () => {
+          const writes = k.app.get(PermissionCeilingWrites);
+          await writes.lock({ orgId: f.orgId, deviceId: f.deviceId }, "device");
+          await writes.publishLocked({ orgId: f.orgId, deviceId: f.deviceId }, "device", false);
+        }),
+      ),
+    );
+    await f.step();
+    expect(f.effects()).toBe(0);
+    const [result] = await f.results();
+    expect(result?.isError).toBe(true);
+    expect(result?.content).toBe(ESCALATION_GRANT_MISSING_TEXT);
+    expect((result?.review as { sandbox?: unknown }).sandbox).toBeUndefined();
+  },
+);
+
+it("an owner ceiling of sandbox refuses the escalation before any review", async () => {
+  const f = await escalated("request-approval");
+  await f.db
+    .updateTable("device_machines")
+    .set({ local_policy: JSON.stringify({ mode: "sandbox", allowedDomains: [] }) })
+    .where("device_id", "=", f.deviceId)
+    .execute();
+  const review = vi.spyOn(k.app.get(CommandReviewService), "review");
+  await f.step();
+  expect(f.effects()).toBe(0);
+  expect(review).not.toHaveBeenCalled();
+  expect(JSON.stringify((await f.results())[0]?.content)).toMatch(
+    /not allowed on this device.*Call Bash without sandbox/,
+  );
+});
+
+it("a platform Full switch off refuses the escalation before any review", async () => {
+  const f = await escalated("request-approval");
+  await platformFull("off");
+  try {
+    const review = vi.spyOn(k.app.get(CommandReviewService), "review");
+    await f.step();
+    expect(f.effects()).toBe(0);
+    expect(review).not.toHaveBeenCalled();
+    expect(JSON.stringify((await f.results())[0]?.content)).toMatch(/not allowed on this device/);
+  } finally {
+    await platformFull("allowed");
+  }
+});
+
+it("a runtime that cannot run Full access refuses the escalation with its reason", async () => {
+  const f = await escalated("request-approval");
+  await seedInstalledEvidence(k, raw, {
+    orgId: f.orgId,
+    deviceId: f.deviceId,
+    provider: "@permission-policy-test",
+    version: "test-1",
+    report: { ...SUPPORTS_BOTH, fullAccess: false },
+  });
+  const review = vi.spyOn(k.app.get(CommandReviewService), "review");
+  await f.step();
+  expect(f.effects()).toBe(0);
+  expect(review).not.toHaveBeenCalled();
+  expect(JSON.stringify((await f.results())[0]?.content)).toMatch(
+    /cannot run commands outside its sandbox now/,
+  );
+});
+
+it.each(["org", "platform"] as const)(
+  "a running escalated command is revoked when the %s Full switch turns off",
+  async (writer) => {
+    const f = await escalated("approve-for-me");
+    reviewAllows();
+    let revokedWhileRunning: unknown;
+    f.setEffectHook(async (scope, method) => {
+      if (method !== "exec" || scope.filesystem.kind !== "device") return;
+      if (writer === "org")
+        await k.app.get(OrgSettingsService).update(f.orgId, { fullAccess: "off" }, f.accountId);
+      else await platformFull("off");
+      revokedWhileRunning = (await intentsOf(f)).map((i) => i.state);
+    });
+    try {
+      await f.step();
+    } finally {
+      if (writer === "platform") await platformFull("allowed");
+    }
+    expect(revokedWhileRunning).toEqual(["revoked"]);
+    const owed = await f.db
+      .selectFrom("outbox")
+      .select("job_id")
+      .where("job_name", "=", "sandbox-operation-revoke")
+      .execute();
+    const [intent] = await intentsOf(f);
+    expect(owed.map((o) => o.job_id)).toContain(`sandbox-operation-revoke-${intent?.operation_id}`);
+  },
+);
+
+it("another member's run in the owner's conversation never escalates on the owner's device", async () => {
+  const f = await escalated("request-approval");
+  const other = randomUUID();
+  await f.db.insertInto("accounts").values({ id: other, display_name: "Other" }).execute();
+  await f.db
+    .insertInto("memberships")
+    .values({ org_id: f.orgId, account_id: other, role: "member" })
+    .execute();
+  await f.db
+    .updateTable("runs")
+    .set({ trigger_account_id: other })
+    .where("id", "=", f.runId)
+    .execute();
+  await k.app.get(RunExecution).withClaim(
+    f.claim,
+    () => true,
+    () => k.app.get(ToolPipeline).runStep({ ...f.ctx, accountId: other, role: "member" }),
+  );
+  expect(f.effects()).toBe(0);
+  expect(await k.app.get(ApprovalsService).commandForCall(f.runId, f.callId)).toBeNull();
+  expect(await f.db.selectFrom("permission_call_grants").selectAll().execute()).toEqual([]);
+  expect((await f.results())[0]?.isError).toBe(true);
+});
+
+it("a sub-agent's escalation asks the owner, in the root's permission context", async () => {
+  const f = await escalated("request-approval");
+  const childId = randomUUID(),
+    childRunId = randomUUID(),
+    childExecution = randomUUID(),
+    childCall = randomUUID();
+  await f.db
+    .insertInto("conversations")
+    .values({
+      id: childId,
+      org_id: f.orgId,
+      agent_id: f.agentId,
+      account_id: f.accountId,
+      title: null,
+      last_seq: 0,
+      consumed_seq: 0,
+      created_at: new Date(),
+      updated_at: new Date(),
+      kind: "subagent",
+      source: "subagent",
+      parent_conversation_id: f.conversationId,
+    })
+    .execute();
+  await f.db
+    .insertInto("runs")
+    .values({
+      id: childRunId,
+      conversation_id: childId,
+      execution_id: childExecution,
+      status: "running",
+      agent_version: 1,
+      trigger_account_id: f.accountId,
+      trigger_seq: 0,
+    })
+    .execute();
+  await k.app.get(EventLog).append(childId, [
+    {
+      type: "assistant_message",
+      runId: childRunId,
+      idemKey: assistantIdemKey(childRunId, 1),
+      payload: {
+        step: 1,
+        stopReason: "tool_use",
+        content: [{ type: "tool_call", id: childCall, name: "Bash", input: ESCALATED }],
+      },
+    },
+  ]);
+  const result = await k.app.get(RunExecution).withClaim(
+    { ...f.claim, conversationId: childId, runId: childRunId, executionId: childExecution },
+    () => true,
+    () =>
+      k.app.get(ToolPipeline).runStep({
+        ...f.ctx,
+        conversationId: childId,
+        runId: childRunId,
+        parent: {
+          conversationId: f.conversationId,
+          runId: f.runId,
+          callId: f.callId,
+          depth: 0,
+          rootConversationId: f.conversationId,
+        },
+      }),
+  );
+  expect(result.kind).toBe("suspended");
+  expect(f.effects()).toBe(0);
+  const ask = await k.app.get(ApprovalsService).commandForCall(childRunId, childCall);
+  expect(ask).toMatchObject({ status: "pending", requestedFor: f.accountId, scopes: ["once"] });
+  expect(ask?.command?.escalation).toEqual({ justification: JUSTIFICATION });
+  expect(ask?.command?.permissionCandidate?.binding).toMatchObject({
+    rootConversationId: f.conversationId,
+    conversationId: childId,
+    accountId: f.accountId,
+  });
 });

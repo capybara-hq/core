@@ -1195,7 +1195,12 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
       toolKey: z.string(),
       specHash: z.string(),
       permissionInput: z
-        .object({ callInputHash: z.string(), resolvedInputHash: z.string() })
+        .object({
+          callInputHash: z.string(),
+          resolvedInputHash: z.string(),
+          /** The call asked to run outside the sandbox: admission runs it escalated or refuses. */
+          sandbox: z.literal("escalated").optional(),
+        })
         .optional(),
     }),
   ),

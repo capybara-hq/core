@@ -40,7 +40,11 @@ import {
   kernelReadRoute,
 } from "./kernel-read.js";
 import { coversHost, type EffectiveDevicePolicy, projectReachOf } from "./modes.js";
-import { isExecutionMethod, parseStartingExecutionGrants } from "./operation-authority-types.js";
+import {
+  EscalationGrantMissingError,
+  isExecutionMethod,
+  parseStartingExecutionGrants,
+} from "./operation-authority-types.js";
 import { PermissionAuthorityEpochStore } from "./permission-authority-epochs.js";
 import { assertAuthorityHeld, PermissionAuthorityLock } from "./permission-authority-lock.js";
 import type { PermissionAvailability } from "./permission-availability.js";
@@ -339,8 +343,20 @@ export class SandboxOperationAuthority {
     const payload = started.payload as {
       toolKey?: string;
       specHash?: string;
-      permissionInput?: { callInputHash: string; resolvedInputHash: string };
+      permissionInput?: {
+        callInputHash: string;
+        resolvedInputHash: string;
+        sandbox?: "escalated";
+      };
     };
+    const permissionInput: {
+      callInputHash: string | undefined;
+      resolvedInputHash: string | undefined;
+    } = {
+      callInputHash: payload.permissionInput?.callInputHash,
+      resolvedInputHash: payload.permissionInput?.resolvedInputHash,
+    };
+    const requested = payload.permissionInput?.sandbox;
     const {
       orgId,
       rootConversationId,
@@ -355,7 +371,10 @@ export class SandboxOperationAuthority {
       authorityRevision,
     } = f;
     const grant =
-      payload.toolKey && payload.specHash && payload.permissionInput
+      payload.toolKey &&
+      payload.specHash &&
+      permissionInput.callInputHash !== undefined &&
+      permissionInput.resolvedInputHash !== undefined
         ? await this.callGrants.findForAdmission({
             orgId,
             rootConversationId,
@@ -370,19 +389,28 @@ export class SandboxOperationAuthority {
             authorityRevision,
             toolKey: payload.toolKey,
             specHash: payload.specHash,
-            ...payload.permissionInput,
+            callInputHash: permissionInput.callInputHash,
+            resolvedInputHash: permissionInput.resolvedInputHash,
           })
         : null;
     // full execution for this exact call's command only (a native method of the same call keeps
     // the base scope): the same checks as Full access, now
     const escalated = grant?.scopeKind === "sandbox-escalation" && isExecutionMethod(operation);
-    if (escalated) {
-      if (f.escalationRefusal)
-        throw new ApiError(
-          "forbidden",
-          `Sandbox escalation is unavailable: ${f.escalationRefusal}`,
-        );
-    } else if (grant && grant.scopeKind !== "sandbox-escalation") {
+    // a call that asked to run outside the sandbox under a restricted profile runs escalated or
+    // not at all: a missed grant (the device, ceiling or scope changed since the approval) or a
+    // ceiling that no longer allows it is a pre-effect refusal, never a sandboxed run
+    if (
+      requested === "escalated" &&
+      f.profile !== "full-access" &&
+      isExecutionMethod(operation) &&
+      (!escalated || f.escalationRefusal)
+    )
+      throw new EscalationGrantMissingError(
+        f.escalationRefusal
+          ? `Sandbox escalation is unavailable: ${f.escalationRefusal}`
+          : "The call's sandbox escalation grant no longer matches",
+      );
+    if (!escalated && grant && grant.scopeKind !== "sandbox-escalation") {
       normalizePermissionExpansion(grant.expansion, f);
       if (
         (!f.broadProjectReach &&

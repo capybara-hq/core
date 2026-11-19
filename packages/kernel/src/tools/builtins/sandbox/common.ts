@@ -49,6 +49,7 @@ import {
   ManagedDeviceContextUnavailable,
 } from "../../../sandbox/managed-device-context.js";
 import type { SandboxMode } from "../../../sandbox/modes.js";
+import { isEscalationGrantMissing } from "../../../sandbox/operation-authority-types.js";
 import type { HeldDeviceContextEvidence } from "../../../sandbox/permission-context-types.js";
 import {
   type HeldProvider,
@@ -529,6 +530,9 @@ function retirementToolText(code: string): string {
  */
 export const SCOPE_DENIED_TOOL_TEXT =
   "This operation reaches outside what this conversation's permission profile allows on the device (a path outside the directories it may read or write, or a host it may not reach), so it did not run. Keep the call inside the working directory and the directories already granted, or ask the user to grant the directory or choose a broader permission profile, then retry.";
+/** An approved sandbox escalation whose grant no longer matches at admission (nothing ran). */
+export const ESCALATION_GRANT_MISSING_TEXT =
+  'This Bash call was approved to run outside the sandbox, but the approval no longer matches: the device, its Full access ceiling or this conversation\'s permission scope changed since it was approved, so it did not run. Call Bash again with sandbox: "escalated" and a justification to ask again, or call it without sandbox to run it inside the sandbox.';
 /** A staged request the machine never got: it reconnected before the request was sent. */
 export const DEVICE_REQUEST_NOT_SENT_TOOL_TEXT =
   "The device's machine reconnected before this operation was sent, so nothing ran. Retry the tool call.";
@@ -588,6 +592,10 @@ export function mapSandboxError(e: unknown, log: Pick<Logger, "warn"> | undefine
   // kernel-typed, before the scope refusal it extends: nothing was sent, a retry is safe
   if (isDeviceRequestNotSent(e))
     return new ToolError(DEVICE_REQUEST_NOT_SENT_TOOL_TEXT, { kind: "unavailable" });
+  if (isEscalationGrantMissing(e)) {
+    log?.warn("sandbox escalation grant no longer matches", { err: e });
+    return new ToolError(ESCALATION_GRANT_MISSING_TEXT);
+  }
   if (isSandboxScopeDeniedError(e)) {
     log?.warn("sandbox operation outside its scope", { err: e });
     return new ToolError(SCOPE_DENIED_TOOL_TEXT);

@@ -1465,6 +1465,7 @@ export class ToolPipeline {
                 permissionInput: {
                   callInputHash: permissionScopeHash(call.input),
                   resolvedInputHash: permissionScopeHash(input),
+                  ...(isEscalatedCall(tool.key, input) ? { sandbox: "escalated" as const } : {}),
                 },
               }
             : {}),
@@ -1483,6 +1484,13 @@ export class ToolPipeline {
     );
     const durationMs = Date.now() - t0;
     await this.deps.hooks?.afterExecute?.(ctx.runId, call.id);
+    // the record says a call ran outside the sandbox only when admission gave it that scope
+    if (review !== undefined && isEscalatedCall(tool.key, input)) {
+      const { sandbox: _asked, ...rest } = review;
+      review = (await this.admittedOutsideSandbox(ctx.runId, call.id))
+        ? { ...rest, sandbox: "escalated" }
+        : rest;
+    }
 
     // scheduled tasks spec §7, `fail` mode: no one answers an input request or connects an app
     if (unattendedFails(ctx.unattended) && ctx.unattended != null) {
@@ -2201,6 +2209,24 @@ export class ToolPipeline {
       },
     });
     return { kind: "wait", wait: approvalWait(ask) };
+  }
+  /**
+   * Whether an execution of this call was admitted outside the sandbox under a restricted profile
+   * (a per-call escalation's full reach): an intent past admission, or one revoked after dispatch.
+   */
+  private async admittedOutsideSandbox(runId: string, callId: string): Promise<boolean> {
+    const rows = await this.deps.db
+      .selectFrom("sandbox_operation_intents")
+      .select(["scope", "state", "outcome_unknown"])
+      .where("run_id", "=", runId)
+      .where("call_id", "=", callId)
+      .where("method", "in", ["exec", "backgroundStart"])
+      .execute();
+    return rows.some((r) => {
+      const scope = r.scope as { profile?: string; filesystem?: { kind?: string } };
+      const admitted = r.state === "revoked" ? r.outcome_unknown : r.state !== "pending";
+      return admitted && scope.profile !== "full-access" && scope.filesystem?.kind === "device";
+    });
   }
   @Transactional()
   private findPermissionGrant(candidate: PermissionCandidate) {

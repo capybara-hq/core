@@ -17,6 +17,7 @@ import {
 import { taskReasonText } from "../../../background/render.js";
 import type { BackgroundTaskRow } from "../../../background/store.js";
 import { isDeviceRequestNotSent } from "../../../local-devices/relay.js";
+import { isEscalationGrantMissing } from "../../../sandbox/operation-authority-types.js";
 import { launchRefusedText, operationIdFor } from "../../../sandbox/operation-intents.js";
 import {
   ESCALATION_JUSTIFICATION_MAX_CHARS,
@@ -413,6 +414,8 @@ export async function runInBackgroundManaged(
 
 /** Why a managed start was refused, in the kernel's own words (never the provider's message). */
 function launchRefusedWhy(e: unknown): string {
+  if (isEscalationGrantMissing(e))
+    return 'its approval to run outside the sandbox no longer matches (the device, its Full access ceiling or the permission scope changed since it was approved); call Bash again with sandbox: "escalated" and a justification to ask again';
   return launchRefusedText(
     isDeviceRequestNotSent(e)
       ? "not_sent"
