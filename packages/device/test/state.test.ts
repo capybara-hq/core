@@ -13,6 +13,7 @@ import { DEVICE_DEFAULT_STATE_PATH } from "@capybara-hq/plugin-sdk";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   type Credential,
+  convertPolicyFile,
   credentialPath,
   DEFAULT_POLICY,
   ownerCeilingOfMode,
@@ -113,24 +114,125 @@ describe("state", () => {
       allowCredentials: [],
       cpu: null,
       memoryMb: null,
-      // the restricted default ceiling of a new setup (B-14)
-      ownerCeiling: { fullAccess: false, restrictedProjectReach: "workspace" },
+      // a new install: no running outside the sandbox, the open network, the workspace reach
+      ownerCeiling: { outsideSandbox: false, network: "open", restrictedProjectReach: "workspace" },
     });
     writePolicy(dir, {
       allowedDomains: ["a.test"],
       allowCredentials: [],
       cpu: 2,
       memoryMb: null,
-      ownerCeiling: { fullAccess: false, restrictedProjectReach: "os-user" },
+      ownerCeiling: {
+        outsideSandbox: false,
+        network: "allowlist",
+        restrictedProjectReach: "os-user",
+      },
     });
     expect(readPolicy(dir)).toEqual({
       allowedDomains: ["a.test"],
       allowCredentials: [],
       cpu: 2,
       memoryMb: null,
-      ownerCeiling: { fullAccess: false, restrictedProjectReach: "os-user" },
+      ownerCeiling: {
+        outsideSandbox: false,
+        network: "allowlist",
+        restrictedProjectReach: "os-user",
+      },
     });
     expect(readPolicyFile(dir).legacy).toBe(false);
+    expect(JSON.parse(readFileSync(join(dir, "policy.json"), "utf8")).version).toBe(3);
+  });
+
+  it("converts a version 2 policy.json by the table, never wider", () => {
+    const file = join(dir, "policy.json");
+    const v2 = (fullAccess: boolean, reach: "workspace" | "os-user") => ({
+      version: 2,
+      allowedDomains: ["a.test", "*.b.test"],
+      allowCredentials: ["gh"],
+      cpu: 2,
+      memoryMb: null,
+      ownerCeiling: { fullAccess, restrictedProjectReach: reach },
+      future: { kept: true },
+    });
+    const table = [
+      [
+        true,
+        "os-user",
+        { outsideSandbox: true, network: "open", restrictedProjectReach: "os-user" },
+      ],
+      [
+        true,
+        "workspace",
+        { outsideSandbox: true, network: "open", restrictedProjectReach: "workspace" },
+      ],
+      [
+        false,
+        "os-user",
+        { outsideSandbox: false, network: "allowlist", restrictedProjectReach: "os-user" },
+      ],
+      [
+        false,
+        "workspace",
+        { outsideSandbox: false, network: "allowlist", restrictedProjectReach: "workspace" },
+      ],
+    ] as const;
+    for (const [fullAccess, reach, want] of table) {
+      writeFileSync(file, JSON.stringify(v2(fullAccess, reach)));
+      const got = readPolicyFile(dir);
+      const label = `${fullAccess} ${reach}`;
+      expect(got.legacy, label).toBe(true);
+      expect(got.policy.ownerCeiling, label).toEqual(want);
+      // the old allowlist, resources and unknown keys are kept
+      expect(got.policy.allowedDomains, label).toEqual(["a.test", "*.b.test"]);
+      expect(got.policy.allowCredentials, label).toEqual(["gh"]);
+      expect(got.policy.cpu, label).toBe(2);
+      expect(got.extra, label).toEqual({ future: { kept: true } });
+      // never wider: no escalation where Full access was denied, and the denied device keeps
+      // its allowlist network (the sandbox it had)
+      if (!fullAccess) {
+        expect(got.policy.ownerCeiling.outsideSandbox, label).toBe(false);
+        expect(got.policy.ownerCeiling.network, label).toBe("allowlist");
+      }
+      expect(convertPolicyFile(dir), label).toBe("converted");
+      const written = JSON.parse(readFileSync(file, "utf8"));
+      expect(written.version, label).toBe(3);
+      expect(written.ownerCeiling, label).toEqual(want);
+      expect(written.future, label).toEqual({ kept: true });
+      expect(convertPolicyFile(dir), label).toBe("current");
+    }
+    // a version 2 file with version 3 fields is malformed, never a guess
+    writeFileSync(
+      file,
+      JSON.stringify({
+        version: 2,
+        ownerCeiling: { outsideSandbox: true, network: "open", restrictedProjectReach: "os-user" },
+      }),
+    );
+    expect(() => readPolicyFile(dir)).toThrow(/ownerCeiling must be only fullAccess/);
+    // and a version 3 file with a version 2 field too
+    writeFileSync(
+      file,
+      JSON.stringify({
+        version: 3,
+        ownerCeiling: { fullAccess: true, restrictedProjectReach: "os-user" },
+      }),
+    );
+    expect(() => readPolicyFile(dir)).toThrow(/ownerCeiling must be only outsideSandbox/);
+    for (const bad of [{ network: "any" }, { network: undefined }, { outsideSandbox: "yes" }]) {
+      writeFileSync(
+        file,
+        JSON.stringify({
+          version: 3,
+          ownerCeiling: {
+            outsideSandbox: false,
+            network: "open",
+            restrictedProjectReach: "workspace",
+            ...bad,
+          },
+        }),
+      );
+      expect(() => readPolicyFile(dir), JSON.stringify(bad)).toThrow(/policy\.json is invalid/);
+    }
   });
 
   it("migrates a legacy policy file to a mode, once", () => {

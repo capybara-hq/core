@@ -33,16 +33,16 @@ async function fixture() {
   let ceilingReads = 0;
   let ceiling: DeviceOwnerCeiling = {
     revision: "one",
-    fullAccess: true,
+    outsideSandbox: true,
+    network: "allowlist",
     roots,
     restrictedProjectReach: "os-user",
-    restrictedAllowedDomains: ["a.example.com"],
+    allowedDomains: ["a.example.com"],
     restrictedDeniedReadRoots: [],
     preparation: {
       skillsRoot: roots.skills,
       attachmentsBase: join(roots.workspace, "attachments"),
     },
-    fullNetwork: "environment",
   };
   const launched: unknown[] = [];
   let beforeStart = async () => {};
@@ -302,7 +302,7 @@ it("owned idle watcher revokes removed baseline while preserving independent gra
   };
   const removed = await start("baseline", false);
   const granted = await start("granted", true);
-  f.setCeiling({ revision: "two", restrictedAllowedDomains: [] });
+  f.setCeiling({ revision: "two", allowedDomains: [] });
   await f.tick();
   expect(f.cancellations).toEqual(["baseline"]);
   expect(await f.backend.background.status({ id: "d" }, granted, signal)).toEqual({
@@ -331,7 +331,7 @@ it("Full owner narrowing cancels Full without a websocket or another tool call",
     retainUntilMs: Date.now() + 60000,
     signal,
   });
-  f.setCeiling({ revision: "two", fullAccess: false });
+  f.setCeiling({ revision: "two", outsideSandbox: false });
   await f.tick();
   expect(f.cancellations).toEqual(["op"]);
   expect(await f.backend.background.stop({ id: "d" }, ref, { graceMs: 0, signal })).toEqual({
@@ -669,13 +669,13 @@ it.runIf(process.platform === "darwin")(
     const conversation = join(base, "123456789abc");
     const ceiling: DeviceOwnerCeiling = {
       revision: "fixture",
-      fullAccess: true,
+      outsideSandbox: true,
+      network: "allowlist",
       roots,
       restrictedProjectReach: "os-user",
-      restrictedAllowedDomains: [],
+      allowedDomains: [],
       restrictedDeniedReadRoots: [stateDir],
       preparation: { skillsRoot: roots.skills, attachmentsBase: base },
-      fullNetwork: "environment",
     };
     const backend = await createMacOperationBackend(
       {
@@ -801,7 +801,7 @@ it("retained output controls use the exact reference without a fresh profile gra
   });
   const reads = f.ceilingReads(),
     launches = f.launched.length;
-  f.setCeiling({ fullAccess: false, restrictedDeniedReadRoots: [f.roots.tmp] });
+  f.setCeiling({ outsideSandbox: false, restrictedDeniedReadRoots: [f.roots.tmp] });
   expect(
     await f.backend.background.readOutput({ id: "d" }, ref, { offset: 0, maxBytes: 0, signal }),
   ).toMatchObject({ totalBytes: 0, nextOffset: 0 });

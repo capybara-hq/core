@@ -16,6 +16,7 @@ import {
 } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
+import type { DeviceNetworkMode } from "@capybara-hq/plugin-sdk";
 import type { DeviceMode } from "./args.js";
 
 /** What `login` stores: how to reach the deployment and who this machine is there. */
@@ -40,40 +41,46 @@ export interface Credential {
  */
 export type SandboxMode = "auto" | "sandbox";
 
-/** How far restricted (non-Full) operations and project browsing may reach on this machine. */
+/** How far sandboxed operations and project browsing may reach on this machine. */
 export type RestrictedProjectReach = "workspace" | "os-user";
 
 /**
- * The owner's own ceiling for this machine (permission runtime cutover B2): whether Full access may
- * be granted at all, and how far restricted operations reach, independently of each other. Only the
+ * The owner's own ceiling for this machine (approval-only profiles design, "Settings model"): the
+ * device sandbox for every profile. `outsideSandbox` is whether a call may be granted escalation
+ * outside the sandbox; `network` is the sandbox network (`open` public internet, or the
+ * `allowedDomains` allowlist); `restrictedProjectReach` is how far sandboxed work reaches. Only the
  * owner widens it on the machine (`capybara-device ceiling set`); the deployment may only narrow.
  */
 export interface OwnerCeilingPolicy {
-  fullAccess: boolean;
+  outsideSandbox: boolean;
+  network: DeviceNetworkMode;
   restrictedProjectReach: RestrictedProjectReach;
 }
 
-/** The persisted local policy format (`version: 2`). */
-export const POLICY_VERSION = 2;
+/** The persisted local policy format (`version: 3`). */
+export const POLICY_VERSION = 3;
 
 /** Local limits the person sets for this machine. */
 export interface Policy {
+  /** The sandbox allowlist: what sandboxed work may reach while the network is `allowlist`. */
   allowedDomains: string[];
   allowCredentials: string[];
   cpu: number | null;
   memoryMb: number | null;
-  /** The owner ceiling. The kernel's `limits.mode` and the org ceiling only narrow it. */
+  /** The owner ceiling. The platform and organization settings only narrow it. */
   ownerCeiling: OwnerCeilingPolicy;
 }
 
-/** The exact old `mode: auto` ceiling. */
+/** The exact old `mode: auto` ceiling, as the conversion table translates it. */
 export const FULL_OWNER_CEILING: OwnerCeilingPolicy = Object.freeze({
-  fullAccess: true,
+  outsideSandbox: true,
+  network: "open",
   restrictedProjectReach: "os-user",
 });
-/** The exact old `mode: sandbox` ceiling. */
+/** The exact old `mode: sandbox` ceiling, as the conversion table translates it. */
 export const SANDBOX_OWNER_CEILING: OwnerCeilingPolicy = Object.freeze({
-  fullAccess: false,
+  outsideSandbox: false,
+  network: "allowlist",
   restrictedProjectReach: "workspace",
 });
 
@@ -83,11 +90,27 @@ export function ownerCeilingOfMode(mode: SandboxMode): OwnerCeilingPolicy {
 }
 
 /**
- * The protocol 2 mode of a policy: `auto` exactly when the owner allows Full access. Protocol 2
- * has no separate project reach (its auto mode runs as the owner anyway).
+ * The version 2 owner ceiling converted (approval-only profiles design, "Migration"), never wider:
+ * Full access allowed becomes `outsideSandbox` with the open network; Full access denied keeps the
+ * sandbox allowlist (the old `allowedDomains`). The project reach is kept.
+ */
+export function convertV2OwnerCeiling(v2: {
+  fullAccess: boolean;
+  restrictedProjectReach: RestrictedProjectReach;
+}): OwnerCeilingPolicy {
+  return {
+    outsideSandbox: v2.fullAccess,
+    network: v2.fullAccess ? "open" : "allowlist",
+    restrictedProjectReach: v2.restrictedProjectReach,
+  };
+}
+
+/**
+ * The protocol 3 mode of a policy for the policy summary: `auto` exactly when the owner allows
+ * running outside the sandbox. W1.M removes it with the protocol 3 summary.
  */
 export function policyMode(p: Pick<Policy, "ownerCeiling">): SandboxMode {
-  return p.ownerCeiling.fullAccess ? "auto" : "sandbox";
+  return p.ownerCeiling.outsideSandbox ? "auto" : "sandbox";
 }
 
 const DEFAULT_RECONNECT_GRACE_SECONDS = 120;
@@ -98,9 +121,10 @@ export const DEFAULT_POLICY: Policy = {
   allowCredentials: [],
   cpu: null,
   memoryMb: null,
-  // A new setup's owner ceiling (B-14): no Full access, restricted work in the workspace. An old
-  // policy file still converts exactly from its `mode` (convertPolicyFile).
-  ownerCeiling: { ...SANDBOX_OWNER_CEILING },
+  // A new setup's owner ceiling: no running outside the sandbox, the open network (the design's
+  // shipped default), sandboxed work in the workspace. An old policy file converts never wider
+  // (convertPolicyFile).
+  ownerCeiling: { outsideSandbox: false, network: "open", restrictedProjectReach: "workspace" },
 };
 
 type Env = Record<string, string | undefined>;
@@ -225,9 +249,9 @@ export interface PolicyFile {
   /** The file's keys this version does not know (legacy keys excluded). */
   extra: Record<string, unknown>;
   /**
-   * The file is in an old format (no `version: 2`): its owner ceiling was translated exactly from
-   * its `mode` (or, before `mode`, its legacy keys). {@link convertPolicyFile} rewrites it; so does
-   * the next change.
+   * The file is in an old format (not `version: 3`): its owner ceiling was converted never wider
+   * from its version 2 `fullAccess` or its older `mode` (or, before `mode`, its legacy keys).
+   * {@link convertPolicyFile} rewrites it; so does the next change.
    */
   legacy: boolean;
 }
@@ -258,10 +282,26 @@ export function readPolicyFile(dir: string): PolicyFile {
   const bad = (key: string, want: string): Error =>
     new Error(`${file} is invalid: ${key} must be ${want} (fix or delete the file)`);
   let ownerCeiling: OwnerCeilingPolicy;
-  const legacy = o.version === undefined;
-  if (legacy) {
-    // Old format: `mode` exactly (auto -> Full + os-user reach, sandbox -> neither); before
-    // `mode`, `isolation: none` or `tier: open` asked for no sandbox (spec §4.4).
+  const ceilingObject = (): Record<string, unknown> => {
+    const c = o.ownerCeiling;
+    if (typeof c !== "object" || c === null || Array.isArray(c)) {
+      throw bad("ownerCeiling", "an object");
+    }
+    return c as Record<string, unknown>;
+  };
+  const reachOf = (r: Record<string, unknown>): RestrictedProjectReach => {
+    if (r.restrictedProjectReach !== "workspace" && r.restrictedProjectReach !== "os-user") {
+      throw bad("ownerCeiling.restrictedProjectReach", '"workspace" or "os-user"');
+    }
+    return r.restrictedProjectReach;
+  };
+  // Every format before version 3 is converted, never wider (approval-only profiles design,
+  // "Migration"); `legacy` makes start rewrite the file once.
+  const legacy = o.version !== POLICY_VERSION;
+  if (o.version === undefined) {
+    // Before version 2: `mode` exactly (auto -> outside the sandbox, open network, os-user reach;
+    // sandbox -> none of them); before `mode`, `isolation: none` or `tier: open` asked for no
+    // sandbox (spec §4.4).
     const rawMode: unknown =
       o.mode === undefined
         ? o.isolation === "none" || o.tier === "open"
@@ -270,24 +310,38 @@ export function readPolicyFile(dir: string): PolicyFile {
         : o.mode;
     if (!isMode(rawMode)) throw bad("mode", '"auto" or "sandbox"');
     ownerCeiling = ownerCeilingOfMode(rawMode);
-  } else {
-    if (o.version !== POLICY_VERSION) throw bad("version", String(POLICY_VERSION));
+  } else if (o.version === 2) {
     if (o.mode !== undefined) throw bad("mode", "absent in version 2 (use ownerCeiling)");
-    const c = o.ownerCeiling;
-    if (typeof c !== "object" || c === null || Array.isArray(c)) {
-      throw bad("ownerCeiling", "an object");
-    }
-    const r = c as Record<string, unknown>;
+    const r = ceilingObject();
     if (Object.keys(r).some((k) => k !== "fullAccess" && k !== "restrictedProjectReach")) {
-      throw bad("ownerCeiling", "only fullAccess and restrictedProjectReach");
+      throw bad("ownerCeiling", "only fullAccess and restrictedProjectReach in version 2");
     }
     if (typeof r.fullAccess !== "boolean") throw bad("ownerCeiling.fullAccess", "a boolean");
-    if (r.restrictedProjectReach !== "workspace" && r.restrictedProjectReach !== "os-user") {
-      throw bad("ownerCeiling.restrictedProjectReach", '"workspace" or "os-user"');
+    ownerCeiling = convertV2OwnerCeiling({
+      fullAccess: r.fullAccess,
+      restrictedProjectReach: reachOf(r),
+    });
+  } else {
+    if (o.version !== POLICY_VERSION) throw bad("version", String(POLICY_VERSION));
+    if (o.mode !== undefined) throw bad("mode", "absent (use ownerCeiling)");
+    const r = ceilingObject();
+    if (
+      Object.keys(r).some(
+        (k) => k !== "outsideSandbox" && k !== "network" && k !== "restrictedProjectReach",
+      )
+    ) {
+      throw bad("ownerCeiling", "only outsideSandbox, network and restrictedProjectReach");
+    }
+    if (typeof r.outsideSandbox !== "boolean") {
+      throw bad("ownerCeiling.outsideSandbox", "a boolean");
+    }
+    if (r.network !== "open" && r.network !== "allowlist") {
+      throw bad("ownerCeiling.network", '"open" or "allowlist"');
     }
     ownerCeiling = {
-      fullAccess: r.fullAccess,
-      restrictedProjectReach: r.restrictedProjectReach,
+      outsideSandbox: r.outsideSandbox,
+      network: r.network,
+      restrictedProjectReach: reachOf(r),
     };
   }
   const policy: Policy = {
@@ -326,7 +380,8 @@ export function writePolicy(
     cpu,
     memoryMb,
     ownerCeiling: {
-      fullAccess: ownerCeiling.fullAccess,
+      outsideSandbox: ownerCeiling.outsideSandbox,
+      network: ownerCeiling.network,
       restrictedProjectReach: ownerCeiling.restrictedProjectReach,
     },
   };
@@ -334,10 +389,10 @@ export function writePolicy(
 }
 
 /**
- * The one-time explicit conversion of policy.json to version 2, under the policy lock and atomic:
- * an old `mode` translates exactly (never wider), domains, resources and unknown keys are kept.
- * `absent`: no file (nothing written); `current`: already version 2. Throws, writing nothing, on a
- * malformed file.
+ * The one-time explicit conversion of policy.json to version 3, under the policy lock and atomic:
+ * an old ceiling converts never wider ({@link convertV2OwnerCeiling}, {@link ownerCeilingOfMode});
+ * domains, resources and unknown keys are kept. `absent`: no file (nothing written); `current`:
+ * already version 3. Throws, writing nothing, on a malformed file.
  */
 export function convertPolicyFile(dir: string): "absent" | "current" | "converted" {
   return withPolicyLock(dir, () => {

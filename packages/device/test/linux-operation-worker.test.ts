@@ -390,16 +390,16 @@ describe("local-Docker skill preparation", () => {
         hostRoots,
         readOwnerCeiling: async () => ({
           revision: "one",
-          fullAccess: false,
+          outsideSandbox: false,
+          network: "allowlist",
           roots: hostRoots,
           restrictedProjectReach: "workspace",
-          restrictedAllowedDomains: [],
+          allowedDomains: [],
           restrictedDeniedReadRoots: [],
           preparation: {
             skillsRoot: hostRoots.skills,
             attachmentsBase: join(hostRoots.workspace, "attachments"),
           },
-          fullNetwork: "environment",
         }),
         container: {
           operationContainer: async () => {

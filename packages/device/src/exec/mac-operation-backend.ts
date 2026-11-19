@@ -484,7 +484,7 @@ export async function createLocalOperationBackend(
         restricted: restricted
           ? { filesystem: true, network: true, native: true, concurrentScopes: true }
           : null,
-        fullAccess: host.fullAccess && c.fullAccess,
+        fullAccess: host.fullAccess && c.outsideSandbox,
         background: host.background,
         ...(!restricted
           ? { unavailableReason: host.proof?.failure() ?? host.unavailableReason ?? host.pending }

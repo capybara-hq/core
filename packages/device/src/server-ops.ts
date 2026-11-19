@@ -23,7 +23,7 @@ import { grantedHosts } from "./policy.js";
 import type { PolicyOpRecord } from "./policy-ops.js";
 import type { PolicyStore } from "./policy-store.js";
 import { publicSuffixWildcard } from "./public-suffix.js";
-import { ownerCeilingOfMode, type Policy, policyMode } from "./state.js";
+import { type Policy, policyMode } from "./state.js";
 
 /** The refusal of a `policy` op that tries to widen the owner's ceiling from the deployment. */
 export const MODE_ON_DEVICE_MESSAGE =
@@ -91,10 +91,12 @@ function opHosts(list: unknown, key: "add" | "remove", fromApproval: boolean): s
 /**
  * Applies a `policy` op to the local policy (a trust boundary: the deployment is not the owner).
  *
- * - `mode`: only `"sandbox"` (narrowing) is ever applied; `"auto"` is refused, so the deployment
- *   can never widen the owner's ceiling. Only `capybara-device ceiling set` on the machine does.
- * - `add` / `remove` change the sandbox-mode allowlist; every host is validated (an approval adds
- *   an exact host, never a wildcard).
+ * - `mode`: only `"sandbox"` (narrowing: no escalation, the workspace reach) is ever applied;
+ *   `"auto"` is refused, so the deployment can never widen the owner's ceiling. Only
+ *   `capybara-device ceiling set` on the machine does.
+ * - `ownerCeiling`: a narrowing only ({@link ownerCeilingNarrowing}); anything else is refused.
+ * - `add` / `remove` change the sandbox allowlist; every host is validated (an approval adds an
+ *   exact host, never a wildcard).
  *
  * The op is idempotent. Returns the result and the local audit line; a refusal carries its audit
  * line too ({@link PolicyRefused}).
@@ -135,28 +137,14 @@ function applyPolicyOp(
     // Widening the owner's ceiling is decided on the machine only.
     throw new PolicyRefused(MODE_ON_DEVICE_MESSAGE, refused);
   }
-  // Staged (v3) owner-ceiling narrowing: only `fullAccess: false` and `workspace` reach are ever
-  // applied; the deployment can never widen the owner's ceiling (B2).
-  const rawCeiling: unknown = (args as { ownerCeiling?: unknown }).ownerCeiling;
-  let narrowFull = false;
-  let narrowReach = false;
-  if (rawCeiling !== undefined) {
-    const o = rawCeiling as Record<string, unknown> | null;
-    if (
-      typeof o !== "object" ||
-      o === null ||
-      Array.isArray(o) ||
-      Object.keys(o).some((k) => k !== "fullAccess" && k !== "restrictedProjectReach") ||
-      (o.fullAccess !== undefined && o.fullAccess !== false) ||
-      (o.restrictedProjectReach !== undefined && o.restrictedProjectReach !== "workspace")
-    )
-      throw new PolicyRefused(
-        "The owner ceiling is widened on the machine only (capybara-device ceiling set)",
-        refused,
-      );
-    narrowFull = o.fullAccess === false;
-    narrowReach = o.restrictedProjectReach === "workspace";
-  }
+  const narrowing = ownerCeilingNarrowing((args as { ownerCeiling?: unknown }).ownerCeiling);
+  if (narrowing === undefined)
+    throw new PolicyRefused(
+      "The owner ceiling is widened on the machine only (capybara-device ceiling set)",
+      refused,
+    );
+  // removing a host from the sandbox allowlist is a narrowing as well
+  for (const h of narrowing.removeAllowedDomains) if (!remove.includes(h)) remove.push(h);
   const both = add.find((h) => remove.includes(h));
   if (both !== undefined) {
     throw new PolicyRefused(`${both} is both added and removed`, refused);
@@ -164,17 +152,19 @@ function applyPolicyOp(
   const change = (p: Policy): Policy => {
     const kept = p.allowedDomains.filter((d) => !remove.includes(d.toLowerCase()));
     const present = new Set(kept.map((d) => d.toLowerCase()));
+    // protocol 2's `mode: "sandbox"` stands for no escalation and the workspace reach at once
+    const legacySandbox = rawMode === "sandbox";
     return {
       ...p,
-      ownerCeiling:
-        rawMode === "sandbox"
-          ? ownerCeilingOfMode("sandbox")
-          : {
-              fullAccess: p.ownerCeiling.fullAccess && !narrowFull,
-              restrictedProjectReach: narrowReach
-                ? "workspace"
-                : p.ownerCeiling.restrictedProjectReach,
-            },
+      ownerCeiling: {
+        outsideSandbox:
+          p.ownerCeiling.outsideSandbox && !narrowing.outsideSandboxOff && !legacySandbox,
+        network: narrowing.networkAllowlist ? "allowlist" : p.ownerCeiling.network,
+        restrictedProjectReach:
+          narrowing.workspaceReach || legacySandbox
+            ? "workspace"
+            : p.ownerCeiling.restrictedProjectReach,
+      },
       allowedDomains: [...kept, ...add.filter((h) => !present.has(h))],
     };
   };
@@ -182,6 +172,60 @@ function applyPolicyOp(
   return {
     result: { policy: policySummary(next, facts) },
     detail: `policy ${what} ${by}${approval}`,
+  };
+}
+
+/** An owner-ceiling narrowing as this program applies it: each field can only narrow. */
+interface CeilingNarrowing {
+  outsideSandboxOff: boolean;
+  networkAllowlist: boolean;
+  workspaceReach: boolean;
+  removeAllowedDomains: string[];
+}
+
+/**
+ * The staged owner-ceiling narrowing of a `policy` op (a trust boundary), read as unknown: the
+ * frame parser may have been bypassed. It takes the protocol 3 fields (`fullAccess: false`,
+ * `restrictedProjectReach: "workspace"`) and those of `DeviceOwnerCeilingNarrowingV3`
+ * (`outsideSandbox: false`, `network: "allowlist"`, `removeAllowedDomains`), so the protocol 4
+ * cutover only switches the frame parser. Undefined for anything that could widen: another value,
+ * another key or another shape. W1.M drops the protocol 3 `fullAccess` key.
+ */
+export function ownerCeilingNarrowing(raw: unknown): CeilingNarrowing | undefined {
+  const none: CeilingNarrowing = {
+    outsideSandboxOff: false,
+    networkAllowlist: false,
+    workspaceReach: false,
+    removeAllowedDomains: [],
+  };
+  if (raw === undefined) return none;
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return undefined;
+  const o = raw as Record<string, unknown>;
+  const allowed = [
+    "fullAccess",
+    "outsideSandbox",
+    "network",
+    "restrictedProjectReach",
+    "removeAllowedDomains",
+  ];
+  if (Object.keys(o).some((k) => !allowed.includes(k))) return undefined;
+  if (o.fullAccess !== undefined && o.fullAccess !== false) return undefined;
+  if (o.outsideSandbox !== undefined && o.outsideSandbox !== false) return undefined;
+  if (o.network !== undefined && o.network !== "allowlist") return undefined;
+  if (o.restrictedProjectReach !== undefined && o.restrictedProjectReach !== "workspace")
+    return undefined;
+  let removeAllowedDomains: string[] = [];
+  if (o.removeAllowedDomains !== undefined) {
+    const list = o.removeAllowedDomains;
+    if (!Array.isArray(list) || list.length > 100 || list.some((h) => typeof h !== "string"))
+      return undefined;
+    removeAllowedDomains = [...new Set((list as string[]).map((h) => h.toLowerCase()))];
+  }
+  return {
+    outsideSandboxOff: o.fullAccess === false || o.outsideSandbox === false,
+    networkAllowlist: o.network === "allowlist",
+    workspaceReach: o.restrictedProjectReach === "workspace",
+    removeAllowedDomains,
   };
 }
 

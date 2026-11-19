@@ -10,7 +10,14 @@ import { stop } from "../src/commands/stop.js";
 import { type ProcessLookup, pidPath, readRunning, removePid, writePid } from "../src/pid.js";
 import type { PolicyStore } from "../src/policy-store.js";
 import type { StagedDevice } from "../src/staged-device.js";
-import { DEFAULT_POLICY, writeCredential, writePolicy } from "../src/state.js";
+import {
+  DEFAULT_POLICY,
+  FULL_OWNER_CEILING,
+  readPolicy,
+  SANDBOX_OWNER_CEILING,
+  writeCredential,
+  writePolicy,
+} from "../src/state.js";
 
 /** `ps` for a test: every pid is a capybara-device that started long ago. */
 const ps: ProcessLookup = () => ({
@@ -68,26 +75,39 @@ describe("start: legacy policy notice", () => {
     return out;
   };
 
-  it("says once that policy.json was converted to version 2, and which mode it runs in", async () => {
+  it("says once that policy.json was converted to version 3, and how to open the network", async () => {
     writeCredential(dir, cred);
     writeFileSync(join(dir, "policy.json"), JSON.stringify({ isolation: "none", tier: "open" }));
     const out = await run();
-    const notice = legacyPolicyNotice("auto");
-    expect(out.filter((l) => l === notice)).toHaveLength(1);
-    expect(notice).toBe(
-      "policy.json now uses the version 2 owner ceiling; this machine runs in auto mode; see " +
-        "`capybara-device ceiling show`.",
+    const open = legacyPolicyNotice(FULL_OWNER_CEILING);
+    expect(out.filter((l) => l === open)).toHaveLength(1);
+    expect(open).toBe(
+      "policy.json now uses the version 3 owner ceiling: commands run in the sandbox under every " +
+        "profile; outside the sandbox on, network open; see `capybara-device ceiling show`.",
     );
-    // An older file that did not ask for no sandbox migrates to sandbox.
-    writeFileSync(join(dir, "policy.json"), JSON.stringify({ tier: "dev" }));
-    expect(await run()).toContain(legacyPolicyNotice("sandbox"));
+    // a version 2 file that denied Full access keeps the allowlist and learns how to open it
+    writeFileSync(
+      join(dir, "policy.json"),
+      JSON.stringify({
+        version: 2,
+        allowedDomains: ["a.test"],
+        ownerCeiling: { fullAccess: false, restrictedProjectReach: "workspace" },
+      }),
+    );
+    const allowlist = legacyPolicyNotice(SANDBOX_OWNER_CEILING);
+    expect(await run()).toContain(allowlist);
+    expect(allowlist).toContain("capybara-device ceiling set --network open");
+    expect(readPolicy(dir)).toMatchObject({
+      allowedDomains: ["a.test"],
+      ownerCeiling: SANDBOX_OWNER_CEILING,
+    });
   });
 
   it("says nothing for a current policy", async () => {
     writeCredential(dir, cred);
     writePolicy(dir, DEFAULT_POLICY);
-    expect(await run()).not.toContain(legacyPolicyNotice("auto"));
-    expect(await run()).not.toContain(legacyPolicyNotice("sandbox"));
+    const out = await run();
+    expect(out.some((l) => l.startsWith("policy.json now uses"))).toBe(false);
   });
 });
 

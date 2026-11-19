@@ -15,12 +15,13 @@ const KEYS = ["allowedDomains", "allowCredentials", "cpu", "memoryMb"] as const;
 
 /** What OS mode does not enforce yet, shown with `show` and with a limits change. */
 export const NOT_ENFORCED_NOTE =
-  "Note: in OS mode cpu and memoryMb are not enforced yet; allowCredentials is ignored (Full " +
-  "access already has the owner's credentials, restricted work gets none).";
+  "Note: in OS mode cpu and memoryMb are not enforced yet; allowCredentials is ignored (a call " +
+  "outside the sandbox already has the owner's credentials, sandboxed work gets none).";
 
 /** Where the owner ceiling is changed (the policy command never changes it). */
 const CEILING_COMMAND =
-  "capybara-device ceiling set --full-access allow|deny --project-reach workspace|os-user";
+  "capybara-device ceiling set --outside-sandbox on|off --network open|allowlist " +
+  "--project-reach workspace|os-user";
 
 function list(value: string): string[] {
   return value
@@ -90,15 +91,19 @@ function edit(
 
 /** What `policy show` says the owner ceiling gives on this machine (English, one line each). */
 export function describeCeiling(policy: Policy, runMode: "os" | "docker" = "os"): string[] {
-  const { fullAccess, restrictedProjectReach } = policy.ownerCeiling;
+  const { outsideSandbox, network, restrictedProjectReach } = policy.ownerCeiling;
   const where = runMode === "docker" ? "in the device's container" : "as you on this machine";
   return [
-    fullAccess
-      ? `Owner ceiling: Full access allowed: a conversation set to Full access runs commands ${where}.`
-      : "Owner ceiling: Full access denied: conversations here use the restricted profiles only.",
+    "Commands run in the sandbox under every profile, Full access included.",
+    outsideSandbox
+      ? `Owner ceiling: outside the sandbox on: one approved call may run ${where}.`
+      : "Owner ceiling: outside the sandbox off: no call runs outside the sandbox here.",
+    network === "open"
+      ? "Sandbox network: open (the public internet; private, local and metadata addresses stay closed)."
+      : "Sandbox network: allowlist (allowedDomains only).",
     restrictedProjectReach === "os-user"
-      ? "Restricted work and project browsing may read projects outside the device's workspace."
-      : "Restricted work and project browsing stay in the device's workspace.",
+      ? "Sandboxed work and project browsing may read projects outside the device's workspace."
+      : "Sandboxed work and project browsing stay in the device's workspace.",
     `Change the owner ceiling with: ${CEILING_COMMAND}`,
   ];
 }
@@ -198,7 +203,10 @@ export async function policyCommand(
   for (const l of lines) out(l);
   out(`Saved ${policyPath(stateDir)}. A running capybara-device applies it at the next operation.`);
   if (key === "allowedDomains") {
-    out("Restricted work may reach these domains when the organization allows them too.");
+    out(
+      "Sandboxed work may reach these domains while the network is an allowlist, when the " +
+        "organization allows them too.",
+    );
   }
   if (key === "cpu" || key === "memoryMb" || key === "allowCredentials") out(NOT_ENFORCED_NOTE);
   return 0;

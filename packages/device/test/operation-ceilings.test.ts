@@ -2,7 +2,11 @@ import { mkdtemp, rm, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { intersectOperation, readStrictOwnerCeiling } from "../src/exec/operation-types.js";
+import {
+  intersectOperation,
+  OUTSIDE_SANDBOX_REFUSAL,
+  readStrictOwnerCeiling,
+} from "../src/exec/operation-types.js";
 import { osRoots } from "../src/exec/shared.js";
 import {
   DEFAULT_POLICY,
@@ -11,7 +15,7 @@ import {
   writePolicy,
 } from "../src/state.js";
 
-/** The policy these tests were written against: the owner allows Full access (old auto). */
+/** The policy these tests were written against: outside the sandbox on, the open network. */
 const FULL_POLICY = { ...DEFAULT_POLICY, ownerCeiling: { ...FULL_OWNER_CEILING } };
 const dirs: string[] = [];
 afterEach(async () => {
@@ -52,7 +56,8 @@ describe("independent owner ceiling", () => {
     const f = await fixture();
     const c = await f.read();
     expect(Object.isFrozen(c.roots)).toBe(true);
-    expect(c.fullAccess).toBe(true);
+    expect(c.outsideSandbox).toBe(true);
+    expect(c.network).toBe("open");
     await unlink(join(f.dir, "state", "policy.json"));
     await expect(f.read()).rejects.toThrow();
     await writeFile(join(f.dir, "state", "policy.json"), "{} nope");
@@ -60,6 +65,11 @@ describe("independent owner ceiling", () => {
   });
   it("retains independently approved additions, never scope-only hosts", async () => {
     const f = await fixture();
+    writePolicy(join(f.dir, "state"), {
+      ...FULL_POLICY,
+      allowedDomains: ["*.example.com"],
+      ownerCeiling: { ...FULL_OWNER_CEILING, network: "allowlist" },
+    });
     const c = await f.read();
     const a = {
       operationId: "op",
@@ -73,7 +83,11 @@ describe("independent owner ceiling", () => {
       "a.example.com",
       "approved.test",
     ]);
-    writePolicy(join(f.dir, "state"), { ...FULL_POLICY, allowedDomains: [] });
+    writePolicy(join(f.dir, "state"), {
+      ...FULL_POLICY,
+      allowedDomains: [],
+      ownerCeiling: { ...FULL_OWNER_CEILING, network: "allowlist" },
+    });
     expect(intersectOperation(scope(f.roots), await f.read(), a).hosts).toEqual(["approved.test"]);
   });
   it("requires matching provenance and intersects org host patterns", async () => {
@@ -106,7 +120,7 @@ describe("independent owner ceiling", () => {
     const narrowed = await f.read();
     expect(() => intersectOperation(s, narrowed, a)).toThrow();
   });
-  it("full ignores restricted host baseline but owner narrowing denies it", async () => {
+  it("an escalated Full access call ignores the host baseline; the owner ceiling denies it", async () => {
     const f = await fixture();
     const s = {
       ...scope(f.roots),
@@ -132,12 +146,89 @@ describe("independent owner ceiling", () => {
     const a = { operationId: "op", orgNetwork: { kind: "open-public" as const, hosts: [] } };
     expect(intersectOperation(escalated, await f.read()).full).toBe(true);
     expect(intersectOperation(scope(f.roots), await f.read(), a).full).toBe(false);
-    // the owner's Full ceiling bounds it exactly as it bounds Full access
+    // the owner's outside-sandbox ceiling bounds it under every profile
     writePolicy(join(f.dir, "state"), {
       ...FULL_POLICY,
       ownerCeiling: ownerCeilingOfMode("sandbox"),
     });
     const narrowed = await f.read();
     expect(() => intersectOperation(escalated, narrowed)).toThrow();
+  });
+});
+
+describe("approval-only profiles: the sandbox under every profile", () => {
+  const authority = (orgNetwork: { kind: "open-public" | "allowlist"; hosts: string[] }) => ({
+    operationId: "op",
+    orgNetwork,
+  });
+  it("a non-escalated Full access scope gets scoped roots and the denied read roots", async () => {
+    const f = await fixture();
+    const s = {
+      ...scope(f.roots),
+      profile: "full-access" as const,
+      network: { kind: "open-public" as const },
+    };
+    const g = intersectOperation(s, await f.read(), authority({ kind: "open-public", hosts: [] }));
+    expect(g.full).toBe(false);
+    expect(g.readRoots).toEqual([f.roots.workspace]);
+    expect(g.writeRoots).toEqual([f.roots.tmp]);
+    expect(g.readRoots).not.toContain("/");
+    expect(g.deniedReadRoots).toContain(join(f.dir, "home", ".ssh"));
+    expect(g.deniedReadRoots).toContain(join(f.dir, "state"));
+    expect(g.openNetwork).toBe(true);
+    expect(g.hosts).toEqual([]);
+  });
+  it("open-public against an allowlist owner ceiling narrows to the allowlist", async () => {
+    const f = await fixture();
+    writePolicy(join(f.dir, "state"), {
+      ...FULL_POLICY,
+      allowedDomains: ["*.example.com", "b.test"],
+      ownerCeiling: { ...FULL_OWNER_CEILING, network: "allowlist" },
+    });
+    const s = { ...scope(f.roots), network: { kind: "open-public" as const } };
+    const g = intersectOperation(s, await f.read(), authority({ kind: "open-public", hosts: [] }));
+    expect(g.openNetwork).toBeUndefined();
+    expect([...g.hosts].sort()).toEqual(["*.example.com", "b.test"]);
+    // and against a kernel allowlist under the open owner ceiling: the kernel's hosts
+    writePolicy(join(f.dir, "state"), FULL_POLICY);
+    const k = intersectOperation(
+      s,
+      await f.read(),
+      authority({ kind: "allowlist", hosts: ["k.test"] }),
+    );
+    expect(k.openNetwork).toBeUndefined();
+    expect(k.hosts).toEqual(["k.test"]);
+  });
+  it("an allowlist scope under the open owner ceiling keeps the scope's hosts", async () => {
+    const f = await fixture();
+    const g = intersectOperation(
+      scope(f.roots),
+      await f.read(),
+      authority({ kind: "open-public", hosts: [] }),
+    );
+    expect(g.openNetwork).toBeUndefined();
+    expect([...g.hosts].sort()).toEqual(["a.example.com", "approved.test", "unknown.test"]);
+  });
+  it("device + environment without outsideSandbox is refused under every profile", async () => {
+    const f = await fixture();
+    writePolicy(join(f.dir, "state"), {
+      ...FULL_POLICY,
+      ownerCeiling: { ...FULL_OWNER_CEILING, outsideSandbox: false },
+    });
+    const c = await f.read();
+    for (const profile of ["full-access", "approve-for-me", "request-approval"] as const) {
+      const s = {
+        ...scope(f.roots),
+        profile,
+        filesystem: { kind: "device" as const },
+        network: { kind: "environment" as const },
+      };
+      expect(() => intersectOperation(s, c), profile).toThrow(OUTSIDE_SANDBOX_REFUSAL);
+    }
+    // half an escalation is never one
+    const half = { ...scope(f.roots), network: { kind: "environment" as const } };
+    expect(() =>
+      intersectOperation(half, c, authority({ kind: "open-public", hosts: [] })),
+    ).toThrow(/only together/);
   });
 });
