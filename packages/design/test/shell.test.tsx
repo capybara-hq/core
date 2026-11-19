@@ -676,14 +676,29 @@ describe("Body", () => {
     expect(screen.getByRole("dialog", { name: "运行详情" })).toBeTruthy();
   });
 
-  it("< 1280：rail 改为「筛选」按钮 + Sheet（侧栏占 256 后 body 放不下 240 的 rail）", async () => {
-    stubWidth(1279);
+  it("the rail's fit is a container query on the body: both forms are drawn, CSS shows one", async () => {
+    stubWidth(1100);
     zh(body);
-    expect(screen.queryByText("筛选器内容")).toBeNull();
+    // a ~1100 window with the full sidebar leaves the body 844: the rail is inline (792 and up)
+    const rail = document.querySelector('[data-part="rail"]') as HTMLElement;
+    expect(rail.getAttribute("data-rail-fit")).toBe("inline");
+    const tool = screen.getByRole("button", { name: "筛选" }).closest("[data-rail-fit]");
+    expect(tool?.getAttribute("data-rail-fit")).toBe("button");
+    const css = readFileSync(resolve(import.meta.dirname, "../src/styles/shell.css"), "utf8");
+    expect(css).toMatch(/\.cb-body \{\s*container: cb-frame \/ inline-size;/);
+    // content-min (552) beside the 240 rail: 792
+    expect(css).toMatch(
+      /@container cb-frame \(max-width: 791px\) \{\s*\.cb-body \[data-rail-fit="inline"\] \{\s*display: none;/,
+    );
+    expect(css).toMatch(
+      /@container cb-frame \(min-width: 792px\) \{\s*\.cb-body \[data-rail-fit="button"\] \{\s*display: none;/,
+    );
+    // the window width is not the rail's rule any more
+    expect(css).not.toMatch(/data-responsive="(from|below)-960"/);
     await act(async () => {
       await userEvent.click(screen.getByRole("button", { name: "筛选" }));
     });
-    expect(screen.getByText("筛选器内容")).toBeTruthy();
+    expect(screen.getByRole("dialog", { name: "筛选" })).toBeTruthy();
   });
 
   it("centered: no anchor navigation; content at the content width", () => {
@@ -710,6 +725,9 @@ describe("Body", () => {
     for (const v of ["from-1280", "below-1280"]) {
       expect(html).toContain(`data-responsive="${v}"`);
     }
+    // the rail and its Filter button are both drawn; the container query shows one
+    expect(html).toContain('data-rail-fit="inline"');
+    expect(html).toContain('data-rail-fit="button"');
   });
 
   it("a body is the whole width unless a frame template asks for the content width", () => {

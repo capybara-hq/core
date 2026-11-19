@@ -54,9 +54,7 @@ describe("the collapsible sidebar", () => {
   it("a collapsed cookie draws the rail on the expanded class from the first client render", () => {
     renderFrame(shellOf(), undefined, { sidebarCollapsed: true });
     expect(sidebar()?.getAttribute("data-mode")).toBe("rail");
-    expect(screen.getByRole("button", { name: "展开侧栏" }).getAttribute("aria-pressed")).toBe(
-      "true",
-    );
+    expect(screen.getByRole("button", { name: "展开侧栏" })).toBeTruthy();
   });
 
   it("the server render carries the choice on both panels, so CSS draws the right one", async () => {

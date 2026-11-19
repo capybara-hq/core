@@ -48,22 +48,23 @@ export function Body({
   children,
 }: BodyProps) {
   const t = useDesignT();
-  // One fit threshold for both side columns: with the full sidebar beside it, the body leaves
-  // room for a 240 rail or a 400 inspector from 1280 (spec §4.3).
+  // The inspector is the right area: inline from 1280, a sheet below (window width). The facet
+  // rail follows the "side columns fit" rule instead (spec §4.3): inline while the body leaves
+  // `layout.content-min` beside it, else a Filter button and a sheet. Both forms are always drawn
+  // and a container query on the body (`@container cb-frame`) shows one, so the server render is
+  // right without JS and a sidebar, rail or pane that changes the room is followed live.
   const narrowInspector = useMediaQuery(INLINE_RIGHT_AREA_BELOW);
-  const narrowRail = narrowInspector;
   const [railOpen, setRailOpen] = useState(false);
   const [inspectorOpen, setInspectorOpen] = useState(false);
   const [railCollapsed, setRailCollapsed] = useState(false);
   const hasRail = (layout === "rail" || layout === "rail-inspector") && rail != null;
   const hasInspector = (layout === "inspector" || layout === "rail-inspector") && inspector != null;
-  const railInSheet = hasRail && narrowRail;
   const inspectorInSheet = hasInspector && narrowInspector;
   // Before hydration both forms are drawn and CSS media queries show one (`data-responsive`), so
   // the first paint is right at every width (no 240 rail beside the content below 1280).
   const pre = !useHydrated();
-  const railInline = hasRail && (pre || !railInSheet);
-  const railButton = hasRail && (pre || railInSheet);
+  const railInline = hasRail;
+  const railButton = hasRail;
   const inspectorInline = hasInspector && (pre || !inspectorInSheet);
   const inspectorButton = hasInspector && (pre || inspectorInSheet);
   const resp = (v: string) => (pre ? v : undefined);
@@ -101,9 +102,13 @@ export function Body({
   return (
     <div className="cb-body" data-layout={layout}>
       {railButton || inspectorButton ? (
-        <div className="cb-body-tools" data-responsive={resp("below-1280")}>
+        <div
+          className="cb-body-tools"
+          data-responsive={hasInspector ? resp("below-1280") : undefined}
+          data-rail-fit={hasInspector ? undefined : "button"}
+        >
           {railButton ? (
-            <span className="cb-body-tool" data-responsive={resp("below-1280")}>
+            <span className="cb-body-tool" data-rail-fit="button">
               <Button onClick={() => setRailOpen(true)}>{t("shell.filter")}</Button>
             </span>
           ) : null}
@@ -117,7 +122,7 @@ export function Body({
       <div className="cb-body-row">
         {railInline ? (
           railCollapsed ? (
-            <div className="cb-body-rail-collapsed" data-responsive={resp("from-1280")}>
+            <div className="cb-body-rail-collapsed" data-rail-fit="inline">
               <IconButton
                 label={t("shell.railExpand")}
                 icon={<Icon name="chevrons-right" />}
@@ -126,7 +131,7 @@ export function Body({
               />
             </div>
           ) : (
-            <aside className="cb-body-rail" data-part="rail" data-responsive={resp("from-1280")}>
+            <aside className="cb-body-rail" data-part="rail" data-rail-fit="inline">
               {railCollapsible ? (
                 <div className="cb-body-rail-head">
                   <IconButton
@@ -165,7 +170,7 @@ export function Body({
           </aside>
         ) : null}
       </div>
-      {railInSheet ? (
+      {hasRail ? (
         <Sheet open={railOpen} onOpenChange={setRailOpen} title={t("shell.filter")}>
           {rail}
         </Sheet>

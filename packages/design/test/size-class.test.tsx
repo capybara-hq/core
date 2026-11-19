@@ -153,19 +153,15 @@ describe("the shell follows the class", () => {
     expect(shellEl(container).getAttribute("data-short")).toBeNull();
   });
 
-  it("expanded: the full sidebar; collapsed it is the rail with a pressed expand button", () => {
+  it("expanded: the full sidebar; collapsed it is the rail with an expand button", () => {
     window.matchMedia = matchMediaFor(1000).matchMedia;
     const { unmount } = render(shell());
     expect(document.querySelector('[data-part="sidebar"]')?.getAttribute("data-mode")).toBe("full");
-    expect(screen.getByRole("button", { name: "收起侧栏" }).getAttribute("aria-pressed")).toBe(
-      "false",
-    );
+    expect(screen.getByRole("button", { name: "收起侧栏" })).toBeTruthy();
     unmount();
     render(shell({ collapsed: true }));
     expect(document.querySelector('[data-part="sidebar"]')?.getAttribute("data-mode")).toBe("rail");
-    expect(screen.getByRole("button", { name: "展开侧栏" }).getAttribute("aria-pressed")).toBe(
-      "true",
-    );
+    expect(screen.getByRole("button", { name: "展开侧栏" })).toBeTruthy();
   });
 
   it("medium is the rail whatever the saved choice, with 会话 and no expand button", () => {

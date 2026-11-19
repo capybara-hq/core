@@ -691,7 +691,8 @@ a.cb-stat-card:focus-visible {
   color: var(--cb-fail);
 }
 
-/* Body before hydration: CSS picks the inline rail / inspector or their toolbar buttons. */
+/* Body before hydration: CSS picks the inline inspector or its toolbar button by window width (the
+   right area, spec §5.4). */
 .cb-body-tool {
   display: contents;
 }
@@ -702,6 +703,22 @@ a.cb-stat-card:focus-visible {
 }
 @media (min-width: 1280px) {
   .cb-body [data-responsive="below-1280"] {
+    display: none;
+  }
+}
+/* The facet rail's fit (spec §4.3 "side columns fit"): inline only while the body leaves
+   layout.content-min (552) beside the 240 rail, else the Filter button and its sheet. A container
+   query on the body, so the sidebar, the rail, a second viewport segment and a nested pane count. */
+.cb-body {
+  container: cb-frame / inline-size;
+}
+@container cb-frame (max-width: 791px) {
+  .cb-body [data-rail-fit="inline"] {
+    display: none;
+  }
+}
+@container cb-frame (min-width: 792px) {
+  .cb-body [data-rail-fit="button"] {
     display: none;
   }
 }

@@ -443,7 +443,6 @@ function SidebarPanel({
                 title={`${t("sidebar.collapse")} ${COLLAPSE_SHORTCUT}`}
                 icon={<Icon name="panel-left" />}
                 part="collapse-toggle"
-                aria-pressed={false}
                 onClick={() => p.onCollapsedChange?.(true)}
               />
             ) : null}
@@ -465,7 +464,6 @@ function SidebarPanel({
                 label={t("sidebar.expand")}
                 icon={<Icon name="panel-left" />}
                 part="expand-toggle"
-                aria-pressed={true}
                 data-rail-for={responsive ? "expanded" : undefined}
                 onClick={() => p.onCollapsedChange?.(false)}
               />

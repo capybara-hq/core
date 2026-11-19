@@ -999,7 +999,6 @@ describe("Sidebar rail", () => {
     const onCollapsedChange = vi.fn();
     zh(<Sidebar {...props()} mode="rail" collapsed onCollapsedChange={onCollapsedChange} />);
     const expand = screen.getByRole("button", { name: "展开侧栏" });
-    expect(expand.getAttribute("aria-pressed")).toBe("true");
     expect(expand.getAttribute("data-part")).toBe("expand-toggle");
     await userEvent.click(expand);
     expect(onCollapsedChange).toHaveBeenCalledWith(false);
@@ -1015,7 +1014,6 @@ describe("Sidebar rail", () => {
     const tools = top.querySelector(".cb-sidebar-top-tools") as HTMLElement;
     const toggle = within(tools).getByRole("button", { name: "收起侧栏" });
     expect(tools.lastElementChild).toBe(toggle);
-    expect(toggle.getAttribute("aria-pressed")).toBe("false");
     expect(toggle.getAttribute("title")).toBe("收起侧栏 ⌘\\");
     await userEvent.click(toggle);
     expect(onCollapsedChange).toHaveBeenCalledWith(true);
