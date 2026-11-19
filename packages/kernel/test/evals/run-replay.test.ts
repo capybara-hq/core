@@ -303,7 +303,13 @@ async function seedRun(
   convId: string,
   runId: string,
   text: string,
-  recorded: { name: string; input: unknown; content: string }[],
+  recorded: {
+    name: string;
+    input: unknown;
+    content: string;
+    /** The result's images from Read (`tool_result.media`). */
+    media?: NonNullable<EventPayload<"tool_result">["media"]>;
+  }[],
   /**
    * A message, a finished background task (background Bash §4.4) or a sub-agent delivery (agent
    * map spec §5.2), landing during step 1.
@@ -439,6 +445,7 @@ async function seedRun(
           toolKey: r.name,
           content: r.content,
           isError: false,
+          ...(r.media !== undefined && { media: r.media }),
         },
       },
     ]),
@@ -957,6 +964,44 @@ describe("整轮回放", () => {
     expect(copied[0]?.runId).toBeNull();
     expect(new Set(copied.slice(1).map((e) => e.runId)).size).toBe(1);
     expect(copied[1]?.runId).not.toBeNull();
+  });
+
+  it("a recorded Read result's media survives full-run replay (vision-read design §1.4)", async () => {
+    const setId = await createSet();
+    const conv = await createConv(admin, orgId, agentId);
+    const media = [
+      {
+        attachmentId: "00000000-0000-4000-8000-00000000a001",
+        name: "shot.png",
+        mediaType: "image/png",
+        size: 68,
+      },
+    ];
+    await seedRun(conv, "read-media-copy", 'tool:plugin__tools-count__count:{"n":3}', [
+      {
+        name: "plugin__tools-count__count",
+        input: { n: 3 },
+        content: "Read image shot.png",
+        media,
+      },
+    ]);
+    await addCase(setId, conv, "read-media-copy");
+    const run = await startRun(setId, {});
+    expect((await finished(run.id)).status).toBe("completed");
+    const [r] = await results(run.id);
+    expect(r?.status, JSON.stringify(r?.error)).toBe("done");
+    expect((r as EvalResultView).candidate as RunReplayResult).toMatchObject({ unmatched: 0 });
+    const evs = await evalEvents(r as EvalResultView);
+    const result = evs.find((e) => e.type === "tool_result");
+    expect(result?.payload).toMatchObject({ content: "Read image shot.png", media });
+    // the next replayed request renders it (fake-1 has no vision: the static text)
+    const next = evs.filter(
+      (e): e is Extract<ConversationEvent, { type: "model_call" }> =>
+        e.type === "model_call" && e.seq > (result?.seq ?? 0),
+    );
+    expect(next[0]?.payload.request.media).toEqual([
+      { attachmentId: media[0]?.attachmentId, outcome: "placeholder_unsupported" },
+    ]);
   });
 
   it("the run's project_root event is copied unchanged (project root spec §5)", async () => {

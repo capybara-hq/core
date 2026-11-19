@@ -10,6 +10,7 @@ import {
   buildModelRequest,
   type MediaBytes,
   type MediaInfo,
+  readImageWindow,
   TEXT_INLINE_MAX_CHARS,
 } from "../../../src/runtime/context/build.js";
 import { AGENT, Log, MODEL } from "./fixtures.js";
@@ -579,5 +580,269 @@ describe("buildModelRequest", () => {
     const parentOnly = write(false);
     for (const e of extras) parentOnly.add(e);
     expect(build(parentOnly, 1).request).toEqual(plain);
+  });
+});
+
+describe("images from Read (vision-read design §1.4)", () => {
+  const VISION = { ...MODEL, capabilities: { ...MODEL.capabilities, vision: true } };
+  const PNG = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 1, 2, 3]);
+  const b64 = Buffer.from(PNG).toString("base64");
+  /** Read image ids: `00000000-0000-4000-8000-0000000000NN`. */
+  const rid = (n: number) => `00000000-0000-4000-8000-${String(n).padStart(12, "0")}`;
+  const readMedia = (n: number) => ({
+    attachmentId: rid(n),
+    name: `shot-${n}.png`,
+    mediaType: "image/png",
+    size: PNG.byteLength,
+  });
+
+  /** One tool step: an assistant message calling `ids.length` tools, each result with its images. */
+  function readStep(log: Log, step: number, calls: { id: string; images: number[] }[]): void {
+    log.assistant(
+      calls.map((c) => ({ type: "tool_call", id: c.id, name: "Read", input: {} })),
+      "tool_use",
+      step,
+    );
+    for (const c of calls) {
+      log.add({
+        type: "tool_result",
+        payload: {
+          step,
+          callId: c.id,
+          toolKey: "Read",
+          content: `result ${c.id}`,
+          isError: false,
+          ...(c.images.length > 0 && { media: c.images.map(readMedia) }),
+        },
+      });
+    }
+  }
+
+  const mediaOf = (ids: number[]) => ({
+    mediaInfo: new Map<string, MediaInfo>(
+      ids.map((n) => [rid(n), { size: PNG.byteLength, pages: null, uri: `s3://b/${rid(n)}` }]),
+    ),
+    media: new Map<string, MediaBytes | null>(
+      ids.map((n) => [rid(n), { mediaType: "image/png", data: PNG }]),
+    ),
+  });
+
+  const buildRead = (log: Log, model = VISION, ids: number[] = [], window?: number) =>
+    buildModelRequest({
+      events: log.events,
+      agent: AGENT,
+      agentVersion: 1,
+      model,
+      step: 1,
+      ...mediaOf(ids),
+      mediaBudgetBytes: 20_971_520,
+      ...(window !== undefined && { readImagesPerRequest: window }),
+    });
+
+  it("renders a Read image after the tool results", () => {
+    const log = new Log();
+    log.user("look at the screenshots");
+    readStep(log, 1, [
+      { id: "c1", images: [1] },
+      { id: "c2", images: [] },
+      { id: "c3", images: [2] },
+    ]);
+    const { request, meta, mediaTokens } = buildRead(log, VISION, [1, 2], 6);
+    expect(request.messages.at(-1)).toEqual({
+      role: "user",
+      content: [
+        { type: "tool_result", callId: "c1", content: "result c1", isError: false },
+        { type: "tool_result", callId: "c2", content: "result c2", isError: false },
+        { type: "tool_result", callId: "c3", content: "result c3", isError: false },
+        { type: "text", text: `Image from Read (file_id ${rid(1)}):` },
+        {
+          type: "image",
+          mediaType: "image/png",
+          name: "shot-1.png",
+          source: { kind: "base64", data: b64 },
+        },
+        { type: "text", text: `Image from Read (file_id ${rid(2)}):` },
+        {
+          type: "image",
+          mediaType: "image/png",
+          name: "shot-2.png",
+          source: { kind: "base64", data: b64 },
+        },
+      ],
+    });
+    expect(meta.media).toEqual([
+      { attachmentId: rid(1), outcome: "bytes" },
+      { attachmentId: rid(2), outcome: "bytes" },
+    ]);
+    expect(meta.readImagesPerRequest).toBe(6);
+    expect(mediaTokens).toBe(3200);
+  });
+
+  it("non-vision model gets the static Read text", () => {
+    const log = new Log();
+    log.user("look");
+    readStep(log, 1, [{ id: "c1", images: [1] }]);
+    // the bytes exist: a model without vision must never get them
+    const { request, meta, mediaTokens } = buildRead(log, MODEL, [1], 6);
+    expect(request.messages.at(-1)).toEqual({
+      role: "user",
+      content: [
+        { type: "tool_result", callId: "c1", content: "result c1", isError: false },
+        { type: "text", text: `Image from Read (file_id ${rid(1)}):` },
+        { type: "text", text: "[This model cannot view images.]" },
+      ],
+    });
+    expect(meta.media).toEqual([{ attachmentId: rid(1), outcome: "placeholder_unsupported" }]);
+    expect(mediaTokens).toBe(0);
+    expect(JSON.stringify(request)).not.toContain(b64);
+  });
+
+  it("a result whose call no assistant message carries renders no image", () => {
+    const log = new Log();
+    log.user("look");
+    log.add({
+      type: "tool_result",
+      payload: {
+        step: 1,
+        callId: "orphan",
+        toolKey: "Read",
+        content: "x",
+        isError: false,
+        media: [readMedia(1)],
+      },
+    });
+    const { request, meta } = buildRead(log, VISION, [1], 6);
+    expect(JSON.stringify(request)).not.toContain(rid(1));
+    expect(meta.media).toBeUndefined();
+    expect(meta.readImagesPerRequest).toBeUndefined();
+  });
+
+  it("Read window evicts in chunks", () => {
+    const log = new Log();
+    log.user("read them one by one");
+    const keptAt: number[][] = [];
+    const prefixes: string[] = [];
+    for (let n = 1; n <= 11; n++) {
+      readStep(log, n, [{ id: `c${n}`, images: [n] }]);
+      const ids = Array.from({ length: n }, (_, i) => i + 1);
+      const { request, meta } = buildRead(log, VISION, ids, 6);
+      keptAt.push(
+        (meta.media ?? []).flatMap((m) =>
+          m.outcome === "bytes" ? [Number(m.attachmentId.slice(-12))] : [],
+        ),
+      );
+      const json = JSON.stringify(request.messages);
+      prefixes.push(json.slice(0, json.indexOf('"type":"image"')));
+      // a dropped image renders the window's text, never its label or bytes
+      for (const m of meta.media ?? []) {
+        if (m.outcome !== "not_included") continue;
+        expect(json).toContain(
+          `[Image from Read (file_id ${m.attachmentId}) not included in this request.]`,
+        );
+        expect(json).not.toContain(`Image from Read (file_id ${m.attachmentId}):`);
+      }
+    }
+    expect(keptAt).toEqual([
+      [1],
+      [1, 2],
+      [1, 2, 3],
+      [1, 2, 3, 4],
+      [1, 2, 3, 4, 5],
+      [1, 2, 3, 4, 5, 6],
+      [5, 6, 7],
+      [5, 6, 7, 8],
+      [5, 6, 7, 8, 9],
+      [5, 6, 7, 8, 9, 10],
+      [9, 10, 11],
+    ]);
+    // the prefix before the first image block stays byte-identical between steps that do not
+    // overflow (reads 2–6 and 8–10)
+    for (const n of [2, 3, 4, 5, 6, 8, 9, 10]) {
+      expect(prefixes[n - 1], `read ${n}`).toBe(prefixes[n - 2]);
+    }
+    expect(prefixes[6]).not.toBe(prefixes[5]);
+    expect(prefixes[10]).not.toBe(prefixes[9]);
+  });
+
+  it("readImageWindow keeps the newest half at each overflow", () => {
+    const ids = Array.from({ length: 11 }, (_, i) => String(i + 1));
+    expect([...readImageWindow(ids.slice(0, 6), 6)]).toEqual(["1", "2", "3", "4", "5", "6"]);
+    expect([...readImageWindow(ids.slice(0, 7), 6)]).toEqual(["5", "6", "7"]);
+    expect([...readImageWindow(ids.slice(0, 10), 6)]).toEqual(["5", "6", "7", "8", "9", "10"]);
+    expect([...readImageWindow(ids, 6)]).toEqual(["9", "10", "11"]);
+    // an odd window keeps floor(window / 2)
+    expect([...readImageWindow(ids.slice(0, 4), 3)]).toEqual(["4"]);
+    expect([...readImageWindow(ids, undefined)]).toEqual(ids);
+  });
+
+  it("Read images count toward the image cap and the byte budget like pasted ones", () => {
+    const log = new Log();
+    log.user("look");
+    readStep(log, 1, [
+      { id: "c1", images: [1] },
+      { id: "c2", images: [2] },
+    ]);
+    const { request, meta } = buildModelRequest({
+      events: log.events,
+      agent: AGENT,
+      agentVersion: 1,
+      model: VISION,
+      step: 1,
+      ...mediaOf([1, 2]),
+      mediaBudgetBytes: PNG.byteLength,
+      readImagesPerRequest: 6,
+    });
+    expect(meta.media).toEqual([
+      { attachmentId: rid(1), outcome: "omitted" },
+      { attachmentId: rid(2), outcome: "bytes" },
+    ]);
+    expect(JSON.stringify(request)).toContain('[Attachment \\"shot-1.png\\" omitted');
+  });
+
+  it("pasted placeholder names the attachment id", () => {
+    const id = rid(42);
+    const log = new Log();
+    log.add(
+      {
+        type: "user_message",
+        payload: {
+          content: [
+            { type: "image", mediaType: "image/png", source: { kind: "ref", attachmentId: id } },
+          ],
+          authorAccountId: "acc-1",
+        },
+      },
+      null,
+    );
+    const named = new Log();
+    named.add(
+      {
+        type: "user_message",
+        payload: {
+          content: [
+            {
+              type: "image",
+              mediaType: "image/png",
+              source: { kind: "ref", attachmentId: id },
+              name: "cat.png",
+            },
+          ],
+          authorAccountId: "acc-1",
+        },
+      },
+      null,
+    );
+    expect(build(named).request.messages[0]?.content).toEqual([
+      {
+        type: "text",
+        text: `[Attached image "cat.png" — this model cannot view images. Read with file_id ${id} sends it to the organization's vision model, if one is set.]`,
+      },
+    ]);
+    expect(build(log).request.messages[0]?.content).toEqual([
+      {
+        type: "text",
+        text: `[Attached image "attachment" — this model cannot view images. Read with file_id ${id} sends it to the organization's vision model, if one is set.]`,
+      },
+    ]);
   });
 });

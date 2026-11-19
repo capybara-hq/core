@@ -1064,6 +1064,7 @@ function buildRequest(
     mediaInfo: tools.media.info,
     media: tools.media.bytes,
     mediaBudgetBytes: deps.config.get().attachments.requestMediaBytes,
+    readImagesPerRequest: deps.config.get().attachments.readImagesPerRequest,
     defaultMaxOutputTokens: runtime.maxOutputTokens,
   });
   return {
@@ -1100,8 +1101,8 @@ async function loadMedia(
     }
     for (const id of look) cache.looked.add(id);
   }
-  const budget = deps.config.get().attachments.requestMediaBytes;
-  const plan = planMedia(events, info, cache.info, budget);
+  const { requestMediaBytes: budget, readImagesPerRequest } = deps.config.get().attachments;
+  const plan = planMedia(events, info, cache.info, budget, readImagesPerRequest);
   const runKey = (id: string) =>
     MediaCache.key(id, cache.info.get(id) as MediaInfo, plan.caps.get(id));
   const need: string[] = [];
