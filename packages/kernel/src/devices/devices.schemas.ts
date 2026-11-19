@@ -11,11 +11,11 @@ import {
 export { DevicePolicyBody } from "./dto.js";
 
 /**
- * The devices routes the Platform operations mirror (`check:platform-ops` keys). Changing a
- * device's network policy (`POST /devices/:id/policy`, body {@link DevicePolicyBody}) is a person's
- * act on their own machine and stays excluded, so it has no entry here. `PATCH /devices/:id` takes
- * a narrowing `mode` too ({@link DevicePatchBody}); `devices.rename` omits it: a person changes
- * their device's mode, and only on the machine's terms.
+ * The devices routes the Platform operations mirror (`check:platform-ops` keys). Narrowing a local
+ * machine's sandbox (`POST /devices/:id/policy`, body {@link DevicePolicyBody}) is a person's act
+ * on their own machine and stays excluded, so it has no entry here. `PATCH /devices/:id`
+ * ({@link DevicePatchBody}) is mirrored by `devices.rename` (the name) and `devices.set-network`
+ * (a cloud device's network, narrow only).
  */
 export const DEVICE_ROUTES: readonly RouteSchemas[] = [
   { route: "GET /api/v1/orgs/:orgId/devices" },

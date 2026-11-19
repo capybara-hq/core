@@ -256,7 +256,7 @@ export class SandboxOperationAuthority {
       throw new ApiError("device.not_found", "Device not found");
     await this.facts.preview(ctx.orgId, ctx.accountId, ctx.deviceId);
     const scope = await this.facts.projectScope(ctx.orgId, ctx.accountId, ctx.deviceId);
-    if (!scope.supported || scope.widerThanAllowed)
+    if (!scope.supported)
       throw new ApiError(
         "device.projects_unsupported",
         "Current owner and organization ceilings do not permit browsing",

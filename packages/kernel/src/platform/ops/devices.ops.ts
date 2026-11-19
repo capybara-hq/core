@@ -4,6 +4,7 @@ import { DeviceProjectsService } from "../../devices/device-projects.service.js"
 import { DevicesService, type DeviceView } from "../../devices/devices.service.js";
 import {
   DeviceNameBody,
+  DeviceNetworkBody,
   DeviceParams,
   DeviceProjectAddBody,
   DeviceProjectParams,
@@ -154,7 +155,7 @@ export class DevicesOperations implements OnModuleInit {
       defineOperation({
         id: "devices.get",
         description:
-          "Read one of your devices with its source (cloud or local), provider, state, instance, the machine of a local one and whether it is online, limits, its mode (the one its commands run at and the one this org allows, and which layer allows auto mode), its network and where that comes from, a pending change that applies on its next use, its recent mode and policy changes, and creation time. Takes the id from devices.list. Only the person changes a device's mode: a local device's on the machine (auto mode is enabled only there), a cloud device's on its device page (to sandbox, or back to following the org's mode).",
+          "Read one of your devices with its source (cloud or local), provider, state, instance, the machine of a local one and whether it is online, limits, its sandbox (the network in effect and its ceiling: open, allowlist or none, with the allowlist hosts; the device's own network setting and host list; whether a call may run outside the sandbox; which layer set each ceiling; a pending change that applies on its next use; its recent setting changes), a local machine's owner ceiling, and creation time. Takes the id from devices.list. A local device's sandbox is widened only on its machine; a cloud device's network can be narrowed with devices.set-network.",
         input: DeviceId,
         example: { deviceId: "4e8a0c1d-6b2f-4a37-8d19-3c5e7f9a1b20" },
         authz: { orgAction: "agents.use" },
@@ -334,9 +335,8 @@ export class DevicesOperations implements OnModuleInit {
         authz: { orgAction: "agents.use" },
         mirrors: ["PATCH /api/v1/orgs/:orgId/devices/:id"],
         renames: { deviceId: "id" },
-        // a person changes their own device's mode or owner ceiling in a web session; widening a
-        // machine's ceiling happens on the machine (B2)
-        omits: ["mode", "ownerCeiling", "confirmWidening"],
+        // the network is devices.set-network's (narrow only)
+        omits: ["network"],
         confirm: "personal",
         errors: [
           {
@@ -375,6 +375,89 @@ export class DevicesOperations implements OnModuleInit {
             ),
           ),
         }),
+      }),
+      defineOperation({
+        id: "devices.set-network",
+        description:
+          "Narrow the sandbox network of one of your cloud devices: mode allowlist (its organization's allowed hosts, optionally narrowed to hosts: a device's list never adds a host) or none (no network). Only narrowing is allowed here, in its stored setting and in effect: opening the network, adding a host, dropping its own host list or following the organization again (mode null) is refused and needs the person on the device's page. A local device's network is kept on its machine. Takes the id from devices.list; devices.get shows the network in effect.",
+        input: DeviceId.extend({ network: DeviceNetworkBody }).strict(),
+        example: {
+          deviceId: "4e8a0c1d-6b2f-4a37-8d19-3c5e7f9a1b20",
+          network: { mode: "allowlist", hosts: ["registry.npmjs.org"] },
+        },
+        authz: { orgAction: "agents.use" },
+        mirrors: ["PATCH /api/v1/orgs/:orgId/devices/:id"],
+        renames: { deviceId: "id" },
+        omits: ["name"],
+        confirm: "personal",
+        errors: [
+          {
+            code: "device.not_found",
+            next: "Check the id with devices.list: you only see your own devices.",
+          },
+          {
+            code: "device.network_not_allowed",
+            next: "Through this tool a device's network may only narrow, within its organization's hosts: pick allowlist or none, or hosts its organization allows (devices.get shows them). To open it, ask the person to change it on the device's page; a host outside the organization's list needs an org admin.",
+          },
+          {
+            code: "device.ceiling_on_machine",
+            next: "This is a local device: its network is kept on its machine. Ask the person to narrow it on the device's page or on the machine.",
+          },
+        ],
+        precheck: (i, ctx) =>
+          precheckBy(() =>
+            this.devices.checkNetwork(ctx.orgId, ctx.actorAccountId, i.deviceId, i.network, true),
+          ),
+        summary: async (i, ctx) => {
+          const name = await orElse(
+            async () =>
+              named(labelOf(await this.devices.get(ctx.orgId, ctx.actorAccountId, i.deviceId))),
+            i.deviceId,
+          );
+          const hosts = i.network.hosts?.length ? i.network.hosts.join(", ") : null;
+          const zh =
+            i.network.mode === "none"
+              ? "关闭网络"
+              : i.network.mode === "allowlist"
+                ? `仅白名单${hosts ? `（${hosts}）` : ""}`
+                : i.network.mode === "open"
+                  ? "开放互联网"
+                  : "跟随组织";
+          const en =
+            i.network.mode === "none"
+              ? "no network"
+              : i.network.mode === "allowlist"
+                ? `the allowlist only${hosts ? ` (${hosts})` : ""}`
+                : i.network.mode === "open"
+                  ? "the open internet"
+                  : "follow the organization";
+          // neutral wording: the precheck and the run refuse anything but a narrowing
+          return {
+            zh: `将设备「${name}」的沙箱网络设为：${zh}`,
+            en: `Set the sandbox network of device "${name}" to ${en}`,
+          };
+        },
+        run: async (input, ctx) => {
+          const e = await this.devices.update(
+            ctx.orgId,
+            ctx.actorAccountId,
+            input.deviceId,
+            {
+              network: {
+                mode: input.network.mode,
+                ...(input.network.hosts !== undefined && { hosts: input.network.hosts }),
+              },
+            },
+            undefined,
+            { narrowOnly: true, auditDetail: viaAgent("devices.set-network", ctx) },
+          );
+          return {
+            device: {
+              ...row(e),
+              sandbox: { network: e.sandbox.network, hosts: e.sandbox.hosts },
+            },
+          };
+        },
       }),
       defineOperation({
         id: "devices.list-projects",

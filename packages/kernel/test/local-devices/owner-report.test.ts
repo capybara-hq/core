@@ -56,21 +56,21 @@ describe("owner report ordering (B2)", () => {
       ownerFactsOf({ owner_report: stored(report(1, { outsideSandbox: false })) }),
     ).toMatchObject({
       state: "report",
-      fullAccess: false,
+      outsideSandbox: false,
       restrictedProjectReach: "os-user",
-      restrictedAllowedDomains: ["a.test"],
+      allowedDomains: ["a.test"],
       network: "open",
     });
     // protocol 4 has no legacy owner state: no report is missing (the summary's mode is gone)
     expect(ownerFactsOf({})).toMatchObject({
       state: "missing",
-      fullAccess: false,
+      outsideSandbox: false,
       restrictedProjectReach: "workspace",
       network: "allowlist",
     });
     expect(ownerFactsOf({ owner_report: { junk: true } })).toMatchObject({
       state: "missing",
-      fullAccess: false,
+      outsideSandbox: false,
     });
     // a protocol 3 (version 2) report is not readable: missing, fail closed
     const v2 = {
@@ -86,12 +86,12 @@ describe("owner report ordering (B2)", () => {
     };
     expect(ownerFactsOf({ owner_report: v2 })).toMatchObject({
       state: "missing",
-      fullAccess: false,
+      outsideSandbox: false,
     });
     const blocked = { ...stored(report(2)), blocked: { reason: "stale", sequence: 1, at: "x" } };
     expect(ownerFactsOf({ owner_report: blocked })).toMatchObject({
       state: "blocked",
-      fullAccess: false,
+      outsideSandbox: false,
       restrictedProjectReach: "workspace",
     });
     expect(ownerModeOf({ owner_report: stored(report(1, { outsideSandbox: false })) })).toBe(

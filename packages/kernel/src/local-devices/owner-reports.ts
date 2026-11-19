@@ -139,11 +139,11 @@ export class OwnerReports {
     };
     const after = ownerFactsOfReport(next);
     await this.write(machineId, next);
-    const fullChanged = before.fullAccess !== after.fullAccess;
+    const fullChanged = before.outsideSandbox !== after.outsideSandbox;
     const reachChanged = before.restrictedProjectReach !== after.restrictedProjectReach;
     const domainsChanged =
-      JSON.stringify([...before.restrictedAllowedDomains].sort()) !==
-      JSON.stringify([...after.restrictedAllowedDomains].sort());
+      JSON.stringify([...before.allowedDomains].sort()) !==
+      JSON.stringify([...after.allowedDomains].sort());
     // the owner's sandbox network: narrowing it to the allowlist takes open-network work
     const networkChanged = before.network !== after.network;
     // only a widening resets Full consent (Full access would auto-approve more): running outside
@@ -152,15 +152,13 @@ export class OwnerReports {
     // network widening (the missing state's allowlist is only failing closed)
     const reported = before.state !== "missing";
     const widened =
-      (!before.fullAccess && after.fullAccess) ||
+      (!before.outsideSandbox && after.outsideSandbox) ||
       (before.restrictedProjectReach === "workspace" &&
         after.restrictedProjectReach === "os-user") ||
       (reported && before.network === "allowlist" && after.network === "open") ||
       (reported &&
         after.network === "allowlist" &&
-        after.restrictedAllowedDomains.some(
-          (h) => !before.restrictedAllowedDomains.some((p) => coversHost(p, h)),
-        ));
+        after.allowedDomains.some((h) => !before.allowedDomains.some((p) => coversHost(p, h))));
     const roots = machineRootList(row.roots);
     // a new revision with the same visible facts is no new authority: nothing is published
     if (fullChanged || reachChanged || domainsChanged || networkChanged || meta.rootsChanged)
@@ -200,12 +198,12 @@ export class OwnerReports {
         detail: {
           // the network appears when it changed (the rows of other changes keep their shape)
           from: {
-            fullAccess: before.fullAccess,
+            outsideSandbox: before.outsideSandbox,
             restrictedProjectReach: before.restrictedProjectReach,
             ...(networkChanged && { network: before.network }),
           },
           to: {
-            fullAccess: after.fullAccess,
+            outsideSandbox: after.outsideSandbox,
             restrictedProjectReach: after.restrictedProjectReach,
             ...(networkChanged && { network: after.network }),
           },

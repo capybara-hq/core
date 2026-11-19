@@ -143,7 +143,6 @@ describe("per-call sandbox escalation", () => {
     policy: {
       mode: "auto",
       allowedMode: "auto",
-      localAllowedDomains: [],
       network: { kind: "allowlist", hosts: [] },
     },
     ...over,

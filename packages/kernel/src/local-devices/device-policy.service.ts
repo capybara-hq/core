@@ -50,24 +50,20 @@ const STATUS_DEADLINE_MS = 10_000;
 export const UNKNOWN_OP_MS = 24 * 3_600_000;
 
 /**
- * A policy change as callers ask for it (the op id and the source are added here). `add` is
- * refused before anything is recorded: under device protocol 4 the deployment never widens a local
- * device's sandbox allowlist, its owner adds hosts on the machine. `mode: "sandbox"` is sent as the
- * owner-ceiling narrowing it always stood for: no running outside the sandbox, the workspace reach.
+ * A policy change as callers ask for it (the op id and the source are added here): narrowings
+ * only. Under device protocol 4 the deployment never widens a local device: its owner adds hosts,
+ * opens the network or allows running outside the sandbox on the machine.
  */
 export interface PolicyChange {
-  add?: string[];
   remove?: string[];
-  mode?: "sandbox";
   ownerCeiling?: DeviceOwnerCeilingNarrowing;
 }
 
 /** The change as the machine takes it: narrowings only. */
 type WireChange = Omit<DevicePolicyArgs, "source" | "opId">;
 
-/** Why the platform sends no `add`: widening a local device's sandbox happens on the machine. */
-export const HOSTS_ON_MACHINE_MESSAGE =
-  "Hosts are added to this device's sandbox on its machine only: run capybara-device policy add allowedDomains <host> there. The platform can only remove hosts or narrow the device.";
+/** Who asked for a change, for the device's local audit line (never a network ask). */
+export type PolicyChangeSource = Omit<LegacyDevicePolicyArgs["source"], "approvalId">;
 
 /** The prefix the relay puts before a machine's `policy`-kind refusal. */
 const REFUSED_PREFIX = "Refused by the machine's local policy: ";
@@ -144,8 +140,9 @@ const OWNER_CEILING_UNSUPPORTED_MESSAGE =
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 /**
- * Changes a local device's policy on its machine (network ask-to-allow spec §5.2; auto mode spec
- * §4.1: its sandbox-mode allowlist, and its mode back to `sandbox`): the kernel→device `policy`
+ * Narrows a local device's policy on its machine (approval-only profiles design, "Settings model":
+ * hosts removed, the network to the allowlist, no running outside the sandbox, the workspace
+ * reach): the kernel→device `policy`
  * op over the {@link LocalDeviceRelay}. The machine is the authority: it refuses what its owner
  * forbids, validates every host and answers with the policy as written, which the kernel then
  * keeps on the active machine's row (§5.4).
@@ -192,7 +189,7 @@ export class DevicePolicyService {
     orgId: string;
     deviceId: string;
     change: PolicyChange;
-    source: LegacyDevicePolicyArgs["source"];
+    source: PolicyChangeSource;
     actorTokenId?: string;
   }): Promise<PolicyChangeOutcome> {
     const begun = await this.begin(input);
@@ -216,7 +213,7 @@ export class DevicePolicyService {
     orgId: string;
     deviceId: string;
     change: PolicyChange;
-    source: LegacyDevicePolicyArgs["source"];
+    source: PolicyChangeSource;
     actorTokenId?: string;
   }): Promise<{ intent: PolicyIntent } | { outcome: PolicyChangeOutcome }> {
     if (currentStore()) {
@@ -237,9 +234,6 @@ export class DevicePolicyService {
       .executeTakeFirst();
     if (!device) throw deviceNotFound();
     if (device.source !== "local") return { outcome: unsupported() };
-    // protocol 4: the machine refuses an `add`, so none is sent (nothing recorded either)
-    if ((input.change.add?.length ?? 0) > 0)
-      return { outcome: { applied: false, reason: "refused", message: HOSTS_ON_MACHINE_MESSAGE } };
     const machine = await this.machines.activeFor(input.deviceId);
     if (machine === null) return { outcome: offline() };
     // only a program that logs op outcomes under their ids can tell what became of a lost answer
@@ -549,7 +543,7 @@ export class DevicePolicyService {
         false,
       );
     if (result.outcome === "applied") {
-      if (op.add.length > 0 || op.remove.length > 0) {
+      if (op.remove.length > 0) {
         await auditOp("device.policy_changed", {
           ...(op.status === "unknown" && { late: true }),
         });
@@ -630,7 +624,7 @@ export class DevicePolicyService {
     machineId: string;
     opId: string;
     change: WireChange;
-    source: LegacyDevicePolicyArgs["source"];
+    source: PolicyChangeSource;
     actorTokenId?: string;
   }): Promise<boolean> {
     const locked = await this.db
@@ -646,14 +640,9 @@ export class DevicePolicyService {
     const { change, source } = input;
     const op: PendingPolicyOp = {
       id: input.opId,
-      add: [],
       remove: change.remove ?? [],
       ...(change.ownerCeiling !== undefined && { ownerCeiling: change.ownerCeiling }),
-      source: {
-        accountId: source.accountId,
-        via: source.via,
-        approvalId: source.approvalId ?? null,
-      },
+      source: { accountId: source.accountId, via: source.via },
       ...(input.actorTokenId !== undefined && { actorTokenId: input.actorTokenId }),
       status: "sent",
       sentAt: now,
@@ -693,19 +682,12 @@ export class DevicePolicyService {
 
 /**
  * A change as the machine takes it (protocol 4): the hosts to remove and the owner-ceiling
- * narrowing. `mode: "sandbox"` becomes the narrowing it stands for (no running outside the sandbox
- * and the workspace reach at once); the machine keeps its owner ceiling, not a daily mode. Never
- * wider: only narrowings come out of it (the frame parser refuses anything else). An `add` was
- * refused before.
+ * narrowing. Never wider: only narrowings come out of it (the frame parser refuses anything else).
  */
 function wireChange(change: PolicyChange): WireChange {
-  const ownerCeiling: DeviceOwnerCeilingNarrowing | undefined =
-    change.mode === "sandbox"
-      ? { ...change.ownerCeiling, outsideSandbox: false, restrictedProjectReach: "workspace" }
-      : change.ownerCeiling;
   return {
     ...(change.remove !== undefined && { remove: change.remove }),
-    ...(ownerCeiling !== undefined && { ownerCeiling }),
+    ...(change.ownerCeiling !== undefined && { ownerCeiling: change.ownerCeiling }),
   };
 }
 
@@ -720,16 +702,9 @@ const unsupported = (): PolicyChangeOutcome => ({
   message: UNSUPPORTED_MESSAGE,
 });
 
-/** The audit detail of an op's change and source (every `device.policy_*` / `device.mode_*` row). */
+/** The audit detail of an op's change and source (every `device.policy_*` row). */
 function changeDetail(op: PendingPolicyOp): Record<string, unknown> {
-  return {
-    opId: op.id,
-    add: op.add,
-    remove: op.remove,
-    by: op.source.accountId,
-    via: op.source.via,
-    approvalId: op.source.approvalId,
-  };
+  return { opId: op.id, remove: op.remove, by: op.source.accountId, via: op.source.via };
 }
 
 /** The machine's pending ops with the fields `patch` merged into the op `opId`. */

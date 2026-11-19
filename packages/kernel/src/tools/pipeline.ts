@@ -126,6 +126,7 @@ import { type ConnectorAuth, CredentialMissing, Credentials } from "./credential
 import { ToolDrift } from "./drift.js";
 import { ElicitationSession } from "./elicitation.js";
 import {
+  addressEscalationHint,
   blockedEventHosts,
   clipKept,
   NETWORK_ASK_KEPT_MAX_BYTES,
@@ -472,6 +473,8 @@ interface PipelineDeps {
         /** `deviceId` scopes the run tree's asks to the device (ignored by an older provider). */
         grants: { runState(runId: string, deviceId?: string): Promise<NetworkRunState> };
         devices: Pick<DevicePolicyService, "summary">;
+        /** The device's per-call host ceiling (absent: every device-layer host is asked about). */
+        sandbox?: Pick<SandboxService, "hostRefusal">;
       }
     | undefined;
 }
@@ -903,7 +906,7 @@ export class ToolPipeline {
     /** Starts a cloud device before its first managed call is reviewed (absent: never). */
     @Optional()
     @Inject(SandboxService)
-    private readonly sandboxes?: Pick<SandboxService, "ensureRunning">,
+    private readonly sandboxes?: Pick<SandboxService, "ensureRunning" | "hostRefusal">,
   ) {
     this.deps = {
       // the builtins that enter a device on the managed operation route once activated (common.ts
@@ -946,7 +949,11 @@ export class ToolPipeline {
       devices,
       network:
         networkGrants && devicePolicy
-          ? { grants: networkGrants, devices: devicePolicy }
+          ? {
+              grants: networkGrants,
+              devices: devicePolicy,
+              ...(this.sandboxes !== undefined && { sandbox: this.sandboxes }),
+            }
           : undefined,
     };
     const decide = hooks?.decidePolicy;
@@ -1625,6 +1632,7 @@ export class ToolPipeline {
           // with `network_blocked` below when the ask was created)
           ...(loginCode !== undefined && { loginCode }),
         },
+        reviewedRoots.escalation,
       );
       if (handled.kind === "wait") {
         if (hooks && hookBase) {
@@ -2375,6 +2383,8 @@ export class ToolPipeline {
     pre: readonly AppendEvent[],
     callAudit: CallAudit,
     result: NetworkAskDetail["result"] & { text: string; review?: ReviewRecord },
+    /** Admission's verdict for this call: `available` when it may run outside the sandbox. */
+    escalation?: "available" | "escalated",
   ): Promise<
     | { kind: "wait"; wait: WaitingFor; content: string }
     | { kind: "write"; event: AppendEvent | null; notes: string[] }
@@ -2394,10 +2404,22 @@ export class ToolPipeline {
       ? await network.grants.runState(ctx.runId, report.deviceId)
       : null;
     const limits = this.config.get().sandbox.limits;
+    // the per-call host ceiling decides what is worth asking: a host beyond a local owner's
+    // allowlist or the org's or platform's allowlist ceiling is unavailable, never asked about
+    const sandbox = await network.sandbox?.hostRefusal({
+      orgId: ctx.orgId,
+      deviceId: report.deviceId,
+    });
     const plan = planNetworkAsk(hosts, run, {
       device,
       unattended: ctx.unattended,
       outsideCeiling: (h) => orgHostOutsideCeiling(limits, h),
+      ...(sandbox !== undefined && {
+        refusal: sandbox.refusal,
+        // the hint follows admission's verdict for this call (never a recomputation), and only
+        // the open network makes a private address the one thing escalation adds
+        escalation: addressEscalationHint(escalation, sandbox.box.networkMode),
+      }),
     });
     if (ctx.unattended != null) {
       for (const key of plan.missingGrants) {
@@ -2465,7 +2487,7 @@ export class ToolPipeline {
         description: typeof given.description === "string" ? given.description : null,
         result: kept,
       },
-      scopes: plan.scopes,
+      scopes: ["once"],
     });
     return { kind: "wait", wait: approvalWait(ask), content: kept.content };
   }
@@ -2515,7 +2537,7 @@ export class ToolPipeline {
     return null;
   }
 
-  /** 审批的非批准结果 → 给模型的说明；仍 pending → null（继续等待）。 */
+  /** A decided approval other than approved → the model's text; still pending → null (wait). */
   private refusalText(a: ApprovalRecord): string | null {
     switch (a.status) {
       case "denied":

@@ -60,11 +60,10 @@ export function localPolicyDiff(
   return d.add.length > 0 || d.remove.length > 0 ? d : null;
 }
 
-/** Who asked for a `policy` op: the deciding account, where, and the network ask it answers. */
+/** Who asked for a `policy` op: the deciding account and where. */
 export interface PolicyOpSource {
   accountId: string;
   via: "web" | "im";
-  approvalId: string | null;
 }
 
 /** What the machine reported of an op after its answer was lost (its hello's `recentOps`). */
@@ -87,8 +86,7 @@ export interface ReportedPolicyOp {
  */
 export interface PendingPolicyOp {
   id: string;
-  /** Always empty for an op sent under protocol 4 (the platform never adds hosts). */
-  add: string[];
+  /** Hosts to remove; the platform never adds one (the owner does, on the machine). */
   remove: string[];
   /**
    * The owner-ceiling narrowing the op asked the machine for: only `false` / `allowlist` /
@@ -138,14 +136,9 @@ export function pendingPolicyOpsOf(v: unknown): PendingPolicyOp[] {
         : undefined;
     out.push({
       id: o.id,
-      add: hosts(o.add),
       remove: hosts(o.remove),
       ...ownerNarrowingOf(o.ownerCeiling),
-      source: {
-        accountId: src.accountId,
-        via: src.via,
-        approvalId: typeof src.approvalId === "string" ? src.approvalId : null,
-      },
+      source: { accountId: src.accountId, via: src.via },
       ...(typeof o.actorTokenId === "string" && { actorTokenId: o.actorTokenId }),
       status: o.status,
       sentAt: o.sentAt,
@@ -158,12 +151,10 @@ export function pendingPolicyOpsOf(v: unknown): PendingPolicyOp[] {
 }
 
 /**
- * Whether the change of `op` is in `policy`: its hosts added and removed. Tells an op the machine
- * logged only as `started` (it stopped between the log and the answer) that was written from one
- * that was not.
+ * Whether the change of `op` is in `policy`: its hosts removed. Tells an op the machine logged only
+ * as `started` (it stopped between the log and the answer) that was written from one that was not.
  */
 export function opVisibleIn(op: PendingPolicyOp, policy: DeviceLocalPolicySummary): boolean {
-  if (!op.add.every((h) => policy.allowedDomains.includes(h))) return false;
   return !op.remove.some((h) => policy.allowedDomains.includes(h));
 }
 
@@ -181,6 +172,13 @@ function ownerNarrowingOf(v: unknown): Pick<PendingPolicyOp, "ownerCeiling"> {
   return Object.keys(narrowing).length > 0 ? { ownerCeiling: narrowing } : {};
 }
 
+/** The owner facts an op's narrowing is compared on (`network` absent: not compared). */
+export interface OwnerChangeFacts {
+  outsideSandbox: boolean;
+  restrictedProjectReach: "workspace" | "os-user";
+  network?: "open" | "allowlist";
+}
+
 /**
  * Whether a v3 owner report's change from `before` to `after` is what the platform's `op` asked
  * for (the machine's own report of it, arriving before the op's answer): something changed, and
@@ -189,13 +187,17 @@ function ownerNarrowingOf(v: unknown): Pick<PendingPolicyOp, "ownerCeiling"> {
  */
 export function opExplainsOwnerChange(
   op: PendingPolicyOp,
-  before: { fullAccess: boolean; restrictedProjectReach: "workspace" | "os-user" },
-  after: { fullAccess: boolean; restrictedProjectReach: "workspace" | "os-user" },
+  before: OwnerChangeFacts,
+  after: OwnerChangeFacts,
 ): boolean {
-  const fullChanged = before.fullAccess !== after.fullAccess;
+  const outsideChanged = before.outsideSandbox !== after.outsideSandbox;
   const reachChanged = before.restrictedProjectReach !== after.restrictedProjectReach;
-  if (!fullChanged && !reachChanged) return false;
-  if (fullChanged && (op.ownerCeiling?.outsideSandbox !== false || after.fullAccess)) return false;
+  const networkChanged = (before.network ?? after.network) !== (after.network ?? before.network);
+  if (!outsideChanged && !reachChanged && !networkChanged) return false;
+  if (outsideChanged && (op.ownerCeiling?.outsideSandbox !== false || after.outsideSandbox))
+    return false;
+  if (networkChanged && (op.ownerCeiling?.network !== "allowlist" || after.network !== "allowlist"))
+    return false;
   if (
     reachChanged &&
     (op.ownerCeiling?.restrictedProjectReach !== "workspace" ||
@@ -211,7 +213,8 @@ export function opExplainsOwnerChange(
  * once, as the platform's.
  */
 export function opExplains(op: PendingPolicyOp, diff: LocalPolicyDiff): boolean {
-  if (!diff.add.every((h) => op.add.includes(h))) return false;
+  // the platform never adds a host: a diff with an addition is the owner's own
+  if (diff.add.length > 0) return false;
   return diff.remove.every((h) => op.remove.includes(h));
 }
 

@@ -408,7 +408,10 @@ export class MachinesService {
     }
   }
 
-  /** Dormant authenticated hello adapter; the active gateway still accepts only protocol 2. */
+  /**
+   * A protocol 4 hello on an authenticated connection: validated as a frame, then recorded like
+   * {@link recordHello} with its owner report and the connection it arrived on.
+   */
   @Transactional()
   async recordHelloV3(
     machineId: string,
@@ -573,10 +576,10 @@ export class MachinesService {
    * null. When both the stored and the reported summary are readable and what the owner sets
    * changed ({@link localPolicyDiff}) by no `policy` op the platform sent ({@link opExplains}: its
    * answer may come after the machine's own report), the owner changed it on the machine
-   * (`capybara-device ceiling set ...`): the host changes are audited
-   * `device.policy_changed` and the mode change `device.mode_changed`, both `via: "device"`, so the
-   * device page lists them beside the platform's changes; one an op explains is not audited here
-   * (the op's answer is). A summary reported again is no change. Runs in the caller's transaction,
+   * (`capybara-device policy add|remove allowedDomains ...`): the host changes are audited
+   * `device.policy_changed`, `via: "device"`, so the device page lists them beside the platform's
+   * changes (an owner ceiling change is the owner report writer's, `device.owner_ceiling_changed`);
+   * one an op explains is not audited here (the op's answer is). A summary reported again is no change. Runs in the caller's transaction,
    * with the machine's row locked.
    */
   private async reportedPolicy(
@@ -614,7 +617,6 @@ export class MachinesService {
             by: self.account_id,
             via: "device",
             machineId,
-            approvalId: null,
           },
         });
       }

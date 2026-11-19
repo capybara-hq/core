@@ -434,7 +434,6 @@ describe("project knowledge at run start", () => {
           workspace: "/Users/u/capybara-device/d/workspace",
           home: "/Users/u",
           supported: true,
-          widerThanAllowed: false,
         }),
         keeps: (...args: Parameters<DeviceProjectsService["keeps"]>) => projects.keeps(...args),
       },

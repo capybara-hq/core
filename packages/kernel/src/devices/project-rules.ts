@@ -14,11 +14,6 @@ export interface DeviceProjectScope {
   /** The owner's home a local machine reported; null when unknown (and for a cloud device). */
   home: string | null;
   supported: boolean;
-  /**
-   * A machine without an authenticated owner report whose own policy is auto mode while the
-   * organization allows only sandbox mode: the kernel reads nothing on it unasked.
-   */
-  widerThanAllowed: boolean;
 }
 
 type Scope = DeviceProjectScope;

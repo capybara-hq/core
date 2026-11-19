@@ -39,19 +39,19 @@ describe("deviceFeaturesOf", () => {
 describe("opExplainsOwnerChange (a v3 owner report the platform's narrowing op explains)", () => {
   const op = (ownerCeiling?: PendingPolicyOp["ownerCeiling"]): PendingPolicyOp => ({
     id: "op",
-    add: [],
     remove: [],
     ...(ownerCeiling && { ownerCeiling }),
-    source: { accountId: "a", via: "web", approvalId: null },
+    source: { accountId: "a", via: "web" },
     status: "sent",
     sentAt: 0,
     resolveAt: 0,
     until: 0,
   });
-  const facts = (fullAccess: boolean, restrictedProjectReach: "workspace" | "os-user") => ({
-    fullAccess,
-    restrictedProjectReach,
-  });
+  const facts = (
+    outsideSandbox: boolean,
+    restrictedProjectReach: "workspace" | "os-user",
+    network: "open" | "allowlist" = "open",
+  ) => ({ outsideSandbox, restrictedProjectReach, network });
 
   it("explains exactly the narrowing the op asked for", () => {
     const full = op({ outsideSandbox: false });
@@ -68,6 +68,32 @@ describe("opExplainsOwnerChange (a v3 owner report the platform's narrowing op e
     expect(opExplainsOwnerChange(reach, facts(true, "os-user"), facts(true, "workspace"))).toBe(
       true,
     );
+  });
+
+  it("explains the network narrowed to the allowlist only when the op asked for it", () => {
+    const net = op({ network: "allowlist" });
+    expect(
+      opExplainsOwnerChange(
+        net,
+        facts(false, "workspace", "open"),
+        facts(false, "workspace", "allowlist"),
+      ),
+    ).toBe(true);
+    expect(
+      opExplainsOwnerChange(
+        op({ outsideSandbox: false }),
+        facts(true, "workspace", "open"),
+        facts(false, "workspace", "allowlist"),
+      ),
+    ).toBe(false);
+    // the network opening is never an op's
+    expect(
+      opExplainsOwnerChange(
+        net,
+        facts(false, "workspace", "allowlist"),
+        facts(false, "workspace", "open"),
+      ),
+    ).toBe(false);
   });
 
   it("never explains a widening, an op without a narrowing, or no change", () => {

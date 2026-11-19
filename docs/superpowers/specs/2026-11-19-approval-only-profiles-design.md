@@ -195,7 +195,7 @@ or a Full access auto-grant within the outside-sandbox ceiling allows it.
 | Platform | the super admin: startup config (env > file / Nacos), else the admin console | `devices.outsideSandbox`, `devices.network.default`, `devices.network.ceiling`; the host list `sandbox.limits.allowHosts` with `orgHosts`; the kill switch `sandbox.limits.egress` | `allowed`, `open`, `open` |
 | Org | an org admin in a web session (only narrowing through the Platform tool or an API token, as today) | `outsideSandbox`, `deviceNetwork { default?, ceiling?, base?, extraHosts?, excludedHosts? }` | absent = follow the platform |
 | Device, local | the owner on the machine (`capybara-device ceiling set`, `capybara-device policy add allowedDomains`) widens; the owner in a web session narrows | on-disk `ownerCeiling { outsideSandbox, restrictedProjectReach, network }` and `allowedDomains`; with `network: "allowlist"` the owner's `allowedDomains` is a ceiling, so a per-call host grant counts only where that list covers it (under `open`, grants are bounded by the kernel only) | new install: `outsideSandbox: false`, `network: "open"`, reach as today |
-| Device, cloud | the device owner or an org admin in a web session, both directions within the org and platform ceilings | `devices.network_mode`, `devices.network_hosts` | absent = follow the org |
+| Device, cloud | the device owner (org admin later) in a web session, both directions within the org and platform ceilings; an API token or the Platform tool only narrows | `devices.network_mode`, `devices.network_hosts` | absent = follow the org |
 
 The effective values come from one pure function, `effectiveDeviceSandbox(platform, org, device,
 provider)`, in the new `packages/kernel/src/sandbox/device-sandbox.ts`. The device mirrors it in
@@ -237,7 +237,7 @@ stale; that rule is unchanged.
 - The web can narrow a local ceiling through the v3 `policy` op: switch the network to `allowlist`,
   remove hosts, or turn `outsideSandbox` off.
 - Widening happens only on the machine.
-- A cloud device has no machine, so its owner or an org admin changes its network in both
+- A cloud device has no machine, so its owner (an org admin later) changes its network in both
   directions, within the ceilings.
 
 ### Why open is the shipped default

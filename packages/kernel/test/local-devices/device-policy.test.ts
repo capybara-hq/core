@@ -18,10 +18,7 @@ import { createDb } from "../../src/db/pool.js";
 import { DevicesService } from "../../src/devices/devices.service.js";
 import { ApiError } from "../../src/errors.js";
 import { TransactionHost } from "../../src/infra/database/transaction-host.js";
-import {
-  DevicePolicyService,
-  HOSTS_ON_MACHINE_MESSAGE,
-} from "../../src/local-devices/device-policy.service.js";
+import { DevicePolicyService } from "../../src/local-devices/device-policy.service.js";
 import { LocalInstanceBindings } from "../../src/local-devices/instance-bindings.js";
 import { deviceLeaseKey } from "../../src/local-devices/keys.js";
 import { LocalDeviceGateway } from "../../src/local-devices/local-device-gateway.js";
@@ -204,7 +201,6 @@ function applying(policy: DeviceLocalPolicySummary): (req: KernelReq) => Answer 
 }
 
 const source = (accountId: string) => ({
-  approvalId: "ap-1",
   accountId,
   accountName: "Me",
   via: "web" as const,
@@ -247,11 +243,9 @@ describe("DevicePolicyService.apply", () => {
         org_id: orgId,
         detail: {
           opId: (req.args as { opId: string }).opId,
-          add: [],
           remove: ["files.slack.com"],
           by: d.accountId,
           via: "web",
-          approvalId: "ap-1",
         },
       },
     ]);
@@ -261,53 +255,16 @@ describe("DevicePolicyService.apply", () => {
       features: ["networkReport", "policyOp", "policyOpId"],
       policy: want,
     });
-    expect(view.mode.recent).toEqual([
+    expect(view.sandbox.recent).toEqual([
       expect.objectContaining({
         kind: "policy",
         add: [],
         remove: ["files.slack.com"],
-        mode: null,
+        ceiling: null,
         via: "web",
         outcome: "applied",
       }),
     ]);
-  });
-
-  it("refuses an add before anything is recorded or sent (hosts are added on the machine)", async () => {
-    const d = await device();
-    const machine = await connect(d, applying(POLICY), FEATURES);
-    const out = await policies.apply({
-      orgId,
-      deviceId: d.deviceId,
-      change: { add: ["github.com"], remove: ["pypi.org"] },
-      source: source(d.accountId),
-    });
-    expect(out).toEqual({ applied: false, reason: "refused", message: HOSTS_ON_MACHINE_MESSAGE });
-    // the device page's write says the same, as a refusal
-    await expect(
-      devices.changePolicy(orgId, { id: d.accountId, displayName: "Me" }, d.deviceId, {
-        add: ["github.com"],
-      }),
-    ).rejects.toMatchObject({ code: "device.policy_refused", message: HOSTS_ON_MACHINE_MESSAGE });
-    expect(machine.frames.filter((f) => f.type === "req" && f.op === "policy")).toEqual([]);
-    expect(
-      await db
-        .selectFrom("audit_events")
-        .select("action")
-        .where("target", "=", d.deviceId)
-        .where("action", "like", "device.policy_%")
-        .execute(),
-    ).toEqual([]);
-    expect(
-      (
-        await db
-          .selectFrom("device_machines")
-          .select("pending_policy_ops")
-          .where("id", "=", d.machineId)
-          .executeTakeFirstOrThrow()
-      ).pending_policy_ops,
-    ).toEqual([]);
-    expect((await policies.summary(d.deviceId))?.policy).toEqual(POLICY);
   });
 
   it("lists the platform's op once, however the machine reports it, and the owner's own change as the machine's", async () => {
@@ -356,11 +313,9 @@ describe("DevicePolicyService.apply", () => {
     expect(audits.map((a) => a.detail)).toEqual([
       {
         opId: expect.any(String),
-        add: [],
         remove: ["files.slack.com"],
         by: d.accountId,
         via: "web",
-        approvalId: "ap-1",
       },
       {
         add: ["github.com"],
@@ -368,7 +323,6 @@ describe("DevicePolicyService.apply", () => {
         by: d.accountId,
         via: "device",
         machineId: d.machineId,
-        approvalId: null,
       },
     ]);
     expect(audits[1]?.actor_account_id).toBe(d.accountId);
@@ -382,8 +336,8 @@ describe("DevicePolicyService.apply", () => {
     expect(ceilingAudits).toEqual([
       {
         detail: {
-          from: { fullAccess: true, restrictedProjectReach: "workspace" },
-          to: { fullAccess: false, restrictedProjectReach: "workspace" },
+          from: { outsideSandbox: true, restrictedProjectReach: "workspace" },
+          to: { outsideSandbox: false, restrictedProjectReach: "workspace" },
           sequence: ownReport.sequence,
           by: d.accountId,
           via: "device",
@@ -393,7 +347,7 @@ describe("DevicePolicyService.apply", () => {
     ]);
     // the device page lists the change and the ceiling separately, newest first (one policy
     // frame writes both rows at the same time: their order between themselves is not fixed)
-    const recent = (await devices.get(orgId, d.accountId, d.deviceId)).mode.recent;
+    const recent = (await devices.get(orgId, d.accountId, d.deviceId)).sandbox.recent;
     expect(recent).toHaveLength(3);
     expect(recent.slice(0, 2)).toEqual(
       expect.arrayContaining([
@@ -406,8 +360,8 @@ describe("DevicePolicyService.apply", () => {
         expect.objectContaining({
           kind: "ceiling",
           ceiling: {
-            from: { fullAccess: true, restrictedProjectReach: "workspace" },
-            to: { fullAccess: false, restrictedProjectReach: "workspace" },
+            from: { outsideSandbox: true, restrictedProjectReach: "workspace" },
+            to: { outsideSandbox: false, restrictedProjectReach: "workspace" },
           },
           via: "device",
           outcome: "applied",
@@ -713,7 +667,7 @@ describe("staged (protocol 4) machines", () => {
     const d = await device();
     const m = await stagedMachine(d, OWNER_FULL);
     await devices.changePolicy(orgId, { id: d.accountId, displayName: "Me" }, d.deviceId, {
-      ownerCeiling: { fullAccess: false },
+      ownerCeiling: { outsideSandbox: false },
     });
     const ops = m.requests.filter((r) => r.op === "policy");
     expect(ops).toHaveLength(1);
@@ -733,8 +687,8 @@ describe("staged (protocol 4) machines", () => {
         action: "device.owner_ceiling_changed",
         actor_account_id: d.accountId,
         detail: expect.objectContaining({
-          from: { fullAccess: true, restrictedProjectReach: "os-user" },
-          to: { fullAccess: false, restrictedProjectReach: "os-user" },
+          from: { outsideSandbox: true, restrictedProjectReach: "os-user" },
+          to: { outsideSandbox: false, restrictedProjectReach: "os-user" },
           via: "web",
           opId: expect.any(String),
         }),
@@ -781,28 +735,24 @@ describe("staged (protocol 4) machines", () => {
     ]);
   });
 
-  it("B-24: protocol 2's sandbox switch reaches a staged machine as the narrowing it stands for, never wider", async () => {
+  it("B-24: a network narrowing reaches a staged machine as an owner-ceiling narrowing, never wider", async () => {
     const d = await device();
     const m = await stagedMachine(d, OWNER_FULL);
     await devices.changePolicy(orgId, { id: d.accountId, displayName: "Me" }, d.deviceId, {
-      mode: "sandbox",
+      ownerCeiling: { network: "allowlist", restrictedProjectReach: "workspace" },
     });
     const ops = m.requests.filter((r) => r.op === "policy");
     expect(ops).toHaveLength(1);
     expect(ops[0]?.args).toMatchObject({
-      ownerCeiling: { outsideSandbox: false, restrictedProjectReach: "workspace" },
-    });
-    expect(ops[0]?.args).not.toHaveProperty("mode");
-    expect((await ownerReportOf(d.machineId)).report).toMatchObject({
-      outsideSandbox: false,
-      restrictedProjectReach: "workspace",
+      ownerCeiling: { network: "allowlist", restrictedProjectReach: "workspace" },
     });
     // a widening is refused before anything is sent
-    await expect(
-      devices.changePolicy(orgId, { id: d.accountId, displayName: "Me" }, d.deviceId, {
-        ownerCeiling: { fullAccess: true as never },
-      }),
-    ).rejects.toMatchObject({ code: "validation_failed" });
+    for (const ownerCeiling of [{ outsideSandbox: true }, { network: "open" }])
+      await expect(
+        devices.changePolicy(orgId, { id: d.accountId, displayName: "Me" }, d.deviceId, {
+          ownerCeiling: ownerCeiling as never,
+        }),
+      ).rejects.toMatchObject({ code: "validation_failed" });
     expect(m.requests.filter((r) => r.op === "policy")).toHaveLength(1);
   });
 

@@ -17,7 +17,14 @@ import {
  * runtime cutover 8.6); the conversation's permission profile does, within this ceiling.
  */
 
-/** A device mode. Not `DeviceMode`, which is the program's os | docker run mode. */
+/**
+ * The kernel-internal tier of a device (not `DeviceMode`, the program's os | docker run mode). It
+ * is no longer a mode the person picks or the model runs at (approval-only profiles design: every
+ * profile is sandboxed): `auto` only records that the platform, the org and a local owner allow
+ * running outside the sandbox. It survives as the instance-limits tier (recorded with a cloud
+ * instance's applied limits, so a changed tier updates or recreates it), the working root's reach
+ * and the legacy `device_paths` text; the device sandbox (`device-sandbox.ts`) decides scope.
+ */
 export type SandboxMode = "auto" | "sandbox";
 
 /** A device network: any public address (cloud only), or an allowlist. */
@@ -114,12 +121,6 @@ export interface EffectiveDevicePolicy {
   allowedMode: SandboxMode;
   /** The cloud network (auto mode's open network, the org's allowlist, or the kill switch). */
   network: DeviceNetwork;
-  /**
-   * The allowlist a local device's sandbox mode intersects with its own (`sandbox.limits.egress:
-   * none` empties it). The exec args always carry it, even when the ceiling is auto: the device
-   * may run stricter than the ceiling.
-   */
-  localAllowedDomains: string[];
 }
 
 /**
@@ -194,7 +195,6 @@ export function effectiveDevicePolicy(
       outer === null
         ? deviceNetwork(deployment, org, mode)
         : intersectNetworks(deviceNetwork(deployment, org, mode), outer),
-    localAllowedDomains: orgAllowedDomains(deployment, org),
   };
 }
 

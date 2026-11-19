@@ -17,7 +17,7 @@ import { osRoots } from "./shared.js";
 
 /**
  * The owner ceiling as this program enforces it: the fields of the protocol's
- * `DeviceOwnerCeilingV3` (the device sandbox for every profile) plus the local facts the
+ * `DeviceOwnerCeiling` (the device sandbox for every profile) plus the local facts the
  * intersection needs (roots, denied read roots, preparation roots).
  */
 export interface DeviceOwnerCeiling {

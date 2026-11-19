@@ -83,7 +83,6 @@ const facts: PermissionReviewSnapshot = {
   policy: {
     mode: "auto",
     allowedMode: "auto",
-    localAllowedDomains: [],
     network: { kind: "open-public", hosts: [] },
   } as unknown as PermissionReviewSnapshot["policy"],
 };

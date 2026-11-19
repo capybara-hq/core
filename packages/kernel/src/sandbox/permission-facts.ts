@@ -32,8 +32,10 @@ import {
   type DeviceSandbox,
   type DeviceSandboxDeviceLayer,
   effectiveDeviceSandbox,
+  type HostGrantCeiling,
   hostGrantCeiling,
   hostGrantRefusal,
+  orgHostsOf,
   providerLayerOf,
   reachWithin,
 } from "./device-sandbox.js";
@@ -128,10 +130,10 @@ export class PermissionFacts {
         ? null
         : {
             state: facts.state,
-            outsideSandbox: facts.fullAccess,
+            outsideSandbox: facts.outsideSandbox,
             restrictedProjectReach: facts.restrictedProjectReach,
             network: facts.network,
-            allowedDomains: facts.restrictedAllowedDomains,
+            allowedDomains: facts.allowedDomains,
           };
     const sandbox = await this.deviceSandboxFacts(orgId, deviceId, availability);
     return {
@@ -166,7 +168,13 @@ export class PermissionFacts {
    * ({@link hostGrantCeiling}), why a host is unavailable ({@link hostGrantRefusal}) and the
    * crossing ceilings a Full access consent covers ({@link ConsentReach}).
    */
-  async deviceSandboxFacts(orgId: string, deviceId: string, availability?: PermissionAvailability) {
+  async deviceSandboxFacts(
+    orgId: string,
+    deviceId: string,
+    availability?: PermissionAvailability,
+    /** A cloud device's network as it would be stored (a change checked before it is written). */
+    cloudNetwork?: { networkMode: "open" | "allowlist" | "none" | null; networkHosts: string[] },
+  ) {
     const [settings, org, row] = await Promise.all([
       readDeviceSandboxSettings(this.db.db, this.config),
       readOrgSettings(this.db.db, orgId),
@@ -186,15 +194,15 @@ export class PermissionFacts {
     let owner: { network: "open" | "allowlist"; allowedDomains: readonly string[] } | null = null;
     if (location === "local") {
       const facts = ownerFactsOf(row ?? {});
-      owner = { network: facts.network, allowedDomains: facts.restrictedAllowedDomains };
+      owner = { network: facts.network, allowedDomains: facts.allowedDomains };
       device = {
         location,
-        outsideSandbox: facts.fullAccess,
+        outsideSandbox: facts.outsideSandbox,
         network: facts.network,
-        allowedDomains: facts.restrictedAllowedDomains,
+        allowedDomains: facts.allowedDomains,
         restrictedProjectReach: facts.restrictedProjectReach,
       };
-    } else device = { location, ...cloudOwnNetwork(row) };
+    } else device = { location, ...(cloudNetwork ?? cloudOwnNetwork(row)) };
     const current = availability ?? (await this.availability(orgId, deviceId));
     const report = current.state === "supported" ? current.report : null;
     const platform = {
@@ -217,6 +225,8 @@ export class PermissionFacts {
     return {
       box,
       hostCeiling,
+      /** The org's effective hosts: what a device's own host list may narrow, never add to. */
+      orgHosts: orgHostsOf(platform, orgLayer),
       refusal: (host: string) => hostGrantRefusal(host, box, platform, orgLayer, owner),
       reach: {
         outsideSandbox: box.outsideSandbox,
@@ -226,6 +236,41 @@ export class PermissionFacts {
         hostCeiling: canonicalHostCeiling(hostCeiling),
       } satisfies ConsentReach,
     };
+  }
+
+  /**
+   * The per-call host ceiling of an org, with no device (`hostGrantCeiling` under the platform and
+   * org layers alone): what a standing grant that may reach any of the org's devices (a scheduled
+   * task's network grant, a network approval) is checked against. A device's own layers only
+   * narrow it further.
+   */
+  async orgHostGrantCeiling(orgId: string): Promise<HostGrantCeiling> {
+    const [settings, org] = await Promise.all([
+      readDeviceSandboxSettings(this.db.db, this.config),
+      readOrgSettings(this.db.db, orgId),
+    ]);
+    const limits = this.config.get().sandbox.limits;
+    const platform = {
+      settings,
+      allowHosts: limits.allowHosts,
+      orgHosts: limits.orgHosts,
+      egress: limits.egress,
+    };
+    const orgLayer = {
+      ...(org.outsideSandbox !== undefined && { outsideSandbox: org.outsideSandbox }),
+      ...(org.deviceNetwork !== undefined && { deviceNetwork: org.deviceNetwork }),
+    };
+    const box = effectiveDeviceSandbox(
+      platform,
+      orgLayer,
+      { location: "cloud", networkMode: null, networkHosts: [] },
+      {
+        boundary: "operation",
+        network: { openPublic: true, allowlist: true, perOperationHosts: true },
+        outsideSandbox: false,
+      },
+    );
+    return hostGrantCeiling(box, platform, orgLayer, null);
   }
 
   /** Stored binding only; projectScope supplies the live owner and deletion checks. */
@@ -502,7 +547,6 @@ export class PermissionFacts {
             ? "os-user"
             : "workspace",
         // an authenticated report bounds browsing by scope: never wider than the device allows
-        widerThanAllowed: false,
         workspace: row.machine_workspace ?? DEFAULT_SANDBOX_ROOTS.workspace,
         home: row.home,
         supported: deviceFeaturesOf(row.features).includes("projects"),
@@ -515,7 +559,6 @@ export class PermissionFacts {
       mode,
       // cloud projects stay within their provisioned files
       reach: "workspace",
-      widerThanAllowed: false,
       workspace: handle === null ? DEFAULT_SANDBOX_ROOTS.workspace : rootsOf(handle).workspace,
       home: null,
       supported: typeof impl?.list === "function" && typeof impl.scan === "function",

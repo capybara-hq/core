@@ -3,10 +3,13 @@ import type {
   DeviceLocalPolicySummary,
   DeviceOwnerCeilingNarrowing,
   LocalizedName,
+  SandboxBrowseScope,
   SandboxLimits,
+  SandboxOperationScope,
 } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
-import { sql } from "kysely";
+import { type Selectable, sql } from "kysely";
+import type { SandboxOperationIntentsTable } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { ExtensionDisplayNames } from "../extensions/display-name.js";
 import { audit } from "../identity/audit.js";
@@ -23,37 +26,29 @@ import { OutboxService } from "../infra/outbox/outbox.service.js";
 import { DevicePolicyService } from "../local-devices/device-policy.service.js";
 import { deviceLeaseKey } from "../local-devices/keys.js";
 import { MachinesService } from "../local-devices/machines.js";
-import { ownerFactsOf, ownerModeOf } from "../local-devices/owner-report.js";
+import { type OwnerFacts, ownerFactsOf } from "../local-devices/owner-report.js";
 import { deviceFeaturesOf, localPolicyOf } from "../local-devices/policy-summary.js";
-import { readOrgSettings } from "../orgs/settings.service.js";
 import type { DeviceModeLevel } from "../runtime/context/device-paths.js";
+import type {
+  DeviceSandbox,
+  DeviceSandboxLayer,
+  HostGrantCeiling,
+} from "../sandbox/device-sandbox.js";
+import { hostGrantable } from "../sandbox/device-sandbox.js";
 import { oweDeviceDestroy, SandboxJobs } from "../sandbox/jobs.js";
 import {
-  cloudChosenMode,
+  coversHost,
+  type DeviceLimits,
   type DeviceNetwork,
-  deviceNetwork,
-  type EffectiveDevicePolicy,
-  effectiveDevicePolicy,
-  intersectNetworks,
-  type NetworkKind,
-  type OrgDeviceSettings,
   projectReachOf,
-  readDeploymentDevicePolicy,
-  type SandboxMode,
 } from "../sandbox/modes.js";
-import { permissionAvailabilityFor } from "../sandbox/permission-availability.js";
 import {
-  needsFullCeiling,
+  hostsNarrowed,
+  needsOpenNetwork,
   PermissionCeilingWrites,
-  requiresFullExecution,
 } from "../sandbox/permission-ceiling-writes.js";
-import { readRuntimeReport } from "../sandbox/permission-runtime-reports.js";
-import {
-  isInternalProvider,
-  LOCAL_PROVIDER,
-  providerForDevice,
-  SandboxProviders,
-} from "../sandbox/providers.js";
+import { cloudOwnNetwork, networkOfSandbox, PermissionFacts } from "../sandbox/permission-facts.js";
+import { isInternalProvider, LOCAL_PROVIDER, SandboxProviders } from "../sandbox/providers.js";
 import { deviceNotFound, SandboxService } from "../sandbox/sandbox.service.js";
 import {
   DeviceAccess,
@@ -102,14 +97,14 @@ export interface DeviceView {
     features: string[];
     policy: DeviceLocalPolicySummary | null;
   } | null;
-  /** Its mode and network (auto mode spec §4.3). */
-  mode: DeviceModeView;
+  /** Its effective device sandbox, the same under every permission profile. */
+  sandbox: DeviceSandboxView;
   /**
-   * The device owner's ceiling as last reported (B2, read only): a local device's authenticated
-   * owner report (`state: "report"`), a stale or conflicting report (`blocked`), only a protocol
-   * 2 summary (`legacy`, translated exactly) or nothing (`missing`); a cloud device's explicit
-   * Full ceiling once snapshotted. `stale` is true while the machine is offline or the report is
-   * not current: last-known facts, never authority. null for a cloud device not snapshotted yet.
+   * A local device's owner ceiling as its machine last reported it (read only): an authenticated
+   * report (`state: "report"`), a stale or conflicting one (`blocked`) or nothing readable
+   * (`missing`). `stale` is true while the machine is offline or the report is not current:
+   * last-known facts, never authority. null for a cloud device (it has no machine) and for a local
+   * one without a connected machine.
    */
   ownerCeiling: DeviceOwnerCeilingView | null;
   /**
@@ -123,135 +118,134 @@ export interface DeviceView {
   filesLost: boolean;
   instance: { status: "running" | "suspended"; lastUsedAt: string } | null;
   /**
-   * The sandbox limits of its effective mode (auto mode spec §4.2): what a cloud instance is
-   * created with; for a local device the sandbox-mode allowlist.
+   * Its sandbox limits: the resources and network a cloud instance is created with; for a local
+   * device the network its commands carry (the machine intersects it with its owner's ceiling).
    */
   limits: SandboxLimits;
   createdAt: string;
 }
 
-/** {@link DeviceView.ownerCeiling}. */
-export interface DeviceOwnerCeilingView {
-  state: "report" | "blocked" | "missing" | "cloud";
-  revision: string | null;
-  sequence: number | null;
-  /** The owner's ceiling as stored or reported (a cloud device: the raw B1 ceiling). */
-  fullAccess: boolean;
-  /**
-   * Whether the owner's side allows Full access as the kernel applies it: a cloud device's ceiling
-   * narrowed by its old sandbox switch (`cloudChosenMode`); a local machine's derived mode
-   * (`ownerModeOf`: its report, else an older program's mode or isolation), as admission reads it.
-   * The platform and the org may still cut it ({@link DeviceModeView.allowedMode}).
-   */
-  effectiveFullAccess: boolean;
-  /** Restricted project reach; a cloud device stays within its provisioned files (`workspace`). */
-  restrictedProjectReach: "workspace" | "os-user";
-  restrictedAllowedDomains: string[];
-  observedAt: string | null;
-  stale: boolean;
-}
-
 /**
- * A device's mode and network as its owner sees it (auto mode spec §4.1–§4.3).
+ * The effective device sandbox of a device as its owner sees it (approval-only profiles design,
+ * "Settings model" and "UI"): `effectiveDeviceSandbox` over the platform, org, device and provider
+ * layers.
  */
-export interface DeviceModeView {
+export interface DeviceSandboxView {
+  /** The sandbox network in effect: the open public internet, the allowlist, or closed. */
+  network: "open" | "allowlist" | "none";
+  /** The widest network the platform, the org and the provider leave this device. */
+  networkCeiling: "open" | "allowlist" | "none";
+  /** The allowlist hosts in effect (empty unless {@link network} is `allowlist`). */
+  hosts: string[];
   /**
-   * The mode its commands run at: the local device's choice cut to {@link allowedMode}; a cloud
-   * device has no choice, so it follows {@link allowedMode}.
+   * The device's own network setting: a cloud device's stored choice (null follows its org), a
+   * local owner's reported network (null without a readable report).
    */
-  mode: SandboxMode;
-  /** `auto` only when the platform's and the org's `fullAccess` leave it allowed. */
-  allowedMode: SandboxMode;
-  /** Which layer allows auto mode (`org`: the org set it; `platform`: the org follows the platform); null when only sandbox mode is allowed. */
-  allowedBy: "org" | "platform" | null;
-  /** Its network (a cloud device's effective one; a local device's sandbox-mode allowlist). */
-  network: { kind: NetworkKind; hosts: string[]; source: "org" | "platform" };
-  /** A local device: the mode its machine reported and its own sandbox-mode allowlist; null for cloud. */
-  local: { reported: SandboxMode | null; allowedDomains: string[] } | null;
+  ownNetwork: "open" | "allowlist" | "none" | null;
   /**
-   * A cloud device: the network sandbox mode gives it, whatever mode it runs at now (the org's
-   * `cloudNetwork`, open by default; the kill switch empties it) within its {@link outerNetwork},
-   * so the page names exactly what turning Full access off reaches before it is done (hardening
-   * spec D3). Null for a local device.
+   * The device's own host list, which only narrows the org's hosts: a local owner's
+   * `allowedDomains` (its machine's ceiling while its network is the allowlist), a cloud device's
+   * stored hosts (empty: it follows its org's hosts).
    */
-  sandboxNetwork: { kind: NetworkKind; hosts: string[] } | null;
+  allowedDomains: string[];
+  /** Whether a call may be granted escalation outside the sandbox (never on a cloud device). */
+  outsideSandbox: boolean;
+  /** How far restricted work may root outside the workspace. */
+  restrictedProjectReach: "workspace" | "os-user";
+  /** The layer that set each ceiling (a disabled option names it), or null when nothing did. */
+  layer: { network: DeviceSandboxLayer | null; outsideSandbox: DeviceSandboxLayer | null };
   /**
-   * A cloud device: the network Full access gives it (the open public network, or the kill
-   * switch's empty allowlist) within its {@link outerNetwork}. Null for a local device.
-   */
-  fullNetwork: { kind: NetworkKind; hosts: string[] } | null;
-  /**
-   * A cloud device's B1 outer network: the boundary no mode or ceiling change widens. Null for a
-   * local device and for a cloud device not snapshotted yet.
-   */
-  outerNetwork: { kind: NetworkKind; hosts: string[] } | null;
-  /**
-   * A cloud device's instance runs another mode or network kind: its next use updates or recreates
-   * it, files kept (「下次使用时生效，文件保留」).
+   * A cloud device's instance runs another network: its next use updates or recreates it, files
+   * kept (the page says it applies on next use).
    */
   pendingNextUse: boolean;
   /**
    * Its provider applies limits at its file system (`limitsApplyAt: "fileSystem"`) and the instance
-   * runs another mode or network kind: only a file reset applies it (「重置文件后生效」).
+   * runs another network: only a file reset applies it (the page says it applies after a reset).
    */
   pendingFilesReset: boolean;
-  /** Its last {@link RECENT_POLICY_CHANGES} mode and policy changes, newest first. */
-  recent: DeviceModeChangeView[];
+  /** Its last {@link RECENT_POLICY_CHANGES} setting changes, newest first. */
+  recent: DeviceSettingChangeView[];
 }
 
-/** How many recent mode and policy changes a device view lists. */
+/** {@link DeviceView.ownerCeiling}: a local machine's owner ceiling as reported. */
+export interface DeviceOwnerCeilingView {
+  state: "report" | "blocked" | "missing";
+  revision: string | null;
+  sequence: number | null;
+  /** The owner allows running outside the sandbox (fail closed: false). */
+  outsideSandbox: boolean;
+  /** The owner's sandbox network (fail closed: `allowlist`). */
+  network: "open" | "allowlist";
+  /** The owner's sandbox allowlist: the machine's host ceiling while its network is `allowlist`. */
+  allowedDomains: string[];
+  restrictedProjectReach: "workspace" | "os-user";
+  observedAt: string | null;
+  stale: boolean;
+}
+
+/** How many recent setting changes a device view lists. */
 export const RECENT_POLICY_CHANGES = 10;
 
 /**
- * One mode or policy change of a device, as its owner sees it on the device page:
- * - `policy` (`device.policy_changed`): a local policy change sent to the machine (`web`, `im`), or
- *   made on the machine by its owner (`device`, `capybara-device policy ...`); one sent whose
- *   answer never came (`device.policy_unknown`) or that failed (`device.policy_failed`) too;
- * - `mode` (`device.mode_changed`): the device switched between auto and sandbox mode, on the
- *   machine (`device`) or by a policy op (`web`, `im`);
- * - `ceiling` (`device.owner_ceiling_changed`): the owner ceiling changed, a cloud device's Full
- *   ceiling on the device page (`web`) or a machine's authenticated report (`device`).
+ * One setting change of a device, as its owner sees it on the device page:
+ * - `policy` (`device.policy_changed`): hosts removed from a local machine's allowlist by the
+ *   platform (`web`, `im`), or added or removed on the machine by its owner (`device`,
+ *   `capybara-device policy ...`); one sent whose answer never came (`device.policy_unknown`) or
+ *   that failed (`device.policy_failed`) too;
+ * - `ceiling` (`device.owner_ceiling_changed`): a machine's owner ceiling changed, narrowed from the
+ *   device page (`web`) or on the machine (`device`);
+ * - `network` (`device.network_changed`): a cloud device's sandbox network changed on its device
+ *   page (`web`), through an API token (`token`), or by an agent's Platform tool call (`agent`).
  */
-export interface DeviceModeChangeView {
+export interface DeviceSettingChangeView {
   at: string;
-  kind: "policy" | "mode" | "ceiling";
+  kind: "policy" | "ceiling" | "network";
   /** Hosts added to / removed from the local allowlist (`policy` only; else empty). */
   add: string[];
   remove: string[];
-  /** The mode change (`from`: the previous mode the machine reported); null when it did not change. */
-  mode: { from?: SandboxMode | null; to: SandboxMode } | null;
-  /**
-   * The ceiling change (`ceiling` only; else null): Full access, and a machine's restricted project
-   * reach (a cloud device has none). `from` is null when the row does not say.
-   */
+  /** The owner ceiling change (`ceiling` only; else null). `from` is null when the row does not say. */
   ceiling: { from: DeviceCeilingFacts | null; to: DeviceCeilingFacts } | null;
+  /** The cloud network change (`network` only; else null). */
+  network: { from: DeviceNetworkSetting; to: DeviceNetworkSetting } | null;
   /** The deciding account's display name (null when the account is gone). */
   by: string | null;
-  /** `device`: made or reported on the machine itself. */
-  via: "web" | "im" | "device";
+  /**
+   * `device`: made or reported on the machine itself; `token`: through an API token; `agent`: an
+   * agent's Platform tool call.
+   */
+  via: "web" | "im" | "device" | "token" | "agent";
   /**
    * What became of a `policy` change sent to the machine: `applied` (also every change made or
-   * reported on the machine, and every mode row); `unknown`, its answer never came, `failed`, the
+   * reported on the machine, and every other row); `unknown`, its answer never came, `failed`, the
    * machine refused it, never received it or stopped while applying it.
    */
   outcome: "applied" | "unknown" | "failed";
 }
 
-/** One side of a {@link DeviceModeChangeView.ceiling} change. */
+/** One side of a {@link DeviceSettingChangeView.ceiling} change. */
 export interface DeviceCeilingFacts {
-  fullAccess: boolean;
+  outsideSandbox: boolean;
   restrictedProjectReach?: "workspace" | "os-user";
+  network?: "open" | "allowlist";
 }
 
-/** A change of a local device's policy by its owner (`POST /devices/:id/policy`). */
+/** A cloud device's stored network setting: `mode` null follows its org. */
+export interface DeviceNetworkSetting {
+  mode: "open" | "allowlist" | "none" | null;
+  hosts: string[];
+}
+
+/** A narrowing of a local device's policy by its owner (`POST /devices/:id/policy`). */
 export interface DevicePolicyChange {
-  add?: string[] | undefined;
   remove?: string[] | undefined;
-  /** Switch the sandbox back on; auto mode is turned on only on the machine. */
-  mode?: "sandbox" | undefined;
-  /** B2: narrow the owner ceiling (never widen; the schema refuses true and os-user). */
+  /** Narrow the owner ceiling (never widen; the schema refuses anything wider). */
   ownerCeiling?:
-    | { fullAccess?: false | undefined; restrictedProjectReach?: "workspace" | undefined }
+    | {
+        outsideSandbox?: false | undefined;
+        network?: "allowlist" | undefined;
+        restrictedProjectReach?: "workspace" | undefined;
+      }
     | undefined;
 }
 
@@ -259,18 +253,10 @@ export interface DevicePolicyChange {
 export interface DevicePatch {
   name?: string;
   /**
-   * A cloud device's mode choice: `sandbox` narrows it (the org's `cloudNetwork` applies), `null`
-   * clears the choice so it follows the org and the platform again (auto when they allow it;
-   * hardening spec D2). Only a person in a web session sends it (the controller refuses a token).
-   * A local device refuses it here (`device.mode_on_device`, its mode is its machine's).
+   * A cloud device's sandbox network, within its org's and the platform's ceilings. A local
+   * device refuses it here (`device.ceiling_on_machine`).
    */
-  mode?: "sandbox" | null;
-  /**
-   * B2: a cloud device's explicit Full ceiling. Narrowing applies; widening needs
-   * `confirmWidening` and stays bounded by the platform, the org and the outer network.
-   */
-  ownerCeiling?: { fullAccess: boolean };
-  confirmWidening?: true;
+  network?: { mode: "open" | "allowlist" | "none" | null; hosts?: string[] | undefined };
 }
 
 /** The machine connected to a local device, as its owner sees it. */
@@ -334,6 +320,8 @@ export class DevicesService {
     @Inject(DevicePolicyService)
     private readonly policies: Pick<DevicePolicyService, "apply" | "summary">,
     @Inject(PermissionCeilingWrites) private readonly ceilings: PermissionCeilingWrites,
+    @Inject(PermissionFacts)
+    private readonly facts: Pick<PermissionFacts, "deviceSandbox" | "deviceSandboxFacts">,
   ) {}
 
   /**
@@ -568,11 +556,13 @@ export class DevicesService {
   }
 
   /**
-   * `PATCH /devices/:id`: renames one of the person's live devices ({@link rename}) and narrows a
-   * cloud device to sandbox mode, in one transaction. A local device's mode lives on its machine,
-   * so a `mode` for it is refused (`device.mode_on_device`; {@link changePolicy}); auto mode is
-   * never set from the web (auto mode spec §4.3). Callers make sure only a person in a session
-   * changes a device.
+   * `PATCH /devices/:id`: renames one of the person's live devices ({@link rename}) and sets a
+   * cloud device's sandbox network ({@link networkLocked}), in one transaction. A network change
+   * takes the membership, the device row and the device's permission write lock as the ordered
+   * prelude (`withOrderedLocks`): inside a run's fence (`devices.set-network`) they follow the org
+   * row and precede the conversation rows. A local device's network lives on its machine
+   * (`device.ceiling_on_machine`). `narrowOnly` (an API token, the Platform tool): the network may
+   * only narrow, stored and effective.
    */
   async update(
     orgId: string,
@@ -580,9 +570,22 @@ export class DevicesService {
     id: string,
     patch: DevicePatch,
     actorTokenId?: string,
+    opts: { narrowOnly?: boolean; auditDetail?: Record<string, unknown> } = {},
   ): Promise<DeviceView> {
-    await this.updateIn(orgId, accountId, id, patch, actorTokenId);
+    if (patch.network !== undefined)
+      await withOrderedLocks(
+        () => this.lockNetworkSubject(orgId, accountId, id),
+        () => this.updateIn(orgId, accountId, id, patch, actorTokenId, opts),
+      );
+    else await this.updateIn(orgId, accountId, id, patch, actorTokenId, opts);
     return this.get(orgId, accountId, id);
+  }
+
+  /** The prelude of a network change: the membership, the device row, the device's write lock. */
+  @Transactional({ propagation: "mandatory" })
+  private async lockNetworkSubject(orgId: string, accountId: string, id: string): Promise<void> {
+    await this.lockOwn(orgId, accountId, id);
+    await this.ceilings.lock({ orgId, deviceId: id }, "device");
   }
 
   @Transactional()
@@ -592,158 +595,169 @@ export class DevicesService {
     id: string,
     patch: DevicePatch,
     actorTokenId: string | undefined,
+    opts: { narrowOnly?: boolean; auditDetail?: Record<string, unknown> },
   ): Promise<void> {
+    // held since the prelude for a network change (naming them again re-checks)
     const before = await this.lockOwn(orgId, accountId, id);
-    if (patch.mode !== undefined) {
-      await this.ceilings.lock({ orgId, deviceId: id }, "device");
-      // A cloud device's owner narrows it to sandbox or clears the choice to follow the org (auto
-      // mode spec §4.3, hardening D2); a local device's mode lives on its machine.
-      if (before.source !== "cloud") {
-        throw new ApiError(
-          "device.mode_on_device",
-          "This device's owner ceiling is kept on its connected computer: narrow it from the device page, or run capybara-device ceiling set --full-access deny --project-reach workspace on that computer.",
-        );
-      }
-      if ((before.mode ?? null) !== patch.mode) {
-        // `from` / `to` are the modes it runs at: the org may cap both at sandbox, and then the
-        // stored choice changes without a mode change, so nothing is audited
-        const from = (await this.sandbox.devicePolicy({ orgId, deviceId: id })).mode;
-        await this.db
-          .updateTable("devices")
-          .set({ mode: patch.mode, updated_at: sql<Date>`now()` })
-          .where("id", "=", id)
-          .execute();
-        // B1: once snapshotted, the owner ceiling decides; sandbox narrows it, while clearing the
-        // old switch never widens it (only a deliberate owner widening does)
-        if (patch.mode === "sandbox")
-          await this.db
-            .updateTable("devices")
-            .set({ owner_full_access: false })
-            .where("id", "=", id)
-            .where("owner_full_access", "=", true)
-            .execute();
-        const to = (await this.sandbox.devicePolicy({ orgId, deviceId: id })).mode;
-        await this.ceilings.publishLocked(
-          { orgId, deviceId: id },
-          "device",
-          to === "sandbox" ? needsFullCeiling : false,
-          true,
-        );
-        if (from !== to) {
-          await audit(this.db.db, {
-            actorAccountId: accountId,
-            ...(actorTokenId !== undefined && { actorTokenId }),
-            orgId,
-            action: "device.mode_changed",
-            target: id,
-            detail: { from, to, by: accountId, via: "web" },
-          });
-        }
-      }
-    }
-    if (patch.ownerCeiling !== undefined)
-      await this.cloudOwnerCeilingLocked(orgId, accountId, id, before, patch, actorTokenId);
+    if (patch.network !== undefined)
+      await this.networkLocked(orgId, accountId, id, before, patch.network, actorTokenId, opts);
     if (patch.name !== undefined) {
-      await this.renameLocked(orgId, accountId, id, before, patch.name, actorTokenId, undefined);
+      await this.renameLocked(
+        orgId,
+        accountId,
+        id,
+        before,
+        patch.name,
+        actorTokenId,
+        opts.auditDetail,
+      );
     }
   }
 
   /**
-   * B2 cloud owner ceiling (`PATCH ownerCeiling: {fullAccess}`), under the device authority
-   * writer: a cloud device's explicit Full ceiling. Narrowing applies at once and revokes only Full
-   * work; widening needs the person's explicit confirmation in a web session, is refused while
-   * the platform or the org does not allow Full access, never touches the outer network, and
-   * resets Full consent (conversations need fresh consent). A local device's ceiling is its
-   * machine's (`device.mode_on_device`).
+   * Checks a cloud network change without writing anything and without locks (the Platform
+   * tool's precheck): the device is the person's live cloud device, and the change stays within
+   * the ceilings and, with `narrowOnly`, only narrows. Throws what {@link update} would; the
+   * write re-checks under its locks.
    */
-  private async cloudOwnerCeilingLocked(
+  async checkNetwork(
+    orgId: string,
+    accountId: string,
+    id: string,
+    network: NonNullable<DevicePatch["network"]>,
+    narrowOnly: boolean,
+  ): Promise<void> {
+    const row = await this.db
+      .selectFrom("devices")
+      .select(["source"])
+      .where("id", "=", id)
+      .where("org_id", "=", orgId)
+      .where("owner_kind", "=", "personal")
+      .where("owner_account_id", "=", accountId)
+      .where("deleted_at", "is", null)
+      .executeTakeFirst();
+    if (!row) throw deviceNotFound();
+    await this.planNetwork(orgId, id, row, network, narrowOnly);
+  }
+
+  /**
+   * Decides a cloud network change (read only): the stored setting before and after, the
+   * effective device sandbox before and after (computed in memory from the patched setting), and
+   * whether it widens. Refuses, without writing: a local device (`device.ceiling_on_machine`),
+   * the open network above the ceilings or a host outside the org's list
+   * (`device.network_not_allowed`), and with `narrowOnly` a widening of the stored setting or of
+   * the effective network (`device.network_not_allowed`). Null when nothing changes.
+   */
+  private async planNetwork(
+    orgId: string,
+    id: string,
+    before: { source: string },
+    want: NonNullable<DevicePatch["network"]>,
+    narrowOnly: boolean,
+  ) {
+    if (before.source !== "cloud")
+      throw new ApiError(
+        "device.ceiling_on_machine",
+        "This device's sandbox network is kept on its connected machine: narrow it from the device page, or widen it on that machine with capybara-device ceiling set --network open or capybara-device policy add allowedDomains <host>.",
+      );
+    const row = await this.db
+      .selectFrom("devices")
+      .select(["network_mode", "network_hosts"])
+      .where("id", "=", id)
+      .executeTakeFirstOrThrow();
+    const own = cloudOwnNetwork(row);
+    const from: DeviceNetworkSetting = { mode: own.networkMode, hosts: [...own.networkHosts] };
+    const to: DeviceNetworkSetting = {
+      mode: want.mode,
+      hosts:
+        want.mode === "allowlist"
+          ? [...new Set((want.hosts ?? []).map((h) => h.toLowerCase()))].sort()
+          : [],
+    };
+    if (from.mode === to.mode && sameHosts(from.hosts, to.hosts)) return null;
+    const [prev, next] = await Promise.all([
+      this.facts.deviceSandboxFacts(orgId, id),
+      this.facts.deviceSandboxFacts(orgId, id, undefined, {
+        networkMode: to.mode,
+        networkHosts: to.hosts,
+      }),
+    ]);
+    if (to.mode === "open" && next.box.networkMode !== "open")
+      throw new ApiError(
+        "device.network_not_allowed",
+        `The open network is not allowed for this device: ${networkLayerText(next.box.layer.network)} limits it to ${next.box.networkCeiling === "none" ? "no network" : "the allowlist"}`,
+      );
+    // a device's own list only narrows its org's hosts, whatever the network in effect now
+    const outside = to.hosts.filter(
+      (h) => !next.orgHosts.some((p) => coversHost(p.toLowerCase(), h)),
+    );
+    if (outside.length > 0)
+      throw new ApiError(
+        "device.network_not_allowed",
+        `A device's host list only narrows its organization's hosts; an organization admin adds ${outside.join(", ")} to the organization's device network list`,
+      );
+    const widened = networkWidens(prev.box, next.box);
+    if (narrowOnly && (widened || storedNetworkWidens(from, to)))
+      throw new ApiError(
+        "device.network_not_allowed",
+        "Through an API token or the Platform tool a device's network may only narrow (to allowlist, its own shorter host list, or none; never back to following the organization); its owner widens it on the device page",
+      );
+    return { from, to, next, widened };
+  }
+
+  /**
+   * A cloud device's sandbox network (approval-only profiles design, "Settings model"), under the
+   * device authority writer held since the prelude: its owner chooses `open`, `allowlist` (its
+   * org's hosts, narrowed by its own list: a device list never adds a host; an empty one follows
+   * the org's hosts), `none` (closed) or null (follow the org), in both directions within the
+   * org's and the platform's ceilings ({@link planNetwork}). The write and its publication are one
+   * transaction: a narrowing bumps the device epoch and revokes the admitted or started work it
+   * takes ({@link networkNarrowingRevokes}; the revocations are owed through the outbox) and keeps
+   * Full consent; a widening resets Full consent with a `permission_profile_changed` event.
+   * Audited `device.network_changed` (`via`: `web`, `token` for an API token, or the agent's).
+   */
+  private async networkLocked(
     orgId: string,
     accountId: string,
     id: string,
     before: { source: string },
-    patch: DevicePatch,
+    want: NonNullable<DevicePatch["network"]>,
     actorTokenId: string | undefined,
+    opts: { narrowOnly?: boolean; auditDetail?: Record<string, unknown> },
   ): Promise<void> {
-    const want = (patch.ownerCeiling as { fullAccess: boolean }).fullAccess;
     await this.ceilings.lock({ orgId, deviceId: id }, "device");
-    if (before.source !== "cloud")
-      throw new ApiError(
-        "device.mode_on_device",
-        "This device's owner ceiling is kept on its connected machine: narrow it from the device page or run capybara-device ceiling set there.",
-      );
-    const row = await this.db
-      .selectFrom("devices")
-      .select(["owner_full_access", "mode", "provider", "outer_network"])
-      .where("id", "=", id)
-      .executeTakeFirstOrThrow();
-    // the explicit ceiling exists only once B1 snapshotted the device's old effective authority
-    // and its outer network (under the exclusive lifecycle lease, which a request cannot take
-    // inside its transaction): writing it first would pre-empt the snapshot and could leave the
-    // outer network open, so the PATCH is refused until then (the old sandbox switch narrows)
-    if (row.owner_full_access === null || row.outer_network === null)
-      throw new ApiError(
-        "device.permission_not_migrated",
-        "This device's permissions have not been migrated yet; switch it to sandbox mode to narrow it, and set its Full access ceiling once the migration has run",
-      );
-    const current = cloudChosenMode(row) !== "sandbox";
-    if (want === current) return;
-    if (want && !current) {
-      if (patch.confirmWidening !== true)
-        throw new ApiError(
-          "device.owner_ceiling_confirmation_required",
-          "Widening a device's Full access ceiling needs explicit confirmation; conversations then need fresh Full consent",
-        );
-      const policy = await this.sandbox.devicePolicy({ orgId, deviceId: id });
-      if (policy.allowedMode !== "auto")
-        throw new ApiError(
-          "device.full_access_not_allowed",
-          "The platform or the organization does not allow Full access, so this device's ceiling cannot be widened",
-        );
-      // M3: nor beyond what the provider can enforce (a report or a provider without Full)
-      const provider = providerForDevice(this.providers, row.provider);
-      let availability = permissionAvailabilityFor(provider?.impl);
-      if (availability.state === "unprobed" && provider)
-        availability = await readRuntimeReport(this.db.db, id, provider.plugin, provider.version);
-      if (
-        availability.state === "unsupported" ||
-        (availability.state === "supported" && !availability.report.outsideSandbox)
-      )
-        throw new ApiError(
-          "device.full_access_not_allowed",
-          "This device's sandbox provider cannot run Full access, so its ceiling cannot be widened",
-        );
-    }
+    const plan = await this.planNetwork(orgId, id, before, want, opts.narrowOnly === true);
+    if (plan === null) return;
+    const { from, to, next, widened } = plan;
     await this.db
       .updateTable("devices")
       .set({
-        owner_full_access: want,
-        // the old sandbox switch no longer decides once the explicit ceiling is set
-        ...(want && { mode: null }),
+        network_mode: to.mode,
+        network_hosts: JSON.stringify(to.hosts),
         updated_at: sql<Date>`now()`,
       })
       .where("id", "=", id)
       .execute();
-    if (want !== current) {
-      await this.ceilings.publishLocked(
-        { orgId, deviceId: id },
-        "device",
-        want ? false : requiresFullExecution,
-        true,
-      );
-      await audit(this.db.db, {
-        actorAccountId: accountId,
-        ...(actorTokenId !== undefined && { actorTokenId }),
-        orgId,
-        action: "device.owner_ceiling_changed",
-        target: id,
-        detail: {
-          from: { fullAccess: current },
-          to: { fullAccess: want },
-          by: accountId,
-          via: "web",
-        },
-      });
-    }
+    await this.ceilings.publishLocked(
+      { orgId, deviceId: id },
+      "device",
+      (scope, intent) => networkNarrowingRevokes(next, scope, intent),
+      widened,
+    );
+    await audit(this.db.db, {
+      actorAccountId: accountId,
+      ...(actorTokenId !== undefined && { actorTokenId }),
+      orgId,
+      action: "device.network_changed",
+      target: id,
+      detail: {
+        from,
+        to,
+        by: accountId,
+        via: actorTokenId !== undefined ? "token" : "web",
+        ...opts.auditDetail,
+      },
+    });
   }
 
   /**
@@ -772,50 +786,26 @@ export class DevicesService {
   }
 
   /**
-   * The mode a sandbox call in the device runs at now, for the model (`device_paths`, auto mode
-   * spec §4.2): the effective policy for the mode it runs at (a local machine's derived mode,
-   * failing closed; a cloud device's narrowing switch, else the allowed mode), its network, and a
-   * cloud device's pending file-reset state (the mode and network its instance still runs with).
-   * Null when the device is not a live device of the org.
+   * The level a sandbox call in the device runs at now, for the model (legacy `device_paths`, auto
+   * mode spec §4.2): the kernel-internal tier (`SandboxMode`: a local machine's owner permission to
+   * run outside the sandbox, failing closed) with its device sandbox network, and a cloud device's
+   * pending file-reset state (the tier and network its instance still runs with). Null when the
+   * device is not a live device of the org.
    */
   async modeLevel(orgId: string, deviceId: string): Promise<DeviceModeLevel | null> {
     const row = await this.db
-      .selectFrom("devices as e")
-      .leftJoin("device_machines as m", (j) =>
-        j.onRef("m.device_id", "=", "e.id").on("m.revoked_at", "is", null),
-      )
-      .select([
-        "e.source",
-        "e.mode",
-        "e.owner_full_access",
-        "e.outer_network",
-        "m.features",
-        "m.local_policy",
-        "m.owner_report",
-      ])
-      .where("e.id", "=", deviceId)
-      .where("e.org_id", "=", orgId)
-      .where("e.deleted_at", "is", null)
+      .selectFrom("devices")
+      .select(["source"])
+      .where("id", "=", deviceId)
+      .where("org_id", "=", orgId)
+      .where("deleted_at", "is", null)
       .executeTakeFirst();
     if (row === undefined) return null;
-    const [deployment, settings] = await Promise.all([
-      readDeploymentDevicePolicy(this.db.db, this.config),
-      readOrgSettings(this.db.db, orgId),
-    ]);
-    // a local device's mode is derived fail-closed; a cloud device's switch (or its B1 owner
-    // ceiling and outer network once snapshotted) only narrows it
-    const chosen: SandboxMode | null =
-      row.source === "local" ? ownerModeOf(row) : cloudChosenMode(row);
-    const policy = effectiveDevicePolicy(
-      deployment,
-      settings,
-      chosen,
-      row.source === "local" ? null : row.outer_network,
-    );
+    const policy = await this.sandbox.devicePolicy({ orgId, deviceId });
     let mode = policy.mode;
     let network: DeviceNetwork =
       row.source === "local"
-        ? { kind: "allowlist", hosts: [...policy.localAllowedDomains] }
+        ? networkOfSandbox(await this.facts.deviceSandbox(orgId, deviceId))
         : policy.network;
     if (row.source === "cloud") {
       const state = await this.sandbox.limitsState({ orgId, deviceId }, { policy });
@@ -946,14 +936,15 @@ export class DevicesService {
   }
 
   /**
-   * The owner changes one of their own devices' local policy (network ask-to-allow spec §7, §13
-   * Q6; auto mode spec §4.1): sent to the machine with the `policy` op, which is the authority and
-   * answers with the policy as written. Anyone but the owner gets `device.not_found`. The owner may
-   * add or remove sandbox-mode hosts, and turn the sandbox back on (`mode: "sandbox"`); auto mode
-   * is turned on only on the machine. The machine offline → `device.offline`; a cloud device or a
-   * program without the `policyOpId` feature → `device.policy_unsupported`; the machine's refusal →
-   * `device.policy_refused` with its message. Callers are human sessions only (no personal access
-   * token, no service token, no Platform op).
+   * The owner narrows one of their own local devices' sandbox from the web (approval-only
+   * profiles design, "Settings model"): sent to the machine with the `policy` op, which is the
+   * authority and answers with the policy as written. Anyone but the owner gets
+   * `device.not_found`. The owner may remove hosts from the machine's allowlist and narrow its
+   * owner ceiling (no running outside the sandbox, the allowlist network, the workspace reach);
+   * widening happens on the machine only. The machine offline → `device.offline`; a cloud device
+   * or a program without the `policyOpId` feature → `device.policy_unsupported`; the machine's
+   * refusal → `device.policy_refused` with its message. Callers are human sessions only (no
+   * personal access token, no service token, no Platform op).
    */
   async changePolicy(
     orgId: string,
@@ -966,9 +957,7 @@ export class DevicesService {
       orgId,
       deviceId: id,
       change: {
-        ...(change.add !== undefined && { add: change.add }),
         ...(change.remove !== undefined && { remove: change.remove }),
-        ...(change.mode !== undefined && { mode: change.mode }),
         ...(change.ownerCeiling !== undefined && { ownerCeiling: narrowOnly(change.ownerCeiling) }),
       },
       source: { accountId: account.id, accountName: account.displayName, via: "web" },
@@ -1307,9 +1296,8 @@ export class DevicesService {
         "e.source",
         "e.provider",
         "e.demoted_from_provider",
-        "e.mode",
-        "e.owner_full_access",
-        "e.outer_network",
+        "e.network_mode",
+        "e.network_hosts",
         "e.permission_reconcile_required",
         "e.created_at",
         "m.id as machine_id",
@@ -1362,53 +1350,26 @@ export class DevicesService {
     const demotedProviders = [
       ...new Set(rows.flatMap((r) => (demoted.get(r.id) ? [demoted.get(r.id) as string] : []))),
     ];
-    const [names, recent, settings, deployment] = await Promise.all([
+    const [names, recent] = await Promise.all([
       this.displayNames.many(demotedProviders),
-      this.recentModeChanges(
+      this.recentChanges(
         orgId,
         rows.map((r) => r.id),
       ),
-      readOrgSettings(this.db.db, orgId),
-      readDeploymentDevicePolicy(this.db.db, this.config),
     ]);
-    const summaryOf = (r: (typeof all)[number]): LocalReport | null => {
-      const summary = r.source === "local" ? localPolicyOf(r.machine_local_policy) : null;
-      if (summary === null) return null;
-      const owner = ownerFactsOf({ owner_report: r.machine_owner_report });
-      return {
-        reported: owner.state === "report" ? (owner.fullAccess ? "auto" : "sandbox") : null,
-        allowedDomains: summary.allowedDomains,
-      };
-    };
-    /** The mode the device chose: its machine's report (local) or its switch (cloud: sandbox, or null to follow the org). */
-    const chosenOf = (r: (typeof all)[number]): SandboxMode | null =>
-      r.source === "local"
-        ? ownerModeOf({ owner_report: r.machine_owner_report })
-        : cloudChosenMode(r);
-    const policyOf = (r: (typeof all)[number]): EffectiveDevicePolicy =>
-      effectiveDevicePolicy(
-        deployment,
-        settings,
-        chosenOf(r),
-        r.source === "local" ? null : r.outer_network,
-      );
-    // the network each mode gives a cloud device, within its outer network once snapshotted
-    const sandboxNetwork = deviceNetwork(deployment, settings, "sandbox");
-    const fullNetwork = deviceNetwork(deployment, settings, "auto");
-    const within = (n: DeviceNetwork, outer: DeviceNetwork | null): DeviceNetwork =>
-      outer === null ? n : intersectNetworks(n, outer);
-    // each device's limits and its instance's pending change
+    // each device's sandbox, limits and its instance's pending change
     const perDevice = new Map(
       await Promise.all(
         rows.map(async (r) => {
-          const policy = policyOf(r);
-          const [limits, state] = await Promise.all([
+          const policy = await this.sandbox.devicePolicy({ orgId, deviceId: r.id });
+          const [limits, state, facts] = await Promise.all([
             this.sandbox.deviceLimits({ orgId, deviceId: r.id }, { policy, source: r.source }),
             r.source === "cloud"
               ? this.sandbox.limitsState({ orgId, deviceId: r.id }, { policy })
               : { pendingNextUse: false, pendingFilesReset: false },
+            this.facts.deviceSandboxFacts(orgId, r.id),
           ]);
-          return [r.id, { limits, state }] as const;
+          return [r.id, { limits, state, box: facts.box }] as const;
         }),
       ),
     );
@@ -1466,22 +1427,18 @@ export class DevicesService {
                 policy: localPolicyOf(r.machine_local_policy),
               }
             : null,
-        mode: deviceModeViewOf(
-          policyOf(r),
-          settings,
-          r.source === "local",
-          summaryOf(r),
+        sandbox: sandboxViewOf(
+          perDevice.get(r.id)?.box as DeviceSandbox,
+          r.source === "local"
+            ? ownerFactsOf({ owner_report: r.machine_owner_report })
+            : cloudOwnNetwork(r),
           {
             pendingNextUse: perDevice.get(r.id)?.state.pendingNextUse ?? false,
             pendingFilesReset: perDevice.get(r.id)?.state.pendingFilesReset ?? false,
             recent: recent.get(r.id) ?? [],
-            sandboxNetwork: within(sandboxNetwork, r.outer_network),
-            fullNetwork: within(fullNetwork, r.outer_network),
-            outerNetwork: r.source === "local" ? null : r.outer_network,
           },
-          this.config.get().sandbox.limits.egress === "none",
         ),
-        // a local device's machine decides it; cloud devices have none in phase 2
+        // a local device's machine decides it; a cloud device has none
         ownerCeiling: ownerCeilingViewOf(r, online.get(r.id) ?? false),
         reconcileRequired: r.source === "cloud" && r.permission_reconcile_required,
         sessionIsolation: r.machine_session_isolation ?? false,
@@ -1492,23 +1449,21 @@ export class DevicesService {
               lastUsedAt: (r.last_used_at as Date).toISOString(),
             }
           : null,
-        limits: limitsView(perDevice.get(r.id)?.limits as SandboxLimits),
+        limits: limitsView(perDevice.get(r.id)?.limits as DeviceLimits),
         createdAt: r.created_at.toISOString(),
       };
     });
   }
 
   /**
-   * The last {@link RECENT_POLICY_CHANGES} mode and policy changes of each device in the org
-   * (audit rows `device.policy_changed`, `device.policy_unknown`, `device.policy_failed`,
-   * `device.mode_changed`, `device.owner_ceiling_changed`), newest first, with the deciding
-   * account's display name.
+   * The last {@link RECENT_POLICY_CHANGES} setting changes of each device in the org (audit rows
+   * {@link SETTING_CHANGE_ACTIONS}), newest first, with the deciding account's display name.
    */
-  private async recentModeChanges(
+  private async recentChanges(
     orgId: string,
     deviceIds: string[],
-  ): Promise<Map<string, DeviceModeChangeView[]>> {
-    const out = new Map<string, DeviceModeChangeView[]>();
+  ): Promise<Map<string, DeviceSettingChangeView[]>> {
+    const out = new Map<string, DeviceSettingChangeView[]>();
     if (deviceIds.length === 0) return out;
     const ranked = this.db
       .selectFrom("audit_events as a")
@@ -1523,7 +1478,7 @@ export class DevicesService {
         ),
       ])
       .where("a.org_id", "=", orgId)
-      .where("a.action", "in", [...MODE_CHANGE_ACTIONS])
+      .where("a.action", "in", [...SETTING_CHANGE_ACTIONS])
       .where("a.target", "in", deviceIds);
     const rows = await this.db
       .selectFrom(ranked.as("r"))
@@ -1536,7 +1491,7 @@ export class DevicesService {
       if (r.target === null) continue;
       const list = out.get(r.target) ?? [];
       list.push(
-        modeChangeOf(
+        settingChangeOf(
           r.action,
           r.at,
           (r.detail ?? {}) as Record<string, unknown>,
@@ -1589,12 +1544,11 @@ export class DevicesService {
     name: string | null;
     is_default: boolean;
     source: "cloud" | "local";
-    mode: "sandbox" | null;
   }> {
     await this.lockMember(orgId, accountId);
     const row = await this.db
       .selectFrom("devices")
-      .select(["name", "is_default", "source", "mode"])
+      .select(["name", "is_default", "source"])
       .where("id", "=", id)
       .where("org_id", "=", orgId)
       .where("owner_kind", "=", "personal")
@@ -1632,71 +1586,156 @@ function refuseDeviceReset(env: { provider: string | null }): void {
   }
 }
 
-/** A copy of `l` for a view (its lists not shared). */
-const limitsView = (l: SandboxLimits): SandboxLimits => ({
-  ...l,
-  network: { kind: l.network.kind, hosts: [...l.network.hosts] },
-});
+/** A copy of `l` for a view (its lists not shared; the kernel-internal tier left out). */
+const limitsView = (l: DeviceLimits): SandboxLimits => {
+  const { mode: _kernelOnly, ...rest } = l;
+  return { ...rest, network: { kind: l.network.kind, hosts: [...l.network.hosts] } };
+};
 
-/** The audit actions a device's recent mode, policy and ceiling changes list. */
-const MODE_CHANGE_ACTIONS = [
+const sameHosts = (a: readonly string[], b: readonly string[]) =>
+  a.length === b.length && a.every((h, i) => h === b[i]);
+
+const NETWORK_RANK = { none: 0, allowlist: 1, open: 2 } as const;
+
+/**
+ * Whether the effective sandbox network widens from `a` to `b`: a wider mode, or an allowlist
+ * gaining a host the previous one did not cover.
+ */
+function networkWidens(
+  a: Pick<DeviceSandbox, "networkMode" | "hosts">,
+  b: Pick<DeviceSandbox, "networkMode" | "hosts">,
+): boolean {
+  if (NETWORK_RANK[b.networkMode] !== NETWORK_RANK[a.networkMode])
+    return NETWORK_RANK[b.networkMode] > NETWORK_RANK[a.networkMode];
+  return (
+    b.networkMode === "allowlist" &&
+    b.hosts.some((h) => !a.hosts.some((p) => coversHost(p.toLowerCase(), h.toLowerCase())))
+  );
+}
+
+const STORED_RANK = { none: 0, allowlist: 1, open: 2 } as const;
+
+/**
+ * Whether a cloud device's stored network setting widens from `a` to `b`, whatever the network in
+ * effect now (a stored widening takes effect when a ceiling opens later): a wider mode, where
+ * following the org (null) counts as wider than any explicit mode; or an explicit host list
+ * replaced by none of its own (follow the org's hosts) or gaining a host.
+ */
+export function storedNetworkWidens(a: DeviceNetworkSetting, b: DeviceNetworkSetting): boolean {
+  const rank = (m: DeviceNetworkSetting["mode"]) => (m === null ? 3 : STORED_RANK[m]);
+  if (rank(b.mode) !== rank(a.mode)) return rank(b.mode) > rank(a.mode);
+  if (b.mode !== "allowlist" || a.hosts.length === 0) return false;
+  if (b.hosts.length === 0) return true;
+  return b.hosts.some((h) => !a.hosts.some((p) => coversHost(p.toLowerCase(), h.toLowerCase())));
+}
+
+/**
+ * What a cloud device's new network takes from admitted or started work (`next`: its sandbox
+ * after the change): open-network work once it is no longer open, and allowlist work naming a host
+ * its new hosts no longer cover, unless an independent grant the new per-call ceiling still allows
+ * holds it (`hostsNarrowed`).
+ */
+export function networkNarrowingRevokes(
+  next: { box: Pick<DeviceSandbox, "networkMode" | "hosts">; hostCeiling: HostGrantCeiling },
+  scope: SandboxOperationScope | SandboxBrowseScope,
+  intent: Pick<Selectable<SandboxOperationIntentsTable>, "method" | "granted_hosts">,
+): boolean {
+  if (next.box.networkMode === "open") return false;
+  return (
+    needsOpenNetwork(scope) ||
+    hostsNarrowed(scope, intent, next.box.hosts, (host) => hostGrantable(next.hostCeiling, host))
+  );
+}
+
+/** Who set a network ceiling, for an actionable refusal. */
+function networkLayerText(layer: DeviceSandboxLayer | null): string {
+  switch (layer) {
+    case "platform":
+      return "the platform (a super admin)";
+    case "org":
+      return "the organization (an org admin)";
+    case "provider":
+      return "its sandbox provider";
+    default:
+      return "its owner";
+  }
+}
+
+/** The audit actions a device's recent setting changes list. */
+const SETTING_CHANGE_ACTIONS = [
   "device.policy_changed",
   "device.policy_unknown",
   "device.policy_failed",
-  "device.mode_changed",
   "device.owner_ceiling_changed",
+  "device.network_changed",
 ] as const;
-
-const modeOrNull = (v: unknown): SandboxMode | null => (v === "auto" || v === "sandbox" ? v : null);
 
 /** One side of an audited ceiling change; null when the row does not carry a readable one. */
 function ceilingFactsOf(v: unknown): DeviceCeilingFacts | null {
   if (typeof v !== "object" || v === null) return null;
   const o = v as Record<string, unknown>;
-  if (typeof o.fullAccess !== "boolean") return null;
+  // rows written before the rename carry the same fact as `fullAccess`
+  const outside = typeof o.outsideSandbox === "boolean" ? o.outsideSandbox : o.fullAccess;
+  if (typeof outside !== "boolean") return null;
   const reach = o.restrictedProjectReach;
   return {
-    fullAccess: o.fullAccess,
+    outsideSandbox: outside,
     ...((reach === "workspace" || reach === "os-user") && { restrictedProjectReach: reach }),
+    ...((o.network === "open" || o.network === "allowlist") && { network: o.network }),
   };
 }
 
-/** One audit row of {@link MODE_CHANGE_ACTIONS} as a {@link DeviceModeChangeView}. */
-function modeChangeOf(
+/** One side of an audited cloud network change. */
+function networkSettingOf(v: unknown): DeviceNetworkSetting {
+  const o = (typeof v === "object" && v !== null ? v : {}) as Record<string, unknown>;
+  const mode = o.mode;
+  return {
+    mode: mode === "open" || mode === "allowlist" || mode === "none" ? mode : null,
+    hosts: Array.isArray(o.hosts) ? o.hosts.filter((h): h is string => typeof h === "string") : [],
+  };
+}
+
+/** One audit row of {@link SETTING_CHANGE_ACTIONS} as a {@link DeviceSettingChangeView}. */
+function settingChangeOf(
   action: string,
   at: Date,
   d: Record<string, unknown>,
   by: string | null,
-): DeviceModeChangeView {
+): DeviceSettingChangeView {
   const hosts = (v: unknown) =>
     Array.isArray(v) ? v.filter((h): h is string => typeof h === "string") : [];
-  const base = { at: at.toISOString(), add: [], remove: [], mode: null, ceiling: null, by };
+  const via: DeviceSettingChangeView["via"] =
+    d.via === "im"
+      ? "im"
+      : d.via === "device"
+        ? "device"
+        : d.via === "token"
+          ? "token"
+          : d.via === "agent"
+            ? "agent"
+            : "web";
+  const base = { at: at.toISOString(), add: [], remove: [], ceiling: null, network: null, by, via };
   if (action === "device.owner_ceiling_changed") {
     const to = ceilingFactsOf(d.to);
     return {
       ...base,
       kind: "ceiling",
       ceiling: to === null ? null : { from: ceilingFactsOf(d.from), to },
-      via: d.via === "im" ? "im" : d.via === "device" ? "device" : "web",
       outcome: "applied",
     };
   }
-  if (action === "device.mode_changed") {
-    const to = modeOrNull(d.to);
+  if (action === "device.network_changed")
     return {
       ...base,
-      kind: "mode",
-      mode: to === null ? null : { ...(d.from !== undefined && { from: modeOrNull(d.from) }), to },
-      via: d.via === "im" ? "im" : d.via === "device" ? "device" : "web",
+      kind: "network",
+      network: { from: networkSettingOf(d.from), to: networkSettingOf(d.to) },
       outcome: "applied",
     };
-  }
   return {
     ...base,
     kind: "policy",
     add: hosts(d.add),
     remove: hosts(d.remove),
-    via: d.via === "im" ? "im" : d.via === "device" ? "device" : "web",
     outcome:
       action === "device.policy_unknown"
         ? "unknown"
@@ -1707,143 +1746,60 @@ function modeChangeOf(
 }
 
 /**
- * What a local machine reported, as the mode view shows it: the mode its owner report encodes
- * (null without an authenticated report) and its sandbox allowlist.
+ * The sandbox view of one device: its effective {@link DeviceSandbox} with its own network setting
+ * (`own`: a local machine's owner facts, a cloud device's stored choice) and the instance's pending
+ * change with the recent changes.
  */
-export interface LocalReport {
-  reported: SandboxMode | null;
-  allowedDomains: string[];
-}
-
-/**
- * The mode view of one device (auto mode spec §4.3): its effective policy with what its machine
- * reported (`summary`, local devices only), the network and where it comes from, and the
- * instance's pending change with the recent changes.
- */
-export function deviceModeViewOf(
-  policy: EffectiveDevicePolicy,
-  settings: OrgDeviceSettings,
-  local: boolean,
-  summary: LocalReport | null,
-  extra: {
-    pendingNextUse: boolean;
-    pendingFilesReset: boolean;
-    recent: DeviceModeChangeView[];
-    /** The network sandbox mode gives a cloud device, within its outer network. */
-    sandboxNetwork: DeviceNetwork;
-    /** The network Full access gives a cloud device, within its outer network. */
-    fullNetwork: DeviceNetwork;
-    /** A cloud device's B1 outer network; null when not snapshotted. */
-    outerNetwork: DeviceNetwork | null;
-  },
-  /** The platform kill switch (`sandbox.limits.egress: none`): the network is the platform's. */
-  killSwitch = false,
-): DeviceModeView {
-  const { sandboxNetwork, fullNetwork, outerNetwork, ...rest } = extra;
-  const copy = (n: DeviceNetwork | null) =>
-    local || n === null ? null : { kind: n.kind, hosts: [...n.hosts] };
-  const networkKind = local ? "allowlist" : policy.network.kind;
-  const org = settings.deviceNetwork;
-  // the mode the org chose (its default or ceiling; the narrower), until T10 reworks this view
-  const orgMode =
-    org?.ceiling === "allowlist" || org?.default === "allowlist"
-      ? "allowlist"
-      : (org?.ceiling ?? org?.default);
-  // "org" only when the org supplied what is in effect: the kill switch always wins; auto mode
-  // ignores the org's network; a local device's list is the org's only when the org changed the
-  // platform's (its own base or a delta); a sandbox cloud device's kind is the org's when it
-  // matches the mode the org chose (the platform ceiling may force the allowlist)
-  const orgHosts =
-    org?.base === "none" ||
-    (org?.extraHosts?.length ?? 0) > 0 ||
-    (org?.excludedHosts?.length ?? 0) > 0;
-  const source: "org" | "platform" = killSwitch
-    ? "platform"
-    : local
-      ? policy.mode === "sandbox" && orgHosts
-        ? "org"
-        : "platform"
-      : policy.mode === "sandbox" &&
-          orgMode !== undefined &&
-          (orgMode === "open" ? networkKind === "open-public" : networkKind === "allowlist")
-        ? "org"
-        : "platform";
-  const network = local
-    ? { kind: "allowlist" as const, hosts: [...policy.localAllowedDomains], source }
-    : { kind: policy.network.kind, hosts: [...policy.network.hosts], source };
+export function sandboxViewOf(
+  box: DeviceSandbox,
+  own:
+    | Pick<OwnerFacts, "state" | "network" | "allowedDomains">
+    | { networkMode: "open" | "allowlist" | "none" | null; networkHosts: readonly string[] },
+  extra: Pick<DeviceSandboxView, "pendingNextUse" | "pendingFilesReset" | "recent">,
+): DeviceSandboxView {
+  const local = "state" in own;
   return {
-    mode: policy.mode,
-    allowedMode: policy.allowedMode,
-    allowedBy:
-      policy.allowedMode === "sandbox"
-        ? null
-        : settings.outsideSandbox === "allowed"
-          ? "org"
-          : "platform",
-    network,
-    local: local
-      ? {
-          reported: summary?.reported ?? null,
-          allowedDomains: [...(summary?.allowedDomains ?? [])],
-        }
-      : null,
-    sandboxNetwork: copy(sandboxNetwork),
-    fullNetwork: copy(fullNetwork),
-    outerNetwork: copy(outerNetwork),
-    ...rest,
+    network: box.networkMode,
+    networkCeiling: box.networkCeiling,
+    hosts: [...box.hosts],
+    ownNetwork: local ? (own.state === "missing" ? null : own.network) : own.networkMode,
+    allowedDomains: local ? [...own.allowedDomains] : [...own.networkHosts],
+    outsideSandbox: box.outsideSandbox,
+    restrictedProjectReach: box.restrictedProjectReach,
+    layer: { ...box.layer },
+    ...extra,
   };
 }
 
-/** The read-only owner ceiling view of a listed device row (B2). */
+/** The read-only owner ceiling view of a listed local device row. */
 function ownerCeilingViewOf(
-  r: {
-    source: "cloud" | "local";
-    machine_id: string | null;
-    machine_features: unknown;
-    machine_local_policy: unknown;
-    machine_owner_report: unknown;
-    owner_full_access: boolean | null;
-    mode: "sandbox" | null;
-  },
+  r: { source: "cloud" | "local"; machine_id: string | null; machine_owner_report: unknown },
   online: boolean,
 ): DeviceOwnerCeilingView | null {
-  if (r.source === "cloud")
-    return r.owner_full_access === null
-      ? null
-      : {
-          state: "cloud",
-          revision: null,
-          sequence: null,
-          fullAccess: r.owner_full_access,
-          effectiveFullAccess: cloudChosenMode(r) !== "sandbox",
-          restrictedProjectReach: "workspace",
-          restrictedAllowedDomains: [],
-          observedAt: null,
-          stale: false,
-        };
-  if (r.machine_id === null) return null;
+  if (r.source === "cloud" || r.machine_id === null) return null;
   const f = ownerFactsOf({ owner_report: r.machine_owner_report });
   return {
     state: f.state,
     revision: f.revision,
     sequence: f.sequence,
-    fullAccess: f.fullAccess,
-    // the mode admission derives, fail closed
-    effectiveFullAccess: ownerModeOf({ owner_report: r.machine_owner_report }) === "auto",
+    outsideSandbox: f.outsideSandbox,
+    network: f.network,
+    allowedDomains: [...f.allowedDomains],
     restrictedProjectReach: f.restrictedProjectReach,
-    restrictedAllowedDomains: f.restrictedAllowedDomains,
     observedAt: f.observedAt,
     stale: !online || f.state !== "report",
   };
 }
 
-/** The owner ceiling narrowing the web may send (B2): anything wider is refused, never sent. */
+/** The owner ceiling narrowing the web may send: anything wider is refused, never sent. */
 function narrowOnly(c: {
-  fullAccess?: unknown;
+  outsideSandbox?: unknown;
+  network?: unknown;
   restrictedProjectReach?: unknown;
 }): DeviceOwnerCeilingNarrowing {
   if (
-    (c.fullAccess !== undefined && c.fullAccess !== false) ||
+    (c.outsideSandbox !== undefined && c.outsideSandbox !== false) ||
+    (c.network !== undefined && c.network !== "allowlist") ||
     (c.restrictedProjectReach !== undefined && c.restrictedProjectReach !== "workspace")
   )
     throw new ApiError(
@@ -1851,8 +1807,8 @@ function narrowOnly(c: {
       "The device page can only narrow a machine's owner ceiling; widen it on the machine with capybara-device ceiling set",
     );
   return {
-    // the device page's `fullAccess: false` (until T11) is the protocol 4 `outsideSandbox: false`
-    ...(c.fullAccess === false && { outsideSandbox: false as const }),
+    ...(c.outsideSandbox === false && { outsideSandbox: false as const }),
+    ...(c.network === "allowlist" && { network: "allowlist" as const }),
     ...(c.restrictedProjectReach === "workspace" && {
       restrictedProjectReach: "workspace" as const,
     }),

@@ -8,6 +8,7 @@ import {
   NETWORK_ASK_CANCELLED_NOTE,
 } from "../../src/tools/approvals.service.js";
 import {
+  addressEscalationHint,
   allowedOnceNote,
   clipKept,
   deniedNote,
@@ -72,12 +73,70 @@ describe("planNetworkAsk", () => {
       attended,
     );
     expect(p.ask).toEqual([{ host: "files.slack.com", port: 443 }]);
-    expect(p.scopes).toEqual(["once"]);
+    // a run grant only: no "always" remnant in the plan
+    expect(p).not.toHaveProperty("scopes");
     expect(p.notes).toEqual([
       "[network] api.foo.com is not in the organization's network allowlist. Only an organization admin can add it; the user can ask an admin from the conversation. Continue without it or tell the user.",
       "[network] 10.0.0.5 is a private or local address, which commands can never reach.",
     ]);
     expect(p.missingGrants).toEqual([]);
+  });
+
+  it("a host beyond a local owner's allowlist is not asked: the owner adds it on the machine", () => {
+    const why =
+      "the device owner adds it on the machine: capybara-device policy add allowedDomains a.com";
+    const p = planNetworkAsk([dev("a.com"), dev("b.com")], run(), {
+      ...attended,
+      refusal: (h) => (h === "a.com" ? why : null),
+    });
+    expect(p.ask).toEqual([{ host: "b.com", port: 443 }]);
+    expect(p.notes).toEqual([
+      `[network] a.com was blocked by this device's network policy and cannot be allowed from this conversation: ${why}. Continue without it or tell the user.`,
+    ]);
+  });
+
+  it("a host beyond an org or platform allowlist ceiling names the organization admin, never asked", () => {
+    const why = "an organization admin adds c.com to the organization's device network list";
+    for (const layer of ["device", "org"] as const) {
+      const p = planNetworkAsk([{ host: "c.com", port: 443, layer }], run(), {
+        ...attended,
+        refusal: () => why,
+      });
+      expect(p.ask).toEqual([]);
+      expect(p.notes).toEqual([
+        `[network] c.com was blocked by this device's network policy and cannot be allowed from this conversation: ${why}. Continue without it or tell the user.`,
+      ]);
+    }
+  });
+
+  it("the escalation hint follows admission's verdict and the open network only", () => {
+    expect(addressEscalationHint("available", "open")).toBe(true);
+    // a withheld runtime (or any escalation refusal): admission gives no `available`
+    expect(addressEscalationHint(undefined, "open")).toBe(false);
+    // an already escalated call has nothing to retry with
+    expect(addressEscalationHint("escalated", "open")).toBe(false);
+    // under an allowlist or a closed network a host grant (or nothing) is the remedy
+    expect(addressEscalationHint("available", "allowlist")).toBe(false);
+    expect(addressEscalationHint("available", "none")).toBe(false);
+  });
+
+  it("a private address under the open network gets the escalation hint, never an ask", () => {
+    const blocked = [{ host: "10.0.0.5", port: 80, layer: "address" as const }];
+    const p = planNetworkAsk(blocked, run(), { ...attended, escalation: true });
+    expect(p.ask).toEqual([]);
+    expect(p.notes).toEqual([
+      '[network] 10.0.0.5 is a private or local address, which the sandbox never reaches. If the command must reach it, retry the same Bash call with sandbox: "escalated" and justification: one sentence saying why; this conversation\'s permission profile decides whether it may run outside the sandbox for this call only.',
+    ]);
+    // an unattended run cannot escalate: the plain note
+    expect(
+      planNetworkAsk(blocked, run(), {
+        device: attended.device,
+        unattended: unattended("wait"),
+        escalation: true,
+      }).notes,
+    ).toEqual([
+      "[network] 10.0.0.5 is a private or local address, which commands can never reach.",
+    ]);
   });
 
   it("an org-layer host beyond the platform ceiling names the super admin, not the org admins", () => {

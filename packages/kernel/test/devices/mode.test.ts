@@ -143,12 +143,13 @@ async function unreportedLocalDevice(): Promise<string> {
 }
 
 describe("DevicesService.modeLevel", () => {
-  it("a local device carries its reported mode and the org's sandbox-mode allowlist", async () => {
+  it("a local device carries its reported tier and its device sandbox network", async () => {
     const deviceId = await localDevice();
+    // the owner's network is open (a new install's default): the sandbox network is open
     expect(await devices.modeLevel(orgId, deviceId)).toEqual({
       mode: "auto",
       allowedMode: "auto",
-      network: { kind: "allowlist", hosts: ["*.example.com"] },
+      network: { kind: "open-public", hosts: [] },
       local: true,
     });
   });
@@ -196,20 +197,21 @@ describe("DevicesService.modeLevel", () => {
     expect(devicePathsText(first?.payload as DevicePathsPayload)).toContain(
       "Mode: auto. Commands run as the user on this machine",
     );
-    // the owner ran `capybara-device ceiling set --full-access deny` and allowed a host: the
-    // program pushes the new owner report with its summary
-    const summary: DeviceLocalPolicySummary = { allowedDomains: ["a.com"] };
+    // the owner ran `capybara-device ceiling set --outside-sandbox off --network allowlist` and
+    // allowed a host: the program pushes the new owner report with its summary
+    const summary: DeviceLocalPolicySummary = { allowedDomains: ["a.example.com"] };
     await machines.recordPolicyV3(machineId, {
       type: "policy",
       policy: summary,
-      ownerCeiling: ownerReportFor(summary, { outsideSandbox: false }),
+      ownerCeiling: ownerReportFor(summary, { outsideSandbox: false, network: "allowlist" }),
     });
     expect((await machines.activeFor(deviceId))?.localPolicy).toEqual(summary);
     const after = await devices.modeLevel(orgId, deviceId);
+    // the owner's list narrows the org's hosts
     expect(after).toMatchObject({
       mode: "sandbox",
       local: true,
-      network: { kind: "allowlist", hosts: ["*.example.com"] },
+      network: { kind: "allowlist", hosts: ["a.example.com"] },
     });
     // the next sandbox call records a new device_paths event, which tells the model
     const next = devicePathsChange(
@@ -233,8 +235,8 @@ describe("DevicesService.modeLevel", () => {
       {
         action: "device.owner_ceiling_changed",
         detail: expect.objectContaining({
-          from: { fullAccess: true, restrictedProjectReach: "workspace" },
-          to: { fullAccess: false, restrictedProjectReach: "workspace" },
+          from: { outsideSandbox: true, restrictedProjectReach: "workspace", network: "open" },
+          to: { outsideSandbox: false, restrictedProjectReach: "workspace", network: "allowlist" },
           by: ownerId,
           via: "device",
           machineId,

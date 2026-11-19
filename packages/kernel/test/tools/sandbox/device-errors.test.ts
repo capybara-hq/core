@@ -19,10 +19,10 @@ import {
 } from "../../../src/sandbox/sandbox.service.js";
 import {
   DEVICE_REQUEST_NOT_SENT_TOOL_TEXT,
-  FULL_ACCESS_CEILING_TOOL_TEXT,
   FULL_ACCESS_OFF_BY_POLICY_TOOL_TEXT,
   mapSandboxError,
   OUTCOME_UNKNOWN_TOOL_TEXT,
+  OUTSIDE_SANDBOX_CEILING_TOOL_TEXT,
   PERMISSION_UNSUPPORTED_TOOL_TEXT,
   RETIREMENT_PENDING_TOOL_TEXT,
   RETIREMENT_RECREATE_TOOL_TEXT,
@@ -88,15 +88,15 @@ describe("sandbox tool errors", () => {
     },
   );
 
-  it("a device ceiling without Full access points to the owner's ceiling command", () => {
+  it("a device that does not allow running outside the sandbox points to the owner's ceiling command", () => {
     const mapped = mapSandboxError(
-      new ApiError("device.full_access_not_allowed", "internal detail"),
+      new ApiError("device.outside_sandbox_not_allowed", "internal detail"),
       undefined,
     );
     expect(mapped).toBeInstanceOf(ToolError);
-    expect(message(mapped)).toBe(FULL_ACCESS_CEILING_TOOL_TEXT);
-    expect(message(mapped)).toMatch(/owner ceiling/);
-    expect(message(mapped)).toMatch(/capybara-device ceiling set/);
+    expect(message(mapped)).toBe(OUTSIDE_SANDBOX_CEILING_TOOL_TEXT);
+    expect(message(mapped)).toMatch(/outside the sandbox/);
+    expect(message(mapped)).toMatch(/capybara-device ceiling set --outside-sandbox on/);
     expect(message(mapped)).not.toContain("internal detail");
   });
 

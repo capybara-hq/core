@@ -119,7 +119,6 @@ describe("device projects (owner browse)", () => {
     workspace: WS,
     home: "/home/me",
     supported: true,
-    widerThanAllowed: false,
   };
   const projects = (activation?: boolean) =>
     new DeviceProjectsService(
@@ -201,7 +200,6 @@ describe("project knowledge (run start)", () => {
           workspace: WS,
           home: "/home/me",
           supported: true,
-          widerThanAllowed: false,
         }),
       } as never,
       sb as never,
