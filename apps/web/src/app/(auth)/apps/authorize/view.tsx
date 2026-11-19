@@ -23,7 +23,7 @@ const needsLogin = (e: unknown) => e instanceof ApiClientError && e.status === 4
 
 /**
  * `/apps/authorize`: the one confirmation before the Capybara desktop app is signed in (desktop
- * client spec §6.5). 登录 and 取消 post the kernel's authorize route (取消 with `deny`); the page
+ * client spec §6.5). the Sign in and Cancel buttons post the kernel's authorize route (Cancel with `deny`); the page
  * navigates only to the redirect the kernel returned, never to the query's `redirect_uri`, and
  * not at all when the kernel refused.
  */
