@@ -24,8 +24,6 @@ import {
   type ConversationEvent,
   type ModelRef,
 } from "../../lib/conversations";
-import { modelLabel } from "../../lib/extension-label";
-import { targetName } from "../../lib/models";
 import { retryOnMountOf } from "../../lib/query/client";
 import {
   agentTreeQuery,
@@ -73,7 +71,7 @@ function statusOf(s: AgentTreeNode["status"]): AgentMapStatus {
 
 /**
  * The agent tree (`GET …/agent-tree`) as the map's nodes (agent map spec §9.2): `idle` reads as
- * completed, the model as `provider / model` (with the providers' display names when given), an
+ * completed, the model as its display name alone (the id when the providers are not given), an
  * untitled root as `untitled`. The tree reports a run that ended on its step, time or token limit
  * as `idle` (the run completed); `finishes` (the root's own children's latest
  * `subagent_finished`, which the stream shows as `limit`) corrects an ended node. A deeper agent's
@@ -89,12 +87,13 @@ export function agentTreeNodes(
     finishes?: ReadonlyMap<string, AgentMapStatus>;
   } = {},
 ): AgentMapNode {
+  // The model's display name alone (no provider prefix: it would push the name into an ellipsis)
   const model = (m: AgentTreeNode["model"]) =>
     m === null
       ? "—"
-      : opts.providers
-        ? targetName(opts.providers, m, locale)
-        : modelLabel({ name: m.provider }, m.model, locale);
+      : (opts.providers
+          ?.find((p) => p.provider === m.provider)
+          ?.models.find((x) => x.id === m.model)?.displayName ?? m.model);
   const walk = (n: AgentTreeNode, root: boolean): AgentMapNode => ({
     id: n.id,
     description: root && n.description === "" ? (opts.untitled ?? "") : n.description,
