@@ -1204,6 +1204,8 @@ export class SandboxOperationAuthority {
         // a cloud device has no outside: its provider's instance is the outermost boundary
         outsideSandbox: location === "local" && box.outsideSandbox,
         outerNetwork: applied.outerNetwork,
+        // the provider's network covers a whole instance: no host is granted per call there
+        perCallHosts: box.boundary !== "instance",
       },
     });
   }

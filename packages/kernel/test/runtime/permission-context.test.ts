@@ -1666,6 +1666,57 @@ describe("permission context v2: the device sandbox and the approver per crossin
         `Sensitive commands: ${person}.`,
       ],
     ],
+    ...(
+      [
+        // a new context records that hosts are not grantable per call: Full access says so
+        [
+          true,
+          [
+            "Hosts outside the network allowlist: not approvable per call on this device; the device's host list must include them.",
+          ],
+        ],
+        // a stored context without the field renders the bytes it rendered (zero drift)
+        [false, []],
+      ] as const
+    ).map(
+      ([recorded, extra]) =>
+        [
+          `Full access on an instance-boundary allowlist${recorded ? "" : " (stored before perCallHosts)"}`,
+          sandboxed("full-access", false, {
+            scope: {
+              location: "cloud",
+              workingRoot: "/project",
+              filesystem: {
+                kind: "scoped",
+                readDirectories: ["/", "/project"],
+                writeDirectories: ["/", "/project"],
+              },
+              network: { kind: "allowlist", hosts: ["api.example.com"] },
+              outerNetwork: { kind: "allowlist", hosts: ["api.example.com"] },
+            },
+            sandbox: {
+              boundary: "instance",
+              location: "cloud",
+              workingRoot: "/project",
+              network: { kind: "allowlist", hostsCount: 1 },
+              outsideSandbox: false,
+              outerNetwork: { kind: "allowlist", hosts: ["api.example.com"] },
+              ...(recorded && { perCallHosts: false }),
+            },
+          }),
+          [
+            ...head("Full access"),
+            "Sandbox: the same under every profile; the provisioned device instance is the sandbox, its whole filesystem is in scope and its outer network applies.",
+            'Working directory: "/project".',
+            'Readable directories: ["/","/project"].',
+            'Writable directories: ["/","/project"].',
+            'Network: new commands may reach only these authorized hosts: ["api.example.com"].',
+            'Outer network boundary: allowed hosts ["api.example.com"].',
+            "Full access: commands run in the sandbox; crossings this device allows are approved automatically.",
+            ...extra,
+          ],
+        ] as [string, PermissionContextV2, string[]],
+    ),
   ])("states the sandbox once, then the approver per crossing: %s", (_name, p, lines) => {
     expect(permissionContextText(p)).toBe([...lines, closing].join("\n"));
   });

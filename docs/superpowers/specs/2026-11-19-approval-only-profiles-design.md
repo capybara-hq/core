@@ -482,7 +482,7 @@ rows, order and icons unchanged. The `chat.permission.description.*` keys become
 |---|---|---|
 | 请求批准 / Request approval | 在沙箱内直接工作；超出沙箱或执行敏感命令前先问你。 | Works freely inside the sandbox; asks you before going beyond it or running sensitive commands. |
 | 帮我批准 / Approve for me | 同样的沙箱；超出范围的请求交给审查模型，拿不准时问你。 | Same sandbox; a review model decides requests to go beyond it and asks you when unsure. |
-| 完全访问 / Full access | 同样的沙箱；在此设备允许的范围内自动批准，不再询问。 | Same sandbox; approves whatever this device allows, without asking. |
+| 完全访问 / Full access | 同样的沙箱；在此设备允许的范围内自动批准，不再询问。在沙箱外读取凭据和子智能体在沙箱外运行的请求仍交给审查模型。 | Same sandbox; approves whatever this device allows, without asking. Credential reads outside the sandbox and sub-agents' requests to run outside it still go to the review model. |
 
 **Full access dialog** (`chat.permission.full.*`), shorter than today:
 
@@ -491,7 +491,7 @@ rows, order and icons unchanged. The `chat.permission.description.*` keys become
 | title | 在 {device} 上使用完全访问？ | Use Full access on {device}? |
 | body | 命令仍在沙箱中运行；智能体超出沙箱的请求{outside}会自动批准并记录。 | Commands still run in the sandbox; the agent's requests to go beyond it{outside} are approved automatically and recorded. |
 | `{outside}`, only when the device allows running outside the sandbox | （包括在沙箱外运行命令） | (including running commands outside the sandbox) |
-| limits | 受保护的路径、平台和组织的禁止项仍然有效。 | Protected paths and platform and organization denials still apply. |
+| limits | 受保护的路径、平台和组织的禁止项仍然有效。在沙箱外读取凭据和子智能体在沙箱外运行的请求仍交给审查模型。 | Protected paths and platform and organization denials still apply. Credential reads outside the sandbox and sub-agents' requests to run outside it still go to the review model. |
 
 Remove `reason.ceiling` and `reason.restrictedUnsupported` for Full access: it is never unavailable
 because of a ceiling now.

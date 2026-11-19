@@ -436,6 +436,10 @@ describe("a cloud device's network", () => {
     // it follows the organization until it chooses its own network
     expect(radio(S.network, S.followOrg).checked).toBe(true);
     await user.click(radio(S.network, S.networkValue.allowlist));
+    // hosts outside the organization's list are refused, never silently ignored
+    expect(S.cloudHostsHelp).toMatch(/refused/);
+    expect(S.cloudHostsHelp).not.toMatch(/take effect/);
+    expect(document.body.textContent).toContain(S.cloudHostsHelp);
     await user.type(screen.getByRole("textbox", { name: S.cloudHosts }), "files.example.com");
     await user.click(screen.getByRole("button", { name: S.save }));
     await vi.waitFor(() => expect(calls.some((c) => c.method === "PATCH")).toBe(true));

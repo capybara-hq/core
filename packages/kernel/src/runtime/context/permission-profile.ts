@@ -95,6 +95,10 @@ function outerLine(outer: NonNullable<PermissionContextV2["scope"]>["outerNetwor
   }
 }
 
+/** Hosts on a sandbox whose network covers the whole instance: no call can add one. */
+const instanceHostsLine = (box: PermissionContextSandbox): string =>
+  `${box.network.kind === "none" ? "Network hosts" : "Hosts outside the network allowlist"}: not approvable per call on this device; the device's host list must include them.`;
+
 /**
  * Who approves each crossing kind under the recorded sandbox (approval-only profiles design,
  * "Profiles"). The escalation clause appears only where running outside the sandbox is available:
@@ -111,6 +115,10 @@ function approverLines(p: PermissionContextV2, box: PermissionContextSandbox): s
     const lines = [
       `Full access: commands run in the sandbox; crossings this device allows are approved automatically${escalation ? `; to run a command outside the sandbox ${ESCALATE}` : ""}.`,
     ];
+    // a host no call can add (an instance-boundary allowlist) is not approved automatically
+    // either; only a block that records `perCallHosts` says so (a stored one renders its bytes)
+    if (box.perCallHosts === false && box.network.kind !== "open-public")
+      lines.push(instanceHostsLine(box));
     // a sub-agent's escalation is never auto-granted: the review model decides it; nor is an
     // escalation that touches credentials (maintainer ruling 2026-11-19)
     if (escalation && p.inherited)
@@ -135,7 +143,7 @@ function approverLines(p: PermissionContextV2, box: PermissionContextSandbox): s
   if (box.network.kind !== "open-public")
     lines.push(
       instance
-        ? `${box.network.kind === "none" ? "Network hosts" : "Hosts outside the network allowlist"}: not approvable per call on this device; the device's host list must include them.`
+        ? instanceHostsLine(box)
         : box.network.kind === "none"
           ? `Network hosts (none authorized yet): ${approver}, where this device allows network access.`
           : `Hosts outside the network allowlist: ${approver}.`,

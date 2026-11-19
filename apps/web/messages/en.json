@@ -1634,7 +1634,7 @@
       "description": {
         "requestApproval": "Works freely inside the sandbox; asks you before going beyond it or running sensitive commands.",
         "approveForMe": "Same sandbox; a review model decides requests to go beyond it and asks you when unsure.",
-        "fullAccess": "Same sandbox; approves whatever this device allows, without asking."
+        "fullAccess": "Same sandbox; approves whatever this device allows, without asking. Credential reads outside the sandbox and sub-agents' requests to run outside it still go to the review model."
       },
       "reason": {
         "noDevice": "Choose a device first",
@@ -1654,7 +1654,7 @@
         "title": "Use Full access on {device}?",
         "body": "Commands still run in the sandbox; the agent's requests to go beyond it{outside} are approved automatically and recorded.",
         "outside": " (including running commands outside the sandbox)",
-        "limits": "Protected paths and platform and organization denials still apply.",
+        "limits": "Protected paths and platform and organization denials still apply. Credential reads outside the sandbox and sub-agents' requests to run outside it still go to the review model.",
         "confirm": "Use Full access",
         "cancel": "Cancel"
       },
@@ -1881,7 +1881,7 @@
       "pendingNextUse": "Takes effect at the next use; files are kept.",
       "pendingFilesReset": "Takes effect after the files are reset.",
       "cloudHosts": "Hosts",
-      "cloudHostsHelp": "One host per line. Only hosts on the organization's list take effect; leave it empty to use the organization's hosts.",
+      "cloudHostsHelp": "One host per line. A host outside the organization's list is refused; leave it empty to use the organization's hosts.",
       "invalidHost": "{host} is not a valid host: use a lowercase name such as files.example.com or *.example.com.",
       "save": "Save network",
       "saved": "The device's network is saved."
