@@ -9,6 +9,7 @@ import {
   type SandboxPermissionSupport,
   SandboxPermissionUnsupportedError,
   SandboxScopeDeniedError,
+  SandboxScopeValidationError,
   validateAllowHost,
 } from "@capybara-hq/plugin-sdk";
 import type { NativeFixtureEntry } from "../../../src/sandbox-native-conformance.js";
@@ -342,7 +343,12 @@ export function operation(agent: Agent, grant: SandboxPermissionGrant): SandboxO
   const frozen = structuredClone(grant);
   Object.freeze(frozen);
   const restricted = frozen.filesystem.kind === "scoped";
-  // Like a conforming provider (parseSandboxOperationScope), refuse hosts no scope may carry.
+  // Like a conforming provider (parseSandboxOperationScope): the environment network comes only
+  // with the device filesystem (the escalated pair), and no scope carries an invalid host.
+  if ((frozen.network.kind === "environment") !== (frozen.filesystem.kind === "device"))
+    throw new SandboxScopeValidationError(
+      "network.kind: environment requires the device filesystem, and the device filesystem the environment network",
+    );
   if (frozen.network.kind === "allowlist") {
     for (const host of frozen.network.hosts) {
       const problems = validateAllowHost(host);

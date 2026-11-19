@@ -19,6 +19,8 @@ import type { DeviceOwnerCeiling, LocalExecAuthority } from "../../src/exec/oper
 
 let backend: LocalOperationBackend | undefined;
 let deviceId = "";
+/** The owner ceiling the backend reads (the "ceiling" op replaces it, as the owner's CLI does). */
+let ceiling: DeviceOwnerCeiling | undefined;
 const aborts = new Map<string, AbortController>();
 
 const send = (message: object) => process.stdout.write(`${JSON.stringify(message)}\n`);
@@ -42,7 +44,8 @@ async function handle(message: Record<string, unknown>): Promise<unknown> {
   switch (message.op) {
     case "create": {
       deviceId = String(message.deviceId);
-      const ceiling = message.ceiling as DeviceOwnerCeiling;
+      ceiling = message.ceiling as DeviceOwnerCeiling;
+      const read = async () => ceiling as DeviceOwnerCeiling;
       const expected = String(message.runtimeHash);
       backend?.lifecycle.dispose();
       const common = {
@@ -74,7 +77,7 @@ async function handle(message: Record<string, unknown>): Promise<unknown> {
           {
             ...common,
             hostRoots: message.hostRoots as { workspace: string; skills: string; tmp: string },
-            readOwnerCeiling: async () => ceiling,
+            readOwnerCeiling: read,
             container: {
               operationContainer: async () => ({
                 name: container,
@@ -87,11 +90,14 @@ async function handle(message: Record<string, unknown>): Promise<unknown> {
         );
       } else
         backend = await createHostOperationBackend(
-          { ...common, roots: ceiling.roots, readOwnerCeiling: async () => ceiling },
+          { ...common, roots: ceiling.roots, readOwnerCeiling: read },
           { platform: "linux", linux },
         );
       return backend.permissionSupport({ id: deviceId }, signal);
     }
+    case "ceiling":
+      ceiling = message.ceiling as DeviceOwnerCeiling;
+      return null;
     case "support":
       return backend?.permissionSupport(handleOf, signal);
     case "operation": {

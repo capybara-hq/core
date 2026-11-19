@@ -7,6 +7,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 // meet the harness here): a hardened container with endpoints, and the bundled backend server.
 import {
   dockerUnavailable,
+  type FixtureNetworks,
   inspect,
   type LinuxDevice,
   NAMES,
@@ -14,18 +15,19 @@ import {
   startLinuxDevice,
 } from "../../device/test/linux-docker-fixture.js";
 import {
-  authorityFor,
   type HostBackend,
   HostServer,
   hostBackend,
   installServer,
   localServerFile,
+  openAuthorityFor,
 } from "../../device/test/linux-host-fixture.js";
 import type { NativeFixtureEntry } from "../src/sandbox-native-conformance.js";
 import {
   runSandboxPermissionConformance,
   type SandboxPermissionEndpoint,
   type SandboxPermissionFixture,
+  type SandboxPermissionTarget,
 } from "../src/sandbox-permission-conformance.js";
 
 const unavailable = dockerUnavailable();
@@ -37,28 +39,69 @@ describe.runIf(required && unavailable !== null)("Linux restricted runtime is re
   });
 });
 
-/** The conformance fixture over a device backend whose operations run in the container. */
-function fixture(device: LinuxDevice, backend: HostBackend): SandboxPermissionFixture {
+/** Planted in the device process's environment: no sandboxed command may see them. */
+const PLANTED = {
+  AWS_SECRET_ACCESS_KEY: "planted-aws-secret-0d1e",
+  CAPYBARA_TEST_DEVICE_TOKEN: "planted-capybara-token-7f3a",
+};
+
+/** The device options of every backend here: the open network under the production rules. */
+const backendOptions = (net: FixtureNetworks) => ({
+  network: "open" as const,
+  allowedDomains: [],
+  // production forwarder rules: the fixture's local addresses are closed like any other
+  privateProxyTargets: false,
+  fakeIpDns: net.doh,
+});
+
+/**
+ * The conformance fixture over a device backend whose operations run in the container. The device
+ * sits on the open-network fixture's two internal networks (a globally routable subnet standing in
+ * for the internet, and a private one) and reaches names only through its operation's proxy.
+ */
+function fixture(
+  device: LinuxDevice,
+  backend: HostBackend,
+  options: { escalatedEnvironment: boolean; home: boolean },
+): SandboxPermissionFixture {
+  const net = device.networks as FixtureNetworks;
   const id = randomUUID().slice(0, 8);
   const root = `/workspace/project-${id}`;
   const sibling = `/workspace/sibling-${id}`;
   device.run(`mkdir ${root} ${sibling} && printf rc > /home/sandbox/.profile-${id}`);
+  const inDevice = (key: string) => async () => {
+    const value = (await inspect(device, {
+      what: "read",
+      path: `/opt/capybara-receipts/${key}`,
+    })) as string | null;
+    return value === null ? 0 : Number(Buffer.from(value, "base64").toString());
+  };
   const endpoint = (
-    key: keyof typeof NAMES,
+    name: string,
     address: string,
     port: number,
-  ): SandboxPermissionEndpoint => ({
-    name: NAMES[key],
-    address,
+    receipts: () => Promise<number>,
+  ): SandboxPermissionEndpoint => ({ name, address, port, receipts });
+  const atServer = (key: "public" | "public80" | "private" | "private80") => async () =>
+    net.accepted(key);
+  const target = (
+    label: string,
+    host: string,
+    port: number,
+    receipts?: () => Promise<number>,
+    address?: string,
+  ): SandboxPermissionTarget => ({
+    label,
+    host,
     port,
-    receipts: async () => {
-      const value = (await inspect(device, {
-        what: "read",
-        path: `/opt/capybara-receipts/${key}`,
-      })) as string | null;
-      return value === null ? 0 : Number(Buffer.from(value, "base64").toString());
-    },
+    ...(receipts ? { receipts } : {}),
+    ...(address ? { address } : {}),
   });
+  const s = net.server;
+  const v4 = inDevice("ungranted4");
+  const v6 = inDevice("ungranted6");
+  const pub = atServer("public");
+  const priv = atServer("private");
   const read = async (path: string) => {
     const value = (await inspect(device, { what: "read", path })) as string | null;
     return value === null ? null : new Uint8Array(Buffer.from(value, "base64"));
@@ -67,18 +110,81 @@ function fixture(device: LinuxDevice, backend: HostBackend): SandboxPermissionFi
     root,
     sibling,
     protectedPaths: [`/home/sandbox/.profile-${id}`],
-    // a local device ties the environment network to Full access (owner ceiling policy)
-    restrictedEnvironment: "refused",
     endpoints: {
-      granted: endpoint("granted", "127.0.0.1", 18080),
-      ungranted: [endpoint("ungranted4", "127.0.0.1", 18081), endpoint("ungranted6", "::1", 18082)],
+      // the allowlist reaches web ports at public addresses only
+      granted: endpoint("allowed.permission.test", s.public, 80, atServer("public80")),
+      ungranted: [
+        endpoint(NAMES.ungranted4, "127.0.0.1", 18081, v4),
+        endpoint(NAMES.ungranted6, "::1", 18082, v6),
+        endpoint("private.permission.test", s.private, net.port, priv),
+      ],
       // allowlisted names are reached only through the operation's own proxy
       access: "proxy",
+      closedGranted: [
+        target("granted-private", "private.permission.test", 80, atServer("private80")),
+      ],
     },
+    openNetwork: {
+      reachable: [
+        target("public-name", "public.permission.test", net.port, pub, s.public),
+        target("public-literal", s.public, net.port, pub, s.public),
+      ],
+      closed: [
+        target("private-name", "private.permission.test", net.port, priv),
+        target("private-literal", s.private, net.port, priv),
+        target("private-mapped", `::ffff:${s.private}`, net.port, priv),
+        target("mapped-name", "mapped.permission.test", net.port, priv),
+        target("nat64-name", "nat64.permission.test", net.port, priv),
+        target("nat64-literal", `64:ff9b::${s.private}`, net.port, priv),
+        target("metadata-name", "metadata.permission.test", 80),
+        target("metadata", "169.254.169.254", 80),
+        target("metadata-mapped", "::ffff:169.254.169.254", 80),
+        target("azure-name", "azure.permission.test", 80),
+        target("azure", "168.63.129.16", 80),
+        target("cgnat-name", "cgnat.permission.test", 80),
+        target("cgnat", "100.64.0.1", 80),
+        target("documentation", "192.0.2.1", 80),
+        target("loopback-name", "loop.permission.test", 18081, v4),
+        target("localhost", "localhost", 18081, v4),
+        target("loopback", "127.0.0.1", 18081, v4),
+        target("loopback6", "::1", 18082, v6),
+        target("unspecified", "0.0.0.0", 18081, v4),
+        target("self-name", "self.permission.test", 18083),
+        target("self", net.self, 18083),
+      ],
+      fakeIp: {
+        reachable: [target("fake-public", "fake.permission.test", net.port, pub)],
+        closed: [
+          target("fake-private", "fakepriv.permission.test", net.port, priv),
+          target("fake-down", "fakedown.permission.test", net.port),
+        ],
+      },
+    },
+    deviceEnvironment: { variables: PLANTED, escalatedControl: options.escalatedEnvironment },
+    withoutOutsideSandbox: async () => {
+      await backend.server.call({
+        op: "ceiling",
+        ceiling: { ...backend.ceiling, revision: "no-outside", outsideSandbox: false },
+      });
+      return async () => {
+        await backend.server.call({ op: "ceiling", ceiling: backend.ceiling });
+      };
+    },
+    ...(options.home
+      ? {
+          home: {
+            // the device process's home (the image gives the device user its own)
+            path: device.run(`node -e "process.stdout.write(require('os').homedir())"`).trim(),
+            remove: async (path: string) => {
+              device.run(`rm -f ${path}`);
+            },
+          },
+        }
+      : {}),
     support: () => backend.support(),
     operation: async (grant) => {
       const scope = scopeFor(backend.deviceId, grant);
-      return backend.operation(scope, authorityFor(scope.operationId));
+      return backend.operation(scope, openAuthorityFor(scope.operationId));
     },
     seed: async (entries: readonly NativeFixtureEntry[]) => {
       await inspect(
@@ -111,65 +217,63 @@ function fixture(device: LinuxDevice, backend: HostBackend): SandboxPermissionFi
   };
 }
 
+const PARTS = ["filesystem", "network", "processes"] as const;
+
 // The capybara-device Linux operation backends against the full permission conformance in a
-// hardened container (aarch64 locally; x86_64 on CI with CAPYBARA_TEST_REQUIRE_LINUX_RESTRICTED=1).
+// hardened container (aarch64 locally; x86_64 on CI with CAPYBARA_TEST_REQUIRE_LINUX_RESTRICTED=1),
+// in its three parts (one test each keeps every part within the test timeout).
 describe.skipIf(unavailable !== null)("capybara-device Linux operation backends", () => {
   let device: LinuxDevice;
   const servers: HostServer[] = [];
   const cleanups: (() => Promise<void>)[] = [];
+  const backends: Partial<Record<"host" | "docker" | "bind", HostBackend>> = {};
+  const devices: Partial<Record<"host" | "docker" | "bind", LinuxDevice>> = {};
+  let bindSkip = "";
 
   beforeAll(async () => {
-    device = await startLinuxDevice();
+    device = await startLinuxDevice({ networks: true });
     await installServer(device);
-  });
-  afterAll(async () => {
-    for (const server of servers) server.close();
-    for (const cleanup of cleanups) await cleanup();
-    device?.remove();
-  });
+    const net = device.networks as FixtureNetworks;
 
-  it("Linux host backend: passes the full permission conformance", async () => {
+    // the Linux host backend: the device process runs in the container
     device.run("mkdir -m 700 /home/sandbox/state-host");
-    const server = new HostServer(device);
-    servers.push(server);
-    const backend = await hostBackend(server, { stateDir: "/home/sandbox/state-host" });
-    const support = await backend.support();
-    if (required) expect(support.restricted).not.toBeNull();
-    await runSandboxPermissionConformance(fixture(device, backend));
-  });
+    const host = new HostServer(device, PLANTED);
+    servers.push(host);
+    backends.host = await hostBackend(host, {
+      stateDir: "/home/sandbox/state-host",
+      ...backendOptions(net),
+    });
+    devices.host = device;
 
-  it("local-Docker backend: passes the full permission conformance", async () => {
+    // the local-Docker backend: the device process runs here, its agents in the container
     const dir = await mkdtemp(join(tmpdir(), "cap-docker-backend-"));
     cleanups.push(() => rm(dir, { recursive: true, force: true }));
-    const server = new HostServer(await localServerFile(dir));
-    servers.push(server);
-    const state = join(dir, "state");
-    await import("node:fs/promises").then((fs) => fs.mkdir(state, { mode: 0o700 }));
-    const backend = await hostBackend(server, {
-      stateDir: state,
+    const local = new HostServer(await localServerFile(dir), PLANTED);
+    servers.push(local);
+    await mkdir(join(dir, "state"), { mode: 0o700 });
+    backends.docker = await hostBackend(local, {
+      stateDir: join(dir, "state"),
       deviceId: "device-docker",
       docker: {
         container: device.name,
         hostRoots: { workspace: join(dir, "w"), skills: join(dir, "s"), tmp: join(dir, "t") },
       },
+      ...backendOptions(net),
     });
-    const support = await backend.support();
-    if (required) expect(support.restricted).not.toBeNull();
-    await runSandboxPermissionConformance(fixture(device, backend));
-  });
+    devices.docker = device;
 
-  // The executor's real layout: workspace and tmp are host directories bind-mounted into the
-  // container. Where the mount does not keep Landlock's rules (Docker Desktop's file sharing) the
-  // backend reports restricted unavailable and this records why instead of passing vacuously.
-  it("local-Docker backend on bind-mounted host directories: passes the full permission conformance", async (context) => {
-    const dir = await realpath(await mkdtemp(join(tmpdir(), "cap-docker-bind-")));
-    cleanups.push(() => rm(dir, { recursive: true, force: true }));
-    await mkdir(join(dir, "workspace"));
-    await mkdir(join(dir, "tmp"));
-    await chmod(join(dir, "workspace"), 0o777);
-    await chmod(join(dir, "tmp"), 0o1777);
-    const bound = await startLinuxDevice({ bindWorkspace: dir });
-    // Cleanups run in order: before the host removes dir, the container user (uid 1000, which
+    // The executor's real layout: workspace and tmp are host directories bind-mounted into the
+    // container. Where the mount does not keep Landlock's rules (Docker Desktop's file sharing)
+    // the backend reports restricted unavailable and the parts record why instead of passing
+    // vacuously.
+    const bindDir = await realpath(await mkdtemp(join(tmpdir(), "cap-docker-bind-")));
+    cleanups.push(() => rm(bindDir, { recursive: true, force: true }));
+    await mkdir(join(bindDir, "workspace"));
+    await mkdir(join(bindDir, "tmp"));
+    await chmod(join(bindDir, "workspace"), 0o777);
+    await chmod(join(bindDir, "tmp"), 0o1777);
+    const bound = await startLinuxDevice({ bindWorkspace: bindDir, networks: true });
+    // Cleanups run in order: before the host removes bindDir, the container user (uid 1000, which
     // on a Linux host differs from the test's own uid) removes what it created in the bind
     // mounts: directories it made are 0755 and its own, so the host user could not empty them.
     // (A real device runs its container as the host user, so this is a fixture concern.)
@@ -179,29 +283,56 @@ describe.skipIf(unavailable !== null)("capybara-device Linux operation backends"
       );
       bound.remove();
     });
-    const server = new HostServer(await localServerFile(dir));
-    servers.push(server);
-    const state = join(dir, "state");
-    await mkdir(state, { mode: 0o700 });
-    const backend = await hostBackend(server, {
-      stateDir: state,
+    const bindServer = new HostServer(await localServerFile(bindDir), PLANTED);
+    servers.push(bindServer);
+    await mkdir(join(bindDir, "state"), { mode: 0o700 });
+    backends.bind = await hostBackend(bindServer, {
+      stateDir: join(bindDir, "state"),
       deviceId: "device-docker-bind",
       docker: {
         container: bound.name,
         hostRoots: {
-          workspace: join(dir, "workspace"),
-          skills: join(dir, "s"),
-          tmp: join(dir, "tmp"),
+          workspace: join(bindDir, "workspace"),
+          skills: join(bindDir, "s"),
+          tmp: join(bindDir, "tmp"),
         },
       },
+      ...backendOptions(bound.networks as FixtureNetworks),
     });
-    const support = await backend.support();
+    devices.bind = bound;
+    const support = await backends.bind.support();
     if (
       support.restricted === null &&
       /Landlock rules do not hold/.test(support.unavailableReason ?? "")
     )
-      return context.skip(`bind mounts here drop Landlock rules: ${support.unavailableReason}`);
-    if (required) expect(support.restricted).not.toBeNull();
-    await runSandboxPermissionConformance(fixture(bound, backend));
+      bindSkip = `bind mounts here drop Landlock rules: ${support.unavailableReason}`;
   });
+  afterAll(async () => {
+    for (const server of servers) server.close();
+    for (const cleanup of cleanups) await cleanup();
+    device?.remove();
+  });
+
+  for (const [kind, label] of [
+    ["host", "Linux host backend"],
+    ["docker", "local-Docker backend"],
+    ["bind", "local-Docker backend on bind-mounted host directories"],
+  ] as const)
+    for (const part of PARTS)
+      it(`${label}: passes the permission conformance: ${part}`, async (context) => {
+        if (kind === "bind" && bindSkip) return context.skip(bindSkip);
+        const backend = backends[kind] as HostBackend;
+        const support = await backend.support();
+        if (required) expect(support.restricted).not.toBeNull();
+        await runSandboxPermissionConformance(
+          fixture(devices[kind] as LinuxDevice, backend, {
+            // the local-Docker device's escalated calls run in its container, whose environment
+            // is the container's, not the device process's
+            escalatedEnvironment: kind === "host",
+            // the Linux host's workers resolve the protected home locations in the container
+            home: kind === "host",
+          }),
+          { parts: [part] },
+        );
+      });
 });

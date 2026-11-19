@@ -90,15 +90,17 @@ export class HostServer {
   readonly ready: Promise<number>;
   readonly exited: Promise<void>;
 
-  constructor(where: LinuxDevice | { local: string }) {
+  /** `env`: extra variables in the device process's environment (planted secrets, for instance). */
+  constructor(where: LinuxDevice | { local: string }, env: Readonly<Record<string, string>> = {}) {
     this.child =
       "local" in where
-        ? spawn(process.execPath, [where.local])
+        ? spawn(process.execPath, [where.local], { env: { ...process.env, ...env } })
         : spawn("docker", [
             "exec",
             "-i",
             "-u",
             "1000:1000",
+            ...Object.entries(env).flatMap(([name, value]) => ["-e", `${name}=${value}`]),
             where.name,
             "node",
             `${SERVER_DIR}/server.mjs`,
