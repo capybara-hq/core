@@ -433,11 +433,15 @@ export class MachinesService {
     if (!machine) return;
     const subject = { orgId: machine.org_id, deviceId: machine.device_id };
     await this.ceilings.lock(subject, "device");
+    const attested = await this.boundIdentityLocked(subject, machineId, parsed, connectionId);
+    // the hello predates the binding its own connection installed: that install recorded the
+    // report, which this hello's must not overwrite
+    if (attested === "installed-here") return;
     await this.reports.record(
       machine.device_id,
       LOCAL_PROVIDER,
       parsed.programVersion,
-      await this.boundIdentityLocked(subject, machineId, parsed),
+      attested,
       parsed.permissionSupport,
     );
   }
@@ -454,12 +458,17 @@ export class MachinesService {
    * starts unbound, and the device refuses to rebind a generation under a changed runtime. The
    * instance is then replaced ({@link replaceUnattestedLocked}), so the next use creates and binds
    * a new generation under the new evidence instead of staying unprobed until a new login.
+   *
+   * A connection answers bindInstance before its own hello is recorded (the hello is recorded
+   * after `ready`), so a binding installed on the hello's own connection is newer than the hello:
+   * it is left as it is (`installed-here`), never replaced by the evidence the hello predates.
    */
   private async boundIdentityLocked(
     subject: { orgId: string; deviceId: string },
     machineId: string,
     hello: DeviceHello,
-  ): Promise<PermissionRuntimeIdentity | undefined> {
+    connectionId: string | null,
+  ): Promise<PermissionRuntimeIdentity | "installed-here" | undefined> {
     const instance = await this.db
       .selectFrom("device_instances")
       .select(["provider", "status", "handle", "created_at", "permission_runtime_identity"])
@@ -475,7 +484,7 @@ export class MachinesService {
     const generation = String(instance.created_at.getTime());
     const binding = await this.db
       .selectFrom("device_instance_bindings")
-      .select(["status", "runtime_identity", "machine_id"])
+      .select(["status", "runtime_identity", "machine_id", "installed_connection_id"])
       .where("device_id", "=", subject.deviceId)
       .where("instance_generation", "=", generation)
       .executeTakeFirst();
@@ -483,6 +492,8 @@ export class MachinesService {
     // (a login replaced the instance already): nothing to attest, nothing to replace
     if (binding?.status !== "installed" || !binding.runtime_identity) return undefined;
     if (binding.machine_id !== machineId) return undefined;
+    if (connectionId !== null && binding.installed_connection_id === connectionId)
+      return "installed-here";
     const reported = hello.runtimeIdentity;
     if (
       hello.instanceGeneration === generation &&
@@ -490,11 +501,7 @@ export class MachinesService {
       sameRuntimeIdentity(binding.runtime_identity, reported)
     )
       return reported;
-    await this.replaceUnattestedLocked(
-      subject,
-      binding.runtime_identity.imageFingerprint,
-      reported?.imageFingerprint,
-    );
+    await this.replaceUnattestedLocked(subject);
     return undefined;
   }
 
@@ -504,21 +511,16 @@ export class MachinesService {
    * fence moves on, so a lifecycle holder of the old instance fails its next write; the device's
    * admission epoch advances, revoking every admitted or started operation of the old generation.
    * The files stay (the same machine and directory): the next use creates a new instance on them,
-   * which the kernel binds under the program's new runtime evidence, and the install resets Full
-   * consent when the environment fingerprint changed. A bound hello that already names another
-   * fingerprint resets it here.
+   * which the kernel binds under the program's new runtime evidence. Full consent is left to that
+   * install, which resets it when the proven environment fingerprint changed: a fingerprint a
+   * hello merely names proves nothing, and nothing is admitted before the install records a
+   * report, so resetting here too would reset twice.
    */
-  private async replaceUnattestedLocked(
-    subject: { orgId: string; deviceId: string },
-    boundFingerprint: string,
-    reportedFingerprint: string | undefined,
-  ): Promise<void> {
-    await this.ceilings.publishLocked(
-      subject,
-      "device",
-      true,
-      reportedFingerprint !== undefined && reportedFingerprint !== boundFingerprint,
-    );
+  private async replaceUnattestedLocked(subject: {
+    orgId: string;
+    deviceId: string;
+  }): Promise<void> {
+    await this.ceilings.publishLocked(subject, "device", true, false);
     await this.db
       .updateTable("device_instances")
       .set((eb) => ({

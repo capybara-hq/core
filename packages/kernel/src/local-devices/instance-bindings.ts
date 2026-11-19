@@ -318,6 +318,7 @@ export class LocalInstanceBindings implements SandboxInstanceBinder {
         machine_id: machineId,
         runtime_identity: JSON.stringify(identity),
         installed_at: sql`now()`,
+        installed_connection_id: connectionId,
       })
       .where("device_id", "=", deviceId)
       .where("instance_generation", "=", request.instanceGeneration)

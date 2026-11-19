@@ -1761,6 +1761,8 @@ export interface DeviceInstanceBindingsTable {
   >;
   created_at: Ts;
   installed_at: TsNullable;
+  /** Migration 0168: the device connection whose bind answer installed it. */
+  installed_connection_id: string | null;
 }
 
 export interface LegacyLaunchFreezeTable {

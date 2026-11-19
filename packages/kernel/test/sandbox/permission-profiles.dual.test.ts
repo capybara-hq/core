@@ -905,20 +905,7 @@ describe("a local device's project outside its fixed workspace", () => {
       .orderBy("installed_at", "desc")
       .executeTakeFirstOrThrow();
     expect(before.status).toBe("installed");
-    const epochBefore = await deviceEpoch(deviceId);
-
-    // the program is replaced and restarts: its stored binding no longer verifies, so it is unbound
-    machine.close();
-    await machine.closed;
-    const upgraded = new FakeMachineV3(
-      `ws://127.0.0.1:${kA.port}/device/connect`,
-      credential,
-      answerWith("d".repeat(64)),
-      { hello: false },
-    );
-    machines.push(upgraded);
-    await upgraded.opened;
-    upgraded.hello({
+    const helloOverrides = {
       roots: ROOTS,
       home: HOME,
       features: ["networkReport", "policyOp", "policyOpId", "projects"],
@@ -927,8 +914,87 @@ describe("a local device's project outside its fixed workspace", () => {
         { allowedDomains: [] },
         { outsideSandbox: false, restrictedProjectReach: "os-user" },
       ),
-      instanceGeneration: null,
+    };
+    const instanceFence = async () =>
+      (
+        await db
+          .selectFrom("device_instances")
+          .select("generation")
+          .where("device_id", "=", deviceId)
+          .executeTakeFirstOrThrow()
+      ).generation;
+    /** Waits until the hello of the connection `ready` named is recorded (its owner report). */
+    const helloRecorded = (connectionId: string) =>
+      waitFor(
+        async () => {
+          const row = await db
+            .selectFrom("device_machines")
+            .select("owner_report")
+            .where("device_id", "=", deviceId)
+            .where("revoked_at", "is", null)
+            .executeTakeFirst();
+          return (
+            (row?.owner_report as { connectionId?: string } | null)?.connectionId === connectionId
+          );
+        },
+        15_000,
+        "the hello was recorded",
+      );
+
+    // the same program reconnects (a socket blip) with its binding: nothing is replaced
+    const fenceBefore = await instanceFence();
+    const epochBefore = await deviceEpoch(deviceId);
+    machine.close();
+    await machine.closed;
+    const reconnected = new FakeMachineV3(
+      `ws://127.0.0.1:${kA.port}/device/connect`,
+      credential,
+      answerWith("a".repeat(64)),
+      { hello: false },
+    );
+    machines.push(reconnected);
+    await reconnected.opened;
+    const installed = bindAnswer({
+      args: {
+        instanceId: deviceId,
+        instanceGeneration: before.instance_generation,
+        bindingId: "x",
+      },
+    } as unknown as KernelReq) as { ok: true; result: Record<string, unknown> };
+    reconnected.hello({
+      ...helloOverrides,
+      instanceGeneration: before.instance_generation,
+      runtimeIdentity: installed.result.runtimeIdentity,
+      permissionSupport: installed.result.permissionSupport,
     });
+    await helloRecorded((await reconnected.ready).connectionId);
+    expect(await deviceEpoch(deviceId)).toBe(epochBefore);
+    expect(await instanceFence()).toBe(fenceBefore);
+    const again = await call(conv, "Read", { file_path: `${PROJECT}/README.md` }, 2);
+    expect(again.payload.isError, again.payload.content).toBe(false);
+    expect(
+      (
+        await db
+          .selectFrom("device_instance_bindings")
+          .select("instance_generation")
+          .where("device_id", "=", deviceId)
+          .orderBy("installed_at", "desc")
+          .executeTakeFirstOrThrow()
+      ).instance_generation,
+    ).toBe(before.instance_generation);
+
+    // the program is replaced and restarts: its stored binding no longer verifies, so it is unbound
+    reconnected.close();
+    await reconnected.closed;
+    const upgraded = new FakeMachineV3(
+      `ws://127.0.0.1:${kA.port}/device/connect`,
+      credential,
+      answerWith("d".repeat(64)),
+      { hello: false },
+    );
+    machines.push(upgraded);
+    await upgraded.opened;
+    upgraded.hello({ ...helloOverrides, instanceGeneration: null });
     await upgraded.ready;
     // the old generation's admitted work is revoked: the device's admission epoch moved on
     await waitFor(
@@ -938,7 +1004,7 @@ describe("a local device's project outside its fixed workspace", () => {
     );
 
     // the next call succeeds on a new generation bound under the new runtime evidence
-    const next = await call(conv, "Read", { file_path: `${PROJECT}/README.md` }, 2);
+    const next = await call(conv, "Read", { file_path: `${PROJECT}/README.md` }, 3);
     expect(next.payload.isError, next.payload.content).toBe(false);
     expect(next.payload.content).toContain("hello app");
     const after = await db
