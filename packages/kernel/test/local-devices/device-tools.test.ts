@@ -384,7 +384,8 @@ describe("local devices through the sandbox tools", () => {
       expect(Buffer.from(dir.files.get(file) as string, "base64").toString()).toBe(content);
       await timed(`Read #${round}`, () => m.run("Read", { file_path: file }));
     }
-    console.log(`kernel 5 MB transfer timings\n${report.join("\n")}`);
+    if (process.env.CAPYBARA_DEVICE_DEBUG_TIMINGS === "1")
+      console.log(`kernel 5 MB transfer timings\n${report.join("\n")}`);
   });
 
   it("every exec carries the org's sandbox allowlist of the moment (R27)", async () => {

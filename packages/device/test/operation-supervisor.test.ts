@@ -1089,3 +1089,45 @@ it("keeps a native read's bytes out of the journal; a restarted retry gets an un
   expect(recovered.retirementObligations("next")).toBe(0);
   await expect(recovered.execute(read, "changed", signal)).rejects.toThrow(/input/);
 });
+it("bounds the read bytes it retains in memory: past the budget the oldest reads answer unknown", async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), "cap-supervisor-budget-"));
+  dirs.push(stateDir);
+  const payload = (n: number) => Buffer.alloc(1000, n).toString("base64");
+  const supervisor = new MacOperationSupervisor({
+    stateDir,
+    deviceId: "d",
+    instanceGeneration: "g",
+    now: () => 1,
+    retainedReadBytes: 2500,
+    start: async (r: MacWorkerRequest) => {
+      await r.beforeLaunch();
+      await r.onLaunch({ pid: 123, token: "trusted-child" });
+      const n = Number(r.scope.operationId.slice(1));
+      return {
+        ready: Promise.resolve(),
+        completion: Promise.resolve({ dataB64: payload(n), truncated: false }),
+        cancel: async () => {},
+      };
+    },
+  });
+  const read = (n: number) => ({
+    kind: "native" as const,
+    native: { method: "readFile" as const, path: "/f", maxBytes: 4096 },
+    purpose: "operation" as const,
+    scope: { ...scope, operationId: `r${n}` },
+    grant,
+    stateDir,
+    pythonPath: "/usr/bin/python3",
+    beforeLaunch: async () => {},
+    onLaunch: async () => {},
+  });
+  for (const n of [1, 2, 3]) await supervisor.execute(read(n), `h${n}`, signal);
+  // 3000 retained bytes exceed 2500: the oldest read gave its bytes up
+  await expect(supervisor.execute(read(1), "h1", signal)).rejects.toThrow(/outcome is unknown/);
+  for (const n of [2, 3])
+    expect(await supervisor.execute(read(n), `h${n}`, signal)).toEqual({
+      dataB64: payload(n),
+      truncated: false,
+    });
+  expect(supervisor.retirementObligations("next")).toBe(0);
+});

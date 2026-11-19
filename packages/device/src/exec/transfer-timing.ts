@@ -31,7 +31,12 @@ export function observeTransferTimings(listener: (timing: TransferTiming) => voi
 export function recordTransferTiming(method: string, stage: TransferStage, ms: number): void {
   if (process.env.CAPYBARA_DEVICE_DEBUG_TIMINGS === "1")
     process.stderr.write(`[capybara-device] ${method} ${stage} ${ms.toFixed(1)} ms\n`);
-  for (const listener of listeners) listener({ method, stage, ms });
+  for (const listener of listeners)
+    try {
+      listener({ method, stage, ms });
+    } catch {
+      // instrumentation never changes an operation's outcome
+    }
 }
 
 /** Runs `work` and records how long it took as `stage`. */

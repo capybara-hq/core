@@ -163,6 +163,7 @@ it.runIf(process.platform === "darwin")(
     } finally {
       stop();
     }
-    console.log(`5 MB transfer stage timings\n${report.join("\n")}`);
+    if (process.env.CAPYBARA_DEVICE_DEBUG_TIMINGS === "1")
+      console.log(`5 MB transfer stage timings\n${report.join("\n")}`);
   },
 );
