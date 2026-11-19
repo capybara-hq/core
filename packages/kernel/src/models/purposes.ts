@@ -42,12 +42,25 @@ import { IMAGE_PURPOSE, imagePurposeState } from "./image-usable.js";
 /** The kinds a purpose can need: the callable model kinds. */
 export type PurposeKind = "chat" | "embedding" | "image_generation";
 
+/** What a purpose needs of its target model beyond its kind. */
+export interface PurposeRequires {
+  /** The target model must declare `capabilities.vision`. */
+  vision?: true;
+}
+
+interface KernelPurpose {
+  purpose: string;
+  kind: PurposeKind;
+  requires?: PurposeRequires;
+  label: { zh: string; en: string };
+}
+
 /**
  * Purposes the kernel declares: the eval judge, and the three sub-agent model tiers (phase C,
  * spec §5.4: `fast` / `standard` / `capable` → `subagent_<tier>`; an unmapped tier runs on the
  * parent's model).
  */
-export const KERNEL_PURPOSES = [
+export const KERNEL_PURPOSES: readonly KernelPurpose[] = [
   { purpose: "eval", kind: "chat", label: { zh: "评测评委", en: "Eval judge" } },
   /** Conversation titles (UI refresh B); unmapped → the conversation's current chat model. */
   { purpose: "title", kind: "chat", label: { zh: "会话标题", en: "Conversation titles" } },
@@ -78,7 +91,17 @@ export const KERNEL_PURPOSES = [
   },
   /** The `GenerateImage` tool's model; no fallback: unmapped → `model.unconfigured`. */
   { purpose: "image", kind: "image_generation", label: { zh: "图片生成", en: "Image generation" } },
-] as const;
+  /**
+   * The model that reads an image for a model without vision; no fallback: unmapped, or a target
+   * without `capabilities.vision` → `model.unconfigured`.
+   */
+  {
+    purpose: "vision",
+    kind: "chat",
+    requires: { vision: true },
+    label: { zh: "识图", en: "Vision" },
+  },
+];
 
 /** 一个用途映射到的模型与参数。 */
 export interface PurposeTarget {
@@ -90,6 +113,8 @@ export interface PurposeView {
   purpose: string;
   kind: PurposeKind;
   label: { zh: string; en: string };
+  /** What the target model must support beyond its kind; absent = nothing. */
+  requires?: PurposeRequires;
   /** `kernel` 或声明它的插件名。 */
   declaredBy: string;
   default: PurposeTarget | null;
@@ -154,6 +179,7 @@ interface Declared {
   purpose: string;
   kind: PurposeKind;
   label: { zh: string; en: string };
+  requires?: PurposeRequires;
   declaredBy: string;
 }
 
@@ -205,6 +231,7 @@ export class ModelPurposesService {
       purpose: p.purpose,
       kind: p.kind,
       label: { ...p.label },
+      ...(p.requires !== undefined && { requires: { ...p.requires } }),
       declaredBy: "kernel",
     }));
     const seen = new Set(out.map((p) => p.purpose));
@@ -307,6 +334,7 @@ export class ModelPurposesService {
     orgId: string | null,
     target: PurposeTarget,
     kind: PurposeKind,
+    requires?: PurposeRequires,
   ): Promise<void> {
     let info: Awaited<ReturnType<ProviderRegistry["resolve"]>>["info"];
     try {
@@ -329,6 +357,11 @@ export class ModelPurposesService {
         },
       ]);
     }
+    if (requires?.vision === true && !info.capabilities.vision) {
+      throw invalid([
+        { path: "target.model", message: "this purpose needs a model that can view images" },
+      ]);
+    }
     const issues = paramIssues("target.params", info.parameters, target.params);
     if (issues.length > 0) throw invalid(issues);
   }
@@ -342,7 +375,7 @@ export class ModelPurposesService {
     auditDetail: Record<string, unknown> | undefined,
   ): Promise<PurposeView> {
     const decl = this.find(purpose);
-    if (target) await this.check(orgId, target, decl.kind);
+    if (target) await this.check(orgId, target, decl.kind, decl.requires);
     await this.write(orgId, purpose, target, actor, actorTokenId, auditDetail);
     const [view] = await this.views([decl], orgId ?? undefined);
     return view as PurposeView;
@@ -359,7 +392,7 @@ export class ModelPurposesService {
     target: PurposeTarget | null,
   ): Promise<void> {
     const decl = this.find(purpose);
-    if (target) await this.check(orgId, target, decl.kind);
+    if (target) await this.check(orgId, target, decl.kind, decl.requires);
   }
 
   /** The mapping write of {@link set}, under the super admin or org lock. */
@@ -452,7 +485,15 @@ export class ModelPurposesService {
       );
     }
     try {
-      await this.providers.resolve(orgId, view.effective.model, { kind: decl.kind });
+      const { info } = await this.providers.resolve(orgId, view.effective.model, {
+        kind: decl.kind,
+      });
+      if (decl.requires?.vision === true && !info.capabilities.vision) {
+        throw new ApiError(
+          "model.unconfigured",
+          `The model configured for the "${purpose}" purpose cannot view images`,
+        );
+      }
     } catch (e) {
       if (e instanceof ProviderListError) return view.effective;
       if (e instanceof ApiError && e.code === "agent.model_unavailable") {

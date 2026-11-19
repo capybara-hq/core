@@ -75,6 +75,8 @@ export interface PurposeView {
   purpose: string;
   kind: "chat" | "embedding" | "image_generation";
   label: { zh: string; en: string };
+  /** What the target model must support beyond its kind (`vision`: it must view images). */
+  requires?: { vision?: true };
   /** `kernel` 或声明它的插件名。 */
   declaredBy: string;
   /** The declaring extension's display name (`null`: a kernel purpose, or none declared). */

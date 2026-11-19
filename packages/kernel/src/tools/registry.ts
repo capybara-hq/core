@@ -20,7 +20,7 @@ import {
   extensionToolDisabled,
   type SubagentTools,
 } from "../agents/definition.js";
-import type { ToolView } from "../conversations/events.js";
+import type { EventPayload, ToolView } from "../conversations/events.js";
 import { EffectiveConfigs, NEEDS_CONFIG_REASON } from "../extensions/effective-config.js";
 import { ExtensionHost } from "../extensions/host.js";
 import { ExtensionRegistry } from "../extensions/registry.js";
@@ -132,6 +132,9 @@ export interface BuiltinCallContext extends ToolCallContext {
   parent?: HookParentScope;
 }
 
+/** One image the builtin `Read` stored for a call (`tool_result.media`, vision-read design §1.2). */
+export type ToolResultMedia = NonNullable<EventPayload<"tool_result">["media"]>[number];
+
 /**
  * 内置工具的结果：`ToolResult` 之外可带 `loadedTools`（`ToolSearch` 加载的工具 key，
  * 管线写进 `tool_result.loadedTools`）。
@@ -144,6 +147,12 @@ export type BuiltinResult =
        * checking it against `ToolViewSchema`). Builtins only: extension tools cannot set it.
        */
       view?: ToolView;
+      /**
+       * The `read` copies the builtin `Read` stored for the call (vision-read design §1.2): the
+       * pipeline writes them to `tool_result.media` for builtin tools only (a plugin cannot set
+       * it); request building shows each image after the step's tool results.
+       */
+      media?: ToolResultMedia[];
       /**
        * Kernel-internal (never written to the log or sent to the model): the network hosts a
        * foreground command on a device was refused (`Bash`; network ask-to-allow spec §6.2). The

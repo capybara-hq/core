@@ -1035,13 +1035,30 @@ export function assembleModelRequest(input: AssembleModelRequestInput): {
 }
 
 /**
+ * The media limits of one request construction, read from the config once, so the fetches
+ * ({@link loadMedia}) and the build ({@link buildRequest}) plan with the same values even when a
+ * hot reload lands between them.
+ */
+interface MediaLimits {
+  /** `attachments.requestMediaBytes`. */
+  budgetBytes: number;
+  /** `attachments.readImagesPerRequest`. */
+  readImagesPerRequest: number;
+}
+
+function mediaLimits(deps: Pick<ModelStepDeps, "config">): MediaLimits {
+  const { requestMediaBytes, readImagesPerRequest } = deps.config.get().attachments;
+  return { budgetBytes: requestMediaBytes, readImagesPerRequest };
+}
+
+/**
  * 由事件构建本步的模型请求（{@link assembleModelRequest}）并给出输入 token 估算。
  *
  * 调用方不变式：不得在「已记录 tool_call、尚未记录其 tool_result」之间构建请求——
  * 否则配对守卫会给进行中的调用补上 unknown 结果并发给模型。运行循环在工具结果落日志后才进入下一步。
  */
 function buildRequest(
-  deps: Pick<ModelStepDeps, "config">,
+  limits: MediaLimits,
   events: ConversationEvent[],
   input: ModelStepInput,
   info: ModelInfo,
@@ -1063,7 +1080,8 @@ function buildRequest(
     ...(wrapUp && { toolChoice: "none" as const }),
     mediaInfo: tools.media.info,
     media: tools.media.bytes,
-    mediaBudgetBytes: deps.config.get().attachments.requestMediaBytes,
+    mediaBudgetBytes: limits.budgetBytes,
+    readImagesPerRequest: limits.readImagesPerRequest,
     defaultMaxOutputTokens: runtime.maxOutputTokens,
   });
   return {
@@ -1081,13 +1099,16 @@ function buildRequest(
  */
 async function loadMedia(
   deps: ModelStepDeps,
+  limits: MediaLimits,
   input: ModelStepInput,
   events: ConversationEvent[],
   info: ModelInfo,
   tools: StepTools,
 ): Promise<void> {
   const cache = tools.media;
-  const look = mediaRefs(events, info).filter((id) => !cache.looked.has(id));
+  const look = mediaRefs(events, info, limits.readImagesPerRequest).filter(
+    (id) => !cache.looked.has(id),
+  );
   if (look.length > 0) {
     if (deps.media) {
       let rows: Map<string, MediaInfo>;
@@ -1100,8 +1121,7 @@ async function loadMedia(
     }
     for (const id of look) cache.looked.add(id);
   }
-  const budget = deps.config.get().attachments.requestMediaBytes;
-  const plan = planMedia(events, info, cache.info, budget);
+  const plan = planMedia(events, info, cache.info, limits.budgetBytes, limits.readImagesPerRequest);
   const runKey = (id: string) =>
     MediaCache.key(id, cache.info.get(id) as MediaInfo, plan.caps.get(id));
   const need: string[] = [];
@@ -1256,8 +1276,9 @@ export async function runCompaction(
     deps.log.warn("compaction skipped: model unavailable", { model: modelRef, err });
     return skipped(events);
   }
+  const limits = mediaLimits(deps);
   try {
-    await loadMedia(deps, input, events, info, tools);
+    await loadMedia(deps, limits, input, events, info, tools);
   } catch (err) {
     if (!(err instanceof MediaUnavailableError)) throw err;
     // storage is temporarily unavailable: skip compaction for this step and leave it to the
@@ -1269,7 +1290,7 @@ export async function runCompaction(
     return skipped(events);
   }
   const { request: built, estimate: raw } = buildRequest(
-    deps,
+    limits,
     events,
     input,
     info,
@@ -1826,8 +1847,18 @@ async function ladder(
           // context, then build from the complete log read once after it; absent, `evs` stays
           const refreshed = await permissionContextBoundary(deps, input, attempt);
           if (refreshed !== undefined) evs = refreshed;
-          await loadMedia(deps, input, evs, info, tools);
-          const built = buildRequest(deps, evs, input, info, params.value, runtime, tools, wrapUp);
+          const limits = mediaLimits(deps);
+          await loadMedia(deps, limits, input, evs, info, tools);
+          const built = buildRequest(
+            limits,
+            evs,
+            input,
+            info,
+            params.value,
+            runtime,
+            tools,
+            wrapUp,
+          );
           const { request, estimate } = built;
           const fitInput = {
             events: evs,

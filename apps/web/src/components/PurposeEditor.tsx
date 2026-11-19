@@ -60,12 +60,13 @@ type Scope = "deployment" | "org";
  */
 const KERNEL_HINTS: Record<
   string,
-  "hint.eval" | "hint.titles" | "hint.webFetch" | "hint.review" | "subagentHint"
+  "hint.eval" | "hint.titles" | "hint.webFetch" | "hint.review" | "hint.vision" | "subagentHint"
 > = {
   eval: "hint.eval",
   title: "hint.titles",
   review: "hint.review",
   web_fetch: "hint.webFetch",
+  vision: "hint.vision",
   subagent_fast: "subagentHint",
   subagent_standard: "subagentHint",
   subagent_capable: "subagentHint",
@@ -254,10 +255,12 @@ function PurposeEditor({
     },
     // Only the models of the purpose's kind (a chat purpose never lists an embedding model)
     ...providersOfKind(providers, view.kind).flatMap((p) =>
-      p.models.map((m) => ({
-        value: encodeModel({ provider: p.provider, model: m.id }),
-        label: modelLabel({ name: p.provider, displayName: p.displayName }, m.displayName, lang),
-      })),
+      p.models
+        .filter((m) => view.requires?.vision !== true || m.capabilities.vision === true)
+        .map((m) => ({
+          value: encodeModel({ provider: p.provider, model: m.id }),
+          label: modelLabel({ name: p.provider, displayName: p.displayName }, m.displayName, lang),
+        })),
     ),
   ];
   // A saved model that is not listed (its provider failed, the model is gone): still listed, marked

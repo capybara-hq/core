@@ -314,7 +314,8 @@ describe("单次请求的媒体预算（Ruling M6）", () => {
 describe("主模型与兜底的能力不同", () => {
   it("主模型有视觉但失败，兜底没有视觉：兜底请求只有占位、没有字节", async () => {
     const data = new Uint8Array([5, 5, 5, 5]);
-    await say("look", [image(data)]);
+    const id = image(data);
+    await say("look", [id]);
     failing = new Set(["see"]);
     await step(agent("see", "blind"));
     const b64 = Buffer.from(data).toString("base64");
@@ -326,7 +327,10 @@ describe("主模型与兜底的能力不同", () => {
     expect(JSON.stringify(blindCalls)).not.toContain(b64);
     expect(userBlocks(blindCalls[0] as ModelRequest)).toEqual([
       { type: "text", text: "look" },
-      { type: "text", text: '[Attached image "img-look-0.png" — this model cannot view images.]' },
+      {
+        type: "text",
+        text: `[Attached image "img-look-0.png" — this model cannot view images. Read with file_id ${id} sends it to the organization's vision model, if one is set.]`,
+      },
     ]);
   });
 
@@ -402,6 +406,52 @@ describe("供应商拒收媒体（Ruling M8 / I1）", () => {
       type: "text",
       text: '[Attachment "img-look-0.png" was rejected by the model provider.]',
     });
+  });
+
+  it("a Read image rejected by the provider: media_excluded is written; the next request renders it as rejected", async () => {
+    const id = image(new Uint8Array([7, 7, 7]));
+    await say("read it", []);
+    const runId = randomUUID();
+    await eventLog.append(conversationId, [
+      {
+        type: "assistant_message",
+        runId,
+        payload: {
+          step: 1,
+          content: [{ type: "tool_call", id: "r1", name: "Read", input: {} }],
+          stopReason: "tool_use",
+        },
+      },
+      {
+        type: "tool_result",
+        runId,
+        payload: {
+          step: 1,
+          callId: "r1",
+          toolKey: "Read",
+          content: "Read image shot.png",
+          isError: false,
+          media: [{ attachmentId: id, name: "shot.png", mediaType: "image/png", size: 3 }],
+        },
+      },
+    ]);
+    rejectMedia = true;
+    const err = await step(agent("see"), { runId, step: 2 }).catch((e: unknown) => e);
+    expect((err as RunError).code).toBe("model.invalid_request");
+    const excluded = await eventsOfType("media_excluded");
+    expect(excluded.map((e) => e.payload)).toEqual([
+      { attachmentIds: [id], reason: "provider_rejected" },
+    ]);
+
+    calls.length = 0;
+    fetched = [];
+    const r = await step(agent("see"), { runId, step: 2 });
+    expect(r.stopReason).toBe("end_turn");
+    expect(fetched.flat()).not.toContain(id);
+    expect(userBlocks(calls[0] as ModelRequest).slice(-2)).toEqual([
+      { type: "text", text: `Image from Read (file_id ${id}):` },
+      { type: "text", text: '[Attachment "shot.png" was rejected by the model provider.]' },
+    ]);
   });
 
   it("写 media_excluded 失败：只记 warn，仍以原来的 RunError 失败", async () => {

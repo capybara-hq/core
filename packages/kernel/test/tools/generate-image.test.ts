@@ -92,6 +92,7 @@ let ownerId: string;
 let otherId: string;
 let orgId: string;
 let agentId: string;
+let courierId: string;
 
 beforeAll(async () => {
   [pgc, rd] = await Promise.all([startTestPostgres(), startTestRedis()]);
@@ -112,6 +113,14 @@ beforeAll(async () => {
               { id: "fake-image-b", kind: "image_generation" },
               { id: "fake-image-noref", kind: "image_generation", maxReferenceImages: 0 },
               { id: "fake-image-one", kind: "image_generation", maxImages: 1 },
+              {
+                id: "fake-image-sizes",
+                kind: "image_generation",
+                imageSizes: [
+                  { width: 1024, height: 1024 },
+                  { width: 2048, height: 2048 },
+                ],
+              },
             ],
           },
           "sandbox-fake": { root },
@@ -152,6 +161,25 @@ beforeAll(async () => {
   });
   expect(created.statusCode, created.body).toBe(201);
   agentId = (created.json() as { agent: { id: string } }).agent.id;
+  // Deliver as well: the delivery scope is one run, so a scripted run needs both tools
+  const courier = await owner({
+    method: "POST",
+    url: `/api/v1/orgs/${orgId}/agents`,
+    payload: {
+      definition: {
+        name: "Courier",
+        instructions: "Draw and deliver.",
+        model: { provider: "model-fake", model: "fake-1" },
+        disabledTools: onlyBuiltins([
+          { kind: "builtin", name: "GenerateImage" },
+          { kind: "builtin", name: "Deliver" },
+        ]),
+      },
+      visibility: "org",
+    },
+  });
+  expect(courier.statusCode, courier.body).toBe(201);
+  courierId = (courier.json() as { agent: { id: string } }).agent.id;
 });
 
 afterAll(async () => {
@@ -497,7 +525,10 @@ describe("GenerateImage calls", () => {
       expect(lines[i + 2]).toMatch(ARTIFACT_LINE);
     }
     expect(lines[4]).toBe("Revised prompt: revised: a red fox");
-    expect(lines).toHaveLength(5);
+    expect(lines[5]).toBe(
+      `The images are not shown to you; Read with file_id ${artifacts[0]?.payload.artifactId} returns one.`,
+    );
+    expect(lines).toHaveLength(6);
     // without file_path the call writes nothing into the device and is not reviewed
     expect(r.payload.review).toBeUndefined();
   });
@@ -536,6 +567,90 @@ describe("GenerateImage calls", () => {
     ]);
   });
 
+  it("accepts a Deliver'ed image as a reference", async () => {
+    const conv = await createConv(owner, orgId, agentId);
+    // the event `Deliver` writes: a device file's bytes stored under the conversation
+    const bytes = Buffer.concat([PNG, Buffer.from([1, 2, 3])]);
+    const artifactId = randomUUID();
+    const objectKey = `artifacts/${conv}/${artifactId}`;
+    await k.app.get(StorageService).kernel(orgId).put(objectKey, bytes, {
+      contentType: "image/png",
+      size: bytes.byteLength,
+    });
+    await k.app.get(EventLog).append(conv, [
+      {
+        type: "artifact_created",
+        payload: {
+          artifactId,
+          name: "photo.png",
+          contentType: "image/png",
+          size: bytes.byteLength,
+          objectKey,
+          sourcePath: "/workspace/photo.png",
+          callId: "call-deliver",
+        },
+      },
+    ]);
+    const seen = providerCalls();
+    await direct(conv, { prompt: "like it", reference_images: [artifactId] });
+    expect(seen[0]?.referenceImages).toEqual([
+      { mediaType: "image/png", data: bytes.toString("base64") },
+    ]);
+  });
+
+  it("an artifact id of another org is an unknown reference", async () => {
+    const conv = await createConv(owner, orgId, agentId);
+    const first = await direct(conv, { prompt: "a cat" });
+    const artifactId = ARTIFACT_LINE.exec(textOf(first).split("\n")[2] as string)?.[2];
+    const org2 = await createOrgWithProviders(k, owner, `Other ${randomUUID().slice(0, 6)}`);
+    const mapped = await owner({
+      method: "PUT",
+      url: `/api/v1/orgs/${org2}/model-purposes/image`,
+      payload: { target: { model: { provider: "model-fake", model: "fake-image" }, params: {} } },
+    });
+    expect(mapped.statusCode, mapped.body).toBe(200);
+    const seen = providerCalls();
+    const err = await rejection(
+      direct(conv, { prompt: "a cat", reference_images: [artifactId] }, { orgId: org2 }),
+    );
+    expect((err as ToolError).message).toBe(
+      "reference_images[0] is not an image attachment or artifact of this conversation; pass the id of one.",
+    );
+    expect(seen).toEqual([]);
+  });
+
+  it("a sub-agent may reference its root's attachment", async () => {
+    const rootConv = await createConv(owner, orgId, agentId);
+    const child = await createConv(owner, orgId, agentId);
+    const att = await attachment(rootConv, PNG);
+    const seen = providerCalls();
+    await direct(
+      child,
+      { prompt: "a cat", reference_images: [att] },
+      { sandboxConversationId: rootConv },
+    );
+    expect(seen[0]?.referenceImages).toEqual([{ mediaType: "image/png", data: FAKE_PNG_BASE64 }]);
+  });
+
+  it("standard resolution uses imageStandardPixels", async () => {
+    await map("fake-image-sizes");
+    const conv = await createConv(owner, orgId, agentId);
+    expect(textOf(await direct(conv, { prompt: "a cat" }))).toContain("at 1024x1024.");
+    expect(textOf(await direct(conv, { prompt: "a cat", resolution: "standard" }))).toContain(
+      "at 1024x1024.",
+    );
+    expect(textOf(await direct(conv, { prompt: "a cat", resolution: "high" }))).toContain(
+      "at 2048x2048.",
+    );
+  });
+
+  it("result names Read with file_id", async () => {
+    const conv = await createConv(owner, orgId, agentId);
+    const text = textOf(await direct(conv, { prompt: "a moon" }));
+    const id = ARTIFACT_LINE.exec(text.split("\n")[2] as string)?.[2];
+    expect(text).toContain(`The images are not shown to you; Read with file_id ${id} returns one.`);
+  });
+
   it("an unknown reference id names the index", async () => {
     const conv = await createConv(owner, orgId, agentId);
     const att = await attachment(conv, PNG);
@@ -543,14 +658,14 @@ describe("GenerateImage calls", () => {
     for (const bad of [randomUUID(), "not-an-id"]) {
       const err = await rejection(direct(conv, { prompt: "a cat", reference_images: [att, bad] }));
       expect((err as ToolError).message).toBe(
-        "reference_images[1] is not an attachment or generated image of this conversation; pass an attachment id or the artifact id of an image generated earlier in it.",
+        "reference_images[1] is not an image attachment or artifact of this conversation; pass the id of one.",
       );
     }
     // another conversation's attachment is not one of this conversation's
     const other = await createConv(owner, orgId, agentId);
     const err = await rejection(direct(other, { prompt: "a cat", reference_images: [att] }));
     expect((err as ToolError).message).toBe(
-      "reference_images[0] is not an attachment or generated image of this conversation; pass an attachment id or the artifact id of an image generated earlier in it.",
+      "reference_images[0] is not an image attachment or artifact of this conversation; pass the id of one.",
     );
     expect(seen).toEqual([]);
   });
@@ -1020,19 +1135,47 @@ describe("GenerateImage facts: repeats, billing, device copies", () => {
     );
     expect(lines[2]).toBe("Usage is billed for 1 generated image.");
     expect(lines[3]).toMatch(/^Revised prompt: /);
-    expect(lines).toHaveLength(4);
+    expect(lines).toHaveLength(5);
     expect(imageUsage(events)).toHaveLength(2);
   });
 
-  it("GenerateImage then Deliver of its device copy is a repeat", async () => {
+  it("GenerateImage then Deliver of its device copy in one run is a repeat", async () => {
     await map("fake-image");
-    const conv = await createConv(owner, orgId, agentId);
+    const conv = await createConv(owner, orgId, courierId);
     const name = `dev${randomUUID().slice(0, 6)}`;
-    const g = await call(conv, { prompt: "a fox", file_path: `out/${name}.png` });
-    const path = /device[^:]*: (\S+)/.exec(g.payload.content.split("\n").at(-1) ?? "")?.[1];
-    await postMessage(owner, orgId, conv, `tool:Deliver:${JSON.stringify({ file_path: path })}`);
+    const script = [
+      { name: "GenerateImage", input: { prompt: "a fox", file_path: `out/${name}.png` } },
+      { name: "Deliver", input: { file_path: `/workspace/out/${name}.png` } },
+    ];
+    await postMessage(owner, orgId, conv, `tools:${JSON.stringify(script)}`);
+    await waitForTerminal(db, conv, 1, 30_000);
+    const events = await eventsOf(db, conv);
+    const results = ofType(events, "tool_result");
+    const deliver = results.find((e) => e.payload.toolKey === "Deliver");
+    expect(deliver?.payload.isError, deliver?.payload.content).toBe(false);
+    expect(ofType(events, "artifact_created")).toHaveLength(1);
+    expect(deliver?.payload.content).toContain("already delivered");
+  });
+
+  it("a Deliver in a later run delivers the same bytes again (a new run is a new scope)", async () => {
+    await map("fake-image");
+    const conv = await createConv(owner, orgId, courierId);
+    const name = `dev${randomUUID().slice(0, 6)}`;
+    await postMessage(
+      owner,
+      orgId,
+      conv,
+      `tool:GenerateImage:${JSON.stringify({ prompt: "a fox", file_path: `out/${name}.png` })}`,
+    );
+    await waitForTerminal(db, conv, 1, 30_000);
+    await postMessage(
+      owner,
+      orgId,
+      conv,
+      `tool:Deliver:${JSON.stringify({ file_path: `/workspace/out/${name}.png` })}`,
+    );
     await waitForTerminal(db, conv, 2, 30_000);
-    expect(ofType(await eventsOf(db, conv), "artifact_created")).toHaveLength(1);
+    expect(ofType(await eventsOf(db, conv), "artifact_created")).toHaveLength(2);
   });
 
   it("n the listing does not offer fails validation", async () => {

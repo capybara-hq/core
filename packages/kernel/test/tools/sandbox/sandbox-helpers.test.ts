@@ -842,7 +842,7 @@ describe("custom roots (environments phase 2, spec §13.1)", () => {
     );
     expect(bash).toContain("The working directory is the workspace directory; files persist");
     expect(d.tool("Read").spec.description).toContain(
-      "Paths are absolute, under the workspace directory, the skills directory or the temporary files directory.",
+      "file_path is an absolute path on the device (under the workspace, skills or temporary directory; anywhere in auto mode)",
     );
     expect(d.tool("Write").spec.description).toContain(
       "The path is absolute, under the workspace directory or the temporary files directory (the skills directory is read-only).",

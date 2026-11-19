@@ -3837,7 +3837,8 @@
         "eval": "The eval judge uses it to compare baseline and candidate and give pass / fail. When it is not set, evals cannot use a judge.",
         "titles": "Generates titles for new conversations. When it is not set, the model of the conversation's latest run is used.",
         "webFetch": "The web fetch tool uses it to extract what is asked from a fetched page. When it is not set, the model of the calling conversation's latest run is used (for a sub-agent's call, the sub-agent's).",
-        "review": "The command-review classifier uses it to judge commands before they run. When it is not set, no classifier runs and a command it would be unsure about is asked about."
+        "review": "The command-review classifier uses it to judge commands before they run. When it is not set, no classifier runs and a command it would be unsure about is asked about.",
+        "vision": "Reads images for a model that cannot view them, through the Read tool (a pasted image too, by its file id). Only models that can view images are listed. When it is not set, those models cannot read images."
       }
     },
     "catalog": {

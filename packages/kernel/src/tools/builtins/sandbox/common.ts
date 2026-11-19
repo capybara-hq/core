@@ -64,6 +64,7 @@ import {
 import type { StorageService } from "../../../storage/storage.service.js";
 import type { BuiltinCallContext, ToolListingScope } from "../../registry.js";
 import { assertDeviceOfRunAccount } from "./device-owner.js";
+import type { ReadFileDeps } from "./read.js";
 
 /** 沙箱工具的依赖（都按调用时取，多副本下无进程内状态）。 */
 export interface SandboxToolDeps {
@@ -128,6 +129,12 @@ export interface SandboxToolDeps {
    * {@link managedDeviceContext} and refuses before entering without it.
    */
   managedDeviceContextRequired?: boolean;
+  /**
+   * `Read` beyond the device (vision-read design §1): reads by `file_id`, images shown or read by
+   * the vision purpose, their stored copies. Absent in test stubs: `Read` then reads the device
+   * only, and an image is reported as a binary file.
+   */
+  read?: ReadFileDeps;
 }
 
 /**

@@ -56,7 +56,8 @@ export interface HookScope {
  * `WebFetch` tool, `review` is the command-review classifier's call (`review` purpose, no run
  * step; absent = no classifier), `suggestion` is the prompt suggestion side request after a
  * completed web run (`runId` the run, `step` 0, `attempt` 1; a denial skips it and is recorded only
- * in the audit log).
+ * in the audit log), `vision` is the call that reads an image for a model without vision, made by
+ * the `Read` tool (also for a pasted image, read by its `file_id`; the `vision` purpose's model).
  */
 export type ModelCallPurpose =
   | "step"
@@ -65,6 +66,7 @@ export type ModelCallPurpose =
   | "web_fetch"
   | "review"
   | "image"
+  | "vision"
   | "suggestion";
 
 /**
@@ -107,7 +109,7 @@ export type HookModelRequest = Omit<ModelRequest, "messages"> & { messages: Hook
  * denial skips the title and is recorded only in the audit log), once for each `WebFetch`
  * extraction call (`purpose: "web_fetch"`) and once for each prompt suggestion call
  * (`purpose: "suggestion"`, `step` 0, `attempt` 1; a denial skips the suggestion and is recorded
- * only in the audit log).
+ * only in the audit log) and once for each vision call (`purpose: "vision"`).
  * `request` is the request as sent, except that images and documents are placeholders
  * ({@link HookMediaPlaceholder}): no media bytes, no attachment ids.
  */

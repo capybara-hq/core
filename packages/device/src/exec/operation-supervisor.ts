@@ -38,6 +38,7 @@ import {
   type OutputLocator,
   validateOutputRange,
 } from "./output-spool.js";
+import { timed } from "./transfer-timing.js";
 
 interface Entry {
   ref: SandboxExecutionRef;
@@ -47,7 +48,7 @@ interface Entry {
   state: "consumed" | "running" | "completed" | "unknown";
   revoked: boolean;
   identity?: TrustedLaunchIdentity;
-  result?: ExecResult | NativeHelperResult;
+  result?: ExecResult | NativeHelperResult | OmittedReadResult;
   stop?: SandboxStopResult;
   request?: {
     scope: MacWorkerRequest["scope"];
@@ -65,6 +66,34 @@ interface Entry {
     cleaned?: boolean;
   };
 }
+/**
+ * What the journal keeps of a completed native read: its outcome, never its bytes. The bytes stay
+ * in this process's memory for in-process retries; rewriting megabytes of file content on every
+ * fsynced journal commit is what made transfers slow and could exhaust the journal. A read has no
+ * lasting effect, so after a restart its retry reports an unknown outcome instead.
+ */
+interface OmittedReadResult {
+  omitted: "native-read";
+  bytes: number;
+  truncated: boolean;
+}
+const isOmittedRead = (result: Entry["result"]): result is OmittedReadResult =>
+  typeof result === "object" && result !== null && "omitted" in result;
+/** A completed native read's bytes as base64, while the entry still holds them. */
+const readBytes = (result: Entry["result"]): string | undefined =>
+  typeof result === "object" && result !== null && "dataB64" in result ? result.dataB64 : undefined;
+const omitRead = (result: { dataB64: string; truncated: boolean }): OmittedReadResult => ({
+  omitted: "native-read",
+  bytes: Buffer.byteLength(result.dataB64, "base64"),
+  truncated: result.truncated,
+});
+/** The entry as the journal stores it (see {@link OmittedReadResult}). */
+function journalForm(entry: Entry): Entry {
+  const result = entry.result;
+  if (readBytes(result) === undefined) return entry;
+  return { ...entry, result: omitRead(result as { dataB64: string; truncated: boolean }) };
+}
+const RETAINED_READ_BYTES = 64 * 1024 * 1024;
 interface Live {
   worker?: MacWorkerHandle;
   controller: AbortController;
@@ -87,6 +116,12 @@ export interface SupervisorOptions {
    * the entry stays unknown and is never resumed.
    */
   reapOrphan?: (identity: TrustedLaunchIdentity) => void;
+  /**
+   * The most completed native read bytes kept in memory for retries (default 64 MiB). Past it the
+   * oldest reads give their bytes up and their retry reports an unknown outcome, as after a
+   * restart.
+   */
+  retainedReadBytes?: number;
 }
 interface Journal {
   version: 1;
@@ -409,12 +444,36 @@ export class MacOperationSupervisor {
       } catch {}
     }
   }
+  /**
+   * Keeps the completed read bytes held for retries within {@link SupervisorOptions.retainedReadBytes}:
+   * the oldest reads (admission order) give their bytes up first.
+   */
+  private boundRetainedReads(): void {
+    const budget = this.options.retainedReadBytes ?? RETAINED_READ_BYTES;
+    const held: Entry[] = [];
+    let total = 0;
+    for (const entry of this.entries.values()) {
+      const data = readBytes(entry.result);
+      if (data === undefined) continue;
+      held.push(entry);
+      total += Buffer.byteLength(data, "base64");
+    }
+    for (const entry of held) {
+      if (total <= budget) break;
+      const result = entry.result as { dataB64: string; truncated: boolean };
+      total -= Buffer.byteLength(result.dataB64, "base64");
+      entry.result = omitRead(result);
+    }
+  }
   private serial<T>(fn: () => Promise<T> | T): Promise<T> {
     const next = this.queue.then(fn);
     this.queue = next.catch(() => {});
     return next;
   }
   private persist(): void {
+    timed("supervisor", "journal", () => this.persistNow());
+  }
+  private persistNow(): void {
     if (this.closed)
       throw new SandboxPermissionUnsupportedError(
         "This instance generation was superseded; its journal belongs to the current binding",
@@ -430,7 +489,11 @@ export class MacOperationSupervisor {
       deviceId: this.options.deviceId,
       generation: this.options.instanceGeneration,
     };
-    const journal: Journal = { version: 1, transaction, entries: [...this.entries.values()] };
+    const journal: Journal = {
+      version: 1,
+      transaction,
+      entries: [...this.entries.values()].map(journalForm),
+    };
     const text = JSON.stringify(journal);
     if (Buffer.byteLength(text) > 64 * 1024 * 1024)
       throw Error("Operation journal capacity exhausted");
@@ -674,6 +737,7 @@ export class MacOperationSupervisor {
                   };
                 entry.state = "completed";
                 entry.result = value;
+                this.boundRetainedReads();
                 if (
                   entry.stop?.outcome === "cancel-pending" &&
                   !this.cancellations.has(entry.ref.operationId) &&
@@ -754,7 +818,7 @@ export class MacOperationSupervisor {
   ): Promise<ExecResult | NativeHelperResult> {
     const { entry, fresh } = await this.admit(request, hash, this.now() + 60000, signal);
     if (!fresh) {
-      if (entry.state === "completed") return entry.result ?? null;
+      if (entry.state === "completed" && !isOmittedRead(entry.result)) return entry.result ?? null;
       throw new SandboxOperationOutcomeUnknownError("Consumed operation outcome is unknown");
     }
     const launching = this.launch(entry, request, signal, false);

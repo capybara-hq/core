@@ -497,6 +497,69 @@ async function snapshotOf(convId: string, runId?: string): Promise<CaseSnapshot>
 
 const reset = () => capture.reset();
 
+/** A Bash call whose output carries `marker` (see {@link withReadImages}). */
+const readCommand = (marker: string) =>
+  `tool:Bash:${JSON.stringify({ command: `echo ${marker}`, description: "Read a screenshot" })}`;
+
+/**
+ * Stands in for the builtin Read logging `tool_result.media` (vision-read Task 7): while `work`
+ * runs, a Bash result whose content holds `marker` gets a `read` copy of {@link PNG} bound to its
+ * conversation (stored as `storeRead` binds it, under `read-images/<id>`), the Read result text
+ * (plus `fallback` as a second paragraph) and the media entry. Returns the copies' ids.
+ */
+async function withReadImages(
+  marker: string,
+  fallback: string | null,
+  work: () => Promise<void>,
+): Promise<string[]> {
+  const log = k.app.get(EventLog) as unknown as {
+    write: (conversationId: string, events: unknown[], bodies: unknown[]) => Promise<unknown>;
+  };
+  const original = log.write.bind(log);
+  const ids: string[] = [];
+  const spy = vi.spyOn(log, "write").mockImplementation(async (conversationId, events, bodies) => {
+    for (const body of bodies as { type: string; payload: Record<string, unknown> }[]) {
+      const p = body.payload;
+      if (body.type !== "tool_result" || p.toolKey !== "Bash") continue;
+      if (typeof p.content !== "string" || !p.content.includes(marker)) continue;
+      const id = randomUUID();
+      const key = `read-images/${id}`;
+      const head = await k.app
+        .get(StorageService)
+        .kernel(orgId)
+        .put(key, PNG, { contentType: "image/png", size: PNG.length });
+      await db
+        .insertInto("attachments")
+        .values({
+          id,
+          org_id: orgId,
+          account_id: ownerId,
+          conversation_id: conversationId,
+          name: "shot.png",
+          content_type: "image/png",
+          size: PNG.length,
+          object_key: key,
+          status: "ready",
+          purpose: "read",
+          etag: head.etag ?? null,
+        })
+        .execute();
+      p.content = `Read image shot.png (image/png, ${PNG.length} bytes, 1×1; file_id ${id}).${
+        fallback === null ? "" : `\n\n${fallback}`
+      }`;
+      p.media = [{ attachmentId: id, name: "shot.png", mediaType: "image/png", size: PNG.length }];
+      ids.push(id);
+    }
+    return original(conversationId, events, bodies);
+  });
+  try {
+    await work();
+  } finally {
+    spy.mockRestore();
+  }
+  return ids;
+}
+
 describe("reconstructRequest：基线零漂移", () => {
   it("多步工具、ToolSearch 加载、审批续跑、技能目录快照与变更、提醒、跨运行插话、工具不可用", async () => {
     reset();
@@ -1443,6 +1506,210 @@ describe("reconstructRequest：基线零漂移", () => {
     expect(call.payload.request.media?.map((m) => m.outcome)).toEqual(["placeholder_unsupported"]);
     expect(snapshotMediaRefs(snap, call.seq, await modelInfo("model-fake", "fake-1"))).toEqual([]);
     await expectZeroDrift(conv, snap);
+  });
+
+  it("a Read image on a vision model: the image follows the tool results, zero drift; a deleted object gives media_missing", async () => {
+    reset();
+    const agentId = await createAgent(
+      { provider: "model-fake", model: "fake-v" },
+      { tools: [{ kind: "builtin", name: "Bash" }] },
+    );
+    const conv = await createConv(owner, orgId, agentId);
+    const ids = await withReadImages("READIMG-V", null, async () => {
+      await postMessage(owner, orgId, conv, readCommand("READIMG-V"));
+      await waitForTerminal(db, conv, 1, 30_000);
+    });
+    expect(ids).toHaveLength(1);
+    const id = ids[0] as string;
+    const result = (await eventsOf(db, conv)).find((e) => e.type === "tool_result");
+    expect(result?.type === "tool_result" && result.payload.media?.[0]?.attachmentId).toBe(id);
+    // the request after the tool result: the label and the image after the tool result block
+    const last = sent.at(-1) as ModelRequest;
+    const tail = last.messages.filter((m) => m.role === "user").at(-1)?.content as unknown[];
+    expect(tail.slice(-2)).toEqual([
+      { type: "text", text: `Image from Read (file_id ${id}):` },
+      {
+        type: "image",
+        mediaType: "image/png",
+        name: "shot.png",
+        source: { kind: "base64", data: PNG.toString("base64") },
+      },
+    ]);
+    const snap = await snapshotOf(conv);
+    await expectZeroDrift(conv, snap);
+    const calls = modelCalls(toEvents(snap));
+    const second = calls[1] as ModelCallEvent;
+    expect(second.payload.request.media?.map((m) => m.outcome)).toEqual(["bytes"]);
+    expect(second.payload.request.readImagesPerRequest).toBe(
+      k.app.get(KernelConfigService).get().attachments.readImagesPerRequest,
+    );
+
+    // the read copy's object deleted (a purged conversation): the replay reports drift, no crash
+    await k.app.get(StorageService).kernel(orgId).delete(`read-images/${id}`);
+    const info = await modelInfo("model-fake", "fake-v");
+    const out = reconstructRequest(snap, second.seq, {
+      model: info,
+      ...(await mediaFor(conv, snap, second.seq, info)),
+    });
+    expect(out.drift).toEqual(["media_missing"]);
+    expect(JSON.stringify(out.request)).toContain(
+      '[Attachment \\"shot.png\\" is no longer available.]',
+    );
+  });
+
+  it("Read window eviction and a hot window change: the recorded window drives every reconstruction, zero drift", async () => {
+    reset();
+    const config = k.app.get(KernelConfigService);
+    const live = config.get.bind(config);
+    let window = 2;
+    const spy = vi.spyOn(config, "get").mockImplementation(() => {
+      const c = live();
+      return { ...c, attachments: { ...c.attachments, readImagesPerRequest: window } };
+    });
+    try {
+      const agentId = await createAgent(
+        { provider: "model-fake", model: "fake-v" },
+        { tools: [{ kind: "builtin", name: "Bash" }] },
+      );
+      const conv = await createConv(owner, orgId, agentId);
+      const ids = await withReadImages("READIMG-W", null, async () => {
+        for (let n = 1; n <= 4; n++) {
+          // the window changes hot before the fourth Read step
+          if (n === 4) window = 4;
+          await postMessage(owner, orgId, conv, readCommand(`READIMG-W${n}`));
+          await waitForTerminal(db, conv, n, 30_000);
+        }
+      });
+      expect(ids).toHaveLength(4);
+      const snap = await snapshotOf(conv);
+      await expectZeroDrift(conv, snap);
+      // every request after a Read result: its window and what became of each Read image
+      const withReads = modelCalls(toEvents(snap)).filter(
+        (c) => c.payload.request.readImagesPerRequest !== undefined,
+      );
+      const outcomes = withReads.map((c) => [
+        c.payload.request.readImagesPerRequest,
+        ids.map((id) => c.payload.request.media?.find((m) => m.attachmentId === id)?.outcome),
+      ]);
+      expect(outcomes).toEqual([
+        [2, ["bytes", undefined, undefined, undefined]],
+        // the second run's first request already sees read 1; its second request reads 2 too
+        [2, ["bytes", undefined, undefined, undefined]],
+        [2, ["bytes", "bytes", undefined, undefined]],
+        [2, ["bytes", "bytes", undefined, undefined]],
+        // read 3 overflows the window of 2: only the newest one stays
+        [2, ["not_included", "not_included", "bytes", undefined]],
+        // the window grows to 4 hot: the walk over the log keeps all four
+        [4, ["bytes", "bytes", "bytes", undefined]],
+        [4, ["bytes", "bytes", "bytes", "bytes"]],
+      ]);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
+  it("a fallback read on a model without vision: the static text after the tool results, zero drift", async () => {
+    reset();
+    const agentId = await createAgent(
+      { provider: "model-fake", model: "fake-1" },
+      { tools: [{ kind: "builtin", name: "Bash" }] },
+    );
+    const conv = await createConv(owner, orgId, agentId);
+    const ids = await withReadImages(
+      "READIMG-F",
+      "model-fake/fake-v read the image for you (this model cannot view images):\nA transparent pixel.",
+      async () => {
+        await postMessage(owner, orgId, conv, readCommand("READIMG-F"));
+        await waitForTerminal(db, conv, 1, 30_000);
+      },
+    );
+    const id = ids[0] as string;
+    const last = sent.at(-1) as ModelRequest;
+    const tail = last.messages.filter((m) => m.role === "user").at(-1)?.content as {
+      type: string;
+      content?: string;
+    }[];
+    expect(tail[0]?.content).toContain("read the image for you");
+    expect(tail.slice(-2)).toEqual([
+      { type: "text", text: `Image from Read (file_id ${id}):` },
+      { type: "text", text: "[This model cannot view images.]" },
+    ]);
+    const snap = await snapshotOf(conv);
+    const second = modelCalls(toEvents(snap))[1] as ModelCallEvent;
+    expect(second.payload.request.media).toEqual([
+      { attachmentId: id, outcome: "placeholder_unsupported" },
+    ]);
+    // no row or byte is needed for a model without vision
+    expect(snapshotMediaRefs(snap, second.seq, await modelInfo("model-fake", "fake-1"))).toEqual(
+      [],
+    );
+    await expectZeroDrift(conv, snap);
+  });
+
+  it("a sub-agent's Read image: the copy is in the child's conversation and its next request, zero drift", async () => {
+    reset();
+    const agentId = await createAgent(
+      { provider: "model-fake", model: "fake-v" },
+      { tools: ["Agent", "Bash"].map((name) => ({ kind: "builtin", name })) },
+    );
+    const conv = await createConv(owner, orgId, agentId);
+    const prompt = readCommand("READIMG-S");
+    const ids = await withReadImages("READIMG-S", null, async () => {
+      await postMessage(
+        owner,
+        orgId,
+        conv,
+        `tool:Agent:${JSON.stringify({ description: "Look", prompt, subagent_type: "general-purpose" })}`,
+      );
+      await waitFor(
+        async () => {
+          const events = await eventsOf(db, conv);
+          const delivery = events.find((e) => e.type === "subagent_delivery");
+          if (delivery === undefined) return false;
+          const read = events.find((e) => e.type === "model_call" && e.seq > delivery.seq);
+          const busy = (await runsOf(db, conv)).some((r) => r.status !== "completed");
+          return (
+            read !== undefined &&
+            !busy &&
+            events.some((e) => e.type === "run_finished" && e.seq > read.seq)
+          );
+        },
+        30_000,
+        "the root's runs to finish after the child's delivery",
+      );
+    });
+    expect(ids).toHaveLength(1);
+    const id = ids[0] as string;
+    const dispatched = (await eventsOf(db, conv)).find((e) => e.type === "subagent_dispatched");
+    const child = (dispatched as Extract<ConversationEvent, { type: "subagent_dispatched" }>)
+      .payload.subagentId;
+    const row = await db
+      .selectFrom("attachments")
+      .select(["conversation_id", "purpose"])
+      .where("id", "=", id)
+      .executeTakeFirstOrThrow();
+    expect(row).toEqual({ conversation_id: child, purpose: "read" });
+    // the parent never sees the child's image
+    const label = `Image from Read (file_id ${id}):`;
+    const withImage = sent.filter((r) => JSON.stringify(r.messages).includes(label));
+    expect(withImage).toHaveLength(1);
+    const childEvents = await eventsOf(db, child);
+    const call = modelCalls(childEvents).find((c) =>
+      (c.payload.request.media ?? []).some((m) => m.attachmentId === id),
+    ) as ModelCallEvent;
+    expect(call.payload.request.media).toEqual([
+      { attachmentId: id, outcome: "bytes", etag: expect.any(String) },
+    ]);
+    const snap = await snapshotOf(child, call.runId as string);
+    const info = await modelInfo("model-fake", "fake-v");
+    for (const c of modelCalls(toEvents(snap))) {
+      const out = reconstructRequest(snap, c.seq, {
+        model: info,
+        ...(await mediaFor(child, snap, c.seq, info)),
+      });
+      expect(out.drift, `child model_call seq ${c.seq}`).toEqual([]);
+      if (c.seq === call.seq) expect(out.request).toEqual(withImage[0]);
+    }
   });
 
   it("a skill version change mid-conversation, a claude-code skill with the tool map, and a compaction: zero drift and equal to what the provider received", async () => {

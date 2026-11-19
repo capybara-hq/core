@@ -142,6 +142,7 @@ import {
   type CallPolicy,
   type ResolvedTool,
   ToolRegistry,
+  type ToolResultMedia,
 } from "./registry.js";
 import { runResourceTool } from "./resources.js";
 import { validateInput } from "./validate.js";
@@ -599,10 +600,16 @@ const MANAGED_OPERATION_TOOLS: ReadonlySet<string> = new Set([
 /**
  * Whether a managed builtin's call enters the device: every call of the device tools, a
  * `GenerateImage` call only with `file_path` (one without writes nothing into the device, so it
- * takes neither the device-owner guard nor the permission review: image generation spec §5.3).
+ * takes neither the device-owner guard nor the permission review: image generation spec §5.3),
+ * and a `Read` only with `file_path` (a `file_id` read comes from the object store: vision-read
+ * design §1.1).
  */
-const entersDevice = (toolKey: string, input: unknown): boolean =>
-  toolKey !== BUILTIN.GenerateImage || generateImagePaths(input).length > 0;
+const entersDevice = (toolKey: string, input: unknown): boolean => {
+  if (toolKey === BUILTIN.Read) {
+    return typeof (input as { file_path?: unknown } | null)?.file_path === "string";
+  }
+  return toolKey !== BUILTIN.GenerateImage || generateImagePaths(input).length > 0;
+};
 
 /** Whether the review holds a shell command or a file write, for the texts and the ask's detail. */
 const reviewKindOf = (toolKey: string): "command" | "write" =>
@@ -722,6 +729,12 @@ function loadedFrom(result: unknown, tools: readonly ResolvedTool[]): string[] {
   if (!Array.isArray(raw)) return [];
   const known = new Set(tools.filter((t) => !isAlwaysLoaded(t.key)).map((t) => t.key));
   return [...new Set(raw.filter((k): k is string => typeof k === "string" && known.has(k)))];
+}
+
+/** A builtin result's `media` (see `BuiltinResult`): a non-empty array, else nothing. */
+function mediaFrom(result: unknown): ToolResultMedia[] | undefined {
+  const raw = (result as { media?: unknown } | null)?.media;
+  return Array.isArray(raw) && raw.length > 0 ? (raw as ToolResultMedia[]) : undefined;
 }
 
 class Stopped extends Error {}
@@ -1515,11 +1528,18 @@ export class ToolPipeline {
       outcome.kind === "result"
         ? renderResult(outcome.result)
         : { text: outcome.message, contentTypes: [], isError: true };
-    // 内置工具（ToolSearch）报告的已加载工具：只认本步可用、非内置的 key，写进 tool_result（日志即事实源）
+    // the tools a builtin (ToolSearch) reports as loaded: only keys available in this step and not
+    // builtin, written to tool_result (the log is the source of truth)
     const loadedTools =
       outcome.kind === "result" && tool.source.kind === "builtin"
         ? loadedFrom(outcome.result, resolved.tools)
         : [];
+    // the images the builtin Read stored for the call (vision-read design §1.2): builtins only,
+    // so a plugin can never name an attachment for request building
+    const media =
+      outcome.kind === "result" && tool.source.kind === "builtin"
+        ? mediaFrom(outcome.result)
+        : undefined;
     // 显示摘要：只认插件 / 内置工具与内核的 resources 工具给的（连接器结果来自外部服务，不采信），
     // 校验不过就丢弃并告警
     const display =
@@ -1644,6 +1664,7 @@ export class ToolPipeline {
         ...(spilled.outputId !== undefined && { outputId: spilled.outputId }),
         ...(rendered.contentTypes.length > 0 && { contentTypes: rendered.contentTypes }),
         ...(loadedTools.length > 0 && { loadedTools }),
+        ...(media !== undefined && { media }),
         ...(display !== undefined && { display }),
         ...(view !== undefined && { view }),
         ...(card !== undefined && { card }),
@@ -2968,6 +2989,7 @@ export class ToolPipeline {
       outputId?: string;
       contentTypes?: string[];
       loadedTools?: string[];
+      media?: ToolResultMedia[];
       display?: ToolDisplay;
       view?: ToolView;
       card?: ToolCard;

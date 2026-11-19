@@ -6,6 +6,7 @@ import {
   SandboxPermissionUnsupportedError,
   SandboxScopeDeniedError,
 } from "@capybara-hq/plugin-sdk";
+import { recordTransferTiming, timed } from "./transfer-timing.js";
 export interface PinnedNativeRoot {
   path: string;
   fd: number;
@@ -123,6 +124,8 @@ export async function runNativeHelper(
     if (!s.isDirectory()) throw new Error("Pinned root must be a directory");
     return [s.dev, s.ino];
   });
+  const spawnedAt = performance.now();
+  let dispatchedAt = 0;
   const child = (launch.spawn ?? spawn)(
     launch.pythonPath,
     ["-I", "-c", PRELUDE, NATIVE_FILES_SOURCE, JSON.stringify(expected)],
@@ -184,6 +187,7 @@ export async function runNativeHelper(
     }
     if (handshake === "ready\n" && !ready) {
       ready = true;
+      recordTransferTiming(request.method, "spawn", performance.now() - spawnedAt);
       void (async () => {
         try {
           await launched;
@@ -200,7 +204,11 @@ export async function runNativeHelper(
               ...(r.components ? { components: r.components } : {}),
             });
           });
-          child.stdin?.end(JSON.stringify({ ...request, roots: mapped }));
+          const body = timed(request.method, "serialise", () =>
+            JSON.stringify({ ...request, roots: mapped }),
+          );
+          dispatchedAt = performance.now();
+          child.stdin?.end(body);
         } catch (e) {
           failure = e;
           kill();
@@ -219,6 +227,8 @@ export async function runNativeHelper(
     signal.removeEventListener("abort", abort);
     kill();
   }
+  if (dispatchedAt)
+    recordTransferTiming(request.method, "helperIo", performance.now() - dispatchedAt);
   signal.throwIfAborted();
   if (failure) throw failure;
   if (!ready)
@@ -227,7 +237,9 @@ export async function runNativeHelper(
     );
   let response: { result?: NativeHelperResult; error?: { code: string; message: string } };
   try {
-    response = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+    response = timed(request.method, "parse", () =>
+      JSON.parse(Buffer.concat(chunks).toString("utf8")),
+    );
   } catch {
     throw new Error("Native helper returned invalid bounded JSON");
   }

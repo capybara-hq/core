@@ -71,6 +71,16 @@ const DeploymentConfig = z.object({
             .min(0)
             .optional()
             .meta(label("最大参考图数", "Max reference images")),
+          imageSizes: z
+            .array(
+              z.object({
+                width: z.number().int().positive().meta(label("宽（像素）", "Width (px)")),
+                height: z.number().int().positive().meta(label("高（像素）", "Height (px)")),
+              }),
+            )
+            .min(1)
+            .optional()
+            .meta(label("出图尺寸", "Image sizes")),
         }),
       )
       .optional()

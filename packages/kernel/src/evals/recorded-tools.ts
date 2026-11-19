@@ -1,6 +1,7 @@
 import type { AppendEvent, EventLog } from "../conversations/event-log.js";
 import { type ReviewRecord, ReviewRecordSchema } from "../conversations/events.js";
 import { ApiError } from "../errors.js";
+import type { ReadMedia } from "../runtime/context/build.js";
 import {
   type DevicePathsPayload,
   devicePathsChangeFromPayload,
@@ -49,6 +50,12 @@ export interface RecordedCall {
    * original had none. Never part of matching, the content or any request.
    */
   review?: ReviewRecord;
+  /**
+   * The images the original Read stored (`tool_result.media`, vision-read design §1.4), copied
+   * verbatim: the replay renders the same `read` attachments of the original conversation (media
+   * lookups use the snapshot's conversation), never reads or stores again.
+   */
+  media?: ReadMedia[];
 }
 
 /** 规范化 JSON：对象键递归按码点排序，数组保持顺序；`undefined` 按 JSON 规则省略。 */
@@ -98,6 +105,7 @@ export function recordedCalls(s: CaseSnapshot): RecordedCall[] {
       loadedTools?: string[];
       contentTypes?: string[];
       review?: unknown;
+      media?: ReadMedia[];
     }>
   >();
   const resultSeq = new Map<string, number>();
@@ -154,6 +162,7 @@ export function recordedCalls(s: CaseSnapshot): RecordedCall[] {
         ...(r.review !== undefined && {
           review: recordedReview(r.review, resultSeq.get(call.id) ?? 0),
         }),
+        ...(r.media !== undefined && { media: structuredClone(r.media) }),
       });
     }
   }
@@ -264,6 +273,7 @@ export class RecordedToolPipeline implements Pick<ToolPipeline, "runStep"> {
                 ...(rec.contentTypes !== undefined && { contentTypes: rec.contentTypes }),
                 // the recorded decision, verbatim: nothing is reviewed or admitted again
                 ...(rec.review !== undefined && { review: structuredClone(rec.review) }),
+                ...(rec.media !== undefined && { media: structuredClone(rec.media) }),
               }
             : { content: REPLAY_NO_RECORDING, isError: true },
         ),
