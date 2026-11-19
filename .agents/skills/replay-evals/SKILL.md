@@ -44,7 +44,10 @@ see `.agents/skills/writing-web-ui`). Design basis: overall design §6 principle
   `Edit` call (the rule table, the classifier, or the person through a `command` approval) and the rule and reason.
   Display only: request building reads only `callId` / `content` / `isError`, and a replay renders the recorded result,
   so a denied, allowed or held command needs no `DriftReason`; a resumed `command` approval replays from its recorded
-  result and is never reviewed again (`RecordedToolPipeline` never executes or reviews a tool). The review's own
+  result and is never reviewed again (`RecordedToolPipeline` never executes or reviews a tool). The permission side of
+  the record (`decisionSource`, including `full-access` for an auto-grant, and `crossing`: `directory` / `host` /
+  `outside-sandbox` / `sensitive`) and the `permission_reviewed` event are display and audit only too: replay uses the
+  recorded decision, never today's settings or profile, and needs no `DriftReason`. The review's own
   classifier call fires `model.request` / `model.response` with purpose `review` and writes a `usage` event with
   the same purpose — neither is model-visible, so neither needs a `DriftReason`.
 - **`tools_changed`** (tool naming spec §9.1): written before a step's request when its resolved tool set differs from the
@@ -93,7 +96,7 @@ see `.agents/skills/writing-web-ui`). Design basis: overall design §6 principle
   `ExecutionRevoked` (checked before the abort); every other callback or refresh failure is a named no-send
   `run.permission_context_*` run error, never a provider error or fallback. Compaction, title, review and
   extraction calls get no permission context. **Live producers are on** (the paired activation, device
-  protocol 3): `RunSteps` wires the recorder (`PermissionContextRecorder`) and `BuiltinTools` the managed device
+  protocol 4): `RunSteps` wires the recorder (`PermissionContextRecorder`) and `BuiltinTools` the managed device
   writer (`ManagedDeviceContextRecorder`) while the one gate `PERMISSION_CONTEXT_ACTIVATION` is on (production
   `PERMISSION_CONTEXT_ACTIVE = true`; a test may provide `false` for the dormant state). Every agent run now
   records a context before its first request (a conversation without a usable device records it as
@@ -105,13 +108,13 @@ see `.agents/skills/writing-web-ui`). Design basis: overall design §6 principle
   Cases in `reconstruct.test.ts` ("the device's permission context"): a provisioned device and a profile change
   between runs, and a log written before the activation (made with the request boundary removed from
   `RunSteps.deps`, `beforeActivation`). Activated cases that run builtins bind a cloud device on sandbox-fake,
-  which reports permission support (restricted and Full) and serves the managed operation route
+  which reports permission support v2 and serves the managed operation route
   (`bindFreshCloudDevice`: unprobed until its first provisioning, then `supported`).
   **The 9.6 group** (run sequentially, 2 workers, before and after any change to request building, the
   recorder or the managed device writer): `evals/reconstruct.test.ts`, `evals/run-replay.test.ts`,
   `evals/recorded-permission-context.test.ts`, `runtime/permission-context*.test.ts` (including the
   `.dual` file in the container project) and the cross-path smoke test `runtime/permission-activation.test.ts`
-  (one app on the production gate: an anonymous IM guest, a protocol 3 local device and a sandbox-fake cloud
+  (one app on the production gate: an anonymous IM guest, a local device on the real gateway and a sandbox-fake cloud
   device each record a schema-valid v2 context before their first request, every request locates the latest
   one, a profile change appends one, an unchanged follow-up none).
   Full-run replay (`evals/recorded-permission-context.ts`, spec B4): earlier runs' contexts are seeds; the target
