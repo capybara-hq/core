@@ -305,7 +305,7 @@ describe("vision read", () => {
     expect(err).toBeInstanceOf(ToolError);
     expect((err as ToolError).message).toBe(NO_VISION_MODEL_TEXT);
     expect(NO_VISION_MODEL_TEXT).toBe(
-      "This model cannot view images and the organization has no vision model; an org admin can set one under Models → Purposes → Vision.",
+      "This model cannot view images and the organization has no vision model; ask an org admin to set one under Models → Purposes → Vision, then Read again.",
     );
     expect(visionRequests()).toEqual([]);
   });

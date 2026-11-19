@@ -50,8 +50,8 @@ export const VISION_DEFAULT_PROMPT = "Describe the image, including any text in 
 
 /** The tool error when the org has no usable vision model (spec §1.2; verbatim). */
 export const NO_VISION_MODEL_TEXT =
-  "This model cannot view images and the organization has no vision model; an org admin can set " +
-  "one under Models → Purposes → Vision.";
+  "This model cannot view images and the organization has no vision model; ask an org admin to " +
+  "set one under Models → Purposes → Vision, then Read again.";
 
 /** The tool error when the vision call fails. */
 export const VISION_READ_FAILED_TEXT = "The vision model could not read the image.";
