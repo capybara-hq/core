@@ -15,6 +15,7 @@ import {
   type SandboxLimits,
   validateAllowHost,
 } from "@capybara-hq/plugin-sdk";
+import type { RunningOperations } from "./activity.js";
 import type { CommandLog, CommandLogEntry } from "./command-log.js";
 import type { InstanceBinder } from "./exec/instance-binding.js";
 import type { MacOperationBackend } from "./exec/mac-operation-backend.js";
@@ -284,6 +285,8 @@ export interface StagedOwnerPolicy {
   reconcile: (signal: AbortSignal) => Promise<void>;
   /** The owner's local command log: operations and policy changes are recorded there. */
   log?: CommandLog;
+  /** The operations executing now, for the control socket's `running` op (never their command). */
+  running?: RunningOperations;
 }
 
 /** Appends one line to the local command log: best effort, never fails or delays an operation. */
@@ -510,6 +513,16 @@ export async function serveOperationV3(
           ...(a.cwd === undefined ? {} : { cwd: a.cwd as string }),
           ...(a.env === undefined ? {} : { env: a.env as Record<string, string> }),
         };
+        // listed as running from here to the command-log line of its end; never the command
+        const entry = operationEntry(parsed.op, a, scope, null);
+        const tag = entry.tag ?? "";
+        owner?.running?.begin({
+          tag,
+          conversationId: entry.actor?.conversationId || null,
+          accountId: entry.actor?.accountId || null,
+          isolation: entry.isolation ?? "restricted",
+          startedAt: new Date().toISOString(),
+        });
         try {
           result =
             parsed.op === "exec"
@@ -523,6 +536,8 @@ export async function serveOperationV3(
         } catch (error) {
           note(owner?.log, operationEntry(parsed.op, a, scope, null, errorKind(sdk, error)));
           throw error;
+        } finally {
+          owner?.running?.end(tag);
         }
         const exitCode =
           parsed.op === "exec" ? ((result as { exitCode?: number | null }).exitCode ?? null) : null;
