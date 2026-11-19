@@ -1558,10 +1558,10 @@ export class ApprovalsService {
     ) {
       await this.keepTrialGrant(before, accountId);
     }
-    // 「这次允许」 of a push in a trial run: the task's grant for that repository; a standing
+    // "Allow once" of a push in a trial run: the task's grant for that repository; a standing
     // allow needs none (the member's policy already allows it)
     if (git?.outcome === "once") await this.keepTrialGitGrant(before, accountId);
-    // 「这次允许」 in a trial run: the task's grants (network ask-to-allow spec §8.1)
+    // "Allow once" in a trial run: the task's grants (network ask-to-allow spec §8.1)
     if (network?.outcome === "once") {
       await this.keepTrialNetworkGrant(before, accountId, network.granted);
     }
