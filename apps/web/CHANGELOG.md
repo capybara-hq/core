@@ -1,5 +1,17 @@
 # @capybara-hq/web
 
+## 0.1.0-rc.61
+
+### Patch Changes
+
+- d91ad92: Agent map: every node (root and sub-agents) is the same bordered compact card, siblings `space.2`
+  apart; the status legend moves into a tooltip on the count line; line 2 shows the model's display
+  name alone, so it no longer collapses into an ellipsis behind the provider prefix.
+- 8b3450b: The purpose list no longer warns that extensions cannot call models yet under an extension's
+  purpose: extensions call `ctx.models.embed` / `generateImage` with their declared purposes.
+- Updated dependencies [d91ad92]
+  - @capybara-hq/design@0.2.0-rc.22
+
 ## 0.1.0-rc.60
 
 No changes in this release.

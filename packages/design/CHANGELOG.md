@@ -1,5 +1,13 @@
 # @capybara-hq/design
 
+## 0.2.0-rc.22
+
+### Patch Changes
+
+- d91ad92: Agent map: every node (root and sub-agents) is the same bordered compact card, siblings `space.2`
+  apart; the status legend moves into a tooltip on the count line; line 2 shows the model's display
+  name alone, so it no longer collapses into an ellipsis behind the provider prefix.
+
 ## 0.2.0-rc.21
 
 ### Patch Changes
