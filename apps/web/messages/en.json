@@ -4176,6 +4176,10 @@
       "actions": {
         "accountCreated": "Created an account",
         "accountUpdated": "Updated an account",
+        "authAppAuthorized": "Allowed an app to sign in",
+        "authAppSignedIn": "An app signed in",
+        "platformIconUpdated": "Changed the platform icon",
+        "platformIconCleared": "Restored the default platform icon",
         "identityLinked": "Linked an external identity",
         "identityVerified": "Verified an external identity",
         "identityUnlinked": "Unlinked an external identity",
