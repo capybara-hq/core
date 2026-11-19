@@ -51,11 +51,12 @@ const GUARANTEED = [
 ];
 
 /**
- * A ring is drawn from the padding box (`inset: -6px` around a 28 px button with a 1 px border is
- * 38 px), so the probe takes a 38 px square: the edge midpoints and the corners pulled in by 5 px.
+ * The 40 x 40 square around a control's center: the edge midpoints, and the corners pulled in by
+ * 5 px (a rounded button's corner is not a hit). Rings are drawn from the padding box, so the
+ * top bar's ring is `inset: -7px` around a 28 px button with a 1 px border.
  */
-const PROBE_EDGE = 18;
-const PROBE_CORNER = 14;
+const PROBE_EDGE = 19;
+const PROBE_CORNER = 15;
 
 async function openCompact(page: Page, route: string) {
   await page.context().addCookies([

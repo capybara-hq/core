@@ -235,7 +235,7 @@
 .cb-topbar .cb-icon-btn::after {
   content: "";
   position: absolute;
-  inset: -6px;
+  inset: -7px;
 }
 .cb-topbar .cb-icon-btn[aria-pressed="true"] {
   background: var(--cb-selected);

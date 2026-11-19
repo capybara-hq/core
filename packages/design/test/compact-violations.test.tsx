@@ -45,6 +45,21 @@ describe("findCompactViolations (the rule set itself, red first)", () => {
     expect(found()[1]).toBe("unnamed-control: <button>");
   });
 
+  it("the shell top bar's back counts only while it is pushed", () => {
+    const shell = (pushed: boolean) => (
+      <div className="cb-shell">
+        <header data-part="top-bar" data-pushed={pushed ? "true" : "false"}>
+          <button type="button" data-part="back" aria-label="返回" />
+        </header>
+        <section data-part="list-detail" aria-label="收件箱" />
+      </div>
+    );
+    const r = render(shell(true));
+    expect(findCompactViolations(document.body)).toEqual([]);
+    r.rerender(shell(false));
+    expect(findCompactViolations(document.body).map((v) => v.rule)).toEqual(["list-detail-back"]);
+  });
+
   it("a name from aria-label, aria-labelledby, text or an image alt is a name; title alone is not", () => {
     render(
       <div>

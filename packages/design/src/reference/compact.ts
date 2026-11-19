@@ -15,7 +15,8 @@ export type CompactViolation = {
 /**
  * Marks an action that only a pointer hover reveals (or only a context menu reaches): a compact
  * window has neither. A component that needs such a control must also offer it another way and
- * must not carry the marker.
+ * must not carry the marker. Detection is marker-based: jsdom has no cascade, so a control shown
+ * only by a `:hover` rule is found only when it carries the marker.
  */
 const HOVER_ONLY = "[data-hover-only], [data-context-menu-only]";
 
@@ -62,12 +63,12 @@ function visibleText(node: Node): string {
 function hasBack(region: Element): boolean {
   const own = region.querySelector("[data-part='back-bar'] :is(button, a[href], [role='button'])");
   if (own !== null && accessibleName(own) !== "") return true;
-  // inside an AppShell the top bar owns back and the region's own bar is hidden on compact
+  // Inside an AppShell the top bar owns back on compact (the region's own bar is hidden there),
+  // but only while the open item is a pushed page: the shell's bar must be marked pushed and
+  // carry a named back. A region outside any shell has no such bar to lean on.
   const shell = region.closest(".cb-shell");
-  const bar = (shell ?? region.ownerDocument).querySelector(
-    "[data-part='top-bar'] [data-part='back']",
-  );
-  return bar !== null && accessibleName(bar) !== "";
+  const bar = shell?.querySelector("[data-part='top-bar'][data-pushed='true'] [data-part='back']");
+  return bar != null && accessibleName(bar) !== "";
 }
 
 /**

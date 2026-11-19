@@ -62,7 +62,10 @@ test("every template has a head-rhythm block", () => {
 });
 
 for (const theme of THEMES) {
-  for (const width of MATRIX_WIDTHS) {
+  // Medium and expanded only: on compact (below 600) the head stacks (title, description and
+  // actions across the width, spec §4.2) and the blocks' fixed widths mix container and viewport
+  // rules, so the rhythm tokens do not apply there.
+  for (const width of MATRIX_WIDTHS.filter((w) => w >= 600)) {
     test(`head rhythm (${theme}, ${width})`, async ({ page }) => {
       await page.setViewportSize({ width, height: heightFor(width) });
       await openReference(page, COMPONENT, theme, ORIGIN);
@@ -95,7 +98,10 @@ for (const theme of THEMES) {
             above = above.previousElementSibling;
           }
           const frame = b.querySelector('[data-part="content"]');
-          const first = frame?.firstElementChild;
+          // the first child with a box (the wizard's step count is display: none above 599 px)
+          const first = Array.from(frame?.children ?? []).find(
+            (el) => el.getBoundingClientRect().height > 0,
+          );
           const firsts = [first, b.querySelector('[data-part="rail"]')]
             .filter((el): el is Element => el != null)
             .map((el) => el.getBoundingClientRect().top - top);
