@@ -327,6 +327,72 @@ span.cb-title-btn {
   margin: var(--cb-space-1) 0;
   background: var(--cb-line-soft);
 }
+/* A label's key hint (the mode menu's head, §6.16.3a): at the end of the line, `faint`. */
+.cb-cmenu-label:has(> .cb-cmenu-hint) {
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-2);
+}
+.cb-cmenu-hint {
+  flex: none;
+  color: var(--cb-faint);
+}
+/* The mode menu (§6.16.3a): wider rows, so a profile's sentence takes one or two lines, and the
+ * whole height the room allows; the effort stays under the list, its own hairline above it. */
+.cb-cmenu[data-anchored="true"][data-size="wide"] {
+  max-width: min(400px, calc(100vw - 16px));
+  max-height: var(--radix-dropdown-menu-content-available-height, 520px);
+}
+.cb-cmenu[data-anchored="true"][data-size="wide"][data-inline="true"] {
+  max-height: none;
+}
+.cb-cmenu-segments {
+  flex: none;
+  margin-top: var(--cb-space-1);
+  border-top: 1px solid var(--cb-line-soft);
+}
+/* Segments (the mode menu's effort, §6.16.3a): the label, then one row of equal segments on the
+ * `bg` ground inside a 1px `line` frame; the checked one on `selected` with `ink`. */
+.cb-cmenu-segment-row {
+  display: flex;
+  gap: 2px;
+  margin: 0 var(--cb-pad-default-x) var(--cb-space-1);
+  padding: 2px;
+  border: 1px solid var(--cb-line);
+  border-radius: var(--cb-radius-sm);
+  background: var(--cb-bg);
+}
+.cb-cmenu-segment {
+  display: flex;
+  flex: 1 1 0;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  height: var(--cb-control-dense);
+  padding: 0 var(--cb-space-2);
+  border-radius: var(--cb-radius-sm);
+  color: var(--cb-muted);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+  white-space: nowrap;
+  outline: none;
+  cursor: pointer;
+}
+.cb-cmenu-segment[data-highlighted] {
+  background: var(--cb-hover);
+  color: var(--cb-ink);
+}
+.cb-cmenu-segment[aria-checked="true"] {
+  background: var(--cb-selected);
+  color: var(--cb-ink);
+}
+.cb-cmenu-segment:focus-visible {
+  box-shadow: 0 0 0 2px var(--cb-focus-ring);
+}
+.cb-cmenu-segment[data-disabled] {
+  color: var(--cb-disabled);
+  cursor: not-allowed;
+}
 
 /* ── Composer control row and pickers (§6.16.2) ── */
 
@@ -499,8 +565,20 @@ span.cb-title-btn {
 .cb-composer-bar > .cb-composer-suggestion-use.cb-btn {
   flex: none;
 }
+/* The mode menu's button (§6.16.3a): at the end of the row before send, its icon and the mode's
+ * label; it keeps its size while the model's label gives way. */
+.cb-composer-mode {
+  display: contents;
+}
+.cb-composer-bar .cb-mode-button.cb-btn {
+  flex: none;
+}
+.cb-mode-button.cb-btn .cb-icon {
+  flex: none;
+}
 @media (max-width: 639px) {
-  .cb-composer-pickers {
+  .cb-composer-pickers,
+  .cb-composer-mode {
     display: none;
   }
   /* A prompt suggestion is one line on a phone, cut with an ellipsis (§6.16.2). */

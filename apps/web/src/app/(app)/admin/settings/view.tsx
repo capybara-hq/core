@@ -53,7 +53,13 @@ import {
 } from "../../../../lib/compaction";
 import { componentName, type PlatformComponent } from "../../../../lib/components";
 import { extensionLabel, labelLocale } from "../../../../lib/extension-label";
-import type { DevicesFullAccessSource, DevicesFullAccessView } from "../../../../lib/org-settings";
+import {
+  type DeviceNetworkMode,
+  type DevicesNetworkView,
+  type DevicesOutsideSandboxView,
+  narrowerNetwork,
+  lockedSource as startupLocked,
+} from "../../../../lib/org-settings";
 import {
   adminExtensionsQuery,
   deploymentSettingsQuery,
@@ -80,10 +86,11 @@ import NotFound from "../../not-found";
  * (themes spec §7, §10), 内置主题 or a platform-owned theme whose scope is `all` and that is not
  * disabled; the kernel refuses one off in some org with the orgs (shown). 插件界面代码: the client
  * code kill switch and the plugins whose client code alone is stopped (client extensions spec
- * §10.2); a save that changes it marks every cached client set stale. Full access: the
- * platform's switch (`devicesFullAccess`), read with where it comes from; a value set in the startup
- * config is shown read-only with its source. 按组织的限额在「组织」页；
- * 组织自己的设置仍在 `/settings/*`。有改动时出现 ActionRow，只提交改过的项。
+ * §10.2); a save that changes it marks every cached client set stale. The device sandbox:
+ * running outside the sandbox (`devicesOutsideSandbox`) and the device network's default and
+ * ceiling (`devicesNetwork`), each read with where it comes from; a value set in the startup config
+ * is shown read-only with its source. Per-org limits live on the orgs page; an org's own settings
+ * stay under `/settings/*`. The ActionRow shows once something changed and saves only those.
  * From the query cache (the layout prefetched it on a first load); a save writes the answered
  * settings into the cache.
  */
@@ -150,10 +157,22 @@ function AdminSettingsRead() {
         {section("customConnectors", "customConnectors", RADIOS)}
         {section("customSkills", "customSkills", RADIOS)}
         <FormSection
-          id="full-access"
-          title={t("fullAccess.title")}
-          description={t("fullAccess.description")}
+          id="outside-sandbox"
+          title={t("outsideSandbox.title")}
+          description={t("outsideSandbox.description")}
           loading={{ fields: [{ control: "radio-cards", options: 2 }, { control: "text" }] }}
+        />
+        <FormSection
+          id="device-network"
+          title={t("deviceNetwork.title")}
+          description={t("deviceNetwork.description")}
+          loading={{
+            fields: [
+              { control: "radio-cards", options: 2 },
+              { control: "radio-cards", options: 2 },
+              { control: "text" },
+            ],
+          }}
         />
         <FormSection
           id="prompt-suggestions"
@@ -229,8 +248,9 @@ function AdminSettings({
       if (patch.uiTheme !== undefined) await invalidatePlatformTheme(qc);
       // the kill switch: open pages drop (or pick up) client code at their next shell read
       if (patch.clientExtensions !== undefined) await invalidateClientSets(qc);
-      // the platform's Full permission switch decides every org's and device's Full access
-      if (patch.devicesFullAccess !== undefined) await invalidateDeviceModes(qc);
+      // the platform's device sandbox settings bound every org's and device's sandbox
+      if (patch.devicesOutsideSandbox !== undefined || patch.devicesNetwork !== undefined)
+        await invalidateDeviceModes(qc);
       // the attribution defaults ride on every org's settings (the agent page's help text)
       if (patch.attribution !== undefined) await invalidateAttribution(qc);
       // the platform's compaction defaults are what an org that follows the platform shows, and
@@ -246,7 +266,10 @@ function AdminSettings({
   const [themeDraft, setThemeDraft] = useState<string | null | undefined>(undefined);
   const [clientDraft, setClientDraft] = useState<ClientExtensionsSetting | undefined>(undefined);
   const [attributionDraft, setAttributionDraft] = useState<AttributionDraft>({});
-  const [fullDraft, setFullDraft] = useState<"allowed" | "off" | undefined>(undefined);
+  const [outsideDraft, setOutsideDraft] = useState<"allowed" | "off" | undefined>(undefined);
+  const [networkDraft, setNetworkDraft] = useState<
+    Partial<Record<NetworkField, DeviceNetworkMode>>
+  >({});
   const [compactionDraft, setCompactionDraft] = useState<CompactionSettingsPatch>({});
   const [suggestionsDraft, setSuggestionsDraft] = useState<"on" | "off" | undefined>(undefined);
   const [sharingDraft, setSharingDraft] = useState<SharingDraft>({});
@@ -283,15 +306,18 @@ function AdminSettings({
   const attribution =
     saved.attribution === undefined ? null : attributionOf(saved.attribution, attributionDraft);
   if (attribution !== null && attribution.patch !== null) patch.attribution = attribution.patch;
-  const fullAccess = saved.devicesFullAccess;
+  const outside = saved.devicesOutsideSandbox;
   if (
-    fullAccess !== undefined &&
-    !fullLocked(fullAccess.source) &&
-    fullDraft !== undefined &&
-    fullDraft !== fullAccess.permission
+    outside !== undefined &&
+    !startupLocked(outside.source) &&
+    outsideDraft !== undefined &&
+    outsideDraft !== outside.permission
   ) {
-    patch.devicesFullAccess = { permission: fullDraft };
+    patch.devicesOutsideSandbox = { permission: outsideDraft };
   }
+  const network =
+    saved.devicesNetwork === undefined ? null : networkOf(saved.devicesNetwork, networkDraft);
+  if (network !== null && network.patch !== null) patch.devicesNetwork = network.patch;
   const savedCompaction = saved.compaction ?? COMPACTION_DEFAULTS;
   const compaction: CompactionSettings = { ...savedCompaction, ...compactionDraft };
   const compactionPatch = compactionChange(savedCompaction, compaction);
@@ -313,7 +339,8 @@ function AdminSettings({
       setThemeDraft(undefined);
       setClientDraft(undefined);
       setAttributionDraft({});
-      setFullDraft(undefined);
+      setOutsideDraft(undefined);
+      setNetworkDraft({});
       setCompactionDraft({});
       setSuggestionsDraft(undefined);
       setSharingDraft({});
@@ -361,7 +388,8 @@ function AdminSettings({
             setThemeDraft(undefined);
             setClientDraft(undefined);
             setAttributionDraft({});
-            setFullDraft(undefined);
+            setOutsideDraft(undefined);
+            setNetworkDraft({});
             setCompactionDraft({});
             setSuggestionsDraft(undefined);
             setSharingDraft({});
@@ -414,11 +442,18 @@ function AdminSettings({
       </FormSection>
       {policy("customConnectors")}
       {policy("customSkills")}
-      {saved.devicesFullAccess !== undefined && (
-        <FullAccessSection
-          value={saved.devicesFullAccess}
-          draft={fullDraft}
-          onChange={setFullDraft}
+      {saved.devicesOutsideSandbox !== undefined && (
+        <OutsideSandboxSection
+          value={saved.devicesOutsideSandbox}
+          draft={outsideDraft}
+          onChange={setOutsideDraft}
+        />
+      )}
+      {saved.devicesNetwork !== undefined && network !== null && (
+        <DeviceNetworkSection
+          saved={saved.devicesNetwork}
+          value={network.value}
+          onChange={(field, mode) => setNetworkDraft((d) => ({ ...d, [field]: mode }))}
         />
       )}
       {saved.attribution !== undefined && attribution !== null && (
@@ -704,9 +739,30 @@ function ClientCodeSection({
   );
 }
 
-/** Whether a startup config source makes the platform's Full permission switch read-only here. */
-const fullLocked = (source: DevicesFullAccessSource | undefined): boolean =>
-  source === "env" || source === "file" || source === "nacos";
+/** The two fields of the platform's device network. */
+type NetworkField = "default" | "ceiling";
+
+/**
+ * The device network the section shows (the draft over the saved values, a locked field always
+ * its startup-config value, the default never above the ceiling) and the patch: the changed fields
+ * only, never a locked one.
+ */
+function networkOf(
+  saved: DevicesNetworkView,
+  draft: Partial<Record<NetworkField, DeviceNetworkMode>>,
+): {
+  value: Record<NetworkField, DeviceNetworkMode>;
+  patch: Partial<Record<NetworkField, DeviceNetworkMode>> | null;
+} {
+  const shown = (f: NetworkField) =>
+    startupLocked(saved.sources[f]) ? saved[f] : (draft[f] ?? saved[f]);
+  const ceiling = shown("ceiling");
+  const value = { ceiling, default: narrowerNetwork(shown("default"), ceiling) };
+  const patch: Partial<Record<NetworkField, DeviceNetworkMode>> = {};
+  for (const f of ["default", "ceiling"] as const)
+    if (value[f] !== saved[f] && !startupLocked(saved.sources[f])) patch[f] = value[f];
+  return { value, patch: Object.keys(patch).length > 0 ? patch : null };
+}
 
 /** The startup config's source of a field (read-only here), or null when it can be changed. */
 const lockedSource = (s: string): "env" | "file" | "nacos" | null =>
@@ -741,27 +797,27 @@ function attributionOf(
 }
 
 /**
- * Full access (`devicesFullAccess`): one control, allowed or off, with where the value comes from. A
- * value set in the startup config is disabled with its source. Off runs every device restricted:
- * local devices on their allowlist, cloud devices on the organization's cloud network. The kernel
- * refuses allowing it through an API token or the Platform tool, which may only turn it off; a
- * signed-in super admin here may set it either way. Saved with the page's ActionRow.
+ * Running outside the sandbox (`devicesOutsideSandbox`): one control, allowed or off, with where the
+ * value comes from. A value set in the startup config is disabled with its source. Off keeps every
+ * call inside the sandbox. The kernel refuses allowing it through an API token or the Platform
+ * tool, which may only turn it off; a signed-in super admin here may set it either way. Saved with
+ * the page's ActionRow.
  */
-function FullAccessSection({
+function OutsideSandboxSection({
   value,
   draft,
   onChange,
 }: {
-  value: DevicesFullAccessView;
+  value: DevicesOutsideSandboxView;
   draft: "allowed" | "off" | undefined;
   onChange(permission: "allowed" | "off"): void;
 }) {
-  const t = useTranslations("admin.settings.fullAccess");
+  const t = useTranslations("admin.settings.outsideSandbox");
   const tf = useTranslations("configForm");
-  const locked = fullLocked(value.source);
+  const locked = startupLocked(value.source);
   const mode = draft ?? value.permission;
   return (
-    <FormSection id="full-access" title={t("title")} description={t("description")}>
+    <FormSection id="outside-sandbox" title={t("title")} description={t("description")}>
       <Stack gap={8}>
         <RadioGroup
           label={t("label")}
@@ -777,8 +833,72 @@ function FullAccessSection({
         />
         <Text variant="small" tone="muted">
           {locked
-            ? `${tf("readonly", { source: value.source })} · devices.fullAccess`
+            ? `${tf("readonly", { source: value.source })} · devices.outsideSandbox`
             : t("source", { source: t(`sources.${value.source}`) })}
+        </Text>
+      </Stack>
+    </FormSection>
+  );
+}
+
+/**
+ * The device network (`devicesNetwork`): the ceiling and the default, each open internet or the
+ * allowlist, each with where it comes from (a startup-config field is disabled with its source).
+ * The default never goes above the ceiling: narrowing the ceiling to the allowlist takes the
+ * default with it. An API token or the Platform tool may only narrow (a kernel rule). Saved with
+ * the page's ActionRow.
+ */
+function DeviceNetworkSection({
+  saved,
+  value,
+  onChange,
+}: {
+  saved: DevicesNetworkView;
+  value: Record<NetworkField, DeviceNetworkMode>;
+  onChange(field: NetworkField, mode: DeviceNetworkMode): void;
+}) {
+  const t = useTranslations("admin.settings.deviceNetwork");
+  const tf = useTranslations("configForm");
+  const group = (field: NetworkField) => {
+    const source = saved.sources[field];
+    const locked = startupLocked(source);
+    return (
+      <Field label={t(field)}>
+        <RadioGroup
+          label={t(field)}
+          variant="card"
+          value={value[field]}
+          disabled={locked}
+          onChange={(v) => onChange(field, v as DeviceNetworkMode)}
+          options={(["open", "allowlist"] as const).map((v) => {
+            const closed = field === "default" && v === "open" && value.ceiling === "allowlist";
+            return {
+              value: v,
+              label: t(v),
+              description: closed ? t("ceilingAllowlist") : t(`${v}Hint`),
+              ...(closed ? { disabled: true } : {}),
+            };
+          })}
+        />
+      </Field>
+    );
+  };
+  const sourceLine = (field: NetworkField) => {
+    const source = saved.sources[field];
+    return startupLocked(source)
+      ? `${t("sourceOf", { field: t(field), source: tf("readonly", { source }) })} · devices.network.${field}`
+      : t("sourceOf", { field: t(field), source: t(`sources.${source}`) });
+  };
+  return (
+    <FormSection id="device-network" title={t("title")} description={t("description")}>
+      <Stack gap={8}>
+        {group("ceiling")}
+        {group("default")}
+        <Text variant="small" tone="muted">
+          {sourceLine("ceiling")}
+        </Text>
+        <Text variant="small" tone="muted">
+          {sourceLine("default")}
         </Text>
       </Stack>
     </FormSection>

@@ -189,7 +189,7 @@ export function ContextSection({
             name: nameOf(device.data),
             state: te(`state.${deviceState(device.data)}`),
           });
-  // whether Full access is available on the device, neutral like every permission choice
+  // whether a call may run outside the sandbox on the device, neutral like every permission choice
   const mark = device.data != null ? deviceCeilingMark(device.data) : null;
   return (
     <ContextBlock
@@ -197,7 +197,7 @@ export function ContextSection({
       model={model === null ? "—" : model.model}
       {...(deviceText !== undefined ? { sandbox: deviceText } : {})}
       {...(mark !== null
-        ? { sandboxBadge: te(`ceiling.mark.${mark}`), sandboxBadgeTone: "default" as const }
+        ? { sandboxBadge: te(`sandbox.mark.${mark}`), sandboxBadgeTone: "default" as const }
         : {})}
       connectors={connectorsUsed(events, nameOfSlug)}
       {...(lastRun !== undefined ? { lastRun } : {})}

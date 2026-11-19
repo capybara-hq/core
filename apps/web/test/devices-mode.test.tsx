@@ -1,12 +1,13 @@
+import { findNestedBoxes } from "@capybara-hq/design/reference";
 import { act, cleanup, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import zh from "../messages/zh.json";
-import { CEILING_COMMAND } from "../src/components/DeviceModeSection";
+import { SANDBOX_COMMANDS } from "../src/components/DeviceModeSection";
 import { RESET_POLL_DEADLINE_MS, RESET_POLL_MS, resetPollInterval } from "../src/lib/devices";
 import { keys } from "../src/lib/query/keys";
-import { bodyOf, json, lastStubRoutes, stubApi } from "./support/api";
+import { bodyOf, type Call, json, lastStubRoutes, stubApi } from "./support/api";
 import { resetNavigation } from "./support/navigation";
 import { renderRouteEmptyCache, renderRouteWithCache } from "./support/query";
 import { expectNoFirstPaintFetch } from "./support/server";
@@ -29,8 +30,7 @@ const NO_PROJECTS = {
 };
 const T = "2026-11-07T08:00:00.000Z";
 const E = en.devices;
-const COMMAND = CEILING_COMMAND;
-const C = E.ceiling;
+const S = E.sandbox;
 /** The KeyValue row whose key is `key` (the page's facts or the machine block). */
 const factRow = (key: string) =>
   [...document.querySelectorAll('[data-part="key-value-row"]')].find(
@@ -41,7 +41,6 @@ const LIMITS = {
   cpu: 2,
   memoryMb: 2048,
   diskMb: 10240,
-  mode: "auto",
   network: { kind: "open-public", hosts: [] },
 };
 const MACHINE = {
@@ -53,60 +52,43 @@ const MACHINE = {
   lastSeenAt: T,
 };
 
-const cloudMode = (over: Record<string, unknown> = {}) => ({
-  mode: "auto",
-  allowedMode: "auto",
-  allowedBy: "org",
-  network: { kind: "open-public", hosts: [], source: "org" },
-  local: null,
-  sandboxNetwork: { kind: "open-public", hosts: [] },
-  fullNetwork: { kind: "open-public", hosts: [] },
-  outerNetwork: { kind: "open-public", hosts: [] },
-  pendingNextUse: false,
-  pendingFilesReset: false,
-  recent: [],
-  ...over,
-});
-const localMode = (over: Record<string, unknown> = {}) => ({
-  mode: "auto",
-  allowedMode: "auto",
-  allowedBy: "org",
-  network: { kind: "allowlist", hosts: [], source: "platform" },
-  local: { reported: "auto", allowedDomains: [] },
-  sandboxNetwork: null,
-  fullNetwork: null,
-  outerNetwork: null,
-  pendingNextUse: false,
-  pendingFilesReset: false,
-  recent: [],
-  ...over,
-});
-
-/** A local machine's authenticated owner report (B2): Full allowed, the OS user's reach. */
+/** A local machine's authenticated owner report: outside allowed, the open network, the OS user's reach. */
 const report = (over: Record<string, unknown> = {}) => ({
   state: "report",
   revision: "r1",
   sequence: 3,
-  fullAccess: true,
-  effectiveFullAccess: true,
+  outsideSandbox: true,
+  network: "open",
+  allowedDomains: [],
   restrictedProjectReach: "os-user",
-  restrictedAllowedDomains: [],
   observedAt: T,
   stale: false,
   ...over,
 });
-/** A migrated cloud device's explicit Full ceiling. */
-const cloudCeiling = (fullAccess = true, effectiveFullAccess = fullAccess) => ({
-  state: "cloud",
-  revision: null,
-  sequence: null,
-  fullAccess,
-  effectiveFullAccess,
-  restrictedProjectReach: "workspace",
-  restrictedAllowedDomains: [],
-  observedAt: null,
-  stale: false,
+/** The kernel's effective sandbox view (`DeviceSandboxView`): a local machine's open report. */
+const sandbox = (over: Record<string, unknown> = {}) => ({
+  network: "open",
+  networkCeiling: "open",
+  hosts: [],
+  ownNetwork: "open",
+  allowedDomains: [],
+  outsideSandbox: true,
+  restrictedProjectReach: "os-user",
+  layer: { network: null, outsideSandbox: null },
+  pendingNextUse: false,
+  pendingFilesReset: false,
+  recent: [],
+  ...over,
 });
+/** A cloud device's sandbox: following its org's open network, never outside its instance. */
+const cloudSandbox = (over: Record<string, unknown> = {}) =>
+  sandbox({
+    ownNetwork: null,
+    outsideSandbox: false,
+    restrictedProjectReach: "workspace",
+    layer: { network: null, outsideSandbox: "provider" },
+    ...over,
+  });
 
 const cloud = (over: Record<string, unknown> = {}) => ({
   id: "e1",
@@ -124,13 +106,13 @@ const cloud = (over: Record<string, unknown> = {}) => ({
   filesLost: false,
   instance: null,
   limits: LIMITS,
-  mode: cloudMode(),
-  ownerCeiling: cloudCeiling(),
+  ownerCeiling: null,
+  sandbox: cloudSandbox(),
   reconcileRequired: false,
   createdAt: T,
   ...over,
 });
-const local = (over: Record<string, unknown> = {}, modeOver: Record<string, unknown> = {}) => ({
+const local = (over: Record<string, unknown> = {}, sandboxOver: Record<string, unknown> = {}) => ({
   id: "e1",
   name: "Laptop",
   isDefault: true,
@@ -148,9 +130,9 @@ const local = (over: Record<string, unknown> = {}, modeOver: Record<string, unkn
   sessionIsolation: false,
   filesLost: false,
   instance: null,
-  limits: { ...LIMITS, mode: "sandbox", network: { kind: "allowlist", hosts: [] } },
-  mode: localMode(modeOver),
+  limits: { ...LIMITS, network: { kind: "allowlist", hosts: [] } },
   ownerCeiling: report(),
+  sandbox: sandbox(sandboxOver),
   reconcileRequired: false,
   createdAt: T,
   ...over,
@@ -177,14 +159,19 @@ const openSettings = async () => {
   await user.click(await screen.findByRole("tab", { name: E.detail.tabSettings }));
   return user;
 };
-/** The access ceiling section of Settings (or Overview). */
-const ceilingSection = () =>
-  screen.findByRole("heading", { name: C.title }).then((h) => {
+/** The sandbox section (Settings) or block (Overview). */
+const sandboxSection = () =>
+  screen.findByRole("heading", { name: S.title }).then((h) => {
     const section = h.closest("section") ?? h.parentElement?.parentElement;
     return section as HTMLElement;
   });
+const radio = (group: string, name: string) =>
+  within(screen.getByRole("radiogroup", { name: group })).getByRole("radio", {
+    name: new RegExp(`^${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`),
+  }) as HTMLInputElement;
 const failWith = (status: number, code: string) => () =>
   json(status, { error: { code, message: `kernel says ${code}` } });
+const posts = (calls: Call[]) => calls.filter((c) => c.method === "POST");
 
 beforeEach(() => resetNavigation("/devices/e1"));
 afterEach(() => {
@@ -193,7 +180,7 @@ afterEach(() => {
 });
 
 describe("the device nameplate head", () => {
-  it("is the page's head: name, origin, status, version and last seen, drawn once", async () => {
+  it("is the page's head: name, origin, status, version, last seen and the sandbox mark", async () => {
     stubApi(detail(local()));
     const { container } = await renderDetail();
     const plate = container.querySelector('[data-part="device-nameplate"]') as HTMLElement;
@@ -202,74 +189,78 @@ describe("the device nameplate head", () => {
     expect(plate.textContent).toContain(E.source.local);
     expect(plate.textContent).toContain(E.state.online);
     expect(plate.textContent).toContain("v0.4.0");
-    // a local machine's last seen, and the device's creation time as a third figure
     expect(plate.textContent).toContain("2026");
-    // the ceiling mark, never a daily mode
-    expect(plate.textContent).toContain(C.mark.full);
-    expect(plate.textContent).not.toContain("Auto");
-    // the design's own label for the third figure
+    // the neutral sandbox mark, never a daily mode or Full access
+    expect(plate.textContent).toContain(S.mark.outside);
+    expect(plate.textContent).not.toMatch(/Auto|Full access/);
     expect(plate.textContent).toContain("Created");
   });
 
-  it("a cloud device without an instance has no version and never connected", async () => {
-    stubApi(detail(cloud({ ownerCeiling: cloudCeiling(false) })));
+  it("a cloud device is sandbox only, with no version and never connected", async () => {
+    stubApi(detail(cloud()));
     const { container } = await renderDetail();
     const plate = container.querySelector('[data-part="device-nameplate"]') as HTMLElement;
     expect(plate.textContent).toContain("—");
     expect(plate.textContent).toContain("Never connected");
-    expect(plate.textContent).toContain(C.mark.restricted);
+    expect(plate.textContent).toContain(S.mark.sandbox);
     expect(plate.querySelector(".cb-badge")?.getAttribute("data-tone")).toBe("default");
   });
 });
 
-describe("no daily mode", () => {
-  it("neither tab draws the auto / sandbox choice or the old mode command", async () => {
-    stubApi(detail(local()));
-    await renderDetail();
-    await screen.findByRole("tab", { name: E.detail.tabOverview });
-    expect(screen.queryByRole("radiogroup")).toBeNull();
-    await openSettings();
-    await ceilingSection();
-    expect(screen.queryByRole("radiogroup")).toBeNull();
-    expect(screen.queryByRole("radio")).toBeNull();
-    expect(document.body.textContent).not.toContain("capybara-device mode");
-    expect(screen.queryByText(/^(Auto|Sandbox)$/)).toBeNull();
-  });
-});
-
-describe("a local device's owner ceiling", () => {
-  it("概览 shows it read only: Full access, project reach and when it was reported", async () => {
+describe("a local device's sandbox", () => {
+  it("概览 shows it read only: network, outside the sandbox, project reach, report time", async () => {
     const calls = stubApi(detail(local()));
     await renderDetail();
-    const section = await ceilingSection();
-    expect(within(section).getByText(C.fullAccess)).toBeTruthy();
-    expect(factRow(C.fullAccess)?.textContent).toContain(C.full.available);
-    expect(factRow(C.reach)?.textContent).toContain(C.reachValue["os-user"]);
-    expect(factRow(C.reported)).toBeTruthy();
-    // values only on Overview: no control
+    const section = await sandboxSection();
+    expect(factRow(S.network)?.textContent).toContain(S.networkValue.open);
+    expect(factRow(S.outside)?.textContent).toContain(S.outsideValue.allowed);
+    expect(factRow(S.reach)?.textContent).toContain(S.reachValue["os-user"]);
+    expect(factRow(S.reported)).toBeTruthy();
     expect(within(section).queryByRole("button")).toBeNull();
+    expect(screen.queryByRole("radiogroup")).toBeNull();
     await settle();
     expect(calls.every((c) => c.method === "GET")).toBe(true);
   });
 
-  it("设置 says only the owner widens it, on the computer, as copyable keycaps", async () => {
+  it("设置 is one 沙箱 section with the network and outside-sandbox groups, no box in a box", async () => {
     stubApi(detail(local()));
-    await renderDetail({ locale: "zh" });
+    const { container } = await renderDetail({ locale: "zh" });
     const user = userEvent.setup();
     await user.click(await screen.findByRole("tab", { name: "设置" }));
-    expect(await screen.findByText("只有电脑的所有者能在电脑上放宽：")).toBeTruthy();
-    const caps = document.querySelector('[data-part="keycap-command-caps"]') as HTMLElement;
-    expect(
-      [...caps.querySelectorAll('[data-part="keycap-command-cap"]')].map((c) => c.textContent),
-    ).toEqual(COMMAND.split(" "));
-    expect(COMMAND.startsWith("capybara-device ceiling set")).toBe(true);
-    await user.click(screen.getByRole("button", { name: `复制 ${COMMAND}` }));
-    expect(await navigator.clipboard.readText()).toBe(COMMAND);
-    // the web never offers to widen a machine
-    expect(screen.queryByRole("button", { name: "允许完全访问" })).toBeNull();
+    const section = await screen.findByRole("heading", { name: "沙箱" });
+    expect(section).toBeTruthy();
+    expect(screen.getByRole("radiogroup", { name: "网络" })).toBeTruthy();
+    expect(screen.getByRole("radiogroup", { name: "在沙箱外运行" })).toBeTruthy();
+    expect(screen.getByText("开放互联网（内网除外）")).toBeTruthy();
+    expect(screen.getByRole("heading", { name: "项目范围" })).toBeTruthy();
+    expect(findNestedBoxes(container)).toEqual([]);
+    expect(document.body.textContent).not.toMatch(/完全访问|企业/);
   });
 
-  it("narrows Full access and the project reach through the policy op, never wider", async () => {
+  it("shows the machine's widening commands as keycaps and never offers to widen", async () => {
+    stubApi(detail(local()));
+    await renderDetail();
+    await openSettings();
+    await sandboxSection();
+    const caps = [...document.querySelectorAll('[data-part="keycap-command-caps"]')].map((c) =>
+      [...c.querySelectorAll('[data-part="keycap-command-cap"]')]
+        .map((x) => x.textContent)
+        .join(" "),
+    );
+    expect(caps).toEqual(
+      expect.arrayContaining([
+        "capybara-device ceiling set --network open",
+        "capybara-device ceiling set --outside-sandbox on",
+        "capybara-device policy add allowedDomains <host>",
+      ]),
+    );
+    expect(Object.values(SANDBOX_COMMANDS)).toContain("capybara-device ceiling set --network open");
+    // no add-host control: the local host editor only removes
+    expect(screen.queryByRole("button", { name: /^add (a )?(host|domain)/i })).toBeNull();
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("narrows the network, outside the sandbox and the reach through the policy op only", async () => {
     const calls = stubApi({
       ...detail(local()),
       [`POST ${BASE}/e1/policy`]: () =>
@@ -277,119 +268,143 @@ describe("a local device's owner ceiling", () => {
     });
     await renderDetail();
     const user = await openSettings();
-    await user.click(await screen.findByRole("button", { name: C.turnOffFull }));
-    await vi.waitFor(() => expect(calls.filter((c) => c.method === "POST")).toHaveLength(1));
-    expect(bodyOf(calls.find((c) => c.method === "POST"))).toEqual({
-      ownerCeiling: { fullAccess: false },
-    });
-    await user.click(screen.getByRole("button", { name: C.limitReach }));
-    await vi.waitFor(() => expect(calls.filter((c) => c.method === "POST")).toHaveLength(2));
-    expect(bodyOf(calls.filter((c) => c.method === "POST")[1])).toEqual({
+    await sandboxSection();
+    await user.click(radio(S.network, S.networkValue.allowlist));
+    await vi.waitFor(() => expect(posts(calls)).toHaveLength(1));
+    expect(bodyOf(posts(calls)[0])).toEqual({ ownerCeiling: { network: "allowlist" } });
+    await user.click(radio(S.outside, S.outsideValue.off));
+    await vi.waitFor(() => expect(posts(calls)).toHaveLength(2));
+    expect(bodyOf(posts(calls)[1])).toEqual({ ownerCeiling: { outsideSandbox: false } });
+    await user.click(screen.getByRole("button", { name: S.limitReach }));
+    await vi.waitFor(() => expect(posts(calls)).toHaveLength(3));
+    expect(bodyOf(posts(calls)[2])).toEqual({
       ownerCeiling: { restrictedProjectReach: "workspace" },
     });
-    // nothing ever widens: no true, no os-user, no auto, no PATCH
     for (const c of calls.filter((x) => x.method !== "GET")) {
-      expect(String(c.body)).not.toMatch(/true|os-user|"auto"/);
+      expect(String(c.body)).not.toMatch(/true|os-user|"open"|"add"/);
     }
     expect(calls.some((c) => c.method === "PATCH")).toBe(false);
   });
 
-  it("a narrowed machine offers nothing to narrow, only the owner's command", async () => {
+  it("a narrowed machine names who widens: the owner on the computer", async () => {
     stubApi(
       detail(
-        local({ ownerCeiling: report({ fullAccess: false, restrictedProjectReach: "workspace" }) }),
+        local({
+          ownerCeiling: report({ outsideSandbox: false, network: "allowlist" }),
+          sandbox: sandbox({
+            network: "allowlist",
+            outsideSandbox: false,
+            layer: { network: "device", outsideSandbox: "device" },
+          }),
+        }),
       ),
     );
     await renderDetail();
     await openSettings();
-    await ceilingSection();
-    expect(factRow(C.fullAccess)?.textContent).toContain(C.full.owner);
-    expect(factRow(C.reach)?.textContent).toContain(C.reachValue.workspace);
-    expect(screen.queryByRole("button", { name: C.turnOffFull })).toBeNull();
-    expect(screen.queryByRole("button", { name: C.limitReach })).toBeNull();
-    expect(screen.getByRole("button", { name: `Copy ${COMMAND}` })).toBeTruthy();
+    await sandboxSection();
+    expect(radio(S.network, S.networkValue.open).disabled).toBe(true);
+    expect(radio(S.outside, S.outsideValue.allowed).disabled).toBe(true);
+    expect(screen.getByText(S.limited.network.device)).toBeTruthy();
+    expect(screen.getByText(S.limited.outside.device)).toBeTruthy();
   });
 
-  it("zh says Full access is off on this device, never that the device is off", async () => {
-    stubApi(detail(local({ ownerCeiling: report({ fullAccess: false }) })));
-    await renderDetail({ locale: "zh" });
-    await screen.findByRole("heading", { name: zh.devices.ceiling.title });
-    expect(factRow("完全访问")?.textContent).toContain("已在此设备上关闭");
-  });
-
-  it("an older program narrows both at once with its sandbox switch, and says so", async () => {
-    const calls = stubApi({
-      ...detail(
-        local({ ownerCeiling: report({ state: "legacy", revision: null, sequence: null }) }),
+  it("a disabled option names its layer: 平台 / 超级管理员", async () => {
+    stubApi(
+      detail(
+        local({
+          sandbox: sandbox({
+            network: "allowlist",
+            outsideSandbox: false,
+            layer: { network: "platform", outsideSandbox: "org" },
+          }),
+        }),
       ),
+    );
+    await renderDetail({ locale: "zh" });
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("tab", { name: "设置" }));
+    expect(await screen.findByText("平台已限定为白名单（超级管理员设置）")).toBeTruthy();
+    expect(screen.getByText(zh.devices.sandbox.limited.outside.org)).toBeTruthy();
+  });
+
+  it("removes a host from the machine's allowlist, and adds none", async () => {
+    const calls = stubApi({
+      ...detail(local({ ownerCeiling: report({ allowedDomains: ["files.example.com"] }) })),
       [`POST ${BASE}/e1/policy`]: () =>
         json(200, { policy: { mode: "sandbox", allowedDomains: [] } }),
     });
     await renderDetail();
     const user = await openSettings();
-    expect(await screen.findByText(C.notice.legacy)).toBeTruthy();
-    expect(screen.getByText(C.legacyNarrowNote)).toBeTruthy();
-    expect(screen.queryByRole("button", { name: C.limitReach })).toBeNull();
-    await user.click(screen.getByRole("button", { name: C.turnOffFull }));
-    await vi.waitFor(() => expect(calls.some((c) => c.method === "POST")).toBe(true));
-    expect(bodyOf(calls.find((c) => c.method === "POST"))).toEqual({ mode: "sandbox" });
+    const hosts = await screen.findByRole("list", { name: S.hosts });
+    expect(within(hosts).getByText("files.example.com")).toBeTruthy();
+    expect(screen.getByText(S.localHostsHelp)).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "Remove files.example.com" }));
+    await vi.waitFor(() => expect(posts(calls)).toHaveLength(1));
+    expect(bodyOf(posts(calls)[0])).toEqual({
+      remove: ["files.example.com"],
+    });
+  });
+
+  it("project reach keeps today's control: limited to the workspace, nothing else", async () => {
+    stubApi(detail(local({ ownerCeiling: report({ restrictedProjectReach: "workspace" }) })));
+    await renderDetail();
+    await openSettings();
+    await sandboxSection();
+    expect(screen.getByText(S.reachValue.workspace)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: S.limitReach })).toBeNull();
   });
 
   it("an offline machine shows no refused control: it says to narrow on the computer", async () => {
     stubApi(detail(local({ online: false, ownerCeiling: report({ stale: true }) })));
     await renderDetail();
     await openSettings();
-    expect(await screen.findByText(C.cannotNarrow.offline)).toBeTruthy();
-    expect(screen.getByText(C.notice.stale)).toBeTruthy();
-    expect(screen.queryByRole("button", { name: C.turnOffFull })).toBeNull();
+    expect(await screen.findByText(S.cannotNarrow.offline)).toBeTruthy();
+    expect(screen.getAllByText(S.notice.stale).length).toBeGreaterThan(0);
+    expect(radio(S.network, S.networkValue.allowlist).disabled).toBe(true);
+    expect(screen.queryByRole("button", { name: S.limitReach })).toBeNull();
   });
 
   it("a program that cannot take changes says to update it", async () => {
     stubApi(detail(local({ network: { features: ["networkReport"], policy: null } })));
     await renderDetail();
     await openSettings();
-    expect(await screen.findByText(C.cannotNarrow.upgrade)).toBeTruthy();
-    expect(screen.queryByRole("button", { name: C.turnOffFull })).toBeNull();
+    expect(await screen.findByText(S.cannotNarrow.upgrade)).toBeTruthy();
+    expect(radio(S.outside, S.outsideValue.off).disabled).toBe(true);
   });
 
-  it("a blocked report fails closed: Full access unconfirmed, with the re-login step", async () => {
+  it("a blocked report fails closed: unknown settings, the re-login step, no control", async () => {
     stubApi(
       detail(
         local({
-          ownerCeiling: report({
-            state: "blocked",
-            fullAccess: false,
-            restrictedProjectReach: "workspace",
-          }),
+          ownerCeiling: report({ state: "blocked" }),
         }),
       ),
     );
     await renderDetail();
-    await ceilingSection();
-    expect(factRow(C.fullAccess)?.textContent).toContain(C.full.unconfirmed);
-    expect(screen.getByText(C.notice.blocked)).toBeTruthy();
+    await sandboxSection();
+    expect(factRow(S.network)?.textContent).toContain(S.unknown);
+    expect(screen.getByText(S.notice.blocked)).toBeTruthy();
     await openSettings();
-    await ceilingSection();
-    expect(screen.queryByRole("button", { name: C.turnOffFull })).toBeNull();
+    await sandboxSection();
+    expect(screen.queryByRole("radiogroup")).toBeNull();
   });
 
-  it("a platform or org that forbids Full access says so, the owner's ceiling notwithstanding", async () => {
-    stubApi(detail(local({}, { allowedMode: "sandbox", allowedBy: null, mode: "sandbox" })));
+  it("without a connected machine it says how to connect one and shows no command", async () => {
+    stubApi(
+      detail(
+        local({
+          machine: null,
+          network: null,
+          online: false,
+          ownerCeiling: null,
+        }),
+      ),
+    );
     await renderDetail();
-    await ceilingSection();
-    expect(factRow(C.fullAccess)?.textContent).toContain(C.full.platform);
-  });
-
-  it("without a connected machine it says how to connect one", async () => {
-    stubApi(detail(local({ machine: null, network: null, online: false, ownerCeiling: null })));
-    await renderDetail();
-    await ceilingSection();
-    expect(screen.getByText(C.notice.noMachine)).toBeTruthy();
-    expect(factRow(C.fullAccess)?.textContent).toContain(C.full.unconfirmed);
-    // Settings names the login step only: the ceiling command needs a connected computer
+    await sandboxSection();
+    expect(screen.getByText(S.notice.noMachine)).toBeTruthy();
     await openSettings();
-    await ceilingSection();
-    expect(screen.queryByRole("button", { name: `Copy ${COMMAND}` })).toBeNull();
+    await sandboxSection();
     expect(document.querySelector('[data-part="keycap-command-caps"]')).toBeNull();
   });
 
@@ -400,159 +415,130 @@ describe("a local device's owner ceiling", () => {
     });
     await renderDetail();
     const user = await openSettings();
-    await user.click(await screen.findByRole("button", { name: C.turnOffFull }));
+    await sandboxSection();
+    await user.click(radio(S.outside, S.outsideValue.off));
     const alert = await screen.findByRole("alert");
     expect(alert.textContent).toContain(en.errors.device.owner_report_stale);
   });
-
-  it("a computer that must restart says so", async () => {
-    stubApi({
-      ...detail(local()),
-      [`POST ${BASE}/e1/policy`]: failWith(503, "device.restart_required"),
-    });
-    await renderDetail();
-    const user = await openSettings();
-    await user.click(await screen.findByRole("button", { name: C.turnOffFull }));
-    const alert = await screen.findByRole("alert");
-    expect(alert.textContent).toContain(
-      (en.errors.device as Record<string, string>).restart_required,
-    );
-  });
 });
 
-describe("a cloud device's owner ceiling", () => {
-  it("turns Full access off only after a confirmation naming the effect", async () => {
+describe("a cloud device's network", () => {
+  it("has no outside-sandbox control and changes its network with { network: { mode, hosts } }", async () => {
     const calls = stubApi({
       ...detail(cloud()),
       [`PATCH ${BASE}/e1`]: () =>
-        json(200, { device: cloud({ ownerCeiling: cloudCeiling(false) }) }),
+        json(200, { device: cloud({ sandbox: cloudSandbox({ ownNetwork: "allowlist" }) }) }),
     });
     await renderDetail();
     const user = await openSettings();
-    await user.click(await screen.findByRole("button", { name: C.turnOffFull }));
-    const dialog = await screen.findByRole("dialog", { name: C.confirm.title.narrow });
-    expect(within(dialog).getByText(C.confirm.effect.narrow)).toBeTruthy();
-    expect(within(dialog).getByText(C.confirm.network.open)).toBeTruthy();
-    expect(within(dialog).getByText(C.confirm.nextUse)).toBeTruthy();
-    // Full work stops now: nothing in the dialog defers that to the next use
-    expect(dialog.textContent).toMatch(/stops now/);
-    expect(dialog.textContent).not.toMatch(/takes effect at the next use/i);
-    expect(dialog.textContent).not.toMatch(/network does not change/i);
-    expect(calls.some((c) => c.method === "PATCH")).toBe(false);
-    await user.click(within(dialog).getByRole("button", { name: C.confirm.submit.narrow }));
+    await sandboxSection();
+    expect(screen.queryByRole("radiogroup", { name: S.outside })).toBeNull();
+    // it follows the organization until it chooses its own network
+    expect(radio(S.network, S.followOrg).checked).toBe(true);
+    await user.click(radio(S.network, S.networkValue.allowlist));
+    await user.type(screen.getByRole("textbox", { name: S.cloudHosts }), "files.example.com");
+    await user.click(screen.getByRole("button", { name: S.save }));
     await vi.waitFor(() => expect(calls.some((c) => c.method === "PATCH")).toBe(true));
     expect(bodyOf(calls.find((c) => c.method === "PATCH"))).toEqual({
-      ownerCeiling: { fullAccess: false },
+      network: { mode: "allowlist", hosts: ["files.example.com"] },
     });
-    await vi.waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   });
 
-  it("widens Full access only through the explicit confirmation, with confirmWidening", async () => {
+  it("prefills its own hosts, and goes back to following the organization with mode null", async () => {
     const calls = stubApi({
-      ...detail(cloud({ ownerCeiling: cloudCeiling(false) })),
+      ...detail(
+        cloud({
+          sandbox: cloudSandbox({
+            network: "allowlist",
+            ownNetwork: "allowlist",
+            hosts: ["a.test"],
+            allowedDomains: ["a.test"],
+          }),
+        }),
+      ),
       [`PATCH ${BASE}/e1`]: () => json(200, { device: cloud() }),
     });
     await renderDetail();
     const user = await openSettings();
-    await user.click(await screen.findByRole("button", { name: C.allowFull }));
-    const dialog = await screen.findByRole("dialog", { name: C.confirm.title.widen });
-    expect(within(dialog).getByText(C.confirm.effect.widen)).toBeTruthy();
-    expect(within(dialog).getByText(C.confirm.network.open)).toBeTruthy();
-    expect(dialog.textContent).not.toMatch(/network does not change/i);
-    expect(calls.some((c) => c.method === "PATCH")).toBe(false);
-    await user.click(within(dialog).getByRole("button", { name: C.confirm.submit.widen }));
+    await sandboxSection();
+    expect(radio(S.network, S.networkValue.allowlist).checked).toBe(true);
+    expect((screen.getByRole("textbox", { name: S.cloudHosts }) as HTMLTextAreaElement).value).toBe(
+      "a.test",
+    );
+    await user.click(radio(S.network, S.followOrg));
+    await user.click(screen.getByRole("button", { name: S.save }));
+    await vi.waitFor(() => expect(calls.some((c) => c.method === "PATCH")).toBe(true));
+    expect(bodyOf(calls.find((c) => c.method === "PATCH"))).toEqual({ network: { mode: null } });
+  });
+
+  it("opens to the internet or closes the network without hosts", async () => {
+    const calls = stubApi({
+      ...detail(cloud()),
+      [`PATCH ${BASE}/e1`]: () => json(200, { device: cloud() }),
+    });
+    await renderDetail();
+    const user = await openSettings();
+    await sandboxSection();
+    await user.click(radio(S.network, S.networkValue.none));
+    await user.click(screen.getByRole("button", { name: S.save }));
     await vi.waitFor(() => expect(calls.some((c) => c.method === "PATCH")).toBe(true));
     expect(bodyOf(calls.find((c) => c.method === "PATCH"))).toEqual({
-      ownerCeiling: { fullAccess: true },
-      confirmWidening: true,
+      network: { mode: "none" },
     });
   });
 
-  it("cancelling the confirmation sends nothing", async () => {
-    const calls = stubApi(detail(cloud({ ownerCeiling: cloudCeiling(false) })));
-    await renderDetail();
-    const user = await openSettings();
-    await user.click(await screen.findByRole("button", { name: C.allowFull }));
-    const dialog = await screen.findByRole("dialog", { name: C.confirm.title.widen });
-    await user.click(within(dialog).getByRole("button", { name: C.confirm.cancel }));
-    await vi.waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
-    await settle();
-    expect(calls.every((c) => c.method === "GET")).toBe(true);
-  });
-
-  it("turning Full access off names exactly the hosts the device then reaches", async () => {
-    const hosts = ["files.example.com", "*.slack.com"];
-    stubApi(detail(cloud({ mode: cloudMode({ sandboxNetwork: { kind: "allowlist", hosts } }) })));
-    await renderDetail({ locale: "zh" });
-    const user = userEvent.setup();
-    await user.click(await screen.findByRole("tab", { name: "设置" }));
-    await user.click(await screen.findByRole("button", { name: "关闭完全访问" }));
-    const dialog = await screen.findByRole("dialog", {
-      name: zh.devices.ceiling.confirm.title.narrow,
-    });
-    expect(
-      within(dialog).getByText(
-        zh.devices.ceiling.confirm.network.allowlist.replace("{hosts}", hosts.join(", ")),
-      ),
-    ).toBeTruthy();
-    expect(dialog.textContent).not.toContain("网络不变");
-    expect(dialog.textContent).not.toContain("公网");
-  });
-
-  it("an empty organization allowlist says the device then reaches no host", async () => {
-    stubApi(
-      detail(cloud({ mode: cloudMode({ sandboxNetwork: { kind: "allowlist", hosts: [] } }) })),
-    );
-    await renderDetail();
-    const user = await openSettings();
-    await user.click(await screen.findByRole("button", { name: C.turnOffFull }));
-    const dialog = await screen.findByRole("dialog", { name: C.confirm.title.narrow });
-    expect(within(dialog).getByText(C.confirm.network.none)).toBeTruthy();
-  });
-
-  it("allowing Full access names the network it then reaches within the device's outer network", async () => {
+  it("a network above the org ceiling is disabled and names the layer", async () => {
     stubApi(
       detail(
         cloud({
-          ownerCeiling: cloudCeiling(false),
-          mode: cloudMode({
-            mode: "sandbox",
-            network: { kind: "allowlist", hosts: ["files.example.com"], source: "org" },
-            sandboxNetwork: { kind: "allowlist", hosts: ["files.example.com"] },
-            fullNetwork: { kind: "allowlist", hosts: ["files.example.com", "a.test"] },
-            outerNetwork: { kind: "allowlist", hosts: ["files.example.com", "a.test"] },
+          sandbox: cloudSandbox({
+            network: "allowlist",
+            networkCeiling: "allowlist",
+            layer: { network: "org", outsideSandbox: "provider" },
           }),
         }),
       ),
     );
     await renderDetail();
-    const user = await openSettings();
-    await user.click(await screen.findByRole("button", { name: C.allowFull }));
-    const dialog = await screen.findByRole("dialog", { name: C.confirm.title.widen });
-    expect(
-      within(dialog).getByText(
-        C.confirm.network.allowlist.replace("{hosts}", "files.example.com, a.test"),
-      ),
-    ).toBeTruthy();
-    // the exact network, not the conservative wording
-    expect(dialog.textContent).not.toMatch(/provisioned|never beyond/);
+    await openSettings();
+    await sandboxSection();
+    expect(radio(S.network, S.networkValue.open).disabled).toBe(true);
+    expect(radio(S.network, S.networkValue.allowlist).disabled).toBe(false);
+    expect(screen.getByText(S.limited.network.org)).toBeTruthy();
   });
 
-  it("the effective owner Full access decides: an old switch is off on the device, not the platform's", async () => {
+  it("a network the provider closed names the provider", async () => {
     stubApi(
       detail(
         cloud({
-          ownerCeiling: cloudCeiling(true, false),
-          mode: cloudMode({ mode: "sandbox", allowedMode: "sandbox", allowedBy: null }),
+          sandbox: cloudSandbox({
+            network: "none",
+            networkCeiling: "none",
+            layer: { network: "provider", outsideSandbox: "provider" },
+          }),
         }),
       ),
     );
     await renderDetail();
     await openSettings();
-    await ceilingSection();
-    expect(factRow(C.fullAccess)?.textContent).toContain(C.full.owner);
-    expect(screen.queryByRole("button", { name: C.turnOffFull })).toBeNull();
-    expect(screen.queryByRole("button", { name: C.allowFull })).toBeNull();
+    await sandboxSection();
+    expect(radio(S.network, S.networkValue.open).disabled).toBe(true);
+    expect(radio(S.network, S.networkValue.allowlist).disabled).toBe(true);
+    expect(screen.getAllByText(S.limited.closed.provider).length).toBe(2);
+  });
+
+  it("a refusal above the ceiling shows its copy", async () => {
+    stubApi({
+      ...detail(cloud()),
+      [`PATCH ${BASE}/e1`]: failWith(400, "device.network_not_allowed"),
+    });
+    await renderDetail();
+    const user = await openSettings();
+    await sandboxSection();
+    await user.click(radio(S.network, S.networkValue.open));
+    await user.click(screen.getByRole("button", { name: S.save }));
+    const alert = await screen.findByRole("alert");
+    expect(alert.textContent).toContain(en.errors.device.network_not_allowed);
   });
 
   it("a device whose limits must be established again says so up front and offers 重建文件", async () => {
@@ -562,150 +548,44 @@ describe("a cloud device's owner ceiling", () => {
     expect(screen.getByRole("button", { name: E.detail.resetFiles })).toBeTruthy();
   });
 
-  it("offers no narrowing while the platform or the org already keeps Full access off", async () => {
-    stubApi(
-      detail(
-        cloud({
-          ownerCeiling: cloudCeiling(true),
-          mode: cloudMode({ mode: "sandbox", allowedMode: "sandbox", allowedBy: null }),
-        }),
-      ),
-    );
+  it("a pending change is one status line", async () => {
+    stubApi(detail(cloud({ sandbox: cloudSandbox({ pendingNextUse: true }) })));
     await renderDetail();
     await openSettings();
-    await ceilingSection();
-    expect(factRow(C.fullAccess)?.textContent).toContain(C.full.platform);
-    expect(screen.queryByRole("button", { name: C.turnOffFull })).toBeNull();
-    expect(screen.queryByRole("button", { name: C.allowFull })).toBeNull();
-    expect(screen.getByText(C.cloudForbidden)).toBeTruthy();
+    expect(await screen.findByText(S.pendingNextUse)).toBeTruthy();
   });
 
-  it("offers no narrowing while its old sandbox switch already keeps Full access off", async () => {
-    stubApi(
-      // the kernel reports the switch in the effective owner allowance
-      detail(
-        cloud({ ownerCeiling: cloudCeiling(true, false), mode: cloudMode({ mode: "sandbox" }) }),
-      ),
-    );
+  it("a change only a file reset applies has its own status line and offers 重建文件", async () => {
+    stubApi(detail(cloud({ sandbox: cloudSandbox({ pendingFilesReset: true }) })));
     await renderDetail();
     await openSettings();
-    await ceilingSection();
-    expect(factRow(C.fullAccess)?.textContent).toContain(C.full.owner);
-    expect(screen.queryByRole("button", { name: C.turnOffFull })).toBeNull();
-  });
-
-  it("offers no widening while the platform or the org forbids Full access", async () => {
-    stubApi(
-      detail(
-        cloud({
-          ownerCeiling: cloudCeiling(false),
-          mode: cloudMode({ mode: "sandbox", allowedMode: "sandbox", allowedBy: null }),
-        }),
-      ),
-    );
-    await renderDetail();
-    await openSettings();
-    await ceilingSection();
-    expect(factRow(C.fullAccess)?.textContent).toContain(C.full.owner);
-    expect(screen.queryByRole("button", { name: C.allowFull })).toBeNull();
-    expect(screen.queryByRole("button", { name: C.turnOffFull })).toBeNull();
-  });
-
-  it("before its permissions are migrated it narrows with the old switch and never widens", async () => {
-    const calls = stubApi({
-      ...detail(cloud({ ownerCeiling: null })),
-      [`PATCH ${BASE}/e1`]: () => json(200, { device: cloud({ ownerCeiling: null }) }),
-    });
-    await renderDetail();
-    const user = await openSettings();
-    expect(await screen.findByText(C.notice.migrating)).toBeTruthy();
-    await user.click(screen.getByRole("button", { name: C.turnOffFull }));
-    const dialog = await screen.findByRole("dialog", { name: C.confirm.title.narrow });
-    await user.click(within(dialog).getByRole("button", { name: C.confirm.submit.narrow }));
-    await vi.waitFor(() => expect(calls.some((c) => c.method === "PATCH")).toBe(true));
-    expect(bodyOf(calls.find((c) => c.method === "PATCH"))).toEqual({ mode: "sandbox" });
-  });
-
-  it("a device not migrated yet and narrowed by its old switch offers no widening", async () => {
-    stubApi(detail(cloud({ ownerCeiling: null, mode: cloudMode({ mode: "sandbox" }) })));
-    await renderDetail();
-    await openSettings();
-    await ceilingSection();
-    expect(screen.queryByRole("button", { name: C.allowFull })).toBeNull();
-  });
-
-  it("a refused widening shows why", async () => {
-    stubApi({
-      ...detail(cloud({ ownerCeiling: cloudCeiling(false) })),
-      [`PATCH ${BASE}/e1`]: failWith(409, "device.full_access_not_allowed"),
-    });
-    await renderDetail();
-    const user = await openSettings();
-    await user.click(await screen.findByRole("button", { name: C.allowFull }));
-    const dialog = await screen.findByRole("dialog", { name: C.confirm.title.widen });
-    await user.click(within(dialog).getByRole("button", { name: C.confirm.submit.widen }));
-    const alert = await screen.findByRole("alert");
-    expect(alert.textContent).toContain(en.errors.device.full_access_not_allowed);
-    expect(screen.queryByRole("dialog")).toBeNull();
-  });
-
-  it("a refusal because the device is not migrated yet explains that, offering no file rebuild", async () => {
-    stubApi({
-      ...detail(cloud()),
-      [`PATCH ${BASE}/e1`]: failWith(409, "device.permission_not_migrated"),
-    });
-    await renderDetail();
-    const user = await openSettings();
-    await user.click(await screen.findByRole("button", { name: C.turnOffFull }));
-    const dialog = await screen.findByRole("dialog", { name: C.confirm.title.narrow });
-    await user.click(within(dialog).getByRole("button", { name: C.confirm.submit.narrow }));
-    const alert = await screen.findByRole("alert");
-    expect(alert.textContent).toContain(en.errors.device.permission_not_migrated);
-    // a file reset does not migrate a device: the page neither offers it nor says to do it
-    expect(screen.queryByText(en.errors.device.permission_reconcile_required)).toBeNull();
-    expect(screen.queryByRole("button", { name: E.detail.resetFiles })).toBeNull();
-  });
-
-  it("a pending ceiling change is one status line", async () => {
-    stubApi(detail(cloud({ mode: cloudMode({ pendingNextUse: true }) })));
-    await renderDetail();
-    await openSettings();
-    expect(await screen.findByText(C.pendingNextUse)).toBeTruthy();
-  });
-
-  it("a change that only a file reset applies has its own status line and offers 重建文件", async () => {
-    stubApi(detail(cloud({ mode: cloudMode({ pendingFilesReset: true }) })));
-    await renderDetail();
-    await openSettings();
-    expect(await screen.findByText(C.pendingFilesReset)).toBeTruthy();
+    expect(await screen.findByText(S.pendingFilesReset)).toBeTruthy();
     expect(screen.getByRole("button", { name: E.detail.resetFiles })).toBeTruthy();
   });
 
-  it("the ceiling change invalidates the device, so its permission previews are read again", async () => {
-    let fullAccess = true;
+  it("a network change invalidates the device, so its permission previews are read again", async () => {
+    let mode: string | null = null;
     const calls = stubApi({
       ...detail(cloud()),
       [`GET ${BASE}/e1`]: () =>
-        json(200, { device: cloud({ ownerCeiling: cloudCeiling(fullAccess) }) }),
+        json(200, { device: cloud({ sandbox: cloudSandbox({ ownNetwork: mode }) }) }),
       [`PATCH ${BASE}/e1`]: () => {
-        fullAccess = false;
-        return json(200, { device: cloud({ ownerCeiling: cloudCeiling(false) }) });
+        mode = "allowlist";
+        return json(200, { device: cloud({ sandbox: cloudSandbox({ ownNetwork: "allowlist" }) }) });
       },
     });
     const { client } = await renderDetail();
     const k = keys.org("o1");
-    // the composer's previews of this device (with and without a project), and another device's
     const previews = [k.permissionPreview("e1"), k.permissionPreview("e1", "api")];
     const other = k.permissionPreview("e2");
     for (const key of [...previews, other]) client.setQueryData(key, { cached: true });
     const user = await openSettings();
+    await sandboxSection();
     const gets = () => calls.filter((c) => c.method === "GET" && c.url.endsWith("/e1")).length;
     const before = gets();
-    await user.click(await screen.findByRole("button", { name: C.turnOffFull }));
-    const dialog = await screen.findByRole("dialog", { name: C.confirm.title.narrow });
-    await user.click(within(dialog).getByRole("button", { name: C.confirm.submit.narrow }));
-    await vi.waitFor(() => expect(factRow(C.fullAccess)?.textContent).toContain(C.full.owner));
-    expect(gets()).toBeGreaterThan(before);
+    await user.click(radio(S.network, S.networkValue.allowlist));
+    await user.click(screen.getByRole("button", { name: S.save }));
+    await vi.waitFor(() => expect(gets()).toBeGreaterThan(before));
     await vi.waitFor(() =>
       expect(previews.map((key) => client.getQueryState(key)?.isInvalidated)).toEqual([true, true]),
     );
@@ -713,40 +593,15 @@ describe("a cloud device's owner ceiling", () => {
   });
 });
 
-describe("the network", () => {
-  it("a local machine lists its allowlist on 概览, read only, and points at 设置", async () => {
-    stubApi(
-      detail(local({}, { local: { reported: "auto", allowedDomains: ["files.example.com"] } })),
-    );
-    await renderDetail();
-    expect(await screen.findByRole("heading", { name: E.network.title })).toBeTruthy();
-    const list = screen.getByRole("list", { name: E.network.domains });
-    expect(within(list).getByText("files.example.com")).toBeTruthy();
-    // no editing here: one link to the settings tab
-    const open = screen.getByRole("button", { name: E.overview.editNetwork });
-    await userEvent.setup().click(open);
-    expect(await screen.findByRole("heading", { name: C.title })).toBeTruthy();
-    expect(screen.getByRole("button", { name: E.network.add })).toBeTruthy();
-  });
-
-  it("a cloud device on the open network has no network section", async () => {
-    stubApi(detail(cloud()));
-    await renderDetail();
-    await screen.findByRole("tab", { name: E.detail.tabOverview });
-    expect(screen.queryByRole("heading", { name: E.network.cloudTitle })).toBeNull();
-  });
-
-  it("a cloud device shows the organization's allowlist read only", async () => {
+describe("the network on 概览", () => {
+  it("a local machine lists its allowlist read only and points at 设置", async () => {
     stubApi(
       detail(
-        cloud({
-          mode: cloudMode({
-            mode: "sandbox",
-            network: {
-              kind: "allowlist",
-              hosts: ["files.example.com", "*.slack.com"],
-              source: "org",
-            },
+        local({
+          sandbox: sandbox({
+            network: "allowlist",
+            hosts: ["files.example.com"],
+            allowedDomains: ["files.example.com"],
           }),
         }),
       ),
@@ -755,10 +610,194 @@ describe("the network", () => {
     expect(await screen.findByRole("heading", { name: E.network.title })).toBeTruthy();
     const list = screen.getByRole("list", { name: E.network.domains });
     expect(within(list).getByText("files.example.com")).toBeTruthy();
+    await userEvent.setup().click(screen.getByRole("button", { name: E.overview.editNetwork }));
+    expect(await screen.findByRole("radiogroup", { name: S.network })).toBeTruthy();
+  });
+
+  it("a cloud device on the open network has no network block", async () => {
+    stubApi(detail(cloud()));
+    await renderDetail();
+    await screen.findByRole("tab", { name: E.detail.tabOverview });
+    expect(screen.queryByRole("list", { name: E.network.domains })).toBeNull();
+  });
+
+  it("a cloud device on an allowlist shows its hosts with where they come from", async () => {
+    stubApi(
+      detail(
+        cloud({
+          sandbox: cloudSandbox({
+            network: "allowlist",
+            hosts: ["files.example.com", "*.slack.com"],
+          }),
+        }),
+      ),
+    );
+    await renderDetail();
+    const list = await screen.findByRole("list", { name: E.network.domains });
+    expect(within(list).getByText("files.example.com")).toBeTruthy();
     expect(within(list).getByText("*.slack.com")).toBeTruthy();
     expect(screen.getByText(E.network.cloudHint.org)).toBeTruthy();
-    // read only: no add control anywhere on the page
-    expect(screen.queryByRole("button", { name: E.network.add })).toBeNull();
+  });
+});
+
+describe("the recent changes", () => {
+  const change = (over: Record<string, unknown> = {}) => ({
+    at: T,
+    kind: "policy",
+    add: [],
+    remove: [],
+    ceiling: null,
+    network: null,
+    by: "Ada",
+    via: "web",
+    outcome: "applied",
+    ...over,
+  });
+
+  it("says nothing when there is no change", async () => {
+    stubApi(detail(cloud()));
+    await renderDetail();
+    await screen.findByRole("tab", { name: E.detail.tabOverview });
+    expect(screen.queryByRole("list", { name: E.recent.title })).toBeNull();
+  });
+
+  it("lists host changes with who, where and what became of them", async () => {
+    stubApi(
+      detail(
+        local(
+          {},
+          {
+            recent: [
+              change({ add: ["files.example.com"] }),
+              change({ remove: ["*.slack.com"] }),
+              change({ add: ["x.example.com"], outcome: "failed" }),
+            ],
+          },
+        ),
+      ),
+    );
+    await renderDetail();
+    const list = await screen.findByRole("list", { name: E.recent.title });
+    expect(within(list).getByText("Added files.example.com")).toBeTruthy();
+    expect(within(list).getByText("Removed *.slack.com")).toBeTruthy();
+    expect(within(list).getByText(E.recent.outcome.failed)).toBeTruthy();
+    const webRow = within(list)
+      .getAllByRole("listitem")
+      .find((r) => r.textContent?.includes("Added files.example.com")) as HTMLElement;
+    expect(webRow.querySelector(".cb-item-list-meta")?.textContent).toContain("Ada");
+    expect(webRow.querySelector(".cb-item-list-meta")?.textContent).toContain(E.recent.via.web);
+  });
+
+  it("each setting change shows its from and to values", async () => {
+    const ceiling = (from: unknown, to: unknown, via = "web") =>
+      change({ kind: "ceiling", ceiling: { from, to }, via, by: via === "device" ? null : "Ada" });
+    stubApi(
+      detail(
+        local(
+          {},
+          {
+            recent: [
+              ceiling(
+                { outsideSandbox: true, network: "open" },
+                { outsideSandbox: true, network: "allowlist" },
+              ),
+              ceiling({ outsideSandbox: false }, { outsideSandbox: true }, "device"),
+              ceiling(
+                { outsideSandbox: true, restrictedProjectReach: "os-user" },
+                { outsideSandbox: true, restrictedProjectReach: "workspace" },
+              ),
+            ],
+          },
+        ),
+      ),
+    );
+    await renderDetail();
+    const list = await screen.findByRole("list", { name: E.recent.title });
+    expect(
+      within(list).getByText(`${S.network}: ${S.networkValue.open} → ${S.networkValue.allowlist}`),
+    ).toBeTruthy();
+    expect(
+      within(list).getByText(`${S.outside}: ${S.outsideValue.off} → ${S.outsideValue.allowed}`),
+    ).toBeTruthy();
+    expect(
+      within(list).getByText(`${S.reach}: ${S.reachValue["os-user"]} → ${S.reachValue.workspace}`),
+    ).toBeTruthy();
+    // a report of the machine names nobody
+    const deviceRow = within(list)
+      .getAllByRole("listitem")
+      .find((r) => r.textContent?.includes(S.outsideValue.allowed)) as HTMLElement;
+    const meta = deviceRow.querySelector(".cb-item-list-meta")?.textContent ?? "";
+    expect(meta).toContain(E.recent.via.device);
+    expect(meta).not.toContain(E.recent.unknownBy);
+  });
+});
+
+describe("a cloud device's network changes in the recent changes", () => {
+  it("reads following the organization and the own network with its hosts, from and to", async () => {
+    const row = (from: unknown, to: unknown, via = "web") => ({
+      at: T,
+      kind: "network",
+      add: [],
+      remove: [],
+      ceiling: null,
+      network: { from, to },
+      by: "Ada",
+      via,
+      outcome: "applied",
+    });
+    stubApi(
+      detail(
+        cloud({
+          sandbox: cloudSandbox({
+            recent: [
+              row({ mode: null, hosts: [] }, { mode: "allowlist", hosts: ["a.test", "b.test"] }),
+              row({ mode: "open", hosts: [] }, { mode: "none", hosts: [] }, "agent"),
+              row({ mode: "none", hosts: [] }, { mode: null, hosts: [] }, "token"),
+            ],
+          }),
+        }),
+      ),
+    );
+    await renderDetail();
+    const list = await screen.findByRole("list", { name: E.recent.title });
+    expect(
+      within(list).getByText(
+        `${S.network}: ${S.followOrg} → ${S.networkValue.allowlist} (a.test, b.test)`,
+      ),
+    ).toBeTruthy();
+    expect(
+      within(list).getByText(`${S.network}: ${S.networkValue.open} → ${S.networkValue.none}`),
+    ).toBeTruthy();
+    expect(list.textContent).toContain(E.recent.via.agent);
+    expect(list.textContent).toContain(E.recent.via.token);
+  });
+});
+
+describe("the sandbox marks", () => {
+  it("the list says whether a call may run outside the sandbox, neutral, never a mode", async () => {
+    stubApi({
+      [`GET ${BASE}`]: () =>
+        json(
+          200,
+          list([
+            local(),
+            local({
+              id: "e2",
+              name: "Server",
+              sandbox: sandbox({ outsideSandbox: false }),
+            }),
+            cloud({ id: "e3", name: "Box" }),
+          ]),
+        ),
+    });
+    await renderList({ locale: "zh" });
+    await screen.findByText("Server");
+    const cards = await screen.findAllByRole("listitem");
+    const meta = (c: HTMLElement) => c.querySelector(".cb-object-card-meta")?.textContent;
+    expect(meta(cards[0] as HTMLElement)).toBe("在线 · 可在沙箱外运行");
+    expect(meta(cards[1] as HTMLElement)).toBe("在线 · 仅沙箱");
+    expect(meta(cards[2] as HTMLElement)).toBe("未启动 · 仅沙箱");
+    expect(document.body.textContent).not.toMatch(/自动|完全访问|白名单|开放/);
   });
 });
 
@@ -780,88 +819,19 @@ describe("the facts", () => {
   });
 });
 
-describe("the recent changes", () => {
-  const change = (over: Record<string, unknown> = {}) => ({
-    at: T,
-    kind: "policy",
-    add: [],
-    remove: [],
-    mode: null,
-    ceiling: null,
-    by: "Ada",
-    via: "web",
-    outcome: "applied",
-    ...over,
-  });
-
-  it("says nothing when there is no change", async () => {
-    stubApi(detail(cloud()));
-    await renderDetail();
-    await screen.findByRole("tab", { name: E.detail.tabOverview });
-    expect(screen.queryByRole("list", { name: E.recent.title })).toBeNull();
-  });
-
-  it("lists host and ceiling changes with who, where and what became of them", async () => {
-    stubApi(
-      detail(
-        cloud({
-          mode: cloudMode({
-            recent: [
-              change({ add: ["files.example.com"] }),
-              change({ remove: ["*.slack.com"] }),
-              change({ kind: "mode", mode: { to: "sandbox" } }),
-              change({
-                kind: "mode",
-                mode: { from: "sandbox", to: "auto" },
-                by: null,
-                via: "device",
-              }),
-              change({ add: ["x.example.com"], outcome: "failed" }),
-            ],
-          }),
-        }),
-      ),
-    );
-    await renderDetail();
-    const list = await screen.findByRole("list", { name: E.recent.title });
-    expect(within(list).getByText("Added files.example.com")).toBeTruthy();
-    expect(within(list).getByText("Removed *.slack.com")).toBeTruthy();
-    // an old mode change reads as the ceiling it set, never as a mode
-    expect(within(list).getByText(E.recent.fullOff)).toBeTruthy();
-    expect(within(list).getByText(E.recent.fullAllowed)).toBeTruthy();
-    expect(list.textContent).not.toMatch(/Mode|Auto|Sandbox/);
-    // a change that did not take effect says so
-    expect(within(list).getByText(E.recent.outcome.failed)).toBeTruthy();
-    // a web change names its account and where it was made
-    const webRow = within(list)
-      .getAllByRole("listitem")
-      .find((r) => r.textContent?.includes("Added files.example.com")) as HTMLElement;
-    expect(webRow.querySelector(".cb-item-list-meta")?.textContent).toContain("Ada");
-    expect(webRow.querySelector(".cb-item-list-meta")?.textContent).toContain(E.recent.via.web);
-    // a change made on the machine names nobody (not even an unknown account)
-    const deviceRow = within(list)
-      .getAllByRole("listitem")
-      .find((r) => r.textContent?.includes(E.recent.fullAllowed)) as HTMLElement;
-    const meta = deviceRow.querySelector(".cb-item-list-meta")?.textContent ?? "";
-    expect(meta).toContain(E.recent.via.device);
-    expect(meta).not.toContain(E.recent.unknownBy);
-    expect(meta).not.toContain("Ada");
-  });
-});
-
 describe("polling after a file reset", () => {
   const at = 1_000_000;
   const state = (over: Record<string, unknown> = {}) => ({
     filesLost: false,
     reconcileRequired: false,
-    mode: { pendingFilesReset: false },
+    sandbox: { pendingFilesReset: false },
     ...over,
   });
 
   it("polls while a reset is pending and stops once nothing waits for it", () => {
     expect(resetPollInterval(state({ filesLost: true }), at, at + 1)).toBe(RESET_POLL_MS);
     expect(resetPollInterval(state({ reconcileRequired: true }), at, at + 1)).toBe(RESET_POLL_MS);
-    expect(resetPollInterval(state({ mode: { pendingFilesReset: true } }), at, at + 1)).toBe(
+    expect(resetPollInterval(state({ sandbox: { pendingFilesReset: true } }), at, at + 1)).toBe(
       RESET_POLL_MS,
     );
     expect(resetPollInterval(state(), at, at + 1)).toBe(false);
@@ -874,91 +844,6 @@ describe("polling after a file reset", () => {
     const marked = state({ reconcileRequired: true });
     expect(resetPollInterval(marked, at, at + RESET_POLL_DEADLINE_MS - 1)).toBe(RESET_POLL_MS);
     expect(resetPollInterval(marked, at, at + RESET_POLL_DEADLINE_MS)).toBe(false);
-  });
-});
-
-describe("ceiling changes in the recent changes", () => {
-  const ceiling = (from: Record<string, unknown>, to: Record<string, unknown>, via = "web") => ({
-    at: T,
-    kind: "ceiling",
-    add: [],
-    remove: [],
-    mode: null,
-    ceiling: { from, to },
-    by: via === "device" ? null : "Ada",
-    via,
-    outcome: "applied",
-  });
-
-  it("a cloud Full change and a machine's reach change each read as what changed", async () => {
-    stubApi(
-      detail(
-        cloud({
-          mode: cloudMode({
-            recent: [
-              ceiling({ fullAccess: true }, { fullAccess: false }),
-              ceiling(
-                { fullAccess: false, restrictedProjectReach: "os-user" },
-                { fullAccess: false, restrictedProjectReach: "workspace" },
-                "device",
-              ),
-            ],
-          }),
-        }),
-      ),
-    );
-    await renderDetail();
-    const list = await screen.findByRole("list", { name: E.recent.title });
-    expect(within(list).getByText(E.recent.fullOff)).toBeTruthy();
-    expect(within(list).getByText(E.recent.reach.workspace)).toBeTruthy();
-    expect(within(list).queryByText(E.recent.none)).toBeNull();
-  });
-
-  it("zh labels a widened reach and allowed Full access", async () => {
-    stubApi(
-      detail(
-        cloud({
-          mode: cloudMode({
-            recent: [
-              ceiling(
-                { fullAccess: false, restrictedProjectReach: "workspace" },
-                { fullAccess: true, restrictedProjectReach: "os-user" },
-                "device",
-              ),
-            ],
-          }),
-        }),
-      ),
-    );
-    await renderDetail({ locale: "zh" });
-    const list = await screen.findByRole("list", { name: zh.devices.recent.title });
-    expect(list.textContent).toContain(zh.devices.recent.fullAllowed);
-    expect(list.textContent).toContain(zh.devices.recent.reach["os-user"]);
-  });
-});
-
-describe("the ceiling marks", () => {
-  it("the list says whether Full access is available, neutral, never a mode", async () => {
-    stubApi({
-      [`GET ${BASE}`]: () =>
-        json(
-          200,
-          list([
-            local(),
-            local({ id: "e2", name: "Server", ownerCeiling: report({ fullAccess: false }) }),
-            cloud({ id: "e3", name: "Box", ownerCeiling: cloudCeiling(false) }),
-          ]),
-        ),
-    });
-    await renderList({ locale: "zh" });
-    await screen.findByText("Server");
-    const cards = await screen.findAllByRole("listitem");
-    const meta = (c: HTMLElement) => c.querySelector(".cb-object-card-meta")?.textContent;
-    expect(meta(cards[0] as HTMLElement)).toBe("在线 · 可完全访问");
-    expect(meta(cards[1] as HTMLElement)).toBe("在线 · 受限");
-    expect(meta(cards[2] as HTMLElement)).toBe("未启动 · 受限");
-    for (const c of cards) expect(c.querySelector(".cb-object-card-meta-part")).toBeNull();
-    expect(document.body.textContent).not.toMatch(/自动|沙箱|白名单|开放/);
   });
 });
 

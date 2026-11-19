@@ -58,16 +58,17 @@ const chatRoutes = (
   [`GET ${BASE}/${id}/permissions`]: () => json(200, view),
 });
 
-const pickers = () => document.querySelector('[data-part="composer-pickers"]') as HTMLElement;
-/** The editable permission button of the desktop composer (null while locked). */
-const editable = () => within(pickers()).queryByRole("button", { name: /^Permissions: / });
-/** The locked permission value of the desktop composer (null while editable). */
-const locked = () =>
-  pickers().querySelector<HTMLElement>(
-    '[data-locked="true"][title], .cb-picker[data-locked="true"]',
-  );
+/** The desktop composer's mode button (the permission profile and the effort). */
+const mode = () => document.querySelector('[data-part="composer-mode"]') as HTMLElement;
+/** The editable mode button (null while locked). */
+const editable = () => {
+  const b = within(mode()).queryByRole("button", { name: /^Permissions: / });
+  return b === null || b.getAttribute("data-locked") === "true" ? null : b;
+};
+/** The locked mode button (null while editable). */
+const locked = () => mode().querySelector<HTMLElement>('[data-locked="true"][title]');
 const lockedProfile = (text: string) =>
-  [...pickers().querySelectorAll<HTMLElement>('[data-locked="true"]')].find(
+  [...mode().querySelectorAll<HTMLElement>('[data-locked="true"]')].find(
     (e) => e.textContent === text,
   );
 const reads = (calls: Call[], id = "c1") =>
@@ -148,7 +149,7 @@ describe("live profile change of an interactive root (Task 10D)", () => {
     // Refresh only reads; revision 4 confirms the write and the editor returns
     await user.click(screen.getByRole("button", { name: "Refresh" }));
     await waitFor(() =>
-      expect(editable()?.getAttribute("aria-label")).toBe("Permissions: Request approval"),
+      expect(editable()?.getAttribute("aria-label")).toMatch(/^Permissions: Request approval(:|$)/),
     );
     expect(patches(calls)).toHaveLength(1);
     expect(after).toBe(3);
@@ -167,7 +168,7 @@ describe("live profile change of an interactive root (Task 10D)", () => {
     });
     await choose(user, "Request approval");
     await waitFor(() =>
-      expect(editable()?.getAttribute("aria-label")).toBe("Permissions: Full access"),
+      expect(editable()?.getAttribute("aria-label")).toMatch(/^Permissions: Full access(:|$)/),
     );
     expect(patches(calls)).toHaveLength(1);
   });
@@ -193,7 +194,7 @@ describe("live profile change of an interactive root (Task 10D)", () => {
     );
     await waitFor(() => expect(reads(calls).length).toBeGreaterThanOrEqual(1));
     await waitFor(() =>
-      expect(editable()?.getAttribute("aria-label")).toBe("Permissions: Approve for me"),
+      expect(editable()?.getAttribute("aria-label")).toMatch(/^Permissions: Approve for me(:|$)/),
     );
     expect(patches(calls)).toHaveLength(1);
   });
@@ -280,7 +281,7 @@ describe("live profile change of an interactive root (Task 10D)", () => {
       held.resolve(json(200, permissionsView({ profile: "request-approval", revision: 5 }))),
     );
     await waitFor(() =>
-      expect(editable()?.getAttribute("aria-label")).toBe("Permissions: Request approval"),
+      expect(editable()?.getAttribute("aria-label")).toMatch(/^Permissions: Request approval(:|$)/),
     );
     expect(patches(calls)).toHaveLength(0);
   });
@@ -337,7 +338,7 @@ describe("fix round 1 (10D review minors)", () => {
       late.resolve(json(200, permissionsView({ profile: "request-approval", revision: 4 }))),
     );
     await waitFor(() =>
-      expect(editable()?.getAttribute("aria-label")).toBe("Permissions: Request approval"),
+      expect(editable()?.getAttribute("aria-label")).toMatch(/^Permissions: Request approval(:|$)/),
     );
     expect(patches(calls)).toHaveLength(1);
   });

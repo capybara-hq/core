@@ -482,6 +482,46 @@ describe("ToolGroup (§6.16.8)", () => {
     expect(plain.container.querySelector('[data-part="sandbox-word"]')).toBeNull();
   });
 
+  it("a crossing Full access granted by itself adds the neutral approved-automatically word with its kind", () => {
+    const { container } = wrap(
+      <ToolRow row={builtin("Bash", { kind: "command", keyArg: "curl x", autoGranted: "host" })} />,
+    );
+    const word = container.querySelector('[data-part="auto-granted-word"]');
+    expect(word?.textContent).toBe(" · 已自动批准：主机");
+    expect(word?.className).toBe("cb-muted");
+    cleanup();
+    const en = wrap(
+      <ToolRow
+        row={builtin("Bash", {
+          kind: "command",
+          keyArg: "npm run dev",
+          autoGranted: "outside-sandbox",
+          outsideSandbox: true,
+        })}
+      />,
+      "en",
+    );
+    expect(en.container.querySelector('[data-part="auto-granted-word"]')?.textContent).toBe(
+      " · Approved automatically: running outside the sandbox",
+    );
+    // the existing marker stays
+    expect(en.container.querySelector('[data-part="sandbox-word"]')?.textContent).toBe(
+      " · Ran outside the sandbox",
+    );
+    cleanup();
+    const running = wrap(
+      <ToolRow
+        row={builtin("Bash", {
+          kind: "command",
+          keyArg: "x",
+          status: "running",
+          autoGranted: "directory",
+        })}
+      />,
+    );
+    expect(running.container.querySelector('[data-part="auto-granted-word"]')).toBeNull();
+  });
+
   it("a failed group marks the failures in fail", () => {
     const { container } = wrap(<ToolGroup rows={[row(), row({ status: "failed" })]} />);
     expect(container.querySelector('[data-part="fail-word"]')?.textContent).toBe("（1 个失败）");

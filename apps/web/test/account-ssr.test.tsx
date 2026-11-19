@@ -96,8 +96,15 @@ const ROUTES: Routes = {
     json(200, {
       settings: { toolSearch: "off", locale: "en", sandboxToolPolicy: "ask" },
       deployment: {
-        fullAccess: { permission: "allowed", source: "default" },
-        cloudNetwork: { allowHosts: [], orgHosts: "extend", off: true },
+        outsideSandbox: { permission: "allowed", source: "default" },
+        deviceNetwork: {
+          default: "open",
+          ceiling: "open",
+          sources: { default: "default", ceiling: "default" },
+          allowHosts: [],
+          orgHosts: "extend",
+          off: true,
+        },
       },
       sandboxLimits: { cpu: 2, memoryMb: 4096, source: "deployment" },
       effectiveNetwork: { mode: "allowlist", hosts: [] },

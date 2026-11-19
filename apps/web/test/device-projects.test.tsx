@@ -26,15 +26,15 @@ const T = "2026-11-07T08:00:00.000Z";
 const E = en.devices;
 const P = en.devices.projects;
 
-const mode = (over: Record<string, unknown> = {}) => ({
-  mode: "auto",
-  allowedMode: "auto",
-  allowedBy: "org",
-  network: { kind: "open-public", hosts: [], source: "org" },
-  local: null,
-  sandboxNetwork: { kind: "open-public", hosts: [] },
-  fullNetwork: { kind: "open-public", hosts: [] },
-  outerNetwork: null,
+const sandbox = (over: Record<string, unknown> = {}) => ({
+  network: "open",
+  networkCeiling: "open",
+  hosts: [],
+  ownNetwork: null,
+  allowedDomains: [],
+  outsideSandbox: false,
+  restrictedProjectReach: "workspace",
+  layer: { network: null, outsideSandbox: "provider" },
   pendingNextUse: false,
   pendingFilesReset: false,
   recent: [],
@@ -59,10 +59,9 @@ const cloud = (over: Record<string, unknown> = {}) => ({
     cpu: 2,
     memoryMb: 2048,
     diskMb: 10240,
-    mode: "auto",
     network: { kind: "open-public", hosts: [] },
   },
-  mode: mode(),
+  sandbox: sandbox(),
   createdAt: T,
   ...over,
 });
@@ -81,10 +80,10 @@ const local = (over: Record<string, unknown> = {}) =>
       lastSeenAt: T,
     },
     network: { features: ["policyOpId", "projects"], policy: { mode: "auto", allowedDomains: [] } },
-    mode: mode({
-      network: { kind: "allowlist", hosts: [], source: "platform" },
-      local: { reported: "auto", allowedDomains: [] },
-      sandboxNetwork: null,
+    sandbox: sandbox({
+      ownNetwork: "open",
+      outsideSandbox: true,
+      layer: { network: null, outsideSandbox: null },
     }),
     ...over,
   });

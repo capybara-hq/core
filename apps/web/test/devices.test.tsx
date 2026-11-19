@@ -31,19 +31,18 @@ const LIMITS = {
   cpu: 2,
   memoryMb: 2048,
   diskMb: 10240,
-  mode: "auto",
   network: { kind: "open-public", hosts: [] },
 };
-/** A device's mode and network (kernel `DeviceModeView`): a cloud device in auto mode. */
-const MODE = {
-  mode: "auto",
-  allowedMode: "auto",
-  allowedBy: "org",
-  network: { kind: "open-public", hosts: [], source: "org" },
-  local: null,
-  sandboxNetwork: { kind: "open-public", hosts: [] },
-  fullNetwork: { kind: "open-public", hosts: [] },
-  outerNetwork: null,
+/** A device's sandbox (kernel `DeviceSandboxView`): a cloud device following its org's open network. */
+const SANDBOX = {
+  network: "open",
+  networkCeiling: "open",
+  hosts: [],
+  ownNetwork: null,
+  allowedDomains: [],
+  outsideSandbox: false,
+  restrictedProjectReach: "workspace",
+  layer: { network: null, outsideSandbox: "provider" },
   pendingNextUse: false,
   pendingFilesReset: false,
   recent: [],
@@ -61,7 +60,7 @@ const env = (id: string, name: string | null, over: Record<string, unknown> = {}
   filesLost: false,
   instance: null,
   limits: LIMITS,
-  mode: MODE,
+  sandbox: SANDBOX,
   createdAt: T,
   ...over,
 });
@@ -84,13 +83,6 @@ const openSettings = async () => {
   const user = userEvent.setup();
   await user.click(await settingsTab());
   return user;
-};
-/** 添加域名 opens a dialog: type the host there and submit. */
-const addHost = async (user: ReturnType<typeof userEvent.setup>, host: string) => {
-  await user.click(await screen.findByRole("button", { name: E.network.add }));
-  const dialog = await screen.findByRole("dialog");
-  await user.type(within(dialog).getByRole("textbox", { name: E.network.addField }), host);
-  await user.click(within(dialog).getByRole("button", { name: E.network.addSubmit }));
 };
 const template = (name: string) => document.querySelector(`[data-template="${name}"]`);
 
@@ -124,9 +116,9 @@ describe("devices list", () => {
     expect(
       within(cards[0] as HTMLElement).getByText(E.state.running, { exact: false }),
     ).toBeTruthy();
-    // whether Full access is available there, never a daily mode or network mark
+    // the neutral sandbox mark, never a daily mode or network mark
     expect(
-      within(cards[0] as HTMLElement).getByText(E.ceiling.mark.full, { exact: false }),
+      within(cards[0] as HTMLElement).getByText(E.sandbox.mark.sandbox, { exact: false }),
     ).toBeTruthy();
     expect(within(cards[1] as HTMLElement).getByText("Build box")).toBeTruthy();
     expect(
@@ -404,23 +396,10 @@ describe("device detail", () => {
     });
   });
 
-  it("a cloud ceiling change invalidates the list and the device, only after its confirmation", async () => {
-    const narrowed = {
-      state: "cloud",
-      revision: null,
-      sequence: null,
-      fullAccess: false,
-      effectiveFullAccess: false,
-      restrictedProjectReach: "workspace",
-      restrictedAllowedDomains: [],
-      observedAt: null,
-      stale: false,
-    };
+  it("a cloud network change invalidates the list, the device and its previews", async () => {
     const calls = stubApi({
       ...routes,
       ...NO_PROJECTS,
-      [`GET ${BASE}/e1`]: () =>
-        json(200, { device: env("e1", "Build box", { ownerCeiling: narrowed }) }),
       [`PATCH ${BASE}/e1`]: () => json(200, { device: env("e1", "Build box") }),
     });
     const { client } = await renderDetail();
@@ -428,11 +407,13 @@ describe("device detail", () => {
     // the composer's cached permission preview of this device
     client.setQueryData(["org", "o1", "device", "e1", "permissionPreview", null], { cached: 1 });
     const user = await openSettings();
-    await user.click(await screen.findByRole("button", { name: E.ceiling.allowFull }));
-    const dialog = await screen.findByRole("dialog", { name: E.ceiling.confirm.title.widen });
-    // nothing is sent before the person confirms
-    expect(calls.some((c) => c.method === "PATCH")).toBe(false);
-    await user.click(within(dialog).getByRole("button", { name: E.ceiling.confirm.submit.widen }));
+    const group = await screen.findByRole("radiogroup", { name: E.sandbox.network });
+    await user.click(
+      within(group).getByRole("radio", {
+        name: new RegExp(`^${E.sandbox.networkValue.allowlist}`),
+      }),
+    );
+    await user.click(screen.getByRole("button", { name: E.sandbox.save }));
     await vi.waitFor(() =>
       expect(client.getQueryState(["org", "o1", "devices"])?.isInvalidated).toBe(true),
     );
@@ -440,14 +421,12 @@ describe("device detail", () => {
       client.getQueryState(["org", "o1", "device", "e1", "permissionPreview", null])?.isInvalidated,
     ).toBe(true);
     expect(bodyOf(calls.find((c) => c.method === "PATCH"))).toEqual({
-      ownerCeiling: { fullAccess: true },
-      confirmWidening: true,
+      network: { mode: "allowlist", hosts: [] },
     });
     await vi.waitFor(() => {
       const names = calls.map((c) => `${c.method} ${c.url}`);
       expect(names.slice(names.indexOf(`PATCH ${BASE}/e1`))).toContain(`GET ${BASE}/e1`);
     });
-    await vi.waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
   });
 
   it("delete invalidates devices and forgets the detail once the page is left", async () => {
@@ -717,8 +696,8 @@ describe("local devices (environments spec §6, §9)", () => {
   });
 });
 
-describe("device network in sandbox mode (auto mode spec §4.4)", () => {
-  const N = E.network;
+describe("a local machine's allowlist (approval-only profiles design)", () => {
+  const S = E.sandbox;
   const MACHINE = {
     id: "m1",
     name: "grant-mbp",
@@ -727,23 +706,18 @@ describe("device network in sandbox mode (auto mode spec §4.4)", () => {
     programVersion: "0.1.0",
     lastSeenAt: T,
   };
-  const policy = (over: Record<string, unknown> = {}) => ({
-    mode: "sandbox",
-    allowedDomains: ["files.example.com"],
-    ...over,
+  const ceiling = (allowedDomains: string[]) => ({
+    state: "report",
+    revision: "r1",
+    sequence: 1,
+    outsideSandbox: false,
+    network: "allowlist",
+    allowedDomains,
+    restrictedProjectReach: "workspace",
+    observedAt: T,
+    stale: false,
   });
-  const mode = (pol: Record<string, unknown> = {}) => ({
-    ...MODE,
-    mode: "sandbox",
-    network: { kind: "allowlist", hosts: ["files.example.com"], source: "org" },
-    local: { reported: "sandbox", allowedDomains: ["files.example.com"] },
-    sandboxNetwork: null,
-    ...pol,
-  });
-  const local = (
-    net: { features?: string[]; policy?: unknown } = {},
-    over: Record<string, unknown> = {},
-  ) =>
+  const local = (allowedDomains: string[] = ["files.example.com"]) =>
     env("e1", "Laptop", {
       source: "local",
       provider: "@local",
@@ -751,27 +725,19 @@ describe("device network in sandbox mode (auto mode spec §4.4)", () => {
       machine: MACHINE,
       network: {
         features: ["networkReport", "policyOp", "policyOpId"],
-        policy: policy(),
-        ...net,
+        policy: { mode: "sandbox", allowedDomains },
       },
-      mode: mode(),
-      ...over,
+      ownerCeiling: ceiling(allowedDomains),
     });
 
-  it("removes a domain: the change goes to the machine and the device is read again", async () => {
+  it("removes a host: the change goes to the machine and the device is read again", async () => {
     let removed = false;
     const calls = stubApi({
       ...NO_PROJECTS,
-      [`GET ${BASE}/e1`]: () =>
-        json(200, {
-          device: local(
-            removed ? { policy: policy({ allowedDomains: [] }) } : {},
-            removed ? { mode: mode({ local: { reported: "sandbox", allowedDomains: [] } }) } : {},
-          ),
-        }),
+      [`GET ${BASE}/e1`]: () => json(200, { device: local(removed ? [] : undefined) }),
       [`POST ${BASE}/e1/policy`]: () => {
         removed = true;
-        return json(200, { policy: policy({ allowedDomains: [] }) });
+        return json(200, { policy: { mode: "sandbox", allowedDomains: [] } });
       },
     });
     const { client } = await renderDetail();
@@ -779,61 +745,14 @@ describe("device network in sandbox mode (auto mode spec §4.4)", () => {
     const user = await openSettings();
     expect(await screen.findByText("files.example.com")).toBeTruthy();
     await user.click(
-      screen.getByRole("button", { name: N.removeLabel.replace("{host}", "files.example.com") }),
+      screen.getByRole("button", { name: S.removeLabel.replace("{host}", "files.example.com") }),
     );
     await vi.waitFor(() => expect(calls.some((c) => c.method === "POST")).toBe(true));
-    const post = calls.find((c) => c.method === "POST");
-    expect(bodyOf(post)).toEqual({ remove: ["files.example.com"] });
-    expect(await screen.findByText(N.domainsEmpty)).toBeTruthy();
+    expect(bodyOf(calls.find((c) => c.method === "POST"))).toEqual({
+      remove: ["files.example.com"],
+    });
+    expect(await screen.findByText(S.hostsEmpty)).toBeTruthy();
     expect(client.getQueryState(["org", "o1", "devices"])?.isInvalidated).toBe(true);
-  });
-
-  it("adds a wildcard domain and refuses an invalid one before sending", async () => {
-    const calls = stubApi({
-      ...NO_PROJECTS,
-      [`GET ${BASE}/e1`]: () => json(200, { device: local() }),
-      [`POST ${BASE}/e1/policy`]: () => json(200, { policy: policy() }),
-    });
-    await renderDetail();
-    const user = await openSettings();
-    await addHost(user, "*.Slack.com");
-    await vi.waitFor(() => expect(calls.some((c) => c.method === "POST")).toBe(true));
-    expect(bodyOf(calls.find((c) => c.method === "POST"))).toEqual({ add: ["*.slack.com"] });
-  });
-
-  it("an empty allowlist is one muted line, not an empty-state page", async () => {
-    stubApi({
-      ...NO_PROJECTS,
-      [`GET ${BASE}/e1`]: () =>
-        json(200, {
-          device: local(
-            { policy: policy({ allowedDomains: [] }) },
-            {
-              mode: mode({ local: { reported: "sandbox", allowedDomains: [] } }),
-            },
-          ),
-        }),
-    });
-    await renderDetail();
-    const user = await openSettings();
-    expect(await screen.findByText(N.domainsEmpty)).toBeTruthy();
-    // the add flow stays: it is the only way to widen the list
-    const add = screen.getByRole("button", { name: N.add });
-    expect(add).toHaveProperty("disabled", false);
-    await user.click(add);
-    expect(await screen.findByRole("dialog")).toBeTruthy();
-  });
-
-  it("a program without policyOpId says to upgrade it", async () => {
-    stubApi({
-      ...NO_PROJECTS,
-      [`GET ${BASE}/e1`]: () =>
-        json(200, { device: local({ features: ["networkReport", "policyOp"] }) }),
-    });
-    await renderDetail();
-    await openSettings();
-    expect(await screen.findByText(N.upgrade)).toBeTruthy();
-    expect(screen.queryByRole("button", { name: /Remove files\.example\.com/ })).toBeNull();
   });
 
   it("a refused change shows why with the machine's message", async () => {
@@ -850,20 +769,12 @@ describe("device network in sandbox mode (auto mode spec §4.4)", () => {
     });
     await renderDetail();
     const user = await openSettings();
-    await addHost(user, "a.com");
+    await user.click(
+      await screen.findByRole("button", {
+        name: S.removeLabel.replace("{host}", "files.example.com"),
+      }),
+    );
     expect(await screen.findByText(en.errors.device.policy_refused)).toBeTruthy();
     expect(screen.getByText(/capybara-device policy add allowedDomains a\.com/)).toBeTruthy();
-  });
-
-  it("a Docker-mode machine says it has no per-domain control", async () => {
-    stubApi({
-      ...NO_PROJECTS,
-      [`GET ${BASE}/e1`]: () =>
-        json(200, { device: local({}, { machine: { ...MACHINE, mode: "docker" } }) }),
-    });
-    await renderDetail();
-    await openSettings();
-    expect(await screen.findByText(N.dockerNote, { exact: false })).toBeTruthy();
-    expect(screen.getByRole("button", { name: N.add })).toHaveProperty("disabled", true);
   });
 });

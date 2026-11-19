@@ -6640,3 +6640,47 @@ span.r-scal-daynum {
   justify-content: center;
   color: var(--cb-muted);
 }
+
+/* §6.16.3a the mode menu: hangs from the mode button, its end edge on the button's; the head's
+   key hint at the end of its line; the effort as segments under a hairline. */
+.r-menu-stage > .r-anchored-menu.r-anchored-end {
+  left: auto;
+  right: anchor(right);
+}
+.r-menu-label[data-hinted] {
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-2);
+}
+.r-menu-hint {
+  color: var(--cb-faint);
+}
+.r-menu-segments {
+  display: flex;
+  gap: 2px;
+  margin: 0 var(--cb-pad-default-x) var(--cb-space-1);
+  padding: 2px;
+  border: 1px solid var(--cb-line);
+  border-radius: var(--cb-radius-sm);
+  background: var(--cb-bg);
+}
+.r-menu-segment {
+  display: flex;
+  flex: 1 1 0;
+  align-items: center;
+  justify-content: center;
+  height: var(--cb-control-dense);
+  padding: 0 var(--cb-space-2);
+  border-radius: var(--cb-radius-sm);
+  color: var(--cb-muted);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+}
+.r-menu-segment[aria-checked="true"] {
+  background: var(--cb-selected);
+  color: var(--cb-ink);
+}
+.r-menu-effort {
+  margin-top: var(--cb-space-1);
+  border-top: 1px solid var(--cb-line-soft);
+}

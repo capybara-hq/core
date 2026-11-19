@@ -26,8 +26,15 @@ const PLATFORM = {
 };
 
 const DEPLOYMENT = {
-  fullAccess: { permission: "allowed", source: "default" },
-  cloudNetwork: { allowHosts: [] as string[], orgHosts: "extend" as const, off: false },
+  outsideSandbox: { permission: "allowed", source: "default" },
+  deviceNetwork: {
+    default: "open",
+    ceiling: "open",
+    sources: { default: "default", ceiling: "default" },
+    allowHosts: [] as string[],
+    orgHosts: "extend" as const,
+    off: false,
+  },
   compaction: PLATFORM,
 };
 

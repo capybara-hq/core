@@ -86,6 +86,13 @@ export interface ReviewRecord {
   commandHash?: string;
   /** Set only when the command was actually admitted to run outside the OS sandbox. */
   sandbox?: "escalated";
+  /**
+   * Who approved the call's crossing: inside the scope (`scope`), the review model, or Full access
+   * by itself (approval-only profiles design). Absent on a denial.
+   */
+  decisionSource?: "scope" | "review-model" | "full-access";
+  /** The boundary crossing the allow covered (absent when the call crossed nothing). */
+  crossing?: "directory" | "host" | "outside-sandbox" | "sensitive";
 }
 
 /**

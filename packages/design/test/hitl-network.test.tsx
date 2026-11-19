@@ -20,7 +20,7 @@ const ask = (over: Partial<ApprovalBlockProps> = {}): ApprovalBlockProps => ({
   tool: "Bash",
   toolKey: "Bash",
   input: {},
-  scopes: ["once", "always"],
+  scopes: ["once"],
   network: {
     hosts: ["files.slack.com"],
     command: "curl -sS https://files.slack.com/x",
@@ -81,28 +81,21 @@ describe("ApprovalBlock, network variant (network ask spec §6.5)", () => {
     expect(screen.queryByText("需要你批准")).toBeNull();
   });
 
-  it("the primary button is 这次允许, never 一直允许; each has its hint", () => {
-    wrap(<ApprovalBlock {...ask()} />);
-    const once = screen.getByRole("button", { name: "这次允许" });
-    const always = screen.getByRole("button", { name: "这台设备一直允许" });
-    expect(once.getAttribute("data-variant")).toBe("primary");
-    expect(always.getAttribute("data-variant")).toBe("default");
-    expect(screen.getByText("到智能体这次回复结束为止有效")).toBeTruthy();
-    const hints = [...document.querySelectorAll('[data-part="scope-hint"]')].map(
-      (h) => h.textContent,
-    );
-    expect(hints[1]).toBe(
-      "写入这台设备的本地策略，之后的命令都可以访问；可在设备页或用 capybara-device policy 撤销",
-    );
-    expect(screen.getByRole("button", { name: "拒绝" })).toBeTruthy();
-    expect(document.querySelector('[data-part="network-remote-off"]')).toBeNull();
-  });
-
-  it("approving passes the scope and the host", async () => {
+  it("offers only 这次允许 (primary, with its hint), 拒绝 and the machine command, even if always is listed", async () => {
     const onApprove = vi.fn();
-    wrap(<ApprovalBlock {...ask({ onApprove })} />);
-    await userEvent.setup().click(screen.getByRole("button", { name: "这台设备一直允许" }));
-    expect(onApprove).toHaveBeenCalledWith("always", ["files.slack.com"]);
+    const { container } = wrap(
+      <ApprovalBlock {...ask({ scopes: ["once", "always"], onApprove })} />,
+    );
+    const once = screen.getByRole("button", { name: "这次允许" });
+    expect(once.getAttribute("data-variant")).toBe("primary");
+    expect(screen.queryByRole("button", { name: /一直允许/ })).toBeNull();
+    expect(screen.getByText("到智能体这次回复结束为止有效")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "拒绝" })).toBeTruthy();
+    expect(container.querySelector('[data-part="network-on-machine"]')?.textContent).toBe(
+      "要让这台设备一直允许，请在设备上运行 capybara-device policy add allowedDomains files.slack.com",
+    );
+    await userEvent.setup().click(once);
+    expect(onApprove).toHaveBeenCalledWith("once", ["files.slack.com"]);
   });
 
   it("n hosts: a checkbox per host, all checked; the decision carries the checked ones; none checked disables approving", async () => {
@@ -121,20 +114,9 @@ describe("ApprovalBlock, network variant (network ask spec §6.5)", () => {
     expect((screen.getByRole("button", { name: "这次允许" }) as HTMLButtonElement).disabled).toBe(
       true,
     );
-    expect(
-      (screen.getByRole("button", { name: "这台设备一直允许" }) as HTMLButtonElement).disabled,
-    ).toBe(true);
     // Deny stays available
     expect((screen.getByRole("button", { name: "拒绝" }) as HTMLButtonElement).disabled).toBe(
       false,
-    );
-  });
-
-  it("only once offered (remote grants off): no 一直允许, and the device command hint", () => {
-    const { container } = wrap(<ApprovalBlock {...ask({ scopes: ["once"] })} />);
-    expect(screen.queryByRole("button", { name: "这台设备一直允许" })).toBeNull();
-    expect(container.querySelector('[data-part="network-remote-off"]')?.textContent).toBe(
-      "这台设备不接受远程修改；要一直允许，请在设备上运行 capybara-device policy add allowedDomains files.slack.com",
     );
   });
 
@@ -159,7 +141,6 @@ describe("ApprovalBlock, network variant (network ask spec §6.5)", () => {
 
   it.each([
     [{ decision: "approved", scope: "once" }, "已允许（这次）"],
-    [{ decision: "approved", scope: "always" }, "已允许（这台设备）"],
     [{ decision: "denied" }, "已拒绝"],
     [{ decision: "expired" }, "已过期"],
     [{ decision: "skipped" }, "已跳过"],
@@ -175,7 +156,7 @@ describe("ApprovalBlock, network variant (network ask spec §6.5)", () => {
     else expect(line?.textContent).toContain("张三");
   });
 
-  it("decided: the granted hosts, the fallback note and the reason", () => {
+  it("decided: the granted hosts and the reason", () => {
     const { container, rerender } = wrap(
       <ApprovalBlock
         {...ask({
@@ -187,7 +168,6 @@ describe("ApprovalBlock, network variant (network ask spec §6.5)", () => {
             who: "张三",
             when: "10:41",
             hosts: ["api.github.com"],
-            fallback: "offline",
           },
         })}
       />,
@@ -195,9 +175,7 @@ describe("ApprovalBlock, network variant (network ask spec §6.5)", () => {
     const line = container.querySelector('[data-part="tool-line"]');
     expect(line?.textContent).toContain("api.github.com");
     expect(line?.textContent).not.toContain("files.slack.com");
-    expect(container.querySelector('[data-part="network-fallback"]')?.textContent).toBe(
-      " · 设备离线，已按这次允许",
-    );
+    expect(container.querySelector('[data-part="network-fallback"]')).toBeNull();
     rerender(
       <DesignProvider locale="en">
         <ApprovalBlock
@@ -208,16 +186,13 @@ describe("ApprovalBlock, network variant (network ask spec §6.5)", () => {
               scope: "once",
               who: "Ann",
               when: "10:41",
-              fallback: "refused",
             },
           })}
         />
       </DesignProvider>,
     );
     expect(container.textContent).toContain("Allowed (this time)");
-    expect(container.textContent).toContain(
-      "The device does not accept remote changes; allowed this time instead",
-    );
+    expect(container.textContent).not.toContain("instead");
     rerender(
       <DesignProvider locale="en">
         <ApprovalBlock
@@ -236,7 +211,10 @@ describe("ApprovalBlock, network variant (network ask spec §6.5)", () => {
       screen.getByRole("group", { name: "The agent wants to reach 2 domains. Allow?" }),
     ).toBeTruthy();
     expect(screen.getByRole("button", { name: "Allow this time" })).toBeTruthy();
-    expect(screen.getByRole("button", { name: "Always allow on this device" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /Always allow/ })).toBeNull();
+    expect(document.querySelector('[data-part="network-on-machine"]')?.textContent).toBe(
+      "To always allow it on this device, run capybara-device policy add allowedDomains <host> on the device",
+    );
     expect(screen.getByText("Until the agent finishes this reply")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Deny" })).toBeTruthy();
   });

@@ -25,8 +25,15 @@ export function agentFormDefaults(agentId = "ag1"): Routes {
     [`GET ${ORG}/settings`]: ok({
       settings: { toolSearch: "on", locale: "en" },
       deployment: {
-        fullAccess: { permission: "allowed", source: "default" },
-        cloudNetwork: { allowHosts: [], orgHosts: "extend", off: false },
+        outsideSandbox: { permission: "allowed", source: "default" },
+        deviceNetwork: {
+          default: "open",
+          ceiling: "open",
+          sources: { default: "default", ceiling: "default" },
+          allowHosts: [],
+          orgHosts: "extend",
+          off: false,
+        },
         attribution: {
           commit: "Co-Authored-By: Capybara <noreply@capybarahq.com>",
           pr: "🤖 Generated with [Capybara](https://github.com/capybara-hq/core)",

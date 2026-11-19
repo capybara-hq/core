@@ -98,7 +98,6 @@ export {
   NetworkBlockedFacts,
   type NetworkBlockedFactsProps,
   type NetworkFact,
-  type NetworkFallback,
   type QuestionAnswer,
   QuestionBlock,
   type QuestionBlockProps,
@@ -117,6 +116,13 @@ export {
   type MenuPlacementInput,
   menuPlacement,
 } from "./menu";
+export {
+  ModeMenu,
+  type ModeMenuMode,
+  type ModeMenuProps,
+  modeMenuEntries,
+  nextMode,
+} from "./mode-menu";
 export {
   type BlockState,
   ContextSection,
@@ -201,6 +207,7 @@ export {
   type SummaryRow,
   summarizeTools,
   summaryParts,
+  type ToolAutoGranted,
   type ToolGuard,
   type ToolKind,
   type ToolNotice,

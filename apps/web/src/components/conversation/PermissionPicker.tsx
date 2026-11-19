@@ -4,6 +4,7 @@ import {
   Button,
   Dialog,
   type IconName,
+  type ModeMenuProps,
   type PickerProps,
   Stack,
   Text,
@@ -11,7 +12,7 @@ import {
 } from "@capybara-hq/design";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
-import { type ReactNode, useCallback, useState, useSyncExternalStore } from "react";
+import { type ReactNode, useCallback, useRef, useState, useSyncExternalStore } from "react";
 import { useRouter } from "../../i18n/navigation";
 import { ApiClientError } from "../../lib/api";
 import type { Conversation, ConversationEvent } from "../../lib/conversations";
@@ -82,17 +83,14 @@ export function recordedProfile(
 /** The model-purposes settings where an org admin sets the review model. */
 export const REVIEW_MODEL_SETTINGS = "/settings/models?tab=purposes";
 
-type Reason =
-  | "noDevice"
-  | "checking"
-  | "checkFailed"
-  | "ceiling"
-  | "unsupported"
-  | "restrictedUnsupported";
+type Reason = "noDevice" | "checking" | "checkFailed" | "unsupported";
 
 /**
- * Why each profile cannot be chosen for this device (undefined: it can). Only known states map
- * to a reason; a provider's raw reason text is never shown here.
+ * Why each profile cannot be chosen for this device (undefined: it can). A profile only chooses
+ * who approves a crossing (approval-only profiles design), so the three share the device's
+ * support: a provider that cannot run scoped operations (unsupported, or an operation boundary
+ * without restricted execution) offers none, and Full access never depends on a ceiling. Only
+ * known states map to a reason; a provider's raw reason text is never shown here.
  */
 export function unavailableReasons(
   deviceId: string | undefined,
@@ -111,18 +109,76 @@ export function unavailableReasons(
     return { "request-approval": undefined, "approve-for-me": undefined, "full-access": full };
   }
   const a = p.availability;
-  const restricted: Reason | undefined =
-    a.state === "unsupported"
-      ? "unsupported"
-      : a.state === "supported" && a.report.restricted === null
-        ? "restrictedUnsupported"
-        : undefined;
-  const full: Reason | undefined = !p.outsideSandboxCeiling
-    ? "ceiling"
-    : a.state === "unsupported" || (a.state === "supported" && !a.report.outsideSandbox)
+  const reason: Reason | undefined =
+    a.state === "unsupported" ||
+    (a.state === "supported" && a.report.boundary === "operation" && a.report.restricted === null)
       ? "unsupported"
       : undefined;
-  return { "request-approval": restricted, "approve-for-me": restricted, "full-access": full };
+  return { "request-approval": reason, "approve-for-me": reason, "full-access": reason };
+}
+
+/**
+ * Whether the Full access confirmation names running outside the sandbox: the device may grant
+ * it (its outside-sandbox ceiling allows it and its runtime can do it; never a cloud instance).
+ */
+export function fullAccessReachesOutside(p: PermissionPreview): boolean {
+  const a = p.availability;
+  return (
+    p.outsideSandboxCeiling &&
+    a.state === "supported" &&
+    a.report.boundary === "operation" &&
+    a.report.outsideSandbox
+  );
+}
+
+/**
+ * The composer's mode menu (design `ModeMenu`) from the permission picker and the effort picker
+ * a page passes: the profiles with their icons and sentences, the review model action, the
+ * effort as segments (only when the model declares efforts), the Shift+Tab hint while the
+ * profile can change. A locked picker (a recorded or inherited profile) gives read-only modes
+ * with its hint.
+ */
+export function modeMenuFromPickers(
+  permission: PickerProps,
+  effort: PickerProps | undefined,
+  hint: string,
+): ModeMenuProps {
+  const items = permission.groups.flatMap((g) => g.items);
+  const effortItems = effort?.groups.flatMap((g) => g.items) ?? [];
+  return {
+    label: permission.label,
+    modes: items.map((it) => ({
+      id: it.id,
+      label: it.label,
+      icon: it.icon ?? "shield-check",
+      description: it.description ?? "",
+      ...(it.checked ? { checked: true } : {}),
+      ...(it.disabled ? { disabled: true } : {}),
+      ...(it.tag !== undefined ? { tag: it.tag } : {}),
+    })),
+    onPickMode: permission.onPick,
+    ...(permission.note !== undefined ? { note: permission.note } : {}),
+    ...(permission.locked !== undefined
+      ? { locked: permission.locked.hint }
+      : permission.disabled
+        ? {}
+        : { hint }),
+    ...(permission.disabled ? { disabled: true } : {}),
+    ...(permission.action !== undefined ? { action: permission.action } : {}),
+    ...(effort !== undefined && effort.locked === undefined && effortItems.length > 0
+      ? {
+          effort: {
+            label: effort.label,
+            items: effortItems.map((it) => ({
+              id: it.id,
+              label: it.label,
+              ...(it.checked ? { checked: true } : {}),
+            })),
+            onPick: effort.onPick,
+          },
+        }
+      : {}),
+  };
 }
 
 type Consent = { deviceId: string; project: string | null; scopeRevision: string };
@@ -163,6 +219,11 @@ export type PermissionChoiceInput = {
    * instead of into local state; the shown value stays `initial` until the authoritative read.
    */
   onChange?(selection: PermissionSelection): void;
+  /**
+   * The Full access consent the kernel holds for this conversation (its device and scope
+   * revision): choosing Full again for that same scope needs no confirmation.
+   */
+  consentScope?: { deviceId: string; scopeRevision: string } | null;
 };
 
 /**
@@ -182,7 +243,8 @@ export function usePermissionChoice(input: PermissionChoiceInput): {
   selection: PermissionSelection | null;
   /**
    * Drops a Full access consent back to Approve for me (the kernel refused the displayed scope);
-   * any other choice stays. Consent is only ever given again through the dialog.
+   * any other choice stays. Consent is only ever given again through the dialog, which the next
+   * Full selection shows again.
    */
   clearFullAccess(): void;
 } {
@@ -201,6 +263,11 @@ export function usePermissionChoice(input: PermissionChoiceInput): {
   const [choice, setChoice] = useState<Choice>({
     profile: input.initial ?? DEFAULT_PERMISSION_PROFILE,
   });
+  // The last Full access consent given here; the confirmation shows on the first selection for a
+  // device and scope revision, and again once the scope changes (a widened ceiling)
+  const [consented, setConsented] = useState<Consent | null>(null);
+  // another device drops it: a device switch always asks again
+  if (consented !== null && consented.deviceId !== deviceId) setConsented(null);
   // A starting choice that arrives or changes after mount (a recorded profile read later) is
   // taken over, adjusted during render as the consent reset below.
   const [initial, setInitial] = useState(input.initial);
@@ -251,7 +318,24 @@ export function usePermissionChoice(input: PermissionChoiceInput): {
     if (profile === undefined || reasons[profile] !== undefined || profile === choice.profile)
       return;
     if (profile !== "full-access") choose({ profile });
-    else if (shown !== undefined) setAsking(shown);
+    else if (shown !== undefined) {
+      const held = consented ?? input.consentScope;
+      if (
+        held != null &&
+        held.deviceId === shown.deviceId &&
+        held.scopeRevision === shown.scopeRevision &&
+        (consented === null || consented.project === shown.project)
+      )
+        choose({
+          profile: "full-access",
+          consent: {
+            deviceId: shown.deviceId,
+            project: shown.project,
+            scopeRevision: shown.scopeRevision,
+          },
+        });
+      else setAsking(shown);
+    }
   };
   const confirm = () => {
     const p = asking;
@@ -264,17 +348,12 @@ export function usePermissionChoice(input: PermissionChoiceInput): {
       shown?.scopeRevision !== p.scopeRevision
     )
       return;
-    choose({
-      profile: "full-access",
-      consent: { deviceId: p.deviceId, project: p.project, scopeRevision: p.scopeRevision },
-    });
+    const consent = { deviceId: p.deviceId, project: p.project, scopeRevision: p.scopeRevision };
+    setConsented(consent);
+    choose({ profile: "full-access", consent });
   };
+  // no persistent explanation: only a device not checked yet says when it will be
   const unprobed = shown?.availability.state === "unprobed";
-  const note = [
-    ...(unprobed ? [t("note.unprobed")] : []),
-    t("note.review"),
-    t(input.context === "new" ? "note.new" : "note.existing"),
-  ].join(" ");
   const picker: PickerProps = {
     label: t("label"),
     value: t(`profile.${PROFILE_KEY[choice.profile]}`),
@@ -293,7 +372,7 @@ export function usePermissionChoice(input: PermissionChoiceInput): {
         }),
       },
     ],
-    note,
+    ...(unprobed ? { note: t("note.unprobed") } : {}),
     ...(canUpdateOrg(session.me)
       ? {
           action: {
@@ -326,9 +405,9 @@ export function usePermissionChoice(input: PermissionChoiceInput): {
       >
         <Stack gap={8}>
           <Text variant="prose">
-            {asking.project === null
-              ? t("full.body")
-              : t("full.bodyProject", { project: asking.project })}
+            {t("full.body", {
+              outside: fullAccessReachesOutside(asking) ? t("full.outside") : "",
+            })}
           </Text>
           <Text variant="prose" tone="muted">
             {t("full.limits")}
@@ -342,15 +421,20 @@ export function usePermissionChoice(input: PermissionChoiceInput): {
       : choice.consent !== undefined
         ? { profile: "full-access", consentScopeRevision: choice.consent.scopeRevision }
         : null;
-  const clearFullAccess = () =>
+  const clearFullAccess = () => {
+    // the kernel refused the consent: the next Full asks again
+    setConsented(null);
     setChoice((cur) =>
       cur.profile === "full-access" ? { profile: DEFAULT_PERMISSION_PROFILE } : cur,
     );
+  };
   return { picker, dialog, selection, clearFullAccess };
 }
 
 /**
  * A profile shown read-only (a recorded or inherited one): the locked picker, its hint saying why.
+ * It lists the three profiles too, so the mode menu shows them read-only with the current one
+ * checked.
  */
 export function useLockedPermissionPicker(
   profile: PermissionProfile | undefined,
@@ -371,7 +455,17 @@ export function useLockedPermissionPicker(
               ? t("unconfirmed")
               : t(`description.${PROFILE_KEY[profile]}`),
     },
-    groups: [],
+    groups: [
+      {
+        items: PERMISSION_PROFILES.map((p) => ({
+          id: p,
+          label: t(`profile.${PROFILE_KEY[p]}`),
+          icon: ICON[p],
+          description: t(`description.${PROFILE_KEY[p]}`),
+          checked: p === profile,
+        })),
+      },
+    ],
     onPick: () => {},
   };
 }
@@ -437,6 +531,8 @@ export function useConversationPermission(o: {
   const interactiveRoot =
     owner && !child && !scheduled && row !== undefined && !row.parentConversationId;
   const [failure, setFailure] = useState<unknown>(null);
+  /** Filled below with the choice's `clearFullAccess` (the mutation is declared first). */
+  const clearConsent = useRef<() => void>(() => {});
   const patch = useAppMutation({
     fn: async (v: PermissionSelection & { expectedRevision: number }) => {
       const r = await setConversationPermissions(orgId, conversationId, v);
@@ -463,6 +559,8 @@ export function useConversationPermission(o: {
         return;
       }
       setFailure(e);
+      // a refused change (a stale consent among them): the next Full asks again
+      clearConsent.current();
       refreshPermissionViews(qc, orgId, conversationId);
     },
   });
@@ -476,7 +574,7 @@ export function useConversationPermission(o: {
     context: "existing",
     ...(view !== undefined ? { revision: view.revision } : {}),
     editable: interactiveRoot && view !== undefined && confirmed && !patch.isPending,
-    ...(view !== undefined ? { initial: view.profile } : {}),
+    ...(view !== undefined ? { initial: view.profile, consentScope: view.consentScope } : {}),
     // the view is the scope the kernel checks a Full consent against: no preview is read
     preview: {
       data:
@@ -498,6 +596,7 @@ export function useConversationPermission(o: {
       patch.mutate({ ...selection, expectedRevision: view.revision });
     },
   });
+  clearConsent.current = choice.clearFullAccess;
   const recorded = owner ? recordedProfile(o.events) : undefined;
   const editable = interactiveRoot && view !== undefined && confirmed && !patch.isPending;
   const locked = useLockedPermissionPicker(

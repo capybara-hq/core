@@ -20,8 +20,15 @@ const MEMBER = {
 const settings = (platformOff: boolean) => ({
   settings: { toolSearch: "on" },
   deployment: {
-    fullAccess: { permission: "allowed", source: "default" },
-    cloudNetwork: { allowHosts: [], orgHosts: "extend", off: platformOff },
+    outsideSandbox: { permission: "allowed", source: "default" },
+    deviceNetwork: {
+      default: "open",
+      ceiling: "open",
+      sources: { default: "default", ceiling: "default" },
+      allowHosts: [],
+      orgHosts: "extend",
+      off: platformOff,
+    },
   },
   effectiveNetwork: { mode: platformOff ? "allowlist" : "open", hosts: [] },
 });
