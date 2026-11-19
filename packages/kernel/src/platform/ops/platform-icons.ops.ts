@@ -48,7 +48,7 @@ export class PlatformIconsOperations implements OnModuleInit {
       defineOperation<z.infer<typeof SetIconInput>>({
         id: "admin.set-icon",
         description:
-          "Upload a platform icon (super admin), given as standard base64 of the file, at most 1 MiB: app and maskable take a PNG (image/png) of exactly 512 × 512 pixels (maskable keeps its subject inside the central 80 % safe zone); favicon takes an SVG (image/svg+xml) with a viewBox and no script, style element or external reference. It replaces the purpose's previous upload for every org and every installed app. The platform audit log records it.",
+          "Upload a platform icon (super admin), given as standard base64 of the file, at most 1 MiB: app and maskable take a PNG (image/png) of exactly 512 × 512 pixels (maskable keeps its subject inside the central 80 % safe zone); favicon takes an SVG (image/svg+xml) of at most 128 KiB with a viewBox and no script, style element or external reference. It replaces the purpose's previous upload for every org and every installed app. The platform audit log records it.",
         input: SetIconInput,
         example: { purpose: "app", contentType: "image/png", dataBase64: "iVBORw0KGgo..." },
         authz: { superAdmin: true },
@@ -65,7 +65,7 @@ export class PlatformIconsOperations implements OnModuleInit {
           },
           {
             code: "platform_icon.too_large",
-            next: "Make the file at most 1 MiB (1048576 bytes) and upload it again.",
+            next: "Make the file at most 1 MiB (1048576 bytes), an SVG favicon at most 128 KiB (131072 bytes), and upload it again.",
           },
           {
             code: "platform_icon.storage_unavailable",

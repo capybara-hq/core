@@ -44,7 +44,9 @@ export const PlatformIconBody = z
         /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/,
         "dataBase64 must be standard base64 (A-Z, a-z, 0-9, +, / with = padding)",
       )
-      .describe("The file's bytes as standard base64, at most 1 MiB decoded."),
+      .describe(
+        "The file's bytes as standard base64, at most 1 MiB decoded (an SVG favicon at most 128 KiB).",
+      ),
   })
   .strict();
 

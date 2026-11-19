@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { crc32 } from "node:zlib";
 import {
   fakeExtensionEntry,
   startTestPostgres,
@@ -127,7 +128,10 @@ beforeEach(async () => {
   await testMembers(db).add(orgId, ownerId, "owner", adminId);
 });
 
-/** A PNG of `width` × `height`: the signature, an IHDR chunk and IEND, padded to `size` bytes. */
+/**
+ * A PNG of `width` × `height`: the signature, an IHDR chunk with its CRC-32 and IEND, padded to
+ * `size` bytes with an ancillary chunk before IEND.
+ */
 function png(width: number, height: number, size?: number): Buffer {
   const ihdr = Buffer.alloc(25);
   ihdr.writeUInt32BE(13, 0);
@@ -136,10 +140,17 @@ function png(width: number, height: number, size?: number): Buffer {
   ihdr.writeUInt32BE(height, 12);
   ihdr.writeUInt8(8, 16); // bit depth
   ihdr.writeUInt8(6, 17); // RGBA
+  ihdr.writeUInt32BE(crc32(ihdr.subarray(4, 21)), 21);
   const iend = Buffer.from([0, 0, 0, 0, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82]);
   const sig = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
-  const body = Buffer.concat([sig, ihdr, iend]);
-  return size === undefined ? body : Buffer.concat([body, Buffer.alloc(size - body.length)]);
+  const head = Buffer.concat([sig, ihdr]);
+  if (size === undefined) return Buffer.concat([head, iend]);
+  // a "zzZz" ancillary chunk: length, type, data, CRC (not checked by the kernel)
+  const pad = size - head.length - iend.length - 12;
+  const chunk = Buffer.alloc(12 + pad);
+  chunk.writeUInt32BE(pad, 0);
+  chunk.write("zzZz", 4, "latin1");
+  return Buffer.concat([head, chunk, iend]);
 }
 
 const SVG = Buffer.from(
@@ -267,6 +278,33 @@ describe("refusals store nothing", () => {
   it("exactly 1 MiB is accepted", async () => {
     const res = await put(admin, "app", "image/png", png(512, 512, 1024 * 1024));
     expect(res.statusCode, res.body).toBe(200);
+  });
+
+  it("a truncated or damaged PNG is invalid_type", async () => {
+    const full = png(512, 512);
+    const headerOnly = full.subarray(0, 33);
+    const badCrc = Buffer.from(full);
+    badCrc.writeUInt32BE((badCrc.readUInt32BE(29) ^ 1) >>> 0, 29);
+    for (const bad of [headerOnly, full.subarray(0, full.length - 1), badCrc]) {
+      const res = await put(admin, "app", "image/png", bad);
+      expect(res.statusCode).toBe(400);
+      expect(errCode(res)).toBe("platform_icon.invalid_type");
+      expect(res.body).toContain("truncated");
+    }
+    await nothingStored();
+  });
+
+  it("an SVG favicon over 128 KiB is too_large and names the SVG limit", async () => {
+    const big = Buffer.from(
+      `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><title>${"x".repeat(
+        128 * 1024,
+      )}</title></svg>`,
+    );
+    const res = await put(admin, "favicon", "image/svg+xml", big);
+    expect(res.statusCode).toBe(413);
+    expect(errCode(res)).toBe("platform_icon.too_large");
+    expect(res.body).toContain("128 KiB");
+    await nothingStored();
   });
 
   it("an SVG is only a favicon, and a favicon only an SVG", async () => {

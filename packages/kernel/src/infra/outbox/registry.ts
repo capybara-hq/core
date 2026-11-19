@@ -58,7 +58,14 @@ export const OUTBOX_JOBS = {
     idempotent:
       "Deletes one icon object only when the purpose's row does not name it, under the purpose's lock; deleting a missing object is a no-op",
     processedIn: "packages/kernel/src/runtime/maintenance.ts",
-    opts: { attempts: 10, backoff: { type: "exponential", delay: 5000 }, removeOnComplete: true },
+    // removed on failure too: the ids are content addressed, so a kept failed job would swallow a
+    // later owing of the same deletion
+    opts: {
+      attempts: 10,
+      backoff: { type: "exponential", delay: 5000 },
+      removeOnComplete: true,
+      removeOnFail: true,
+    },
   },
   "permission-approval-recheck": {
     queue: "cap-kernel-maintenance",
