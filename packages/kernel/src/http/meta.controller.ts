@@ -3,6 +3,7 @@ import { Controller, Get, Header, Inject } from "@nestjs/common";
 import { z } from "zod";
 import { Public } from "../identity/principal.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
+import { PlatformIconService } from "../themes/platform-icon.service.js";
 
 /** Pre-sign-in discovery document native clients and the PWA manifest read. */
 export const MetaResponseSchema = z.object({
@@ -18,22 +19,30 @@ export type MetaResponse = z.infer<typeof MetaResponseSchema>;
 /** `GET /api/v1/meta`: public, never cached, reveals only what a client needs before signing in. */
 @Controller("api/v1/meta")
 export class MetaController {
-  constructor(@Inject(KernelConfigService) private readonly config: KernelConfigService) {}
+  constructor(
+    @Inject(KernelConfigService) private readonly config: KernelConfigService,
+    @Inject(PlatformIconService) private readonly icons: PlatformIconService,
+  ) {}
 
   @Public()
   @Get()
   @Header("cache-control", "no-store")
   async meta(): Promise<MetaResponse> {
+    const config = this.config.get();
     return {
-      name: this.config.get().platform.name ?? null,
+      name: config.platform.name ?? null,
       icon: await this.iconUrl(),
       protocols: { device: { min: DEVICE_PROTOCOL_VERSION, max: DEVICE_PROTOCOL_VERSION } },
-      features: { localDevices: true, appSignIn: true },
+      features: {
+        localDevices: true,
+        // The authorize route answers app_auth.unavailable without http.publicUrl.
+        appSignIn: Boolean(config.http.publicUrl),
+      },
     };
   }
 
-  /** The platform icon's URL; none is served yet. */
+  /** The customised platform icon's URL (the one the manifest uses); null for the default. */
   private async iconUrl(): Promise<string | null> {
-    return null;
+    return (await this.icons.current("app"))?.url ?? null;
   }
 }
