@@ -510,6 +510,8 @@ export const keys = {
     const all = ["deployment"] as const;
     return {
       all: all as readonly unknown[],
+      /** The platform's public description (`GET /api/v1/meta`: its name). */
+      platformMeta: (): readonly unknown[] => [...all, "platformMeta"],
       /** The sign-in sources the login page offers. */
       authSources: (): readonly unknown[] => [...all, "authSources"],
       /** Whether the deployment still needs its first admin (`GET /setup`). */
