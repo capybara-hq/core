@@ -163,17 +163,21 @@ export async function runCli(argv: string[], io: CliEnv = {}): Promise<number> {
         ...(io.beforeCeilingWrite && { beforeWrite: io.beforeCeilingWrite }),
       });
     case "service":
-      return serviceCommand(cmd.action, {
-        stateDir: dir,
-        home,
-        platform,
-        env: io.env ?? process.env,
-        out,
-        err,
-        ...(io.runSystem && { run: io.runSystem }),
-        ...(io.sleep && { sleep: io.sleep }),
-        ...(io.kill && { kill: io.kill }),
-        ...(io.ps && { ps: io.ps }),
-      });
+      return serviceCommand(
+        cmd.action,
+        {
+          stateDir: dir,
+          home,
+          platform,
+          env: io.env ?? process.env,
+          out,
+          err,
+          ...(io.runSystem && { run: io.runSystem }),
+          ...(io.sleep && { sleep: io.sleep }),
+          ...(io.kill && { kill: io.kill }),
+          ...(io.ps && { ps: io.ps }),
+        },
+        { json: cmd.json === true },
+      );
   }
 }

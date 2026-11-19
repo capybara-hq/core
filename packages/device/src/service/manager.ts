@@ -2,8 +2,8 @@ import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { hasLoginService } from "./installed.js";
-import { LAUNCHD_LABEL, plistBinPath, plistPath } from "./launchd.js";
-import { SYSTEMD_UNIT, unitBinPath, unitPath } from "./systemd.js";
+import { LAUNCHD_LABEL, plistBinPath, plistNodePath, plistPath } from "./launchd.js";
+import { SYSTEMD_UNIT, unitBinPath, unitNodePath, unitPath } from "./systemd.js";
 
 /**
  * Runs a system command and returns its standard output; throws when it fails (the default,
@@ -80,6 +80,19 @@ export function serviceBinPath(where: ServiceWhere): string | undefined {
       return plistBinPath(readFileSync(plistPath(where.home), "utf8"));
     }
     return unitBinPath(readFileSync(unitPath(where.home), "utf8"));
+  } catch {
+    return undefined;
+  }
+}
+
+/** The node binary the installed service file runs, or undefined (no file, or unreadable). */
+export function serviceNodePath(where: ServiceWhere): string | undefined {
+  if (!hasLoginService(where.home, where.platform)) return undefined;
+  try {
+    if (where.platform === "darwin") {
+      return plistNodePath(readFileSync(plistPath(where.home), "utf8"));
+    }
+    return unitNodePath(readFileSync(unitPath(where.home), "utf8"));
   } catch {
     return undefined;
   }

@@ -149,6 +149,57 @@ const credFile = () => join(stateDir(), "credential.json");
 /** The mode the hello reports before the first exec: `policySummary` with no ceiling seen. */
 const helloMode = () => policySummary(new PolicyStore(stateDir()).current(), { mode: "os" }).mode;
 
+describe("login --json", () => {
+  const events = () => out.map((l) => JSON.parse(l) as Record<string, unknown>);
+
+  it("emits verification then done, opens no browser, human lines go to stderr", async () => {
+    tokenAnswers = [pending, granted];
+    expect(await run(["login", "--url", base, "--json"])).toBe(0);
+    expect(events()).toEqual([
+      {
+        event: "verification",
+        url: `${base}/devices/link?code=BCDF-GHJK`,
+        userCode: "BCDF-GHJK",
+        expiresIn: 600,
+      },
+      {
+        event: "done",
+        deviceId: "env-1",
+        orgId: "org-1",
+        dir: join(home, "capybara-device", "env-1"),
+      },
+    ]);
+    expect(opened).toEqual([]);
+    expect(err.join("\n")).toContain("Logged in. Device env-1");
+  });
+
+  it("prints no credential", async () => {
+    tokenAnswers = [granted];
+    expect(await run(["login", "--url", base, "--json"])).toBe(0);
+    expect(out.join("\n")).not.toContain("cap_dev_secret");
+    expect(out.join("\n")).not.toContain("cap_dvc_x");
+    expect(err.join("\n")).not.toContain("cap_dev_secret");
+  });
+
+  it("an expired code ends with an error event", async () => {
+    tokenAnswers = [
+      { status: 400, body: { error: { code: "device_sign_in.expired", message: "gone" } } },
+    ];
+    expect(await run(["login", "--url", base, "--json"])).toBe(1);
+    const last = events().at(-1);
+    expect(last).toMatchObject({ event: "error", code: "device_sign_in.expired" });
+    expect(existsSync(credFile())).toBe(false);
+  });
+
+  it("a denied login ends with an error event", async () => {
+    tokenAnswers = [
+      { status: 400, body: { error: { code: "device_sign_in.denied", message: "no" } } },
+    ];
+    expect(await run(["login", "--url", base, "--json"])).toBe(1);
+    expect(events().at(-1)).toMatchObject({ event: "error", code: "device_sign_in.denied" });
+  });
+});
+
 describe("login", () => {
   it("polls until approved and writes a 0600 credential", async () => {
     tokenAnswers = [pending, pending, granted];

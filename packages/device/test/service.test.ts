@@ -418,6 +418,72 @@ describe("service command", () => {
     expect(lines.join("\n")).toContain("boom");
   });
 
+  it("status --json: not installed", async () => {
+    expect(await serviceCommand("status", { ...base(), platform: "linux" }, { json: true })).toBe(
+      1,
+    );
+    expect(JSON.parse(lines[0] ?? "")).toEqual({
+      installed: false,
+      loaded: false,
+      running: false,
+      binExists: false,
+    });
+  });
+
+  it("status --json: binExists is false when the unit's bin path is gone", async () => {
+    installUnit();
+    const systemctl = (cmd: string, args: string[]): string => {
+      calls.push([cmd, ...args]);
+      return args.includes("MainPID") ? "4000\n" : "";
+    };
+    expect(
+      await serviceCommand(
+        "status",
+        { ...base(), run: systemctl, platform: "linux" },
+        { json: true },
+      ),
+    ).toBe(0);
+    expect(JSON.parse(lines[0] ?? "")).toEqual({
+      installed: true,
+      loaded: true,
+      running: true,
+      pid: 4000,
+      nodePath: spec.nodePath,
+      binPath: spec.binPath,
+      binExists: false,
+    });
+  });
+
+  it("status --json: binExists is true and the installed version is read from the package", async () => {
+    const pkg = join(home, "pkg");
+    mkdirSync(join(pkg, "bin"), { recursive: true });
+    writeFileSync(join(pkg, "bin", "capybara-device.mjs"), "");
+    writeFileSync(join(pkg, "package.json"), JSON.stringify({ version: "1.2.3" }));
+    mkdirSync(dirname(unitPath(home)), { recursive: true });
+    writeFileSync(
+      unitPath(home),
+      unitContent({ ...spec, binPath: join(pkg, "bin", "capybara-device.mjs") }),
+    );
+    const systemctl = (_cmd: string, args: string[]): string => {
+      if (args.includes("is-active")) throw failed(3, "inactive");
+      return "";
+    };
+    expect(
+      await serviceCommand(
+        "status",
+        { ...base(), run: systemctl, platform: "linux" },
+        { json: true },
+      ),
+    ).toBe(1);
+    expect(JSON.parse(lines[0] ?? "")).toMatchObject({
+      installed: true,
+      loaded: false,
+      running: false,
+      installedVersion: "1.2.3",
+      binExists: true,
+    });
+  });
+
   it("is wired into the CLI", async () => {
     const out: string[] = [];
     const code = await runCli(["service", "install"], {

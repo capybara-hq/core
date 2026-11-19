@@ -17,6 +17,12 @@ capybara-device status [--json]
 capybara-device logout
 ```
 
+`login --json` is for programs that drive the CLI (the desktop app): it opens no browser and writes one
+JSON object per line to stdout, the human lines going to stderr: `{"event":"verification","url":…,
+"userCode":…,"expiresIn":…}`, then `{"event":"done","deviceId":…,"orgId":…,"dir":…}` or
+`{"event":"error","code":…,"message":…}` (for example `device_sign_in.expired`, `device_sign_in.denied`).
+It never prints the credential.
+
 `login` shows a code like `BCDF-GHJK`; with `--no-browser` it prints the address (`<url>/devices/link`) and
 the code to enter on any signed-in browser, where you pick the org and the device (a new one or
 an existing connected one of yours) after reading what the program can do. Logging in again from
@@ -93,6 +99,7 @@ the platform can switch Full access off on their side; the narrowest setting win
 
 ```bash
 capybara-device ceiling show                    # the owner ceiling, network baseline, revision
+capybara-device ceiling show --json             # {"fullAccess":…,"projectReach":…,"revision":…}
 capybara-device ceiling set --full-access deny --project-reach workspace       # narrow
 capybara-device ceiling set --full-access allow --project-reach os-user --yes  # widen
 capybara-device policy add allowedDomains files.slack.com
@@ -230,6 +237,11 @@ has the agent loaded, or systemd the unit active, and its pid is the pid file's)
 `service stop`; a program started in a terminal is signalled as before. `start` in a terminal says
 how to restart the installed service; started by the service manager (launchd sets
 `XPC_SERVICE_NAME`, systemd `INVOCATION_ID`) it prints no such hint.
+
+`capybara-device service status --json` prints one object instead: `installed`, `loaded`, `running`,
+`binExists` (false when the service file's `bin` path is gone, e.g. the app that installed it moved)
+and, when known, `pid`, `runningVersion`, `installedVersion`, `nodePath`, `binPath`. The exit code is
+the same as the human report's.
 
 `capybara-device service status` says one of four things: not installed; installed but not loaded
 (`service start`); loaded but the program is not running, i.e. it exited (the reason is at the end of
