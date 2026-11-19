@@ -313,6 +313,9 @@ export function AppShell({
           data-banner={banner ? "true" : undefined}
           data-short={short ? "true" : undefined}
         >
+          {/* The native shell's top band (spec mobile layout §9.3): a window drag region on the
+              desktop, drawn only under `<html data-shell>` by CSS. */}
+          <div className="cb-shell-band" aria-hidden="true" />
           {/* The first tab stop: past the sidebar to the page (m9); visible only when focused. */}
           <a className="cb-skip-link" href={`#${mainId}`}>
             {t("shell.skipToContent")}

@@ -13,12 +13,19 @@ import { useCallback, useSyncExternalStore } from "react";
  *
  * The global is untrusted input: only the top frame reads it, only envelope version 1, only own
  * keys of `capabilities` whose value is an object. Two accessors:
- * - {@link useShellCapability} for rendering (is the capability there, its status), reactive: a
- *   shell may add or remove a capability after load (`change`).
- * - {@link shellCapability} for calling one from an event handler, synchronously, in the handler
- *   itself: it throws during a render and outside an event, so a page never raises a confirming
- *   call on its own (the shell refuses one without a user activation, or while another dialog is
- *   open, `busy`; the web never tries).
+ * - {@link useShellCapability}: the capability's object for rendering and for the calls a page
+ *   makes from event-driven code (a click's handler, the mutation function a click starts, which
+ *   runs after a microtask). Reactive: a shell may add or remove a capability after load
+ *   (`change`); the object keeps its reference until the shell says it changed.
+ * - {@link shellCapability}: a one-off read inside an event handler. It throws during a render,
+ *   and without a transient user activation (`navigator.userActivation.isActive`; where a browser
+ *   lacks that API, without an event being dispatched).
+ *
+ * The confirming-call rule (spec §9.4) is the shell's: a capability call that needs a native
+ * confirmation is refused unless the page has a transient user activation at that moment, and
+ * while another native dialog is open (`busy`); the shell's injected code checks
+ * `navigator.userActivation` itself. The web's part is never to call a capability during a
+ * render or from code no person started (an effect, a timer).
  */
 
 const KEY = /^[A-Za-z][A-Za-z0-9-]*@[1-9][0-9]*$/;
@@ -63,35 +70,74 @@ function read<T extends object>(key: string): T | undefined {
   }
 }
 
-function subscribe(listener: () => void): () => void {
+/**
+ * The snapshots `useShellCapability` renders from, per key, for one shell object. A shell may
+ * hand out a fresh `capabilities` object (or fresh capability objects) on every access (a getter,
+ * a bridge that copies), so a snapshot is read once and kept until the shell fires `change`;
+ * `useSyncExternalStore` then sees the same reference while nothing changed.
+ */
+let cache: { shell: ShellGlobal; values: Map<string, object | undefined> } | null = null;
+/** The components subscribed, and the one `change` subscription held for all of them. */
+const listeners = new Set<() => void>();
+let unsubscribeShell: (() => void) | null = null;
+
+function cached<T extends object>(key: string): T | undefined {
   const s = shell();
-  if (s === undefined) return () => {};
-  try {
-    const off = s.on("change", listener);
-    return () => {
+  if (s === undefined) return undefined;
+  if (cache === null || cache.shell !== s) cache = { shell: s, values: new Map() };
+  if (!cache.values.has(key)) cache.values.set(key, read(key));
+  return cache.values.get(key) as T | undefined;
+}
+
+function onShellChange(): void {
+  cache?.values.clear();
+  for (const l of [...listeners]) l();
+}
+
+function subscribe(listener: () => void): () => void {
+  listeners.add(listener);
+  if (listeners.size === 1) {
+    // the first subscriber keeps what its render read (cleared when the last one left), so the
+    // re-check after subscribing sees the same reference
+    const s = shell();
+    if (s !== undefined) {
       try {
-        if (typeof off === "function") off();
+        const off = s.on("change", onShellChange);
+        unsubscribeShell = typeof off === "function" ? (off as () => void) : null;
       } catch {
-        // the shell already dropped it
+        unsubscribeShell = null;
       }
-    };
-  } catch {
-    return () => {};
+    }
   }
+  return () => {
+    listeners.delete(listener);
+    if (listeners.size > 0) return;
+    // nobody hears `change` any more: what is cached may go stale
+    cache = null;
+    const off = unsubscribeShell;
+    unsubscribeShell = null;
+    try {
+      off?.();
+    } catch {
+      // the shell already dropped it
+    }
+  };
 }
 
 const serverSnapshot = () => undefined;
 
 /**
- * The capability under `key` (`name@major`) for rendering: `undefined` on the server, during
- * hydration and whenever the shell does not offer it (the browser). Follows the shell's `change`
- * (subscribed through `useSyncExternalStore`, unsubscribed on unmount), so a capability added
- * after load shows up; a page never caches a one-time read. Do not call a confirming function of
- * it from an effect: calls go through {@link shellCapability} in an event handler.
+ * The capability under `key` (`name@major`): `undefined` on the server, during hydration and
+ * whenever the shell does not offer it (the browser). Follows the shell's `change` (subscribed
+ * through `useSyncExternalStore`, unsubscribed on unmount), so a capability added after load
+ * shows up; the object keeps its reference until the shell fires `change`. Call its functions
+ * from event-driven code (a handler, the mutation function a click starts), never during a
+ * render or from an effect or timer; a confirming call is refused by the shell without a user
+ * activation.
  */
 export function useShellCapability<T extends object>(key: string): T | undefined {
   assertKey(key);
-  const snapshot = useCallback(() => read<T>(key), [key]);
+  const snapshot = useCallback(() => cached<T>(key), [key]);
   return useSyncExternalStore(subscribe, snapshot, serverSnapshot);
 }
 
@@ -103,10 +149,10 @@ const internals = (
 ).__CLIENT_INTERNALS_DO_NOT_USE_OR_WARN_USERS_THEY_CANNOT_UPGRADE;
 
 /**
- * Whether a component is rendering now. React exposes no public test, so this reads its current
- * hooks dispatcher: set while a component renders; null or the context-only dispatcher (every
- * hook the same throwing function) otherwise. Without those internals it answers false and the
- * event check below still holds.
+ * Whether a function component is rendering now. React exposes no public test, so this reads its
+ * current hooks dispatcher: set while a function component renders; null or the context-only
+ * dispatcher (every hook the same throwing function) otherwise. It does not see a class
+ * component's render (no hooks dispatcher then), and without those internals it answers false.
  */
 function rendering(): boolean {
   const h = internals?.H;
@@ -114,16 +160,29 @@ function rendering(): boolean {
 }
 
 /**
- * The capability under `key` (`name@major`) for a call from an event handler, or undefined (the
- * browser). Call it synchronously in the handler (`onClick={() => shellCapability(...)?.connect()}`)
- * and keep the object for what follows an await. It throws when called during a render (even one
- * that runs inside an event's dispatch) or outside any event (an effect, a timer), so a page can
- * never raise a confirming native dialog by itself (spec §9.4, plan Review Focus 4).
+ * Whether the page has a transient user activation now (`navigator.userActivation.isActive`, the
+ * signal the shell itself checks). Where the browser lacks the API, an event being dispatched
+ * (`window.event`) stands in: it only says the call comes from an event handler, not that a
+ * person started it, and the shell's own check stays the barrier.
+ */
+function activated(): boolean {
+  if (typeof window === "undefined") return false;
+  const ua = (navigator as Navigator & { userActivation?: { isActive?: unknown } }).userActivation;
+  if (ua !== undefined && ua !== null) return ua.isActive === true;
+  return window.event !== undefined;
+}
+
+/**
+ * The capability under `key` (`name@major`) for a one-off call from an event handler, or
+ * undefined (the browser). It throws when called during a render (even one that runs inside an
+ * event's dispatch), and without a transient user activation (an effect, a timer), so a page
+ * never asks the shell for a confirming call on its own (spec §9.4, plan Review Focus 4). Code
+ * that runs later in the same interaction (a mutation function) uses the object of
+ * {@link useShellCapability} instead.
  */
 export function shellCapability<T extends object>(key: string): T | undefined {
   assertKey(key);
-  if (rendering() || typeof window === "undefined" || window.event === undefined) {
-    throw new Error("calls a shell capability outside an event handler");
-  }
+  if (rendering()) throw new Error("calls a shell capability outside an event handler");
+  if (!activated()) throw new Error("calls a shell capability without a user activation");
   return read<T>(key);
 }

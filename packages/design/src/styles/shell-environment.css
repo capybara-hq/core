@@ -30,11 +30,15 @@
   }
 }
 
-/* Window drag regions (desktop client spec §7.3): the band itself, the sidebar's brand row, the
-   compact top bar and the conversation title bar move the window; every control inside them
-   stays clickable. */
-:root[data-shell="desktop"] .cb-shell::before {
-  content: "";
+/* Window drag regions (desktop client spec §7.3): the band itself (a real element, `.cb-shell-band`,
+   drawn by the AppShell: a pseudo-element's drag region is not reliably honoured), the sidebar's
+   brand row, the compact top bar and the conversation title bar move the window; every control
+   inside them stays clickable. */
+.cb-shell-band {
+  display: none;
+}
+:root[data-shell="desktop"] .cb-shell-band {
+  display: block;
   position: absolute;
   inset: 0 0 auto;
   height: var(--cb-shell-band);
@@ -50,4 +54,38 @@
   :is(a, button, input, select, textarea, summary, label, [role], [tabindex]) {
   -webkit-app-region: no-drag;
   app-region: no-drag;
+}
+
+/* Overlays are portaled under <body>, over the band: a drag region under them would swallow their
+   clicks, so each overlay root is no-drag (its scrim too: while a modal is open the window does
+   not drag from the band). */
+:root[data-shell="desktop"]
+:is(
+  .cb-scrim,
+  .cb-dialog,
+  .cb-sheet,
+  .cb-bsheet,
+  .cb-bsheet-scrim,
+  .cb-menu,
+  .cb-popover,
+  .cb-cmenu,
+  .cb-tooltip,
+  .cb-palette,
+  .cb-toast-region,
+  .cb-viewer,
+  .cb-conv-sheet,
+  .cb-conv-scrim,
+  .cb-sidebar-layer,
+  .cb-conv-pushed
+) {
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+}
+/* Full-height overlays start below the band, clear of the window controls. */
+:root[data-shell="desktop"] :is(.cb-sheet, .cb-conv-sheet, .cb-viewer, .cb-sidebar-layer) {
+  top: var(--cb-shell-band);
+}
+/* (a pushed right area outside an AppShell; inside one the shell already starts below the band) */
+:root[data-shell="desktop"] .cb-conv-pushed:not([data-shell="true"]) {
+  padding-top: var(--cb-shell-band);
 }

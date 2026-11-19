@@ -137,6 +137,12 @@ describe("the inline script (before the first paint)", () => {
     for (const p of PROPS.slice(4)) expect(root().style.getPropertyValue(p)).toBe("");
   });
 
+  it("does nothing for a global without an on function", () => {
+    install(fakeShell({ on: "nope" }).shell);
+    runScript();
+    untouched();
+  });
+
   it("leaves the controls unset when they are null or absent", () => {
     install(fakeShell({ controls: null }).shell);
     runScript();
@@ -182,6 +188,7 @@ describe("the inline script (before the first paint)", () => {
         insets: { top: 0, right: 0, bottom: 34, left: 0 },
       }).shell,
       fakeShell({ insets: { top: 1e9, right: -1, bottom: "x", left: 3 } }).shell,
+      fakeShell({ on: undefined }).shell,
     ];
     for (const c of cases) {
       clearRoot();
@@ -271,6 +278,28 @@ describe("the AppShell in a shell (after hydration)", () => {
     expect(setAppearance).toHaveBeenCalledTimes(1);
   });
 
+  it("follows a theme that changes the background through <html>'s style or class", async () => {
+    const setAppearance = vi.fn();
+    install(fakeShell({ capabilities: { "chrome@1": { setAppearance } } }).shell);
+    root().dataset.theme = "dark";
+    renderShell();
+    setAppearance.mockClear();
+    await act(async () => {
+      root().style.setProperty("--cb-bg", "#123456");
+      await Promise.resolve();
+    });
+    expect(setAppearance).toHaveBeenCalledTimes(1);
+    expect(setAppearance).toHaveBeenCalledWith({ scheme: "dark", background: "#123456" });
+    root().style.removeProperty("--cb-bg");
+  });
+
+  it("draws the window drag band as a real element, hidden from assistive tech", () => {
+    const { container } = renderShell();
+    const band = container.querySelector(".cb-shell > .cb-shell-band") as HTMLElement;
+    expect(band).not.toBeNull();
+    expect(band.getAttribute("aria-hidden")).toBe("true");
+  });
+
   it("calls no appearance without chrome@1, and a capability that throws breaks nothing", async () => {
     install(fakeShell({ capabilities: {} }).shell);
     root().dataset.theme = "dark";
@@ -308,5 +337,61 @@ describe("the inset tokens (spec §7.5, design spec §4.7)", () => {
 
   it("the pinned composer pads by the inset token, not the raw safe area", () => {
     expect(css("conversation-page.css")).not.toMatch(/env\(safe-area-inset-bottom\)\)/);
+  });
+});
+
+describe("desktop drag regions (desktop client spec §7.3)", () => {
+  const css = readFileSync(
+    resolve(import.meta.dirname, "../src/styles/shell-environment.css"),
+    "utf8",
+  ).replace(/\/\*[\s\S]*?\*\//g, "");
+  /** Every innermost rule: its selector list (whitespace collapsed) and its body. */
+  const rules = [...css.matchAll(/([^{}]+)\{([^{}]*)\}/g)].map((m) => ({
+    selector: (m[1] ?? "").replace(/\s+/g, " ").trim(),
+    body: m[2] ?? "",
+  }));
+  const desktopRule = (cls: string, decl: RegExp) =>
+    rules.some(
+      (r) =>
+        r.selector.includes(':root[data-shell="desktop"]') &&
+        new RegExp(`\\.${cls}(?![\\w-])`).test(r.selector) &&
+        decl.test(r.body),
+    );
+  const OVERLAYS = [
+    "cb-scrim",
+    "cb-dialog",
+    "cb-sheet",
+    "cb-bsheet",
+    "cb-bsheet-scrim",
+    "cb-menu",
+    "cb-popover",
+    "cb-cmenu",
+    "cb-tooltip",
+    "cb-palette",
+    "cb-toast-region",
+    "cb-viewer",
+    "cb-conv-sheet",
+    "cb-conv-scrim",
+    "cb-sidebar-layer",
+    "cb-conv-pushed",
+  ];
+
+  it("the band is a real element that drags; no pseudo-element carries a drag region", () => {
+    expect(desktopRule("cb-shell-band", /(^|[^-])app-region: drag/)).toBe(true);
+    expect(rules.filter((r) => r.selector.includes("::") && /app-region/.test(r.body))).toEqual([]);
+  });
+
+  it("every portaled overlay root is no-drag, so it stays clickable over the band", () => {
+    for (const cls of OVERLAYS) {
+      expect(desktopRule(cls, /-webkit-app-region: no-drag/), cls).toBe(true);
+      expect(desktopRule(cls, /(^|[^-])app-region: no-drag/), cls).toBe(true);
+    }
+  });
+
+  it("full-height overlays start below the band", () => {
+    for (const cls of ["cb-sheet", "cb-conv-sheet", "cb-viewer", "cb-sidebar-layer"]) {
+      expect(desktopRule(cls, /top: var\(--cb-shell-band\)/), cls).toBe(true);
+    }
+    expect(desktopRule("cb-conv-pushed", /padding-top: var\(--cb-shell-band\)/)).toBe(true);
   });
 });

@@ -9,7 +9,8 @@
  *
  * A fixed string: nothing of the page, the request or the user is interpolated into it, so the
  * request's CSP nonce is the only thing that differs between documents. It does nothing outside
- * the top frame, without the global, for another envelope `version` or an unknown `kind`, and it
+ * the top frame, without the global, for another envelope `version`, a global without an `on`
+ * function or an unknown `kind`, and it
  * writes only the two attributes and the eight properties above, each from a value it has checked
  * (a finite, non-negative, bounded number; a known platform), whatever the global holds.
  * `readShellEnvironment` in `shell-environment.tsx` applies the same rules after hydration (the
@@ -18,7 +19,7 @@
 export const SHELL_ENVIRONMENT_SCRIPT =
   "(function(){try{" +
   "var w=window;if(w!==w.top)return;" +
-  "var s=w.capybaraShell;if(!s||typeof s!=='object'||s.version!==1)return;" +
+  "var s=w.capybaraShell;if(!s||typeof s!=='object'||s.version!==1||typeof s.on!=='function')return;" +
   "var kind=s.kind;if(kind!=='desktop'&&kind!=='mobile')return;" +
   "var platform=s.platform,insets=s.insets,controls=s.controls;" +
   "function ok(v,max){return typeof v==='number'&&v>=0&&v<=max;}" +

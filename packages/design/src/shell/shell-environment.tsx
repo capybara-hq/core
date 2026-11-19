@@ -153,7 +153,8 @@ function backgroundOf(root: HTMLElement, scheme: "dark" | "light"): string {
  * The AppShell's side of the Shell environment (spec §9.3), after hydration: re-reads the
  * environment on every `change` (fullscreen hides the traffic lights, a capability appears) and
  * writes it on `<html>`; tells `chrome@1.setAppearance` the scheme and background on mount and
- * once per theme change. Returns the shell's kind for the `shell=` state token, null in a browser
+ * once per change of them (`data-theme`, or the background token through `<html>`'s class or
+ * style). Returns the shell's kind for the `shell=` state token, null in a browser
  * and before hydration. Unsubscribes on unmount.
  */
 export function useShellEnvironment(): ShellKind | null {
@@ -195,7 +196,12 @@ export function useShellEnvironment(): ShellKind | null {
     }
     const observer =
       typeof MutationObserver === "undefined" ? null : new MutationObserver(appearance);
-    observer?.observe(root, { attributes: true, attributeFilter: ["data-theme"] });
+    // the scheme is `data-theme`; a UI theme may also move the background token through <html>'s
+    // class or style (this hook's own property writes land there too: deduped by `sent`)
+    observer?.observe(root, {
+      attributes: true,
+      attributeFilter: ["data-theme", "class", "style"],
+    });
     return () => {
       observer?.disconnect();
       try {

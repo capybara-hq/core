@@ -6,7 +6,7 @@ import { act, cleanup, fireEvent, render, screen } from "@testing-library/react"
 import { useState } from "react";
 import { flushSync } from "react-dom";
 import { renderToString } from "react-dom/server";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { shellCapability, useShellCapability } from "../src/lib/shell";
 
 /** A fake shell whose capabilities a test changes, announcing them with `change`. */
@@ -70,6 +70,48 @@ describe("useShellCapability", () => {
     expect(f.listeners.size).toBe(1);
     unmount();
     expect(f.listeners.size).toBe(0);
+  });
+
+  it("keeps one reference while unchanged when the shell copies capabilities on every read", () => {
+    let copies = 0;
+    let offered = true;
+    const listeners = new Set<() => void>();
+    const shell = {
+      version: 1,
+      kind: "desktop",
+      get capabilities() {
+        copies++;
+        // a bridge that hands out a fresh copy per access
+        return offered ? { "device@1": { status: () => `copy ${copies}` } } : {};
+      },
+      on: (_e: "change", l: () => void) => {
+        listeners.add(l);
+        return () => listeners.delete(l);
+      },
+    };
+    install(shell);
+    const seen: unknown[] = [];
+    function Keep() {
+      const d = useShellCapability<{ status(): string }>("device@1");
+      seen.push(d);
+      return <p data-testid="keep">{d === undefined ? "browser" : d.status()}</p>;
+    }
+    const { rerender } = render(<Keep />);
+    const first = screen.getByTestId("keep").textContent;
+    rerender(<Keep />);
+    rerender(<Keep />);
+    // no render loop, and the same object on every render until the shell says it changed
+    expect(screen.getByTestId("keep").textContent).toBe(first);
+    expect(new Set(seen.filter((x) => x !== undefined)).size).toBe(1);
+    act(() => {
+      for (const l of [...listeners]) l();
+    });
+    expect(screen.getByTestId("keep").textContent).not.toBe(first);
+    offered = false;
+    act(() => {
+      for (const l of [...listeners]) l();
+    });
+    expect(screen.getByTestId("keep").textContent).toBe("browser");
   });
 
   it("is the browser without a shell, for another envelope version and inside a frame", () => {
@@ -144,11 +186,68 @@ describe("shellCapability (event handlers only)", () => {
     );
   });
 
-  it("throws outside any event (a timer, an effect)", () => {
+  it("without navigator.userActivation: throws outside any event (a timer, an effect)", () => {
     withDevice();
+    expect(navigator).not.toHaveProperty("userActivation");
     expect(() => shellCapability("device@1")).toThrow(
-      "calls a shell capability outside an event handler",
+      "calls a shell capability without a user activation",
     );
+  });
+
+  describe("with navigator.userActivation", () => {
+    let active = false;
+    beforeEach(() => {
+      Object.defineProperty(navigator, "userActivation", {
+        configurable: true,
+        get: () => ({ isActive: active, hasBeenActive: active }),
+      });
+    });
+    afterEach(() => {
+      Reflect.deleteProperty(navigator, "userActivation");
+    });
+
+    it("returns the capability while the activation is active, even after a microtask", async () => {
+      withDevice();
+      active = true;
+      await Promise.resolve();
+      expect(shellCapability("device@1")).toEqual({ connect });
+    });
+
+    it("throws without an active activation, even inside an event's dispatch", () => {
+      withDevice();
+      active = false;
+      let error: unknown;
+      function Button() {
+        return (
+          <button
+            type="button"
+            onClick={() => {
+              try {
+                shellCapability("device@1");
+              } catch (e) {
+                error = e;
+              }
+            }}
+          >
+            connect
+          </button>
+        );
+      }
+      render(<Button />);
+      fireEvent.click(screen.getByRole("button"));
+      expect(String(error)).toContain("calls a shell capability without a user activation");
+    });
+
+    it("still throws during a render while the activation is active", () => {
+      withDevice();
+      active = true;
+      vi.spyOn(console, "error").mockImplementation(() => {});
+      function Bad() {
+        shellCapability("device@1");
+        return null;
+      }
+      expect(() => render(<Bad />)).toThrow("calls a shell capability outside an event handler");
+    });
   });
 
   it("returns the capability inside an event handler, undefined when it is absent", () => {
