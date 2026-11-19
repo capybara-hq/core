@@ -56,6 +56,8 @@ export interface ImageCallInput {
   /** An exact size (only `ctx.models`); must be one the model declares. */
   size?: ImageSize;
   aspectRatio?: ImageAspectRatio;
+  /** Picks the size from the model's facts (the tool's standard size; wins over the other two). */
+  chooseSize?: (info: ModelImageGenerationInfo) => ImageSize;
   /** Images to produce (default 1). */
   n?: number;
   /** Base64 reference images. */
@@ -317,10 +319,12 @@ export class ModelImages {
       }
     });
 
-    const size = pickImageSize(gen, {
-      ...(input.size !== undefined && { size: input.size }),
-      ...(input.aspectRatio !== undefined && { aspectRatio: input.aspectRatio }),
-    });
+    const size = input.chooseSize
+      ? ({ ok: true, size: input.chooseSize(gen) } as const)
+      : pickImageSize(gen, {
+          ...(input.size !== undefined && { size: input.size }),
+          ...(input.aspectRatio !== undefined && { aspectRatio: input.aspectRatio }),
+        });
     if (!size.ok) return bad(size.error);
 
     const params = sanitizeParams(info.parameters ?? [], target.params).value;

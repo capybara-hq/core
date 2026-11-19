@@ -76,10 +76,7 @@ const MAX_IMAGES = 4;
 const NAME_MAX_CHARS = 100;
 
 /** The listed spec for an org whose image model accepts `caps` (pure; `n` and references drop or cap). */
-export function generateImageSpec(
-  caps: ImageInputCaps,
-  standardPixels: number = DEFAULT_STANDARD_PIXELS,
-): ToolSpec {
+export function generateImageSpec(caps: ImageInputCaps, standardPixels: number): ToolSpec {
   const base = GENERATE_IMAGE_SPEC;
   const { n, reference_images, resolution, ...rest } = (
     base.inputSchema as { properties: Record<string, unknown> }
@@ -112,8 +109,6 @@ export function generateImageSpec(
 const REFERENCE_SENTENCE =
   "Pass reference images (ids of images in this conversation) to keep a subject or style consistent with them, or to edit one. ";
 
-/** `models.imageStandardPixels` default (the schema's), for the listing without the config. */
-const DEFAULT_STANDARD_PIXELS = 1_048_576;
 /** The `resolution` description with the configured target area in megapixels. */
 const resolutionDescription = (standardPixels: number): string =>
   `standard: the size closest to about ${(standardPixels / 1_000_000).toFixed(1)} megapixels for this shape; high: the model's largest size for this shape. Default: standard.`;
@@ -146,7 +141,9 @@ export const GENERATE_IMAGE_SPEC: ToolSpec = {
       resolution: {
         type: "string",
         enum: ["standard", "high"],
-        description: resolutionDescription(DEFAULT_STANDARD_PIXELS),
+        // the listed spec replaces this with the configured megapixels (generateImageSpec)
+        description:
+          "standard: a mid-sized image for this shape; high: the model's largest size for this shape. Default: standard.",
       },
       n: {
         type: "integer",
@@ -309,20 +306,15 @@ export function generateImageTool(deps: GenerateImageDeps): BuiltinTool {
         ...(input.n !== undefined && { n: input.n }),
       };
       // the cheap checks (prompt, count, size, the model) before any reference is read
-      let prepared = await prepare(deps, ctx, call);
       // the size of the tool: the kernel's standard size for the shape, or the largest (spec §3.3)
-      const size = pickStandardSize(prepared.info, {
-        aspectRatio: input.aspect_ratio,
-        resolution: input.resolution ?? "standard",
-        standardPixels: deps.config.get().models.imageStandardPixels,
-      });
-      call.size = size;
-      if (
-        size.width !== prepared.request.size.width ||
-        size.height !== prepared.request.size.height
-      ) {
-        prepared = await prepare(deps, ctx, call);
-      }
+      const standardPixels = deps.config.get().models.imageStandardPixels;
+      call.chooseSize = (info) =>
+        pickStandardSize(info, {
+          aspectRatio: input.aspect_ratio,
+          resolution: input.resolution ?? "standard",
+          standardPixels,
+        });
+      let prepared = await prepare(deps, ctx, call);
       const refs = input.reference_images ?? [];
       if (refs.length > prepared.info.maxReferenceImages) {
         throw new ToolError(tooManyReferencesText(prepared.info.maxReferenceImages));
@@ -447,6 +439,7 @@ async function resolveReferences(
         !(IMAGE_MEDIA_TYPES as readonly string[]).includes(mediaType) ||
         found.size > MEDIA_LIMITS.imageBytes
       ) {
+        await found.discard();
         throw new ToolError(badReferenceText(k));
       }
       const bytes = await found.open();

@@ -4,7 +4,7 @@ import { generateImageSpec } from "../../src/tools/builtins/image/generate.js";
 
 const props = (c: ImageInputCaps) =>
   // biome-ignore lint/suspicious/noExplicitAny: schema properties are probed by name
-  (generateImageSpec(c).inputSchema as { properties: Record<string, any> }).properties;
+  (generateImageSpec(c, 1_048_576).inputSchema as { properties: Record<string, any> }).properties;
 
 describe("generateImageSpec", () => {
   it("drops n when the cap is 1", () =>
@@ -18,15 +18,18 @@ describe("generateImageSpec", () => {
     expect(props({ maxImages: 2, maxReferenceImages: 9 }).reference_images.maxItems).toBe(4);
   });
   it("mentions reference images in the description only while the field is listed", () => {
-    expect(generateImageSpec({ maxImages: 2, maxReferenceImages: 2 }).description).toContain(
-      "reference images",
-    );
-    const without = generateImageSpec({ maxImages: 2, maxReferenceImages: 0 }).description;
+    expect(
+      generateImageSpec({ maxImages: 2, maxReferenceImages: 2 }, 1_048_576).description,
+    ).toContain("reference images");
+    const without = generateImageSpec(
+      { maxImages: 2, maxReferenceImages: 0 },
+      1_048_576,
+    ).description;
     expect(without).not.toMatch(/reference/i);
     expect(without).toContain("Each call costs money");
   });
   it("states the new texts verbatim", () => {
-    const spec = generateImageSpec({ maxImages: 2, maxReferenceImages: 2 });
+    const spec = generateImageSpec({ maxImages: 2, maxReferenceImages: 2 }, 1_048_576);
     expect(spec.description).toContain(
       "Pass reference images (ids of images in this conversation) to keep a subject or style consistent with them, or to edit one.",
     );
@@ -38,7 +41,7 @@ describe("generateImageSpec", () => {
   });
   it("describes resolution with the configured megapixels", () => {
     const caps = { maxImages: 2, maxReferenceImages: 2 };
-    const at = (px?: number) =>
+    const at = (px = 1_048_576) =>
       (
         generateImageSpec(caps, px).inputSchema as {
           properties: Record<string, { description: string }>;

@@ -11,8 +11,10 @@ export interface ConversationFile {
   name: string;
   contentType: string;
   size: number;
-  /** Reads the bytes (the lookup itself holds no open stream). */
+  /** Reads the bytes. Call it, or {@link discard}, exactly once: an attachment holds its stream. */
   open(): Promise<Uint8Array>;
+  /** Releases the file without reading it (a refusal before the bytes are needed). */
+  discard(): Promise<void>;
 }
 
 export interface ConversationFileDeps {
@@ -44,19 +46,15 @@ export async function findConversationFile(
   for (const conversationId of conversations) {
     const opened = await deps.attachments.openForConversation(q.orgId, conversationId, id);
     if (opened === null) continue;
-    // only the facts are needed now; the bytes are fetched again by open()
-    await opened.body.cancel().catch(() => {});
     return {
       kind: "attachment",
       id,
       name: opened.name,
       contentType: opened.contentType,
       size: opened.size,
-      async open() {
-        const again = await deps.attachments.openForConversation(q.orgId, conversationId, id);
-        if (again === null) throw new Error(`attachment ${id} is no longer available`);
-        return bytesOf(again.body);
-      },
+      // the one storage read of the lookup: its stream is read by open() or cancelled by discard()
+      open: () => bytesOf(opened.body),
+      discard: () => opened.body.cancel().catch(() => {}),
     };
   }
 
@@ -86,5 +84,6 @@ export async function findConversationFile(
       if (got === null) throw new Error(`artifact ${id} is no longer available`);
       return bytesOf(got.body);
     },
+    discard: async () => {},
   };
 }
