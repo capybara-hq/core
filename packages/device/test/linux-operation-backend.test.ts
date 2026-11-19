@@ -339,6 +339,12 @@ describe.skipIf(unavailable !== null)("Linux host operation backend", () => {
     device.run(
       `mkdir -p ${q(`${home}/.asdf`)} && printf shim > ${q(`${home}/.asdf/x`)} && printf 'nodejs 22.12.0' > ${q(`${home}/.tool-versions`)} && printf private > ${q(`${home}/outside.txt`)}`,
     );
+    // a mise-managed tool: its install in the data directory runs; mise's config.toml (which may
+    // hold tokens) is never readable
+    const miseBin = `${home}/.local/share/mise/installs/tool/1.0/bin`;
+    device.run(
+      `mkdir -p ${q(miseBin)} ${q(`${home}/.config/mise`)} && printf '#!/bin/sh\necho mise-tool-ran\n' > ${q(`${miseBin}/tool`)} && chmod +x ${q(`${miseBin}/tool`)} && printf 'TOKEN=secret' > ${q(`${home}/.config/mise/config.toml`)}`,
+    );
     try {
       const scope = restricted(root);
       const result = await backend.operation(scope, authorityFor(scope.operationId)).exec({
@@ -350,6 +356,9 @@ describe.skipIf(unavailable !== null)("Linux host operation backend", () => {
           '(printf y >> "$H/.asdf/x") 2>/dev/null && printf w > wrote-x',
           '(printf y >> "$H/.tool-versions") 2>/dev/null && printf w > wrote-versions',
           'cat "$H/outside.txt" > got-outside 2>/dev/null || rm -f got-outside',
+          '"$MISE_DATA_DIR/installs/tool/1.0/bin/tool" > got-mise',
+          'if [ -n "$MISE_CONFIG_DIR" ]; then printf set; else printf unset; fi > mise-config-env',
+          'cat "$H/.config/mise/config.toml" > got-mise-config 2>/dev/null || rm -f got-mise-config',
           "true",
         ].join("; "),
         cwd: root,
@@ -361,13 +370,15 @@ describe.skipIf(unavailable !== null)("Linux host operation backend", () => {
       expect(text(await read(`${root}/env`))).toBe(`${home}/.asdf`);
       expect(text(await read(`${root}/got-x`)), result.stderr).toBe("shim");
       expect(text(await read(`${root}/got-versions`)), result.stderr).toBe("nodejs 22.12.0");
-      for (const name of ["wrote-x", "wrote-versions", "got-outside"])
+      for (const name of ["wrote-x", "wrote-versions", "got-outside", "got-mise-config"])
         expect(await read(`${root}/${name}`), name).toBeNull();
+      expect(text(await read(`${root}/got-mise`)), result.stderr).toBe("mise-tool-ran\n");
+      expect(text(await read(`${root}/mise-config-env`))).toBe("unset");
       expect(text(await read(`${home}/.asdf/x`))).toBe("shim");
       expect(text(await read(`${home}/.tool-versions`))).toBe("nodejs 22.12.0");
     } finally {
       device.run(
-        `rm -rf ${q(`${home}/.asdf`)} ${q(`${home}/.tool-versions`)} ${q(`${home}/outside.txt`)}`,
+        `rm -rf ${q(`${home}/.asdf`)} ${q(`${home}/.tool-versions`)} ${q(`${home}/outside.txt`)} ${q(`${home}/.local/share/mise`)} ${q(`${home}/.config/mise`)}`,
       );
     }
   });

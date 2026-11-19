@@ -34,7 +34,6 @@ describe("toolHomeEnv", () => {
       PYENV_ROOT: join(home, ".pyenv"),
       RBENV_ROOT: join(home, ".rbenv"),
       MISE_DATA_DIR: join(home, ".local/share/mise"),
-      MISE_CONFIG_DIR: join(home, ".config/mise"),
       VOLTA_HOME: join(home, ".volta"),
       SDKMAN_DIR: join(home, ".sdkman"),
       RUSTUP_HOME: join(home, ".rustup"),
@@ -54,15 +53,29 @@ describe("toolHomeEnv", () => {
     ).toEqual({ ASDF_DATA_DIR: "/opt/asdf" });
   });
 
-  it("mise follows XDG_DATA_HOME and XDG_CONFIG_HOME of the device's environment", () => {
+  it("mise follows XDG_DATA_HOME of the device's environment", () => {
     const data = join(home, "xdg-data");
     const config = join(home, "xdg-config");
     mkdirSync(join(data, "mise"), { recursive: true });
     mkdirSync(join(config, "mise"), { recursive: true });
     expect(toolHomeEnv(home, { XDG_DATA_HOME: data, XDG_CONFIG_HOME: config })).toEqual({
       MISE_DATA_DIR: join(data, "mise"),
-      MISE_CONFIG_DIR: join(config, "mise"),
     });
+  });
+
+  // R3 final review m3: mise's config.toml may hold tokens (an [env] section)
+  it("never grants mise's configuration directory, even when the device's environment names it", () => {
+    make(".local/share/mise/installs/node/22.12.0/bin", ".config/mise");
+    writeFileSync(join(home, ".config/mise/config.toml"), '[env]\nGITHUB_TOKEN = "secret"\n');
+    writeFileSync(join(home, ".tool-versions"), "node 22.12.0\n");
+    for (const env of [{}, { MISE_CONFIG_DIR: join(home, ".config/mise") }]) {
+      const homes = restrictedToolHomes(home, env, deniedSecretPaths(home));
+      expect(homes.env).toEqual({ MISE_DATA_DIR: join(home, ".local/share/mise") });
+      expect(homes.readRoots).toEqual([join(home, ".local/share/mise")]);
+      expect(homes.readFiles).toEqual([join(home, ".tool-versions")]);
+      for (const path of [...homes.readRoots, ...homes.readFiles])
+        expect(path.startsWith(join(home, ".config"))).toBe(false);
+    }
   });
 
   it("no default directory is under, or contains, a denied secret path", () => {
