@@ -1,5 +1,7 @@
+import { randomBytes } from "node:crypto";
 import { startTestPostgres, type TestContainer } from "@capybara-hq/testing";
 import { sql } from "kysely";
+import sharp from "sharp";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { type KernelConfig, KernelConfigSchema } from "../../src/config/schema.js";
 import {
@@ -41,8 +43,9 @@ const config = (): KernelConfig =>
     attachments,
   });
 
-const service = () =>
+const service = (cache?: Parameters<typeof attachmentsFor>[0]["cache"]) =>
   attachmentsFor({
+    cache,
     db: raw,
     storage: new PrefixedStorage({ provider: () => mem, plugins: async () => [] }),
     config,
@@ -112,6 +115,37 @@ beforeEach(async () => {
 });
 
 describe("storeRead", () => {
+  it("fetchMedia sends a heavy image as the model-sized copy; the stored object stays", async () => {
+    const big = new Uint8Array(
+      await sharp(randomBytes(1000 * 800 * 3), { raw: { width: 1000, height: 800, channels: 3 } })
+        .png()
+        .toBuffer(),
+    );
+    const r = await service().storeRead(ORG, "c1", "a1", {
+      name: "page.png",
+      contentType: "image/png",
+      data: big,
+    });
+    if (!r.ok) throw new Error("expected the copy to be stored");
+    const kept = new Map<string, string>();
+    const cache = {
+      get: async (k: string) => kept.get(k),
+      set: async (k: string, v: string) => void kept.set(k, v),
+    };
+    const svc = service(cache);
+    const got = (await svc.fetchMedia(ORG, "c1", [r.attachmentId])).get(r.attachmentId);
+    expect(got?.mediaType).toBe("image/jpeg");
+    expect(got?.data.byteLength).toBeLessThan(big.byteLength);
+    expect((await row(r.attachmentId))?.size).toBe(String(big.byteLength));
+    expect(stored(`read-images/${r.attachmentId}`)).toBe(true);
+    // the next step reads the cached copy, still only while the object is there
+    expect(kept.size).toBe(1);
+    const again = (await svc.fetchMedia(ORG, "c1", [r.attachmentId])).get(r.attachmentId);
+    expect(Buffer.from(again?.data ?? []).equals(Buffer.from(got?.data ?? []))).toBe(true);
+    for (const k of [...mem.objects.keys()]) if (k.endsWith(r.attachmentId)) mem.objects.delete(k);
+    expect((await svc.fetchMedia(ORG, "c1", [r.attachmentId])).get(r.attachmentId)).toBeNull();
+  });
+
   it("binds a ready row that mediaInfo and fetchMedia return", async () => {
     const r = await storeOk("c1");
     expect(r.size).toBe(PNG.length);

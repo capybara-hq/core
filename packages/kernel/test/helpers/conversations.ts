@@ -66,6 +66,7 @@ export function attachmentsFor(d: {
     viewer: string,
   ) => Promise<boolean>;
   log: Pick<KernelLogger, "info" | "warn">;
+  cache?: ConstructorParameters<typeof AttachmentsService>[6] | undefined;
 }): AttachmentsService {
   const h = d.db === undefined ? undefined : handlesFor(d.db);
   return new AttachmentsService(
@@ -75,6 +76,7 @@ export function attachmentsFor(d: {
     { isAccessible: d.canAccessConversation },
     d.log,
     h?.txHost ?? ({} as never),
+    d.cache ?? { get: async () => undefined, set: async () => {} },
   );
 }
 

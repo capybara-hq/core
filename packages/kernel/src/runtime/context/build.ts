@@ -1,6 +1,8 @@
 import { createHash } from "node:crypto";
 import {
   type ContentBlock,
+  IMAGE_MEDIA_TYPES,
+  type ImageMediaType,
   MEDIA_LIMITS,
   type ModelInfo,
   type ModelMessage,
@@ -756,7 +758,15 @@ export function resolveMedia(
     };
     out.push(
       b.type === "image"
-        ? { type: "image", mediaType: b.mediaType, source, ...(b.name !== undefined && { name }) }
+        ? {
+            type: "image",
+            // the fetched copy's type: an image may arrive re-encoded for the model
+            mediaType: (IMAGE_MEDIA_TYPES as readonly string[]).includes(got.mediaType)
+              ? (got.mediaType as ImageMediaType)
+              : b.mediaType,
+            source,
+            ...(b.name !== undefined && { name }),
+          }
         : {
             type: "document",
             mediaType: b.mediaType,
