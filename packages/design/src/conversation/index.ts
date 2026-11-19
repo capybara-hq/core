@@ -221,6 +221,7 @@ export {
   ToolDetail,
   ToolLabel,
   ToolLink,
+  ToolMeta,
   ToolRow,
   type ToolRowData,
   type ToolRowProps,

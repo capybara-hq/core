@@ -243,6 +243,10 @@ export type FixtureTool = {
   diff?: FixtureDiffLine[];
   added?: number;
   removed?: number;
+  /** A crossing Full access granted by itself (§6.16.9 "approved automatically"). */
+  autoGranted?: "directory" | "host" | "outside-sandbox" | "sensitive";
+  /** A command the review admitted to run outside the OS sandbox (§6.16.9). */
+  outsideSandbox?: boolean;
 };
 
 const cmd = (
@@ -268,7 +272,8 @@ export const TOOL_FIXTURES: Record<
   | "diff"
   | "largeOutput"
   | "hookDenied"
-  | "waiting",
+  | "waiting"
+  | "autoGranted",
   FixtureTool[]
 > = {
   // Two separate single calls (each one line, no box).
@@ -502,6 +507,21 @@ export const TOOL_FIXTURES: Record<
       keyArg: "对账口径",
       status: "running",
       waiting: "input",
+    },
+  ],
+  // A long command Full access let run outside the sandbox: the status words are the row's meta,
+  // so the description yields with the ellipsis and the words stay whole.
+  autoGranted: [
+    {
+      id: "t_auto_granted",
+      kind: "command",
+      name: "Bash",
+      description:
+        '抓取路由器管理页的状态码，确认内网服务在沙箱外可以访问：curl -sS -m 5 -o /dev/null -w "HTTP %{http_code}" http://192.168.3.1/',
+      status: "done",
+      extra: "退出码 0",
+      outsideSandbox: true,
+      autoGranted: "outside-sandbox",
     },
   ],
 };
