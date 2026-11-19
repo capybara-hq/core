@@ -49,6 +49,8 @@ export class KeepAwake {
   }
 
   update(i: { mode: KeepAwakeMode; connected: boolean; busy: boolean }): void {
+    // a new mode is a new request: it may try again after a failure
+    if (i.mode !== this.mode) this.unavailable = undefined;
     this.mode = i.mode;
     const want = (i.mode === "connected" && i.connected) || (i.mode === "while-busy" && i.busy);
     if (!want) {
@@ -58,6 +60,9 @@ export class KeepAwake {
       return;
     }
     if (this.holder !== undefined) return;
+    // a holder that failed is not started again (every refresh would spawn and fail again, and
+    // the status would flap) until nothing is wanted for a while or the mode changes
+    if (this.unavailable !== undefined) return;
     this.acquire();
   }
 

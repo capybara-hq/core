@@ -97,9 +97,20 @@ describe("KeepAwake", () => {
     const s = ka.state();
     expect(s.held).toBe(false);
     expect(s.unavailable).toContain("ENOENT");
-    // the next change tries again
-    ka.update({ mode: "connected", connected: true, busy: true });
+    // still wanted: no new spawn and the status stays put
+    for (let i = 0; i < 3; i++)
+      ka.update({ mode: "connected", connected: true, busy: i % 2 === 0 });
+    expect(calls).toHaveLength(1);
+    expect(ka.state().unavailable).toContain("ENOENT");
+    // nothing wanted, then wanted again: tries again
+    ka.update({ mode: "connected", connected: false, busy: false });
+    expect(ka.state().unavailable).toBeUndefined();
+    ka.update({ mode: "connected", connected: true, busy: false });
     expect(calls).toHaveLength(2);
+    // a changed mode also tries again
+    calls[1]?.child.emit("exit", 1, null);
+    ka.update({ mode: "while-busy", connected: true, busy: true });
+    expect(calls).toHaveLength(3);
   });
 
   it("a synchronous spawn failure and an early exit are unavailable too", () => {
