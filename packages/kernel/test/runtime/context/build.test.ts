@@ -721,7 +721,7 @@ describe("images from Read (vision-read design §1.4)", () => {
     const log = new Log();
     log.user("read them one by one");
     const keptAt: number[][] = [];
-    const prefixes: string[] = [];
+    const sentMessages: ModelRequest["messages"][] = [];
     for (let n = 1; n <= 11; n++) {
       readStep(log, n, [{ id: `c${n}`, images: [n] }]);
       const ids = Array.from({ length: n }, (_, i) => i + 1);
@@ -732,7 +732,7 @@ describe("images from Read (vision-read design §1.4)", () => {
         ),
       );
       const json = JSON.stringify(request.messages);
-      prefixes.push(json.slice(0, json.indexOf('"type":"image"')));
+      sentMessages.push(request.messages);
       // a dropped image renders the window's text, never its label or bytes
       for (const m of meta.media ?? []) {
         if (m.outcome !== "not_included") continue;
@@ -755,13 +755,22 @@ describe("images from Read (vision-read design §1.4)", () => {
       [5, 6, 7, 8, 9, 10],
       [9, 10, 11],
     ]);
-    // the prefix before the first image block stays byte-identical between steps that do not
-    // overflow (reads 2–6 and 8–10)
+    // between steps that do not overflow (reads 2–6 and 8–10) the previous request's messages are
+    // an exact prefix of the next one's; an overflow (reads 7 and 11) changes earlier messages
+    const isPrefix = (n: number) => {
+      const before = sentMessages[n - 2] as ModelRequest["messages"];
+      const now = sentMessages[n - 1] as ModelRequest["messages"];
+      return JSON.stringify(now.slice(0, before.length)) === JSON.stringify(before);
+    };
     for (const n of [2, 3, 4, 5, 6, 8, 9, 10]) {
-      expect(prefixes[n - 1], `read ${n}`).toBe(prefixes[n - 2]);
+      expect(isPrefix(n), `read ${n}`).toBe(true);
+      const before = sentMessages[n - 2] as ModelRequest["messages"];
+      expect((sentMessages[n - 1] as ModelRequest["messages"]).slice(0, before.length)).toEqual(
+        before,
+      );
     }
-    expect(prefixes[6]).not.toBe(prefixes[5]);
-    expect(prefixes[10]).not.toBe(prefixes[9]);
+    expect(isPrefix(7)).toBe(false);
+    expect(isPrefix(11)).toBe(false);
   });
 
   it("readImageWindow keeps the newest half at each overflow", () => {

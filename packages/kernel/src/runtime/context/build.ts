@@ -273,7 +273,12 @@ function renderedResults(
   return first;
 }
 
-/** The images from Read a request renders, in log order (`events` sorted by seq). */
+/**
+ * The images from Read a request renders, in log order (`events` sorted by seq): by their result's
+ * seq. Rendering places them in call order (after the step's results), so parallel calls that
+ * finish out of order are "newer" for the window and the image cap in the order they finished,
+ * not the order they show; both orders come from the log, so this stays deterministic.
+ */
 function readImages(events: readonly ConversationEvent[], after: number): ReadMedia[] {
   return [...renderedResults(events, after).values()]
     .sort((a, b) => a.seq - b.seq)
@@ -361,37 +366,44 @@ export function excludedMedia(events: readonly ConversationEvent[]): Set<string>
 }
 
 /**
- * 该模型需要其附件行的附件 id（去重、按出现顺序），调用方据此查行信息（{@link MediaInfo}）。
- * 模型不支持的图片 / PDF、被 `media_excluded` 排除的不在其中——只发占位，行与字节都不取。
- * `file` 块在结果里（引用行要行里的大小与 URI），但从不取字节。
+ * The attachment ids whose rows this model needs (deduplicated, in order of appearance), for the
+ * caller to look up ({@link MediaInfo}). Images / PDFs the model cannot take, ones excluded by
+ * `media_excluded`, and images from Read the window leaves out (`readWindow`, see
+ * {@link readImageWindow}) are not in it: they render without a row or bytes. `file` blocks are in
+ * it (the reference line needs the row's size and URI) but their bytes are never fetched.
  */
-export function mediaRefs(events: readonly ConversationEvent[], model: ModelInfo): string[] {
+export function mediaRefs(
+  events: readonly ConversationEvent[],
+  model: ModelInfo,
+  readWindow?: number,
+): string[] {
   const excluded = excludedMedia(events);
   return [
     ...new Set(
-      mediaBlocks(events, model)
+      mediaBlocks(events, model, readWindow)
         .map((b) => b.source.attachmentId)
         .filter((id) => !excluded.has(id)),
     ),
   ];
 }
 
-/** {@link planMedia} 的结果。 */
+/** The result of {@link planMedia}. */
 export interface MediaPlan {
-  /** 要取字节的附件 id（从新到旧）。 */
+  /** The attachment ids whose bytes are fetched (newest first). */
   fetch: string[];
   /**
-   * 只取开头若干字节的附件（`text/*` 超过 {@link TEXT_FETCH_MAX_BYTES}）：id → 字节数。
-   * 现在总是空：超过取字节上限的文本不再取（它是引用行，§5.2），上限之内的取整份。
+   * Attachments fetched only up to a number of leading bytes (`text/*` over
+   * {@link TEXT_FETCH_MAX_BYTES}): id → bytes. Always empty now: text over the fetch cap is not
+   * fetched at all (it is the reference line, §5.2), text below it is fetched whole.
    */
   caps: Map<string, number>;
-  /** 为控制请求大小而省略（预算）。 */
+  /** Omitted to keep the request size down (the budget). */
   dropped: Set<string>;
-  /** 图片超过 {@link MAX_IMAGES_PER_REQUEST} 而省略。 */
+  /** Omitted because the images exceed {@link MAX_IMAGES_PER_REQUEST}. */
   tooManyImages: Set<string>;
-  /** PDF 页数超过 {@link MAX_PDF_PAGES}。 */
+  /** A PDF over {@link MAX_PDF_PAGES} pages. */
   tooManyPages: Set<string>;
-  /** 日志里 `media_excluded` 排除的。 */
+  /** Excluded by `media_excluded` in the log. */
   excluded: Set<string>;
   /** Images from Read the Read-image window left out ({@link readImageWindow}): not fetched. */
   notIncluded: Set<string>;
@@ -495,15 +507,15 @@ export const mediaUnavailableText = (name: string): string =>
 export const mediaOmittedText = (name: string): string =>
   `[Attachment ${quoted(name)} omitted to fit the request size limit.]`;
 
-/** 单次请求图片太多而省略的附件（模型可见，英文）。 */
+/** An attachment omitted because one request has too many images (model-facing, English). */
 export const mediaTooManyImagesText = (name: string): string =>
   `[Attachment ${quoted(name)} omitted (too many images in one request).]`;
 
-/** PDF 页数超过上限（模型可见，英文）。 */
+/** A PDF over the page limit (model-facing, English). */
 export const mediaTooManyPagesText = (name: string): string =>
   `[Attachment ${quoted(name)} has too many pages for this model.]`;
 
-/** 被供应商拒绝、此后不再发送的附件（模型可见，英文）。 */
+/** An attachment the provider rejected, never sent again (model-facing, English). */
 export const mediaRejectedText = (name: string): string =>
   `[Attachment ${quoted(name)} was rejected by the model provider.]`;
 
@@ -828,7 +840,7 @@ export function summaryText(summary: string): string {
 export function buildModelRequest(input: BuildModelRequestInput): {
   request: ModelRequest;
   meta: ModelCallMeta;
-  /** 请求里媒体块（base64 的图片 / 文档）的估算 token 数，传给 `estimateTokens`。 */
+  /** Estimated tokens of the request's media blocks (base64 images / documents), for `estimateTokens`. */
   mediaTokens: number;
 } {
   const { agent, model } = input;
@@ -1012,9 +1024,11 @@ export function buildModelRequest(input: BuildModelRequestInput): {
     }
   };
   /**
-   * 把已被吸收（seq ≤ upTo）的延后消息按 seq 顺序放进 messages，插在末尾连续的 system 提醒之前
-   * （若有）。这样某一步自己写在 model_call 之前的提醒（含收尾提醒）仍排在它所跟随的用户消息之后，
-   * 收尾提醒保持在请求末尾。只要求确定性：本次请求与由日志还原时执行的是同一套规则，结果一致。
+   * Puts the deferred messages already absorbed (seq ≤ upTo) into messages in seq order, before the
+   * trailing run of system reminders (if any). So a reminder a step wrote before its model_call
+   * (the wrap-up one included) still follows the user message it goes with, and the wrap-up
+   * reminder stays at the end of the request. Only determinism is required: this request and a
+   * reconstruction from the log run the same rules and get the same result.
    */
   const flush = (upTo: number) => {
     const ready = deferred.filter((u) => u.seq <= upTo);

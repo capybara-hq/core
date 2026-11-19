@@ -1557,6 +1557,57 @@ describe("reconstructRequest：基线零漂移", () => {
     );
   });
 
+  it("Read window eviction and a hot window change: the recorded window drives every reconstruction, zero drift", async () => {
+    reset();
+    const config = k.app.get(KernelConfigService);
+    const live = config.get.bind(config);
+    let window = 2;
+    const spy = vi.spyOn(config, "get").mockImplementation(() => {
+      const c = live();
+      return { ...c, attachments: { ...c.attachments, readImagesPerRequest: window } };
+    });
+    try {
+      const agentId = await createAgent(
+        { provider: "model-fake", model: "fake-v" },
+        { tools: [{ kind: "builtin", name: "Bash" }] },
+      );
+      const conv = await createConv(owner, orgId, agentId);
+      const ids = await withReadImages("READIMG-W", null, async () => {
+        for (let n = 1; n <= 4; n++) {
+          // the window changes hot before the fourth Read step
+          if (n === 4) window = 4;
+          await postMessage(owner, orgId, conv, readCommand(`READIMG-W${n}`));
+          await waitForTerminal(db, conv, n, 30_000);
+        }
+      });
+      expect(ids).toHaveLength(4);
+      const snap = await snapshotOf(conv);
+      await expectZeroDrift(conv, snap);
+      // every request after a Read result: its window and what became of each Read image
+      const withReads = modelCalls(toEvents(snap)).filter(
+        (c) => c.payload.request.readImagesPerRequest !== undefined,
+      );
+      const outcomes = withReads.map((c) => [
+        c.payload.request.readImagesPerRequest,
+        ids.map((id) => c.payload.request.media?.find((m) => m.attachmentId === id)?.outcome),
+      ]);
+      expect(outcomes).toEqual([
+        [2, ["bytes", undefined, undefined, undefined]],
+        // the second run's first request already sees read 1; its second request reads 2 too
+        [2, ["bytes", undefined, undefined, undefined]],
+        [2, ["bytes", "bytes", undefined, undefined]],
+        [2, ["bytes", "bytes", undefined, undefined]],
+        // read 3 overflows the window of 2: only the newest one stays
+        [2, ["not_included", "not_included", "bytes", undefined]],
+        // the window grows to 4 hot: the walk over the log keeps all four
+        [4, ["bytes", "bytes", "bytes", undefined]],
+        [4, ["bytes", "bytes", "bytes", "bytes"]],
+      ]);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
   it("a fallback read on a model without vision: the static text after the tool results, zero drift", async () => {
     reset();
     const agentId = await createAgent(

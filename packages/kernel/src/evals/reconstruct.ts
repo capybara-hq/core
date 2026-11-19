@@ -693,7 +693,8 @@ export function snapshotMediaRefs(
   model: ModelInfo,
 ): string[] {
   const all = toEvents(s);
-  return mediaRefs(inputEvents(all, findCall(all, modelCallSeq)), model);
+  const call = findCall(all, modelCallSeq);
+  return mediaRefs(inputEvents(all, call), model, call.payload.request.readImagesPerRequest);
 }
 
 /**
@@ -714,12 +715,12 @@ export async function loadSnapshotMedia(
   const all = toEvents(s);
   const call = findCall(all, modelCallSeq);
   const events = inputEvents(all, call);
-  const refs = mediaRefs(events, model);
+  const readWindow = readImagesPerRequest ?? call.payload.request.readImagesPerRequest;
+  const refs = mediaRefs(events, model, readWindow);
   const media = new Map<string, MediaBytes | null>();
   if (refs.length === 0) return { mediaInfo: new Map(), media };
   const mediaInfo = await source.info(s.orgId, s.conversationId, refs);
   const budget = mediaBudgetBytes ?? call.payload.request.mediaBudgetBytes;
-  const readWindow = readImagesPerRequest ?? call.payload.request.readImagesPerRequest;
   const plan = planMedia(events, model, mediaInfo, budget, readWindow);
   if (plan.fetch.length > 0) {
     const caps = new Map(
