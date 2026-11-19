@@ -34,10 +34,10 @@ import { useErrorMessage } from "../../../lib/use-error-message";
 import NotFound from "../not-found";
 
 /**
- * `/conversations`: my conversations grouped by agent (ListPage `objects`, the compact class's 会话
+ * `/conversations`: my conversations grouped by agent (ListPage `objects`, the compact class's Conversations
  * tab). The first page of the groups comes from the query cache (the layout prefetched it on a
  * first load, and the sidebar reads the same query); later groups are read through the cache by
- * cursor (加载更多) and a group's older rows by its own 更多 row. The primary action starts a new
+ * cursor (Load more) and a group's older rows by its own More row. The primary action starts a new
  * conversation.
  */
 export default function ConversationsView() {
@@ -47,7 +47,7 @@ export default function ConversationsView() {
   return <Conversations orgId={ws.orgId} />;
 }
 
-/** The rows a group's 更多 row read past its first rows, and where it stands. */
+/** The rows a group's More row read past its first rows, and where it stands. */
 type Extra = { rows: Conversation[]; done: boolean; loading: boolean };
 
 function Conversations({ orgId }: { orgId: string }) {

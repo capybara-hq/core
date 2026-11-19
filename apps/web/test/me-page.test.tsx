@@ -1,5 +1,5 @@
-// `/me` (the compact class's 我 tab): the MePanel from the sidebar's own nav, org and account data,
-// by role (design spec §6.48: members see only 工作区, org admins add 管理, super admins the admin
+// `/me` (the compact class's Me tab): the MePanel from the sidebar's own nav, org and account data,
+// by role (design spec §6.48: members see only Workspace, org admins add Manage, super admins the admin
 // entry), and the admin context `/admin` draws in place of the console's overview on compact.
 import { cleanup, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";

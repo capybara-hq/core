@@ -1,6 +1,6 @@
-// `/conversations` (the compact class's 会话 tab) reads from the query cache the layout prefetched
+// `/conversations` (the compact class's Conversations tab) reads from the query cache the layout prefetched
 // (web query cache spec §3): first paint complete without a browser read, the loading state on an
-// empty cache, 加载更多 through the groups cursor, the group's own 更多 row and the new action.
+// empty cache, Load more through the groups cursor, the group's own More row and the new action.
 import { act, cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";

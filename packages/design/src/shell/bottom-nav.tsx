@@ -57,7 +57,7 @@ const countText = (n: { count?: number; countMore?: boolean }): string =>
   (n.count ?? 0) > 99 ? "99+" : `${n.count ?? 0}${n.countMore ? "+" : ""}`;
 
 /**
- * The compact class's navigation (design spec §6.45): four links, a `nav` named 主导航, on tab
+ * The compact class's navigation (design spec §6.45): four links, a `nav` named Main navigation, on tab
  * roots only. `AppShell` draws it from the same `useNav` data the sidebar takes; the shell's slot
  * decides where it shows (compact, tab roots, no open keyboard), the bar itself is always drawn.
  */

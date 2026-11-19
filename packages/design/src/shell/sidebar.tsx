@@ -259,7 +259,7 @@ export function Sidebar(p: SidebarProps) {
 }
 
 /**
- * The rail's 会话 sheet (spec §6.13): the conversation section over the content from the
+ * The rail's Conversations sheet (spec §6.13): the conversation section over the content from the
  * rail's edge, `layout.sidebar` wide, with no scrim. Esc, the close button, a choice of a
  * conversation and a click outside dismiss it.
  */
@@ -314,7 +314,7 @@ function SidebarPanel({
   responsive?: boolean;
   /** The rail of the medium class: no expand button. */
   mediumRail?: boolean;
-  /** The rail's 会话 button (work context with conversations). */
+  /** The rail's Conversations button (work context with conversations). */
   sessions?: { open: boolean; onToggle(): void } | undefined;
 }) {
   const t = useDesignT();
@@ -615,7 +615,7 @@ function AdminEntry({ href, rail }: { href: string; rail: boolean }) {
   );
 }
 
-/** The nav items; 更多 opens a flyout beside the sidebar or the rail. */
+/** The nav items; More opens a flyout beside the sidebar or the rail. */
 function SidebarNav({
   p,
   rail,
@@ -623,7 +623,7 @@ function SidebarNav({
 }: {
   p: SidebarProps;
   rail: boolean;
-  /** The rail's 会话 button: toggles the side sheet. */
+  /** The rail's Conversations button: toggles the side sheet. */
   sessions?: { open: boolean; onToggle(): void } | undefined;
 }) {
   const t = useDesignT();

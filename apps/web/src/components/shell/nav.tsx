@@ -352,8 +352,8 @@ export function useNav(
   /** The compact class's four navigation items (design spec §6.45), in their fixed order. */
   bottom: BottomNavItem[];
   /**
-   * The Me page's rows (design spec §6.48): 工作区 is the sidebar's primary items the bottom
-   * navigation has no room for, then 设备; 管理 is the sidebar's other 更多 items for org admins and
+   * The Me page's rows (design spec §6.48): Workspace is the sidebar's primary items the bottom
+   * navigation has no room for, then Devices; Manage is the sidebar's other More items for org admins and
    * owners only (the sidebar also shows members some of them to read).
    */
   me: { workspace: SidebarNavItem[]; manage: SidebarNavItem[] };
@@ -469,7 +469,7 @@ function bottomItems(
   inbox: { count?: number; countMore?: boolean },
 ): BottomNavItem[] {
   return [
-    // the new conversation (`/`) and a conversation are pushed pages the 会话 tab holds
+    // the new conversation (`/`) and a conversation are pushed pages the Conversations tab holds
     {
       id: "chats",
       label: label.chats,

@@ -884,7 +884,7 @@ export const ROUTES: readonly RouteEntry[] = [
   },
   {
     pattern: "/conversations",
-    // The compact class's 会话 tab: the first page of the groups, the sidebar's own read (the
+    // The compact class's Conversations tab: the first page of the groups, the sidebar's own read (the
     // layout prefetches it as shell data too).
     queries: ({ orgId }) => (orgId === null ? [] : [q(conversationGroupsQuery(orgId))]),
   },

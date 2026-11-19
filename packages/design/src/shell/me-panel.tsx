@@ -35,17 +35,17 @@ export type MePanelProps = {
   /** The work context's org switcher (the sidebar's); `null` in the admin context. */
   org: SidebarOrg | null;
   /**
-   * The admin context: the context block takes the switcher's place, the 工作区 group is not drawn
+   * The admin context: the context block takes the switcher's place, the Workspace group is not drawn
    * and `manage` lists the console's pages, `back` last.
    */
   adminContext?: boolean;
-  /** The 工作区 group (work context): the sidebar's primary items and 设备, then the extension pages. */
+  /** The Workspace group (work context): the sidebar's primary items and Devices, then the extension pages. */
   workspace?: MeRow[];
-  /** The 管理 group: org admins' items and the admin entry; in the admin context the console's pages. */
+  /** The Manage group: org admins' items and the admin entry; in the admin context the console's pages. */
   manage?: MeRow[];
-  /** The admin context's way back (回到工作区), the last row of the 管理 group. */
+  /** The admin context's way back (Back to workspace), the last row of the Manage group. */
   back?: MeRow;
-  /** The 账户 group: personal settings, language, theme, sign out. */
+  /** The Account group: personal settings, language, theme, sign out. */
   accountRows: MeRow[];
   /** The StatusBar's system line, which compact has no StatusBar for. */
   system?: string;
