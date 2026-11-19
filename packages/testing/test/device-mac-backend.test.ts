@@ -4,6 +4,7 @@ import { lookup } from "node:dns/promises";
 import { mkdir, mkdtemp, readFile, realpath, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { createServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
+import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { classifyAddress, type SandboxOperationScope } from "@capybara-hq/plugin-sdk";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
@@ -15,7 +16,7 @@ import {
 } from "../../device/src/exec/mac-operation-backend.js";
 import type { DeviceOwnerCeiling } from "../../device/src/exec/operation-types.js";
 import { startMacOperationWorker } from "../../device/src/exec/operation-worker.js";
-import { TOOL_HOME_DIRS } from "../../device/src/exec/shared.js";
+import { TOOL_HOME_DIRS, toolHomeEnv } from "../../device/src/exec/shared.js";
 import { sealWorkspaceRuntime } from "../../device/test/runtime-seal.js";
 import type { NativeFixtureEntry } from "../src/sandbox-native-conformance.js";
 import {
@@ -90,6 +91,7 @@ async function answers(url: string): Promise<boolean> {
 let dir = "";
 let priorHome: string | undefined;
 let priorPath: string | undefined;
+let toolHome: { home: string; env: Record<string, string | undefined> } = { home: "", env: {} };
 const priorPlanted: Record<string, string | undefined> = {};
 const servers: Server[] = [];
 const seal = { runtimeHash: "", cleanup: async () => {} };
@@ -163,6 +165,9 @@ describe.runIf(darwin)("capybara-device macOS operation backend", () => {
     await writeFile(profile, "export SYNTHETIC=1\n");
     priorHome = process.env.HOME;
     priorPath = process.env.PATH;
+    // the synthetic home stays the protected home; the version manager directories are the real
+    // home's, named explicitly (as a device whose environment sets ASDF_DATA_DIR, ...)
+    toolHome = { home, env: { ...process.env, ...toolHomeEnv(homedir(), process.env) } };
     process.env.HOME = home;
     // version manager shims resolve their versions from the real home: run the real binaries
     process.env.PATH = [dirname(process.execPath), "/usr/bin", "/bin", "/usr/sbin", "/sbin"].join(
@@ -198,7 +203,9 @@ describe.runIf(darwin)("capybara-device macOS operation backend", () => {
       {
         platform: "darwin",
         restrictedSupported: true,
-        startWorker: startMacOperationWorker,
+        // HOME is the synthetic home, where no version manager lives: the trusted seam names the
+        // real installs a restricted command must read (the node first on PATH may be ~/.asdf's)
+        startWorker: (request, signal) => startMacOperationWorker({ ...request, toolHome }, signal),
         watch: () => () => {},
       },
     );
