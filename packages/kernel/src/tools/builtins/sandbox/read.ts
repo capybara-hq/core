@@ -1,5 +1,5 @@
 import { posix } from "node:path";
-import { MEDIA_LIMITS, ToolError, type ToolSpec } from "@capybara-hq/plugin-sdk";
+import { IMAGE_MEDIA_TYPES, MEDIA_LIMITS, ToolError, type ToolSpec } from "@capybara-hq/plugin-sdk";
 import type { AttachmentsService } from "../../../conversations/attachments.service.js";
 import type { ToolView } from "../../../conversations/events.js";
 import { ApiError } from "../../../errors.js";
@@ -160,10 +160,13 @@ export const notStoredText = (
 const dimsText = (d: { width?: number; height?: number }): string =>
   d.width !== undefined && d.height !== undefined ? `, ${d.width}×${d.height}` : "";
 
-/** The file names an image by its extension (decides a too-large file before it is read). */
+/** The file names a raster image Read can show by its extension (an SVG is text). */
 const IMAGE_EXTENSION = /\.(png|jpe?g|gif|webp)$/i;
-/** Bytes read from the head of a large file to sniff it. */
-const SNIFF_BYTES = 64;
+/** A content type of one of the raster images Read can show (`image/svg+xml` is not one). */
+const isRasterType = (contentType: string): boolean =>
+  (IMAGE_MEDIA_TYPES as readonly string[]).includes(
+    contentType.split(";")[0]?.trim().toLowerCase() ?? "",
+  );
 const PDF_MAGIC = [0x25, 0x50, 0x44, 0x46, 0x2d];
 const isPdf = (data: Uint8Array): boolean => PDF_MAGIC.every((b, i) => data[i] === b);
 
@@ -260,28 +263,14 @@ export function sandboxReadTool(deps: SandboxToolDeps): BuiltinTool {
         const st = await p.stat(h, path, signal);
         if (st === null) throw new ToolError(notFound(path));
         if (st.isDir) throw new ToolError(isDirectory(path));
-        // too large to be an image the model can take: only the head decides, never the whole file
-        if (st.size > MEDIA_LIMITS.imageBytes) {
-          let image = IMAGE_EXTENSION.test(path);
-          if (!image) {
-            const head = await p.readFile(h, path, { maxBytes: SNIFF_BYTES, signal });
-            if (head === null) throw new ToolError(notFound(path));
-            image = sniffImage(head.data) !== null;
-          }
-          if (image) return { tooLarge: true as const, size: st.size };
-        }
+        // read as before (up to the cap) so the file state is recorded for the read-before-write
+        // guard even when the image is too large to show (readImage gives the too-large text)
         const got = await p.readFile(h, path, { maxBytes: READ_MAX_BYTES, signal });
         if (got === null) throw new ToolError(notFound(path));
-        return { tooLarge: false as const, ...got, size: st.size };
+        return { ...got, size: st.size };
       });
       const name = posix.basename(path);
       const summary = { display: display(`读取 ${clip(path, 180)}`, `Read ${clip(path, 180)}`) };
-      if (value.tooLarge) {
-        return {
-          content: [{ type: "text", text: withNotices(notices, tooLargeText(name, value.size)) }],
-          ...summary,
-        };
-      }
       const view = (range: { fromLine?: number; toLine?: number }): ToolView => ({
         kind: "read",
         path: viewPath(path),
@@ -337,8 +326,7 @@ async function readById(
   const summary = {
     display: display(`读取 ${clip(found.name, 180)}`, `Read ${clip(found.name, 180)}`),
   };
-  const imageLike =
-    IMAGE_EXTENSION.test(found.name) || found.contentType.toLowerCase().startsWith("image/");
+  const imageLike = IMAGE_EXTENSION.test(found.name) || isRasterType(found.contentType);
   if (found.size > MEDIA_LIMITS.imageBytes && imageLike) {
     await found.discard();
     return {

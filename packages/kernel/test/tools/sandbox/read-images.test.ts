@@ -195,7 +195,7 @@ beforeAll(async () => {
   viewerId = await agent("Viewer", { model: VISION }, ["Read", "Agent"]);
   blindId = await agent("Blind", { model: BLIND }, ["Read"]);
   switcherId = await agent("Switcher", { model: VISION, fallback: BLIND }, ["Read"]);
-  painterId = await agent("Painter", { model: VISION }, ["GenerateImage", "Read"]);
+  painterId = await agent("Painter", { model: VISION }, ["GenerateImage", "Read", "Write"]);
   // image models start disabled in an org
   const enable = await owner({
     method: "PATCH",
@@ -590,6 +590,48 @@ describe("Read: images for a model without vision", () => {
 });
 
 describe("Read: limits and other files", () => {
+  it("a too-large image read by path still counts as read: Write and GenerateImage may replace it", async () => {
+    const big = png(3, 2, 6 * 1024 * 1024);
+    const conv = await createConv(owner, orgId, painterId);
+    const forWrite = await onDevice(`w${randomUUID().slice(0, 6)}.png`, big);
+    const r = await read(conv, { file_path: forWrite });
+    expect(r.payload.content).toContain("is 6.0 MB; the limit is 5 MB");
+    expect(r.payload.view).toMatchObject({ kind: "read", file: { size: big.length } });
+    await postMessage(
+      owner,
+      orgId,
+      conv,
+      `tool:Write:${JSON.stringify({ file_path: forWrite, content: "replaced\n" })}`,
+    );
+    await waitForTerminal(db, conv, 2, 30_000);
+    const written = ofType(await eventsOf(db, conv), "tool_result").at(-1) as ToolResultEvent;
+    expect(written.payload.toolKey).toBe("Write");
+    expect(written.payload.isError, written.payload.content).toBe(false);
+
+    const forImage = await onDevice(`g${randomUUID().slice(0, 6)}.png`, big);
+    await read(conv, { file_path: forImage }, 3);
+    await postMessage(
+      owner,
+      orgId,
+      conv,
+      `tool:GenerateImage:${JSON.stringify({ prompt: "a cat", file_path: forImage })}`,
+    );
+    await waitForTerminal(db, conv, 4, 30_000);
+    const gen = ofType(await eventsOf(db, conv), "tool_result").at(-1) as ToolResultEvent;
+    expect(gen.payload.toolKey).toBe("GenerateImage");
+    expect(gen.payload.content.split("\n").at(-1)).toMatch(/^Also written to the device/);
+  });
+
+  it("an SVG over 5 MB read by file_id takes the text path", async () => {
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg">\n${"<!-- pad -->\n".repeat(500_000)}</svg>\n`;
+    expect(svg.length).toBeGreaterThan(5 * 1024 * 1024);
+    const conv = await createConv(owner, orgId, viewerId);
+    const id = await attachment(conv, Buffer.from(svg), "big.svg", "image/svg+xml");
+    const r = await read(conv, { file_id: id, limit: 1 });
+    expect(r.payload.isError, r.payload.content).toBe(false);
+    expect(r.payload.content).toContain('     1\t<svg xmlns="http://www.w3.org/2000/svg">');
+  });
+
   it("a 6 MiB PNG gives the too-large text and stores nothing", async () => {
     const big = png(3, 2, 6 * 1024 * 1024);
     const path = await onDevice("big.png", big);
