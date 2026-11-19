@@ -494,9 +494,16 @@ describe("a local device's project outside its fixed workspace", () => {
   };
   const PROJECT = "/home/me/code/app";
 
-  it("the first call of a restricted conversation is a Read of the project: the device gets the project as its root", async () => {
+  /**
+   * A project outside the workspace (the owner's os-user reach), read first in a restricted
+   * conversation. The owner's outside-sandbox switch decides only whether a call may run outside
+   * the sandbox: it must not change which paths the file tools accept inside the project.
+   */
+  async function firstProjectRead(outsideSandbox: boolean): Promise<void> {
     const { deviceId, credential } = await kA.app.get(TransactionHost).run(async () => {
-      const { id } = await kA.app.get(DevicesService).createLocal(orgId, ownerId, "Laptop");
+      const { id } = await kA.app
+        .get(DevicesService)
+        .createLocal(orgId, ownerId, `Laptop ${outsideSandbox ? "on" : "off"}`);
       const issued = await kA.app.get(MachinesService).issue({
         orgId,
         deviceId: id,
@@ -553,7 +560,7 @@ describe("a local device's project outside its fixed workspace", () => {
       ...hello,
       ownerCeiling: ownerReportFor(
         { allowedDomains: [] },
-        { outsideSandbox: true, restrictedProjectReach: "os-user" },
+        { outsideSandbox, restrictedProjectReach: "os-user" },
       ),
     });
     await machine.ready;
@@ -617,6 +624,19 @@ describe("a local device's project outside its fixed workspace", () => {
     expect(((write as KernelReq).args as { scope: Scope }).scope.filesystem).toEqual(
       scopedTo(PROJECT),
     );
+  }
+
+  it("the first call of a restricted conversation is a Read of the project: the device gets the project as its root", async () => {
+    await firstProjectRead(true);
+  });
+
+  // Open finding (R3 Mac dogfood, 2026-11-20): with the owner's outside-sandbox off (a new
+  // install's default) the device's tier is `sandbox`, and checkToolPath keeps the fixed roots,
+  // so Read / Write / Edit / Glob / Grep refuse every path in a project outside the workspace
+  // ("path must be under <workspace>, <skills>, <tmp>") and after an approved or auto-granted
+  // directory crossing, while Bash in the same project runs. Remove `.fails` with the fix.
+  it.fails("the same first Read when the owner keeps every call in the sandbox (outside-sandbox off)", async () => {
+    await firstProjectRead(false);
   });
 });
 
