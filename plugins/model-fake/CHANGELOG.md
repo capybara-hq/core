@@ -1,5 +1,14 @@
 # @capybara-hq/plugin-model-fake
 
+## 0.1.0-rc.38
+
+### Patch Changes
+
+- 4f0ff57: Each image generation model can declare its own `imageSizes`.
+- Updated dependencies [10ecf48]
+- Updated dependencies [311c56e]
+  - @capybara-hq/plugin-sdk@0.1.0-rc.37
+
 ## 0.1.0-rc.37
 
 ### Patch Changes
