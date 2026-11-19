@@ -14,6 +14,7 @@ import {
   listSourceFiles,
   type Node,
   parseFile,
+  stringValue,
   walk,
 } from "./source.js";
 
@@ -388,6 +389,147 @@ export function checkI18n(messagesDir: string): Finding[] {
       rule: "i18n-extra-key",
       message: `${TARGET} 多出 key「${key}」（${BASE} 中不存在）；删除该 key，或先在 ${BASE} 中补上`,
     });
+  }
+  return findings;
+}
+
+/** A translator binding: `const t = useTranslations("ns")` (or `await getTranslations("ns")`). */
+interface Translator {
+  name: string;
+  /** The namespace the keys are relative to ("" for the root). */
+  namespace: string;
+  /** The range of the function (or file) the binding is declared in. */
+  scope: [number, number];
+}
+
+/** The namespace of a `useTranslations` / `getTranslations` call, or undefined when not static. */
+function namespaceOf(call: Node): string | undefined {
+  const args = call.arguments as Node[];
+  const arg = args[0];
+  if (arg === undefined) return "";
+  const literal = stringValue(arg);
+  if (literal !== undefined) return literal;
+  if (arg.type === "ObjectExpression") {
+    const ns = (arg.properties as Node[]).find(
+      (p) =>
+        p.type === "Property" &&
+        (p.key as Node).type === "Identifier" &&
+        (p.key as Node).name === "namespace",
+    );
+    return ns === undefined ? "" : stringValue(ns.value);
+  }
+  return undefined;
+}
+
+/** The translator call a declarator's initializer is, if any. */
+function translatorCall(init: Node | null | undefined): Node | undefined {
+  if (!init) return undefined;
+  const call = init.type === "AwaitExpression" ? (init.argument as Node) : init;
+  if (call.type !== "CallExpression") return undefined;
+  const callee = call.callee as Node;
+  return callee.type === "Identifier" &&
+    (callee.name === "useTranslations" || callee.name === "getTranslations")
+    ? call
+    : undefined;
+}
+
+const FUNCTION_TYPES = new Set([
+  "FunctionDeclaration",
+  "FunctionExpression",
+  "ArrowFunctionExpression",
+]);
+
+/**
+ * `i18n-unknown-key`: every static key a web translator is called with exists in the messages.
+ * A translator is a variable bound to `useTranslations(ns)` / `await getTranslations(ns)` (a
+ * literal namespace, an object with a literal `namespace`, or none); a call `t("key")`,
+ * `t.rich("key", …)` or `t.markup("key", …)` resolves against the innermost binding of that name
+ * whose function contains it, and must name a message (a leaf); `t.raw("key")` may name a group
+ * too. A dynamic key (a template literal with interpolations, a variable) and a translator passed
+ * in as a parameter cannot be confirmed statically and are skipped; `t.has` asks, it never needs
+ * the key. zh.json is the key authority (`checkI18n` keeps en.json in step). Test files are skipped.
+ */
+export function checkWebI18nKeys(srcDir: string, messagesDir: string): Finding[] {
+  const base = load(join(messagesDir, BASE));
+  if ("rule" in base) return [base];
+  const leaves = base.keys;
+  const groups = new Set<string>();
+  for (const k of leaves) {
+    const parts = k.split(".");
+    for (let i = 1; i < parts.length; i++) groups.add(parts.slice(0, i).join("."));
+  }
+  const findings: Finding[] = [];
+  for (const f of listSourceFiles(srcDir)) {
+    if (f.isTest) continue;
+    const parsed = parseFile(f.file);
+    if (isParseError(parsed)) {
+      findings.push(parsed);
+      continue;
+    }
+    const translators: Translator[] = [];
+    const calls: { name: string; method: string | null; key: string; at: number }[] = [];
+    const scopes: [number, number][] = [[parsed.program.start, parsed.program.end]];
+    const visit = (node: unknown): void => {
+      if (Array.isArray(node)) {
+        for (const item of node) visit(item);
+        return;
+      }
+      if (typeof node !== "object" || node === null || typeof (node as Node).type !== "string") {
+        return;
+      }
+      const n = node as Node;
+      const isFunction = FUNCTION_TYPES.has(n.type);
+      if (isFunction) scopes.push([n.start, n.end]);
+      if (n.type === "VariableDeclarator" && (n.id as Node).type === "Identifier") {
+        const call = translatorCall(n.init as Node | null);
+        const namespace = call && namespaceOf(call);
+        if (namespace !== undefined) {
+          translators.push({
+            name: (n.id as Node).name as string,
+            namespace,
+            scope: scopes[scopes.length - 1] as [number, number],
+          });
+        }
+      }
+      if (n.type === "CallExpression") {
+        const callee = n.callee as Node;
+        let name: string | undefined;
+        let method: string | null = null;
+        if (callee.type === "Identifier") name = callee.name as string;
+        else if (
+          callee.type === "MemberExpression" &&
+          callee.computed !== true &&
+          (callee.object as Node).type === "Identifier" &&
+          (callee.property as Node).type === "Identifier"
+        ) {
+          name = (callee.object as Node).name as string;
+          method = (callee.property as Node).name as string;
+        }
+        const key = stringValue((n.arguments as Node[])[0]);
+        if (name !== undefined && key !== undefined) calls.push({ name, method, key, at: n.start });
+      }
+      for (const [k, v] of Object.entries(n)) {
+        if (k === "type" || k === "start" || k === "end") continue;
+        if (typeof v === "object" && v !== null) visit(v);
+      }
+      if (isFunction) scopes.pop();
+    };
+    visit(parsed.program);
+    for (const c of calls) {
+      if (c.method !== null && !["rich", "markup", "raw"].includes(c.method)) continue;
+      const binding = translators
+        .filter((t) => t.name === c.name && t.scope[0] <= c.at && c.at <= t.scope[1])
+        .sort((a, b) => a.scope[1] - a.scope[0] - (b.scope[1] - b.scope[0]))[0];
+      if (binding === undefined) continue;
+      const full = binding.namespace === "" ? c.key : `${binding.namespace}.${c.key}`;
+      if (leaves.has(full) || (c.method === "raw" && groups.has(full))) continue;
+      findings.push({
+        file: f.file,
+        line: parsed.lineOf(c.at),
+        rule: "i18n-unknown-key",
+        message: `${full} is not in ${BASE}${groups.has(full) ? " (it is a group, not a message)" : ""}: add it to zh.json and en.json, or fix the key`,
+      });
+    }
   }
   return findings;
 }
