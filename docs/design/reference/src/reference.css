@@ -1015,6 +1015,14 @@ textarea {
   line-height: var(--cb-type-micro-line);
   text-align: center;
 }
+/* The rail form: the rail leaves 16 beside a centered icon, too little for a badge, its gap and
+   its ring, so the badge sits above the corner (bottom edge 2px over the icon's top edge), its
+   right edge 4px inside the rail (the ring and 2px clear), the count capped at 9+. */
+.r-nav-badge[data-rail="true"] {
+  left: auto;
+  top: calc(-1 * (var(--cb-type-micro-line) + 2px));
+  right: calc((var(--cb-layout-sidebar-rail) - 16px) / -2 + 4px);
+}
 .r-sidebar[data-mode="rail"] .r-sb-foot {
   padding: var(--cb-space-2) 0 0;
   justify-content: center;
@@ -6840,18 +6848,23 @@ span.r-scal-daynum {
 }
 /* The compact ActionRow (spec §4.4): the primary a full-width line at the bottom, the other
    actions side by side in equal widths on the line above, every button 40 high. */
-.r-ld-actions[data-compact] {
+.r-actionrow[data-compact] {
   flex-direction: column;
   align-items: stretch;
   gap: var(--cb-space-2);
   height: auto;
   padding: var(--cb-space-2) var(--cb-space-4);
 }
-.r-ld-actions-line {
+.r-actionrow-line {
   display: flex;
   gap: var(--cb-space-2);
 }
-.r-ld-actions[data-compact] .r-btn {
+.r-actionrow[data-compact] .r-actionrow-text {
+  flex: none;
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+}
+.r-actionrow[data-compact] .r-btn {
   flex: 1 1 0;
   min-width: 0;
   height: 40px;

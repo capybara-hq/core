@@ -42,7 +42,10 @@ export type FixtureMeItem = {
   label: string;
   href: string;
   icon: string;
-  /** Who sees the row, as the sidebar's `audience` for the same item (nav.tsx). */
+  /**
+   * Who sees the row: the workspace rows as the sidebar's `audience` (nav.tsx); every manage row
+   * is for org admins and owners (design spec §6.48).
+   */
   audience: "all" | "member" | "admin";
   group: "workspace" | "manage";
 };
@@ -95,7 +98,7 @@ export const ME_PANEL_FIXTURE = {
       label: "插件",
       href: "/plugins",
       icon: "catalog",
-      audience: "member",
+      audience: "admin",
       group: "manage",
     },
     {
@@ -103,7 +106,7 @@ export const ME_PANEL_FIXTURE = {
       label: "扩展",
       href: "/extensions",
       icon: "extension",
-      audience: "member",
+      audience: "admin",
       group: "manage",
     },
     {
@@ -127,11 +130,27 @@ export const ME_PANEL_FIXTURE = {
       label: "组织设置",
       href: "/settings/organization",
       icon: "settings",
-      audience: "member",
+      audience: "admin",
       group: "manage",
     },
   ] as FixtureMeItem[],
   adminEntry: { label: "管理后台", href: "/admin", icon: "admin" },
+  /**
+   * The admin context (design spec §6.48): a short sample of the console's pages in the manage
+   * group, the back row last; the context block replaces the org switcher.
+   */
+  adminContext: {
+    block: { label: "管理后台", meta: "整个部署 · /admin", icon: "admin" },
+    items: [
+      { id: "overview", label: "概览", href: "/admin", icon: "gauge" },
+      { id: "accounts", label: "账号", href: "/admin/accounts", icon: "user" },
+      { id: "orgs", label: "组织", href: "/admin/orgs", icon: "building" },
+      { id: "extensions", label: "扩展", href: "/admin/extensions", icon: "extension" },
+      { id: "models", label: "模型", href: "/admin/models", icon: "cpu" },
+      { id: "settings", label: "部署设置", href: "/admin/settings", icon: "sliders" },
+    ] as { id: string; label: string; href: string; icon: string }[],
+    back: { id: "back", label: "回到工作区", href: "/", icon: "arrow-left" },
+  },
   accountGroup: "账户",
   accountItems: [
     { id: "account", label: "个人设置", href: "/account", icon: "user" },
@@ -141,11 +160,14 @@ export const ME_PANEL_FIXTURE = {
   ] as { id: string; label: string; href?: string; icon: string; value?: string }[],
   /** The StatusBar's system line, which compact has no room for (§4). */
   system: "系统正常 · v0.1.0 · UTC+8",
-  /** The roles a block draws, by what the sidebar shows each (design spec §6.13). */
+  /**
+   * The audiences each block draws. The super-admin block is an org member who is a super admin:
+   * the workspace rows and, in the manage group, only the admin console entry.
+   */
   visible: {
     member: ["all", "member"],
     admin: ["all", "member", "admin"],
-    "super-admin": ["all", "member", "admin"],
+    "super-admin": ["all", "member"],
   } as Record<"member" | "admin" | "super-admin", string[]>,
 };
 

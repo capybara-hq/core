@@ -144,7 +144,7 @@ Compared with today: 640 becomes 600, the 960 drawer becomes the medium rail and
 bottom navigation, and below 1280 the sidebar no longer turns into the rail by itself (only by
 the person's toggle).
 
-## 4. The App Shell per class (decided, details designer's call)
+## 4. The App Shell per class (decided)
 
 | | compact | medium | expanded |
 |---|---|---|---|
@@ -156,7 +156,7 @@ the person's toggle).
 | StatusBar | Hidden (its system status moves to the Me page) | Shown | Shown |
 | ActionRow | Sticky at the bottom, above the safe area: the primary a full-width line, the other actions side by side above it | As today | As today |
 
-### 4.1 Compact: top bar and push model (designer's call)
+### 4.1 Compact: top bar and push model (decided)
 
 - **Tab roots and pushed pages.** A route is a *tab root* when it is the target of a bottom-nav
   item (§4.2); every other route is *pushed*. The shell knows the nav items, so no page declares
@@ -188,18 +188,19 @@ settings under 更多), the inbox is where approvals and notices wait:
 | 会话 / Chats | `/conversations` (new compact list route, §5.4) | The conversations grouped by agent, as the sidebar's section; a "new" action to `/` |
 | 智能体 / Agents | `/agents` | The cards page as today |
 | 收件箱 / Inbox | `/inbox` | With the pending count badge (the rail's nav badge: outside the icon's top-right corner, 2px gap, a ring in the bar ground) |
-| 我 / Me | `/me` (new compact page) | Account, org switcher, 工作区 (技能, 连接器, 定时任务, 设备) and 管理 (插件, 扩展, 渠道, 评测与运行, 组织设置, 管理后台 for super admins) rows the role sees as on the sidebar, personal settings, system status, sign out; drawn by the shell from the sidebar's data |
+| 我 / Me | `/me` (new compact page) | Account, org switcher, 工作区 (技能, 连接器, 定时任务, 设备: the rows the role sees on the sidebar) and 管理 (插件, 扩展, 渠道, 评测与运行, 组织设置 for org admins and owners only; 管理后台 for super admins; members see only 工作区), personal settings, system status, sign out; drawn by the shell from the sidebar's data |
 
 技能 / 连接器 / 定时任务 are reached from
 Me (and from the agents' pages), as 更多 items are on the sidebar. The current item has no ground
 of its own: icon and label in `ink`, the label weight 500, the others `muted`; icons are 16.
 The **compact admin navigation is the Me page's 管理 group** (maintainer decision 2026-11-20):
-there is no admin overview page for it; design spec §6.48 lists which role sees which row.
+there is no admin overview page for it; in the admin context the same Me page lists the console's
+pages, 回到工作区 last. Design spec §6.48 lists which role sees which row.
 
 `/me` is built on the `OverviewPage` template with a design `MePanel` component, so it passes
 `web-ui-template` **(decided)**.
 
-### 4.3 Medium: the rail (designer's call)
+### 4.3 Medium: the rail (decided)
 
 Today's rail, unchanged in look, gains one button: **conversations**, which opens the
 conversations list as a side sheet over the content (`layout.sidebar` wide, no scrim) (a pane beside a conversation when the

@@ -10,7 +10,7 @@
 <body>
 <main class="r-page">
 <h1>MePanel</h1>
-<p>The Me tab's page body (spec §6.48; mobile layout spec §4.2): what the sidebar holds, drawn by the shell from the sidebar's data. The account row and the org switcher (which opens a bottom sheet), the 更多 group of every item the role sees (技能, 连接器, 定时任务, 设备, 插件, 扩展, 组织设置; 渠道 and 评测与运行 for org admins), 管理后台 for super admins, the account group (个人设置, 语言, 主题, 退出登录) and the system status line the compact class has no StatusBar for. Rows are `row.roomy` high, split by `line-soft`, in no box. Drawn in its page with the root top bar and the bottom navigation.</p>
+<p>The Me tab's page body (spec §6.48; mobile layout spec §4.2), drawn by the shell from the sidebar's data: the account row and the org switcher (a bottom sheet), the 工作区 group (技能, 连接器, 定时任务, 设备; guests only 连接器 and 设备), the 管理 group (插件, 扩展, 渠道, 评测与运行, 组织设置 for org admins and owners; 管理后台 last for super admins; no group when the role has no row), the account group and the system status line. In the admin context the same panel lists the console's pages in 管理, 回到工作区 last, with no 工作区 group. Rows are `row.roomy` high, split by `line-soft`, in no box.</p>
 <div class="r-blocks">
 <section data-ref-block="me-panel-member" style="width:390px">
   <template data-fixture="me-panel" data-opts='{"role": "member"}'></template>
@@ -20,6 +20,9 @@
 </section>
 <section data-ref-block="me-panel-super-admin" style="width:390px">
   <template data-fixture="me-panel" data-opts='{"role": "super-admin"}'></template>
+</section>
+<section data-ref-block="me-panel-admin-context" style="width:390px">
+  <template data-fixture="me-panel" data-opts='{"role": "super-admin", "context": "admin"}'></template>
 </section>
 </div>
 </main>

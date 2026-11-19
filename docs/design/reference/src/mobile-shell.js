@@ -88,7 +88,7 @@ window.__CB_EXTRA__ = ({ F, esc, icon, table }) => {
     const primary = ds.filter((d) => d.variant === "primary");
     const others = ds.filter((d) => d.variant !== "primary");
     const line = (list, part) =>
-      list.length ? `<div class="r-ld-actions-line">${list.map((d) => decisionButton(d, part)).join("")}</div>` : "";
+      list.length ? `<div class="r-actionrow-line">${list.map((d) => decisionButton(d, part)).join("")}</div>` : "";
     return `<div class="r-actionrow r-ld-actions" data-part="decision-row" data-compact>${line(others, "decision-secondary")}${line(primary, "decision-primary")}</div>`;
   }
 
@@ -138,8 +138,19 @@ window.__CB_EXTRA__ = ({ F, esc, icon, table }) => {
         ? `<section class="r-me-group" data-part="group" aria-label="${esc(M.groups[id])}"><h2 class="r-me-label" data-part="group-label">${esc(M.groups[id])}</h2>${rows}</section>`
         : "";
     };
-    const org = `<button class="r-sb-org r-me-org" data-part="org-switcher" aria-label="当前组织：${esc(M.org.name)}，切换组织"><span class="r-sb-org-initial">${esc(M.org.initial)}</span><span class="r-sb-org-text"><span class="r-sb-org-name">${esc(M.org.name)}</span><span class="r-sb-org-meta">~/${esc(M.org.slug)} · ${esc(role === "member" ? "组织成员" : role === "admin" ? "组织管理员" : "超级管理员")}</span></span>${icon("chevrons-up-down", 14)}</button>`;
-    const body = `<div class="r-me" data-part="me-panel" data-role="${role}"><div class="r-me-head"><div class="r-me-account" data-part="account"><span class="r-avatar">${esc(M.account.initial)}</span><span class="r-ellipsis">${esc(M.account.name)}</span></div>${org}</div>${group("workspace")}${group("manage", admin)}<section class="r-me-group" data-part="group" aria-label="${esc(M.accountGroup)}"><h2 class="r-me-label" data-part="group-label">${esc(M.accountGroup)}</h2>${M.accountItems.map((n) => meRow(n)).join("")}</section><p class="r-me-system" data-part="system-status">${esc(M.system)}</p></div>`;
+    const A = M.adminContext;
+    const inAdmin = o.context === "admin";
+    // The super-admin block is an org member who is a super admin (the meta shows the org role).
+    const orgRole = role === "admin" ? "组织管理员" : "组织成员";
+    const org = inAdmin
+      ? `<div class="r-sb-org r-me-org" data-static="true" data-part="context-block"><span class="r-sb-org-initial" data-tone="accent">${icon(A.block.icon, 14)}</span><span class="r-sb-org-text"><span class="r-sb-org-name">${esc(A.block.label)}</span><span class="r-sb-org-meta">${esc(A.block.meta)}</span></span></div>`
+      : `<button class="r-sb-org r-me-org" data-part="org-switcher" aria-label="当前组织：${esc(M.org.name)}，切换组织"><span class="r-sb-org-initial">${esc(M.org.initial)}</span><span class="r-sb-org-text"><span class="r-sb-org-name">${esc(M.org.name)}</span><span class="r-sb-org-meta">~/${esc(M.org.slug)} · ${esc(orgRole)}</span></span>${icon("chevrons-up-down", 14)}</button>`;
+    // The admin context: the console's pages in the manage group, the back row last, no
+    // workspace group; the account group and the status line stay.
+    const groups = inAdmin
+      ? `<section class="r-me-group" data-part="group" aria-label="${esc(M.groups.manage)}"><h2 class="r-me-label" data-part="group-label">${esc(M.groups.manage)}</h2>${A.items.map((n) => meRow(n)).join("")}<a class="r-me-row" data-part="back-row" data-id="back" href="#">${icon(A.back.icon)}<span class="r-ellipsis">${esc(A.back.label)}</span></a></section>`
+      : `${group("workspace")}${group("manage", admin)}`;
+    const body = `<div class="r-me" data-part="me-panel" data-role="${role}"${inAdmin ? ' data-context="admin"' : ""}><div class="r-me-head"><div class="r-me-account" data-part="account"><span class="r-avatar">${esc(M.account.initial)}</span><span class="r-ellipsis">${esc(M.account.name)}</span></div>${org}</div>${groups}<section class="r-me-group" data-part="group" aria-label="${esc(M.accountGroup)}"><h2 class="r-me-label" data-part="group-label">${esc(M.accountGroup)}</h2>${M.accountItems.map((n) => meRow(n)).join("")}</section><p class="r-me-system" data-part="system-status">${esc(M.system)}</p></div>`;
     return `<div class="r-screen" data-part="screen" data-auto>${topBar({ title: M.title })}<div class="r-ld-scroll">${body}</div>${bottomNav({ current: "me", badge: true })}</div>`;
   }
 

@@ -58,7 +58,7 @@
       // The nav badge (spec §6.13): placed from the icon, outside its top-right corner.
       const glyph =
         n.count !== undefined
-          ? `<span class="r-badged">${icon(n.icon)}<span class="r-nav-badge" data-part="rail-badge">${n.count}</span></span>`
+          ? `<span class="r-badged">${icon(n.icon)}<span class="r-nav-badge" data-part="rail-badge" data-rail="true">${n.count > 9 ? "9+" : n.count}</span></span>`
           : icon(n.icon);
       return `<a class="r-nav-item r-rail-item${extra}" href="#" aria-label="${esc(label)}"${current}${state(st)}>${glyph}</a>`;
     }
@@ -238,17 +238,20 @@
     // Search and the inbox: brand-row icon buttons (rail icons under the expand button).
     const inboxItem = F.NAV_FIXTURE.find((n) => n.place === "brand");
     const inboxLabel = inboxItem
-      ? inboxItem.count
-        ? `${inboxItem.label}，${inboxItem.count} 项待处理`
+      ? (o.inboxCount ?? inboxItem.count)
+        ? `${inboxItem.label}，${o.inboxCount ?? inboxItem.count} 项待处理`
         : inboxItem.label
       : "";
     // The rail's inbox takes the nav badge outside the icon's corner; the full brand row keeps
     // the inset badge (its icon buttons sit 2 apart, spec §6.13).
-    const inboxGlyph = !inboxItem?.count
+    // `inboxCount` overrides the sample count; the rail caps its badge at 9+ (spec §6.13).
+    const inboxCount = o.inboxCount ?? inboxItem?.count;
+    const railCount = inboxCount > 9 ? "9+" : inboxCount;
+    const inboxGlyph = !inboxCount
       ? icon("inbox")
       : rail
-        ? `<span class="r-badged">${icon("inbox")}<span class="r-nav-badge" data-part="inbox-badge">${inboxItem.count}</span></span>`
-        : `${icon("inbox")}<span class="r-rail-badge" data-part="inbox-badge">${inboxItem.count}</span>`;
+        ? `<span class="r-badged">${icon("inbox")}<span class="r-nav-badge" data-part="inbox-badge" data-rail="true">${railCount}</span></span>`
+        : `${icon("inbox")}<span class="r-rail-badge" data-part="inbox-badge">${inboxCount}</span>`;
     const tools = admin || setup
       ? ""
       : `<button class="r-icon-btn${rail ? " r-rail-item" : ""}" aria-label="${esc(C.search)} ${esc(C.searchShortcut)}">${icon("search")}</button>${
@@ -399,6 +402,11 @@
     // Loading (spec §5.3): the row stays, nothing to count, the buttons disabled.
     if (o.loading) {
       return `<div class="r-actionrow"><span class="r-actionrow-text"></span><button class="r-btn" data-variant="default" disabled>${esc(A.discard)}</button><button class="r-btn" data-variant="primary" disabled>${esc(A.save)}</button></div>`;
+    }
+    // Compact (spec §4.4): the unsaved line, the one secondary alone on its full-width line, the
+    // primary alone on the bottom line.
+    if (o.compact) {
+      return `<div class="r-actionrow" data-part="action-row" data-compact><span class="r-actionrow-text"><span class="r-dot" aria-hidden="true"></span> ${esc(A.unsaved)}</span><div class="r-actionrow-line"><button class="r-btn" data-variant="default" data-part="action-secondary">${esc(A.discard)}</button></div><div class="r-actionrow-line"><button class="r-btn" data-variant="primary" data-part="action-primary">${esc(A.save)}</button></div></div>`;
     }
     if (o.clean) {
       return `<div class="r-actionrow"><span class="r-actionrow-text">${esc(A.clean)}</span><button class="r-btn" data-variant="primary" disabled>${esc(A.save)}</button></div>`;
