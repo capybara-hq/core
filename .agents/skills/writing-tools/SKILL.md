@@ -140,28 +140,57 @@ fails closed.
   `ask.secret-file`, `ask.credential-link`, `ask.dynamic-arg` and `ask.sudo`
   (`isSessionGrantableRule`). Grants allow a line only when every ask hit is granted and nothing is
   unsure (`applySessionGrants`), and only in attended runs.
-- **Per-call sandbox escalation** (approval profiles design, "Per-call sandbox escalation",
-  2026-11-19). `Bash` takes `sandbox: "escalated"` plus a `justification` (1–500 characters),
-  foreground or background. `buildPermissionCandidate` makes it one `sandbox-escalation`
-  candidate (empty expansion, the justification, the exact call binding); the approver comes from
-  the profile (`approverForProfile`: Request approval the person, Approve for me the review model,
-  Full access none, within the Full access ceiling). Fixed denies and mandatory asks stay first; a
-  sensitive line keeps its consent in the same single ask (the reason states both); only `once`.
-  An approval issues a call grant bound to that call (never a session grant), admission gives that
-  command full execution under the restricted profile, and the next call is sandboxed again. No
-  ceiling, an unattended run or no justification (or one over 500 code points) is an actionable
-  refusal before any review. Every escalation ask keeps the escalation statement first (a review
-  model's or fallback reason is appended), quotes the justification as the agent's, and a
-  background start discloses that it keeps running outside the sandbox (`escalation.background`,
-  `maxSeconds`); IM cards build their lines from `escalation`. A call that asked for escalation
-  (`tool_call_started.permissionInput.sandbox`) runs escalated or is refused at admission
-  (`EscalationGrantMissingError`, `ESCALATION_GRANT_MISSING_TEXT`), never sandboxed silently. A
-  restricted `Bash` refusal or a sandbox signal (`network.blocked`, EPERM, a read-only bind,
-  Seatbelt's deny, the proxy's refusal; never a credential or auth failure) tells the model it may
-  retry escalated only where it is possible (`BuiltinCallContext.sandboxEscalation`). The record:
-  `approval_requested.command.escalation` / `workingRoot`, `permission_reviewed` with `scopeKind:
-  "sandbox-escalation"`, `tool_result.review.sandbox: "escalated"` (from the admitted scope only);
-  the schema change needs no `DriftReason`.
+- **Permission profiles choose only the approver** (approval-only profiles design, 2026-11-19).
+  The sandbox is a device setting, the same under every profile (writing-sandbox-providers); a
+  call inside the scope and the sandbox network runs under every profile. Candidate building
+  (`buildPermissionCandidate`) runs for every profile, Full access included, and a candidate is one
+  **crossing** (`crossingOfCandidate`, `PermissionCrossingKind`): `directory` (outside the scope),
+  `host` (a new host, only while the sandbox network is an allowlist; IP literals and loopback names
+  are never proposed) or `outside-sandbox` (the escalation below). `approverForCrossing`
+  (`sandbox/review/permission-candidate.ts`) decides: Request approval the person, Approve for me the
+  review model (the person when it is missing, unsure or failing; a model deny stays a deny), Full
+  access nobody. Two exceptions turn `none` into `review-model`: a **sub-agent's** escalation, and
+  an escalation carrying a **credential consent** (`ask.credential-*`, `ask.ssh`, `ask.secret-file`,
+  `isCredentialConsentRule`); the review input says neutrally why it sees a Full access call. The
+  fixed denies (`deny.*` rules, platform and org denies, protected paths) come first under every
+  profile, and a directory proposal at a protected location is `unsupported` before review, naming
+  the escalation. A crossing beyond a ceiling is unavailable with a text naming the layer (the host
+  rules: `hostGrantRefusal`).
+- **Full access auto-grants are recorded exactly once.** For approver `none`, `decidePermission`
+  allows with `decisionSource: "full-access"` and the call goes on to grant issuance
+  (`sandbox/permission-auto-grants.ts`): one fenced transaction under the shared authority lock
+  writes the `permission_reviewed` event (outcome allow, the `crossing`), the audit row
+  `permission.crossing_auto_granted` with the kind, and the grant with source `full-access`
+  (`PermissionGrantDecision`, migration `0164`); the binding hash makes it exactly-once across
+  replicas, and an exact retry returns the same grant. Issuance re-reads the ceilings: an
+  `outside-sandbox` grant needs `outsideSandboxCeiling`, a `host` grant `hostGrantCeiling`;
+  unattended, non-owner and sub-agent auto-escalations are refused. Sensitive consents an auto-grant
+  skipped are recorded on it (`sensitive`); a skipped consent with no crossing is recorded as
+  crossing `sensitive`. `ReviewRecord.crossing` carries the kind on `tool_result.review`.
+- **Per-call sandbox escalation.** `Bash` takes `sandbox: "escalated"` plus a `justification`
+  (1–500 characters), foreground or background. `buildPermissionCandidate` makes it one
+  `sandbox-escalation` candidate (empty expansion, the justification, the exact call binding),
+  decided as above within the device's outside-sandbox ceiling. Fixed denies and mandatory asks stay
+  first; a sensitive line keeps its consent in the same single ask (the reason states both); only
+  `once`. An approval issues a call grant bound to that call (never a session grant), admission gives
+  that command the escalated pair, and the next call is sandboxed again. Running outside not allowed
+  (`escalationRefusal`), a cloud device, an unattended run or no justification (or one over 500 code
+  points) is an actionable refusal before any review. Every escalation ask keeps the escalation
+  statement first (a review model's or fallback reason is appended), quotes the justification as
+  the agent's, and a background start discloses that it keeps running outside the sandbox
+  (`escalation.background`, `maxSeconds`); IM cards build their lines from `escalation`. A call that
+  asked for escalation (`tool_call_started.permissionInput.sandbox`) runs escalated or is refused at
+  admission (`EscalationGrantMissingError`, `ESCALATION_GRANT_MISSING_TEXT`), never sandboxed
+  silently. A restricted `Bash` refusal or a sandbox signal (`network.blocked`, EPERM, a read-only
+  bind, Seatbelt's deny, the proxy's refusal; never a
+  credential or auth failure) tells the model it may retry escalated only where it is possible
+  (`BuiltinCallContext.sandboxEscalation`). The `Bash` description explains proxy-aware traffic
+  (plain `ssh` does not connect; `GIT_SSH_COMMAND` with a SOCKS `ProxyCommand` does) and the
+  escalation. The record: `approval_requested.command.escalation` / `workingRoot`,
+  `permission_reviewed` with `scopeKind: "sandbox-escalation"`, `tool_result.review.sandbox:
+  "escalated"` (from the admitted scope only); the schema change needs no `DriftReason`.
+- **Network asks** offer a run grant only: "always allow" for a host is refused (a local owner's
+  allowlist widens only on the machine).
 - **Code it cannot read.** Inline interpreter code, stdin or URL scripts, fetched packages and files
   the conversation wrote are `unsure.interpreter`; `review-guarantees.test.ts` (acts × spellings that
   must never be `allow`) is the authority over the ordered-hit corpus.
@@ -313,8 +342,8 @@ the same transaction as the business rows.
   `The device's instance was restarted; files are kept, running processes and /tmp are gone.` A sandbox call copies no attachment: `FetchAttachment` is
   the only way one enters the device, writing one file under the workspace's `attachments/<conversation>/` (the first 12 hex digits of the root
   conversation id) and returning the same path for the same file every call; the other tools' descriptions say so and name the tool.
-- Default policy is allow; the **command review** above is the boundary in auto mode (and in
-  sandbox mode the sandbox isolates the host, D5). When the org setting `sandboxToolPolicy: "ask"`
+- Default policy is allow; the device sandbox holds every call under every profile, and the
+  **command review** above judges commands and writes before they run. When the org setting `sandboxToolPolicy: "ask"`
   is set, bash / write / edit / deliver need approval, the setting is read **at the moment of
   execution**, and the read-only read / glob / grep are unaffected. The file tools reach any
   absolute path on a local device in auto mode (`checkToolPath`).

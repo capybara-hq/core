@@ -80,7 +80,8 @@ export interface ReviewVerdict {
   rule: string | null;
   /**
    * The crossing a Full access allow granted by itself (approval-only profiles design): the
-   * candidate's kind, or `sensitive` when it skipped a sensitive-command consent. Absent otherwise.
+   * candidate's kind, or `sensitive` when it skipped a sensitive-command consent; also `sensitive`
+   * when the review model allowed a sensitive command. Absent otherwise.
    */
   crossing?: PermissionCrossingKind;
   /**
@@ -443,6 +444,11 @@ export class CommandReviewService implements CommandReview {
       reason: answer.reason,
       rule: null,
       approver,
+      // a sensitive command the review model allowed is recorded as that crossing, as a Full
+      // access skip is
+      ...(answer.decision === "allow" && !candidate && consent
+        ? { crossing: "sensitive" as const }
+        : {}),
     };
   }
 
