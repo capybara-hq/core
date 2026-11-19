@@ -1,13 +1,26 @@
+// The server-safe subpath (the main entry holds client modules): the manifest's colors cannot
+// read a CSS variable, and apps/web writes no color literal.
+import { PAGE_BACKGROUND } from "@capybara-hq/design/theme";
 import type { Metadata, MetadataRoute } from "next";
-// The design tokens' source of truth (`pnpm gen:tokens` renders the CSS from it): the manifest's
-// colors cannot read a CSS variable, and apps/web writes no color literal. Kept out of
-// `platform-icons.ts`, which the settings page loads in the browser.
-import tokens from "../../../../docs/design/tokens.json";
 import type { PlatformMeta } from "./app-auth";
 import { DEFAULT_PLATFORM_ICONS, DEFAULT_PLATFORM_NAME } from "./platform-icons";
 
 /** The PWA's theme and background color: the built-in theme's dark page background. */
-const MANIFEST_COLOR = tokens.color.bg.dark;
+const MANIFEST_COLOR = PAGE_BACKGROUND.dark;
+
+/**
+ * The meta's icon URLs, each null for the web's default. A meta answer without `icons` (a rolling
+ * deploy may reach a kernel replica that does not send it yet) reads as no upload, never a throw:
+ * the root layout's metadata runs for every page.
+ */
+function iconsOf(meta: PlatformMeta | null): PlatformMeta["icons"] {
+  const icons = meta?.icons as Partial<PlatformMeta["icons"]> | undefined;
+  return {
+    app: icons?.app ?? null,
+    maskable: icons?.maskable ?? null,
+    favicon: icons?.favicon ?? null,
+  };
+}
 
 /**
  * The web app manifest (mobile layout spec §10.2): the deployment's name ("Capybara" unset), its
@@ -17,8 +30,7 @@ const MANIFEST_COLOR = tokens.color.bg.dark;
  */
 export function webManifest(meta: PlatformMeta | null): MetadataRoute.Manifest {
   const name = meta?.name ?? DEFAULT_PLATFORM_NAME;
-  const app = meta?.icons.app ?? null;
-  const maskable = meta?.icons.maskable ?? null;
+  const { app, maskable } = iconsOf(meta);
   const png = { sizes: "512x512", type: "image/png" } as const;
   const icons: MetadataRoute.Manifest["icons"] = [
     { src: app ?? DEFAULT_PLATFORM_ICONS.app, ...png, purpose: "any" },
@@ -44,10 +56,9 @@ export function webManifest(meta: PlatformMeta | null): MetadataRoute.Manifest {
  * favicon replaces `icon` in the layouts below (`lib/server/theme.ts`).
  */
 export function platformIconsMetadata(meta: PlatformMeta | null): NonNullable<Metadata["icons"]> {
+  const { app, favicon } = iconsOf(meta);
   return {
-    icon: [{ url: meta?.icons.favicon ?? DEFAULT_PLATFORM_ICONS.favicon, type: "image/svg+xml" }],
-    apple: [
-      { url: meta?.icons.app ?? DEFAULT_PLATFORM_ICONS.app, sizes: "512x512", type: "image/png" },
-    ],
+    icon: [{ url: favicon ?? DEFAULT_PLATFORM_ICONS.favicon, type: "image/svg+xml" }],
+    apple: [{ url: app ?? DEFAULT_PLATFORM_ICONS.app, sizes: "512x512", type: "image/png" }],
   };
 }

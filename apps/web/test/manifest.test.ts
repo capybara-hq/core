@@ -8,12 +8,22 @@ import type { PlatformMeta } from "../src/lib/app-auth";
 /** What the mocked `getPlatformMeta` answers (set per test). */
 let readMeta: () => Promise<PlatformMeta>;
 vi.mock("../src/lib/server/register", () => ({}));
+// The root layout's metadata: its meta read and its copy.
+vi.mock("../src/lib/server/query", () => ({
+  serverQueryClient: () => ({ fetchQuery: () => readMeta() }),
+}));
+vi.mock("next-intl/server", () => ({
+  getTranslations: async () => (k: string) =>
+    ({ title: "Capybara", description: "Agent platform" })[k] ?? k,
+  getLocale: async () => "en",
+}));
 vi.mock("../src/lib/app-auth", async (actual) => ({
   ...(await actual<typeof import("../src/lib/app-auth")>()),
   getPlatformMeta: () => readMeta(),
 }));
 
 const { default: manifest } = await import("../src/app/manifest");
+const { generateMetadata } = await import("../src/app/layout");
 const { DEFAULT_PLATFORM_ICONS } = await import("../src/lib/platform-icons");
 const { platformIconsMetadata, webManifest } = await import("../src/lib/web-manifest");
 
@@ -30,6 +40,8 @@ const CUSTOM: PlatformMeta = {
   icons: { app: APP, maskable: MASKABLE, favicon: FAVICON },
 };
 const DEFAULT: PlatformMeta = { name: null, icons: { app: null, maskable: null, favicon: null } };
+/** A meta answer without `icons` (a kernel replica that does not send it yet). */
+const NO_ICONS = { name: "X" } as unknown as PlatformMeta;
 
 beforeEach(() => {
   readMeta = async () => DEFAULT;
@@ -106,5 +118,45 @@ describe("platformIconsMetadata", () => {
       expect([png.readUInt32BE(16), png.readUInt32BE(20)], path).toEqual([512, 512]);
     }
     expect(DEFAULT_PLATFORM_ICONS.favicon).toBe("/icon.svg");
+  });
+});
+
+describe("a meta answer without icons", () => {
+  it("the manifest keeps the name and uses the default icons", async () => {
+    readMeta = async () => NO_ICONS;
+    const m = await manifest();
+    expect(m.name).toBe("X");
+    expect(m.icons?.map((i) => i.src)).toEqual(["/icon-512.png", "/icon-maskable-512.png"]);
+  });
+
+  it("the root layout's metadata keeps the name and uses the default icons", async () => {
+    readMeta = async () => NO_ICONS;
+    const md = await generateMetadata();
+    expect(md.title).toBe("X");
+    expect(md.appleWebApp).toMatchObject({ title: "X" });
+    expect(md.icons).toEqual(platformIconsMetadata(DEFAULT));
+  });
+});
+
+describe("the root layout's metadata", () => {
+  it("names the platform and points the icons at its uploads", async () => {
+    readMeta = async () => CUSTOM;
+    const md = await generateMetadata();
+    expect(md.title).toBe("Example Corp");
+    expect(md.appleWebApp).toEqual({
+      capable: true,
+      title: "Example Corp",
+      statusBarStyle: "black-translucent",
+    });
+    expect(md.icons).toEqual(platformIconsMetadata(CUSTOM));
+  });
+
+  it("an unreachable kernel: the Capybara title and the default icons", async () => {
+    readMeta = async () => {
+      throw new Error("down");
+    };
+    const md = await generateMetadata();
+    expect(md.title).toBe("Capybara");
+    expect(md.icons).toEqual(platformIconsMetadata(DEFAULT));
   });
 });

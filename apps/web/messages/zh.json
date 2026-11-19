@@ -573,7 +573,7 @@
     "platform_icon": {
       "invalid_type": "文件类型不对：应用图标和自适应图标必须是 PNG，网站图标必须是 SVG。",
       "invalid_size": "PNG 必须正好是 512 × 512 像素。",
-      "too_large": "文件太大：最多 1 MB（SVG 网站图标最多 128 KB）。",
+      "too_large": "文件太大：最多 1 MiB（SVG 网站图标最多 128 KiB）。",
       "storage_unavailable": "对象存储不可用，无法保存图标。请稍后重试。",
       "not_found": "这个图标尚未上传。"
     }
@@ -6419,7 +6419,7 @@
     },
     "favicon": {
       "title": "网站图标",
-      "hint": "SVG，不超过 128 KB"
+      "hint": "SVG，不超过 128 KiB"
     },
     "default": "默认",
     "custom": "已上传",

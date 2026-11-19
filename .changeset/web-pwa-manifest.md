@@ -1,5 +1,6 @@
 ---
 "@capybara-hq/web": minor
+"@capybara-hq/design": patch
 "@capybara-hq/capybara": patch
 ---
 
@@ -10,3 +11,6 @@ apple-touch-icon follow them. A signed-out browser may read the manifest and the
 icons (the sign-in proxy skips exactly those names). The super admin's deployment settings gain
 应用图标 / App icon: upload the app icon, its maskable variant and the SVG favicon, or restore the
 default; the `/api` proxy admits 2 MiB for the icon upload.
+
+The design system exports `PAGE_BACKGROUND` (the page background per theme) for what cannot read a
+CSS variable.

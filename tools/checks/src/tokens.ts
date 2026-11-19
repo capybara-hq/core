@@ -324,7 +324,10 @@ const WIDTH = 100;
 const key = (k: string) => (/^[A-Za-z_$][A-Za-z0-9_$]*$/.test(k) ? k : JSON.stringify(k));
 const value = (v: SizeStep) => (Array.isArray(v) ? `[${v.join(", ")}]` : String(v));
 
-/** The generated tokens.ts (biome-formatted; carries no color values). */
+/**
+ * The generated tokens.ts (biome-formatted): names and sizes, and of the colors only the page
+ * background, for what cannot read a CSS variable (the PWA manifest's colors).
+ */
 export function renderTokensTs(t: DesignTokens): string {
   const names = [...Object.keys(t.color), ...Object.keys(t.shadow)];
   const oneLine = `export const TOKEN_NAMES = [${names.map((n) => JSON.stringify(n)).join(", ")}] as const;`;
@@ -354,6 +357,9 @@ export function renderTokensTs(t: DesignTokens): string {
     "export const SIZES = {",
     ...groups,
     "} as const;",
+    "",
+    "/** The page background (`bg`) per theme, for what cannot read `--cb-bg` (the PWA manifest). */",
+    `export const PAGE_BACKGROUND = { dark: ${JSON.stringify(t.color.bg?.dark)}, light: ${JSON.stringify(t.color.bg?.light)} } as const;`,
     "",
   ].join("\n");
 }

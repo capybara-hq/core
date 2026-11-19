@@ -573,7 +573,7 @@
     "platform_icon": {
       "invalid_type": "The file type is wrong: the app and maskable icons must be PNG, the favicon SVG.",
       "invalid_size": "The PNG must be exactly 512 × 512 pixels.",
-      "too_large": "The file is too large: at most 1 MB (an SVG favicon at most 128 KB).",
+      "too_large": "The file is too large: at most 1 MiB (an SVG favicon at most 128 KiB).",
       "storage_unavailable": "Object storage is unavailable, so the icon cannot be saved. Try again later.",
       "not_found": "This icon has not been uploaded."
     }
@@ -6431,7 +6431,7 @@
     },
     "favicon": {
       "title": "Favicon",
-      "hint": "SVG, at most 128 KB"
+      "hint": "SVG, at most 128 KiB"
     },
     "default": "Default",
     "custom": "Uploaded",
