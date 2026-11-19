@@ -216,7 +216,7 @@ export function InboxPage({
     <>
       <TemplateHead header={loading ? loadingHeader(header) : header} statsInHead />
       <div className="cb-inbox-frame" data-part="inbox-frame">
-        <div className="cb-inbox-content" data-part="content">
+        <div className="cb-inbox-content" data-part="content" data-width="content">
           <ListDetail
             list={
               <div className="cb-inbox-rail" data-part="rail">
