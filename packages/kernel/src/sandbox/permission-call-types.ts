@@ -29,6 +29,22 @@ export type PermissionGrantDecision =
   | { source: "human"; approvalId: string; decidedBy: string }
   | { source: "review-model"; reviewEventSeq: number; decidedBy: null };
 /**
+ * Full access granted the crossing within the device's ceilings (approval-only profiles design):
+ * recorded by its `permission_reviewed` event and an audit row. W0 interface stub: the review and
+ * grants task (T6) joins it to {@link PermissionGrantDecision} together with migration `0164` (the
+ * grant `source` check) and the `kernel-schema.ts` column type; until then issuance rejects it.
+ */
+export type PermissionFullAccessGrantDecision = {
+  source: "full-access";
+  reviewEventSeq: number;
+  decidedBy: null;
+};
+/**
+ * The kind of one boundary crossing, as `ReviewRecord.crossing` records it: a directory outside the
+ * scope, a new host on an allowlist, running one call outside the sandbox, or a sensitive command.
+ */
+export type PermissionCrossingKind = "directory" | "host" | "outside-sandbox" | "sensitive";
+/**
  * What a call grant authorizes: an exact directory and host expansion of the restricted scope, or
  * one Bash call run outside the OS sandbox (per-call sandbox escalation: full execution for that
  * call only, within the device's Full access ceiling).

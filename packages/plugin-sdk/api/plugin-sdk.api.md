@@ -9,6 +9,9 @@ import { z } from 'zod';
 import type { ZodTypeAny } from 'zod';
 
 // @public
+export type AddressClass = "public" | "private" | "cgnat" | "ula" | "link-local" | "metadata" | "loopback" | "multicast" | "broadcast" | "unspecified" | "nat64" | "reserved";
+
+// @public
 export const AGENT_TEMPLATE_FIELDS: readonly AgentTemplateField[];
 
 // @public
@@ -443,6 +446,9 @@ export function checkThemeReadability(_scheme: ThemeScheme, merged: MergedScheme
 
 // @public
 export function checkWoff2(bytes: Uint8Array): string | undefined;
+
+// @public
+export function classifyAddress(ip: string): AddressClass;
 
 // @public
 export const CLIENT_API_VERSION = 1;
@@ -941,6 +947,9 @@ export interface DeviceLocalPolicySummary {
 }
 
 // @public
+export type DeviceNetworkMode = "open" | "allowlist";
+
+// @public
 export type DeviceOp = "create" | "exec" | "readFile" | "writeFile" | "stat" | "killTagged" | "killAll" | "stop" | "policy" | "policyStatus" | "list" | "scan";
 
 // @public
@@ -976,6 +985,25 @@ export interface DeviceOwnerCeiling {
 export interface DeviceOwnerCeilingNarrowing {
     readonly fullAccess?: false;
     readonly restrictedProjectReach?: "workspace";
+}
+
+// @public
+export interface DeviceOwnerCeilingNarrowingV3 {
+    readonly network?: "allowlist";
+    readonly outsideSandbox?: false;
+    readonly removeAllowedDomains?: readonly string[];
+    readonly restrictedProjectReach?: "workspace";
+}
+
+// @public
+export interface DeviceOwnerCeilingV3 {
+    readonly allowedDomains: readonly string[];
+    readonly network: DeviceNetworkMode;
+    readonly outsideSandbox: boolean;
+    readonly restrictedProjectReach: "workspace" | "os-user";
+    readonly revision: string;
+    readonly sequence: number;
+    readonly version: 3;
 }
 
 // @public
@@ -2626,6 +2654,9 @@ export interface ObjectStore {
 export function oklabL(hex: string): number;
 
 // @public
+export const OPEN_PUBLIC_DENIED_CLASSES: readonly AddressClass[];
+
+// @public
 export type OrgAccess = "readonly" | "override";
 
 // @public
@@ -3230,6 +3261,9 @@ export interface SandboxBackground {
 }
 
 // @public
+export type SandboxBoundary = "operation" | "instance";
+
+// @public
 export type SandboxBrowse = Pick<SandboxOperation, "stat"> & Required<Pick<SandboxOperation, "list" | "scan">>;
 
 // @public
@@ -3304,6 +3338,14 @@ export type SandboxNetworkScope = {
 } | {
     readonly kind: "allowlist";
     readonly hosts: readonly string[];
+}
+/**
+* The public internet, decided on the resolved address against `AddressClass`
+* (`network-classes.ts`): every class in `OPEN_PUBLIC_DENIED_CLASSES` stays closed. W0 stub:
+* the parser does not accept it yet.
+*/
+| {
+    readonly kind: "open-public";
 } | {
     readonly kind: "environment";
 };
@@ -3378,6 +3420,26 @@ export interface SandboxPermissionSupport {
     } | null;
     readonly unavailableReason?: string;
     readonly version: 1;
+}
+
+// @public
+export interface SandboxPermissionSupportV2 {
+    readonly background: boolean;
+    readonly boundary: SandboxBoundary;
+    readonly network: {
+        readonly openPublic: boolean;
+        readonly allowlist: boolean;
+        readonly perOperationHosts: boolean;
+    };
+    readonly outsideSandbox: boolean;
+    readonly restricted: {
+        readonly filesystem: true;
+        readonly network: true;
+        readonly native: true;
+        readonly concurrentScopes: true;
+    } | null;
+    readonly unavailableReason?: string;
+    readonly version: 2;
 }
 
 // @public

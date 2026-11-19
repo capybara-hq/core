@@ -109,6 +109,12 @@ export type SandboxFileScope =
 export type SandboxNetworkScope =
   | { readonly kind: "none" }
   | { readonly kind: "allowlist"; readonly hosts: readonly string[] }
+  /**
+   * The public internet, decided on the resolved address against `AddressClass`
+   * (`network-classes.ts`): every class in `OPEN_PUBLIC_DENIED_CLASSES` stays closed. W0 stub:
+   * the parser does not accept it yet.
+   */
+  | { readonly kind: "open-public" }
   | { readonly kind: "environment" };
 
 /** An operation locator for idempotent admission and revocation, never a credential. */
@@ -145,6 +151,39 @@ export interface SandboxPermissionSupport {
     readonly concurrentScopes: true;
   } | null;
   readonly fullAccess: boolean;
+  readonly background: boolean;
+  readonly unavailableReason?: string;
+}
+
+/**
+ * Where a provider's sandbox boundary lies: around each operation (the OS sandbox of a local device,
+ * the Linux per-operation runtime) or around the whole instance (a cloud container or microVM).
+ */
+export type SandboxBoundary = "operation" | "instance";
+
+/**
+ * Runtime support, version 2 (approval-only profiles design, "SDK and protocol"). `boundary:
+ * "instance"` with `restricted: null` is a supported device whose scope is the whole instance.
+ * `outsideSandbox` says whether a call can run outside the sandbox (an escalated call).
+ *
+ * W0 interface stub: replaces {@link SandboxPermissionSupport} at the protocol 4 cutover, which then
+ * takes this name.
+ */
+export interface SandboxPermissionSupportV2 {
+  readonly version: 2;
+  readonly boundary: SandboxBoundary;
+  readonly restricted: {
+    readonly filesystem: true;
+    readonly network: true;
+    readonly native: true;
+    readonly concurrentScopes: true;
+  } | null;
+  readonly network: {
+    readonly openPublic: boolean;
+    readonly allowlist: boolean;
+    readonly perOperationHosts: boolean;
+  };
+  readonly outsideSandbox: boolean;
   readonly background: boolean;
   readonly unavailableReason?: string;
 }

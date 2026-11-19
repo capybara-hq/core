@@ -3718,6 +3718,7 @@
       "tool_unmatched": "A tool call had no recorded result",
       "subagent_changed": "A sub-agent's definition changed since the recording",
       "permission_profile_changed": "The recorded permission context cannot be reproduced from the snapshot",
+      "device_sandbox_changed": "The device sandbox changed between runs",
       "model_switched": "The candidate model replaces a model switch made in the conversation"
     },
     "tabs": {

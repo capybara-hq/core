@@ -918,6 +918,38 @@ export interface DeviceOwnerCeiling {
   readonly fullAccess: boolean;
   readonly restrictedAllowedDomains: readonly string[];
 }
+/** The sandbox network of a device: the open public internet or an allowlist. */
+export type DeviceNetworkMode = "open" | "allowlist";
+/**
+ * The owner ceiling of protocol 4 (approval-only profiles design, "Settings model"): the device
+ * sandbox for every profile. `outsideSandbox` is whether a call may be granted escalation outside
+ * the sandbox; `network` and `allowedDomains` are the sandbox network.
+ *
+ * W0 interface stub: replaces {@link DeviceOwnerCeiling} at the protocol 4 cutover, which then takes
+ * this name.
+ */
+export interface DeviceOwnerCeilingV3 {
+  readonly version: 3;
+  readonly sequence: number;
+  readonly revision: string;
+  readonly outsideSandbox: boolean;
+  readonly network: DeviceNetworkMode;
+  readonly allowedDomains: readonly string[];
+  readonly restrictedProjectReach: "workspace" | "os-user";
+}
+/**
+ * The narrowing of protocol 4: the kernel may switch the network to `allowlist`, remove hosts, turn
+ * `outsideSandbox` off or narrow the project reach. Never a widening.
+ *
+ * W0 interface stub: replaces {@link DeviceOwnerCeilingNarrowing} at the protocol 4 cutover.
+ */
+export interface DeviceOwnerCeilingNarrowingV3 {
+  readonly outsideSandbox?: false;
+  readonly network?: "allowlist";
+  /** Hosts to remove from `allowedDomains`; a host not on the list is ignored. */
+  readonly removeAllowedDomains?: readonly string[];
+  readonly restrictedProjectReach?: "workspace";
+}
 /**
  * The only owner-ceiling change the kernel may ask of a machine (B2): narrowing. Widening is decided
  * on the machine by its owner (`capybara-device ceiling set`), never over the wire.

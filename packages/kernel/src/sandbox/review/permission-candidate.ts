@@ -13,6 +13,7 @@ import { coversHost } from "../modes.js";
 import type {
   PermissionCandidate,
   PermissionCandidateResult,
+  PermissionCrossingKind,
   PermissionEscalation,
   PermissionExpansion,
   PermissionReviewSnapshot,
@@ -157,6 +158,19 @@ export const approverForProfile = (profile: PermissionProfile): PermissionApprov
     : profile === "approve-for-me"
       ? "review-model"
       : "none";
+/**
+ * Who decides one crossing (approval-only profiles design, "Profiles"): {@link approverForProfile},
+ * except that a sub-agent's `outside-sandbox` escalation is never auto-granted (`none` becomes
+ * `review-model`). W0 interface stub: the review and grants task (T6) implements and wires it.
+ */
+export function approverForCrossing(input: {
+  profile: PermissionProfile;
+  crossing: PermissionCrossingKind;
+  subAgent: boolean;
+}): PermissionApprover {
+  void input;
+  throw new Error("approverForCrossing: not implemented in W0");
+}
 /** The paths a local device never opens to restricted work, relative to `~`. */
 const OWNER_DENIED_PATHS = [...DEVICE_DENIED_SECRET_PATHS, DEVICE_DEFAULT_STATE_PATH];
 /**

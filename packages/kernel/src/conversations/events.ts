@@ -135,6 +135,33 @@ const PermissionScopeSchema = z
   })
   .strict();
 
+/**
+ * The `sandbox` block of permission context version 2 (approval-only profiles design, "Replay and
+ * permission context"): the device sandbox, the same under every profile. W0 interface stub: the
+ * replay context task (T4) builds version 2 on it; nothing parses it yet.
+ */
+export const PermissionContextSandboxSchema = z
+  .object({
+    boundary: z.enum(["operation", "instance"]),
+    location: z.enum(["local", "cloud"]),
+    workingRoot: z.string().min(1).max(4096),
+    network: z
+      .object({
+        kind: z.enum(["none", "allowlist", "open-public"]),
+        hostsCount: z.number().int().nonnegative().max(1000),
+      })
+      .strict(),
+    outsideSandbox: z.boolean(),
+    outerNetwork: z.discriminatedUnion("kind", [
+      z.object({ kind: z.literal("host-environment") }).strict(),
+      z.object({ kind: z.literal("none") }).strict(),
+      z.object({ kind: z.literal("open-public") }).strict(),
+      z.object({ kind: z.literal("allowlist"), hosts: PermissionHosts }).strict(),
+    ]),
+  })
+  .strict();
+export type PermissionContextSandbox = z.infer<typeof PermissionContextSandboxSchema>;
+
 /** Complete recorded facts, never a grant or a requested-but-unverified scope. */
 export const PermissionContextV1Schema = z
   .object({
@@ -375,6 +402,11 @@ export const ReviewRecordSchema = z
       .optional(),
     /** The call was allowed to run outside the OS sandbox (a per-call escalation). */
     sandbox: z.literal("escalated").optional(),
+    /**
+     * The crossing this review decided (approval-only profiles design). W0 interface stub: nothing
+     * writes it yet; the replay context task (T4) and the review task (T6) fill it.
+     */
+    crossing: z.enum(["directory", "host", "outside-sandbox", "sensitive"]).optional(),
   })
   .strict();
 

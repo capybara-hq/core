@@ -107,6 +107,12 @@ export type DriftReason =
   | "subagent_changed"
   /** Original bounded permission contributions or their recorded locator/hash differ. */
   | "permission_profile_changed"
+  /**
+   * Approval-only profiles: the recorded permission context's `sandbox` block differs from the
+   * previous one (the device sandbox changed between runs). W0 interface stub: the replay context
+   * task (T4) emits it.
+   */
+  | "device_sandbox_changed"
   | "params_changed"
   /**
    * UI refresh B: a non-baseline reconstruction whose run used a person's mid-conversation model
@@ -131,6 +137,7 @@ const DRIFT_ORDER: readonly DriftReason[] = [
   "definition_missing",
   "subagent_changed",
   "permission_profile_changed",
+  "device_sandbox_changed",
   "params_changed",
   "model_switched",
   "media_missing",
