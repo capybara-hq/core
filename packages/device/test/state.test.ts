@@ -16,6 +16,7 @@ import {
   convertPolicyFile,
   credentialPath,
   DEFAULT_POLICY,
+  MISSING_POLICY_OWNER_CEILING,
   ownerCeilingOfMode,
   readCredential,
   readPolicy,
@@ -44,6 +45,28 @@ beforeEach(() => {
 afterEach(() => rmSync(dir, { recursive: true, force: true }));
 
 describe("state", () => {
+  it("an absent policy.json reads as the closed allowlist, and start's conversion writes it", () => {
+    const read = readPolicyFile(dir);
+    expect(read.policy.ownerCeiling).toEqual(MISSING_POLICY_OWNER_CEILING);
+    expect(read.policy.ownerCeiling).toEqual({
+      outsideSandbox: false,
+      network: "allowlist",
+      restrictedProjectReach: "workspace",
+    });
+    expect(read.policy.allowedDomains).toEqual([]);
+    expect(readPolicy(dir).ownerCeiling.network).toBe("allowlist");
+    expect(convertPolicyFile(dir)).toBe("created");
+    const written = JSON.parse(readFileSync(join(dir, "policy.json"), "utf8"));
+    expect(written).toMatchObject({
+      version: 3,
+      allowedDomains: [],
+      ownerCeiling: MISSING_POLICY_OWNER_CEILING,
+    });
+    expect(convertPolicyFile(dir)).toBe("current");
+    // a new setup (login) still writes the open default
+    expect(DEFAULT_POLICY.ownerCeiling.network).toBe("open");
+  });
+
   it("stateDir follows XDG_CONFIG_HOME, else ~/.config", () => {
     expect(stateDir({ XDG_CONFIG_HOME: "/x" }, "/h")).toBe("/x/capybara-device");
     expect(stateDir({}, "/h")).toBe("/h/.config/capybara-device");
@@ -113,8 +136,12 @@ describe("state", () => {
       allowCredentials: [],
       cpu: null,
       memoryMb: null,
-      // a new install: no running outside the sandbox, the open network, the workspace reach
-      ownerCeiling: { outsideSandbox: false, network: "open", restrictedProjectReach: "workspace" },
+      // no file: no running outside the sandbox, the allowlist network with no host
+      ownerCeiling: {
+        outsideSandbox: false,
+        network: "allowlist",
+        restrictedProjectReach: "workspace",
+      },
       keepAwake: "while-busy",
     });
     writePolicy(dir, {

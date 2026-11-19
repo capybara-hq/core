@@ -141,8 +141,12 @@ the publication barrier).
 **Cloud devices.** Migrations `0165` and `0167` add `devices.network_mode` / `network_hosts` and copy
 an allowlist outer network snapshot into them (an empty or unreadable list ran closed and becomes
 `network_mode: none`). A cloud device that followed its org on the allowlist (for example under
-`sandbox.limits.orgHosts: within`) keeps the allowlist. `owner_full_access` is no longer read. A
-cloud device has no outside of its sandbox: an escalation there is refused. `PATCH …/devices/:id`
+`sandbox.limits.orgHosts: within`) keeps the allowlist. A cloud device has no outside of its
+sandbox: an escalation there is refused, and `owner_full_access` no longer decides anything a cloud
+device may do. The column is still read by the one-time conversions (the B1 snapshot, the
+publication's version conversion) and for the kernel-only mode recorded with an instance's limits;
+that mode never decides a provider update, so toggling the platform's or an org's
+`outsideSandbox` updates no running cloud instance. A later release drops the column. `PATCH …/devices/:id`
 no longer takes `mode` or `ownerCeiling` (the codes `device.mode_on_device`,
 `device.mode_requires_session`, `device.full_access_not_allowed`,
 `device.owner_ceiling_confirmation_required` and `device.permission_not_migrated` are gone); it
@@ -152,7 +156,11 @@ Platform tool (`devices.set-network`) may only narrow.
 **Local devices.** `capybara-device` converts its `policy.json` once on start, never wider:
 Full access allowed becomes outside-the-sandbox allowed with the open network; denied keeps the
 allowlist with its old `allowedDomains`, and `start` prints `capybara-device ceiling set --network
-open` to open it. New installs get outside-the-sandbox off and the open network. The CLI is now
+open` to open it. A device set up before rc.58 may have no `policy.json` at all (its `login` wrote
+none), and such a device ran with no reachable host: on its first start with a credential the
+program writes `{ outsideSandbox: false, network: "allowlist", allowedDomains: [] }` and prints how
+to open it (`capybara-device ceiling set --network open`); a missing file never reads as the open
+network. New installs (`login`) get outside-the-sandbox off and the open network. The CLI is now
 `capybara-device ceiling set [--outside-sandbox on|off] [--network open|allowlist]
 [--project-reach workspace|os-user]`; `--full-access` is gone. The device page only narrows a
 local device: `POST …/devices/:id/policy` takes only `remove` and `ownerCeiling` narrowings (`add`
@@ -171,6 +179,18 @@ and `mode` are gone), and a `network` PATCH on a local device is refused with
    bootstrap manifest of the release pins matching versions: run `capybara bootstrap` before rolling
    the replicas.
 3. Upgrade every `capybara-device` on the people's machines.
+
+**Running Docker cloud containers keep their old network until their next suspend or resume.** A
+container started before the upgrade keeps the network and egress proxy it was created with; the
+new sandbox network (the open public network with private ranges closed, or the device's
+allowlist) applies when the instance is next resumed or created. Restart cloud devices (suspend and
+resume, or reset their files) after the upgrade so every container runs the new network.
+
+**Offline or pinned-image deployments must rebuild the sandbox and egress images.** The released
+`sandbox-docker` expects the sandbox and egress proxy images of the same release. A deployment that
+builds them locally (`docker compose -f docker/compose.dev.yaml --profile sandbox build`), mirrors
+them, or pins their tags must rebuild or re-pull both before rolling the replicas: images of an
+earlier release do not carry this release's sandbox network rules.
 
 **Full access consent resets once.** The consent fingerprint changed, and a stored owner report
 from a protocol 3 device cannot be read, so every conversation on Full access reads as Approve for

@@ -26,7 +26,12 @@ import { logout } from "../src/commands/logout.js";
 
 import { pidPath, writePid } from "../src/pid.js";
 import { PolicyStore } from "../src/policy-store.js";
-import { policyLockPath, policyPath, readPolicy } from "../src/state.js";
+import {
+  MISSING_POLICY_OWNER_CEILING,
+  policyLockPath,
+  policyPath,
+  readPolicy,
+} from "../src/state.js";
 
 /** The owner ceiling a new setup writes (B-14). */
 /** A new install's owner ceiling: in the sandbox only, the open network, the workspace reach. */
@@ -343,10 +348,10 @@ describe("login", () => {
     tokenAnswers = [granted];
     expect(await run(["login", "--url", base])).toBe(0);
     expect(err.join("\n")).toContain("Cannot set the local policy");
-    // the program's default without a file is the same ceiling
+    // no file: every reader sees the closed missing-file ceiling (start writes it), never open
     expect(out).toContain(SANDBOX_ONLY_LOGIN_LINE);
     expect(existsSync(policyPath(stateDir()))).toBe(false);
-    expect(readPolicy(stateDir()).ownerCeiling).toEqual(NEW_INSTALL);
+    expect(readPolicy(stateDir()).ownerCeiling).toEqual(MISSING_POLICY_OWNER_CEILING);
     expect(JSON.parse(readFileSync(credFile(), "utf8")).deviceId).toBe("env-1");
   }, 10_000);
 

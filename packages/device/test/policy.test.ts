@@ -158,12 +158,13 @@ describe("policy command", () => {
     throw new Error(`bad test argv ${argv.join(" ")}`);
   };
 
-  it("show prints the defaults when there is no file", async () => {
+  it("show prints the closed missing-file policy when there is no file", async () => {
     const r = await run(["show"]);
     expect(r.code).toBe(0);
-    // a new install: no running outside the sandbox, the open network, the workspace reach
+    // no file (a device set up before rc.58): no running outside the sandbox, the allowlist
+    // network with no host, the workspace reach; never the open default
     expect(r.out).toContain('"outsideSandbox": false');
-    expect(r.out).toContain('"network": "open"');
+    expect(r.out).toContain('"network": "allowlist"');
     expect(r.out).toContain('"restrictedProjectReach": "workspace"');
     expect(r.out).toContain(
       "Commands run in the sandbox under every profile, Full access included.",

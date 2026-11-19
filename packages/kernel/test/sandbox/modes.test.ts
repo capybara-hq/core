@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   appliedOf,
+  appliedWider,
   type DeploymentDevicePolicy,
   deviceNetwork,
   type EffectiveDevicePolicy,
@@ -278,7 +279,7 @@ describe("orgHostOutsideCeiling", () => {
 });
 
 describe("instance limits", () => {
-  it("compares the mode and the network kind only; hosts reach the next create", () => {
+  it("compares the network kind only, never the mode; hosts reach the next create", () => {
     const a = appliedOf({
       mode: "auto",
       network: { kind: "open-public", hosts: [] },
@@ -288,9 +289,10 @@ describe("instance limits", () => {
       network: { kind: "open-public", hosts: ["a.com"] },
     });
     expect(sameApplied(a, b)).toBe(true);
-    expect(
-      sameApplied(a, appliedOf({ mode: "sandbox", network: { kind: "open-public", hosts: [] } })),
-    ).toBe(false);
+    // the mode follows the outside-sandbox setting, which a cloud instance has no use for
+    const sandboxMode = appliedOf({ mode: "sandbox", network: { kind: "open-public", hosts: [] } });
+    expect(sameApplied(a, sandboxMode)).toBe(true);
+    expect(appliedWider(a, sandboxMode)).toBe(false);
     expect(
       sameApplied(a, appliedOf({ mode: "auto", network: { kind: "allowlist", hosts: ["a.com"] } })),
     ).toBe(false);

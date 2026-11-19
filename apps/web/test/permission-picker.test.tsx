@@ -193,7 +193,7 @@ describe("the permission choice in the composer", () => {
     ).toEqual([
       "Works freely inside the sandbox; asks you before going beyond it or running sensitive commands.",
       "Same sandbox; a review model decides requests to go beyond it and asks you when unsure.",
-      "Same sandbox; approves whatever this device allows, without asking.",
+      "Same sandbox; approves whatever this device allows, without asking. Credential reads outside the sandbox and sub-agents' requests to run outside it still go to the review model.",
     ]);
     // the head hints the shortcut; no standing explanation closes the menu, only the transient
     // fact that this (unprobed) device is checked when it starts
@@ -236,7 +236,10 @@ describe("the permission choice in the composer", () => {
     ).toEqual([
       ["请求批准", "在沙箱内直接工作；超出沙箱或执行敏感命令前先问你。"],
       ["帮我批准", "同样的沙箱；超出范围的请求交给审查模型，拿不准时问你。"],
-      ["完全访问", "同样的沙箱；在此设备允许的范围内自动批准，不再询问。"],
+      [
+        "完全访问",
+        "同样的沙箱；在此设备允许的范围内自动批准，不再询问。在沙箱外读取凭据和子智能体在沙箱外运行的请求仍交给审查模型。",
+      ],
     ]);
     expect(menu.textContent).not.toMatch(/agent/i);
   });
@@ -390,7 +393,7 @@ describe("Full access consent", () => {
       "Commands still run in the sandbox; the agent's requests to go beyond it (including running commands outside the sandbox) are approved automatically and recorded.",
     );
     expect(dialog.textContent).toContain(
-      "Protected paths and platform and organization denials still apply.",
+      "Protected paths and platform and organization denials still apply. Credential reads outside the sandbox and sub-agents' requests to run outside it still go to the review model.",
     );
     await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
     expect(screen.queryByRole("dialog")).toBeNull();

@@ -224,7 +224,12 @@ export function intersectNetworks(a: DeviceNetwork, b: DeviceNetwork): DeviceNet
   });
 }
 
-/** Whether `a` and `b` are the same mode, network kind and host set (null is never the same). */
+/**
+ * Whether `a` and `b` are the same mode, network kind and host set (null is never the same): the
+ * one-time B1 reconciliation's exactness (`CloudPermissionSnapshots`), which still binds a migrated
+ * instance to the exact limits it recorded. A running instance's change ignores the mode
+ * ({@link AppliedLimits}).
+ */
 export const sameAppliedExactly = (
   a: AppliedLimits | null | undefined,
   b: AppliedLimits,
@@ -287,8 +292,14 @@ export function providerLimits(limits: DeviceLimits): SandboxLimits {
 }
 
 /**
- * What decides whether a running cloud instance must change (auto mode spec §4.2): its mode and
- * the kind of its network only. `hosts` and resources reach instances created afterwards.
+ * What the kernel records of a cloud instance's limits (auto mode spec §4.2). Only the kind of its
+ * network decides whether a running instance must change; `hosts` and resources reach instances
+ * created afterwards. `mode` is recorded but never decides a change ({@link sameApplied},
+ * {@link appliedWider}; only the one-time B1 reconciliation compares it, {@link sameAppliedExactly}):
+ * a cloud device has no outside of its sandbox and the mode never reaches a provider
+ * ({@link providerLimits}), so a mode that follows the platform's or org's outside-sandbox setting
+ * must not update every cloud instance when that setting is toggled (Docker would recreate it
+ * without its egress proxy; approval-only profiles design).
  */
 export interface AppliedLimits {
   mode: SandboxMode;
@@ -304,25 +315,24 @@ export const appliedOf = (limits: {
   network: { kind: limits.network.kind, hosts: [...limits.network.hosts] },
 });
 
-/** Whether `a` and `b` are the same mode and network kind (null, unknown, is never the same). */
+/** Whether `a` and `b` are the same network kind (null, unknown, is never the same; no mode). */
 export const sameApplied = (a: AppliedLimits | null | undefined, b: AppliedLimits): boolean =>
-  a != null && a.mode === b.mode && a.network.kind === b.network.kind;
+  a != null && a.network.kind === b.network.kind;
 
-/** Whether `a` and `b` are the same mode, network kind and host set (null is never the same). */
+/** Whether `a` and `b` are the same network kind and host set (null is never the same; no mode). */
 export const sameAppliedExact = (a: AppliedLimits | null | undefined, b: AppliedLimits): boolean =>
   sameApplied(a, b) &&
   [...new Set(a?.network.hosts ?? [])].sort().join("\n") ===
     [...new Set(b.network.hosts)].sort().join("\n");
 
 /**
- * Whether applied limits `a` are more permissive than desired limits `b` in any dimension (spec
- * §124): auto where `b` is sandbox, open public addresses where `b` is an allowlist, or an
- * allowlisted host `b`'s allowlist does not cover. Narrower or equal is false; unknown (null) is
- * false here (callers treat unknown separately).
+ * Whether applied limits `a` are more permissive than desired limits `b` in its network (spec
+ * §124): open public addresses where `b` is an allowlist, or an allowlisted host `b`'s allowlist
+ * does not cover. Narrower or equal is false; unknown (null) is false here (callers treat unknown
+ * separately). The mode is not a dimension ({@link AppliedLimits}).
  */
 export function appliedWider(a: AppliedLimits | null | undefined, b: AppliedLimits): boolean {
   if (a == null) return false;
-  if (a.mode === "auto" && b.mode === "sandbox") return true;
   if (b.network.kind === "open-public") return false;
   if (a.network.kind === "open-public") return true;
   return a.network.hosts.some((host) => !b.network.hosts.some((p) => coversHost(p, host)));

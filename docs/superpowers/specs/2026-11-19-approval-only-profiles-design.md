@@ -495,7 +495,7 @@ rows, order and icons unchanged. The `chat.permission.description.*` keys become
 |---|---|---|
 | 请求批准 / Request approval | 在沙箱内直接工作；超出沙箱或执行敏感命令前先问你。 | Works freely inside the sandbox; asks you before going beyond it or running sensitive commands. |
 | 帮我批准 / Approve for me | 同样的沙箱；超出范围的请求交给审查模型，拿不准时问你。 | Same sandbox; a review model decides requests to go beyond it and asks you when unsure. |
-| 完全访问 / Full access | 同样的沙箱；在此设备允许的范围内自动批准，不再询问。 | Same sandbox; approves whatever this device allows, without asking. |
+| 完全访问 / Full access | 同样的沙箱；在此设备允许的范围内自动批准，不再询问。在沙箱外读取凭据和子智能体在沙箱外运行的请求仍交给审查模型。 | Same sandbox; approves whatever this device allows, without asking. Credential reads outside the sandbox and sub-agents' requests to run outside it still go to the review model. |
 
 **Full access dialog** (`chat.permission.full.*`), shorter than today:
 
@@ -504,7 +504,7 @@ rows, order and icons unchanged. The `chat.permission.description.*` keys become
 | title | 在 {device} 上使用完全访问？ | Use Full access on {device}? |
 | body | 命令仍在沙箱中运行；智能体超出沙箱的请求{outside}会自动批准并记录。 | Commands still run in the sandbox; the agent's requests to go beyond it{outside} are approved automatically and recorded. |
 | `{outside}`, only when the device allows running outside the sandbox | （包括在沙箱外运行命令） | (including running commands outside the sandbox) |
-| limits | 受保护的路径、平台和组织的禁止项仍然有效。 | Protected paths and platform and organization denials still apply. |
+| limits | 受保护的路径、平台和组织的禁止项仍然有效。在沙箱外读取凭据和子智能体在沙箱外运行的请求仍交给审查模型。 | Protected paths and platform and organization denials still apply. Credential reads outside the sandbox and sub-agents' requests to run outside it still go to the review model. |
 
 Remove `reason.ceiling` and `reason.restrictedUnsupported` for Full access: it is never unavailable
 because of a ceiling now.
@@ -574,16 +574,21 @@ The migration never widens.
     hosts as `network_hosts` when they are a non-empty array of strings; an empty or unreadable list
     ran closed and becomes `network_mode: none`). Since a device list only narrows, this is exact and
     never widens. Migration `0167` repeats the copy, the B1 snapshot writer copies new snapshots, and
-    the device sandbox reads `outer_network` while a device has no `network_mode` (a snapshot an
-    older replica writes later).
+    every permission publication repeats the copy (`copyCloudSnapshotNetworks`) for a snapshot an
+    older replica writes later. The device sandbox never reads `outer_network`: a device without
+    `network_mode` follows its org.
   - **`sandbox.limits.orgHosts: within` and other allowlist devices:** at the publication's version
     conversion (it has the config), a cloud device still following its org (`network_mode` NULL)
     whose old effective network was the allowlist (`effectiveDevicePolicy(...).network.kind ===
     "allowlist"`: a sandbox-mode device under `within`, an org allowlist or an old `off`) gets
     `network_mode: allowlist, network_hosts: []`. The new model's `orgHosts` limits hosts only, so
     without this such a device would open.
-  - `owner_full_access` is no longer read; a later migration drops it (the writing-migrations
-    two-step).
+  - `owner_full_access` no longer decides what a cloud device may do. It is still read by the
+    one-time conversions (the B1 snapshot and its reconciliation, the publication's version
+    conversion) and for the kernel-only mode recorded with an instance's limits, which never decides
+    a provider update (`sameApplied` and `appliedWider` compare the network only), so toggling
+    `outsideSandbox` updates no running cloud instance. A later migration drops it (the
+    writing-migrations two-step).
 - **Conversations:** no data rewrite.
   - The consent fingerprint changes, so a stored Full access selection reads as Approve for me until
     the owner confirms again.

@@ -71,10 +71,16 @@ import type { PermissionReviewSnapshot } from "../../src/sandbox/permission-call
 import {
   approverForProfile,
   buildPermissionCandidate,
-  ESCALATION_CEILING_WHY,
   ESCALATION_JUSTIFICATION_MISSING_TEXT,
+  escalationCeilingWhy,
   escalationRefusedText,
 } from "../../src/sandbox/review/permission-candidate.js";
+
+const ESCALATION_CEILING_WHY = escalationCeilingWhy({
+  layer: "device",
+  location: "local",
+  boundary: "operation",
+});
 
 describe("per-call sandbox escalation", () => {
   const base = {
@@ -102,7 +108,7 @@ describe("per-call sandbox escalation", () => {
         network: { kind: "environment" },
       });
   });
-  it("an escalation is refused without the Full access ceiling, like Full access", () => {
+  it("an escalation is refused without the outside-sandbox setting", () => {
     expect(() =>
       intersectPermissionScope({
         ...base,
@@ -181,6 +187,27 @@ describe("per-call sandbox escalation", () => {
     expect(build({ command: "make", sandbox: "escalated", justification: "  " }).kind).toBe(
       "unsupported",
     );
+  });
+  it("a refused escalation names the layer that blocks it and how to lift it", () => {
+    const why = (layer: Parameters<typeof escalationCeilingWhy>[0]["layer"], cloud = false) =>
+      escalationCeilingWhy({
+        layer,
+        location: cloud ? "cloud" : "local",
+        boundary: cloud ? "instance" : "operation",
+      });
+    expect(why("device")).toContain("capybara-device ceiling set --outside-sandbox on");
+    expect(why("device")).toMatch(/owner/);
+    expect(why("org")).toMatch(/an organization admin/);
+    expect(why("platform")).toMatch(/a super admin/);
+    // a cloud instance is its sandbox: there is nothing outside it to allow, whatever layer is off
+    for (const layer of ["device", "org", "platform", "provider"] as const)
+      expect(why(layer, true)).toMatch(/no outside of its sandbox/);
+    const texts = [why("device"), why("org"), why("platform"), why("device", true)];
+    expect(new Set(texts).size).toBe(4);
+    for (const text of texts) {
+      expect(text).not.toMatch(/Full access/);
+      expect(escalationRefusedText(text, "/work")).not.toMatch(/Full access/);
+    }
   });
   it("a ceiling or an unattended run refuses it with an actionable text", () => {
     expect(build(escalated, { escalationRefusal: ESCALATION_CEILING_WHY })).toEqual({

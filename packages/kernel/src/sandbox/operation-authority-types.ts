@@ -7,7 +7,7 @@ import {
 } from "@capybara-hq/plugin-sdk";
 /**
  * A call that asked to run outside the sandbox (`sandbox: "escalated"`) whose escalation grant no
- * longer matches at admission: the device, its Full access ceiling or the permission scope
+ * longer matches at admission: the device, its outside-sandbox setting or the permission scope
  * changed after the approval. A typed pre-effect scope refusal (nothing ran), never a silent
  * downgrade to the restricted scope; the tool tells the model to ask again.
  */

@@ -1680,6 +1680,7 @@ describe("approval-only profiles: the device sandbox in admission and the record
         network: { kind: scope.network.kind, hostsCount: network === "open" ? 0 : 1 },
         outsideSandbox: true,
         outerNetwork: { kind: "host-environment" },
+        perCallHosts: true,
       });
     },
   );

@@ -329,6 +329,34 @@ describe("a changed mode on use", () => {
     expect(await modeOf()).toBe("sandbox");
   });
 
+  it.each(["org", "platform"] as const)(
+    "the %s outside-sandbox setting alone never changes a cloud instance's applied limits",
+    async (layer) => {
+      // a cloud device has no outside of its sandbox: toggling the setting is no provider update
+      // (Docker would drop its egress proxy) and no pending change
+      provider = fake({ updateMode: "updated" });
+      const s = service();
+      const first = await use(s);
+      const before = await record();
+      if (layer === "org") await setOrgSettings({ outsideSandbox: "off" });
+      else
+        config = KernelConfigSchema.parse({
+          ...config,
+          devices: { ...config.devices, outsideSandbox: "off" },
+        });
+      expect(await s.limitsState({ orgId, deviceId })).toMatchObject({
+        pendingNextUse: false,
+        pendingFilesReset: false,
+      });
+      const again = await use(s);
+      expect(again.h).toEqual(first.h);
+      expect(again.info).toMatchObject({ fresh: false, restarted: false });
+      expect(await ops("update")).toEqual([]);
+      expect(await ops("create")).toHaveLength(1);
+      expect(await record()).toEqual(before);
+    },
+  );
+
   it("a NULL record (an instance made before auto mode) differs once", async () => {
     const s = service();
     await use(s);

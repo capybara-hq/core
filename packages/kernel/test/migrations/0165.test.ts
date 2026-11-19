@@ -115,3 +115,33 @@ describe("0165 device network columns", () => {
     expect((await rowOf("d_allow"))?.network_mode).toBe("open");
   });
 });
+
+describe("0165 and 0166 add their checks without a scan under the add's lock", () => {
+  // each CHECK is added NOT VALID, then validated in its own statement (rerunnable: dropped first)
+  it.each([FILE, "0166_permission_grant_full_access.sql"])("%s", async (file) => {
+    const text = readFileSync(join(KERNEL_MIGRATIONS_DIR, file), "utf8");
+    const statements = text
+      .replace(/--[^\n]*/g, "")
+      .split(";")
+      .map((s) => s.replace(/\s+/g, " ").trim());
+    const adds = statements.filter((s) => / ADD CONSTRAINT \S+ CHECK /.test(s));
+    expect(adds.length).toBeGreaterThan(0);
+    for (const add of adds) {
+      const name = / ADD CONSTRAINT (\S+) /.exec(add)?.[1];
+      expect(add, name).toMatch(/ NOT VALID$/);
+      expect(statements, name).toContainEqual(
+        expect.stringMatching(` VALIDATE CONSTRAINT ${name}$`),
+      );
+    }
+  });
+
+  it("the checks are validated", async () => {
+    const rows = (
+      await sql<{ conname: string; convalidated: boolean }>`
+        select conname, convalidated from pg_constraint
+        where conname in ('devices_network_mode_check', 'devices_network_hosts_check')`.execute(db)
+    ).rows;
+    expect(rows).toHaveLength(2);
+    for (const r of rows) expect(r.convalidated, r.conname).toBe(true);
+  });
+});

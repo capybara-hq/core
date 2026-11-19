@@ -1622,7 +1622,7 @@
       "description": {
         "requestApproval": "在沙箱内直接工作；超出沙箱或执行敏感命令前先问你。",
         "approveForMe": "同样的沙箱；超出范围的请求交给审查模型，拿不准时问你。",
-        "fullAccess": "同样的沙箱；在此设备允许的范围内自动批准，不再询问。"
+        "fullAccess": "同样的沙箱；在此设备允许的范围内自动批准，不再询问。在沙箱外读取凭据和子智能体在沙箱外运行的请求仍交给审查模型。"
       },
       "reason": {
         "noDevice": "请先选择设备",
@@ -1642,7 +1642,7 @@
         "title": "在 {device} 上使用完全访问？",
         "body": "命令仍在沙箱中运行；智能体超出沙箱的请求{outside}会自动批准并记录。",
         "outside": "（包括在沙箱外运行命令）",
-        "limits": "受保护的路径、平台和组织的禁止项仍然有效。",
+        "limits": "受保护的路径、平台和组织的禁止项仍然有效。在沙箱外读取凭据和子智能体在沙箱外运行的请求仍交给审查模型。",
         "confirm": "使用完全访问",
         "cancel": "取消"
       },
@@ -1869,7 +1869,7 @@
       "pendingNextUse": "下次使用时生效，文件保留。",
       "pendingFilesReset": "重建文件后生效。",
       "cloudHosts": "主机",
-      "cloudHostsHelp": "每行一个主机。只有组织清单里的主机生效；留空则使用组织的主机。",
+      "cloudHostsHelp": "每行一个主机。不在组织清单里的主机会被拒绝；留空则使用组织的主机。",
       "invalidHost": "{host} 不是有效的主机：请使用小写名称，例如 files.example.com 或 *.example.com。",
       "save": "保存网络",
       "saved": "设备的网络已保存。"
@@ -4256,6 +4256,7 @@
         "deviceMachineRevoked": "断开了本地设备",
         "deviceModeChanged": "修改了设备模式",
         "deviceNetworkAllowed": "允许了网络访问",
+        "deviceNetworkChanged": "更改了云端设备的沙箱网络",
         "deviceNetworkDenied": "拒绝了网络访问",
         "devicePolicyChanged": "修改了设备策略",
         "devicePolicyFailed": "设备策略修改失败",

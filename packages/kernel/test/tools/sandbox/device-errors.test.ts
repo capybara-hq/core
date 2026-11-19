@@ -19,11 +19,14 @@ import {
 } from "../../../src/sandbox/sandbox.service.js";
 import {
   DEVICE_REQUEST_NOT_SENT_TOOL_TEXT,
-  FULL_ACCESS_OFF_BY_POLICY_TOOL_TEXT,
+  ESCALATION_GRANT_MISSING_LAUNCH_WHY,
+  ESCALATION_GRANT_MISSING_TEXT,
   mapSandboxError,
+  ORG_OUTSIDE_SANDBOX_OFF_TOOL_TEXT,
   OUTCOME_UNKNOWN_TOOL_TEXT,
   OUTSIDE_SANDBOX_CEILING_TOOL_TEXT,
   PERMISSION_UNSUPPORTED_TOOL_TEXT,
+  PLATFORM_OUTSIDE_SANDBOX_OFF_TOOL_TEXT,
   RETIREMENT_PENDING_TOOL_TEXT,
   RETIREMENT_RECREATE_TOOL_TEXT,
   RETIREMENT_REPLACE_TOOL_TEXT,
@@ -75,18 +78,34 @@ describe("sandbox tool errors", () => {
     expect(message(mapped)).not.toContain("internal detail");
   });
 
-  // B-13: the full-access refusals are actionable English tool errors, never the kernel's message
-  it.each(["org.outside_sandbox_not_allowed", "deployment.outside_sandbox_not_allowed"] as const)(
-    "Full access off by policy (%s) names the profiles and who can allow it",
-    (code) => {
+  // B-13: running outside the sandbox off by policy: one actionable text per layer that blocks it,
+  // never the kernel's message and never "Full access" (the profile no longer runs outside)
+  it.each([
+    ["org.outside_sandbox_not_allowed", ORG_OUTSIDE_SANDBOX_OFF_TOOL_TEXT, /an organization admin/],
+    [
+      "deployment.outside_sandbox_not_allowed",
+      PLATFORM_OUTSIDE_SANDBOX_OFF_TOOL_TEXT,
+      /a super admin/,
+    ],
+  ] as const)(
+    "running outside the sandbox off by policy (%s) names who can allow it",
+    (code, text, who) => {
       const mapped = mapSandboxError(new ApiError(code, "internal detail"), undefined);
       expect(mapped).toBeInstanceOf(ToolError);
-      expect(message(mapped)).toBe(FULL_ACCESS_OFF_BY_POLICY_TOOL_TEXT);
-      expect(message(mapped)).toMatch(/Request approval or Approve for me/);
-      expect(message(mapped)).toMatch(/admin/);
-      expect(message(mapped)).not.toMatch(/capybara-device mode/);
+      expect(message(mapped)).toBe(text);
+      expect(message(mapped)).toMatch(who);
+      expect(message(mapped)).toMatch(/outside the sandbox/);
+      expect(message(mapped)).not.toMatch(/Full access/);
+      expect(message(mapped)).not.toContain("internal detail");
     },
   );
+
+  it("an approval that no longer matches names the outside-sandbox setting, not Full access", () => {
+    for (const text of [ESCALATION_GRANT_MISSING_TEXT, ESCALATION_GRANT_MISSING_LAUNCH_WHY]) {
+      expect(text).toMatch(/outside-sandbox setting/);
+      expect(text).not.toMatch(/Full access/);
+    }
+  });
 
   it("a device that does not allow running outside the sandbox points to the owner's ceiling command", () => {
     const mapped = mapSandboxError(

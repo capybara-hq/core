@@ -782,8 +782,8 @@ describe("device projects", () => {
       k.app.get(PermissionCeilingWrites),
     );
     // its files were made in auto mode with the open network, then the device was narrowed to
-    // sandbox mode: the provider fixes limits at its file system, so a files reset is pending and
-    // the instance's applied mode (what modeLevel reports for the model) is still auto
+    // sandbox mode: the kernel-only mode is no dimension of a cloud instance's limits (it has no
+    // outside of its sandbox), so no files reset is pending and modeLevel reports the effective mode
     await db
       .insertInto("device_instances")
       .values({
@@ -799,7 +799,7 @@ describe("device projects", () => {
       })
       .execute();
     await db.updateTable("devices").set({ mode: "sandbox" }).where("id", "=", id).execute();
-    expect((await devices.modeLevel(orgId, id))?.mode).toBe("auto");
+    expect((await devices.modeLevel(orgId, id))?.mode).toBe("sandbox");
     // the ceiling and the scope follow the effective policy: sandbox
     expect(await service.add(orgId, d.accountId, id, { path: "app" })).toMatchObject({
       path: `${workspace}/app`,

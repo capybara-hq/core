@@ -497,21 +497,19 @@ function legacyPreparationSession(s: SandboxSession): PreparationSession {
 }
 
 /**
- * Full access refused by policy (B-13: `org.*` / `deployment.*`): the organization or the
- * platform has it off. The kernel's own message is never shown.
+ * Running outside the sandbox refused by policy (B-13): the organization
+ * (`org.outside_sandbox_not_allowed`) or the platform (`deployment.*`) has its outside-sandbox
+ * setting off. One text per layer; the kernel's own message is never shown.
  */
-export const FULL_ACCESS_OFF_BY_POLICY_TOOL_TEXT =
-  "Full access is turned off by your organization's or the platform's policy, so nothing ran. Continue with the Request approval or Approve for me permission profile, or ask an org admin (or a super admin) to allow Full access.";
+export const ORG_OUTSIDE_SANDBOX_OFF_TOOL_TEXT =
+  "Running commands outside the sandbox is off in this organization, so nothing ran. Run the command inside the sandbox, or ask an organization admin to allow running outside the sandbox.";
+export const PLATFORM_OUTSIDE_SANDBOX_OFF_TOOL_TEXT =
+  "Running commands outside the sandbox is off on this platform, so nothing ran. Run the command inside the sandbox, or ask a super admin to allow running outside the sandbox.";
 /**
  * The device does not allow running outside the sandbox (`device.outside_sandbox_not_allowed`).
  */
 export const OUTSIDE_SANDBOX_CEILING_TOOL_TEXT =
   "This device does not allow running commands outside the sandbox, so nothing ran. Run the command inside the sandbox, or ask the device's owner to allow it on that machine with `capybara-device ceiling set --outside-sandbox on`.";
-/** The full-access refusal codes off by policy (organization and platform). */
-const FULL_ACCESS_OFF_BY_POLICY_CODES: ReadonlySet<string> = new Set([
-  "org.outside_sandbox_not_allowed",
-  "deployment.outside_sandbox_not_allowed",
-]);
 /**
  * The legacy retirement gate's refusals (`RetirementPendingError`, permission runtime cutover
  * 8.5): the device's earlier instance may still run background work an earlier version started.
@@ -540,7 +538,10 @@ export const SCOPE_DENIED_TOOL_TEXT =
   "This operation reaches outside what this conversation's permission profile allows on the device (a path outside the directories it may read or write, or a host it may not reach), so it did not run. Keep the call inside the working directory and the directories already granted, or ask the user to grant the directory or choose a broader permission profile, then retry.";
 /** An approved sandbox escalation whose grant no longer matches at admission (nothing ran). */
 export const ESCALATION_GRANT_MISSING_TEXT =
-  'This Bash call was approved to run outside the sandbox, but the approval no longer matches: the device, its Full access ceiling or this conversation\'s permission scope changed since it was approved, so it did not run. Call Bash again with sandbox: "escalated" and a justification to ask again, or call it without sandbox to run it inside the sandbox.';
+  'This Bash call was approved to run outside the sandbox, but the approval no longer matches: the device, its outside-sandbox setting or this conversation\'s permission scope changed since it was approved, so it did not run. Call Bash again with sandbox: "escalated" and a justification to ask again, or call it without sandbox to run it inside the sandbox.';
+/** {@link ESCALATION_GRANT_MISSING_TEXT} as the reason of a refused background start. */
+export const ESCALATION_GRANT_MISSING_LAUNCH_WHY =
+  'its approval to run outside the sandbox no longer matches (the device, its outside-sandbox setting or the permission scope changed since it was approved); call Bash again with sandbox: "escalated" and a justification to ask again';
 /** A staged request the machine never got: it reconnected before the request was sent. */
 export const DEVICE_REQUEST_NOT_SENT_TOOL_TEXT =
   "The device's machine reconnected before this operation was sent, so nothing ran. Retry the tool call.";
@@ -657,8 +658,10 @@ export function mapSandboxError(e: unknown, log: Pick<Logger, "warn"> | undefine
     if (e.code === "device.program_outdated") return new ToolError(DEVICE_OUTDATED_TEXT);
     if (e.code === "device.outside_sandbox_not_allowed")
       return new ToolError(OUTSIDE_SANDBOX_CEILING_TOOL_TEXT);
-    if (FULL_ACCESS_OFF_BY_POLICY_CODES.has(e.code))
-      return new ToolError(FULL_ACCESS_OFF_BY_POLICY_TOOL_TEXT);
+    if (e.code === "org.outside_sandbox_not_allowed")
+      return new ToolError(ORG_OUTSIDE_SANDBOX_OFF_TOOL_TEXT);
+    if (e.code === "deployment.outside_sandbox_not_allowed")
+      return new ToolError(PLATFORM_OUTSIDE_SANDBOX_OFF_TOOL_TEXT);
     if (e.code === "device.permission_reconcile_required") {
       return new ToolError(RECONCILE_REQUIRED_TEXT, { kind: "unavailable" });
     }

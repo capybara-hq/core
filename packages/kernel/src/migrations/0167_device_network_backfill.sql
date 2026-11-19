@@ -5,8 +5,8 @@
 -- non-empty array of strings; an empty or unreadable allowlist ran closed and becomes `none`.
 -- Never wider: a device's host list only narrows its org's hosts. Only rows still following the
 -- org are written, so a rerun never overwrites a later choice. The snapshot writer copies new
--- snapshots itself from now on, and the device sandbox reads a snapshot an older replica writes
--- later while the device has no choice of its own.
+-- snapshots itself from now on, and every permission publication repeats the copy for a snapshot
+-- an older replica writes later (`copyCloudSnapshotNetworks`).
 UPDATE devices
 SET network_mode = CASE
       WHEN jsonb_typeof(outer_network -> 'hosts') = 'array'

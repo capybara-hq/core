@@ -158,8 +158,17 @@ export const PermissionContextSandboxSchema = z
       z.object({ kind: z.literal("open-public") }).strict(),
       z.object({ kind: z.literal("allowlist"), hosts: PermissionHosts }).strict(),
     ]),
+    /**
+     * Whether a host may be granted per call on this device (false on an instance boundary, whose
+     * provider's network covers the whole instance). Absent in a block recorded before it existed:
+     * such a block renders the text it rendered, so replay never drifts.
+     */
+    perCallHosts: z.boolean().optional(),
   })
-  .strict();
+  .strict()
+  .refine((b) => !(b.boundary === "instance" && b.perCallHosts === true), {
+    message: "An instance-boundary sandbox grants no host per call",
+  });
 export type PermissionContextSandbox = z.infer<typeof PermissionContextSandboxSchema>;
 
 /**

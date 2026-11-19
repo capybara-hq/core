@@ -34,7 +34,7 @@ import { startKernel, type TestKernel } from "../helpers/runs.js";
 
 // Per-call sandbox escalation (approval profiles design, "Per-call sandbox escalation"): a Bash
 // call with sandbox: "escalated" crosses the sandbox for that call only, decided by the profile's
-// approver within the device's Full access ceiling.
+// approver within the device's outside-sandbox setting.
 
 let pg: TestContainer, redis: TestContainer, k: TestKernel, raw: ReturnType<typeof createDb>;
 beforeAll(async () => {
@@ -432,7 +432,7 @@ it("Full access: a sub-agent's escalation the review model allows is its grant",
 });
 
 it.each(["request-approval", "approve-for-me"] as const)(
-  "%s: a ceiling that forbids Full access refuses the escalation with what to do instead",
+  "%s: an org that turned running outside the sandbox off refuses the escalation, naming the org admin",
   async (profile) => {
     const f = await escalated(profile);
     await k.app.get(OrgSettingsService).update(f.orgId, { outsideSandbox: "off" }, f.accountId);
@@ -444,8 +444,9 @@ it.each(["request-approval", "approve-for-me"] as const)(
     const [result] = await f.results();
     expect(result?.isError).toBe(true);
     expect(JSON.stringify(result?.content)).toMatch(
-      /not allowed on this device.*Call Bash without sandbox/,
+      /off in this organization; an organization admin can allow.*Call Bash without sandbox/,
     );
+    expect(JSON.stringify(result?.content)).not.toMatch(/Full access/);
   },
 );
 
@@ -619,7 +620,7 @@ it.each(["approve-for-me", "request-approval"] as const)(
   },
 );
 
-it("an owner ceiling of sandbox refuses the escalation before any review", async () => {
+it("an owner who turned running outside the sandbox off refuses the escalation, naming the machine command", async () => {
   const f = await escalated("request-approval");
   await f.db
     .updateTable("device_machines")
@@ -631,11 +632,11 @@ it("an owner ceiling of sandbox refuses the escalation before any review", async
   expect(f.effects()).toBe(0);
   expect(review).not.toHaveBeenCalled();
   expect(JSON.stringify((await f.results())[0]?.content)).toMatch(
-    /not allowed on this device.*Call Bash without sandbox/,
+    /off on this device; its owner turns it on by running `capybara-device ceiling set --outside-sandbox on`.*Call Bash without sandbox/,
   );
 });
 
-it("a platform Full switch off refuses the escalation before any review", async () => {
+it("a platform outside-sandbox setting off refuses the escalation, naming the super admin", async () => {
   const f = await escalated("request-approval");
   await platformFull("off");
   try {
@@ -643,13 +644,15 @@ it("a platform Full switch off refuses the escalation before any review", async 
     await f.step();
     expect(f.effects()).toBe(0);
     expect(review).not.toHaveBeenCalled();
-    expect(JSON.stringify((await f.results())[0]?.content)).toMatch(/not allowed on this device/);
+    expect(JSON.stringify((await f.results())[0]?.content)).toMatch(
+      /off on this platform; a super admin can allow/,
+    );
   } finally {
     await platformFull("allowed");
   }
 });
 
-it("a runtime that cannot run Full access refuses the escalation with its reason", async () => {
+it("a runtime that cannot run outside its sandbox refuses the escalation with its reason", async () => {
   const f = await escalated("request-approval");
   await seedInstalledEvidence(k, raw, {
     orgId: f.orgId,
