@@ -116,7 +116,7 @@ reload and without losing state (the URL hash keeps the right area, §5.4).
 - **No client hints.** `Sec-CH-Viewport-Width` exists only in Chromium; the server never guesses
   the class.
 
-### 3.2 A short window (designer's call)
+### 3.2 A short window (decided)
 
 Width decides the class; height only trims chrome. A window **shorter than 480 px** (a phone in
 landscape, the iPhone Duo at its shortest reported height, 368) sets `data-short` on the shell:
@@ -358,13 +358,15 @@ The thread already follows the bottom while the reader is within 48 px of it
   away from the bottom and new content arrives; one tap scrolls to the bottom and resumes
   following.
 
-### 7.3 Long threads (designer's call)
+### 7.3 Long threads (decided)
 
 No windowing today. Step one is CSS-only: thread items get `content-visibility: auto` with a
 `contain-intrinsic-size` from their last measured height, which keeps the DOM (find in page,
 screen readers, the scroll anchoring above) and skips layout and paint off screen. Real
-windowing (only mounting visible items) comes only if a measurement on a mid-range phone with a
-2 000-item recorded log shows it is needed (open question 4), and must then keep follow-bottom,
+windowing (only mounting visible items) comes only if a measurement shows it is needed: on a
+mid-range phone (Chromium's 4× CPU throttling as the CI stand-in) with a 2 000-item recorded log,
+opening the conversation takes more than 1 s to paint its latest items, or streaming a reply
+produces main-thread long tasks over 100 ms. Windowing must then keep follow-bottom,
 anchor-to-item (`#approval=`) and find-in-page behavior.
 
 ### 7.4 Follow-finger sheets and drawers
@@ -785,14 +787,15 @@ Recorded so review sees them; the design above resolves each.
 
 ## 15. Open questions
 
+Neither blocks this design; both are answered at the mobile app shell / real-device stage.
+
 1. **WKWebView** support of the Device Posture and Viewport Segments APIs (the Capacitor shell):
    unknown until Apple says; the design degrades to one screen without them.
 2. **`viewport-fit=cover` on the iPhone Duo outer display**: Apple has not decided; we follow
    `env()`. Revisit when Safari ships the behavior.
-3. **Thread windowing**: accept the CSS-only step first and windowing only on measurement?
-4. **Short windows** (§3.2): accept the height trim, or keep height out entirely?
 
-The lock-screen text question moved to the later push design with the rest of push (§10.3).
+Settled since the first draft and moved out of this list: long threads (§7.3) and the
+short-window trim (§3.2) (decided); the lock-screen text moved to the later push design (§10.3).
 
 ## AGENTS.md rules touched
 
