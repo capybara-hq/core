@@ -21,12 +21,18 @@ import { AGENT_LOOP_FACTORY, type AgentLoopFactory } from "../../src/runtime/run
 import { RunWorker } from "../../src/runtime/run-worker.js";
 import { Waits } from "../../src/runtime/waits.js";
 import { PermissionAuthorityLock } from "../../src/sandbox/permission-authority-lock.js";
+import {
+  PERMISSION_AUTO_GRANT_HOOKS,
+  type PermissionAutoGrantHooks,
+  PermissionAutoGrants,
+} from "../../src/sandbox/permission-auto-grants.js";
 import { PermissionCallGrants } from "../../src/sandbox/permission-call-grants.js";
 import type { PermissionCandidate } from "../../src/sandbox/permission-call-types.js";
 import { permissionCandidateHash } from "../../src/sandbox/review/permission-candidate.js";
 import { ApprovalsService } from "../../src/tools/approvals.service.js";
 import { PermissionApprovalJobs } from "../../src/tools/permission-approval-jobs.js";
 import { ToolPipeline } from "../../src/tools/pipeline.js";
+import { ToolRegistry } from "../../src/tools/registry.js";
 import { truncateTables } from "../helpers/db.js";
 import { MODEL_PLUGINS_CONFIG } from "../helpers/model-plugins.js";
 import { permissionFixture } from "../helpers/permission-policy.js";
@@ -40,6 +46,13 @@ let pg: TestContainer,
   redis: Redis,
   queue: Queue;
 let deliver = false;
+/** Armed by the race test: each replica's auto-grant waits here after its precheck. */
+let autoGrantBarrier: (() => Promise<void>) | undefined;
+const autoGrantHooks: PermissionAutoGrantHooks = {
+  afterPrecheck: async () => {
+    await autoGrantBarrier?.();
+  },
+};
 let active: Awaited<ReturnType<typeof permissionFixture>>;
 const loop: AgentLoopFactory = () => ({
   run: async (ctx) => {
@@ -64,7 +77,10 @@ beforeAll(async () => {
   a = await startKernel(config, {
     env: {},
     logger: createLogger("error", { write: () => {} }),
-    overrides: [{ provide: OUTBOX_DISPATCH_FAILS, useValue: () => !deliver }],
+    overrides: [
+      { provide: OUTBOX_DISPATCH_FAILS, useValue: () => !deliver },
+      { provide: PERMISSION_AUTO_GRANT_HOOKS, useValue: autoGrantHooks },
+    ],
   });
   b = await startKernel(config, {
     env: {},
@@ -72,6 +88,7 @@ beforeAll(async () => {
     overrides: [
       { provide: OUTBOX_DISPATCH_FAILS, useValue: () => !deliver },
       { provide: AGENT_LOOP_FACTORY, useValue: loop },
+      { provide: PERMISSION_AUTO_GRANT_HOOKS, useValue: autoGrantHooks },
     ],
   });
   raw = createDb(pg.url, 8);
@@ -958,3 +975,85 @@ it.each(["request-approval", "approve-for-me", "full-access"] as const)(
     });
   },
 );
+
+// approval-only profiles design, "Risks": two replicas race the same Full access crossing and
+// record one grant, one permission_reviewed event and one audit row
+it("two replicas racing one Full access auto-grant record it exactly once", async () => {
+  const f = await permissionFixture(
+    a,
+    raw,
+    "Write",
+    { file_path: "/outside/reports/report.txt" },
+    true,
+  );
+  f.install(b);
+  const view = await a.app
+    .get(PermissionProfilesService)
+    .get(f.orgId, f.conversationId, f.accountId);
+  await a.app.get(PermissionProfilesService).set(f.orgId, f.conversationId, f.accountId, {
+    profile: "full-access",
+    expectedRevision: view.revision,
+    consentScopeRevision: view.scopeRevision ?? undefined,
+  });
+  const use = {
+    orgId: f.orgId,
+    deviceId: f.deviceId,
+    holderConversationId: f.conversationId,
+    actor: { accountId: f.accountId, conversationId: f.conversationId, runId: f.runId },
+  };
+  const facts = await a.app
+    .get(SandboxOperationAuthority)
+    .previewCall(use, { runId: f.runId, callId: f.callId }, new AbortController().signal);
+  const [tool] = (await a.app.get(ToolRegistry).forAgent(f.orgId, f.ctx.agent as never)).tools;
+  if (!tool) throw new Error("no Write tool");
+  const input = { file_path: "/outside/reports/report.txt" };
+  const built = buildPermissionCandidate(
+    { toolKey: "Write", specHash: tool.specHash, rawInput: input, validatedInput: input },
+    facts,
+  );
+  if (built.kind !== "proposal") throw new Error(`Expected a proposal: ${built.kind}`);
+  // both replicas pass the precheck (no grant yet) before either writes: the loser rolls back on
+  // the grant's immutable evidence and resolves with the winner's grant
+  let arrived = 0;
+  let release!: () => void;
+  const together = new Promise<void>((r) => {
+    release = r;
+  });
+  autoGrantBarrier = async () => {
+    arrived += 1;
+    if (arrived === 2) release();
+    await together;
+  };
+  let outcomes: PromiseSettledResult<void>[];
+  try {
+    outcomes = await Promise.allSettled([
+      a.app.get(PermissionAutoGrants).record(built.candidate),
+      b.app.get(PermissionAutoGrants).record(built.candidate),
+    ]);
+  } finally {
+    autoGrantBarrier = undefined;
+  }
+  expect(arrived).toBe(2);
+  expect(outcomes.map((o) => (o.status === "rejected" ? String(o.reason) : "ok"))).toEqual([
+    "ok",
+    "ok",
+  ]);
+  expect(await f.db.selectFrom("permission_call_grants").selectAll().execute()).toMatchObject([
+    { source: "full-access" },
+  ]);
+  expect(
+    await f.db
+      .selectFrom("conversation_events")
+      .select("seq")
+      .where("type", "=", "permission_reviewed")
+      .where("run_id", "=", f.runId)
+      .execute(),
+  ).toHaveLength(1);
+  expect(
+    await f.db
+      .selectFrom("audit_events")
+      .select("id")
+      .where("action", "=", "permission.crossing_auto_granted")
+      .execute(),
+  ).toHaveLength(1);
+});

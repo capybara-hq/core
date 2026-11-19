@@ -14,9 +14,8 @@ import { FakeMachine, HELLO } from "../local-devices/fake-machine-v3.js";
 /**
  * A network ask across replicas (network ask-to-allow spec §10.3, Review Focus 4): the command
  * runs on a worker against a device held by replica 0's gateway, the run parks, and the device
- * owner's "Allow once" or "Always allow on this device" sent to both replicas at once is taken
- * once (under device protocol 4 both are a run grant: always sends no `policy` op), one resume;
- * the command is never run again.
+ * owner's "Allow once" (a run grant, the only offer under device protocol 4) sent to both
+ * replicas at once is taken once, one resume, no `policy` op; the command is never run again.
  */
 
 let h: Harness | undefined;
@@ -33,7 +32,7 @@ type Json = Record<string, unknown>;
 const POLICY = { allowedDomains: [] as string[] };
 
 describe("network ask (dual replica)", () => {
-  it.each(["once", "always"] as const)(
+  it.each(["once"] as const)(
     "asked on one replica, decided %s on both at once: one decision, one resume, one exec, no policy op",
     async (scope) => {
       h = await createDualReplicaHarness({

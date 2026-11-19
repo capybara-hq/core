@@ -4249,6 +4249,7 @@
         "deviceRenamed": "重命名了设备",
         "deviceOwnerCeilingChanged": "修改了设备的权限上限",
         "conversationPermissionProfileChanged": "修改了对话的权限",
+        "permissionCrossingAutoGranted": "完全访问自动为智能体批准了一次沙箱越界",
         "evalCaseAdded": "添加了评测用例",
         "evalCaseRemoved": "移除了评测用例",
         "evalResultLabeled": "标注了评测结果",

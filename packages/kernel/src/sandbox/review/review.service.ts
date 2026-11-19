@@ -15,7 +15,7 @@ import { ModelPurposesService } from "../../models/purposes.js";
 import type { ConversationKindForHooks } from "../../runtime/hook-calls.js";
 import { StepLog } from "../../runtime/step-log.js";
 import { generateImagePaths } from "../../tools/builtins/image/paths.js";
-import type { PermissionCandidate } from "../permission-call-types.js";
+import type { PermissionCandidate, PermissionCrossingKind } from "../permission-call-types.js";
 import {
   boundMessages,
   newReviewTag,
@@ -24,9 +24,12 @@ import {
   runClassifier,
 } from "./classifier.js";
 import {
-  approverForProfile,
+  approverForCrossing,
+  crossingOfCandidate,
   ESCALATION_RETRY_HINT,
   escalationAskReason,
+  isCredentialConsentRule,
+  type PermissionApprover,
 } from "./permission-candidate.js";
 
 export { escalationAskReason, quotedJustification } from "./permission-candidate.js";
@@ -75,6 +78,18 @@ export interface ReviewVerdict {
   reason: string;
   /** The rule the decision came from, or null for a classifier decision. */
   rule: string | null;
+  /**
+   * The crossing a Full access allow granted by itself (approval-only profiles design): the
+   * candidate's kind, or `sensitive` when it skipped a sensitive-command consent. Absent otherwise.
+   */
+  crossing?: PermissionCrossingKind;
+  /**
+   * Who decided the permission review of a call with a candidate: the person, the review model
+   * or nobody (Full access). Absent outside the permission review.
+   */
+  approver?: PermissionApprover;
+  /** The sensitive-command consents (rule ids) a Full access allow skipped. */
+  sensitive?: string[];
 }
 
 /** What the pipeline knows about one tool call it reviews. */
@@ -245,8 +260,10 @@ export class CommandReviewService implements CommandReview {
 
   /**
    * The permission review of a managed call (permission operation contract, policy order), after
-   * the fixed denies: Full access has no discretionary review; Request approval and Approve for me
-   * keep the sensitive-command consent (the fixed asks: sudo, credentials, persistent changes,
+   * the fixed denies. The profile only chooses who approves ({@link approverForCrossing}): under
+   * Full access nobody does (the candidate's crossing is granted within the device's ceilings, a
+   * sensitive-command consent is skipped, both recorded), except a sub-agent's escalation, which
+   * goes to the review model. Request approval and Approve for me keep the sensitive-command consent (the fixed asks: sudo, credentials, persistent changes,
    * force push, ...), which comes before any reach. A call with neither a consent ask nor a
    * proposed expansion runs under the enforced base scope with no review. Otherwise Request
    * approval asks the person and Approve for me asks the review model (an ask when it is not
@@ -264,10 +281,6 @@ export class CommandReviewService implements CommandReview {
       rootOf: () => Promise<string>;
     },
   ): Promise<ReviewVerdict> {
-    // no approver (Full access): nothing discretionary is asked; a crossing the candidate names is
-    // granted for this call within the ceiling the candidate builder already checked
-    const approver = approverForProfile(input.permissionProfile ?? "approve-for-me");
-    if (approver === "none") return allow("Current Full access covers discretionary review.", null);
     const escalation =
       input.permissionCandidate?.scopeKind === "sandbox-escalation"
         ? input.permissionCandidate.escalation
@@ -294,6 +307,53 @@ export class CommandReviewService implements CommandReview {
         ? h.outcome === "ask" && CREDENTIAL_READ_RULES.has(h.id)
         : (h.outcome === "ask" && !SCOPE_ASK_RULES.has(h.id)) || h.outcome === "unsure",
     );
+    const candidate = input.permissionCandidate;
+    const subAgent = input.parentRunId !== undefined;
+    const credentialConsent = consentHits.some((h) => isCredentialConsentRule(h.id));
+    // who decides (approval-only profiles design, "Profiles"): under Full access an escalation a
+    // sub-agent asks for, or one carrying a credential consent, goes to the review model; the fixed
+    // denies were evaluated before this
+    const approver = approverForCrossing({
+      profile: input.permissionProfile ?? "approve-for-me",
+      crossing: candidate ? crossingOfCandidate(candidate) : "sensitive",
+      subAgent,
+      credentialConsent,
+    });
+    // why the review model sees a Full access call at all (its input says so, neutrally)
+    const fullAccessReview =
+      input.permissionProfile === "full-access" && approver === "review-model"
+        ? {
+            ...(subAgent ? { subAgent: true as const } : {}),
+            ...(credentialConsent ? { credential: true as const } : {}),
+          }
+        : undefined;
+    if (approver === "none") {
+      // Full access: the candidate's crossing is granted for this call within the ceilings the
+      // candidate builder checked (issuance checks them again), and a sensitive-command consent
+      // is skipped but recorded (with the crossing when there is one): the sandbox still holds
+      // the protected paths
+      const skipped = [...new Set(consentHits.map((h) => h.id))].sort();
+      if (candidate)
+        return {
+          ...allow(
+            "Full access grants this crossing within the device's limits.",
+            consentHits[0]?.id ?? null,
+          ),
+          crossing: crossingOfCandidate(candidate),
+          approver,
+          ...(skipped.length > 0 ? { sensitive: skipped } : {}),
+        };
+      const consentHit = consentHits[0];
+      if (consentHit)
+        return {
+          ...allow(
+            "Full access runs this sensitive command without asking; the sandbox still applies.",
+            consentHit.id,
+          ),
+          crossing: "sensitive",
+        };
+      return allow("The enforced operation scope covers this call without expansion.", null);
+    }
     let consent: RuleHit | undefined;
     let granted: RuleHit | undefined;
     if (consentHits.length > 0) {
@@ -308,7 +368,6 @@ export class CommandReviewService implements CommandReview {
       if (after.outcome === "ask" || after.outcome === "unsure") consent = after.hit;
       else granted = after.hit;
     }
-    const candidate = input.permissionCandidate;
     if (!consent && !candidate) {
       if (granted) return allow(REVIEW_REASONS.sessionGrant, granted.id);
       // the rule table's allow, when it has one, says why; the enforced scope covers the rest
@@ -327,7 +386,7 @@ export class CommandReviewService implements CommandReview {
       ? escalationAskReason(escalation, consent?.reason)
       : (consent?.reason ??
         (scopeHit?.reason ? `${scopeHit.reason} ${EXPANSION_ASK_REASON}` : EXPANSION_ASK_REASON));
-    const ask: ReviewVerdict = { decision: "ask", by: "rule", rule, reason };
+    const ask: ReviewVerdict = { decision: "ask", by: "rule", rule, reason, approver };
     if (approver === "person") return ask;
     if (!(await this.classifierMapped(input.orgId))) return ask;
     const answer = await runClassifier(
@@ -366,6 +425,7 @@ export class CommandReviewService implements CommandReview {
           personMessages: await this.personMessages(await facts.rootOf()),
           tag: newReviewTag(),
           ...(candidate ? { permissionCandidate: candidate } : {}),
+          ...(fullAccessReview ? { fullAccessReview } : {}),
         },
         beforeSend: input.beforeSend,
       },
@@ -377,7 +437,13 @@ export class CommandReviewService implements CommandReview {
         by: "classifier",
         reason: escalation ? withEscalation(reason, answer.reason) : answer.reason,
       };
-    return { decision: answer.decision, by: "classifier", reason: answer.reason, rule: null };
+    return {
+      decision: answer.decision,
+      by: "classifier",
+      reason: answer.reason,
+      rule: null,
+      approver,
+    };
   }
 
   private async decide(input: ReviewInput & ReviewCall): Promise<ReviewVerdict> {

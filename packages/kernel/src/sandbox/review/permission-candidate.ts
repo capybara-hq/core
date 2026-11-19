@@ -3,6 +3,7 @@ import path from "node:path";
 import {
   DEVICE_DEFAULT_STATE_PATH,
   DEVICE_DENIED_SECRET_PATHS,
+  isSandboxWriteDenied,
   type PermissionProfile,
   validateAllowHost,
 } from "@capybara-hq/plugin-sdk";
@@ -18,6 +19,9 @@ import type {
   PermissionExpansion,
   PermissionReviewSnapshot,
 } from "../permission-call-types.js";
+
+export type { PermissionCrossingKind };
+
 import { hostsWithinOuter, permissionScopeHash } from "../permission-facts.js";
 import { parseCommand } from "./rules.js";
 
@@ -143,8 +147,7 @@ export const escalationRefusedText = (why: string, workingRoot: string): string 
  * it) when this device and org allow running outside the sandbox: the model may retry the same
  * call escalated, and the profile's approver decides.
  */
-export const ESCALATION_RETRY_HINT =
-  ' If this command must reach outside the sandbox, retry the same Bash call with sandbox: "escalated" and justification: one sentence saying why; the user or the review model decides whether it may run outside the sandbox for this call only.';
+export const ESCALATION_RETRY_HINT = ` If this command must reach outside the sandbox, retry the same Bash call with sandbox: "escalated" and justification: one sentence saying why; this conversation's permission profile decides whether it may run outside the sandbox for this call only (the user, the review model, or Full access within this device's limits).`;
 /**
  * Who decides a boundary crossing (a per-call escalation, a directory or host proposal) under a
  * profile (2026-11-19 maintainer decision: the profiles are approval policy only): Request approval
@@ -159,17 +162,45 @@ export const approverForProfile = (profile: PermissionProfile): PermissionApprov
       ? "review-model"
       : "none";
 /**
+ * The sensitive-command consents that touch credentials (`ask.credential-*`, `ask.ssh`,
+ * `ask.secret-file`): an escalation carrying one is reviewed even under Full access.
+ */
+export const isCredentialConsentRule = (rule: string): boolean =>
+  rule.startsWith("ask.credential-") || rule === "ask.ssh" || rule === "ask.secret-file";
+/**
  * Who decides one crossing (approval-only profiles design, "Profiles"): {@link approverForProfile},
- * except that a sub-agent's `outside-sandbox` escalation is never auto-granted (`none` becomes
- * `review-model`). W0 interface stub: the review and grants task (T6) implements and wires it.
+ * except that an `outside-sandbox` escalation is never auto-granted when a sub-agent asks for it or
+ * when it carries a credential consent ({@link isCredentialConsentRule}): `none` becomes
+ * `review-model` (maintainer ruling 2026-11-19). Other sensitive consents (sudo, persistent
+ * changes) stay automatic under Full access and are recorded.
  */
 export function approverForCrossing(input: {
   profile: PermissionProfile;
   crossing: PermissionCrossingKind;
   subAgent: boolean;
+  /** The call carries a credential consent (its rule hits; absent: none). */
+  credentialConsent?: boolean;
 }): PermissionApprover {
-  void input;
-  throw new Error("approverForCrossing: not implemented in W0");
+  const approver = approverForProfile(input.profile);
+  // only the person or the review model approves these escalations, never the agent tree itself
+  return approver === "none" &&
+    input.crossing === "outside-sandbox" &&
+    (input.subAgent || input.credentialConsent === true)
+    ? "review-model"
+    : approver;
+}
+/**
+ * The crossing a candidate asks for: running one call outside the sandbox, a directory outside the
+ * scope (also when hosts come with it), or a new host while the network is an allowlist.
+ */
+export function crossingOfCandidate(
+  candidate: Pick<PermissionCandidate, "scopeKind" | "permissionScope">,
+): PermissionCrossingKind {
+  if (candidate.scopeKind === "sandbox-escalation") return "outside-sandbox";
+  return candidate.permissionScope.readDirectories.length > 0 ||
+    candidate.permissionScope.writeDirectories.length > 0
+    ? "directory"
+    : "host";
 }
 /** The paths a local device never opens to restricted work, relative to `~`. */
 const OWNER_DENIED_PATHS = [...DEVICE_DENIED_SECRET_PATHS, DEVICE_DEFAULT_STATE_PATH];
@@ -183,8 +214,17 @@ function ownerDeniedPath(target: string, homes: readonly string[]): string | und
       if (withinDirectory(target, path.posix.join(home, denied.slice(2)))) return denied;
   return undefined;
 }
-const ownerDeniedText = (denied: string, target: string) =>
-  `${target} is under ${denied}, which the device never opens to this conversation's permission profile (a credential location or the device's own state), so this call cannot be approved and did not run. Ask the user to provide what is needed from it, or to choose Full access for this conversation if it must be used there.`;
+/** How a protected location is still reached: only a Bash call run outside the sandbox, if allowed. */
+const protectedReach = (escalationRefusal: string | null | undefined) =>
+  escalationRefusal
+    ? ` Running a command outside the sandbox is not possible here (${escalationRefusal}).`
+    : ' If it must be used, only a Bash call run outside the sandbox (sandbox: "escalated" with a justification) can reach it, for that call only and as this conversation\'s permission profile decides.';
+const ownerDeniedText = (denied: string, target: string, escalationRefusal?: string | null) =>
+  `${target} is under ${denied}, which the device never opens to sandboxed work (a credential location or the device's own state), so this call cannot be approved and did not run. Ask the user to provide what is needed from it.${protectedReach(escalationRefusal)}`;
+const protectedWriteText = (target: string, escalationRefusal?: string | null) =>
+  `${target} is a protected location the sandbox never writes (shell startup files, git hooks and configuration, and the places the system runs programs from later), so no directory approval covers it and this call did not run. Keep the change inside the project, or ask the user to make it.${protectedReach(escalationRefusal)}`;
+/** A refusal of a protected location: never proposed, and its text already names the escalation. */
+class ProtectedPathError extends Error {}
 /**
  * A background escalation's disclosure: it starts a process that keeps running outside the
  * sandbox until it exits or is stopped, at most the task's deadline (the requested timeout
@@ -251,23 +291,20 @@ export function buildPermissionCandidate(
   ];
   const refuseDenied = (target: string) => {
     const denied = ownerDeniedPath(target, homeRoots);
-    if (denied) throw new Error(ownerDeniedText(denied, target));
+    if (denied)
+      throw new ProtectedPathError(ownerDeniedText(denied, target, facts.escalationRefusal));
+  };
+  // a write proposal never covers a location the sandbox refuses to write (the persistence
+  // vectors, git internals): no approval could make it run inside the sandbox
+  const refuseWriteDenied = (target: string) => {
+    if (isSandboxWriteDenied(target))
+      throw new ProtectedPathError(protectedWriteText(target, facts.escalationRefusal));
   };
   const input = call.validatedInput as { file_path?: unknown; command?: unknown } | null;
   // a per-call sandbox escalation: one Bash call with full execution, never a directory or host
-  // expansion; Full access already runs every call that way, so there it asks for nothing more
+  // expansion. Every profile proposes it: the profile only chooses who approves it (Full access
+  // grants it within the device's outside-sandbox ceiling, recorded and audited)
   if (isEscalatedCall(call.toolKey, input)) {
-    // no approver (Full access): granted for this call within the ceiling, never past it. Full
-    // access runs every call outside the sandbox today, so there is no grant to issue (until the
-    // profile-semantics refactor keeps the sandbox under every profile)
-    if (approverForProfile(facts.profile) === "none")
-      return facts.escalationRefusal
-        ? {
-            kind: "unsupported",
-            code: "escalation-unavailable",
-            message: escalationRefusedText(facts.escalationRefusal, facts.workingRoot),
-          }
-        : { kind: "in-scope" };
     const justification = (input as { justification?: unknown }).justification;
     if (typeof justification !== "string" || justification.trim() === "")
       return {
@@ -309,8 +346,10 @@ export function buildPermissionCandidate(
     const normalized = directory(path.posix.resolve(facts.workingRoot, value));
     refuseDenied(normalized);
     const base = write ? facts.baseWriteDirectories : facts.baseReadDirectories;
-    if (!base.some((root) => withinDirectory(normalized, root)))
+    if (!base.some((root) => withinDirectory(normalized, root))) {
+      if (write) refuseWriteDenied(normalized);
       (write ? writes : reads).push(normalized);
+    }
   };
   // the paths a file call names: `file_path`, or every path a `GenerateImage` call writes into the
   // device (none without `file_path`; the suffixed paths of several images), each judged
@@ -336,6 +375,7 @@ export function buildPermissionCandidate(
       for (const target of resolved) refuseDenied(target);
       for (const target of resolved) {
         if (!base.some((root) => withinDirectory(target, root))) {
+          if (write) refuseWriteDenied(target);
           proposeDirectory(path.posix.dirname(target), write);
         }
       }
@@ -343,15 +383,26 @@ export function buildPermissionCandidate(
       targetPath = resolved.join(", ");
       if (targetPath.length > 4096) throw new Error("Invalid target path");
     } else if (call.toolKey === "Bash" && typeof input?.command === "string") {
+      // a host is a crossing only while the sandbox network is an allowlist: the open network
+      // already reaches every public host, and private ones only outside the sandbox
+      const allowlist = facts.policy.network.kind !== "open-public";
       const parsed = parseCommand(input.command);
       for (const command of parsed?.commands ?? []) {
         if (command.argv[0] === "cd" && command.argv.length === 2 && command.argv[1])
           proposeDirectory(command.argv[1], true);
         for (const word of command.argv) {
-          if (!/^https?:\/\//i.test(word)) continue;
+          if (!allowlist || !/^https?:\/\//i.test(word)) continue;
           const url = new URL(word);
-          // an IP literal is no grantable host: nothing is proposed, the enforced network decides
-          if (isIP(url.hostname.replace(/^\[|\]$/g, "")) !== 0) continue;
+          // an IP literal or a loopback name is no grantable host (no per-call private endpoint
+          // grants): nothing is proposed, the enforced network decides and only running outside
+          // the sandbox reaches a private address
+          const hostname = url.hostname.toLowerCase().replace(/\.$/, "");
+          if (
+            isIP(hostname.replace(/^\[|\]$/g, "")) !== 0 ||
+            hostname === "localhost" ||
+            hostname.endsWith(".localhost")
+          )
+            continue;
           if (
             url.username ||
             url.password ||
@@ -401,6 +452,8 @@ export function buildPermissionCandidate(
       candidate: Object.freeze({ ...candidate, candidateHash: permissionCandidateHash(candidate) }),
     };
   } catch (error) {
+    if (error instanceof ProtectedPathError)
+      return { kind: "unsupported", code: "protected-path", message: error.message };
     return {
       kind: "unsupported",
       code: "unbounded-scope",

@@ -732,10 +732,7 @@ describe("network asks: only the device owner decides, in a signed-in session", 
       .run(async () => (await ka.app.get(DevicesService).createLocal(orgId, accountId, "Box")).id);
 
   /** A network ask about a device of `deviceOwner` (default: the run's initiator). */
-  const ask = async (
-    scopes: ("once" | "always")[] = ["once", "always"],
-    deviceOwner: string = initiator.account.id,
-  ) =>
+  const ask = async (scopes: "once"[] = ["once"], deviceOwner: string = initiator.account.id) =>
     svc().requestNetwork({
       orgId,
       conversationId,
@@ -767,7 +764,7 @@ describe("network asks: only the device owner decides, in a signed-in session", 
 
   it("the run's starter who does not own the device → 403 approval.not_yours naming the owner", async () => {
     // the conversation's run is the initiator's; the device is another member's
-    const a = await ask(["once", "always"], other.account.id);
+    const a = await ask(["once"], other.account.id);
     const res = await initiator.req({
       method: "POST",
       url: `${base()}/${a.id}/decision`,

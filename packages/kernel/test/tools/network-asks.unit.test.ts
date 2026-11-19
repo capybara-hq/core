@@ -8,7 +8,6 @@ import {
   NETWORK_ASK_CANCELLED_NOTE,
 } from "../../src/tools/approvals.service.js";
 import {
-  allowedAlwaysNote,
   allowedOnceNote,
   clipKept,
   deniedNote,
@@ -47,9 +46,6 @@ describe("note texts (spec §6.6, §8.3)", () => {
     expect(allowedOnceNote(["files.slack.com"])).toBe(
       "[network] files.slack.com was blocked by this device's network policy. The user allowed it for the rest of this task. Run the command again.",
     );
-    expect(allowedAlwaysNote(["files.slack.com"])).toBe(
-      "[network] files.slack.com was blocked by this device's network policy. The user allowed it on this device from now on. Run the command again.",
-    );
     expect(deniedNote(["files.slack.com"], "not for work")).toBe(
       "[network] files.slack.com was blocked by this device's network policy. The user declined access to files.slack.com. Do not try to reach it another way; continue without it or ask the user. Reason: not for work",
     );
@@ -76,7 +72,7 @@ describe("planNetworkAsk", () => {
       attended,
     );
     expect(p.ask).toEqual([{ host: "files.slack.com", port: 443 }]);
-    expect(p.scopes).toEqual(["once", "always"]);
+    expect(p.scopes).toEqual(["once"]);
     expect(p.notes).toEqual([
       "[network] api.foo.com is not in the organization's network allowlist. Only an organization admin can add it; the user can ask an admin from the conversation. Continue without it or tell the user.",
       "[network] 10.0.0.5 is a private or local address, which commands can never reach.",
@@ -209,34 +205,10 @@ describe("settledNetworkNotes", () => {
     ).toEqual([allowedOnceNote(["a.com"]), deniedNote(["b.com"])]);
     expect(
       settledNetworkNotes(
-        rec({
-          status: "approved",
-          detail: { ...d, grantedHosts: ["a.com", "b.com"], outcome: "always" },
-        }),
-        24,
-      ),
-    ).toEqual([allowedAlwaysNote(["a.com", "b.com"])]);
-    expect(
-      settledNetworkNotes(
-        rec({
-          status: "approved",
-          detail: { ...d, grantedHosts: ["a.com", "b.com"], outcome: "once_fallback" },
-        }),
+        rec({ status: "approved", detail: { ...d, grantedHosts: ["a.com", "b.com"] } }),
         24,
       ),
     ).toEqual([allowedOnceNote(["a.com", "b.com"])]);
-    // allowed always, but the device refused the policy op: nothing granted
-    expect(
-      settledNetworkNotes(
-        rec({
-          status: "approved",
-          detail: { ...d, grantedHosts: [], outcome: "refused" as never },
-        }),
-        24,
-      ),
-    ).toEqual([
-      "[network] a.com, b.com were blocked by this device's network policy. The user allowed them on this device, but the device does not accept network changes from the deployment; access stays blocked. The device owner can allow them locally: capybara-device policy add allowedDomains a.com and capybara-device policy add allowedDomains b.com.",
-    ]);
     expect(settledNetworkNotes(rec({ status: "denied", denyReason: "no" }), 24)).toEqual([
       deniedNote(["a.com", "b.com"], "no"),
     ]);

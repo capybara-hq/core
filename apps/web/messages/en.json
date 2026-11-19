@@ -4261,6 +4261,7 @@
         "deviceRenamed": "Renamed a device",
         "deviceOwnerCeilingChanged": "Changed a device's owner permission ceiling",
         "conversationPermissionProfileChanged": "Changed a conversation's permission profile",
+        "permissionCrossingAutoGranted": "Full access automatically granted an agent a sandbox crossing",
         "evalCaseAdded": "Added an eval case",
         "evalCaseRemoved": "Removed an eval case",
         "evalResultLabeled": "Labeled an eval result",

@@ -822,8 +822,15 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
       candidateHash: z.string(),
       outcome: z.enum(["allow", "ask", "deny"]),
       reason: z.string(),
-      /** Who decided: the review model, or the fixed rules (a deny, an ask, the fail-closed ask). */
-      decisionSource: z.enum(["review-model", "rule"]),
+      /**
+       * Who decided: the review model, the fixed rules (a deny, an ask, the fail-closed ask), or
+       * Full access granting the crossing within the device's ceilings by itself.
+       */
+      decisionSource: z.enum(["review-model", "rule", "full-access"]),
+      /** The crossing reviewed (approval-only profiles design); not model-visible. */
+      crossing: z.enum(["directory", "host", "outside-sandbox"]).optional(),
+      /** The sensitive-command consents (rule ids) a Full access auto-grant skipped; not model-visible. */
+      sensitive: z.array(z.string()).optional(),
     }),
   ),
   ev(

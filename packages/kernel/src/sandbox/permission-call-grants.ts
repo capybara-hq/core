@@ -21,9 +21,12 @@ import type {
   PermissionCallBinding,
   PermissionCandidate,
   PermissionGrantDecision,
+  PermissionGrantSource,
 } from "./permission-call-types.js";
 import { PermissionFacts, permissionScopeHash } from "./permission-facts.js";
 import {
+  approverForCrossing,
+  crossingOfCandidate,
   normalizePermissionExpansion,
   permissionCandidateHash,
 } from "./review/permission-candidate.js";
@@ -154,15 +157,31 @@ export class PermissionCallGrants {
         "forbidden",
         "Permission proposal evidence does not match its exact directory scope",
       );
+    // the automated sources only where the profile names them as the approver of this crossing
+    // (approval-only profiles design): the review model under Approve for me and for an
+    // escalation under Full access that a sub-agent asks for or that carries a credential consent
+    // (the review verdict knows the consents: issuance accepts the stricter review model for any
+    // Full access escalation), Full access itself for every other crossing, never a sub-agent's
+    // escalation. The person's own approval is always evidence; assertCurrent refused unattended
+    // and non-owner calls already
+    const crossing = crossingOfCandidate(candidate);
+    const approver = approverForCrossing({
+      profile: b.profile,
+      crossing,
+      subAgent: b.conversationId !== b.rootConversationId,
+    });
+    const reviewModelMay =
+      approver === "review-model" ||
+      (b.profile === "full-access" && crossing === "outside-sandbox");
     if (
-      b.profile === "full-access" ||
-      (decision.source === "review-model" && b.profile !== "approve-for-me")
+      (decision.source === "review-model" && !reviewModelMay) ||
+      (decision.source === "full-access" && approver !== "none")
     )
       throw new ApiError("forbidden", "This profile cannot issue an automated expansion grant");
     const root = await this.profiles.readOwnedRoot(b.orgId, b.conversationId, b.accountId);
     const view = await this.facts.view(b.orgId, b.accountId, root);
     if (escalation) {
-      // the same ceiling as Full access: owner, org and platform, and a runtime that runs Full
+      // the outside-sandbox ceiling: owner, org and platform, and a runtime that can run outside
       if (
         b.toolKey !== "Bash" ||
         !view.outsideSandboxCeiling ||
@@ -171,7 +190,7 @@ export class PermissionCallGrants {
       )
         throw new ApiError(
           "forbidden",
-          "Running this call outside the sandbox is outside the current Full access ceiling",
+          "Running this call outside the sandbox is beyond the current outside-sandbox ceiling",
         );
       await this.verifyEvidence(candidate, decision);
       return this.insertGrant(candidate, decision);
@@ -258,7 +277,7 @@ export class PermissionCallGrants {
         escalation: candidate.escalation ? JSON.stringify(candidate.escalation) : null,
         source: decision.source,
         approval_id: decision.source === "human" ? decision.approvalId : null,
-        review_event_seq: decision.source === "review-model" ? decision.reviewEventSeq : null,
+        review_event_seq: decision.source === "human" ? null : decision.reviewEventSeq,
         decided_by: decision.decidedBy,
       })
       .onConflict((oc) => oc.column("binding_hash").doNothing())
@@ -277,8 +296,7 @@ export class PermissionCallGrants {
       permissionScopeHash(row.escalation) !== permissionScopeHash(candidate.escalation ?? null) ||
       row.source !== decision.source ||
       row.approval_id !== (decision.source === "human" ? decision.approvalId : null) ||
-      row.review_event_seq !==
-        (decision.source === "review-model" ? decision.reviewEventSeq : null) ||
+      row.review_event_seq !== (decision.source === "human" ? null : decision.reviewEventSeq) ||
       row.decided_by !== decision.decidedBy
     )
       throw new ApiError(
@@ -328,13 +346,15 @@ export class PermissionCallGrants {
       if (
         !event ||
         (event.payload as Record<string, unknown>).outcome !== "allow" ||
-        (event.payload as Record<string, unknown>).decisionSource !== "review-model"
+        (event.payload as Record<string, unknown>).decisionSource !== decision.source
       )
         throw new ApiError("forbidden", "Permission grant requires its recorded allow verdict");
       const {
         outcome: _outcome,
         reason: _reason,
         decisionSource: _source,
+        crossing: _crossing,
+        sensitive: _sensitive,
         ...proposal
       } = event.payload as Record<string, unknown>;
       evidence = proposal;
@@ -347,7 +367,7 @@ export class PermissionCallGrants {
     id: string;
     expansion: PermissionCandidate["permissionScope"];
     scopeKind: PermissionCandidate["scopeKind"];
-    source: "human" | "review-model";
+    source: PermissionGrantSource;
   } | null> {
     const hash = permissionScopeHash(binding);
     const row = await this.db
@@ -359,7 +379,7 @@ export class PermissionCallGrants {
     await this.assertCurrent(binding);
     if (row.source === "human" && (!row.approval_id || !row.decided_by))
       throw new ApiError("forbidden", "The human permission evidence is incomplete");
-    if (row.source === "review-model" && row.review_event_seq === null)
+    if (row.source !== "human" && row.review_event_seq === null)
       throw new ApiError("forbidden", "The review permission evidence is incomplete");
     await this.verifyEvidence(
       {
@@ -372,7 +392,7 @@ export class PermissionCallGrants {
       },
       row.source === "human"
         ? { source: "human", approvalId: row.approval_id ?? "", decidedBy: row.decided_by ?? "" }
-        : { source: "review-model", reviewEventSeq: row.review_event_seq ?? -1, decidedBy: null },
+        : { source: row.source, reviewEventSeq: row.review_event_seq ?? -1, decidedBy: null },
     );
     return { id: row.id, expansion: row.expansion, scopeKind: row.scope_kind, source: row.source };
   }
