@@ -73,8 +73,15 @@ const routes = (
         json(200, {
           settings: { toolSearch: "on", locale: "en" },
           deployment: {
-            fullAccess: { permission: "allowed", source: "default" },
-            cloudNetwork: { allowHosts: [], orgHosts: "extend", off: false },
+            outsideSandbox: { permission: "allowed", source: "default" },
+            deviceNetwork: {
+              default: "open",
+              ceiling: "open",
+              sources: { default: "default", ceiling: "default" },
+              allowHosts: [],
+              orgHosts: "extend",
+              off: false,
+            },
             attribution: {
               commit: PLATFORM_COMMIT,
               pr: PLATFORM_PR,

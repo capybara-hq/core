@@ -5,7 +5,6 @@ import {
   type ApprovalState,
   type CommandAsk as CommandAskBlock,
   type NetworkAsk,
-  type NetworkFallback,
   RadioGroup,
   Stack,
   StatusMark,
@@ -212,11 +211,10 @@ export function useDecide(orgId: string) {
  * nothing is drawn until the read answers, so a decided approval never paints as pending first.
  *
  * A network ask (network ask spec §6.5, `kind: "network"`) draws the block's network variant: the
- * hosts, the refused command, 「这次允许」 / 「这台设备一直允许」 / 「拒绝」 and the checked hosts in
- * the decision. Decided, it still reads the approval: the granted hosts and a fallback from
- * "always" to "this time" are only there. Pending after an "always" whose device change did not
- * take effect or was not confirmed (`detail.attempt`, re-read on `approval_updated`), one line
- * says why under the block.
+ * hosts, the refused command, 「这次允许」 / 「拒绝」 and the checked hosts in the decision. Device
+ * protocol 4 never widens a device from the deployment, so it offers no "always" (the block names
+ * the machine command instead). Decided, it still reads the approval: the granted hosts are only
+ * there.
  */
 export function ApprovalCard({
   orgId,
@@ -307,6 +305,10 @@ export function ApprovalCard({
   const scope = permissionScopeOf(item, view);
   const escalation = escalationOf(item, view);
   const detail = view?.kind === "network" ? (view.detail ?? null) : null;
+  // a network ask is granted for this run only: an "always" is never offered (device protocol 4)
+  const scopes = view
+    ? scopesFor(view).filter((s) => network === undefined || s !== "always")
+    : (["once"] as const);
   // A permission change replaced the ask before anyone decided it: a final line, never actions.
   if (outcome?.decision === "superseded") {
     return (
@@ -350,19 +352,13 @@ export function ApprovalCard({
   }
   let state: ApprovalState;
   if (outcome !== null) {
-    const fallback: NetworkFallback | undefined =
-      detail?.outcome === "once_fallback" ? (detail.fallback ?? "unsupported") : undefined;
     const granted = outcome.decision === "approved" ? detail?.grantedHosts : undefined;
     state = {
       kind: "decided",
       decision: outcome.decision,
       who: who(outcome.byAccountId),
       when: outcome.at ? shortTime(outcome.at, locale, timeZone) : "",
-      ...(fallback !== undefined
-        ? { scope: "once" as const, fallback }
-        : outcome.scope !== undefined
-          ? { scope: outcome.scope }
-          : {}),
+      ...(outcome.scope !== undefined ? { scope: outcome.scope } : {}),
       ...(granted !== undefined && granted.length > 0 ? { hosts: granted } : {}),
       ...(outcome.reason !== undefined ? { reason: outcome.reason } : {}),
     };
@@ -407,7 +403,7 @@ export function ApprovalCard({
         {...(view?.summary ? { summary: view.summary[lang(locale)] } : {})}
         input={input}
         keyArgs={info?.keyArgs ?? []}
-        scopes={view ? scopesFor(view) : ["once"]}
+        scopes={[...scopes]}
         {...(item.policy !== undefined && network === undefined && command === undefined
           ? { policy: t(`policy.${item.policy}`) }
           : {})}
@@ -429,15 +425,6 @@ export function ApprovalCard({
           background={escalation.background}
           maxSeconds={escalation.maxSeconds}
         />
-      )}
-      {state.kind === "pending" && detail?.attempt !== undefined && (
-        <Text variant="small" tone="warn">
-          {detail.attempt.outcome === "failed"
-            ? t("network.attempt.failed", { message: detail.attempt.message })
-            : detail.attempt.outcome === "unknown"
-              ? t("network.attempt.unknown")
-              : t("network.attempt.appliedUndecided")}
-        </Text>
       )}
       {revealsPassword && <InitialPasswordReveal orgId={orgId} approvalId={item.approvalId} />}
     </div>

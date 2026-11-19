@@ -1787,16 +1787,19 @@
       "deleteDangerDefault": "删除 {name} 会同时删除它的文件并结束其中的进程，且无法恢复。下次需要时会新建一个空的设备。",
       "deleteDangerLocal": "删除 {name} 会断开它的机器，且无法恢复。机器上的文件会保留。"
     },
-    "ceiling": {
-      "title": "访问上限",
-      "sectionLocal": "智能体在这台电脑上最多能做什么。只有电脑的所有者能在电脑上放宽，这里只能收窄。",
-      "sectionCloud": "智能体在这台云端设备上最多能做什么。会话的完全访问不会超出它。",
-      "fullAccess": "完全访问",
-      "full": {
-        "available": "可用",
-        "owner": "已在此设备上关闭",
-        "platform": "平台或组织不允许",
-        "unconfirmed": "电脑报告上限之前不可用"
+    "sandbox": {
+      "title": "沙箱",
+      "sectionLocal": "智能体的命令在这台电脑上的运行范围，三种权限下都一样。只有电脑的所有者能在电脑上放宽，这里只能收窄。",
+      "sectionCloud": "智能体的命令在这台云端设备上的运行范围，三种权限下都一样。它的实例就是沙箱。",
+      "network": "网络",
+      "networkValue": {
+        "open": "开放互联网（内网除外）",
+        "allowlist": "白名单"
+      },
+      "outside": "在沙箱外运行",
+      "outsideValue": {
+        "allowed": "允许",
+        "off": "关闭"
       },
       "reach": "项目范围",
       "reachValue": {
@@ -1807,58 +1810,63 @@
       "notice": {
         "noMachine": "还没有连接电脑。请在电脑上运行 capybara-device login 连接它。",
         "blocked": "这台电脑发来的权限报告已过期，新的工作已暂停。请在电脑上重新运行 capybara-device login。",
-        "missing": "这台电脑还没有报告它的上限，所以完全访问不可用。请在电脑上更新 capybara-device 并重新连接。",
-        "legacy": "这台电脑运行的是旧版 capybara-device，它的上限按旧设置读取。更新 capybara-device 后可以分别设置完全访问和项目范围。",
-        "stale": "这是电脑最近一次报告的情况：它已离线，或报告不是最新的。",
-        "migrating": "该设备的权限尚未迁移。现在可以关闭完全访问；开启要等迁移完成。"
+        "missing": "这台电脑还没有报告它的沙箱设置。请在电脑上更新 capybara-device 并重新连接。",
+        "stale": "这是电脑最近一次报告的设置：它已离线，或报告不是最新的。"
       },
+      "unknown": "电脑报告设置之前未知",
       "mark": {
-        "full": "可完全访问",
-        "restricted": "受限"
+        "outside": "可在沙箱外运行",
+        "sandbox": "仅沙箱"
       },
+      "limited": {
+        "network": {
+          "platform": "平台已限定为白名单（超级管理员设置）",
+          "org": "组织已限定为白名单（组织管理员设置）",
+          "owner": "只有电脑的所有者能在电脑上放宽",
+          "provider": "设备的提供方已限定为白名单"
+        },
+        "outside": {
+          "platform": "平台已关闭（超级管理员设置）",
+          "org": "组织已关闭（组织管理员设置）",
+          "owner": "只有电脑的所有者能在电脑上允许",
+          "provider": "云端设备的实例就是它的沙箱"
+        }
+      },
+      "hosts": "允许的主机",
+      "hostsEmpty": "没有允许的主机。",
+      "remove": "移除",
+      "removeLabel": "移除 {host}",
+      "removed": "已移除 {host}。",
+      "localHostsHelp": "这里只能移除主机；添加只能由电脑的所有者在电脑上进行。",
       "widenLocal": "只有电脑的所有者能在电脑上放宽：",
-      "turnOffFull": "关闭完全访问",
+      "command": {
+        "network": "开放网络：",
+        "outside": "允许在沙箱外运行：",
+        "host": "把主机加入白名单：",
+        "reach": "放宽项目范围："
+      },
+      "networkNarrowed": "网络已限定为白名单。",
+      "outsideOff": "此设备已关闭在沙箱外运行。",
       "limitReach": "仅限工作区",
-      "allowFull": "允许完全访问",
-      "fullOff": "此设备的完全访问已关闭。",
-      "fullOn": "此设备已允许完全访问。",
       "reachLimited": "项目范围已限制为工作区。",
-      "legacyNarrowNote": "在这个旧版 capybara-device 上，这也会把项目范围限制为工作区。",
       "cannotNarrow": {
         "offline": "这台电脑已离线，无法在这里收窄。请在电脑上运行下面的命令。",
         "upgrade": "这台电脑上的 capybara-device 不能接收平台的修改。请更新它，或在电脑上运行下面的命令。"
       },
       "pendingNextUse": "下次使用时生效，文件保留。",
       "pendingFilesReset": "重建文件后生效。",
-      "confirm": {
-        "title": {
-          "widen": "允许此设备完全访问？",
-          "narrow": "关闭此设备的完全访问？"
-        },
-        "effect": {
-          "widen": "之后这台设备上的会话可以选择完全访问：命令在它的环境里运行，不再逐次确认。每个会话都需要重新确认完全访问。",
-          "narrow": "这台设备上以完全访问运行的工作会立即停止，它的会话不能再选择完全访问。"
-        },
-        "network": {
-          "open": "设备随后可以访问公网地址，内网仍被阻止。",
-          "allowlist": "设备随后只能访问 {hosts}。",
-          "none": "设备随后无法访问任何网络地址。"
-        },
-        "nextUse": "它的实例在下次使用时采用新的限制和网络，届时可能重启，正在运行的命令会结束。文件保留。",
-        "submit": {
-          "widen": "允许完全访问",
-          "narrow": "关闭完全访问"
-        },
-        "cancel": "取消"
-      },
-      "cloudForbidden": "平台或组织不允许完全访问，所以它在此设备上已经关闭。"
+      "cloudHosts": "主机",
+      "cloudHostsHelp": "每行一个主机。只有组织清单里的主机生效；留空则跟随组织的清单。",
+      "invalidHost": "{host} 不是有效的主机：请使用小写名称，例如 files.example.com 或 *.example.com。",
+      "save": "保存网络",
+      "saved": "设备的网络已保存。"
     },
     "recent": {
       "title": "最近的修改",
       "add": "添加 {hosts}",
       "remove": "移除 {hosts}",
-      "fullAllowed": "已允许完全访问",
-      "fullOff": "已关闭完全访问",
+      "change": "{setting}：{from} → {to}",
+      "set": "{setting}：{to}",
       "none": "没有改动",
       "unknownBy": "未知账号",
       "via": {
@@ -1869,10 +1877,6 @@
       "outcome": {
         "unknown": "机器未确认",
         "failed": "未生效"
-      },
-      "reach": {
-        "workspace": "项目范围已限制为工作区",
-        "os-user": "项目范围已放宽到这台电脑上该用户的文件"
       }
     },
     "machine": {
@@ -1887,33 +1891,14 @@
       "description": "断开后这台机器的连接凭据会被撤销，正在运行的命令会结束；机器上的文件会保留。"
     },
     "network": {
-      "domains": "允许的域名",
-      "domainsEmpty": "这台机器还没有允许任何域名。",
-      "remove": "移除",
-      "removeLabel": "移除 {host}",
-      "removed": "已移除 {host}。",
-      "add": "添加域名",
-      "addHelp": "完整主机名或通配符（*.example.com）。",
-      "addDisabled": "这台机器不能从平台添加域名。",
-      "addSubmit": "添加",
-      "added": "已添加 {host}。",
-      "hostInvalid": "请输入小写主机名，不带协议、端口或路径，例如 files.example.com 或 *.example.com。",
-      "hostPresent": "这个域名已经允许。",
-      "upgrade": "这台机器上的设备程序不支持从平台修改网络设置。请在机器上升级 capybara-device。",
-      "dockerNote": "这台机器用 Docker 运行命令，无法按域名限制，因此不接受平台放宽网络。",
-      "unknown": "机器还没有上报它的网络设置。",
       "title": "网络",
-      "cloudTitle": "网络",
+      "domains": "允许的主机",
+      "domainsEmpty": "没有允许的主机。",
+      "overviewNote": "沙箱里的命令只能访问这些主机。",
       "cloudHint": {
         "org": "组织在设置里修改这里。",
         "platform": "由平台设置。"
-      },
-      "cloudEmpty": "没有允许的域名。",
-      "overviewNote": "受限的工作只能访问这些域名。",
-      "description": "受限的工作只能访问这些域名；修改会发送到这台电脑。",
-      "addTitle": "添加域名",
-      "addField": "域名",
-      "cancel": "取消"
+      }
     },
     "overview": {
       "editNetwork": "去设置修改"
@@ -2059,12 +2044,7 @@
       "fixed": "该工具总是需要审批"
     },
     "network": {
-      "otherApprover": "智能体想访问 {hosts}，等待设备所有者处理。",
-      "attempt": {
-        "unknown": "设备没有确认这次网络规则的修改；设备下次连接时会说明是否生效。你可以重新处理。",
-        "failed": "设备的网络规则修改没有生效：{message} 你可以重新处理。",
-        "appliedUndecided": "设备已经允许，但做出这个选择的人已不能处理这条请求。"
-      }
+      "otherApprover": "智能体想访问 {hosts}，等待设备所有者处理。"
     },
     "permissionScope": {
       "intro": "批准后仅本次操作获得以下访问范围，每个目录包含其中的全部内容。",
@@ -2664,34 +2644,38 @@
       "ask": "需要审批",
       "askHint": "除只读工具外，每次调用都要用户批准。"
     },
-    "fullAccess": {
-      "title": "完全访问",
-      "description": "允许完全访问时，组织内的设备以环境自身的权限运行命令，由命令审核把关；关闭后，设备以受限方式运行，只能写入工作区和临时目录，网络只走白名单。",
-      "allowed": "允许完全访问",
-      "allowedHint": "设备可以使用完全访问，设备的所有者仍要在自己的设备上允许。",
-      "off": "关闭完全访问",
-      "offHint": "组织内的设备都以受限方式运行，所有者不能在设备上改回完全访问。",
-      "platformClosed": "平台未开放"
+    "outsideSandbox": {
+      "title": "在沙箱外运行",
+      "description": "设备上的单次调用能否获准在沙箱外运行：请求批准和帮我批准下要先经过你或审查模型，完全访问下在设备允许的范围内自动批准并记录。设备的所有者仍要在自己的设备上允许；云设备没有沙箱外。",
+      "allowed": "允许",
+      "allowedHint": "调用可以获准在沙箱外运行，设备的所有者仍要在自己的设备上允许。",
+      "off": "关闭",
+      "offHint": "组织内的调用都只在沙箱内运行，所有者也不能在设备上改回。",
+      "platformClosed": "平台已关闭（超级管理员设置）"
     },
-    "cloudNetwork": {
-      "title": "云设备网络",
-      "description": "云设备在沙箱模式下使用的网络；自动模式没有网络限制。这份主机清单同时是本地设备在沙箱模式下的上限（设备会与自己的清单取交集），收紧它也会限制本地沙箱设备。",
-      "open": "开放（挡内网）",
-      "openHint": "任何公网地址和端口。",
+    "deviceNetwork": {
+      "title": "设备网络",
+      "description": "设备沙箱的网络，本地设备和云设备都适用。上限是设备最多能选到的网络，默认是设备所有者没有选择时使用的网络，默认不会超过上限。",
+      "ceiling": "上限",
+      "default": "默认",
+      "open": "开放互联网（内网除外）",
+      "openHint": "任何公网地址；内网、回环和云元数据地址只有在沙箱外运行才能访问。",
       "allowlist": "白名单",
       "allowlistHint": "只放行下面的主机。",
-      "platformClosed": "平台已关闭网络：只有平台能重新开放。",
-      "withinClosed": "平台把主机限制在它的清单内：只能使用白名单。",
+      "platformAllowlist": "平台已限定为白名单（超级管理员设置）",
+      "ceilingAllowlist": "上限是白名单，默认也只能是白名单",
+      "platformClosed": "平台已关闭网络：只有超级管理员能重新开放。",
+      "withinNote": "平台把主机限制在它的清单内：清单外的主机需要超级管理员添加。",
       "outsideCeiling": "平台把主机限制在它的清单内：请超级管理员把 {hosts} 加入平台的白名单。",
       "hosts": "允许的主机",
-      "hostsHelp": "沙箱模式能访问的主机：云设备的白名单，也是每台本地设备在沙箱模式下的上限（云设备网络开放时也一样）。从平台的清单加上本组织的改动开始；每行一个，如 registry.npmjs.org 或 *.example.com（只匹配子域）。不能填 IP、端口或内网名称。",
+      "hostsHelp": "设备网络是白名单时能访问的主机，设备只会在这份清单内再收窄。从平台的清单加上本组织的改动开始；每行一个，如 registry.npmjs.org 或 *.example.com（只匹配子域）。不能填 IP、端口或内网名称。",
       "invalidHost": "{host} 不是有效的主机：小写，不带协议、端口或路径，也不是内网名称。",
       "prefilled": "已从被拦截的命令添加 {hosts}，保存后生效。",
-      "ownNetwork": "本组织在平台的主机清单上保留了自己的改动。",
+      "ownNetwork": "本组织保留了自己的设备网络设置。",
       "followPlatform": "跟随平台",
-      "followPlatformBody": "本组织自己添加和移除的主机以及云设备网络的选择都会被丢弃，之后跟随平台的主机清单和默认网络，包括超级管理员以后的改动。",
+      "followPlatformBody": "本组织的默认、上限以及自己添加和移除的主机都会被丢弃，之后跟随平台的设备网络和主机清单，包括超级管理员以后的改动。",
       "followPlatformDone": "已跟随平台",
-      "publicOnly": "只放行公网地址；回环、内网和云元数据地址在容器外一律拦截。"
+      "publicOnly": "沙箱内只能访问公网地址；内网、回环和云元数据地址一律拦截。"
     },
     "limits": {
       "title": "沙箱资源",
@@ -4461,14 +4445,14 @@
         "allowHint": "组织可以自己新建、导入技能，也可以从平台目录安装。",
         "denyHint": "组织只能从平台目录安装技能。"
       },
-      "fullAccess": {
-        "title": "完全访问",
-        "description": "平台上的设备是否可以使用完全访问：设备的所有者也允许时，对话可以以完全访问运行，命令以环境自身的权限执行，由命令审核把关。",
-        "label": "完全访问",
+      "outsideSandbox": {
+        "title": "在沙箱外运行",
+        "description": "平台上的设备能否获准让单次调用在沙箱外运行：组织和设备的所有者也允许时，请求批准和帮我批准下由你或审查模型批准，完全访问下自动批准并记录。云设备没有沙箱外。",
+        "label": "在沙箱外运行",
         "allowed": "允许",
-        "allowedHint": "组织可以允许完全访问，设备的所有者仍要在自己的设备上允许。",
+        "allowedHint": "组织可以允许，设备的所有者仍要在自己的设备上允许。",
         "off": "关闭",
-        "offHint": "关闭后，设备都以受限方式运行：本地设备只走白名单，云设备按组织的云设备网络运行。重新允许需要超级管理员在此设置。",
+        "offHint": "关闭后，所有调用都只在沙箱内运行。重新允许需要超级管理员在此设置。",
         "source": "来源：{source}",
         "sources": {
           "env": "来自环境变量（只读）",
@@ -4476,6 +4460,25 @@
           "nacos": "来自 Nacos（只读）",
           "db": "在管理后台设置",
           "default": "默认（允许）"
+        }
+      },
+      "deviceNetwork": {
+        "title": "设备网络",
+        "description": "设备沙箱的网络，本地设备和云设备都适用。上限是组织和设备最多能选到的网络，默认是没有选择时使用的网络，默认不会超过上限。需要控制出网时，把上限设为白名单，并在 sandbox.limits.allowHosts 里维护主机。",
+        "ceiling": "上限",
+        "default": "默认",
+        "open": "开放互联网（内网除外）",
+        "openHint": "任何公网地址；内网、回环和云元数据地址只有在沙箱外运行才能访问。",
+        "allowlist": "白名单",
+        "allowlistHint": "只放行平台和组织清单里的主机。",
+        "ceilingAllowlist": "上限是白名单，默认也只能是白名单",
+        "sourceOf": "{field}：{source}",
+        "sources": {
+          "env": "来自环境变量（只读）",
+          "file": "来自配置文件（只读）",
+          "nacos": "来自 Nacos（只读）",
+          "db": "在管理后台设置",
+          "default": "默认（开放）"
         }
       },
       "clientCode": {

@@ -30,16 +30,8 @@ export interface NetworkApprovalDetail {
   description: string | null;
   /** The hosts the decision allowed (the checked subset). */
   grantedHosts?: string[];
-  /** `once_fallback`: "always" was chosen but the device took it as "this time". */
-  outcome?: "once" | "always" | "once_fallback";
-  /** Why "always" fell back to "this time". */
-  fallback?: "offline" | "refused" | "unsupported";
-  /**
-   * While pending: the last "always" whose device change did not take effect (`failed`, with the
-   * device's reason), that the device did not confirm (`unknown`), or that the device applied but
-   * whose chooser can no longer decide the request (`applied_undecided`).
-   */
-  attempt?: { outcome: "failed" | "unknown" | "applied_undecided"; message: string };
+  /** A network ask is granted for this run only (device protocol 4 never widens a device). */
+  outcome?: "once";
 }
 
 /**

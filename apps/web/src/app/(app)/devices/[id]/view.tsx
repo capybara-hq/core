@@ -56,7 +56,7 @@ import NotFound from "../../not-found";
 
 /**
  * `/devices/[id]`: one device (DetailPage, one centred column). Its head is the `DeviceNameplate`
- * band — name, origin, status light and the ceiling mark (Full access available or restricted) on
+ * band — name, origin, status light and the sandbox mark (can run outside the sandbox, or sandbox only) on
  * the left, program version, last seen and creation time on the right — the page's one bright
  * element, and the page's title: the PageHeader is title-less, so the name is said once
  * (`titleHidden`). Everything below is quiet and dense: the owner ceiling (read only on Overview, with
@@ -213,7 +213,7 @@ function Detail({
             version={local ? (e.machine?.programVersion ?? null) : null}
             lastSeen={local ? (e.machine?.lastSeenAt ?? null) : (e.instance?.lastUsedAt ?? null)}
             created={e.createdAt}
-            badge={<Badge>{t(`ceiling.mark.${mark}`)}</Badge>}
+            badge={<Badge>{t(`sandbox.mark.${mark}`)}</Badge>}
             labels={{
               origin: { cloud: t("source.cloud"), local: t("source.local") },
               state: { [npState]: t(`state.${state}`) },

@@ -8,6 +8,7 @@ import { DiffBlock, type DiffData } from "./diff-block";
 import { Spinner } from "./prose";
 import {
   fillCopy,
+  type ToolAutoGranted,
   type ToolGuard,
   type ToolKind,
   type ToolNotice,
@@ -65,6 +66,12 @@ export type ToolRowData = {
    * in `muted` (§6.16.9).
    */
   outsideSandbox?: boolean;
+  /**
+   * A boundary crossing Full access granted by itself (`tool_result.review.decisionSource:
+   * "full-access"` with a `crossing`): a done or failed row adds the neutral words "Approved
+   * automatically: <kind>" (`tool.autoGranted`) in `muted` (§6.16.9).
+   */
+  autoGranted?: ToolAutoGranted;
   /** The error; its first line is shown after "Failed". */
   error?: string;
   /** The extension whose policy hook denied the call. */
@@ -162,6 +169,11 @@ export function ToolLabel({ row }: { row: ToolRowData }): JSX.Element {
       {(row.status === "done" || row.status === "failed") && row.outsideSandbox ? (
         <span className="cb-muted" data-part="sandbox-word">
           {` · ${t("tool.outsideSandbox")}`}
+        </span>
+      ) : null}
+      {(row.status === "done" || row.status === "failed") && row.autoGranted ? (
+        <span className="cb-muted" data-part="auto-granted-word">
+          {` · ${t("tool.autoGranted").replace("{kind}", t(`tool.crossing.${row.autoGranted}`))}`}
         </span>
       ) : null}
       {row.status === "cancelled" ? (

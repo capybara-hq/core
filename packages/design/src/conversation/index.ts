@@ -201,6 +201,7 @@ export {
   type SummaryRow,
   summarizeTools,
   summaryParts,
+  type ToolAutoGranted,
   type ToolGuard,
   type ToolKind,
   type ToolNotice,

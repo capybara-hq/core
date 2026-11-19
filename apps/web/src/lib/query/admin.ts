@@ -157,8 +157,8 @@ const under = (k: readonly unknown[], prefix: readonly unknown[]) =>
   prefix.every((p, i) => k[i] === p);
 
 /**
- * After a change of the platform's Full permission switch: every cached org's settings (the platform's
- * answer rides on them) and devices (their allowed and effective mode) are stale.
+ * After a change of the platform's device sandbox settings (outside the sandbox, the network): every
+ * cached org's settings (the platform's answer rides on them) and devices are stale.
  */
 export function invalidateDeviceModes(qc: QueryClient): Promise<void> {
   return qc.invalidateQueries({

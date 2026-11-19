@@ -48,7 +48,12 @@ const SETTINGS = {
   sandboxLimitOverrides: {},
   customConnectors: "allow",
   customSkills: "allow",
-  devicesFullAccess: { permission: "allowed", source: "default" },
+  devicesOutsideSandbox: { permission: "allowed", source: "default" },
+  devicesNetwork: {
+    default: "open",
+    ceiling: "open",
+    sources: { default: "default", ceiling: "default" },
+  },
 };
 
 const SHA = "a".repeat(64);
@@ -567,14 +572,15 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
     await release();
   });
 
-  it("/admin/settings: the loading sections are the page's own (five card radios, the currency)", async () => {
+  it("/admin/settings: the loading sections are the page's own (seven card radios, the currency)", async () => {
     const { release } = await renderHeld("/admin/settings", "GET /api/v1/admin/settings");
     await expectLoading("FormPage", en.admin.settings.orgCreation.anyone);
-    // three policies, 自动模式's two cards and 外观's theme cards, then 插件界面代码's switch row
-    expect(document.querySelectorAll('[data-part="loading-radios"]')).toHaveLength(5);
+    // three policies, running outside the sandbox, the device network's ceiling and default and
+    // 外观's theme cards, then 插件界面代码's switch row
+    expect(document.querySelectorAll('[data-part="loading-radios"]')).toHaveLength(7);
     // ... plus the prompt suggestion switch, the compaction section (a switch and four numbers, no
     // card radios) and the sharing section (a switch, a number and a list)
-    expect(document.querySelectorAll(".cb-form-section")).toHaveLength(10);
+    expect(document.querySelectorAll(".cb-form-section")).toHaveLength(11);
     await release();
   });
 

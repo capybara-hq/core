@@ -3,17 +3,18 @@
 import {
   Button,
   ContentSection,
-  Dialog,
   Field,
   FormSection,
   formatBytes,
   formatDateTime,
-  Input,
   ItemList,
   KeycapCommand,
   KeyValue,
+  RadioGroup,
   Stack,
+  Subsection,
   Text,
+  Textarea,
   useTimeZone,
   useToast,
 } from "@capybara-hq/design";
@@ -22,42 +23,70 @@ import { useState } from "react";
 import { osLabel } from "../lib/device-sign-in";
 import {
   type Device,
+  type DeviceCeilingChangeSide,
   type DeviceModeChange,
+  type DeviceNetworkMode,
   type DevicePolicyPatch,
+  type DeviceSandboxView,
   deviceCeilingOf,
-  narrowCloudDevice,
+  setCloudDeviceNetwork,
   updateDevicePolicy,
-  widenCloudDevice,
 } from "../lib/devices";
-import { allowHostProblem, normalizeHost } from "../lib/network-hosts";
+import { allowHostProblem } from "../lib/network-hosts";
 import { keys } from "../lib/query/keys";
 import { useAppMutation } from "../lib/query/mutation";
 import { ApiErrorDetail } from "./ApiErrorDetail";
 
 /**
- * The only CLI line a device page shows: the owner widens (or sets) a machine's ceiling on the
- * machine itself (`capybara-device ceiling set`); the page can only narrow it.
+ * The CLI lines a device page shows for a local machine: its owner widens the sandbox on the
+ * machine itself; the page can only narrow it (approval-only profiles design, "Settings model").
  */
-export const CEILING_COMMAND =
-  "capybara-device ceiling set --full-access allow|deny --project-reach workspace|os-user";
+export const SANDBOX_COMMANDS = {
+  network: "capybara-device ceiling set --network open",
+  outside: "capybara-device ceiling set --outside-sandbox on",
+  host: "capybara-device policy add allowedDomains <host>",
+  reach: "capybara-device ceiling set --project-reach os-user",
+} as const;
+
+type Translate = ReturnType<typeof useTranslations>;
+
+/** A host list as typed (one per line, or separated by spaces or commas): trimmed, lowercased, unique. */
+const parseHosts = (text: string): string[] => [
+  ...new Set(
+    text
+      .split(/[\s,]+/)
+      .map((h) => h.trim().toLowerCase())
+      .filter((h) => h !== ""),
+  ),
+];
+
+/** A network value as people read it. */
+const networkText = (t: Translate, n: DeviceNetworkMode) => t(`networkValue.${n}`);
+/** Whether running outside the sandbox may be granted, as people read it. */
+const outsideText = (t: Translate, allowed: boolean) =>
+  t(`outsideValue.${allowed ? "allowed" : "off"}`);
 
 /**
- * The owner ceiling's facts, read only (permission profiles spec, "Device and execution model"):
- * whether Full access is available here and why not, a local machine's project reach and when it
- * reported them, and one notice when the facts are not current. Shared by the Overview and Settings tabs.
+ * The sandbox facts, read only (approval-only profiles design, "UI"): the network, whether a call
+ * may run outside the sandbox (a local machine; a cloud device's instance is its sandbox), a local
+ * machine's project reach and when it reported them, and one notice when the facts are not current.
  */
-function CeilingFacts({ device: e }: { device: Device }) {
-  const t = useTranslations("devices.ceiling");
+function SandboxFacts({ device: e }: { device: Device }) {
+  const t = useTranslations("devices.sandbox");
   const zone = useTimeZone();
   const f = deviceCeilingOf(e);
   const local = e.source === "local";
   const observed = local ? (e.ownerCeiling?.observedAt ?? null) : null;
+  const s = f.sandbox;
   return (
     <Stack gap={8}>
       <KeyValue
-        keyWidth="12ch"
+        keyWidth="14ch"
         rows={[
-          { k: t("fullAccess"), v: t(`full.${f.full}`) },
+          { k: t("network"), v: s === null ? t("unknown") : networkText(t, s.network) },
+          ...(local
+            ? [{ k: t("outside"), v: s === null ? t("unknown") : outsideText(t, s.outsideSandbox) }]
+            : []),
           ...(local && f.reach !== null ? [{ k: t("reach"), v: t(`reachValue.${f.reach}`) }] : []),
           ...(observed !== null
             ? [{ k: t("reported"), v: formatDateTime(observed, "full", zone) }]
@@ -75,10 +104,9 @@ function CeilingFacts({ device: e }: { device: Device }) {
 
 /**
  * Overview: what the device is and does now, read only (the device page's split of values and
- * controls, 2026-11-14). The band above says origin and state; the tab adds the owner ceiling, the
- * network restricted work reaches (a local machine's allowlist, a cloud device's org allowlist), a
- * cloud device's provider and resources, a local machine's system, and what the files are. Every
- * control lives in Settings; this tab links there.
+ * controls, 2026-11-14). The band above says origin and state; the tab adds the sandbox, the hosts
+ * an allowlist reaches, a cloud device's provider and resources, a local machine's system, and what
+ * the files are. Every control lives in Settings; this tab links there.
  */
 export function DeviceOverview({
   device: e,
@@ -90,27 +118,25 @@ export function DeviceOverview({
   const t = useTranslations("devices");
   const tc = useTranslations("devices.network");
   const local = e.source === "local";
-  const hosts = local ? (e.mode.local?.allowedDomains ?? []) : (e.mode.network.hosts ?? []);
+  const sandbox = deviceCeilingOf(e).sandbox;
+  const hosts = sandbox?.allowedDomains ?? [];
   const showNetwork =
-    (local && e.machine !== null) || (e.mode.network.kind === "allowlist" && hosts.length > 0);
+    (local && e.machine !== null && sandbox !== null) ||
+    (sandbox?.network === "allowlist" && hosts.length > 0);
   return (
     <Stack gap={12}>
-      <ContentSection title={t("ceiling.title")}>
-        <CeilingFacts device={e} />
+      <ContentSection title={t("sandbox.title")}>
+        <SandboxFacts device={e} />
       </ContentSection>
       {showNetwork && (
         <ContentSection
           title={tc("title")}
           description={local ? tc("overviewNote") : tc(`cloudHint.${e.mode.network.source}`)}
-          {...(local
-            ? {
-                actions: (
-                  <Button density="dense" onClick={onOpenSettings}>
-                    {t("overview.editNetwork")}
-                  </Button>
-                ),
-              }
-            : {})}
+          actions={
+            <Button density="dense" onClick={onOpenSettings}>
+              {t("overview.editNetwork")}
+            </Button>
+          }
         >
           <ItemList
             label={tc("domains")}
@@ -153,22 +179,18 @@ export function DeviceOverview({
   );
 }
 
-/** A cloud device's ceiling change waiting for its confirmation. */
-type CloudChange = "widen" | "narrow";
-
 /**
- * Settings: the device's controls, and the only place they live (2026-11-14). There is no daily mode
- * any more (permission profiles spec): a conversation picks its permission profile, and the device
- * only keeps its owner's ceiling. Access ceiling shows that ceiling and the controls the kernel allows:
- * - a local machine's ceiling is its owner's, widened only on the machine (`capybara-device
- *   ceiling set`, shown as keycaps); the page only narrows it through the policy op (Full access
- *   off, the project reach to the workspace; an older program's one narrowing turns both off), and
- *   only while the machine is connected, online and able to take it, else it says why;
- * - a cloud device's owner turns Full access off, or on again within what the platform and the org
- *   allow, each after a confirmation naming the effect; a widening is never sent without
- *   `confirmWidening`, and never from anywhere but that confirmation.
- * Network edits a local machine's allowlist through the machine. Disconnect this machine lives with the machine,
- * and the page's danger zone follows this block.
+ * Settings: the device's controls, and the only place they live (2026-11-14). A conversation picks
+ * its permission profile; the device keeps its sandbox, the same under every profile, in one
+ * 沙箱 / Sandbox section with its network, running outside the sandbox and the project reach:
+ * - a local machine's sandbox is its owner's, widened only on the machine (the commands as
+ *   keycaps); the page only narrows it through the policy op (the allowlist, removing hosts,
+ *   running outside the sandbox off, the workspace reach), and only while the machine is online,
+ *   current and able to take it, else it says why;
+ * - a cloud device's network is changed by its owner or an org admin in either direction within
+ *   the platform and org ceilings; a cloud device never runs outside its instance.
+ * A disabled option names the layer that limits it. Disconnect this machine follows; the page's
+ * danger zone follows this block.
  */
 export function DeviceSettings({
   orgId,
@@ -180,10 +202,10 @@ export function DeviceSettings({
   onDisconnect(): void;
 }) {
   const t = useTranslations("devices");
+  const ts = useTranslations("devices.sandbox");
   const toast = useToast();
   const [failure, setFailure] = useState<unknown>(null);
-  const [confirming, setConfirming] = useState<CloudChange | null>(null);
-  // a ceiling change can change what a conversation may choose: the device's key holds its
+  // a sandbox change can change what a conversation may do: the device's key holds its
   // permission previews too, so invalidating it reads them again
   const invalidates = () => [keys.org(orgId).devices(), keys.org(orgId).device(e.id)];
   const change = useAppMutation({
@@ -191,84 +213,70 @@ export function DeviceSettings({
     invalidates,
   });
   const cloudChange = useAppMutation({
-    fn: (next: CloudChange) =>
-      next === "widen"
-        ? widenCloudDevice(orgId, e.id)
-        : narrowCloudDevice(orgId, e.id, (e.ownerCeiling ?? null) !== null),
+    fn: (network: { mode: DeviceNetworkMode; hosts: string[] }) =>
+      setCloudDeviceNetwork(orgId, e.id, network),
     invalidates,
   });
   const local = e.source === "local";
+  const facts = deviceCeilingOf(e);
   const pending = change.isPending || cloudChange.isPending;
-  const canApply =
-    local && e.online === true && (e.network?.features.includes("policyOpId") ?? false);
 
   const send = async (patch: DevicePolicyPatch, done: string) => {
     setFailure(null);
     try {
       await change.mutateAsync(patch);
       toast.success(done);
+    } catch (err) {
+      setFailure(err);
+    }
+  };
+  const saveCloud = async (network: { mode: DeviceNetworkMode; hosts: string[] }) => {
+    setFailure(null);
+    try {
+      await cloudChange.mutateAsync(network);
+      toast.success(ts("saved"));
       return true;
     } catch (err) {
       setFailure(err);
       return false;
     }
   };
-  const applyCloud = async (next: CloudChange) => {
-    if (pending) return;
-    setFailure(null);
-    try {
-      await cloudChange.mutateAsync(next);
-      setConfirming(null);
-      toast.success(t(next === "widen" ? "ceiling.fullOn" : "ceiling.fullOff"));
-    } catch (err) {
-      setConfirming(null);
-      setFailure(err);
-    }
-  };
   return (
     <>
       <FormSection
-        id="ceiling"
-        title={t("ceiling.title")}
-        description={t(local ? "ceiling.sectionLocal" : "ceiling.sectionCloud")}
+        id="sandbox"
+        title={ts("title")}
+        description={ts(local ? "sectionLocal" : "sectionCloud")}
       >
-        <Stack gap={12}>
-          <CeilingFacts device={e} />
+        <Stack gap={16}>
+          {facts.notice !== null && (
+            <Text variant="prose" tone={facts.notice === "stale" ? "muted" : "warn"}>
+              {ts(`notice.${facts.notice}`)}
+            </Text>
+          )}
           {!local && e.mode.pendingNextUse && (
             <Text variant="prose" tone="muted">
-              {t("ceiling.pendingNextUse")}
+              {ts("pendingNextUse")}
             </Text>
           )}
           {!local && e.mode.pendingFilesReset && (
             <Text variant="prose" tone="warn">
-              {t("ceiling.pendingFilesReset")}
+              {ts("pendingFilesReset")}
             </Text>
           )}
           {local ? (
-            <LocalNarrowing
-              device={e}
-              canApply={canApply}
+            <LocalSandbox device={e} pending={pending} onSend={(p, done) => void send(p, done)} />
+          ) : facts.sandbox != null ? (
+            <CloudNetwork
+              // a saved network starts the draft again from what the kernel answers
+              key={`${facts.sandbox.network}:${facts.sandbox.allowedDomains.join(",")}`}
+              sandbox={facts.sandbox}
               pending={pending}
-              onSend={(patch, done) => void send(patch, done)}
+              onSave={saveCloud}
             />
-          ) : (
-            <CloudControls device={e} pending={pending} onChoose={setConfirming} />
-          )}
-          {local && e.machine !== null && (
-            <KeycapCommand command={CEILING_COMMAND} hint={t("ceiling.widenLocal")} />
-          )}
+          ) : null}
         </Stack>
       </FormSection>
-      {confirming !== null && (
-        <CeilingConfirmDialog
-          device={e}
-          change={confirming}
-          pending={cloudChange.isPending}
-          onCancel={() => setConfirming(null)}
-          onConfirm={() => void applyCloud(confirming)}
-        />
-      )}
-      {local && e.machine !== null && <LocalAllowlist device={e} pending={pending} onSend={send} />}
       {local && e.machine !== null && (
         <FormSection id="machine" title={t("machine.title")} description={t("machine.description")}>
           <div>
@@ -284,222 +292,290 @@ export function DeviceSettings({
 }
 
 /**
- * A local machine's narrowing (B2: the policy op takes `fullAccess: false` and the `workspace`
- * reach only). An authenticated report narrows each field on its own; an older program's report
- * (`legacy`) has one narrowing, its old sandbox switch, which turns both off at once. Nothing is
- * offered when there is nothing to narrow or no usable report; a machine that cannot take the
- * change now says why instead of drawing a button that would be refused.
+ * A local machine's sandbox controls: the network (only the allowlist can be chosen here, its hosts
+ * only removed), running outside the sandbox (only off) and the project reach (only the
+ * workspace), each sent to the machine through the policy op. A machine that cannot take the change
+ * now says why once and its controls are disabled, never refused; without a usable report there is
+ * nothing to change. The widening commands follow as keycaps while a machine is connected.
  */
-function LocalNarrowing({
+function LocalSandbox({
   device: e,
-  canApply,
   pending,
   onSend,
 }: {
   device: Device;
-  canApply: boolean;
   pending: boolean;
   onSend(patch: DevicePolicyPatch, done: string): void;
 }) {
-  const t = useTranslations("devices.ceiling");
-  const c = e.ownerCeiling ?? null;
-  if (c === null || (c.state !== "report" && c.state !== "legacy")) return null;
-  const narrowFull = c.fullAccess;
-  const narrowReach = c.restrictedProjectReach === "os-user";
-  if (!narrowFull && !narrowReach) return null;
-  if (!canApply) {
-    return (
-      <Text variant="prose" tone="muted">
-        {t(e.online !== true ? "cannotNarrow.offline" : "cannotNarrow.upgrade")}
-      </Text>
-    );
-  }
-  if (c.state === "legacy") {
-    return (
+  const t = useTranslations("devices.sandbox");
+  const facts = deviceCeilingOf(e);
+  const s = facts.sandbox;
+  const owner = facts.owner;
+  const canApply =
+    e.online === true &&
+    owner !== null &&
+    !owner.stale &&
+    (e.network?.features.includes("policyOpId") ?? false);
+  const disabled = !canApply || pending;
+  const commands =
+    e.machine === null ? null : (
       <Stack gap={8}>
-        <div>
-          <Button
-            density="dense"
-            disabled={pending}
-            onClick={() => onSend({ mode: "sandbox" }, t("fullOff"))}
-          >
-            {t("turnOffFull")}
-          </Button>
-        </div>
         <Text variant="prose" tone="muted">
-          {t("legacyNarrowNote")}
+          {t("widenLocal")}
         </Text>
+        {(Object.keys(SANDBOX_COMMANDS) as (keyof typeof SANDBOX_COMMANDS)[]).map((k) => (
+          <KeycapCommand key={k} command={SANDBOX_COMMANDS[k]} hint={t(`command.${k}`)} />
+        ))}
       </Stack>
     );
-  }
+  if (s === null || owner === null) return commands;
+  const hosts = owner.allowedDomains;
   return (
-    <Stack direction="row" gap={8} wrap>
-      {narrowFull && (
-        <Button
-          density="dense"
-          disabled={pending}
-          onClick={() => onSend({ ownerCeiling: { fullAccess: false } }, t("fullOff"))}
-        >
-          {t("turnOffFull")}
-        </Button>
+    <Stack gap={16}>
+      {!canApply && (
+        <Text variant="prose" tone="muted">
+          {t(e.online !== true || owner.stale ? "cannotNarrow.offline" : "cannotNarrow.upgrade")}
+        </Text>
       )}
-      {narrowReach && (
-        <Button
-          density="dense"
-          disabled={pending}
-          onClick={() =>
-            onSend({ ownerCeiling: { restrictedProjectReach: "workspace" } }, t("reachLimited"))
-          }
-        >
-          {t("limitReach")}
-        </Button>
-      )}
+      <Subsection title={t("network")}>
+        <Stack gap={12}>
+          <RadioGroup
+            label={t("network")}
+            value={s.network}
+            disabled={disabled}
+            onChange={(v) => {
+              if (v === "allowlist" && s.network === "open")
+                onSend({ ownerCeiling: { network: "allowlist" } }, t("networkNarrowed"));
+            }}
+            options={[
+              {
+                value: "open",
+                label: networkText(t, "open"),
+                // the machine widens only on the machine; a platform or org ceiling names itself
+                ...(s.network === "allowlist"
+                  ? {
+                      disabled: true,
+                      description: t(`limited.network.${s.layer.network ?? "owner"}`),
+                    }
+                  : {}),
+              },
+              { value: "allowlist", label: networkText(t, "allowlist") },
+            ]}
+          />
+          <ItemList
+            label={t("hosts")}
+            rows={hosts.map((h) => ({
+              id: h,
+              title: h,
+              ...(canApply
+                ? {
+                    actions: (
+                      <Button
+                        density="dense"
+                        disabled={pending}
+                        aria-label={t("removeLabel", { host: h })}
+                        onClick={() =>
+                          onSend(
+                            { ownerCeiling: { removeAllowedDomains: [h] } },
+                            t("removed", { host: h }),
+                          )
+                        }
+                      >
+                        {t("remove")}
+                      </Button>
+                    ),
+                  }
+                : {}),
+            }))}
+            empty={t("hostsEmpty")}
+          />
+          <Text variant="prose" tone="muted">
+            {t("localHostsHelp")}
+          </Text>
+        </Stack>
+      </Subsection>
+      <Subsection title={t("outside")}>
+        <RadioGroup
+          label={t("outside")}
+          value={s.outsideSandbox ? "allowed" : "off"}
+          disabled={disabled}
+          onChange={(v) => {
+            if (v === "off" && s.outsideSandbox)
+              onSend({ ownerCeiling: { outsideSandbox: false } }, t("outsideOff"));
+          }}
+          options={[
+            {
+              value: "allowed",
+              label: outsideText(t, true),
+              ...(!s.outsideSandbox
+                ? {
+                    disabled: true,
+                    description: t(`limited.outside.${s.layer.outsideSandbox ?? "owner"}`),
+                  }
+                : {}),
+            },
+            { value: "off", label: outsideText(t, false) },
+          ]}
+        />
+      </Subsection>
+      <Subsection title={t("reach")}>
+        <Stack gap={8}>
+          <Text variant="prose">{t(`reachValue.${owner.restrictedProjectReach}`)}</Text>
+          {owner.restrictedProjectReach === "os-user" && canApply && (
+            <div>
+              <Button
+                density="dense"
+                disabled={pending}
+                onClick={() =>
+                  onSend(
+                    { ownerCeiling: { restrictedProjectReach: "workspace" } },
+                    t("reachLimited"),
+                  )
+                }
+              >
+                {t("limitReach")}
+              </Button>
+            </div>
+          )}
+        </Stack>
+      </Subsection>
+      {commands}
     </Stack>
   );
 }
 
 /**
- * A cloud device's one control: Full access off while it is effectively on (its ceiling allows it
- * and so do the platform and the org; an old sandbox switch already keeps it off), or allowed again
- * while the platform and the org allow it and the device's permissions were migrated (before that
- * the kernel takes only the narrowing). While the platform or the org keeps it off there is nothing
- * to turn off, and the reason is shown instead. A choice opens its confirmation; nothing is sent
- * here.
+ * A cloud device's network, changed by its owner or an org admin in either direction within the
+ * platform and org ceilings (`PATCH` with `{ network: { mode, hosts } }`): the open internet
+ * (private networks blocked) or an allowlist whose hosts only narrow the organization's list. An
+ * open network above a ceiling is disabled and names the layer; the kernel refuses it too
+ * (`device.network_not_allowed`).
  */
-function CloudControls({
-  device: e,
+function CloudNetwork({
+  sandbox: s,
   pending,
-  onChoose,
+  onSave,
 }: {
-  device: Device;
+  sandbox: DeviceSandboxView;
   pending: boolean;
-  onChoose(change: CloudChange): void;
+  onSave(network: { mode: DeviceNetworkMode; hosts: string[] }): Promise<boolean>;
 }) {
-  const t = useTranslations("devices.ceiling");
-  const f = deviceCeilingOf(e);
-  if (f.full === "platform") {
-    return (
-      <Text variant="prose" tone="muted">
-        {t("cloudForbidden")}
-      </Text>
-    );
-  }
-  if (f.full === "available") {
-    return (
-      <div>
-        <Button density="dense" disabled={pending} onClick={() => onChoose("narrow")}>
-          {t("turnOffFull")}
-        </Button>
-      </div>
-    );
-  }
-  if ((e.ownerCeiling ?? null) === null || e.mode.allowedMode !== "auto") return null;
+  const t = useTranslations("devices.sandbox");
+  const [mode, setMode] = useState<DeviceNetworkMode>(s.network);
+  const [text, setText] = useState(s.allowedDomains.join("\n"));
+  const hosts = parseHosts(text);
+  const bad = hosts.find((h) => allowHostProblem(h, { wildcard: true }) !== null);
+  const changed =
+    mode !== s.network ||
+    (mode === "allowlist" && hosts.join("\n") !== s.allowedDomains.join("\n"));
+  const openLimit = s.layer.network;
   return (
-    <div>
-      <Button density="dense" disabled={pending} onClick={() => onChoose("widen")}>
-        {t("allowFull")}
-      </Button>
-    </div>
-  );
-}
-
-/**
- * The network line of a cloud ceiling change, exactly as the kernel computes it: Full off gives
- * the org's cloud network (`mode.sandboxNetwork`), Full allowed the open public network
- * (`mode.fullNetwork`), each already within the device's outer network. Null when the view has
- * none (never for a cloud device).
- */
-function confirmNetworkLine(
-  t: (key: string, values?: Record<string, string>) => string,
-  e: Device,
-  change: CloudChange,
-): string | null {
-  const n = change === "widen" ? e.mode.fullNetwork : e.mode.sandboxNetwork;
-  if (n === null) return null;
-  if (n.kind === "open-public") return t("network.open");
-  if (n.hosts.length === 0) return t("network.none");
-  return t("network.allowlist", { hosts: n.hosts.join(", ") });
-}
-
-/**
- * The confirmation of a cloud device's ceiling change: what it does to conversations and running
- * work (a narrowing stops Full work now), the network the device then reaches, and that its
- * instance takes the new limits at its next use (it may restart; the files are kept). The
- * widening's confirm is the only place that sends one.
- */
-function CeilingConfirmDialog({
-  device: e,
-  change,
-  pending,
-  onCancel,
-  onConfirm,
-}: {
-  device: Device;
-  change: CloudChange;
-  pending: boolean;
-  onCancel(): void;
-  onConfirm(): void;
-}) {
-  const t = useTranslations("devices.ceiling.confirm");
-  const network = confirmNetworkLine(t, e, change);
-  return (
-    <Dialog
-      open
-      onOpenChange={(open) => {
-        if (!open && !pending) onCancel();
-      }}
-      title={t(`title.${change}`)}
-      footer={
-        <>
-          <Button variant="ghost" onClick={onCancel} disabled={pending}>
-            {t("cancel")}
+    <Subsection title={t("network")}>
+      <Stack gap={12}>
+        <RadioGroup
+          label={t("network")}
+          value={mode}
+          disabled={pending}
+          onChange={(v) => setMode(v === "open" ? "open" : "allowlist")}
+          options={[
+            {
+              value: "open",
+              label: networkText(t, "open"),
+              ...(openLimit !== null && s.network === "allowlist"
+                ? { disabled: true, description: t(`limited.network.${openLimit}`) }
+                : {}),
+            },
+            { value: "allowlist", label: networkText(t, "allowlist") },
+          ]}
+        />
+        {mode === "allowlist" && (
+          <Field
+            label={t("cloudHosts")}
+            help={t("cloudHostsHelp")}
+            {...(bad !== undefined ? { error: t("invalidHost", { host: bad }) } : {})}
+          >
+            <Textarea
+              code
+              rows={4}
+              value={text}
+              disabled={pending}
+              placeholder="files.example.com"
+              onChange={(ev) => setText(ev.target.value)}
+            />
+          </Field>
+        )}
+        <div>
+          <Button
+            density="dense"
+            variant="primary"
+            loading={pending}
+            disabled={!changed || bad !== undefined || pending}
+            onClick={() => void onSave({ mode, hosts: mode === "allowlist" ? hosts : [] })}
+          >
+            {t("save")}
           </Button>
-          <Button variant="primary" loading={pending} disabled={pending} onClick={onConfirm}>
-            {t(`submit.${change}`)}
-          </Button>
-        </>
-      }
-    >
-      <Stack gap={8}>
-        <Text variant="prose">{t(`effect.${change}`)}</Text>
-        {network !== null && <Text variant="prose">{network}</Text>}
-        <Text variant="prose" tone="muted">
-          {t("nextUse")}
-        </Text>
+        </div>
       </Stack>
-    </Dialog>
+    </Subsection>
   );
 }
 
 /**
- * The recent ceiling and policy changes: what, when, by whom and from where; a change sent to the
- * machine that did not take effect is marked. An old mode change reads as the ceiling it set (the
- * old auto is the Full ceiling, the old sandbox its narrowing); a ceiling change names what
- * changed (Full access, a machine's project reach).
+ * The recent sandbox and policy changes: what, when, by whom and from where; a change sent to the
+ * machine that did not take effect is marked. A setting change names each setting it changed with
+ * its from and to values (the network, running outside the sandbox, a machine's project reach).
  */
 export function RecentChanges({ recent }: { recent: DeviceModeChange[] }) {
   const t = useTranslations("devices.recent");
+  const ts = useTranslations("devices.sandbox");
   const zone = useTimeZone();
   if (recent.length === 0) return null;
-  const modeText = (c: DeviceModeChange["mode"]) =>
-    c === null ? [] : [t(c.to === "auto" ? "fullAllowed" : "fullOff")];
-  const ceilingText = (c: DeviceModeChange["ceiling"]) => {
+  const settingTexts = (c: DeviceModeChange["ceiling"]) => {
     if (c === null) return [];
-    const { from, to } = c;
-    const reach = to.restrictedProjectReach;
-    return [
-      ...(from?.fullAccess !== to.fullAccess ? [t(to.fullAccess ? "fullAllowed" : "fullOff")] : []),
-      ...(reach !== undefined && from?.restrictedProjectReach !== reach
-        ? [t(`reach.${reach}`)]
-        : []),
-    ];
+    const from: DeviceCeilingChangeSide = c.from ?? {};
+    const known = c.from !== null;
+    const line = (setting: string, before: string | undefined, after: string) =>
+      known && before !== undefined
+        ? t("change", { setting, from: before, to: after })
+        : t("set", { setting, to: after });
+    const out: string[] = [];
+    const to = c.to;
+    if (to.network !== undefined && from.network !== to.network)
+      out.push(
+        line(
+          ts("network"),
+          from.network === undefined ? undefined : networkText(ts, from.network),
+          networkText(ts, to.network),
+        ),
+      );
+    if (to.outsideSandbox !== undefined && from.outsideSandbox !== to.outsideSandbox)
+      out.push(
+        line(
+          ts("outside"),
+          from.outsideSandbox === undefined ? undefined : outsideText(ts, from.outsideSandbox),
+          outsideText(ts, to.outsideSandbox),
+        ),
+      );
+    if (
+      to.restrictedProjectReach !== undefined &&
+      from.restrictedProjectReach !== to.restrictedProjectReach
+    )
+      out.push(
+        line(
+          ts("reach"),
+          from.restrictedProjectReach === undefined
+            ? undefined
+            : ts(`reachValue.${from.restrictedProjectReach}`),
+          ts(`reachValue.${to.restrictedProjectReach}`),
+        ),
+      );
+    return out;
   };
   const what = (c: DeviceModeChange) =>
     [
       ...(c.add.length > 0 ? [t("add", { hosts: c.add.join(", ") })] : []),
       ...(c.remove.length > 0 ? [t("remove", { hosts: c.remove.join(", ") })] : []),
-      ...modeText(c.mode),
-      ...ceilingText(c.ceiling ?? null),
+      ...settingTexts(c.ceiling ?? null),
     ].join(" · ");
   return (
     <ContentSection title={t("title")}>
@@ -520,168 +596,5 @@ export function RecentChanges({ recent }: { recent: DeviceModeChange[] }) {
         }))}
       />
     </ContentSection>
-  );
-}
-
-/**
- * A local machine's allowlist for restricted work (network ask-to-allow spec §7): the
- * hosts with 移除 each (narrowing, always accepted), and 添加域名 in a dialog (widening asks the
- * machine). A program without the `policyOpId` feature must be upgraded first; a Docker-mode
- * machine cannot limit single domains.
- */
-function LocalAllowlist({
-  device: e,
-  pending,
-  onSend,
-}: {
-  device: Device;
-  pending: boolean;
-  onSend(patch: DevicePolicyPatch, done: string): Promise<boolean>;
-}) {
-  const t = useTranslations("devices.network");
-  const [adding, setAdding] = useState(false);
-  const network = e.network;
-  const canApply = network?.features.includes("policyOpId") ?? false;
-  const docker = e.machine?.mode === "docker";
-  // widening (add) needs the machine's help; narrowing is always sent
-  const canWiden = canApply && !docker;
-  const domains = e.mode.local?.allowedDomains ?? [];
-  return (
-    <FormSection
-      id="network"
-      title={t("title")}
-      description={`${t("description")}${docker ? ` ${t("dockerNote")}` : ""}`}
-    >
-      <Stack gap={12}>
-        {network === null ? (
-          <Text variant="prose" tone="muted">
-            {t("unknown")}
-          </Text>
-        ) : (
-          <>
-            {!canApply && (
-              <Text variant="prose" tone="warn">
-                {t("upgrade")}
-              </Text>
-            )}
-            <ItemList
-              label={t("domains")}
-              rows={domains.map((h) => ({
-                id: h,
-                title: h,
-                ...(canApply
-                  ? {
-                      actions: (
-                        <Button
-                          density="dense"
-                          disabled={pending}
-                          aria-label={t("removeLabel", { host: h })}
-                          onClick={() => void onSend({ remove: [h] }, t("removed", { host: h }))}
-                        >
-                          {t("remove")}
-                        </Button>
-                      ),
-                    }
-                  : {}),
-              }))}
-              empty={t("domainsEmpty")}
-            />
-            <div>
-              <Button density="dense" disabled={!canWiden} onClick={() => setAdding(true)}>
-                {t("add")}
-              </Button>
-            </div>
-            <Text variant="prose" tone="muted">
-              {canWiden ? t("addHelp") : t("addDisabled")}
-            </Text>
-          </>
-        )}
-      </Stack>
-      {adding && (
-        <AddHostDialog
-          pending={pending}
-          domains={domains}
-          onClose={() => setAdding(false)}
-          onAdd={async (host) => {
-            const ok = await onSend({ add: [host] }, t("added", { host }));
-            if (ok) setAdding(false);
-            return ok;
-          }}
-        />
-      )}
-    </FormSection>
-  );
-}
-
-/** One host: an exact name (files.example.com) or a wildcard (*.example.com). */
-function AddHostDialog({
-  pending,
-  domains,
-  onClose,
-  onAdd,
-}: {
-  pending: boolean;
-  domains: string[];
-  onClose(): void;
-  onAdd(host: string): Promise<boolean>;
-}) {
-  const t = useTranslations("devices.network");
-  const [host, setHost] = useState("");
-  const [problem, setProblem] = useState<string>();
-  const normalized = normalizeHost(host);
-  const valid = host.trim() !== "" && allowHostProblem(normalized, { wildcard: true }) === null;
-  const submit = async () => {
-    if (!valid || pending) return;
-    if (domains.includes(normalized)) {
-      setProblem(t("hostPresent"));
-      return;
-    }
-    setProblem(undefined);
-    const ok = await onAdd(normalized);
-    if (ok) setHost("");
-  };
-  return (
-    <Dialog
-      open
-      onOpenChange={(open) => {
-        if (!open && !pending) onClose();
-      }}
-      title={t("addTitle")}
-      footer={
-        <>
-          <Button variant="ghost" onClick={onClose} disabled={pending}>
-            {t("cancel")}
-          </Button>
-          <Button
-            variant="primary"
-            loading={pending}
-            disabled={!valid || pending}
-            onClick={() => void submit()}
-          >
-            {t("addSubmit")}
-          </Button>
-        </>
-      }
-    >
-      <Field
-        label={t("addField")}
-        required
-        help={t("addHelp")}
-        {...(problem !== undefined ? { error: problem } : {})}
-      >
-        <Input
-          value={host}
-          maxLength={253}
-          placeholder="*.example.com"
-          onChange={(ev) => {
-            setHost(ev.target.value);
-            setProblem(undefined);
-          }}
-          onKeyDown={(ev) => {
-            if (ev.key === "Enter") void submit();
-          }}
-        />
-      </Field>
-    </Dialog>
   );
 }

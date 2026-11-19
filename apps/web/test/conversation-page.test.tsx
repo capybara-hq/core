@@ -1267,7 +1267,7 @@ describe("the conversation page's server gate", () => {
 });
 
 describe("the properties panel's device mark", () => {
-  it("the device carries its neutral ceiling mark, never a daily mode", async () => {
+  it("the device carries its neutral sandbox mark, never a daily mode", async () => {
     const mode = {
       mode: "auto",
       allowedMode: "auto",
@@ -1287,11 +1287,18 @@ describe("the properties panel's device mark", () => {
         state: "report",
         revision: "r1",
         sequence: 1,
-        fullAccess: true,
+        outsideSandbox: true,
+        network: "open",
+        allowedDomains: [],
         restrictedProjectReach: "os-user",
-        restrictedAllowedDomains: [],
         observedAt: "2026-11-07T08:00:00.000Z",
         stale: false,
+      },
+      sandbox: {
+        network: "open",
+        allowedDomains: [],
+        outsideSandbox: true,
+        layer: { network: null, outsideSandbox: null },
       },
     });
     api({
@@ -1307,7 +1314,7 @@ describe("the properties panel's device mark", () => {
       if (b === null) throw new Error("no mark yet");
       return b;
     });
-    expect(badge.textContent).toBe(en.devices.ceiling.mark.full);
+    expect(badge.textContent).toBe(en.devices.sandbox.mark.outside);
     expect(badge.getAttribute("data-tone")).toBe("default");
     window.history.replaceState(null, "", "/");
   });

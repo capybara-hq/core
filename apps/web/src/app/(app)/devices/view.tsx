@@ -98,8 +98,8 @@ function DeviceCard({ device: e }: { device: Device }) {
         state === "filesLost" || state === "unavailable"
           ? { label: t(`state.${state}`), tone: "warn" as const }
           : t(`state.${state}`),
-        // whether Full access is available there, neutral (no daily mode, no warn tone)
-        t(`ceiling.mark.${mark}`),
+        // whether a call may run outside the sandbox there, neutral (no daily mode, no warn tone)
+        t(`sandbox.mark.${mark}`),
       ]}
     />
   );
