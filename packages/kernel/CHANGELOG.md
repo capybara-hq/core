@@ -1,5 +1,13 @@
 # @capybara-hq/kernel
 
+## 0.1.0-rc.53
+
+### Patch Changes
+
+- 5bfad28: Images sent to a model are scaled to at most 2048 px and re-encoded (JPEG, or WebP with
+  transparency) when over 1 MiB, and the copy is cached between steps, so a conversation holding
+  several large images no longer re-uploads tens of megabytes on every step.
+
 ## 0.1.0-rc.52
 
 ### Patch Changes
