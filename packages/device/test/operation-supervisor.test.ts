@@ -1046,3 +1046,46 @@ it("drain retries dirty control persistence once and waits for it", async () => 
   await vi.waitFor(() => expect(done()).toBe(true));
   expect(f.supervisor.ownership().persistence).toBe(0);
 });
+it("keeps a native read's bytes out of the journal; a restarted retry gets an unknown outcome", async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), "cap-supervisor-read-"));
+  dirs.push(stateDir);
+  const dataB64 = Buffer.from("secret file bytes ".repeat(100)).toString("base64");
+  const options = {
+    stateDir,
+    deviceId: "d",
+    instanceGeneration: "g",
+    now: () => 1,
+    start: async (r: MacWorkerRequest) => {
+      await r.beforeLaunch();
+      await r.onLaunch({ pid: 123, token: "trusted-child" });
+      return {
+        ready: Promise.resolve(),
+        completion: Promise.resolve({ dataB64, truncated: false }),
+        cancel: async () => {},
+      };
+    },
+  };
+  const supervisor = new MacOperationSupervisor(options);
+  const read = {
+    kind: "native" as const,
+    native: { method: "readFile" as const, path: "/f", maxBytes: 4096 },
+    purpose: "operation" as const,
+    scope,
+    grant,
+    stateDir,
+    pythonPath: "/usr/bin/python3",
+    beforeLaunch: async () => {},
+    onLaunch: async () => {},
+  };
+  expect(await supervisor.execute(read, "hash", signal)).toEqual({ dataB64, truncated: false });
+  // a retry in this process still answers from the retained result
+  expect(await supervisor.execute(read, "hash", signal)).toEqual({ dataB64, truncated: false });
+  const journal = (await readdir(stateDir)).filter((name) => name.startsWith("operation-journal-"));
+  for (const name of journal)
+    expect(await readFile(join(stateDir, name), "utf8")).not.toContain(dataB64.slice(0, 40));
+  const recovered = new MacOperationSupervisor(options);
+  await expect(recovered.execute(read, "hash", signal)).rejects.toThrow(/outcome is unknown/);
+  // the read completed: it is no retirement obligation for another generation
+  expect(recovered.retirementObligations("next")).toBe(0);
+  await expect(recovered.execute(read, "changed", signal)).rejects.toThrow(/input/);
+});

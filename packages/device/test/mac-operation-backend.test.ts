@@ -154,6 +154,23 @@ it("first native read uses its explicit outside project without an earlier exec"
   });
   expect(f.launched).toHaveLength(1);
 });
+it("binds a native write's operation id to its exact bytes through the payload digest", async () => {
+  const f = await fixture();
+  const op = await f.backend.operation({ id: "d" }, f.scope, signal);
+  const path = join(f.roots.tmp, "file");
+  const bytes = Buffer.from("first payload");
+  await op.writeFile(path, bytes, signal);
+  // a retry of the same operation with the same bytes is the same admitted operation
+  await op.writeFile(path, Buffer.from(bytes), signal);
+  expect(f.launched).toHaveLength(1);
+  expect((f.launched[0] as { native: { dataB64: string } }).native.dataB64).toBe(
+    bytes.toString("base64"),
+  );
+  // the same operation id with other bytes is refused before anything launches
+  await expect(op.writeFile(path, Buffer.from("other payload"), signal)).rejects.toThrow(/input/);
+  await expect(op.writeFile(path, Buffer.from("first payloaD"), signal)).rejects.toThrow(/input/);
+  expect(f.launched).toHaveLength(1);
+});
 it("re-reads ceilings at invocation and rejects restricted exec without private provenance", async () => {
   const f = await fixture();
   const op = await f.backend.operation({ id: "d" }, f.scope, signal);

@@ -38,6 +38,7 @@ import {
   type OutputLocator,
   validateOutputRange,
 } from "./output-spool.js";
+import { timed } from "./transfer-timing.js";
 
 interface Entry {
   ref: SandboxExecutionRef;
@@ -47,7 +48,7 @@ interface Entry {
   state: "consumed" | "running" | "completed" | "unknown";
   revoked: boolean;
   identity?: TrustedLaunchIdentity;
-  result?: ExecResult | NativeHelperResult;
+  result?: ExecResult | NativeHelperResult | OmittedReadResult;
   stop?: SandboxStopResult;
   request?: {
     scope: MacWorkerRequest["scope"];
@@ -63,6 +64,32 @@ interface Entry {
     interruptedCancellation: boolean;
     expired?: boolean;
     cleaned?: boolean;
+  };
+}
+/**
+ * What the journal keeps of a completed native read: its outcome, never its bytes. The bytes stay
+ * in this process's memory for in-process retries; rewriting megabytes of file content on every
+ * fsynced journal commit is what made transfers slow and could exhaust the journal. A read has no
+ * lasting effect, so after a restart its retry reports an unknown outcome instead.
+ */
+interface OmittedReadResult {
+  omitted: "native-read";
+  bytes: number;
+  truncated: boolean;
+}
+const isOmittedRead = (result: Entry["result"]): result is OmittedReadResult =>
+  typeof result === "object" && result !== null && "omitted" in result;
+/** The entry as the journal stores it (see {@link OmittedReadResult}). */
+function journalForm(entry: Entry): Entry {
+  const result = entry.result;
+  if (typeof result !== "object" || result === null || !("dataB64" in result)) return entry;
+  return {
+    ...entry,
+    result: {
+      omitted: "native-read",
+      bytes: Math.floor((result.dataB64.length * 3) / 4),
+      truncated: result.truncated,
+    },
   };
 }
 interface Live {
@@ -415,6 +442,9 @@ export class MacOperationSupervisor {
     return next;
   }
   private persist(): void {
+    timed("supervisor", "journal", () => this.persistNow());
+  }
+  private persistNow(): void {
     if (this.closed)
       throw new SandboxPermissionUnsupportedError(
         "This instance generation was superseded; its journal belongs to the current binding",
@@ -430,7 +460,11 @@ export class MacOperationSupervisor {
       deviceId: this.options.deviceId,
       generation: this.options.instanceGeneration,
     };
-    const journal: Journal = { version: 1, transaction, entries: [...this.entries.values()] };
+    const journal: Journal = {
+      version: 1,
+      transaction,
+      entries: [...this.entries.values()].map(journalForm),
+    };
     const text = JSON.stringify(journal);
     if (Buffer.byteLength(text) > 64 * 1024 * 1024)
       throw Error("Operation journal capacity exhausted");
@@ -754,7 +788,7 @@ export class MacOperationSupervisor {
   ): Promise<ExecResult | NativeHelperResult> {
     const { entry, fresh } = await this.admit(request, hash, this.now() + 60000, signal);
     if (!fresh) {
-      if (entry.state === "completed") return entry.result ?? null;
+      if (entry.state === "completed" && !isOmittedRead(entry.result)) return entry.result ?? null;
       throw new SandboxOperationOutcomeUnknownError("Consumed operation outcome is unknown");
     }
     const launching = this.launch(entry, request, signal, false);

@@ -14,5 +14,6 @@
   "output-spool.test.ts",
   "permission-native-contract.test.ts",
   "runtime-manifest-pack.test.ts",
-  "runtime-manifest.test.ts"
+  "runtime-manifest.test.ts",
+  "transfer-timing.test.ts"
 ]
