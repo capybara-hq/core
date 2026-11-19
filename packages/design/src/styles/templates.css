@@ -1415,6 +1415,10 @@ a.cb-object-name:hover {
   .cb-listdetail[data-fit="580"] > .cb-listdetail-detail > .cb-listdetail-bar {
     display: flex;
   }
+  .cb-listdetail[data-fit="580"][data-divided="true"] > .cb-listdetail-list,
+  .cb-listdetail[data-fit="580"][data-divided="true"] > .cb-listdetail-detail {
+    padding-inline: 0;
+  }
 }
 @container cb-ld (max-width: 679px) {
   .cb-listdetail[data-fit="680"] {
@@ -1433,6 +1437,17 @@ a.cb-object-name:hover {
   .cb-listdetail[data-fit="680"] > .cb-listdetail-detail > .cb-listdetail-bar {
     display: flex;
   }
+  .cb-listdetail[data-fit="680"][data-divided="true"] > .cb-listdetail-list,
+  .cb-listdetail[data-fit="680"][data-divided="true"] > .cb-listdetail-detail {
+    padding-inline: 0;
+  }
+}
+/* A divided region (a form card's list + editor): the divider sits space.4 from each pane. */
+.cb-listdetail[data-divided="true"] > .cb-listdetail-list {
+  padding-right: var(--cb-space-4);
+}
+.cb-listdetail[data-divided="true"] > .cb-listdetail-detail {
+  padding-left: var(--cb-space-4);
 }
 /* Inside the shell on compact the top bar is the one back (the open item is a pushed page). */
 @media (max-width: 599px) {

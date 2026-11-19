@@ -1,7 +1,8 @@
-import type { ElementType, ReactNode } from "react";
+import { Children, type ElementType, type ReactNode } from "react";
 import { Icon } from "../icons/icon";
 import type { IconName } from "../icons/paths";
 import { BoxScope } from "./box";
+import { ListDetail } from "./list-detail";
 
 export type Gap = 0 | 4 | 8 | 12 | 16 | 24 | 32;
 
@@ -53,12 +54,32 @@ export type GridProps = {
        * they stack below 600. Only for `list-detail`: its two children make one row.
        */
       divided?: boolean;
+      /**
+       * The list-detail region's open state (spec §6.47): with it the grid is a `ListDetail`, so
+       * a frame narrower than the 220 list plus a 360 detail shows the list as the page and the
+       * open item pushed over it (`onBack` closes it). Without it the two children stack, the
+       * list above the detail.
+       */
+      open?: boolean;
+      onBack?: () => void;
+      /** The region's accessible name (with `open`). */
+      label?: string;
     }
-  | { columns: Exclude<GridColumns, "list-detail">; divided?: never }
+  | {
+      columns: Exclude<GridColumns, "list-detail">;
+      divided?: never;
+      open?: never;
+      onBack?: never;
+      label?: never;
+    }
 );
 
-export function Grid({ columns, gap = 16, divided, children }: GridProps) {
-  return (
+/** The list column and the detail's least width of a `list-detail` grid: its fit is 580. */
+const GRID_LIST = 220;
+const GRID_DETAIL = 360;
+
+export function Grid({ columns, gap = 16, divided, open, onBack, label, children }: GridProps) {
+  const grid = (
     <div
       className="cb-grid"
       data-columns={columns}
@@ -68,6 +89,25 @@ export function Grid({ columns, gap = 16, divided, children }: GridProps) {
       {children}
     </div>
   );
+  if (columns !== "list-detail") return grid;
+  const [list, detail] = Children.toArray(children);
+  if (open !== undefined && list !== undefined && detail !== undefined) {
+    return (
+      <ListDetail
+        list={list}
+        detail={open ? detail : null}
+        preview={detail}
+        onBack={onBack ?? (() => {})}
+        listMin={GRID_LIST}
+        detailMin={GRID_DETAIL}
+        label={label ?? ""}
+        divided={divided === true}
+        columns="list-detail"
+      />
+    );
+  }
+  // The columns fit by the frame's own width (spec §4.3), not the window's.
+  return <div className="cb-grid-frame">{grid}</div>;
 }
 
 export function Card({

@@ -9,6 +9,7 @@ import {
   DesignProvider,
   FormPage,
   FormSection,
+  Grid,
   InboxPage,
   LIST_DETAIL_FITS,
   ListDetail,
@@ -289,5 +290,42 @@ describe("InboxPage structure (spec §5.7: rail + content + inspector, decisions
     expect(sheet).toMatch(
       /@container cb-ld \(min-width: 1100px\) \{[^@]*grid-template-columns: minmax\(0, 1fr\) 400px;/,
     );
+  });
+});
+
+describe('Grid columns="list-detail"', () => {
+  it("is a ListDetail (fit 580) once it has an open state, else it stacks by its own frame", () => {
+    const { container, rerender } = render(
+      <DesignProvider locale="zh">
+        <Grid columns="list-detail" divided open={false} onBack={() => {}} label="文件">
+          <p>FILES</p>
+          <p>EDITOR</p>
+        </Grid>
+      </DesignProvider>,
+    );
+    const region = container.querySelector('[data-columns="list-detail"]') as HTMLElement;
+    expect(region.getAttribute("data-fit")).toBe("580");
+    expect(region.getAttribute("data-open")).toBe("false");
+    expect(region.getAttribute("data-divided")).toBe("true");
+    rerender(
+      <DesignProvider locale="zh">
+        <Grid columns="list-detail" divided open onBack={() => {}} label="文件">
+          <p>FILES</p>
+          <p>EDITOR</p>
+        </Grid>
+      </DesignProvider>,
+    );
+    expect(region.getAttribute("data-open")).toBe("true");
+    cleanup();
+    const plain = render(
+      <DesignProvider locale="zh">
+        <Grid columns="list-detail">
+          <p>A</p>
+          <p>B</p>
+        </Grid>
+      </DesignProvider>,
+    );
+    expect(plain.container.querySelector(".cb-grid-frame > .cb-grid")).not.toBeNull();
+    expect(css("controls.css")).toContain("@container cb-grid (max-width: 579px)");
   });
 });

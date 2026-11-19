@@ -58,6 +58,8 @@ export function useInstructionFilesEditor(
   const saved = draftOf(savedFiles);
   const draft = useSectionDraft(saved);
   const [open, setOpen] = useState<string | null>(null);
+  // Below the grid's fit the file list is the page until a file is opened (spec §6.47).
+  const [opened, setOpened] = useState(false);
   const [checked, setChecked] = useState(false);
   // the files whose name problems show: a name left (blur) or a save attempt shows them, and
   // typing in a name hides its own until it is left again
@@ -93,7 +95,13 @@ export function useInstructionFilesEditor(
   const editor = (
     // The form card is the one box: the open file's name is an h3 over its fields, the columns
     // split by a hairline, no editor card
-    <Grid columns="list-detail" divided>
+    <Grid
+      columns="list-detail"
+      divided
+      open={opened}
+      onBack={() => setOpened(false)}
+      label={t("filesLabel")}
+    >
       <Stack gap={8}>
         <Repeater
           variant="rows"
@@ -110,7 +118,10 @@ export function useInstructionFilesEditor(
               <Button
                 variant="ghost"
                 aria-pressed={f.key === current?.key}
-                onClick={() => setOpen(f.key)}
+                onClick={() => {
+                  setOpen(f.key);
+                  setOpened(true);
+                }}
               >
                 {f.name}
               </Button>
@@ -125,6 +136,7 @@ export function useInstructionFilesEditor(
                 : { files: [...d.files, { key, name: newFileName(d.files), content: "" }] },
             );
             setOpen(key);
+            setOpened(true);
           }}
           onRemove={(key) => {
             const before = files;

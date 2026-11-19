@@ -23,6 +23,10 @@ export type ListDetailProps = {
   preview?: ReactNode;
   /** A row under both panes in two panes, under the open item in the stack (the decision row). */
   footer?: ReactNode;
+  /** A `line-soft` divider `space.4` from each pane (the form card's list + editor, spec §5.8). */
+  divided?: boolean;
+  /** Set by `Grid columns="list-detail"`: the region keeps the grid's `data-columns` marker. */
+  columns?: "list-detail";
 };
 
 /**
@@ -47,6 +51,8 @@ export function ListDetail({
   label,
   preview,
   footer,
+  divided,
+  columns,
 }: ListDetailProps) {
   const t = useDesignT();
   const fit = listMin + detailMin;
@@ -75,6 +81,8 @@ export function ListDetail({
         data-part="list-detail"
         data-fit={fit}
         data-open={open ? "true" : "false"}
+        data-divided={divided ? "true" : undefined}
+        data-columns={columns}
         aria-label={label}
         style={{ "--cb-ld-list": `${listMin}px` } as CSSProperties}
       >

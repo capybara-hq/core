@@ -316,6 +316,8 @@ function ModelsBody({
             }))}
             selected={open.plugin}
             onSelect={onProvider}
+            open={provider !== ""}
+            onBack={() => onProvider("")}
           >
             <ProviderModels
               key={open.plugin}
