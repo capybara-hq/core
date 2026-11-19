@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type {
   DeviceExecArgs,
   DeviceLocalPolicySummary,
+  DeviceOwnerCeiling,
   KernelReq,
   NetworkBlockLayer,
 } from "@capybara-hq/plugin-sdk";
@@ -37,10 +38,10 @@ import {
   allowedOnceNote,
   deniedNote,
   expiredNote,
-  orgLayerNote,
   skippedNote,
   tooManyNote,
   unattendedNetworkNote,
+  unavailableHostNote,
 } from "../../src/tools/network-asks.js";
 import { ToolPipeline, type ToolStepContext } from "../../src/tools/pipeline.js";
 import { legacyDbFor } from "../helpers/conversations.js";
@@ -62,7 +63,7 @@ import {
   waitForTerminal,
 } from "../helpers/runs.js";
 import { webCaller } from "../helpers/step-context.js";
-import { FakeMachine, HELLO } from "../local-devices/fake-machine-v3.js";
+import { FakeMachine, HELLO, ownerReportFor } from "../local-devices/fake-machine-v3.js";
 
 /**
  * The network ask in the tool pipeline (network ask-to-allow spec §6.2, §6.6–§6.9, §8.3, P1.7):
@@ -125,6 +126,8 @@ interface Device {
   allowed: Set<string>;
   features: string[];
   policy: DeviceLocalPolicySummary;
+  /** The owner report the machine says hello with (absent: the fake's default, open network). */
+  ownerCeiling?: DeviceOwnerCeiling;
 }
 
 interface Setup {
@@ -181,7 +184,11 @@ async function connect(deviceId: string, credential: string, machineId: string, 
   const machine = new FakeMachine(wsUrl, credential, answer(dev) as any, { hello: false });
   open.push(machine);
   await machine.opened;
-  machine.hello({ features: dev.features, policy: dev.policy });
+  machine.hello({
+    features: dev.features,
+    policy: dev.policy,
+    ...(dev.ownerCeiling !== undefined && { ownerCeiling: dev.ownerCeiling }),
+  });
   await waitFor(
     async () => (await redis.get(deviceLeaseKey(deviceId))) !== null,
     10_000,
@@ -462,9 +469,10 @@ describe("not asked", () => {
     await post([curl(["api.foo.com", "10.0.0.5"])]);
     await waitForTerminal(db, s.conversationId, 1, 20_000);
     const [r] = await results();
+    // the reply names who adds the host (the per-call host ceiling's refusal)
     expect(
       r?.content.endsWith(
-        `\n\n${orgLayerNote(["api.foo.com"])}\n${addressLayerNote(["10.0.0.5"])}`,
+        `\n\n${unavailableHostNote("api.foo.com", "an organization admin adds api.foo.com to the organization's device network list")}\n${addressLayerNote(["10.0.0.5"])}`,
       ),
     ).toBe(true);
     expect(await asks()).toEqual([]);
@@ -477,6 +485,26 @@ describe("not asked", () => {
     const evs = await eventsOf(db, s.conversationId);
     const at = (t: string) => evs.findIndex((e) => e.type === t);
     expect(at("network_blocked")).toBeLessThan(at("tool_result"));
+  });
+
+  it("a host beyond the local owner's allowlist is not asked: the owner adds it on the machine", async () => {
+    s = await setup({
+      ownerCeiling: ownerReportFor(
+        { allowedDomains: ["pypi.example.com"] },
+        { network: "allowlist" },
+      ),
+    });
+    s.dev.blocking.set("files.example.com", "device");
+    await post([curl(["files.example.com"])]);
+    await waitForTerminal(db, s.conversationId, 1, 20_000);
+    const [r] = await results();
+    expect(
+      r?.content.endsWith(
+        `\n\n${unavailableHostNote("files.example.com", "the device owner adds it on the machine: capybara-device policy add allowedDomains files.example.com")}`,
+      ),
+    ).toBe(true);
+    expect(await asks()).toEqual([]);
+    expect(curlExecs()).toHaveLength(1);
   });
 
   it("a program without policyOpId: no ask, no note", async () => {
@@ -655,7 +683,7 @@ describe("sub-agents and unattended runs", () => {
     const [r] = await results();
     expect(
       r?.content.endsWith(
-        `\n\n${unattendedNetworkNote(["files.example.com"])}\n${orgLayerNote(["api.foo.com"])}`,
+        `\n\n${unattendedNetworkNote(["files.example.com"])}\n${unavailableHostNote("api.foo.com", "an organization admin adds api.foo.com to the organization's device network list")}`,
       ),
     ).toBe(true);
     expect(await asks()).toEqual([]);
