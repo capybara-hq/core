@@ -62,8 +62,9 @@ Goals:
 1. Everything the web app does, by loading the deployment's own web app. No second copy of the
    UI, and no version skew between UI and kernel **(decided)**.
 2. **The desktop draws no UI of its own** **(decided)**. The only local page is the address page,
-   plain HTML with no `@capybara-hq/design` dependency. Sign-in, OAuth, setup, onboarding and
-   every setting are the deployment's own web pages.
+   plain HTML with no `@capybara-hq/design` dependency. Setup, onboarding, connector OAuth and
+   every setting are the deployment's own web pages in the window.
+   Sign-in happens in the system browser, never in the window (§6.5) **(decided)**.
 3. The web adapts when it detects the desktop shell through the Shell environment contract (title
    bar insets for the macOS traffic lights, drag regions), by capability detection, never by
    user-agent sniffing **(decided)**.
@@ -226,7 +227,9 @@ Packaging facts that follow from the current program:
   `https`, and certificate errors cannot be bypassed (the connector rule: https only, loopback
   exempt).
 - The page calls discovery (§6.2), shows the deployment's name when it has one, saves the profile
-  and loads the deployment in the shell. From then on every screen is the deployment's.
+  and loads the deployment in the shell. From then on every screen is the deployment's; a profile
+  without a session lands on the deployment's sign-in page, which offers only the browser sign-in
+  (§6.5).
 
 ### 6.2 Discovery endpoint (kernel change)
 
@@ -241,7 +244,7 @@ GET /api/v1/meta   (@Public, cache-control: no-store)
   "protocols": {
     "device": { "min": 3, "max": 3 }  // DEVICE_PROTOCOL_VERSION range of the gateway
   },
-  "features": { "localDevices": true }
+  "features": { "localDevices": true, "appSignIn": true }
 }
 ```
 
@@ -278,15 +281,81 @@ GET /api/v1/meta   (@Public, cache-control: no-store)
   send someone to a look-alike deployment). `capybara://open?url=<deployment page>` focuses the
   matching profile and navigates there when the URL is on its origin.
 
+### 6.5 Sign-in through the system browser (decided; details designer's calls)
+
+The app has no sign-in of its own and never signs in inside the window. It uses the
+authorization code flow with PKCE for native apps (RFC 8252, RFC 7636), the same idea as
+`capybara-device login`: the person authenticates where their password manager, SSO session and
+security keys already are, and the app only receives a one-time code.
+
+**Flow**
+
+1. The person clicks 「在浏览器中登录」 on the deployment's sign-in page in the window
+   (`signIn@1.start()`, §8). The main process creates `state` and a `code_verifier` (32 random
+   bytes each), keeps them with the profile for 10 minutes, and opens the system browser at
+   `<origin>/apps/authorize?client=desktop&redirect_uri=capybara://auth/callback&code_challenge=<S256>&code_challenge_method=S256&state=<state>&name=<machine name>`.
+2. The web page `/apps/authorize` (an auth route like `/devices/link`) signs the person in if
+   needed (password or SSO, unchanged), then shows one confirmation: 「在 <机器名> 上的 Capybara
+   桌面端登录 <平台名称>？」 with the account and 「登录」/「取消」. Confirming calls
+   `POST /api/v1/app-auth/authorize`; the page then navigates to the returned redirect.
+3. The browser hands `capybara://auth/callback?code=…&state=…&iss=<public URL>` to the app. The
+   main process accepts it only for a pending `state`, checks `iss` equals the profile's origin
+   (mix-up defence, RFC 9207), and drops the pending entry (one use).
+4. The main process calls `POST /api/v1/app-auth/token` with `{ code, codeVerifier, redirectUri }`
+   through the profile's own session (Electron `net.fetch` of that partition), so the kernel's
+   `Set-Cookie` lands in the partition's cookie jar; the body carries only the account. The window
+   reloads, signed in. No token passes through a renderer or the app's own storage.
+
+**Redirect: a custom scheme, not loopback** **(designer's call)**. A loopback redirect needs a
+listening port on the machine, which §3 rules out, and a firewall prompt on some systems. The
+known weakness of a custom scheme (another app registering `capybara://`) is covered by PKCE: a
+code caught by another app cannot be exchanged without the verifier, which never leaves the main
+process. The callback page in the browser says 「已返回 Capybara，可以关闭此页」.
+
+**Kernel side**
+
+| Route | Access | Does |
+|---|---|---|
+| `POST /api/v1/app-auth/authorize` | Signed-in person, human only (`HUMAN_ONLY`), CSRF header | Body `{ client, redirectUri, codeChallenge, codeChallengeMethod: "S256", state, name }`. Refuses a `redirectUri` not in `auth.appRedirectUris` and any method but S256. Issues `code` (`cap_ac_` + 32 random bytes), stores its sha256 in Redis for 60 s with the account, the browser session id, `client`, `redirectUri`, `codeChallenge` and `name`; answers `{ redirect }` (the URI with `code`, `state`, `iss`). Audit `auth.app_authorized` (client, name) |
+| `POST /api/v1/app-auth/token` | `@Public`, rate-limited per IP like `/auth/login` | Body `{ code, codeVerifier, redirectUri }`. `GETDEL` of the code (one use; a second try is `app_auth.code_invalid`), checks expiry, `redirectUri` and `S256(codeVerifier)`; refuses a disabled account; creates a session with `SessionService.create` and sets `cap_at` / `cap_rt` like `/auth/login`; answers `{ account }`. Audit `auth.app_signed_in` (client, name, session id) |
+
+- **Binding**: the code is bound to its PKCE challenge, to the redirect URI, to this deployment
+  (the exchange works only on the kernel that issued it; `iss` lets the app check where it came
+  from) and, through `state`, to the profile that started it. Lifetime 60 s, single use, stored by
+  hash; Redis keys carry a TTL, so any replica can exchange it (multi-replica rule).
+- **Config**: `auth.appRedirectUris` (list, default `["capybara://auth/callback"]`, not hot). A
+  fork that ships its own build under another scheme adds its URI here.
+- **Which session the window gets**: an ordinary web session, one row in the sessions table like a
+  browser sign-in, with the same cookies, refresh rotation and lifetimes
+  (`auth.accessTokenTtlSeconds`, `auth.refreshTokenTtlDays`). It is a separate session from the
+  browser's (signing out in one does not sign out the other); its `user_agent` records
+  `Capybara Desktop/<version> (<machine name>)` so it is recognisable wherever sessions are shown.
+  Revoking it, a password change (which revokes sessions) or a disabled account end it as any
+  session.
+- **Sign-out and expiry**: the web's sign-out calls `/api/v1/auth/logout` as in a browser; the
+  window lands on the sign-in page, which offers the browser flow again. When the refresh fails
+  (expired or revoked), the same happens: the person re-runs the browser flow. The shell removes
+  the profile's cookies when the profile is removed.
+- **Enforcement in the window**: the shell blocks requests from the profile's window to
+  `POST /api/v1/auth/login` and `GET /api/v1/auth/sso/*/start` (a `webRequest` filter on the
+  partition), so even a web version that shows the form cannot sign in inside the window. The app
+  refuses a deployment whose `/api/v1/meta` lacks `features.appSignIn` (「该平台版本过旧」).
+- **Platform-tool exclusions**: both routes. `authorize`: interactive consent by the person in
+  the browser; `token`: transport (an app exchanges a one-time code, nothing for an agent to do).
+- **Reused for the device (D2)**: the window's session is what makes 「连接本机」 a single
+  confirmation: the device's `/devices/link` page opens in the profile's partition, already signed
+  in (§9.2). Confirming a device code is a deployment page's consent, not a sign-in, so it stays
+  in the window.
+
 ## 7. The shell
 
 ### 7.1 Loading and navigation
 
-- The shell loads the profile's origin in a `BrowserWindow` with the profile's partition. Sign-in,
-  first-run setup and invitations are the deployment's own pages **(decided)**.
-- Top-level navigation may leave the origin in the same window: SSO sign-in and connector OAuth
-  are full-page redirects through the provider and back. Off the origin the shell injects nothing
-  (§8).
+- The shell loads the profile's origin in a `BrowserWindow` with the profile's partition.
+  First-run setup and invitations are the deployment's own pages **(decided)**; sign-in is the
+  browser flow of §6.5.
+- Top-level navigation may leave the origin in the same window for connector OAuth, a full-page
+  redirect through the provider and back. Off the origin the shell injects nothing (§8).
 - `target=_blank` and `window.open` to other origins open in the system browser (http and https
   only); same-origin ones open a new shell window of the profile (file previews, shared pages).
 - The app sets no user-agent token of its own; the web never reads the user agent (§7.3).
@@ -322,7 +391,7 @@ values:
 | `shellVersion` | The app's version |
 | `insets` | macOS with `titleBarStyle: "hiddenInset"`: `top` 28 (the title bar band holding the traffic lights at their default position), `right` / `bottom` / `left` 0. In fullscreen: `top` 0, announced with `change` |
 | `controls` | macOS: the traffic lights' rectangle at the app's fixed `trafficLightPosition`, including their margins: `{ x: 0, y: 0, width: 80, height: 28 }` (exact values measured once on the built window, **designer's call**); `null` in fullscreen, announced with `change`. Later Windows / Linux builds report their title-bar overlay buttons the same way |
-| `capabilities` | `notify@1` and `openExternal@1` always; `chrome@1` (mobile layout §9.2: window background and title bar follow the theme); `device@1` when 「连接本机」 is available: macOS or Linux, not turned off by managed configuration, and the deployment's `/api/v1/meta` says `localDevices` with a `device` range the bundled program speaks |
+| `capabilities` | `notify@1`, `openExternal@1` and `signIn@1` always; `chrome@1` (mobile layout §9.2: window background and title bar follow the theme); `device@1` when 「连接本机」 is available: macOS or Linux, not turned off by managed configuration, and the deployment's `/api/v1/meta` says `localDevices` with a `device` range the bundled program speaks |
 
 The AppShell clears the window controls from `--cb-shell-controls-*` (mobile layout §9.3); no
 geometry is keyed on `data-shell-platform`. The desktop's remaining choice, realized in design CSS
@@ -340,6 +409,7 @@ browser. Every call returns plain data, never a credential.
 |---|---|
 | `notify@1.notify({ title, body, path? })` | OS notification; a click focuses the shell and navigates to `path` (same origin only) |
 | `openExternal@1.open(url)` | Opens an http(s) URL in the system browser |
+| `signIn@1.start()` | Starts the browser sign-in of §6.5 for this profile; resolves `signedIn` (the window then reloads), `cancelled` or an error code. Needs a user activation; nothing is confirmed natively (it grants the page nothing) |
 | `device@1.status()` / `device@1.onStatus(cb)` | For this machine: `not_connected`, `connected_elsewhere` (logged in to another deployment: its origin only), or connected to this deployment with `deviceId`, `orgId`, run mode (`os` / `docker`), connection state (`starting`, `online`, `offline` + reason, `draining`, `stopped`), the keep-awake mode and whether an assertion is held (§9.7), the last wake. From `status --json` and the control socket |
 | `device@1.running()` | What runs on this machine now (control socket `running`): tag, conversation id, account id, isolation, started at; no command text |
 | `device@1.connect({ orgId, deviceId? })` | Asks natively first (§9.1); on yes, runs the authorization of §9.2; resolves `connected`, `cancelled` or an error code |
@@ -478,6 +548,15 @@ conversation.
   otherwise) and Linux (AppImage, deb) later. No macOS-only API where a cross-platform one exists.
 - Signing certificates and the app id are arranged by the maintainer **(decided)**; the working
   app id is `com.capybarahq.desktop`.
+- **Only the official app** is published: the Capybara name and icon, fixed **(decided)**. There
+  is no white-label product; the repository is open source, and an organization that wants its
+  own brand forks it and signs and publishes its own build. To make that easy, the brand (name,
+  icons, app id, URL scheme, signing identity, update feed) lives in one file of `apps/desktop`
+  **(designer's call)**; a fork that changes the scheme registers its redirect URI in
+  `auth.appRedirectUris` (§6.5).
+- The Dock icon stays the Capybara icon **(designer's call)**: switching it to a deployment's icon
+  at runtime would need a deployment icon the kernel does not have, and the window title already
+  names the platform.
 - Updates: automatic from GitHub Releases by default; managed configuration may turn them off or
   point at an internal feed. An update that changes the bundled device runs `service restart` when
   the service runs the app's copy (§5.2).
@@ -499,6 +578,7 @@ Latin word `agent`. The language follows the OS; everything else is the deployme
 | A page connects the machine silently | Native dialog naming the platform and host before any login (§9.1) |
 | A page loosens the local policy | Only narrowing applies directly; widening shows the program's risk text natively (§9.5) |
 | A misled agent runs harmful commands | Unchanged: the permission profile, the owner ceiling, the restricted runtime, the deployment's command review; plus one-click pause and disconnect from the tray |
+| A stolen sign-in code or a hijacked `capybara://` scheme | PKCE (the verifier never leaves the main process), 60 s single-use codes stored by hash, `state` and `iss` checked, redirect URIs allowlisted (§6.5) |
 | A crafted deep link points to a look-alike deployment | Deep links prefill only; the address and the discovery name are shown (§6.4) |
 | Device credential theft from disk | Unchanged from the CLI (0600 file, never in a renderer); revocable from the device page; keychain later (§4.2) |
 | Tampered app or runtime injection | Code signing, notarization, fuses, ASAR integrity; the device package unmodified and attested (§5.2, §7.2) |
@@ -512,6 +592,8 @@ Latin word `agent`. The language follows the OS; everything else is the deployme
 | `packages/kernel` | `GET /api/v1/meta` (§6.2), `@Public`, no-store, tested through the web proxy; a Platform-tool exclusion (`transport`); new config field `platform.name` (`adding-config`: schema meta, `docs/config.md` regenerated) |
 | `packages/design` | Shell environment support comes with the mobile layout design (§9.3 there); this spec adds only the desktop's drag regions (§7.3); controls clearance comes from `--cb-shell-controls-*` |
 | `apps/web` | Typed accessors for `device@1` and `notify@1` on `useShellCapability` in the shell adapter `lib/shell.ts` (the adapter itself, the plugin-sdk types and the no-flash script come with the mobile layout design), `defineQuery` for `device@1.status` / `device@1.running`, `useAppMutation` for the actions); `DeviceCreateDialog` local branch: 「连接本机」 or this machine's state (§9.1); the device page's 本机 section and widen-through-bridge action (§9.6); 本机 marks in the device list and picker; `notify@1` for attention signals (§10); zh / en messages (`check:i18n`) |
+| `packages/kernel` sign-in | `POST /api/v1/app-auth/authorize` and `/token` (§6.5): Redis codes, PKCE, sessions through `SessionService.create`, audit events, error codes `app_auth.*`, two Platform-tool exclusions, `features.appSignIn` in meta; config `auth.appRedirectUris` |
+| `apps/web` sign-in | The `/apps/authorize` page (sign in if needed, one confirmation, redirect); the sign-in page shows only 「在浏览器中登录」 when `useShellCapability("signIn@1")` returns it; zh / en |
 | `apps/web` `/devices/link` | Honour `org=<orgId>`: preselect the org and 新建设备 named after the machine (§9.2) |
 | `packages/device` | The gaps of §4.2: the control socket and live `status --json`; `login --json`; `ceiling show --json`; `service status --json`; keep-awake (`keepAwake` policy field, `keep-awake` command, the macOS and Linux assertions, wake notes in status and `commands.log`); README and tests; a changeset |
 | `docs/architecture.md` | `capybara-hq/clients` (desktop, later mobile) as an external app in its own repository |
@@ -520,7 +602,7 @@ Latin word `agent`. The language follows the OS; everything else is the deployme
 
 | Phase | Content | Depends on |
 |---|---|---|
-| **D1 Shell** (macOS) | `capybara-hq/clients` with `apps/desktop` and `packages/shell`; address page; `/api/v1/meta`; profiles; shell security; navigation rules; the Shell environment values; `notify@1`, `openExternal@1`, `chrome@1`; deep links; managed configuration; signing and updates | `/api/v1/meta`; the AppShell side of the Shell environment (mobile layout design) |
+| **D1 Shell** (macOS) | `capybara-hq/clients` with `apps/desktop` and `packages/shell`; address page; `/api/v1/meta`; browser sign-in (§6.5, kernel and web); profiles; shell security; navigation rules; the Shell environment values; `notify@1`, `openExternal@1`, `chrome@1`; deep links; managed configuration; signing and updates | `/api/v1/meta`; the app-auth routes; the AppShell side of the Shell environment (mobile layout design) |
 | **D2 Connect this machine** | Bundled Node and device package; the login service from the app; `device@1`; native dialogs; 「连接本机」 and the device page's 本机 section in core web; `/devices/link?org=`; keep-awake; tray | The `packages/device` gaps of §4.2 |
 | D3 Windows and Linux | Builds, signing, installers; `device@1` on Linux (WSL / Docker on Windows) | D2 |
 | Later | Mobile (Capacitor) in the same repository; several connected deployments per machine user; keychain credential; a virtual-machine sandbox mode; local MCP servers on the device (own design) | — |
@@ -530,7 +612,10 @@ changes.
 
 ## AGENTS.md rules touched
 
-- **Platform tool**: the new route `GET /api/v1/meta` gets an exclusion with a reason (§6.2).
+- **Platform tool**: the new routes `GET /api/v1/meta`, `POST /api/v1/app-auth/authorize` and
+  `POST /api/v1/app-auth/token` get exclusions with reasons (§6.2, §6.5).
+- **Multi-replica**: app sign-in codes live in Redis with a 60 s TTL and are taken with `GETDEL`,
+  so any replica can exchange them (§6.5).
 - **Web UI**: apps/web adapts only through design's AppShell and capability detection; no styles,
   no user-agent checks; new reads and writes go through `defineQuery` / `useAppMutation` (§7.3,
   §14).
@@ -541,8 +626,8 @@ changes.
   `@capybara-hq/design` (§5.1).
 - **Sandboxes**: no inbound port; the control socket is a local Unix socket in the owner's private
   state directory (§3, §4.2).
-- **Config**: the new deployment field `platform.name` (§6.2), with the `CAPYBARA_` naming and
-  regenerated `docs/config.md`.
+- **Config**: the new fields `platform.name` (§6.2) and `auth.appRedirectUris` (§6.5), with the
+  `CAPYBARA_` naming and regenerated `docs/config.md`.
 
 ## 16. Decisions and open questions
 
@@ -551,17 +636,16 @@ Decided by the maintainer:
 1. Electron (§5.1); macOS first (§11); the maintainer arranges signing and the app id (§11).
 2. Repository `capybara-hq/clients` (desktop now, mobile later, shared `packages/shell`); no React
    Native (§5.1).
-3. The desktop draws no UI: only the plain-HTML address page; sign-in, OAuth and setup are the
-   deployment's web (§3, §6.1, §7.1).
+3. The desktop draws no UI: only the plain-HTML address page; setup and onboarding are the
+   deployment's web in the window (§3, §6.1, §7.1).
 4. The web adapts through the Shell environment contract (mobile layout §9; the desktop values in §7.3).
 5. 「连接本机」 in the 新建设备 flow, with a native confirmation naming the platform (§9.1).
 6. Remote can only tighten; no local settings windows (§9.5, §3).
 7. `/api/v1/meta` returns the platform name before sign-in, from a config field (§6.2).
 8. The device runs as a login service the app installs and attaches to; the window closing never
    stops it (§5.2, §9.4). The desktop offers keep-awake, a device feature (§9.7).
+9. Sign-in only in the system browser: authorization code with PKCE, a deep link back, a one-time
+   code exchanged for the window's session (§6.5).
+10. Only the official app is published; a brand of one's own means a fork (§11).
 
-Open:
-
-1. Should an IdP that refuses embedded browsers (some reject Electron windows) get a system-browser
-   sign-in with a one-time hand-off into the window's session? That needs a kernel hand-off
-   endpoint; not planned until a deployment hits it.
+Open: none at the moment.
