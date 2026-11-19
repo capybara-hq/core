@@ -4,7 +4,7 @@ import { Icon } from "../icons/icon";
 import { useDesignT } from "../provider";
 
 export type KeycapCommandProps = {
-  /** The command line; its words become keycaps (`capybara-device ceiling set --full-access deny`). */
+  /** The command line; its words become keycaps (`capybara-device ceiling set --outside-sandbox off`). */
   command: string;
   /** A sentence above the line saying where to run it. */
   hint?: ReactNode;
