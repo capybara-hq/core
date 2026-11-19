@@ -6449,6 +6449,8 @@
     "uploadLabel": "上传{name}",
     "restore": "恢复默认",
     "uploaded": "图标已上传。",
+    "previewLight": "浅色",
+    "previewDark": "深色",
     "restored": "已恢复默认图标。"
   },
   "clientExtensions": {

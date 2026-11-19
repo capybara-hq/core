@@ -1,5 +1,5 @@
 import * as RD from "@radix-ui/react-dialog";
-import { type ReactNode, type Ref, useId, useRef } from "react";
+import { type ReactNode, type Ref, useCallback, useId, useRef, useState } from "react";
 import { IconButton } from "../controls/button";
 import { Icon } from "../icons/icon";
 import { useDesignT } from "../provider";
@@ -72,6 +72,7 @@ export function BottomSheetFrame({
   children,
 }: BottomSheetFrameProps) {
   const t = useDesignT();
+  const grab = handleLabel ?? t("overlay.dragToClose");
   return (
     <div className="cb-bsheet-stage" data-part="sheet-stage">
       <div className="cb-bsheet-page">{page}</div>
@@ -84,7 +85,7 @@ export function BottomSheetFrame({
       <div
         className="cb-bsheet cb-bsheet-static"
         data-part="sheet"
-        data-state={state}
+        data-drag={state}
         role="dialog"
         aria-label={title}
         style={{ transform: `translateY(${share * 100}%)` }}
@@ -97,7 +98,7 @@ export function BottomSheetFrame({
               icon={<Icon name="x" size={16} />}
             />
           }
-          handleLabel={handleLabel}
+          handleLabel={grab}
         >
           {children}
         </BottomSheetInner>
@@ -132,6 +133,13 @@ export function BottomSheetContent({
   const focusReturn = useFocusReturn();
   const sheet = useRef<HTMLDivElement | null>(null);
   const body = useRef<HTMLDivElement | null>(null);
+  // The portal mounts the body after this component's first render: a state change on mount
+  // re-renders it so the drag hook attaches its touch listeners to the body.
+  const [, setBodyMounted] = useState(false);
+  const bodyRef = useCallback((el: HTMLDivElement | null) => {
+    body.current = el;
+    setBodyMounted(el !== null);
+  }, []);
   const drag = useDragDismiss({
     axis: "y",
     size: () => sheet.current?.offsetHeight ?? 0,
@@ -158,8 +166,8 @@ export function BottomSheetContent({
               <IconButton label={t("overlay.close")} icon={<Icon name="x" size={16} />} />
             </RD.Close>
           }
-          handleLabel={handleLabel}
-          bodyRef={body}
+          handleLabel={handleLabel ?? t("overlay.dragToClose")}
+          bodyRef={bodyRef}
         >
           {children}
         </BottomSheetInner>

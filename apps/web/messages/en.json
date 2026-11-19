@@ -6461,6 +6461,8 @@
     "uploadLabel": "Upload {name}",
     "restore": "Restore default",
     "uploaded": "Icon uploaded.",
+    "previewLight": "Light",
+    "previewDark": "Dark",
     "restored": "Default icon restored."
   },
   "clientExtensions": {

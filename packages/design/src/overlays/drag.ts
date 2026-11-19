@@ -45,19 +45,18 @@ export type DragDismissOptions = {
 export type DragDismiss = {
   /** Spread on the elements that start a drag (the handle and the head, or the whole sheet). */
   handleProps: HTMLAttributes<HTMLElement>;
-  /** Spread on the moving sheet: its transform, `data-state` and the settle's end. */
-  panelProps: HTMLAttributes<HTMLElement> & { "data-state": DragState };
+  /** Spread on the moving sheet: its transform, `data-drag` and the settle's end. */
+  panelProps: HTMLAttributes<HTMLElement> & { "data-drag": DragState };
   /** For a scrim behind the sheet: it fades with the dragged share (opacity `1 − share`). */
   scrimProps: HTMLAttributes<HTMLElement> & { "data-drag": DragState };
   state: DragState;
-  /** The distance dragged toward the dismissed edge, in px (the settle's target while settling). */
-  offset: number;
   /** `offset` as a share of the sheet's size, 0 to 1. */
   share: number;
 };
 
 type Gesture = {
-  pointerId: number;
+  /** The pointer's id, or "touch" for a gesture the body's touch listeners drive. */
+  id: number | "touch";
   start: number;
   startCross: number;
   active: boolean;
@@ -81,6 +80,8 @@ export function useDragDismiss(opts: DragDismissOptions): DragDismiss {
   const [size, setSize] = useState(0);
   const gesture = useRef<Gesture | null>(null);
   const dismissing = useRef(false);
+  const settling = useRef(false);
+  settling.current = state === "settling";
 
   const finish = useCallback(() => {
     const was = dismissing.current;
@@ -97,63 +98,54 @@ export function useDragDismiss(opts: DragDismissOptions): DragDismiss {
     return () => window.clearTimeout(id);
   }, [state, finish]);
 
-  const pos = (e: ReactPointerEvent) => (axis === "y" ? e.clientY : e.clientX);
-  const cross = (e: ReactPointerEvent) => (axis === "y" ? e.clientX : e.clientY);
-
-  const onPointerDown = (e: ReactPointerEvent<HTMLElement>) => {
-    if (e.button !== undefined && e.button !== 0) return;
-    if (gesture.current !== null || state === "settling") return;
-    const region = scroller?.current;
-    const fromBody =
-      region != null && e.target instanceof Node && region.contains(e.target as Node);
-    if (fromBody && region.scrollTop > 0) return;
+  const begin = (id: Gesture["id"], pos: number, crossPos: number, fromBody: boolean) => {
     gesture.current = {
-      pointerId: e.pointerId,
-      start: pos(e),
-      startCross: cross(e),
+      id,
+      start: pos,
+      startCross: crossPos,
       active: false,
       fromBody,
-      samples: [{ t: performance.now(), pos: pos(e) }],
+      samples: [{ t: performance.now(), pos }],
       size: latest.current.size(),
     };
   };
 
-  const onPointerMove = (e: ReactPointerEvent<HTMLElement>) => {
+  /** Moves the gesture; returns whether it is (now) a drag of ours. */
+  const move = (pos: number, crossPos: number, claim: () => void): boolean => {
     const g = gesture.current;
-    if (g === null || e.pointerId !== g.pointerId) return;
-    const along = (pos(e) - g.start) * direction;
+    if (g === null) return false;
+    const along = (pos - g.start) * direction;
     if (!g.active) {
-      const across = Math.abs(cross(e) - g.startCross);
-      if (Math.abs(along) < DRAG_SLOP && across < DRAG_SLOP) return;
+      const across = Math.abs(crossPos - g.startCross);
+      if (Math.abs(along) < DRAG_SLOP && across < DRAG_SLOP) return false;
       // Away from the dismissed edge, sideways, or into a body that scrolled meanwhile: not ours.
       const region = scroller?.current;
       if (along <= 0 || across > Math.abs(along) || (g.fromBody && (region?.scrollTop ?? 0) > 0)) {
         gesture.current = null;
-        return;
+        return false;
       }
       g.active = true;
-      e.currentTarget.setPointerCapture?.(e.pointerId);
+      claim();
       setSize(g.size);
       setState("dragging");
     }
     const now = performance.now();
-    g.samples.push({ t: now, pos: pos(e) });
+    g.samples.push({ t: now, pos });
     while (g.samples.length > 2 && now - (g.samples[0]?.t ?? now) > VELOCITY_WINDOW) {
       g.samples.shift();
     }
     setOffset(Math.min(Math.max(along, 0), g.size));
+    return true;
   };
 
-  const end = (e: ReactPointerEvent<HTMLElement>, cancelled: boolean) => {
+  const release = (pos: number, cancelled: boolean) => {
     const g = gesture.current;
-    if (g === null || e.pointerId !== g.pointerId) return;
     gesture.current = null;
-    if (!g.active) return;
-    e.currentTarget.releasePointerCapture?.(e.pointerId);
-    const along = Math.min(Math.max((pos(e) - g.start) * direction, 0), g.size);
+    if (g === null || !g.active) return;
+    const along = Math.min(Math.max((pos - g.start) * direction, 0), g.size);
     const first = g.samples[0];
     const dt = performance.now() - (first?.t ?? 0);
-    const velocity = first !== undefined && dt > 0 ? ((pos(e) - first.pos) * direction) / dt : 0;
+    const velocity = first !== undefined && dt > 0 ? ((pos - first.pos) * direction) / dt : 0;
     const dismiss =
       !cancelled && (along > g.size * DRAG_DISMISS_SHARE || velocity > DRAG_DISMISS_VELOCITY);
     const target = dismiss ? g.size : 0;
@@ -165,6 +157,76 @@ export function useDragDismiss(opts: DragDismissOptions): DragDismiss {
     } else {
       setState("settling");
     }
+  };
+
+  // A touch in the body: the browser takes a vertical pan for scrolling (and cancels the pointer),
+  // so the body's touches are driven here with a non-passive `touchmove` that claims the gesture
+  // at scroll top and prevents the pan; sideways and upward pans stay the browser's.
+  useEffect(() => {
+    const el = scroller?.current;
+    if (!el) return;
+    const point = (e: TouchEvent) => {
+      const touch = e.touches[0] ?? e.changedTouches[0];
+      return touch === undefined
+        ? null
+        : {
+            pos: axis === "y" ? touch.clientY : touch.clientX,
+            cross: axis === "y" ? touch.clientX : touch.clientY,
+          };
+    };
+    const onStart = (e: TouchEvent) => {
+      const p = point(e);
+      if (p === null || e.touches.length !== 1 || gesture.current !== null || settling.current)
+        return;
+      if (el.scrollTop > 0) return;
+      begin("touch", p.pos, p.cross, true);
+    };
+    const onMove = (e: TouchEvent) => {
+      const p = point(e);
+      if (p === null || gesture.current?.id !== "touch") return;
+      if (move(p.pos, p.cross, () => {}) && e.cancelable) e.preventDefault();
+    };
+    const onEnd = (cancelled: boolean) => (e: TouchEvent) => {
+      if (gesture.current?.id !== "touch") return;
+      const p = point(e);
+      release(p?.pos ?? gesture.current.start, cancelled);
+    };
+    const end = onEnd(false);
+    const cancel = onEnd(true);
+    el.addEventListener("touchstart", onStart, { passive: true });
+    el.addEventListener("touchmove", onMove, { passive: false });
+    el.addEventListener("touchend", end);
+    el.addEventListener("touchcancel", cancel);
+    return () => {
+      el.removeEventListener("touchstart", onStart);
+      el.removeEventListener("touchmove", onMove);
+      el.removeEventListener("touchend", end);
+      el.removeEventListener("touchcancel", cancel);
+    };
+  });
+
+  const pos = (e: ReactPointerEvent) => (axis === "y" ? e.clientY : e.clientX);
+  const cross = (e: ReactPointerEvent) => (axis === "y" ? e.clientX : e.clientY);
+
+  const onPointerDown = (e: ReactPointerEvent<HTMLElement>) => {
+    if (e.button !== undefined && e.button !== 0) return;
+    if (gesture.current !== null || state === "settling") return;
+    const region = scroller?.current;
+    const fromBody =
+      region != null && e.target instanceof Node && region.contains(e.target as Node);
+    // Touches in the body belong to the touch listeners above.
+    if (fromBody && e.pointerType === "touch") return;
+    if (fromBody && region.scrollTop > 0) return;
+    begin(e.pointerId, pos(e), cross(e), fromBody);
+  };
+  const onPointerMove = (e: ReactPointerEvent<HTMLElement>) => {
+    if (gesture.current?.id !== e.pointerId) return;
+    move(pos(e), cross(e), () => e.currentTarget.setPointerCapture?.(e.pointerId));
+  };
+  const end = (e: ReactPointerEvent<HTMLElement>, cancelled: boolean) => {
+    if (gesture.current?.id !== e.pointerId) return;
+    e.currentTarget.releasePointerCapture?.(e.pointerId);
+    release(pos(e), cancelled);
   };
 
   const shown = state === "idle" ? 0 : offset;
@@ -181,7 +243,7 @@ export function useDragDismiss(opts: DragDismissOptions): DragDismiss {
       onPointerCancel: (e) => end(e, true),
     },
     panelProps: {
-      "data-state": state,
+      "data-drag": state,
       style,
       onTransitionEnd: (e) => {
         if (e.target === e.currentTarget && state === "settling") finish();
@@ -192,7 +254,6 @@ export function useDragDismiss(opts: DragDismissOptions): DragDismiss {
       style: state === "idle" ? undefined : { opacity: 1 - share },
     },
     state,
-    offset: shown,
     share,
   };
 }

@@ -46,9 +46,9 @@ const ROW = { lines: 2, buttons: 1 } as const;
  * The app icon section (mobile layout spec §10.2.1): the installed app's icon for the whole
  * deployment, on the super admin's `/admin/settings` (the page is the super admin's alone, so
  * nobody else sees it). A row per purpose (the app icon, its maskable variant, the SVG favicon)
- * with its current picture on a light and a dark ground (the upload, else the web's default), an upload button (the file goes
- * as base64 JSON; the kernel checks the type and the PNG's 512 × 512) and, for an upload, a
- * restore-default button. Each action saves at once, apart from the page's ActionRow.
+ * with its current picture on a light and a dark ground (the upload, else the web's default), an
+ * upload button (the file goes as base64 JSON; the kernel checks the type and the PNG's 512 × 512)
+ * and, for an upload, a restore-default button. Each action saves at once, apart from the page's ActionRow.
  */
 export function AppIconSection() {
   const t = useTranslations("appIcon");
@@ -136,7 +136,10 @@ export function AppIconSection() {
                 </>
               }
             >
-              <IconPreview src={icon?.url ?? DEFAULT_PLATFORM_ICONS[purpose]} />
+              <IconPreview
+                src={icon?.url ?? DEFAULT_PLATFORM_ICONS[purpose]}
+                labels={{ light: t("previewLight"), dark: t("previewDark") }}
+              />
             </ItemListItem>
           );
         })}

@@ -7002,7 +7002,7 @@ span.r-scal-daynum {
   border-radius: var(--cb-radius-sm);
   background: var(--cb-line-strong);
 }
-.r-sh[data-state="dragging"] .r-sh-handle {
+.r-sh[data-drag="dragging"] .r-sh-handle {
   background: var(--cb-muted);
 }
 .r-sh-head {

@@ -24,6 +24,11 @@ export type SheetProps = {
   tabs?: ReactNode;
   footer?: ReactNode;
   dirty?: boolean;
+  /**
+   * The head drags the sheet toward its edge and a release past 40 % closes it (spec §6.7). Only
+   * where the spec names it; an ordinary Sheet (an admin form) stays put.
+   */
+  draggable?: boolean;
   children?: ReactNode;
 };
 
@@ -38,6 +43,7 @@ export function Sheet({
   tabs,
   footer,
   dirty,
+  draggable = false,
   children,
 }: SheetProps) {
   const t = useDesignT();
@@ -75,9 +81,9 @@ export function Sheet({
             onOpenAutoFocus={focusReturn.capture}
             onCloseAutoFocus={focusReturn.restore}
             onInteractOutside={(e) => e.preventDefault()}
-            {...drag.panelProps}
+            {...(draggable ? drag.panelProps : {})}
           >
-            <div className="cb-sheet-head" {...drag.handleProps}>
+            <div className="cb-sheet-head" {...(draggable ? drag.handleProps : {})}>
               {mark ? <ObjectMark text={mark.text} image={mark.image ?? null} size={28} /> : null}
               <RD.Title className="cb-sheet-title">{title}</RD.Title>
               {meta ? <span className="cb-sheet-meta">{meta}</span> : null}

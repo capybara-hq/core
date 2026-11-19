@@ -560,7 +560,7 @@ span.cb-title-btn {
   border-radius: var(--cb-radius-sm);
   background: var(--cb-line-strong);
 }
-.cb-bsheet[data-state="dragging"] .cb-bsheet-handle {
+.cb-bsheet[data-drag="dragging"] .cb-bsheet-handle {
   background: var(--cb-muted);
 }
 .cb-bsheet-head {
@@ -574,19 +574,30 @@ span.cb-title-btn {
   touch-action: none;
 }
 /* Dragging follows the finger with no transition; a release travels over motion.expand (§6.7). */
-.cb-bsheet[data-state="dragging"],
-.cb-sheet[data-state="dragging"] {
+.cb-bsheet[data-drag="dragging"],
+.cb-sheet[data-drag="dragging"],
+.cb-conv-sheet[data-drag="dragging"],
+.cb-sidebar-sheet[data-drag="dragging"] {
   animation: none;
   transition: none;
 }
-.cb-bsheet[data-state="settling"],
-.cb-sheet[data-state="settling"] {
+.cb-bsheet[data-drag="settling"],
+.cb-sheet[data-drag="settling"],
+.cb-conv-sheet[data-drag="settling"],
+.cb-sidebar-sheet[data-drag="settling"] {
   animation: none;
   transition: transform var(--cb-motion-expand) ease-out;
 }
+/* Side sheets drag along x only: vertical pans stay the browser's. */
+.cb-conv-sheet[data-drag],
+.cb-sidebar-sheet[data-drag] {
+  touch-action: pan-y;
+}
+.cb-conv-scrim[data-drag="dragging"],
 .cb-bsheet-scrim[data-drag="dragging"] {
   animation: none;
 }
+.cb-conv-scrim[data-drag="settling"],
 .cb-bsheet-scrim[data-drag="settling"] {
   animation: none;
   transition: opacity var(--cb-motion-expand) ease-out;

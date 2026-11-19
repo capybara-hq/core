@@ -1,9 +1,11 @@
 import * as RD from "@radix-ui/react-dialog";
 import {
   type CSSProperties,
+  type HTMLAttributes,
   type KeyboardEvent,
   type PointerEvent,
   type ReactNode,
+  type Ref,
   useCallback,
   useEffect,
   useRef,
@@ -19,6 +21,7 @@ import { WorkingLine } from "../conversation/working-line";
 import { SkeletonGroup, SkeletonText } from "../display/skeleton";
 import { Icon } from "../icons/icon";
 import { BoxScope } from "../layout/box";
+import { useDragDismiss } from "../overlays/drag";
 import { useFocusReturn } from "../overlays/focus-return";
 import { useDesignT } from "../provider";
 import { INLINE_RIGHT_AREA_BELOW } from "../shell/size-class";
@@ -498,14 +501,14 @@ export function ConversationPage({
               </>
             ) : (
               <RD.Portal>
-                <RD.Overlay className="cb-conv-scrim" data-part="scrim" />
-                <SheetContent
+                <DraggableRightSheet
                   label={t("panel.label")}
                   focusReturn={focusReturn}
                   head={right === "properties" ? propertiesHead : undefined}
+                  onDismiss={onCloseRight}
                 >
                   {rightNode}
-                </SheetContent>
+                </DraggableRightSheet>
               </RD.Portal>
             )}
           </RD.Root>
@@ -515,22 +518,66 @@ export function ConversationPage({
   );
 }
 
+/**
+ * The right area as a side sheet (spec §6.7): the scrim and the sheet, which follows the finger
+ * to the right; a release past 40 % of its width closes it, the scrim fading as it goes.
+ */
+function DraggableRightSheet({
+  label,
+  focusReturn,
+  head,
+  onDismiss,
+  children,
+}: {
+  label: string;
+  focusReturn: ReturnType<typeof useFocusReturn>;
+  head?: ReactNode;
+  onDismiss(): void;
+  children?: ReactNode;
+}) {
+  const sheet = useRef<HTMLDivElement | null>(null);
+  const drag = useDragDismiss({
+    axis: "x",
+    size: () => sheet.current?.offsetWidth ?? 0,
+    onDismiss,
+  });
+  return (
+    <>
+      <RD.Overlay className="cb-conv-scrim" data-part="scrim" {...drag.scrimProps} />
+      <SheetContent
+        label={label}
+        focusReturn={focusReturn}
+        head={head}
+        contentRef={sheet}
+        {...drag.handleProps}
+        {...drag.panelProps}
+      >
+        {children}
+      </SheetContent>
+    </>
+  );
+}
+
 function SheetContent({
   inline,
   label,
   focusReturn,
   head,
+  contentRef,
   children,
-}: {
+  ...rest
+}: HTMLAttributes<HTMLDivElement> & {
   inline?: boolean;
+  contentRef?: Ref<HTMLDivElement>;
   label: string;
   focusReturn: ReturnType<typeof useFocusReturn>;
   /** A head row drawn above the content (the properties sheet's title and ×). */
   head?: ReactNode;
-  children?: ReactNode;
 }) {
   return (
     <RD.Content
+      {...rest}
+      ref={contentRef}
       className="cb-conv-sheet"
       data-part="sheet"
       data-inline={inline ? "true" : undefined}
