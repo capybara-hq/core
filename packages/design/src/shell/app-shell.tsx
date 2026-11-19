@@ -159,9 +159,13 @@ export function AppShell({
   // popstate, our own back button included) takes one, so back never leaves the app.
   const [depth, setDepth] = useState(0);
   const popping = useRef(false);
+  // The document path the shell last settled on: a popstate that leaves it unchanged is a hash-only
+  // step (a list item opened and closed), which is no page change and counts for nothing.
+  const settledPath = useRef<string | null>(null);
   useEffect(() => {
+    settledPath.current = window.location.pathname;
     const onPop = () => {
-      popping.current = true;
+      if (window.location.pathname !== settledPath.current) popping.current = true;
     };
     window.addEventListener("popstate", onPop);
     return () => window.removeEventListener("popstate", onPop);
@@ -176,6 +180,7 @@ export function AppShell({
     lastRoute.current = { pathname, tabRoot };
     const wasPop = popping.current;
     popping.current = false;
+    settledPath.current = window.location.pathname;
     setDepth((d) => Math.max(0, d + (wasPop ? -1 : 1)));
     // A pushed page slides in from the end edge; the way back to a root slides back.
     setSlide((prev) =>

@@ -279,15 +279,37 @@ describe("back never leaves the app", () => {
 
   it("a deep link, one push, a pop: the second back goes up the path, not out through the history", () => {
     window.matchMedia = matchMediaFor(390).matchMedia;
+    window.history.replaceState(null, "", "/agents/new");
     const { rerender } = render(shell("/agents/new"));
     // deep link: nothing behind it in the app
     expect(back().tagName).toBe("A");
     expect(back().getAttribute("href")).toBe("/agents");
+    window.history.pushState(null, "", "/agents/new/step");
     rerender(shell("/agents/new/step"));
     expect(back().tagName).toBe("BUTTON"); // one in-app entry behind: history back
+    window.history.replaceState(null, "", "/agents/new");
     window.dispatchEvent(new PopStateEvent("popstate"));
     rerender(shell("/agents/new"));
     expect(back().tagName).toBe("A"); // back at the deep link: up the path
     expect(back().getAttribute("href")).toBe("/agents");
+  });
+
+  it("a hash-only pop (an item opened and closed) does not count as a page pop", () => {
+    window.matchMedia = matchMediaFor(390).matchMedia;
+    window.history.replaceState(null, "", "/agents/new");
+    const { rerender } = render(shell("/agents/new"));
+    // open an item (a hash push) and close it (a hash pop): the path never changes
+    window.history.pushState(null, "", "/agents/new#item");
+    window.history.replaceState(null, "", "/agents/new");
+    window.dispatchEvent(new PopStateEvent("popstate"));
+    // a real push after it
+    window.history.pushState(null, "", "/agents/new/step");
+    rerender(shell("/agents/new/step"));
+    expect(back().tagName).toBe("BUTTON"); // depth 1, not 0
+    // and its pop
+    window.history.replaceState(null, "", "/agents/new");
+    window.dispatchEvent(new PopStateEvent("popstate"));
+    rerender(shell("/agents/new"));
+    expect(back().tagName).toBe("A");
   });
 });
