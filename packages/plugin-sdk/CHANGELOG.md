@@ -1,5 +1,13 @@
 # @capybara-hq/plugin-sdk
 
+## 0.1.0-rc.37
+
+### Patch Changes
+
+- 10ecf48: `parseDeviceFrame` checks a `writeFile` payload's base64 in one linear pass: the previous pattern
+  overflowed the regex stack on Node 24 for payloads above about 3.3 MB, so larger device writes failed.
+- 311c56e: `ModelCallPurpose` gains `"vision"`: the call that reads an image for a model without vision.
+
 ## 0.1.0-rc.36
 
 ### Minor Changes

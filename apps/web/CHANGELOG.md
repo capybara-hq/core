@@ -1,5 +1,9 @@
 # @capybara-hq/web
 
+## 0.1.0-rc.60
+
+No changes in this release.
+
 ## 0.1.0-rc.59
 
 ### Patch Changes

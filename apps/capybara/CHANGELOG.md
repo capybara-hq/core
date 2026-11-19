@@ -1,5 +1,14 @@
 # @capybara-hq/capybara
 
+## 0.1.0-rc.60
+
+### Patch Changes
+
+- a01098a: Images: `Read` shows images, the new `vision` model purpose reads them for models without vision,
+  and `GenerateImage` returns standard-size images by default.
+- Updated dependencies [a01098a]
+  - @capybara-hq/kernel@0.1.0-rc.52
+
 ## 0.1.0-rc.59
 
 ### Patch Changes
