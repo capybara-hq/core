@@ -33,7 +33,11 @@ type Devices = {
   outsideSandbox?: "allowed" | "off";
   network?: { default?: "open" | "allowlist"; ceiling?: "open" | "allowlist" };
 };
-const config = (devices: Devices = {}, allowHosts = ["a.example"]) =>
+const config = (
+  devices: Devices = {},
+  allowHosts = ["a.example"],
+  orgHosts: "extend" | "within" = "extend",
+) =>
   KernelConfigSchema.parse({
     db: { url: pgc.url },
     redis: { url: rd.url },
@@ -42,7 +46,7 @@ const config = (devices: Devices = {}, allowHosts = ["a.example"]) =>
     http: { port: 0 },
     marketplaces: { official: { enabled: false } },
     devices,
-    sandbox: { limits: { egress: "allowlist", allowHosts } },
+    sandbox: { limits: { egress: "allowlist", allowHosts, orgHosts } },
   });
 const publisher = (cfg = config()) => {
   const service = new KernelConfigService({ config: cfg, env: {} }, log);
@@ -340,22 +344,111 @@ it("a semantic difference stays a mismatch until activated against the exact old
   );
 });
 
-it("conflicting old and new stored values stop the conversion atomically", async () => {
+it("divergent old and new stored values convert to what readers saw, never refused", async () => {
   await publishOld(v2());
   await store("devicesFullAccess", { permission: "allowed" });
   await store("devicesOutsideSandbox", { permission: "off" });
-  await expect(publisher().initialize()).rejects.toThrow(
-    /devicesFullAccess.*devicesOutsideSandbox/s,
-  );
-  expect(await row()).toEqual({ fingerprint: sha(v2()), projection: v2() });
-  expect(await setting("devicesFullAccess")).toEqual({ permission: "allowed" });
-
-  await store("devicesOutsideSandbox", { permission: "allowed" });
   const o = await org({ fullAccess: "off", outsideSandbox: "allowed" });
-  await expect(publisher().initialize()).rejects.toThrow(/fullAccess.*outsideSandbox/s);
-  expect(await row()).toEqual({ fingerprint: sha(v2()), projection: v2() });
-  expect(await setting("devicesFullAccess")).toEqual({ permission: "allowed" });
-  expect(await o.settings()).toEqual({ fullAccess: "off", outsideSandbox: "allowed" });
+  expect((await publisher().initialize()).outcome).toBe("migrated");
+  expect(await setting("devicesFullAccess")).toBeUndefined();
+  expect(await setting("devicesOutsideSandbox")).toEqual({ permission: "off" });
+  expect(await o.settings()).toEqual({
+    outsideSandbox: "off",
+    deviceNetwork: { ceiling: "allowlist" },
+  });
+});
+
+it("the conversion stores exactly the network readers saw (M1)", async () => {
+  await publishOld(v2());
+  await store("devicesFullAccess", { permission: "off" });
+  await store("devicesNetwork", { ceiling: "open" });
+  const view = async () => (await k.app.get(SettingsService).view()).devicesNetwork.ceiling;
+  expect(await view()).toBe("allowlist");
+  expect((await publisher().initialize()).outcome).toBe("migrated");
+  expect(await setting("devicesOutsideSandbox")).toEqual({ permission: "off" });
+  expect(await setting("devicesNetwork")).toEqual({ ceiling: "allowlist" });
+  expect(await view()).toBe("allowlist");
+});
+
+it("an empty converted network removes the stored row", async () => {
+  await publishOld(v2());
+  await store("devicesFullAccess", { permission: "allowed" });
+  await store("devicesNetwork", {});
+  await publisher().initialize();
+  expect(await setting("devicesNetwork")).toBeUndefined();
+});
+
+it("orgHosts within: cloud devices on the old allowlist keep it (M4)", async () => {
+  const within = config({}, ["a.example"], "within");
+  await publishOld({ ...v2(), orgHosts: "within" });
+  const o = await org({});
+  const device = async (mode: "sandbox" | null) => {
+    const id = randomUUID();
+    await db
+      .insertInto("devices")
+      .values({
+        id,
+        org_id: o.id,
+        owner_kind: "personal",
+        owner_account_id: o.accountId,
+        source: "cloud",
+        mode,
+      })
+      .execute();
+    return id;
+  };
+  const sandboxed = await device("sandbox");
+  const auto = await device(null);
+  const local = randomUUID();
+  await db
+    .insertInto("devices")
+    .values({
+      id: local,
+      org_id: o.id,
+      owner_kind: "personal",
+      owner_account_id: o.accountId,
+      source: "local",
+    })
+    .execute();
+  expect((await publisher(within).initialize()).outcome).toBe("migrated");
+  const net = async (id: string) =>
+    db
+      .selectFrom("devices")
+      .select(["network_mode", "network_hosts"])
+      .where("id", "=", id)
+      .executeTakeFirstOrThrow();
+  expect(await net(sandboxed)).toEqual({ network_mode: "allowlist", network_hosts: [] });
+  // auto mode ran on the open network; a local device has no cloud network
+  expect(await net(auto)).toEqual({ network_mode: null, network_hosts: [] });
+  expect(await net(local)).toEqual({ network_mode: null, network_hosts: [] });
+  await db.deleteFrom("devices").execute();
+});
+
+it("old keys an old replica writes after conversion convert on the next publish", async () => {
+  await publishOld(v2());
+  const p = publisher();
+  expect((await p.initialize()).outcome).toBe("migrated");
+  const o = await org({ outsideSandbox: "allowed", fullAccess: "off" });
+  await store("devicesFullAccess", { permission: "off" });
+  await p.publish(config(), config({ network: { default: "open" } }));
+  expect(await setting("devicesFullAccess")).toBeUndefined();
+  expect(await setting("devicesOutsideSandbox")).toEqual({ permission: "off" });
+  expect(await setting("devicesNetwork")).toEqual({ ceiling: "allowlist" });
+  expect(await o.settings()).toEqual({
+    outsideSandbox: "off",
+    deviceNetwork: { ceiling: "allowlist" },
+  });
+});
+
+it("the conversion warns once per platform or org it narrowed, with how to reopen it", async () => {
+  await publishOld(v2());
+  await store("devicesFullAccess", { permission: "off" });
+  const o = await org({ fullAccess: "off" });
+  await publisher().initialize();
+  expect(warnings.filter((w) => /platform.*allowlist.*devicesNetwork/s.test(w))).toHaveLength(1);
+  expect(
+    warnings.filter((w) => w.includes(o.id) && /allowlist.*deviceNetwork/s.test(w)),
+  ).toHaveLength(1);
 });
 
 it("a corrupt or unknown predecessor aborts; it is never labelled current", async () => {
@@ -459,10 +552,50 @@ describe("the window before conversion and stale-replica writes (fail closed)", 
     await k.app
       .get(SettingsService)
       .update({ devicesOutsideSandbox: { permission: "allowed" } }, id);
-    expect(await setting("devicesFullAccess")).toEqual({ permission: "allowed" });
+    // old replicas read Full allowed only when the network ceiling is open too: here it is the
+    // allowlist the old off implied, so they keep reading off
+    expect(await setting("devicesFullAccess")).toEqual({ permission: "off" });
     expect(await setting("devicesOutsideSandbox")).toEqual({ permission: "allowed" });
     // the network the old off implied is stored, so allowing outside runs never opens it
     expect(await setting("devicesNetwork")).toEqual({ ceiling: "allowlist" });
+    // the new keys read as written: the old key is in step, not a narrowing
+    const view = await k.app.get(SettingsService).view();
+    expect(view.devicesOutsideSandbox.permission).toBe("allowed");
+    expect(view.devicesNetwork.ceiling).toBe("allowlist");
+    // a network write rewrites the old key in step: an open ceiling lets old replicas allow Full
+    await k.app.get(SettingsService).update({ devicesNetwork: { ceiling: "open" } }, id);
+    expect(await setting("devicesFullAccess")).toEqual({ permission: "allowed" });
+    expect(await setting("devicesNetwork")).toEqual({ ceiling: "open" });
+  });
+
+  it("a network-only window write stores the outside key too, and the old key in step", async () => {
+    await publishOld(v2());
+    await store("devicesFullAccess", { permission: "allowed" });
+    const a = await org({ fullAccess: "allowed" });
+    await publisher(changed()).initialize();
+    const id = await admin();
+    await k.app.get(SettingsService).update({ devicesNetwork: { ceiling: "allowlist" } }, id);
+    expect(await setting("devicesOutsideSandbox")).toEqual({ permission: "allowed" });
+    expect(await setting("devicesFullAccess")).toEqual({ permission: "off" });
+    expect((await k.app.get(SettingsService).view()).devicesOutsideSandbox.permission).toBe(
+      "allowed",
+    );
+    await k.app
+      .get(OrgSettingsService)
+      .update(a.id, { deviceNetwork: { ceiling: "allowlist" } }, a.accountId);
+    expect(await a.settings()).toMatchObject({
+      outsideSandbox: "allowed",
+      fullAccess: "off",
+      deviceNetwork: { ceiling: "allowlist" },
+    });
+    expect((await readOrgSettings(db.db, a.id)).outsideSandbox).toBe("allowed");
+    // activation converts to exactly that
+    await publisher(changed()).initialize({ activation: { expectedActiveHash: sha(v2()) } });
+    expect(await setting("devicesFullAccess")).toBeUndefined();
+    expect(await setting("devicesOutsideSandbox")).toEqual({ permission: "allowed" });
+    expect(await setting("devicesNetwork")).toEqual({ ceiling: "allowlist" });
+    expect(await a.settings()).not.toHaveProperty("fullAccess");
+    expect(await a.settings()).toMatchObject({ outsideSandbox: "allowed" });
   });
 
   it("an org write keeps an old cloudNetwork in step", async () => {

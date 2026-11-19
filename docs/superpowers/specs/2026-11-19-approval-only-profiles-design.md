@@ -195,10 +195,11 @@ provider)`, in the new `packages/kernel/src/sandbox/device-sandbox.ts`. The devi
   than `open`. It is `allowlist` with an empty list when the kill switch is `none`.
 - **Network mode:** the device's choice, else the org default, else the platform default. It is then
   clamped to the ceiling, and for a cloud device also to the provider's outer network.
-- **Allowlist hosts when the ceiling is `open`** (the owner chose the allowlist): the owner's
-  `allowedDomains`, plus the org's effective hosts (`orgEffectiveHosts`).
-- **Allowlist hosts when the ceiling forces `allowlist`:** the org's effective hosts, plus those of
-  the owner's hosts the org's list covers.
+- **Allowlist hosts:** the org's effective hosts (`orgEffectiveHosts`), intersected with the
+  device's own list when it has one: a local owner's `allowedDomains` or a cloud device's
+  `network_hosts`. **A device-level host list only narrows; it never adds a host.** An empty device
+  list adds no narrowing of its own (the device follows its org's hosts). Hosts widen only through
+  the org and platform lists, or through per-call host grants within the ceilings.
 - **Per-call host grant:** possible under `orgHosts: extend`. Under `within`, only for hosts the list
   covers; otherwise it is unavailable ("an admin adds the host").
 
@@ -436,6 +437,21 @@ The migration never widens.
   - org `cloudNetwork.mode: "allowlist"` → `deviceNetwork.ceiling: "allowlist"`, keeping `base`,
     `extraHosts` and `excludedHosts`.
   - `mode: "open"` or absent → absent.
+  - **An old `off` also keeps the network on the allowlist** (never wider: an old platform or org
+    `off` kept every local device on the allowlist). It converts to `outsideSandbox: off` plus the
+    allowlist network ceiling, wherever it comes from: the platform's stored `devicesFullAccess` /
+    `devicesAutoMode` (→ `devicesNetwork.ceiling: allowlist`), an org's `fullAccess` / `autoMode`
+    (→ `deviceNetwork.ceiling: allowlist`), the file or Nacos key `devices.fullAccess` /
+    `devices.autoMode` (`capybara config migrate-permissions` adds `devices.network.ceiling:
+    allowlist`), the environment variable (the CLI names `CAPYBARA_DEVICES__NETWORK__CEILING=allowlist`
+    to add), and an invalid old value, which already read as `off`. Side effect: cloud devices of a
+    platform or org that had `off` and ran on the open network get the allowlist. The conversion
+    logs one warning per platform or org it narrowed, with how to reopen it.
+  - The publication converts the stored keys at every publication (idempotent; old keys an old
+    replica writes later convert too) and stores exactly what every reader saw. Until then, a write
+    keeps the old keys in step for replicas of the previous version: their Full switch reads
+    `allowed` only when running outside the sandbox is allowed and the effective network ceiling is
+    open, else `off`.
 - **Local devices:** converted once by the device's strict parser.
   - `fullAccess: true` → `outsideSandbox: true, network: "open"`.
   - `fullAccess: false` → `outsideSandbox: false, network: "allowlist"` with the old
@@ -445,7 +461,15 @@ The migration never widens.
   - New installs get the open default.
 - **Cloud devices:** a kernel migration, expand then contract.
   - Add `network_mode` and `network_hosts`.
-  - Copy the snapshot's `outer_network` where it was an allowlist.
+  - Copy the snapshot's `outer_network` where it was an allowlist (`network_mode: allowlist`, its
+    hosts as `network_hosts` when they are an array of strings, else `[]`). Since a device list only
+    narrows, this is exact and never widens.
+  - **`sandbox.limits.orgHosts: within` and other allowlist devices:** at the publication's version
+    conversion (it has the config), a cloud device still following its org (`network_mode` NULL)
+    whose old effective network was the allowlist (`effectiveDevicePolicy(...).network.kind ===
+    "allowlist"`: a sandbox-mode device under `within`, an org allowlist or an old `off`) gets
+    `network_mode: allowlist, network_hosts: []`. The new model's `orgHosts` limits hosts only, so
+    without this such a device would open.
   - `owner_full_access` is no longer read; a later migration drops it (the writing-migrations
     two-step).
 - **Conversations:** no data rewrite.

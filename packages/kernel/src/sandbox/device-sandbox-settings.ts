@@ -367,14 +367,29 @@ function legacyOf(
 }
 
 /**
- * The stored choices of `rows` over every key (fail closed): the new keys, narrowed by the old
- * keys still stored. An old `off` narrows the network ceiling only while no network choice is
- * stored or while it disagrees with the new key (an old replica wrote it): a network chosen in
- * step with it already holds that narrowing, and is never overridden.
+ * The old permission value written next to the new keys for replicas of the previous version
+ * (their Full switch): `allowed` only when running outside the sandbox is allowed AND the network
+ * ceiling is open, else `off`, so an old replica never reads Full where a new one keeps devices on
+ * the allowlist. `outside` absent with an open ceiling stays absent (follow the default).
+ */
+export function legacyPermissionFor(
+  outside: OutsideSandboxPermission | undefined,
+  ceiling: DeviceNetworkMode | undefined,
+): OutsideSandboxPermission | undefined {
+  return outside === "off" || ceiling === "allowlist" ? "off" : outside;
+}
+
+/**
+ * The stored choices of `rows` over every key (fail closed). Without `devicesOutsideSandbox` the
+ * old keys are all there is: each converts in full (an `off` also narrows the network ceiling).
+ * With it, an old key written in step ({@link legacyPermissionFor} the new keys and the effective
+ * ceiling, `configuredCeiling` from the startup config winning over the stored one) says nothing
+ * more; one that differs (an old replica wrote it) narrows as a conversion would.
  */
 function storedOf(
   rows: Map<string, unknown>,
   log?: Pick<KernelLogger, "warn">,
+  configuredCeiling?: DeviceNetworkMode,
 ): StoredDeviceSandbox {
   const current: StoredDeviceSandbox = {
     outsideSandbox: parseStoredDevicesOutsideSandbox(
@@ -383,15 +398,15 @@ function storedOf(
     ),
     network: parseStoredDevicesNetwork(rows.get(DEVICES_NETWORK_SETTING), log),
   };
+  const marked = rows.has(DEVICES_OUTSIDE_SANDBOX_SETTING);
+  const inStep = legacyPermissionFor(
+    current.outsideSandbox.permission,
+    configuredCeiling ?? current.network.ceiling,
+  );
   let out = current;
   for (const { value } of legacyOf(rows, log)) {
-    const diverged =
-      !rows.has(DEVICES_NETWORK_SETTING) ||
-      value.outsideSandbox.permission !== current.outsideSandbox.permission;
-    out = narrowerStoredDeviceSandbox(
-      out,
-      diverged ? value : { outsideSandbox: value.outsideSandbox, network: {} },
-    );
+    if (marked && value.outsideSandbox.permission === inStep) continue;
+    out = narrowerStoredDeviceSandbox(out, value);
   }
   return out;
 }
@@ -400,8 +415,9 @@ function storedOf(
 export async function readStoredDeviceSandbox(
   db: KernelSchemaDb,
   log?: Pick<KernelLogger, "warn">,
+  configuredCeiling?: DeviceNetworkMode,
 ): Promise<StoredDeviceSandbox> {
-  return storedOf(await storedRows(db), log);
+  return storedOf(await storedRows(db), log, configuredCeiling);
 }
 
 /** The old platform keys still stored (a write then keeps them in step until they are converted). */
@@ -411,10 +427,22 @@ export async function legacyPlatformKeysStored(db: KernelSchemaDb): Promise<stri
   );
 }
 
-/** Whether a network choice is stored. */
-export async function devicesNetworkStored(db: KernelSchemaDb): Promise<boolean> {
-  return (await storedRows(db)).has(DEVICES_NETWORK_SETTING);
-}
+/** The value an old platform key stores for `permission` (absent: follow the default). */
+export const legacyPlatformValue = (
+  key: string,
+  permission: OutsideSandboxPermission | undefined,
+): unknown =>
+  key === LEGACY_DEVICES_AUTO_MODE_SETTING
+    ? permission === undefined
+      ? {}
+      : { mode: permission }
+    : permission === undefined
+      ? {}
+      : { permission };
+
+/** The configured network ceiling (it wins over the stored one), or undefined. */
+const configuredCeilingOf = (c: ConfiguredDeviceSandbox) =>
+  c.sources.networkCeiling !== undefined ? c.networkCeiling : undefined;
 
 /**
  * The platform's effective device sandbox settings with their sources, read live from PG at every
@@ -425,9 +453,10 @@ export async function readDeviceSandboxSettingsView(
   config: Pick<KernelConfigService, "get" | "fieldSource">,
   log?: Pick<KernelLogger, "warn">,
 ): Promise<DeviceSandboxSettingsView> {
+  const configured = configuredDeviceSandbox(config);
   return resolveDeviceSandboxSettings(
-    configuredDeviceSandbox(config),
-    await readStoredDeviceSandbox(db, log),
+    configured,
+    await readStoredDeviceSandbox(db, log, configuredCeilingOf(configured)),
   );
 }
 
@@ -464,15 +493,15 @@ const legacyOrgPermission = (v: unknown): OutsideSandboxPermission => {
 };
 
 /**
- * An org's `outsideSandbox` and `deviceNetwork` read over the new and the old keys (fail closed):
- * - `outsideSandbox`: the narrower of it and the old `fullAccess` / `autoMode` still stored (an
- *   invalid value reads as `off`).
- * - `deviceNetwork`: the stored value (invalid: {@link invalidDeviceNetwork}; an empty object, the
- *   marker a write leaves while old keys are stored, follows the platform); an old `cloudNetwork`
- *   converted ({@link convertLegacyCloudNetwork}) when there is none, or narrowing it when it is not
- *   the one written in step ({@link legacyCloudNetworkOf}); and an old `off` narrows the ceiling to
- *   the allowlist when there is no `deviceNetwork` or when the old value disagrees with
- *   `outsideSandbox` (an old replica wrote it).
+ * An org's `outsideSandbox` and `deviceNetwork` read over the new and the old keys (fail closed).
+ * `deviceNetwork` present (a `{}` follow marker included) means this version wrote the settings:
+ * - absent: the old keys are all there is and convert in full (design, "Migration"):
+ *   `fullAccess` / `autoMode` -> `outsideSandbox` (invalid: `off`), `cloudNetwork` ->
+ *   {@link convertLegacyCloudNetwork}, and an old `off` also narrows the ceiling to the allowlist;
+ * - present: an old permission written in step ({@link legacyPermissionFor} `outsideSandbox` and
+ *   the org's own ceiling; the platform's ceiling reaches old replicas through the platform's own
+ *   old key) and a `cloudNetwork` written in step ({@link legacyCloudNetworkOf}) say nothing more;
+ *   one that differs (an old replica wrote it) narrows as a conversion would.
  */
 export function orgDeviceSandboxOf(raw: unknown): OrgDeviceSandboxStored {
   const stored = asObject(raw);
@@ -483,29 +512,41 @@ export function orgDeviceSandboxOf(raw: unknown): OrgDeviceSandboxStored {
   const legacy = (["autoMode", "fullAccess"] as const)
     .filter((k) => k in stored)
     .map((k) => legacyOrgPermission(stored[k]));
-  const outsideSandbox =
-    current === "off" || legacy.includes("off") ? ("off" as const) : (current ?? legacy[0]);
-  const hasNetwork = "deviceNetwork" in stored && stored.deviceNetwork !== undefined;
-  let deviceNetwork: DeviceNetworkSetting | undefined;
-  if (hasNetwork) {
-    const parsed = DeviceNetworkSettingSchema.safeParse(stored.deviceNetwork);
-    deviceNetwork = parsed.success ? parsed.data : invalidDeviceNetwork();
-    if (deviceNetwork !== undefined && Object.keys(deviceNetwork).length === 0)
-      deviceNetwork = undefined;
-    if (
-      "cloudNetwork" in stored &&
-      canonical(stored.cloudNetwork) !== canonical(legacyCloudNetworkOf(deviceNetwork))
-    )
-      deviceNetwork = narrowerDeviceNetwork(
-        deviceNetwork ?? {},
-        convertLegacyCloudNetwork(stored.cloudNetwork),
-      );
-  } else if ("cloudNetwork" in stored) {
-    deviceNetwork = convertLegacyCloudNetwork(stored.cloudNetwork);
+  const marked = "deviceNetwork" in stored && stored.deviceNetwork !== undefined;
+  if (!marked) {
+    const outsideSandbox =
+      current === "off" || legacy.includes("off") ? ("off" as const) : (current ?? legacy[0]);
+    let deviceNetwork = convertLegacyCloudNetwork(stored.cloudNetwork);
+    if (legacy.includes("off")) deviceNetwork = withAllowlistCeiling(deviceNetwork);
+    return {
+      ...(outsideSandbox !== undefined && { outsideSandbox }),
+      ...(deviceNetwork !== undefined && { deviceNetwork }),
+    };
   }
-  const legacyOff = legacy.includes("off");
-  if (legacyOff && (!hasNetwork || current !== "off"))
-    deviceNetwork = withAllowlistCeiling(deviceNetwork);
+  const parsed = DeviceNetworkSettingSchema.safeParse(stored.deviceNetwork);
+  let deviceNetwork: DeviceNetworkSetting | undefined = parsed.success
+    ? parsed.data
+    : invalidDeviceNetwork();
+  if (deviceNetwork !== undefined && Object.keys(deviceNetwork).length === 0)
+    deviceNetwork = undefined;
+  // what the new keys alone would have written in step, before any old key narrows them
+  const inStep = legacyPermissionFor(current, deviceNetwork?.ceiling);
+  if (
+    "cloudNetwork" in stored &&
+    canonical(stored.cloudNetwork) !== canonical(legacyCloudNetworkOf(deviceNetwork))
+  )
+    deviceNetwork = narrowerDeviceNetwork(
+      deviceNetwork ?? {},
+      convertLegacyCloudNetwork(stored.cloudNetwork),
+    );
+  let outsideSandbox = current;
+  for (const value of legacy) {
+    if (value === inStep) continue;
+    if (value === "off") {
+      outsideSandbox = "off";
+      deviceNetwork = withAllowlistCeiling(deviceNetwork);
+    } else outsideSandbox ??= value;
+  }
   return {
     ...(outsideSandbox !== undefined && { outsideSandbox }),
     ...(deviceNetwork !== undefined && { deviceNetwork }),
@@ -519,9 +560,9 @@ export const orgLegacyKeysStored = (raw: unknown): boolean =>
 /**
  * The old org keys written next to the new ones while any of them is still stored (`written` is
  * the settings object about to be stored; `stored` the one it replaces): `fullAccess` / `autoMode`
- * carry `outsideSandbox`, `cloudNetwork` carries {@link legacyCloudNetworkOf} `deviceNetwork`; a
- * cleared value removes the old key. `deviceNetwork` cleared is stored as `{}`, so an old `off`
- * left in step is not read as a network narrowing the person removed.
+ * carry {@link legacyPermissionFor} `outsideSandbox` and the org's ceiling, `cloudNetwork` carries
+ * {@link legacyCloudNetworkOf} `deviceNetwork`; a value that says nothing removes the old key.
+ * `deviceNetwork` cleared is stored as `{}`, the marker that this version wrote the settings.
  */
 export function keepOrgLegacyKeysInStep(
   written: Record<string, unknown>,
@@ -530,15 +571,16 @@ export function keepOrgLegacyKeysInStep(
   if (!orgLegacyKeysStored(stored)) return;
   const outside = written.outsideSandbox as OutsideSandboxPermission | undefined;
   const network = written.deviceNetwork as DeviceNetworkSetting | undefined;
+  const legacy = legacyPermissionFor(outside, network?.ceiling);
   for (const k of ["autoMode", "fullAccess"] as const) {
     if (!(k in stored)) continue;
-    if (outside === undefined) delete written[k];
-    else written[k] = outside;
+    if (legacy === undefined) delete written[k];
+    else written[k] = legacy;
   }
   if ("cloudNetwork" in stored) {
-    const legacy = legacyCloudNetworkOf(network);
-    if (legacy === undefined) delete written.cloudNetwork;
-    else written.cloudNetwork = legacy;
+    const old = legacyCloudNetworkOf(network);
+    if (old === undefined) delete written.cloudNetwork;
+    else written.cloudNetwork = old;
   }
   if (network === undefined) written.deviceNetwork = {};
 }
@@ -561,42 +603,35 @@ export async function lockOrgsWithStoredPermissionKeys(db: KernelSchemaDb): Prom
     .execute();
 }
 
+/** What the conversion needs of the startup config: the configured network ceiling. */
+export interface PermissionKeyConversionContext {
+  configuredCeiling?: DeviceNetworkMode | undefined;
+}
+
 /**
- * The one-time conversion of the stored permission keys (design, "Migration"), run only inside the
- * permission configuration publication transaction under the platform authority write lock (which
- * excludes every org and device writer; the caller locked the org rows to convert before it,
- * {@link lockOrgsWithStoredPermissionKeys}):
- * - the deployment settings `devicesAutoMode` and `devicesFullAccess` become
- *   `devicesOutsideSandbox`, and an old `off` also stores the allowlist network ceiling
- *   (`devicesNetwork`) unless a network choice is stored;
- * - every org's `autoMode` / `fullAccess` becomes `outsideSandbox`, and `cloudNetwork` becomes
- *   `deviceNetwork` ({@link orgDeviceSandboxOf}: absent stays absent, the org follows the platform).
- * Values convert exactly, never wider; an invalid old value converts to `off` with a warning. Old
- * and new permission values that differ stop the conversion (the caller's transaction rolls back):
- * never pick the wider one. Idempotent.
+ * The conversion of the stored permission keys (design, "Migration"), run inside the permission
+ * configuration publication transaction under the platform authority write lock (which excludes
+ * every org and device writer; the caller locked the org rows to convert before it,
+ * {@link lockOrgsWithStoredPermissionKeys}), at every publication: old keys an old replica writes
+ * later are converted too. It stores exactly what every reader saw ({@link storedOf},
+ * {@link orgDeviceSandboxOf}), never wider, and removes the old keys:
+ * - the deployment settings `devicesAutoMode` / `devicesFullAccess` become `devicesOutsideSandbox`
+ *   and `devicesNetwork` (an empty network removes the row);
+ * - every org's `autoMode` / `fullAccess` / `cloudNetwork` become `outsideSandbox` and
+ *   `deviceNetwork` (absent stays absent: the org follows the platform).
+ * Each platform or org whose network an old `off` narrowed to the allowlist is named in one
+ * warning, with how to reopen it. Idempotent; never refuses.
  */
 export async function convertStoredPermissionKeys(
   db: KernelSchemaDb,
   log?: Pick<KernelLogger, "warn">,
+  context: PermissionKeyConversionContext = {},
 ): Promise<void> {
   const rows = await storedRows(db, true);
   const legacy = legacyOf(rows, log);
   if (legacy.length > 0) {
-    const permissions = new Set(legacy.map((l) => l.value.outsideSandbox.permission));
-    if (rows.has(DEVICES_OUTSIDE_SANDBOX_SETTING))
-      permissions.add(
-        parseStoredDevicesOutsideSandbox(rows.get(DEVICES_OUTSIDE_SANDBOX_SETTING), log).permission,
-      );
-    if (permissions.size > 1)
-      throw new Error(
-        `Stored deployment settings ${[
-          ...legacy.map((l) => l.key),
-          ...(rows.has(DEVICES_OUTSIDE_SANDBOX_SETTING) ? [DEVICES_OUTSIDE_SANDBOX_SETTING] : []),
-        ].join(
-          ", ",
-        )} differ; remove all but one of them before converting the permission configuration`,
-      );
-    const converted = storedOf(rows, log);
+    const converted = storedOf(rows, log, context.configuredCeiling);
+    const before = parseStoredDevicesNetwork(rows.get(DEVICES_NETWORK_SETTING));
     const upsert = (key: string, value: unknown) =>
       db
         .insertInto("deployment_settings")
@@ -604,12 +639,22 @@ export async function convertStoredPermissionKeys(
         .onConflict((oc) => oc.column("key").doUpdateSet({ value: JSON.stringify(value) }))
         .execute();
     await upsert(DEVICES_OUTSIDE_SANDBOX_SETTING, converted.outsideSandbox);
-    if (!rows.has(DEVICES_NETWORK_SETTING) && Object.keys(converted.network).length > 0)
+    if (Object.keys(converted.network).length > 0)
       await upsert(DEVICES_NETWORK_SETTING, converted.network);
+    else
+      await db
+        .deleteFrom("deployment_settings")
+        .where("key", "=", DEVICES_NETWORK_SETTING)
+        .execute();
     await db
       .deleteFrom("deployment_settings")
       .where("key", "in", [LEGACY_DEVICES_AUTO_MODE_SETTING, LEGACY_DEVICES_FULL_ACCESS_SETTING])
       .execute();
+    if (converted.network.ceiling === "allowlist" && before.ceiling !== "allowlist")
+      log?.warn(
+        "permission configuration conversion: the platform's old Full access off now keeps every device on the allowlist network (devicesNetwork ceiling allowlist); a super admin reopens it in the admin console settings (devicesNetwork.ceiling open)",
+        { key: DEVICES_NETWORK_SETTING },
+      );
   }
   const orgs = await db
     .selectFrom("orgs")
@@ -620,30 +665,16 @@ export async function convertStoredPermissionKeys(
     .execute();
   for (const org of orgs) {
     const stored = asObject(org.settings);
-    const values = new Set<unknown>();
-    for (const k of ["autoMode", "fullAccess"] as const) {
-      if (!(k in stored)) continue;
-      if (!Permission.safeParse(stored[k]).success)
+    for (const k of ["autoMode", "fullAccess"] as const)
+      if (k in stored && !Permission.safeParse(stored[k]).success)
         log?.warn(`org settings: stored ${k} is invalid; it converts to outsideSandbox off`, {
           orgId: org.id,
         });
-      values.add(legacyOrgPermission(stored[k]));
-    }
-    if (values.size > 0 && "outsideSandbox" in stored)
-      values.add(Permission.safeParse(stored.outsideSandbox).data ?? "off");
-    if (values.size > 1)
-      throw new Error(
-        `Org ${org.id} stores autoMode, fullAccess and outsideSandbox values that differ; remove all but one of them before converting the permission configuration`,
-      );
     const { outsideSandbox, deviceNetwork } = orgDeviceSandboxOf(stored);
-    const {
-      autoMode: _a,
-      fullAccess: _f,
-      cloudNetwork: _c,
-      outsideSandbox: _o,
-      deviceNetwork: _d,
-      ...rest
-    } = stored;
+    const { autoMode: _a, fullAccess: _f, ...withoutPermission } = stored;
+    // the network without the old permission: what an old off narrowed, for the warning
+    const was = orgDeviceSandboxOf(withoutPermission).deviceNetwork;
+    const { cloudNetwork: _c, outsideSandbox: _o, deviceNetwork: _d, ...rest } = withoutPermission;
     await db
       .updateTable("orgs")
       .set({
@@ -655,5 +686,10 @@ export async function convertStoredPermissionKeys(
       })
       .where("id", "=", org.id)
       .execute();
+    if (deviceNetwork?.ceiling === "allowlist" && was?.ceiling !== "allowlist")
+      log?.warn(
+        `permission configuration conversion: org ${org.id}'s old Full access off now keeps its devices on the allowlist network (deviceNetwork ceiling allowlist); an org admin reopens it in the organization settings (deviceNetwork.ceiling open)`,
+        { orgId: org.id },
+      );
   }
 }

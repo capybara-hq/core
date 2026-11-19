@@ -387,6 +387,22 @@ describe("org deviceNetwork", () => {
     ).toBe("org.network_not_allowed");
   });
 
+  it("narrow only (tokens): the effective default and ceiling never widen (M2)", async () => {
+    await storePlatformNetwork({ default: "allowlist", ceiling: "open" });
+    const s = settingsWith();
+    const tokenUpdate = tokenUpdateOf(s);
+    // the org has no default, so it follows the platform's allowlist: open widens it
+    expect(await codeOf(tokenUpdate({ deviceNetwork: { default: "open" } }))).toBe(
+      "org.network_not_allowed",
+    );
+    // the ceiling it follows is open: pinning it open is no widening
+    expect(await codeOf(tokenUpdate({ deviceNetwork: { ceiling: "open" } }))).toBeUndefined();
+    // a person may open the default
+    expect(
+      await codeOf(s.update(orgId, { deviceNetwork: { default: "open" } }, accountId)),
+    ).toBeUndefined();
+  });
+
   it("narrow only (tokens): an extra covered by a stored extra narrows; base none with a platform host is refused (over-strict on purpose)", async () => {
     const s = settingsWith();
     const tokenUpdate = tokenUpdateOf(s);

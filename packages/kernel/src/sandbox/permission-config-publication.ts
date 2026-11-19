@@ -10,13 +10,20 @@ import { Transactional } from "../infra/database/transactional.decorator.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
 import {
+  type ConfiguredDeviceSandbox,
   convertStoredPermissionKeys,
   lockOrgsWithStoredPermissionKeys,
   orgDeviceSandboxOf,
   readStoredDeviceSandbox,
   resolveDeviceSandboxSettings,
 } from "./device-sandbox-settings.js";
-import { coversHost, orgEffectiveHosts } from "./modes.js";
+import {
+  cloudChosenMode,
+  coversHost,
+  type DeploymentDevicePolicy,
+  effectiveDevicePolicy,
+  orgEffectiveHosts,
+} from "./modes.js";
 import { isExecutionMethod } from "./operation-authority-types.js";
 import {
   localMachineRoots,
@@ -161,6 +168,23 @@ export function permissionConfigProjection(config: KernelConfig): PermissionConf
     allowHosts,
   });
 }
+/** A configured value of the projection, or undefined when the deployment setting decides. */
+const configuredOf = <T>(s: { kind: "deployment-setting" } | { kind: "configured"; value: T }) =>
+  s.kind === "configured" ? s.value : undefined;
+/** The projection as the settings reader's startup config input. */
+const configuredView = (projection: PermissionConfigProjection): ConfiguredDeviceSandbox => {
+  const fileSource = (s: { kind: string }) => (s.kind === "configured" ? "file" : undefined);
+  return {
+    outsideSandbox: configuredOf(projection.outsideSandbox),
+    networkDefault: configuredOf(projection.network.default),
+    networkCeiling: configuredOf(projection.network.ceiling),
+    sources: {
+      outsideSandbox: fileSource(projection.outsideSandbox),
+      networkDefault: fileSource(projection.network.default),
+      networkCeiling: fileSource(projection.network.ceiling),
+    },
+  } as const;
+};
 const sha256 = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
 export function permissionProjectionFingerprint(projection: PermissionConfigProjection): string {
   return sha256(parsePermissionConfigProjection(projection));
@@ -262,7 +286,7 @@ export class PermissionConfigPublication {
       // (format only: no epoch, no Full reset, no revocation)
       if (stored.legacy && permissionProjectionFingerprint(stored.projection) === candidateHash) {
         await this.replaceLocked(row.fingerprint, projection);
-        await convertStoredPermissionKeys(this.db.db, this.log);
+        await this.convertLocked(projection, true);
         return { outcome: "migrated", activeHash: candidateHash };
       }
       return { outcome: "mismatch", activeHash: row.fingerprint, candidateHash };
@@ -283,7 +307,7 @@ export class PermissionConfigPublication {
       .executeTakeFirstOrThrow();
     if (inserted.fingerprint !== candidateHash)
       return { outcome: "mismatch", activeHash: inserted.fingerprint, candidateHash };
-    await convertStoredPermissionKeys(this.db.db, this.log);
+    await this.convertLocked(projection, true);
     return { outcome: "initialized", activeHash: candidateHash };
   }
   /** CAS publication precedes exposing the new local config. Same-next replicas converge idempotently. */
@@ -326,6 +350,73 @@ export class PermissionConfigPublication {
     if (sha256(old) !== row.fingerprint) throw corrupt();
     return { fingerprint: row.fingerprint, projection: ofOld(old.autoMode, old), legacy: true };
   }
+  /**
+   * Converts the stored permission keys ({@link convertStoredPermissionKeys}) and, when the
+   * predecessor is an older publication (`pinDevices`), keeps every cloud device that ran on an
+   * allowlist on it: a device still following its org (`network_mode` NULL) whose old effective
+   * network was the allowlist (`sandbox.limits.orgHosts: within`, an org allowlist or an old off)
+   * gets `network_mode = 'allowlist'` with no hosts of its own (it follows its org's hosts), so
+   * the new model, where `orgHosts` limits hosts only, never opens it. The caller holds the
+   * platform write lock and the org rows.
+   */
+  @Transactional({ propagation: "mandatory" })
+  private async convertLocked(
+    projection: PermissionConfigProjection,
+    pinDevices: boolean,
+  ): Promise<void> {
+    const configuredCeiling = configuredOf(projection.network.ceiling);
+    if (pinDevices) {
+      const stored = await readStoredDeviceSandbox(this.db.db, this.log, configuredCeiling);
+      const view = resolveDeviceSandboxSettings(configuredView(projection), stored);
+      const deployment: DeploymentDevicePolicy = {
+        fullAccess: view.outsideSandbox.permission,
+        limits: {
+          egress: projection.egress,
+          orgHosts: projection.orgHosts,
+          allowHosts: projection.allowHosts,
+        },
+      };
+      const devices = await this.db
+        .selectFrom("devices")
+        .select(["id", "org_id", "mode", "owner_full_access", "outer_network"])
+        .where("source", "=", "cloud")
+        .where("network_mode", "is", null)
+        .where("deleted_at", "is", null)
+        .orderBy("id")
+        .execute();
+      const orgIds = [...new Set(devices.map((d) => d.org_id))];
+      const orgSettings = new Map(
+        orgIds.length === 0
+          ? []
+          : (
+              await this.db
+                .selectFrom("orgs")
+                .select(["id", "settings"])
+                .where("id", "in", orgIds)
+                .execute()
+            ).map((o) => [o.id, o.settings] as const),
+      );
+      const pinned = devices
+        .filter(
+          (d) =>
+            effectiveDevicePolicy(
+              deployment,
+              orgDeviceSandboxOf(orgSettings.get(d.org_id)),
+              cloudChosenMode(d),
+              d.outer_network,
+            ).network.kind === "allowlist",
+        )
+        .map((d) => d.id);
+      if (pinned.length > 0)
+        await this.db
+          .updateTable("devices")
+          .set({ network_mode: "allowlist", network_hosts: "[]" })
+          .where("id", "in", pinned)
+          .where("network_mode", "is", null)
+          .execute();
+    }
+    await convertStoredPermissionKeys(this.db.db, this.log, { configuredCeiling });
+  }
   /** Compare-and-set of the publication row; the caller holds the platform write lock. */
   @Transactional({ propagation: "mandatory" })
   private async replaceLocked(previous: string, next: PermissionConfigProjection): Promise<void> {
@@ -357,30 +448,18 @@ export class PermissionConfigPublication {
     if (row.fingerprint !== previous)
       throw new PermissionConfigActivationConflict(row.fingerprint, fingerprint);
     await this.replaceLocked(previous, next);
-    // an older predecessor converts its stored keys in this same transaction
-    if (stored.legacy) await convertStoredPermissionKeys(this.db.db, this.log);
+    // the stored keys convert at every publication (old keys an old replica wrote meanwhile
+    // too); an older predecessor also pins its cloud devices, in this same transaction
+    await this.convertLocked(next, stored.legacy);
     // format only: the same semantics publish the new fingerprint (the barrier) and nothing else
     if (permissionProjectionFingerprint(before) === fingerprint) return "activated";
-    const storedChoice = await readStoredDeviceSandbox(this.db.db, this.log);
-    const effective = (projection: PermissionConfigProjection) => {
-      const configured = <T>(
-        s: { kind: "deployment-setting" } | { kind: "configured"; value: T },
-      ) => (s.kind === "configured" ? s.value : undefined);
-      const fileSource = (s: { kind: string }) => (s.kind === "configured" ? "file" : undefined);
-      return resolveDeviceSandboxSettings(
-        {
-          outsideSandbox: configured(projection.outsideSandbox),
-          networkDefault: configured(projection.network.default),
-          networkCeiling: configured(projection.network.ceiling),
-          sources: {
-            outsideSandbox: fileSource(projection.outsideSandbox),
-            networkDefault: fileSource(projection.network.default),
-            networkCeiling: fileSource(projection.network.ceiling),
-          },
-        },
-        storedChoice,
-      );
-    };
+    const storedChoice = await readStoredDeviceSandbox(
+      this.db.db,
+      this.log,
+      configuredOf(next.network.ceiling),
+    );
+    const effective = (projection: PermissionConfigProjection) =>
+      resolveDeviceSandboxSettings(configuredView(projection), storedChoice);
     const beforeView = effective(before),
       nextView = effective(next);
     const beforeMode = beforeView.outsideSandbox.permission,

@@ -545,6 +545,27 @@ export function deviceNetworkModeWidens(
   return null;
 }
 
+/** The org's effective network default and ceiling: its own, within the platform's. */
+export function effectiveOrgNetwork(
+  platform: { default: DeviceNetworkMode; ceiling: DeviceNetworkMode },
+  org: DeviceNetworkSetting | undefined,
+): { default: DeviceNetworkMode; ceiling: DeviceNetworkMode } {
+  const ceiling =
+    platform.ceiling === "allowlist" || org?.ceiling === "allowlist" ? "allowlist" : "open";
+  const def = ceiling === "allowlist" ? "allowlist" : (org?.default ?? platform.default);
+  return { default: def, ceiling };
+}
+
+/** Which effective field opens from `a` to `b`, if any. */
+export function effectiveNetworkWidens(
+  a: { default: DeviceNetworkMode; ceiling: DeviceNetworkMode },
+  b: { default: DeviceNetworkMode; ceiling: DeviceNetworkMode },
+): "default" | "ceiling" | null {
+  if (a.ceiling === "allowlist" && b.ceiling === "open") return "ceiling";
+  if (a.default === "allowlist" && b.default === "open") return "default";
+  return null;
+}
+
 /**
  * Whether `next`'s hosts (absent: follow the platform) widen `prev`'s (org egress ceiling spec
  * §D3), both normalized (base platform, empty lists): base none to platform; with base platform,
@@ -568,7 +589,7 @@ export function deviceNetworkHostsWiden(
   );
 }
 
-/** 组织设置服务：读取与修改（修改需 `org.update`，锁内实时复核角色，写审计）。 */
+/** Org settings: read and update (an update needs `org.update`, re-checks the role under the lock and is audited). */
 @Injectable()
 export class OrgSettingsService {
   constructor(
@@ -613,7 +634,7 @@ export class OrgSettingsService {
     return parseOrgSettings(raw);
   }
 
-  /** 部署默认值（设置页展示「跟随部署」时的实际取值）。 */
+  /** The deployment defaults (what "follow the platform" means on the settings page). */
   async deployment(): Promise<OrgSettingsDeployment> {
     const lim = this.config.get().sandbox.limits;
     const [
@@ -821,7 +842,15 @@ export class OrgSettingsService {
     }
     if (patch.deviceNetwork !== undefined) {
       const next = patch.deviceNetwork ?? undefined;
-      const field = deviceNetworkModeWidens(before.deviceNetwork, next);
+      // the stored delta (a widening that takes effect when the platform relaxes) and the
+      // effective value (an absent field follows the platform's) must both not open
+      const platform = await readDeviceSandboxSettingsView(this.db.db, this.config, this.log);
+      const field =
+        deviceNetworkModeWidens(before.deviceNetwork, next) ??
+        effectiveNetworkWidens(
+          effectiveOrgNetwork(platform.network, before.deviceNetwork),
+          effectiveOrgNetwork(platform.network, next),
+        );
       if (field !== null)
         throw networkNotAllowed(
           `Opening the organization's network ${field} needs a person in the organization settings.`,
@@ -965,6 +994,18 @@ export class OrgSettingsService {
       detail: { before, after, ...(repairs && { repaired: true }), ...auditDetail },
     });
     if (patch.outsideSandbox !== undefined || patch.deviceNetwork !== undefined) {
+      // the consent reset follows the effective values as every reader sees them (re-read from
+      // what was written, within the platform), so a widening the platform hides resets nothing
+      const platform = await readDeviceSandboxSettingsView(this.db.db, this.config, this.log);
+      const effOutside = (o: OrgSettings) =>
+        platform.outsideSandbox.permission === "off" ? "off" : (o.outsideSandbox ?? "allowed");
+      const reread = parseOrgSettings(written);
+      const resetConsent =
+        effOutside(before) !== effOutside(reread) ||
+        effectiveNetworkWidens(
+          effectiveOrgNetwork(platform.network, before.deviceNetwork),
+          effectiveOrgNetwork(platform.network, reread.deviceNetwork),
+        ) !== null;
       const machineRoots = await localMachineRoots(this.db.db, orgId);
       await this.ceilings.publishLocked(
         { orgId },
@@ -991,8 +1032,7 @@ export class OrgSettingsService {
               !(this.effectiveNetwork(after).mode === "open" && row.granted_hosts.includes(host)),
           );
         },
-        before.outsideSandbox !== after.outsideSandbox ||
-          deviceNetworkModeWidens(before.deviceNetwork, after.deviceNetwork) !== null,
+        resetConsent,
       );
     }
     return viewOf(after, written);

@@ -36,9 +36,9 @@ import {
   type DevicesOutsideSandboxPatch,
   type DevicesOutsideSandboxStored,
   type DevicesOutsideSandboxView,
-  devicesNetworkStored,
-  LEGACY_DEVICES_AUTO_MODE_SETTING,
+  legacyPermissionFor,
   legacyPlatformKeysStored,
+  legacyPlatformValue,
   readDeviceSandboxSettingsView,
   readStoredDeviceSandbox,
   resolveDeviceSandboxSettings,
@@ -742,7 +742,9 @@ export class SettingsService {
         fixed.map(([path, , source]) => ({ path, source })),
       );
     }
-    const stored = await readStoredDeviceSandbox(this.db.db, this.log);
+    const configuredCeiling =
+      configured.sources.networkCeiling !== undefined ? configured.networkCeiling : undefined;
+    const stored = await readStoredDeviceSandbox(this.db.db, this.log, configuredCeiling);
     const next = {
       outsideSandbox:
         patch.devicesOutsideSandbox === undefined
@@ -755,18 +757,13 @@ export class SettingsService {
     };
     const before = resolveDeviceSandboxSettings(configured, stored);
     const after = resolveDeviceSandboxSettings(configured, next);
-    if (patch.devicesNetwork !== undefined) {
-      // the default the patch leaves, compared with the ceiling it leaves (never clamped silently)
-      const def =
-        configured.sources.networkDefault !== undefined
-          ? configured.networkDefault
-          : next.network.default;
-      if (def === "open" && after.network.ceiling === "allowlist")
-        throw networkNotAllowed(
-          "The network default open is above the ceiling allowlist; set the default to allowlist too, or keep the ceiling open",
-          "default",
-        );
-    }
+    // opening the stored default above the stored ceiling (one source) is refused; across
+    // sources, and for a change that only narrows, the reader clamps the default to the ceiling
+    if (patch.devicesNetwork?.default === "open" && next.network.ceiling === "allowlist")
+      throw networkNotAllowed(
+        "The network default open is above the ceiling allowlist; set the default to allowlist too, or open the ceiling",
+        "default",
+      );
     if (opts.onlyNarrows) {
       if (
         patch.devicesOutsideSandbox !== undefined &&
@@ -776,10 +773,14 @@ export class SettingsService {
         throw outsideSandboxWidenRefused();
       for (const field of ["default", "ceiling"] as const) {
         if (patch.devicesNetwork?.[field] === undefined) continue;
-        const was =
-          field === "default" ? (stored.network.default ?? "open") : before.network.ceiling;
-        const now = field === "default" ? (next.network.default ?? "open") : after.network.ceiling;
-        if (was === "allowlist" && now === "open")
+        // both the stored choice (it takes effect when the startup config lets it) and the
+        // effective value (it may follow the default) must not open
+        const storedWidens =
+          (stored.network[field] ?? "open") === "allowlist" &&
+          (next.network[field] ?? "open") === "open";
+        const effectiveWidens =
+          before.network[field] === "allowlist" && after.network[field] === "open";
+        if (storedWidens || effectiveWidens)
           throw networkNotAllowed(
             `Opening the platform's network ${field} needs a super admin in the admin console; an API token or the Platform tool may only narrow it to the allowlist.`,
             field,
@@ -1026,27 +1027,22 @@ export class SettingsService {
       const r = await this.checkDeviceSandbox(patch, opts);
       deviceSandboxChange = { before: r.before, after: r.after };
       const legacy = await legacyPlatformKeysStored(this.db.db);
-      if (patch.devicesOutsideSandbox !== undefined) {
+      // old keys the publication conversion has not reached yet (a mismatch window before
+      // activation): the new keys are stored as every reader sees them, and each old key is
+      // rewritten in step for replicas of the previous version (Full allowed only when running
+      // outside the sandbox is allowed and the effective network ceiling is open)
+      if (patch.devicesOutsideSandbox !== undefined || legacy.length > 0)
         writes.push([DEVICES_OUTSIDE_SANDBOX_SETTING, r.next.outsideSandbox]);
-        // old keys the publication conversion has not reached yet (a mismatch window before
-        // activation) are kept in step for replicas of the previous version
-        for (const key of legacy)
-          writes.push([
-            key,
-            key === LEGACY_DEVICES_AUTO_MODE_SETTING
-              ? r.next.outsideSandbox.permission === undefined
-                ? {}
-                : { mode: r.next.outsideSandbox.permission }
-              : r.next.outsideSandbox,
-          ]);
+      if (patch.devicesNetwork !== undefined || legacy.length > 0) {
+        if (legacy.length > 0 && Object.keys(r.next.network).length === 0)
+          await this.db
+            .deleteFrom("deployment_settings")
+            .where("key", "=", DEVICES_NETWORK_SETTING)
+            .execute();
+        else writes.push([DEVICES_NETWORK_SETTING, r.next.network]);
       }
-      // the network the readers see, stored once old keys are still in play: an old off read as
-      // the allowlist ceiling must not widen when its key changes in step
-      if (
-        patch.devicesNetwork !== undefined ||
-        (legacy.length > 0 && !(await devicesNetworkStored(this.db.db)))
-      )
-        writes.push([DEVICES_NETWORK_SETTING, r.next.network]);
+      const inStep = legacyPermissionFor(r.next.outsideSandbox.permission, r.after.network.ceiling);
+      for (const key of legacy) writes.push([key, legacyPlatformValue(key, inStep)]);
       const outsideOff =
         r.before.outsideSandbox.permission === "allowed" &&
         r.after.outsideSandbox.permission === "off";

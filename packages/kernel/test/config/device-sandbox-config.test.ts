@@ -51,16 +51,60 @@ describe("devices.outsideSandbox and devices.network (approval-only profiles)", 
     );
     expect(e).toBeInstanceOf(ConfigError);
     expect(e?.message).toMatch(/devices\.network.*default.*ceiling/s);
-    expect(() =>
+    // across sources the reader clamps the default to the ceiling
+    expect(
       devices(
         { devices: { network: { default: "open" } } },
         { CAPYBARA_DEVICES__NETWORK__CEILING: "allowlist" },
-      ),
-    ).toThrow(ConfigError);
+      ).network,
+    ).toEqual({ default: "open", ceiling: "allowlist" });
     // the narrower default under a wider ceiling is fine
     expect(
       devices({ devices: { network: { default: "allowlist", ceiling: "open" } } }).network.default,
     ).toBe("allowlist");
+  });
+
+  it("a hot reload that only narrows is applied even when it leaves the default above the ceiling", async () => {
+    const svc = new KernelConfigService(
+      {
+        config: resolveConfig(
+          { ...base, devices: { network: { default: "open", ceiling: "open" } } },
+          {},
+        ),
+        env: {},
+      },
+      log,
+    );
+    await svc.apply(
+      { ...base, devices: { network: { default: "open", ceiling: "allowlist" } } },
+      async () => {},
+    );
+    expect(svc.get().devices.network).toEqual({ default: "open", ceiling: "allowlist" });
+    // an unrelated narrowing keeps the clamped pair as it is
+    await svc.apply(
+      {
+        ...base,
+        devices: { outsideSandbox: "off", network: { default: "open", ceiling: "allowlist" } },
+      },
+      async () => {},
+    );
+    expect(svc.get().devices.outsideSandbox).toBe("off");
+    // opening the default above the same source's ceiling is a widening: refused, kept as it was
+    const strict = new KernelConfigService(
+      {
+        config: resolveConfig(
+          { ...base, devices: { network: { default: "allowlist", ceiling: "allowlist" } } },
+          {},
+        ),
+        env: {},
+      },
+      log,
+    );
+    await strict.apply(
+      { ...base, devices: { network: { default: "open", ceiling: "allowlist" } } },
+      async () => {},
+    );
+    expect(strict.get().devices.network.default).toBe("allowlist");
   });
 
   it("refuses the old file / Nacos keys with the conversion message, never the value", () => {

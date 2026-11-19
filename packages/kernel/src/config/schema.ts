@@ -1957,7 +1957,8 @@ export const KernelConfigSchema = z.strictObject({
        * the default mode and the widest mode an org or device may choose, `open` (the public
        * internet; private, loopback and metadata addresses closed) or `allowlist`. Optional with
        * no schema default, like `outsideSandbox`: the admin console's choice applies when unset
-       * (`devicesNetwork`), else `open`. A default above the ceiling is refused.
+       * (`devicesNetwork`), else `open`. A default above the ceiling of the same source is refused
+       * (`config/load.ts`); across sources the reader clamps the default to the ceiling.
        */
       network: z
         .strictObject({
@@ -1981,15 +1982,6 @@ export const KernelConfigSchema = z.strictObject({
                   "The widest sandbox network an organization or a device may choose (default open). Set it to allowlist for egress control: every device then reaches only the hosts of sandbox.limits.allowHosts and its organization's list. Set here, it is read-only in the admin console",
               }),
             ),
-        })
-        .superRefine((n, ctx) => {
-          if (n.default === "open" && n.ceiling === "allowlist")
-            ctx.addIssue({
-              code: "custom",
-              path: ["default"],
-              message:
-                "devices.network.default open is above devices.network.ceiling allowlist; choose a default no wider than the ceiling",
-            });
         })
         .prefault({} as never),
       maxPersonal: z

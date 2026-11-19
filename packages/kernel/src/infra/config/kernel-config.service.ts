@@ -153,7 +153,7 @@ export class KernelConfigService {
     const log = this.log;
     let next: KernelConfig;
     try {
-      next = resolveConfig(raw, this.env);
+      next = resolveConfig(raw, this.env, this.current);
     } catch (e) {
       log.error("config reload rejected; keeping current config", { error: errMsg(e) });
       return;

@@ -433,14 +433,19 @@ describe("SettingsService devicesOutsideSandbox and devicesNetwork", () => {
       .update({ devicesNetwork: { default: "open" } }, admin.id)
       .catch((e: unknown) => e);
     expect(above).toMatchObject({ code: "deployment.network_not_allowed", status: 400 });
-    // above a configured ceiling as well
+    // a narrowing is never refused: the ceiling under a stored open default (the reader clamps)
+    await s.update({ devicesNetwork: { default: null, ceiling: null } }, admin.id);
+    await s.update({ devicesNetwork: { default: "open" } }, admin.id);
+    expect(await s.update({ devicesNetwork: { ceiling: "allowlist" } }, admin.id)).toMatchObject({
+      devicesNetwork: { default: "allowlist", ceiling: "allowlist" },
+    });
+    // across sources the reader clamps too: an open stored default under a configured ceiling
+    await s.update({ devicesNetwork: { default: null, ceiling: null } }, admin.id);
     const configured = serviceWith({ network: { ceiling: "allowlist" } }, "file");
-    await s.update({ devicesNetwork: { default: null } }, admin.id);
     expect(
-      await configured
-        .update({ devicesNetwork: { default: "open" } }, admin.id)
-        .catch((e: unknown) => e),
-    ).toMatchObject({ code: "deployment.network_not_allowed" });
+      await configured.update({ devicesNetwork: { default: "open" } }, admin.id),
+    ).toMatchObject({ devicesNetwork: { default: "allowlist", ceiling: "allowlist" } });
+    await s.update({ devicesNetwork: { default: "allowlist", ceiling: "allowlist" } }, admin.id);
     // a token may not open either field, nor clear it back to open
     for (const devicesNetwork of [
       { ceiling: "open" as const },
@@ -462,6 +467,35 @@ describe("SettingsService devicesOutsideSandbox and devicesNetwork", () => {
         onlyNarrows: true,
       }),
     ).toMatchObject({ devicesNetwork: { default: "allowlist", ceiling: "open" } });
+  });
+
+  it("a change the startup config hides is no widening: no consent reset, the audit says so", async () => {
+    await db.deleteFrom("deployment_settings").execute();
+    const admin = await adminFor("network-hidden");
+    const s = serviceWith({ network: { ceiling: "allowlist" } }, "file");
+    const epoch = async () => {
+      const row = await db
+        .selectFrom("permission_authority_epochs")
+        .select(["revision", "full_revision"])
+        .where("kind", "=", "platform")
+        .executeTakeFirst();
+      return { revision: row?.revision ?? 0, full: row?.full_revision ?? 0 };
+    };
+    const before = await epoch();
+    await s.update({ devicesNetwork: { default: "open" } }, admin.id);
+    expect(await epoch()).toEqual(before);
+    const audit = await db
+      .selectFrom("audit_events")
+      .select("detail")
+      .where("action", "=", "deployment.settings.updated")
+      .orderBy("at", "desc")
+      .executeTakeFirstOrThrow();
+    expect(audit.detail).toMatchObject({
+      deviceSandboxEffective: {
+        before: { network: { default: "allowlist", ceiling: "allowlist" } },
+        after: { network: { default: "allowlist", ceiling: "allowlist" } },
+      },
+    });
   });
 
   it("the old names are refused and never answered", async () => {

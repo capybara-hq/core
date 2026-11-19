@@ -44,6 +44,7 @@ const SEEDS: Record<string, { source: "cloud" | "local"; outer: unknown }> = {
   d_open: { source: "cloud", outer: { kind: "open-public", hosts: [] } },
   d_none: { source: "cloud", outer: null },
   d_badhosts: { source: "cloud", outer: { kind: "allowlist", hosts: "github.com" } },
+  d_mixedhosts: { source: "cloud", outer: { kind: "allowlist", hosts: ["github.com", 7] } },
   d_local: { source: "local", outer: null },
 };
 
@@ -88,6 +89,7 @@ describe("0163 device network columns", () => {
 
   it("an allowlist whose hosts are unreadable becomes an empty allowlist (never wider)", async () => {
     expect(await rowOf("d_badhosts")).toEqual({ network_mode: "allowlist", network_hosts: [] });
+    expect(await rowOf("d_mixedhosts")).toEqual({ network_mode: "allowlist", network_hosts: [] });
   });
 
   it("an open, missing or local snapshot follows the org", async () => {

@@ -138,8 +138,61 @@ function refuseLegacyPermissionKeys(
   if (problems.length > 0) throw new ConfigError(`invalid configuration:\n${problems.join("\n")}`);
 }
 
-/** 原始配置深合并环境变量覆盖（优先级最高）后校验；热更新与启动共用。错误只列路径不列值。 */
-export function resolveConfig(raw: unknown, env: NodeJS.ProcessEnv): KernelConfig {
+type NetworkMode = "open" | "allowlist";
+const modeAt = (source: Record<string, unknown>, field: "default" | "ceiling") => {
+  const devices = source.devices;
+  const network = isPlainObject(devices) ? devices.network : undefined;
+  const v = isPlainObject(network) ? network[field] : undefined;
+  return v === "open" || v === "allowlist" ? (v as NetworkMode) : undefined;
+};
+/** Whether the mode opens from `was` to `now` (absent reads as open, the default). */
+const opens = (was: NetworkMode | undefined, now: NetworkMode | undefined) =>
+  (was ?? "open") === "allowlist" && (now ?? "open") === "open";
+
+/**
+ * Refuses a `devices.network.default` of `open` under a `ceiling` of `allowlist` set in the SAME
+ * source (the file / Nacos document, or the environment); across sources the reader clamps the
+ * default to the ceiling. A hot reload that only narrows the network (`previous`: the applied
+ * config) is never refused, even when it leaves such a pair: the reader clamps it.
+ */
+function refuseDefaultAboveCeiling(
+  raw: Record<string, unknown>,
+  env: Record<string, unknown>,
+  previous: KernelConfig | undefined,
+  merged: KernelConfig,
+): void {
+  if (previous !== undefined) {
+    const was = previous.devices.network;
+    const now = merged.devices.network;
+    if (!opens(was.default, now.default) && !opens(was.ceiling, now.ceiling)) return;
+  }
+  const problems = (
+    [
+      ["file", raw],
+      ["env", env],
+    ] as const
+  )
+    .filter(
+      ([, source]) =>
+        modeAt(source, "default") === "open" && modeAt(source, "ceiling") === "allowlist",
+    )
+    .map(
+      ([label]) =>
+        `  - devices.network.default: open is above devices.network.ceiling allowlist in the same ${label === "env" ? "environment" : "config source"}; choose a default no wider than the ceiling`,
+    );
+  if (problems.length > 0) throw new ConfigError(`invalid configuration:\n${problems.join("\n")}`);
+}
+
+/**
+ * 原始配置深合并环境变量覆盖（优先级最高）后校验；热更新与启动共用。错误只列路径不列值。
+ * `previous` (a hot reload: the applied config) lets a change that only narrows the device network
+ * through ({@link refuseDefaultAboveCeiling}).
+ */
+export function resolveConfig(
+  raw: unknown,
+  env: NodeJS.ProcessEnv,
+  previous?: KernelConfig,
+): KernelConfig {
   if (!isPlainObject(raw)) throw new ConfigError("config file root must be a mapping");
   const overrides = envOverrides(env);
   refuseLegacyPermissionKeys(raw, overrides);
@@ -156,6 +209,7 @@ export function resolveConfig(raw: unknown, env: NodeJS.ProcessEnv): KernelConfi
     });
     throw new ConfigError(`invalid configuration:\n${lines.join("\n")}`);
   }
+  refuseDefaultAboveCeiling(raw, overrides, previous, result.data);
   // Cross-section rule (the loopback exception lives under `tools`)
   const webhookProblem = webhookBaseUrlProblem(result.data);
   if (webhookProblem !== null) {
