@@ -12,12 +12,12 @@ import { isInternalProvider, LOCAL_PROVIDER } from "./providers.js";
  * the physical no-reuse obligations of old instance incarnations (migration 0157).
  *
  * - **Freeze.** {@link freeze} writes the one freeze row under the platform authority writer (the
- *   exclusive platform permission lock). A legacy SID launch calls {@link admitLegacyDispatch}
- *   immediately before its dispatch, which takes the shared platform lock and refuses once the
- *   row exists; so when the freeze commits, every admission that passed before has committed its
- *   `dispatched` mark, and none passes after. A replica without this code is not fenced: it must
- *   be stopped or drained before the freeze (the rows it writes still read `unknown`, never
- *   "not dispatched", and the periodic re-scan picks them up).
+ *   exclusive platform permission lock). An R1 (protocol 2) kernel admitted each legacy SID
+ *   launch under the shared platform lock immediately before its dispatch and refused once the
+ *   row existed, marking an admitted reservation `dispatched` with the incarnation it dispatched
+ *   into; this release launches no SID task, so it only reads those marks. A replica without the
+ *   fence must be stopped or drained before the freeze (the rows it writes still read `unknown`,
+ *   never "not dispatched", and the periodic re-scan picks them up).
  * - **Obligations.** {@link scan} enumerates, under the freeze, every legacy row whose processes
  *   may still exist (running with a SID, a reservation that may have dispatched, a stop in flight,
  *   `kill_pending` including terminal rows, a possibly dispatched launch that failed), and every
@@ -67,15 +67,6 @@ export type BootReport =
   | "stale"
   /** Malformed, or the machine is unknown or revoked: ignored. */
   | "ignored";
-
-/** {@link LegacyRetirementStore.admitLegacyDispatch}'s answer. */
-export type LegacyDispatchAdmission =
-  /** The launch may dispatch; its row is marked `dispatched` first. */
-  | "admitted"
-  /** The legacy-launch freeze is published: the launch must not dispatch. */
-  | "frozen"
-  /** The reservation is no longer a launchable legacy row (finished meanwhile). */
-  | "gone";
 
 /** {@link LegacyRetirementStore.freeze}'s answer: the freeze is published and enumerated. */
 export interface LegacyFreezeResult {
@@ -489,38 +480,6 @@ export class LegacyRetirementStore {
       .where("id", "=", FREEZE_ID)
       .executeTakeFirst();
     return row !== undefined;
-  }
-
-  /**
-   * The check every legacy SID launch makes immediately before it dispatches its command: under
-   * the shared platform authority lock (so a concurrent {@link freeze} waits for it), refuses once
-   * the freeze is published; otherwise marks the reservation `dispatched` in the same transaction.
-   */
-  @Transactional({ propagation: "requires_new" })
-  async admitLegacyDispatch(
-    orgId: string,
-    taskId: string,
-    /** The exact incarnation the launch dispatches into (read under its shared lease). */
-    instance: { provider: string; generation: string },
-  ): Promise<LegacyDispatchAdmission> {
-    await this.locks.acquire({ orgId }, { kind: "admit" });
-    if (await this.frozen()) return "frozen";
-    const r = await this.db
-      .updateTable("background_tasks")
-      .set({
-        legacy_dispatch: "dispatched",
-        legacy_dispatch_provider: instance.provider,
-        legacy_dispatch_generation: GENERATION_RE.test(instance.generation)
-          ? instance.generation
-          : null,
-      })
-      .where("id", "=", taskId)
-      .where("org_id", "=", orgId)
-      .where("status", "=", "running")
-      .where("sid", "is", null)
-      .where("launch_state", "=", "legacy")
-      .executeTakeFirst();
-    return Number(r.numUpdatedRows) === 1 ? "admitted" : "gone";
   }
 
   /**

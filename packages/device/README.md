@@ -2,8 +2,8 @@
 
 `capybara-device` connects a laptop or server to a [Capybara](https://github.com/capybara-hq/core)
 deployment as a device: the platform's agents run commands and read and write files on this
-machine, in auto mode (as you, with every command reviewed by the deployment) or inside an OS
-sandbox, while the program is online.
+machine while the program is online, confined by the conversation's permission profile and by this
+machine's owner ceiling.
 
 Runs on macOS and Linux. Native Windows is refused: use WSL (then it is a Linux machine) or Docker
 mode inside WSL. Node 22.12 or newer.
@@ -54,183 +54,129 @@ the device page says so. To start afresh, run `capybara-device logout` and then
 and the platform rebuilds the device on its next use.
 
 Commands: `login --url <url> [--no-browser] [--dir <path>] [--mode os|docker]`, `logout`,
-`status [--json]` (it prints the command mode too), `start`, `stop`,
-`drain [--wait] [--timeout <seconds>]`, `mode [auto|sandbox] [--yes]`,
-`policy [show | set <key> <value> [--yes] | add|remove <key> <value>]` and
+`status [--json]`, `start`, `stop`,
+`drain [--wait] [--timeout <seconds>]`,
+`ceiling show | ceiling set --full-access allow|deny --project-reach workspace|os-user [--yes]`,
+`policy [show | set <key> <value> | add|remove <key> <value>]` and
 `service install|uninstall|start|stop|restart|status`.
-`mode` is the only way to switch the command mode (`policy set mode` points there); `mode auto`
-prints the risk text and asks for confirmation unless `--yes` is given.
+`ceiling set` is the only way to change the owner ceiling (`policy set mode` points there); a
+widening prints the risk text and asks for confirmation unless `--yes` is given. The old daily
+`mode auto|sandbox` command is gone.
 
 State lives in `$XDG_CONFIG_HOME/capybara-device` (default `~/.config/capybara-device`):
 `credential.json` (mode 0600; the program refuses a file other users can read; it also holds the
 deployment's reconnect grace and frame limit: a result larger than the frame limit is answered
 with an error instead) and `policy.json` (a file with wrong field types stops `start` with an
 error naming it; once running, the program re-reads the file when it changes, and a broken edit
-keeps the last valid policy and logs one error). Changes made with `capybara-device policy` take
+is no authority: operations and owner reports are refused with the reason until it is fixed, never
+served from a policy read earlier). Changes made with `capybara-device policy` take
 `policy.json.lock`, so two writers never lose an update; keys this version does not know are kept.
 The working directory (default `~/capybara-device/<deviceId>`) holds `workspace/`, `skills/`
 and `tmp/`.
 
-In OS mode a device runs every command in one of two modes (`mode` in `policy.json`; switch it
-with `capybara-device mode`):
+## Permissions
 
-- **auto** (the default of a new login): commands run directly on this computer as you — your real
-  `HOME`, `PATH`, environment, caches, credentials (SSH keys, `gh`, cloud CLIs), Docker and any
-  network. It is what a coding agent without an OS sandbox has, and what Claude Code calls auto
-  mode. The deployment reviews every command before it runs and blocks, or asks about, the
-  dangerous ones (deleting outside the workspace, sending a secret away, force-pushing a protected
-  branch). The platform's file tools reach any absolute path on the machine. The hello reports
-  your home directory, and the deployment can list any directory you can read and scan your home
-  for projects (directory entries only, never file contents).
-- **sandbox**: today's strict `@anthropic-ai/sandbox-runtime` profile (macOS Seatbelt, Linux
-  bubblewrap; Linux needs `bwrap` and `socat`). Writes only under `workspace/` and `tmp/`,
-  `skills/` read only, `HOME` = the workspace, `~/.ssh`, cloud CLI credentials, `~/.netrc`,
-  `~/.gnupg`, browser profiles and this program's state directory unreadable, no local binding or
-  unix sockets, and network only to the domains of the local policy that the organization's
-  allowlist also admits (with an empty list, no network at all). Commands keep their package
-  caches in the workspace like any other file. The hello still reports your home directory, but
-  the deployment's directory listing and project scan cover the workspace only.
+Every operation the deployment sends carries a scope: the conversation's permission profile
+(`request-approval` and `approve-for-me` are restricted, `full-access` is Full access), the roots
+it may read and write, and its network. The device checks each one against the **owner ceiling**
+in `policy.json`, which only you change, on this machine:
 
-If the OS sandbox is unavailable on the machine (an unsupported platform or missing dependencies,
-such as `bwrap` / `socat` on Linux), the device still starts and serves: auto mode works, and every
-sandbox-mode command is refused with the reason and how to fix it (`capybara-device mode auto`, or
-install the dependencies and restart). `capybara-device mode sandbox` is refused on such a machine
-and the policy stays in auto; nothing ever runs unsandboxed by falling back. File operations
-(read, write, stat) there follow only a fresh command decision (the latest command, within a
-minute): without one they are refused, never served on the host. `login` into an organization that
-forbids auto mode checks the OS sandbox first: when it is unavailable, no sandbox policy is written
-and the login line says what to install (or to log in with `--mode docker`).
+- **Full access** `allow|deny`: whether a conversation set to Full access may run here. Full access
+  runs as you (in Docker mode, as the container's user): your files, credentials and network; the
+  deployment reviews every command, but that review is the boundary, not a sandbox.
+- **Project reach** `workspace|os-user`: whether restricted work and project browsing may read
+  projects outside the device's `workspace/`.
+
+A new login starts restricted (`deny`, `workspace`). `login` prints the ceiling and how to widen
+it; a widening prints the risk text and needs `--yes` or a `y` at the prompt. The organization and
+the platform can switch Full access off on their side; the narrowest setting wins.
 
 ```bash
-capybara-device mode                            # print the current mode
-capybara-device mode sandbox                    # switch to the sandbox
-capybara-device mode auto                       # prints the risk text and asks; or add --yes
-capybara-device policy add allowedDomains files.slack.com      # sandbox mode
+capybara-device ceiling show                    # the owner ceiling, network baseline, revision
+capybara-device ceiling set --full-access deny --project-reach workspace       # narrow
+capybara-device ceiling set --full-access allow --project-reach os-user --yes  # widen
+capybara-device policy add allowedDomains files.slack.com
 capybara-device policy remove allowedDomains files.slack.com
 capybara-device policy show
 ```
 
-A change applies at the next command; a running program does not need a restart. Turning the
-sandbox back on stops the commands still running in auto mode. Auto mode is set only on the
-machine: the deployment may narrow a device to `sandbox` but never turn auto mode on. An
-organization can allow or forbid auto mode; when it forbids it, this device runs in the sandbox
-and its summary says so, and the device's own `mode sandbox` always wins. `add` and `remove` work
-on `allowedDomains` and `allowCredentials`; every domain must be a lowercase host name (optionally
-`*.` for subdomains, never the apex), never an IP address or an internal name. They apply in
-sandbox mode only.
+**Restricted work** runs each operation in its own sandbox: macOS uses
+`@anthropic-ai/sandbox-runtime` (Seatbelt); Linux and Docker mode use the SDK's restricted Linux
+runtime (Landlock plus a seccomp broker). Writes stay in the scope's roots; reads stay in them too,
+plus the system and developer tool directories (on macOS `/System`, `/usr`, `/bin`, `/sbin`,
+`/private/etc`, Homebrew, Xcode and the Command Line Tools, `/Library/Apple`, `/Library/Frameworks`,
+installed JDKs) and the data of the version managers your home uses, read only; other files of the
+machine, such as the rest of your home, are not readable. Secret paths (`~/.ssh`, cloud CLI
+credentials, `~/.netrc`, `~/.gnupg`, browser profiles, this program's state directory) stay
+unreadable even inside those, and the network reaches only hosts in the local `allowedDomains` that
+the organization's allowlist also admits (plus a run's or a task's grants, within that allowlist),
+through a proxy that refuses loopback, private addresses and internal names. Restricted work also
+follows one write policy (below). On macOS each restricted command also gets its own empty temporary
+directory (`TMPDIR`, `TMP`, `TEMP`), removed when the command ends; `mktemp` without a template
+writes to the user's shared temporary directory instead, which stays closed, so give it one (`mktemp
+"$TMPDIR/x.XXXXXX"`). On Linux `TMPDIR` is the first write root. When the restricted runtime is
+unavailable here, the device reports it to the deployment and refuses restricted work with the
+reason; nothing falls back to running unconfined.
 
-A command ends with everything it started: once it returns (or times out, or is stopped), the
-program kills what it left running, such as `server &` or `nohup …`, because inside the sandbox no
-later command may signal another command's processes. Its process group goes at once, and a process
-that left the group (`setsid`) is found by the marker every process of the command carries. On
-macOS only a background task launch (`Bash` with `run_in_background`, whose command starts with the
-line `# capybara: background task launch`) keeps what it starts. On Linux the sandbox's pid
-namespace already ends every process with its command. In Docker mode and without a sandbox, a
-later command can stop what an earlier one left, so nothing is killed.
+A change to the ceiling or the policy applies at the next operation without a restart, and running
+work the narrower ceiling no longer allows is stopped. `add` and `remove` work on `allowedDomains`
+and `allowCredentials`; every domain must be a lowercase host name (optionally `*.` for
+subdomains, never the apex), never an IP address or an internal name.
 
-When a command is refused a domain, the program says why. Clients that print the proxy's answer
-show a reason such as `capybara: files.slack.com is not in this device's allowed domains`, and
-after the command its stderr ends with a trailer naming each refused host (at most 20) and who can
-lift it:
-
-```text
-[capybara-device] Network access was blocked:
-- files.slack.com:443: not in this device's allowed domains. Only the device owner can allow it (capybara-device policy add allowedDomains files.slack.com, or the device page).
-- api.foo.com:443: not in the organization's network allowlist. Only an organization admin can add it.
-- 10.0.0.5:22: a private or local address; commands can never reach it.
-```
-
-The trailer is part of the command's output, so the agent reads it too. It comes after the
-output the deployment asked for (`maxOutputBytes`), so stderr can exceed that cap by the trailer's
-lines (at most 21).
-
-In OS mode each command's result also carries the refused hosts and their layers, so the
-deployment can ask the device owner on the spot (the device announces this in its hello, together
-with a summary of its local policy: the owner's `mode`, never cut by an exec's ceiling (the
-deployment applies its own), and the sandbox-mode `allowedDomains`).
-
-### Sandbox mode details
-
-In sandbox mode commands keep `HOME` = `workspace/`, writes stay inside the device directory, the
-secret paths stay unreadable, and the network proxy refuses loopback, private addresses and
-internal names as destinations. The device's `allowedDomains` are intersected with the
-organization's allowlist; a host either list refuses is reported as described above.
-
-Version managers (asdf, nvm, pyenv, mise, …) find their data under the real home, read only, so
-their shims work with `HOME` = the workspace. Git can read a repository, but `.git/config` and
-`.git/hooks` stay unwritable: a hook or `core.sshCommand` a command wrote would run when you later
-run git there. When you want git to write (init, clone, remotes) or commands to use your
-credentials, use auto mode.
-
-### The auto mode risk
-
-In auto mode agent commands have your full capability. The deployment reviews every command and
-blocks or asks about the dangerous ones, but that review is the boundary, not an OS sandbox: prompt
-injection can still make an agent attempt to delete files or send your credentials away. Commands
-can also read this program's own credential (`credential.json`): if you suspect misuse, run
-`capybara-device logout` and log in again, which revokes it. Keep auto mode to your own development
-machine, with agents and material you trust; `capybara-device mode sandbox` turns the sandbox back
-on.
+In OS mode the hello reports your home directory (the base for project paths), and browsing
+follows the project reach. The device tracks every process an operation starts and stops it
+exactly when the operation ends, is cancelled or its task is stopped; it never kills by guessing.
 
 ### Changes from the deployment
 
 The deployment changes the local policy only by narrowing it: it may add or remove
-`allowedDomains` (an approval adds an exact host; the device page may add a `*.` wildcard) and set
-`mode: "sandbox"`. It can never set `mode: "auto"` — that is `capybara-device mode auto` on the
-machine, with its risk text and confirmation. Every host is validated like a local one, the change
-is written under `policy.json.lock`, and it applies at the next command. Each change from the
-deployment is recorded in the local command log (`commands.log`, next to `policy.json`) with who
-decided it, and so is a refused attempt and the grants a command was given:
+`allowedDomains` (an approval adds an exact host; the device page may add a `*.` wildcard) and
+narrow the owner ceiling. It can never widen it. Every host is validated like a local one, and the
+change is written under `policy.json.lock`.
+
+### The command log
+
+`commands.log` (next to `policy.json`, mode 0600, rotated to `commands.log.1` at 10 MiB) records
+one line per command (exec or background start: tag, account, conversation, `restricted` or
+`full`, exit code, the grants' source) and every policy change, from the deployment or the CLI,
+refused or failed ones included. It never holds a command's text, its environment or file contents.
 
 ```text
+{"op":"exec","tag":"t1","actor":{"accountId":"acc_123","conversationId":"conv_1"},"exitCode":0,"isolation":"restricted",...}
 {"op":"policy","detail":"policy add files.slack.com by Ada Lovelace (acc_123) via web, approval apr_456",...}
-{"op":"policy","detail":"policy refused mode auto by Ada Lovelace (acc_123) via web",...}
-{"op":"exec","detail":"grants run run_789 by acc_123: files.slack.com",...}
+{"op":"policy","detail":"ceiling set fullAccess allow, projectReach os-user by ada via cli",...}
 ```
 
-A run's or a scheduled task's network grants apply in sandbox mode only, within the organization's
-allowlist; auto mode has the machine's own network, so grants do nothing there.
-
-Limit to know: commands of one device run as the same user, and the sandbox runtime ties a
-command's list (including its run grants) to the proxy credentials it hands that command. Another
-command running at the same time on the same device could reuse them, so a run's grants may be
-usable by a concurrent command of another run on that device: same owner, same device.
-
 Limits to know: the platform's `Grep` tool assumes GNU grep, so on macOS (BSD grep) in OS mode some
-Grep options behave differently or fail. Docker mode (a Linux container) does not have this issue.
+Grep options behave differently or fail. In OS mode the `cpu` and `memoryMb` ceilings are not
+enforced yet, and `allowCredentials` is ignored (Full access already has your credentials,
+restricted work gets none).
 
-Not enforced yet in OS mode: the `cpu` and `memoryMb` ceilings. In auto mode commands already see
-the owner's credentials, so `allowCredentials` has nothing to add; in sandbox mode they get none.
-Processes a command leaves running are killed when it ends; on macOS a child that leaves the
-command's process group and runs only Apple system binaries cannot be found by its marker
-(`ps -E` hides their environment), so it survives (Linux runs each command in its own pid
-namespace, which takes every child down with it).
+### Upgrading from a protocol 2 program
+
+The old program's auto mode ran commands as you, outside any tracking this version has: processes
+they left running survive the upgrade. Restart the machine, or kill such leftovers from before the
+upgrade yourself; this version never searches for them. In Docker mode the old container is
+recreated at the first operation, which ends whatever it still ran.
 
 ## Docker mode
 
-`login --mode docker` runs every command with `docker exec` in one container per device
+`login --mode docker` runs every operation in one container per device
 (`capybara-device-<deviceId>`, started on first use from
-`ghcr.io/capybara-hq/capybara-sandbox:<tag>`, the sandbox image of this release). On Linux commands
-run as your own uid:gid, so they can write the mounted directories you own (a root user falls back to
-the image's `sandbox` user, uid 1000); on macOS as the image's `sandbox` user. `<dir>/workspace`, `<dir>/skills` (read only) and `<dir>/tmp` are mounted
-at `/workspace`, `/skills` and `/tmp`; the container has a read-only root file system, a pids limit of 1024, `--memory-swap` equal to
-`memoryMb`, `--cap-drop ALL` and `no-new-privileges`. The policy's `cpu` and
-`memoryMb` become `--cpus` and `--memory`. The container is reused while its mounts and flags
-match and recreated when they change (at the next command that finds it idle); it stays running
-(idle) between starts. Commands always have the container's own localhost and unix sockets.
+`ghcr.io/capybara-hq/capybara-sandbox:<tag>`, the sandbox image of this release). On Linux it runs
+as your own uid:gid, so it can write the mounted directories you own (a root user falls back to the
+image's `sandbox` user, uid 1000); on macOS as the image's `sandbox` user. `<dir>/workspace`,
+`<dir>/skills` (read only) and `<dir>/tmp` are mounted at `/workspace`, `/skills` and `/tmp`; the
+container has a read-only root file system, a pids limit of 1024, `--cap-drop ALL`,
+`no-new-privileges`, and the policy's `cpu` and `memoryMb` as `--cpus`, `--memory` and an equal
+`--memory-swap`.
 
-Docker mode has no per-domain network filter, so the mode alone decides:
-
-- **auto**: the container runs on Docker's default bridge (the whole internet and this machine's
-  network), and the platform's file tools reach any absolute path in the container.
-- **sandbox**: the container has no network at all, and file operations stay in the mounted roots.
-
-In both, the hello reports your home directory, while the deployment's directory listing and
-project scan cover the container's `/workspace` only (directory entries, never file contents).
-
-The network is switched between the two without recreating the container (a container disconnected
-from every network has no network, the same as `--network none`). Use OS mode's sandbox when you
-need to allow single domains.
+The container is always on Docker's default bridge: Full access has the container's whole network.
+Restricted work inside it is confined by the Linux launcher (Landlock, the seccomp broker and the
+proxy with the allowlist above), on the container's paths. The hello reports no home directory, and
+browsing covers the container's `/workspace` only. The container is reused while its mounts, flags
+and format match, and recreated, once no operation holds it, when they differ or when it lost its
+bridge; it stays running (idle) between starts.
 
 ## Running at login
 
@@ -270,14 +216,13 @@ agent out and waits (up to 10 s) until launchd has let it go, because `launchctl
 before that; a `bootstrap` that still fails with error 5 (Input/output error) is retried a few
 times. On Linux, installing again restarts the unit so the new file applies.
 
-## Staged operation backend
+## Operation backend
 
-The package includes a private macOS operation backend for the forthcoming permission-profile
-protocol. The current CLI, wire version 2, hello and dispatch still use the existing executors.
-The staged factory does not advertise restricted support: actual adapter acceptance and the
-coordinated policy-writer, background and protocol integration gates remain open. Linux and local
-Docker hosts get their own backends on the SDK's restricted Linux runtime (Landlock plus a seccomp
-broker), reported unavailable wherever that runtime's probe fails; there is no Full fallback.
+The program speaks device protocol 3 only. It binds each instance generation the deployment creates
+to a verified, sealed runtime and reports restricted support only once a self-check on that runtime
+passed (macOS: a write in its root goes through, while a write outside it, reads of a denied secret
+and of an ordinary file it was never granted, and a local connection are refused) or the runtime's
+probe passed (Linux, Docker); there is no Full fallback for restricted work.
 
 Each restricted operation has its own immutable sandbox-runtime process and proxy lifetime.
 Native methods use the SDK's hash-checked Python helper and pinned directory descriptors, with a
@@ -299,7 +244,6 @@ The private supervisor consumes operation IDs durably before launch, records tru
 identities, bounds output tails to 65,536 bytes and preserves cancellation and unknown outcomes.
 A restarted supervisor never signals a recorded PID or relaunches a consumed operation. Cleanup
 covers its registered execution groups; it does not discover arbitrary unregistered detached
-processes. Its owner-policy watcher runs while it owns live work independently of connection state.
-The later protocol cutover must also call reconciliation after successful policy writes and verify
-that live integration before enabling this backend. Journals fail closed when their bounded
+processes. Its owner-policy watcher runs while it owns live work independently of connection state,
+and every successful policy write reconciles live work at once. Journals fail closed when their bounded
 capacity is exhausted; terminal results remain subject to their reference retention deadlines.

@@ -26,7 +26,7 @@ const COMPACTION = {
 };
 
 const deployment = (promptSuggestions: "on" | "off") => ({
-  autoMode: { mode: "allowed", source: "default" },
+  fullAccess: { permission: "allowed", source: "default" },
   cloudNetwork: { allowHosts: [] as string[], orgHosts: "extend" as const, off: false },
   compaction: COMPACTION,
   promptSuggestions,

@@ -171,6 +171,10 @@ describe("Linux restricted grant checks", () => {
   };
   it("refuses an exec grant whose root contains an owner-denied path", () => {
     expect(() => checkLinuxRestrictedGrant(grant, "exec")).toThrow(/owner denies/);
+    // the refusal names the root and the denied path and says what to do instead
+    expect(() => checkLinuxRestrictedGrant(grant, "exec")).toThrow(
+      /\/home\/u .*\/home\/u\/\.ssh.*narrower directory.*Full access/,
+    );
     expect(() =>
       checkLinuxRestrictedGrant({ ...grant, readRoots: ["/home/u/project"] }, "exec"),
     ).not.toThrow();

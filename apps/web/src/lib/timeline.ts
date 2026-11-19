@@ -1195,6 +1195,8 @@ export function buildEventTimeline(
         row.status = failed ? "failed" : "done";
         if (guard !== undefined && !failed) row.guard = guard;
         if (notLoaded && !failed) row.notice = "not_loaded";
+        // the review admitted the command outside the OS sandbox (a per-call escalation)
+        if (p.review?.sandbox === "escalated") row.outsideSandbox = true;
         delete row.waiting;
         delete row.waitingFor;
         c.done = true;

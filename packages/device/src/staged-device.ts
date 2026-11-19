@@ -3,7 +3,7 @@ import { resolve } from "node:path";
 import {
   DEFAULT_SANDBOX_ROOTS,
   type DeviceFeature,
-  type DeviceHelloV3,
+  type DeviceHello,
   FileSystemGoneError,
   type SandboxHandle,
   type SandboxPermissionSupport,
@@ -12,6 +12,7 @@ import {
   type SandboxStopResult,
   validateSandboxPathShape,
 } from "@capybara-hq/plugin-sdk";
+import { CommandLog } from "./command-log.js";
 import type { OperationContainerHost } from "./exec/docker-operations.js";
 import { credentialIdentity, InstanceBinder, type StoredBinding } from "./exec/instance-binding.js";
 import type { LinuxBackendDependencies } from "./exec/linux-operation-backend.js";
@@ -88,9 +89,9 @@ export interface StagedDeviceOptions {
   /** The owner's home (default: the user's), for the denied secret paths and the hello. */
   home?: string;
   platform?: NodeJS.Platform;
-  /** A docker-mode device lends its container to each operation (the Docker executor). */
+  /** A docker-mode device lends its container to each operation (`DockerContainer`). */
   container?: OperationContainerHost;
-  /** Releases what construction acquired (the Docker executor); called by {@link StagedDevice.dispose}. */
+  /** Releases what construction acquired; called by {@link StagedDevice.dispose}. */
   dispose?: () => Promise<void>;
   /**
    * The host interpreter the trusted helpers run with (the output spool helper and the native
@@ -137,7 +138,7 @@ export interface StagedDevice {
     programVersion?: string;
     home?: string;
     bootId?: string;
-  }): Promise<Omit<DeviceHelloV3, "transport">>;
+  }): Promise<Omit<DeviceHello, "transport">>;
   /** `create`: the roots of a new instance; the bound (now older) generation's tasks are dropped. */
   create(signal: AbortSignal): Promise<{ roots: SandboxRoots }>;
   /**
@@ -267,6 +268,8 @@ export function createStagedDevice(o: StagedDeviceOptions): StagedDevice {
   });
   const owner: StagedOwnerPolicy = {
     store: policy,
+    // operations and policy changes are recorded in the owner's local command log
+    log: new CommandLog(stateDir),
     report: () => issueOwnerReport({ stateDir, deviceId: cred.deviceId, dir: cred.dir, home }),
     reconcile: async (signal) => {
       await binder.current()?.backend.reconcileOwnerCeiling(signal);

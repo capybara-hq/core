@@ -1,33 +1,42 @@
-import { mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  type BindInstanceResultV3,
+  type BindInstanceResult,
+  DEVICE_PROTOCOL_VERSION,
   FileSystemGoneError,
-  parseDeviceFrameV3,
+  type KernelRequest,
+  parseDeviceFrame,
   type SandboxOperationScope,
   SandboxPermissionUnsupportedError,
 } from "@capybara-hq/plugin-sdk";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { DISCONNECTED_MESSAGE } from "../src/client.js";
+import {
+  DISCONNECTED_MESSAGE,
+  deploymentOutdatedMessage,
+  OUTDATED_MESSAGE,
+} from "../src/client.js";
 import type { OperationContainerHost } from "../src/exec/docker-operations.js";
 import type { LinuxProbe } from "../src/exec/linux-runtime.js";
 import type { MacSelfCheckInput } from "../src/exec/mac-self-check.js";
 import type { MacWorkerRequest } from "../src/exec/operation-worker.js";
 import type { EnvironmentInputs } from "../src/exec/runtime-manifest.js";
 import { PolicyStore } from "../src/policy-store.js";
+import { serveOperationV3 } from "../src/server-ops.js";
 import { CREDENTIAL_CHANGED_MESSAGE, connectStaged } from "../src/staged-connect.js";
 import { createStagedDevice, UNBOUND_SUPPORT } from "../src/staged-device.js";
-import { type Credential, DEFAULT_POLICY, writePolicy } from "../src/state.js";
+import { type Credential, DEFAULT_POLICY, FULL_OWNER_CEILING, writePolicy } from "../src/state.js";
 import { FakeKernel } from "./fake-kernel.js";
 
+/** The policy these tests were written against: the owner allows Full access (old auto). */
+const FULL_POLICY = { ...DEFAULT_POLICY, ownerCeiling: { ...FULL_OWNER_CEILING } };
 let root: string;
 let state: string;
 beforeEach(() => {
   root = realpathSync(mkdtempSync(join(tmpdir(), "device-staged-")));
   state = join(root, "state");
   mkdirSync(join(root, "device"), { recursive: true });
-  writePolicy(state, DEFAULT_POLICY);
+  writePolicy(state, FULL_POLICY);
 });
 const cleanups: (() => Promise<unknown> | unknown)[] = [];
 afterEach(async () => {
@@ -224,7 +233,7 @@ describe("staged device parts (W3-M)", () => {
     const answer = (await staged().device.binder.bind(
       request(G1, B1, null),
       signal(),
-    )) as BindInstanceResultV3;
+    )) as BindInstanceResult;
     expect(answer.permissionSupport).toEqual({
       version: 1,
       restricted: { filesystem: true, network: true, native: true, concurrentScopes: true },
@@ -284,7 +293,7 @@ describe("staged device parts (W3-M)", () => {
   it("an unbound hello reports no capability; a bound one its generation and verified identity", async () => {
     const s = staged();
     const parse = (r: object) =>
-      parseDeviceFrameV3(
+      parseDeviceFrame(
         JSON.stringify({ ...r, transport: { maxFrameBytes: 69632 } }),
         "device",
         69632,
@@ -350,6 +359,35 @@ describe("staged device parts (W3-M)", () => {
     expect(s.cancelled.sort()).toEqual(["exec-1", "task-1"]);
     await running;
     await expect(s.startTask("task-2")).rejects.toBeInstanceOf(SandboxPermissionUnsupportedError);
+  });
+});
+
+describe("staged device: the local command log", () => {
+  it("the program's owner controls write commands.log in the state directory", async () => {
+    writePolicy(state, { ...DEFAULT_POLICY, ownerCeiling: { ...FULL_OWNER_CEILING } });
+    const s = staged();
+    const res = await serveOperationV3(
+      s.device.backend(),
+      s.device.handle,
+      {
+        type: "req",
+        id: "q",
+        op: "policy",
+        args: {
+          opId: "op_log",
+          add: ["files.slack.com"],
+          source: { accountId: "acc_1", accountName: "Ada", via: "web" },
+        },
+        deadlineMs: 1000,
+      } as KernelRequest,
+      signal(),
+      s.device.binder,
+      s.device.owner,
+    );
+    expect(res).toMatchObject({ ok: true });
+    expect(readFileSync(join(state, "commands.log"), "utf8")).toContain(
+      "policy add files.slack.com by Ada (acc_1) via web",
+    );
   });
 });
 
@@ -452,6 +490,38 @@ describe("staged connection (W3-M)", () => {
       ok: true,
       result: { roots: { workspace: join(root, "device", "workspace") } },
     });
+  });
+
+  it("an owner report that breaks after the hello is reported, never an unhandled rejection", async () => {
+    const k = await kernel();
+    const s = staged({ cred: credential({ connectUrl: k.url }) });
+    const report = s.device.owner.report;
+    let calls = 0;
+    s.device.owner.report = () => {
+      calls += 1;
+      // the hello's report succeeds; policy.json breaks right after
+      if (calls > 1) throw new Error("policy.json is not valid JSON");
+      return report();
+    };
+    const unhandled = vi.fn();
+    process.on("unhandledRejection", unhandled);
+    cleanups.push(async () => {
+      process.off("unhandledRejection", unhandled);
+    });
+    const errs: string[] = [];
+    const conn = connectStaged(s.device, {
+      err: (l) => errs.push(l),
+      bootId: null,
+      policyCheckMs: 60_000,
+    });
+    cleanups.push(() => {
+      conn.stop();
+      return conn.done;
+    });
+    await k.waitFor("hello", () => k.of("hello")[0]);
+    await vi.waitFor(() => expect(errs.join("\n")).toMatch(/not valid JSON/));
+    await new Promise((r) => setImmediate(r));
+    expect(unhandled).not.toHaveBeenCalled();
   });
 
   it("an answer produced while disconnected waits the credential's grace and reaches the next socket (B-3, B-4)", async () => {
@@ -582,6 +652,32 @@ describe("staged connection (W3-M)", () => {
       expect(await conn.done).toBe(0);
       expect(s.cancelled.sort()).toEqual(["exec-1", "task-1"]);
       await running;
+    });
+  }
+
+  // A 426 names the kernel's protocol: an older deployment is to be upgraded, not this program.
+  for (const [kernelProtocol, expected] of [
+    [DEVICE_PROTOCOL_VERSION + 1, OUTDATED_MESSAGE],
+    [DEVICE_PROTOCOL_VERSION - 1, deploymentOutdatedMessage(DEVICE_PROTOCOL_VERSION - 1)],
+    [undefined, OUTDATED_MESSAGE],
+  ] as const) {
+    it(`a 426 from a kernel on protocol ${kernelProtocol ?? "(unreadable)"} says which side to upgrade`, async () => {
+      const k = await kernel();
+      k.rejectWith = 426;
+      k.rejectBody =
+        kernelProtocol === undefined
+          ? undefined
+          : {
+              error: {
+                code: "device.program_outdated",
+                message: `This kernel speaks device protocol ${kernelProtocol}. Update capybara-device.`,
+              },
+            };
+      const s = staged({ cred: credential({ connectUrl: k.url }) });
+      const errs: string[] = [];
+      const conn = connectStaged(s.device, { err: (l) => errs.push(l), bootId: null });
+      expect(await conn.done).toBe(1);
+      expect(errs).toContain(expected);
     });
   }
 

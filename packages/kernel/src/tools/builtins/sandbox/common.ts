@@ -31,7 +31,6 @@ import { canonicalRoot, workingRootOf } from "../../../devices/working-root.js";
 import { ApiError } from "../../../errors.js";
 import type { KernelConfigService } from "../../../infra/config/kernel-config.service.js";
 import { InstanceBindingError } from "../../../local-devices/instance-bindings.js";
-import { AUTO_MODE_NOT_ALLOWED_TEXT } from "../../../local-devices/local-device-provider.js";
 import { isDeviceRequestNotSent } from "../../../local-devices/relay.js";
 import { type DeviceModeLevel, devicePathsChange } from "../../../runtime/context/device-paths.js";
 import {
@@ -40,7 +39,6 @@ import {
   attachmentsRoot,
 } from "../../../sandbox/attachments-path.js";
 import { SandboxPathBusyError } from "../../../sandbox/leases.js";
-import type { LegacyRetirementStore } from "../../../sandbox/legacy-retirement.js";
 import {
   MANAGED_DEVICE_CONTEXT_FAILED_TEXT,
   MANAGED_DEVICE_CONTEXT_STALE_TEXT,
@@ -51,15 +49,21 @@ import {
   ManagedDeviceContextUnavailable,
 } from "../../../sandbox/managed-device-context.js";
 import type { SandboxMode } from "../../../sandbox/modes.js";
+import { isEscalationGrantMissing } from "../../../sandbox/operation-authority-types.js";
 import type { HeldDeviceContextEvidence } from "../../../sandbox/permission-context-types.js";
 import {
   type HeldProvider,
+  RetirementPendingError,
   SandboxLockLostError,
   type SandboxService,
 } from "../../../sandbox/sandbox.service.js";
-import { SandboxProviderUnreachableError } from "../../../sandbox/unreachable.js";
+import {
+  providerConnectionFailure,
+  SandboxProviderUnreachableError,
+} from "../../../sandbox/unreachable.js";
 import type { StorageService } from "../../../storage/storage.service.js";
 import type { BuiltinCallContext, ToolListingScope } from "../../registry.js";
+import { assertDeviceOfRunAccount } from "./device-owner.js";
 
 /** 沙箱工具的依赖（都按调用时取，多副本下无进程内状态）。 */
 export interface SandboxToolDeps {
@@ -81,22 +85,9 @@ export interface SandboxToolDeps {
   /** Background `Bash` tasks; absent in test stubs, where `run_in_background` is refused. */
   background?: Pick<
     BackgroundTaskStore,
-    | "reserve"
-    | "markStarted"
-    | "failLaunch"
-    | "finishStoppedLaunch"
-    | "releaseStop"
-    | "get"
-    | "advanceOffset"
-    | "runningOwnedBy"
-    | "finishedOwnedBy"
+    "releaseStop" | "get" | "advanceOffset" | "runningOwnedBy" | "finishedOwnedBy"
   > &
     Partial<Pick<BackgroundTaskStore, "reserveManaged" | "failManagedPreEffect">>;
-  /**
-   * The legacy-launch freeze check (permission runtime cutover 8.5) every legacy background launch
-   * makes immediately before it dispatches; always wired in the kernel, absent in test stubs.
-   */
-  legacyLaunch?: Pick<LegacyRetirementStore, "admitLegacyDispatch">;
   /**
    * Whether `id` is a sub-agent conversation in the tree under `rootConversationId` (TaskOutput /
    * TaskStop tell a sub-agent's agentId apart from an unknown task id), and the sub-agents a
@@ -498,13 +489,8 @@ function legacyPreparationSession(s: SandboxSession): PreparationSession {
 }
 
 /**
- * A machine that reports auto mode while the organization allows only sandbox mode (auto mode
- * spec §4.3): the kernel's refusal text plus what the model can do.
- */
-const AUTO_MODE_TOOL_TEXT = `${AUTO_MODE_NOT_ALLOWED_TEXT} Ask the user to switch it on the machine, or to start a new conversation on another device.`;
-/**
- * Full access refused by policy (B-13: `org.*` / `deployment.*`, old and renamed codes): the
- * organization or the platform has it off. The kernel's own message is never shown.
+ * Full access refused by policy (B-13: `org.*` / `deployment.*`): the organization or the
+ * platform has it off. The kernel's own message is never shown.
  */
 export const FULL_ACCESS_OFF_BY_POLICY_TOOL_TEXT =
   "Full access is turned off by your organization's or the platform's policy, so nothing ran. Continue with the Request approval or Approve for me permission profile, or ask an org admin (or a super admin) to allow Full access.";
@@ -513,23 +499,40 @@ export const FULL_ACCESS_OFF_BY_POLICY_TOOL_TEXT =
  */
 export const FULL_ACCESS_CEILING_TOOL_TEXT =
   "This device's owner ceiling does not allow Full access, so nothing ran. Ask the device's owner to raise it with `capybara-device ceiling set` on that machine, or continue with the Request approval or Approve for me permission profile.";
-/**
- * The full-access refusal codes off by policy: the renamed ones (W5-P3b) and the old organization
- * and platform names until that rename lands; `device.auto_mode_not_allowed` keeps its machine
- * text ({@link AUTO_MODE_TOOL_TEXT}).
- */
+/** The full-access refusal codes off by policy (organization and platform). */
 const FULL_ACCESS_OFF_BY_POLICY_CODES: ReadonlySet<string> = new Set([
   "org.full_access_not_allowed",
   "deployment.full_access_not_allowed",
-  "org.auto_mode_not_allowed",
-  "deployment.auto_mode_not_allowed",
 ]);
+/**
+ * The legacy retirement gate's refusals (`RetirementPendingError`, permission runtime cutover
+ * 8.5): the device's earlier instance may still run background work an earlier version started.
+ * Each says what clears it; the generic `device.unavailable` text would name an inactive provider.
+ */
+export const RETIREMENT_PENDING_TOOL_TEXT =
+  "This device is unavailable: background work started by an earlier version may still run on its previous instance, which has not been confirmed destroyed yet, so nothing ran. Retry later (a cloud device becomes usable once its provider confirms the old instance destroyed), continue without the device, or ask the user to start a new conversation on another device.";
+export const RETIREMENT_RESTART_TOOL_TEXT =
+  "Background work started by an earlier version may still be running on this device's computer, so nothing ran. Ask the user to restart that computer to finish the upgrade, then retry; or continue without the device.";
+export const RETIREMENT_RECREATE_TOOL_TEXT =
+  "Background work started by an earlier version may still be running on an earlier instance of this device, which can no longer be verified as destroyed, so nothing ran. Ask the device's owner to delete the device and create it again, or ask the user to start a new conversation on another device.";
+export const RETIREMENT_REPLACE_TOOL_TEXT =
+  "Background work started by an earlier version may still be running on this device's computer, which cannot prove a restart, so nothing ran. Ask the device's owner to delete the device and connect the computer again as a new device, or ask the user to start a new conversation on another device.";
+/** The model-facing text of a retirement refusal's code (`device.unavailable` for any other). */
+function retirementToolText(code: string): string {
+  if (code === "device.restart_required") return RETIREMENT_RESTART_TOOL_TEXT;
+  if (code === "device.recreate_required") return RETIREMENT_RECREATE_TOOL_TEXT;
+  if (code === "device.replace_required") return RETIREMENT_REPLACE_TOOL_TEXT;
+  return RETIREMENT_PENDING_TOOL_TEXT;
+}
 /**
  * A managed operation outside the admitted scope (`SandboxScopeDeniedError`): fixed text, never
  * the refusal's own message (a provider may write it).
  */
 export const SCOPE_DENIED_TOOL_TEXT =
   "This operation reaches outside what this conversation's permission profile allows on the device (a path outside the directories it may read or write, or a host it may not reach), so it did not run. Keep the call inside the working directory and the directories already granted, or ask the user to grant the directory or choose a broader permission profile, then retry.";
+/** An approved sandbox escalation whose grant no longer matches at admission (nothing ran). */
+export const ESCALATION_GRANT_MISSING_TEXT =
+  'This Bash call was approved to run outside the sandbox, but the approval no longer matches: the device, its Full access ceiling or this conversation\'s permission scope changed since it was approved, so it did not run. Call Bash again with sandbox: "escalated" and a justification to ask again, or call it without sandbox to run it inside the sandbox.';
 /** A staged request the machine never got: it reconnected before the request was sent. */
 export const DEVICE_REQUEST_NOT_SENT_TOOL_TEXT =
   "The device's machine reconnected before this operation was sent, so nothing ran. Retry the tool call.";
@@ -552,6 +555,18 @@ const RECONCILE_REQUIRED_TEXT =
 const INSTANCE_BINDING_TEXT =
   "The device's machine has not confirmed its current instance, so nothing ran. Ask the person to restart capybara-device on that machine (updating it if it is outdated), then retry, or to start a new conversation on another device.";
 
+/** The provider connection failure behind an unknown outcome, with the raw error to log. */
+function unreachableCause(
+  cause: unknown,
+): { failure: "connect" | "dropped"; err: unknown } | undefined {
+  if (cause instanceof SandboxProviderUnreachableError)
+    return { failure: cause.failure, err: cause.cause };
+  const failure = providerConnectionFailure(cause);
+  return failure ? { failure, err: cause } : undefined;
+}
+
+export { DEVICE_OF_ANOTHER_ACCOUNT_TEXT } from "./device-owner.js";
+
 export function mapSandboxError(e: unknown, log: Pick<Logger, "warn"> | undefined): unknown {
   if (e instanceof ManagedDeviceContextStale)
     return new ToolError(MANAGED_DEVICE_CONTEXT_STALE_TEXT, { kind: "unavailable" });
@@ -561,12 +576,26 @@ export function mapSandboxError(e: unknown, log: Pick<Logger, "warn"> | undefine
     return new ToolError(MANAGED_DEVICE_CONTEXT_FAILED_TEXT, { kind: "unavailable" });
   // the managed route's typed refusals (unknown first: it never proves the operation had no effect)
   if (isSandboxOperationOutcomeUnknownError(e)) {
+    // the provider could not be reached after the durable dispatch: the ledger keeps the outcome
+    // unknown, the model gets the actionable connection text (a connection never made did
+    // nothing; a broken one may have acted)
+    const unreachable = unreachableCause((e as { cause?: unknown }).cause);
+    if (unreachable) {
+      log?.warn("sandbox provider unreachable", { ...unreachable, outcome: "unknown" });
+      if (unreachable.failure === "connect")
+        return new ToolError(SANDBOX_UNREACHABLE_TEXT, { kind: "unavailable" });
+      return new ToolError(SANDBOX_CONNECTION_DROPPED_TEXT, { kind: "unavailable" });
+    }
     log?.warn("sandbox operation outcome unknown", { err: e });
     return new ToolError(OUTCOME_UNKNOWN_TOOL_TEXT, { kind: "unavailable" });
   }
   // kernel-typed, before the scope refusal it extends: nothing was sent, a retry is safe
   if (isDeviceRequestNotSent(e))
     return new ToolError(DEVICE_REQUEST_NOT_SENT_TOOL_TEXT, { kind: "unavailable" });
+  if (isEscalationGrantMissing(e)) {
+    log?.warn("sandbox escalation grant no longer matches", { err: e });
+    return new ToolError(ESCALATION_GRANT_MISSING_TEXT);
+  }
   if (isSandboxScopeDeniedError(e)) {
     log?.warn("sandbox operation outside its scope", { err: e });
     return new ToolError(SCOPE_DENIED_TOOL_TEXT);
@@ -581,6 +610,9 @@ export function mapSandboxError(e: unknown, log: Pick<Logger, "warn"> | undefine
       return new ToolError(SANDBOX_UNREACHABLE_TEXT, { kind: "unavailable" });
     }
     return new ToolError(SANDBOX_CONNECTION_DROPPED_TEXT, { kind: "unavailable" });
+  }
+  if (e instanceof RetirementPendingError) {
+    return new ToolError(retirementToolText(e.code));
   }
   if (e instanceof ApiError) {
     if (e.code === "sandbox.busy") return new ToolError(BUSY_TEXT);
@@ -602,7 +634,6 @@ export function mapSandboxError(e: unknown, log: Pick<Logger, "warn"> | undefine
     if (e.code === "device.files_lost") return new ToolError(ENV_FILES_LOST_TEXT);
     if (e.code === "device.offline") return new ToolError(DEVICE_OFFLINE_TEXT);
     if (e.code === "device.program_outdated") return new ToolError(DEVICE_OUTDATED_TEXT);
-    if (e.code === "device.auto_mode_not_allowed") return new ToolError(AUTO_MODE_TOOL_TEXT);
     if (e.code === "device.full_access_not_allowed")
       return new ToolError(FULL_ACCESS_CEILING_TOOL_TEXT);
     if (FULL_ACCESS_OFF_BY_POLICY_CODES.has(e.code))
@@ -716,6 +747,8 @@ async function inSandboxWith<T>(
     run: (s: PreparationSession) => Promise<void>;
   },
 ): Promise<{ value: T; notices: string[] }> {
+  // a run another account triggered never uses the owner's device (activated): refused first
+  assertDeviceOfRunAccount(deps.managedDeviceContextRequired, ctx);
   try {
     // once activated, only the managed route runs: a legacy route refuses before entering, so v1
     // permission context never sits next to old-mode device_paths; a managed route never runs

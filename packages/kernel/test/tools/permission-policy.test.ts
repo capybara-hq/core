@@ -9,11 +9,12 @@ import { afterAll, beforeAll, beforeEach, expect, it, vi } from "vitest";
 import { KernelConfigSchema } from "../../src/config/schema.js";
 import { conversationTopic, EventLog } from "../../src/conversations/event-log.js";
 import { createDb } from "../../src/db/pool.js";
+import { ApiError } from "../../src/errors.js";
 import { createLogger } from "../../src/log.js";
 import { ModelPurposesService } from "../../src/models/purposes.js";
 import { RunExecution } from "../../src/runtime/run-execution.js";
 import { SCOPE_DENIED_TOOL_TEXT } from "../../src/tools/builtins/sandbox/common.js";
-import { ToolPipeline } from "../../src/tools/pipeline.js";
+import { permissionCheckFailedText, ToolPipeline } from "../../src/tools/pipeline.js";
 import { ToolRegistry } from "../../src/tools/registry.js";
 import { truncateTables } from "../helpers/db.js";
 import { MODEL_PLUGINS_CONFIG } from "../helpers/model-plugins.js";
@@ -129,7 +130,7 @@ it.each(["Write", "Edit"])(
   },
 );
 it.each(["request-approval", "approve-for-me"] as const)(
-  "project Python needs no discretionary prompt in %s on the staged route",
+  "inline project Python is a discretionary review in %s on the staged route (no review model: an ask)",
   async (profile) => {
     const f = await fixture("Bash", { command: "python -c 'import os; print(os.getcwd())'" }, true);
     await f.db
@@ -142,9 +143,12 @@ it.each(["request-approval", "approve-for-me"] as const)(
       () => true,
       () => k.app.get(ToolPipeline).runStep(f.ctx),
     );
-    expect(result.kind).toBe("done");
-    expect(f.effects()).toBe(1);
-    expect(await k.app.get(ApprovalsService).commandForCall(f.runId, f.callId)).toBeNull();
+    expect(result.kind).toBe("suspended");
+    expect(f.effects()).toBe(0);
+    const ask = await k.app.get(ApprovalsService).commandForCall(f.runId, f.callId);
+    expect(ask?.status).toBe("pending");
+    // the consent ask proposes no reach: approved, the call would run under the base scope
+    expect(ask?.command?.permissionCandidate).toBeUndefined();
   },
 );
 
@@ -174,7 +178,7 @@ it.each(["Write", "Edit"])(
     expect(f.effects()).toBe(1);
     expect(f.scopes[0]?.filesystem).toEqual({
       kind: "scoped",
-      readRoots: ["/outside/reports", "/work"],
+      readRoots: ["/outside/reports", "/skills", "/work"],
       writeRoots: ["/outside/reports", "/work"],
     });
     const [grant] = await f.db.selectFrom("permission_call_grants").selectAll().execute();
@@ -184,6 +188,73 @@ it.each(["Write", "Edit"])(
     expect(intent?.granted_hosts).toEqual([]);
   },
 );
+
+it("the activated ask path fails closed: a refused evidence or ask is a deny result, not a run error", async () => {
+  const f = await fixture("Write", { file_path: "/outside/reports/report.txt" }, true);
+  await f.db
+    .updateTable("conversations")
+    .set({ permission_profile: "request-approval" })
+    .where("id", "=", f.conversationId)
+    .execute();
+  // the ask cannot be created (a conflicting card): the call is refused, the run goes on
+  const request = vi
+    .spyOn(k.app.get(ApprovalsService), "requestCommand")
+    .mockRejectedValueOnce(new ApiError("conflict", "The call already has another card"));
+  const result = await k.app.get(RunExecution).withClaim(
+    f.claim,
+    () => true,
+    () => k.app.get(ToolPipeline).runStep(f.ctx),
+  );
+  request.mockRestore();
+  expect(result.kind).toBe("done");
+  expect(f.effects()).toBe(0);
+  const [refused] = await f.db
+    .selectFrom("conversation_events")
+    .select("payload")
+    .where("type", "=", "tool_result")
+    .where("run_id", "=", f.runId)
+    .execute();
+  const payload = refused?.payload as { isError?: boolean; content?: string; review?: unknown };
+  expect(payload.isError).toBe(true);
+  expect(payload.content).toBe(permissionCheckFailedText("The call already has another card"));
+  expect(payload.review).toMatchObject({ decision: "deny", by: "rule" });
+});
+
+it("a reused grant records its real source: the person's approval", async () => {
+  const f = await fixture("Write", { file_path: "/outside/reports/report.txt" }, true);
+  await f.db
+    .updateTable("conversations")
+    .set({ permission_profile: "request-approval" })
+    .where("id", "=", f.conversationId)
+    .execute();
+  // the exact call already holds a human grant when it is reviewed (the review's lookup)
+  vi.spyOn(k.app.get(PermissionCallGrants), "findForAdmission").mockResolvedValueOnce({
+    id: randomUUID(),
+    expansion: {
+      readDirectories: ["/outside/reports"],
+      writeDirectories: ["/outside/reports"],
+      hosts: [],
+    },
+    scopeKind: "directories-and-hosts",
+    source: "human",
+  });
+  await k.app.get(RunExecution).withClaim(
+    f.claim,
+    () => true,
+    () => k.app.get(ToolPipeline).runStep(f.ctx),
+  );
+  const [result] = await f.db
+    .selectFrom("conversation_events")
+    .select("payload")
+    .where("type", "=", "tool_result")
+    .where("run_id", "=", f.runId)
+    .execute();
+  expect((result?.payload as { review?: unknown } | undefined)?.review).toMatchObject({
+    decision: "allow",
+    by: "person",
+    decisionSource: "human",
+  });
+});
 
 import { PermissionProfilesService } from "../../src/conversations/permission-profiles.service.js";
 import { OUTBOX_DISPATCH_FAILS } from "../../src/infra/outbox/outbox.dispatcher.js";
@@ -400,6 +471,73 @@ it.each(["allow", "ask", "deny"] as const)(
         expect(f.effects()).toBe(1);
       }
     }
+  },
+);
+
+// A file call under an owner-denied device path (here ~/.ssh) is refused before any review: no
+// directory proposal and no credential consent the device could never run.
+it.each(["request-approval", "approve-for-me"] as const)(
+  "a %s Read under ~/.ssh is refused with no approval asked",
+  async (profile) => {
+    const f = await fixture("Read", { file_path: "/home/owner/.ssh/id_rsa" }, true);
+    await f.db
+      .updateTable("conversations")
+      .set({ permission_profile: profile })
+      .where("id", "=", f.conversationId)
+      .execute();
+    const review = vi.spyOn(k.app.get(CommandReviewService), "review");
+    const result = await k.app.get(RunExecution).withClaim(
+      f.claim,
+      () => true,
+      () => k.app.get(ToolPipeline).runStep(f.ctx),
+    );
+    expect(result.kind).not.toBe("suspended");
+    expect(review).not.toHaveBeenCalled();
+    expect(await k.app.get(ApprovalsService).commandForCall(f.runId, f.callId)).toBeFalsy();
+    expect(f.effects()).toBe(0);
+    const payload = (
+      await f.db
+        .selectFrom("conversation_events")
+        .select("payload")
+        .where("conversation_id", "=", f.conversationId)
+        .where("type", "=", "tool_result")
+        .executeTakeFirstOrThrow()
+    ).payload as { content: unknown };
+    expect(JSON.stringify(payload.content)).toMatch(/under ~\/\.ssh.*cannot be approved/);
+  },
+);
+
+// The recorded review names who decided: the review model only for its own verdicts; a fixed
+// rule's deny, a rule ask (the review model unmapped) and the fail-closed ask are the rules'.
+it.each([
+  ["allow", "classifier", "review-model"],
+  ["ask", "classifier", "review-model"],
+  ["deny", "classifier", "review-model"],
+  ["ask", "rule", "rule"],
+  ["deny", "rule", "rule"],
+] as const)(
+  "a reviewed candidate's %s by %s records decision source %s",
+  async (decision, by, source) => {
+    const f = await fixture("Write", { file_path: "/outside/reports/report.txt" }, true);
+    vi.spyOn(k.app.get(CommandReviewService), "review").mockResolvedValue({
+      decision,
+      by,
+      reason: "Reviewed",
+      rule: by === "rule" ? "fixed.rule" : null,
+    });
+    await k.app.get(RunExecution).withClaim(
+      f.claim,
+      () => true,
+      () => k.app.get(ToolPipeline).runStep(f.ctx),
+    );
+    const events = await f.db
+      .selectFrom("conversation_events")
+      .select("payload")
+      .where("type", "=", "permission_reviewed")
+      .where("run_id", "=", f.runId)
+      .execute();
+    expect(events).toHaveLength(1);
+    expect(events[0]?.payload).toMatchObject({ outcome: decision, decisionSource: source });
   },
 );
 
@@ -706,7 +844,7 @@ it.each([
     expect(await f.db.selectFrom("permission_call_grants").selectAll().execute()).toEqual([]);
     expect(f.scopes[0]?.filesystem).toEqual({
       kind: "scoped",
-      readRoots: ["/work"],
+      readRoots: ["/skills", "/work"],
       writeRoots: ["/work"],
     });
   },

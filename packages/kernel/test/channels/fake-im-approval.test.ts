@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import { ChannelCardActions, type ChannelCardActionsDeps } from "../../src/channels/actions.js";
 import { approvalCard, CARD_SUMMARY_MAX, commandCardText } from "../../src/channels/cards.js";
 import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
+import { escalationAskReason } from "../../src/sandbox/review/permission-candidate.js";
 
 /**
  * The command review ask in IM (auto mode spec §5.4): the card's title, the reason and the held
@@ -247,5 +248,83 @@ describe("a command ask's click in IM", () => {
       undefined,
       "im",
     );
+  });
+});
+
+describe("a per-call sandbox escalation ask card", () => {
+  const JUSTIFICATION = "The dev server must bind port 3000.";
+  const escalationView = (escalation: Record<string, unknown>, reason?: string) =>
+    commandView({
+      command: {
+        ...commandView().command,
+        command: "npm run dev",
+        rule: null,
+        workingRoot: "/work/app",
+        escalation: { justification: JUSTIFICATION, ...escalation },
+        // under Approve for me a review model's ask may say anything: the card still discloses
+        reason: reason ?? "Looks fine but needs a person.",
+      },
+      scopes: ["once"],
+    });
+
+  it("a foreground escalation says it runs outside the sandbox, where, and why (zh and en)", async () => {
+    const zh = await approvalCard(cardDeps(escalationView({})), "ca1", "https://cap.example", "zh");
+    expect(zh?.title).toBe("智能体想在沙箱外运行这条命令，允许吗？");
+    expect(zh?.inputPreview.split("\n")).toEqual([
+      "仅本次调用在沙箱外运行，可完整访问此设备的文件和网络。",
+      "运行目录：/work/app",
+      `智能体给出的理由："${JUSTIFICATION}"`,
+      "Looks fine but needs a person.",
+      "",
+      "npm run dev",
+    ]);
+    expect(zh?.scopeLabels).toEqual({ once: "允许一次" });
+    const en = await approvalCard(cardDeps(escalationView({})), "ca1", "https://cap.example", "en");
+    expect(en?.title).toBe("The agent wants to run this command outside the sandbox. Allow?");
+    expect(en?.inputPreview).toContain(
+      "Runs outside the sandbox for this call only, with full access to this device's files and network.",
+    );
+    expect(en?.inputPreview).toContain("Runs in: /work/app");
+    expect(en?.inputPreview).toContain(`Justification (from the agent): "${JUSTIFICATION}"`);
+    expect(en?.inputPreview).not.toContain("background");
+    const text = renderCardAsText(en as NonNullable<typeof en>, "en");
+    expect(text).toContain("outside the sandbox. Allow?");
+    expect(text).toContain("Runs in: /work/app");
+  });
+
+  it("a background escalation says it keeps running outside the sandbox, at most N minutes", async () => {
+    const view = escalationView({ background: true, maxSeconds: 7200 });
+    const en = await approvalCard(cardDeps(view), "ca1", "https://cap.example", "en");
+    expect(en?.title).toBe(
+      "The agent wants to start this command in the background outside the sandbox. Allow?",
+    );
+    expect(en?.inputPreview).toContain(
+      "Starts a background process that keeps running outside the sandbox until it exits or is stopped, at most 120 minutes.",
+    );
+    const zh = await approvalCard(cardDeps(view), "ca1", "https://cap.example", "zh");
+    expect(zh?.inputPreview).toContain(
+      "启动一个后台进程，它在沙箱外持续运行，直到自行退出或被停止，最长 120 分钟。",
+    );
+  });
+
+  it("the plain escalation statement is not repeated as a reason; the justification is cleaned", async () => {
+    const escalation = { justification: "Bind\nport\u202E 3000." };
+    const view = commandView({
+      command: {
+        ...commandView().command,
+        command: "npm run dev",
+        workingRoot: "/work",
+        escalation,
+        reason: escalationAskReason(escalation),
+      },
+    });
+    const en = await approvalCard(cardDeps(view), "ca1", "https://cap.example", "en");
+    expect(en?.inputPreview.split("\n")).toEqual([
+      "Runs outside the sandbox for this call only, with full access to this device's files and network.",
+      "Runs in: /work",
+      'Justification (from the agent): "Bind port 3000."',
+      "",
+      "npm run dev",
+    ]);
   });
 });

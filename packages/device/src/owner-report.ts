@@ -1,6 +1,6 @@
 import { closeSync, existsSync, fsyncSync, openSync, readFileSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { type DeviceOwnerCeilingV3, parseOwnerCeilingReportV3 } from "@capybara-hq/plugin-sdk";
+import { type DeviceOwnerCeiling, parseOwnerCeilingReport } from "@capybara-hq/plugin-sdk";
 import { readStrictOwnerCeilingSync } from "./exec/operation-types.js";
 import { withPolicyLock, writePrivate } from "./state.js";
 
@@ -92,7 +92,7 @@ export function issueOwnerReport(input: {
   deviceId: string;
   dir: string;
   home?: string;
-}): DeviceOwnerCeilingV3 {
+}): DeviceOwnerCeiling {
   return withPolicyLock(input.stateDir, () => {
     const ceiling = readStrictOwnerCeilingSync(input);
     const state = readState(input.stateDir);
@@ -102,7 +102,7 @@ export function issueOwnerReport(input: {
       if (!Number.isSafeInteger(sequence)) throw new Error("Owner report sequence exhausted");
       writeState(input.stateDir, { sequence, lastPublishedRevision: ceiling.revision });
     }
-    return parseOwnerCeilingReportV3({
+    return parseOwnerCeilingReport({
       version: 2,
       revision: ceiling.revision,
       sequence,

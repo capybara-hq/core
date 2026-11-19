@@ -1,13 +1,7 @@
 import { setTimeout as sleep } from "node:timers/promises";
-import {
-  isSandboxGoneError,
-  rootsOf,
-  type SandboxHandle,
-  ToolError,
-  type ToolSpec,
-} from "@capybara-hq/plugin-sdk";
+import { isSandboxGoneError, ToolError, type ToolSpec } from "@capybara-hq/plugin-sdk";
 import { type BackgroundFinish, finishedEventKey } from "../../../background/finish.js";
-import { TASK_ID_RE, TASKS_DIR, taskOutputFile } from "../../../background/launch.js";
+import { TASK_ID_RE, taskOutputFile } from "../../../background/launch.js";
 import {
   exactRefOf,
   lastLinesByRef,
@@ -23,20 +17,14 @@ import {
   ManagedOutputUnavailableError,
   type TaskOutputAssembly,
 } from "../../../background/managed-output.js";
-import { formatElapsed, lostReasonText } from "../../../background/render.js";
-import { actingAs, SID_RE, taskActor } from "../../../background/session.js";
-import {
-  parsePollOutput,
-  polledAs,
-  pollScript,
-  type TaskReport,
-} from "../../../background/status.js";
+import { formatElapsed, taskReasonText } from "../../../background/render.js";
 import { notRunningAs, RECREATED } from "../../../background/stop.js";
 import { type BackgroundTaskRow, isManagedTask } from "../../../background/store.js";
-import type {
-  HeldProvider,
-  IfRunningResult,
-  SandboxService,
+import {
+  type IfRunningResult,
+  RetirementPendingError,
+  retirementPending,
+  type SandboxService,
 } from "../../../sandbox/sandbox.service.js";
 import type { BuiltinCallContext, BuiltinResult, BuiltinTool } from "../../registry.js";
 import {
@@ -52,15 +40,14 @@ import {
   unavailableWhenNoSandbox,
 } from "./common.js";
 import { type DeviceCode, parseDeviceCode } from "./device-code.js";
+import { assertDeviceOfRunAccount } from "./device-owner.js";
 
 /** How long `TaskOutput` waits with `block` when `timeout` is not given (ms). */
 export const TASK_OUTPUT_DEFAULT_TIMEOUT_MS = 30_000;
 /** The longest `TaskOutput` wait (ms). */
 export const TASK_OUTPUT_MAX_TIMEOUT_MS = 600_000;
-/** How often a blocking `TaskOutput` checks the task (each check a short exec of its own). */
+/** How often a blocking `TaskOutput` checks the task (each check an exact status read). */
 export const TASK_CHECK_INTERVAL_MS = 2000;
-/** The time limit of one check or read exec. */
-const READ_EXEC_TIMEOUT_MS = 30_000;
 
 const SPEC: ToolSpec = {
   name: "TaskOutput",
@@ -205,30 +192,6 @@ export async function recheckDevice(env: TaskEnv, ctx: BuiltinCallContext): Prom
 }
 
 /**
- * `ifRunning` on the task's own device instance (its execs act for the task's trigger in its
- * conversation); sandbox errors become the tools' errors. A task from before devices has no
- * instance (`not_running`).
- */
-export async function onTaskInstance<T>(
-  env: TaskEnv,
-  task: BackgroundTaskRow,
-  fn: (p: HeldProvider, h: SandboxHandle, signal: AbortSignal) => Promise<T>,
-  signal: AbortSignal,
-): Promise<IfRunningResult<T>> {
-  if (task.deviceId === null) return { kind: "not_running", status: "gone" };
-  try {
-    return await env.ifRunning(
-      task.deviceId,
-      { createdAt: task.sandboxCreatedAt as Date },
-      (p, h, sig) => fn(actingAs(p, taskActor(task)), h, sig),
-      signal,
-    );
-  } catch (e) {
-    throw mapSandboxError(e, env.log);
-  }
-}
-
-/**
  * The task's status line: `Status: running (2m05s)`, `Status: failed, exit code 3, after 4m12s`,
  * `Status: stopped after 1m00s`, `Status: lost (the sandbox was suspended) after 3s`.
  */
@@ -237,7 +200,7 @@ export function statusLine(task: BackgroundTaskRow, now = new Date()): string {
   const elapsed = formatElapsed(end.getTime() - task.startedAt.getTime());
   if (task.status === "running") return `Status: running (${elapsed})`;
   let s = `Status: ${task.status === "timed_out" ? "timed out" : task.status}`;
-  if (task.lostReason !== null) s += ` (${lostReasonText(task.lostReason)})`;
+  if (task.lostReason !== null) s += ` (${taskReasonText(task)})`;
   if (task.exitCode !== null) return `${s}, exit code ${task.exitCode}, after ${elapsed}`;
   return `${s} after ${elapsed}`;
 }
@@ -253,162 +216,10 @@ export function unavailableText(task: BackgroundTaskRow, r: IfRunningResult<unkn
   return "[Output unavailable: the sandbox that ran this task is gone, and its output with it.]";
 }
 
-// ---- reading a task ----
-
-/**
- * The exec that checks and reads task `t` (relative to the workspace root): for a running task first
- * its status line (the poller's, {@link pollScript}: liveness, then the exit file), then
- * `size <bytes>` and `out <base64>`, at most `cap` bytes of the output from byte `offset` on.
- * The file is never read whole: `tail -c +<offset+1> | head -c <cap>`. Without `read` only the
- * status line.
- */
-export function taskReadScript(
-  t: { id: string; sid: string | null; running: boolean },
-  offset: number,
-  cap: number,
-  read = true,
-): string {
-  if (!TASK_ID_RE.test(t.id)) throw new Error(`invalid background task id: ${t.id}`);
-  const lines: string[] = [];
-  if (t.running && t.sid !== null) lines.push(pollScript([{ id: t.id, sid: t.sid }]));
-  if (read) {
-    const f = `${TASKS_DIR}/${t.id}.out`;
-    const from = Math.max(0, Math.floor(offset)) + 1;
-    const n = Math.max(1, Math.floor(cap));
-    lines.push(`s=$({ wc -c < ${f}; } 2>/dev/null | tr -d ' '); echo "size \${s:-0}"`);
-    lines.push(
-      `printf 'out '; { tail -c +${from} ${f} 2>/dev/null | head -c ${n} | base64 | tr -d '\\n'; }; echo`,
-    );
-  }
-  return lines.join("\n");
-}
-
-/** What one check or read of a task saw. */
-interface Seen {
-  /** The status line of a running task (absent for a finished one, or when not reported). */
-  report: TaskReport | undefined;
-  /** The output file's size in bytes. */
-  size: number;
-  /** The bytes read. */
-  data: Buffer;
-}
-
-function parseRead(id: string, stdout: string): Seen {
-  const size = /^size ([0-9]+)$/m.exec(stdout);
-  const out = /^out ?([A-Za-z0-9+/=]*)$/m.exec(stdout);
-  return {
-    report: parsePollOutput(stdout).get(id),
-    size: size ? Number(size[1]) : 0,
-    data: Buffer.from(out?.[1] ?? "", "base64"),
-  };
-}
-
-/**
- * How many bytes before the read offset a `TaskOutput` read also reads again, so a prompt split
- * across reads still matches: `gh auth login --web` prints its one-time code and its URL line
- * separately, and a read that lands between them (or a read cap that splits them) otherwise sees
- * only one half, and no later read sees both. The tail only ever holds this many already-delivered
- * bytes, whatever the task's output size: a read's buffer stays bounded.
- */
-export const READ_TAIL_BYTES = 4096;
-
-/** The byte window one `TaskOutput` read covers. */
-export interface ReadWindow {
-  /** Where the read exec starts (the output offset minus at most {@link READ_TAIL_BYTES}). */
-  offset: number;
-  /** How many bytes the exec reads from there. */
-  cap: number;
-  /** How many of the returned bytes were already delivered by earlier reads. */
-  skip: number;
-}
-
-/**
- * The window of a read at `offset` (the output bytes already delivered) with `cap` new bytes: it
- * starts up to {@link READ_TAIL_BYTES} earlier, and the first `skip` bytes of what it returns were
- * delivered already, so the parser can match a pattern spanning the boundary. Bounded: the window
- * is `cap + READ_TAIL_BYTES` bytes at most, never more as the output grows.
- */
-export function readWindow(offset: number, cap: number): ReadWindow {
-  const start = Math.max(0, offset - READ_TAIL_BYTES);
-  const skip = offset - start;
-  return { offset: start, cap: cap + skip, skip };
-}
-
-/**
- * The bytes of `buf` up to its last whole UTF-8 character: a character cut by the read's cap is
- * left for the next read.
- */
-export function wholeUtf8Length(buf: Uint8Array): number {
-  let i = buf.length - 1;
-  let back = 0;
-  while (i >= 0 && back < 3 && ((buf[i] as number) & 0xc0) === 0x80) {
-    i--;
-    back++;
-  }
-  if (i < 0) return buf.length;
-  const b = buf[i] as number;
-  const need = b >= 0xf0 ? 4 : b >= 0xe0 ? 3 : b >= 0xc0 ? 2 : 1;
-  return i + need > buf.length ? i : buf.length;
-}
-
-/** Checks (and with `read`, reads) the task in its sandbox instance; never creates or resumes one. */
-async function look(
-  env: TaskEnv,
-  task: BackgroundTaskRow,
-  read: { offset: number; cap: number } | null,
-  signal: AbortSignal,
-): Promise<IfRunningResult<Seen>> {
-  if (task.sid !== null && !SID_RE.test(task.sid)) {
-    throw new Error(`invalid background task session: ${task.sid}`);
-  }
-  const script = taskReadScript(
-    { id: task.id, sid: task.sid, running: task.status === "running" },
-    read?.offset ?? 0,
-    read?.cap ?? 1,
-    read !== null,
-  );
-  const maxBytes = Math.ceil((read?.cap ?? 0) / 3) * 4 + 64 * 1024;
-  return onTaskInstance(
-    env,
-    task,
-    async (p, h, sig) => {
-      const r = await p.exec(h, {
-        command: script,
-        cwd: rootsOf(h).workspace,
-        timeoutMs: READ_EXEC_TIMEOUT_MS,
-        maxOutputBytes: maxBytes,
-        signal: sig,
-      });
-      if (r.exitCode !== 0 || r.truncated) {
-        throw new ToolError(
-          `Background task ${task.id} could not be read (exit ${r.exitCode}${r.truncated ? ", output truncated" : ""}); retry TaskOutput, or Read ${outputFile(task)}.`,
-        );
-      }
-      return parseRead(task.id, r.stdout);
-    },
-    signal,
-  );
-}
-
 /** How a running task ended, as the poller would finish it. */
 interface End {
   to: BackgroundFinish;
   lastLines: string;
-}
-
-/**
- * How `seen` shows the running `task` ended (an exit file, no process left, its sandbox instance
- * not running), or null while it runs (or when the row is no longer running).
- */
-function endOf(task: BackgroundTaskRow, seen: IfRunningResult<Seen>): End | null {
-  if (task.status !== "running") return null;
-  if (seen.kind === "not_running") {
-    return { to: notRunningAs(seen.status, seen.status === "suspended"), lastLines: "" };
-  }
-  if (seen.kind === "other_instance") return { to: RECREATED, lastLines: "" };
-  const r = seen.value.report;
-  const to = r ? polledAs(task, r, new Date()) : null;
-  return to === null ? null : { to, lastLines: r?.lastLines ?? "" };
 }
 
 /**
@@ -426,30 +237,15 @@ async function settle(
   return (await env.store.get(task.id)) ?? task;
 }
 
-/** {@link look}, with a `SandboxGoneError` from the exec as null (the instance is gone). */
-async function lookOrGone(
-  env: TaskEnv,
-  task: BackgroundTaskRow,
-  read: { offset: number; cap: number } | null,
-  signal: AbortSignal,
-): Promise<IfRunningResult<Seen> | null> {
-  try {
-    return await look(env, task, read, signal);
-  } catch (e) {
-    if (isSandboxGoneError(e)) return null;
-    throw e;
-  }
-}
-
 /**
  * Built-in `TaskOutput` (spec 2026-11-05-background-bash-design §2.2): a task's status and the
- * output since this conversation's last read of it. Every check is a short exec through
- * `SandboxService.ifRunning` on the task's own sandbox instance: it never creates or resumes a
- * sandbox, so a suspended or rebuilt one means the task is lost (its output unavailable). With
- * `block`, checks every {@link TASK_CHECK_INTERVAL_MS}, each under a lease of its own, until the
- * task ends or the wait (at most `timeout` and the run's time left) is over; the checks only
- * detect the end, and the one read that makes the result finishes the task (reported). The output
- * read is capped at `tools.outputSpillChars` bytes; the pipeline spills the result beyond that.
+ * output since this conversation's last read of it, by the task's exact ref only (no exec, no
+ * path) through `SandboxService.ifRunning` on the task's own instance: it never creates or
+ * resumes a sandbox, so a suspended or rebuilt one means the task is lost (its output
+ * unavailable). With `block`, checks every {@link TASK_CHECK_INTERVAL_MS}, each under a lease of
+ * its own, until the task ends or the wait (at most `timeout` and the run's time left) is over.
+ * The output read is capped at `tools.outputSpillChars` bytes; the pipeline spills the result
+ * beyond that. A legacy (SID) task is never read live ({@link legacyTaskOutput}).
  */
 export function taskOutputTool(deps: SandboxToolDeps): BuiltinTool {
   return {
@@ -466,6 +262,8 @@ export function taskOutputTool(deps: SandboxToolDeps): BuiltinTool {
     },
     async run(input, ctx) {
       const { task_id, block = true, timeout } = input as TaskOutputInput;
+      // another account's run never reads or stops on the owner's device (activated)
+      assertDeviceOfRunAccount(deps.managedDeviceContextRequired, ctx);
       const env = await taskEnv(deps, ctx);
       // A sub-agent's agentId is answered, not refused: where its report arrives is the answer
       // (acceptance 2026-11-13: guidance the model is expected to follow is not a failed call).
@@ -478,85 +276,98 @@ export function taskOutputTool(deps: SandboxToolDeps): BuiltinTool {
           display: display(`查看子智能体：${id}`, `Checked sub-agent: ${id}`),
         };
       }
-      let task = await ownedTask(env, ctx, task_id);
+      const task = await ownedTask(env, ctx, task_id);
       await recheckDevice(env, ctx);
       if (isManagedTask(task)) return managedTaskOutput(deps, env, ctx, task, block, timeout);
-      if (block && task.status === "running") {
-        const wait = Math.max(
-          0,
-          Math.min(
-            timeout ?? TASK_OUTPUT_DEFAULT_TIMEOUT_MS,
-            TASK_OUTPUT_MAX_TIMEOUT_MS,
-            runTimeLeftMs(ctx.runDeadline),
-          ),
-        );
-        const until = Date.now() + wait;
-        // no check right before the final read: the loop ends when the wait does
-        while (task.status === "running" && Date.now() < until) {
-          if (task.sandboxCreatedAt !== null) {
-            const seen = await lookOrGone(env, task, null, ctx.signal);
-            if (seen === null || endOf(task, seen) !== null) break;
-          }
-          const left = until - Date.now();
-          if (left <= 0) break;
-          await sleep(Math.min(TASK_CHECK_INTERVAL_MS, left), undefined, { signal: ctx.signal });
-          task = (await env.store.get(task.id)) ?? task;
-        }
-      }
-
-      if (task.sandboxCreatedAt === null) {
-        // a reservation still launching, or a launch that failed: nothing ran
-        return result(task, [
-          statusLine(task),
-          task.status === "running"
-            ? "[The task is still starting; no output yet.]"
-            : "[No output: the command never started.]",
-        ]);
-      }
-      const offset = task.readOffset;
-      const cap = deps.config.get().tools.outputSpillChars;
-      const window = readWindow(offset, cap);
-      const seen = await lookOrGone(
-        env,
-        task,
-        { offset: window.offset, cap: window.cap },
-        ctx.signal,
-      );
-      if (seen === null) {
-        return result(task, [statusLine(task), unavailableText(task, { kind: "other_instance" })]);
-      }
-      const end = endOf(task, seen);
-      if (seen.kind !== "ran") {
-        task = await settle(env, task, end);
-        return result(task, [statusLine(task), unavailableText(task, seen)]);
-      }
-      const { data, size } = seen.value;
-      // the window's first bytes were delivered already: only the rest is new output
-      const fresh = data.subarray(window.skip);
-      // an ended task's output is complete: only a read cut by the cap can end inside a character
-      const ended = task.status !== "running" || end !== null;
-      const used = ended && data.length < window.cap ? fresh.length : wholeUtf8Length(fresh);
-      if (used > 0) await env.store.advanceOffset(task.id, offset + used);
-      task = await settle(env, task, end);
-      const parts: string[] = [];
-      const more = size - (offset + used);
-      if (more > 0) {
-        parts.push(
-          `[${more} more bytes of output after this; call TaskOutput again to read them, or Read ${outputFile(task)}.]`,
-        );
-      }
-      const text = used === 0 ? "" : fresh.subarray(0, used).toString("utf8");
-      parts.push(used === 0 ? "[No new output.]" : text);
-      // A background command that waits for a person (`gh auth login --web`, any interactive
-      // login) prints its prompt while TaskOutput reads it (auto mode spec §6, P-D13): this is
-      // the path that shows the device-code card while the login is still pending. The parser sees
-      // the tail the window re-read plus the new bytes, so a prompt split across reads matches; it
-      // takes the newest prompt in the window, so a retried login's code is not hidden by an older
-      // prompt sitting in the tail.
-      const loginCode = used > 0 ? parseDeviceCode(data.toString("utf8")) : null;
-      return result(task, [statusLine(task), ...parts], loginCode);
+      return legacyTaskOutput(deps, env, task);
     },
   };
+}
+
+/**
+ * A legacy task's own instance, never signalled or read (as `BackgroundTaskStopper` checks it):
+ * a running one refuses with the retirement gate's own text before any provider call; one that is
+ * not running or was replaced is returned. A task from before devices has none.
+ */
+async function legacyInstance(
+  env: TaskEnv,
+  task: BackgroundTaskRow,
+): Promise<Exclude<IfRunningResult<never>, { kind: "ran" }>> {
+  if (task.deviceId === null || task.sandboxCreatedAt === null)
+    return { kind: "not_running", status: "gone" };
+  let r: IfRunningResult<never>;
+  try {
+    r = await env.ifRunning(
+      task.deviceId,
+      { createdAt: task.sandboxCreatedAt },
+      async () => {
+        throw retirementPending();
+      },
+      AbortSignal.timeout(30_000),
+    );
+  } catch (e) {
+    throw retirementRefusal(e, env);
+  }
+  if (r.kind === "ran") throw retirementRefusal(retirementPending(), env);
+  return r;
+}
+
+/**
+ * The retirement gate's refusal as the tool's error (the generic `device.unavailable` text would
+ * name an inactive provider); anything else mapped as usual.
+ */
+export function retirementRefusal(e: unknown, env: Pick<TaskEnv, "log">): unknown {
+  if (e instanceof RetirementPendingError) {
+    return new ToolError(
+      "This task's device is unavailable: background work started by an earlier version may still run on its previous instance, which has not been confirmed destroyed yet (for a local device, restarting its computer confirms it). The task cannot be read or stopped until then; continue without it, or start the work again with Bash on another device.",
+    );
+  }
+  return mapSandboxError(e, env.log);
+}
+
+/**
+ * `TaskOutput` of a legacy (SID) task: never read by an exec (permission activation W5-P2). A
+ * running one whose instance still runs belongs to the retirement gate, so the call is refused
+ * with its actionable text; one whose instance is gone, suspended or replaced is settled lost; a
+ * finished one answers with its status and the last lines its finish kept.
+ */
+async function legacyTaskOutput(
+  deps: SandboxToolDeps,
+  env: TaskEnv,
+  task: BackgroundTaskRow,
+): Promise<BuiltinResult> {
+  if (task.sandboxCreatedAt === null) {
+    // a reservation that never started: nothing ran
+    return result(task, [
+      statusLine(task),
+      task.status === "running"
+        ? "[The task is still starting; no output yet.]"
+        : "[No output: the command never started.]",
+    ]);
+  }
+  if (task.status === "running") {
+    // the instance first: only a running one belongs to the retirement gate; a gone, suspended
+    // or replaced one settles the task lost (its processes went with it, or wait for retirement)
+    const seen = await legacyInstance(env, task);
+    const end: End = {
+      to:
+        seen.kind === "not_running"
+          ? notRunningAs(seen.status, seen.status === "suspended")
+          : RECREATED,
+      lastLines: "",
+    };
+    const after = await settle(env, task, end);
+    return result(after, [statusLine(after), unavailableText(after, seen)]);
+  }
+  const lines = [
+    statusLine(task),
+    "[Output unavailable: this task was started by an earlier version of the device runtime, whose output is not read live.]",
+  ];
+  const summary = await finishSummary(deps, task);
+  if (summary !== null) {
+    lines.push(`Last lines recorded when the task finished (not new output):\n${summary}`);
+  }
+  return result(task, lines);
 }
 
 /** A managed task's ref or provider failure as the tool's error (never a fallback read). */

@@ -23,13 +23,39 @@ import {
   REVIEW_PURPOSE,
   runClassifier,
 } from "./classifier.js";
+import {
+  approverForProfile,
+  ESCALATION_RETRY_HINT,
+  escalationAskReason,
+} from "./permission-candidate.js";
+
+export { escalationAskReason, quotedJustification } from "./permission-candidate.js";
+
 import { reviewRules, reviewWrite, writtenPaths } from "./rules.js";
 import {
   applySessionGrants,
   isSessionGrantableRule,
+  type ReviewResult,
   type RuleHit,
   type RuleOutcome,
 } from "./types.js";
+
+/**
+ * The rule asks about reach, not consent: a write or a link outside the workspace. On the managed
+ * route the enforced scope and a proposed expansion decide them.
+ */
+const SCOPE_ASK_RULES: ReadonlySet<string> = new Set(["ask.outside-write", "ask.outside-link"]);
+/** The consent a file read keeps: reading a credential file or SSH keys. */
+const CREDENTIAL_READ_RULES: ReadonlySet<string> = new Set(["ask.secret-file", "ask.ssh"]);
+/**
+ * Every ask about an escalation keeps its statement first: an ask the review model made, or one
+ * the review fell back to (failed, unparseable, truncated), adds its own reason after it.
+ */
+const withEscalation = (statement: string, reason: string): string =>
+  reason === statement ? statement : `${statement} Review: ${reason}`;
+/** What an ask about a proposed expansion tells the person. */
+const EXPANSION_ASK_REASON =
+  "Approve the exact proposed directory and host access for this call. File-only grants are not supported: directory approval covers its descendants; otherwise choose an in-project path.";
 
 /**
  * The command review the tool pipeline calls (auto mode spec §5): stage 1 the pure rule table, stage
@@ -55,6 +81,11 @@ export interface ReviewVerdict {
 export interface ReviewInput {
   permissionProfile?: PermissionProfile;
   permissionCandidate?: PermissionCandidate;
+  /**
+   * A restricted `Bash` call on a device and org whose ceiling allows running outside the sandbox:
+   * a refusal of its outside reach tells the model it may retry with `sandbox: "escalated"`.
+   */
+  escalationAvailable?: boolean;
   orgId: string;
   /**
    * The root conversation of the run's tree: where the person's messages (the classifier's bounded
@@ -197,8 +228,156 @@ export class CommandReviewService implements CommandReview {
         toolKey: input.toolKey,
         err,
       });
-      return { decision: "ask", by: "rule", reason: REVIEW_ASK_REASON, rule: null };
+      const escalation =
+        input.permissionCandidate?.scopeKind === "sandbox-escalation"
+          ? input.permissionCandidate.escalation
+          : undefined;
+      return {
+        decision: "ask",
+        by: "rule",
+        reason: escalation
+          ? withEscalation(escalationAskReason(escalation), REVIEW_ASK_REASON)
+          : REVIEW_ASK_REASON,
+        rule: null,
+      };
     }
+  }
+
+  /**
+   * The permission review of a managed call (permission operation contract, policy order), after
+   * the fixed denies: Full access has no discretionary review; Request approval and Approve for me
+   * keep the sensitive-command consent (the fixed asks: sudo, credentials, persistent changes,
+   * force push, ...), which comes before any reach. A call with neither a consent ask nor a
+   * proposed expansion runs under the enforced base scope with no review. Otherwise Request
+   * approval asks the person and Approve for me asks the review model (an ask when it is not
+   * configured, unsure or failing; its deny is never an approval). The scope asks of the rules
+   * (a write or link outside the workspace) are not consent: the proposed expansion carries them,
+   * and without one the enforced scope decides. An ask keeps its rule id.
+   */
+  private async decidePermission(
+    input: ReviewInput & ReviewCall,
+    result: ReviewResult,
+    facts: {
+      kind: "write" | "command" | "read";
+      target: string;
+      workspace: string;
+      rootOf: () => Promise<string>;
+    },
+  ): Promise<ReviewVerdict> {
+    // no approver (Full access): nothing discretionary is asked; a crossing the candidate names is
+    // granted for this call within the ceiling the candidate builder already checked
+    const approver = approverForProfile(input.permissionProfile ?? "approve-for-me");
+    if (approver === "none") return allow("Current Full access covers discretionary review.", null);
+    const escalation =
+      input.permissionCandidate?.scopeKind === "sandbox-escalation"
+        ? input.permissionCandidate.escalation
+        : undefined;
+    // a command writing or linking outside the working directory with no proposal (only a
+    // literal `cd <dir>` proposes a command's directory): no approval could let the enforced scope
+    // run it, so it is refused now with what works instead
+    const commandScopeHit =
+      facts.kind === "command" && !input.permissionCandidate
+        ? result.hits.find((h) => h.outcome === "ask" && SCOPE_ASK_RULES.has(h.id))
+        : undefined;
+    if (commandScopeHit)
+      return {
+        decision: "deny",
+        by: "rule",
+        rule: commandScopeHit.id,
+        reason: `${commandScopeHit.reason.replace(/[.;]?\s*this needs approval\.?$/i, "")}, which this conversation's permission profile does not reach, and a command's own outside write cannot be approved inside the sandbox; write the file with Write or Edit (its directory can be approved), run the command after a literal \`cd\` into that directory, or keep it inside ${facts.workspace}${input.escalationAvailable ? `; ${ESCALATION_RETRY_HINT.trim().replace(/^If/, "if")}` : ""}`,
+      };
+    // the consent cases: the fixed asks and the unsure findings (an interpreter's inline code, an
+    // unparsed or uncovered line), which keep the profile's review. A read keeps only the
+    // credential reads: the write rules (persistence, shell config) are no consent for a read
+    const consentHits = result.hits.filter((h) =>
+      facts.kind === "read"
+        ? h.outcome === "ask" && CREDENTIAL_READ_RULES.has(h.id)
+        : (h.outcome === "ask" && !SCOPE_ASK_RULES.has(h.id)) || h.outcome === "unsure",
+    );
+    let consent: RuleHit | undefined;
+    let granted: RuleHit | undefined;
+    if (consentHits.length > 0) {
+      // a session grant covers its own class only, and only while the person is there to have
+      // given it (hardening spec R4, R6)
+      const grants = input.attended
+        ? await this.grantedRules(await facts.rootOf())
+        : new Set<string>();
+      const after = applySessionGrants({ outcome: "ask", hits: consentHits }, (rule) =>
+        grants.has(rule),
+      );
+      if (after.outcome === "ask" || after.outcome === "unsure") consent = after.hit;
+      else granted = after.hit;
+    }
+    const candidate = input.permissionCandidate;
+    if (!consent && !candidate) {
+      if (granted) return allow(REVIEW_REASONS.sessionGrant, granted.id);
+      // the rule table's allow, when it has one, says why; the enforced scope covers the rest
+      const allowed = result.outcome === "allow" ? decidingHit(result.hits, "allow") : undefined;
+      return allowed
+        ? allow(allowed.reason, allowed.id)
+        : allow("The enforced operation scope covers this call without expansion.", null);
+    }
+    const scopeHit =
+      facts.kind === "read"
+        ? undefined
+        : result.hits.find((h) => h.outcome === "ask" && SCOPE_ASK_RULES.has(h.id));
+    const rule = consent?.id ?? (candidate ? (scopeHit?.id ?? null) : null);
+    // an escalation's one ask states both what it crosses and any sensitive consent it carries
+    const reason = escalation
+      ? escalationAskReason(escalation, consent?.reason)
+      : (consent?.reason ??
+        (scopeHit?.reason ? `${scopeHit.reason} ${EXPANSION_ASK_REASON}` : EXPANSION_ASK_REASON));
+    const ask: ReviewVerdict = { decision: "ask", by: "rule", rule, reason };
+    if (approver === "person") return ask;
+    if (!(await this.classifierMapped(input.orgId))) return ask;
+    const answer = await runClassifier(
+      {
+        purposes: this.purposes,
+        eventLog: this.eventLog,
+        stepLog: this.stepLog,
+        config: this.config,
+        log: this.log,
+        hooks: this.host?.hooks,
+      },
+      {
+        orgId: input.orgId,
+        conversationId: input.conversationId,
+        runId: input.runId,
+        step: input.step,
+        callId: input.callId,
+        signal: input.signal,
+        ...(input.parentRunId !== undefined && {
+          parentRunId: input.parentRunId,
+          ...(input.budgetRunId !== undefined && { budgetRunId: input.budgetRunId }),
+        }),
+        hookFacts: {
+          accountId: input.accountId,
+          agentId: input.agentId,
+          agentVersion: input.agentVersion,
+          conversationKind: input.conversationKind,
+          parent: input.parent,
+        },
+        input: {
+          mode: input.mode,
+          kind: facts.kind,
+          text: facts.target,
+          cwd: facts.workspace,
+          ruleHits: result.hits,
+          personMessages: await this.personMessages(await facts.rootOf()),
+          tag: newReviewTag(),
+          ...(candidate ? { permissionCandidate: candidate } : {}),
+        },
+        beforeSend: input.beforeSend,
+      },
+    );
+    // the review model's ask still shows the rule the person is asked about
+    if (answer.decision === "ask")
+      return {
+        ...ask,
+        by: "classifier",
+        reason: escalation ? withEscalation(reason, answer.reason) : answer.reason,
+      };
+    return { decision: answer.decision, by: "classifier", reason: answer.reason, rule: null };
   }
 
   private async decide(input: ReviewInput & ReviewCall): Promise<ReviewVerdict> {
@@ -256,18 +435,14 @@ export class CommandReviewService implements CommandReview {
         rule: hit?.id ?? null,
       };
     }
-    if (input.permissionProfile === "full-access")
-      return allow("Current Full access covers discretionary review.", null);
-    if (input.permissionProfile && !input.permissionCandidate)
-      return allow("The enforced operation scope covers this call without expansion.", null);
-    if (input.permissionProfile === "request-approval")
-      return {
-        decision: "ask",
-        by: "rule",
-        rule: null,
-        reason:
-          "Approve the exact proposed directory and host access for this call. File-only grants are not supported: directory approval covers its descendants; otherwise choose an in-project path.",
-      };
+    // the activated permission review has its own order after the fixed denies
+    if (input.permissionProfile)
+      return this.decidePermission(input, result, {
+        kind: input.toolKey === "Read" ? "read" : isWrite ? "write" : "command",
+        target,
+        workspace,
+        rootOf,
+      });
     if (result.outcome === "allow" && !input.permissionCandidate) {
       return allow(hit?.reason ?? "The command review allows this command.", hit?.id ?? null);
     }

@@ -38,10 +38,8 @@ import {
   PermissionCeilingWrites,
 } from "../sandbox/permission-ceiling-writes.js";
 import {
-  type DevicesAutoModeView,
   type DevicesFullAccessView,
   type FullAccessPermission,
-  legacyAutoModeView,
   narrowedOrgFullAccess,
   readDevicesFullAccess,
 } from "../sandbox/platform-full-access.js";
@@ -261,8 +259,6 @@ export type OrgSettings = z.infer<typeof OrgSettingsSchema>;
  */
 export type OrgSettingsView = OrgSettings & {
   scheduledTasks: OrgSettings["scheduledTasks"] & { forbiddenToolsUnreadable?: true };
-  /** The old public name of `fullAccess`, mirrored by {@link orgSettingsView}. */
-  autoMode?: FullAccessPermission;
 };
 
 /** {@link OrgSettingsView} of `settings`, flagged from the stored value `raw`. */
@@ -285,11 +281,9 @@ export const OrgSettingsPatchSchema = z
     wakeOnBackgroundTask: z.boolean().nullable().optional(),
     /**
      * The org's Full permission switch; null clears it (follow the platform). `allowed` while the
-     * platform is `off` -> 400 `org.auto_mode_not_allowed`.
+     * platform is `off` -> 400 `org.full_access_not_allowed`.
      */
     fullAccess: FullAccessSetting.nullable().optional(),
-    /** The old name of `fullAccess`, still accepted (never together with it). */
-    autoMode: FullAccessSetting.nullable().optional(),
     /**
      * The org's network for cloud devices, replaced whole (hosts left out follow the deployment);
      * null clears it (open). Through the Platform tool or an API token it may only narrow.
@@ -324,29 +318,9 @@ export const OrgSettingsPatchSchema = z
     /** The org's prompt suggestions switch (on or off); null clears it (follow the platform). */
     promptSuggestions: PromptSuggestionsSetting.nullable().optional(),
   })
-  .strict()
-  .refine((p) => p.autoMode === undefined || p.fullAccess === undefined, {
-    message: "pass fullAccess only, not together with autoMode",
-    path: ["autoMode"],
-  });
+  .strict();
 
 export type OrgSettingsPatch = z.infer<typeof OrgSettingsPatchSchema>;
-
-/** A patch with the old `autoMode` moved to `fullAccess` (the schema refuses both together). */
-export function normalizeOrgSettingsPatch(patch: OrgSettingsPatch): OrgSettingsPatch {
-  if (patch.autoMode === undefined) return patch;
-  const { autoMode, ...rest } = patch;
-  return { ...rest, fullAccess: autoMode };
-}
-
-/**
- * The settings as the API answers them ({@link OrgSettingsView}), plus the old public name
- * `autoMode` mirroring `fullAccess` until the old public readers are removed.
- */
-export const orgSettingsView = (settings: OrgSettingsView): OrgSettingsView => ({
-  ...settings,
-  ...(settings.fullAccess !== undefined && { autoMode: settings.fullAccess }),
-});
 
 /** Whether a finished background task wakes an idle conversation: the org's setting, else the deployment's. */
 export function effectiveWakeOnBackgroundTask(
@@ -390,8 +364,6 @@ export interface OrgEffectiveNetwork {
 export interface OrgSettingsDeployment {
   /** The platform's Full permission switch and where it comes from. */
   fullAccess: DevicesFullAccessView;
-  /** The same switch under its old public name (`{ mode, source }`). */
-  autoMode: DevicesAutoModeView;
   /**
    * The platform's network: its allowlist (what an org's delta applies to), whether orgs may go
    * beyond it (`sandbox.limits.orgHosts`) and the kill switch (`off`: `sandbox.limits.egress` is
@@ -423,8 +395,9 @@ const asObject = (v: unknown): Record<string, unknown> =>
   v !== null && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
 
 /**
- * Parses the stored jsonb into settings (leniently, see {@link OrgSettingsSchema}). Until 8.6 `fullAccess` is read
- * over both keys, the narrower of it and the old `autoMode` ({@link narrowedOrgFullAccess}).
+ * Parses the stored jsonb into settings (leniently, see {@link OrgSettingsSchema}). `fullAccess` is
+ * read over both keys, the narrower of it and an old `autoMode` the permission configuration
+ * publication has not converted yet ({@link narrowedOrgFullAccess}; fail closed).
  */
 export function parseOrgSettings(raw: unknown): OrgSettings {
   const stored = asObject(raw);
@@ -512,8 +485,8 @@ export function logUnreadableSecuritySettings(
   }
 }
 
-const autoModeNotAllowed = (message: string): ApiError =>
-  new ApiError("org.auto_mode_not_allowed", message);
+const fullAccessNotAllowed = (message: string): ApiError =>
+  new ApiError("org.full_access_not_allowed", message);
 
 const externalSharingNotAllowed = (message: string): ApiError =>
   new ApiError("org.external_sharing_not_allowed", message);
@@ -632,7 +605,6 @@ export class OrgSettingsService {
     ]);
     return {
       fullAccess,
-      autoMode: legacyAutoModeView(fullAccess),
       cloudNetwork: {
         allowHosts: [...lim.allowHosts],
         orgHosts: lim.orgHosts,
@@ -703,13 +675,12 @@ export class OrgSettingsService {
    * The refusals of {@link update} that need no read of the org (the Platform tool's precheck):
    * auto mode where the platform turned it off, external sharing where the platform denies it.
    */
-  async check(input: OrgSettingsPatch): Promise<void> {
-    const patch = normalizeOrgSettingsPatch(input);
+  async check(patch: OrgSettingsPatch): Promise<void> {
     // allowing Full where the platform turned it off is wider than the platform allows
     if (patch.fullAccess === "allowed") {
       const platform = await readDevicesFullAccess(this.db.db, this.config, this.log);
       if (platform.permission === "off") {
-        throw autoModeNotAllowed("The platform does not allow Full permission");
+        throw fullAccessNotAllowed("The platform does not allow Full permission");
       }
     }
     if (patch.externalSharing === "on") {
@@ -756,7 +727,7 @@ export class OrgSettingsService {
 
   async update(
     orgId: string,
-    input: OrgSettingsPatch,
+    patch: OrgSettingsPatch,
     actorAccountId: string,
     actorTokenId?: string,
     /** Merged into the audit detail (the Platform tool's `via: "agent"`). */
@@ -768,7 +739,6 @@ export class OrgSettingsService {
      */
     opts?: { onlyNarrows?: boolean },
   ): Promise<OrgSettingsView> {
-    const patch = normalizeOrgSettingsPatch(input);
     await this.check(patch);
     // the org row, then (for a Full or cloud network change) the org's permission authority lock:
     // the ordered prelude, so inside a run's fence (the Platform tool's `org-settings.update`) they
@@ -800,13 +770,12 @@ export class OrgSettingsService {
    *   that takes effect when the platform relaxes (org egress ceiling spec §D3);
    * - `externalSharing`: `on` where the org is off (absent = off).
    */
-  async assertOnlyNarrows(before: OrgSettings, input: OrgSettingsPatch): Promise<void> {
-    const patch = normalizeOrgSettingsPatch(input);
+  async assertOnlyNarrows(before: OrgSettings, patch: OrgSettingsPatch): Promise<void> {
     if (patch.fullAccess !== undefined) {
       const platform = await readDevicesFullAccess(this.db.db, this.config, this.log);
       const next = patch.fullAccess === null ? platform.permission : patch.fullAccess;
       if ((before.fullAccess ?? platform.permission) !== "allowed" && next === "allowed") {
-        throw autoModeNotAllowed(
+        throw fullAccessNotAllowed(
           "Allowing Full permission needs a person in the organization settings.",
         );
       }
@@ -880,10 +849,10 @@ export class OrgSettingsService {
       after.uiArrangement = mergeArrangement(before.uiArrangement, arrangementPatch);
       if (Object.keys(after.uiArrangement).length === 0) delete after.uiArrangement;
     }
-    // Until 8.6 a stored old `autoMode` is never dropped: an unconverted key (or one an old
-    // replica wrote again) is carried in step with `fullAccess`, since old replicas still read it.
-    // A write that does not choose the value stores what every reader already sees: the narrower
-    // of the two (never refused, never wider).
+    // A stored old `autoMode` is never dropped here: only the permission configuration
+    // publication converts it (a mismatch window before activation keeps it). It is carried in
+    // step with `fullAccess`; a write that does not choose the value stores what every reader
+    // already sees: the narrower of the two (never refused, never wider).
     const legacy = "autoMode" in stored;
     if (legacy && patch.fullAccess === undefined)
       after.fullAccess = narrowedOrgFullAccess(before.fullAccess, stored.autoMode);

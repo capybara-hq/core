@@ -1,10 +1,12 @@
-import { rootsOf } from "@capybara-hq/plugin-sdk";
-import { Inject, Injectable, Optional } from "@nestjs/common";
+import { Inject, Injectable } from "@nestjs/common";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
-import { PERMISSION_CONTEXT_ACTIVATION } from "../sandbox/permission-context-types.js";
-import { type IfRunningResult, SandboxService } from "../sandbox/sandbox.service.js";
+import {
+  type IfRunningResult,
+  retirementPending,
+  SandboxService,
+} from "../sandbox/sandbox.service.js";
 import {
   type BackgroundFinish,
   type BackgroundStoppedBy,
@@ -19,16 +21,6 @@ import {
   summaryLines,
 } from "./managed.js";
 import {
-  actingAs,
-  assertTaskRef,
-  decodeTail,
-  killSession,
-  TERM_EXEC_TIMEOUT_MS,
-  tailCommand,
-  taskActor,
-  termScript,
-} from "./session.js";
-import {
   type BackgroundTaskRow,
   BackgroundTaskStore,
   type CancelRequester,
@@ -40,18 +32,6 @@ import {
  * conversation, unless a stop asked for it before: that asker's rule holds).
  */
 export type StopReason = "tool" | "person" | "subagent_end" | "conversation_deleted" | "revoked";
-
-/** The time limit of reading the last lines after a stop. */
-const TAIL_EXEC_TIMEOUT_MS = 10_000;
-
-/** How a task that exited by itself ends (spec §4.3): exit 137 past its deadline timed out. */
-export function exitedAs(task: BackgroundTaskRow, code: number, now: Date): BackgroundFinish {
-  if (code === 0) return { status: "completed", exitCode: 0 };
-  if (code === 137 && now.getTime() >= task.deadlineAt.getTime()) {
-    return { status: "timed_out", exitCode: 137 };
-  }
-  return { status: "failed", exitCode: code };
-}
 
 /** How a task whose sandbox is not running ends (`ifRunning`'s `not_running` status). */
 export function notRunningAs(status: string, killPending: boolean): BackgroundFinish {
@@ -70,13 +50,12 @@ export const RECREATED: BackgroundFinish = {
 };
 
 /**
- * Stops background tasks (spec 2026-11-05-background-bash-design §2.3, §4.3): SIGTERM to the
- * task's session, up to 5 s for it to empty, then SIGKILL until it is empty, all through
- * `SandboxService.ifRunning` (it never creates or resumes a sandbox); the task then finishes as
- * `stopped` with its last 20 lines. A task that had already exited finishes as its exit says. When
- * the sandbox is not running the task finishes as `lost` with `kill_pending` (killed right after a
- * resume); in a rebuilt sandbox as `lost` (`sandbox_recreated`). Processes a task that had
- * already exited left running are killed as well.
+ * Stops background tasks (spec 2026-11-05-background-bash-design §2.3, §4.3, permission runtime
+ * cutover phase 8.3): a managed task by its exact ref on its exact instance only, through
+ * `SandboxService.ifRunning` (it never creates or resumes a sandbox). A legacy (SID) task is never
+ * signalled: while its instance runs it belongs to the retirement gate (`RetireLegacyTasksJob`),
+ * and its stop is refused with that gate's actionable refusal; once its instance is gone or
+ * replaced it finishes `lost` without any exec or signal.
  */
 @Injectable()
 export class BackgroundTaskStopper {
@@ -96,25 +75,18 @@ export class BackgroundTaskStopper {
     @Inject(SandboxService) private readonly sandbox: Pick<SandboxService, "ifRunning">,
     @Inject(KernelDb) private readonly db: KernelDb,
     @Inject(KERNEL_LOGGER) private readonly log: Pick<KernelLogger, "warn">,
-    /**
-     * The paired activation gate: once on, a legacy (SID) task's stop refuses with the retirement
-     * refusal exactly when it would run an exec (its instance runs); one whose instance is gone
-     * or replaced still finishes without one. A managed task always stops by its exact ref.
-     */
-    @Optional() @Inject(PERMISSION_CONTEXT_ACTIVATION) private readonly activation?: boolean,
   ) {}
 
   /**
    * Stops `task` and returns its row afterwards. A task that is no longer running, or that another
    * live stop already claimed, is returned as it is now.
    *
-   * The stop first claims the task (`stopping_at`), so the poller leaves it alone while the
-   * signals take effect and the stop's finish is its only one. A reservation whose launch has not
-   * started the command yet (no `sid`) is only claimed: the launch then kills what it starts and
-   * finishes the row `stopped`. When the stop fails while the sandbox runs (busy, a provider
-   * error, a session that could not be confirmed empty), the claim is given up, the task stays
-   * `running` and the error is thrown. `how.reported`: the caller's own result tells the model this
-   * finish (a managed task's cancellation settled from a TaskOutput read).
+   * The stop first claims the task (`stopping_at`), so the poller leaves it alone while the stop
+   * takes effect and the stop's finish is its only one. A legacy reservation that never started
+   * (no instance) is only claimed: the poller fails it as abandoned. When the stop fails while the
+   * sandbox runs (busy, a provider error, a legacy task's retirement refusal), the claim is given
+   * up, the task stays `running` and the error is thrown. `how.reported`: the caller's own result
+   * tells the model this finish (a managed task's cancellation settled from a TaskOutput read).
    */
   async stop(
     task: BackgroundTaskRow,
@@ -123,14 +95,12 @@ export class BackgroundTaskStopper {
     how: { reported?: boolean } = {},
   ): Promise<BackgroundTaskRow> {
     if (!(await this.store.claimStop(task.id))) return (await this.store.get(task.id)) ?? task;
-    // read after the claim: a launch recording its session before the claim is seen here, one
-    // recording it after sees the claim (both are single-row updates of the same row)
+    // read after the claim: an acknowledgement recording the ref before the claim is seen here,
+    // one recording it after sees the claim (both are single-row updates of the same row)
     const cur = (await this.store.get(task.id)) ?? task;
     if (isManagedTask(cur)) return this.stopManaged(cur, why, signal, how.reported);
-    if (cur.status !== "running" || cur.sid === null || cur.sandboxCreatedAt === null) return cur;
+    if (cur.status !== "running" || cur.sandboxCreatedAt === null) return cur;
     const started = { ...cur, sandboxCreatedAt: cur.sandboxCreatedAt };
-    const sid = cur.sid;
-    assertTaskRef(cur.id, sid);
     const reported = why === "tool";
     // a person's stop never wakes the conversation (background Bash §3, fix round 1), nor does
     // the stop of a conversation being deleted or of a sub-agent that ended (agent map spec §5.3)
@@ -143,9 +113,9 @@ export class BackgroundTaskStopper {
             ? "subagent_end"
             : undefined;
     const opts = stoppedBy === undefined ? {} : { stoppedBy };
-    let r: IfRunningResult<{ to: BackgroundFinish; lastLines: string }>;
+    let r: IfRunningResult<never>;
     try {
-      r = await this.signalTask(started, sid, signal);
+      r = await this.legacyInstance(started, signal);
     } catch (err) {
       await this.store
         .releaseStop(cur.id)
@@ -154,11 +124,9 @@ export class BackgroundTaskStopper {
         );
       throw err;
     }
-    if (r.kind === "ran") {
-      await this.finisher.finish(cur, r.value.to, r.value.lastLines, reported, opts);
-    } else if (r.kind === "not_running") {
+    if (r.kind === "not_running") {
       await this.finisher.finish(cur, notRunningAs(r.status, true), "", reported, opts);
-    } else {
+    } else if (r.kind === "other_instance") {
       await this.finisher.finish(cur, RECREATED, "", reported, opts);
     }
     return (await this.store.get(cur.id)) ?? cur;
@@ -175,6 +143,30 @@ export class BackgroundTaskStopper {
    * running (never resumed) or was replaced leaves the cancellation owed. Who asked is recorded,
    * so a later finish keeps their wake rule.
    */
+  /**
+   * `conversation_deleted` when the task's conversation, its tree's root (the device's
+   * conversation, a sub-agent's root) or its org is deleted or gone, else null.
+   */
+  private async deletedConversationStop(cur: BackgroundTaskRow): Promise<CancelRequester | null> {
+    const ids = [...new Set([cur.conversationId, cur.sandboxConversationId])];
+    const [conversations, org] = await Promise.all([
+      this.db.db
+        .selectFrom("conversations")
+        .select(["id", "deleted_at"])
+        .where("id", "in", ids)
+        .execute(),
+      this.db.db
+        .selectFrom("orgs")
+        .select("deleted_at")
+        .where("id", "=", cur.orgId)
+        .executeTakeFirst(),
+    ]);
+    const live = conversations.filter((c) => c.deleted_at === null).length;
+    return live < ids.length || org === undefined || org.deleted_at !== null
+      ? "conversation_deleted"
+      : null;
+  }
+
   private async stopManaged(
     cur: BackgroundTaskRow,
     why: StopReason,
@@ -183,8 +175,10 @@ export class BackgroundTaskStopper {
   ): Promise<BackgroundTaskRow> {
     if (cur.status !== "running") return cur;
     const asker: CancelRequester | null = why === "revoked" ? null : why;
-    // the first asker's wake rule holds for the finish, whoever applies the stop
-    const by = cur.cancelRequestedBy ?? asker;
+    // the first asker's wake rule holds for the finish, whoever applies the stop; a revocation
+    // that wins the race against its conversation's deletion stop is still the deletion's (its
+    // finish must never wake anything)
+    const by = cur.cancelRequestedBy ?? asker ?? (await this.deletedConversationStop(cur));
     if (cur.executionRef === null) {
       if (asker !== null) await this.store.requestCancel(cur.id, asker, false);
       return (await this.store.get(cur.id)) ?? cur;
@@ -244,49 +238,21 @@ export class BackgroundTaskStopper {
   }
 
   /**
-   * SIGTERM, the grace period, SIGKILL until the session is empty, then the last lines: in the
-   * task's own instance only (`ifRunning`); a task from before devices has none.
+   * A legacy task's own instance, never signalled: a running one refuses with the retirement
+   * gate's refusal before any provider call (the gate retires it and its processes whole); one
+   * that is not running or was replaced is reported, so the task finishes without any exec or
+   * signal. A task from before devices has none.
    */
-  private async signalTask(
+  private async legacyInstance(
     cur: BackgroundTaskRow & { sandboxCreatedAt: Date },
-    sid: string,
     signal: AbortSignal | undefined,
-  ): Promise<IfRunningResult<{ to: BackgroundFinish; lastLines: string }>> {
+  ): Promise<IfRunningResult<never>> {
     if (cur.deviceId === null) return { kind: "not_running", status: "gone" };
     return this.sandbox.ifRunning(
       cur.deviceId,
       { createdAt: cur.sandboxCreatedAt },
-      async (tp, h, sig) => {
-        // once activated this refuses before the provider (the retirement gate owns the task)
-        const p = actingAs(tp, taskActor(cur), this.activation);
-        const term = await p.exec(h, {
-          command: termScript(cur.id, sid),
-          cwd: rootsOf(h).workspace,
-          timeoutMs: TERM_EXEC_TIMEOUT_MS,
-          maxOutputBytes: 4096,
-          signal: sig,
-        });
-        const exited = /^exited (-?[0-9]+)$/.exec(term.stdout.trim());
-        if (term.exitCode !== 0 || (!exited && term.stdout.trim() !== "term")) {
-          throw new Error(`the stop of background task ${cur.id} failed (${term.exitCode})`);
-        }
-        // also after an exit: processes the command left running are stopped with the task
-        if (!(await killSession(p, h, sid, this.activation))) {
-          throw new Error(`background task ${cur.id} could not be confirmed stopped`);
-        }
-        const tail = await p.exec(h, {
-          command: tailCommand(cur.id),
-          cwd: rootsOf(h).workspace,
-          timeoutMs: TAIL_EXEC_TIMEOUT_MS,
-          maxOutputBytes: 64 * 1024,
-          signal: sig,
-        });
-        const lastLines = tail.exitCode === 0 ? decodeTail(tail.stdout) : "";
-        // a task that had exited before the signal ends as its exit says
-        const to: BackgroundFinish = exited
-          ? exitedAs(cur, Number(exited[1]), new Date())
-          : { status: "stopped" };
-        return { to, lastLines };
+      async () => {
+        throw retirementPending();
       },
       signal,
     );
@@ -338,7 +304,9 @@ export class BackgroundTaskStopper {
 
   /**
    * Stops `tasks` side by side. A stop that fails while the sandbox runs leaves its task running
-   * (logged): the poller still checks it and it ends at its own deadline at the latest.
+   * (logged): a managed task stays owed to the poller and ends at its own deadline at the latest;
+   * a legacy task stays with the retirement gate until its instance is destroyed or quarantined
+   * (no deadline ends it in the kernel's view).
    */
   private async stopAll(tasks: BackgroundTaskRow[], why: StopReason): Promise<void> {
     await Promise.all(

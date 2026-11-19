@@ -24,6 +24,7 @@ import {
   PROJECT_KNOWLEDGE_TIMEOUT,
   ProjectKnowledgeService,
 } from "../../src/runtime/project/knowledge.service.js";
+import { RunExecution } from "../../src/runtime/run-execution.js";
 import { SandboxService } from "../../src/sandbox/sandbox.service.js";
 import { skillLoadOfferedIn } from "../../src/skills/catalog.js";
 import {
@@ -37,6 +38,7 @@ import {
 } from "../fixtures/plugins/sandbox-fake/index.js";
 import { onlyBuiltins } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
+import { startClaimedRun } from "../helpers/managed-calls.js";
 import { testMembers } from "../helpers/members.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
@@ -429,9 +431,9 @@ describe("project knowledge at run start", () => {
         keeps: (...args: Parameters<DeviceProjectsService["keeps"]>) => projects.keeps(...args),
       },
       {
-        // gate off: the raw route only
-        withKernelRead: () => Promise.reject(new Error("no kernel read while the gate is off")),
-        withSandbox: (async (_opts: unknown, fn: (...a: unknown[]) => unknown) =>
+        // activated: the kernel read route only (its callback checks the root before any read)
+        withSandbox: () => Promise.reject(new Error("no raw device use once activated")),
+        withKernelRead: (async (_opts: unknown, _read: unknown, fn: (...a: unknown[]) => unknown) =>
           fn(
             {},
             {
@@ -449,13 +451,20 @@ describe("project knowledge at run start", () => {
     );
     for (const root of ["/Users", "/"]) {
       const convId = await insertBound({ name: `top-${randomUUID().slice(0, 8)}`, path: root });
-      const ok = await service.record({
-        orgId,
-        conversationId: convId,
-        runId: randomUUID(),
-        kind: "chat",
-        signal: new AbortController().signal,
-      });
+      // a run start reads under its run's current execution claim
+      const { runId, claim } = await startClaimedRun(k, raw, convId, ownerId);
+      const ok = await k.app.get(RunExecution).withClaim(
+        claim,
+        () => true,
+        () =>
+          service.record({
+            orgId,
+            conversationId: convId,
+            runId,
+            kind: "chat",
+            signal: new AbortController().signal,
+          }),
+      );
       expect(ok).toBe(true);
       const roots = projectRoots(await eventsOf(db, convId));
       expect(
@@ -537,14 +546,23 @@ describe("project knowledge at run start", () => {
       kind: "chat" as const,
       signal: new AbortController().signal,
     };
-    // the run has ended: nothing is appended and the start must not go on
+    // the run has ended: it has no execution claim, so nothing is read or appended
     await put(deviceId, { [`${dir}/AGENTS.md`]: "second" });
-    expect(await service.record(input)).toBe(false);
+    await service.record(input);
     expect(projectRoots(await eventsOf(db, convId))).toHaveLength(1);
-    // the same run starting again (a crash retry): the content changed, the idem key holds
+    // the same run starting again (a crash retry, under a new claim): the content changed, the
+    // idem key holds
     await db.updateTable("runs").set({ status: "running" }).where("id", "=", runId).execute();
     try {
-      expect(await service.record(input)).toBe(true);
+      const claim = await k.app.get(RunExecution).claim(convId, runId, randomUUID());
+      if (!claim) throw new Error("the run could not be claimed");
+      expect(
+        await k.app.get(RunExecution).withClaim(
+          claim,
+          () => true,
+          () => service.record(input),
+        ),
+      ).toBe(true);
     } finally {
       await db.updateTable("runs").set({ status: "completed" }).where("id", "=", runId).execute();
     }

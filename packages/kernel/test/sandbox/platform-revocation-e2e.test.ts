@@ -1,23 +1,33 @@
 import { randomUUID } from "node:crypto";
+import { DEFAULT_SANDBOX_ROOTS } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Queue } from "bullmq";
 import { Redis } from "ioredis";
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from "vitest";
+import { BackgroundTaskStore } from "../../src/background/store.js";
 import { KernelConfigSchema } from "../../src/config/schema.js";
 import { PermissionProfilesService } from "../../src/conversations/permission-profiles.service.js";
 import { kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import type { Account } from "../../src/identity/accounts.js";
 import { SettingsService } from "../../src/identity/settings.js";
+import { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
 import { KernelDb } from "../../src/infra/database/kernel-db.js";
 import { TransactionHost } from "../../src/infra/database/transaction-host.js";
 import { OutboxService } from "../../src/infra/outbox/outbox.service.js";
+import { LocalInstanceBindings } from "../../src/local-devices/instance-bindings.js";
+import { LocalDeviceProvider } from "../../src/local-devices/local-device-provider.js";
+import { localProviderEntry } from "../../src/local-devices/local-devices.module.js";
 import { MachinesService } from "../../src/local-devices/machines.js";
+import { LocalDeviceRelay } from "../../src/local-devices/relay.js";
 import { createLogger } from "../../src/log.js";
 import { MAINTENANCE_QUEUE_NAME } from "../../src/runtime/maintenance-queue.js";
-import { SandboxOperationIntents } from "../../src/sandbox/operation-intents.js";
+import { HOLDER_REVOKE, SandboxOperationIntents } from "../../src/sandbox/operation-intents.js";
+import { SandboxOperationReconcileJob } from "../../src/sandbox/operation-reconcile.job.js";
 import { PermissionCeilingWrites } from "../../src/sandbox/permission-ceiling-writes.js";
 import { PermissionFacts } from "../../src/sandbox/permission-facts.js";
+import { LOCAL_PROVIDER, SandboxProviders } from "../../src/sandbox/providers.js";
+import { SandboxService } from "../../src/sandbox/sandbox.service.js";
 import { runInBackgroundManaged } from "../../src/tools/builtins/sandbox/bash.js";
 import { truncateTables } from "../helpers/db.js";
 import { accountsFor } from "../helpers/identity.js";
@@ -25,6 +35,9 @@ import { barrier, managedTaskFixture } from "../helpers/managed-background.js";
 import { MODEL_PLUGINS_CONFIG } from "../helpers/model-plugins.js";
 import { drainOutbox } from "../helpers/outbox.js";
 import { startKernel, type TestKernel, waitFor } from "../helpers/runs.js";
+import { seedDevice } from "../helpers/sandbox.js";
+import { seedConversation } from "../helpers/tool-fixtures.js";
+import { stagedHello } from "../local-devices/fake-machine-v3.js";
 
 /**
  * B3 evidence end to end (permission activation B-6): the platform's Full switch turned off by the
@@ -33,7 +46,9 @@ import { startKernel, type TestKernel, waitFor } from "../helpers/runs.js";
  * of the Full task by its recorded ref. Restricted work keeps its grant. A duplicate delivery of
  * the same revoke (again, or two at once) changes nothing. Stop before start: a revocation landing
  * before the start is dispatched never sends it; one landing while the start is in flight stops it
- * by its ref once known.
+ * by its ref once known. A crashed holder's revocation is durable too (W5-P3a): owed in an outbox
+ * row before its holder record is forgotten, it reaches the device by operation id even when the
+ * inline revoke fails once on a database error; nothing is ever killed broadly.
  */
 
 const PW = "correct horse battery";
@@ -271,6 +286,76 @@ it("a revocation that arrives before the start is acknowledged stops it by its r
   expect(f.provider.executions.size).toBe(1);
 });
 
+// final review M1: a start revoked while its ref is unknown ends its task `lost` / `terminal`;
+// a ref arriving later is no proof the process ended, so its exact stop runs before the
+// revocation is acknowledged
+it.each([
+  ["a dead holder's revocation", "holder"],
+  ["an abandoned unknown launch", "abandon"],
+] as const)(
+  "%s: a late ref is stopped exactly before the revocation is acknowledged",
+  async (_name, how) => {
+    const f = await fullAccessFixture();
+    const entered = barrier();
+    const release = barrier();
+    f.provider.state.beforeStart = async () => {
+      entered.resolve();
+      await release.promise;
+    };
+    const launch = runInBackgroundManaged(f.depsOf(k), await f.ctxFor(), {
+      command: "npm run dev",
+      description: "Serve",
+      run_in_background: true,
+    });
+    await entered.promise;
+    const dispatching = await f.intent();
+    expect(dispatching.state).toBe("dispatching");
+    const intents = k.app.get(SandboxOperationIntents);
+    // the dispatcher's lease lapsed: an acquirer revokes its holder (or the launch is given up)
+    if (how === "holder") await intents.revokeHolders(f.deviceId, [dispatching.holder_token ?? ""]);
+    else await intents.abandonBackgroundLaunch(f.operationId, "expired");
+    expect(await f.taskRow()).toMatchObject({ status: "lost", launch_state: "terminal" });
+    // the first revoke runs before the ref is known: only the operation's tombstone
+    await revokeJobRan(revokeJobId(f.operationId, how === "holder" ? "" : "-expired"));
+    expect(f.provider.calls.stop).toEqual([]);
+
+    // the late ref joins the owed cancellation; acknowledging needs a verified stop by that ref
+    const order: string[] = [];
+    const stop = f.provider.impl.background?.stop.bind(f.provider.impl.background);
+    if (!stop || !f.provider.impl.background) throw new Error("no background stop");
+    f.provider.impl.background.stop = async (...args: Parameters<typeof stop>) => {
+      order.push("stop");
+      return stop(...args);
+    };
+    const acknowledge = intents.acknowledgeRevocation.bind(intents);
+    const ack = vi.spyOn(intents, "acknowledgeRevocation").mockImplementation(async (id) => {
+      order.push("acknowledge");
+      return acknowledge(id);
+    });
+    try {
+      release.resolve();
+      // the process may have started before its launch was revoked: the call never claims that
+      // nothing runs, says it is being stopped and to check its effects
+      const err = (await launch.catch((e: unknown) => e)) as Error;
+      expect(err).toBeInstanceOf(Error);
+      expect(err.message).not.toMatch(/was not started|Nothing runs/);
+      expect(err.message).toMatch(
+        /^Background task \S+ \("Serve"\) may have started before its launch was (revoked|given up) \(.+\); any process it started is being stopped and will not keep running, but it may already have had effects\. Check them before calling Bash again as a new call\.$/,
+      );
+      expect(await f.intent()).toMatchObject({ state: "revoked", revoke_acknowledged: false });
+      await revokeJobRan(revokeJobId(f.operationId, "-ack"));
+    } finally {
+      ack.mockRestore();
+    }
+    expect(order).toEqual(["stop", "acknowledge"]);
+    expect(f.provider.calls.stop).toEqual([{ graceMs: 5000 }]);
+    expect(f.provider.only()).toMatchObject({ ref: f.provider.only().ref, cancelled: true });
+    expect(await f.intent()).toMatchObject({ state: "revoked", revoke_acknowledged: true });
+    // the task's record stays as it ended (lost, its slot freed)
+    expect(await f.taskRow()).toMatchObject({ status: "lost", launch_state: "terminal" });
+  },
+);
+
 it("Full-off revokes only Full work: a restricted sibling keeps its grant and keeps running", async () => {
   const f = await fullAccessFixture();
   // the machine reports every root of the instance, so restricted work stays within its reach
@@ -420,4 +505,471 @@ it("turning Full off again writes no new revocation", async () => {
     updated_at: before.updated_at,
   });
   expect(f.provider.calls.stop).toHaveLength(1);
+});
+
+// ---- a crashed holder (permission runtime cutover B-1, W5-P3a gap (c))
+
+const db = () => kernelDb(raw);
+const signal = () => AbortSignal.timeout(20_000);
+const ROOTS = { ...DEFAULT_SANDBOX_ROOTS, workspace: "/Users/owner/capybara" };
+const support = {
+  version: 1 as const,
+  restricted: null,
+  fullAccess: true,
+  background: true,
+  unavailableReason: "Restricted per-instance validation pending",
+};
+
+/** A local device whose machine answers through the staged transport; `frames` records each op. */
+async function localDevice() {
+  const seed = await seedConversation(raw);
+  const deviceId = randomUUID();
+  await db()
+    .insertInto("devices")
+    .values({
+      id: deviceId,
+      org_id: seed.orgId,
+      owner_kind: "personal",
+      owner_account_id: seed.accountId,
+      source: "local",
+      provider: LOCAL_PROVIDER,
+      name: "Laptop",
+    })
+    .execute();
+  await db()
+    .insertInto("device_machines")
+    .values({
+      org_id: seed.orgId,
+      device_id: deviceId,
+      account_id: seed.accountId,
+      credential_hash: randomUUID(),
+      name: "Laptop",
+      os: "darwin",
+      arch: "arm64",
+      program_version: "0.1.0",
+      roots: JSON.stringify(ROOTS),
+    })
+    .execute();
+  const frames: { op: string; args: Record<string, unknown> }[] = [];
+  const relay = k.app.get(LocalDeviceRelay);
+  vi.spyOn(relay, "connection").mockResolvedValue({ connectionId: "c1", maxFrameBytes: 69632 });
+  vi.spyOn(relay, "callV3").mockImplementation(async (_d, op, args) => {
+    frames.push({ op, args });
+    if (op === "create") return { roots: ROOTS };
+    if (op === "revokeOperation") return null;
+    if (op === "bindInstance") {
+      const g = args.instanceGeneration as string;
+      return {
+        instanceId: args.instanceId as string,
+        instanceGeneration: g,
+        bindingId: args.bindingId as string,
+        runtimeIdentity: {
+          runtimeHash: "a".repeat(64),
+          helperHash: "b".repeat(64),
+          imageFingerprint: "c".repeat(64),
+          instanceGeneration: g,
+        },
+        permissionSupport: support,
+        ownerCeiling: stagedHello().ownerCeiling,
+      };
+    }
+    throw new Error(`unexpected device op ${op}`);
+  });
+  // the production @local registration, over the answering transport
+  k.app.get(SandboxProviders).register(
+    localProviderEntry({
+      provider: k.app.get(LocalDeviceProvider),
+      relay,
+      bindings: k.app.get(LocalInstanceBindings),
+    }),
+  );
+  const ctx = {
+    orgId: seed.orgId,
+    deviceId,
+    holderConversationId: seed.conversationId,
+    actor: { accountId: seed.accountId, conversationId: seed.conversationId },
+  };
+  return { ...seed, deviceId, ctx, frames };
+}
+
+/** One operation intent of `f`'s device, as an admission (or a crashed holder) left it. */
+async function seedIntent(
+  f: { orgId: string; accountId: string; conversationId: string; deviceId: string },
+  o: {
+    holder?: string;
+    generation: string;
+    state: "admitted" | "dispatching" | "started-or-unknown" | "background-running" | "completed";
+    method?: "exec" | "backgroundStart";
+    provider?: string;
+    deviceId?: string;
+  },
+): Promise<string> {
+  const operationId = randomUUID();
+  const method = o.method ?? "exec";
+  await db()
+    .insertInto("sandbox_operation_intents")
+    .values({
+      operation_id: operationId,
+      org_id: f.orgId,
+      account_id: f.accountId,
+      device_id: o.deviceId ?? f.deviceId,
+      root_conversation_id: f.conversationId,
+      conversation_id: f.conversationId,
+      run_id: null,
+      call_id: null,
+      ordinal: 0,
+      method,
+      input_hash: "a".repeat(64),
+      admission_hash: "b".repeat(64),
+      input: "{}",
+      scope: "{}",
+      epochs: JSON.stringify({ platform: 0, org: 0, device: 0, root: 0 }),
+      provider: o.provider ?? LOCAL_PROVIDER,
+      provider_version: "test",
+      instance_generation: o.generation,
+      deadline: new Date(Date.now() + 60_000),
+      retain_until: new Date(Date.now() + 120_000),
+      state: o.state,
+      execution_id: randomUUID(),
+      holder_token: o.holder ?? randomUUID(),
+      ...(o.state === "background-running" && {
+        execution_ref: JSON.stringify({
+          operationId,
+          executionId: "x",
+          instanceId: o.deviceId ?? f.deviceId,
+          instanceGeneration: o.generation,
+        }),
+      }),
+    })
+    .execute();
+  return operationId;
+}
+
+/** The admitted Bash a crashed replica held on the device's current instance. */
+const admittedBash = (
+  f: Awaited<ReturnType<typeof localDevice>>,
+  holder: string,
+  generation: string,
+): Promise<string> => seedIntent(f, { holder, generation, state: "admitted" });
+
+/** A managed background task reserved for `operationId` (dispatched, no exact ref yet). */
+async function launchingTask(
+  f: { orgId: string; accountId: string; conversationId: string; deviceId: string },
+  operationId: string,
+  launchState: "pending" | "dispatched",
+): Promise<string> {
+  const id = `bt_${randomUUID()
+    .replace(/[^a-z2-7]/g, "")
+    .slice(0, 6)
+    .padEnd(6, "a")}`;
+  await db()
+    .insertInto("background_tasks")
+    .values({
+      id,
+      org_id: f.orgId,
+      conversation_id: f.conversationId,
+      sandbox_conversation_id: f.conversationId,
+      device_id: f.deviceId,
+      run_id: randomUUID(),
+      call_id: `call-${id}`,
+      trigger_account_id: f.accountId,
+      description: "d",
+      command: "sleep 600",
+      sid: null,
+      output_path: `/workspace/.capybara/tasks/${id}.out`,
+      status: "running",
+      deadline_at: new Date(Date.now() + 3_600_000),
+      sandbox_created_at: null,
+      launch_state: launchState,
+      operation_id: operationId,
+      working_root: "/workspace",
+      retain_until: new Date(Date.now() + 86_400_000),
+      ...(launchState === "dispatched" && {
+        input_digest: "d".repeat(64),
+        run_execution_id: randomUUID(),
+        task_tag: randomUUID(),
+        instance_id: f.deviceId,
+        instance_provider: LOCAL_PROVIDER,
+        instance_provider_version: "test",
+        instance_generation: "1",
+        profile_revision: 0,
+        ceiling_revision: "c",
+      }),
+    })
+    .execute();
+  return id;
+}
+
+/** A cloud device of a fresh org (the intents tests need no instance). */
+async function intentDevice() {
+  const seed = await seedConversation(raw);
+  const deviceId = await seedDevice(raw, seed.orgId, seed.accountId);
+  return { ...seed, deviceId };
+}
+
+const stateOf = async (operationId: string) =>
+  (
+    await db()
+      .selectFrom("sandbox_operation_intents")
+      .select("state")
+      .where("operation_id", "=", operationId)
+      .executeTakeFirstOrThrow()
+  ).state;
+
+it("revokeIncarnation revokes the generation's admitted, dispatching and started-or-unknown intents only", async () => {
+  const f = await intentDevice();
+  const other = await seedDevice(raw, f.orgId, f.accountId);
+  const g = "1700000000001";
+  const ids = {
+    admitted: await seedIntent(f, { generation: g, state: "admitted" }),
+    dispatching: await seedIntent(f, { generation: g, state: "dispatching" }),
+    unknown: await seedIntent(f, { generation: g, state: "started-or-unknown" }),
+    running: await seedIntent(f, {
+      generation: g,
+      state: "background-running",
+      method: "backgroundStart",
+    }),
+    completed: await seedIntent(f, { generation: g, state: "completed" }),
+    olderGeneration: await seedIntent(f, { generation: "1600000000000", state: "admitted" }),
+    otherProvider: await seedIntent(f, { generation: g, state: "dispatching", provider: "x" }),
+    otherDevice: await seedIntent(f, {
+      generation: g,
+      state: "started-or-unknown",
+      deviceId: other,
+    }),
+  };
+  await k.app
+    .get(SandboxOperationIntents)
+    .revokeIncarnation(f.deviceId, { provider: LOCAL_PROVIDER, generation: g });
+  expect({
+    admitted: await stateOf(ids.admitted),
+    dispatching: await stateOf(ids.dispatching),
+    unknown: await stateOf(ids.unknown),
+    running: await stateOf(ids.running),
+    completed: await stateOf(ids.completed),
+    olderGeneration: await stateOf(ids.olderGeneration),
+    otherProvider: await stateOf(ids.otherProvider),
+    otherDevice: await stateOf(ids.otherDevice),
+  }).toEqual({
+    admitted: "revoked",
+    dispatching: "revoked",
+    unknown: "revoked",
+    running: "background-running",
+    completed: "completed",
+    olderGeneration: "admitted",
+    otherProvider: "dispatching",
+    otherDevice: "started-or-unknown",
+  });
+});
+
+it("a revoked launch without an exact ref ends its task and frees its maxTasks slot", async () => {
+  const f = await intentDevice();
+  const intents = k.app.get(SandboxOperationIntents);
+  const store = k.app.get(BackgroundTaskStore);
+  const dead = randomUUID();
+  // a crashed holder's dispatched start, and an admitted one of a resumed generation
+  const dispatched = await seedIntent(f, {
+    holder: dead,
+    generation: "1",
+    state: "dispatching",
+    method: "backgroundStart",
+  });
+  const admitted = await seedIntent(f, {
+    generation: "2",
+    state: "admitted",
+    method: "backgroundStart",
+  });
+  const t1 = await launchingTask(f, dispatched, "dispatched");
+  const t2 = await launchingTask(f, admitted, "pending");
+  expect(await store.countRunning(f.conversationId)).toBe(2);
+  await intents.revokeHolders(f.deviceId, [dead]);
+  await intents.revokeIncarnation(f.deviceId, { provider: LOCAL_PROVIDER, generation: "2" });
+  // the exact revokes are acknowledged (the device confirmed): the tasks stay ended
+  await intents.acknowledgeRevocation(dispatched);
+  await intents.acknowledgeRevocation(admitted);
+  expect(await store.countRunning(f.conversationId)).toBe(0);
+  for (const id of [t1, t2]) {
+    const task = await store.get(id);
+    expect(task).toMatchObject({ status: "lost", launchState: "terminal" });
+    expect(task?.lostReason).toMatch(/revoked/);
+    expect(task?.finishedAt).toBeInstanceOf(Date);
+  }
+});
+
+it("a crashed holder's revocation survives a failed inline revoke: the owed job revokes its admitted Bash and the device gets the exact revoke", async () => {
+  const original = k.app.get(SandboxProviders).forName(LOCAL_PROVIDER);
+  const redis = new Redis(rd.url);
+  try {
+    await crashedHolderScenario(redis);
+  } finally {
+    vi.restoreAllMocks();
+    if (original) k.app.get(SandboxProviders).register(original);
+    redis.disconnect();
+  }
+});
+
+async function crashedHolderScenario(redis: Redis) {
+  const f = await localDevice();
+  const sandbox = k.app.get(SandboxService);
+  // the first holder makes and binds the instance, then leaves
+  await sandbox.ensureRunning(f.ctx, signal());
+  const instance = await sandbox.currentInstance(f.deviceId);
+  if (!instance) throw new Error("expected the running instance");
+  // a replica crashed holding an admitted Bash: its holder record stays, its lease is gone
+  const dead = randomUUID();
+  const operationId = await admittedBash(f, dead, String(instance.createdAt.getTime()));
+  await redis.hset(`capk:sandbox-holders:${f.deviceId}`, dead, Date.now() + 600_000);
+  await redis.pexpire(`capk:sandbox-holders:${f.deviceId}`, 600_000);
+  // the revocation fails once on a database error (the inline one or the job's, whichever
+  // runs first); the other delivers it
+  const intents = k.app.get(SandboxOperationIntents);
+  const revokeHolders = intents.revokeHolders.bind(intents);
+  let failed = 0;
+  const calls: string[][] = [];
+  vi.spyOn(intents, "revokeHolders").mockImplementation(async (deviceId, tokens) => {
+    calls.push([...tokens]);
+    if (failed++ === 0) throw new Error("Connection terminated unexpectedly");
+    return revokeHolders(deviceId, tokens);
+  });
+
+  const outbox = k.app.get(OutboxService);
+  const add = outbox.add.bind(outbox);
+  const owed: string[] = [];
+  vi.spyOn(outbox, "add").mockImplementation(async (job) => {
+    owed.push(job.jobId);
+    return add(job);
+  });
+
+  // the next holder takes over
+  await sandbox.ensureRunning(f.ctx, signal());
+  // the record is forgotten only once the revocation is owed
+  expect(await redis.hexists(`capk:sandbox-holders:${f.deviceId}`, dead)).toBe(0);
+
+  await waitFor(
+    async () => {
+      const row = await db()
+        .selectFrom("sandbox_operation_intents")
+        .select(["state", "revoke_acknowledged"])
+        .where("operation_id", "=", operationId)
+        .executeTakeFirstOrThrow();
+      return row.state === "revoked" && row.revoke_acknowledged;
+    },
+    30_000,
+    "the dead holder's admitted Bash revoked and acknowledged",
+  );
+  expect(calls.length).toBeGreaterThanOrEqual(2);
+  for (const c of calls) expect(c).toEqual([dead]);
+  const revokes = f.frames.filter((x) => x.op === "revokeOperation");
+  expect(revokes.length).toBeGreaterThanOrEqual(1);
+  for (const r of revokes)
+    expect(r.args).toEqual({ ref: { operationId, admitBeforeMs: expect.any(Number) } });
+  // no broad kill ever reaches the device
+  expect(f.frames.filter((x) => x.op === "killAll" || x.op === "killTagged")).toEqual([]);
+  // the owed job was written under its deterministic id, and so was the operation revoke
+  expect(owed).toContain(`${HOLDER_REVOKE}-${f.deviceId}-${dead}`);
+  expect(owed).toContain(`sandbox-operation-revoke-${operationId}`);
+}
+
+// final review m3: every owed revocation row carries its org, so the org's deletion removes it
+it("owed holder and operation revocations carry the device's org", async () => {
+  const f = await intentDevice();
+  const intents = k.app.get(SandboxOperationIntents);
+  const outbox = k.app.get(OutboxService);
+  const add = outbox.add.bind(outbox);
+  const owed: { jobId: string; orgId: string | undefined }[] = [];
+  // the relay may take a committed row at once: what was written is read at the write
+  const spy = vi.spyOn(outbox, "add").mockImplementation(async (job) => {
+    owed.push({ jobId: job.jobId, orgId: job.orgId });
+    return add(job);
+  });
+  try {
+    const dead = randomUUID();
+    const op = await seedIntent(f, { holder: dead, generation: "1", state: "admitted" });
+    await intents.oweHolderRevocations(f.deviceId, [dead]);
+    await intents.revokeHolders(f.deviceId, [dead]);
+    await intents.deferRevocation(op);
+    expect(owed).toEqual([
+      { jobId: `${HOLDER_REVOKE}-${f.deviceId}-${dead}`, orgId: f.orgId },
+      { jobId: revokeJobId(op), orgId: f.orgId },
+      { jobId: revokeJobId(op, "-1"), orgId: f.orgId },
+    ]);
+  } finally {
+    spy.mockRestore();
+  }
+});
+
+// final review m2: a revoked exec / read / write on an incarnation that no longer runs is
+// acknowledged once that incarnation provably ended (its confirmed destruction is recorded, or
+// the operation is past its device-enforced time limit), instead of being retried for ever; a
+// start with an exact ref stays with its exact stop (and the retirement)
+it("revoked operations of an ended incarnation are acknowledged; unproven ones and refs stay owed", async () => {
+  const f = await intentDevice();
+  const provider = "sandbox-fake";
+  // the device now runs a newer incarnation
+  await db()
+    .insertInto("device_instances")
+    .values({
+      device_id: f.deviceId,
+      org_id: f.orgId,
+      provider,
+      status: "running",
+      handle: JSON.stringify({ id: f.deviceId }),
+      created_at: new Date(1700000009000),
+      fs_status: "ready",
+      had_instance: true,
+    })
+    .execute();
+  const revoked = async (
+    generation: string,
+    o: { method?: "exec" | "backgroundStart"; deadline?: Date } = {},
+  ) => {
+    const id = await seedIntent(f, {
+      generation,
+      provider,
+      state: o.method === "backgroundStart" ? "background-running" : "admitted",
+      ...(o.method && { method: o.method }),
+    });
+    await db()
+      .updateTable("sandbox_operation_intents")
+      .set({ state: "revoked", ...(o.deadline && { deadline: o.deadline }) })
+      .where("operation_id", "=", id)
+      .execute();
+    return id;
+  };
+  const maxCommandMs = k.app.get(KernelConfigService).get().sandbox.limits.maxCommandSeconds * 1000;
+  const ids = {
+    // a cloud incarnation whose destruction the provider confirmed
+    destroyed: await revoked("1700000001000"),
+    // a replaced incarnation, nothing recorded, admitted a moment ago: it may still run
+    unproven: await revoked("1700000002000"),
+    // a replaced incarnation, past the admission deadline plus the longest command
+    expired: await revoked("1700000003000", {
+      deadline: new Date(Date.now() - maxCommandMs - 11 * 60_000),
+    }),
+    // a launched start on the destroyed incarnation: only its exact stop or the retirement
+    start: await revoked("1700000001000", { method: "backgroundStart" }),
+  };
+  await db()
+    .insertInto("device_instance_destructions")
+    .values({ device_id: f.deviceId, provider, instance_generation: "1700000001000" })
+    .execute();
+  const job = k.app.get(SandboxOperationReconcileJob);
+  for (const id of Object.values(ids)) await job.revoke(id);
+  const read = async (id: string) =>
+    db()
+      .selectFrom("sandbox_operation_intents")
+      .select(["revoke_acknowledged", "reconcile_attempt"])
+      .where("operation_id", "=", id)
+      .executeTakeFirstOrThrow();
+  expect({
+    destroyed: await read(ids.destroyed),
+    unproven: await read(ids.unproven),
+    expired: await read(ids.expired),
+    start: await read(ids.start),
+  }).toEqual({
+    destroyed: { revoke_acknowledged: true, reconcile_attempt: 0 },
+    unproven: { revoke_acknowledged: false, reconcile_attempt: 1 },
+    expired: { revoke_acknowledged: true, reconcile_attempt: 0 },
+    start: { revoke_acknowledged: false, reconcile_attempt: 1 },
+  });
 });

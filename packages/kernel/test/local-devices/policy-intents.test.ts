@@ -1,9 +1,9 @@
 import { randomUUID } from "node:crypto";
 import type {
-  DeviceHello,
   DeviceLocalPolicySummary,
   DevicePolicyOpOutcome,
   KernelReq,
+  LegacyDeviceHello,
 } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
@@ -38,7 +38,7 @@ import {
   type TestKernel,
   waitFor,
 } from "../helpers/runs.js";
-import { FakeMachine } from "./fake-machine-v3.js";
+import { FakeMachine, ownerReportFor, policyAnswer } from "./fake-machine-v3.js";
 import type { Answer } from "./test-holder.js";
 
 /**
@@ -58,7 +58,7 @@ const POLICY: DeviceLocalPolicySummary = {
 const GRACE_S = 2;
 /** How long after the intent the op can no longer reach the machine. */
 const T = POLICY_DEADLINE_MS + GRACE_S * 1000 + LIST_TTL_MARGIN_MS + 5000;
-const FEATURES: Partial<DeviceHello> = {
+const FEATURES: Partial<LegacyDeviceHello> = {
   features: ["networkReport", "policyOp", "policyOpId", "mode"],
   policy: POLICY,
 };
@@ -181,6 +181,8 @@ class Sim {
           outcome: this.log.get(opId) ?? "unknown",
           policy: this.policy,
           ...(this.log.get(opId) === "refused" && { message: this.refuse }),
+          // protocol 3: an applied outcome carries the machine's current owner report
+          ...(this.log.get(opId) === "applied" && { ownerCeiling: ownerReportFor(this.policy) }),
         },
       };
     }
@@ -206,7 +208,7 @@ class Sim {
     this.log.set(a.opId, "applied");
     if (this.after === "bad-result") return { ok: true, result: { policy: "garbled" } };
     if (this.after === "error") return { ok: false, error: { kind: "error", message: "EIO" } };
-    return { ok: true, result: { policy: this.policy } };
+    return policyAnswer(this.policy);
   }
 
   recentOps() {
@@ -214,11 +216,17 @@ class Sim {
   }
 }
 
-async function connect(d: Dev, sim: Sim, hello: Partial<DeviceHello> = {}) {
+async function connect(d: Dev, sim: Sim, hello: Partial<LegacyDeviceHello> = {}) {
   const machine = new FakeMachine(url, d.credential, sim.answer, { hello: false });
   open.push(machine);
   await machine.opened;
-  machine.hello({ ...FEATURES, policy: sim.policy, ...hello });
+  // a reconnect reports the machine's current owner report (never an older sequence)
+  machine.hello({
+    ...FEATURES,
+    policy: sim.policy,
+    ownerCeiling: ownerReportFor(sim.policy),
+    ...hello,
+  });
   await waitFor(
     async () => (await redis.get(deviceLeaseKey(d.deviceId))) !== null,
     10_000,
@@ -600,7 +608,7 @@ describe("device policy intents", () => {
         source: source(d.accountId),
       });
       if ("outcome" in begun) throw new Error("nothing was sent");
-      const call = vi.spyOn(relay, "call").mockRejectedValueOnce(new ApiError(code, "relay"));
+      const call = vi.spyOn(relay, "callV3").mockRejectedValueOnce(new ApiError(code, "relay"));
       try {
         const sent = await policies.send(begun.intent);
         expect(sent.result).toEqual({ outcome: "unknown" });

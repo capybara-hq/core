@@ -16,7 +16,7 @@ import { createLogger } from "../../src/log.js";
 import { FakeMachineV3, fakeMachineFor, HELLO_V3 } from "./fake-machine-v3.js";
 
 /**
- * The staged fake machine (permission activation B-28) against the real gateway's `acceptStaged`:
+ * The staged fake machine (permission activation B-28) against the real gateway's `accept`:
  * its hello is recorded through the v3 writers, the kernel's `ready` carries the connection id,
  * a `bindInstance` is answered with installed evidence, and a scripted answer reaches the relay.
  */
@@ -72,7 +72,7 @@ async function fixture() {
   const address = server.address();
   if (typeof address === "string" || !address) throw Error("no address");
   server.on("connection", (socket) => {
-    void gateway.acceptStaged(socket, credential);
+    void gateway.accept(socket, credential);
   });
   cleanups.push(async () => {
     for (const c of server.clients) c.terminate();
@@ -140,6 +140,32 @@ it("answers a bindInstance with evidence the relay validates against the request
     bindingId: args.bindingId,
     permissionSupport: { fullAccess: true, background: true },
   });
+});
+
+it("a catch-all null answer still binds; with autoBind false the scripted null reaches the relay", async () => {
+  const bindArgs = () => ({
+    instanceId: randomUUID(),
+    instanceGeneration: "1700000000000",
+    bindingId: randomUUID(),
+    expectedPreviousGeneration: null,
+  });
+  for (const autoBind of [true, false]) {
+    const f = await fixture();
+    const machine = new FakeMachineV3(f.url, f.credential, () => ({ ok: true, result: null }), {
+      autoBind,
+    });
+    cleanups.push(async () => machine.close());
+    await machine.ready;
+    await expect.poll(() => f.targets.transport(f.deviceId).catch(() => null)).not.toBeNull();
+    const call = f.relay.callV3(f.deviceId, "bindInstance", bindArgs(), {
+      deadlineMs: 6000,
+      signal: signal(),
+    });
+    if (autoBind)
+      await expect(call).resolves.toMatchObject({ instanceGeneration: "1700000000000" });
+    // the relay refuses a null bind result as unreadable
+    else await expect(call).rejects.toThrow();
+  }
 });
 
 it("a scripted answer reaches the relay and the frames are recorded", async () => {

@@ -14,6 +14,7 @@ import {
 } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable, Optional } from "@nestjs/common";
 import type { AgentDefinition } from "../agents/definition.js";
+import { backgroundMaxSeconds } from "../background/launch.js";
 import { type AppendEvent, EventLog } from "../conversations/event-log.js";
 import {
   COMMAND_ASK_MAX_CHARS,
@@ -67,14 +68,25 @@ import { SandboxOperationAuthority } from "../sandbox/operation-authority.js";
 import { PermissionAuthorityLock } from "../sandbox/permission-authority-lock.js";
 import { PermissionCallGrants } from "../sandbox/permission-call-grants.js";
 import type { PermissionCandidate } from "../sandbox/permission-call-types.js";
+import {
+  PERMISSION_CONTEXT_ACTIVATION,
+  permissionContextActive,
+} from "../sandbox/permission-context-types.js";
 import { permissionScopeHash } from "../sandbox/permission-facts.js";
 import {
   type CommandReview,
   isSessionGrantableRule,
   type ReviewVerdict,
 } from "../sandbox/review/index.js";
-import { buildPermissionCandidate } from "../sandbox/review/permission-candidate.js";
+import {
+  buildPermissionCandidate,
+  ESCALATION_RETRY_HINT,
+  ESCALATION_UNATTENDED_WHY,
+  escalationRefusedText,
+  isEscalatedCall,
+} from "../sandbox/review/permission-candidate.js";
 import { CommandReviewService } from "../sandbox/review/review.service.js";
+import { SandboxService } from "../sandbox/sandbox.service.js";
 import {
   appendMissingGrant,
   connectionGrantKey,
@@ -94,7 +106,7 @@ import {
   type NetworkAskDetail,
 } from "./approvals.service.js";
 import { Breaker, breakerOpenMessage } from "./breaker.js";
-import { SEND_MESSAGE, SUBAGENT_HANDBACK, TOOL_SEARCH } from "./builtin-names.js";
+import { BUILTIN, SEND_MESSAGE, SUBAGENT_HANDBACK, TOOL_SEARCH } from "./builtin-names.js";
 import { AGENT_TOOL, AgentToolInput } from "./builtins/agent.js";
 import { HandbackInput } from "./builtins/handback.js";
 import { generateImagePaths } from "./builtins/image/paths.js";
@@ -103,6 +115,7 @@ import {
   deviceCodeIdemKey,
   GITHUB_DEVICE_LOGIN_URL,
 } from "./builtins/sandbox/device-code.js";
+import { DEVICE_OF_ANOTHER_ACCOUNT_TEXT } from "./builtins/sandbox/device-owner.js";
 import { SendMessageInput } from "./builtins/send-message.js";
 import { isAlwaysLoaded, notLoadedText } from "./builtins/tool-search.js";
 import { canonicalJson } from "./canonical-json.js";
@@ -543,6 +556,53 @@ const isReviewedCall = (toolKey: string, input: unknown): boolean =>
 /** The paths a reviewed write writes: `file_path`, or every path of a `GenerateImage` call. */
 const writePathsOf = (toolKey: string, input: unknown): string[] =>
   toolKey === "GenerateImage" ? generateImagePaths(input) : [textField(input, "file_path")];
+/**
+ * A call that needs reach beyond the working directory on a device whose permission support is
+ * not verified: no approval could let admission run it, so nothing is offered.
+ */
+export const PERMISSION_SUPPORT_UNVERIFIED_TEXT =
+  "This call needs access outside the working directory, but this device's permission support is not verified yet, so only paths inside the working directory work now. Keep the call inside the working directory, or retry once the device is ready.";
+/**
+ * The managed builtins whose review depends on the device's facts (a proposed reach or a
+ * sensitive command): their first call starts the device before it is reviewed. The others start
+ * it only when they run (a Skill without scripts never does).
+ */
+const REVIEWED_ON_FACTS: ReadonlySet<string> = new Set([
+  BUILTIN.Bash,
+  BUILTIN.Read,
+  BUILTIN.Write,
+  BUILTIN.Edit,
+  BUILTIN.GenerateImage,
+]);
+/** The refusals of a permission review that end the call (fail closed), not the run. */
+const FAIL_CLOSED_CODES: ReadonlySet<string> = new Set([
+  "forbidden",
+  "conflict",
+  "conversation.not_found",
+]);
+/** What the model gets when the permission check of its call refused (fail closed). */
+export const permissionCheckFailedText = (why: string): string =>
+  `The permission check for this call could not be completed (${why.replace(/\.$/, "")}), so it did not run. Retry the call once; if it fails again, ask the user to check the conversation's permission profile or to approve the call again.`;
+/** The builtins whose device entry is the managed operation route once activated. */
+const MANAGED_OPERATION_TOOLS: ReadonlySet<string> = new Set([
+  BUILTIN.Bash,
+  BUILTIN.Read,
+  BUILTIN.Write,
+  BUILTIN.Edit,
+  BUILTIN.Glob,
+  BUILTIN.Grep,
+  BUILTIN.Deliver,
+  BUILTIN.FetchAttachment,
+  BUILTIN.Skill,
+  BUILTIN.GenerateImage,
+]);
+/**
+ * Whether a managed builtin's call enters the device: every call of the device tools, a
+ * `GenerateImage` call only with `file_path` (one without writes nothing into the device, so it
+ * takes neither the device-owner guard nor the permission review: image generation spec §5.3).
+ */
+const entersDevice = (toolKey: string, input: unknown): boolean =>
+  toolKey !== BUILTIN.GenerateImage || generateImagePaths(input).length > 0;
 
 /** Whether the review holds a shell command or a file write, for the texts and the ask's detail. */
 const reviewKindOf = (toolKey: string): "command" | "write" =>
@@ -562,6 +622,8 @@ type ReviewOutcome =
        * the managed route refuses as stale when the held device context names another root.
        */
       reviewedAgainst?: string | undefined;
+      /** A restricted `Bash` call's escalation state, for the tool's sandbox hints. */
+      sandboxEscalation?: "available" | "escalated" | undefined;
     }
   /** The run waits on the call's `command` approval. */
   | { kind: "wait"; wait: WaitingFor }
@@ -829,8 +891,20 @@ export class ToolPipeline {
     @Optional()
     @Inject(PermissionAuthorityLock)
     private readonly permissionLocks?: PermissionAuthorityLock,
+    /** The paired activation gate: on, the managed builtins take the permission review. */
+    @Optional() @Inject(PERMISSION_CONTEXT_ACTIVATION) activation?: boolean,
+    /** Starts a cloud device before its first managed call is reviewed (absent: never). */
+    @Optional()
+    @Inject(SandboxService)
+    private readonly sandboxes?: Pick<SandboxService, "ensureRunning">,
   ) {
     this.deps = {
+      // the builtins that enter a device on the managed operation route once activated (common.ts
+      // `inToolSandbox`, `inSandboxPreparation`): their review is the permission review, whose
+      // approvals issue the exact call grants admission reads; dormant, none (the command review)
+      permissionOperations: permissionContextActive(activation)
+        ? MANAGED_OPERATION_TOOLS
+        : new Set<string>(),
       get db() {
         return kdb.db;
       },
@@ -1217,7 +1291,11 @@ export class ToolPipeline {
       return fail(reviewed.content, outKey);
     }
     review = reviewed.review;
-    const reviewedRoots = { workingRoot: reviewed.workingRoot, against: reviewed.reviewedAgainst };
+    const reviewedRoots = {
+      workingRoot: reviewed.workingRoot,
+      against: reviewed.reviewedAgainst,
+      ...(reviewed.sandboxEscalation !== undefined && { escalation: reviewed.sandboxEscalation }),
+    };
     if (reviewed.commandAsk !== undefined)
       authorization = approvalAuthorization(reviewed.commandAsk);
 
@@ -1382,11 +1460,12 @@ export class ToolPipeline {
           callId: call.id,
           toolKey: tool.key,
           specHash: tool.specHash,
-          ...(this.operationScoped(tool)
+          ...(this.operationScoped(tool, input)
             ? {
                 permissionInput: {
                   callInputHash: permissionScopeHash(call.input),
                   resolvedInputHash: permissionScopeHash(input),
+                  ...(isEscalatedCall(tool.key, input) ? { sandbox: "escalated" as const } : {}),
                 },
               }
             : {}),
@@ -1405,6 +1484,13 @@ export class ToolPipeline {
     );
     const durationMs = Date.now() - t0;
     await this.deps.hooks?.afterExecute?.(ctx.runId, call.id);
+    // the record says a call ran outside the sandbox only when admission gave it that scope
+    if (review !== undefined && isEscalatedCall(tool.key, input)) {
+      const { sandbox: _asked, ...rest } = review;
+      review = (await this.admittedOutsideSandbox(ctx.runId, call.id))
+        ? { ...rest, sandbox: "escalated" }
+        : rest;
+    }
 
     // scheduled tasks spec §7, `fail` mode: no one answers an input request or connects an app
     if (unattendedFails(ctx.unattended) && ctx.unattended != null) {
@@ -1604,8 +1690,31 @@ export class ToolPipeline {
     tool: ResolvedTool,
     input: unknown,
   ): Promise<ReviewOutcome> {
-    if (this.operationScoped(tool)) {
-      const scoped = await this.reviewPermissionCall(ctx, call, tool, input);
+    // a device tool of a run another account triggered never uses the owner's device: refused
+    // here, with no review and no review model call (the tools refuse it the same way)
+    if (this.operationScoped(tool, input) && ctx.ownerAccountId !== ctx.accountId)
+      return {
+        kind: "result",
+        content: DEVICE_OF_ANOTHER_ACCOUNT_TEXT,
+        review: denyRecord("rule", null, "The run's account is not the conversation's owner"),
+      };
+    if (this.operationScoped(tool, input)) {
+      let scoped: ReviewOutcome | null;
+      try {
+        scoped = await this.reviewPermissionCall(ctx, call, tool, input);
+      } catch (error) {
+        // fail closed: a permission evidence conflict or an owner check that refuses while the
+        // call is asked about, reviewed or matched to its grant is a refusal of this call, never a
+        // run error and never a run of it
+        if (!(error instanceof ApiError) || !FAIL_CLOSED_CODES.has(error.code)) throw error;
+        this.deps.log.warn("permission review refused the call", {
+          conversationId: ctx.conversationId,
+          callId: call.id,
+          err: error,
+        });
+        const content = permissionCheckFailedText(error.message);
+        return { kind: "result", content, review: denyRecord("rule", null, error.message) };
+      }
       if (scoped) return scoped;
     }
     const review = this.deps.review;
@@ -1752,15 +1861,40 @@ export class ToolPipeline {
     return { kind: "wait", wait: approvalWait(ask) };
   }
 
-  private operationScoped(tool: ResolvedTool): boolean {
-    return tool.source.kind === "builtin" && this.deps.permissionOperations?.has(tool.key) === true;
+  /**
+   * Whether this call takes the managed route's permission review: a managed builtin once
+   * activated ({@link MANAGED_OPERATION_TOOLS}) whose call enters the device ({@link entersDevice}).
+   */
+  private operationScoped(tool: ResolvedTool, input: unknown): boolean {
+    return (
+      tool.source.kind === "builtin" &&
+      this.deps.permissionOperations?.has(tool.key) === true &&
+      entersDevice(tool.key, input)
+    );
   }
-  /** This branch is unreachable for production legacy handlers until the caller cutover. */
+  /**
+   * The permission review of a managed call, with the escalation state a continued restricted
+   * `Bash` call carries to its tool (its sandbox hints: retry with `sandbox: "escalated"` only
+   * where this device and org allow it).
+   */
   private async reviewPermissionCall(
     ctx: ToolStepContext,
     call: ToolCall,
     tool: ResolvedTool,
     input: unknown,
+  ): Promise<ReviewOutcome | null> {
+    const note: { escalation?: "available" | "escalated" } = {};
+    const outcome = await this.reviewPermissionCallWith(ctx, call, tool, input, note);
+    return outcome?.kind === "continue" && note.escalation !== undefined
+      ? { ...outcome, sandboxEscalation: note.escalation }
+      : outcome;
+  }
+  private async reviewPermissionCallWith(
+    ctx: ToolStepContext,
+    call: ToolCall,
+    tool: ResolvedTool,
+    input: unknown,
+    note: { escalation?: "available" | "escalated" },
   ): Promise<ReviewOutcome | null> {
     if (
       !this.permissionAuthority ||
@@ -1781,26 +1915,81 @@ export class ToolPipeline {
       ctx.conversationId,
     );
     if (!device) return null;
+    // a run another account triggered never uses the owner's device (the tool refuses it): there
+    // is no permission authority of that account here to review against
+    if (ctx.accountId !== device.ownerAccountId) return null;
     const use = {
       orgId: ctx.orgId,
       deviceId: device.deviceId,
       holderConversationId: ctx.conversationId,
       actor: { accountId: ctx.accountId, conversationId: ctx.conversationId, runId: ctx.runId },
     };
-    const facts = await this.permissionAuthority.previewCall(
-      use,
-      { runId: ctx.runId, callId: call.id },
-      ctx.signal,
-    );
-    if (facts.availability.state !== "supported" || facts.unattended) return null;
+    const preview = () =>
+      (this.permissionAuthority as SandboxOperationAuthority).previewCall(
+        use,
+        { runId: ctx.runId, callId: call.id },
+        ctx.signal,
+      );
+    let facts = await preview();
+    // the facts first: a device not yet started (or not yet probed) whose review depends on them
+    // is started under the normal lifecycle lease, which records a cloud instance's permission
+    // evidence or a local one's installed binding, and read again
+    if (
+      facts.availability.state === "unprobed" &&
+      !facts.unattended &&
+      this.sandboxes &&
+      REVIEWED_ON_FACTS.has(tool.key)
+    ) {
+      try {
+        await this.sandboxes.ensureRunning(use, ctx.signal);
+        facts = await preview();
+      } catch (err) {
+        // a start that fails leaves the facts unverified (the conservative branch below); the
+        // tool's own entry reports the device's state
+        ctx.signal.throwIfAborted();
+        this.deps.log.warn("cannot start the device before its review; reviewing unverified", {
+          conversationId: ctx.conversationId,
+          deviceId: device.deviceId,
+          err,
+        });
+      }
+    }
+    if (facts.unattended) {
+      // an unattended run never runs a call outside the sandbox: no one could approve it
+      if (isEscalatedCall(tool.key, input)) {
+        const content = escalationRefusedText(ESCALATION_UNATTENDED_WHY, facts.workingRoot);
+        return { kind: "result", content, review: denyRecord("rule", null, content) };
+      }
+      return null;
+    }
+    if (facts.availability.state !== "supported") {
+      // still unverified: the conservative command review decides (Full access too), but a call
+      // that needs more reach is refused now: admission could never run what an approval allowed
+      if (facts.profile === "full-access") return null;
+      const unverified = buildPermissionCandidate(
+        { toolKey: tool.key, specHash: tool.specHash, rawInput: call.input, validatedInput: input },
+        facts,
+        [device.home, device.deviceHome],
+        { backgroundMaxSeconds: backgroundMaxSeconds(this.config.get()) },
+      );
+      if (unverified.kind === "in-scope") return null;
+      const content =
+        unverified.kind === "proposal" ? PERMISSION_SUPPORT_UNVERIFIED_TEXT : unverified.message;
+      return { kind: "result", content, review: denyRecord("rule", null, content) };
+    }
     if (tool.key === "Bash" && textField(input, "command").length > COMMAND_ASK_MAX_CHARS)
       return {
         kind: "result",
         content: commandTooLongText(textField(input, "command").length),
         review: denyRecord("rule", null, "The command exceeds the review limit"),
       };
+    const escalated = isEscalatedCall(tool.key, input);
+    // the escalation state the tool's hints read: only a restricted Bash call on a device and
+    // org whose ceiling allows running outside the sandbox
+    if (tool.key === "Bash" && facts.profile !== "full-access" && !facts.escalationRefusal)
+      note.escalation = escalated ? "escalated" : "available";
     const built =
-      facts.profile === "full-access"
+      facts.profile === "full-access" && !escalated
         ? { kind: "in-scope" as const }
         : buildPermissionCandidate(
             {
@@ -1810,14 +1999,39 @@ export class ToolPipeline {
               validatedInput: input,
             },
             facts,
+            [device.home, device.deviceHome],
+            { backgroundMaxSeconds: backgroundMaxSeconds(this.config.get()) },
           );
-    if (built.kind === "unsupported")
-      return {
-        kind: "result",
-        content: built.message,
-        review: denyRecord("rule", null, built.message),
-      };
+    if (built.kind === "unsupported") {
+      // a Bash reach the restricted scope cannot grant: retrying outside the sandbox may
+      const content =
+        note.escalation === "available"
+          ? `${built.message}${ESCALATION_RETRY_HINT}`
+          : built.message;
+      return { kind: "result", content, review: denyRecord("rule", null, content) };
+    }
     const candidate = built.kind === "proposal" ? built.candidate : undefined;
+    // a sensitive-command consent the person settled (no proposed reach): the call runs under
+    // the base scope it was asked under; the approval adds nothing
+    if (
+      previous &&
+      previous.status !== "superseded" &&
+      !candidate &&
+      !previous.command?.permissionCandidate
+    ) {
+      const settled = this.settledCommandAsk(previous, tool.key);
+      // the root the person approved is carried only while the device still runs in the mode
+      // recorded with the ask (B-18: the judged root stays the one recorded)
+      if (
+        settled.kind === "continue" &&
+        settled.workingRoot !== undefined &&
+        (device.mode !== previous.command?.mode ||
+          carriedRoot({ workspace: device.workspace, workingRoot: settled.workingRoot }) ===
+            undefined)
+      )
+        return { ...settled, workingRoot: undefined };
+      return settled;
+    }
     if (
       previous &&
       previous.status !== "superseded" &&
@@ -1854,8 +2068,9 @@ export class ToolPipeline {
       );
       if (existingGrant) {
         if (
+          existingGrant.scopeKind !== candidate.scopeKind ||
           permissionScopeHash(existingGrant.expansion) !==
-          permissionScopeHash(candidate.permissionScope)
+            permissionScopeHash(candidate.permissionScope)
         )
           return {
             kind: "result",
@@ -1867,15 +2082,17 @@ export class ToolPipeline {
           kind: "continue",
           workingRoot: carriedRoot(device),
           reviewedAgainst: facts.workingRoot,
+          // the evidence's real source: the person's approval or the review model's allow
           review: {
             decision: "allow",
-            by: "classifier",
+            by: existingGrant.source === "human" ? "person" : "classifier",
             rule: null,
             reason: "The exact current call already has approved permission evidence.",
             profile: facts.profile,
             profileRevision: facts.profileRevision,
             scopeRevision: facts.scopeRevision,
-            decisionSource: "review-model",
+            decisionSource: existingGrant.source === "human" ? "human" : "review-model",
+            ...(candidate.escalation ? { sandbox: "escalated" as const } : {}),
           },
         };
       }
@@ -1901,6 +2118,7 @@ export class ToolPipeline {
       ...(ctx.conversationKind ? { conversationKind: ctx.conversationKind } : {}),
       permissionProfile: facts.profile,
       ...(candidate ? { permissionCandidate: candidate } : {}),
+      ...(note.escalation === "available" ? { escalationAvailable: true } : {}),
     });
     if (candidate && facts.profile === "approve-for-me") {
       await withTransactionFencePrelude(
@@ -1936,16 +2154,22 @@ export class ToolPipeline {
           ...allowRecord(verdict),
           ...provenance,
           decisionSource:
-            facts.profile === "full-access" ? "full-access" : candidate ? "review-model" : "scope",
+            facts.profile === "full-access"
+              ? "full-access"
+              : verdict.by === "classifier"
+                ? "review-model"
+                : "scope",
+          // the review model's allow issued this call's escalation grant: it runs unsandboxed
+          ...(candidate?.escalation && verdict.by === "classifier"
+            ? { sandbox: "escalated" as const }
+            : {}),
         },
       };
-    if (!candidate)
-      return {
-        kind: "result",
-        content:
-          "Current permission review could not decide; retry with an explicit bounded directory or host.",
-        review: denyRecord(verdict.by, verdict.rule, verdict.reason),
-      };
+    // an ask: the sensitive-command consent (no proposed reach: approved, the call runs under the
+    // base scope) or the displayed expansion (approved, the call's grant is issued)
+    const kind = reviewKindOf(tool.key);
+    // every path the call writes (a GenerateImage call's suffixed paths, comma-separated)
+    const filePaths = kind === "write" ? writePathsOf(tool.key, input).filter(Boolean) : [];
     const ask = await this.deps.approvals.requestCommand({
       orgId: ctx.orgId,
       conversationId: ctx.conversationId,
@@ -1953,25 +2177,56 @@ export class ToolPipeline {
       step: ctx.step,
       callId: call.id,
       requestedFor: ctx.accountId,
-      scopes: ["once"],
+      // `session` only for a consent rule class with no expansion (a grant is per call)
+      scopes: !candidate && isSessionGrantableRule(verdict.rule) ? ["once", "session"] : ["once"],
       detail: {
         deviceId: device.deviceId,
         deviceName: device.deviceName,
         mode: device.mode,
-        kind: reviewKindOf(tool.key),
+        kind,
         command: tool.key === "Bash" ? textField(input, "command") : tool.key,
         rule: verdict.rule,
-        reason: verdict.reason,
+        reason: clipText(verdict.reason, COMMAND_ASK_TEXT_MAX_CHARS),
         workingRoot: facts.workingRoot,
-        permissionCandidate: candidate,
-        permissionScope: candidate.permissionScope,
-        candidateHash: candidate.candidateHash,
-        ...(candidate.targetPath
-          ? { targetPath: candidate.targetPath, path: candidate.targetPath }
-          : {}),
+        ...(candidate
+          ? {
+              permissionCandidate: candidate,
+              permissionScope: candidate.permissionScope,
+              candidateHash: candidate.candidateHash,
+              ...(candidate.targetPath
+                ? { targetPath: candidate.targetPath, path: candidate.targetPath }
+                : {}),
+              ...(candidate.escalation ? { escalation: candidate.escalation } : {}),
+            }
+          : filePaths.length > 0
+            ? {
+                path: clipText(
+                  filePaths.map((p) => pathAgainstWorkingRoot(p, facts.workingRoot)).join(", "),
+                  4096,
+                ),
+              }
+            : {}),
       },
     });
     return { kind: "wait", wait: approvalWait(ask) };
+  }
+  /**
+   * Whether an execution of this call was admitted outside the sandbox under a restricted profile
+   * (a per-call escalation's full reach): an intent past admission, or one revoked after dispatch.
+   */
+  private async admittedOutsideSandbox(runId: string, callId: string): Promise<boolean> {
+    const rows = await this.deps.db
+      .selectFrom("sandbox_operation_intents")
+      .select(["scope", "state", "outcome_unknown"])
+      .where("run_id", "=", runId)
+      .where("call_id", "=", callId)
+      .where("method", "in", ["exec", "backgroundStart"])
+      .execute();
+    return rows.some((r) => {
+      const scope = r.scope as { profile?: string; filesystem?: { kind?: string } };
+      const admitted = r.state === "revoked" ? r.outcome_unknown : r.state !== "pending";
+      return admitted && scope.profile !== "full-access" && scope.filesystem?.kind === "device";
+    });
   }
   @Transactional()
   private findPermissionGrant(candidate: PermissionCandidate) {
@@ -1981,7 +2236,7 @@ export class ToolPipeline {
   @Transactional()
   private async recordPermissionReview(
     candidate: PermissionCandidate,
-    verdict: { decision: "allow" | "ask" | "deny"; reason: string },
+    verdict: { decision: "allow" | "ask" | "deny"; by: "rule" | "classifier"; reason: string },
   ): Promise<void> {
     if (!this.permissionGrants) throw new Error("Permission grants are unavailable");
     await this.permissionGrants.assertCurrent(candidate.binding);
@@ -1993,13 +2248,15 @@ export class ToolPipeline {
           ...candidate,
           outcome: verdict.decision,
           reason: verdict.reason,
-          decisionSource: "review-model",
+          // the review model only for its own verdict: a fixed rule's deny, a rule ask (the review
+          // model unmapped or not consulted) and the fail-closed ask are the rules'
+          decisionSource: verdict.by === "classifier" ? "review-model" : "rule",
         },
       },
     ]);
     const event = events[0];
     if (!event) throw new Error("The review event was not recorded");
-    if (verdict.decision === "allow")
+    if (verdict.decision === "allow" && verdict.by === "classifier")
       await this.permissionGrants.issueLocked(candidate, {
         source: "review-model",
         reviewEventSeq: event.seq,
@@ -2040,7 +2297,9 @@ export class ToolPipeline {
    */
   private personAllowRecord(ask: ApprovalRecord): ReviewRecord {
     const binding = ask.command?.permissionCandidate?.binding;
+    const escalated = ask.command?.permissionCandidate?.scopeKind === "sandbox-escalation";
     return {
+      ...(escalated ? { sandbox: "escalated" as const } : {}),
       ...(binding
         ? {
             profile: binding.profile,
@@ -2284,7 +2543,11 @@ export class ToolPipeline {
     callId: string,
     resume?: ToolResume,
     stepTools?: readonly ResolvedTool[],
-    reviewed?: { workingRoot?: string | undefined; against?: string | undefined },
+    reviewed?: {
+      workingRoot?: string | undefined;
+      against?: string | undefined;
+      escalation?: "available" | "escalated" | undefined;
+    },
   ): Promise<ExecOutcome> {
     const reviewedWorkingRoot = reviewed?.workingRoot;
     const reviewedAgainstRoot = reviewed?.against;
@@ -2318,6 +2581,8 @@ export class ToolPipeline {
       // and the root it was judged against, workspace included (B-18, the managed route)
       ...(tool.source.kind === "builtin" &&
         reviewedAgainstRoot !== undefined && { reviewedAgainstRoot }),
+      ...(tool.source.kind === "builtin" &&
+        reviewed?.escalation !== undefined && { sandboxEscalation: reviewed.escalation }),
       // a sub-agent works in its root conversation's sandbox (spec §10.1, at every depth)
       ...(tool.source.kind === "builtin" &&
         ctx.parent !== undefined && { sandboxConversationId: ctx.parent.rootConversationId }),

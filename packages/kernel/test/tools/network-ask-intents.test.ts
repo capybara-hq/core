@@ -1,9 +1,9 @@
 import { randomUUID } from "node:crypto";
 import type {
-  DeviceHello,
   DeviceLocalPolicySummary,
   DevicePolicyOpOutcome,
   KernelReq,
+  LegacyDeviceHello,
 } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
@@ -41,7 +41,12 @@ import {
   type TestKernel,
   waitFor,
 } from "../helpers/runs.js";
-import { FakeMachine } from "../local-devices/fake-machine-v3.js";
+import {
+  FakeMachine,
+  ownerReportFor,
+  policyAnswer,
+  policyStatusAnswer,
+} from "../local-devices/fake-machine-v3.js";
 import type { Answer } from "../local-devices/test-holder.js";
 
 /**
@@ -55,7 +60,7 @@ import type { Answer } from "../local-devices/test-holder.js";
  */
 
 const POLICY: DeviceLocalPolicySummary = { mode: "auto", allowedDomains: ["pypi.org"] };
-const FEATURES: DeviceHello["features"] = ["networkReport", "policyOp", "policyOpId"];
+const FEATURES: LegacyDeviceHello["features"] = ["networkReport", "policyOp", "policyOpId"];
 
 let pgc: TestContainer;
 let rd: TestContainer;
@@ -171,10 +176,7 @@ class Sim {
   answer = (req: KernelReq): Answer => {
     if (req.op === "policyStatus") {
       const { opId } = req.args as { opId: string };
-      return {
-        ok: true,
-        result: { outcome: this.log.get(opId) ?? "unknown", policy: this.policy },
-      };
+      return policyStatusAnswer(this.log.get(opId) ?? "unknown", this.policy);
     }
     if (req.op !== "policy" || this.mode === "hold") {
       return req.op === "policy" ? undefined : { ok: true, result: null };
@@ -190,7 +192,7 @@ class Sim {
       allowedDomains: [...new Set([...this.policy.allowedDomains, ...(a.add ?? [])])],
     };
     this.log.set(a.opId, "applied");
-    return { ok: true, result: { policy: this.policy } };
+    return policyAnswer(this.policy);
   }
 
   recentOps() {
@@ -198,11 +200,17 @@ class Sim {
   }
 }
 
-async function connect(sim: Sim, hello: Partial<DeviceHello> = {}) {
+async function connect(sim: Sim, hello: Partial<LegacyDeviceHello> = {}) {
   const machine = new FakeMachine(wsUrl, s.credential, sim.answer, { hello: false });
   open.push(machine);
   await machine.opened;
-  machine.hello({ features: FEATURES, policy: sim.policy, ...hello });
+  // a reconnect reports the machine's current owner report (never an older sequence)
+  machine.hello({
+    features: FEATURES,
+    policy: sim.policy,
+    ownerCeiling: ownerReportFor(sim.policy),
+    ...hello,
+  });
   await waitFor(
     async () => (await redis.get(deviceLeaseKey(s.deviceId))) !== null,
     10_000,
@@ -533,7 +541,7 @@ describe("network asks on the device policy intent", () => {
     await resolver().resolve(jobData(await owed(`device-op-reported-${opId}`)));
     expect(await row(a.id)).toMatchObject({ status: "approved", scope: "always" });
     // then sends the result it kept while disconnected
-    again.respond(op.id, { ok: true, result: { policy: sim.policy } });
+    again.respond(op.id, policyAnswer(sim.policy));
     const res = await pending;
     expect(res.statusCode, res.body).toBe(200);
     expect((res.json() as { approval: unknown }).approval).toMatchObject({

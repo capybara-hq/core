@@ -3,9 +3,9 @@ import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promi
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  type DeviceHelloV3,
-  type DeviceResponseV3,
-  parseDeviceFrameV3,
+  type DeviceHello,
+  type DeviceResponse,
+  parseDeviceFrame,
   type SandboxOperationScope,
   SandboxPermissionUnsupportedError,
   SandboxScopeDeniedError,
@@ -585,10 +585,10 @@ it("an unbound first hello admits no operation until the authenticated bind", as
   const client = new WebSocket(`ws://127.0.0.1:${address.port}`);
   await once(client, "open");
   const [socket] = (await accepted) as [WebSocket];
-  const answers = new Map<string, (r: DeviceResponseV3) => void>();
-  let hello: DeviceHelloV3 | undefined;
+  const answers = new Map<string, (r: DeviceResponse) => void>();
+  let hello: DeviceHello | undefined;
   socket.on("message", (raw) => {
-    const frame = parseDeviceFrameV3(raw.toString(), "device", 69632);
+    const frame = parseDeviceFrame(raw.toString(), "device", 69632);
     if (frame.type === "hello") {
       hello = frame;
       socket.send(JSON.stringify({ type: "ready", connectionId: "c", maxFrameBytes: 69632 }));
@@ -640,7 +640,7 @@ it("an unbound first hello admits no operation until the authenticated bind", as
   let n = 0;
   const send = (op: string, args: unknown) => {
     const id = String(++n);
-    const response = new Promise<DeviceResponseV3>((r) => answers.set(id, r));
+    const response = new Promise<DeviceResponse>((r) => answers.set(id, r));
     socket.send(JSON.stringify({ type: "req", id, op, args, deadlineMs: 10000 }));
     return response;
   };

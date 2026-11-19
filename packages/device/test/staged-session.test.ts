@@ -3,9 +3,9 @@ import { mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  type DeviceHelloV3,
-  type DeviceResponseV3,
-  parseDeviceFrameV3,
+  type DeviceHello,
+  type DeviceResponse,
+  parseDeviceFrame,
   type SandboxExecutionRef,
 } from "@capybara-hq/plugin-sdk";
 import { afterEach, expect, it, vi } from "vitest";
@@ -131,9 +131,9 @@ async function fixture(
     await new Promise<void>((r) => server.close(() => r()));
   });
   let id = 0;
-  const answers = new Map<string, (r: DeviceResponseV3) => void>();
+  const answers = new Map<string, (r: DeviceResponse) => void>();
   // every response the kernel side received, in order, with the connection it arrived on
-  const responses: { connection: number; res: DeviceResponseV3 }[] = [];
+  const responses: { connection: number; res: DeviceResponse }[] = [];
   let connections = 0;
   const open = async () => {
     const accepted = once(server, "connection");
@@ -142,7 +142,7 @@ async function fixture(
     const [socket] = (await accepted) as [WebSocket];
     const connection = ++connections;
     socket.on("message", (raw) => {
-      const f = parseDeviceFrameV3(raw.toString(), "device", 69632);
+      const f = parseDeviceFrame(raw.toString(), "device", 69632);
       if (f.type === "hello" && negotiate)
         socket.send(
           JSON.stringify({
@@ -159,7 +159,7 @@ async function fixture(
     return { client, socket };
   };
   let { client, socket } = await open();
-  const hello: DeviceHelloV3 = {
+  const hello: DeviceHello = {
     type: "hello",
     protocol: 3,
     programVersion: "fixture",
@@ -203,7 +203,7 @@ async function fixture(
   );
   if (negotiate) await expect.poll(() => session.ready()).toBeDefined();
   const request = (op: string, args: unknown, deadlineMs = 10000, key = String(++id)) => {
-    const response = new Promise<DeviceResponseV3>((resolve) => answers.set(key, resolve));
+    const response = new Promise<DeviceResponse>((resolve) => answers.set(key, resolve));
     socket.send(JSON.stringify({ type: "req", id: key, op, args, deadlineMs }));
     return { key, response };
   };
@@ -610,7 +610,7 @@ it("the reconnect grace is required: no silent default of 0 (B-4)", async () => 
   expect(() => createStagedSessionState({} as never)).toThrow(/grace/);
   expect(() => createStagedSessionState({ graceMs: -1 })).toThrow(/grace/);
   expect(createStagedSessionState({ graceMs: 0 }).graceMs).toBe(0);
-  const hello = {} as DeviceHelloV3;
+  const hello = {} as DeviceHello;
   const backend = {} as Parameters<typeof serveStagedSession>[3];
   expect(() =>
     serveStagedSession(
@@ -655,7 +655,7 @@ it("session states are kept per credential; a change discards held answers (rere
   expect(() =>
     serveStagedSession(
       f.client,
-      {} as DeviceHelloV3,
+      {} as DeviceHello,
       { maxFrameBytes: 1 },
       f.backend,
       f.handle,

@@ -30,7 +30,6 @@ describe("effectiveDevicePolicy", () => {
     expect(effectiveDevicePolicy(deployment(), NO_ORG, null)).toEqual({
       mode: "auto",
       allowedMode: "auto",
-      modeSource: "platform",
       network: { kind: "open-public", hosts: [] },
       localAllowedDomains: L,
     });
@@ -53,7 +52,6 @@ describe("effectiveDevicePolicy", () => {
       {
         mode: "sandbox",
         allowedMode: "sandbox",
-        modeSource: "platform",
         network: { kind: "open-public", hosts: [] },
         localAllowedDomains: L,
       },
@@ -66,7 +64,6 @@ describe("effectiveDevicePolicy", () => {
       {
         mode: "sandbox",
         allowedMode: "sandbox",
-        modeSource: "org",
         network: { kind: "open-public", hosts: [] },
         localAllowedDomains: L,
       },
@@ -79,7 +76,6 @@ describe("effectiveDevicePolicy", () => {
       {
         mode: "auto",
         allowedMode: "auto",
-        modeSource: "org",
         network: { kind: "open-public", hosts: [] },
         localAllowedDomains: L,
       },
@@ -92,7 +88,6 @@ describe("effectiveDevicePolicy", () => {
       {
         mode: "sandbox",
         allowedMode: "auto",
-        modeSource: "device",
         network: { kind: "open-public", hosts: [] },
         localAllowedDomains: L,
       },
@@ -105,7 +100,6 @@ describe("effectiveDevicePolicy", () => {
       {
         mode: "sandbox",
         allowedMode: "sandbox",
-        modeSource: "org",
         network: { kind: "open-public", hosts: [] },
         localAllowedDomains: L,
       },
@@ -118,7 +112,6 @@ describe("effectiveDevicePolicy", () => {
       {
         mode: "auto",
         allowedMode: "auto",
-        modeSource: "platform",
         network: { kind: "open-public", hosts: [] },
         localAllowedDomains: L,
       },
@@ -137,7 +130,6 @@ describe("effectiveDevicePolicy", () => {
       {
         mode: "sandbox",
         allowedMode: "auto",
-        modeSource: "device",
         network: { kind: "allowlist", hosts: ["registry.npmjs.org", "a.com"] },
         localAllowedDomains: ["registry.npmjs.org", "a.com"],
       },
@@ -150,7 +142,6 @@ describe("effectiveDevicePolicy", () => {
       {
         mode: "sandbox",
         allowedMode: "auto",
-        modeSource: "device",
         network: { kind: "allowlist", hosts: ["a.com"] },
         localAllowedDomains: ["a.com"],
       },

@@ -16,7 +16,11 @@ import type { ModelRef } from "../agents/definition.js";
 import type { DeviceNetwork } from "../sandbox/modes.js";
 import type { StartingExecutionGrants } from "../sandbox/operation-authority-types.js";
 import type { AuthorityEpochVector } from "../sandbox/permission-authority-epochs.js";
-import type { PermissionExpansion } from "../sandbox/permission-call-types.js";
+import type {
+  PermissionEscalation,
+  PermissionExpansion,
+  PermissionScopeKind,
+} from "../sandbox/permission-call-types.js";
 import type { PermissionConfigProjection } from "../sandbox/permission-config-publication.js";
 import type { PermissionRuntimeIdentity } from "../sandbox/permission-runtime-reports.js";
 import type {
@@ -59,7 +63,9 @@ export interface PermissionCallGrantsTable {
   expansion_hash: string;
   candidate_hash: string;
   target_path: string | null;
-  scope_kind: "directories-and-hosts";
+  scope_kind: PermissionScopeKind;
+  /** A per-call sandbox escalation's justification (`scope_kind = 'sandbox-escalation'` only). */
+  escalation: ColumnType<PermissionEscalation | null, string | null | undefined, string | null>;
   source: "human" | "review-model";
   approval_id: string | null;
   review_event_seq: number | null;
@@ -1055,8 +1061,11 @@ export interface BackgroundTasksTable {
   trigger_account_id: string;
   description: string;
   command: string;
-  /** NULL while the launch is reserved but not started (0071). */
-  sid: string | null;
+  /**
+   * A legacy row's session id (0071); NULL on every managed row. Never written after insert: no
+   * launch records a SID any more (permission activation W5-P2), so updates are refused by type.
+   */
+  sid: ColumnType<string | null, string | null | undefined, never>;
   output_path: string;
   status: ColumnType<
     "running" | "completed" | "failed" | "stopped" | "timed_out" | "lost",

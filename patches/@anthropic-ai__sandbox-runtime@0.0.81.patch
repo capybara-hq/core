@@ -1,22 +1,57 @@
 diff --git a/dist/sandbox/macos-sandbox-utils.js b/dist/sandbox/macos-sandbox-utils.js
-index 0e598b612d84d24b09ec2ab0d7ccc9b009c9457b..42f25ad99eb58d1024aa58f9b4a96d996b4afdad 100644
+index 0e598b612d84d24b09ec2ab0d7ccc9b009c9457b..10c4bd0b6518f6b968a105b0ed70838bbd009da9 100644
 --- a/dist/sandbox/macos-sandbox-utils.js
 +++ b/dist/sandbox/macos-sandbox-utils.js
-@@ -745,6 +745,13 @@ function generateWriteRules(config, logTag, allowGitConfig, writeRoots) {
+@@ -220,6 +220,18 @@ function inBothSpellings(kind, entry) {
+             : { glob: false, path: canonical },
+     ];
+ }
++/**
++ * capybara patch: the exact read allows, as given. Each must be an absolute, normalized path; it
++ * becomes a `(literal …)` filter, so a directory's entries can be listed but nothing below it
++ * is read, and a symbolic link can be followed or read but not its target.
++ */
++function exactReadAllows(paths) {
++    for (const p of paths ?? []) {
++        if (typeof p !== 'string' || !path.isAbsolute(p) || path.normalize(p) !== p || (p !== '/' && p.endsWith('/')) || p.includes('\0'))
++            throw new Error(`An exact read allow must be an absolute, normalized path: ${p}`);
++    }
++    return [...new Set(paths ?? [])];
++}
+ function resolveReadConfig(config, writeRoots, 
+ /**
+  * Read denies the library resolved itself — the masked credential files,
+@@ -244,6 +256,8 @@ libraryDenies) {
+         // the nested-deny re-emit matches by `path + '/'` prefix, which a
+         // preserved trailing slash would defeat ('<dir>//').
+         allows: callerEntries('allow', config.allowWithinDeny, config.literalAllowWithinDeny).flatMap(entry => inBothSpellings('allow', entry)),
++        // capybara patch: exact read allows, each one vnode, never the subtree below it
++        exactAllows: exactReadAllows(config.exactAllowWithinDeny),
+         writeRoots: [...writeRoots],
+     };
+ }
+@@ -644,6 +658,9 @@ function generateReadRules(resolved, logTag) {
+     rules.push(...renderRule('deny', ['file-read*'], denyFilters, logTag));
+     // Re-allow specific paths within denied regions (allowWithinDeny takes precedence)
+     const allowFilters = new Set(resolved.allows.map(a => pathFilter(a)));
++    // capybara patch: exact allows join the allow block, so the late denies still win over them
++    for (const p of resolved.exactAllows ?? [])
++        allowFilters.add(`(literal ${escapePath(p)})`);
+     rules.push(...renderRule('allow', ['file-read*'], allowFilters, logTag));
+     // Denies the allow block would otherwise win over (last-match-wins) land
+     // here, after it. Must stay ahead of the file-read-metadata allow below.
+@@ -745,6 +762,10 @@ function generateWriteRules(config, logTag, allowGitConfig, writeRoots) {
          }
      }
      rules.push(...renderRule('deny', ['file-write-unlink', 'file-write-create'], moveFilters, logTag));
 +    // capybara patch: ordered raw regex rules, last, so each decides over everything before it
-+    // (raw #"…" strings: SBPL string escapes would change the regex; a quote cannot occur)
 +    for (const rule of config.regexRules ?? []) {
-+        if (rule.regex.includes('"'))
-+            throw new Error('A raw regex write rule cannot contain a double quote');
-+        rules.push(...renderRule(rule.action, rule.operations, new Set([`(regex #"${rule.regex}")`]), logTag));
++        rules.push(...renderRule(rule.action, rule.operations, new Set([`(regex ${escapePath(rule.regex)})`]), logTag));
 +    }
      return rules;
  }
  /**
-@@ -851,6 +858,8 @@ function generateSandboxProfile({ readConfig, libraryDenyEntries, writeConfig, h
+@@ -851,6 +872,8 @@ function generateSandboxProfile({ readConfig, libraryDenyEntries, writeConfig, h
          '  (sysctl-name "hw.logicalcpu")',
          '  (sysctl-name "hw.logicalcpu_max")',
          '  (sysctl-name "hw.machine")',
@@ -26,13 +61,19 @@ index 0e598b612d84d24b09ec2ab0d7ccc9b009c9457b..42f25ad99eb58d1024aa58f9b4a96d99
          '  (sysctl-name "hw.ncpu")',
          '  (sysctl-name "hw.nperflevels")',
 diff --git a/dist/sandbox/sandbox-config.js b/dist/sandbox/sandbox-config.js
-index 76b00b1dc82a2d42a451a9f58068cbbd5e68da75..784dac7f685068a85c3f95f9fe472dac0e1ba65b 100644
+index 76b00b1dc82a2d42a451a9f58068cbbd5e68da75..25ea77fe4259ddeb8578262fffd2021c7c06aa0d 100644
 --- a/dist/sandbox/sandbox-config.js
 +++ b/dist/sandbox/sandbox-config.js
-@@ -832,6 +832,16 @@ export const FilesystemConfigSchema = z.object({
+@@ -832,6 +832,22 @@ export const FilesystemConfigSchema = z.object({
          .boolean()
          .optional()
          .describe('Allow writes to .git/config files (default: false). Enables git remote URL updates while keeping .git/hooks protected.'),
++    // capybara patch: exact read allows (macOS): absolute paths emitted as (literal …), never
++    // (subpath …), for directories whose entries a command may list or links it may follow
++    allowReadExact: z
++        .array(z.string())
++        .optional()
++        .describe('macOS only: absolute paths re-allowed for reading as exactly that path, not its subtree'),
 +    // capybara patch: ordered raw SBPL regex write rules (macOS), emitted after every other
 +    // write rule so they decide last (Seatbelt is last-match-wins for the same operations)
 +    writeRegexRules: z
@@ -47,10 +88,19 @@ index 76b00b1dc82a2d42a451a9f58068cbbd5e68da75..784dac7f685068a85c3f95f9fe472dac
  /**
   * Configuration schema for ignoring specific sandbox violations
 diff --git a/dist/sandbox/sandbox-manager.js b/dist/sandbox/sandbox-manager.js
-index d475e55977bf54a2fe00a0c6aba38313761d55aa..a9a1d4b42f983adabdbc3659b1910b3f36bb61c2 100644
+index d475e55977bf54a2fe00a0c6aba38313761d55aa..d60dab574bca5a1071e55dae7c597c6a2c86a4a6 100644
 --- a/dist/sandbox/sandbox-manager.js
 +++ b/dist/sandbox/sandbox-manager.js
-@@ -1516,6 +1516,8 @@ function getFsWriteConfig() {
+@@ -1493,6 +1493,8 @@ function getFsReadConfig() {
+         allowWithinDeny: allowPaths,
+         unlistableDenyDirs: [...unlistableDenyDirs],
+         ...literalReadLists(config.filesystem.denyRead, config.filesystem.allowRead),
++        // capybara patch: exact read allows (macOS)
++        exactAllowWithinDeny: config.filesystem.allowReadExact ?? [],
+     };
+ }
+ function getFsWriteConfig() {
+@@ -1516,6 +1518,8 @@ function getFsWriteConfig() {
          allowOnly,
          denyWithinAllow: denyPaths,
          ...literalWriteLists(config.filesystem.allowWrite, config.filesystem.denyWrite),
@@ -59,7 +109,7 @@ index d475e55977bf54a2fe00a0c6aba38313761d55aa..a9a1d4b42f983adabdbc3659b1910b3f
      };
  }
  /**
-@@ -1866,6 +1868,8 @@ async function wrapWithSandboxOnce(walkEnded, restarts, command, binShell, custo
+@@ -1866,6 +1870,8 @@ async function wrapWithSandboxOnce(walkEnded, restarts, command, binShell, custo
                  config?.filesystem.denyWrite ??
                  []),
              ...literalWriteLists(customConfig?.filesystem?.allowWrite ?? config?.filesystem.allowWrite, customConfig?.filesystem?.denyWrite ?? config?.filesystem.denyWrite),
@@ -68,3 +118,12 @@ index d475e55977bf54a2fe00a0c6aba38313761d55aa..a9a1d4b42f983adabdbc3659b1910b3f
          };
          // For a caller that never reads checkDependencies(), the CLI among them.
          if (!ownInstallLogged) {
+@@ -1917,6 +1923,8 @@ async function wrapWithSandboxOnce(walkEnded, restarts, command, binShell, custo
+             ...(ownAllowWithinDeny.length > 0 && { ownAllowWithinDeny }),
+             unlistableDenyDirs: [...unlistableDenyDirs],
+             ...literalReadLists(customConfig?.filesystem?.denyRead ?? config?.filesystem.denyRead, customConfig?.filesystem?.allowRead ?? config?.filesystem.allowRead),
++            // capybara patch: exact read allows (macOS)
++            exactAllowWithinDeny: customConfig?.filesystem?.allowReadExact ?? config?.filesystem.allowReadExact ?? [],
+         };
+     }
+     // Nothing below walks, and what it waits for is not this thread.

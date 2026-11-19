@@ -129,7 +129,7 @@ describe("BackgroundTaskStore", () => {
     expect(row?.finishedAt).toBeInstanceOf(Date);
   });
 
-  it("finish records the lost reason and the pending kill; pendingKills and clearKill follow", async () => {
+  it("finish records the lost reason and the pending kill; clearKill clears it", async () => {
     await store.insert(task("bt_000001"));
     await store.insert(task("bt_000002"));
     await finish("bt_000001", { status: "lost", lostReason: "process_gone", killPending: true });
@@ -139,11 +139,8 @@ describe("BackgroundTaskStore", () => {
       lostReason: "process_gone",
       killPending: true,
     });
-    expect((await store.pendingKills(ENV)).map((r) => r.id)).toEqual(["bt_000001"]);
-    // by device: another device's pending kills are its own
-    expect(await store.pendingKills("env-2")).toEqual([]);
     await store.clearKill(["bt_000001"]);
-    expect(await store.pendingKills(ENV)).toEqual([]);
+    expect((await store.get("bt_000001"))?.killPending).toBe(false);
   });
 
   it("finish outside a transaction throws (mandatory propagation)", async () => {

@@ -1,5 +1,5 @@
 import { apiFetch } from "./api";
-import type { PermissionScope } from "./conversations";
+import type { PermissionScope, SandboxEscalation } from "./conversations";
 
 /**
  * 内核审批 API 的类型（`packages/kernel/src/tools/approvals.controller.ts` / `approvals.service.ts`；
@@ -50,6 +50,15 @@ export interface NetworkApprovalDetail {
 export interface CommandAskDetail {
   /** The exact reach this ask grants (absent on older asks). */
   permissionScope?: PermissionScope;
+  /**
+   * The command asks to run outside the sandbox for this call only (per-call escalation): the
+   * agent's justification. The card shows it instead of a directory scope. `background`: the
+   * approved command starts a background process; `maxSeconds` (with `background`) is the most
+   * seconds that process may run before it is stopped.
+   */
+  escalation?: SandboxEscalation;
+  /** The directory the command runs in (shown with an escalation). */
+  workingRoot?: string;
   /** The file the call targets, informational only. */
   targetPath?: string;
   candidateHash?: string;

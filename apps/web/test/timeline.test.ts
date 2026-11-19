@@ -207,6 +207,25 @@ describe("buildTimeline", () => {
     expect(summarizeTools(rows, "en")).toContain(" (2 blocked)");
   });
 
+  it("a command the review admitted outside the sandbox marks its row; others stay unmarked", () => {
+    const review = { decision: "allow", by: "person", rule: null, reason: "approved" };
+    const events = [
+      user(1, "go"),
+      calls(2, [
+        { id: "a", name: "Bash", input: { command: "npm run dev" } },
+        { id: "b", name: "Bash", input: { command: "ls" } },
+        { id: "c", name: "Bash", input: { command: "pwd" } },
+      ]),
+      result(3, "a", "Bash", { review: { ...review, sandbox: "escalated" } }),
+      result(4, "b", "Bash", { review }),
+      result(5, "c", "Bash"),
+    ];
+    const rows = tools(buildTimeline(events, [], new Map(), "zh"))[0]?.rows.map((r) => r.row) ?? [];
+    expect(rows[0]).toMatchObject({ status: "done", outsideSandbox: true });
+    expect(rows[1]).not.toHaveProperty("outsideSandbox");
+    expect(rows[2]).not.toHaveProperty("outsideSandbox");
+  });
+
   it("a call to a tool the step did not load (not_loaded view) is a neutral notice, not a failure", () => {
     const text =
       'Tool "plugin__memory__view" is not loaded. Call ToolSearch first with keywords for this tool, then call it in a later step.';

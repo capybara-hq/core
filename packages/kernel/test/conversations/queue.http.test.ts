@@ -440,6 +440,9 @@ describe("queued messages and the author's access (review I1, M5)", () => {
     await postMessage(other, orgId, conv, SLOW);
     await runStatus(conv, "running");
     expect((await enqueue(conv, "echo:after", randomUUID(), otherId)).statusCode).toBe(201);
+    // once the run's request is under way (its permission context was recorded for the author,
+    // who could still use the agent then): the run itself completes
+    await waitForEvent(db, conv, (e) => e.type === "model_call", 30_000, "model_call");
     // the agent is no longer visible to the author (members only, not listed)
     await db
       .updateTable("agents")

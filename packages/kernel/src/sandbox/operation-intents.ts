@@ -8,10 +8,10 @@ import {
   SandboxScopeDeniedError,
 } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
-import type { Selectable } from "kysely";
+import type { Expression, ExpressionBuilder, Selectable, SqlBool } from "kysely";
 import { sql } from "kysely";
 import { STOP_CLAIM_TTL_MS } from "../background/store.js";
-import type { SandboxOperationIntentsTable } from "../db/kernel-schema.js";
+import type { KernelDatabase, SandboxOperationIntentsTable } from "../db/kernel-schema.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
@@ -35,6 +35,22 @@ export class PermissionAdmissionStale extends Error {}
 
 export const OPERATION_RECONCILE = "sandbox-operation-reconcile";
 export const OPERATION_REVOKE = "sandbox-operation-revoke";
+/**
+ * The owed revocation of one crashed holder's intents (`revokeHolders`), written before its holder
+ * record is forgotten, under the job id `sandbox-holder-revoke-<deviceId>-<token>`.
+ */
+export const HOLDER_REVOKE = "sandbox-holder-revoke";
+/**
+ * Why a revoked background launch ended (`lost_reason`; `lostReasonText` renders it): its launch
+ * was revoked before its start was confirmed (the replica starting it stopped, or its instance was
+ * cleaned up). The process may have started; its exact revoke stays owed.
+ */
+export const REVOKED_LAUNCH_REASON = "launch_revoked";
+/** The instance whose operations an exact cleanup covers: its provider and generation. */
+export interface RevokedIncarnation {
+  provider: string;
+  generation: string;
+}
 export type OperationIntent = Selectable<SandboxOperationIntentsTable>;
 /** Supplied only by the executing tool worker, never tool/model arguments. */
 export interface OperationInvocation {
@@ -104,7 +120,7 @@ export function launchRefusedText(kind: OperationFailureKind | undefined): strin
     case "unsupported":
       return "this device cannot run background tasks with this conversation's permissions; ask the user to choose another permission profile or device";
     default:
-      return "the device refused the start";
+      return "the device refused the start; check that the device is connected and its permission profile allows background tasks, then retry the call";
   }
 }
 export function operationResult(value: unknown): unknown {
@@ -1338,10 +1354,66 @@ export class SandboxOperationIntents {
       .executeTakeFirst();
     if (expired) await this.payloads.expire(id);
   }
+  /**
+   * Owes the revocation of crashed holders' intents durably (permission runtime cutover B-1): one
+   * outbox row per token under a deterministic job id, committed before the caller forgets the
+   * holder records, so a revocation that then fails inline is retried by a worker. Two acquirers
+   * that saw the same dead token owe one job.
+   */
+  @Transactional({ propagation: "requires_new" })
+  async oweHolderRevocations(deviceId: string, tokens: readonly string[]): Promise<void> {
+    if (!tokens.length) return;
+    // the device's org, as every intent outbox row carries it: the org's deletion removes them
+    const device = await this.db
+      .selectFrom("devices")
+      .select("org_id")
+      .where("id", "=", deviceId)
+      .executeTakeFirst();
+    for (const token of tokens)
+      await this.outbox.add({
+        queue: "cap-kernel-maintenance",
+        name: HOLDER_REVOKE,
+        jobId: `${HOLDER_REVOKE}-${deviceId}-${token}`,
+        data: { deviceId, token },
+        ...(device && { orgId: device.org_id }),
+      });
+  }
   /** Cleanup association only: a claimed dead holder can never authorize dispatch. */
   @Transactional({ propagation: "requires_new" })
   async revokeHolders(deviceId: string, tokens: readonly string[]): Promise<void> {
     if (!tokens.length) return;
+    await this.revokeMatching(deviceId, (eb) =>
+      eb.and([
+        eb("holder_token", "in", [...tokens]),
+        eb("state", "in", ["admitted", "dispatching", "started-or-unknown"]),
+      ]),
+    );
+  }
+  /**
+   * The exact cleanup of an incarnation nobody else holds (the caller has its exclusive lifecycle
+   * lease: a resume from `suspended`, a failed limits change, a quarantine), replacing the broad
+   * `killAll`: every admitted, dispatching and started-or-unknown intent of that instance
+   * generation. Under the exclusive lease none of them has a live dispatcher (a shared holder can
+   * not exist), including a crashed replica's whose holder record expired or was never written.
+   * An acknowledged background task (`background-running`) keeps its starting grant.
+   */
+  @Transactional({ propagation: "requires_new" })
+  async revokeIncarnation(deviceId: string, instance: RevokedIncarnation): Promise<void> {
+    await this.revokeMatching(deviceId, (eb) =>
+      eb.and([
+        eb("provider", "=", instance.provider),
+        eb("instance_generation", "=", instance.generation),
+        eb("state", "in", ["admitted", "dispatching", "started-or-unknown"]),
+      ]),
+    );
+  }
+  /** Revokes the device's intents `where` selects and owes each its exact revoke job. */
+  private async revokeMatching(
+    deviceId: string,
+    where: (
+      eb: ExpressionBuilder<KernelDatabase, "sandbox_operation_intents">,
+    ) => Expression<SqlBool>,
+  ): Promise<void> {
     const device = await this.db
       .selectFrom("devices")
       .select("org_id")
@@ -1353,17 +1425,62 @@ export class SandboxOperationIntents {
       .updateTable("sandbox_operation_intents")
       .set({ state: "revoked", outcome_unknown: true, updated_at: new Date() })
       .where("device_id", "=", deviceId)
-      .where("holder_token", "in", [...tokens])
-      .where("state", "in", ["admitted", "dispatching", "started-or-unknown"])
-      .returning("operation_id")
+      .where(where)
+      .returning(["operation_id", "method"])
       .execute();
+    // A revoked start never gets its exact ref: its task would keep running and hold its
+    // `maxTasks` slot forever. It ends now, in the revocation's transaction; the exact revoke (the
+    // operation tombstone) stays owed below, so the possibly launched process is still cancelled.
+    const starts = rows.filter((r) => r.method === "backgroundStart").map((r) => r.operation_id);
+    if (starts.length > 0)
+      await this.db
+        .updateTable("background_tasks")
+        .set({
+          status: "lost",
+          launch_state: "terminal",
+          finished_at: new Date(),
+          lost_reason: REVOKED_LAUNCH_REASON,
+          stopping_at: null,
+        })
+        .where("operation_id", "in", starts)
+        .where("status", "=", "running")
+        .where("execution_ref", "is", null)
+        .where("launch_state", "in", ["pending", "dispatched", "cancel-pending"])
+        .execute();
     for (const row of rows)
       await this.outbox.add({
         queue: "cap-kernel-maintenance",
         name: OPERATION_REVOKE,
         jobId: `${OPERATION_REVOKE}-${row.operation_id}`,
         data: { operationId: row.operation_id },
+        orgId: device.org_id,
       });
+  }
+  /**
+   * The revoked, unacknowledged operation revokes owed on one instance generation (oldest first,
+   * at most `limit`), which a lifecycle holder delivers before anything else runs there. A
+   * launched background start is left to its exact stop by the revoke job.
+   */
+  async owedRevocations(
+    deviceId: string,
+    instance: RevokedIncarnation,
+    limit: number,
+  ): Promise<{ operationId: string; deadline: Date }[]> {
+    const rows = await this.db
+      .selectFrom("sandbox_operation_intents")
+      .select(["operation_id", "deadline"])
+      .where("device_id", "=", deviceId)
+      .where("provider", "=", instance.provider)
+      .where("instance_generation", "=", instance.generation)
+      .where("state", "=", "revoked")
+      .where("revoke_acknowledged", "=", false)
+      .where((eb) =>
+        eb.or([eb("method", "!=", "backgroundStart"), eb("execution_ref", "is", null)]),
+      )
+      .orderBy("created_at")
+      .limit(limit)
+      .execute();
+    return rows.map((r) => ({ operationId: r.operation_id, deadline: r.deadline }));
   }
   /**
    * A disconnected or still-pending revoke remains owed; every retry is a new deterministic
@@ -1386,6 +1503,7 @@ export class SandboxOperationIntents {
         name: OPERATION_REVOKE,
         jobId: `${OPERATION_REVOKE}-${id}-${row.reconcile_attempt}`,
         data: { operationId: id },
+        orgId: row.org_id,
         runAt: new Date(
           Date.now() + Math.min(30_000 * 2 ** Math.min(row.reconcile_attempt - 1, 20), 3_600_000),
         ),

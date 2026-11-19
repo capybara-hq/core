@@ -4,6 +4,17 @@ export const deviceNotFound = (): ApiError =>
   new ApiError("device.not_found", "This device does not exist or was deleted.");
 
 /**
+ * The device's machine was disconnected (revoked, signed out): 403 `device.forbidden`
+ * with `details: [{ reason: "machine_revoked" }]`, so the tools tell the model what to ask for.
+ */
+export const machineRevoked = (): ApiError =>
+  new ApiError(
+    "device.forbidden",
+    "The machine of this local device was disconnected. Run capybara-device logout, then capybara-device login on it, or pick another device.",
+    [{ reason: "machine_revoked" }],
+  );
+
+/**
  * The device offers no projects (project root §4.1): a local machine whose `capybara-device`
  * does not announce `projects`, or a cloud provider without `list` / `scan`.
  */

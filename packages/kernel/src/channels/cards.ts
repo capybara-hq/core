@@ -6,6 +6,11 @@ import {
   parseToolKey,
 } from "@capybara-hq/plugin-sdk";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
+import type { PermissionEscalation } from "../sandbox/permission-call-types.js";
+import {
+  escalationAskReason,
+  quotedJustification,
+} from "../sandbox/review/permission-candidate.js";
 import type {
   ApprovalsService,
   ApprovalView,
@@ -281,7 +286,11 @@ export function gitCardText(
  * labelled only when offered. Model-controlled values are redacted by `redact`.
  */
 export function commandCardText(
-  detail: Pick<CommandAskDetail, "kind" | "command" | "reason"> & { path?: string },
+  detail: Pick<CommandAskDetail, "kind" | "command" | "reason"> & {
+    path?: string;
+    escalation?: PermissionEscalation;
+    workingRoot?: string;
+  },
   scopes: readonly string[],
   locale: ChannelLocale,
   redact: (s: string) => string = (s) => s,
@@ -290,9 +299,44 @@ export function commandCardText(
   const text = write ? (detail.path ?? detail.command) : detail.command;
   const shown = cut(redact(text.trim()), CARD_SUMMARY_MAX);
   const reason = cut(redact(detail.reason.trim()), CARD_SUMMARY_MAX);
+  const escalation = write ? undefined : detail.escalation;
+  // an escalation states the crossing from its own facts, never from the reason alone (a review
+  // model's ask may word the reason any way); the reason follows only when it adds something
+  const lines = escalation
+    ? [
+        phrase("escalationLine", locale),
+        ...(escalation.background === true
+          ? [
+              escalation.maxSeconds !== undefined
+                ? phrase("escalationBackgroundLimit", locale).replace(
+                    "{minutes}",
+                    String(Math.ceil(escalation.maxSeconds / 60)),
+                  )
+                : phrase("escalationBackground", locale),
+            ]
+          : []),
+        ...(detail.workingRoot !== undefined
+          ? [phrase("escalationCwd", locale).replace("{dir}", redact(detail.workingRoot))]
+          : []),
+        phrase("escalationJustification", locale).replace(
+          "{text}",
+          cut(redact(quotedJustification(escalation.justification)), CARD_SUMMARY_MAX),
+        ),
+        ...(detail.reason.trim() !== escalationAskReason(escalation) ? [reason] : []),
+      ]
+    : [reason];
   return {
-    title: phrase(write ? "commandWriteTitle" : "commandTitle", locale),
-    inputPreview: [reason, ...(shown !== "" ? ["", shown] : [])].join("\n"),
+    title: phrase(
+      write
+        ? "commandWriteTitle"
+        : escalation?.background === true
+          ? "escalationBackgroundTitle"
+          : escalation
+            ? "escalationTitle"
+            : "commandTitle",
+      locale,
+    ),
+    inputPreview: [...lines, ...(shown !== "" ? ["", shown] : [])].join("\n"),
     scopeLabels: {
       ...(scopes.includes("once") ? { once: phrase("commandAllowOnce", locale) } : {}),
       ...(scopes.includes("session") ? { session: phrase("commandAllowSession", locale) } : {}),

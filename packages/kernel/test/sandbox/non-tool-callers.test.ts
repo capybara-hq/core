@@ -1,7 +1,6 @@
 import { SandboxScopeDeniedError } from "@capybara-hq/plugin-sdk";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { BackgroundTaskPollJob } from "../../src/background/poll.job.js";
-import { actingAs, killSession } from "../../src/background/session.js";
 import { BackgroundTaskStopper } from "../../src/background/stop.js";
 import type { BackgroundTaskRow } from "../../src/background/store.js";
 import { BackgroundTasks } from "../../src/background/tasks.service.js";
@@ -19,8 +18,10 @@ import { SkillInvoker } from "../../src/skills/invoke.js";
  * through `withBrowse`, run-start knowledge reads through `withKernelRead` and the kernel's file
  * read through `withOperations` under the run's execution claim, a person's project skill
  * invocation renders a stub without any device call, and background reads, stops and polls of a
- * legacy (SID) task never run a raw exec. None of them calls the raw `withSandbox`. With the gate
- * off every caller keeps its raw route (the zero-drift state). Real admission of these routes is
+ * legacy (SID) task never run any exec (the SID path is gone, W5-P2, whatever the gate says). None
+ * of them calls the raw `withSandbox`. With the gate
+ * off (an explicit `false`, the test seam for the dormant state; production leaves it on) every
+ * caller keeps its raw route (the zero-drift state). Real admission of these routes is
  * covered by `kernel-reads.test.ts`.
  */
 
@@ -167,10 +168,16 @@ describe("device projects (owner browse)", () => {
     expect(raw()).toBe(0);
   });
 
-  it("gate off: the raw route, unchanged", async () => {
+  it("no injected value is the production default: the gate-on route", async () => {
     await projects().candidates(ORG, ACC, DEV);
+    expect(raw()).toBe(0);
+    expect(sb.withBrowse).toHaveBeenCalledTimes(1);
+  });
+
+  it("gate off: the raw route, unchanged", async () => {
+    // an explicit false is the test seam for the dormant state (production default: on)
     await projects(false).candidates(ORG, ACC, DEV);
-    expect(raw()).toBe(2);
+    expect(raw()).toBe(1);
     expect(sb.withBrowse).not.toHaveBeenCalled();
     expect(sb.held.scan).toHaveBeenCalledWith(
       H,
@@ -257,7 +264,7 @@ describe("project knowledge (run start)", () => {
   });
 
   it("gate off: the raw route, unchanged", async () => {
-    await read(knowledge());
+    await read(knowledge(false));
     expect(raw()).toBe(1);
     expect(sb.withKernelRead).not.toHaveBeenCalled();
   });
@@ -364,12 +371,12 @@ describe("a person's project skill invocation", () => {
       "project:fix",
     ]);
     // gate off: the send-time read needs no Skill tool, the menu is unchanged
-    expect((await listing()).map((s) => s.name)).toEqual(["project:fix"]);
+    expect((await listing(false)).map((s) => s.name)).toEqual(["project:fix"]);
     expect(raw()).toBe(0);
   });
 
   it("gate off: the raw route, unchanged", async () => {
-    await prepare(invoker()).catch(() => undefined);
+    await prepare(invoker(false)).catch(() => undefined);
     expect(raw()).toBe(1);
   });
 });
@@ -426,7 +433,7 @@ describe("the kernel's file read (agents.register-skill)", () => {
   });
 
   it("gate off: the raw route, unchanged", async () => {
-    await reader().read(input);
+    await reader(false).read(input);
     expect(raw()).toBe(1);
     expect(sb.withOperations).not.toHaveBeenCalled();
   });
@@ -466,7 +473,7 @@ describe("background tasks (HTTP output and stop)", () => {
     cancelRequestedAt: null,
   } as unknown as BackgroundTaskRow;
   const stopper = { stop: vi.fn(async (t: BackgroundTaskRow) => t) };
-  const tasks = (task: BackgroundTaskRow, activation?: boolean) =>
+  const tasks = (task: BackgroundTaskRow) =>
     new BackgroundTasks(
       { isAccessible: async () => true } as never,
       { get: async () => task, listFor: async () => [task] } as never,
@@ -475,32 +482,31 @@ describe("background tasks (HTTP output and stop)", () => {
       { findByIdem: async () => undefined } as never,
       fakeDb({ source: "cloud" }),
       { forTool: async () => DEV } as never,
-      activation,
     );
   beforeEach(() => stopper.stop.mockClear());
 
-  it("gate on: a running legacy task's output is the retirement gate's actionable refusal", async () => {
-    await expect(tasks(base, true).output(ORG, CONV, ACC, base.id, 100)).rejects.toBeInstanceOf(
+  it("a running legacy task's output is the retirement gate's actionable refusal", async () => {
+    await expect(tasks(base).output(ORG, CONV, ACC, base.id, 100)).rejects.toBeInstanceOf(
       RetirementPendingError,
     );
     expect(sb.ifRunning).not.toHaveBeenCalled();
     expect(raw()).toBe(0);
   });
 
-  it("gate on: a finished legacy task's output is never read by a raw exec", async () => {
+  it("a finished legacy task's output is never read by an exec", async () => {
     const done = { ...base, status: "completed" } as unknown as BackgroundTaskRow;
-    await expect(tasks(done, true).output(ORG, CONV, ACC, base.id, 100)).rejects.toMatchObject({
+    await expect(tasks(done).output(ORG, CONV, ACC, base.id, 100)).rejects.toMatchObject({
       code: "background_task.output_unavailable",
     });
     expect(sb.ifRunning).not.toHaveBeenCalled();
   });
 
-  it("gate on: a legacy task's stop goes to the stopper, which refuses only before an exec", async () => {
-    await tasks(base, true).stop(ORG, CONV, ACC, base.id);
+  it("a legacy task's stop goes to the stopper, which never signals it", async () => {
+    await tasks(base).stop(ORG, CONV, ACC, base.id);
     expect(stopper.stop).toHaveBeenCalledTimes(1);
   });
 
-  it("gate on: a managed task reads by its exact ref (an exact-ref drain, no exec)", async () => {
+  it("a managed task reads by its exact ref (an exact-ref drain, no exec)", async () => {
     const managed = {
       ...base,
       sid: null,
@@ -515,52 +521,30 @@ describe("background tasks (HTTP output and stop)", () => {
         instanceGeneration: "1000",
       },
     } as unknown as BackgroundTaskRow;
-    await expect(tasks(managed, true).output(ORG, CONV, ACC, base.id, 100)).rejects.toBeInstanceOf(
+    await expect(tasks(managed).output(ORG, CONV, ACC, base.id, 100)).rejects.toBeInstanceOf(
       ApiError,
     );
     expect(sb.ifRunning).toHaveBeenCalledTimes(1);
     expect(sb.ifRunning.mock.calls[0]?.[1]).toEqual({ createdAt: new Date(1000), exactRef: true });
-    await tasks(managed, true)
+    await tasks(managed)
       .stop(ORG, CONV, ACC, base.id)
       .catch(() => undefined);
     expect(stopper.stop).toHaveBeenCalledTimes(1);
     expect(raw()).toBe(0);
   });
 
-  it("gate off: a legacy task keeps its SID read and stop", async () => {
-    await tasks(base)
-      .output(ORG, CONV, ACC, base.id, 100)
-      .catch(() => undefined);
-    expect(sb.ifRunning).toHaveBeenCalledWith(
-      DEV,
-      { createdAt: new Date(1000) },
-      expect.any(Function),
-      expect.anything(),
-    );
-    await tasks(base)
-      .stop(ORG, CONV, ACC, base.id)
-      .catch(() => undefined);
-    expect(stopper.stop).toHaveBeenCalledTimes(1);
-  });
-});
-
-describe("background session helpers", () => {
-  it("gate on: actingAs refuses the raw exec; killSession runs nothing", async () => {
-    const p = { exec: vi.fn(async () => ({ exitCode: 0, stdout: "", stderr: "" })) };
-    const actor = { accountId: ACC, conversationId: CONV };
-    await expect(
-      actingAs(p as never, actor, true).exec(H as never, { command: "true" } as never),
-    ).rejects.toBeInstanceOf(RetirementPendingError);
-    expect(await killSession(p as never, H as never, "42", true)).toBe(false);
-    expect(p.exec).not.toHaveBeenCalled();
-  });
-
-  it("gate off: both still run the exec", async () => {
-    const p = { exec: vi.fn(async () => ({ exitCode: 0, stdout: "", stderr: "" })) };
-    const actor = { accountId: ACC, conversationId: CONV };
-    await actingAs(p as never, actor).exec(H as never, { command: "true" } as never);
-    expect(p.exec).toHaveBeenCalledWith(H, { command: "true", actor });
-    expect(await killSession(p as never, H as never, "42")).toBe(true);
+  it("a finished legacy task that never started answers not_started, with no device call", async () => {
+    const never = {
+      ...base,
+      sid: null,
+      sandboxCreatedAt: null,
+      status: "failed",
+    } as unknown as BackgroundTaskRow;
+    await expect(tasks(never).output(ORG, CONV, ACC, base.id, 100)).rejects.toMatchObject({
+      code: "background_task.output_unavailable",
+      details: [{ reason: "not_started", environment: "cloud" }],
+    });
+    expect(sb.ifRunning).not.toHaveBeenCalled();
   });
 });
 
@@ -583,15 +567,8 @@ describe("the legacy stop and poll (W3-L review M2, M4)", () => {
     get: vi.fn(async () => task),
   };
   const finisher = { finish: vi.fn(async () => true) };
-  const stopper = (activation?: boolean) =>
-    new BackgroundTaskStopper(
-      store as never,
-      finisher as never,
-      sb as never,
-      fakeDb(),
-      log,
-      activation,
-    );
+  const stopper = () =>
+    new BackgroundTaskStopper(store as never, finisher as never, sb as never, fakeDb(), log);
   /** `ifRunning` that runs its callback on a running instance with the held exec. */
   const running = () =>
     sb.ifRunning.mockImplementation(async (...a: unknown[]) => {
@@ -603,22 +580,22 @@ describe("the legacy stop and poll (W3-L review M2, M4)", () => {
     finisher.finish.mockClear();
   });
 
-  it("gate on: a stop on a running instance refuses before its exec and gives up its claim", async () => {
+  it("a stop on a running instance refuses before any exec and gives up its claim", async () => {
     running();
-    await expect(stopper(true).stop(task, "person")).rejects.toBeInstanceOf(RetirementPendingError);
+    await expect(stopper().stop(task, "person")).rejects.toBeInstanceOf(RetirementPendingError);
     expect(sb.held.exec).not.toHaveBeenCalled();
     expect(store.releaseStop).toHaveBeenCalledTimes(1);
     expect(finisher.finish).not.toHaveBeenCalled();
   });
 
-  it("gate on: a stop whose instance is gone finishes without any exec", async () => {
+  it("a stop whose instance is gone finishes without any exec", async () => {
     sb.ifRunning.mockResolvedValueOnce({ kind: "not_running", status: "gone" });
-    await stopper(true).stop(task, "person");
+    await stopper().stop(task, "person");
     expect(sb.held.exec).not.toHaveBeenCalled();
     expect(finisher.finish).toHaveBeenCalledTimes(1);
   });
 
-  it("gate on: a refused poll is logged once per instance at info, never as a warning", async () => {
+  it("a running legacy instance is left alone, logged once per instance at info", async () => {
     running();
     const info = vi.fn();
     const warn = vi.fn();
@@ -632,7 +609,7 @@ describe("the legacy stop and poll (W3-L review M2, M4)", () => {
     };
     const job = new BackgroundTaskPollJob(
       {
-        runningStarted: async () => [task],
+        runningLegacy: async () => [task],
         runningManaged: async () => [],
         owedCancels: async () => [],
         failAbandonedLaunches: async () => [],
@@ -644,7 +621,6 @@ describe("the legacy stop and poll (W3-L review M2, M4)", () => {
       {} as never,
       { info, warn, error: vi.fn(), debug: vi.fn() } as never,
       {} as never,
-      true,
       redis as never,
     );
     await job.pollOnce();
@@ -653,5 +629,32 @@ describe("the legacy stop and poll (W3-L review M2, M4)", () => {
     expect(finisher.finish).not.toHaveBeenCalled();
     expect(warn).not.toHaveBeenCalled();
     expect(info.mock.calls.filter((c) => String(c[0]).includes("retirement gate"))).toHaveLength(1);
+  });
+
+  it("a legacy instance that is suspended or replaced finishes its task without any exec", async () => {
+    const job = new BackgroundTaskPollJob(
+      {
+        runningLegacy: async () => [task],
+        runningManaged: async () => [],
+        owedCancels: async () => [],
+        failAbandonedLaunches: async () => [],
+      } as never,
+      finisher as never,
+      {} as never,
+      sb as never,
+      { get: () => ({ sandbox: { background: { pollSeconds: 5 } }, tools: {} }) } as never,
+      {} as never,
+      log,
+      {} as never,
+    );
+    sb.ifRunning.mockResolvedValueOnce({ kind: "not_running", status: "suspended" });
+    await job.pollOnce();
+    sb.ifRunning.mockResolvedValueOnce({ kind: "other_instance" });
+    await job.pollOnce();
+    expect(sb.held.exec).not.toHaveBeenCalled();
+    expect(finisher.finish.mock.calls.map((c) => (c as unknown[])[1])).toEqual([
+      { status: "lost", lostReason: "sandbox_suspended", killPending: true },
+      { status: "lost", lostReason: "sandbox_recreated", killPending: false },
+    ]);
   });
 });

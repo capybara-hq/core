@@ -1,5 +1,4 @@
 import { randomUUID } from "node:crypto";
-import { existsSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -8,13 +7,12 @@ import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara
 import { sql } from "kysely";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { BackgroundTaskFinisher } from "../../src/background/finish.js";
-import { launchScript, newTaskId, taskOutputPath } from "../../src/background/launch.js";
+import { newTaskId, taskOutputPath } from "../../src/background/launch.js";
 import {
   BACKGROUND_PRUNE_JOB,
   BackgroundTaskPollJob,
   launchAbandonedAfterMs,
 } from "../../src/background/poll.job.js";
-import { killSessionScript } from "../../src/background/session.js";
 import { BackgroundTaskStopper } from "../../src/background/stop.js";
 import {
   type BackgroundTaskRow,
@@ -38,10 +36,18 @@ import { ApprovalsService } from "../../src/tools/approvals.service.js";
 import { sandboxBaseTimeoutMs } from "../../src/tools/builtins/sandbox/common.js";
 import type { ScriptRule } from "../fixtures/plugins/model-script/index.js";
 import { removeFakeSandbox } from "../fixtures/plugins/sandbox-fake/index.js";
+import {
+  fakeExecutionAlive,
+  fakeExecutionExited,
+  killFakeExecution,
+  launchManaged,
+  type ManagedLauncher,
+} from "../helpers/background-fake.js";
 import { legacyDbFor } from "../helpers/conversations.js";
 import { onlyBuiltins } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
 import { managedTaskFixture } from "../helpers/managed-background.js";
+import { startClaimedRun } from "../helpers/managed-calls.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { drainOutbox } from "../helpers/outbox.js";
 import {
@@ -182,13 +188,49 @@ afterEach(async () => {
     WHERE status = 'running'`.execute(raw);
 });
 
-/** A new conversation (seeded in the database) bound to a device of its own. */
-async function conversation(): Promise<{
-  orgId: string;
-  conversationId: string;
-  accountId: string;
-  deviceId: string;
-}> {
+/** A conversation with the actor and the claimed run its managed launches belong to. */
+type Conv = ManagedLauncher & { deviceId: string };
+
+/**
+ * A new conversation (seeded in the database) bound to a device of its own, its actor an org
+ * member (a managed call's actor must be one), with a running claimed run.
+ */
+/** A legacy row of `c` (no launch writes one any more: rows from before the cutover). */
+function legacyRow(c: Conv, id: string, startedAt: Date) {
+  return {
+    id,
+    orgId: c.orgId,
+    conversationId: c.conversationId,
+    sandboxConversationId: c.conversationId,
+    deviceId: c.deviceId,
+    runId: "run-x",
+    callId: "call-x",
+    triggerAccountId: c.accountId,
+    description: "d",
+    command: "true",
+    sid: null,
+    outputPath: taskOutputPath(id),
+    startedAt,
+    deadlineAt: new Date(startedAt.getTime() + 3_600_000),
+    sandboxCreatedAt: null,
+  };
+}
+
+/** A legacy reservation that never started (its launch died before the cutover). */
+async function legacyReservation(c: Conv, startedAt: Date): Promise<string> {
+  const id = newTaskId();
+  await store.insert(legacyRow(c, id, startedAt), "reserved");
+  return id;
+}
+
+/** Ends a row a test left running, so it holds no slot for the next test. */
+async function settleRow(id: string): Promise<void> {
+  await sql`UPDATE capybara.background_tasks
+    SET status = 'failed', finished_at = now(), stopping_at = NULL
+    WHERE id = ${id}`.execute(raw);
+}
+
+async function conversation(): Promise<Conv> {
   const s = await seedConversation(raw);
   const deviceId = await seedDevice(raw, s.orgId, s.accountId);
   await db
@@ -196,8 +238,12 @@ async function conversation(): Promise<{
     .set({ device_id: deviceId })
     .where("id", "=", s.conversationId)
     .execute();
+  await db
+    .insertInto("memberships")
+    .values({ org_id: s.orgId, account_id: s.accountId, role: "owner" })
+    .execute();
   used.push(deviceId);
-  return { ...s, deviceId };
+  return { ...s, deviceId, ...(await startClaimedRun(k, raw, s.conversationId, s.accountId)) };
 }
 
 /** The device a conversation is bound to. */
@@ -235,57 +281,16 @@ async function inSandbox(
   );
 }
 
-/** Starts `command` as a background task of the conversation, as the `Bash` launch does. */
-async function launch(
-  c: { orgId: string; conversationId: string; accountId: string },
-  command: string,
-  seconds = 300,
-  runId = "run-x",
-): Promise<BackgroundTaskRow> {
-  const id = newTaskId();
-  // before the launch exec, as the Bash launch does: the sandbox's own timeout starts after it
-  const startedAt = new Date();
-  const r = await inSandbox(c, launchScript(id, command, seconds));
-  expect(r.exitCode).toBe(0);
-  const sid = r.stdout.trim();
-  // the fake's setsid shim may still be starting when the launch returns (on Linux the session
-  // exists by then): wait for its session record, so a suspension right after kills it
-  const deviceId = await envOf(c.conversationId);
-  const { handle } = await db
-    .selectFrom("device_instances")
-    .select("handle")
-    .where("device_id", "=", deviceId)
-    .executeTakeFirstOrThrow();
-  const record = join(root, "instances", (handle as { id: string }).id, "sessions", sid);
-  await waitFor(async () => existsSync(record), 10_000, "session record");
-  const instance = await sandbox.currentInstance(deviceId);
-  await store.insert({
-    id,
-    orgId: c.orgId,
-    conversationId: c.conversationId,
-    sandboxConversationId: c.conversationId,
-    deviceId,
-    runId,
-    callId: "call-x",
-    triggerAccountId: c.accountId,
-    description: `Run ${command}`,
-    command,
-    sid,
-    outputPath: taskOutputPath(id),
-    startedAt,
-    deadlineAt: new Date(startedAt.getTime() + seconds * 1000),
-    sandboxCreatedAt: instance?.createdAt as Date,
-  });
-  return (await store.get(id)) as BackgroundTaskRow;
-}
+/** Starts `command` as a managed background task of the conversation through the `Bash` path. */
+const launch = (c: ManagedLauncher, command: string, seconds = 300): Promise<BackgroundTaskRow> =>
+  launchManaged(k, raw, c, command, seconds);
 
-/** Whether the task's session still has a process (pgrep -s), asked inside the sandbox. */
-async function alive(
-  c: { orgId: string; conversationId: string },
-  t: BackgroundTaskRow,
-): Promise<boolean> {
-  return (await inSandbox(c, `pgrep -s ${t.sid} >/dev/null`)).exitCode === 0;
-}
+/** Whether a process of the task's group still runs (the fake's record of its execution). */
+const alive = (_c: unknown, t: BackgroundTaskRow): Promise<boolean> => fakeExecutionAlive(root, t);
+
+/** Waits until the fake recorded the task's command exit. */
+const exited = (t: BackgroundTaskRow) =>
+  waitFor(async () => fakeExecutionExited(root, t), 10_000, "the task's exit");
 
 type Finished = Extract<ConversationEvent, { type: "background_task_finished" }>;
 const finishedEvents = async (conversationId: string, taskId: string): Promise<Finished[]> =>
@@ -311,12 +316,8 @@ describe("polling", () => {
   it("a task that exits 3 ends failed with its exit code and last lines, in one poll, with one event", async () => {
     const c = await conversation();
     const t = await launch(c, "echo hi; exit 3");
-    // the exit file is written: the next poll finishes it
-    await waitFor(
-      async () => (await inSandbox(c, `test -s .capybara/tasks/${t.id}.exit`)).exitCode === 0,
-      10_000,
-      "exit file",
-    );
+    // the exit is recorded: the next poll finishes it
+    await exited(t);
     expect(await job.pollOnce()).toBe(1);
     const row = await store.get(t.id);
     expect(row).toMatchObject({ status: "failed", exitCode: 3, lostReason: null });
@@ -362,19 +363,14 @@ describe("polling", () => {
     expect(last.endsWith("x\n")).toBe(true);
   });
 
-  it("a task whose command exited but left processes running ends completed, its session empty (M2)", async () => {
+  it("a task whose command exited but left processes running ends completed, nothing of it left running (M2)", async () => {
     const c = await conversation();
     const t = await launch(c, "sh -c 'sleep 300 & echo started'");
-    await waitFor(
-      async () => (await inSandbox(c, `test -s .capybara/tasks/${t.id}.exit`)).exitCode === 0,
-      10_000,
-      "exit file",
-    );
-    // the command exited, its `sleep 300` lives on in the task's session
-    expect(await alive(c, t)).toBe(true);
+    await exited(t);
+    // the provider ends what the command left running once it exits, as a device's exec does
+    await waitFor(async () => !(await alive(c, t)), 10_000, "the task's group ended");
     const row = await pollUntilFinished(t);
     expect(row).toMatchObject({ status: "completed", exitCode: 0 });
-    expect(await alive(c, t)).toBe(false);
     expect((await finishedEvents(c.conversationId, t.id))[0]?.payload.lastLines).toBe("started\n");
   });
 
@@ -382,38 +378,37 @@ describe("polling", () => {
     const c = await conversation();
     const t = await launch(c, "sleep 60", 1);
     const row = await pollUntilFinished(t);
-    expect(row).toMatchObject({ status: "timed_out", exitCode: 137 });
+    // the exit code is the provider's (the fake's timeout gives 124)
+    expect(row).toMatchObject({ status: "timed_out", exitCode: 124 });
   });
 
-  it("a task whose session was killed from outside ends lost (process_gone)", async () => {
+  it("a task whose process group was killed from outside ends lost (supervision_lost)", async () => {
     const c = await conversation();
     const t = await launch(c, "sleep 303");
-    // killed until the session is empty, as the product kills one: a single pkill can miss a
-    // process forked between its listing and its signals (timeout starting bash), which lives on
-    const killed = await inSandbox(c, `${killSessionScript(t.sid as string)}; exit "$ks"`);
-    expect(killed.exitCode).toBe(0);
+    // its whole process group killed from outside: the provider lost the execution
+    await killFakeExecution(root, t);
     const row = await pollUntilFinished(t);
     expect(row).toMatchObject({
       status: "lost",
-      lostReason: "process_gone",
+      lostReason: "supervision_lost",
       exitCode: null,
-      killPending: false,
     });
     expect((await finishedEvents(c.conversationId, t.id))[0]?.payload).toMatchObject({
       status: "lost",
-      lostReason: "process_gone",
+      lostReason: "supervision_lost",
     });
   });
 
-  it("a suspended sandbox's task ends lost (sandbox_suspended) with kill_pending; a resume kills nothing alive", async () => {
+  it("a suspended sandbox's task ends lost (sandbox_suspended); nothing of it is left alive", async () => {
     const c = await conversation();
     const t = await launch(c, "sleep 304");
     expect(await sandbox.suspendIdle(new Date(Date.now() + 2 * 86_400_000))).toBeGreaterThan(0);
     expect(await job.pollOnce()).toBe(1);
+    // the suspension killed the exact execution: no kill is owed
     expect(await store.get(t.id)).toMatchObject({
       status: "lost",
       lostReason: "sandbox_suspended",
-      killPending: true,
+      killPending: false,
     });
     // the poll neither resumed the sandbox nor ran anything in it
     const st = await db
@@ -422,9 +417,7 @@ describe("polling", () => {
       .where("device_id", "=", c.deviceId)
       .executeTakeFirstOrThrow();
     expect(st.status).toBe("suspended");
-    // the next use resumes it and kills the pending task's session: nothing of it is alive
     expect(await alive(c, t)).toBe(false);
-    expect((await store.get(t.id))?.killPending).toBe(false);
   });
 
   it("a task of a rebuilt sandbox ends lost (sandbox_recreated)", async () => {
@@ -435,7 +428,7 @@ describe("polling", () => {
       .select("handle")
       .where("device_id", "=", c.deviceId)
       .executeTakeFirstOrThrow();
-    await inSandbox(c, killSessionScript(t.sid as string));
+    await killFakeExecution(root, t);
     await removeFakeSandbox(root, (row.handle as { id: string }).id);
     // the next use finds the instance gone and rebuilds it
     expect((await inSandbox(c, "true")).exitCode).toBe(0);
@@ -486,60 +479,19 @@ describe("polling", () => {
     expect((await status()).status).toBe("suspended");
   });
 
-  it("skips a reservation that has not started (no sid)", async () => {
+  it("skips a legacy reservation that never started", async () => {
     const c = await conversation();
-    const id = newTaskId();
-    expect(
-      await store.reserve(
-        {
-          id,
-          orgId: c.orgId,
-          conversationId: c.conversationId,
-          sandboxConversationId: c.conversationId,
-          deviceId: c.deviceId,
-          runId: "run-x",
-          callId: "call-x",
-          triggerAccountId: c.accountId,
-          description: "d",
-          command: "true",
-          outputPath: taskOutputPath(id),
-          startedAt: new Date(),
-          deadlineAt: new Date(Date.now() + 60_000),
-        },
-        4,
-      ),
-    ).toBe(true);
+    const id = await legacyReservation(c, new Date());
     expect(await job.pollOnce()).toBe(0);
     expect((await store.get(id))?.status).toBe("running");
-    await store.failLaunch(id, "test");
+    await settleRow(id);
   });
 
   it("fails a reservation abandoned by its launch after 2 minutes, never a younger or live-claimed one", async () => {
     const c = await conversation();
     // only an abandoned reservation of its own: its frame comes from the abandoned path alone
     const lone = await conversation();
-    const reserve = async (startedAt: Date, conv = c) => {
-      const id = newTaskId();
-      await store.reserve(
-        {
-          id,
-          orgId: conv.orgId,
-          conversationId: conv.conversationId,
-          sandboxConversationId: conv.conversationId,
-          deviceId: conv.deviceId,
-          runId: "run-x",
-          callId: "call-x",
-          triggerAccountId: conv.accountId,
-          description: "d",
-          command: "true",
-          outputPath: taskOutputPath(id),
-          startedAt,
-          deadlineAt: new Date(startedAt.getTime() + 3_600_000),
-        },
-        10,
-      );
-      return id;
-    };
+    const reserve = (startedAt: Date, conv = c) => legacyReservation(conv, startedAt);
     const limit = launchAbandonedAfterMs(k.app.get(KernelConfigService).get());
     // derived from config: twice the launch call's pipeline limit, so well over the lease wait
     const cfg = k.app.get(KernelConfigService).get();
@@ -557,11 +509,13 @@ describe("polling", () => {
     await sql`UPDATE capybara.background_tasks
       SET stopping_at = now() - ${STOP_CLAIM_TTL_MS + 1000}::integer * interval '1 millisecond'
       WHERE id = ${staleClaim}`.execute(raw);
-    // a launch that completed at that moment (its sid set) is no longer a reservation
-    const completing = await reserve(old);
-    expect(
-      await store.markStarted(completing, { sid: "424242", sandboxCreatedAt: new Date() }),
-    ).toBe("started");
+    // a legacy launch that had started (its sid and instance recorded) is no reservation
+    const completing = newTaskId();
+    await store.insert({
+      ...legacyRow(c, completing, old),
+      sid: "424242",
+      sandboxCreatedAt: new Date(),
+    });
 
     const publish = vi.spyOn(k.app.get(EventLog), "publishChanged");
     await job.pollOnce();
@@ -584,12 +538,10 @@ describe("polling", () => {
     expect(await finishedEvents(c.conversationId, staleClaim)).toEqual([]);
     expect((await store.get(young))?.status).toBe("running");
     expect((await store.get(claimed))?.status).toBe("running");
-    // the completed launch keeps its sid (the poll then checks it like any started task)
+    // the started legacy row keeps its sid and is never failed as abandoned
     expect((await store.get(completing))?.sid).toBe("424242");
     expect((await store.get(completing))?.lostReason).not.toBe("launch_abandoned");
-    // a failed launch clears a stop's claim with its status
-    for (const id of [young, claimed]) await store.failLaunch(id, "test");
-    expect(await store.get(claimed)).toMatchObject({ status: "failed", stoppingAt: null });
+    for (const id of [young, claimed]) await settleRow(id);
   });
 });
 
@@ -619,8 +571,7 @@ describe("stopping", () => {
     const c = await conversation();
     const t = await launch(c, "echo started; sleep 309");
     await waitFor(
-      async () =>
-        (await inSandbox(c, `grep -q started .capybara/tasks/${t.id}.out`)).exitCode === 0,
+      async () => (await inSandbox(c, `grep -q started ${t.outputPath}`)).exitCode === 0,
       10_000,
       "output",
     );
@@ -683,45 +634,19 @@ describe("stopping", () => {
     expect(await alive(c, t)).toBe(true);
   });
 
-  it("a stop of a reservation only claims it (its launch kills what it starts)", async () => {
+  it("a stop of a legacy reservation only claims it (the poller fails it as abandoned)", async () => {
     const c = await conversation();
-    const id = newTaskId();
-    await store.reserve(
-      {
-        id,
-        orgId: c.orgId,
-        conversationId: c.conversationId,
-        sandboxConversationId: c.conversationId,
-        deviceId: c.deviceId,
-        runId: "run-x",
-        callId: "call-x",
-        triggerAccountId: c.accountId,
-        description: "d",
-        command: "true",
-        outputPath: taskOutputPath(id),
-        startedAt: new Date(),
-        deadlineAt: new Date(Date.now() + 60_000),
-      },
-      4,
-    );
+    const id = await legacyReservation(c, new Date());
     const row = await stopper.stop((await store.get(id)) as BackgroundTaskRow, "person");
     expect(row.status).toBe("running");
     expect(row.stoppingAt).toBeInstanceOf(Date);
-    expect(await store.markStarted(id, { sid: "12345", sandboxCreatedAt: new Date() })).toBe(
-      "stopping",
-    );
-    await store.finishStoppedLaunch(id);
-    expect(await store.get(id)).toMatchObject({ status: "stopped", stoppingAt: null });
+    await settleRow(id);
   });
 
   it("a stop of a task that already exited finishes it as its exit says", async () => {
     const c = await conversation();
     const t = await launch(c, "echo done");
-    await waitFor(
-      async () => (await inSandbox(c, `test -s .capybara/tasks/${t.id}.exit`)).exitCode === 0,
-      10_000,
-      "exit file",
-    );
+    await exited(t);
     expect(await stopper.stop(t, "tool")).toMatchObject({ status: "completed", exitCode: 0 });
     expect((await finishedEvents(c.conversationId, t.id))[0]?.payload).toMatchObject({
       reported: true,
@@ -729,50 +654,81 @@ describe("stopping", () => {
     });
   });
 
-  it("a stop of a task that exited but left processes running kills them (M2)", async () => {
-    const c = await conversation();
-    const t = await launch(c, "sh -c 'sleep 300 & echo started'");
-    await waitFor(
-      async () => (await inSandbox(c, `test -s .capybara/tasks/${t.id}.exit`)).exitCode === 0,
-      10_000,
-      "exit file",
-    );
-    expect(await alive(c, t)).toBe(true);
-    expect(await stopper.stop(t, "tool")).toMatchObject({ status: "completed", exitCode: 0 });
-    expect(await alive(c, t)).toBe(false);
-  });
-
   it("a sub-agent run's end stops only the tasks that run started (M5)", async () => {
-    const c = await conversation();
-    await sql`UPDATE capybara.conversations SET kind = 'subagent'
-      WHERE id = ${c.conversationId}`.execute(raw);
-    const older = await launch(c, "sleep 319", 300, "run-old");
-    const followUp = await launch(c, "sleep 320", 300, "run-new");
+    const parent = await conversation();
+    // a sub-agent of it, working in the parent's device
+    const childId = randomUUID();
+    await sql`INSERT INTO capybara.conversations
+        (id, org_id, agent_id, account_id, kind, parent_conversation_id)
+      VALUES (${childId}, ${parent.orgId}, ${parent.agentId}, ${parent.accountId}, 'subagent',
+        ${parent.conversationId})`.execute(raw);
+    const childRun = async () => ({
+      ...parent,
+      conversationId: childId,
+      sandboxConversationId: parent.conversationId,
+      ...(await startClaimedRun(k, raw, childId, parent.accountId)),
+    });
+    const c = await childRun();
+    const older = await launch(c, "sleep 319");
+    // the older run ends; a follow-up run starts its own task
+    await db.updateTable("runs").set({ status: "completed" }).where("id", "=", c.runId).execute();
+    const next = await childRun();
+    const followUp = await launch(next, "sleep 320");
     // the older run's end, handled after the follow-up run started its own task
-    await stopper.stopSubagentTasks(c.conversationId, "run-old");
+    await stopper.stopSubagentTasks(childId, c.runId);
     expect(await store.get(older.id)).toMatchObject({ status: "stopped" });
     expect(await alive(c, older)).toBe(false);
     expect(await store.get(followUp.id)).toMatchObject({ status: "running" });
     expect(await alive(c, followUp)).toBe(true);
-    await stopper.stopSubagentTasks(c.conversationId, "run-new");
+    await stopper.stopSubagentTasks(childId, next.runId);
     expect(await store.get(followUp.id)).toMatchObject({ status: "stopped" });
   });
 
-  it("a stop while the sandbox is suspended ends the task lost with kill_pending", async () => {
+  it("a stop while the sandbox is suspended leaves the exact cancellation owed, never resuming it", async () => {
     const c = await conversation();
     const t = await launch(c, "sleep 310");
     expect(await sandbox.suspendIdle(new Date(Date.now() + 2 * 86_400_000))).toBeGreaterThan(0);
-    expect(await stopper.stop(t, "person")).toMatchObject({
-      status: "lost",
-      lostReason: "sandbox_suspended",
-      killPending: true,
-    });
+    const row = await stopper.stop(t, "person");
+    expect(row).toMatchObject({ status: "running", cancelRequestedBy: "person" });
+    expect(row.cancelRequestedAt).toBeInstanceOf(Date);
+    const st = await db
+      .selectFrom("device_instances")
+      .select("status")
+      .where("device_id", "=", c.deviceId)
+      .executeTakeFirstOrThrow();
+    expect(st.status).toBe("suspended");
   });
 
   describe("through the run worker and the conversation delete", () => {
     let owner: Req;
     let orgId: string;
     let agentId: string;
+
+    /** The task once the deletion's owed stop ended it. */
+    const stoppedAfterDeletion = (t: BackgroundTaskRow) =>
+      waitFor(
+        async () => {
+          const r = await store.get(t.id);
+          return r?.status !== "running" && r;
+        },
+        15_000,
+        "the deletion's stop",
+      );
+
+    /**
+     * Launches `command` in conversation `conv` from a run of its own that then ends: the
+     * conversation is idle with the task running.
+     */
+    async function launchIdle(conv: string, accountId: string, command: string) {
+      const run = await startClaimedRun(k, raw, conv, accountId);
+      const t = await launch({ orgId, accountId, agentId, conversationId: conv, ...run }, command);
+      await db
+        .updateTable("runs")
+        .set({ status: "completed" })
+        .where("id", "=", run.runId)
+        .execute();
+      return t;
+    }
 
     beforeAll(async () => {
       await accountsFor(db).createLocal({ login: "owner", password: PW, displayName: "O" });
@@ -882,18 +838,81 @@ describe("stopping", () => {
         .select("account_id")
         .where("id", "=", conv)
         .executeTakeFirstOrThrow();
-      const t = await launch(
-        { orgId, conversationId: conv, accountId: owned.account_id },
-        "sleep 311",
-      );
+      const t = await launchIdle(conv, owned.account_id, "sleep 311");
       const res = await owner({
         method: "DELETE",
         url: `/api/v1/orgs/${orgId}/conversations/${conv}`,
       });
       expect(res.statusCode, res.body).toBe(204);
-      expect(await store.get(t.id)).toMatchObject({ status: "stopped" });
+      // the deletion's stop is owed work after the commit (the outbox): wait for it
+      expect(await stoppedAfterDeletion(t)).toMatchObject({ status: "stopped" });
       expect(await alive({ orgId, conversationId: conv }, t)).toBe(false);
     });
+
+    it("a revocation that stops a task of a deleted conversation first still marks the stop the deletion's", async () => {
+      const conv = await createConv(owner, orgId, agentId);
+      used.push(conv);
+      const owned = await db
+        .selectFrom("conversations")
+        .select("account_id")
+        .where("id", "=", conv)
+        .executeTakeFirstOrThrow();
+      const t = await launchIdle(conv, owned.account_id, "sleep 319");
+      // the deletion committed; its revocation reaches the task before the deletion's own stop
+      await sql`UPDATE capybara.conversations SET deleted_at = now() WHERE id = ${conv}`.execute(
+        raw,
+      );
+      const stopped = await k.app.get(BackgroundTaskStopper).stop(t, "revoked");
+      expect(stopped.status).toBe("stopped");
+      expect((await finishedEvents(conv, t.id)).map((e) => e.payload)).toMatchObject([
+        { status: "stopped", reported: false, stoppedBy: "deletion" },
+      ]);
+    });
+
+    it.each(["root", "org"] as const)(
+      "a revocation winning against the %s's deletion stop still marks the stop the deletion's",
+      async (deleted) => {
+        const conv = await createConv(owner, orgId, agentId);
+        used.push(conv);
+        const owned = await db
+          .selectFrom("conversations")
+          .select("account_id")
+          .where("id", "=", conv)
+          .executeTakeFirstOrThrow();
+        const t = await launchIdle(conv, owned.account_id, "sleep 320");
+        const root = await createConv(owner, orgId, agentId);
+        used.push(root);
+        // the task is a sub-agent's: its tree's root is another conversation
+        await sql`UPDATE capybara.background_tasks SET sandbox_conversation_id = ${root}
+          WHERE id = ${t.id}`.execute(raw);
+        const runsBefore = await db
+          .selectFrom("runs")
+          .select("id")
+          .where("conversation_id", "=", conv)
+          .execute();
+        if (deleted === "root")
+          await sql`UPDATE capybara.conversations SET deleted_at = now() WHERE id = ${root}`.execute(
+            raw,
+          );
+        else
+          await sql`UPDATE capybara.orgs SET deleted_at = now() WHERE id = ${orgId}`.execute(raw);
+        try {
+          const task = (await store.get(t.id)) as BackgroundTaskRow;
+          const stopped = await k.app.get(BackgroundTaskStopper).stop(task, "revoked");
+          expect(stopped.status).toBe("stopped");
+        } finally {
+          if (deleted === "org")
+            await sql`UPDATE capybara.orgs SET deleted_at = NULL WHERE id = ${orgId}`.execute(raw);
+        }
+        expect((await finishedEvents(conv, t.id)).map((e) => e.payload)).toMatchObject([
+          { status: "stopped", reported: false, stoppedBy: "deletion" },
+        ]);
+        // nothing woke: no run beyond the launching one
+        expect(
+          await db.selectFrom("runs").select("id").where("conversation_id", "=", conv).execute(),
+        ).toEqual(runsBefore);
+      },
+    );
 
     it("deleting an idle conversation with a running task wakes no run (I1)", async () => {
       const conv = await createConv(owner, orgId, agentId);
@@ -903,25 +922,24 @@ describe("stopping", () => {
         .select("account_id")
         .where("id", "=", conv)
         .executeTakeFirstOrThrow();
-      const t = await launch(
-        { orgId, conversationId: conv, accountId: owned.account_id },
-        "sleep 318",
-      );
+      const t = await launchIdle(conv, owned.account_id, "sleep 318");
       const res = await owner({
         method: "DELETE",
         url: `/api/v1/orgs/${orgId}/conversations/${conv}`,
       });
       expect(res.statusCode, res.body).toBe(204);
-      expect(await store.get(t.id)).toMatchObject({ status: "stopped" });
+      // the deletion's stop is owed work after the commit (the outbox): wait for it
+      expect(await stoppedAfterDeletion(t)).toMatchObject({ status: "stopped" });
       expect(await alive({ orgId, conversationId: conv }, t)).toBe(false);
       // the wake runs after the stop's commit; give a late one time to show up
       await new Promise((r) => setTimeout(r, 1000));
+      // only the run that launched the task (ended before the deletion)
       const runs = await db
         .selectFrom("runs")
         .select("id")
         .where("conversation_id", "=", conv)
         .execute();
-      expect(runs).toEqual([]);
+      expect(runs).toEqual([{ id: t.runId }]);
       // the stop's finish is marked as the deletion's, so nothing that reads it later wakes a run
       expect((await finishedEvents(conv, t.id)).map((e) => e.payload)).toMatchObject([
         { status: "stopped", reported: false, stoppedBy: "deletion" },
@@ -1251,7 +1269,7 @@ describe("exact background revocation through the outbox and the worker", () => 
     };
     expect((await intentOf(task)).scope).toMatchObject({
       profile: "approve-for-me",
-      filesystem: { kind: "scoped", readRoots: [outside], writeRoots: [outside] },
+      filesystem: { kind: "scoped", readRoots: [outside, "/skills"], writeRoots: [outside] },
     });
     await f.db.updateTable("runs").set({ status: "completed" }).where("id", "=", f.runId).execute();
     await k.app.get(OrgSettingsService).update(f.orgId, { fullAccess: "off" }, ownerAccount().id);
@@ -1322,11 +1340,11 @@ describe("exact background revocation through the outbox and the worker", () => 
     };
     expect((await intentOf(task)).scope).toMatchObject({
       profile: "approve-for-me",
-      filesystem: { kind: "scoped", readRoots: [outside] },
+      filesystem: { kind: "scoped", readRoots: [outside, "/skills"] },
       network: { kind: "allowlist", hosts: [HOST] },
     });
     expect((await intentOf(sibling)).scope).toMatchObject({
-      filesystem: { kind: "scoped", readRoots: [outside] },
+      filesystem: { kind: "scoped", readRoots: [outside, "/skills"] },
       network: { kind: "none" },
     });
     await f.db.updateTable("runs").set({ status: "completed" }).where("id", "=", f.runId).execute();

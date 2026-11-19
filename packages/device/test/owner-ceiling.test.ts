@@ -10,7 +10,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { type KernelRequestV3, parseOwnerCeilingReportV3 } from "@capybara-hq/plugin-sdk";
+import { type KernelRequest, parseOwnerCeilingReport } from "@capybara-hq/plugin-sdk";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { runCli } from "../src/cli.js";
 import type { MacOperationBackend } from "../src/exec/mac-operation-backend.js";
@@ -21,6 +21,7 @@ import { serveOperationV3 } from "../src/server-ops.js";
 import {
   convertPolicyFile,
   DEFAULT_POLICY,
+  FULL_OWNER_CEILING,
   policyMode,
   policyPath,
   readPolicyFile,
@@ -29,6 +30,8 @@ import {
   writePolicy,
 } from "../src/state.js";
 
+/** The policy these tests were written against: the owner allows Full access (old auto). */
+const FULL_POLICY = { ...DEFAULT_POLICY, ownerCeiling: { ...FULL_OWNER_CEILING } };
 let root: string;
 let state: string;
 beforeEach(() => {
@@ -38,7 +41,7 @@ beforeEach(() => {
 afterEach(() => rmSync(root, { recursive: true, force: true }));
 
 const writeRaw = (value: unknown) => {
-  writePolicy(state, DEFAULT_POLICY);
+  writePolicy(state, FULL_POLICY);
   writeFileSync(policyPath(state), `${JSON.stringify(value, null, 2)}\n`);
 };
 const onDisk = () => JSON.parse(readFileSync(policyPath(state), "utf8")) as Record<string, unknown>;
@@ -128,14 +131,14 @@ describe("version-2 local owner policy", () => {
 
   it("keeps Full and project reach independent in the strict reader", async () => {
     writePolicy(state, {
-      ...DEFAULT_POLICY,
+      ...FULL_POLICY,
       ownerCeiling: { fullAccess: false, restrictedProjectReach: "os-user" },
     });
     const c = await strict();
     expect(c.fullAccess).toBe(false);
     expect(c.restrictedProjectReach).toBe("os-user");
     writePolicy(state, {
-      ...DEFAULT_POLICY,
+      ...FULL_POLICY,
       ownerCeiling: { fullAccess: true, restrictedProjectReach: "workspace" },
     });
     const d = await strict();
@@ -162,9 +165,9 @@ describe("version-2 local owner policy", () => {
 
 describe("owner report sequence sidecar", () => {
   it("advances the sequence once per newly observed policy revision", async () => {
-    writePolicy(state, DEFAULT_POLICY);
+    writePolicy(state, FULL_POLICY);
     const first = report();
-    expect(parseOwnerCeilingReportV3(first)).toEqual(first);
+    expect(parseOwnerCeilingReport(first)).toEqual(first);
     expect(first.sequence).toBe(0);
     expect(JSON.parse(readFileSync(ownerReportPath(state), "utf8"))).toEqual({
       sequence: 0,
@@ -174,7 +177,7 @@ describe("owner report sequence sidecar", () => {
     const again = report();
     expect(again).toEqual(first);
     // an edit with identical visible fields is still a new revision
-    writePolicy(state, DEFAULT_POLICY);
+    writePolicy(state, FULL_POLICY);
     const edited = report();
     expect(edited.revision).not.toBe(first.revision);
     expect(edited.sequence).toBe(1);
@@ -183,7 +186,7 @@ describe("owner report sequence sidecar", () => {
 
   it("reports owner fields exactly", async () => {
     writePolicy(state, {
-      ...DEFAULT_POLICY,
+      ...FULL_POLICY,
       allowedDomains: ["*.example.com"],
       ownerCeiling: { fullAccess: false, restrictedProjectReach: "os-user" },
     });
@@ -197,9 +200,9 @@ describe("owner report sequence sidecar", () => {
   });
 
   it("blocks on a corrupt sidecar instead of restarting at zero", async () => {
-    writePolicy(state, DEFAULT_POLICY);
+    writePolicy(state, FULL_POLICY);
     report();
-    writePolicy(state, DEFAULT_POLICY);
+    writePolicy(state, FULL_POLICY);
     writeFileSync(ownerReportPath(state), "{ nope");
     expect(() => report()).toThrow(/owner-report\.json/);
     writeFileSync(ownerReportPath(state), JSON.stringify({ sequence: -1 }));
@@ -217,7 +220,7 @@ describe("owner report sequence sidecar", () => {
 describe("capybara-device ceiling", () => {
   it("M1: the widening check runs on the locked policy, not an earlier read", async () => {
     writePolicy(state, {
-      ...DEFAULT_POLICY,
+      ...FULL_POLICY,
       ownerCeiling: { fullAccess: true, restrictedProjectReach: "os-user" },
     });
     // the narrowing lands after `ceiling set` read the policy but before it writes
@@ -226,7 +229,7 @@ describe("capybara-device ceiling", () => {
       {
         beforeWrite: () =>
           writePolicy(state, {
-            ...DEFAULT_POLICY,
+            ...FULL_POLICY,
             ownerCeiling: { fullAccess: false, restrictedProjectReach: "workspace" },
           }),
       },
@@ -238,20 +241,24 @@ describe("capybara-device ceiling", () => {
     });
   });
 
-  it("M2: show says the reach is not enforced on protocol 2; mode auto says it sets OS-user reach", async () => {
+  it("show no longer carries the protocol 2 note, and the daily mode command is gone", async () => {
     writePolicy(state, {
-      ...DEFAULT_POLICY,
+      ...FULL_POLICY,
       ownerCeiling: { fullAccess: true, restrictedProjectReach: "workspace" },
     });
     const shown = await cli(["ceiling", "show"]);
-    expect(shown.out).toMatch(/project reach takes effect only/i);
-    const auto = await cli(["mode", "auto", "--yes"]);
-    expect(auto.out).toMatch(/project reach: os-user/i);
+    expect(shown.out).not.toMatch(/project reach takes effect only/i);
+    const mode = await cli(["mode", "auto", "--yes"]);
+    expect(mode.code).toBe(2);
+    expect(readPolicyFile(state).policy.ownerCeiling).toEqual({
+      fullAccess: true,
+      restrictedProjectReach: "workspace",
+    });
   });
 
   it("shows the owner ceiling and the network baseline separately", async () => {
     writePolicy(state, {
-      ...DEFAULT_POLICY,
+      ...FULL_POLICY,
       allowedDomains: ["a.test"],
       ownerCeiling: { fullAccess: false, restrictedProjectReach: "os-user" },
     });
@@ -276,7 +283,7 @@ describe("capybara-device ceiling", () => {
   });
 
   it("narrows directly and requires both fields", async () => {
-    writePolicy(state, DEFAULT_POLICY);
+    writePolicy(state, FULL_POLICY);
     expect((await cli(["ceiling", "set", "--full-access", "deny"])).code).toBe(2);
     const r = await cli([
       "ceiling",
@@ -295,7 +302,7 @@ describe("capybara-device ceiling", () => {
 
   it("widening needs --yes or a confirmed terminal answer", async () => {
     writePolicy(state, {
-      ...DEFAULT_POLICY,
+      ...FULL_POLICY,
       ownerCeiling: { fullAccess: false, restrictedProjectReach: "workspace" },
     });
     const refused = await cli([
@@ -340,10 +347,10 @@ describe("capybara-device ceiling", () => {
 
 describe("staged policy op with owner reports", () => {
   const policyReq = (args: Record<string, unknown>, op = "policy", id = "q1") =>
-    ({ type: "req", id, op, args, deadlineMs: 1000 }) as KernelRequestV3;
+    ({ type: "req", id, op, args, deadlineMs: 1000 }) as KernelRequest;
   const source = { accountId: "acc", accountName: "Ann", via: "web" };
   const setup = () => {
-    writePolicy(state, DEFAULT_POLICY);
+    writePolicy(state, FULL_POLICY);
     const store = new PolicyStore(state);
     const calls: string[] = [];
     const owner = {
@@ -394,7 +401,7 @@ describe("staged policy op with owner reports", () => {
 
   it("refuses any widening over the wire and writes nothing", async () => {
     const { owner, calls, backend } = setup();
-    writePolicy(state, { ...DEFAULT_POLICY, ownerCeiling: { ...SANDBOX_OWNER_CEILING } });
+    writePolicy(state, { ...FULL_POLICY, ownerCeiling: { ...SANDBOX_OWNER_CEILING } });
     for (const ownerCeiling of [{ fullAccess: true }, { restrictedProjectReach: "os-user" }]) {
       const res = await serveOperationV3(
         backend,
@@ -419,7 +426,7 @@ describe("owner-denied paths in canonical form", () => {
     mkdirSync(awsData);
     symlinkSync(real, join(root, "home"));
     symlinkSync(awsData, join(real, ".aws"));
-    writePolicy(state, DEFAULT_POLICY);
+    writePolicy(state, FULL_POLICY);
     const denied = (await strict()).restrictedDeniedReadRoots;
     const canonicalRoot = realpathSync(root);
     for (const path of [

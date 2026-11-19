@@ -14,10 +14,8 @@ import { MachinesService } from "./machines.js";
 import { NetworkGrants } from "./network-grants.js";
 import { NetworkGrantsModule } from "./network-grants.module.js";
 import { OwnerReports } from "./owner-reports.js";
-import { LocalDeviceRelay, stagedDeviceProtocolActive } from "./relay.js";
+import { LocalDeviceRelay } from "./relay.js";
 import { DeviceTargets } from "./targets.js";
-
-export { stagedDeviceProtocolActive } from "./relay.js";
 
 /**
  * Connected machines (environments spec §6, §13): the caller side of the device relay and the
@@ -63,7 +61,7 @@ export class LocalDevicesModule implements OnModuleInit {
 
   onModuleInit(): void {
     this.providers.register(
-      localProviderEntry(stagedDeviceProtocolActive(), {
+      localProviderEntry({
         provider: this.provider,
         relay: this.relay,
         bindings: this.bindings,
@@ -73,15 +71,15 @@ export class LocalDevicesModule implements OnModuleInit {
 }
 
 /**
- * The `@local` registration: protocol 2's provider as it is, or the staged (protocol 3) provider
- * ({@link LocalDeviceProvider.staged}: v3 operations, no broad kill) with its instance binder,
- * which binds every committed generation before shared use (B-8).
+ * The `@local` registration: the protocol 3 provider ({@link LocalDeviceProvider.staged}: scoped
+ * operations, no broad kill) with its instance binder, which binds every committed generation
+ * before shared use (B-8).
  */
-export function localProviderEntry(
-  staged: boolean,
-  deps: { provider: LocalDeviceProvider; relay: LocalDeviceRelay; bindings: LocalInstanceBindings },
-): SandboxProviderEntry {
-  if (!staged) return { plugin: LOCAL_PROVIDER, impl: deps.provider };
+export function localProviderEntry(deps: {
+  provider: LocalDeviceProvider;
+  relay: LocalDeviceRelay;
+  bindings: LocalInstanceBindings;
+}): SandboxProviderEntry {
   return {
     plugin: LOCAL_PROVIDER,
     impl: deps.provider.staged({

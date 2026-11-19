@@ -184,6 +184,13 @@ Each W5 task is reviewed alone. Exports become obsolete only once a grep finds n
    obligations may settle retirement members.
 7. Dogfood acceptance on the maintainer's Mac (handoff): three profiles, a background `pnpm test`, then a replay eval.
 
+Notes for operators:
+
+- **Upgrade the kernel before the devices at R2.** A v3 `capybara-device` that reaches a kernel not yet on R2 gets
+  426 "Update capybara-device" and does not connect; it connects once the kernel runs R2.
+- **Running legacy background rows finish only after the freeze (step 4).** Until then each one still holds a
+  background slot (`sandbox.background.maxTasks`) and keeps its device's instance from idling (no suspension).
+
 ## 5. Plugins repo and release order
 
 - **sandbox-docker** (rc.17 already has permission scopes): bump to the SDK/testing release that contains C (the

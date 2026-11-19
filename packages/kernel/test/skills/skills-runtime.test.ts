@@ -420,6 +420,20 @@ describe("skills at runtime", () => {
       2,
     );
     expect(run.content).toContain("delta-v1");
+    // the staged skills root is readable by the restricted profile, never writable
+    const scoped = (await eventsOf(db, conv))
+      .filter(
+        (e): e is Extract<ConversationEvent, { type: "permission_context" }> =>
+          e.type === "permission_context",
+      )
+      .map((e) => e.payload.scope?.filesystem)
+      .filter((f) => f?.kind === "scoped")
+      .at(-1);
+    expect(scoped).toEqual({
+      kind: "scoped",
+      readDirectories: ["/skills", "/workspace"],
+      writeDirectories: ["/workspace"],
+    });
 
     // the same version again: the marker hits, nothing is copied again (a touched file stays)
     const p = await sandboxFilePath(conv, `${dir1}/data/notes.txt`);

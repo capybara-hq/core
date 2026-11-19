@@ -443,7 +443,7 @@ describe("verified runtime closure: verify-to-launch pinning (B-7)", () => {
       const loadedFrom: string[] = [];
       const configs: {
         javaAgentJarPath?: string;
-        filesystem: { allowRead: unknown[] };
+        filesystem: { allowRead: unknown[]; allowReadExact: string[] };
       }[] = [];
       const launch = (runtimeHash = bound) =>
         startMacOperationWorker(
@@ -496,7 +496,7 @@ describe("verified runtime closure: verify-to-launch pinning (B-7)", () => {
       );
       expect(await readFile(jar, "utf8")).toBe("PK jar");
       expect(configs[0]?.javaAgentJarPath).toBe(jar);
-      expect(configs[0]?.filesystem.allowRead).toContainEqual({ path: jar, literal: true });
+      expect(configs[0]?.filesystem.allowReadExact).toContain(jar);
 
       // a launch for another binding's runtime is refused before fork
       const otherBinding = await launch("0".repeat(64));

@@ -380,7 +380,7 @@ it("source labels normalize while delegated identity resolves current DB semanti
   const f = await consentFixture();
   const same = config("allowed", ["a.example", "a.example"]);
   expect(permissionConfigFingerprint(same)).toBe(permissionConfigFingerprint(config()));
-  const env = { CAPYBARA_DEVICES__AUTO_MODE: "allowed" };
+  const env = { CAPYBARA_DEVICES__FULL_ACCESS: "allowed" };
   const winning = resolveConfig({ ...config("off"), log: { level: "error" } }, env);
   const envReader = readers(winning, env);
   expect((await envReader.publication.initialize()).outcome).toBe("matching");

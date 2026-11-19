@@ -19,6 +19,7 @@ import { TransactionHost } from "../../src/infra/database/transaction-host.js";
 import { deviceLeaseKey } from "../../src/local-devices/keys.js";
 import { MachinesService } from "../../src/local-devices/machines.js";
 import { assistantIdemKey } from "../../src/runtime/model-call.js";
+import { RunExecution } from "../../src/runtime/run-execution.js";
 import { Waits } from "../../src/runtime/waits.js";
 import { ScheduledTaskStore } from "../../src/schedules/store.js";
 import { NETWORK_ASK_CANCELLED_NOTE } from "../../src/tools/approvals.service.js";
@@ -34,7 +35,7 @@ import {
   tooManyNote,
   unattendedNetworkNote,
 } from "../../src/tools/network-asks.js";
-import { ToolPipeline } from "../../src/tools/pipeline.js";
+import { ToolPipeline, type ToolStepContext } from "../../src/tools/pipeline.js";
 import { legacyDbFor } from "../helpers/conversations.js";
 import { onlyBuiltins } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
@@ -54,7 +55,7 @@ import {
   waitForTerminal,
 } from "../helpers/runs.js";
 import { webCaller } from "../helpers/step-context.js";
-import { FakeMachine, HELLO } from "../local-devices/fake-machine-v3.js";
+import { FakeMachine, HELLO, policyAnswer } from "../local-devices/fake-machine-v3.js";
 
 /**
  * The network ask in the tool pipeline (network ask-to-allow spec §6.2, §6.6–§6.9, §8.3, P1.7):
@@ -172,10 +173,7 @@ function answer(dev: Device) {
           } as const;
         }
         for (const h of (a.add as string[] | undefined) ?? []) dev.allowed.add(h);
-        return {
-          ok: true,
-          result: { policy: { ...dev.policy, allowedDomains: [...dev.allowed] } },
-        } as const;
+        return policyAnswer({ ...dev.policy, allowedDomains: [...dev.allowed] });
       }
       default:
         return { ok: true, result: null } as const;
@@ -643,7 +641,10 @@ describe("sub-agents and unattended runs", () => {
       model: { provider: "model-fake", model: "fake-1" },
       disabledTools: onlyBuiltins([{ kind: "builtin", name: "Bash" }]),
     } as AgentDefinition;
-    const out = await k.app.get(ToolPipeline).runStep({
+    // a tool step runs under its run's execution claim (managed operations revalidate it)
+    const claim = await k.app.get(RunExecution).claim(s.conversationId, runId, randomUUID());
+    if (!claim) throw new Error("the run could not be claimed");
+    const step = {
       orgId,
       conversationId: s.conversationId,
       runId,
@@ -661,7 +662,12 @@ describe("sub-agents and unattended runs", () => {
         unattendedAsk: "fail",
         forbiddenTools: [],
       },
-    });
+    } satisfies ToolStepContext;
+    const out = await k.app.get(RunExecution).withClaim(
+      claim,
+      () => true,
+      () => k.app.get(ToolPipeline).runStep(step),
+    );
     expect(out).toEqual({ kind: "done" });
     const [r] = await results();
     expect(

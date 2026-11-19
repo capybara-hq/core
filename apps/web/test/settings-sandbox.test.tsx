@@ -16,12 +16,11 @@ const LOCALES = ["zh", "en"] as const;
 const SETTINGS = "/api/v1/orgs/o1/settings";
 
 /**
- * The deployment defaults the kernel sends beside the org's settings (auto mode spec §4.3, egress
- * ceiling spec §D4): the platform's auto-mode switch and its network (allowlist, ceiling, kill
- * switch).
+ * The deployment defaults the kernel sends beside the org's settings (egress ceiling spec §D4):
+ * the platform's Full permission switch and its network (allowlist, ceiling, kill switch).
  */
 const DEPLOYMENT = {
-  autoMode: { mode: "allowed", source: "default" },
+  fullAccess: { permission: "allowed", source: "default" },
   cloudNetwork: {
     allowHosts: ["registry.npmjs.org", "pypi.org"],
     orgHosts: "extend",
@@ -30,7 +29,7 @@ const DEPLOYMENT = {
 };
 
 type Deployment = {
-  autoMode?: unknown;
+  fullAccess?: unknown;
   cloudNetwork: { allowHosts: string[]; orgHosts: string; off: boolean };
 };
 type StoredNetwork = {
@@ -202,31 +201,34 @@ describe("沙箱设置（SettingsPage）", () => {
     expect(actionRow("en")).toBeNull();
   });
 
-  describe("自动模式 (auto mode spec §4.3)", () => {
+  describe("Full access (fullAccess)", () => {
     it.each(LOCALES)("an org admin narrows to off, then allows it again (%s)", async (locale) => {
       const o = msgs[locale].orgSettings;
       const calls = stub({ toolSearch: "on" }, DEPLOYMENT);
       await renderRouteWithCache("/settings/sandbox", lastStubRoutes(), { locale });
       const allowed = await screen.findByRole("radio", {
-        name: prefix(o.autoMode.allowed),
+        name: prefix(o.fullAccess.allowed),
       });
       expect(allowed).toHaveProperty("checked", true);
       const user = userEvent.setup();
-      await user.click(screen.getByRole("radio", { name: prefix(o.autoMode.off) }));
+      await user.click(screen.getByRole("radio", { name: prefix(o.fullAccess.off) }));
       await save(locale);
-      expect(bodyOf(calls.find((c) => c.method === "PATCH"))).toEqual({ autoMode: "off" });
+      expect(bodyOf(calls.find((c) => c.method === "PATCH"))).toEqual({ fullAccess: "off" });
       await vi.waitFor(() => expect(actionRow(locale)).toBeNull());
-      await user.click(screen.getByRole("radio", { name: prefix(o.autoMode.allowed) }));
+      await user.click(screen.getByRole("radio", { name: prefix(o.fullAccess.allowed) }));
       await save(locale);
       expect(bodyOf(calls.filter((c) => c.method === "PATCH")[1])).toEqual({
-        autoMode: "allowed",
+        fullAccess: "allowed",
       });
     });
 
-    it("the platform turned auto mode off: the control is disabled with 平台未开放", async () => {
-      stub({ toolSearch: "on" }, { ...DEPLOYMENT, autoMode: { mode: "off", source: "db" } });
+    it("the platform turned Full access off: the control is disabled with 平台未开放", async () => {
+      stub(
+        { toolSearch: "on" },
+        { ...DEPLOYMENT, fullAccess: { permission: "off", source: "db" } },
+      );
       await renderRouteWithCache("/settings/sandbox", lastStubRoutes(), { locale: "zh" });
-      const o = zh.orgSettings.autoMode;
+      const o = zh.orgSettings.fullAccess;
       const allowed = await screen.findByRole("radio", { name: prefix(o.allowed) });
       expect((allowed as HTMLInputElement).disabled).toBe(true);
       expect(screen.getByRole("radio", { name: prefix(o.off) })).toHaveProperty("checked", true);
@@ -234,15 +236,15 @@ describe("沙箱设置（SettingsPage）", () => {
       expect(actionRow("zh")).toBeNull();
     });
 
-    it("saving auto mode invalidates the org's cached device lists and details", async () => {
+    it("saving Full access invalidates the org's cached device lists and details", async () => {
       const o = en.orgSettings;
       stub({ toolSearch: "on" }, DEPLOYMENT);
       const { client } = await renderRouteWithCache("/settings/sandbox", lastStubRoutes());
       client.setQueryData(keys.org("o1").devices(), { items: [] });
       client.setQueryData(keys.org("o1").device("d1"), { device: {} });
-      await screen.findByRole("radio", { name: prefix(o.autoMode.allowed) });
+      await screen.findByRole("radio", { name: prefix(o.fullAccess.allowed) });
       const user = userEvent.setup();
-      await user.click(screen.getByRole("radio", { name: prefix(o.autoMode.off) }));
+      await user.click(screen.getByRole("radio", { name: prefix(o.fullAccess.off) }));
       await save("en");
       await waitFor(() =>
         expect(client.getQueryState(keys.org("o1").devices())?.isInvalidated).toBe(true),
@@ -255,7 +257,7 @@ describe("沙箱设置（SettingsPage）", () => {
       stub({ toolSearch: "on" }, DEPLOYMENT);
       await renderRouteWithCache("/settings/sandbox", lastStubRoutes(), { locale, me: MEMBER });
       const allowed = await screen.findByRole("radio", {
-        name: prefix(o.autoMode.allowed),
+        name: prefix(o.fullAccess.allowed),
       });
       expect((allowed as HTMLInputElement).disabled).toBe(true);
       const open = screen.getByRole("radio", { name: prefix(o.cloudNetwork.open) });
@@ -398,9 +400,9 @@ describe("沙箱设置（SettingsPage）", () => {
       expect(screen.getByText(o.cloudNetwork.platformClosed)).toBeTruthy();
       expect(hostsBox(o.cloudNetwork.hosts).disabled).toBe(true);
       expect(actionRow("zh")).toBeNull();
-      await userEvent.setup().click(screen.getByRole("radio", { name: prefix(o.autoMode.off) }));
+      await userEvent.setup().click(screen.getByRole("radio", { name: prefix(o.fullAccess.off) }));
       await save("zh");
-      expect(bodyOf(calls.find((c) => c.method === "PATCH"))).toEqual({ autoMode: "off" });
+      expect(bodyOf(calls.find((c) => c.method === "PATCH"))).toEqual({ fullAccess: "off" });
     });
 
     it.each(LOCALES)(

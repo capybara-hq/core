@@ -7,10 +7,13 @@ import {
   type SandboxActor,
   type SandboxBrowseScope,
   type SandboxOperationScope,
+  SandboxPermissionUnsupportedError,
 } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
 import { sql } from "kysely";
 import {
+  ACTOR_DEVICE_ACCESS_REASON,
+  ACTOR_NOT_DEVICE_OWNER_REASON,
   type PermissionContextV1,
   PermissionContextV1Schema,
   permissionCodePointCompare,
@@ -37,7 +40,11 @@ import {
   kernelReadRoute,
 } from "./kernel-read.js";
 import { coversHost, type EffectiveDevicePolicy, projectReachOf } from "./modes.js";
-import { isExecutionMethod, parseStartingExecutionGrants } from "./operation-authority-types.js";
+import {
+  EscalationGrantMissingError,
+  isExecutionMethod,
+  parseStartingExecutionGrants,
+} from "./operation-authority-types.js";
 import { PermissionAuthorityEpochStore } from "./permission-authority-epochs.js";
 import { assertAuthorityHeld, PermissionAuthorityLock } from "./permission-authority-lock.js";
 import type { PermissionAvailability } from "./permission-availability.js";
@@ -50,7 +57,13 @@ import {
   PermissionContextSubjectChanged,
 } from "./permission-context-types.js";
 import { hostsWithinOuter, PermissionFacts, permissionScopeHash } from "./permission-facts.js";
-import { normalizePermissionExpansion } from "./review/permission-candidate.js";
+import {
+  ESCALATION_CEILING_WHY,
+  ESCALATION_UNATTENDED_WHY,
+  escalationRuntimeWhy,
+  normalizePermissionExpansion,
+  withinDirectory,
+} from "./review/permission-candidate.js";
 import type { SandboxUseContext } from "./use-context.js";
 export type SandboxAuthorityOperation =
   | "exec"
@@ -76,6 +89,12 @@ export interface PermissionScopeFacts {
   allowedHosts: readonly string[];
   fullAccessCeiling: boolean;
   fullConsent?: boolean;
+  /**
+   * An approved per-call sandbox escalation of this exact call (its immutable call grant): the
+   * operation gets full execution under the conversation's restricted profile, within the same
+   * Full access ceiling. Only admission sets it, from the grant row; never a caller.
+   */
+  escalated?: boolean;
 }
 const UNPROVED_ENVIRONMENT =
   "The device's installed environment is not verified yet; it is checked when the device starts";
@@ -128,6 +147,14 @@ export function intersectPermissionScope(f: PermissionScopeFacts): SandboxOperat
       "forbidden",
       "Full access requires current device authority and matching consent",
     );
+  // an escalated call runs with full execution: the same device, org and platform ceiling as Full
+  // access, its consent the exact call grant (bound to the scope revision) instead of the profile's
+  if (f.escalated && (f.profile === "full-access" || !f.fullAccessCeiling))
+    throw new ApiError(
+      "forbidden",
+      "A sandbox escalation requires a restricted profile and the current Full access ceiling",
+    );
+  const full = f.profile === "full-access" || f.escalated === true;
   return parseSandboxOperationScope({
     operationId: f.operationId,
     admitBeforeMs: f.admitBeforeMs,
@@ -138,23 +165,39 @@ export function intersectPermissionScope(f: PermissionScopeFacts): SandboxOperat
     profile: f.profile,
     actor: f.actor,
     tag: f.tag,
-    filesystem:
-      f.profile === "full-access"
-        ? { kind: "device" }
-        : {
-            kind: "scoped",
-            readRoots: [...new Set([...f.readRoots, ...f.writeRoots])].sort(),
-            writeRoots: [...new Set(f.writeRoots)].sort(),
-          },
-    network:
-      f.profile === "full-access"
-        ? { kind: "environment" }
-        : f.allowedHosts.length
-          ? { kind: "allowlist", hosts: [...new Set(f.allowedHosts)].sort() }
-          : { kind: "none" },
+    filesystem: full
+      ? { kind: "device" }
+      : {
+          kind: "scoped",
+          readRoots: [...new Set([...f.readRoots, ...f.writeRoots])].sort(),
+          writeRoots: [...new Set(f.writeRoots)].sort(),
+        },
+    network: full
+      ? { kind: "environment" }
+      : f.allowedHosts.length
+        ? { kind: "allowlist", hosts: [...new Set(f.allowedHosts)].sort() }
+        : { kind: "none" },
   });
 }
 /** Fresh authority shape only. Provider dispatch must add durable admission fencing before use. */
+/**
+ * The read roots of a restricted profile: the working root, plus the held instance's
+ * kernel-staged skills root (its committed roots), read-only, so a staged skill's scripts run
+ * (`sh /skills/<name>@<digest>/…`). Never writable; nothing else is added. Sorted by code point,
+ * as the recorded context requires.
+ */
+export function restrictedReadRoots(
+  workingRoot: string,
+  applied: Pick<AppliedEnvironment, "roots"> | null | undefined,
+): string[] {
+  const skills = applied?.roots.skills;
+  const roots =
+    skills?.startsWith("/") && !withinDirectory(skills, workingRoot)
+      ? [workingRoot, skills]
+      : [workingRoot];
+  return [...new Set(roots)].sort(permissionCodePointCompare);
+}
+
 @Injectable()
 export class SandboxOperationAuthority {
   constructor(
@@ -300,8 +343,20 @@ export class SandboxOperationAuthority {
     const payload = started.payload as {
       toolKey?: string;
       specHash?: string;
-      permissionInput?: { callInputHash: string; resolvedInputHash: string };
+      permissionInput?: {
+        callInputHash: string;
+        resolvedInputHash: string;
+        sandbox?: "escalated";
+      };
     };
+    const permissionInput: {
+      callInputHash: string | undefined;
+      resolvedInputHash: string | undefined;
+    } = {
+      callInputHash: payload.permissionInput?.callInputHash,
+      resolvedInputHash: payload.permissionInput?.resolvedInputHash,
+    };
+    const requested = payload.permissionInput?.sandbox;
     const {
       orgId,
       rootConversationId,
@@ -316,7 +371,10 @@ export class SandboxOperationAuthority {
       authorityRevision,
     } = f;
     const grant =
-      payload.toolKey && payload.specHash && payload.permissionInput
+      payload.toolKey &&
+      payload.specHash &&
+      permissionInput.callInputHash !== undefined &&
+      permissionInput.resolvedInputHash !== undefined
         ? await this.callGrants.findForAdmission({
             orgId,
             rootConversationId,
@@ -331,10 +389,28 @@ export class SandboxOperationAuthority {
             authorityRevision,
             toolKey: payload.toolKey,
             specHash: payload.specHash,
-            ...payload.permissionInput,
+            callInputHash: permissionInput.callInputHash,
+            resolvedInputHash: permissionInput.resolvedInputHash,
           })
         : null;
-    if (grant) {
+    // full execution for this exact call's command only (a native method of the same call keeps
+    // the base scope): the same checks as Full access, now
+    const escalated = grant?.scopeKind === "sandbox-escalation" && isExecutionMethod(operation);
+    // a call that asked to run outside the sandbox under a restricted profile runs escalated or
+    // not at all: a missed grant (the device, ceiling or scope changed since the approval) or a
+    // ceiling that no longer allows it is a pre-effect refusal, never a sandboxed run
+    if (
+      requested === "escalated" &&
+      f.profile !== "full-access" &&
+      isExecutionMethod(operation) &&
+      (!escalated || f.escalationRefusal)
+    )
+      throw new EscalationGrantMissingError(
+        f.escalationRefusal
+          ? `Sandbox escalation is unavailable: ${f.escalationRefusal}`
+          : "The call's sandbox escalation grant no longer matches",
+      );
+    if (!escalated && grant && grant.scopeKind !== "sandbox-escalation") {
       normalizePermissionExpansion(grant.expansion, f);
       if (
         (!f.broadProjectReach &&
@@ -353,15 +429,23 @@ export class SandboxOperationAuthority {
       grant?.expansion.hosts ?? [],
       f.outerNetwork ?? undefined,
     );
-    const scope = this.scopeOf(ctx, operation, {
-      ...f,
-      baseReadDirectories: [...f.baseReadDirectories, ...(grant?.expansion.readDirectories ?? [])],
-      baseWriteDirectories: [
-        ...f.baseWriteDirectories,
-        ...(grant?.expansion.writeDirectories ?? []),
-      ],
-      baseHosts: [...f.baseHosts, ...expansionHosts],
-    });
+    const scope = this.scopeOf(
+      ctx,
+      operation,
+      {
+        ...f,
+        baseReadDirectories: [
+          ...f.baseReadDirectories,
+          ...(grant?.expansion.readDirectories ?? []),
+        ],
+        baseWriteDirectories: [
+          ...f.baseWriteDirectories,
+          ...(grant?.expansion.writeDirectories ?? []),
+        ],
+        baseHosts: [...f.baseHosts, ...expansionHosts],
+      },
+      escalated,
+    );
     const hosts = isExecutionMethod(operation)
       ? [...new Set([...(networkGrant?.hosts ?? []), ...expansionHosts])].sort()
       : [];
@@ -379,7 +463,10 @@ export class SandboxOperationAuthority {
             : null,
         })
       : null;
-    return { scope, permissionGrantId: grant?.id ?? null, grantedHosts: hosts, executionGrants };
+    // an escalation grant is provenance of its command only, never of a native method's base scope
+    const permissionGrantId =
+      grant && (grant.scopeKind !== "sandbox-escalation" || escalated) ? grant.id : null;
+    return { scope, permissionGrantId, grantedHosts: hosts, executionGrants };
   }
 
   /**
@@ -486,6 +573,7 @@ export class SandboxOperationAuthority {
     ctx: SandboxUseContext,
     operation: SandboxAuthorityOperation,
     f: PermissionReviewSnapshot,
+    escalated = false,
   ): SandboxOperationScope {
     if (
       !["exec", "readFile", "writeFile", "stat", "list", "scan", "backgroundStart"].includes(
@@ -494,7 +582,13 @@ export class SandboxOperationAuthority {
     )
       throw new ApiError("forbidden", "Unknown sandbox operation");
     // the recorded context withholds its scope for exactly these states (B-16)
-    if (f.admissionRefusal) throw new ApiError("forbidden", f.admissionRefusal);
+    if (f.admissionRefusal) {
+      // a runtime that cannot enforce the profile is the typed pre-effect refusal: the model gets
+      // the actionable unsupported text, never the generic "may not have completed" one
+      if (f.availability.state === "unsupported")
+        throw new SandboxPermissionUnsupportedError(f.admissionRefusal);
+      throw new ApiError("forbidden", f.admissionRefusal);
+    }
     const operationId = randomUUID();
     return intersectPermissionScope({
       operationId,
@@ -512,6 +606,7 @@ export class SandboxOperationAuthority {
       allowedHosts: isExecutionMethod(operation) ? f.baseHosts : [],
       fullAccessCeiling: f.fullAccessCeiling,
       fullConsent: f.fullConsent,
+      ...(escalated ? { escalated: true } : {}),
     });
   }
   @Transactional({ propagation: "mandatory" })
@@ -606,6 +701,23 @@ export class SandboxOperationAuthority {
       projectPath: projectRoot,
       applied,
     });
+    // whether this call could run outside the sandbox (per-call escalation): the Full access
+    // ceiling and the runtime's Full support, judged as for Full access itself
+    const fullWithheld = withheldScope({
+      availability: view.availability,
+      effectiveProfile: "full-access",
+      location: device.source === "local" ? "local" : "cloud",
+      workingRoot,
+      projectPath: projectRoot,
+      applied,
+    });
+    const escalationRefusal = unattended
+      ? ESCALATION_UNATTENDED_WHY
+      : !view.fullAccessCeiling
+        ? ESCALATION_CEILING_WHY
+        : fullWithheld
+          ? escalationRuntimeWhy(fullWithheld.reason)
+          : null;
     const vector = await this.epochs.readLocked(subject);
     signal.throwIfAborted();
     if (!view.scopeRevision)
@@ -623,7 +735,7 @@ export class SandboxOperationAuthority {
       scopeRevision: view.scopeRevision,
       authorityRevision: permissionScopeHash({ scopeRevision: view.scopeRevision, vector }),
       workingRoot,
-      baseReadDirectories: [workingRoot],
+      baseReadDirectories: restrictedReadRoots(workingRoot, applied),
       baseWriteDirectories: [workingRoot],
       baseHosts: allowedHosts,
       fullAccessCeiling: view.fullAccessCeiling,
@@ -635,6 +747,7 @@ export class SandboxOperationAuthority {
       availability: withheld ?? view.availability,
       admissionRefusal: withheld?.reason ?? null,
       outerNetwork: applied?.outerNetwork ?? null,
+      escalationRefusal,
       policy:
         device.source === "local"
           ? { ...policy, network: { kind: "allowlist", hosts: policy.localAllowedDomains } }
@@ -811,11 +924,22 @@ export class SandboxOperationAuthority {
     signal: AbortSignal,
   ): Promise<PermissionContextV1> {
     signal.throwIfAborted();
-    const root = await this.profiles.readOwnedRoot(
-      input.orgId,
-      input.conversationId,
-      input.accountId,
-    );
+    // a run whose trigger account is not the conversation's owner (a group-chat sender, a wake
+    // attributed to another member) is not refused: its context is unavailable and it runs without
+    // the device, which is never used by another account. A removed or disabled actor keeps the
+    // actor refusal (B-19), and the run must be this account's run of this conversation
+    let foreign = false;
+    let root: PermissionRoot;
+    try {
+      root = await this.profiles.readOwnedRoot(input.orgId, input.conversationId, input.accountId);
+    } catch (error) {
+      if (!(error instanceof ApiError) || error.code !== "conversation.not_found") throw error;
+      if (!(await this.isActiveMember(input.orgId, input.accountId)))
+        throw new ApiError("forbidden", "This run's actor is no longer authorized");
+      root = await this.profiles.readRoot(input.orgId, input.conversationId);
+      await this.runScheduledLocked(input.conversationId, input.accountId, input.runId);
+      foreign = true;
+    }
     const held = (kind: "platform" | "org" | "device" | "root", id: string) => {
       try {
         assertAuthorityHeld(kind, id);
@@ -847,6 +971,22 @@ export class SandboxOperationAuthority {
       signal.throwIfAborted();
       return PermissionContextV1Schema.parse(payload);
     };
+    if (foreign && root.device_id !== null)
+      return parse({
+        ...header,
+        profileRevision: null,
+        selectedProfile: null,
+        effectiveProfile: null,
+        deviceId: null,
+        scopeRevision: null,
+        authorityRevision: null,
+        availability: {
+          state: "unavailable",
+          cause: "actor-device-access",
+          reason: ACTOR_NOT_DEVICE_OWNER_REASON,
+        },
+        scope: null,
+      });
     const { view, access } = await this.facts.viewWithAccess(input.orgId, input.accountId, root);
     if (root.device_id === null || access === "no-device")
       return parse({
@@ -876,7 +1016,7 @@ export class SandboxOperationAuthority {
         availability: {
           state: "unavailable",
           cause: "actor-device-access",
-          reason: "This run's actor cannot use the selected device",
+          reason: ACTOR_DEVICE_ACCESS_REASON,
         },
         scope: null,
       });
@@ -977,7 +1117,7 @@ export class SandboxOperationAuthority {
           ? { kind: "device" }
           : {
               kind: "scoped",
-              readDirectories: [base.workingRoot],
+              readDirectories: restrictedReadRoots(base.workingRoot, applied),
               writeDirectories: [base.workingRoot],
             },
         network: full

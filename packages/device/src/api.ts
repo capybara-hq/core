@@ -18,10 +18,10 @@ export interface TokenResponse {
   /** The program uses 16 MiB when it is absent. */
   maxFrameBytes?: number;
   /**
-   * Whether the organization allows auto mode (`allowed`, the default) or forbids it (`off`):
+   * Whether the platform and the organization allow Full access (`allowed`) or not (`off`):
    * `login` prints the matching line. Absent counts as allowed.
    */
-  autoMode?: "allowed" | "off";
+  fullAccess?: "allowed" | "off";
 }
 
 /** An error response of the kernel: `{ error: { code, message } }`. */

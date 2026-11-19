@@ -40,10 +40,7 @@ import type { SandboxToolDeps } from "../../../src/tools/builtins/sandbox/common
 import { sandboxTools } from "../../../src/tools/builtins/sandbox/index.js";
 import { type SkillLoadDeps, skillLoadTool } from "../../../src/tools/builtins/skill-load.js";
 import type { BuiltinCallContext, BuiltinTool } from "../../../src/tools/registry.js";
-import {
-  createFakeSandbox,
-  fakeOperationFacade,
-} from "../../fixtures/plugins/sandbox-fake/index.js";
+import { createFakeSandbox } from "../../fixtures/plugins/sandbox-fake/index.js";
 import { truncateTables } from "../../helpers/db.js";
 import { MODEL_PLUGINS_CONFIG } from "../../helpers/model-plugins.js";
 import { startKernel, type TestKernel } from "../../helpers/runs.js";
@@ -105,7 +102,7 @@ beforeAll(async () => {
   raw = createDb(pg.url, 5);
   root = await mkdtemp(join(tmpdir(), "managed-builtins-"));
   const base = createFakeSandbox(root);
-  const facade = fakeOperationFacade(root, base);
+  const facade = base;
   const impl: SandboxProvider = {
     ...facade,
     async permissionSupport() {
@@ -615,6 +612,27 @@ describe("builtin tools on the managed route with the activation gate on", () =>
     expect(task.status).toBe("failed");
     expect(task.lost_reason).toMatch(/^launch refused: /);
     expect(task.lost_reason).not.toContain("provider secret");
+  });
+
+  it("a background start the scope refuses invites an escalation only where one is possible", async () => {
+    const f = await seed();
+    startRefuses = true;
+    const hinted = await failure(
+      runTool(
+        f,
+        "Bash",
+        { command: "sleep 30", description: "Wait", run_in_background: true },
+        { over: { sandboxEscalation: "available" } },
+      ),
+    );
+    expect((hinted as ToolError).message).toMatch(/^The background task was not started: /);
+    expect((hinted as ToolError).message).toContain(
+      'retry the same Bash call with sandbox: "escalated" and justification',
+    );
+    const plain = await failure(
+      runTool(f, "Bash", { command: "sleep 31", description: "Wait", run_in_background: true }),
+    );
+    expect((plain as ToolError).message).not.toContain('sandbox: "escalated"');
   });
 
   it("FetchAttachment copies into its directory through the managed preparation after the marked paths", async () => {

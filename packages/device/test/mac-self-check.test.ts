@@ -1,10 +1,10 @@
 import { mkdtemp, readdir, realpath, rm } from "node:fs/promises";
 import { connect } from "node:net";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterAll, afterEach, beforeAll, expect, it } from "vitest";
 import { createRestrictedProof, macRestrictedSelfCheck } from "../src/exec/mac-self-check.js";
-import type { MacWorkerRequest } from "../src/exec/operation-worker.js";
+import { type MacWorkerRequest, startMacOperationWorker } from "../src/exec/operation-worker.js";
 import { sealWorkspaceRuntime } from "./runtime-seal.js";
 
 // restricted workers launch only from a verified, sealed runtime closure (B-7)
@@ -61,6 +61,66 @@ it.runIf(process.platform === "darwin")(
   },
 );
 
+// A real worker whose read scope is wider than its grant (here: the directories of the check's
+// ungranted files granted for reading, as an over-broad ancestor rule once did) fails the check.
+it.runIf(process.platform === "darwin")(
+  "a real restricted worker that can read an ungranted file fails the check",
+  async () => {
+    const dir = await stateDir();
+    const widened = async (request: MacWorkerRequest, s: AbortSignal) => {
+      if (request.kind !== "exec") throw new Error("expected exec");
+      const paths = [
+        ...request.args.command.matchAll(/if cat '([^']+)' >\/dev\/null 2>&1; then exit 6/g),
+      ].map((m) => dirname(m[1] as string));
+      return startMacOperationWorker(
+        { ...request, grant: { ...request.grant, readRoots: paths } },
+        s,
+      );
+    };
+    expect(
+      await macRestrictedSelfCheck(
+        {
+          stateDir: dir,
+          pythonPath: "/usr/bin/python3",
+          runtimeHash: workspace.runtimeHash,
+          startWorker: widened,
+        },
+        signal(),
+      ),
+    ).toMatch(/read of an ungranted file went through/);
+  },
+);
+
+// A read probe passes only when its `cat` is refused: a `cat` that fails for every file (here a
+// shell function shadowing it) would pass every probe, so a granted file must read first.
+it.runIf(process.platform === "darwin")(
+  "a worker whose reads fail for every file fails the check (positive control)",
+  async () => {
+    const dir = await stateDir();
+    const broken = async (request: MacWorkerRequest, s: AbortSignal) => {
+      if (request.kind !== "exec") throw new Error("expected exec");
+      return startMacOperationWorker(
+        {
+          ...request,
+          args: { ...request.args, command: `cat() { return 1; }; ${request.args.command}` },
+        },
+        s,
+      );
+    };
+    expect(
+      await macRestrictedSelfCheck(
+        {
+          stateDir: dir,
+          pythonPath: "/usr/bin/python3",
+          runtimeHash: workspace.runtimeHash,
+          startWorker: broken,
+        },
+        signal(),
+      ),
+    ).toMatch(/read of a granted file failed/);
+  },
+);
+
 it("needs an attested runtime, and fails off macOS", async () => {
   const dir = await stateDir();
   expect(
@@ -114,6 +174,18 @@ it("asks the worker for a restricted write inside its root and a refused one out
   expect(request.grant.deniedReadRoots).toHaveLength(1);
   expect(request.args.command).toContain(`${request.grant.deniedReadRoots[0]}/secret`);
   expect(request.args.command).toMatch(/\/dev\/tcp\/127\.0\.0\.1\/\d+/);
+  // two ordinary files outside every granted and denied root: beside the root, and elsewhere
+  const reads = [
+    ...request.args.command.matchAll(/if cat '([^']+)' >\/dev\/null 2>&1; then exit 6/g),
+  ];
+  expect(reads).toHaveLength(2);
+  for (const [, path] of reads) {
+    expect(path?.startsWith(`${request.grant.writeRoots[0]}/`)).toBe(false);
+    expect(path?.startsWith(`${request.grant.deniedReadRoots[0]}/`)).toBe(false);
+  }
+  expect(await macRestrictedSelfCheck({ ...input, startWorker: startWorker(6) }, signal())).toMatch(
+    /read of an ungranted file went through/,
+  );
   expect(await macRestrictedSelfCheck({ ...input, startWorker: startWorker(4) }, signal())).toMatch(
     /read of a denied path went through/,
   );

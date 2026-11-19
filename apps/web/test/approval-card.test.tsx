@@ -471,3 +471,121 @@ describe("ApprovalCard: exact permission scope and supersession (Task 10D)", () 
     expect(calls.filter((c) => c.method === "POST")).toHaveLength(1);
   });
 });
+
+describe("ApprovalCard: a per-call sandbox escalation", () => {
+  const JUSTIFICATION = "The dev server must bind port 3000 on the machine.";
+  const escalationCommand = eventCommand({
+    command: "npm run dev",
+    rule: null,
+    reason: `Run this command outside the sandbox for this call only. Justification: ${JUSTIFICATION}`,
+    permissionScope: { readDirectories: [], writeDirectories: [], hosts: [] },
+    escalation: { justification: JUSTIFICATION },
+    workingRoot: "/work/app",
+  });
+  it("shows the command, the directory, the justification and that only this call leaves the sandbox", async () => {
+    stubApi({
+      "GET /api/v1/orgs/o1/approvals/ap1": () =>
+        json(200, {
+          approval: APPROVAL_COMMAND({
+            scopes: ["once"],
+            command: {
+              ...DETAIL,
+              command: "npm run dev",
+              rule: null,
+              reason: escalationCommand.reason,
+              permissionScope: { readDirectories: [], writeDirectories: [], hosts: [] },
+              escalation: { justification: JUSTIFICATION },
+              workingRoot: "/work/app",
+            },
+          }),
+        }),
+    });
+    const { container } = renderPage(
+      <ApprovalCard orgId="o1" item={item({ command: escalationCommand })} />,
+      { locale: "zh" },
+    );
+    expect(await screen.findByRole("button", { name: "允许一次" })).toBeTruthy();
+    // a once-only grant: never a session scope
+    expect(screen.queryByRole("button", { name: "本会话允许同类" })).toBeNull();
+    const box = container.querySelector('[data-role="sandbox-escalation"]');
+    expect(box?.textContent).toContain(zh.approval.escalation.intro);
+    expect(box?.querySelector('[data-escalation="cwd"]')?.textContent).toContain("/work/app");
+    expect(box?.querySelector('[data-escalation="justification"]')?.textContent).toContain(
+      JUSTIFICATION,
+    );
+    expect(container.textContent).toContain("npm run dev");
+    // an escalation names no directory scope: no empty scope box
+    expect(container.querySelector('[data-role="permission-scope"]')).toBeNull();
+    expect(box?.querySelector("a")).toBeNull();
+    // a foreground command: no background line
+    expect(box?.querySelector('[data-escalation="background"]')).toBeNull();
+  });
+  it("says a background command keeps running outside the sandbox, at most N minutes", async () => {
+    const background = {
+      justification: JUSTIFICATION,
+      background: true as const,
+      maxSeconds: 1530,
+    };
+    stubApi({
+      "GET /api/v1/orgs/o1/approvals/ap1": () =>
+        json(200, {
+          approval: APPROVAL_COMMAND({
+            scopes: ["once"],
+            command: {
+              ...DETAIL,
+              command: "npm run dev",
+              rule: null,
+              reason: escalationCommand.reason,
+              permissionScope: { readDirectories: [], writeDirectories: [], hosts: [] },
+              escalation: background,
+              workingRoot: "/work/app",
+            },
+          }),
+        }),
+    });
+    const { container } = renderPage(
+      <ApprovalCard
+        orgId="o1"
+        item={item({ command: { ...escalationCommand, escalation: background } })}
+      />,
+      { locale: "en" },
+    );
+    await screen.findByRole("button", { name: "Allow once" });
+    const line = container.querySelector(
+      '[data-role="sandbox-escalation"] [data-escalation="background"]',
+    );
+    // 1530 seconds round up to 26 minutes
+    expect(line?.textContent).toBe(
+      "Approving starts a background process that keeps running outside the sandbox until it exits or is stopped, at most 26 minutes.",
+    );
+  });
+  it("omits the limit when a background command names no deadline", () => {
+    stubApi({ "GET /api/v1/orgs/o1/approvals/ap1": () => new Promise<Response>(() => {}) });
+    const { container } = renderPage(
+      <ApprovalCard
+        orgId="o1"
+        item={item({
+          command: {
+            ...escalationCommand,
+            escalation: { justification: JUSTIFICATION, background: true },
+          },
+        })}
+      />,
+      { locale: "zh" },
+    );
+    expect(
+      container.querySelector('[data-role="sandbox-escalation"] [data-escalation="background"]')
+        ?.textContent,
+    ).toBe(zh.approval.escalation.background);
+  });
+  it("speaks English from the log before the read", () => {
+    stubApi({ "GET /api/v1/orgs/o1/approvals/ap1": () => new Promise<Response>(() => {}) });
+    const { container } = renderPage(
+      <ApprovalCard orgId="o1" item={item({ command: escalationCommand })} />,
+      { locale: "en" },
+    );
+    expect(container.querySelector('[data-role="sandbox-escalation"]')?.textContent).toContain(
+      "outside the sandbox for this call only",
+    );
+  });
+});

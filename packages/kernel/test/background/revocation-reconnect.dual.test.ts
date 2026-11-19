@@ -5,7 +5,7 @@ import { mkdir, mkdtemp, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type {
-  DeviceHelloV3,
+  DeviceHello,
   SandboxExecutionRef,
   SandboxPermissionSupport,
   SandboxProvider,
@@ -21,7 +21,7 @@ import { createBus, createBusSubscriber } from "../../src/ctx/bus.js";
 import { kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import type { Account, AccountsService } from "../../src/identity/accounts.js";
-import type { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
+import { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
 import { KernelDb } from "../../src/infra/database/kernel-db.js";
 import { TransactionHost } from "../../src/infra/database/transaction-host.js";
 import { LockService } from "../../src/infra/lock/lock.service.js";
@@ -207,7 +207,7 @@ async function stagedDevice(deviceId: string) {
   });
   const credential = randomUUID();
   const states = new StagedSessionStates();
-  const hello: Omit<DeviceHelloV3, "transport"> = {
+  const hello: Omit<DeviceHello, "transport"> = {
     type: "hello",
     protocol: 3,
     programVersion: "fixture",
@@ -288,8 +288,6 @@ async function gatewayFor(
     {
       authenticate: async (c) =>
         c === device.credential ? { ...identity, machineId: "machine" } : null,
-      recordHello: async () => {},
-      recordPolicy: async () => {},
       recordHelloV3: async () => {},
       recordPolicyV3: async () => {},
       touch: async () => {},
@@ -305,7 +303,7 @@ async function gatewayFor(
   const address = server.address();
   if (typeof address === "string" || !address) throw new Error("no address");
   server.on("connection", (socket) => {
-    void gateway.acceptStaged(socket, device.credential);
+    void gateway.accept(socket, device.credential);
   });
   cleanups.push(async () => {
     for (const c of server.clients) c.terminate();
@@ -413,6 +411,7 @@ const reconcileJob = (k: TestKernel) =>
     k.app.get(SandboxService),
     k.app.get(BackgroundTaskStore),
     k.app.get(BackgroundTaskStopper),
+    k.app.get(KernelConfigService),
   );
 
 /** Revokes exactly `operationId` with the device-level writer, written on replica `k`. */

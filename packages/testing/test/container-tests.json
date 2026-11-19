@@ -1,1 +1,6 @@
-["device-linux-backend.test.ts", "sandbox-linux-runtime.test.ts", "sandbox-native-helper.test.ts"]
+[
+  "device-linux-backend.test.ts",
+  "device-mac-backend.test.ts",
+  "sandbox-linux-runtime.test.ts",
+  "sandbox-native-helper.test.ts"
+]

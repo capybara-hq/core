@@ -10,11 +10,7 @@ import { AdminUsageService } from "../../admin/usage.service.js";
 import { ApiError } from "../../errors.js";
 import { ExtensionDisplayNames } from "../../extensions/display-name.js";
 import { ExtensionRegistry } from "../../extensions/registry.js";
-import {
-  DEPLOYMENT_SETTINGS_PATCH,
-  normalizeDeploymentSettingsPatch,
-  SettingsService,
-} from "../../identity/settings.js";
+import { DEPLOYMENT_SETTINGS_PATCH, SettingsService } from "../../identity/settings.js";
 import { ModelDisabledPatch, ModelProviderParams } from "../../models/enablement.controller.js";
 import { ModelEnablement } from "../../models/enablement.js";
 import { MODEL_PRICE_PUT, PricesService } from "../../models/prices.js";
@@ -41,7 +37,6 @@ const SettingsInput = DEPLOYMENT_SETTINGS_PATCH.pick({
   uiArrangement: true,
   clientExtensions: true,
   devicesFullAccess: true,
-  devicesAutoMode: true,
   attribution: true,
   externalSharing: true,
   shareMaxExpiryDays: true,
@@ -242,7 +237,7 @@ export class AdminOperations implements OnModuleInit {
             next: "Fix the values as the message says (admin.settings shows the current ones).",
           },
           {
-            code: "deployment.auto_mode_not_allowed",
+            code: "deployment.full_access_not_allowed",
             next: "Through this tool the platform's Full permission switch may only be turned off; to allow it, ask a super admin to change it in the admin console settings on the web.",
           },
           {
@@ -272,7 +267,7 @@ export class AdminOperations implements OnModuleInit {
             };
           }
           return precheckBy(async () => {
-            const full = normalizeDeploymentSettingsPatch(i).devicesFullAccess;
+            const full = i.devicesFullAccess;
             if (full !== undefined)
               await this.settings.checkDevicesFullAccess(full, { onlyNarrows: true });
             await this.settings.checkSharing(i, { onlyNarrows: true });
@@ -284,7 +279,6 @@ export class AdminOperations implements OnModuleInit {
             uiArrangement,
             clientExtensions,
             devicesFullAccess,
-            devicesAutoMode,
             attribution,
             htmlRenderCdnAllowlist,
             ...rest
@@ -293,9 +287,8 @@ export class AdminOperations implements OnModuleInit {
           if (htmlRenderCdnAllowlist !== undefined) {
             parts.push(`htmlRenderCdnAllowlist=[${htmlRenderCdnAllowlist.join(", ")}]`);
           }
-          const full = devicesFullAccess?.permission ?? devicesAutoMode?.mode;
-          if (devicesFullAccess !== undefined || devicesAutoMode !== undefined) {
-            parts.push(`devicesFullAccess=${String(full)}`);
+          if (devicesFullAccess !== undefined) {
+            parts.push(`devicesFullAccess=${String(devicesFullAccess.permission)}`);
           }
           const zh = [...parts];
           const en = [...parts];

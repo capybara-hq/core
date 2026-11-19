@@ -68,7 +68,6 @@ import {
 import type { BuiltinCallContext } from "../../src/tools/registry.js";
 import {
   createFakeSandbox,
-  fakeOperationFacade,
   readFakeSandboxLimits,
   readFakeSandboxOps,
 } from "../fixtures/plugins/sandbox-fake/index.js";
@@ -646,8 +645,12 @@ describe("managed device context writer in the real common.ts route", () => {
 
   it("the one activation gate decides whether builtin tools pass and require the managed writer", () => {
     const recorder = k.app.get(ManagedDeviceContextRecorder);
-    // production (no provider for the token): the managed route keeps the legacy writer
-    expect(managedSandboxDeps(recorder, undefined)).toEqual({});
+    // production (no provider for the token): the gate is on, so the writer is passed and required
+    expect(managedSandboxDeps(recorder, undefined)).toEqual({
+      managedDeviceContext: recorder,
+      managedDeviceContextRequired: true,
+    });
+    // an explicit false (the dormant seam) keeps the legacy writer
     expect(managedSandboxDeps(recorder, false)).toEqual({});
     // the gate on passes the injected writer and requires it
     expect(managedSandboxDeps(recorder, true)).toEqual({
@@ -713,7 +716,7 @@ describe("cloud installed evidence in the real lifecycle", () => {
   /** Set: the provider's permission support read fails (a provider that cannot report). */
   let supportFails = false;
   const register = (version: string, options: Parameters<typeof createFakeSandbox>[1] = {}) => {
-    const base = fakeOperationFacade(root, createFakeSandbox(root, options));
+    const base = createFakeSandbox(root, options);
     k.app.get(SandboxProviders).register({
       plugin: CLOUD,
       version,

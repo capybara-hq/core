@@ -1,8 +1,13 @@
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { TOOL_HOME_DIRS, toolHomeEnv } from "../src/exec/shared.js";
+import {
+  restrictedToolHomes,
+  TOOL_HOME_DIRS,
+  TOOL_HOME_FILES,
+  toolHomeEnv,
+} from "../src/exec/shared.js";
 import { deniedSecretPaths } from "../src/policy.js";
 
 /**
@@ -68,5 +73,91 @@ describe("toolHomeEnv", () => {
         expect(dir === d || dir.startsWith(`${d}/`) || d.startsWith(`${dir}/`)).toBe(false);
       }
     }
+  });
+});
+
+/** A restricted exec on the host: the variables plus read-only roots, never a denied path. */
+describe("restrictedToolHomes", () => {
+  let home: string;
+  beforeEach(() => {
+    home = realpathSync(mkdtempSync(join(tmpdir(), "device-toolhome-")));
+  });
+  afterEach(() => rmSync(home, { recursive: true, force: true }));
+
+  it("grants the default directories it picks as read roots, with their variables", () => {
+    mkdirSync(join(home, ".asdf"));
+    mkdirSync(join(home, ".rustup"));
+    expect(restrictedToolHomes(home, {}, deniedSecretPaths(home))).toEqual({
+      env: { ASDF_DATA_DIR: join(home, ".asdf"), RUSTUP_HOME: join(home, ".rustup") },
+      readRoots: [join(home, ".asdf"), join(home, ".rustup")],
+      readFiles: [],
+    });
+  });
+
+  it("passes a set absolute value on; it is read only when it is an existing directory", () => {
+    const nvm = join(home, "opt-nvm");
+    mkdirSync(nvm);
+    expect(
+      restrictedToolHomes(home, { NVM_DIR: `${nvm}/`, ASDF_DATA_DIR: "/no/such/asdf" }, []),
+    ).toEqual({
+      env: { NVM_DIR: `${nvm}/`, ASDF_DATA_DIR: "/no/such/asdf" },
+      readRoots: [nvm],
+      readFiles: [],
+    });
+  });
+
+  it("never grants /, a denied path, a path under one or a directory containing one", () => {
+    const denied = deniedSecretPaths(home);
+    mkdirSync(join(home, ".ssh/keys"), { recursive: true });
+    mkdirSync(join(home, ".aws"));
+    symlinkSync(join(home, ".aws"), join(home, "aws-link"));
+    const result = restrictedToolHomes(
+      home,
+      {
+        ASDF_DATA_DIR: "/",
+        NVM_DIR: home,
+        PYENV_ROOT: join(home, ".ssh/keys"),
+        RBENV_ROOT: join(home, "aws-link"),
+      },
+      denied,
+    );
+    // the variables still pass on; nothing of them becomes readable
+    expect(result.env).toMatchObject({ ASDF_DATA_DIR: "/", NVM_DIR: home });
+    expect(result.readRoots).toEqual([]);
+  });
+
+  it("grants asdf's global .tool-versions as a single read file when it is a regular file", () => {
+    writeFileSync(join(home, ".tool-versions"), "nodejs 22.12.0\n");
+    expect(restrictedToolHomes(home, {}, deniedSecretPaths(home)).readFiles).toEqual([
+      join(home, ".tool-versions"),
+    ]);
+    // a directory of that name, or none at all, grants nothing
+    rmSync(join(home, ".tool-versions"));
+    expect(restrictedToolHomes(home, {}, []).readFiles).toEqual([]);
+    mkdirSync(join(home, ".tool-versions"));
+    expect(restrictedToolHomes(home, {}, []).readFiles).toEqual([]);
+  });
+
+  it("grants a linked .tool-versions by its real path, never one that leads into a denied root", () => {
+    mkdirSync(join(home, "dotfiles"));
+    writeFileSync(join(home, "dotfiles/tool-versions"), "python 3.12.0\n");
+    symlinkSync(join(home, "dotfiles/tool-versions"), join(home, ".tool-versions"));
+    expect(restrictedToolHomes(home, {}, deniedSecretPaths(home)).readFiles).toEqual([
+      join(home, "dotfiles/tool-versions"),
+    ]);
+    rmSync(join(home, ".tool-versions"));
+    mkdirSync(join(home, ".ssh"));
+    writeFileSync(join(home, ".ssh/id_ed25519"), "secret");
+    symlinkSync(join(home, ".ssh/id_ed25519"), join(home, ".tool-versions"));
+    expect(restrictedToolHomes(home, {}, deniedSecretPaths(home)).readFiles).toEqual([]);
+  });
+
+  it("only real version pins are single read files: no other dotfile of the home", () => {
+    expect(TOOL_HOME_FILES).toEqual([".tool-versions"]);
+    for (const rel of TOOL_HOME_FILES)
+      for (const d of deniedSecretPaths(home)) {
+        const file = join(home, rel);
+        expect(file === d || file.startsWith(`${d}/`)).toBe(false);
+      }
   });
 });

@@ -1,5 +1,5 @@
 import type { ToolSpec } from "@capybara-hq/plugin-sdk";
-import { formatElapsed, lostReasonText } from "../../../background/render.js";
+import { formatElapsed, taskReasonText } from "../../../background/render.js";
 import { type BackgroundTaskRow, isManagedTask } from "../../../background/store.js";
 import type { ChildAgent } from "../../../conversations/agent-tree.js";
 import type { BuiltinResult, BuiltinTool } from "../../registry.js";
@@ -54,7 +54,7 @@ function taskState(task: BackgroundTaskRow, now: Date): string {
     return task.sandboxCreatedAt === null ? "starting" : `running for ${elapsed}`;
   }
   let s: string = task.status;
-  if (task.lostReason !== null) s += ` (${lostReasonText(task.lostReason)})`;
+  if (task.lostReason !== null) s += ` (${taskReasonText(task)})`;
   if (task.exitCode !== null) s += `, exit code ${task.exitCode}`;
   return `${s}, after ${elapsed}`;
 }

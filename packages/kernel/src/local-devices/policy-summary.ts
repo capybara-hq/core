@@ -6,7 +6,7 @@ import type {
 } from "@capybara-hq/plugin-sdk";
 import type { SandboxMode } from "../sandbox/modes.js";
 import { coversHost } from "../sandbox/modes.js";
-import { isExecutionMethod } from "../sandbox/operation-authority-types.js";
+import { isExecutionMethod, isFullExecutionScope } from "../sandbox/operation-authority-types.js";
 
 const KNOWN_FEATURES: readonly DeviceFeature[] = [
   "networkReport",
@@ -259,7 +259,7 @@ export function ownerPolicyRevokes(
 ): boolean {
   if (!next) return true;
   if (!("profile" in scope)) return next.mode !== "auto" && scope.readRoots.includes("/");
-  if (scope.profile === "full-access") return next.mode !== "auto";
+  if (isFullExecutionScope(scope)) return next.mode !== "auto";
   if (!isExecutionMethod(method) || scope.network.kind !== "allowlist") return false;
   return scope.network.hosts.some(
     (host) =>

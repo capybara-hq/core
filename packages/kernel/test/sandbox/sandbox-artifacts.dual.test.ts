@@ -56,7 +56,8 @@ import { sandboxServiceFor } from "../helpers/sandbox.js";
  *    the survivor takes over the run (result unknown); the next call runs at once under a shared
  *    lease beside the dead replica's command and reuses the same instance, files kept, no
  *    "restarted" notice; once the dead replica's lease has expired (TTL 60 s), the next call finds
- *    its holder record and kills only its command (`killTagged`, phase C);
+ *    its holder record and revokes exactly its operation (`revokeOperation` by operation id,
+ *    never a broad kill; permission runtime cutover B-1);
  * 5. idle past the limit (last_used_at moved back) -> the maintenance job suspends it -> state
  *    suspended, instance stopped -> the next call resumes it transparently, files kept, no notice.
  *
@@ -406,10 +407,10 @@ describe("sandbox and artifacts (dual replica, fake sandbox)", () => {
     expect(r4b.result.content).toContain("attachments");
     expect(r4b.result.content).not.toContain("step4-finished");
     expect(reuseMs).toBeLessThan(SANDBOX_LOCK_TTL_MS);
-    // after the dead replica's lease expired, the next acquirer kills its command by its tag.
+    // after the dead replica's lease expired, the next acquirer revokes its operation exactly.
     // The wait below is longer than suspendAfterIdleMinutes (1 min, needed by step 5): once the
     // dead lease is gone, a replica's minute idle sweep could suspend the sandbox first (killing
-    // every command) and the next call would resume it with killAll instead. Keep it in use until
+    // every command) and the next call would resume it instead. Keep it in use until
     // step 5 moves last_used_at back (leave keeps the later of last_used_at and now()).
     await sql`UPDATE capybara.device_instances SET last_used_at = now() + interval '10 minutes'
       WHERE device_id = ${envId}`.execute(raw);
@@ -422,14 +423,16 @@ describe("sandbox and artifacts (dual replica, fake sandbox)", () => {
     });
     const r4c = await finished(convId, 7, 60_000);
     expect(r4c.result.isError, r4c.result.content).toBe(false);
-    // killed by the takeover (the sleep cannot end on its own); the dead group may take a moment
-    // to be reaped
+    // revoked by the takeover, by its operation id (the sleep cannot end on its own); the dead
+    // group may take a moment to be reaped
     const group = step4Group;
-    await waitFor(async () => !groupAlive(group), 5000, "step 4 command killed", 50);
+    await waitFor(async () => !groupAlive(group), 5000, "step 4 command revoked", 50);
     expect(
-      (await readFakeSandboxOps(root)).some(([op, id]) => op === "kill-tagged" && id === c2.id),
+      (await readFakeSandboxOps(root)).some(([op, id]) => op === "revoke" && id === c2.id),
     ).toBe(true);
-    expect((await readFakeSandboxOps(root)).some(([op]) => op === "kill-all")).toBe(false);
+    expect(
+      (await readFakeSandboxOps(root)).some(([op]) => op === "kill-all" || op === "kill-tagged"),
+    ).toBe(false);
     const c4 = await instanceOf(convId);
     expect(c4.id).toBe(c2.id);
     const row4 = await sandboxRow(convId);

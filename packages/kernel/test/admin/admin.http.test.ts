@@ -70,7 +70,6 @@ beforeEach(async () => {
 });
 
 /** The platform's auto-mode switch when neither the startup config nor the admin console sets it. */
-const DEFAULT_AUTO_MODE = { mode: "allowed", source: "default" };
 const DEFAULT_FULL_ACCESS = { permission: "allowed", source: "default" };
 
 /** The platform's attribution defaults when neither the startup config nor the admin console sets them. */
@@ -557,7 +556,6 @@ describe("超级管理员端点", () => {
       uiTheme: { id: null },
       clientExtensions: { enabled: true, disabled: [] },
       devicesFullAccess: DEFAULT_FULL_ACCESS,
-      devicesAutoMode: DEFAULT_AUTO_MODE,
       attribution: DEFAULT_ATTRIBUTION,
       compaction: DEFAULT_COMPACTION,
       ...DEFAULT_SHARING,
@@ -581,7 +579,6 @@ describe("超级管理员端点", () => {
       uiTheme: { id: null },
       clientExtensions: { enabled: true, disabled: [] },
       devicesFullAccess: DEFAULT_FULL_ACCESS,
-      devicesAutoMode: DEFAULT_AUTO_MODE,
       attribution: DEFAULT_ATTRIBUTION,
       compaction: DEFAULT_COMPACTION,
       ...DEFAULT_SHARING,
@@ -625,7 +622,6 @@ describe("超级管理员端点", () => {
       uiTheme: { id: null },
       clientExtensions: { enabled: true, disabled: [] },
       devicesFullAccess: DEFAULT_FULL_ACCESS,
-      devicesAutoMode: DEFAULT_AUTO_MODE,
       attribution: DEFAULT_ATTRIBUTION,
       compaction: DEFAULT_COMPACTION,
       ...DEFAULT_SHARING,
@@ -657,7 +653,6 @@ describe("超级管理员端点", () => {
       uiTheme: { id: null },
       clientExtensions: { enabled: true, disabled: [] },
       devicesFullAccess: DEFAULT_FULL_ACCESS,
-      devicesAutoMode: DEFAULT_AUTO_MODE,
       attribution: DEFAULT_ATTRIBUTION,
       compaction: DEFAULT_COMPACTION,
       ...DEFAULT_SHARING,
@@ -690,7 +685,6 @@ describe("超级管理员端点", () => {
       uiTheme: { id: null },
       clientExtensions: { enabled: true, disabled: [] },
       devicesFullAccess: DEFAULT_FULL_ACCESS,
-      devicesAutoMode: DEFAULT_AUTO_MODE,
       attribution: DEFAULT_ATTRIBUTION,
       compaction: DEFAULT_COMPACTION,
       ...DEFAULT_SHARING,
@@ -789,36 +783,35 @@ describe("超级管理员端点", () => {
     );
   });
 
-  it("PUT /admin/settings devicesAutoMode: validated, read back with its source, audited; null clears it", async () => {
+  it("PUT /admin/settings devicesFullAccess: audited; null clears it; the old name devicesAutoMode is refused", async () => {
     const adminReq = await session("admin");
     const put = (payload: Record<string, unknown>) =>
       adminReq({ method: "PUT", url: "/api/v1/admin/settings", payload });
     for (const payload of [
-      { devicesAutoMode: {} },
-      { devicesAutoMode: { mode: "wide" } },
-      { devicesAutoMode: { mode: "off", extra: 1 } },
+      { devicesAutoMode: { mode: "off" } },
+      { devicesAutoMode: { mode: null } },
+      { devicesFullAccess: { permission: "off", extra: 1 } },
     ]) {
       const res = await put(payload);
       expect(res.statusCode, JSON.stringify(payload)).toBe(400);
       expect(errCode(res)).toBe("validation_failed");
     }
-    const off = await put({ devicesAutoMode: { mode: "off" } });
+    const off = await put({ devicesFullAccess: { permission: "off" } });
     expect(off.statusCode, off.body).toBe(200);
-    expect(off.json().devicesAutoMode).toEqual({ mode: "off", source: "db" });
+    expect(off.json().devicesFullAccess).toEqual({ permission: "off", source: "db" });
     const audit = await db
       .selectFrom("audit_events")
       .select(["action", "detail"])
       .where("action", "=", "deployment.settings.updated")
       .executeTakeFirstOrThrow();
-    // the old name is stored and audited as the new one
     expect(audit.detail).toMatchObject({
       devicesFullAccess: { permission: "off" },
       devicesFullAccessEffective: { before: DEFAULT_FULL_ACCESS, after: "off" },
     });
     // null clears it back to the default
-    const cleared = await put({ devicesAutoMode: { mode: null } });
+    const cleared = await put({ devicesFullAccess: { permission: null } });
     expect(cleared.statusCode, cleared.body).toBe(200);
-    expect(cleared.json().devicesAutoMode).toEqual(DEFAULT_AUTO_MODE);
+    expect(cleared.json().devicesFullAccess).toEqual(DEFAULT_FULL_ACCESS);
   });
 
   it("PUT /admin/settings devicesFullAccess: validated, read back with its source, never with the old name", async () => {
@@ -837,15 +830,13 @@ describe("超级管理员端点", () => {
     }
     const off = await put({ devicesFullAccess: { permission: "off" } });
     expect(off.statusCode, off.body).toBe(200);
-    expect(off.json()).toMatchObject({
-      devicesFullAccess: { permission: "off", source: "db" },
-      devicesAutoMode: { mode: "off", source: "db" },
-    });
+    expect(off.json()).toMatchObject({ devicesFullAccess: { permission: "off", source: "db" } });
+    expect(off.json()).not.toHaveProperty("devicesAutoMode");
     const cleared = await put({ devicesFullAccess: { permission: null } });
     expect(cleared.json().devicesFullAccess).toEqual(DEFAULT_FULL_ACCESS);
   });
 
-  it("PUT /admin/settings devicesAutoMode through a personal access token may only turn it off", async () => {
+  it("PUT /admin/settings devicesFullAccess through a personal access token may only turn it off", async () => {
     const pat = await tokens.createPersonal(admin.id, { name: "automation" });
     const viaToken = (payload: Record<string, unknown>) =>
       k.http.inject({
@@ -855,27 +846,27 @@ describe("超级管理员端点", () => {
         payload,
       });
     // from allowed, off narrows
-    const off = await viaToken({ devicesAutoMode: { mode: "off" } });
+    const off = await viaToken({ devicesFullAccess: { permission: "off" } });
     expect(off.statusCode, off.body).toBe(200);
-    expect((off.json() as { devicesAutoMode: unknown }).devicesAutoMode).toEqual({
-      mode: "off",
+    expect((off.json() as { devicesFullAccess: unknown }).devicesFullAccess).toEqual({
+      permission: "off",
       source: "db",
     });
     // turning it back on widens: refused for a token, allowed for a person in a session
-    const widened = await viaToken({ devicesAutoMode: { mode: "allowed" } });
+    const widened = await viaToken({ devicesFullAccess: { permission: "allowed" } });
     expect(widened.statusCode).toBe(400);
-    expect(errCode(widened)).toBe("deployment.auto_mode_not_allowed");
+    expect(errCode(widened)).toBe("deployment.full_access_not_allowed");
     const adminReq = await session("admin");
     const on = await adminReq({
       method: "PUT",
       url: "/api/v1/admin/settings",
-      payload: { devicesAutoMode: { mode: "allowed" } },
+      payload: { devicesFullAccess: { permission: "allowed" } },
     });
     expect(on.statusCode, on.body).toBe(200);
-    expect(on.json().devicesAutoMode).toEqual({ mode: "allowed", source: "db" });
+    expect(on.json().devicesFullAccess).toEqual({ permission: "allowed", source: "db" });
   });
 
-  it("PUT /admin/settings devicesAutoMode: a value set in the startup config is read-only and wins", async () => {
+  it("PUT /admin/settings devicesFullAccess: a value set in the startup config is read-only and wins", async () => {
     const service = k.app.get(KernelConfigService);
     const rawConfig = (fullAccess?: "allowed" | "off") => ({
       db: { url: pgc.url, poolMax: 5 },
@@ -889,7 +880,7 @@ describe("超级管理员端点", () => {
     const adminReq = await session("admin");
     const put = (payload: Record<string, unknown>) =>
       adminReq({ method: "PUT", url: "/api/v1/admin/settings", payload });
-    expect((await put({ devicesAutoMode: { mode: "allowed" } })).statusCode).toBe(200);
+    expect((await put({ devicesFullAccess: { permission: "allowed" } })).statusCode).toBe(200);
     // a hot change of the Full switch publishes durably first (B1 / 6c), as the lifecycle does
     const publication = k.app.get(PermissionConfigPublication);
     const publish = (before: KernelConfig, next: KernelConfig) => publication.publish(before, next);
@@ -897,8 +888,8 @@ describe("超级管理员端点", () => {
     try {
       const view = await adminReq({ method: "GET", url: "/api/v1/admin/settings" });
       // the startup config wins over the stored allowed and reports itself read-only
-      expect(view.json().devicesAutoMode).toEqual({ mode: "off", source: "file" });
-      const locked = await put({ devicesAutoMode: { mode: "allowed" } });
+      expect(view.json().devicesFullAccess).toEqual({ permission: "off", source: "file" });
+      const locked = await put({ devicesFullAccess: { permission: "allowed" } });
       expect(locked.statusCode).toBe(409);
       expect(errCode(locked)).toBe("deployment.setting_readonly");
       expect(locked.json().error.details).toEqual([
@@ -909,7 +900,7 @@ describe("超级管理员端点", () => {
     }
     // with the startup config silent again, the stored choice applies
     const back = await adminReq({ method: "GET", url: "/api/v1/admin/settings" });
-    expect(back.json().devicesAutoMode).toEqual({ mode: "allowed", source: "db" });
+    expect(back.json().devicesFullAccess).toEqual({ permission: "allowed", source: "db" });
   });
 
   it('PUT /admin/settings attribution: saved, read back with sources, "" turns a line off, null clears, a startup-config field is read-only', async () => {

@@ -1,29 +1,28 @@
 import { randomUUID } from "node:crypto";
 import {
-  type BindInstanceRequestV3,
-  DEVICE_PROTOCOL_VERSION,
+  type BindInstanceRequest,
   type DeviceOp,
-  type DeviceOperationV3,
+  type DeviceOperation,
   type DeviceOpResults,
   DeviceProtocolError,
-  type DeviceResponseV3,
+  type DeviceResponse,
   type DeviceStopArgs,
   type ExtensionContext,
   FileSystemGoneError,
   type KernelReq,
   parseDeviceFrame,
-  parseDeviceFrameV3,
-  parseOperationResultV3,
+  parseLegacyDeviceFrame,
+  parseOperationResult,
   parseOpResult,
   SandboxGoneError,
   SandboxOperationOutcomeUnknownError,
   SandboxPermissionUnsupportedError,
   SandboxScopeDeniedError,
-  STAGED_DEVICE_PROTOCOL_VERSION,
   ToolError,
 } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
 import type { Redis } from "ioredis";
+import { machineRevoked } from "../devices/errors.js";
 import { ApiError } from "../errors.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { LockService } from "../infra/lock/lock.service.js";
@@ -47,16 +46,7 @@ export const deviceOffline = (): ApiError =>
     "The machine of this local device is offline. Start capybara-device on that machine, or pick another device.",
   );
 
-/**
- * The device's machine was disconnected (revoked, signed out): 403 `device.forbidden`
- * with `details: [{ reason: "machine_revoked" }]`, so the tools tell the model what to ask for.
- */
-export const machineRevoked = (): ApiError =>
-  new ApiError(
-    "device.forbidden",
-    "The machine of this local device was disconnected. Run capybara-device logout, then capybara-device login on it, or pick another device.",
-    [{ reason: "machine_revoked" }],
-  );
+export { machineRevoked } from "../devices/errors.js";
 
 /** The text a machine's `policy` refusal reaches the model with. */
 export const POLICY_REFUSAL_PREFIX = "Refused by the machine's local policy: ";
@@ -104,13 +94,6 @@ const connectionFenced = (op: string): boolean => op === "backgroundReadOutput";
  * before the frame goes out; a frame for another machine is dropped).
  */
 export const STOP_MACHINE = "machineId" as const;
-
-/**
- * Whether the deployment speaks the staged device protocol: the single gate is the SDK's protocol
- * constant (flipped to 3 at the paired activation). Until then the active wire stays protocol 2.
- */
-export const stagedDeviceProtocolActive = (): boolean =>
-  (DEVICE_PROTOCOL_VERSION as number) === STAGED_DEVICE_PROTOCOL_VERSION;
 
 /** The longest one lease check of a waiting caller may take before it counts as "unknown". */
 export const LEASE_CHECK_TIMEOUT_MS = 2000;
@@ -162,7 +145,7 @@ type Outcome =
    * `connectionId`: the connection a staged result arrived on (tagged by the gateway). `notSent`:
    * the gateway's own marker that the request never reached the machine.
    */
-  | { res: DeviceResponseV3; connectionId?: string; notSent?: true }
+  | { res: DeviceResponse; connectionId?: string; notSent?: true }
   | { error: typeof ABORTED | typeof GRACE_EXPIRED | Error };
 
 /**
@@ -210,9 +193,9 @@ const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
  * list and forwards the frames to the machine.
  *
  * **The holder's half of the wire** (Task 6 follows it): items on the list are `KernelReq` or
- * `KernelCancel` frames as JSON text, to be parsed with `parseDeviceFrame(item, "kernel")`; the
+ * `KernelCancel` frames as JSON text, to be parsed with `parseLegacyDeviceFrame(item, "kernel")`; the
  * nudge's payload is `{ id }`. For each `res` frame the machine sends, the holder writes the frame
- * (the JSON text as validated by `parseDeviceFrame(…, "device")`) under
+ * (the JSON text as validated by `parseLegacyDeviceFrame(…, "device")`) under
  * `capk:device-res:<requestId>` with a TTL and publishes the same frame object on
  * `device.res.<requestId>`.
  *
@@ -242,22 +225,13 @@ export class LocalDeviceRelay {
   }
 
   /**
-   * Whether the protocol gate is open ({@link stagedDeviceProtocolActive}; a test seam opens it
-   * for one relay instance, the deployment never does).
-   */
-  stagedProtocolActive: () => boolean = stagedDeviceProtocolActive;
-
-  /**
-   * The negotiated transport of the device's connection when the platform's own controls (policy
-   * ops) must speak protocol 3 to it, else null (protocol 2). With the gate closed every
-   * connection is protocol 2: nothing is looked up (no lease or transport read per op). With it
-   * open every connection is staged, so this is {@link connection} (a missing or unready one
-   * throws its typed error).
+   * The negotiated transport of the device's connection for the platform's own controls (policy
+   * ops): every connection speaks protocol 3, so this is {@link connection} (a missing or unready
+   * one throws its typed error).
    */
   async stagedTransport(
     deviceId: string,
   ): Promise<{ connectionId: string; maxFrameBytes: number } | null> {
-    if (!this.stagedProtocolActive()) return null;
     return this.connection(deviceId);
   }
 
@@ -316,14 +290,17 @@ export class LocalDeviceRelay {
     return this.callWithCodec(deviceId, op, args, opts, false) as Promise<DeviceOpResults[Op]>;
   }
 
-  /** Development staging: the active gateway continues rejecting protocol 3 until coordinated cutover. */
+  /**
+   * Runs a protocol 3 operation on the device's machine over its current staged connection and
+   * returns its validated result; the request is checked against the protocol 3 codec first.
+   */
   async callV3(
     deviceId: string,
-    op: DeviceOperationV3,
+    op: DeviceOperation,
     args: Record<string, unknown>,
     opts: DeviceCallOptions,
   ): Promise<unknown> {
-    parseDeviceFrameV3(
+    parseDeviceFrame(
       JSON.stringify({ type: "req", id: "validation", op, args, deadlineMs: opts.deadlineMs }),
       "kernel",
     );
@@ -331,7 +308,7 @@ export class LocalDeviceRelay {
   }
   private async callWithCodec(
     deviceId: string,
-    op: DeviceOperationV3 | DeviceOp,
+    op: DeviceOperation | DeviceOp,
     args: unknown,
     opts: DeviceCallOptions,
     staged: boolean,
@@ -358,7 +335,7 @@ export class LocalDeviceRelay {
     const graceMs = this.graceMs();
     const listTtlMs = graceMs + deadlineMs + LIST_TTL_MARGIN_MS;
     const frame = { type: "req", id, op, args, deadlineMs };
-    if (connection) parseDeviceFrameV3(JSON.stringify(frame), "kernel", connection.maxFrameBytes);
+    if (connection) parseDeviceFrame(JSON.stringify(frame), "kernel", connection.maxFrameBytes);
     const reqJson = JSON.stringify({ ...frame, ...connection });
 
     let settle!: (r: Outcome) => void;
@@ -456,13 +433,13 @@ export class LocalDeviceRelay {
         // only the gateway's marker says a request never reached the machine: never its text
         if (connection && r.notSent) throw notSentError(op);
         return staged && r.res.ok
-          ? parseOperationResultV3(
-              op as DeviceOperationV3,
+          ? parseOperationResult(
+              op as DeviceOperation,
               r.res.result,
               op === "backgroundReadOutput"
                 ? (args as { offset: number; maxBytes: number })
                 : op === "bindInstance"
-                  ? (args as BindInstanceRequestV3)
+                  ? (args as BindInstanceRequest)
                   : undefined,
             )
           : this.resultOf(op as DeviceOp, r.res);
@@ -623,8 +600,8 @@ export class LocalDeviceRelay {
         wire = JSON.stringify(frame);
       }
       const f = connection
-        ? parseDeviceFrameV3(wire, "device", cap)
-        : parseDeviceFrame(wire, "device");
+        ? parseDeviceFrame(wire, "device", cap)
+        : parseLegacyDeviceFrame(wire, "device");
       if (f.type !== "res" || f.id !== id) {
         return { error: new DeviceProtocolError("the connected machine sent an unexpected frame") };
       }
@@ -643,7 +620,7 @@ export class LocalDeviceRelay {
     }
   }
 
-  private resultOf<Op extends DeviceOp>(op: Op, res: DeviceResponseV3): DeviceOpResults[Op] {
+  private resultOf<Op extends DeviceOp>(op: Op, res: DeviceResponse): DeviceOpResults[Op] {
     if (res.ok) {
       try {
         return parseOpResult(op, res.result);

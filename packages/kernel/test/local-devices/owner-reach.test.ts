@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { DEFAULT_SANDBOX_ROOTS, type DeviceOwnerCeilingV3 } from "@capybara-hq/plugin-sdk";
+import { DEFAULT_SANDBOX_ROOTS, type DeviceOwnerCeiling } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { KernelConfigSchema } from "../../src/config/schema.js";
@@ -65,7 +65,7 @@ const report = (
   restrictedProjectReach: "workspace" | "os-user",
   restrictedAllowedDomains: string[] = [],
   revision = `rev-${sequence}`,
-): DeviceOwnerCeilingV3 => ({
+): DeviceOwnerCeiling => ({
   version: 2,
   revision,
   sequence,
@@ -86,7 +86,7 @@ async function fixture() {
     .values({ device_id: f.deviceId, name: "outside", path: OUTSIDE, created_by: f.accountId })
     .execute();
   const facts = k.app.get(PermissionFacts);
-  const record = (r: DeviceOwnerCeilingV3) =>
+  const record = (r: DeviceOwnerCeiling) =>
     k.app.get(OwnerReports).record(machine.id, r, { connectionId: "c1", via: "hello" });
   const browse = () =>
     k.app
@@ -382,6 +382,33 @@ describe("Full consent and revocation follow only actual Full changes", () => {
     expect(v.profile).not.toBe("full-access");
   });
 
+  it("an org that turns Full off over an owner report with Full: the profile drops Full, admission narrows", async () => {
+    const f = await fixture();
+    await f.record(report(1, true, "os-user"));
+    await f.consentFull();
+    expect((await f.profileView()).profile).toBe("full-access");
+    const admit = () =>
+      k.app.get(SandboxOperationAuthority).resolve(
+        {
+          orgId: f.orgId,
+          deviceId: f.deviceId,
+          holderConversationId: f.conversationId,
+          actor: { accountId: f.accountId, conversationId: f.conversationId, runId: f.runId },
+        },
+        "exec",
+        new AbortController().signal,
+      );
+    const full = await admit();
+    expect(full).toMatchObject({ profile: "full-access", filesystem: { kind: "device" } });
+    // the org turns Full off; the machine still reports a Full owner ceiling
+    await k.app.get(OrgSettingsService).update(f.orgId, { fullAccess: "off" }, f.accountId);
+    expect((await f.profileView()).profile).not.toBe("full-access");
+    const narrowed = await admit();
+    expect(narrowed.profile).not.toBe("full-access");
+    expect(narrowed.filesystem.kind).toBe("scoped");
+    expect(narrowed.network.kind).not.toBe("environment");
+  });
+
   it("a disconnected owner narrowing arrives with the reconnect hello and resets Full", async () => {
     const f = await fixture();
     const roots = { ...DEFAULT_SANDBOX_ROOTS, workspace: "/work" };
@@ -420,14 +447,20 @@ describe("web writes only narrow", () => {
       expect(DevicePolicyBody.safeParse({ ownerCeiling }).success).toBe(false);
     expect(DevicePolicyBody.safeParse({ ownerCeiling: { fullAccess: false } }).success).toBe(true);
     const f = await fixture();
-    // a protocol 2 program cannot express it: nothing is sent
+    // a connected program that reports no authenticated owner facts cannot take it: nothing is
+    // sent (protocol 2 programs are refused at the upgrade since the activation)
     await f.db
       .updateTable("device_machines")
-      .set({ features: ["mode", "projects", "policyOp", "policyOpId"] })
+      .set({ features: ["mode", "projects", "policyOp", "policyOpId"], owner_report: null })
       .where("id", "=", f.machineId)
       .execute();
-    vi.spyOn(k.app.get(LocalDeviceRelay), "holderLive").mockResolvedValue(true);
-    const call = vi.spyOn(k.app.get(LocalDeviceRelay), "call");
+    const relay = k.app.get(LocalDeviceRelay);
+    vi.spyOn(relay, "holderLive").mockResolvedValue(true);
+    vi.spyOn(relay, "stagedTransport").mockResolvedValue({
+      connectionId: "c-1",
+      maxFrameBytes: 69632,
+    });
+    const call = vi.spyOn(relay, "callV3");
     await expect(
       k.app
         .get(DevicesService)
@@ -460,7 +493,7 @@ describe("web writes only narrow", () => {
       })
       .where("id", "=", f.machineId)
       .execute();
-    const settle = (ownerCeiling: DeviceOwnerCeilingV3) =>
+    const settle = (ownerCeiling: DeviceOwnerCeiling) =>
       k.app.get(TransactionHost).run(() =>
         policies.settleIn(
           { machineId: f.machineId, opId: "op-1" },

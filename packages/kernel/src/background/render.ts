@@ -16,10 +16,33 @@ const LOST_REASONS: Readonly<Record<string, string>> = {
   process_gone: "its processes ended without an exit code",
   launch_abandoned: "its launch was interrupted",
   supervision_lost: "its supervision was lost",
+  launch_unknown:
+    "whether its launch started could not be confirmed; any process it started is being stopped",
+  launch_revoked:
+    "its launch was revoked before its start was confirmed; any process it started is being stopped",
 };
 
 /** Why a task was lost, as the model reads it (an unknown reason as is). */
 export const lostReasonText = (reason: string): string => LOST_REASONS[reason] ?? reason;
+
+/**
+ * Why a legacy (SID) launch failed is recorded in the old launcher's raw words (a provider's
+ * stderr): never shown, the model gets this instead.
+ */
+const LEGACY_LAUNCH_FAILED =
+  "its launch failed under an earlier version of the device runtime; call Bash with run_in_background again to start it";
+
+/**
+ * A task's lost or failure reason as the model reads it (`TaskOutput`, `TaskList`): kernel text
+ * only. A managed task's reasons are the kernel's own; a legacy row's unknown reason is the old
+ * launcher's raw text and is replaced.
+ */
+export function taskReasonText(task: { lostReason: string | null; launchState: string }): string {
+  const reason = task.lostReason ?? "";
+  const known = lostReasonText(reason);
+  if (known !== reason || task.launchState !== "legacy") return known;
+  return LEGACY_LAUNCH_FAILED;
+}
 
 type Finished = EventPayload<"background_task_finished">;
 

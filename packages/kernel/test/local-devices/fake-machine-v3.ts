@@ -1,12 +1,13 @@
 import {
   DEVICE_PROTOCOL_VERSION,
   type DeviceHello,
-  type DeviceHelloV3,
-  type DeviceOwnerCeilingV3,
+  type DeviceLocalPolicySummary,
+  type DeviceOwnerCeiling,
   type KernelCancel,
-  type KernelReadyV3,
+  type KernelReady,
   type KernelReq,
-  parseDeviceFrameV3,
+  type LegacyDeviceHello,
+  parseDeviceFrame,
 } from "@capybara-hq/plugin-sdk";
 import WebSocket from "ws";
 import {
@@ -37,6 +38,12 @@ export interface FakeMachineOptions {
   /** false: the test sends the hello itself (with {@link FakeMachineApi.hello}). */
   hello?: boolean;
   autoPong?: boolean;
+  /**
+   * false: a `bindInstance` gets exactly what the test's answer gives (a scripted `null` result,
+   * an error, or no answer). Default true: an unscripted bind, or one the answer's catch-all
+   * `null` result covers, gets the installed evidence of {@link bindAnswer}.
+   */
+  autoBind?: boolean;
 }
 
 export type FakeMachineConstructor = new (
@@ -47,14 +54,14 @@ export type FakeMachineConstructor = new (
 ) => FakeMachineApi;
 
 /** The staged hello of a machine whose instance is not bound yet (the kernel binds it). */
-export const HELLO_V3: DeviceHelloV3 = stagedHello();
+export const HELLO_V3: DeviceHello = stagedHello();
 
 /** The v3 owner report a fake machine answers a bind with. */
-export const FAKE_OWNER_CEILING: DeviceOwnerCeilingV3 = HELLO_V3.ownerCeiling;
+export const FAKE_OWNER_CEILING: DeviceOwnerCeiling = HELLO_V3.ownerCeiling;
 
 /**
  * A `capybara-device` stand-in speaking the staged (protocol 3) wire over a real WebSocket,
- * against `LocalDeviceGateway.acceptStaged` (or, after the paired activation, the HTTP route):
+ * against `LocalDeviceGateway.accept` (or, after the paired activation, the HTTP route):
  * it records the kernel's frames, keeps the `ready` frame apart (its connection id and capacity
  * are in {@link ready}), and answers requests with `answer` (undefined: the test answers with
  * {@link respond}). A `bindInstance` nobody answered is answered with the installed evidence of
@@ -68,7 +75,7 @@ export class FakeMachineV3 implements FakeMachineApi {
   readonly closed: Promise<{ code: number; reason: string }>;
   readonly opened: Promise<void>;
   /** Resolves with the kernel's `ready` frame (its connection id and negotiated capacity). */
-  readonly ready: Promise<KernelReadyV3>;
+  readonly ready: Promise<KernelReady>;
   private waiters: {
     pred: (f: KernelReq | KernelCancel) => boolean;
     resolve: (f: KernelReq | KernelCancel) => void;
@@ -80,6 +87,7 @@ export class FakeMachineV3 implements FakeMachineApi {
     private readonly answer: (req: KernelReq) => Answer = () => undefined,
     opts: FakeMachineOptions = {},
   ) {
+    const autoBind = opts.autoBind ?? true;
     this.ws = new WebSocket(url, {
       headers: { Authorization: `Bearer ${credential}`, "X-Capybara-Device-Protocol": "3" },
       autoPong: opts.autoPong ?? true,
@@ -94,12 +102,12 @@ export class FakeMachineV3 implements FakeMachineApi {
       });
       this.ws.on("error", reject);
     });
-    let onReady!: (r: KernelReadyV3) => void;
+    let onReady!: (r: KernelReady) => void;
     this.ready = new Promise((resolve) => {
       onReady = resolve;
     });
     this.ws.on("message", (data) => {
-      const f = parseDeviceFrameV3(String(data), "kernel");
+      const f = parseDeviceFrame(String(data), "kernel");
       if (f.type === "ready") {
         onReady(f);
         return;
@@ -115,9 +123,16 @@ export class FakeMachineV3 implements FakeMachineApi {
         }
       }
       if (frame.type === "req") {
-        const a =
-          this.answer(frame) ??
-          (String(frame.op) === "bindInstance" ? bindAnswer(frame) : undefined);
+        let a = this.answer(frame);
+        // a bind nobody scripted (no answer, or the catch-all `null` result many answers give
+        // every op they do not handle) gets the installed evidence an enforcing device returns
+        if (
+          autoBind &&
+          String(frame.op) === "bindInstance" &&
+          (a === undefined || isNullResult(a))
+        ) {
+          a = bindAnswer(frame);
+        }
         if (a !== undefined) this.respond(frame.id, a);
       }
     });
@@ -147,6 +162,56 @@ export class FakeMachineV3 implements FakeMachineApi {
     this.ws.terminate();
   }
 }
+
+let ownerSequence = 0;
+
+/**
+ * A fresh owner report of a machine whose local allowlist is `policy.allowedDomains` (the device
+ * reports its restricted allowance from it): each call issues a higher sequence and a new revision,
+ * so a report after a policy change, or a reconnect's hello, is never stale for the kernel.
+ */
+export function ownerReportFor(
+  policy: { readonly allowedDomains: readonly string[] },
+  over: Partial<DeviceOwnerCeiling> = {},
+): DeviceOwnerCeiling {
+  ownerSequence += 1;
+  return {
+    ...FAKE_OWNER_CEILING,
+    sequence: ownerSequence,
+    revision: `test-owner-r${ownerSequence}`,
+    restrictedAllowedDomains: [...policy.allowedDomains],
+    ...over,
+  };
+}
+
+/** A v3 `policy` answer: the policy as written and the owner report issued for it. */
+export function policyAnswer(policy: DeviceLocalPolicySummary): NonNullable<Answer> {
+  return {
+    ok: true,
+    result: { policy, ownerCeiling: ownerReportFor(policy) },
+  } as NonNullable<Answer>;
+}
+
+/**
+ * A v3 `policyStatus` answer: an `applied` outcome carries the machine's current owner report
+ * (protocol 3 requires it); other outcomes carry none.
+ */
+export function policyStatusAnswer(
+  outcome: "applied" | "refused" | "started" | "unknown",
+  policy: DeviceLocalPolicySummary,
+): NonNullable<Answer> {
+  return {
+    ok: true,
+    result: {
+      outcome,
+      policy,
+      ...(outcome === "applied" && { ownerCeiling: ownerReportFor(policy) }),
+    },
+  } as NonNullable<Answer>;
+}
+
+const isNullResult = (a: NonNullable<Answer>): boolean =>
+  (a as { ok?: unknown }).ok === true && (a as { result?: unknown }).result === null;
 
 /**
  * The installed evidence an enforcing device answers `bindInstance` with: the asked generation and
@@ -201,10 +266,10 @@ export function fakeMachineFor(protocol: 2 | 3) {
     /** The header an upgrade request of this protocol carries. */
     protocolHeader: String(protocol),
     Machine: (staged ? FakeMachineV3 : FakeMachineV2) as FakeMachineConstructor,
-    HELLO: (staged ? HELLO_V3 : HELLO_V2) as DeviceHello,
+    HELLO: (staged ? HELLO_V3 : HELLO_V2) as LegacyDeviceHello,
     /** The hello frame with `overrides` (v2-only fields such as `policy` ride along in both). */
-    helloWith: (overrides: Record<string, unknown> = {}): DeviceHello =>
-      ({ ...(staged ? HELLO_V3 : HELLO_V2), ...overrides }) as DeviceHello,
+    helloWith: (overrides: Record<string, unknown> = {}): LegacyDeviceHello =>
+      ({ ...(staged ? HELLO_V3 : HELLO_V2), ...overrides }) as LegacyDeviceHello,
   };
 }
 

@@ -1,4 +1,3 @@
-import { rootsOf, type SandboxHandle } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable, Optional } from "@nestjs/common";
 import type { Redis } from "ioredis";
 import type { KernelConfig } from "../config/schema.js";
@@ -9,9 +8,7 @@ import { LockedCron } from "../infra/schedule/locked-cron.decorator.js";
 import { LockedInterval } from "../infra/schedule/locked-interval.js";
 import { KERNEL_LOGGER, REDIS } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
-import { PERMISSION_CONTEXT_ACTIVATION } from "../sandbox/permission-context-types.js";
 import {
-  type HeldProvider,
   type IfRunningResult,
   RetirementPendingError,
   SandboxService,
@@ -26,8 +23,6 @@ import {
   statusEnd,
   summaryLines,
 } from "./managed.js";
-import { actingAs, taskActor } from "./session.js";
-import { parsePollOutput, polledAs, pollScript, type TaskReport } from "./status.js";
 import { BackgroundTaskStopper, notRunningAs, RECREATED } from "./stop.js";
 import { type BackgroundTaskRow, BackgroundTaskStore } from "./store.js";
 
@@ -43,7 +38,8 @@ export const MANAGED_STOPS_PER_TICK = 8;
 const LAUNCH_ABANDONED_FLOOR_MS = 120_000;
 
 /**
- * A reservation (`sid` null) older than this has lost its launch. The slowest legitimate launch
+ * A reservation that never dispatched (a managed `pending` row, or a legacy row without an
+ * instance) older than this has lost its launch. The slowest legitimate launch
  * is the pipeline's own limit for a background `Bash` call ({@link LAUNCH_EXEC_TIMEOUT_MS} plus
  * {@link sandboxBaseTimeoutMs}: the tool timeout, `sandbox.lockWaitSeconds` and the setup margin),
  * so twice that (never under 2 minutes) leaves a wide margin: only a launching process that died
@@ -52,20 +48,16 @@ const LAUNCH_ABANDONED_FLOOR_MS = 120_000;
 export const launchAbandonedAfterMs = (cfg: KernelConfig): number =>
   Math.max(LAUNCH_ABANDONED_FLOOR_MS, 2 * (LAUNCH_EXEC_TIMEOUT_MS + sandboxBaseTimeoutMs(cfg)));
 
-/** The time limit of one sandbox's poll exec. */
-const POLL_EXEC_TIMEOUT_MS = 30_000;
-/** The most output one poll exec keeps (a line per task, with a tail when it ended). */
-const POLL_MAX_OUTPUT_BYTES = 4 * 1024 * 1024;
-
 /**
  * The worker's background task jobs (spec 2026-11-05-background-bash-design §4.3), each once per
  * tick across replicas:
- * - `background-task-poll` (every `sandbox.background.pollSeconds`): for every device
- *   instance with running tasks (of any conversation using it), one exec through
- *   `SandboxService.ifRunning` (which never creates or resumes an instance) reports each task's
- *   exit file and liveness; ended tasks finish through {@link BackgroundTaskFinisher}. Each poll
+ * - `background-task-poll` (every `sandbox.background.pollSeconds`): every managed task by its
+ *   exact ref on its exact instance (through `SandboxService.ifRunning`, which never creates or
+ *   resumes an instance); ended tasks finish through {@link BackgroundTaskFinisher}. Each poll
  *   takes and releases a lease, so `last_used_at` stays fresh and an instance with running tasks
- *   is never idle-suspended;
+ *   is never idle-suspended. A running legacy (SID) task is never polled by any exec: while its
+ *   instance runs it is left to the retirement gate (`RetireLegacyTasksJob`); once that instance
+ *   is gone or replaced it finishes `lost` without any exec or signal;
  * - `background-task-prune` (daily): deletes finished tasks older than `tools.outputRetentionDays`.
  */
 @Injectable()
@@ -74,11 +66,7 @@ export class BackgroundTaskPollJob {
     @Inject(BackgroundTaskStore)
     private readonly store: Pick<
       BackgroundTaskStore,
-      | "runningStarted"
-      | "runningManaged"
-      | "owedCancels"
-      | "pruneFinished"
-      | "failAbandonedLaunches"
+      "runningLegacy" | "runningManaged" | "owedCancels" | "pruneFinished" | "failAbandonedLaunches"
     >,
     @Inject(BackgroundTaskFinisher) private readonly finisher: BackgroundTaskFinisher,
     @Inject(EventLog) private readonly eventLog: Pick<EventLog, "publishChanged">,
@@ -89,12 +77,7 @@ export class BackgroundTaskPollJob {
     @Inject(KERNEL_LOGGER) readonly log: KernelLogger,
     @Inject(BackgroundTaskStopper)
     private readonly stopper: Pick<BackgroundTaskStopper, "stop">,
-    /**
-     * The paired activation gate: once on, a legacy (SID) task is never polled by a raw exec;
-     * its instance's poll is refused for the retirement gate ({@link pollSandbox}).
-     */
-    @Optional() @Inject(PERMISSION_CONTEXT_ACTIVATION) private readonly activation?: boolean,
-    /** The marker that logs a refused legacy poll once per instance across the replicas. */
+    /** The marker that logs a left-alone legacy instance once across the replicas. */
     @Optional() @Inject(REDIS) private readonly redis?: Pick<Redis, "set">,
   ) {}
 
@@ -124,9 +107,9 @@ export class BackgroundTaskPollJob {
       for (const c of conversations) await this.eventLog.publishChanged(c, "background");
     }
     const groups = new Map<string, BackgroundTaskRow[]>();
-    for (const t of await this.store.runningStarted()) {
-      if (t.sid === null || t.sandboxCreatedAt === null) continue;
-      // one exec per instance: the tasks of every conversation sharing the device
+    for (const t of await this.store.runningLegacy()) {
+      if (t.sandboxCreatedAt === null) continue;
+      // one look per instance: the tasks of every conversation sharing the device
       const key = `${t.deviceId} ${t.sandboxCreatedAt.getTime()}`;
       groups.set(key, [...(groups.get(key) ?? []), t]);
     }
@@ -140,10 +123,10 @@ export class BackgroundTaskPollJob {
         if (env === null ? !this.sandbox.cloudAvailable : !(await this.sandbox.availableFor(env))) {
           continue;
         }
-        finished += await this.pollSandbox(tasks, signal);
+        finished += await this.pollLegacy(tasks, signal);
       } catch (err) {
         if (signal.aborted) break;
-        this.log.warn("cannot poll background tasks; retrying next tick", {
+        this.log.warn("cannot check legacy background tasks; retrying next tick", {
           deviceId: tasks[0]?.deviceId,
           err,
         });
@@ -266,11 +249,17 @@ export class BackgroundTaskPollJob {
     return n;
   }
 
-  /** Polls the tasks of one device instance; returns how many finished. */
-  private async pollSandbox(tasks: BackgroundTaskRow[], signal: AbortSignal): Promise<number> {
+  /**
+   * The legacy tasks of one device instance, without any exec or signal; returns how many
+   * finished. A running instance is the retirement gate's: its tasks stay as they are until it
+   * destroys or quarantines that incarnation (said once per instance, not a warning every tick).
+   * An instance that is not running finishes them `lost` (a suspended one may keep their processes:
+   * `kill_pending`, settled by the retirement), a replaced one `sandbox_recreated`.
+   */
+  private async pollLegacy(tasks: BackgroundTaskRow[], signal: AbortSignal): Promise<number> {
     const [first] = tasks as [BackgroundTaskRow];
     // a task from before devices has no instance any more
-    let r: IfRunningResult<Map<string, TaskReport>>;
+    let r: IfRunningResult<"running">;
     try {
       r =
         first.deviceId === null
@@ -278,35 +267,24 @@ export class BackgroundTaskPollJob {
           : await this.sandbox.ifRunning(
               first.deviceId,
               { createdAt: first.sandboxCreatedAt as Date },
-              (p, h, sig) =>
-                this.pollExec(actingAs(p, taskActor(first), this.activation), h, tasks, sig),
+              async () => "running" as const,
               signal,
             );
     } catch (err) {
-      // once activated, a running legacy instance is the retirement gate's: its tasks stay as
-      // they are until it retires them; said once per instance, not as a warning every tick
+      // the lifecycle gate refuses the instance itself: the same retirement owns it
       if (!(err instanceof RetirementPendingError)) throw err;
+      r = { kind: "ran", value: "running" };
+    }
+    if (r.kind === "ran") {
       await this.noteRetirementOnce(first);
       return 0;
     }
-    const now = new Date();
     let n = 0;
     for (const t of tasks) {
-      let to: BackgroundFinish | null;
-      let lastLines = "";
-      if (r.kind === "ran") {
-        const report = r.value.get(t.id);
-        // a task the exec did not report is checked again next tick
-        to = report ? polledAs(t, report, now) : null;
-        lastLines = report?.lastLines ?? "";
-      } else if (r.kind === "not_running") {
-        // a suspended sandbox may keep the processes (E2B's pause): killed after its next resume
-        to = notRunningAs(r.status, r.status === "suspended");
-      } else {
-        to = RECREATED;
-      }
+      const to: BackgroundFinish =
+        r.kind === "not_running" ? notRunningAs(r.status, r.status === "suspended") : RECREATED;
       // a stop that claimed the task after the read above finishes it itself
-      if (to && (await this.finisher.finish(t, to, lastLines, false, { unclaimed: true }))) n++;
+      if (await this.finisher.finish(t, to, "", false, { unclaimed: true })) n++;
     }
     return n;
   }
@@ -330,28 +308,6 @@ export class BackgroundTaskPollJob {
         deviceId: first.deviceId,
         instanceGeneration: first.sandboxCreatedAt?.getTime(),
       });
-  }
-
-  /** The poll exec of one instance: each task's report by id. */
-  private async pollExec(
-    p: HeldProvider,
-    h: SandboxHandle,
-    tasks: BackgroundTaskRow[],
-    signal: AbortSignal,
-  ): Promise<Map<string, TaskReport>> {
-    const res = await p.exec(h, {
-      command: pollScript(tasks.map((t) => ({ id: t.id, sid: t.sid as string }))),
-      cwd: rootsOf(h).workspace,
-      timeoutMs: POLL_EXEC_TIMEOUT_MS,
-      maxOutputBytes: POLL_MAX_OUTPUT_BYTES,
-      signal,
-    });
-    if (res.exitCode !== 0 || res.truncated) {
-      throw new Error(
-        `the poll exec failed (exit ${res.exitCode}${res.truncated ? ", truncated" : ""}): ${res.stderr.slice(0, 500)}`,
-      );
-    }
-    return parsePollOutput(res.stdout);
   }
 
   /** Deletes the finished tasks older than `tools.outputRetentionDays` (their rows only). */

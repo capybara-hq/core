@@ -40,7 +40,8 @@ type PermissionCandidate = Readonly<{
   binding: PermissionCallBinding;
   permissionScope: PermissionExpansion;
   targetPath?: string; // explanatory file, never the authorized root
-  scopeKind: "directories-and-hosts";
+  scopeKind: "directories-and-hosts" | "sandbox-escalation"; // escalation: 2026-11-19 amendment
+  escalation?: { justification: string }; // only with "sandbox-escalation"
   candidateHash: string;
 }>;
 type PermissionCandidateResult =
@@ -56,11 +57,23 @@ function buildPermissionCandidate(
 
 The builder computes the input hashes, binds server identity/revisions from facts, resolves relative operands against the trusted working root, validates/normalizes exact roots and hosts, applies write-implies-read and final 64/100 bounds **before** freezing a candidate/hash. The repository has no structured file-only restriction producer. Do not invent a permission field/event or infer owner authority from prose. Existing human/reviewer refusal of the separately displayed directory proposal is canonical denial/ask evidence and yields no expansion. It performs no provider/stat/realpath I/O outside base scope. Pure extraction proposes access; it never grants it or proves that an arbitrary program is confined.
 
-Controller-selected deterministic extraction policy: bare validated Read/Write/Edit with an absolute outside `file_path` may produce a **new parent-directory proposal**, never parent authority. Normalize the target lexically, derive its immediate dirname as the explicitly labelled proposed directory, put the original normalized file in separate `targetPath`, and choose read reach for Read or write-implies-read for Write/Edit. Example Write `/outside/reports/report.txt` proposes **write directory `/outside/reports`**, not file-only access; the entire directory is displayed/reviewed before any grant. An input path is target metadata, not evidence of consent. Reject a catch-all root such as `/`, invalid/unbounded paths; do not stat outside base scope or guess file type. A human/reviewer refusal of directory reach can never become file-only approval or an implicit parent grant. This does not add public arguments or a new intent/standing-grant product. For Bash retain parsed literal explicit `cd <directory>` operands and concrete targets beneath them, and literal HTTP(S) URL operands for exact normalized hosts; opaque strings never invent roots/hosts. Every proposed addition remains subject to live ceilings. Directory requests and unsupported results explain that only directory grants are supported and offer an in-project path; they do not force ordinary outside Write/Edit through a Bash workaround.
+Controller-selected deterministic extraction policy: bare validated Read/Write/Edit, and GenerateImage with `file_path` (each image path it writes, judged as Write), with an absolute outside `file_path` may produce a **new parent-directory proposal**, never parent authority. Normalize the target lexically, derive its immediate dirname as the explicitly labelled proposed directory, put the original normalized file in separate `targetPath`, and choose read reach for Read or write-implies-read for Write/Edit/GenerateImage. Example Write `/outside/reports/report.txt` proposes **write directory `/outside/reports`**, not file-only access; the entire directory is displayed/reviewed before any grant. An input path is target metadata, not evidence of consent. Reject a catch-all root such as `/`, invalid/unbounded paths; do not stat outside base scope or guess file type. A human/reviewer refusal of directory reach can never become file-only approval or an implicit parent grant. This does not add public arguments or a new intent/standing-grant product. For Bash retain parsed literal explicit `cd <directory>` operands and concrete targets beneath them, and literal HTTP(S) URL operands for exact normalized hosts; opaque strings never invent roots/hosts. Every proposed addition remains subject to live ceilings. Directory requests and unsupported results explain that only directory grants are supported and offer an in-project path; they do not force ordinary outside Write/Edit through a Bash workaround.
 
 Calls needing no known expansion, including ordinary opaque inline Python, return in-scope and run under enforced base scope; this is **not** a claim that parsing predicted every access. Unknown/dynamic targets receive no expansion and any later confinement failure preserves prior effects without auto-replay. Existing fixed-deny/ask checks run before this branch. Never use a regex whitelist to authorize arbitrary inline code.
 
 The pipeline sends the same frozen normalized candidate to `ReviewClassifierInput`/independent review request as delimited untrusted data, retaining server-controlled identity and instructions; the verdict cannot replace it. The human command detail, approval_requested/permission_reviewed evidence and grant row carry exactly its permissionScope, targetPath and candidateHash. Request asks; Approve-for-me reviews then asks on uncertain/error; only a final allow issues the identical expansion. Admission retrieves that stored object and adds it to base scope under current ceilings; no second normalization or inferred parent widening occurs. A current ceiling mismatch invalidates the proposal rather than silently approving a different object. An actual-input staged pipeline test must exercise this entire chain, not hand supply roots to issueLocked.
+
+### Proposal kinds (amended 2026-11-19)
+
+A candidate has one of two kinds. `directories-and-hosts` is the exact directory and host
+expansion above. `sandbox-escalation` (per-call sandbox escalation, conversation approval profiles
+design, "Per-call sandbox escalation") is one `Bash` call with `sandbox: "escalated"` and a
+`justification`: an empty expansion, the justification in `escalation`, the same binding. Its
+grant row stores `scope_kind = 'sandbox-escalation'` and the justification (`escalation` column,
+migration 0162; the check ties the column to the kind), and admission gives that call's command
+full execution (`filesystem: device`, `network: environment`) under the conversation's restricted
+profile, only within the current Full access ceiling; the call's native methods keep the base
+scope. Evidence verification compares the whole candidate, justification included.
 
 ## Persisted call-grant contract
 

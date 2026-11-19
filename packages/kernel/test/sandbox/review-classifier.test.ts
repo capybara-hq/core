@@ -14,7 +14,11 @@ import {
   vi,
 } from "vitest";
 import { EventLog } from "../../src/conversations/event-log.js";
-import type { ConversationEvent, EventPayload } from "../../src/conversations/events.js";
+import {
+  type ConversationEvent,
+  type EventPayload,
+  PermissionEscalationSchema,
+} from "../../src/conversations/events.js";
 import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { ModelPurposesService } from "../../src/models/purposes.js";
@@ -37,6 +41,7 @@ import {
   type ReviewVerdict,
   reviewSystemPrompt,
 } from "../../src/sandbox/review/index.js";
+import { escalationAskReason } from "../../src/sandbox/review/review.service.js";
 import { type ScriptRule, scriptRules } from "../fixtures/plugins/model-script/index.js";
 import { legacyDbFor } from "../helpers/conversations.js";
 import { truncateTables } from "../helpers/db.js";
@@ -694,7 +699,10 @@ function userText(req: ModelRequest): string {
 }
 
 import type { PermissionReviewSnapshot } from "../../src/sandbox/permission-call-types.js";
-import { buildPermissionCandidate } from "../../src/sandbox/review/permission-candidate.js";
+import {
+  buildPermissionCandidate,
+  ESCALATION_JUSTIFICATION_TOO_LONG_TEXT,
+} from "../../src/sandbox/review/permission-candidate.js";
 
 it.each(["allow", "ask", "deny", "malformed", "request"] as const)(
   "independent review transport preserves the exact directory candidate for %s",
@@ -724,7 +732,6 @@ it.each(["allow", "ask", "deny", "malformed", "request"] as const)(
       policy: {
         mode: "auto",
         allowedMode: "auto",
-        modeSource: "device",
         localAllowedDomains: [],
         network: { kind: "open-public", hosts: [] },
       },
@@ -931,7 +938,6 @@ it("a proposed host outside the applied cloud outer allowlist is cut like admiss
     policy: {
       mode: "auto",
       allowedMode: "auto",
-      modeSource: "device",
       localAllowedDomains: [],
       network: { kind: "open-public", hosts: [] },
     },
@@ -947,6 +953,127 @@ it("a proposed host outside the applied cloud outer allowlist is cut like admiss
   expect(hostsOf(build({ kind: "open-public" }))).toEqual(["a.example", "b.example"]);
   expect(hostsOf(build({ kind: "allowlist", hosts: ["a.example"] }))).toEqual(["a.example"]);
   expect(hostsOf(build({ kind: "none" }))).toBe("in-scope");
+});
+
+describe("the permission review of a managed call", () => {
+  const INLINE_PUSH = `python3 -c "import os; os.system('git push --force origin main')"`;
+  const NESTED_SUDO = `sh -c "sh -c 'sudo ls /root'"`;
+  const READ_PACKAGE = `python3 -c "import json; print(json.load(open('package.json'))['name'])"`;
+
+  it.each([INLINE_PUSH, NESTED_SUDO])(
+    "Request approval asks the person about an unsure line, with no review model call: %s",
+    async (command) => {
+      const verdict = await call({ input: { command }, permissionProfile: "request-approval" });
+      expect(verdict.decision).toBe("ask");
+      expect(reviewChats()).toEqual([]);
+    },
+  );
+
+  it.each([INLINE_PUSH, NESTED_SUDO])(
+    "Approve for me sends an unsure line to the review model, whose deny stays a deny: %s",
+    async (command) => {
+      answer("deny", "Not what the person asked for.");
+      const verdict = await call({ input: { command }, permissionProfile: "approve-for-me" });
+      expect(verdict).toMatchObject({ decision: "deny", by: "classifier" });
+      expect(reviewChats()).toHaveLength(1);
+    },
+  );
+
+  it("Approve for me: the package.json-reading Python is allowed by the review model", async () => {
+    answer("allow", "Reads the project's own manifest.");
+    const verdict = await call({
+      input: { command: READ_PACKAGE },
+      permissionProfile: "approve-for-me",
+    });
+    expect(verdict).toMatchObject({ decision: "allow", by: "classifier" });
+  });
+
+  it("Approve for me without a review model asks; Full access runs the line unreviewed", async () => {
+    await db.deleteFrom("model_purpose_mappings").where("purpose", "=", "review").execute();
+    expect(
+      await call({ input: { command: INLINE_PUSH }, permissionProfile: "approve-for-me" }),
+    ).toMatchObject({ decision: "ask" });
+    expect(
+      await call({ input: { command: INLINE_PUSH }, permissionProfile: "full-access" }),
+    ).toMatchObject({ decision: "allow" });
+    expect(reviewChats()).toEqual([]);
+  });
+
+  it("a Read gets no write-rule consent: a git hook reads with no ask, a credential read asks", async () => {
+    const hook = await call({
+      toolKey: "Read",
+      input: { file_path: `${WORKSPACE}/.git/hooks/pre-commit` },
+      home: "/home/dev",
+      permissionProfile: "request-approval",
+    });
+    expect(hook.decision).toBe("allow");
+    const key = await call({
+      toolKey: "Read",
+      input: { file_path: "/home/dev/.ssh/id_ed25519" },
+      home: "/home/dev",
+      permissionProfile: "request-approval",
+    });
+    expect(key).toMatchObject({ decision: "ask", rule: "ask.ssh" });
+    // the review model is told it is a read
+    answer("allow");
+    await call({
+      toolKey: "Read",
+      input: { file_path: "/home/dev/.ssh/id_ed25519" },
+      home: "/home/dev",
+      permissionProfile: "approve-for-me",
+    });
+    expect(JSON.stringify(reviewRequest().messages)).toContain("File read path");
+  });
+
+  it("a command's own outside write cannot be approved: refused with what works instead", async () => {
+    const verdict = await call({
+      input: { command: "touch /etc/capybara-outside.txt" },
+      permissionProfile: "request-approval",
+    });
+    expect(verdict).toMatchObject({ decision: "deny", rule: "ask.outside-write" });
+    expect(verdict.reason).toContain("Write or Edit");
+    expect(verdict.reason).toContain(`keep it inside ${WORKSPACE}`);
+  });
+
+  it("a `.` segment is normalized before extraction: /outside/./x proposes /outside", () => {
+    const input = { file_path: "/outside/./report.txt" };
+    const facts: PermissionReviewSnapshot = {
+      orgId,
+      rootConversationId: conv,
+      conversationId: conv,
+      deviceId: "review-fixture",
+      accountId: ownerId,
+      runId,
+      callId: "dot-segment",
+      profile: "request-approval",
+      profileRevision: 0,
+      scopeRevision: "scope",
+      authorityRevision: "authority",
+      baseReadDirectories: [WORKSPACE],
+      baseWriteDirectories: [WORKSPACE],
+      baseHosts: [],
+      workingRoot: WORKSPACE,
+      fullAccessCeiling: true,
+      broadProjectReach: true,
+      fullConsent: false,
+      unattended: false,
+      availability: { state: "supported" },
+      policy: {
+        mode: "auto",
+        allowedMode: "auto",
+        localAllowedDomains: [],
+        network: { kind: "open-public", hosts: [] },
+      },
+    };
+    const built = buildPermissionCandidate(
+      { toolKey: "Write", specHash: "write-spec", rawInput: input, validatedInput: input },
+      facts,
+    );
+    expect(built.kind === "proposal" && built.candidate.permissionScope.writeDirectories).toEqual([
+      "/outside",
+    ]);
+    expect(built.kind === "proposal" && built.candidate.targetPath).toBe("/outside/report.txt");
+  });
 });
 
 /**
@@ -979,7 +1106,6 @@ describe("GenerateImage under a permission profile", () => {
     policy: {
       mode: "auto",
       allowedMode: "auto",
-      modeSource: "device",
       localAllowedDomains: [],
       network: { kind: "open-public", hosts: [] },
     },
@@ -1055,5 +1181,279 @@ describe("GenerateImage under a permission profile", () => {
       decision: "allow",
       reason: "This tool call needs no command review.",
     });
+  });
+});
+
+// Per-call sandbox escalation under Approve for me: the review model decides with the
+// justification; unavailable, unsure, failing, truncated or unmapped asks; its deny stays a deny.
+// Under Request approval the person is asked, the review model never called.
+it.each([
+  "allow",
+  "deny",
+  "ask",
+  "malformed",
+  "failing",
+  "truncated",
+  "unmapped",
+  "request",
+] as const)("an escalation reviewed under %s", async (outcome) => {
+  const command = outcome === "truncated" ? `npm run dev ${"A".repeat(300_000)}` : "npm run dev";
+  const input = {
+    command,
+    sandbox: "escalated",
+    justification: "The dev server must bind port 3000 on the machine.",
+  };
+  const facts: PermissionReviewSnapshot = {
+    orgId,
+    rootConversationId: conv,
+    conversationId: conv,
+    deviceId: "review-fixture",
+    accountId: ownerId,
+    runId,
+    callId: `escalation-${outcome}`,
+    profile: outcome === "request" ? "request-approval" : "approve-for-me",
+    profileRevision: 0,
+    scopeRevision: "scope",
+    authorityRevision: "authority",
+    baseReadDirectories: [WORKSPACE],
+    baseWriteDirectories: [WORKSPACE],
+    baseHosts: [],
+    workingRoot: WORKSPACE,
+    fullAccessCeiling: true,
+    broadProjectReach: true,
+    fullConsent: false,
+    unattended: false,
+    availability: { state: "supported" },
+    escalationRefusal: null,
+    policy: {
+      mode: "auto",
+      allowedMode: "auto",
+      localAllowedDomains: [],
+      network: { kind: "open-public", hosts: [] },
+    },
+  };
+  const built = buildPermissionCandidate(
+    { toolKey: "Bash", specHash: "bash-spec", rawInput: input, validatedInput: input },
+    facts,
+  );
+  if (built.kind !== "proposal") throw new Error(JSON.stringify(built));
+  if (outcome === "malformed") answerText("I think it is fine");
+  else if (outcome === "failing") chatSpy.mockRejectedValueOnce(new Error("provider down"));
+  else if (outcome === "unmapped")
+    await db.deleteFrom("model_purpose_mappings").where("purpose", "=", "review").execute();
+  else answer(outcome === "request" || outcome === "truncated" ? "allow" : outcome);
+  const verdict = await call({
+    input,
+    permissionProfile: facts.profile,
+    permissionCandidate: built.candidate,
+    callId: facts.callId,
+  });
+  const expected = outcome === "allow" ? "allow" : outcome === "deny" ? "deny" : "ask";
+  expect(verdict.decision).toBe(expected);
+  if (expected === "ask") {
+    // every ask keeps the escalation statement first (the person's card and an IM card show
+    // only the reason), whoever asked: the rules, the review model, or a failed answer
+    expect(verdict.reason).toMatch(
+      /^Run this command outside the sandbox for this call only.*Justification \(from the agent\): "The dev server/,
+    );
+    // the review model's own reason follows the statement, never replaces it
+    if (outcome === "ask") expect(verdict.reason).toMatch(/Review: Scripted decision\.$/);
+  }
+  if (outcome === "request" || outcome === "unmapped") {
+    expect(reviewChats()).toEqual([]);
+    return;
+  }
+  if (outcome === "failing") return;
+  const request = reviewRequest(),
+    tag = systemTag(request);
+  expect(userText(request)).toContain("Sandbox escalation requested");
+  expect(userText(request)).toContain(`<${tag}>\n${input.justification}\n</${tag}>`);
+});
+
+it("an escalation of a sensitive command asks once, stating both the crossing and the consent", async () => {
+  const input = {
+    command: "sudo npm install -g pnpm",
+    sandbox: "escalated",
+    justification: "Install pnpm globally as the person asked.",
+  };
+  const built = buildPermissionCandidate(
+    { toolKey: "Bash", specHash: "bash-spec", rawInput: input, validatedInput: input },
+    {
+      orgId,
+      rootConversationId: conv,
+      conversationId: conv,
+      deviceId: "review-fixture",
+      accountId: ownerId,
+      runId,
+      callId: "escalation-sudo",
+      profile: "request-approval",
+      profileRevision: 0,
+      scopeRevision: "scope",
+      authorityRevision: "authority",
+      baseReadDirectories: [WORKSPACE],
+      baseWriteDirectories: [WORKSPACE],
+      baseHosts: [],
+      workingRoot: WORKSPACE,
+      fullAccessCeiling: true,
+      broadProjectReach: true,
+      fullConsent: false,
+      unattended: false,
+      availability: { state: "supported" },
+      escalationRefusal: null,
+      policy: {
+        mode: "auto",
+        allowedMode: "auto",
+        localAllowedDomains: [],
+        network: { kind: "open-public", hosts: [] },
+      },
+    },
+  );
+  if (built.kind !== "proposal") throw new Error(JSON.stringify(built));
+  const verdict = await call({
+    input,
+    permissionProfile: "request-approval",
+    permissionCandidate: built.candidate,
+    callId: "escalation-sudo",
+  });
+  expect(verdict).toMatchObject({ decision: "ask", rule: "ask.sudo" });
+  expect(verdict.reason).toMatch(/outside the sandbox for this call only/);
+  expect(verdict.reason).toMatch(/also a sensitive command/);
+});
+
+it("a fixed deny stays a deny for an escalated command", async () => {
+  const input = { command: "rm -rf /", sandbox: "escalated", justification: "Clean up." };
+  const verdict = await call({
+    input,
+    permissionProfile: "approve-for-me",
+    callId: "escalation-deny",
+  });
+  expect(verdict.decision).toBe("deny");
+  expect(reviewChats()).toEqual([]);
+});
+
+/** The facts of an attended escalation under `profile` (the candidate builder's input). */
+const escalationFacts = (
+  callId: string,
+  profile: "approve-for-me" | "request-approval" = "approve-for-me",
+): PermissionReviewSnapshot => ({
+  orgId,
+  rootConversationId: conv,
+  conversationId: conv,
+  deviceId: "review-fixture",
+  accountId: ownerId,
+  runId,
+  callId,
+  profile,
+  profileRevision: 0,
+  scopeRevision: "scope",
+  authorityRevision: "authority",
+  baseReadDirectories: [WORKSPACE],
+  baseWriteDirectories: [WORKSPACE],
+  baseHosts: [],
+  workingRoot: WORKSPACE,
+  fullAccessCeiling: true,
+  broadProjectReach: true,
+  fullConsent: false,
+  unattended: false,
+  availability: { state: "supported" },
+  escalationRefusal: null,
+  policy: {
+    mode: "auto",
+    allowedMode: "auto",
+    localAllowedDomains: [],
+    network: { kind: "open-public", hosts: [] },
+  },
+});
+
+it("a review that fails outright still asks with the escalation statement", async () => {
+  const input = { command: "npm run dev", sandbox: "escalated", justification: "Bind port 3000." };
+  const built = buildPermissionCandidate(
+    { toolKey: "Bash", specHash: "bash-spec", rawInput: input, validatedInput: input },
+    escalationFacts("escalation-crash"),
+  );
+  if (built.kind !== "proposal") throw new Error(JSON.stringify(built));
+  const crash = vi
+    .spyOn(review as unknown as { decidePermission: () => Promise<never> }, "decidePermission")
+    .mockRejectedValueOnce(new Error("boom"));
+  const verdict = await call({
+    input,
+    permissionProfile: "approve-for-me",
+    permissionCandidate: built.candidate,
+    callId: "escalation-crash",
+  });
+  crash.mockRestore();
+  expect(verdict.decision).toBe("ask");
+  expect(verdict.reason).toMatch(
+    /^Run this command outside the sandbox for this call only.*"Bind port 3000\."/,
+  );
+  expect(verdict.reason).toContain(REVIEW_ASK_REASON);
+});
+
+it("a background escalation says so to the person and to the review model", async () => {
+  const input = {
+    command: "npm run dev",
+    sandbox: "escalated",
+    justification: "Serve the app.",
+    run_in_background: true,
+  };
+  const built = buildPermissionCandidate(
+    { toolKey: "Bash", specHash: "bash-spec", rawInput: input, validatedInput: input },
+    escalationFacts("escalation-background"),
+    [],
+    { backgroundMaxSeconds: 7200 },
+  );
+  if (built.kind !== "proposal") throw new Error(JSON.stringify(built));
+  expect(built.candidate.escalation).toEqual({
+    justification: "Serve the app.",
+    background: true,
+    maxSeconds: 7200,
+  });
+  answer("ask");
+  const verdict = await call({
+    input,
+    permissionProfile: "approve-for-me",
+    permissionCandidate: built.candidate,
+    callId: "escalation-background",
+  });
+  expect(verdict.reason).toMatch(
+    /starts a background process that keeps running outside the sandbox until it exits or is stopped, at most 120 minutes/,
+  );
+  expect(userText(reviewRequest())).toMatch(
+    /starts a background process that keeps running outside the sandbox.*at most 120 minutes/,
+  );
+});
+
+it("the justification is quoted as the agent's and cleaned of line breaks and bidi controls", () => {
+  expect(escalationAskReason({ justification: "  Bind\nport\u202E 3000\u2066.\r\n " })).toBe(
+    'Run this command outside the sandbox for this call only (full access to the device\'s files and network). Justification (from the agent): "Bind port 3000."',
+  );
+});
+
+describe("the justification length counts code points, as the tool schema does", () => {
+  const build = (justification: string) => {
+    const input = { command: "npm run dev", sandbox: "escalated", justification };
+    return buildPermissionCandidate(
+      { toolKey: "Bash", specHash: "bash-spec", rawInput: input, validatedInput: input },
+      escalationFacts("escalation-length"),
+    );
+  };
+  it("500 emoji (1000 UTF-16 units) is within the limit", () => {
+    expect(build("\u{1F600}".repeat(500)).kind).toBe("proposal");
+  });
+  it("501 code points get their own actionable text", () => {
+    const r = build("a".repeat(501));
+    expect(r).toMatchObject({
+      kind: "unsupported",
+      message: ESCALATION_JUSTIFICATION_TOO_LONG_TEXT,
+    });
+    expect(ESCALATION_JUSTIFICATION_TOO_LONG_TEXT).toMatch(/500 characters.*Retry/);
+  });
+  it("the log schema accepts what the candidate accepts", () => {
+    expect(
+      PermissionEscalationSchema.safeParse({ justification: "\u{1F600}".repeat(500) }).success,
+    ).toBe(true);
+    expect(PermissionEscalationSchema.safeParse({ justification: "a".repeat(501) }).success).toBe(
+      false,
+    );
   });
 });

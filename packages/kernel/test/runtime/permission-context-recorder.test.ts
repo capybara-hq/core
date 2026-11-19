@@ -209,7 +209,11 @@ describe("recorded permission context recorder", () => {
       scope: {
         location: "local",
         workingRoot: "/work",
-        filesystem: { kind: "scoped", readDirectories: ["/work"], writeDirectories: ["/work"] },
+        filesystem: {
+          kind: "scoped",
+          readDirectories: ["/skills", "/work"],
+          writeDirectories: ["/work"],
+        },
         network: { kind: "none" },
         outerNetwork: { kind: "host-environment" },
       },
@@ -229,7 +233,7 @@ describe("recorded permission context recorder", () => {
     );
     expect(admitted.filesystem).toEqual({
       kind: "scoped",
-      readRoots: ["/work"],
+      readRoots: ["/skills", "/work"],
       writeRoots: ["/work"],
     });
     expect(admitted.network).toEqual({ kind: "none" });
@@ -764,7 +768,11 @@ describe("permission context projection", () => {
       scope: {
         location: "cloud",
         workingRoot: "/work",
-        filesystem: { kind: "scoped", readDirectories: ["/work"], writeDirectories: ["/work"] },
+        filesystem: {
+          kind: "scoped",
+          readDirectories: ["/skills", "/work"],
+          writeDirectories: ["/work"],
+        },
         network: { kind: "none" },
         outerNetwork: { kind: "none" },
       },
@@ -1207,7 +1215,11 @@ describe("permission context projection", () => {
       effectiveProfile: "request-approval",
       availability: { state: "supported" },
       scope: {
-        filesystem: { kind: "scoped", readDirectories: ["/work"], writeDirectories: ["/work"] },
+        filesystem: {
+          kind: "scoped",
+          readDirectories: ["/skills", "/work"],
+          writeDirectories: ["/work"],
+        },
         network: { kind: "allowlist", hosts: ["api.example.com"] },
       },
     });

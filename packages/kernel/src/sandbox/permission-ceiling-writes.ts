@@ -7,6 +7,7 @@ import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { OutboxService } from "../infra/outbox/outbox.service.js";
 import { machineRootList, outsideMachineRoots } from "../local-devices/owner-report.js";
+import { isFullExecutionScope } from "./operation-authority-types.js";
 import { PermissionAuthorityEpochStore } from "./permission-authority-epochs.js";
 import { type AuthoritySubject, PermissionAuthorityLock } from "./permission-authority-lock.js";
 import { PermissionTransitions } from "./permission-transitions.js";
@@ -210,7 +211,7 @@ export const needsWiderDeviceCeiling = (
 
 /** Full execution: a Full-profile operation (B2: decided by Full permission alone). */
 export const requiresFullExecution = (scope: SandboxOperationScope | SandboxBrowseScope): boolean =>
-  "profile" in scope && scope.profile === "full-access";
+  isFullExecutionScope(scope);
 /**
  * Broad project reach: owner browsing outside the restricted workspace (B2: decided by the reach
  * and the platform/org device ceiling, never by the owner's Full permission).

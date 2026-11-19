@@ -439,6 +439,49 @@ describe("ToolGroup (§6.16.8)", () => {
     );
   });
 
+  it("a command that ran outside the sandbox adds the neutral word on done and failed rows only", () => {
+    const { container } = wrap(
+      <ToolRow
+        row={builtin("Bash", { kind: "command", keyArg: "npm run dev", outsideSandbox: true })}
+      />,
+    );
+    expect(container.querySelector('[data-part="sandbox-word"]')?.textContent).toBe(
+      " · 在沙箱外运行",
+    );
+    expect(container.querySelector('[data-part="fail-word"]')).toBeNull();
+    cleanup();
+    const failed = wrap(
+      <ToolRow
+        row={builtin("Bash", {
+          kind: "command",
+          keyArg: "npm run dev",
+          status: "failed",
+          error: "timed out",
+          outsideSandbox: true,
+        })}
+      />,
+      "en",
+    );
+    expect(failed.container.querySelector('[data-part="sandbox-word"]')?.textContent).toBe(
+      " · Ran outside the sandbox",
+    );
+    cleanup();
+    const running = wrap(
+      <ToolRow
+        row={builtin("Bash", {
+          kind: "command",
+          keyArg: "npm run dev",
+          status: "running",
+          outsideSandbox: true,
+        })}
+      />,
+    );
+    expect(running.container.querySelector('[data-part="sandbox-word"]')).toBeNull();
+    cleanup();
+    const plain = wrap(<ToolRow row={builtin("Bash", { kind: "command", keyArg: "ls" })} />);
+    expect(plain.container.querySelector('[data-part="sandbox-word"]')).toBeNull();
+  });
+
   it("a failed group marks the failures in fail", () => {
     const { container } = wrap(<ToolGroup rows={[row(), row({ status: "failed" })]} />);
     expect(container.querySelector('[data-part="fail-word"]')?.textContent).toBe("（1 个失败）");

@@ -118,6 +118,38 @@ export const CHANNEL_PHRASES = {
     zh: "智能体想写入这个文件，允许吗？",
     en: "The agent wants to write this file. Allow?",
   },
+  /** A per-call sandbox escalation ask's card title (approval profiles design). */
+  escalationTitle: {
+    zh: "智能体想在沙箱外运行这条命令，允许吗？",
+    en: "The agent wants to run this command outside the sandbox. Allow?",
+  },
+  /** A background sandbox escalation ask's card title. */
+  escalationBackgroundTitle: {
+    zh: "智能体想在沙箱外后台启动这条命令，允许吗？",
+    en: "The agent wants to start this command in the background outside the sandbox. Allow?",
+  },
+  /** An escalation card's first line: what approving allows. */
+  escalationLine: {
+    zh: "仅本次调用在沙箱外运行，可完整访问此设备的文件和网络。",
+    en: "Runs outside the sandbox for this call only, with full access to this device's files and network.",
+  },
+  /** A background escalation's line (`{minutes}`: its deadline). */
+  escalationBackgroundLimit: {
+    zh: "启动一个后台进程，它在沙箱外持续运行，直到自行退出或被停止，最长 {minutes} 分钟。",
+    en: "Starts a background process that keeps running outside the sandbox until it exits or is stopped, at most {minutes} minutes.",
+  },
+  /** A background escalation's line without a known deadline. */
+  escalationBackground: {
+    zh: "启动一个后台进程，它在沙箱外持续运行，直到自行退出或被停止。",
+    en: "Starts a background process that keeps running outside the sandbox until it exits or is stopped.",
+  },
+  /** An escalation card's working directory line (`{dir}`). */
+  escalationCwd: { zh: "运行目录：{dir}", en: "Runs in: {dir}" },
+  /** An escalation card's justification line (`{text}`: the agent's words, quoted). */
+  escalationJustification: {
+    zh: "智能体给出的理由：{text}",
+    en: "Justification (from the agent): {text}",
+  },
   /** A command review ask's 「once」 button. */
   commandAllowOnce: { zh: "允许一次", en: "Allow once" },
   /** A command review ask's 「session」 button: remembers the rule for the conversation. */

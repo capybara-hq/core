@@ -1,6 +1,6 @@
 import { DEFAULT_SANDBOX_ROOTS, type SandboxRoots } from "@capybara-hq/plugin-sdk";
 import { describe, expect, it, vi } from "vitest";
-import { startedText, taskOutputFile } from "../../../src/background/launch.js";
+import { taskOutputFile } from "../../../src/background/launch.js";
 import { KernelConfigSchema } from "../../../src/config/schema.js";
 import type { ExtensionHost } from "../../../src/extensions/host.js";
 import type { KernelDb } from "../../../src/infra/database/kernel-db.js";
@@ -667,7 +667,6 @@ describe("custom roots (environments phase 2, spec §13.1)", () => {
     const files = new Map<string, Uint8Array>();
     const writes: string[] = [];
     const execs: { command: string; cwd: string }[] = [];
-    const started: string[] = [];
     let entered = 0;
     const p = {
       readFile: async (_h: unknown, path: string) => {
@@ -685,12 +684,8 @@ describe("custom roots (environments phase 2, spec §13.1)", () => {
       },
       exec: async (_h: unknown, a: { command: string; cwd: string }) => {
         execs.push({ command: a.command, cwd: a.cwd });
-        // find (Glob), grep (Grep: no match), the background launch (prints its session id)
-        const stdout = a.command.startsWith("find")
-          ? "./a.txt\0"
-          : a.command.startsWith("grep")
-            ? ""
-            : "4242\n";
+        // find (Glob), grep (Grep: no match)
+        const stdout = a.command.startsWith("find") ? "./a.txt\0" : "";
         const exitCode = a.command.startsWith("grep") ? 1 : 0;
         return { exitCode, stdout, stderr: "", truncated: false, timedOut: false };
       },
@@ -698,14 +693,6 @@ describe("custom roots (environments phase 2, spec §13.1)", () => {
     const tools = sandboxTools({
       devices,
       background: {
-        reserve: async () => true,
-        markStarted: async (_id: string, to: { outputPath?: string }) => {
-          started.push(to.outputPath ?? "");
-          return "started";
-        },
-        failLaunch: async () => {},
-        finishStoppedLaunch: async () => {},
-        releaseStop: async () => {},
         get: async () => undefined,
         advanceOffset: async () => {},
         // biome-ignore lint/suspicious/noExplicitAny: test stub
@@ -736,7 +723,7 @@ describe("custom roots (environments phase 2, spec §13.1)", () => {
       config: { get: () => cfg },
     });
     const tool = (name: string) => tools.find((t) => t.spec.name === name) as BuiltinTool;
-    return { files, writes, execs, started, tool, entered: () => entered };
+    return { files, writes, execs, tool, entered: () => entered };
   }
 
   const text = (r: unknown) => (r as { content: { text: string }[] }).content[0]?.text ?? "";
@@ -818,17 +805,9 @@ describe("custom roots (environments phase 2, spec §13.1)", () => {
     expect(d.entered()).toBe(0);
   });
 
-  it("background Bash under custom roots: cwd, the started text and an absolute output path", async () => {
-    const d = device();
-    const r = await d
-      .tool("Bash")
-      .run({ command: "sleep 5", description: "Sleep", run_in_background: true }, ctx);
-    expect(d.execs.map((e) => e.cwd)).toEqual([ROOTS.workspace]);
-    const id = /Started background task (bt_[a-z2-7]{6})/.exec(text(r))?.[1];
-    expect(text(r)).toBe(startedText(id as string, "Sleep", ROOTS.workspace));
-    expect(text(r)).toContain(`Output: ${ROOTS.workspace}/.capybara/tasks/${id}.out`);
-    expect(d.started).toEqual([`${ROOTS.workspace}/.capybara/tasks/${id}.out`]);
-    expect(taskOutputFile(d.started[0] as string)).toBe(d.started[0]);
+  it("a task's output file: an absolute path as recorded, a legacy relative one under the default workspace", () => {
+    const abs = `${ROOTS.workspace}/.capybara/tasks/bt_aaaaaa.out`;
+    expect(taskOutputFile(abs)).toBe(abs);
     expect(taskOutputFile(".capybara/tasks/bt_aaaaaa.out")).toBe(
       "/workspace/.capybara/tasks/bt_aaaaaa.out",
     );

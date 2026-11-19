@@ -1,5 +1,5 @@
 import { type ParseArgsOptionsConfig, parseArgs } from "node:util";
-import type { RestrictedProjectReach, SandboxMode } from "./state.js";
+import type { RestrictedProjectReach } from "./state.js";
 
 export type DeviceMode = "os" | "docker";
 
@@ -23,13 +23,6 @@ export type Command =
       action: "set" | "add" | "remove";
       key: string;
       value: string;
-    }
-  | {
-      command: "mode";
-      /** Absent: print the current mode. */
-      mode?: SandboxMode;
-      /** `--yes`: confirms `mode auto` without asking. */
-      yes?: true;
     }
   | { command: "ceiling"; action: "show" }
   | {
@@ -56,10 +49,6 @@ export const USAGE = `Usage:
   capybara-device drain [--wait] [--timeout <seconds>]
                                   Finish running commands, accept no new ones, then stop;
                                   --wait returns once it has stopped (default limit 600 s)
-  capybara-device mode [auto|sandbox] [--yes]
-                                  Show or choose how commands run: auto (as you on this
-                                  machine, every command reviewed) or sandbox (applies at
-                                  the next command; auto needs --yes or a y at the prompt)
   capybara-device ceiling show    Show this machine's owner ceiling (Full access, project reach)
   capybara-device ceiling set --full-access allow|deny --project-reach workspace|os-user [--yes]
                                   Set the owner ceiling; widening needs --yes or a y at the prompt
@@ -67,9 +56,9 @@ export const USAGE = `Usage:
   capybara-device policy set <key> <value>
                                   Replace one field (cpu, memoryMb, allowCredentials)
   capybara-device policy add|remove allowedDomains <host>
-                                  Allow or stop allowing a domain in sandbox mode
+                                  Allow or stop allowing a domain for restricted work
   capybara-device policy add|remove allowCredentials <name>
-                                  Allow or stop allowing a credential in sandbox mode
+                                  Allow or stop allowing a credential for restricted work
   capybara-device service install|uninstall
                                   Run at login as a user service, or remove it
   capybara-device service start|stop|restart
@@ -161,25 +150,6 @@ export function parseCommandLine(argv: string[]): Command {
         return { command: "policy", action, key, value };
       }
       throw new UsageError("usage: policy [show | set <key> <value> | add|remove <key> <value>]");
-    }
-    case "mode": {
-      const { values, positionals } = parse(rest, { yes: { type: "boolean", short: "y" } });
-      const [which, ...extra] = positionals;
-      if (extra.length > 0) {
-        throw new UsageError("usage: mode [auto|sandbox] [--yes]");
-      }
-      if (which !== undefined && which !== "auto" && which !== "sandbox") {
-        throw new UsageError("mode must be auto or sandbox");
-      }
-      const yes = values.yes === true;
-      if (yes && which === undefined) {
-        throw new UsageError("--yes needs a mode: mode auto|sandbox");
-      }
-      return {
-        command: "mode",
-        ...(which !== undefined && { mode: which }),
-        ...(yes && which !== undefined && { yes: true as const }),
-      };
     }
     case "ceiling": {
       const { values, positionals } = parse(rest, {

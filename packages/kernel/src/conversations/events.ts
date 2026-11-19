@@ -88,6 +88,18 @@ const PermissionDirectories = z
       ),
     "Directories must be unique and sorted by Unicode code point",
   );
+/**
+ * The fixed reasons of an `actor-device-access` context: the actor cannot use the selected device
+ * at all, or the run's account is not the conversation's owner (a group-chat sender, a wake for
+ * another member), whose device is never used by another account.
+ */
+export const ACTOR_DEVICE_ACCESS_REASON = "This run's actor cannot use the selected device";
+export const ACTOR_NOT_DEVICE_OWNER_REASON =
+  "The selected device belongs to the conversation's owner, and this run's account is not its owner, so this run continues without the device";
+const ACTOR_DEVICE_ACCESS_REASONS: readonly string[] = [
+  ACTOR_DEVICE_ACCESS_REASON,
+  ACTOR_NOT_DEVICE_OWNER_REASON,
+];
 const PermissionRevision = z.string().min(1).max(256);
 const PermissionReason = z
   .string()
@@ -166,7 +178,7 @@ export const PermissionContextV1Schema = z
       if (p.availability.cause === "actor-device-access") {
         if (p.selectedProfile !== null || p.profileRevision !== null)
           reject("Device access refusal must redact the owner's profile");
-        if (p.availability.reason !== "This run's actor cannot use the selected device")
+        if (!ACTOR_DEVICE_ACCESS_REASONS.includes(p.availability.reason))
           reject("Invalid device access reason");
       } else if (p.availability.reason !== "Choose a device to run device operations")
         reject("Invalid no-device reason");
@@ -329,6 +341,21 @@ export const PermissionCallBindingSchema = z
     authorityRevision: z.string(),
   })
   .strict();
+/**
+ * A per-call sandbox escalation's justification, as the person and the review model saw it (at
+ * most 500 code points, as the tool schema counts), and for a background start that it keeps
+ * running outside the sandbox for at most `maxSeconds`.
+ */
+export const PermissionEscalationSchema = z
+  .object({
+    justification: z
+      .string()
+      .min(1)
+      .refine((s) => [...s].length <= 500, "justification must be at most 500 characters"),
+    background: z.literal(true).optional(),
+    maxSeconds: z.number().int().positive().optional(),
+  })
+  .strict();
 export const ReviewRecordSchema = z
   .object({
     profile: z.enum(["request-approval", "approve-for-me", "full-access"]).optional(),
@@ -346,6 +373,8 @@ export const ReviewRecordSchema = z
       .string()
       .regex(/^[a-f0-9]{64}$/)
       .optional(),
+    /** The call was allowed to run outside the OS sandbox (a per-call escalation). */
+    sandbox: z.literal("escalated").optional(),
   })
   .strict();
 
@@ -355,6 +384,10 @@ export const CommandAskSchema = z
     permissionScope: PermissionExpansionSchema.optional(),
     targetPath: z.string().max(4096).optional(),
     candidateHash: z.string().optional(),
+    /** The command asks to run outside the OS sandbox for this call (its justification). */
+    escalation: PermissionEscalationSchema.optional(),
+    /** The directory the command runs in (an escalation shows it). */
+    workingRoot: z.string().max(4096).optional(),
     /** A shell command or a file write. */
     kind: z.enum(["command", "write"]),
     /** The command text, or the tool key of the write. */
@@ -679,11 +712,14 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
       binding: PermissionCallBindingSchema,
       permissionScope: PermissionExpansionSchema,
       targetPath: z.string().max(4096).optional(),
-      scopeKind: z.literal("directories-and-hosts"),
+      scopeKind: z.enum(["directories-and-hosts", "sandbox-escalation"]),
+      /** A per-call sandbox escalation: the model's justification (its scope is empty). */
+      escalation: PermissionEscalationSchema.optional(),
       candidateHash: z.string(),
       outcome: z.enum(["allow", "ask", "deny"]),
       reason: z.string(),
-      decisionSource: z.literal("review-model"),
+      /** Who decided: the review model, or the fixed rules (a deny, an ask, the fail-closed ask). */
+      decisionSource: z.enum(["review-model", "rule"]),
     }),
   ),
   ev(
@@ -1159,7 +1195,12 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
       toolKey: z.string(),
       specHash: z.string(),
       permissionInput: z
-        .object({ callInputHash: z.string(), resolvedInputHash: z.string() })
+        .object({
+          callInputHash: z.string(),
+          resolvedInputHash: z.string(),
+          /** The call asked to run outside the sandbox: admission runs it escalated or refuses. */
+          sandbox: z.literal("escalated").optional(),
+        })
         .optional(),
     }),
   ),

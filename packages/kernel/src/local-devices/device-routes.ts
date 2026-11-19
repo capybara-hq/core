@@ -12,7 +12,8 @@ export const DEVICE_PROTOCOL_HEADER = "x-capybara-device-protocol";
 /** What the route needs from the gateway (`LocalDeviceGateway`). */
 export interface DeviceRoutesGateway {
   authenticate(credential: string): Promise<MachineIdentity | null>;
-  accept(socket: WebSocket, identity: MachineIdentity, credential: string): void;
+  /** Serves the upgraded socket (re-checks the credential with the socket paused). */
+  accept(socket: WebSocket, credential: string): Promise<void>;
 }
 
 export interface DeviceRoutesOptions {
@@ -56,7 +57,8 @@ function bearer(req: FastifyRequest): string {
  * Registers `GET /device/connect` (the gateway role only) in its own encapsulated scope with
  * `@fastify/websocket`: a raw Fastify route outside Nest, so neither the API's `AuthGuard` nor its
  * CSRF check applies; the route checks the machine credential itself, before the upgrade (401
- * `device.credential_invalid`), then the protocol header (426 `device.program_outdated`).
+ * `device.credential_invalid`), then the protocol header (426 `device.program_outdated`): only
+ * {@link DEVICE_PROTOCOL_VERSION} (3) is served; a protocol 2 program must update.
  * Must be called before Nest `app.init()`, on the root instance.
  *
  * `@fastify/websocket` sends every upgrade request of the server through the Fastify router; the
@@ -80,7 +82,7 @@ export async function registerDeviceConnectRoute(
   });
   await fastify.register(async (scope) => {
     await scope.register(websocket, { options: { maxPayload: opts.maxFrameBytes } });
-    const identities = new WeakMap<FastifyRequest, { identity: MachineIdentity; cred: string }>();
+    const credentials = new WeakMap<FastifyRequest, string>();
     scope.get(
       DEVICE_CONNECT_ROUTE,
       {
@@ -109,16 +111,16 @@ export async function registerDeviceConnectRoute(
                 ),
               );
           }
-          identities.set(req, { identity, cred });
+          credentials.set(req, cred);
         },
       },
       (socket, req) => {
-        const found = identities.get(req);
-        if (!found) {
+        const cred = credentials.get(req);
+        if (cred === undefined) {
           socket.close(4400, "not authenticated");
           return;
         }
-        opts.gateway.accept(socket, found.identity, found.cred);
+        void opts.gateway.accept(socket, cred);
       },
     );
   });

@@ -32,15 +32,15 @@ export interface OrgEffectiveNetwork {
   hosts: string[];
 }
 
-/** Where the platform's auto-mode switch comes from (kernel `DevicesAutoModeSource`). */
-export type DevicesAutoModeSource = "env" | "file" | "nacos" | "db" | "default";
+/** Where the platform's Full permission switch comes from (kernel `DevicesFullAccessSource`). */
+export type DevicesFullAccessSource = "env" | "file" | "nacos" | "db" | "default";
 
-/** The platform's auto-mode switch in effect (kernel `DevicesAutoModeView`). */
-export interface DevicesAutoModeView {
-  /** `allowed`: devices in the org may run in auto mode when the org allows it. */
-  mode: "allowed" | "off";
+/** The platform's Full permission switch in effect (kernel `DevicesFullAccessView`). */
+export interface DevicesFullAccessView {
+  /** `allowed`: devices may run with Full permission when the org and the owner allow it. */
+  permission: "allowed" | "off";
   /** `env` / `file` / `nacos` are the startup config (read-only); `db` the admin console; `default`. */
-  source: DevicesAutoModeSource;
+  source: DevicesFullAccessSource;
 }
 
 /**
@@ -48,8 +48,8 @@ export interface DevicesAutoModeView {
  * - `toolSearch`：工具很多时改用目录 + `ToolSearch` 按需加载（默认 on）；
  * - `locale`：组织默认语言（默认 en），机器人在 IM 里说的固定话术按它选择；
  * - `sandboxToolPolicy`：沙箱工具的默认策略（默认 allow；ask 时除只读工具外都要审批）；
- * - `autoMode`: whether the org's devices may run in auto mode (auto mode spec §4.3); absent
- *   follows the platform's switch;
+ * - `fullAccess`: whether the org's devices may run with Full permission; absent follows the
+ *   platform's switch;
  * - `cloudNetwork`: the org's sandbox network as a delta over the platform's list (egress ceiling
  *   spec §D1); absent follows the platform;
  * - `platformTool`: the `Platform` builtin for the whole org (`on` / `read-only` / `off`, default on).
@@ -59,8 +59,8 @@ export interface OrgSettings {
   locale: "zh" | "en";
   /** 旧内核没有这个字段：缺省按 allow。 */
   sandboxToolPolicy?: "allow" | "ask";
-  /** The org's auto-mode switch; absent = follow the platform. */
-  autoMode?: "allowed" | "off";
+  /** The org's Full permission switch; absent = follow the platform. */
+  fullAccess?: "allowed" | "off";
   /** The org's sandbox network delta; absent = follow the platform. */
   cloudNetwork?: CloudNetworkSetting;
   platformTool: "on" | "read-only" | "off";
@@ -98,8 +98,8 @@ export interface OrgThemeSetting {
 
 /** The deployment defaults the settings page shows for "follow the platform". */
 export interface OrgSettingsDeployment {
-  /** The platform's auto-mode switch and where it comes from. */
-  autoMode: DevicesAutoModeView;
+  /** The platform's Full permission switch and where it comes from. */
+  fullAccess: DevicesFullAccessView;
   /**
    * The platform's network: its allowlist (what an org's delta applies to), whether orgs may go
    * beyond it (`orgHosts`, `sandbox.limits.orgHosts`: `within` makes the list the ceiling and
@@ -148,7 +148,7 @@ export interface OrgSettingsResponse {
 export type OrgSettingsPatch = Partial<
   Omit<
     OrgSettings,
-    | "autoMode"
+    | "fullAccess"
     | "cloudNetwork"
     | "timeZone"
     | "theme"
@@ -162,7 +162,7 @@ export type OrgSettingsPatch = Partial<
   /** null clears the theme setting (follow the platform, allowed). */
   theme?: OrgThemeSetting | null;
   /** null clears it (follow the platform). */
-  autoMode?: "allowed" | "off" | null;
+  fullAccess?: "allowed" | "off" | null;
   /** Replaces the stored value whole (send it with the edited fields); null follows the platform. */
   cloudNetwork?: CloudNetworkSetting | null;
   /** null clears the default (UTC). */

@@ -1,48 +1,18 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 import {
+  DEVICE_DENIED_SECRET_PATHS,
   type DeviceExecGrants,
   type SandboxLimits,
-  type SandboxRoots,
   validateAllowHost,
 } from "@capybara-hq/plugin-sdk";
 import { type Policy, policyMode, type SandboxMode } from "./state.js";
 
 /**
- * Paths no sandboxed command may read (spec §13.6, extended by ruling R19): SSH keys, cloud CLI
- * credentials, container and Kubernetes credentials, netrc, GnuPG, git / npm / PyPI tokens, the
- * macOS keychains, and the browser profile directories (Chrome, Firefox, Chromium, Safari, Brave,
- * Edge, Arc). Relative to `~`. Auto mode runs as the owner and does not apply them: command review
- * in the kernel does (spec §5.2).
+ * Paths no sandboxed command may read: the SDK's {@link DEVICE_DENIED_SECRET_PATHS} (one source
+ * with the kernel, which never proposes an approval under one). Relative to `~`.
  */
-export const DENIED_SECRET_PATHS: readonly string[] = Object.freeze([
-  "~/.ssh",
-  "~/.aws",
-  "~/.config/gcloud",
-  "~/.azure",
-  "~/.kube",
-  "~/.docker/config.json",
-  "~/.netrc",
-  "~/.gnupg",
-  "~/Library/Application Support/Google/Chrome",
-  "~/Library/Application Support/Firefox",
-  "~/.mozilla",
-  "~/.config/google-chrome",
-  "~/.config/chromium",
-  // Ruling R19: more credential stores and browser data.
-  "~/.config/gh",
-  "~/.git-credentials",
-  "~/.npmrc",
-  "~/.pypirc",
-  "~/Library/Keychains",
-  "~/Library/Cookies",
-  "~/Library/Safari",
-  "~/Library/Application Support/BraveSoftware",
-  "~/Library/Application Support/Microsoft Edge",
-  "~/Library/Application Support/Arc",
-  "~/.config/BraveSoftware",
-  "~/.config/microsoft-edge",
-]);
+export const DENIED_SECRET_PATHS: readonly string[] = DEVICE_DENIED_SECRET_PATHS;
 
 /** {@link DENIED_SECRET_PATHS} with `~` expanded to `home`. */
 export function deniedSecretPaths(home: string = homedir()): string[] {
@@ -133,71 +103,4 @@ export function effectiveEgress(
   }
   for (const h of grantedHosts(limits, grants)) out.add(h);
   return [...out];
-}
-
-/** The sandbox-runtime configuration of a sandbox-mode device. */
-export interface SrtConfig {
-  filesystem: {
-    denyRead: string[];
-    allowWrite: string[];
-    denyWrite: string[];
-  };
-  network: {
-    allowedDomains: string[];
-    deniedDomains: string[];
-  };
-}
-
-/** What {@link srtConfig} needs besides the egress list. */
-export interface SrtConfigOptions {
-  /** The home whose secret paths are denied (default: the user's home). */
-  home?: string;
-  /** More paths commands may not read (this program's state directory). */
-  denyRead?: string[];
-}
-
-/** Characters the sandbox runtime reads as a glob in a path entry. */
-const GLOB_CHARS = /[*?[\]{}]/;
-
-/**
- * Write denies for git under each writable root (spec §5.2.1): `.git/hooks` and `.git/config`
- * (a hook or `core.sshCommand` set by a command would run when the owner later runs git there).
- * The runtime has the same mandatory denies, but anchored at this program's own working directory,
- * which may not contain the roots. A root whose path reads as a glob gets none (it cannot be
- * anchored literally); the runtime's own denies still apply when it lies under the working
- * directory.
- */
-function gitWriteDenies(writable: string[]): string[] {
-  const out: string[] = [];
-  for (const root of writable) {
-    if (GLOB_CHARS.test(root)) continue;
-    out.push(`${root}/.git/hooks/**`, `${root}/**/.git/hooks/**`);
-    out.push(`${root}/.git/config`, `${root}/**/.git/config`);
-  }
-  return out;
-}
-
-/**
- * The sandbox-runtime configuration of sandbox mode (spec §4.1, §4.4): today's strict profile
- * only. Writes only under the workspace and tmp roots (the runtime's implicit write paths
- * denied), skills read only, the secret paths (plus `opts.denyRead`, such as this program's own
- * state directory) unreadable, and network limited to `egress`. No local binding, no unix sockets.
- */
-export function srtConfig(
-  roots: SandboxRoots,
-  egress: string[],
-  opts: SrtConfigOptions = {},
-): SrtConfig {
-  const allowWrite = [roots.workspace, roots.tmp];
-  return {
-    filesystem: {
-      denyRead: [...deniedSecretPaths(opts.home), ...(opts.denyRead ?? [])],
-      allowWrite,
-      denyWrite: [roots.skills, ...implicitWritePaths(opts.home), ...gitWriteDenies(allowWrite)],
-    },
-    network: {
-      allowedDomains: [...egress],
-      deniedDomains: [],
-    },
-  };
 }

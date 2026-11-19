@@ -4,6 +4,7 @@ import { hostname } from "node:os";
 import { isAbsolute, resolve } from "node:path";
 import { ApiError, authorize, type FetchFn, programVersion, token } from "../api.js";
 import type { Command } from "../args.js";
+import { SANDBOX_INSTALL_HINT } from "../exec/sandbox-messages.js";
 import { prepareDeviceDir } from "../exec/shared.js";
 import { resetOwnerReport } from "../owner-report.js";
 import { hasLoginService } from "../service/installed.js";
@@ -11,28 +12,68 @@ import {
   DEFAULT_MAX_FRAME_BYTES,
   DEFAULT_POLICY,
   defaultWorkDir,
-  ownerCeilingOfMode,
-  policyMode,
+  type OwnerCeilingPolicy,
   policyPath,
   readCredential,
   readPolicy,
-  type SandboxMode,
   withPolicyLock,
   writeCredential,
   writePolicy,
 } from "../state.js";
-import {
-  AUTO_MODE_LOGIN_LINE,
-  AUTO_MODE_RISK_TEXT,
-  AUTO_POLICY_REFUSED_LOGIN_LINE,
-  checkSandbox,
-  DOCKER_AUTO_MODE_LOGIN_LINE,
-  DOCKER_SANDBOX_MODE_LOGIN_LINE,
-  SANDBOX_MODE_LOGIN_LINE,
-  SANDBOX_POLICY_LOGIN_LINE,
-  type SandboxCheck,
-  sandboxUnavailableLoginLine,
-} from "./mode.js";
+
+/**
+ * Shown once at login when the owner ceiling allows Full access in an organization that allows
+ * it: the trust model of Full access is command review, not the OS sandbox.
+ */
+export const FULL_ACCESS_RISK_TEXT =
+  "With Full access, agent commands run on this computer as you: they can read and write all " +
+  "your files, use your credentials (SSH keys, cloud accounts, keychain), Docker and any network, " +
+  "and the deployment reviews every command before it runs. Prompt injection can make an agent " +
+  "try to delete files or send your credentials away; the review blocks or asks about the " +
+  "dangerous ones. Such commands can also read this program's own credential: if you suspect " +
+  "misuse, run capybara-device logout and log in again.";
+
+/** The OS sandbox check `login` uses (default: the runtime's, loaded on demand). */
+export type SandboxCheck = () => { ok: true } | { ok: false; reason: string };
+
+async function checkSandbox(
+  check: SandboxCheck | undefined,
+): Promise<{ ok: true } | { ok: false; reason: string }> {
+  if (check !== undefined) return check();
+  const { sandboxAvailability } = await import("../exec/sandbox-check.js");
+  return sandboxAvailability();
+}
+
+/** How the owner widens the ceiling, on this machine only (the deployment may only narrow it). */
+export const WIDEN_CEILING_HINT =
+  "Only you can widen it, on this machine: `capybara-device ceiling set --full-access allow " +
+  "--project-reach os-user` (see `capybara-device ceiling show`).";
+
+/**
+ * The line `login` prints for a restricted owner ceiling (the default of a new setup, B-14): no
+ * Full access, restricted work in the device's workspace only.
+ */
+export const RESTRICTED_CEILING_LOGIN_LINE =
+  "This machine's owner ceiling allows restricted work only: Full access is off, and restricted " +
+  `work reaches the device's workspace. ${WIDEN_CEILING_HINT}`;
+
+/** The line `login` prints when the owner ceiling allows Full access. */
+export const FULL_CEILING_LOGIN_LINE =
+  "This machine's owner ceiling allows Full access: a conversation set to Full access runs agent " +
+  "commands as you. Narrow it with `capybara-device ceiling set --full-access deny " +
+  "--project-reach workspace`.";
+
+/** Added when the organization does not allow Full access while the owner ceiling does. */
+export const FULL_ACCESS_NOT_ALLOWED_LOGIN_LINE =
+  "This organization does not allow Full access, so agents use the restricted profiles here.";
+
+/** The line `login` prints when restricted work cannot run here (no OS sandbox). */
+export function restrictedUnavailableLoginLine(reason: string): string {
+  return (
+    `The OS sandbox is unavailable on this machine (${reason}), so restricted work cannot run ` +
+    `here yet: ${SANDBOX_INSTALL_HINT}; or log in again with --mode docker. ${WIDEN_CEILING_HINT}`
+  );
+}
 
 export interface LoginDeps {
   stateDir: string;
@@ -65,18 +106,17 @@ function defaultOpen(platform: NodeJS.Platform) {
 }
 
 /**
- * A fresh device in an organization that forbids auto mode starts in sandbox mode (auto mode
- * spec §4.1): the default policy is auto, which the kernel refuses at every exec, so the login
- * line would otherwise describe a mode the machine does not run. Written under the policy lock,
- * and only while no policy file exists: an existing policy is the owner's choice and is never
- * changed here. Returns whether this call created the file.
+ * A new setup writes the default policy (B-14): a restricted owner ceiling, no Full access and the
+ * workspace as the restricted reach. Written under the policy lock, and only while no policy file
+ * exists: an existing policy is the owner's choice and is never changed here (an old format still
+ * converts exactly at start). Returns whether this call created the file.
  */
-function persistSandboxPolicy(stateDir: string): boolean {
+function persistDefaultPolicy(stateDir: string): boolean {
   const file = policyPath(stateDir);
   if (existsSync(file)) return false;
   return withPolicyLock(stateDir, () => {
     if (existsSync(file)) return false;
-    writePolicy(stateDir, { ...DEFAULT_POLICY, ownerCeiling: ownerCeilingOfMode("sandbox") });
+    writePolicy(stateDir, { ...DEFAULT_POLICY, ownerCeiling: { ...DEFAULT_POLICY.ownerCeiling } });
     return true;
   });
 }
@@ -153,37 +193,24 @@ export async function login(
               : resolve(cmd.dir);
         // Recreates a lost directory, marker or root: the device starts afresh.
         prepareDeviceDir(dir);
-        // The printed line follows this machine's persisted policy in both branches, not the
-        // organization's allowance: sandbox mode is also the state an earlier login in an
-        // auto-forbidden organization left behind. The default mode is auto; an organization that
-        // forbids it gets sandbox mode written as this device's policy before the credential makes
-        // the login final. An existing policy is the owner's choice: the kernel refuses auto mode
-        // at every command if the organization forbids it and the owner keeps auto.
-        let mode: SandboxMode = "auto";
-        /** Why no sandbox policy was written: the OS sandbox cannot run here (OS mode only). */
+        // A new setup gets the restricted default written before the credential makes the login
+        // final; the printed lines follow the policy this machine actually has.
+        let ceiling: OwnerCeilingPolicy = { ...DEFAULT_POLICY.ownerCeiling };
+        try {
+          persistDefaultPolicy(deps.stateDir);
+        } catch (e) {
+          err(`Cannot set the local policy in ${deps.stateDir}: ${(e as Error).message}`);
+        }
+        try {
+          ceiling = readPolicy(deps.stateDir).ownerCeiling;
+        } catch (e) {
+          err(`Cannot read the local policy in ${deps.stateDir}: ${(e as Error).message}`);
+        }
+        /** Why restricted work cannot run here: the OS sandbox is missing (OS mode only). */
         let noSandbox: string | undefined;
-        if (granted.autoMode === "off") {
-          try {
-            // A sandbox policy on a machine without the OS sandbox could not run a command either:
-            // it is not written, and the line says what to install (Docker needs no OS sandbox).
-            if (cmd.mode !== "docker" && !existsSync(policyPath(deps.stateDir))) {
-              const available = await checkSandbox(deps.sandboxAvailable);
-              if (!available.ok) noSandbox = available.reason;
-            }
-            if (noSandbox === undefined) {
-              mode = persistSandboxPolicy(deps.stateDir)
-                ? "sandbox"
-                : policyMode(readPolicy(deps.stateDir));
-            }
-          } catch (e) {
-            err(`Cannot set the local policy in ${deps.stateDir}: ${(e as Error).message}`);
-          }
-        } else {
-          try {
-            mode = policyMode(readPolicy(deps.stateDir));
-          } catch (e) {
-            err(`Cannot read the local policy in ${deps.stateDir}: ${(e as Error).message}`);
-          }
+        if (cmd.mode !== "docker") {
+          const available = await checkSandbox(deps.sandboxAvailable);
+          if (!available.ok) noSandbox = available.reason;
         }
         // a new credential is a new machine at the deployment: its owner reports start a new
         // sequence (also repairs a lost or corrupt sidecar)
@@ -211,22 +238,16 @@ export async function login(
           maxFrameBytes: granted.maxFrameBytes ?? DEFAULT_MAX_FRAME_BYTES,
         });
         out(`Logged in. Device ${granted.deviceId}, working directory ${dir}`);
-        // The risk text is shown once at login (spec §8), and only when commands run on this
-        // machine as the owner (auto mode outside Docker).
-        if (cmd.mode === "docker") {
-          if (granted.autoMode === "off" && mode !== "sandbox") out(AUTO_POLICY_REFUSED_LOGIN_LINE);
-          else
-            out(mode === "sandbox" ? DOCKER_SANDBOX_MODE_LOGIN_LINE : DOCKER_AUTO_MODE_LOGIN_LINE);
-        } else if (noSandbox !== undefined) {
-          out(sandboxUnavailableLoginLine(noSandbox));
-        } else if (granted.autoMode === "off") {
-          out(mode === "sandbox" ? SANDBOX_MODE_LOGIN_LINE : AUTO_POLICY_REFUSED_LOGIN_LINE);
-        } else if (mode === "sandbox") {
-          out(SANDBOX_POLICY_LOGIN_LINE);
+        if (ceiling.fullAccess) {
+          out(FULL_CEILING_LOGIN_LINE);
+          if (granted.fullAccess === "off") out(FULL_ACCESS_NOT_ALLOWED_LOGIN_LINE);
+          // the risk text is shown once at login, and only when Full access runs as the owner on
+          // this machine (outside Docker)
+          else if (cmd.mode !== "docker") out(FULL_ACCESS_RISK_TEXT);
         } else {
-          out(AUTO_MODE_LOGIN_LINE);
-          out(AUTO_MODE_RISK_TEXT);
+          out(RESTRICTED_CEILING_LOGIN_LINE);
         }
+        if (noSandbox !== undefined) out(restrictedUnavailableLoginLine(noSandbox));
         // An installed service stays stopped after a deliberate exit (not logged in, logged out):
         // it needs starting again, not a second program.
         out(

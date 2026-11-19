@@ -8,6 +8,11 @@ import {
   ownerReportRevokes,
   type StoredOwnerReport,
 } from "../../src/local-devices/owner-report.js";
+import { ownerPolicyRevokes } from "../../src/local-devices/policy-summary.js";
+import {
+  needsFullCeiling,
+  needsWiderDeviceCeiling,
+} from "../../src/sandbox/permission-ceiling-writes.js";
 
 const report = (sequence: number, over: Record<string, unknown> = {}) =>
   ({
@@ -83,7 +88,12 @@ describe("owner report ordering (B2)", () => {
   it("revokes Full work only on Full removal and restricted work only on what narrows it", () => {
     const facts = (over: Record<string, unknown>) => ownerFactsOfReport(stored(report(1, over)));
     const roots = ["/work"];
-    const full = op({ profile: "full-access" } as never);
+    // full execution is the scope's reach (Full access, or an escalated call under its profile)
+    const full = op({
+      profile: "full-access",
+      filesystem: { kind: "device" },
+      network: { kind: "environment" },
+    } as never);
     expect(
       ownerReportRevokes(
         facts({ restrictedProjectReach: "workspace", restrictedAllowedDomains: [] }),
@@ -127,5 +137,40 @@ describe("owner report ordering (B2)", () => {
         roots,
       ),
     ).toBe(true);
+  });
+});
+
+describe("a running per-call sandbox escalation loses to every Full ceiling turning off", () => {
+  // an escalated call keeps its restricted profile; its reach is full (device, environment)
+  const escalated = op({
+    profile: "request-approval",
+    filesystem: { kind: "device" },
+    network: { kind: "environment" },
+  } as never);
+  const facts = (over: Record<string, unknown>) => ownerFactsOfReport(stored(report(1, over)));
+
+  it.each(["exec", "backgroundStart"])(
+    "the owner ceiling dropping Full revokes its %s",
+    (method) => {
+      expect(
+        ownerReportRevokes(facts({ fullAccess: false }), escalated, method, [], ["/work"]),
+      ).toBe(true);
+      expect(ownerReportRevokes(facts({}), escalated, method, [], ["/work"])).toBe(false);
+    },
+  );
+
+  it("a legacy owner policy turning to sandbox revokes it", () => {
+    expect(
+      ownerPolicyRevokes({ mode: "sandbox", allowedDomains: [] } as never, escalated, "exec", []),
+    ).toBe(true);
+    expect(
+      ownerPolicyRevokes({ mode: "auto", allowedDomains: [] } as never, escalated, "exec", []),
+    ).toBe(false);
+  });
+
+  it("the org and platform writers' selectors take it (Full execution needs the Full ceiling)", () => {
+    expect(needsFullCeiling(escalated)).toBe(true);
+    expect(needsWiderDeviceCeiling(escalated, ["/work"])).toBe(true);
+    expect(needsFullCeiling(op())).toBe(false);
   });
 });

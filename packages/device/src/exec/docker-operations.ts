@@ -38,7 +38,7 @@ import {
 } from "./operation-worker.js";
 import { acquireSealedRuntime, stageRuntimeSource } from "./runtime-source.js";
 
-/** What the Docker executor lends one operation: its running container, held until release. */
+/** What the device container lends one operation: its running container, held until release. */
 export interface OperationContainerHost {
   operationContainer(
     signal: AbortSignal,
@@ -67,7 +67,7 @@ export function containerBaseEnv(full: boolean): Record<string, string> {
  * (PID plus start time, checked again before each signal) gets SIGTERM, then SIGKILL, and this
  * returns once it is gone.
  */
-const END_AGENT = String.raw`
+const END_AGENT = `
 import os, sys, time
 pid, start = int(sys.argv[1]), int(sys.argv[2])
 def same():
@@ -295,7 +295,8 @@ export interface DockerOperationBackendOptions
  */
 export async function createDockerOperationBackend(
   options: DockerOperationBackendOptions,
-  dependencies: Omit<LinuxBackendDependencies, "transport" | "baseEnv"> = {},
+  // no toolHome: a command in the container has the image's home, not the host user's
+  dependencies: Omit<LinuxBackendDependencies, "transport" | "baseEnv" | "toolHome"> = {},
 ): Promise<LocalOperationBackend> {
   const transport = dockerLinuxTransport(options.container);
   let probe = await (dependencies.probe ?? (() => probeLinuxRuntime(transport)))();

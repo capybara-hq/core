@@ -120,7 +120,7 @@ it("permission publication keeps a bounded nonsecret projection of winning input
   const delegated = resolveConfig(raw({}), {});
   expect(permissionConfigProjection(delegated).fullAccess).toEqual({ kind: "deployment-setting" });
   const winning = resolveConfig(raw({ devices: { fullAccess: "off" } }), {
-    CAPYBARA_DEVICES__AUTO_MODE: "allowed",
+    CAPYBARA_DEVICES__FULL_ACCESS: "allowed",
   });
   expect(permissionConfigProjection(winning).fullAccess).toEqual({
     kind: "configured",

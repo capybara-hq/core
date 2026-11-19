@@ -8,10 +8,12 @@ import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { ConversationDevices } from "../../src/devices/conversation-devices.js";
 import { ApiError } from "../../src/errors.js";
+import { RunExecution } from "../../src/runtime/run-execution.js";
 import { SandboxService } from "../../src/sandbox/sandbox.service.js";
 import { SandboxFileReader } from "../../src/sandbox/sandbox-file-reader.js";
 import { truncateTables } from "../helpers/db.js";
 import { accountsFor } from "../helpers/identity.js";
+import { recordCallStarted, startClaimedRun } from "../helpers/managed-calls.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import {
   createConv,
@@ -26,7 +28,8 @@ import {
 
 /**
  * SandboxFileReader: one file of a conversation's sandbox read for the kernel (skill authoring
- * spec), on a real kernel and the fake sandbox plugin.
+ * spec), on a real kernel and the fake sandbox plugin. On the activated tree a read is a managed
+ * operation of the tool call it serves, under the run's current execution claim.
  */
 
 const SANDBOX_FAKE = fileURLToPath(
@@ -44,7 +47,7 @@ let reader: SandboxFileReader;
 beforeAll(async () => {
   root = await mkdtemp(join(tmpdir(), "cap-sbx-file-reader-"));
   [pgc, rd] = await Promise.all([startTestPostgres(), startTestRedis()]);
-  const raw = createDb(pgc.url, 3);
+  raw = createDb(pgc.url, 3);
   db = kernelDb(raw);
   destroyDb = () => raw.destroy();
   k = await startKernel(
@@ -71,6 +74,7 @@ let owner: Req;
 let ownerId: string;
 let orgId: string;
 let convId: string;
+let raw: ReturnType<typeof createDb>;
 
 beforeEach(async () => {
   await truncateTables(
@@ -116,15 +120,31 @@ async function put(rel: string, data: string): Promise<string> {
   );
 }
 
-const read = (path: string, maxBytes = 1024) =>
-  reader.read({
-    orgId,
-    conversationId: convId,
-    actorAccountId: ownerId,
-    path,
-    maxBytes,
-    signal: new AbortController().signal,
-  });
+const readInput = (path: string, maxBytes: number, callId?: string) => ({
+  orgId,
+  conversationId: convId,
+  actorAccountId: ownerId,
+  path,
+  maxBytes,
+  signal: new AbortController().signal,
+  ...(callId !== undefined && { callId }),
+});
+
+/** Reads `path` as a `Platform` call of a running run does: a started call under its claim. */
+async function read(path: string, maxBytes = 1024): Promise<Uint8Array> {
+  const { runId, claim } = await startClaimedRun(k, raw, convId, ownerId);
+  const callId = `call-${runId.slice(0, 8)}`;
+  await recordCallStarted(raw, convId, runId, callId, "Platform");
+  try {
+    return await k.app.get(RunExecution).withClaim(
+      claim,
+      () => true,
+      () => reader.read(readInput(path, maxBytes, callId)),
+    );
+  } finally {
+    await db.updateTable("runs").set({ status: "completed" }).where("id", "=", runId).execute();
+  }
+}
 
 async function codeOf(p: Promise<unknown>): Promise<{ code: string; message: string }> {
   try {
@@ -143,6 +163,13 @@ describe("SandboxFileReader.read", () => {
     const ws = await put("pkg/skill.zip", "hello");
     const got = await read(`${ws}/pkg/skill.zip`);
     expect(new TextDecoder().decode(got)).toBe("hello");
+  });
+
+  it("reads nothing without the serving call's execution claim", async () => {
+    const ws = await put("a.txt", "x");
+    await expect(reader.read(readInput(`${ws}/a.txt`, 1024))).rejects.toThrow(
+      /permission profile allows/,
+    );
   });
 
   it("refuses a relative path and a path outside the sandbox roots", async () => {

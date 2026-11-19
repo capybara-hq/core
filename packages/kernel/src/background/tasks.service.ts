@@ -3,10 +3,9 @@ import {
   isSandboxGoneError,
   isSandboxPermissionUnsupportedError,
   isSandboxScopeDeniedError,
-  rootsOf,
   ToolError,
 } from "@capybara-hq/plugin-sdk";
-import { Inject, Injectable, Optional } from "@nestjs/common";
+import { Inject, Injectable } from "@nestjs/common";
 import { ConversationAccess } from "../conversations/access.js";
 import { EventLog } from "../conversations/event-log.js";
 import { conversationTree } from "../conversations/tree.js";
@@ -15,11 +14,10 @@ import { ApiError } from "../errors.js";
 import { audit } from "../identity/audit.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { rootConversationOf } from "../runtime/subagents/child.js";
-import { PERMISSION_CONTEXT_ACTIVATION } from "../sandbox/permission-context-types.js";
 import { retirementPending, SandboxService } from "../sandbox/sandbox.service.js";
 import { UUID_RE } from "../ui/registry.js";
 import { finishedEventKey } from "./finish.js";
-import { TASK_ID_RE, TASKS_DIR } from "./launch.js";
+import { TASK_ID_RE } from "./launch.js";
 import {
   ManagedInstanceMismatchError,
   ManagedRefError,
@@ -31,7 +29,6 @@ import {
   ManagedOutputCapacityError,
   ManagedOutputUnavailableError,
 } from "./managed-output.js";
-import { actingAs, legacyBackgroundAllowed } from "./session.js";
 import { BackgroundTaskStopper } from "./stop.js";
 import {
   type BackgroundTaskRow,
@@ -43,7 +40,7 @@ import {
 /** The most bytes of output one read returns. */
 export const OUTPUT_TAIL_MAX_BYTES = 65_536;
 
-/** The time limit of reading an output (the exec and the wait for the sandbox's lease). */
+/** The time limit of reading an output (the exact reads and the wait for the sandbox's lease). */
 const OUTPUT_READ_TIMEOUT_MS = 30_000;
 
 /** A task as the API shows it. */
@@ -65,13 +62,14 @@ export interface BackgroundTaskView {
 }
 
 /**
- * Why a task's output cannot be read live: `starting` (the launch has not recorded the task's
- * session yet), `not_started` (the launch failed: the task never ran, its `lostReason` says why),
- * `device_offline` (the local device's machine is not connected), `suspended` (the instance is
- * suspended; reading never resumes it), `rebuilt` (the instance the task ran in is gone, and its
- * files with it), `output_missing` (the instance runs but the output file is gone), `no_access`
- * (the conversation's owner may no longer use the device), `unavailable` (the device's provider
- * is not loaded), `read_failed` (the read command failed).
+ * Why a task's output cannot be read live: `starting` (the start has not been acknowledged with
+ * the task's exact ref yet), `not_started` (the launch failed: the task never ran, its
+ * `lostReason` says why), `device_offline` (the local device's machine is not connected),
+ * `suspended` (the instance is suspended; reading never resumes it), `rebuilt` (the instance the
+ * task ran in is gone, and its files with it), `output_missing` (the instance runs but the output
+ * is gone), `no_access` (the conversation's owner may no longer use the device), `unavailable`
+ * (the device's provider is not loaded), `read_failed` (the exact read failed, or the task is a
+ * finished legacy one, whose output is never read live).
  */
 export type OutputUnavailableReason =
   | "starting"
@@ -128,11 +126,6 @@ export class BackgroundTasks {
     @Inject(KernelDb) private readonly db: KernelDb,
     @Inject(ConversationDevices)
     private readonly devices: Pick<ConversationDevices, "forTool">,
-    /**
-     * The paired activation gate: once on, a legacy (SID) task is never read or stopped by a raw
-     * exec (the retirement gate owns it); a managed task always goes by its exact ref.
-     */
-    @Optional() @Inject(PERMISSION_CONTEXT_ACTIVATION) private readonly activation?: boolean,
   ) {}
 
   /**
@@ -206,8 +199,8 @@ export class BackgroundTasks {
     auditDetail?: Record<string, unknown>,
   ): Promise<BackgroundTaskView> {
     const task = await this.owned(orgId, conversationId, accountId, taskId);
-    // once activated, the stopper refuses a legacy task's stop with the retirement refusal
-    // exactly when it would signal its session (BackgroundTaskStopper's paired gate)
+    // the stopper refuses a running legacy task's stop with the retirement refusal while its
+    // instance runs (it is never signalled)
     const after = await this.stopper.stop(task, "person");
     await audit(this.db.db, {
       actorAccountId: accountId,
@@ -253,7 +246,7 @@ export class BackgroundTasks {
     tail: number,
   ): Promise<BackgroundTaskOutput> {
     const task = await this.owned(orgId, conversationId, accountId, taskId);
-    const read = await this.readLive(orgId, accountId, task, tail);
+    const read = await this.readLive(orgId, task, tail);
     if (read.kind === "ok") return { ...read.value, source: "live" };
     const unavailable: OutputUnavailable = {
       reason: read.reason,
@@ -284,70 +277,15 @@ export class BackgroundTasks {
   }
 
   /** Reads the output from the task's running instance, or says why it cannot. */
-  private async readLive(
-    orgId: string,
-    accountId: string,
-    task: BackgroundTaskRow,
-    tail: number,
-  ): Promise<LiveRead> {
+  private async readLive(orgId: string, task: BackgroundTaskRow, tail: number): Promise<LiveRead> {
     if (isManagedTask(task)) return this.readManaged(orgId, task, tail);
-    // once activated a legacy task's output is never read by a raw exec: a running one is the
-    // retirement gate's (its actionable refusal), a finished one answers with its finish summary
-    if (!legacyBackgroundAllowed(this.activation)) {
-      if (task.status === "running") throw retirementPending();
-      return { kind: "unavailable", reason: "read_failed" };
-    }
-    if (task.sid === null || task.sandboxCreatedAt === null || task.deviceId === null) {
-      // a reservation the launch has not finished, or a launch that failed
-      return {
-        kind: "unavailable",
-        reason: task.status === "running" ? "starting" : "not_started",
-      };
-    }
-    if (!(await this.sandbox.availableFor(task.deviceId))) {
-      return { kind: "unavailable", reason: "unavailable" };
-    }
-    if (!(await this.deviceUsable(orgId, task.conversationId))) {
-      return { kind: "unavailable", reason: "no_access" };
-    }
-    const createdAt = task.sandboxCreatedAt;
-    // the person reading it acts in the task's conversation
-    const actor = { accountId, conversationId: task.conversationId };
-    try {
-      const r = await this.sandbox.ifRunning(
-        task.deviceId,
-        { createdAt },
-        async (p, h, signal) => {
-          const res = await actingAs(p, actor, this.activation).exec(h, {
-            command: tailScript(task.id, tail),
-            cwd: rootsOf(h).workspace,
-            timeoutMs: OUTPUT_READ_TIMEOUT_MS,
-            maxOutputBytes: 2 * OUTPUT_TAIL_MAX_BYTES + 4096,
-            signal,
-          });
-          return res.exitCode === 0 ? parseTail(res.stdout, tail) : null;
-        },
-        AbortSignal.timeout(OUTPUT_READ_TIMEOUT_MS),
-      );
-      if (r.kind === "other_instance") return { kind: "unavailable", reason: "rebuilt" };
-      if (r.kind === "not_running") {
-        // a suspended instance keeps its files; any other state means they went with it
-        return { kind: "unavailable", reason: r.status === "suspended" ? "suspended" : "rebuilt" };
-      }
-      if (r.value === null) return { kind: "unavailable", reason: "read_failed" };
-      if (r.value === "missing") return { kind: "unavailable", reason: "output_missing" };
-      return { kind: "ok", value: r.value };
-    } catch (e) {
-      if (isSandboxGoneError(e)) return { kind: "unavailable", reason: "rebuilt" };
-      // a local device's machine: offline, or no longer the owner's (revoked, deleted)
-      if (e instanceof ApiError && e.code.startsWith("device.")) {
-        return {
-          kind: "unavailable",
-          reason: e.code === "device.offline" ? "device_offline" : "no_access",
-        };
-      }
-      throw e;
-    }
+    // a legacy task's output is never read by an exec: a running one is the retirement gate's
+    // (its actionable refusal), a finished one answers with its finish summary
+    if (task.status === "running") throw retirementPending();
+    return {
+      kind: "unavailable",
+      reason: task.sandboxCreatedAt === null ? "not_started" : "read_failed",
+    };
   }
 
   /**
@@ -419,41 +357,4 @@ export class BackgroundTasks {
       throw e;
     }
   }
-}
-
-/**
- * Prints `size <bytes>` and `out <base64 of the last `tail` bytes>`, or `missing` when the output
- * file is not there. Relative to the workspace root; POSIX tools only (`wc -c`, `tail -c`,
- * `base64`, `tr`), so it reads the same on Linux and macOS.
- */
-export function tailScript(id: string, tail: number): string {
-  if (!TASK_ID_RE.test(id)) throw new Error(`invalid background task id: ${id}`);
-  const f = `${TASKS_DIR}/${id}.out`;
-  return [
-    `if [ ! -f ${f} ]; then echo missing; exit 0; fi`,
-    `s=$({ wc -c < ${f}; } 2>/dev/null | tr -d ' '); echo "size \${s:-0}"`,
-    `printf 'out '; { tail -c ${Math.floor(tail)} ${f} 2>/dev/null | base64 | tr -d '\\n'; }; echo`,
-  ].join("\n");
-}
-
-/**
- * Decodes {@link tailScript}'s output (`missing`: no output file; null: unreadable); a cut that
- * splits a UTF-8 character drops its tail bytes.
- */
-export function parseTail(
-  stdout: string,
-  tail: number,
-): Omit<BackgroundTaskOutput, "source"> | "missing" | null {
-  if (/^missing$/m.test(stdout)) return "missing";
-  const size = /^size ([0-9]+)$/m.exec(stdout);
-  const out = /^out (\S*)$/m.exec(stdout);
-  if (!size || !out) return null;
-  let bytes = Buffer.from(out[1] as string, "base64");
-  const truncated = Number(size[1]) > tail;
-  if (truncated) {
-    let i = 0;
-    while (i < bytes.length && i < 3 && ((bytes[i] as number) & 0xc0) === 0x80) i++;
-    bytes = bytes.subarray(i);
-  }
-  return { text: bytes.toString("utf8"), truncated };
 }

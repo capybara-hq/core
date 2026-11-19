@@ -184,7 +184,6 @@ export class OrgsOperations implements OnModuleInit {
           "uiArrangement",
           "clientExtensions",
           "devicesFullAccess",
-          "devicesAutoMode",
           "attribution",
           "compaction",
           "externalSharing",

@@ -12,7 +12,6 @@ import {
   type OrgSettings,
   OrgSettingsPatchSchema,
   type OrgSettingsService,
-  orgSettingsView,
   parseOrgSettings,
 } from "../../src/orgs/settings.service.js";
 import { orgAllowedDomains } from "../../src/sandbox/modes.js";
@@ -119,41 +118,25 @@ describe("org fullAccess (B1)", () => {
     });
   });
 
-  it("the old name autoMode is still accepted and stored as fullAccess, never with it", async () => {
+  it("the old name autoMode is refused and never answered (W5-P3b)", async () => {
     const s = settingsWith();
-    expect(await s.update(orgId, { autoMode: "off" }, accountId)).toMatchObject({
-      fullAccess: "off",
-    });
-    const stored = async () =>
-      (
-        await db
-          .selectFrom("orgs")
-          .select("settings")
-          .where("id", "=", orgId)
-          .executeTakeFirstOrThrow()
-      ).settings as Record<string, unknown>;
-    expect(await stored()).toMatchObject({ fullAccess: "off" });
-    expect(await stored()).not.toHaveProperty("autoMode");
-    expect(await s.update(orgId, { autoMode: null }, accountId)).not.toHaveProperty("fullAccess");
-    expect(OrgSettingsPatchSchema.safeParse({ autoMode: "off", fullAccess: "off" }).success).toBe(
-      false,
-    );
-    // the answer mirrors fullAccess under the old name until the old readers go
-    expect(orgSettingsView(parseOrgSettings({ fullAccess: "off" }))).toMatchObject({
-      fullAccess: "off",
-      autoMode: "off",
-    });
-    expect(orgSettingsView(parseOrgSettings({}))).not.toHaveProperty("autoMode");
+    for (const patch of [
+      { autoMode: "off" },
+      { autoMode: null },
+      { autoMode: "off", fullAccess: "off" },
+    ])
+      expect(OrgSettingsPatchSchema.safeParse(patch).success, JSON.stringify(patch)).toBe(false);
+    await s.update(orgId, { fullAccess: "off" }, accountId);
+    expect(await s.get(orgId)).not.toHaveProperty("autoMode");
+    expect(await s.deployment()).not.toHaveProperty("autoMode");
+    await s.update(orgId, { fullAccess: null }, accountId);
   });
 
   it("allowed while the platform is off is refused for a person too", async () => {
     await storePlatformMode({ permission: "off" });
     const s = settingsWith();
     expect(await codeOf(s.update(orgId, { fullAccess: "allowed" }, accountId))).toBe(
-      "org.auto_mode_not_allowed",
-    );
-    expect(await codeOf(s.update(orgId, { autoMode: "allowed" }, accountId))).toBe(
-      "org.auto_mode_not_allowed",
+      "org.full_access_not_allowed",
     );
     // off is the only value left, and clearing it is fine (it follows the platform's off)
     expect(await s.update(orgId, { fullAccess: "off" }, accountId)).toMatchObject({
@@ -167,7 +150,7 @@ describe("org fullAccess (B1)", () => {
     const s = settingsWith({ fullAccess: "off" });
     expect((await s.deployment()).fullAccess).toEqual({ permission: "off", source: "file" });
     expect(await codeOf(s.update(orgId, { fullAccess: "allowed" }, accountId))).toBe(
-      "org.auto_mode_not_allowed",
+      "org.full_access_not_allowed",
     );
   });
 
@@ -175,9 +158,8 @@ describe("org fullAccess (B1)", () => {
     await storePlatformMode({ permission: "maybe" });
     const s = settingsWith();
     expect((await s.deployment()).fullAccess).toEqual({ permission: "off", source: "db" });
-    expect((await s.deployment()).autoMode).toEqual({ mode: "off", source: "db" });
     expect(await codeOf(s.update(orgId, { fullAccess: "allowed" }, accountId))).toBe(
-      "org.auto_mode_not_allowed",
+      "org.full_access_not_allowed",
     );
   });
 
@@ -185,7 +167,8 @@ describe("org fullAccess (B1)", () => {
     expect(parseOrgSettings({ fullAccess: "maybe" }).fullAccess).toBe("off");
     expect(parseOrgSettings({ fullAccess: null }).fullAccess).toBe("off");
     expect(parseOrgSettings({}).fullAccess).toBeUndefined();
-    // until 8.6 the old stored key is read too and the narrower wins (fail closed)
+    // an old stored key the publication conversion has not reached yet is read too and the
+    // narrower wins (fail closed)
     expect(parseOrgSettings({ autoMode: "allowed" }).fullAccess).toBeUndefined();
     expect(parseOrgSettings({ autoMode: "off", fullAccess: "allowed" }).fullAccess).toBe("off");
     expect(parseOrgSettings({ autoMode: "maybe" }).fullAccess).toBe("off");
@@ -198,10 +181,13 @@ describe("org fullAccess (B1)", () => {
         s.update(orgId, { fullAccess: "off" }, accountId, "tok", undefined, { onlyNarrows: true }),
       ),
     ).toBeUndefined();
-    for (const patch of [{ fullAccess: "allowed" as const }, { autoMode: "allowed" as const }])
-      expect(
-        await codeOf(s.update(orgId, patch, accountId, "tok", undefined, { onlyNarrows: true })),
-      ).toBe("org.auto_mode_not_allowed");
+    expect(
+      await codeOf(
+        s.update(orgId, { fullAccess: "allowed" }, accountId, "tok", undefined, {
+          onlyNarrows: true,
+        }),
+      ),
+    ).toBe("org.full_access_not_allowed");
     expect((await s.get(orgId)).fullAccess).toBe("off");
   });
 });
@@ -434,7 +420,6 @@ describe("org cloudNetwork", () => {
     const s = settingsWith();
     expect(await s.deployment()).toEqual({
       fullAccess: { permission: "off", source: "db" },
-      autoMode: { mode: "off", source: "db" },
       cloudNetwork: { allowHosts: LIMITS.allowHosts, orgHosts: "extend", off: false },
       attribution: {
         commit: "Co-Authored-By: Capybara <noreply@capybarahq.com>",

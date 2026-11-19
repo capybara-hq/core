@@ -98,8 +98,9 @@ export const DEFAULT_POLICY: Policy = {
   allowCredentials: [],
   cpu: null,
   memoryMb: null,
-  // The protocol 2 default (old auto); new setup defaults to the sandbox ceiling at activation.
-  ownerCeiling: { ...FULL_OWNER_CEILING },
+  // A new setup's owner ceiling (B-14): no Full access, restricted work in the workspace. An old
+  // policy file still converts exactly from its `mode` (convertPolicyFile).
+  ownerCeiling: { ...SANDBOX_OWNER_CEILING },
 };
 
 type Env = Record<string, string | undefined>;

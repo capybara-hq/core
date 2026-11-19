@@ -1,8 +1,8 @@
 import {
-  type BindInstanceRequestV3,
-  type BindInstanceResultV3,
+  type BindInstanceRequest,
+  type BindInstanceResult,
   DeviceProtocolError,
-  parseOperationResultV3,
+  parseOperationResult,
   type SandboxPermissionSupport,
 } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
@@ -25,7 +25,7 @@ import { LocalDeviceRelay } from "./relay.js";
 /** The committed binding of a local instance generation, as the coordinator sends it. */
 export interface CommittedBinding {
   orgId: string;
-  request: BindInstanceRequestV3;
+  request: BindInstanceRequest;
   status: "awaiting-device" | "installed";
   /** The machine the binding was committed for (null: none was active). */
   machineId: string | null;
@@ -142,7 +142,7 @@ export class LocalInstanceBindings implements SandboxInstanceBinder {
    * Sends the committed binding and installs the verified answer. The caller holds the device's
    * lifecycle lease; no transaction is open across the RPC.
    */
-  async bind(deviceId: string, signal: AbortSignal): Promise<BindInstanceResultV3 | null> {
+  async bind(deviceId: string, signal: AbortSignal): Promise<BindInstanceResult | null> {
     // the device round trip may take the whole operation deadline: never inside a transaction
     if (this.txHost.current())
       throw new InstanceBindingError("bindInstance must not run inside a transaction");
@@ -166,7 +166,7 @@ export class LocalInstanceBindings implements SandboxInstanceBinder {
       committed = again;
     }
     const connection = await this.relay.connection(deviceId);
-    const answer = parseOperationResultV3(
+    const answer = parseOperationResult(
       "bindInstance",
       await this.relay.callV3(
         deviceId,
@@ -179,7 +179,7 @@ export class LocalInstanceBindings implements SandboxInstanceBinder {
         },
       ),
       committed.request,
-    ) as BindInstanceResultV3;
+    ) as BindInstanceResult;
     await runOutsideTransaction(() =>
       this.install(deviceId, machineId, committed, answer, connection.connectionId),
     );
@@ -237,7 +237,7 @@ export class LocalInstanceBindings implements SandboxInstanceBinder {
     deviceId: string,
     machineId: string,
     committed: CommittedBinding,
-    answer: BindInstanceResultV3,
+    answer: BindInstanceResult,
     /** The authenticated connection the answer came on (recorded with its owner report). */
     connectionId: string | null = null,
   ): Promise<void> {

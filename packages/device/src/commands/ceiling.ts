@@ -1,4 +1,5 @@
 import type { Command } from "../args.js";
+import { noteCliPolicyChange } from "../command-log.js";
 import { readStrictOwnerCeilingSync } from "../exec/operation-types.js";
 import { PolicyStore } from "../policy-store.js";
 import { type OwnerCeilingPolicy, policyPath, readCredential } from "../state.js";
@@ -24,11 +25,6 @@ export interface CeilingDeps {
   /** Test seam: runs after the unlocked read, before the locked write. */
   beforeWrite?: () => void;
 }
-
-/** Printed by `show` while the deployment still speaks protocol 2 (M2). */
-export const CEILING_PROTOCOL2_NOTE =
-  "Note: the project reach takes effect only once this program and the deployment use the new " +
-  "device protocol; until then Full access allowed also lets restricted work reach as this OS user.";
 
 /** Thrown inside the locked update when the policy now on disk makes the target a widening. */
 class WideningNeedsConfirmation extends Error {}
@@ -94,7 +90,6 @@ export async function ceilingCommand(
       "The platform and organization Full access settings and this machine's runtime support " +
         "apply separately; the deployment's device page shows the effective permissions.",
     );
-    out(CEILING_PROTOCOL2_NOTE);
     return 0;
   }
   const next: OwnerCeilingPolicy = {
@@ -135,6 +130,11 @@ export async function ceilingCommand(
     err(`Cannot change ${policyPath(stateDir)}: ${(e as Error).message}`);
     return 1;
   }
+  noteCliPolicyChange(
+    stateDir,
+    `ceiling set fullAccess ${written.fullAccess ? "allow" : "deny"}, projectReach ` +
+      written.restrictedProjectReach,
+  );
   out("This machine's owner ceiling is now:");
   for (const line of describe(written)) out(line);
   if (written.restrictedProjectReach === "os-user")

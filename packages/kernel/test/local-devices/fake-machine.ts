@@ -1,14 +1,14 @@
 import {
   DEFAULT_SANDBOX_ROOTS,
-  type DeviceHello,
   type KernelCancel,
   type KernelReq,
-  parseDeviceFrame,
+  type LegacyDeviceHello,
+  parseLegacyDeviceFrame,
 } from "@capybara-hq/plugin-sdk";
 import WebSocket from "ws";
 import type { Answer } from "./test-holder.js";
 
-export const HELLO: DeviceHello = {
+export const HELLO: LegacyDeviceHello = {
   type: "hello",
   protocol: 2,
   programVersion: "0.1.0",
@@ -85,7 +85,7 @@ export class FakeMachine {
       this.ws.on("error", reject);
     });
     this.ws.on("message", (data) => {
-      const f = parseDeviceFrame(String(data), "kernel") as KernelReq | KernelCancel;
+      const f = parseLegacyDeviceFrame(String(data), "kernel") as KernelReq | KernelCancel;
       this.frames.push(f);
       for (const w of [...this.waiters]) {
         if (w.pred(f)) {
@@ -129,8 +129,8 @@ export class FakeMachine {
 
 /** Explicit test-only staged frames; the current fake's socket handshake remains protocol 2. */
 export const stagedHello = (
-  identity?: import("@capybara-hq/plugin-sdk").DeviceHelloV3["runtimeIdentity"],
-): import("@capybara-hq/plugin-sdk").DeviceHelloV3 => ({
+  identity?: import("@capybara-hq/plugin-sdk").DeviceHello["runtimeIdentity"],
+): import("@capybara-hq/plugin-sdk").DeviceHello => ({
   ...HELLO,
   protocol: 3,
   transport: { maxFrameBytes: 69632 },
@@ -153,8 +153,8 @@ export const stagedHello = (
   ...(identity && { runtimeIdentity: identity }),
 });
 export async function stagedRequest(raw: string) {
-  const { parseDeviceFrameV3 } = await import("@capybara-hq/plugin-sdk");
-  const frame = parseDeviceFrameV3(raw, "kernel");
+  const { parseDeviceFrame } = await import("@capybara-hq/plugin-sdk");
+  const frame = parseDeviceFrame(raw, "kernel");
   if (frame.type !== "req") throw new Error("Expected staged kernel request");
   return frame;
 }

@@ -48,7 +48,7 @@ const SETTINGS = {
   sandboxLimitOverrides: {},
   customConnectors: "allow",
   customSkills: "allow",
-  devicesAutoMode: { mode: "allowed", source: "default" },
+  devicesFullAccess: { permission: "allowed", source: "default" },
 };
 
 const SHA = "a".repeat(64);

@@ -1,12 +1,12 @@
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { KernelReq } from "@capybara-hq/plugin-sdk";
+import type { KernelRequest } from "@capybara-hq/plugin-sdk";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import type { MacOperationBackend } from "../src/exec/mac-operation-backend.js";
 import { PolicyStore } from "../src/policy-store.js";
-import { serveOp } from "../src/server-ops.js";
+import { serveOperationV3 } from "../src/server-ops.js";
 import { policyOpsPath } from "../src/state.js";
-import { FakeExecutor } from "./fake-kernel.js";
 
 /** Closing the policy lock's file fails (EIO) once the lock was taken: `fn` has already run. */
 let failClose = false;
@@ -22,13 +22,8 @@ vi.mock("node:fs", async (orig) => {
 });
 
 const source = { accountId: "acc_1", accountName: "Ada", via: "web" as const };
-const req = (args: unknown): KernelReq => ({
-  type: "req",
-  id: "x",
-  op: "policy",
-  args,
-  deadlineMs: 1000,
-});
+const req = (args: unknown) =>
+  ({ type: "req", id: "x", op: "policy", args, deadlineMs: 1000 }) as KernelRequest;
 
 let dir: string;
 beforeEach(() => {
@@ -43,11 +38,21 @@ describe("the policy lock's release", () => {
   it("a failed close after the write leaves the op applied", async () => {
     const store = new PolicyStore(dir);
     failClose = true;
-    const { res } = await serveOp(
-      new FakeExecutor(),
+    const report = {
+      version: 2 as const,
+      sequence: 0,
+      revision: "rev",
+      fullAccess: false,
+      restrictedProjectReach: "workspace" as const,
+      restrictedAllowedDomains: [],
+    };
+    const res = await serveOperationV3(
+      {} as MacOperationBackend,
+      { id: "dev" },
       req({ opId: "op_1", add: ["a.com"], source }),
       new AbortController().signal,
-      { policy: store },
+      undefined,
+      { store, report: () => report, reconcile: async () => {} },
     );
     expect(res).toMatchObject({ ok: true, result: { policy: { allowedDomains: ["a.com"] } } });
     expect(JSON.parse(readFileSync(policyOpsPath(dir), "utf8"))).toEqual([

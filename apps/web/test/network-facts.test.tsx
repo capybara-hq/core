@@ -20,7 +20,7 @@ const MEMBER = {
 const settings = (platformOff: boolean) => ({
   settings: { toolSearch: "on" },
   deployment: {
-    autoMode: { mode: "allowed", source: "default" },
+    fullAccess: { permission: "allowed", source: "default" },
     cloudNetwork: { allowHosts: [], orgHosts: "extend", off: platformOff },
   },
   effectiveNetwork: { mode: platformOff ? "allowlist" : "open", hosts: [] },

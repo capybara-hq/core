@@ -35,8 +35,11 @@ export const ERROR_CODES = {
   "org.last_owner": 409,
   "org.owner_required": 403,
   "org.sandbox_egress_not_allowed": 400,
-  /** The org asked for auto mode where the platform turned it off, or widened it through a token. */
-  "org.auto_mode_not_allowed": 400,
+  /**
+   * The org asked for Full permission (`fullAccess: allowed`) where the platform turned it off, or
+   * widened it through an API token or the Platform tool.
+   */
+  "org.full_access_not_allowed": 400,
   /** An org network allowance entry that is malformed, names a link-local address, or is over the cap. */
   "org.network_allowance_invalid": 400,
   "org.network_allowance_not_found": 404,
@@ -49,8 +52,8 @@ export const ERROR_CODES = {
   "org.external_sharing_not_allowed": 400,
   /** A deployment setting set in the startup config (file, Nacos or env): read-only in the admin console. */
   "deployment.setting_readonly": 409,
-  /** Turning the platform's auto mode on through an API token or the Platform tool (only off). */
-  "deployment.auto_mode_not_allowed": 400,
+  /** Allowing the platform's Full permission through an API token or the Platform tool (only off). */
+  "deployment.full_access_not_allowed": 400,
   /** Allowing external sharing at the platform level through an API token or the Platform tool. */
   "deployment.external_sharing_not_allowed": 400,
   /**
@@ -406,12 +409,6 @@ export const ERROR_CODES = {
   /** The device cannot change its network policy from the platform (cloud, or an older program). */
   "device.policy_unsupported": 409,
   /**
-   * The device's machine reports auto mode while the organization (or the platform) allows only
-   * sandbox mode (auto mode spec §4.3); checked at each command. The message names
-   * `capybara-device mode sandbox`.
-   */
-  "device.auto_mode_not_allowed": 403,
-  /**
    * B1: a cloud device's snapshot found applied limits it could not establish exactly; no operation
    * is admitted until a lifecycle action (a file reset) establishes them.
    */
@@ -432,7 +429,8 @@ export const ERROR_CODES = {
   "device.full_access_not_allowed": 409,
   /**
    * A device's mode is not a stored setting: a local device's mode lives on its machine
-   * (`capybara-device mode` or the device page's policy op), and a cloud device has none to choose.
+   * (`capybara-device ceiling set` or the device page's policy op), and a cloud device has none to
+   * choose.
    */
   "device.mode_on_device": 409,
   /**

@@ -9,6 +9,7 @@ import {
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DEVICE_DEFAULT_STATE_PATH } from "@capybara-hq/plugin-sdk";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
   type Credential,
@@ -46,6 +47,8 @@ describe("state", () => {
   it("stateDir follows XDG_CONFIG_HOME, else ~/.config", () => {
     expect(stateDir({ XDG_CONFIG_HOME: "/x" }, "/h")).toBe("/x/capybara-device");
     expect(stateDir({}, "/h")).toBe("/h/.config/capybara-device");
+    // the kernel refuses approvals under the SDK's copy of this default
+    expect(stateDir({}, "/h")).toBe(join("/h", DEVICE_DEFAULT_STATE_PATH.slice(2)));
   });
 
   it("writes the credential 0600 and reads it back", () => {
@@ -110,7 +113,8 @@ describe("state", () => {
       allowCredentials: [],
       cpu: null,
       memoryMb: null,
-      ownerCeiling: { fullAccess: true, restrictedProjectReach: "os-user" },
+      // the restricted default ceiling of a new setup (B-14)
+      ownerCeiling: { fullAccess: false, restrictedProjectReach: "workspace" },
     });
     writePolicy(dir, {
       allowedDomains: ["a.test"],

@@ -1,21 +1,19 @@
 import { describe, expect, it } from "vitest";
 import {
-  BACKGROUND_LAUNCH_LINE,
   DEFAULT_SANDBOX_ROOTS,
-  type DeviceHello,
   type DeviceLocalPolicySummary,
-  type DevicePolicyStatus,
   DeviceProtocolError,
-  isBackgroundLaunch,
   isDeviceBootId,
   isDeviceProjectName,
+  type LegacyDeviceHello,
+  type LegacyDevicePolicyStatus,
   MAX_DEVICE_LIST_ENTRIES,
   MAX_DEVICE_PROJECT_NAME_LENGTH,
   MAX_DEVICE_SCAN_RESULTS,
   MAX_NETWORK_BLOCKED_HOSTS,
   MAX_POLICY_OP_ID_LENGTH,
   MAX_RECENT_POLICY_OPS,
-  parseDeviceFrame,
+  parseLegacyDeviceFrame,
   parseOpResult,
   rootsOf,
 } from "../src/index.js";
@@ -33,24 +31,28 @@ const hello = {
 
 describe("device protocol", () => {
   it("parses a hello from the device", () => {
-    const f = parseDeviceFrame(JSON.stringify(hello), "device");
+    const f = parseLegacyDeviceFrame(JSON.stringify(hello), "device");
     expect(f.type).toBe("hello");
   });
 
   it("rejects a req sent by the device", () => {
     const req = { type: "req", id: "1", op: "stop", args: { reason: "revoked" }, deadlineMs: 5 };
-    expect(() => parseDeviceFrame(JSON.stringify(req), "device")).toThrow(DeviceProtocolError);
-    expect(parseDeviceFrame(JSON.stringify(req), "kernel").type).toBe("req");
+    expect(() => parseLegacyDeviceFrame(JSON.stringify(req), "device")).toThrow(
+      DeviceProtocolError,
+    );
+    expect(parseLegacyDeviceFrame(JSON.stringify(req), "kernel").type).toBe("req");
   });
 
   it("rejects a res without id", () => {
     const res = { type: "res", ok: true, result: null };
-    expect(() => parseDeviceFrame(JSON.stringify(res), "device")).toThrow(DeviceProtocolError);
+    expect(() => parseLegacyDeviceFrame(JSON.stringify(res), "device")).toThrow(
+      DeviceProtocolError,
+    );
   });
 
   it("rejects bad JSON and unknown types", () => {
-    expect(() => parseDeviceFrame("{", "device")).toThrow(DeviceProtocolError);
-    expect(() => parseDeviceFrame('{"type":"x"}', "device")).toThrow(DeviceProtocolError);
+    expect(() => parseLegacyDeviceFrame("{", "device")).toThrow(DeviceProtocolError);
+    expect(() => parseLegacyDeviceFrame('{"type":"x"}', "device")).toThrow(DeviceProtocolError);
   });
 
   it("rootsOf falls back to DEFAULT_SANDBOX_ROOTS", () => {
@@ -61,13 +63,15 @@ describe("device protocol", () => {
 
   it("rejects a hello with a relative root", () => {
     const bad = { ...hello, roots: { ...hello.roots, workspace: "workspace" } };
-    expect(() => parseDeviceFrame(JSON.stringify(bad), "device")).toThrow(DeviceProtocolError);
+    expect(() => parseLegacyDeviceFrame(JSON.stringify(bad), "device")).toThrow(
+      DeviceProtocolError,
+    );
   });
 
   it("rejects roots with a trailing slash, empty or .. segments, or control characters", () => {
     for (const workspace of ["/w/", "/", "/a//w", "/a/../w", "/a/..", "/a/\u0001w"]) {
       const bad = { ...hello, roots: { ...hello.roots, workspace } };
-      expect(() => parseDeviceFrame(JSON.stringify(bad), "device"), workspace).toThrow(
+      expect(() => parseLegacyDeviceFrame(JSON.stringify(bad), "device"), workspace).toThrow(
         DeviceProtocolError,
       );
       expect(() => parseOpResult("create", { roots: bad.roots }), workspace).toThrow(
@@ -79,7 +83,7 @@ describe("device protocol", () => {
   });
 
   const parse = (o: unknown, from: "device" | "kernel") => () =>
-    parseDeviceFrame(JSON.stringify(o), from);
+    parseLegacyDeviceFrame(JSON.stringify(o), from);
   const limits = {
     cpu: 1,
     memoryMb: 512,
@@ -142,8 +146,8 @@ describe("device protocol", () => {
   });
 
   it("rejects non-object frames", () => {
-    expect(() => parseDeviceFrame("[]", "device")).toThrow(DeviceProtocolError);
-    expect(() => parseDeviceFrame("null", "device")).toThrow(DeviceProtocolError);
+    expect(() => parseLegacyDeviceFrame("[]", "device")).toThrow(DeviceProtocolError);
+    expect(() => parseLegacyDeviceFrame("null", "device")).toThrow(DeviceProtocolError);
   });
 
   it("rejects a bad deadline, unknown op and bad args per op", () => {
@@ -317,7 +321,8 @@ describe("device protocol", () => {
       mode: "sandbox",
       allowedDomains: ["files.slack.com", "*.github.com"],
     };
-    const parseHello = (o: unknown) => parseDeviceFrame(JSON.stringify(o), "device") as DeviceHello;
+    const parseHello = (o: unknown) =>
+      parseLegacyDeviceFrame(JSON.stringify(o), "device") as LegacyDeviceHello;
 
     it("still parses a hello without them", () => {
       const h = parseHello(hello);
@@ -363,7 +368,7 @@ describe("device protocol", () => {
     });
 
     it("a policy frame carries the summary now; only the device sends it", () => {
-      const frame = (o: unknown) => parseDeviceFrame(JSON.stringify(o), "device");
+      const frame = (o: unknown) => parseLegacyDeviceFrame(JSON.stringify(o), "device");
       expect(frame({ type: "policy", policy: summary })).toEqual({
         type: "policy",
         policy: summary,
@@ -374,19 +379,20 @@ describe("device protocol", () => {
       });
       expect(frame({ type: "policy" })).toEqual({ type: "policy" });
       expect(() =>
-        parseDeviceFrame(JSON.stringify({ type: "policy", policy: summary }), "kernel"),
+        parseLegacyDeviceFrame(JSON.stringify({ type: "policy", policy: summary }), "kernel"),
       ).toThrow(DeviceProtocolError);
     });
   });
 
   describe("no projects on the policy summary", () => {
     const summary = { mode: "sandbox", allowedDomains: ["files.slack.com"] };
-    const parseHello = (o: unknown) => parseDeviceFrame(JSON.stringify(o), "device") as DeviceHello;
+    const parseHello = (o: unknown) =>
+      parseLegacyDeviceFrame(JSON.stringify(o), "device") as LegacyDeviceHello;
 
     it("drops a projects field a device still reports: the kernel keeps the projects", () => {
       const policy = { ...summary, projects: [{ name: "core", path: "/w/core" }] };
       expect(parseHello({ ...hello, policy }).policy).toEqual(summary);
-      expect(parseDeviceFrame(JSON.stringify({ type: "policy", policy }), "device")).toEqual({
+      expect(parseLegacyDeviceFrame(JSON.stringify({ type: "policy", policy }), "device")).toEqual({
         type: "policy",
         policy: summary,
       });
@@ -402,7 +408,8 @@ describe("device protocol", () => {
   });
 
   describe("the hello's home", () => {
-    const parseHello = (o: unknown) => parseDeviceFrame(JSON.stringify(o), "device") as DeviceHello;
+    const parseHello = (o: unknown) =>
+      parseLegacyDeviceFrame(JSON.stringify(o), "device") as LegacyDeviceHello;
 
     it("keeps an absolute home and drops a malformed one", () => {
       expect(parseHello({ ...hello, home: "/Users/ann" }).home).toBe("/Users/ann");
@@ -416,7 +423,8 @@ describe("device protocol", () => {
   });
 
   describe("the hello's boot identity", () => {
-    const parseHello = (o: unknown) => parseDeviceFrame(JSON.stringify(o), "device") as DeviceHello;
+    const parseHello = (o: unknown) =>
+      parseLegacyDeviceFrame(JSON.stringify(o), "device") as LegacyDeviceHello;
 
     it("keeps a well-formed boot identity and drops a malformed one", () => {
       for (const bootId of ["0f2a9c1e-7b1d-4b8e-9d5e-1c2b3a4d5e6f", "boottime-1763370000.123456"])
@@ -653,7 +661,7 @@ describe("device protocol", () => {
     });
 
     it("policyStatus args and result round-trip", () => {
-      const f = parseDeviceFrame(JSON.stringify(req("policyStatus", { opId })), "kernel");
+      const f = parseLegacyDeviceFrame(JSON.stringify(req("policyStatus", { opId })), "kernel");
       expect(f).toEqual({ ...req("policyStatus", { opId }), type: "req" });
       for (const args of [{}, { opId: "" }, { opId: 1 }, { opId: "a:b" }]) {
         expect(parse(req("policyStatus", args), "kernel"), JSON.stringify(args)).toThrow(
@@ -664,7 +672,7 @@ describe("device protocol", () => {
         mode: "sandbox",
         allowedDomains: ["a.example.com"],
       };
-      const goods: DevicePolicyStatus[] = [
+      const goods: LegacyDevicePolicyStatus[] = [
         { outcome: "applied", policy },
         { outcome: "refused", message: "This device does not accept network changes." },
         { outcome: "started" },
@@ -689,7 +697,7 @@ describe("device protocol", () => {
     });
 
     it("hello recentOps keeps the last entry of a repeated op id", () => {
-      const h = parseDeviceFrame(
+      const h = parseLegacyDeviceFrame(
         JSON.stringify({
           ...hello,
           recentOps: [
@@ -699,7 +707,7 @@ describe("device protocol", () => {
           ],
         }),
         "device",
-      ) as DeviceHello;
+      ) as LegacyDeviceHello;
       expect(h.recentOps).toEqual([
         { opId: "b", outcome: "applied" },
         { opId: "a", outcome: "refused" },
@@ -708,7 +716,7 @@ describe("device protocol", () => {
 
     it("hello recentOps keeps valid entries and drops the rest, at most 100", () => {
       const parseHello = (o: unknown) =>
-        parseDeviceFrame(JSON.stringify(o), "device") as DeviceHello;
+        parseLegacyDeviceFrame(JSON.stringify(o), "device") as LegacyDeviceHello;
       expect(parseHello(hello).recentOps).toBeUndefined();
       expect(parseHello({ ...hello, recentOps: "x" }).recentOps).toBeUndefined();
       const h = parseHello({
@@ -805,17 +813,5 @@ describe("device protocol", () => {
         );
       }
     });
-  });
-});
-
-describe("isBackgroundLaunch", () => {
-  it("is true only for a command whose first line is the launch line", () => {
-    expect(BACKGROUND_LAUNCH_LINE.startsWith("#")).toBe(true);
-    expect(isBackgroundLaunch(`${BACKGROUND_LAUNCH_LINE}\nset -e`)).toBe(true);
-    expect(isBackgroundLaunch(BACKGROUND_LAUNCH_LINE)).toBe(true);
-    expect(isBackgroundLaunch(`${BACKGROUND_LAUNCH_LINE} x\nset -e`)).toBe(false);
-    expect(isBackgroundLaunch(`echo hi\n${BACKGROUND_LAUNCH_LINE}`)).toBe(false);
-    expect(isBackgroundLaunch(` ${BACKGROUND_LAUNCH_LINE}\n`)).toBe(false);
-    expect(isBackgroundLaunch("sleep 300 &")).toBe(false);
   });
 });

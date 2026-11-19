@@ -579,7 +579,7 @@ describe("a cloud device's mode switch (auto mode spec §4.3, hardening D2)", ()
     const off = await owner({
       method: "PATCH",
       url: `/api/v1/orgs/${orgId}/settings`,
-      payload: { autoMode: "off" },
+      payload: { fullAccess: "off" },
     });
     expect(off.statusCode, off.body).toBe(200);
     try {
@@ -594,7 +594,7 @@ describe("a cloud device's mode switch (auto mode spec §4.3, hardening D2)", ()
       await owner({
         method: "PATCH",
         url: `/api/v1/orgs/${orgId}/settings`,
-        payload: { autoMode: null },
+        payload: { fullAccess: null },
       });
     }
   });

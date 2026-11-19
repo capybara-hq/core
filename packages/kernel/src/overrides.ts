@@ -71,9 +71,9 @@ import { EMBED_TOKEN_CLOCK } from "./ui/embed-token.js";
  * - `EXTENSION_NET_SEAMS`: `ctx.net`'s DNS and dispatcher (a hostname resolving to a private address
  *   served by a loopback fake);
  * - `APP_INTERCEPTOR`: one more global interceptor (a probe of the matched routes);
- * - `PERMISSION_CONTEXT_ACTIVATION`: turns the dormant recorded permission context producers on
- *   (the request boundary and the managed device context writer) before their paired activation
- *   flips the production default.
+ * - `PERMISSION_CONTEXT_ACTIVATION`: the recorded permission context producers (the request
+ *   boundary and the managed device context writer); production leaves them on, and a test may
+ *   turn them off to exercise the dormant state.
  */
 interface KernelSeams {
   [AGENT_LOOP_FACTORY]: AgentLoopFactory;

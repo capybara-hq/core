@@ -1,9 +1,5 @@
 import { homedir } from "node:os";
-import { DEVICE_PROTOCOL_VERSION, STAGED_DEVICE_PROTOCOL_VERSION } from "@capybara-hq/plugin-sdk";
-import { type Connection, connect } from "../client.js";
-import { CommandLog } from "../command-log.js";
-import { sandboxUnavailableMessage } from "../exec/sandbox-messages.js";
-import type { Executor } from "../exec/types.js";
+import type { Connection } from "../client.js";
 import { type ProcessLookup, readRunningPid, removePid, writePid } from "../pid.js";
 import { PolicyStore } from "../policy-store.js";
 import { hasLoginService } from "../service/installed.js";
@@ -16,11 +12,6 @@ import { PROGRAM_VERSION } from "../version.js";
 
 export interface StartDeps {
   stateDir: string;
-  /**
-   * Builds the executor for the credential's mode (the OS and Docker executors). The store
-   * follows policy.json, so executors read the policy at each command.
-   */
-  createExecutor?: (cred: Credential, policy: PolicyStore) => Promise<Executor> | Executor;
   out: (line: string) => void;
   err: (line: string) => void;
   /** Where the login service would be installed, and on which platform (default: this machine). */
@@ -31,20 +22,12 @@ export interface StartDeps {
   ps?: ProcessLookup;
   /** The environment (default: process.env): tells whether the service manager started this. */
   env?: Record<string, string | undefined>;
-  connect?: typeof connect;
   /**
-   * Builds the staged (protocol 3) program's parts for the credential: the binder, one operation
-   * backend per bound generation, the per-credential session states and the owner policy. Used
-   * only when the protocol is the staged one.
+   * Builds the program's parts for the credential: the binder, one operation backend per bound
+   * generation, the per-credential session states and the owner policy.
    */
   createStaged?: (cred: Credential, policy: PolicyStore) => Promise<StagedDevice> | StagedDevice;
   connectStaged?: typeof connectStaged;
-  /**
-   * Test seam: the device protocol this program speaks (default: the SDK's
-   * `DEVICE_PROTOCOL_VERSION`). Production never sets it: the staged path is selected only by
-   * that constant.
-   */
-  protocol?: number;
 }
 
 /** Printed once when start converted an old-format policy.json to version 2. */
@@ -73,9 +56,7 @@ export async function start(deps: StartDeps): Promise<number> {
     err("Not logged in. Run capybara-device login --url <url> first.");
     return 0;
   }
-  // the staged (protocol 3) path is selected only by the protocol constant
-  const staged = (deps.protocol ?? DEVICE_PROTOCOL_VERSION) === STAGED_DEVICE_PROTOCOL_VERSION;
-  if (staged ? deps.createStaged === undefined : deps.createExecutor === undefined) {
+  if (deps.createStaged === undefined) {
     err("capybara-device start: no execution backend is available in this build");
     return 1;
   }
@@ -99,7 +80,7 @@ export async function start(deps: StartDeps): Promise<number> {
     err(`capybara-device is already running (pid ${running}). Stop it first: capybara-device stop`);
     return 1;
   }
-  // Signals arriving while the executor is still being prepared are applied once connected.
+  // Signals arriving while the program is still being prepared are applied once connected.
   let conn: Connection | undefined;
   let stopRequested = false;
   let drainRequested = false;
@@ -117,46 +98,13 @@ export async function start(deps: StartDeps): Promise<number> {
   proc.on("SIGUSR2", onDrain);
   writePid(stateDir, proc.pid, PROGRAM_VERSION);
   try {
-    if (staged)
-      return await serveStaged(deps, cred, {
-        stopRequested: () => stopRequested,
-        drainRequested: () => drainRequested,
-        connected: (c) => {
-          conn = c;
-        },
-      });
-    let executor: Executor;
-    let policy: PolicyStore;
-    try {
-      // An invalid policy.json stops the start; later, a broken edit keeps the last good policy.
-      // The one-time explicit conversion to the version 2 format (locked, atomic, exact).
-      const converted = convertPolicyFile(stateDir) === "converted";
-      policy = new PolicyStore(stateDir, { err });
-      if (converted) out(legacyPolicyNotice(policyMode(policy.current())));
-      executor = await (deps.createExecutor as NonNullable<StartDeps["createExecutor"]>)(
-        cred,
-        policy,
-      );
-      // Without the OS sandbox the device keeps serving: auto mode works, and sandbox mode
-      // refuses every command with this reason. A policy set to sandbox says so at start.
-      const sandbox = executor as { available?: boolean; unavailableReason?: string };
-      if (sandbox.available === false && policyMode(policy.current()) === "sandbox") {
-        err(sandboxUnavailableMessage(sandbox.unavailableReason ?? ""));
-      }
-    } catch (e) {
-      err(`Cannot start: ${(e as Error).message}`);
-      return 1;
-    }
-    if (stopRequested) return 0;
-    // One store: the executor's commands, the hello summary and the policy op see the same policy.
-    conn = (deps.connect ?? connect)(cred, executor, {
-      log: new CommandLog(stateDir),
-      err,
-      policy,
+    return await serveStaged(deps, cred, {
+      stopRequested: () => stopRequested,
+      drainRequested: () => drainRequested,
+      connected: (c) => {
+        conn = c;
+      },
     });
-    if (drainRequested) conn.drain();
-    out(`capybara-device: serving device ${cred.deviceId} (${cred.mode} mode)`);
-    return await conn.done;
   } finally {
     proc.off("SIGTERM", onStop);
     proc.off("SIGINT", onStop);
@@ -166,9 +114,9 @@ export async function start(deps: StartDeps): Promise<number> {
 }
 
 /**
- * The staged (protocol 3) start (permission activation W3-M): the policy store, the staged parts
- * (binder, per-generation backends, per-credential session state), recovery of a persisted
- * binding, then {@link connectStaged}. Dormant until the protocol constant selects it.
+ * The start proper (device protocol 3): the policy store, the program's parts (binder,
+ * per-generation backends, per-credential session state), recovery of a persisted binding, then
+ * {@link connectStaged}.
  */
 async function serveStaged(
   deps: StartDeps,
@@ -183,7 +131,7 @@ async function serveStaged(
   let device: StagedDevice;
   try {
     const converted = convertPolicyFile(stateDir) === "converted";
-    const policy = new PolicyStore(stateDir, { err });
+    const policy = new PolicyStore(stateDir);
     if (converted) out(legacyPolicyNotice(policyMode(policy.current())));
     device = await (deps.createStaged as NonNullable<StartDeps["createStaged"]>)(cred, policy);
   } catch (e) {
@@ -198,7 +146,7 @@ async function serveStaged(
     err(`The instance binding was not recovered: ${(e as Error).message}`);
   }
   if (signals.stopRequested()) {
-    // stopped before it connected: release what construction acquired (the Docker executor)
+    // stopped before it connected: release what construction acquired
     await device.dispose().catch((e: unknown) => err(`Cleanup failed: ${(e as Error).message}`));
     return 0;
   }

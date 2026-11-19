@@ -286,9 +286,23 @@ it("request insertion loses to supersession", async () => {
     expectedRevision: 0,
   });
   release.resolve();
-  expect(await running).toMatchObject({ code: "conflict" });
+  // the activated ask path fails closed: the superseded insertion refuses the call, not the run
+  expect(await running).toMatchObject({ kind: "done" });
   expect(await f.db.selectFrom("approvals").selectAll().execute()).toEqual([]);
   expect(f.effects()).toBe(0);
+  const [refused] = await f.db
+    .selectFrom("conversation_events")
+    .select("payload")
+    .where("type", "=", "tool_result")
+    .where("run_id", "=", f.runId)
+    .execute();
+  expect(refused?.payload).toMatchObject({
+    isError: true,
+    review: { decision: "deny", by: "rule" },
+  });
+  expect((refused?.payload as { content?: string } | undefined)?.content).toContain(
+    "The permission check for this call could not be completed",
+  );
 });
 
 it("two different grant issuances race for one exact binding on distinct PostgreSQL sessions", async () => {
@@ -363,7 +377,12 @@ it("two different grant issuances race for one exact binding on distinct Postgre
         );
       expect(
         await kernel.app.get(PermissionCallGrants).findForAdmission(candidate.binding),
-      ).toEqual({ id: rows[0]?.id, expansion: rows[0]?.expansion });
+      ).toEqual({
+        id: rows[0]?.id,
+        expansion: rows[0]?.expansion,
+        scopeKind: rows[0]?.scope_kind,
+        source: rows[0]?.source,
+      });
     });
   await writeFile(
     "/tmp/capybara-task7-replica-provenance.json",

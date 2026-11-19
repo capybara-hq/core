@@ -10,6 +10,7 @@ import { KernelConfigSchema } from "../../../src/config/schema.js";
 import { EventLog } from "../../../src/conversations/event-log.js";
 import { createDb } from "../../../src/db/pool.js";
 import { BuiltinTools } from "../../../src/tools/builtins/builtin-tools.js";
+import { runClaimed, startClaimedRun } from "../../helpers/managed-calls.js";
 import { startKernel, type TestKernel } from "../../helpers/runs.js";
 import { seedDevice } from "../../helpers/sandbox.js";
 
@@ -77,6 +78,10 @@ describe("read before write (two replicas)", () => {
     await sql`INSERT INTO capybara.conversations (id, org_id, agent_id, account_id, device_id)
       VALUES (${conversationId}, ${orgId}, ${agentId}, ${accountId}, ${deviceId})`.execute(raw);
 
+    await sql`INSERT INTO capybara.memberships (org_id, account_id, role)
+      VALUES (${orgId}, ${accountId}, 'owner')`.execute(raw);
+    // the managed route admits a call only under the current claim of a running run
+    const { runId, claim } = await startClaimedRun(a, raw, conversationId, accountId);
     let step = 0;
     /** Runs a builtin on a replica and logs its result the way the tool pipeline does. */
     const use = async (k: TestKernel, name: string, input: unknown) => {
@@ -87,12 +92,14 @@ describe("read before write (two replicas)", () => {
       if (!tool) throw new Error(`no builtin ${name}`);
       const callId = `c${++step}`;
       try {
-        const r = await tool.run(input, {
+        const r = await runClaimed(k, raw, tool, input as Record<string, unknown>, {
           orgId,
           accountId,
           agentId,
           conversationId,
           callId,
+          runId,
+          executionClaim: claim,
           signal: AbortSignal.timeout(30_000),
         });
         if ("content" in r) {

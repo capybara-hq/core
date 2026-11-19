@@ -52,6 +52,15 @@ interface SandboxProvider {
 }
 ```
 
+On the activated tree (device protocol 3, `PERMISSION_CONTEXT_ACTIVE`) the kernel never calls the raw `exec` / `readFile` /
+`writeFile` / `stat` / `list` / `scan`, `killAll` or `killTagged` for a tool: every builtin enters a device through the
+permission-scoped surface (`packages/plugin-sdk/src/sandbox-operation.ts`): `permissionSupport(h)`, `operation(h, scope)`
+(the admitted `SandboxOperationScope`: filesystem roots, network, actor and tag come only from it), `prepare` (trusted staging
+of skills and attachments), `browse` (owner metadata only), `revokeOperation(h, ref)` and `background` (`start` / `status` /
+`tail` / `readOutput` / `stop` by exact `SandboxExecutionRef`). A provider without that surface makes its devices
+`unsupported`: missing operation support never falls back to the raw methods. The raw methods stay in the `sandbox@2`
+signature for the lifecycle and the conformance suite.
+
 Instance name: `cap-device-<deviceId>` for both the file system and the instance. Old per-conversation instances (`cap-<conversationId>`) are removed by the one-off
 job `devices-legacy-cleanup`, which calls `destroyByName` and `destroyFileSystemByName` on every `sandboxes` row (see Lifecycle).
 
@@ -67,7 +76,7 @@ job `devices-legacy-cleanup`, which calls `destroyByName` and `destroyFileSystem
 - `exec` carries `actor: { accountId, conversationId }` for audit and attribution; providers record it and must not use it for anything else in phase 1.
 
 `glob` / `grep` / `edit` are composed by the kernel from `exec` + `readFile` / `writeFile`; the provider does not implement them. So the image must have GNU `find`
-(`-print0`) and `grep` (`-rnHIE`, `--include`), `timeout`, `setsid`, `pkill` / `pgrep`.
+(`-print0`) and `grep` (`-rnHIE`, `--include`) and `timeout`. Background tasks need no shell tools of the image (below).
 
 ### Semantics the kernel relies on
 
@@ -93,8 +102,8 @@ Every provider must follow these; the kernel's behaviour below assumes them. How
   `timeout -s KILL <timeoutMs + a few seconds>`. When a kernel replica crashes, the provider-side timer disappears with it, and disconnecting does not end the command;
   this limit guarantees it cannot run indefinitely in parallel with the next lock holder's commands.
 - **killAll**: kill every command started through `exec` that is still running (SIGKILL by process group and session); processes moved to the background in a new session are not guaranteed.
-  The kernel calls it only where no other holder (any session of the device) can be running a command (see "Takeover per holder" below): under the exclusive lease,
-  before the downgrade, right after recovering from `suspended` (an E2B pause preserves processes too). Crashed holders are killed by tag, never with `killAll`. When the exec that kills processes cannot even start (process table exhausted),
+  The kernel no longer calls it (permission runtime cutover B-1): a resumed, failed-update or quarantined instance and a crashed holder are cleaned up by exact
+  operation revokes (`revokeOperation`, see "Takeover per holder" below). The method stays in the `sandbox@2` signature. When the exec that kills processes cannot even start (process table exhausted),
   Docker falls back to `restart?t=0` and E2B falls back to pause + a `connect {memory: false}` cold start, which also end live siblings' commands; both log a
   warn and the call returns normally.
 - **Concurrent use (`concurrentExec`, `killTagged`, `tag`; both required)**: all sessions of a device and their sub-agents share one instance, so the kernel calls
@@ -127,17 +136,20 @@ Every provider must follow these; the kernel's behaviour below assumes them. How
   name and paths the mode cannot reach (`node_modules` and a macOS `Library` may be skipped); a missing `base` is `[]`. Entries only, never
   file contents. The kernel checks every answer again (shape, inside the base and the mode, the name rule, the bound). A cloud provider
   answers inside the container's workspace in both modes (the kernel scopes a cloud device's projects to it).
-- **Background tasks** (`Bash` `run_in_background`, spec `docs/superpowers/specs/2026-11-05-background-bash-design.md` §4; no contract
-  change): the kernel launches a task with one short `exec` (`cwd: /workspace`, relative paths `.capybara/tasks/<id>.*`) that runs
-  `setsid nohup sh -c 'timeout -s KILL <s> bash <id>.sh; echo $? > <id>.exit'` in the background and prints the session id; liveness is
-  `pgrep -s <sid>`, stopping is `pkill -TERM|-KILL -s <sid>`. So the sandbox needs `sh`, `bash`, `setsid`, `nohup`, `timeout`, `pkill -s`,
-  `pgrep -s` and `base64` (a provider without them fails the launch with a readable error), and `exec` must return once its own process and stdio end,
-  without waiting for a detached session. The exec wrapper's abort, timeout, `killTagged` and `killAll` don't reach a task, and a task holds
-  no lease while it runs. Tasks don't survive a Docker suspend or a rebuild (the poll marks them `lost`); a task marked lost while its
-  process may live on (an E2B pause keeps processes) is `kill_pending`, and `SandboxService` kills those sessions right after resuming that
-  instance, under the exclusive lease next to its `killAll`. The poll and `TaskOutput` / `TaskStop` use `SandboxService.ifRunning`: a shared
-  lease only on a `running` row of the task's instance, never creating or resuming one. sandbox-fake puts node shims for `setsid`,
-  `timeout`, `pkill -s` and `pgrep -s` first on its PATH (macOS has none) and kills an instance's processes on `suspend` and `destroy`.
+- **Background tasks** (`Bash` `run_in_background`, permission runtime cutover 8.2-8.4, `packages/kernel/src/background/managed.ts`):
+  the kernel reserves the task row, writes the durable launch intent and calls `background.start(h, scope, { command,
+  timeoutMs, maxOutputBytes, taskId, outputPath, retainUntilMs, instanceGeneration })` under the admitted operation scope; the
+  output artifact is `${workingRoot}/.capybara/tasks/<taskId>.out` (never a caller path). The provider persists exact ownership
+  before it acknowledges, returns a `SandboxExecutionRef` (a retry of the same generation, operation and input returns the same
+  ref) and keeps the starting grants for the execution's lifetime. The poll, `TaskOutput` and `TaskStop` act only by that exact
+  ref on its exact recorded generation, through `SandboxService.ifRunning` (a shared lease only on a running instance of that
+  generation, never creating, resuming or rebuilding one): `status`, `readOutput` (an append-only prefix, at most 65,536 bytes
+  a read), `tail` and `stop` (a persisted pending cancellation when unreachable, applied before an explicit resume runs
+  work). No session id, PID or shell script is built or signalled (`test/background/legacy-removal.test.ts` scans the whole
+  kernel for the SID tools). A task holds no lease while it runs and counts against `sandbox.background.maxTasks`; a revoked
+  start is cancelled by its operation id (`revokeOperation`), and one on an incarnation that no longer runs becomes a
+  retirement member (below). Rows left by the old launcher (`launch_state = 'legacy'`) are never read or stopped live: they
+  belong to the legacy retirement.
 - **Cloud installed evidence** (B-15, `sandbox/permission-runtime-reports.ts`): a cloud device has no installed binding.
   Under the lifecycle lease the kernel reads `permissionSupport(handle)` (bounded at 30 s) from a just-created instance
   (recorded in the `commitHandle` transaction), after every resume, and whenever the recorded report is stale
@@ -166,8 +178,9 @@ Every provider must follow these; the kernel's behaviour below assumes them. How
   `update`, `recreate`, a gone instance or a failure leave the marker and its file reset action.
 - **Legacy retirement** (permission runtime cutover 8.5, migration 0157, `sandbox/legacy-retirement.ts`):
   - **Freeze.** `LegacyRetirementStore.freeze` writes the freeze row under the exclusive platform authority lock, then enumerates
-    before it returns. Every SID launch checks the freeze under the shared lock right before its dispatch, recording the exact
-    incarnation (provider and generation) it dispatches into.
+    before it returns. An R1 (protocol 2) kernel checked the freeze under the shared lock right before each SID launch's
+    dispatch, recording the exact incarnation (provider and generation) it dispatched into; this release launches no SID task
+    and only reads those marks.
   - **Obligations.** One per device, provider and exact instance generation, for every legacy row whose processes may live on and
     for each revoked managed start on an incarnation that no longer runs. A historical reservation without a recorded incarnation
     is `unknown`, never the current instance.
@@ -211,7 +224,7 @@ Every provider must follow these; the kernel's behaviour below assumes them. How
     `device.restart_required`. With no boot recorded it never resolves and answers `device.replace_required`: delete the device
     and connect the computer as a new one.
   - **What never clears an obligation.** A local destroy, a service restart, a new generation, a timeout or a SID.
-  - **After the freeze.** `killPendingTasks` neither signals nor clears kill marks.
+  - **After the freeze.** Nothing in `SandboxService` signals a SID or clears kill marks (the old `killPendingTasks` is gone).
   - **`ifRunning`.** It refuses legacy SID polls, stops and reads and staged browse on such a device (`RetirementPendingError`).
     Only exact-ref managed drains pass `exactRef: true`.
   - **Freeze state.** `freeze()` returns once its own enumeration settled (`scanUntilStable`) and records `enumerated_at`
@@ -255,6 +268,9 @@ Every provider must follow these; the kernel's behaviour below assumes them. How
        `owner_full_access` NULL. Then R2, gated on `retired` (below). Deploying R2, again stop and drain every
        replica of the previous release before the first R2 worker runs (its retirement worker must be the only one
        settling `exact-cancelled` obligations, as in step 1).
+    Operator notes: upgrade the kernel before the devices at R2 (a v3 device that reaches a kernel not yet on R2 gets 426
+    "Update capybara-device"); running legacy background rows finish only after the freeze (step 4), and until then each
+    holds a background slot and keeps its instance from idling.
   - **Release gate.** It passes on `retired`. With `abandoned > 0` it also needs the operator to acknowledge: "N old incarnations
     were abandoned with their devices; legacy processes may still run on those computers; no device can reuse them".
 
@@ -264,7 +280,7 @@ Every provider must follow these; the kernel's behaviour below assumes them. How
   mechanism implements it: `auto` runs commands with the environment's own capability (local: the
   owner's machine; cloud: the container is the boundary), `sandbox` adds the OS sandbox on a local
   device and the allowlist network on a cloud one. The kernel computes one effective mode per use,
-  `effectiveDevicePolicy`, from the platform's `devices.autoMode`, the org's `autoMode` and, on a
+  `effectiveDevicePolicy`, from the platform's `devices.fullAccess`, the org's `fullAccess` and, on a
   local device, the machine's own reported mode (`packages/kernel/src/sandbox/modes.ts`, read live
   in the caller's transaction). Only the machine turns a local device's auto on; the platform, the
   org and the web may narrow to `sandbox`, and a cloud device's owner may clear that narrowing on
@@ -375,7 +391,7 @@ The kernel owns it; the extension implements only primitives. **Do not do schedu
 - **Leases** (phase C, `packages/kernel/src/sandbox/leases.ts`, spec `docs/superpowers/specs/2026-10-26-subagents-design.md` §10): using a sandbox recorded
   `running` takes a **shared** lease (up to `sandbox.maxConcurrentCommands`, default 6, hot, shared by all sessions of the device):
   every sandbox tool, attachment sync, `Skill` copies. Every lifecycle change (create instance, first use, rebuild after `gone`, `resume`, provider switch,
-  `suspend`, `destroy`, `killAll` after resume) takes the **exclusive** lease, alone. Keys: `capk:sandbox:<env>` (the lock key: an exclusive token or the literal `shared`), `capk:sandbox-users:<env>` (zset of shared tokens by expiry), `capk:sandbox-intent:<env>`
+  `suspend`, `destroy`, the exact revocation after a resume) takes the **exclusive** lease, alone. Keys: `capk:sandbox:<env>` (the lock key: an exclusive token or the literal `shared`), `capk:sandbox-users:<env>` (zset of shared tokens by expiry), `capk:sandbox-intent:<env>`
   (an exclusive waiter's intent: new shared leases wait, writer preference), `capk:sandbox-holders:<env>` (holder records), `capk:sandbox-path:<env>:<sha256>`.
   Every key carries a TTL, never shortened by a holder for a TTL another holder set: the lease keys (`capk:sandbox:<env>`, `capk:sandbox-users:<env>`)
   60 s (`SANDBOX_LOCK_TTL_MS`; the lease is a `LockService` shared lease, `tryShared` / `tryExclusive` in `infra/lock`, renewed every TTL/3 and lost at
@@ -392,11 +408,29 @@ The kernel owns it; the extension implements only primitives. **Do not do schedu
   An instance is named by its handle **and** the row's `created_at` (set by the fenced write after each `create`): sandbox-docker's handle is the instance
   name, the same after a rebuild, so the handle alone would make every holder rebuild in turn and wipe the instance the previous one had just built.
 - **Takeover per holder**: each holder records itself in `capk:sandbox-holders:<env>` (TTL `maxCommandSeconds` + 10 min) before its provider calls,
-  refreshes the record before every `exec`, and deletes it **before** releasing its lease. Every acquirer claims records without a live lease (crashed
-  holders) atomically and kills only their commands with `killTagged` (every provider has it; other conversations of the device may be running commands).
-  `killAll` runs only under the exclusive lease, before the downgrade, on an instance that acquirer just resumed from `suspended`: nobody else can hold
-  it, and that one call also covers the crashed holders' records it claims. A newly created instance has nothing to kill (records found then are only
-  claimed). The claim removes the records before the kill: an acquirer that crashes in between leaves those commands to the in-sandbox time limit.
+  refreshes the record before every `exec`, and deletes it **before** releasing its lease. The operations a holder admits carry its lease token as
+  their holder. Nothing is ever `killAll`ed or `killTagged` (permission runtime cutover B-1); cleanup is exact, by operation id:
+  - **Crashed holder.** Every acquirer reads the records without a live lease (`SandboxLeases.deadHolders`, which leaves them in place), owes each
+    token's revocation in an outbox row (`SandboxOperationIntents.oweHolderRevocations`, job `sandbox-holder-revoke-<deviceId>-<token>`), and only then
+    forgets the records (`forgetHolders`). It then revokes the holder's admitted, dispatching and started-or-unknown intents inline (`revokeHolders`);
+    if that fails, the maintenance worker's job retries it. If the outbox write itself fails, the record stays for the next acquirer. A record whose
+    TTL lapses before anyone reads it is dropped unowed (its operations are past their device-enforced deadline).
+  - **Incarnation nobody else holds.** Under the exclusive lease, on an instance just resumed from `suspended`, after a failed limits change on it,
+    in the `reconcileLimits` resume and in a `quarantine` that cannot suspend, `revokeIncarnation` revokes every admitted, dispatching and
+    started-or-unknown intent of that provider and instance generation (no live dispatcher can exist). On a resume it runs before the row says
+    `running`; if it fails, the instance is suspended again (best effort) and the use fails, so the next resume revokes again.
+    `background-running` intents keep their starting grant.
+  - **Revoked launches.** A revoked `backgroundStart` with no exact ref ends its task in the same transaction (`lost`, a model-readable reason),
+    freeing its `maxTasks` slot; the exact revoke stays owed.
+  - **Delivery.** Each revocation writes `sandbox-operation-revoke-<operationId>` outbox jobs, which deliver `revokeOperation` until acknowledged.
+    The holder also delivers the owed revokes of the instance inline before it runs anything (after a resume, or when it found crashed holders).
+    That inline delivery is best effort, as the old `killAll` was: at most 100 per call, nothing without `revokeOperation`, and a failure only
+    warned. The owed jobs keep every revoke durable. A revoked exec, read or write whose incarnation no
+    longer runs is acknowledged once that incarnation provably ended: its confirmed destruction is
+    recorded (`device_instance_destructions`), or the operation is past its admission deadline plus
+    `maxCommandSeconds` and a 10-minute margin (the in-sandbox time limit); otherwise it stays owed. A
+    revoked start is acknowledged only after a verified end: a `lost` task record (a launch revoked or
+    given up before its ref was known) is stopped by the late ref first.
   There is no single-holder path and no single "sandbox in use" marker (the `capk:sandbox-busy:<env>` key of earlier kernels is neither read nor written);
   the cap is always `sandbox.maxConcurrentCommands`.
 - **Kernel file writes per path**: `Write`, `Edit`, attachment sync (its marker) and `Skill` copies (the skill's marker) take a per-path
@@ -477,14 +511,47 @@ The kernel owns it; the extension implements only primitives. **Do not do schedu
   renamed into git's subtrees keeps contents Seatbelt never saw; owners are advised to set
   `git config --global safe.bareRepository explicit` (documented, never changed automatically).
 
-## Local file-read ceiling
+## Local file access on protocol 3
 
-Device protocol v2 requires `limits: { mode }` on `readFile` and `stat`, just as `list` and
-`scan` do. `LocalDeviceProvider` resolves the current org ceiling for every read, never from the
-instance handle. The device intersects it with its live local choice and routes reads through
-`SwitchingExecutor.readerFor`, independent of the latest command and its 60-second window.
-Only file writes still use that window; their command-review behavior is unchanged. Kernels and
-device programs upgrade together: protocol v1 connections are refused, not silently adapted.
+A protocol 3 machine runs work only under an admitted operation scope: `LocalDeviceProvider.staged`
+(`packages/kernel/src/local-devices/local-device-provider.ts`) is the `@local` registration, and its raw
+`exec` / `readFile` / `writeFile` / `stat` / `list` / `scan` refuse with `SandboxPermissionUnsupportedError` before anything
+is queued, while `killAll` / `killTagged` queue nothing. Reads and writes go through `operation(h, scope)` (the scope's read
+and write roots, the frame-sized `readFile` cap of `devices.local.maxFrameBytes`), staging through `prepare`, owner browsing
+through `browse`, commands through the request-bound execution adapter (the admitted call grants, cut to the org's current
+limits; a host the limits now refuse fails the call). The machine re-checks every scope against its owner ceiling. Kernels and
+device programs upgrade together: a protocol 2 device is refused (426, "Update capybara-device"), and a protocol 3 device that
+reaches a kernel still on protocol 2 gets the same 426 from that kernel, so upgrade the kernel first.
+
+## Per-call sandbox escalation
+
+An approved escalated `Bash` call (approval profiles design, "Per-call sandbox escalation") is
+admitted with the conversation's restricted `profile` and full reach (`filesystem: device`,
+`network: environment`) for its command only (exec or backgroundStart; its native methods keep the
+base scope). "Needs Full" is therefore the Full access profile or a full reach, never the profile
+name alone: `isFullExecutionScope` (`sandbox/operation-authority-types.ts`) drives the provider support check
+(`held-operations.ts`) and the Full ceiling revocation predicates (`permission-ceiling-writes.ts`,
+`owner-report.ts`, `policy-summary.ts`), and the device's `intersectOperation` decides the same way,
+so the owner's Full ceiling bounds an escalation exactly as it bounds Full access. Admission
+(`resolveInvocation`) refuses an escalation grant when the snapshot's `escalationRefusal` is set
+(no Full ceiling, a runtime without Full support now, an unattended run). The device's
+`commands.log` writes `isolation: "full"` and `grantSource: "call approval"` for such an operation,
+never the command. E2B is Full only, so escalation never applies there.
+
+## Known limitations (permission activation)
+
+- **Local Docker mode needs the host's `/usr/bin/python3`.** A `capybara-device` in Docker mode runs the
+  restricted output helper with the host interpreter; without it the device reports restricted support
+  unavailable.
+- **E2B is Full access only.** `sandbox-e2b` reports no restricted support, so an E2B device runs only
+  conversations on Full access; restricted profiles read `unsupported` there.
+- **Version managers are readable under `workspace` reach too.** A restricted exec on a macOS or Linux
+  host reads the version manager directories of the device user's home (`TOOL_HOME_DIRS`) and asdf's
+  global `~/.tool-versions` read only (`restrictedToolHomes`, never a path at, under or holding an
+  owner-denied one), even when the owner limited restricted project reach to the workspace.
+- **`DockerContainer.ready` is not reset after a `docker rm` or a daemon restart.** The Docker provider keeps
+  its readiness flag, so operations on that container fail closed until the provider (the kernel process)
+  restarts.
 
 ## Tests
 

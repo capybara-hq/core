@@ -41,14 +41,13 @@ export interface BackgroundTaskRow {
   description: string;
   command: string;
   /**
-   * The session id (the pid `setsid` started). Null while the launch is reserved but has not
-   * started: readers that act on the process (the poller, stops) skip such a row.
+   * A legacy row's recorded session id; null on every managed row (a task is never identified by
+   * a SID). Kept for the retirement gate's enumeration and display only.
    */
   sid: string | null;
   /**
-   * The output file: absolute once the task started (`markStarted` records it under its
-   * instance's workspace root), relative to the workspace root while reserved
-   * (`taskOutputFile` in launch.ts).
+   * The output file: absolute on a managed row; a legacy row reserved but never started kept a
+   * relative one (`taskOutputFile` in launch.ts).
    */
   outputPath: string;
   status: BackgroundTaskStatus;
@@ -57,7 +56,7 @@ export interface BackgroundTaskRow {
   startedAt: Date;
   finishedAt: Date | null;
   deadlineAt: Date;
-  /** The sandbox instance the task started in; null while reserved, like `sid`. */
+  /** The sandbox instance the task started in; null until a managed start is acknowledged. */
   sandboxCreatedAt: Date | null;
   /** Marked lost while its process may still exist. */
   killPending: boolean;
@@ -140,9 +139,6 @@ export type BackgroundTaskInsert = Omit<
   | "cancelRequestedBy"
 >;
 
-/** A launch's reservation: the row before the command started (no `sid`, no instance yet). */
-export type BackgroundTaskReservation = Omit<BackgroundTaskInsert, "sid" | "sandboxCreatedAt">;
-
 const toRow = (r: Selectable<BackgroundTasksTable>): BackgroundTaskRow => ({
   id: r.id,
   orgId: r.org_id,
@@ -192,12 +188,11 @@ const unclaimed = sql<boolean>`(stopping_at IS NULL OR stopping_at < now() - ${S
  * `run_in_background`. The store only reads and writes rows; the launch, the poller and the tools
  * that drive them are other providers.
  *
- * A launch first reserves its row ({@link BackgroundTaskStore.reserve}: `running`, `sid` null),
- * then starts the command and sets `sid` ({@link BackgroundTaskStore.markStarted}), or finishes
- * the row as `failed` ({@link BackgroundTaskStore.failLaunch}). A running row with a null `sid`
- * counts against `maxTasks` but has no process to check or stop: the poller and stops must skip
- * it (the launch that reserved it settles it; one left over by a launch that died is failed by the
- * poller, {@link BackgroundTaskStore.failAbandonedLaunches}).
+ * A launch reserves its managed row ({@link BackgroundTaskStore.reserveManaged}: `running`,
+ * `pending`) before the start is dispatched; the operation facade then moves its durable launch
+ * state. No launch writes a legacy (SID) row any more: those left from before are only finished
+ * here and retired by `RetireLegacyTasksJob`; a legacy reservation that never started is failed
+ * by the poller ({@link BackgroundTaskStore.failAbandonedLaunches}).
  */
 @Injectable()
 export class BackgroundTaskStore {
@@ -206,20 +201,6 @@ export class BackgroundTaskStore {
     @Inject(TransactionHost) readonly txHost: TransactionHost,
     @Inject(BackgroundLaunchLock) private readonly launchLock: BackgroundLaunchLock,
   ) {}
-
-  /**
-   * Reserves a launch: under the root conversation's launch lock, counts the running tasks of
-   * `row.sandboxConversationId` and inserts `row` as `running` (no `sid`) when fewer than
-   * `maxTasks` run. False (nothing written) when that conversation tree already runs `maxTasks`.
-   */
-  @Transactional()
-  async reserve(row: BackgroundTaskReservation, maxTasks: number): Promise<boolean> {
-    await this.launchLock.lock(row.sandboxConversationId);
-    if ((await this.countRunning(row.sandboxConversationId)) >= maxTasks) return false;
-    // not admitted for dispatch yet (0157): the launch's freeze check marks it `dispatched`
-    await this.insert({ ...row, sid: null, sandboxCreatedAt: null }, "reserved");
-    return true;
-  }
 
   /**
    * Reserves a managed launch (permission runtime cutover phase 8.2) under the root conversation's
@@ -300,45 +281,6 @@ export class BackgroundTaskStore {
   }
 
   /**
-   * Records the started command of a reserved row: `started`, or `stopping` when a stop claimed the
-   * reservation meanwhile (the launch then kills the command and finishes the row with
-   * {@link finishStoppedLaunch}); false when the row is no longer running.
-   */
-  async markStarted(
-    id: string,
-    to: { sid: string; sandboxCreatedAt: Date; outputPath?: string },
-  ): Promise<"started" | "stopping" | false> {
-    const r = await this.db
-      .updateTable("background_tasks")
-      .set({
-        sid: to.sid,
-        sandbox_created_at: to.sandboxCreatedAt,
-        ...(to.outputPath !== undefined && { output_path: to.outputPath }),
-      })
-      .where("id", "=", id)
-      .where("status", "=", "running")
-      .where("sid", "is", null)
-      .where("launch_state", "=", "legacy")
-      .returning("stopping_at")
-      .executeTakeFirst();
-    if (!r) return false;
-    return r.stopping_at === null ? "started" : "stopping";
-  }
-
-  /**
-   * Finishes a launch whose reservation a stop claimed, once the launch killed what it started:
-   * `stopped`. No `background_task_finished` event: the launching call reports it itself.
-   */
-  async finishStoppedLaunch(id: string): Promise<void> {
-    await this.db
-      .updateTable("background_tasks")
-      .set({ status: "stopped", finished_at: sql<Date>`now()`, stopping_at: null })
-      .where("id", "=", id)
-      .where("status", "=", "running")
-      .execute();
-  }
-
-  /**
    * Claims a running task for a stop (`stopping_at`): false when it is no longer running or another
    * live stop claimed it ({@link STOP_CLAIM_TTL_MS}). While claimed the poller leaves it alone.
    */
@@ -364,38 +306,15 @@ export class BackgroundTaskStore {
   }
 
   /**
-   * Finishes a reserved row whose launch failed as `failed`, with `reason` in `lost_reason` (and a
-   * stop's claim cleared); a row that already has its sid (the command started and is tracked) is
-   * left as it is. No `background_task_finished` event: the launching call reports the failure
-   * itself.
-   */
-  async failLaunch(id: string, reason: string): Promise<void> {
-    await this.db
-      .updateTable("background_tasks")
-      .set({
-        status: "failed",
-        finished_at: sql<Date>`now()`,
-        lost_reason: reason,
-        stopping_at: null,
-      })
-      .where("id", "=", id)
-      .where("status", "=", "running")
-      // only a reservation that never started: a row with its sid is tracked by the poller
-      .where("sid", "is", null)
-      // a managed row settles through its durable launch state only
-      .where("launch_state", "=", "legacy")
-      .execute();
-  }
-
-  /**
    * Finishes as `failed` (`lost_reason` `launch_abandoned`) every reservation that started before
-   * `before`, never got its sid and is not claimed by a live stop: the launch that reserved it died
-   * (a crashed replica). A stop's claim older than {@link STOP_CLAIM_TTL_MS} does not hold it: a
-   * stop only claims a reservation and leaves the rest to the launch, so a dead launch would keep
-   * it (and its slot of `maxTasks`) forever. Conditional on `sid` still null, so a launch
-   * completing at that moment wins. No `background_task_finished` event: the command never
-   * started and the model never saw its id. Returns the rows it finished (their owner and sandbox
-   * conversations, for the caller's `changed: "background"` frames).
+   * `before`, never dispatched (a managed `pending` row, or a legacy row that never got its sid)
+   * and is not claimed by a live stop: the launch that reserved it died (a crashed replica). A
+   * stop's claim older than {@link STOP_CLAIM_TTL_MS} does not hold it: a stop only claims a
+   * reservation and leaves the rest to the launch, so a dead launch would keep it (and its slot of
+   * `maxTasks`) forever. Conditional on `pending`, so a dispatch at that moment wins. No
+   * `background_task_finished` event: the command never started and the model never saw its id.
+   * Returns the rows it finished (their owner and sandbox conversations, for the caller's
+   * `changed: "background"` frames).
    */
   async failAbandonedLaunches(
     before: Date,
@@ -427,8 +346,9 @@ export class BackgroundTaskStore {
   }
 
   /**
-   * Inserts a legacy row. `legacyDispatch` (0157) defaults to `unknown`: a row is "never
-   * dispatched" only when its reservation says so.
+   * Inserts a legacy row: no launch writes one any more; only rows from before (and tests of their
+   * retirement) exist. `legacyDispatch` (0157) defaults to `unknown`: a row is "never dispatched"
+   * only when its reservation says so.
    */
   async insert(
     row: BackgroundTaskInsert,
@@ -504,16 +424,18 @@ export class BackgroundTaskStore {
   }
 
   /**
-   * Every running task that has started (its `sid` is set) and no live stop claimed, across
-   * sandboxes, oldest first: what the poller checks. A reservation still launching (`sid` null) is
-   * left to its launch, a claimed task to its stop.
+   * Every running legacy task that started in an instance and no live stop claimed, across
+   * sandboxes, oldest first: what the poller finishes once its instance is gone (never by an
+   * exec). A legacy reservation that never started is failed as abandoned, a claimed task is left
+   * to its stop.
    */
-  async runningStarted(): Promise<BackgroundTaskRow[]> {
+  async runningLegacy(): Promise<BackgroundTaskRow[]> {
     const rows = await this.db
       .selectFrom("background_tasks")
       .selectAll()
       .where("status", "=", "running")
-      .where("sid", "is not", null)
+      .where("launch_state", "=", "legacy")
+      .where("sandbox_created_at", "is not", null)
       .where(unclaimed)
       .orderBy("started_at", "asc")
       .orderBy("id", "asc")
@@ -709,21 +631,6 @@ export class BackgroundTaskStore {
       .where("id", "=", id)
       .where(sql<boolean>`read_offset < ${to}`)
       .execute();
-  }
-
-  /**
-   * Finished tasks of a device whose process may still exist (any conversation's: they
-   * share the instance).
-   */
-  async pendingKills(deviceId: string): Promise<BackgroundTaskRow[]> {
-    const rows = await this.db
-      .selectFrom("background_tasks")
-      .selectAll()
-      .where("device_id", "=", deviceId)
-      .where("kill_pending", "=", true)
-      .orderBy("started_at", "asc")
-      .execute();
-    return rows.map(toRow);
   }
 
   async clearKill(ids: string[]): Promise<void> {

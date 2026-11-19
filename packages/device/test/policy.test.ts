@@ -3,16 +3,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { SandboxLimits } from "@capybara-hq/plugin-sdk";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { DOCKER_DOMAIN_NOTE, describeMode, policyCommand } from "../src/commands/policy.js";
-import {
-  DENIED_SECRET_PATHS,
-  deniedSecretPaths,
-  effectiveEgress,
-  effectiveMode,
-  grantedHosts,
-  implicitWritePaths,
-  srtConfig,
-} from "../src/policy.js";
+import { describeCeiling, policyCommand } from "../src/commands/policy.js";
+import { effectiveEgress, effectiveMode, grantedHosts } from "../src/policy.js";
 import {
   DEFAULT_POLICY,
   ownerCeilingOfMode,
@@ -120,61 +112,6 @@ describe("grantedHosts", () => {
   });
 });
 
-describe("srtConfig", () => {
-  const roots = { workspace: "/d/w", skills: "/d/s", tmp: "/d/t" };
-
-  it("is the strict profile: workspace and tmp writable, skills read only", () => {
-    const c = srtConfig(roots, ["a.com"], { home: "/home/u" });
-    expect(c.filesystem.allowWrite).toEqual(["/d/w", "/d/t"]);
-    expect(c.filesystem.denyWrite).toEqual(
-      expect.arrayContaining([
-        "/d/s",
-        "/tmp/claude",
-        "/private/tmp/claude",
-        "/home/u/.npm/_logs",
-        "/home/u/.claude/debug",
-        "/d/w/.git/hooks/**",
-        "/d/w/.git/config",
-        "/d/t/**/.git/hooks/**",
-        "/d/t/**/.git/config",
-      ]),
-    );
-    expect(c.filesystem.denyRead).toEqual(expect.arrayContaining(deniedSecretPaths("/home/u")));
-    expect(c.network.allowedDomains).toEqual(["a.com"]);
-    expect(c.network.deniedDomains).toEqual([]);
-    expect(c.network).not.toHaveProperty("allowLocalBinding");
-    expect(c.network).not.toHaveProperty("allowUnixSockets");
-    expect(c.filesystem).not.toHaveProperty("allowGitConfig");
-  });
-
-  it("adds extra denied paths (the program's own state directory)", () => {
-    const c = srtConfig(roots, [], { denyRead: ["/state"] });
-    expect(c.filesystem.denyRead).toContain("/state");
-  });
-
-  it("keeps the spec's secret paths and browser profiles", () => {
-    for (const p of [
-      "~/.ssh",
-      "~/.aws",
-      "~/.config/gcloud",
-      "~/.azure",
-      "~/.kube",
-      "~/.docker/config.json",
-      "~/.netrc",
-      "~/.gnupg",
-      "~/.config/gh",
-      "~/.git-credentials",
-      "~/.npmrc",
-      "~/Library/Keychains",
-      "~/Library/Safari",
-    ]) {
-      expect(DENIED_SECRET_PATHS).toContain(p);
-    }
-    expect(deniedSecretPaths("/home/u")).toContain("/home/u/.ssh");
-    expect(implicitWritePaths("/home/u")).toContain("/home/u/.npm/_logs");
-  });
-});
-
 describe("policy command", () => {
   let dir: string;
   beforeEach(() => {
@@ -207,20 +144,28 @@ describe("policy command", () => {
   it("show prints the defaults when there is no file", async () => {
     const r = await run(["show"]);
     expect(r.code).toBe(0);
-    expect(r.out).toContain('"fullAccess": true');
-    expect(r.out).toContain("Mode: auto.");
-  });
-
-  it("describeMode explains auto and sandbox, on the machine and in a container", () => {
-    expect(describeMode(policy({ mode: "auto" }))[0]).toMatch(/Commands run as you/);
-    expect(describeMode(policy({ mode: "auto" }), "docker")[0]).toMatch(/container/);
-    expect(describeMode(policy({ mode: "sandbox" }))[0]).toMatch(/OS sandbox|Only the workspace/);
-    expect(describeMode(policy({ mode: "sandbox" }), "docker")[0]).toMatch(
-      /container with no network/,
+    // the restricted default ceiling of a new setup (B-14)
+    expect(r.out).toContain('"fullAccess": false');
+    expect(r.out).toContain('"restrictedProjectReach": "workspace"');
+    expect(r.out).toContain(
+      "Owner ceiling: Full access denied: conversations here use the restricted profiles only.",
     );
   });
 
-  it("a Docker-mode device says allowed domains do not apply there", async () => {
+  it("describeCeiling explains the owner ceiling, on the machine and in a container", () => {
+    expect(describeCeiling(policy({ mode: "auto" }))[0]).toMatch(/runs commands as you/);
+    expect(describeCeiling(policy({ mode: "auto" }), "docker")[0]).toMatch(/container/);
+    expect(describeCeiling(policy({ mode: "auto" }))[1]).toMatch(/outside the device's workspace/);
+    expect(describeCeiling(policy({ mode: "sandbox" }))[0]).toMatch(/Full access denied/);
+    expect(describeCeiling(policy({ mode: "sandbox" }))[1]).toMatch(
+      /stay in the device's workspace/,
+    );
+    expect(describeCeiling(policy({ mode: "sandbox" })).at(-1)).toMatch(
+      /capybara-device ceiling set/,
+    );
+  });
+
+  it("a change of allowed domains says restricted work may reach them, also in Docker mode", async () => {
     writeCredential(dir, {
       url: "https://x.test",
       connectUrl: "wss://x.test/device/connect",
@@ -234,7 +179,9 @@ describe("policy command", () => {
     });
     const r = await run(["add", "allowedDomains", "a.com"]);
     expect(r.code).toBe(0);
-    expect(r.out).toContain(DOCKER_DOMAIN_NOTE);
+    expect(r.out).toContain(
+      "Restricted work may reach these domains when the organization allows them too.",
+    );
   });
 
   it("set allowedDomains stores the list; show prints it", async () => {
@@ -249,15 +196,15 @@ describe("policy command", () => {
     expect((await run(["set", "cpu", "0"])).code).toBe(2);
   });
 
-  it("set refuses the removed keys and points at the mode command", async () => {
+  it("set refuses the removed keys and points at the ceiling command", async () => {
     for (const key of ["tier", "isolation", "localhost", "remoteGrants", "network"]) {
       const r = await run(["set", key, "open"]);
       expect(r.code, key).toBe(2);
-      expect(r.err).toMatch(/capybara-device mode auto\|sandbox/);
+      expect(r.err).toMatch(/capybara-device ceiling set/);
     }
     const mode = await run(["set", "mode", "sandbox"]);
     expect(mode.code).toBe(2);
-    expect(mode.err).toMatch(/capybara-device mode auto\|sandbox/);
+    expect(mode.err).toMatch(/capybara-device ceiling set/);
   });
 
   it("set refuses an unknown key and an invalid domain", async () => {
@@ -265,9 +212,9 @@ describe("policy command", () => {
     expect((await run(["set", "allowedDomains", "https://a.com"])).code).toBe(2);
   });
 
-  it("says the running program applies it at the next command, never to restart", async () => {
+  it("says the running program applies it at the next operation, never to restart", async () => {
     const r = await run(["set", "cpu", "2"]);
-    expect(r.out).toMatch(/applies it at the next command/);
+    expect(r.out).toMatch(/applies it at the next operation/);
   });
 
   it("add and remove allowedDomains: validated, lowercased, deduped, idempotent", async () => {

@@ -21,6 +21,7 @@ import {
   createLegacyHeldProvider,
   type HeldProvider,
   type ManagedStartArgs,
+  withKernelGeneration,
 } from "./held-operations.js";
 import { SandboxOperationAuthority } from "./operation-authority.js";
 import {
@@ -28,6 +29,7 @@ import {
   type OperationFailureKind,
   type OperationInvocation,
   PermissionAdmissionStale,
+  type RevokedIncarnation,
   SandboxOperationIntents,
 } from "./operation-intents.js";
 import { type CloudSupportReport, PermissionInstanceWrites } from "./permission-instance-writes.js";
@@ -64,6 +66,7 @@ import {
   type FileSystemHandle,
   isFileSystemGoneError,
   isSandboxGoneError,
+  isSandboxOperationOutcomeUnknownError,
   rootsOf,
   type SandboxActor,
   type SandboxHandle,
@@ -81,9 +84,7 @@ import {
   sql,
   type UpdateObject,
 } from "kysely";
-import { SESSION_MODE_SCRIPT } from "../background/launch.js";
 import { MANAGED_STOP_GRACE_MS } from "../background/managed.js";
-import { BackgroundTaskStore } from "../background/store.js";
 import type { KernelConfig } from "../config/schema.js";
 import type { DeviceInstancesTable, KernelDatabase } from "../db/kernel-schema.js";
 import { deviceNotFound } from "../devices/errors.js";
@@ -171,10 +172,10 @@ const SWEEP_BATCH = 200;
 const SWEEP_CONCURRENCY = 4;
 /** How long `destroyDevice` / `resetFileSystem` wait for the exclusive lease (running commands). */
 const EXCLUSIVE_WAIT_MS = 10 * 60_000;
-/** The time limit of the exec that kills lost background tasks after a resume (ms). */
-const PENDING_KILL_TIMEOUT_MS = 30_000;
-/** A background task's session id as `echo $!` printed it; anything else is never put in a command. */
-const SID_RE = /^[1-9][0-9]{0,9}$/;
+/** The time limit of one best-effort maintenance call and of one inline exact revoke (ms). */
+const MAINTENANCE_CALL_TIMEOUT_MS = 30_000;
+/** How many owed operation revokes a lifecycle holder delivers inline (the revoke jobs do the rest). */
+const INLINE_REVOKE_LIMIT = 100;
 
 /** What a silent use caused, kept for the holder's next ordinary use (`SandboxService.deferNotice`). */
 interface DeferredNotice {
@@ -616,15 +617,17 @@ async function inPool<T>(items: T[], limit: number, fn: (x: T) => Promise<void>)
  *   `gone`, the instance was destroyed, or `fn` throws `SandboxGoneError` (retried once), a new
  *   instance is created on the kept files and `restarted` is true. Several holders hitting `gone`
  *   together rebuild once: the others find the new instance.
- * - **Takeover** (spec §10.5; environments spec §4.2): every holder records itself in
- *   `capk:sandbox-holders:<env>` (again before each `exec`) and its commands carry its lease token
- *   as `tag`. An acquirer that finds a record without a live lease (a crashed holder) kills only
- *   that holder's commands (`killTagged`): other conversations of the device may be running
- *   commands. `killAll` runs only under the exclusive lease, before the downgrade, on an instance
- *   this holder just resumed from `suspended` (nobody else can hold it; a provider that keeps
- *   memory across a pause brings old commands back); it also covers crashed holders' records,
- *   which it claims. A freshly created instance has nothing to kill. Failures are only warned (the
- *   in-sandbox time limit is the backstop).
+ * - **Takeover** (spec §10.5; permission runtime cutover B-1): every holder records itself in
+ *   `capk:sandbox-holders:<env>` (again before each `exec`), and the operations it admits carry
+ *   its lease token as their holder. An acquirer that finds a record without a live lease (a
+ *   crashed holder) revokes exactly that holder's operations, never by a broad kill: the
+ *   revocation is owed durably (an outbox row per token) before the record is forgotten, runs
+ *   inline, and the owed operation revokes of the instance are delivered by operation id. Under
+ *   the exclusive lease, on an instance just resumed from `suspended` (nobody else holds it; a
+ *   provider that keeps memory across a pause brings old work back), every started-or-unknown
+ *   operation of that generation is revoked too, before the row says running. Nothing is ever
+ *   `killAll`ed or `killTagged`. Inline delivery failures are only warned: the revoke jobs keep
+ *   them owed.
  * - **Instance identity**: a holder that hits `gone` names the instance by its handle and the
  *   row's `created_at` (set by the fenced write after each `create`); the handle alone is the same
  *   after a rebuild on providers whose handle is the instance name (sandbox-docker).
@@ -673,9 +676,6 @@ export class SandboxService {
     @Inject(KernelConfigService)
     private readonly config: Pick<KernelConfigService, "get" | "fieldSource">,
     @Inject(KERNEL_LOGGER) private readonly log: Pick<KernelLogger, "info" | "warn">,
-    /** Background tasks lost while their process may live on (killed after a resume). */
-    @Inject(BackgroundTaskStore)
-    private readonly background: Pick<BackgroundTaskStore, "pendingKills" | "clearKill">,
     @Inject(PermissionFacts)
     private readonly facts: Pick<
       PermissionFacts,
@@ -960,8 +960,8 @@ export class SandboxService {
    * creates, resumes or rebuilds one: an instance that is missing, suspended, being created or
    * destroyed (or recorded with another provider) is `not_running`, one that records another
    * instance is `other_instance`. Otherwise `fn` runs under a shared lease, as a `withSandbox`
-   * holder does (its tag on every exec, crashed holders' commands killed), and `last_used_at`
-   * moves forward when it ends. Waits for the lease up to `sandbox.lockWaitSeconds`
+   * holder does (its tag on every exec, crashed holders' operations revoked exactly), and
+   * `last_used_at` moves forward when it ends. Waits for the lease up to `sandbox.lockWaitSeconds`
    * (`sandbox.busy`); `signal` (optional) ends the wait with its abort reason. The signal passed
    * to `fn` aborts with `signal` or when the lease is lost. Errors of `fn` (`SandboxGoneError`
    * too) are thrown as they are.
@@ -1257,6 +1257,23 @@ export class SandboxService {
   }
 
   /**
+   * Makes the device's instance run for a managed call before its permission review reads the
+   * device's facts: the lifecycle `enter` the call's own use takes (the exclusive lease creates
+   * or resumes the instance through the retirement gate, the binding, the limits and fencing, and
+   * records a cloud instance's permission evidence), then the lease is left at once. Nothing runs
+   * in it; what the start caused is kept for the holder's next use to tell (as a silent use).
+   */
+  async ensureRunning(use: SandboxUseContext, signal: AbortSignal): Promise<void> {
+    const p = await this.require(use.deviceId, use.orgId);
+    const e = await this.enter(use, p, signal, null, () => this.wantedLimits(use, p));
+    try {
+      await this.deferNotice(use.deviceId, use.holderConversationId, e);
+    } finally {
+      await this.leave(use.deviceId, e);
+    }
+  }
+
+  /**
    * A run start's kernel read of the bound project (permission activation L2, Hook 1): the use
    * a tool call's would be (the instance made or resumed, the read silent for the holder), whose
    * provider stats, reads and lists only, each call a kernel read admitted and claimed on its own
@@ -1341,11 +1358,37 @@ export class SandboxService {
     const seen = (x: Entered) =>
       ctx.silent ? this.deferNotice(env, holder, x) : this.seenBy(env, holder, x);
     let e = await seen(await this.enter(ctx, p, signal, null, want));
+    let left = false;
     try {
       try {
         return await this.runAs(e, ctx, p, fn, signal, invocation, trusted, kernelRead);
       } catch (err) {
         if (isFileSystemGoneError(err)) throw await this.filesGone(env, p, e);
+        if (
+          isSandboxOperationOutcomeUnknownError(err) &&
+          isSandboxGoneError((err as { cause?: unknown }).cause)
+        ) {
+          // gone after a durable dispatch: the outcome stays unknown and the call is never retried
+          // under a new identity, but the gone instance is rebuilt on the kept files now, so the
+          // holder's next call runs on it and is told of the restart (its seen record still names
+          // the gone instance)
+          this.log.info("sandbox instance is gone after a dispatched operation; recreating", {
+            deviceId: env,
+          });
+          const gone: Instance = { handle: e.handle, createdAt: e.createdAt };
+          await this.leave(env, e);
+          left = true;
+          try {
+            const rebuilt = await this.enter(ctx, p, signal, gone, want);
+            await this.leave(env, rebuilt);
+          } catch (rebuildErr) {
+            this.log.warn("cannot recreate the gone sandbox instance; the next use will", {
+              deviceId: env,
+              err: rebuildErr,
+            });
+          }
+          throw err;
+        }
         if (!isSandboxGoneError(err)) throw err;
         this.log.info("sandbox instance is gone during use; recreating", { deviceId: env });
         const gone: Instance = { handle: e.handle, createdAt: e.createdAt };
@@ -1373,7 +1416,7 @@ export class SandboxService {
         }
       }
     } finally {
-      await this.leave(env, e);
+      if (!left) await this.leave(env, e);
     }
   }
 
@@ -1541,8 +1584,10 @@ export class SandboxService {
         sig,
       );
     let ordinal = 0;
+    // a cloud provider's background starts are told the held instance's kernel generation
+    const held = p.binder ? p.impl : withKernelGeneration(p.impl, String(e.createdAt));
     const impl = invocation
-      ? createHeldOperations(p.impl, e.handle, sig, async (method, input, invoke, preflight) => {
+      ? createHeldOperations(held, e.handle, sig, async (method, input, invoke, preflight) => {
           const identity = { ...invocation, ordinal: ordinal++ };
           sig.throwIfAborted();
           await this.register(env, e.lease.token);
@@ -1671,6 +1716,9 @@ export class SandboxService {
             await runOutsideTransaction(() =>
               this.operationIntents.unknown(admitted.operation_id, admitted.execution_id),
             );
+            // The machine's files are gone (R24): the operation stays unknown, and the caller still
+            // records the files lost so later calls fail without reaching the machine.
+            if (isFileSystemGoneError(error)) throw error;
             // A transport/gone error after durable dispatch cannot justify a new identity retry.
             throw new SandboxOperationOutcomeUnknownError(
               "The operation outcome must be reconciled with its recorded identity",
@@ -2121,7 +2169,7 @@ export class SandboxService {
 
   /**
    * Under a just-taken shared lease: confirms the row is still `accept`ed (else releases and
-   * returns null), records the holder and kills crashed holders' commands.
+   * returns null), records the holder and revokes crashed holders' operations exactly.
    */
   private async asShared(
     ctx: { orgId: string; deviceId: string },
@@ -2131,12 +2179,12 @@ export class SandboxService {
     signal: AbortSignal,
     /**
      * Refused (null) while the device has an unresolved retirement obligation, checked under the
-     * lease and before anything is killed or bumped; false only for exact-ref managed drains.
+     * lease and before anything is revoked or bumped; false only for exact-ref managed drains.
      */
     gated: boolean,
     /**
      * Checked under the lease (which the B1 snapshot writer's exclusive lease excludes) before
-     * anything is killed or bumped: `reconciled` and `use` refuse a device carrying the
+     * anything is revoked or bumped: `reconciled` and `use` refuse a device carrying the
      * reconcile marker (B-11); `use` (entering a holder) also returns null on the staged path
      * while the instance's binding is not installed, so the caller binds it exclusively (B-8).
      * `none` for background polls, stops and drains.
@@ -2164,9 +2212,9 @@ export class SandboxService {
         .where("device_id", "=", env)
         .execute();
       await this.register(env, lease.token);
-      // other holders (any conversation of the device) may be running: only the dead
-      // holders' own commands are killed
-      await this.killTagged(env, row.handle, p, await this.claim(env), signal, lease);
+      // other holders (any conversation of the device) may be running: only the dead holders'
+      // own operations are revoked, exactly
+      await this.takeOver(env, this.incarnationOf(row), row.handle, p, signal, lease);
       return {
         lease,
         handle: row.handle,
@@ -2183,10 +2231,10 @@ export class SandboxService {
 
   /**
    * Under a just-taken exclusive lease: makes the instance run (file system, create / resume /
-   * rebuild when the recorded instance is the one found gone), kills leftovers, then downgrades to
-   * a shared lease. Crashed holders' records are claimed here: on an instance just resumed from
-   * `suspended` one `killAll` covers them and anything else left (nobody else holds the instance),
-   * on a new instance there is nothing to kill, and on one that already ran their tags are killed.
+   * rebuild when the recorded instance is the one found gone), revokes what crashed holders left,
+   * then downgrades to a shared lease. A resumed instance's started-or-unknown operations were
+   * revoked by `ensure` before its row said running; here the crashed holders' records are owed and
+   * forgotten and every owed revoke of the instance is delivered (nothing is `killAll`ed).
    */
   private async asExclusive(
     ctx: SandboxUseContext,
@@ -2199,15 +2247,20 @@ export class SandboxService {
     const sig = AbortSignal.any([signal, lease.signal]);
     try {
       // under the lease the B1 snapshot writer needs: a device carrying the reconcile marker gets
-      // no create, resume, rebuild, limits change, retirement destroy or kill (B-11)
+      // no create, resume, rebuild, limits change, retirement destroy or revocation (B-11)
       await this.facts.assertCloudReconciled(ctx.orgId, env);
       const s = await this.ensure(ctx, p, lease, sig, gone);
-      const dead = await this.claim(env);
-      if (s.resumed) await this.killLeftovers(env, s.handle, p, sig, dead);
-      else if (!s.info.fresh) await this.killTagged(env, s.handle, p, dead, signal, lease);
-      if (s.resumed || s.info.fresh) {
-        await this.killPendingTasks(env, s.handle, s.createdAt, p, lease.token, ctx.actor, sig);
-      }
+      // the dead holders' records are forgotten only after their revocation is owed (on a fresh
+      // instance too: their intents still name them); a resume delivers what `ensure` revoked
+      await this.takeOver(
+        env,
+        { provider: p.plugin, generation: String(s.createdAt) },
+        s.handle,
+        p,
+        signal,
+        lease,
+        s.resumed === true,
+      );
       // B-15: a resumed cloud instance reads its permission support again; any other instance
       // whose recorded evidence is stale (a limits change, a provider version change) too
       await this.refreshCloudSupport(ctx, p, s, sig, s.resumed === true);
@@ -2267,50 +2320,164 @@ export class SandboxService {
       );
   }
 
-  /** Crashed holders' tags (claimed); a Redis error counts as none. */
-  private async claim(env: string): Promise<string[]> {
+  /**
+   * The crashed holders' cleanup (permission runtime cutover B-1): their tokens are read without
+   * removing them, their revocation is owed durably ({@link oweDeadHolders}), it runs inline
+   * (`revokeHolders`), and the owed operation revokes of the instance are delivered by operation id
+   * ({@link deliverRevocations}). `delivered`: a resume under the exclusive lease, which delivers
+   * the revokes `ensure` owed on the incarnation even with no crashed holder. A failure after the
+   * revocation is owed is only warned (the outbox retries it); gone and abort are thrown.
+   */
+  private async takeOver(
+    env: string,
+    instance: RevokedIncarnation,
+    handle: SandboxHandle,
+    p: SandboxProviderEntry,
+    signal: AbortSignal,
+    lease: SandboxLease,
+    delivered = false,
+  ): Promise<void> {
+    const dead = await this.oweDeadHolders(env);
+    if (dead.length === 0 && !delivered) return;
+    const sig = AbortSignal.any([signal, lease.signal]);
+    if (dead.length > 0) {
+      try {
+        await runOutsideTransaction(() => this.operationIntents.revokeHolders(env, dead));
+        this.log.info(
+          "sandbox taken over from a holder that did not finish; its operations revoked",
+          {
+            deviceId: env,
+          },
+        );
+      } catch (err) {
+        if (sig.aborted) throw err;
+        this.log.warn("cannot revoke a crashed sandbox holder's operations now; a worker retries", {
+          deviceId: env,
+          err,
+        });
+      }
+    }
+    await this.deliverRevocations(env, instance, handle, p, sig);
+  }
+
+  /**
+   * Crashed holders' tokens whose revocation is now owed durably: read without removing them, an
+   * outbox row per token committed ({@link SandboxOperationIntents.oweHolderRevocations}), then
+   * their records forgotten. A Redis or database error leaves the records for the next acquirer
+   * and counts as none.
+   */
+  private async oweDeadHolders(env: string): Promise<string[]> {
+    let dead: string[];
     try {
-      return await this.leases.claimDeadHolders(env);
+      dead = await this.leases.deadHolders(env);
     } catch (err) {
       this.log.warn("cannot read sandbox holder records", { deviceId: env, err });
       return [];
     }
+    if (dead.length === 0) return [];
+    try {
+      await runOutsideTransaction(() => this.operationIntents.oweHolderRevocations(env, dead));
+    } catch (err) {
+      this.log.warn("cannot owe a crashed sandbox holder's revocation; the next acquirer will", {
+        deviceId: env,
+        err,
+      });
+      return [];
+    }
+    await this.leases
+      .forgetHolders(env, dead)
+      .catch((err: unknown) =>
+        this.log.warn("cannot clear crashed sandbox holder records", { deviceId: env, err }),
+      );
+    return dead;
   }
 
-  /** Kills the commands of crashed holders by their tags (`killTagged`); nothing without tags. */
-  private async killTagged(
+  /**
+   * The exact cleanup of an incarnation nobody else holds (exclusive lease), in place of a broad
+   * `killAll`: revokes its started-or-unknown operations
+   * ({@link SandboxOperationIntents.revokeIncarnation}) and delivers the owed revokes. Thrown when
+   * the revocation cannot be recorded (`strict`), else only warned: the caller's row still says
+   * suspended, so the next resume revokes again.
+   */
+  private async revokeIncarnation(
     env: string,
+    instance: RevokedIncarnation,
     handle: SandboxHandle,
     p: SandboxProviderEntry,
-    tags: string[],
     signal: AbortSignal,
-    lease: SandboxLease,
-  ): Promise<void> {
-    if (tags.length === 0) return;
-    await runOutsideTransaction(() => this.operationIntents.revokeHolders(env, tags));
-    const sig = AbortSignal.any([signal, lease.signal]);
-    await this.kill(env, "takeover", () => p.impl.killTagged(handle, tags, sig), sig);
-  }
-
-  /** Runs one kill call: gone and abort are thrown, other failures only warned. */
-  private async kill(
-    deviceId: string,
-    why: "takeover" | "resume",
-    call: () => Promise<void>,
-    signal?: AbortSignal,
+    strict: boolean,
   ): Promise<void> {
     try {
-      await call();
-      if (why === "takeover") {
-        this.log.info(
-          "sandbox taken over from a holder that did not finish; leftover commands killed",
-          { deviceId },
-        );
-      }
+      await runOutsideTransaction(() => this.operationIntents.revokeIncarnation(env, instance));
     } catch (err) {
-      if (signal?.aborted || isSandboxGoneError(err)) throw err;
-      this.log.warn("cannot kill leftover sandbox commands", { deviceId, err });
+      if (strict || signal.aborted) throw err;
+      this.log.warn("cannot revoke the sandbox instance's leftover operations", {
+        deviceId: env,
+        err,
+      });
+      return;
     }
+    await this.deliverRevocations(env, instance, handle, p, signal);
+  }
+
+  /**
+   * Delivers the owed operation revokes of one instance generation inline, by operation id
+   * (`revokeOperation`), acknowledging each: what the revoke jobs would deliver, sent before this
+   * holder runs anything. Best effort, as the broad `killAll` it replaces was: at most
+   * {@link INLINE_REVOKE_LIMIT} per call, nothing for a provider without `revokeOperation`, and any
+   * failure only warned. Durability does not depend on it: every revocation wrote its
+   * `sandbox-operation-revoke-<operationId>` outbox job in the same transaction, and those jobs
+   * deliver until acknowledged. Gone and abort are thrown (the use rebuilds / ends).
+   */
+  private async deliverRevocations(
+    env: string,
+    instance: RevokedIncarnation,
+    handle: SandboxHandle,
+    p: SandboxProviderEntry,
+    signal: AbortSignal,
+  ): Promise<void> {
+    const revoke = p.impl.revokeOperation?.bind(p.impl);
+    if (!revoke) return;
+    let owed: { operationId: string; deadline: Date }[];
+    try {
+      owed = await this.operationIntents.owedRevocations(env, instance, INLINE_REVOKE_LIMIT);
+    } catch (err) {
+      if (signal.aborted) throw err;
+      this.log.warn("cannot read the sandbox instance's owed revocations", { deviceId: env, err });
+      return;
+    }
+    for (const o of owed) {
+      try {
+        await revoke(
+          handle,
+          { operationId: o.operationId, admitBeforeMs: o.deadline.getTime() },
+          AbortSignal.any([signal, AbortSignal.timeout(MAINTENANCE_CALL_TIMEOUT_MS)]),
+        );
+        await runOutsideTransaction(() =>
+          this.operationIntents.acknowledgeRevocation(o.operationId),
+        );
+      } catch (err) {
+        if (signal.aborted || isSandboxGoneError(err)) throw err;
+        this.log.warn("cannot deliver an owed operation revoke now; its job retries", {
+          deviceId: env,
+          operationId: o.operationId,
+          err,
+        });
+      }
+    }
+  }
+
+  /** The {@link RevokedIncarnation} of an instance row. */
+  private incarnationOf(row: Row): RevokedIncarnation {
+    return { provider: row.provider ?? "", generation: String(row.created_at.getTime()) };
+  }
+
+  /**
+   * The owed revocation job of one crashed holder (`sandbox-holder-revoke`): revokes its intents
+   * still admitted, dispatching or started-or-unknown and owes each its exact revoke job.
+   */
+  async revokeDeadHolder(deviceId: string, token: string): Promise<void> {
+    await this.operationIntents.revokeHolders(deviceId, [token]);
   }
 
   /**
@@ -2555,8 +2722,8 @@ export class SandboxService {
    * gate's alone (never resumed here). When the
    * marker stays on a live instance whose provider can `update`, the provider applies the
    * reconcile target, which is never wider than the instance in any dimension, so this only
-   * narrows; a suspended instance is resumed for it (its leftover commands killed, nobody else
-   * holds it) and suspended again, as its row still says. `updated` records the target as
+   * narrows; a suspended instance is resumed for it (its leftover operations revoked exactly,
+   * nobody else holds it) and suspended again, as its row still says. `updated` records the target as
    * applied (fenced) and the reconcile runs again, which clears the marker. No `update`, a
    * `recreate` answer, a gone instance or a failure leave the marker and its file reset action.
    */
@@ -2615,8 +2782,17 @@ export class SandboxService {
       try {
         if (suspended && (await p.impl.resume(handle, sig)) === "gone") answer = "gone";
         else {
+          // what the pause brought back is revoked exactly before the update (the row still says
+          // suspended: a failure is revoked again on the next resume)
           if (suspended)
-            await this.kill(deviceId, "resume", () => p.impl.killAll(handle, sig), sig);
+            await this.revokeIncarnation(
+              deviceId,
+              { provider: p.plugin, generation: String(row.created_at.getTime()) },
+              handle,
+              p,
+              sig,
+              false,
+            );
           answer = await update(handle, want, sig);
         }
       } catch (err) {
@@ -3124,91 +3300,6 @@ export class SandboxService {
   }
 
   /**
-   * Under the exclusive lease (before the downgrade), on an instance just resumed from
-   * `suspended`: kills every command left in it (`killAll`), crashed holders' (`dead`, already
-   * claimed) included. Never on the shared path: other holders may be running commands. A gone
-   * instance (`SandboxGoneError`) and an abort are thrown (`withSandbox` rebuilds / ends); other
-   * failures are only warned.
-   */
-  private async killLeftovers(
-    deviceId: string,
-    handle: SandboxHandle,
-    p: SandboxProviderEntry,
-    signal: AbortSignal,
-    dead: string[],
-  ): Promise<void> {
-    await runOutsideTransaction(() => this.operationIntents.revokeHolders(deviceId, dead));
-    await this.kill(
-      deviceId,
-      dead.length > 0 ? "takeover" : "resume",
-      () => p.impl.killAll(handle, signal),
-      signal,
-    );
-  }
-
-  /**
-   * Under the exclusive lease, right after a resume or a (re)build: kills the sessions of the
-   * background tasks marked lost while their process may live on (`kill_pending`), in one exec of
-   * `pkill -KILL -s <sid>` (`-g` on macOS), then clears their flags. Tasks of another instance have no process
-   * here and are only cleared. A gone instance and an abort are thrown; another failure is warned
-   * and leaves the flags of this instance's tasks for the next resume.
-   */
-  private async killPendingTasks(
-    deviceId: string,
-    handle: SandboxHandle,
-    createdAt: number,
-    p: SandboxProviderEntry,
-    tag: string,
-    actor: SandboxActor,
-    signal: AbortSignal,
-  ): Promise<void> {
-    // after the legacy-launch freeze a SID is no authority and the kill marks belong to the
-    // retirement obligations: nothing is signalled or cleared (C1)
-    if (await this.retirement.frozen()) return;
-    const rows = await this.background.pendingKills(deviceId);
-    if (rows.length === 0) return;
-    const mine = rows.filter(
-      (r): r is typeof r & { sid: string } =>
-        r.sandboxCreatedAt?.getTime() === createdAt && r.sid !== null && SID_RE.test(r.sid),
-    );
-    let cleared = rows;
-    if (mine.length > 0) {
-      // pkill exits 1 when the session has no process left: only a higher status is a failure
-      const command = `${SESSION_MODE_SCRIPT}\nrc=0; for sid in ${mine.map((r) => r.sid).join(" ")}; do tk_kill KILL "$sid"; c=$?; [ "$c" -le 1 ] || rc=$c; done; exit $rc`;
-      try {
-        const r = await p.impl.exec(handle, {
-          command,
-          // tk_kill's control files are relative to the workspace root (macOS devices)
-          cwd: rootsOf(handle).workspace,
-          timeoutMs: PENDING_KILL_TIMEOUT_MS,
-          maxOutputBytes: 4096,
-          signal,
-          tag,
-          actor,
-        });
-        if (r.exitCode !== 0) {
-          throw new Error(
-            `pkill exited with ${r.exitCode === null ? "no status" : r.exitCode}: ${r.stderr.slice(0, 500)}`,
-          );
-        }
-        this.log.info("lost background tasks killed after a sandbox resume", {
-          deviceId,
-          tasks: mine.map((t) => t.id),
-        });
-      } catch (err) {
-        if (signal.aborted || isSandboxGoneError(err)) throw err;
-        this.log.warn("cannot kill lost background tasks after a sandbox resume", {
-          deviceId,
-          err,
-        });
-        const kept = new Set(mine.map((r) => r.id));
-        cleared = rows.filter((r) => !kept.has(r.id));
-      }
-    }
-    await this.background.clearKill(cleared.map((r) => r.id));
-  }
-
-  /**
    * A fenced write: only while the lease holds and the row's generation is still the one read
    * under it (and incremented); otherwise {@link SandboxLockLostError}.
    */
@@ -3410,23 +3501,48 @@ export class SandboxService {
         // the retirement gate may have resumed it already, to cancel revoked starts exactly (B-22)
         const r = gate.resumed ? "resumed" : await p.impl.resume(handle, signal);
         if (r === "resumed") {
+          const incarnation = { provider: p.plugin, generation: String(createdAt) };
           // the new limits first: the row says running only once the instance runs with them
           if (want !== null && this.mustApply(row, p, want)) {
             let created: Instance | null;
             try {
               created = await this.applyLimits(ctx, p, held, row, handle, fence, signal, want);
             } catch (err) {
-              // the row still says suspended; the next use resumes and kills what is left
-              await this.bestEffort(
+              // the work a pause brought back is revoked exactly, never killed broadly; the row
+              // still says suspended, so the next use resumes and revokes again
+              await this.revokeIncarnation(
                 id,
-                "kill the commands left after a failed limits change",
-                (s) => p.impl.killAll(handle, s),
+                incarnation,
+                handle,
+                p,
+                AbortSignal.timeout(MAINTENANCE_CALL_TIMEOUT_MS),
+                false,
+              ).catch((e: unknown) =>
+                this.log.warn("cannot revoke the operations left after a failed limits change", {
+                  deviceId: id,
+                  err: e,
+                }),
               );
               throw err;
             }
             if (created) {
               return { ...created, fsResets, info: { fresh: true, restarted: true }, fence };
             }
+          }
+          // the work a pause brought back (every admitted, dispatching and started-or-unknown
+          // operation of this generation) is revoked before the row says running; the revokes are
+          // delivered before the downgrade. A failure fails the use closed: the instance is
+          // suspended again (best effort, its failure only warned), the row still says
+          // suspended, and the next use resumes and revokes again
+          try {
+            await runOutsideTransaction(() =>
+              this.operationIntents.revokeIncarnation(id, incarnation),
+            );
+          } catch (err) {
+            await this.bestEffort(id, "suspend the instance again after a failed revocation", (s) =>
+              p.impl.suspend(handle, s),
+            );
+            throw err;
           }
           await this.fenced(held, id, fence, {
             status: "running",
@@ -3653,7 +3769,10 @@ export class SandboxService {
         } else if (signal.aborted || p.impl.limitsApplyAt === "fileSystem") {
           // the instance may run with half-applied limits and cannot be recreated here: stop it,
           // so the next use resumes it and applies them again
-          await this.quarantine(held, id, handle, p, fence);
+          await this.quarantine(held, id, handle, p, fence, {
+            provider: p.plugin,
+            generation: String(row.created_at.getTime()),
+          });
           // a provider bound to its file system that refuses the new network (E2B)
           throw providerRefusal(
             this.log,
@@ -3694,7 +3813,7 @@ export class SandboxService {
 
   /**
    * After a failed `update` that cannot be repaired by a recreate: best effort, with fresh short
-   * signals (the use's own may be aborted), suspends the instance (or kills its commands) and
+   * signals (the use's own may be aborted), suspends the instance (or revokes its operations) and
    * records it suspended (fenced: a lost lease leaves the record to the new holder).
    */
   private async quarantine(
@@ -3703,13 +3822,16 @@ export class SandboxService {
     handle: SandboxHandle,
     p: SandboxProviderEntry,
     fence: Fence,
+    incarnation: RevokedIncarnation,
   ): Promise<void> {
     const suspended = await this.bestEffort(id, "suspend after a failed limits update", (s) =>
       p.impl.suspend(handle, s),
     );
     if (!suspended) {
-      await this.bestEffort(id, "kill commands after a failed limits update", (s) =>
-        p.impl.killAll(handle, s),
+      // still running with half-applied limits: its leftover operations are revoked exactly (the
+      // row is recorded suspended, so the next resume revokes again)
+      await this.bestEffort(id, "revoke the operations after a failed limits update", (s) =>
+        this.revokeIncarnation(id, incarnation, handle, p, s, false),
       );
     }
     try {
@@ -3733,7 +3855,7 @@ export class SandboxService {
     call: (signal: AbortSignal) => Promise<void>,
   ): Promise<boolean> {
     try {
-      await call(AbortSignal.timeout(PENDING_KILL_TIMEOUT_MS));
+      await call(AbortSignal.timeout(MAINTENANCE_CALL_TIMEOUT_MS));
       return true;
     } catch (err) {
       this.log.warn(`cannot ${what}`, { deviceId, err });

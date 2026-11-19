@@ -53,7 +53,7 @@ import {
 } from "../../../../lib/compaction";
 import { componentName, type PlatformComponent } from "../../../../lib/components";
 import { extensionLabel, labelLocale } from "../../../../lib/extension-label";
-import type { DevicesAutoModeSource, DevicesAutoModeView } from "../../../../lib/org-settings";
+import type { DevicesFullAccessSource, DevicesFullAccessView } from "../../../../lib/org-settings";
 import {
   adminExtensionsQuery,
   deploymentSettingsQuery,
@@ -80,8 +80,8 @@ import NotFound from "../../not-found";
  * (themes spec §7, §10), 内置主题 or a platform-owned theme whose scope is `all` and that is not
  * disabled; the kernel refuses one off in some org with the orgs (shown). 插件界面代码: the client
  * code kill switch and the plugins whose client code alone is stopped (client extensions spec
- * §10.2); a save that changes it marks every cached client set stale. 自动模式: the platform's
- * auto-mode switch (auto mode spec §4.3), read with where it comes from; a value set in the startup
+ * §10.2); a save that changes it marks every cached client set stale. Full access: the
+ * platform's switch (`devicesFullAccess`), read with where it comes from; a value set in the startup
  * config is shown read-only with its source. 按组织的限额在「组织」页；
  * 组织自己的设置仍在 `/settings/*`。有改动时出现 ActionRow，只提交改过的项。
  * From the query cache (the layout prefetched it on a first load); a save writes the answered
@@ -150,9 +150,9 @@ function AdminSettingsRead() {
         {section("customConnectors", "customConnectors", RADIOS)}
         {section("customSkills", "customSkills", RADIOS)}
         <FormSection
-          id="auto-mode"
-          title={t("autoMode.title")}
-          description={t("autoMode.description")}
+          id="full-access"
+          title={t("fullAccess.title")}
+          description={t("fullAccess.description")}
           loading={{ fields: [{ control: "radio-cards", options: 2 }, { control: "text" }] }}
         />
         <FormSection
@@ -229,8 +229,8 @@ function AdminSettings({
       if (patch.uiTheme !== undefined) await invalidatePlatformTheme(qc);
       // the kill switch: open pages drop (or pick up) client code at their next shell read
       if (patch.clientExtensions !== undefined) await invalidateClientSets(qc);
-      // the platform's auto-mode switch decides every org's and device's mode
-      if (patch.devicesAutoMode !== undefined) await invalidateDeviceModes(qc);
+      // the platform's Full permission switch decides every org's and device's Full access
+      if (patch.devicesFullAccess !== undefined) await invalidateDeviceModes(qc);
       // the attribution defaults ride on every org's settings (the agent page's help text)
       if (patch.attribution !== undefined) await invalidateAttribution(qc);
       // the platform's compaction defaults are what an org that follows the platform shows, and
@@ -246,7 +246,7 @@ function AdminSettings({
   const [themeDraft, setThemeDraft] = useState<string | null | undefined>(undefined);
   const [clientDraft, setClientDraft] = useState<ClientExtensionsSetting | undefined>(undefined);
   const [attributionDraft, setAttributionDraft] = useState<AttributionDraft>({});
-  const [autoDraft, setAutoDraft] = useState<"allowed" | "off" | undefined>(undefined);
+  const [fullDraft, setFullDraft] = useState<"allowed" | "off" | undefined>(undefined);
   const [compactionDraft, setCompactionDraft] = useState<CompactionSettingsPatch>({});
   const [suggestionsDraft, setSuggestionsDraft] = useState<"on" | "off" | undefined>(undefined);
   const [sharingDraft, setSharingDraft] = useState<SharingDraft>({});
@@ -283,14 +283,14 @@ function AdminSettings({
   const attribution =
     saved.attribution === undefined ? null : attributionOf(saved.attribution, attributionDraft);
   if (attribution !== null && attribution.patch !== null) patch.attribution = attribution.patch;
-  const autoMode = saved.devicesAutoMode;
+  const fullAccess = saved.devicesFullAccess;
   if (
-    autoMode !== undefined &&
-    !autoLocked(autoMode.source) &&
-    autoDraft !== undefined &&
-    autoDraft !== autoMode.mode
+    fullAccess !== undefined &&
+    !fullLocked(fullAccess.source) &&
+    fullDraft !== undefined &&
+    fullDraft !== fullAccess.permission
   ) {
-    patch.devicesAutoMode = { mode: autoDraft };
+    patch.devicesFullAccess = { permission: fullDraft };
   }
   const savedCompaction = saved.compaction ?? COMPACTION_DEFAULTS;
   const compaction: CompactionSettings = { ...savedCompaction, ...compactionDraft };
@@ -313,7 +313,7 @@ function AdminSettings({
       setThemeDraft(undefined);
       setClientDraft(undefined);
       setAttributionDraft({});
-      setAutoDraft(undefined);
+      setFullDraft(undefined);
       setCompactionDraft({});
       setSuggestionsDraft(undefined);
       setSharingDraft({});
@@ -361,7 +361,7 @@ function AdminSettings({
             setThemeDraft(undefined);
             setClientDraft(undefined);
             setAttributionDraft({});
-            setAutoDraft(undefined);
+            setFullDraft(undefined);
             setCompactionDraft({});
             setSuggestionsDraft(undefined);
             setSharingDraft({});
@@ -414,8 +414,12 @@ function AdminSettings({
       </FormSection>
       {policy("customConnectors")}
       {policy("customSkills")}
-      {saved.devicesAutoMode !== undefined && (
-        <AutoModeSection value={saved.devicesAutoMode} draft={autoDraft} onChange={setAutoDraft} />
+      {saved.devicesFullAccess !== undefined && (
+        <FullAccessSection
+          value={saved.devicesFullAccess}
+          draft={fullDraft}
+          onChange={setFullDraft}
+        />
       )}
       {saved.attribution !== undefined && attribution !== null && (
         <AttributionSection
@@ -700,8 +704,8 @@ function ClientCodeSection({
   );
 }
 
-/** Whether a startup config source makes the platform's auto-mode switch read-only here. */
-const autoLocked = (source: DevicesAutoModeSource | undefined): boolean =>
+/** Whether a startup config source makes the platform's Full permission switch read-only here. */
+const fullLocked = (source: DevicesFullAccessSource | undefined): boolean =>
   source === "env" || source === "file" || source === "nacos";
 
 /** The startup config's source of a field (read-only here), or null when it can be changed. */
@@ -737,27 +741,27 @@ function attributionOf(
 }
 
 /**
- * 自动模式 (auto mode spec §4.3): one control, allowed or off, with where the value comes from. A
- * value set in the startup config is disabled with its source. Off forces local devices to sandbox
- * mode; cloud devices keep the container and follow the organization's cloud network. The kernel
- * refuses a raise through an API token or the Platform tool, which may only turn it off; a signed-in
- * super admin here may set it either way. Saved with the page's ActionRow.
+ * Full access (`devicesFullAccess`): one control, allowed or off, with where the value comes from. A
+ * value set in the startup config is disabled with its source. Off runs every device restricted:
+ * local devices on their allowlist, cloud devices on the organization's cloud network. The kernel
+ * refuses allowing it through an API token or the Platform tool, which may only turn it off; a
+ * signed-in super admin here may set it either way. Saved with the page's ActionRow.
  */
-function AutoModeSection({
+function FullAccessSection({
   value,
   draft,
   onChange,
 }: {
-  value: DevicesAutoModeView;
+  value: DevicesFullAccessView;
   draft: "allowed" | "off" | undefined;
-  onChange(mode: "allowed" | "off"): void;
+  onChange(permission: "allowed" | "off"): void;
 }) {
-  const t = useTranslations("admin.settings.autoMode");
+  const t = useTranslations("admin.settings.fullAccess");
   const tf = useTranslations("configForm");
-  const locked = autoLocked(value.source);
-  const mode = draft ?? value.mode;
+  const locked = fullLocked(value.source);
+  const mode = draft ?? value.permission;
   return (
-    <FormSection id="auto-mode" title={t("title")} description={t("description")}>
+    <FormSection id="full-access" title={t("title")} description={t("description")}>
       <Stack gap={8}>
         <RadioGroup
           label={t("label")}
@@ -773,7 +777,7 @@ function AutoModeSection({
         />
         <Text variant="small" tone="muted">
           {locked
-            ? `${tf("readonly", { source: value.source })} · devices.autoMode`
+            ? `${tf("readonly", { source: value.source })} · devices.fullAccess`
             : t("source", { source: t(`sources.${value.source}`) })}
         </Text>
       </Stack>

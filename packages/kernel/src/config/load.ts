@@ -73,8 +73,9 @@ export function deepMerge(base: unknown, override: unknown): unknown {
 }
 
 /**
- * The permission keys B1 replaced, each with its replacement. Until the old public inputs are
- * removed, {@link translateLegacyPermissionKeys} reads the old key of a source as the new one.
+ * The permission keys B1 replaced, each with its replacement. The old keys are no longer read:
+ * {@link refuseLegacyPermissionKeys} refuses them with the conversion message, and
+ * `capybara config migrate-permissions` (`permission-migration.ts`) converts a config file.
  */
 export const LEGACY_PERMISSION_KEYS = [
   {
@@ -86,44 +87,47 @@ export const LEGACY_PERMISSION_KEYS = [
 ] as const;
 
 /**
- * Translates the old permission keys of ONE config source (the file / Nacos document, or the
- * environment overrides) to their replacements, before the sources are merged: the old key keeps
- * its source's place in the precedence (env > file / Nacos), never its own. An old and a new key
- * in the same source must agree, else the config fails (never pick the wider one). The value is
- * not checked here: the schema refuses an invalid one under the new key.
+ * The conversion message of every old permission key in ONE config source (the file / Nacos
+ * document, or the environment overrides), empty when it names none. The old key is refused even
+ * when it agrees with its replacement, so a source is converted once, never read under two names.
+ * The value is never echoed.
  */
-export function translateLegacyPermissionKeys(
+function legacyPermissionKeyProblems(
   source: Record<string, unknown>,
   label: "file" | "env",
-): Record<string, unknown> {
-  let out = source;
+): string[] {
+  const problems: string[] = [];
   for (const key of LEGACY_PERMISSION_KEYS) {
     const [section, old] = key.path;
-    const [, next] = key.replacement;
-    const parent = out[section];
+    const parent = source[section];
     if (!isPlainObject(parent) || !(old in parent)) continue;
-    const { [old]: value, ...rest } = parent;
-    if (next in rest && rest[next] !== value) {
-      const [a, b] =
-        label === "env"
-          ? [key.env, key.replacementEnv]
-          : [key.path.join("."), key.replacement.join(".")];
-      throw new ConfigError(
-        `invalid configuration:\n  - ${a} and ${b} are both set and differ; remove ${a} (it is replaced by ${b})`,
-      );
-    }
-    out = { ...out, [section]: { ...rest, [next]: rest[next] ?? value } };
+    problems.push(
+      label === "env"
+        ? `  - ${key.env} is no longer read: set ${key.replacementEnv} instead (the same values, allowed or off)`
+        : `  - ${key.path.join(".")} is no longer read: rename it to ${key.replacement.join(".")} (the same values, allowed or off); capybara config migrate-permissions --in <file> --out <file> converts a config file or Nacos document`,
+    );
   }
-  return out;
+  return problems;
+}
+
+/** Refuses the old permission keys of the file / Nacos document and the environment. */
+function refuseLegacyPermissionKeys(
+  raw: Record<string, unknown>,
+  env: Record<string, unknown>,
+): void {
+  const problems = [
+    ...legacyPermissionKeyProblems(raw, "file"),
+    ...legacyPermissionKeyProblems(env, "env"),
+  ];
+  if (problems.length > 0) throw new ConfigError(`invalid configuration:\n${problems.join("\n")}`);
 }
 
 /** 原始配置深合并环境变量覆盖（优先级最高）后校验；热更新与启动共用。错误只列路径不列值。 */
 export function resolveConfig(raw: unknown, env: NodeJS.ProcessEnv): KernelConfig {
   if (!isPlainObject(raw)) throw new ConfigError("config file root must be a mapping");
-  const merged = deepMerge(
-    translateLegacyPermissionKeys(raw, "file"),
-    translateLegacyPermissionKeys(envOverrides(env), "env"),
-  );
+  const overrides = envOverrides(env);
+  refuseLegacyPermissionKeys(raw, overrides);
+  const merged = deepMerge(raw, overrides);
   const result = KernelConfigSchema.safeParse(merged);
   if (!result.success) {
     // The schema is strict: an unknown key (a typo, or a removed setting) is an error that names

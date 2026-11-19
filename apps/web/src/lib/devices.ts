@@ -96,7 +96,7 @@ export interface DeviceModeChange {
 export interface DeviceModeView {
   /** The mode its commands run at. */
   mode: DeviceMode;
-  /** `auto` only while the platform's and the org's `autoMode` allow it. */
+  /** `auto` only while the platform's and the org's `fullAccess` allow it. */
   allowedMode: DeviceMode;
   /** Which layer allows auto mode; null when only sandbox mode is allowed. */
   allowedBy: "org" | "platform" | null;

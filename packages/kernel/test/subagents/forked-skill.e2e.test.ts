@@ -32,8 +32,8 @@ import {
 } from "../helpers/forked-skills.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
+import { withoutRunPreamble } from "../helpers/permission-context-text.js";
 import { captureProviderRequests } from "../helpers/provider-capture.js";
-import { withoutRunContext } from "../helpers/run-context.js";
 import {
   createConv,
   createOrgWithProviders,
@@ -85,7 +85,7 @@ const RULES: ScriptRule[] = [
 
 const capture = captureProviderRequests();
 /** The captured requests without their run context (run context spec §4). */
-const sent = () => capture.sent.map(withoutRunContext);
+const sent = () => capture.sent.map(withoutRunPreamble);
 
 let pgc: TestContainer;
 let rd: TestContainer;

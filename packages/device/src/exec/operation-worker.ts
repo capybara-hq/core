@@ -1,8 +1,9 @@
 import { type ChildProcess, fork, spawn, spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { constants } from "node:fs";
-import { type FileHandle, open, realpath, stat } from "node:fs/promises";
-import { basename, dirname } from "node:path";
+import { constants, realpathSync } from "node:fs";
+import { type FileHandle, mkdtemp, open, readdir, realpath, rm, stat } from "node:fs/promises";
+import { homedir, tmpdir } from "node:os";
+import { basename, dirname, join } from "node:path";
 import {
   type ExecResult,
   SANDBOX_GIT_DENIED_INTERNALS,
@@ -15,6 +16,7 @@ import {
   SandboxScopeDeniedError,
 } from "@capybara-hq/plugin-sdk";
 import { implicitWritePaths } from "../policy.js";
+import { macReadAllows } from "./mac-read-policy.js";
 import { macWriteRegexRules, macWriteRootSpellings } from "./mac-write-policy.js";
 import {
   type NativeHelperRequest,
@@ -23,13 +25,14 @@ import {
   runNativeHelper,
 } from "./native-helper-client.js";
 import type { LocalExecAuthority, LocalOperationGrant } from "./operation-types.js";
+import { withCanonicalForms } from "./operation-types.js";
 import {
   acquireSealedRuntime,
   type SealedRuntime,
   stagePrivateSource,
   stageRuntimeSource,
 } from "./runtime-source.js";
-import { ENV_NAME_RE, OutputCap, shellQuote } from "./shared.js";
+import { ENV_NAME_RE, OutputCap, restrictedToolHomes, shellQuote } from "./shared.js";
 export interface TrustedLaunchIdentity {
   pid: number;
   token: string;
@@ -66,6 +69,12 @@ interface Common {
   }) => void;
   onControl?: (event: "cancelled" | "process-exit") => void;
   onRuntimeReady?: (info: { pid: number; proxyUrl: string }) => Promise<void>;
+  /**
+   * macOS worker only, a test seam (trusted construction): the home and environment whose
+   * version managers a restricted exec reads (default: this process's own). The Linux worker
+   * takes them from its options.
+   */
+  toolHome?: { home: string; env: Record<string, string | undefined> };
 }
 export type MacWorkerRequest = Common &
   (
@@ -125,7 +134,7 @@ export function mandatoryDenyPatterns(root: string): string[] {
  * `.git/modules`) under each write root, descriptor-relative and never following a link, after a
  * restricted command ended. Anything not empty, missing or not a directory is left alone.
  */
-const REMOVE_EMPTY_SEQUENCERS = String.raw`
+const REMOVE_EMPTY_SEQUENCERS = `
 import json, os, stat, sys
 FLAGS = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC
 budget = [4000]
@@ -193,11 +202,18 @@ function removeEmptySequencers(
 }
 /** The JVM proxy agent the sandbox runtime points sandboxed JVMs at, inside its package. */
 export const JAVA_PROXY_AGENT_JAR = "vendor/java-proxy-agent/srt-proxy-agent.jar";
-/** The fixed private worker bootstrap (a runtime-manifest helper entry). */
+/**
+ * The fixed private worker bootstrap (a runtime-manifest helper entry). A kill (cancel, timeout,
+ * stop) first stops the launched command's descendant tree by parent pid (`stopTree`: top down,
+ * each process stopped before its children are read, so a pid is never reused under it), then
+ * kills that tree and the owned groups. Once the launched process has exited and its group is
+ * gone, `settle` closes the stdio pipes after a short bounded grace, so a process that escaped
+ * (one reparented to launchd before the walk) cannot hold the call or the worker open.
+ */
 export const WORKER = `import {pathToFileURL} from 'node:url';
-import {spawn} from 'node:child_process';
+import {spawn,spawnSync} from 'node:child_process';
 import {randomUUID} from 'node:crypto';
-let manager,initialized=false,wrapped=false,closing=false,full=false,child,childClosed,timer,timedOut=false,killed=false;
+let manager,initialized=false,wrapped=false,closing=false,full=false,child,childClosed,timer,timedOut=false,killed=false,exited=false,forced=false,settling=false,settleTimer;
 const owned=new Map(),signaled=new Set();
 let credit,sequence=0,outputFailed=false,outputDone=Promise.resolve();
 async function collect(stream){
@@ -209,15 +225,43 @@ async function collect(stream){
    send({event:'output-flow',frameBytes:data.length,bufferedBytes,producerLimit:262144});
    await new Promise((resolve,reject)=>{credit={seq,resolve,reject};send({event:'output',stream:'stdout',seq,data:data.toString('base64')});});
   }
- }}catch(error){const alreadyFailed=outputFailed;outputFailed=true;stream.resume();if(!alreadyFailed)send({event:'error',message:'Managed producer failed'});}
+ }}catch(error){if(forced)return;const alreadyFailed=outputFailed;outputFailed=true;stream.resume();if(!alreadyFailed)send({event:'error',message:'Managed producer failed'});}
 }
 const send=value=>{if(process.connected)process.send(value,()=>{});};
-function signalOwned(signal='SIGKILL'){for(const pid of owned.keys()){if(signaled.has(pid))continue;try{process.kill(-pid,signal);if(signal==='SIGKILL')signaled.add(pid);}catch(error){if(error.code==='ESRCH')signaled.add(pid);else throw error;}}}
+function stopTree(){
+ if(!child?.pid||child.exitCode!==null||child.signalCode!==null)return [];
+ try{process.kill(child.pid,'SIGSTOP');}catch{return [];}
+ const tree=new Set([child.pid]);
+ for(let round=0;round<64;round++){
+  const ps=spawnSync('/bin/ps',['-axo','pid=,ppid='],{encoding:'utf8',timeout:5000});
+  if(ps.status!==0){send({event:'diagnostic',text:'Descendant snapshot failed'});break;}
+  const found=[];
+  for(const line of ps.stdout.split('\\n')){const [pid,ppid]=line.trim().split(/\\s+/).map(Number);if(pid>1&&tree.has(ppid)&&!tree.has(pid))found.push(pid);}
+  if(!found.length)break;
+  for(const pid of found)try{process.kill(pid,'SIGSTOP');tree.add(pid);}catch{}
+ }
+ return [...tree];
+}
+function signalOwned(signal='SIGKILL'){if(signal==='SIGKILL')for(const pid of stopTree())try{process.kill(pid,'SIGKILL');}catch{}for(const pid of owned.keys()){if(signaled.has(pid))continue;try{process.kill(-pid,signal);if(signal==='SIGKILL')signaled.add(pid);}catch(error){if(error.code==='ESRCH')signaled.add(pid);else throw error;}}}
+function settle(){
+ if(!child||settling||!exited||!(killed||timedOut||closing))return;settling=true;
+ const started=Date.now();let goneAt=0;
+ const tick=()=>{
+  let gone=true;try{process.kill(-child.pid,0);gone=false;}catch(error){if(error.code!=='ESRCH')gone=false;}
+  const now=Date.now();if(gone&&!goneAt)goneAt=now;
+  if((goneAt&&now-goneAt>=250)||now-started>=5000){
+   forced=true;if(credit){const pending=credit;credit=undefined;pending.reject(Error('Owned output closed after cancellation'));}
+   child.stdout.destroy();child.stderr.destroy();return;
+  }
+  settleTimer=setTimeout(tick,50);
+ };
+ settleTimer=setTimeout(tick,50);
+}
 async function stop(){
  if(closing)return;closing=true;
  if(credit){outputFailed=true;const pending=credit;credit=undefined;pending.reject(Error('Owned output channel closed'));child?.stdout.resume();}
  try{signalOwned();}catch(error){closing=false;send({event:'error',message:'Owned cancellation remains pending: '+error.code});return;}
- await childClosed;owned.clear();await manager?.reset();process.disconnect?.();
+ settle();await childClosed;owned.clear();await manager?.reset();process.disconnect?.();
 }
 process.on('disconnect',stop);process.on('SIGTERM',stop);
 process.on('message',async message=>{try{
@@ -235,17 +279,17 @@ process.on('message',async message=>{try{
   child=spawn('/bin/bash',['-c',message.script],{cwd:message.cwd,env:message.env,detached:true,stdio:['ignore','pipe','pipe']});
   const identity={pid:child.pid,token:randomUUID()};if(!identity.pid)throw Error('Missing trusted launch identity');
   owned.set(identity.pid,identity.token);
-  childClosed=new Promise(resolve=>child.once('close',async code=>{clearTimeout(timer);await outputDone;send({event:'completed',code,timedOut,killed,outputFailed});resolve();}));
+  childClosed=new Promise(resolve=>child.once('close',async code=>{clearTimeout(timer);clearTimeout(settleTimer);await outputDone;send({event:'completed',code,timedOut,killed,outputFailed});resolve();}));
   child.once('error',error=>send({event:'error',message:String(error)}));
-  child.once('exit',code=>{send({event:'process-exit',code,timedOut,killed});try{signalOwned();}catch(error){send({event:'error',message:'Owned group cleanup pending: '+error.code});}});
+  child.once('exit',code=>{exited=true;send({event:'process-exit',code,timedOut,killed});try{signalOwned();}catch(error){send({event:'error',message:'Owned group cleanup pending: '+error.code});}settle();});
   if(message.managed){
     if(child.stdout.readableHighWaterMark>65536)throw Error('Unbounded managed producer buffer');
     outputDone=collect(child.stdout);let diagnosticBytes=0;child.stderr.on('data',bytes=>{diagnosticBytes+=bytes.length;if(diagnosticBytes<=65536)send({event:'diagnostic',text:bytes.toString()});});
   }else for(const stream of ['stdout','stderr'])child[stream].on('data',bytes=>{child[stream].pause();if(!process.connected){child[stream].resume();return;}process.send({event:'output',stream,data:bytes.toString('base64')},()=>child[stream].resume());});
-  timer=setTimeout(()=>{timedOut=true;try{signalOwned();}catch(error){send({event:'error',message:'Owned timeout cancellation pending: '+error.code});}},message.timeoutMs);
+  timer=setTimeout(()=>{timedOut=true;try{signalOwned();}catch(error){send({event:'error',message:'Owned timeout cancellation pending: '+error.code});}settle();},message.timeoutMs);
   send({event:'launched',...identity});
  }else if(message.type==='cancel'){
-  killed=true;try{if(message.graceMs>0&&child){signalOwned('SIGTERM');const force=setTimeout(()=>{try{signalOwned();}catch(error){send({event:'error',message:'Owned graceful cancellation pending: '+error.code});}},message.graceMs);childClosed.finally(()=>clearTimeout(force));}else signalOwned();send({event:'cancelled',ok:true});}catch(error){send({event:'cancelled',ok:false,message:'Owned cancellation pending: '+error.code});}
+  killed=true;try{if(message.graceMs>0&&child){signalOwned('SIGTERM');const force=setTimeout(()=>{try{signalOwned();}catch(error){send({event:'error',message:'Owned graceful cancellation pending: '+error.code});}},message.graceMs);childClosed.finally(()=>clearTimeout(force));}else signalOwned();send({event:'cancelled',ok:true});}catch(error){send({event:'cancelled',ok:false,message:'Owned cancellation pending: '+error.code});}settle();
  }else if(message.type==='register'){
   if(!Number.isSafeInteger(message.pid)||message.pid<=1||typeof message.token!=='string')throw Error('Invalid trusted launch identity');
   owned.set(message.pid,message.token);send({event:'registered'});
@@ -296,17 +340,43 @@ function message(child: ChildProcess, event: string): Promise<Record<string, unk
     child.once("error", error);
   });
 }
-function ancestors(paths: readonly string[]): { path: string; literal: true }[] {
-  const all = new Set<string>();
-  for (const path of paths) {
-    let p = dirname(path);
-    while (!all.has(p)) {
-      all.add(p);
-      if (p === "/") break;
-      p = dirname(p);
-    }
+let userTempDir: string | undefined | null = null;
+/** The canonical `DARWIN_USER_TEMP_DIR` of this user, looked up once; undefined when unknown. */
+function macUserTempDir(): string | undefined {
+  if (userTempDir !== null) return userTempDir;
+  try {
+    const out = spawnSync("/usr/bin/getconf", ["DARWIN_USER_TEMP_DIR"], {
+      encoding: "utf8",
+      timeout: 5000,
+    });
+    const dir = out.status === 0 ? out.stdout.trim() : "";
+    userTempDir = dir ? realpathSync(dir) : undefined;
+  } catch {
+    userTempDir = undefined;
   }
-  return [...all].map((path) => ({ path, literal: true }));
+  return userTempDir;
+}
+const PRIVATE_TMP_PREFIX = "capybara-op-";
+/**
+ * Removes the private temporary directories of device processes that are gone (named with the
+ * owning process id; this process removes its own when each operation ends). Best effort.
+ */
+async function sweepPrivateTemps(base: string): Promise<void> {
+  try {
+    for (const name of await readdir(base)) {
+      const pid = Number(/^capybara-op-(\d+)-[^/]+$/.exec(name)?.[1]);
+      if (!pid || pid === process.pid) continue;
+      try {
+        process.kill(pid, 0);
+        continue;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "ESRCH") continue;
+      }
+      await rm(join(base, name), { recursive: true, force: true });
+    }
+  } catch {
+    // a failed sweep only leaves empty scratch directories behind
+  }
 }
 /** A separate process owns each immutable SRT manager; Full never enters that process. */
 export async function startMacOperationWorker(
@@ -369,6 +439,7 @@ export async function startMacOperationWorker(
   signal.addEventListener("abort", abort, { once: true });
   if (signal.aborted) abort();
   let sealed: SealedRuntime | undefined;
+  let privateTmp: string | undefined;
   const completion = (async () => {
     try {
       // Restricted workers import only the sealed private copy of the verified runtime closure
@@ -422,6 +493,28 @@ export async function startMacOperationWorker(
             roots.push({ path: canonical, fd: file.fd, access, components });
           }
         }
+      // Version managers (asdf, nvm, pyenv, ...) read their data under the real home, while HOME
+      // is the working directory: this trusted process has the real home and the device's own
+      // environment (the forked worker runs with a reduced one), so it picks the variables and
+      // grants their directories read only. Full access inherits this process's environment.
+      const toolHomes =
+        request.kind === "exec" && !request.grant.full
+          ? restrictedToolHomes(
+              request.toolHome?.home ?? homedir(),
+              request.toolHome?.env ?? process.env,
+              request.grant.deniedReadRoots,
+            )
+          : undefined;
+      // A restricted command's own temporary directory (TMPDIR, TMP, TEMP): created empty for
+      // this operation alone, private (0700) under the user's temporary directory, writable and
+      // readable only inside the sandbox's grant, and removed once the operation's processes are
+      // gone (a crashed device leaves it behind: the next launch removes it). The runtime's default (`/tmp/claude`) is shared by every command, so it is denied
+      // (implicitWritePaths), and the user's temporary directory itself stays out of reach.
+      if (request.kind === "exec" && !request.grant.full) {
+        const base = macUserTempDir() ?? (await realpath(tmpdir()));
+        await sweepPrivateTemps(base);
+        privateTmp = await mkdtemp(join(base, `${PRIVATE_TMP_PREFIX}${process.pid}-`));
+      }
       let wrap = async (script: string) => script;
       {
         const source = await stagePrivateSource(request.stateDir, "mac-worker.mjs", WORKER);
@@ -433,27 +526,37 @@ export async function startMacOperationWorker(
         const runtimeRoots = roots.length
           ? roots.map((r) => r.path)
           : [...request.grant.readRoots, ...request.grant.writeRoots];
-        const readExceptions = [
-          "/System",
-          "/usr",
-          "/bin",
-          "/sbin",
-          "/opt/homebrew",
-          "/Applications/Xcode.app",
-          "/Library/Developer",
-          ...(helper ? [{ path: helper, literal: true }] : []),
-          ...(javaAgent ? [{ path: javaAgent, literal: true }] : []),
-          ...runtimeRoots,
-          ...ancestors([
+        // Every read is denied from `/` down; only the grant, the system roots, the staged
+        // helper and agent and the tool homes come back (mac-read-policy.ts). Ancestors get no
+        // read rule: directory metadata is all traversal needs, and a subtree rule on one would
+        // expose everything beneath it.
+        // A native root pinned at an existing ancestor names the missing directories between
+        // them: the fixed helper opens each one it creates or meets, so those are read exactly.
+        const pinnedComponents = roots.flatMap((r) => {
+          const dirs: string[] = [];
+          for (let i = 1, p = dirname(r.path); i < (r.components?.length ?? 0); i++, p = dirname(p))
+            dirs.push(p);
+          return dirs;
+        });
+        const reads = macReadAllows({
+          roots: [
             ...runtimeRoots,
+            ...(privateTmp ? [privateTmp] : []),
+            ...(toolHomes?.readRoots ?? []),
+          ],
+          exact: [
+            ...pinnedComponents,
             ...(helper ? [helper] : []),
             ...(javaAgent ? [javaAgent] : []),
-          ]),
-        ];
+            ...(toolHomes?.readFiles ?? []),
+          ],
+          deniedReadRoots: request.grant.deniedReadRoots,
+          userTempDir: macUserTempDir(),
+        });
         const writeRoots =
           request.kind === "native"
             ? roots.filter((r) => r.access === "write").map((r) => r.path)
-            : [...request.grant.writeRoots];
+            : [...request.grant.writeRoots, ...(privateTmp ? [privateTmp] : [])];
         // Only the fixed native helper may establish missing ancestor directories. Its
         // descriptor prelude creates exact components and passes only the final narrow
         // root to NativeFiles. SRT needs this transient subtree write exception because
@@ -481,13 +584,20 @@ export async function startMacOperationWorker(
         const config = {
           filesystem: {
             denyRead: ["/", ...request.grant.deniedReadRoots],
-            allowRead: readExceptions,
+            allowRead: reads.allowRead,
+            // patched runtime: exact `(literal …)` read allows, never the subtree below them
+            allowReadExact: reads.allowReadExact,
             allowWrite: [
               ...writeRoots,
               ...establishmentRoots.map((path) => ({ path, literal: true })),
             ],
             denyWrite: [
               ...implicitWritePaths(),
+              // The owner-denied roots (the secret paths, the device's state directory) are
+              // unwritable too: a write root may contain one (a project bound at the home, an
+              // approved `cd ~`), and the runtime turns each deny into write, move and creation
+              // denies on the path and moves of its ancestors.
+              ...withCanonicalForms(request.grant.deniedReadRoots),
               // Per-root deny entries pin every ancestor against creation in SRT.
               // The fixed helper has no rename API; retain global Git content denies
               // while it establishes a missing root without those ancestor pins.
@@ -592,16 +702,21 @@ export async function startMacOperationWorker(
       for (const key of Object.keys(args.env ?? {}))
         if (!ENV_NAME_RE.test(key)) throw new Error("Invalid environment variable name");
       const outerEnv = {
+        ...toolHomes?.env,
         PATH: process.env.PATH,
         LANG: process.env.LANG,
         HOME: args.cwd ?? "/",
-        TMPDIR: request.grant.writeRoots[0] ?? "/tmp",
+        TMPDIR: privateTmp ?? request.grant.writeRoots[0] ?? "/tmp",
       };
+      // the runtime's wrapper sets its own TMPDIR after this environment: set ours inside it
+      const temp = privateTmp
+        ? `export TMPDIR=${shellQuote(privateTmp)} TMP=${shellQuote(privateTmp)} TEMP=${shellQuote(privateTmp)}; `
+        : "";
       const exports = Object.entries(args.env ?? {})
         .map(([key, value]) => `export ${key}=${shellQuote(value)}`)
         .join("; ");
       const script = await wrap(
-        `${!request.grant.full && exports ? `${exports}; ` : ""}exec /bin/bash -c ${shellQuote(args.command)}${request.managedOutput ? " 2>&1" : ""}`,
+        `${temp}${!request.grant.full && exports ? `${exports}; ` : ""}exec /bin/bash -c ${shellQuote(args.command)}${request.managedOutput ? " 2>&1" : ""}`,
       );
       await request.beforeLaunch();
       controller.signal.throwIfAborted();
@@ -722,6 +837,10 @@ export async function startMacOperationWorker(
       // by the command; once the command is gone, the trusted worker removes it where empty
       if (request.kind === "exec" && !request.grant.full && execStarted)
         removeEmptySequencers(request.grant.writeRoots, request.pythonPath, request.onDiagnostic);
+      if (privateTmp)
+        await rm(privateTmp, { recursive: true, force: true }).catch((error) =>
+          request.onDiagnostic?.(`Private temporary directory: ${(error as Error).message}`),
+        );
     }
   })();
   void completion.catch(() => {});

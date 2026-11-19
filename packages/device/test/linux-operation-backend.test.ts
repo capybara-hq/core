@@ -3,6 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { SandboxExecutionRef } from "@capybara-hq/plugin-sdk";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { shellQuote } from "../src/exec/shared.js";
 import {
   dockerUnavailable,
   inspect,
@@ -225,6 +226,38 @@ describe.skipIf(unavailable !== null)("Linux host operation backend", () => {
     }
   });
 
+  // the macOS hang (mac-abort-escape.test.ts) has no Linux equivalent: a descendant that leaves
+  // the process group stays in the closed session, so the abort ends it with the session
+  it("an aborted restricted exec ends a descendant that left the process group", async () => {
+    const root = project("abort-pgid");
+    const abort = new AbortController();
+    const escaper = [
+      "import os, time",
+      "pid = os.fork()",
+      "if pid == 0:",
+      "    os.setpgid(0, 0)",
+      "    open('escaped', 'w').write(str(os.getpid()))",
+      "    time.sleep(1000)",
+      "os.waitpid(pid, 0)",
+    ].join("\n");
+    const scope = restricted(root);
+    const running = backend
+      .operation(scope, authorityFor(scope.operationId))
+      .exec({
+        command: `cd ${root} && (python3 -c ${shellQuote(escaper)} &); until [ -s escaped ]; do sleep 0.01; done; printf r > ready; sleep 1001`,
+        cwd: root,
+        timeoutMs: 600_000,
+        maxOutputBytes: 1024,
+        signal: abort.signal,
+      })
+      .catch((error: unknown) => error);
+    await exists(`${root}/ready`, running);
+    const [escaped] = (await pidsOf(root, ["escaped"])) as [number];
+    abort.abort();
+    await running;
+    expect(await alive([escaped])).toEqual([]);
+  });
+
   it("a lost agent fails the operation and its recorded session is reaped", async () => {
     const root = project("lost");
     const scope = full();
@@ -293,6 +326,47 @@ describe.skipIf(unavailable !== null)("Linux host operation backend", () => {
       deviceId: "device-restart",
     });
     await until(async () => (await alive([child])).length === 0);
+  });
+
+  it("a restricted command reads the version manager files of the home, read only, and no more", async () => {
+    const root = project("tool-homes");
+    // the device process's own home (the image's home of the device user)
+    const home = device.run(`node -e "process.stdout.write(require('os').homedir())"`).trim();
+    const q = (path: string) => JSON.stringify(path);
+    device.run(
+      `mkdir -p ${q(`${home}/.asdf`)} && printf shim > ${q(`${home}/.asdf/x`)} && printf 'nodejs 22.12.0' > ${q(`${home}/.tool-versions`)} && printf private > ${q(`${home}/outside.txt`)}`,
+    );
+    try {
+      const scope = restricted(root);
+      const result = await backend.operation(scope, authorityFor(scope.operationId)).exec({
+        command: [
+          `H=${q(home)}`,
+          'printf %s "$ASDF_DATA_DIR" > env',
+          'cat "$ASDF_DATA_DIR/x" > got-x',
+          'cat "$H/.tool-versions" > got-versions',
+          '(printf y >> "$H/.asdf/x") 2>/dev/null && printf w > wrote-x',
+          '(printf y >> "$H/.tool-versions") 2>/dev/null && printf w > wrote-versions',
+          'cat "$H/outside.txt" > got-outside 2>/dev/null || rm -f got-outside',
+          "true",
+        ].join("; "),
+        cwd: root,
+        timeoutMs: 20_000,
+        maxOutputBytes: 4096,
+        signal: new AbortController().signal,
+      });
+      expect(result.exitCode, result.stderr).toBe(0);
+      expect(text(await read(`${root}/env`))).toBe(`${home}/.asdf`);
+      expect(text(await read(`${root}/got-x`)), result.stderr).toBe("shim");
+      expect(text(await read(`${root}/got-versions`)), result.stderr).toBe("nodejs 22.12.0");
+      for (const name of ["wrote-x", "wrote-versions", "got-outside"])
+        expect(await read(`${root}/${name}`), name).toBeNull();
+      expect(text(await read(`${home}/.asdf/x`))).toBe("shim");
+      expect(text(await read(`${home}/.tool-versions`))).toBe("nodejs 22.12.0");
+    } finally {
+      device.run(
+        `rm -rf ${q(`${home}/.asdf`)} ${q(`${home}/.tool-versions`)} ${q(`${home}/outside.txt`)}`,
+      );
+    }
   });
 
   it("never reaches an owner-denied path: exec grants around it are refused, native links stop", async () => {

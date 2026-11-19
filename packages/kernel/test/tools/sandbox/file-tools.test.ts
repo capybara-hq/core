@@ -8,9 +8,12 @@ import { sql } from "kysely";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { EventLog } from "../../../src/conversations/event-log.js";
 import type { ConversationEvent } from "../../../src/conversations/events.js";
+import { PermissionProfilesService } from "../../../src/conversations/permission-profiles.service.js";
 import { type KernelSchemaDb, kernelDb } from "../../../src/db/kernel-schema.js";
 import { createDb } from "../../../src/db/pool.js";
 import { ConversationDevices } from "../../../src/devices/conversation-devices.js";
+import { MANAGED_DEVICE_CONTEXT_STALE_TEXT } from "../../../src/sandbox/managed-device-context.js";
+import { PermissionFacts } from "../../../src/sandbox/permission-facts.js";
 import { CommandReviewService } from "../../../src/sandbox/review/index.js";
 import { SandboxService } from "../../../src/sandbox/sandbox.service.js";
 import { checkToolPath, checkToolWritable } from "../../../src/tools/builtins/sandbox/common.js";
@@ -158,9 +161,11 @@ async function call(conv: string, key: string, input: unknown, n: number): Promi
 }
 
 describe("file tool paths in the device's mode", () => {
-  it("auto mode: a write outside the workspace is approved once, then read anywhere", async () => {
+  it("Full access: a write outside the workspace runs with no ask, then is read anywhere", async () => {
     const conv = await createConv(owner, orgId, agentId);
-    const written = await callAllowed(
+    await fullAccess(conv);
+    // Full access: no discretionary review, so nothing asks
+    const written = await call(
       conv,
       "Write",
       { file_path: "/etc/capybara-t7/note.txt", content: "hello\n" },
@@ -175,10 +180,12 @@ describe("file tool paths in the device's mode", () => {
     expect(read.payload.view).toMatchObject({ kind: "read", path: "/etc/capybara-t7/note.txt" });
   });
 
-  it("auto mode: an Edit of a file outside the workspace that was never read hits the guard after the review", async () => {
+  it("Full access: an Edit of a file outside the workspace that was never read hits the guard, with no review", async () => {
     const conv = await createConv(owner, orgId, agentId);
-    // the file lives on the device's machine (another conversation wrote it)
-    const edit = await callAllowed(
+    await fullAccess(conv);
+    // the file lives on the device's machine (another conversation wrote it); Full access has no
+    // discretionary review, so nothing asks
+    const edit = await call(
       conv,
       "Edit",
       { file_path: "/etc/capybara-t7/note.txt", old_string: "hello", new_string: "bye" },
@@ -187,11 +194,10 @@ describe("file tool paths in the device's mode", () => {
     expect(edit.payload.isError).toBe(true);
     expect(edit.payload.content).toContain("File has not been read yet");
     expect(edit.payload.view).toMatchObject({ kind: "guard", reason: "not_read" });
-    // the review record is still the person's allow: the guard refused after it
-    expect(edit.payload.review).toMatchObject({ decision: "allow", by: "person" });
-    // reading it first makes the edit succeed (the write outside the workspace asks again)
+    expect(edit.payload.review).toMatchObject({ decision: "allow", decisionSource: "full-access" });
+    // reading it first makes the edit succeed
     await call(conv, "Read", { file_path: "/etc/capybara-t7/note.txt" }, 2);
-    const ok = await callAllowed(
+    const ok = await call(
       conv,
       "Edit",
       { file_path: "/etc/capybara-t7/note.txt", old_string: "hello", new_string: "bye" },
@@ -214,7 +220,7 @@ describe("file tool paths in the device's mode", () => {
     const off = await owner({
       method: "PATCH",
       url: `/api/v1/orgs/${orgId}/settings`,
-      payload: { autoMode: "off" },
+      payload: { fullAccess: "off" },
     });
     expect(off.statusCode, off.body).toBe(200);
     const conv = await createConv(owner, orgId, agentId);
@@ -304,9 +310,25 @@ async function followPlatformMode(): Promise<void> {
   const res = await owner({
     method: "PATCH",
     url: `/api/v1/orgs/${orgId}/settings`,
-    payload: { autoMode: null },
+    payload: { fullAccess: null },
   });
   expect(res.statusCode, res.body).toBe(200);
+}
+
+/**
+ * Switches `convId` to Full access with the displayed scope's consent: on the activated tree a
+ * restricted profile reaches only its working root, while these tests exercise the device's auto
+ * mode reaching its whole machine (the command review still asks for writes outside the root).
+ */
+async function fullAccess(convId: string): Promise<void> {
+  const deviceId = await deviceOf(convId);
+  const preview = await k.app.get(PermissionFacts).scope(orgId, deviceId, null, null);
+  if (!preview.scopeRevision) throw new Error("the device offers no Full access scope");
+  await k.app.get(PermissionProfilesService).set(orgId, convId, ownerId, {
+    profile: "full-access",
+    consentScopeRevision: preview.scopeRevision,
+    expectedRevision: 0,
+  });
 }
 
 const appendProjectRoot = (convId: string, payload: Record<string, unknown>) =>
@@ -340,8 +362,8 @@ describe("a bound conversation works in its project's root", () => {
     const dir = `p-${randomUUID().slice(0, 8)}`;
     const conv = await boundConversation(`/workspace/${dir}`);
     await put(await deviceOf(conv), { [`${dir}/notes.txt`]: "x\n" });
-    const touch = { command: "touch /workspace/elsewhere.txt", description: "Touch" };
-    await postMessage(owner, orgId, conv, `tool:Bash:${JSON.stringify(touch)}`);
+    const elsewhere = { file_path: "/workspace/elsewhere.txt", content: "x" };
+    await postMessage(owner, orgId, conv, `tool:Write:${JSON.stringify(elsewhere)}`);
     const ask = await waitFor(
       async () =>
         db
@@ -354,7 +376,11 @@ describe("a bound conversation works in its project's root", () => {
       30_000,
       "the command ask",
     );
-    expect(ask.detail as Record<string, unknown>).toMatchObject({ rule: "ask.outside-write" });
+    // the device's workspace is outside the project root: its directory is the proposal
+    expect(ask.detail as Record<string, unknown>).toMatchObject({
+      rule: "ask.outside-write",
+      permissionScope: { writeDirectories: ["/workspace"] },
+    });
     const declined = await owner({
       method: "POST",
       url: `/api/v1/orgs/${orgId}/approvals/${ask.id}/decision`,
@@ -365,17 +391,20 @@ describe("a bound conversation works in its project's root", () => {
 
     // the same command in a free conversation writes inside its workspace: allowed
     const free = await createConv(owner, orgId, agentId);
-    const r = await call(free, "Bash", touch, 1);
+    const r = await call(free, "Write", elsewhere, 1);
     expect(r.payload.review).toMatchObject({ decision: "allow", rule: "allow.workspace-write" });
   });
-  it("an approved command runs against the working root it was reviewed with, not a later snapshot", async () => {
+  // B-18: the review judged the call against a working root; held evidence of another root is
+  // stale, so the approved call is refused before it runs (never in the later snapshot's root)
+  it("an approved command never runs against a later snapshot than the root it was reviewed with", async () => {
     const dir = `p-${randomUUID().slice(0, 8)}`;
     const conv = await boundConversation(`/workspace/${dir}`);
     await put(await deviceOf(conv), {
       [`${dir}/notes.txt`]: "x\n",
       [`${dir}-later/notes.txt`]: "y\n",
     });
-    const line = { command: "pwd && touch /workspace/elsewhere2.txt", description: "Where" };
+    // a sensitive-command consent ask holds the call (approved, it runs under the base scope)
+    const line = { command: "pwd && sudo -n true", description: "Where" };
     await postMessage(owner, orgId, conv, `tool:Bash:${JSON.stringify(line)}`);
     const ask = await waitFor(
       async () =>
@@ -402,8 +431,9 @@ describe("a bound conversation works in its project's root", () => {
     expect(approved.statusCode, approved.body).toBe(200);
     await waitForTerminal(db, conv, 1, 30_000);
     const r = (await results(conv)).at(-1) as ToolResult;
-    expect(r.payload.isError).toBe(false);
-    expect(r.payload.content).toMatch(new RegExp(`/workspace/${dir}\\n`));
+    expect(r.payload.isError).toBe(true);
+    expect(r.payload.content).toContain(MANAGED_DEVICE_CONTEXT_STALE_TEXT);
+    expect(r.payload.content).not.toContain(`/workspace/${dir}-later`);
   });
 
   it("a free conversation with a stale recorded workspace runs where the instance is", async () => {
@@ -415,8 +445,13 @@ describe("a bound conversation works in its project's root", () => {
       } as never,
     ]);
     const r = await call(conv, "Bash", { command: "pwd", description: "Where" }, 1);
-    expect(r.payload.isError).toBe(false);
+    expect(r.payload.isError, r.payload.content).toBe(false);
     expect(r.payload.content).toMatch(/^\/workspace\n/m);
+    // the managed writer records the device paths from the held instance's roots
+    const paths = (await eventsOf(db, conv)).filter((e) => e.type === "device_paths");
+    expect(
+      (paths.at(-1)?.payload as { roots?: { workspace?: string } } | undefined)?.roots?.workspace,
+    ).toBe("/workspace");
   });
 
   it("a free conversation's ask records the root it judged; the approved call still runs where the instance is", async () => {
@@ -427,7 +462,7 @@ describe("a bound conversation works in its project's root", () => {
         payload: { roots: { workspace: "/stale", skills: "/skills", tmp: "/tmp" } },
       } as never,
     ]);
-    const line = { command: "pwd && touch /workspace/../outside-free.txt", description: "Where" };
+    const line = { command: "pwd && sudo -n true", description: "Where" };
     await postMessage(owner, orgId, conv, `tool:Bash:${JSON.stringify(line)}`);
     const ask = await waitFor(
       async () =>
@@ -441,7 +476,9 @@ describe("a bound conversation works in its project's root", () => {
       30_000,
       "the command ask",
     );
-    expect(ask.detail as Record<string, unknown>).toMatchObject({ workingRoot: "/stale" });
+    // the review reads the same source as admission: the held instance's committed roots, not
+    // the stale record
+    expect(ask.detail as Record<string, unknown>).toMatchObject({ workingRoot: "/workspace" });
     const approved = await owner({
       method: "POST",
       url: `/api/v1/orgs/${orgId}/approvals/${ask.id}/decision`,
@@ -454,14 +491,16 @@ describe("a bound conversation works in its project's root", () => {
     expect(r.payload.content).toMatch(/^\/workspace\n/m);
   });
 
-  it("an approved command resumed after a mode switch decides its working root afresh", async () => {
+  // B-18: a mode switch and a newer snapshot while the run waits change the working root the
+  // call was reviewed against, so the approved call is refused as stale instead of re-deciding it
+  it("an approved command resumed after a mode switch and a newer snapshot is refused as stale", async () => {
     const dir = `p-${randomUUID().slice(0, 8)}`;
     const conv = await boundConversation(`/workspace/${dir}`);
     await put(await deviceOf(conv), {
       [`${dir}/notes.txt`]: "x\n",
       [`${dir}-later/notes.txt`]: "y\n",
     });
-    const line = { command: "pwd && touch /workspace/elsewhere3.txt", description: "Where" };
+    const line = { command: "pwd && sudo -n true", description: "Where" };
     await postMessage(owner, orgId, conv, `tool:Bash:${JSON.stringify(line)}`);
     const ask = await waitFor(
       async () =>
@@ -484,7 +523,7 @@ describe("a bound conversation works in its project's root", () => {
     const off = await owner({
       method: "PATCH",
       url: `/api/v1/orgs/${orgId}/settings`,
-      payload: { autoMode: "off" },
+      payload: { fullAccess: "off" },
     });
     expect(off.statusCode, off.body).toBe(200);
     try {
@@ -496,7 +535,8 @@ describe("a bound conversation works in its project's root", () => {
       expect(approved.statusCode, approved.body).toBe(200);
       await waitForTerminal(db, conv, 1, 30_000);
       const r = (await results(conv)).at(-1) as ToolResult;
-      expect(r.payload.content).toMatch(new RegExp(`/workspace/${dir}-later\\n`));
+      expect(r.payload.isError).toBe(true);
+      expect(r.payload.content).toContain(MANAGED_DEVICE_CONTEXT_STALE_TEXT);
     } finally {
       await followPlatformMode();
     }

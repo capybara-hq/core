@@ -53,7 +53,7 @@ describe("nested operation boundaries", () => {
 });
 
 import type { SandboxOperationScope, SandboxProvider } from "@capybara-hq/plugin-sdk";
-import { createHeldOperations } from "../../src/sandbox/held-operations.js";
+import { createHeldOperations, withKernelGeneration } from "../../src/sandbox/held-operations.js";
 
 const scope = (revision: number): SandboxOperationScope => ({
   operationId: `op-${revision}`,
@@ -154,15 +154,68 @@ it("owner baseline removal preserves Full and explicit additions but revokes bas
   expect(ownerPolicyRevokes(next, restricted, "exec", [])).toBe(true);
   expect(ownerPolicyRevokes(next, restricted, "exec", ["api.example.com"])).toBe(false);
   expect(ownerPolicyRevokes(next, restricted, "stat", [])).toBe(false);
-  expect(ownerPolicyRevokes(next, { ...restricted, profile: "full-access" }, "exec", [])).toBe(
-    false,
-  );
-  expect(
-    ownerPolicyRevokes(
-      { ...next, mode: "sandbox" },
-      { ...restricted, profile: "full-access" },
-      "exec",
-      [],
-    ),
-  ).toBe(true);
+  // full execution is the scope's reach: a Full access operation and an escalated call alike
+  const full = {
+    ...restricted,
+    filesystem: { kind: "device" as const },
+    network: { kind: "environment" as const },
+  };
+  for (const profile of ["full-access", "approve-for-me"] as const) {
+    expect(ownerPolicyRevokes(next, { ...full, profile }, "exec", [])).toBe(false);
+    expect(ownerPolicyRevokes({ ...next, mode: "sandbox" }, { ...full, profile }, "exec", [])).toBe(
+      true,
+    );
+  }
+});
+
+// final review m4: a cloud provider's background start is told the kernel's generation of the
+// held instance; nothing else about the provider changes
+describe("withKernelGeneration", () => {
+  const ref = {
+    executionId: "x",
+    operationId: "op-1",
+    instanceId: "i",
+    instanceGeneration: "1700000000000",
+  };
+  it("adds instanceGeneration to start only; the other methods are the provider's own, bound to it", async () => {
+    const seen: { self: unknown; args: unknown }[] = [];
+    const background = {
+      async start(this: unknown, _h: unknown, _s: unknown, args: unknown) {
+        seen.push({ self: this, args });
+        return ref;
+      },
+      async status(this: unknown) {
+        seen.push({ self: this, args: "status" });
+        return { state: "running" as const };
+      },
+      async stop(this: unknown) {
+        seen.push({ self: this, args: "stop" });
+        return { outcome: "stopped" as const };
+      },
+    };
+    const provider = { concurrentExec: true, background } as unknown as SandboxProvider;
+    const wrapped = withKernelGeneration(provider, "1700000000000");
+    const signal = new AbortController().signal;
+    const args = { command: "sleep 1", timeoutMs: 1000, signal } as never;
+    expect(await wrapped.background?.start({ id: "i" }, scope(1), args)).toBe(ref);
+    await wrapped.background?.status({ id: "i" }, ref, { signal } as never);
+    await wrapped.background?.stop({ id: "i" }, ref, { graceMs: 5000, signal });
+    expect(seen).toEqual([
+      {
+        self: background,
+        args: { command: "sleep 1", timeoutMs: 1000, signal, instanceGeneration: "1700000000000" },
+      },
+      { self: background, args: "status" },
+      { self: background, args: "stop" },
+    ]);
+    // the caller's input is not changed, nor is the provider
+    expect(args).not.toHaveProperty("instanceGeneration");
+    expect(provider.background).toBe(background);
+    // every other member reads through to the provider
+    expect(wrapped.concurrentExec).toBe(true);
+  });
+  it("a provider without background tasks is returned as it is", () => {
+    const provider = { concurrentExec: true } as unknown as SandboxProvider;
+    expect(withKernelGeneration(provider, "1")).toBe(provider);
+  });
 });

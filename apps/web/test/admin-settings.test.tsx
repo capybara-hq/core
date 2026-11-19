@@ -21,13 +21,13 @@ vi.mock("next/navigation", () => ({
 }));
 
 /**
- * 自动模式 on the admin settings page (auto mode spec §4.3): one control, allowed or off, the
+ * Full access on the admin settings page (`devicesFullAccess`): one control, allowed or off, the
  * source line (env / file / nacos / db / default; a startup-config value is read-only), and a save
  * that invalidates every org's settings and devices. A signed-in super admin may set it either
  * way; only an API token or the Platform tool may narrow alone (a kernel rule, tested there).
  */
 
-const A = en.admin.settings.autoMode;
+const A = en.admin.settings.fullAccess;
 
 const SETTINGS = {
   orgCreation: "anyone",
@@ -37,26 +37,29 @@ const SETTINGS = {
   customConnectors: "allow",
   customSkills: "allow",
   clientExtensions: { enabled: true, disabled: [] as string[] },
-  devicesAutoMode: { mode: "allowed", source: "default" },
+  devicesFullAccess: { permission: "allowed", source: "default" },
 };
 
-type Mode = { mode: "allowed" | "off"; source: "env" | "file" | "nacos" | "db" | "default" };
+type Mode = { permission: "allowed" | "off"; source: "env" | "file" | "nacos" | "db" | "default" };
 
-const routeMap = (auto: Mode = SETTINGS.devicesAutoMode as Mode) => ({
-  "GET /api/v1/admin/settings": () => json(200, { ...SETTINGS, devicesAutoMode: auto }),
+const routeMap = (full: Mode = SETTINGS.devicesFullAccess as Mode) => ({
+  "GET /api/v1/admin/settings": () => json(200, { ...SETTINGS, devicesFullAccess: full }),
   "GET /api/v1/admin/components?kind=theme": () => json(200, { components: [] }),
   "GET /api/v1/admin/ui/arrangement": () => json(200, { slots: [] }),
   "GET /api/v1/admin/extensions": () => json(200, { extensions: [], drainSeconds: 30 }),
   "PUT /api/v1/admin/settings": (c: Call) => {
-    const body = bodyOf(c) as { devicesAutoMode?: { mode?: string } };
+    const body = bodyOf(c) as { devicesFullAccess?: { permission?: string } };
     return json(200, {
       ...SETTINGS,
-      devicesAutoMode: { mode: body.devicesAutoMode?.mode ?? auto.mode, source: "db" },
+      devicesFullAccess: {
+        permission: body.devicesFullAccess?.permission ?? full.permission,
+        source: "db",
+      },
     });
   },
 });
 
-const routes = (auto: Mode = SETTINGS.devicesAutoMode as Mode) => stubApi(routeMap(auto));
+const routes = (full: Mode = SETTINGS.devicesFullAccess as Mode) => stubApi(routeMap(full));
 
 const sectionOf = async (title: string) =>
   (await screen.findByRole("heading", { name: title })).closest("section") as HTMLElement;
@@ -67,8 +70,8 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe("自动模式 on /admin/settings", () => {
-  it("turning it off saves devicesAutoMode and invalidates every org's settings and devices", async () => {
+describe("Full access on /admin/settings", () => {
+  it("turning it off saves devicesFullAccess and invalidates every org's settings and devices", async () => {
     const calls = routes();
     const { client } = await renderRouteWithCache("/admin/settings", lastStubRoutes());
     client.setQueryData(keys.org("o1").orgSettings(), { settings: {} });
@@ -83,7 +86,7 @@ describe("自动模式 on /admin/settings", () => {
     await user.click(screen.getByRole("button", { name: en.admin.settings.save }));
     await waitFor(() => expect(calls.some((c) => c.method === "PUT")).toBe(true));
     expect(bodyOf(calls.find((c) => c.method === "PUT"))).toEqual({
-      devicesAutoMode: { mode: "off" },
+      devicesFullAccess: { permission: "off" },
     });
     await waitFor(() =>
       expect(client.getQueryState(keys.org("o1").orgSettings())?.isInvalidated).toBe(true),
@@ -96,14 +99,14 @@ describe("自动模式 on /admin/settings", () => {
     "the source line names where the switch comes from (%s)",
     async (source) => {
       const locked = source === "env" || source === "file" || source === "nacos";
-      routes({ mode: locked ? "off" : "allowed", source });
+      routes({ permission: locked ? "off" : "allowed", source });
       await renderRouteWithCache("/admin/settings", lastStubRoutes());
       const section = await sectionOf(A.title);
       for (const radio of within(section).getAllByRole("radio")) {
         expect((radio as HTMLInputElement).disabled).toBe(locked);
       }
       const expected = locked
-        ? `${A.sources[source]} · devices.autoMode`
+        ? `${A.sources[source]} · devices.fullAccess`
         : `Source: ${A.sources[source]}`;
       expect(within(section).getByText(expected)).toBeTruthy();
       expect(findNestedBoxes(document.body).map(describeNestedBox)).toEqual([]);
@@ -111,18 +114,18 @@ describe("自动模式 on /admin/settings", () => {
   );
 
   it("a startup-config value is read-only with its source in Chinese too", async () => {
-    routes({ mode: "off", source: "file" });
+    routes({ permission: "off", source: "file" });
     await renderRouteWithCache("/admin/settings", lastStubRoutes(), { locale: "zh" });
-    const z = zh.admin.settings.autoMode;
+    const z = zh.admin.settings.fullAccess;
     const section = await sectionOf(z.title);
     for (const radio of within(section).getAllByRole("radio")) {
       expect((radio as HTMLInputElement).disabled).toBe(true);
     }
-    expect(within(section).getByText(`${z.sources.file} · devices.autoMode`)).toBeTruthy();
+    expect(within(section).getByText(`${z.sources.file} · devices.fullAccess`)).toBeTruthy();
   });
 
-  it("a signed-in super admin may raise it: the page sends mode allowed", async () => {
-    const calls = routes({ mode: "off", source: "db" });
+  it("a signed-in super admin may raise it: the page sends permission allowed", async () => {
+    const calls = routes({ permission: "off", source: "db" });
     await renderRouteWithCache("/admin/settings", lastStubRoutes());
     const section = await sectionOf(A.title);
     const user = userEvent.setup();
@@ -136,7 +139,7 @@ describe("自动模式 on /admin/settings", () => {
     await user.click(screen.getByRole("button", { name: en.admin.settings.save }));
     await waitFor(() => expect(calls.some((c) => c.method === "PUT")).toBe(true));
     expect(bodyOf(calls.find((c) => c.method === "PUT"))).toEqual({
-      devicesAutoMode: { mode: "allowed" },
+      devicesFullAccess: { permission: "allowed" },
     });
   });
 });

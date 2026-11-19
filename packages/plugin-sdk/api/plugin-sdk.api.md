@@ -159,16 +159,13 @@ export interface AuthInjection {
 export type AvailableHook = (typeof HOOKS_AVAILABLE)[number];
 
 // @public
-export const BACKGROUND_LAUNCH_LINE = "# capybara: background task launch";
-
-// @public
-export interface BackgroundReadOutputRequestV3 {
+export interface BackgroundReadOutputRequest {
     maxBytes: number;
     offset: number;
 }
 
 // @public
-export type BackgroundReadOutputResultV3 = {
+export type BackgroundReadOutputResult = {
     dataB64: string;
     offset: number;
     nextOffset: number;
@@ -178,7 +175,7 @@ export type BackgroundReadOutputResultV3 = {
 };
 
 // @public
-export interface BindInstanceRequestV3 {
+export interface BindInstanceRequest {
     bindingId: string;
     expectedPreviousGeneration: string | null;
     instanceGeneration: string;
@@ -186,13 +183,13 @@ export interface BindInstanceRequestV3 {
 }
 
 // @public
-export interface BindInstanceResultV3 {
+export interface BindInstanceResult {
     bindingId: string;
     instanceGeneration: string;
     instanceId: string;
-    ownerCeiling: DeviceOwnerCeilingV3;
+    ownerCeiling: DeviceOwnerCeiling;
     permissionSupport: SandboxPermissionSupport;
-    runtimeIdentity: DeviceRuntimeIdentityV3;
+    runtimeIdentity: DeviceRuntimeIdentity;
 }
 
 // @public
@@ -839,7 +836,13 @@ export function defineExtension(m: ExtensionManifest): ExtensionManifest;
 export const DEVICE_BOOT_ID_RE: RegExp;
 
 // @public
-export const DEVICE_PROTOCOL_VERSION = 2;
+export const DEVICE_DEFAULT_STATE_PATH = "~/.config/capybara-device";
+
+// @public
+export const DEVICE_DENIED_SECRET_PATHS: readonly string[];
+
+// @public
+export const DEVICE_PROTOCOL_VERSION = 3;
 
 // @public
 export const DEVICE_SCAN_SKIPPED_BASE_DIRS: readonly string[];
@@ -890,35 +893,15 @@ export type DeviceExecResult = ExecResult;
 export type DeviceFeature = "networkReport" | "policyOp" | "policyOpId" | "mode" | "projects";
 
 // @public
-export type DeviceFrame = DeviceHello | DeviceRes | DevicePolicyChanged | KernelReq | KernelCancel;
+export type DeviceFrame = DeviceHello | KernelReady | KernelRequest | KernelCancel | DeviceResponse | DevicePolicyChanged;
 
 // @public
-export type DeviceFrameV3 = DeviceHelloV3 | KernelReadyV3 | KernelRequestV3 | KernelCancel | DeviceResponseV3 | DevicePolicyChangedV3;
-
-// @public
-export interface DeviceHello {
-    arch: string;
-    bootId?: string;
-    features?: DeviceFeature[];
-    home?: string;
-    mode: "os" | "docker";
-    os: "darwin" | "linux";
-    policy?: DeviceLocalPolicySummary;
-    programVersion: string;
-    protocol: number;
-    recentOps?: DevicePolicyOpReport[];
-    roots: SandboxRoots;
-    sessionIsolation: boolean;
-    type: "hello";
-}
-
-// @public
-export interface DeviceHelloV3 extends DeviceHello {
+export interface DeviceHello extends LegacyDeviceHello {
     instanceGeneration: string | null;
-    ownerCeiling: DeviceOwnerCeilingV3;
+    ownerCeiling: DeviceOwnerCeiling;
     permissionSupport: SandboxPermissionSupport;
     protocol: 3;
-    runtimeIdentity?: DeviceRuntimeIdentityV3;
+    runtimeIdentity?: DeviceRuntimeIdentity;
     transport: {
         maxFrameBytes: number;
     };
@@ -961,7 +944,7 @@ export interface DeviceLocalPolicySummary {
 export type DeviceOp = "create" | "exec" | "readFile" | "writeFile" | "stat" | "killTagged" | "killAll" | "stop" | "policy" | "policyStatus" | "list" | "scan";
 
 // @public
-export type DeviceOperationV3 = Exclude<DeviceOp, "killTagged" | "killAll"> | "prepareReadFile" | "prepareWriteFile" | "prepareStat" | "browseStat" | "browseList" | "browseScan" | "backgroundStart" | "backgroundStatus" | "backgroundTail" | "backgroundReadOutput" | "backgroundStop" | "revokeOperation" | "bindInstance";
+export type DeviceOperation = Exclude<DeviceOp, "killTagged" | "killAll"> | "prepareReadFile" | "prepareWriteFile" | "prepareStat" | "browseStat" | "browseList" | "browseScan" | "backgroundStart" | "backgroundStatus" | "backgroundTail" | "backgroundReadOutput" | "backgroundStop" | "revokeOperation" | "bindInstance";
 
 // @public
 export interface DeviceOpResults {
@@ -970,8 +953,8 @@ export interface DeviceOpResults {
     killAll: null;
     killTagged: null;
     list: DeviceListResult;
-    policy: DevicePolicyResult;
-    policyStatus: DevicePolicyStatus;
+    policy: LegacyDevicePolicyResult;
+    policyStatus: LegacyDevicePolicyStatus;
     readFile: DeviceReadFileResult;
     scan: DeviceScanResult;
     stat: DeviceStatResult;
@@ -980,13 +963,7 @@ export interface DeviceOpResults {
 }
 
 // @public
-export interface DeviceOwnerCeilingNarrowingV3 {
-    readonly fullAccess?: false;
-    readonly restrictedProjectReach?: "workspace";
-}
-
-// @public
-export interface DeviceOwnerCeilingV3 {
+export interface DeviceOwnerCeiling {
     readonly fullAccess: boolean;
     readonly restrictedAllowedDomains: readonly string[];
     readonly restrictedProjectReach: "workspace" | "os-user";
@@ -996,33 +973,19 @@ export interface DeviceOwnerCeilingV3 {
 }
 
 // @public
-export interface DevicePolicyArgs {
-    add?: string[];
-    mode?: "sandbox";
-    opId: string;
-    remove?: string[];
-    source: {
-        approvalId?: string;
-        accountId: string;
-        accountName: string;
-        via: "web" | "im";
-    };
+export interface DeviceOwnerCeilingNarrowing {
+    readonly fullAccess?: false;
+    readonly restrictedProjectReach?: "workspace";
 }
 
 // @public
-export interface DevicePolicyArgsV3 extends DevicePolicyArgs {
-    ownerCeiling?: DeviceOwnerCeilingNarrowingV3;
+export interface DevicePolicyArgs extends LegacyDevicePolicyArgs {
+    ownerCeiling?: DeviceOwnerCeilingNarrowing;
 }
 
 // @public
 export interface DevicePolicyChanged {
-    policy?: DeviceLocalPolicySummary;
-    type: "policy";
-}
-
-// @public
-export interface DevicePolicyChangedV3 {
-    ownerCeiling: DeviceOwnerCeilingV3;
+    ownerCeiling: DeviceOwnerCeiling;
     policy?: DeviceLocalPolicySummary;
     type: "policy";
 }
@@ -1038,30 +1001,18 @@ export interface DevicePolicyOpReport {
 
 // @public
 export interface DevicePolicyResult {
+    ownerCeiling: DeviceOwnerCeiling;
     policy: DeviceLocalPolicySummary;
 }
 
 // @public
-export interface DevicePolicyResultV3 {
-    ownerCeiling: DeviceOwnerCeilingV3;
-    policy: DeviceLocalPolicySummary;
-}
-
-// @public
-export interface DevicePolicyStatus {
-    message?: string;
-    outcome: DevicePolicyOpOutcome | "unknown";
-    policy?: DeviceLocalPolicySummary;
+export interface DevicePolicyStatus extends LegacyDevicePolicyStatus {
+    ownerCeiling?: DeviceOwnerCeiling;
 }
 
 // @public
 export interface DevicePolicyStatusArgs {
     opId: string;
-}
-
-// @public
-export interface DevicePolicyStatusV3 extends DevicePolicyStatus {
-    ownerCeiling?: DeviceOwnerCeilingV3;
 }
 
 // @public
@@ -1108,7 +1059,7 @@ export type DeviceRes = {
 };
 
 // @public
-export type DeviceResponseV3 = Exclude<DeviceRes, {
+export type DeviceResponse = Exclude<DeviceRes, {
     ok: false;
 }> | {
     type: "res";
@@ -1121,7 +1072,7 @@ export type DeviceResponseV3 = Exclude<DeviceRes, {
 };
 
 // @public
-export interface DeviceRuntimeIdentityV3 {
+export interface DeviceRuntimeIdentity {
     helperHash: string;
     imageFingerprint: string;
     instanceGeneration: string;
@@ -2060,9 +2011,6 @@ export interface InputRequired {
 export function isAttachmentId(s: unknown): s is string;
 
 // @public
-export function isBackgroundLaunch(command: string): boolean;
-
-// @public
 export function isChannelSendError(e: unknown): e is ChannelSendError;
 
 // @public
@@ -2149,7 +2097,7 @@ export interface KernelCancel {
 }
 
 // @public
-export interface KernelReadyV3 {
+export interface KernelReady {
     connectionId: string;
     maxFrameBytes: number;
     type: "ready";
@@ -2165,11 +2113,11 @@ export interface KernelReq {
 }
 
 // @public
-export interface KernelRequestV3 {
+export interface KernelRequest {
     args: Readonly<Record<string, unknown>>;
     deadlineMs: number;
     id: string;
-    op: DeviceOperationV3;
+    op: DeviceOperation;
     type: "req";
 }
 
@@ -2177,6 +2125,61 @@ export interface KernelRequestV3 {
 export interface Lease {
     release(): Promise<void>;
     renew(): Promise<boolean>;
+}
+
+// @public
+export const LEGACY_DEVICE_PROTOCOL_VERSION = 2;
+
+// @public
+export type LegacyDeviceFrame = LegacyDeviceHello | DeviceRes | LegacyDevicePolicyChanged | KernelReq | KernelCancel;
+
+// @public
+export interface LegacyDeviceHello {
+    arch: string;
+    bootId?: string;
+    features?: DeviceFeature[];
+    home?: string;
+    mode: "os" | "docker";
+    os: "darwin" | "linux";
+    policy?: DeviceLocalPolicySummary;
+    programVersion: string;
+    protocol: number;
+    recentOps?: DevicePolicyOpReport[];
+    roots: SandboxRoots;
+    sessionIsolation: boolean;
+    type: "hello";
+}
+
+// @public
+export interface LegacyDevicePolicyArgs {
+    add?: string[];
+    mode?: "sandbox";
+    opId: string;
+    remove?: string[];
+    source: {
+        approvalId?: string;
+        accountId: string;
+        accountName: string;
+        via: "web" | "im";
+    };
+}
+
+// @public
+export interface LegacyDevicePolicyChanged {
+    policy?: DeviceLocalPolicySummary;
+    type: "policy";
+}
+
+// @public
+export interface LegacyDevicePolicyResult {
+    policy: DeviceLocalPolicySummary;
+}
+
+// @public
+export interface LegacyDevicePolicyStatus {
+    message?: string;
+    outcome: DevicePolicyOpOutcome | "unknown";
+    policy?: DeviceLocalPolicySummary;
 }
 
 // @public
@@ -2701,10 +2704,7 @@ export function parseConnectorTemplateFile(json: unknown): ConnectorTemplateFile
 };
 
 // @public
-export function parseDeviceFrame(raw: string, from: "device" | "kernel"): DeviceFrame;
-
-// @public
-export function parseDeviceFrameV3(raw: string, from: "device" | "kernel", maxFrameBytes?: number): DeviceFrameV3;
+export function parseDeviceFrame(raw: string, from: "device" | "kernel", maxFrameBytes?: number): DeviceFrame;
 
 // @public
 export interface ParsedSetupGuide {
@@ -2758,18 +2758,21 @@ export function parseGitSource(git: unknown): GitSource | {
 };
 
 // @public
+export function parseLegacyDeviceFrame(raw: string, from: "device" | "kernel"): LegacyDeviceFrame;
+
+// @public
 export function parseMarketplaceManifest(json: unknown, opts?: MarketplaceParseOptions): MarketplaceManifest | {
     errors: string[];
 };
 
 // @public
-export function parseOperationResultV3(op: DeviceOperationV3, result: unknown, request?: BackgroundReadOutputRequestV3 | BindInstanceRequestV3): unknown;
+export function parseOperationResult(op: DeviceOperation, result: unknown, request?: BackgroundReadOutputRequest | BindInstanceRequest): unknown;
 
 // @public
 export function parseOpResult<Op extends DeviceOp>(op: Op, result: unknown): DeviceOpResults[Op];
 
 // @public
-export function parseOwnerCeilingReportV3(value: unknown): DeviceOwnerCeilingV3;
+export function parseOwnerCeilingReport(value: unknown): DeviceOwnerCeiling;
 
 // @public
 export function parsePluginManifest(json: unknown): PluginManifest | {
@@ -3208,6 +3211,7 @@ export interface SandboxBackground {
         taskId: string;
         outputPath: string;
         retainUntilMs: number;
+        instanceGeneration?: string;
     }): Promise<SandboxExecutionRef>;
     status(h: SandboxHandle, ref: SandboxExecutionRef, signal: AbortSignal): Promise<SandboxExecutionStatus>;
     stop(h: SandboxHandle, ref: SandboxExecutionRef, opts: {
@@ -3754,9 +3758,6 @@ export function skillSandboxDir(name: string, digest: string, root?: string): st
 
 // @public
 export function skillSandboxPath(name: string, digest: string, path: string, root?: string): string;
-
-// @public
-export const STAGED_DEVICE_PROTOCOL_VERSION = 3;
 
 // @public
 export const STANDARD_KNOBS: readonly StandardKnob[];

@@ -7,10 +7,10 @@ import type {
   SandboxRoots,
 } from "@capybara-hq/plugin-sdk";
 import {
-  type BackgroundReadOutputResultV3,
-  type DeviceOperationV3,
-  parseDeviceFrameV3,
-  parseOperationResultV3,
+  type BackgroundReadOutputResult,
+  type DeviceOperation,
+  parseDeviceFrame,
+  parseOperationResult,
   parseSandboxBrowseScope,
   parseSandboxOperationScope,
   parseSandboxPreparationScope,
@@ -22,14 +22,10 @@ import {
   type SandboxPreparation,
 } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable, Optional } from "@nestjs/common";
-import { projectsUnsupported } from "../devices/errors.js";
-import { ApiError } from "../errors.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
-import { KERNEL_LOGGER } from "../infra/tokens.js";
-import type { KernelLogger } from "../log.js";
 import { PermissionCallGrants } from "../sandbox/permission-call-grants.js";
 import { deviceNotFound, SandboxService } from "../sandbox/sandbox.service.js";
-import { grantsWithin, NetworkGrants, relayer } from "./network-grants.js";
+import { grantsWithin, relayer } from "./network-grants.js";
 import { deviceOffline, LocalDeviceRelay } from "./relay.js";
 import { DeviceTargets, sameRoots } from "./targets.js";
 
@@ -54,16 +50,8 @@ export const maxReadBytes = (maxFrameBytes: number): number =>
 const NAME_PREFIX = "cap-device-";
 
 /**
- * The refusal of a command on a machine whose local policy is auto mode while the organization (or
- * the platform) allows only sandbox mode (auto mode spec §4.3): re-checked at every exec, so a
- * machine switched locally is refused at the next command.
- */
-export const AUTO_MODE_NOT_ALLOWED_TEXT =
-  "This device's machine runs in auto mode, which your organization does not allow. Run `capybara-device mode sandbox` on that machine to switch it to sandbox mode.";
-
-/**
- * A raw protocol 2 method on the staged provider: refused before anything is queued (a v3
- * machine runs work only under an admitted operation scope; there is no raw fallback).
+ * A raw protocol 2 method: refused before anything is queued (a v3 machine runs work only under
+ * an admitted operation scope; there is no raw fallback).
  */
 const refuseRaw =
   (method: string) =>
@@ -77,7 +65,7 @@ const refuseRaw =
 export interface StagedDeviceTransport {
   call(
     deviceId: string,
-    op: DeviceOperationV3,
+    op: DeviceOperation,
     args: Record<string, unknown>,
     opts: {
       deadlineMs: number;
@@ -128,13 +116,10 @@ export class LocalDeviceProvider implements SandboxProvider {
   constructor(
     @Inject(LocalDeviceRelay) private readonly relay: LocalDeviceRelay,
     @Inject(DeviceTargets)
-    private readonly targets: Pick<DeviceTargets, "orgOf" | "machineRoots" | "machineFeatures">,
+    private readonly targets: Pick<DeviceTargets, "orgOf" | "machineRoots">,
     @Inject(SandboxService)
     private readonly sandbox: Pick<SandboxService, "devicePolicy" | "deviceLimits">,
     @Inject(KernelConfigService) private readonly config: Pick<KernelConfigService, "get">,
-    @Inject(NetworkGrants)
-    private readonly grants: Pick<NetworkGrants, "forExec" | "reportedMode">,
-    @Inject(KERNEL_LOGGER) private readonly log: Pick<KernelLogger, "warn">,
     @Optional() @Inject(PermissionCallGrants) private readonly callGrants?: PermissionCallGrants,
   ) {}
 
@@ -150,15 +135,12 @@ export class LocalDeviceProvider implements SandboxProvider {
    * missing operation support never falls back to them.
    *
    * A v3 machine has no `killAll` / `killTagged` (permission runtime cutover B-1), so both are
-   * no-ops that queue nothing. What reaches the machine instead is only what the kernel revokes
-   * exactly (`revokeOperation` per intent): `SandboxService` calls `OperationIntents.revokeHolders`
-   * with the crashed holders' tokens before `killTagged` and before `killLeftovers`' `killAll`, and
-   * that revokes those holders' admitted, dispatching and started-or-unknown intents only. Not
-   * covered today: the `killAll` after a failed limits change on a resumed instance and the one
-   * in `quarantine` (unreachable for `@local`) revoke nothing first; `killLeftovers` revokes only
-   * the dead tokens, not the started-or-unknown intents of live holders of the instance; and
-   * tokens `claimDeadHolders` already deleted are lost when `revokeHolders` then throws. Revoking
-   * every started-or-unknown intent of the generation on a v3 resume is W5-P3a's kernel change.
+   * no-ops that queue nothing; the kernel never calls them anyway. What reaches the machine is
+   * only what the kernel revokes exactly (`revokeOperation` per intent): `SandboxService` owes a
+   * crashed holder's revocation in an outbox row before it forgets the holder record, revokes that
+   * holder's admitted, dispatching and started-or-unknown intents, and, under the exclusive lease
+   * on an incarnation nobody else holds (a resume, a failed limits change, a quarantine), every
+   * started-or-unknown intent of that generation; the owed revokes are delivered by operation id.
    */
   staged(transport: StagedDeviceTransport): SandboxProvider {
     const ops = this.stagedOperations(transport);
@@ -166,7 +148,7 @@ export class LocalDeviceProvider implements SandboxProvider {
       ...ops,
       create: async (args) => {
         const id = args.fileSystem.id;
-        const r = parseOperationResultV3(
+        const r = parseOperationResult(
           "create",
           await transport.call(
             id,
@@ -176,18 +158,6 @@ export class LocalDeviceProvider implements SandboxProvider {
           ),
         ) as { roots: SandboxRoots };
         return { id, roots: r.roots, limits: args.limits } satisfies LocalDeviceHandle;
-      },
-      exec: refuseRaw("exec"),
-      readFile: refuseRaw("readFile"),
-      writeFile: refuseRaw("writeFile"),
-      stat: refuseRaw("stat"),
-      list: refuseRaw("list"),
-      scan: refuseRaw("scan"),
-      killAll: async (_h, signal) => {
-        signal.throwIfAborted();
-      },
-      killTagged: async (_h, _tags, signal) => {
-        signal.throwIfAborted();
       },
     };
     // the shared lifecycle methods keep this provider as their receiver (relay, targets, config)
@@ -216,14 +186,14 @@ export class LocalDeviceProvider implements SandboxProvider {
       ): Promise<unknown> => {
         const name = (
           prefix ? prefix + op.charAt(0).toUpperCase() + op.slice(1) : op
-        ) as DeviceOperationV3;
+        ) as DeviceOperation;
         const result = await transport.call(
           h.id,
           name,
           { scope, ...args },
           { deadlineMs: OP_DEADLINE_MS, signal: AbortSignal.any([factorySignal, signal]) },
         );
-        return parseOperationResultV3(name, result);
+        return parseOperationResult(name, result);
       };
       return {
         exec: async () => {
@@ -292,10 +262,11 @@ export class LocalDeviceProvider implements SandboxProvider {
     const background: SandboxBackground = {
       start: async (h, input, args) => {
         const scope = parseSandboxOperationScope(input);
-        const { signal, ...rest } = args;
+        // the device knows its bound generation: a kernel generation never goes on the wire
+        const { signal, instanceGeneration: _generation, ...rest } = args;
         const authority = await execArgs(h.id, scope, "backgroundStart", rest);
         signal.throwIfAborted();
-        return parseOperationResultV3(
+        return parseOperationResult(
           "backgroundStart",
           await transport.call(
             h.id,
@@ -306,7 +277,7 @@ export class LocalDeviceProvider implements SandboxProvider {
         ) as Awaited<ReturnType<SandboxBackground["start"]>>;
       },
       status: async (h, ref, signal) =>
-        parseOperationResultV3(
+        parseOperationResult(
           "backgroundStatus",
           await transport.call(
             h.id,
@@ -317,7 +288,7 @@ export class LocalDeviceProvider implements SandboxProvider {
         ) as Awaited<ReturnType<SandboxBackground["status"]>>,
       readOutput: async (h, ref, opts) => {
         opts.signal.throwIfAborted();
-        parseDeviceFrameV3(
+        parseDeviceFrame(
           JSON.stringify({
             type: "req",
             id: "validate",
@@ -331,7 +302,7 @@ export class LocalDeviceProvider implements SandboxProvider {
         const connection = await this.relay.connection(h.id);
         const capacity = Math.min(65536, maxReadBytes(connection.maxFrameBytes));
         const request = { ref, offset: opts.offset, maxBytes: Math.min(opts.maxBytes, capacity) };
-        const result = parseOperationResultV3(
+        const result = parseOperationResult(
           "backgroundReadOutput",
           await transport.call(h.id, "backgroundReadOutput", request, {
             deadlineMs: OP_DEADLINE_MS,
@@ -339,7 +310,7 @@ export class LocalDeviceProvider implements SandboxProvider {
             connection,
           }),
           request,
-        ) as BackgroundReadOutputResultV3;
+        ) as BackgroundReadOutputResult;
         if ("unavailable" in result) return result;
         // A zero-capacity probe can establish EOF, but never reports unread bytes as EOF.
         if (opts.maxBytes > 0 && capacity === 0 && result.totalBytes > opts.offset)
@@ -354,7 +325,7 @@ export class LocalDeviceProvider implements SandboxProvider {
         };
       },
       tail: async (h, ref, opts) => {
-        const r = parseOperationResultV3(
+        const r = parseOperationResult(
           "backgroundTail",
           await transport.call(
             h.id,
@@ -366,7 +337,7 @@ export class LocalDeviceProvider implements SandboxProvider {
         return "unavailable" in r ? r : { data: bytesOf(r.dataB64), truncated: r.truncated };
       },
       stop: async (h, ref, opts) =>
-        parseOperationResultV3(
+        parseOperationResult(
           "backgroundStop",
           await transport.call(
             h.id,
@@ -388,7 +359,7 @@ export class LocalDeviceProvider implements SandboxProvider {
             const authority = await execArgs(h.id, scope, "exec", rest);
             const combined = AbortSignal.any([signal, callSignal]);
             combined.throwIfAborted();
-            return parseOperationResultV3(
+            const result = parseOperationResult(
               "exec",
               await transport.call(
                 h.id,
@@ -397,6 +368,13 @@ export class LocalDeviceProvider implements SandboxProvider {
                 { deadlineMs: args.timeoutMs + EXEC_DEADLINE_MARGIN_MS, signal: combined },
               ),
             ) as ExecResult;
+            // the kernel's own layer for the machine's report, as on protocol 2: a host the org
+            // does not allow is `org` (only an admin can lift it), never a question to the owner
+            if (result.network?.blocked === undefined) return result;
+            return {
+              ...result,
+              network: { blocked: relayer(result.network.blocked, authority.limits) },
+            };
           },
         };
       },
@@ -487,173 +465,20 @@ export class LocalDeviceProvider implements SandboxProvider {
     signal.throwIfAborted();
   }
 
-  async killAll(h: SandboxHandle, signal: AbortSignal): Promise<void> {
-    await this.relay.call(h.id, "killAll", {}, { deadlineMs: OP_DEADLINE_MS, signal });
-  }
-
-  async killTagged(h: SandboxHandle, tags: string[], signal: AbortSignal): Promise<void> {
-    await this.relay.call(h.id, "killTagged", { tags }, { deadlineMs: OP_DEADLINE_MS, signal });
-  }
-
-  /**
-   * Runs the command on the machine with the org's limits now (ruling R27) and, for a command of a
-   * run, the hosts the kernel allows that run on this device beyond the local policy (network
-   * ask-to-allow spec §6.3; only those the org's limits admit, sent only when there are some). The
-   * device's report of refused hosts is re-layered against the limits this exec carried: the
-   * kernel never takes the device's word that the org allows a host (auto mode spec §4.2).
-   *
-   * The exec args carry `mode: allowedMode` (the machine cuts its own choice to it), the
-   * sandbox-mode allowlist and the run's grants. A machine whose local policy is auto mode while
-   * the organization allows only sandbox mode is refused at every exec
-   * (`device.auto_mode_not_allowed`), before anything is relayed to it.
-   */
-  async exec(h: SandboxHandle, args: Parameters<SandboxProvider["exec"]>[1]): Promise<ExecResult> {
-    const { signal, ...rest } = args;
+  /** A v3 machine has no broad kill (permission runtime cutover B-1): nothing is queued. */
+  async killAll(_h: SandboxHandle, signal: AbortSignal): Promise<void> {
     signal.throwIfAborted();
-    const runId = rest.actor?.runId;
-    const { orgId, limits } = await this.currentLimits(h.id);
-    // the run's grants for this device, cut to what the org allows now
-    const grants =
-      runId !== undefined
-        ? grantsWithin(await this.grants.forExec({ orgId, runId, deviceId: h.id }), limits)
-        : undefined;
+  }
+
+  async killTagged(_h: SandboxHandle, _tags: string[], signal: AbortSignal): Promise<void> {
     signal.throwIfAborted();
-    let result: ExecResult;
-    try {
-      result = await this.relay.call(
-        h.id,
-        "exec",
-        { ...rest, limits, ...(grants !== undefined && { grants }) },
-        { deadlineMs: args.timeoutMs + EXEC_DEADLINE_MARGIN_MS, signal },
-      );
-    } catch (e) {
-      // the contract: an exec aborted after it was sent resolves with exitCode null (the relay
-      // queued a cancel, which kills the command on the machine); the output stays there
-      if (signal.aborted && e === signal.reason) {
-        return { exitCode: null, stdout: "", stderr: "", truncated: false, timedOut: false };
-      }
-      throw e;
-    }
-    if (result.network?.blocked === undefined) return result;
-    return { ...result, network: { blocked: relayer(result.network.blocked, limits) } };
   }
 
-  async readFile(
-    h: SandboxHandle,
-    path: string,
-    opts: { maxBytes: number; signal: AbortSignal },
-  ): Promise<{ data: Uint8Array; truncated: boolean } | null> {
-    const { limits } = await this.currentLimits(h.id);
-    // the answer must fit one frame: a larger file comes back truncated (Deliver: too large)
-    const maxBytes = Math.min(
-      opts.maxBytes,
-      maxReadBytes(this.config.get().devices.local.maxFrameBytes),
-    );
-    const r = await this.relay.call(
-      h.id,
-      "readFile",
-      { path, maxBytes, limits: { mode: limits.mode } },
-      { deadlineMs: OP_DEADLINE_MS, signal: opts.signal },
-    );
-    return r === null ? null : { data: bytesOf(r.dataB64), truncated: r.truncated };
-  }
-
-  async writeFile(
-    h: SandboxHandle,
-    path: string,
-    data: Uint8Array,
-    signal: AbortSignal,
-  ): Promise<void> {
-    const dataB64 = Buffer.from(data.buffer, data.byteOffset, data.byteLength).toString("base64");
-    await this.relay.call(
-      h.id,
-      "writeFile",
-      { path, dataB64 },
-      { deadlineMs: OP_DEADLINE_MS, signal },
-    );
-  }
-
-  async stat(
-    h: SandboxHandle,
-    path: string,
-    signal: AbortSignal,
-  ): Promise<{ size: number; isDir: boolean } | null> {
-    const { limits } = await this.currentLimits(h.id);
-    return this.relay.call(
-      h.id,
-      "stat",
-      { path, limits: { mode: limits.mode } },
-      { deadlineMs: OP_DEADLINE_MS, signal },
-    );
-  }
-
-  /**
-   * Lists one directory on the machine (the `list` op, project root §4.1), read in the mode the
-   * kernel's current ceiling gives. A machine that did not announce `projects` throws
-   * `device.projects_unsupported` (never null, which would read as "does not exist").
-   */
-  async list(
-    h: SandboxHandle,
-    path: string,
-    opts: { limit: number; limits: Pick<SandboxLimits, "mode">; signal: AbortSignal },
-  ): Promise<{ entries: { name: string; isDir: boolean }[]; truncated: boolean } | null> {
-    await this.requireProjects(h.id);
-    opts.signal.throwIfAborted();
-    return this.relay.call(
-      h.id,
-      "list",
-      { path, limit: opts.limit, limits: { mode: opts.limits.mode } },
-      { deadlineMs: OP_DEADLINE_MS, signal: opts.signal },
-    );
-  }
-
-  /**
-   * Looks for project-like directories under `base` on the machine (the `scan` op, project root
-   * §4.1), read in the mode the kernel's current ceiling gives. A machine that did not announce
-   * `projects` throws `device.projects_unsupported`.
-   */
-  async scan(
-    h: SandboxHandle,
-    base: string,
-    opts: { limits: Pick<SandboxLimits, "mode">; signal: AbortSignal },
-  ): Promise<{ path: string; suggestedName: string }[]> {
-    await this.requireProjects(h.id);
-    opts.signal.throwIfAborted();
-    return this.relay.call(
-      h.id,
-      "scan",
-      { base, limits: { mode: opts.limits.mode } },
-      { deadlineMs: OP_DEADLINE_MS, signal: opts.signal },
-    );
-  }
-
-  /** The kernel never sends `list` or `scan` to a machine that did not announce `projects`. */
-  private async requireProjects(deviceId: string): Promise<void> {
-    if (!(await this.targets.machineFeatures(deviceId)).includes("projects")) {
-      throw projectsUnsupported(true);
-    }
-  }
-
-  /**
-   * The device's org and current limits for an exec or file read (ruling R27): the effective policy's
-   * `allowedMode` and the sandbox-mode allowlist. A deleted device is not found. A machine whose
-   * local policy is auto mode while the organization allows only sandbox mode is refused here, at
-   * every such operation, so a machine switched locally is not used until it is switched back.
-   */
-  private async currentLimits(deviceId: string): Promise<{ orgId: string; limits: SandboxLimits }> {
-    const orgId = await this.targets.orgOf(deviceId);
-    if (orgId === null) throw deviceNotFound();
-    const [policy, reported] = await Promise.all([
-      this.sandbox.devicePolicy({ orgId, deviceId }),
-      this.grants.reportedMode(deviceId),
-    ]);
-    if (policy.allowedMode === "sandbox" && reported === "auto") {
-      this.log.warn("device operation refused on a machine that reports auto mode", { deviceId });
-      throw new ApiError("device.auto_mode_not_allowed", AUTO_MODE_NOT_ALLOWED_TEXT);
-    }
-    return {
-      orgId,
-      limits: await this.sandbox.deviceLimits({ orgId, deviceId }, { policy, source: "local" }),
-    };
-  }
+  // The raw protocol 2 methods: a v3 machine runs work only under an admitted operation scope
+  readonly exec: SandboxProvider["exec"] = refuseRaw("exec");
+  readonly readFile: SandboxProvider["readFile"] = refuseRaw("readFile");
+  readonly writeFile: SandboxProvider["writeFile"] = refuseRaw("writeFile");
+  readonly stat: SandboxProvider["stat"] = refuseRaw("stat");
+  readonly list: NonNullable<SandboxProvider["list"]> = refuseRaw("list");
+  readonly scan: NonNullable<SandboxProvider["scan"]> = refuseRaw("scan");
 }

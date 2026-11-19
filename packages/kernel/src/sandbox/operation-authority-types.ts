@@ -1,4 +1,31 @@
-import { type DeviceExecGrants, validateAllowHost } from "@capybara-hq/plugin-sdk";
+import {
+  type DeviceExecGrants,
+  type SandboxBrowseScope,
+  type SandboxOperationScope,
+  SandboxScopeDeniedError,
+  validateAllowHost,
+} from "@capybara-hq/plugin-sdk";
+/**
+ * A call that asked to run outside the sandbox (`sandbox: "escalated"`) whose escalation grant no
+ * longer matches at admission: the device, its Full access ceiling or the permission scope
+ * changed after the approval. A typed pre-effect scope refusal (nothing ran), never a silent
+ * downgrade to the restricted scope; the tool tells the model to ask again.
+ */
+export class EscalationGrantMissingError extends SandboxScopeDeniedError {
+  readonly escalationGrantMissing = true as const;
+}
+export const isEscalationGrantMissing = (e: unknown): boolean =>
+  e instanceof Error && (e as { escalationGrantMissing?: unknown }).escalationGrantMissing === true;
+/**
+ * Whether an operation scope needs the Full access ceiling and the runtime's Full support: a Full
+ * access operation (its reach is full, or narrowed for a kernel read on a Full-only runtime), or a
+ * per-call sandbox escalation under a restricted profile, whose reach is full (`filesystem:
+ * device`, `network: environment`) while it keeps its conversation's restricted profile.
+ */
+export const isFullExecutionScope = (scope: SandboxOperationScope | SandboxBrowseScope): boolean =>
+  "profile" in scope &&
+  (scope.profile === "full-access" ||
+    (scope.filesystem.kind === "device" && scope.network.kind === "environment"));
 
 export const isExecutionMethod = (method: string): method is "exec" | "backgroundStart" =>
   method === "exec" || method === "backgroundStart";

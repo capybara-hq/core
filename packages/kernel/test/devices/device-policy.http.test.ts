@@ -1,5 +1,10 @@
 import { randomUUID } from "node:crypto";
-import type { DeviceHello, DeviceLocalPolicySummary, KernelReq } from "@capybara-hq/plugin-sdk";
+import type {
+  DeviceLocalPolicySummary,
+  DeviceOwnerCeiling,
+  KernelReq,
+  LegacyDeviceHello,
+} from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
 import { afterAll, afterEach, beforeAll, describe, expect, it } from "vitest";
@@ -23,7 +28,7 @@ import {
   type TestKernel,
   waitFor,
 } from "../helpers/runs.js";
-import { FakeMachine } from "../local-devices/fake-machine-v3.js";
+import { FakeMachine, ownerReportFor } from "../local-devices/fake-machine-v3.js";
 import type { Answer } from "../local-devices/test-holder.js";
 
 /**
@@ -37,7 +42,7 @@ const POLICY: DeviceLocalPolicySummary = {
   mode: "auto",
   allowedDomains: ["pypi.org"],
 };
-const FEATURES: Partial<DeviceHello> = {
+const FEATURES: Partial<LegacyDeviceHello> = {
   features: ["networkReport", "policyOp", "policyOpId", "mode"],
   policy: POLICY,
 };
@@ -126,12 +131,20 @@ async function owned() {
 async function connect(
   d: { deviceId: string; machineId: string; credential: string },
   answer: (req: KernelReq) => Answer,
-  hello: Partial<DeviceHello> = FEATURES,
+  hello: Partial<LegacyDeviceHello> = FEATURES,
 ) {
   const machine = new FakeMachine(url, d.credential, answer, { hello: false });
   open.push(machine);
   await machine.opened;
-  machine.hello({ ...hello });
+  // the hello reports a fresh owner report (a reconnect never regresses its sequence)
+  machine.hello({
+    // an auto-mode machine reports a Full owner ceiling (auto became Full at the activation)
+    ownerCeiling: ownerReportFor(
+      { allowedDomains: hello.policy?.allowedDomains ?? [] },
+      { fullAccess: hello.policy?.mode === "auto" },
+    ),
+    ...hello,
+  });
   await waitFor(
     async () => (await redis.get(deviceLeaseKey(d.deviceId))) !== null,
     10_000,
@@ -155,6 +168,7 @@ async function connect(
 /** A machine that applies `policy` ops the way capybara-device does. */
 function applying(start: DeviceLocalPolicySummary): (req: KernelReq) => Answer {
   let now = start;
+  let ceiling: Partial<DeviceOwnerCeiling> = { fullAccess: start.mode === "auto" };
   return (req) => {
     if (req.op !== "policy") return { ok: true, result: null };
     const a = req.args as { add?: string[]; remove?: string[]; mode?: "sandbox" };
@@ -166,7 +180,15 @@ function applying(start: DeviceLocalPolicySummary): (req: KernelReq) => Answer {
       allowedDomains: [...domains],
       ...(a.mode !== undefined && { mode: a.mode }),
     };
-    return { ok: true, result: { policy: now } };
+    // a v3 answer carries the owner report issued for the change (a narrowing applied)
+    const narrowing = (a as { ownerCeiling?: Partial<DeviceOwnerCeiling> }).ownerCeiling ?? {};
+    ceiling = { ...ceiling, ...narrowing };
+    // as capybara-device does: the summary's mode follows the owner's Full ceiling
+    if (ceiling.fullAccess === false) now = { ...now, mode: "sandbox" };
+    return {
+      ok: true,
+      result: { policy: now, ownerCeiling: ownerReportFor(now, ceiling) },
+    } as NonNullable<Answer>;
   };
 }
 
@@ -193,7 +215,7 @@ async function view(req: Req, deviceId: string): Promise<DeviceView> {
 }
 
 describe("POST /devices/:id/policy", () => {
-  it("the owner adds (a wildcard too), removes, and turns sandbox mode on; each change is audited", async () => {
+  it("the owner adds (a wildcard too), removes, and narrows to sandbox (the owner ceiling); each change is audited", async () => {
     const d = await owned();
     const machine = await connect(d, applying(POLICY));
 
@@ -217,15 +239,27 @@ describe("POST /devices/:id/policy", () => {
     expect(narrowed.json()).toEqual({
       policy: { mode: "sandbox", allowedDomains: ["files.slack.com", "*.npmjs.org"] },
     });
-    expect(policyReqs(machine).at(-1)?.args).toMatchObject({ mode: "sandbox" });
+    // protocol 3: the narrowing reaches the machine as the owner-ceiling narrowing it stands for
+    expect(policyReqs(machine).at(-1)?.args).toMatchObject({
+      ownerCeiling: { fullAccess: false, restrictedProjectReach: "workspace" },
+    });
+    expect(policyReqs(machine).at(-1)?.args).not.toHaveProperty("mode");
 
     expect((await auditsOf(d.deviceId)).map((a) => a.detail)).toEqual([
       expect.objectContaining({ add: ["files.slack.com", "*.npmjs.org"], via: "web" }),
       expect.objectContaining({ remove: ["pypi.org"] }),
     ]);
-    expect((await auditsOf(d.deviceId, "device.mode_changed")).map((a) => a.detail)).toEqual([
-      expect.objectContaining({ from: "auto", to: "sandbox", via: "web" }),
+    // the Full change is the owner report's, audited once by its writer; no daily mode audit
+    expect(
+      (await auditsOf(d.deviceId, "device.owner_ceiling_changed")).map((a) => a.detail),
+    ).toEqual([
+      expect.objectContaining({
+        from: { fullAccess: true, restrictedProjectReach: "workspace" },
+        to: { fullAccess: false, restrictedProjectReach: "workspace" },
+        via: "web",
+      }),
     ]);
+    expect(await auditsOf(d.deviceId, "device.mode_changed")).toEqual([]);
 
     // the device page lists the recent changes, newest first, with the person's name
     const v = await view(d.req, d.deviceId);
@@ -235,8 +269,11 @@ describe("POST /devices/:id/policy", () => {
     });
     expect(v.mode.recent).toHaveLength(3);
     expect(v.mode.recent[0]).toMatchObject({
-      kind: "mode",
-      mode: { from: "auto", to: "sandbox" },
+      kind: "ceiling",
+      ceiling: {
+        from: { fullAccess: true, restrictedProjectReach: "workspace" },
+        to: { fullAccess: false, restrictedProjectReach: "workspace" },
+      },
       by: `Name ${d.login}`,
       via: "web",
     });

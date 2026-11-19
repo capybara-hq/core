@@ -5,12 +5,14 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   DEFAULT_SANDBOX_ROOTS,
-  type DeviceHello,
   type KernelReq,
+  type LegacyDeviceHello,
+  type SandboxBrowseScope,
   type SandboxProvider,
 } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
+import { sql } from "kysely";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
@@ -26,6 +28,7 @@ import { KernelDb } from "../../src/infra/database/kernel-db.js";
 import { TransactionHost } from "../../src/infra/database/transaction-host.js";
 import { deviceLeaseKey } from "../../src/local-devices/keys.js";
 import { MachinesService } from "../../src/local-devices/machines.js";
+import { SandboxOperationAuthority } from "../../src/sandbox/operation-authority.js";
 import { PermissionCeilingWrites } from "../../src/sandbox/permission-ceiling-writes.js";
 import { PermissionFacts } from "../../src/sandbox/permission-facts.js";
 import { SandboxProviders } from "../../src/sandbox/providers.js";
@@ -43,7 +46,7 @@ import {
   type TestKernel,
   waitFor,
 } from "../helpers/runs.js";
-import { FakeMachine } from "../local-devices/fake-machine-v3.js";
+import { FakeMachine, ownerReportFor } from "../local-devices/fake-machine-v3.js";
 import type { Answer } from "../local-devices/test-holder.js";
 
 /**
@@ -64,7 +67,7 @@ const ROOTS = {
   tmp: "/home/me/.capybara/dev/tmp",
 };
 const FEATURES = ["networkReport", "policyOp", "policyOpId", "mode", "projects"] as const;
-const AUTO: Partial<DeviceHello> = {
+const AUTO: Partial<LegacyDeviceHello> = {
   roots: ROOTS,
   home: HOME,
   features: [...FEATURES],
@@ -126,6 +129,7 @@ beforeAll(async () => {
 
 afterEach(() => {
   for (const m of open.splice(0)) m.close();
+  vi.restoreAllMocks();
 });
 
 afterAll(async () => {
@@ -172,7 +176,9 @@ function answering(
   return (req: KernelReq): Answer => {
     const a = req.args as { path?: string };
     const p = a.path as string;
-    switch (req.op) {
+    // protocol 3: the owner's project browsing comes as `browseStat` / `browseList` / `browseScan`
+    const op = String(req.op).replace(/^browse(\w)/, (_, c: string) => c.toLowerCase());
+    switch (op) {
       case "create":
         return { ok: true, result: { roots: ROOTS } };
       case "list":
@@ -209,13 +215,21 @@ function listAnswer(p: string): NonNullable<Answer> {
 /** Connects the machine with `hello` and waits until its lease and hello are recorded. */
 async function connect(
   d: { deviceId: string; machineId: string; credential: string },
-  hello: Partial<DeviceHello> = AUTO,
+  hello: Partial<LegacyDeviceHello> = AUTO,
   answer: (req: KernelReq) => Answer = answering(),
 ) {
   const machine = new FakeMachine(url, d.credential, answer, { hello: false });
   open.push(machine);
   await machine.opened;
-  machine.hello({ ...hello });
+  // an auto-mode machine reports the owner's OS user as its project reach and a Full ceiling
+  const auto = hello.policy?.mode === "auto";
+  machine.hello({
+    ownerCeiling: ownerReportFor(
+      { allowedDomains: hello.policy?.allowedDomains ?? [] },
+      { fullAccess: auto, restrictedProjectReach: auto ? "os-user" : "workspace" },
+    ),
+    ...hello,
+  });
   await waitFor(
     async () => (await redis.get(deviceLeaseKey(d.deviceId))) !== null,
     10_000,
@@ -249,8 +263,13 @@ const listOf = async (req: Req, deviceId: string) => {
     supported: boolean;
   };
 };
+/** The machine's requests of one native op, its protocol 3 browse form included. */
 const reqsOf = (m: FakeMachine, op: string) =>
-  m.frames.filter((f): f is KernelReq => f.type === "req" && f.op === op);
+  m.frames.filter(
+    (f): f is KernelReq =>
+      f.type === "req" &&
+      (f.op === op || String(f.op) === `browse${op.charAt(0).toUpperCase()}${op.slice(1)}`),
+  );
 const storedOf = (deviceId: string) =>
   db
     .selectFrom("device_projects")
@@ -259,13 +278,28 @@ const storedOf = (deviceId: string) =>
     .orderBy("name")
     .execute();
 
-/** Sets the machine's reported mode in PG (what a hello or a `policy` op records). */
+/**
+ * Sets the machine's reported mode in PG (what a hello or a `policy` op records): its summary and
+ * the owner report's project reach and Full ceiling (auto: the owner's OS user, sandbox: the
+ * workspace).
+ */
 const setLocalMode = (machineId: string, mode: "auto" | "sandbox") =>
-  db
-    .updateTable("device_machines")
-    .set({ local_policy: JSON.stringify({ mode, allowedDomains: [] }) })
-    .where("id", "=", machineId)
-    .execute();
+  sql`UPDATE capybara.device_machines
+    SET local_policy = ${JSON.stringify({ mode, allowedDomains: [] })}::jsonb,
+      owner_report = jsonb_set(jsonb_set(owner_report, '{report,restrictedProjectReach}',
+        ${JSON.stringify(mode === "auto" ? "os-user" : "workspace")}::jsonb),
+        '{report,fullAccess}', ${JSON.stringify(mode === "auto")}::jsonb)
+    WHERE id = ${machineId}`.execute(raw);
+
+/**
+ * The owner browse scope a protocol 3 machine is asked under: the owner's OS user in auto mode,
+ * the workspace in sandbox mode (the machine intersects it with its own owner ceiling again).
+ */
+const browsed = (deviceId: string, mode: "auto" | "sandbox") =>
+  expect.objectContaining({
+    deviceId,
+    readRoots: mode === "auto" ? ["/"] : [ROOTS.workspace],
+  });
 
 describe("device projects", () => {
   it("adds a readable directory in auto mode: relative to the home, stored absolute, named by its basename", async () => {
@@ -278,7 +312,7 @@ describe("device projects", () => {
     });
     // the device was asked in the current mode, for one entry
     expect(reqsOf(machine, "list").map((r) => r.args)).toEqual([
-      { path: `${HOME}/src/capybara`, limit: 1, limits: { mode: "auto" } },
+      { path: `${HOME}/src/capybara`, limit: 1, scope: browsed(d.deviceId, "auto") },
     ]);
     expect(await storedOf(d.deviceId)).toEqual([
       { name: "capybara", path: `${HOME}/src/capybara`, created_by: d.accountId },
@@ -373,7 +407,7 @@ describe("device projects", () => {
     expect(reqsOf(machine, "list").at(-1)?.args).toEqual({
       path: `${ROOTS.workspace}/app`,
       limit: 1,
-      limits: { mode: "sandbox" },
+      scope: browsed(d.deviceId, "sandbox"),
     });
 
     // binding follows the same scope
@@ -416,7 +450,7 @@ describe("device projects", () => {
       ],
     });
     expect(reqsOf(machine, "scan").map((r) => r.args)).toEqual([
-      { base: HOME, limits: { mode: "auto" } },
+      { base: HOME, scope: browsed(d.deviceId, "auto") },
     ]);
 
     await setLocalMode(d.machineId, "sandbox");
@@ -424,7 +458,7 @@ describe("device projects", () => {
     expect(sandboxed.statusCode, sandboxed.body).toBe(200);
     expect(reqsOf(machine, "scan").at(-1)?.args).toEqual({
       base: ROOTS.workspace,
-      limits: { mode: "sandbox" },
+      scope: browsed(d.deviceId, "sandbox"),
     });
     // in sandbox mode the kernel drops what lies outside the workspace, whatever the device says
     expect((sandboxed.json() as { candidates: unknown[] }).candidates).toEqual([]);
@@ -686,7 +720,7 @@ describe("device projects", () => {
     expect((await storedOf(d.deviceId)).map((r) => r.name)).toEqual(["src"]);
   });
 
-  it("a cloud device is asked at its effective mode, not a wider one, and scoped to its workspace", async () => {
+  it("a cloud device is scoped to its workspace at its effective mode, not a wider one", async () => {
     const d = await owned();
     const created = await d.req({
       method: "POST",
@@ -696,34 +730,44 @@ describe("device projects", () => {
     expect(created.statusCode, created.body).toBe(201);
     const id = (created.json() as { device: { id: string } }).device.id;
     const workspace = DEFAULT_SANDBOX_ROOTS.workspace;
-    const seen: { op: string; path: string; mode: string }[] = [];
-    // a cloud provider that has list and scan, driven by a stand-in for the instance's lifecycle
-    const impl = {
-      list: async (_h: unknown, path: string, o: { limits: { mode: string } }) => {
-        seen.push({ op: "list", path, mode: o.limits.mode });
+    const seen: { op: string; path: string }[] = [];
+    const scopes: SandboxBrowseScope[] = [];
+    // admission reads the app's provider (the fixture offers no list / scan): this provider
+    // stands in for it there too, so only its support differs; reach and workspace stay real
+    const facts = k.app.get(PermissionFacts);
+    const projectScope = facts.projectScope.bind(facts);
+    vi.spyOn(facts, "projectScope").mockImplementation(async (...a) => ({
+      ...(await projectScope(...a)),
+      supported: true,
+    }));
+    // the owner browse the activated route opens (its scope is SandboxService.withBrowse's: the
+    // effective policy's, never the instance's wider applied mode), on a stand-in provider
+    const browse = {
+      stat: async () => ({ size: 0, isDir: true }),
+      list: async (path: string) => {
+        seen.push({ op: "list", path });
         return { entries: [], truncated: false };
       },
-      scan: async (_h: unknown, path: string, o: { limits: { mode: string } }) => {
-        seen.push({ op: "scan", path, mode: o.limits.mode });
+      scan: async (path: string) => {
+        seen.push({ op: "scan", path });
         return [{ path: `${workspace}/app`, suggestedName: "app" }];
       },
-    } as unknown as SandboxProvider;
+    };
+    // a provider that can list and scan offers projects (the calls go through `browse` above)
+    const impl = { list: browse.list, scan: browse.scan } as unknown as SandboxProvider;
     const real = k.app.get(SandboxProviders);
     const service = new DeviceProjectsService(
       k.app.get(KernelDb),
       txHost,
       {
-        // gate off: the raw route only
-        withBrowse: () => Promise.reject(new Error("no owner browse while the gate is off")),
-        ensureRunningForOwner: () =>
-          Promise.reject(new Error("no owner start while the gate is off")),
-        withSandbox: (_ctx, fn, signal) =>
-          fn(
-            { id },
-            impl as never,
-            { fresh: false, restarted: false, roots: DEFAULT_SANDBOX_ROOTS },
-            signal,
-          ),
+        // the owner browse scope admission gives each call (SandboxService.withBrowse admits it
+        // the same way), then the stand-in provider
+        withBrowse: async (ctx, fn, signal) => {
+          scopes.push(await k.app.get(SandboxOperationAuthority).resolveBrowse(ctx, signal));
+          return fn(browse as never, signal);
+        },
+        ensureRunningForOwner: async () => {},
+        withSandbox: () => Promise.reject(new Error("no raw route once activated")),
       },
       k.app.get(DeviceAccess),
       new PermissionFacts(
@@ -762,9 +806,12 @@ describe("device projects", () => {
     });
     expect((await service.candidates(orgId, d.accountId, id)).candidates).toHaveLength(1);
     expect(seen).toEqual([
-      { op: "list", path: `${workspace}/app`, mode: "sandbox" },
-      { op: "scan", path: workspace, mode: "sandbox" },
+      { op: "list", path: `${workspace}/app` },
+      { op: "scan", path: workspace },
     ]);
+    // asked at the effective (sandbox) policy: the workspace only, never the instance's wider
+    // applied auto mode
+    expect(scopes.map((x) => x.readRoots)).toEqual([[workspace], [workspace]]);
     // auto mode (the platform allows it) widens the ceiling, never the scope: still the workspace
     await db.updateTable("devices").set({ mode: null }).where("id", "=", id).execute();
     const outside = service.add(orgId, d.accountId, id, { path: "../etc" });
@@ -772,7 +819,11 @@ describe("device projects", () => {
     expect(await service.add(orgId, d.accountId, id, { path: "", name: "ws" })).toMatchObject({
       path: workspace,
     });
-    expect(seen.at(-1)).toEqual({ op: "list", path: workspace, mode: "auto" });
+    expect(seen.at(-1)).toEqual({ op: "list", path: workspace });
+    // auto mode widens the ceiling, never a cloud device's browse scope: still the workspace
+    expect(new Set(scopes.map((x) => JSON.stringify(x.readRoots)))).toEqual(
+      new Set([JSON.stringify([workspace])]),
+    );
     expect((await service.list(orgId, d.accountId, id)).projects.map((p) => p.name)).toEqual([
       "app",
       "ws",

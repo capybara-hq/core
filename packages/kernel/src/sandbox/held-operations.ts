@@ -9,6 +9,7 @@ import {
   SandboxScopeDeniedError,
 } from "@capybara-hq/plugin-sdk";
 import { assertManagedArtifactAdmitted } from "../background/launch.js";
+import { isFullExecutionScope } from "./operation-authority-types.js";
 
 /** A callback can use native operations; it cannot obtain a new authority or change lifecycle. */
 export type HeldProvider = Pick<
@@ -64,7 +65,7 @@ export async function assertPermissionSupport(
   if (
     support.version !== 1 ||
     (method === "backgroundStart" && (!support.background || !provider.background)) ||
-    (scope.profile === "full-access"
+    (isFullExecutionScope(scope)
       ? !support.fullAccess
       : !support.restricted?.filesystem ||
         !support.restricted.network ||
@@ -90,6 +91,34 @@ export async function checkManagedStart(
 ): Promise<void> {
   assertManagedArtifactAdmitted(scope, input);
   await assertPermissionSupport(provider, handle, scope, "backgroundStart", signal);
+}
+
+/**
+ * `provider` whose background starts carry `instanceGeneration`, the kernel's generation of the
+ * held instance (its `created_at` milliseconds): a cloud provider cannot know it otherwise (it is
+ * allocated after `create` returns), and the acknowledgement requires the ref to name it. A bound
+ * (local) device knows its generation from its binding and is not given one.
+ */
+export function withKernelGeneration(
+  provider: SandboxProvider,
+  generation: string,
+): SandboxProvider {
+  const background = provider.background;
+  if (!background) return provider;
+  const wrapped = Object.create(provider) as SandboxProvider;
+  // only `start` changes; every other method is the provider's own, bound to it (a provider may
+  // leave out methods the kernel never calls on it)
+  const bound = (m: unknown) =>
+    typeof m === "function" ? (m as (...a: unknown[]) => unknown).bind(background) : m;
+  wrapped.background = {
+    status: bound(background.status),
+    tail: bound(background.tail),
+    readOutput: bound(background.readOutput),
+    stop: bound(background.stop),
+    start: (h, scope, args) =>
+      background.start(h, scope, { ...args, instanceGeneration: generation }),
+  } as NonNullable<SandboxProvider["background"]>;
+  return wrapped;
 }
 
 export function createHeldOperations(

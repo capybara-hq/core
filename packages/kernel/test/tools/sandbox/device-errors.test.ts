@@ -11,12 +11,22 @@ import { ApiError } from "../../../src/errors.js";
 import { InstanceBindingError } from "../../../src/local-devices/instance-bindings.js";
 import { DeviceRequestNotSentError } from "../../../src/local-devices/relay.js";
 import {
+  recreateRequired,
+  replaceRequired,
+  restartRequired,
+  retirementPending,
+} from "../../../src/sandbox/sandbox.service.js";
+import {
   DEVICE_REQUEST_NOT_SENT_TOOL_TEXT,
   FULL_ACCESS_CEILING_TOOL_TEXT,
   FULL_ACCESS_OFF_BY_POLICY_TOOL_TEXT,
   mapSandboxError,
   OUTCOME_UNKNOWN_TOOL_TEXT,
   PERMISSION_UNSUPPORTED_TOOL_TEXT,
+  RETIREMENT_PENDING_TOOL_TEXT,
+  RETIREMENT_RECREATE_TOOL_TEXT,
+  RETIREMENT_REPLACE_TOOL_TEXT,
+  RETIREMENT_RESTART_TOOL_TEXT,
   SCOPE_DENIED_TOOL_TEXT,
 } from "../../../src/tools/builtins/sandbox/common.js";
 
@@ -63,22 +73,18 @@ describe("sandbox tool errors", () => {
     expect(message(mapped)).not.toContain("internal detail");
   });
 
-  // B-13: the old auto-mode codes and their full-access renames (W5-P3b) are actionable English
-  // tool errors, never the kernel's own message; the old device code keeps the machine's text
-  it.each([
-    "org.auto_mode_not_allowed",
-    "org.full_access_not_allowed",
-    "deployment.auto_mode_not_allowed",
-    "deployment.full_access_not_allowed",
-  ])("Full access off by policy (%s) names the profiles and who can allow it", (code) => {
-    // biome-ignore lint/suspicious/noExplicitAny: the renamed codes are registered by W5-P3b
-    const mapped = mapSandboxError(new ApiError(code as any, "internal detail"), undefined);
-    expect(mapped).toBeInstanceOf(ToolError);
-    expect(message(mapped)).toBe(FULL_ACCESS_OFF_BY_POLICY_TOOL_TEXT);
-    expect(message(mapped)).toMatch(/Request approval or Approve for me/);
-    expect(message(mapped)).toMatch(/admin/);
-    expect(message(mapped)).not.toMatch(/capybara-device mode/);
-  });
+  // B-13: the full-access refusals are actionable English tool errors, never the kernel's message
+  it.each(["org.full_access_not_allowed", "deployment.full_access_not_allowed"] as const)(
+    "Full access off by policy (%s) names the profiles and who can allow it",
+    (code) => {
+      const mapped = mapSandboxError(new ApiError(code, "internal detail"), undefined);
+      expect(mapped).toBeInstanceOf(ToolError);
+      expect(message(mapped)).toBe(FULL_ACCESS_OFF_BY_POLICY_TOOL_TEXT);
+      expect(message(mapped)).toMatch(/Request approval or Approve for me/);
+      expect(message(mapped)).toMatch(/admin/);
+      expect(message(mapped)).not.toMatch(/capybara-device mode/);
+    },
+  );
 
   it("a device ceiling without Full access points to the owner's ceiling command", () => {
     const mapped = mapSandboxError(
@@ -92,13 +98,19 @@ describe("sandbox tool errors", () => {
     expect(message(mapped)).not.toContain("internal detail");
   });
 
-  it("the old device code keeps its machine text until the rename", () => {
-    const mapped = mapSandboxError(
-      new ApiError("device.auto_mode_not_allowed", "internal detail"),
-      undefined,
-    );
-    expect(message(mapped)).toMatch(/another device/);
-    expect(message(mapped)).not.toContain("internal detail");
+  // the legacy retirement gate (8.5): its own actionable text, never the inactive-provider one
+  it.each([
+    [retirementPending(), /confirmed destroyed/, RETIREMENT_PENDING_TOOL_TEXT],
+    [restartRequired(), /restart that computer/, RETIREMENT_RESTART_TOOL_TEXT],
+    [recreateRequired(), /delete the device and create it again/, RETIREMENT_RECREATE_TOOL_TEXT],
+    [replaceRequired(), /connect the computer again as a new device/, RETIREMENT_REPLACE_TOOL_TEXT],
+  ])("a retirement refusal (%#) says what clears it", (error, what, text) => {
+    const mapped = mapSandboxError(error, undefined);
+    expect(mapped).toBeInstanceOf(ToolError);
+    expect(message(mapped)).toMatch(/earlier version/);
+    expect(message(mapped)).toMatch(what);
+    expect(message(mapped)).not.toMatch(/not active in this deployment/);
+    expect(message(mapped)).toBe(text);
   });
 
   // the managed route's typed refusals: fixed kernel text, never the refusal's own message

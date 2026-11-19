@@ -100,8 +100,8 @@ export class RunSteps {
         fetch: (orgId, conversationId, ids, caps) =>
           attachments.fetchMedia(orgId, conversationId, ids, caps),
       },
-      // the request boundary of the recorded permission context (spec B2); dormant until the
-      // paired activation (Task 8 phase 8.6) turns the gate on
+      // the request boundary of the recorded permission context (spec B2); on since the paired
+      // activation (device protocol 3), off only where a test provides the gate as false
       ...livePermissionContext(permissionContext, activation),
     };
   }

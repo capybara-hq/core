@@ -1,8 +1,8 @@
 import {
-  type DeviceHelloV3,
-  type DeviceResponseV3,
-  type KernelReadyV3,
-  parseDeviceFrameV3,
+  type DeviceHello,
+  type DeviceResponse,
+  type KernelReady,
+  parseDeviceFrame,
   type SandboxHandle,
 } from "@capybara-hq/plugin-sdk";
 import type WebSocket from "ws";
@@ -37,9 +37,9 @@ export interface StagedSessionState {
   /** Closes each socket this state serves; a discard closes them all. */
   readonly sockets: Set<() => void>;
   /** Answers waiting for the next ready socket, with their expiry. */
-  readonly pending: Map<string, { res: DeviceResponseV3; expires: number }>;
+  readonly pending: Map<string, { res: DeviceResponse; expires: number }>;
   /** Delivers on the current ready socket; undefined while none is ready. */
-  current: ((res: DeviceResponseV3) => void) | undefined;
+  current: ((res: DeviceResponse) => void) | undefined;
 }
 
 /**
@@ -114,7 +114,7 @@ function discardStagedSessionState(state: StagedSessionState): void {
  * Holds an answer for the next ready socket: expired entries are swept first, and the oldest
  * entries are dropped beyond the limit, so a device that never reconnects stays bounded.
  */
-function holdAnswer(state: StagedSessionState, res: DeviceResponseV3): void {
+function holdAnswer(state: StagedSessionState, res: DeviceResponse): void {
   if (state.graceMs <= 0 || state.discarded) return;
   const now = state.now();
   for (const [id, p] of state.pending) if (p.expires <= now) state.pending.delete(id);
@@ -164,7 +164,7 @@ async function serveMachineControl(
   machine: StagedMachineControl | undefined,
   req: { id: string; op: string; args: Readonly<Record<string, unknown>> },
   signal: AbortSignal,
-): Promise<DeviceResponseV3> {
+): Promise<DeviceResponse> {
   const sdk = await import("@capybara-hq/plugin-sdk");
   try {
     if (!machine)
@@ -176,7 +176,7 @@ async function serveMachineControl(
         type: "res",
         id: req.id,
         ok: true,
-        result: sdk.parseOperationResultV3("create", await machine.create(signal)),
+        result: sdk.parseOperationResult("create", await machine.create(signal)),
       };
     const reason = (req.args as { reason?: unknown }).reason;
     if (reason !== "revoked" && reason !== "deleted")
@@ -266,7 +266,7 @@ export async function drainStagedSession(
  */
 export function serveStagedSession(
   socket: WebSocket,
-  report: Omit<DeviceHelloV3, "transport">,
+  report: Omit<DeviceHello, "transport">,
   credential: Pick<Credential, "maxFrameBytes">,
   backend: MacOperationBackend,
   handle: SandboxHandle,
@@ -281,17 +281,17 @@ export function serveStagedSession(
   owner?: StagedOwnerPolicy,
   /** Serves the machine lifecycle `create` and `stop`; without it they are unsupported. */
   machine?: StagedMachineControl,
-): { ready: () => KernelReadyV3 | undefined } {
+): { ready: () => KernelReady | undefined } {
   if (!state || state.discarded)
     throw new Error("Serve the session with the current credential's session state");
   const bootId = report.bootId ?? currentBootId();
-  const hello: DeviceHelloV3 = {
+  const hello: DeviceHello = {
     ...report,
     // the host's OS boot identity: the deployment's evidence that the host restarted (8.5)
     ...(bootId !== undefined && { bootId }),
     transport: { maxFrameBytes: credential.maxFrameBytes },
   };
-  let ready: KernelReadyV3 | undefined;
+  let ready: KernelReady | undefined;
   const send = (value: unknown, cap: number) => {
     const raw = JSON.stringify(value);
     if (Buffer.byteLength(raw) > cap)
@@ -300,7 +300,7 @@ export function serveStagedSession(
   };
   const fail = (error: unknown) => socket.close(4400, String(error).slice(0, 100));
   /** `res`, or an error answer when it cannot fit the negotiated capacity. */
-  const fit = (res: DeviceResponseV3, cap: number): DeviceResponseV3 =>
+  const fit = (res: DeviceResponse, cap: number): DeviceResponse =>
     Buffer.byteLength(JSON.stringify(res)) <= cap
       ? res
       : {
@@ -312,7 +312,7 @@ export function serveStagedSession(
             message: "Result exceeds negotiated capacity; check frame limits and retry",
           },
         };
-  const deliverHere = (res: DeviceResponseV3) => {
+  const deliverHere = (res: DeviceResponse) => {
     const cap = ready?.maxFrameBytes;
     if (cap === undefined || socket.readyState !== socket.OPEN) {
       hold(res);
@@ -325,9 +325,8 @@ export function serveStagedSession(
     }
   };
   // fitted to this socket's own limit, so a held answer is bounded in bytes as well as in count
-  const hold = (res: DeviceResponseV3) =>
-    holdAnswer(state, fit(res, hello.transport.maxFrameBytes));
-  const deliver = (res: DeviceResponseV3) => {
+  const hold = (res: DeviceResponse) => holdAnswer(state, fit(res, hello.transport.maxFrameBytes));
+  const deliver = (res: DeviceResponse) => {
     if (state.current) state.current(res);
     else hold(res);
   };
@@ -343,7 +342,7 @@ export function serveStagedSession(
     }
     try {
       if (binary) throw new Error("Use JSON text frames");
-      const frame = parseDeviceFrameV3(
+      const frame = parseDeviceFrame(
         data.toString(),
         "kernel",
         ready?.maxFrameBytes ?? hello.transport.maxFrameBytes,
@@ -433,7 +432,7 @@ export function serveStagedSession(
       if (CONNECTION_FENCED.has(op)) ctl.abort(new Error("Connection closed; retry the read"));
   });
   try {
-    parseDeviceFrameV3(JSON.stringify(hello), "device", hello.transport.maxFrameBytes);
+    parseDeviceFrame(JSON.stringify(hello), "device", hello.transport.maxFrameBytes);
     send(hello, hello.transport.maxFrameBytes);
   } catch (error) {
     fail(error);

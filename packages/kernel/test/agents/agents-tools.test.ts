@@ -12,6 +12,7 @@ import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { createLogger } from "../../src/log.js";
 import { runModelStep } from "../../src/runtime/model-call.js";
+import { RunExecution } from "../../src/runtime/run-execution.js";
 import { RunSteps } from "../../src/runtime/run-steps.js";
 import { ToolRegistry } from "../../src/tools/registry.js";
 import { memState } from "../fixtures/plugins/mem-connector/index.js";
@@ -19,6 +20,7 @@ import { truncateTables } from "../helpers/db.js";
 import { builtinsOff } from "../helpers/disabled-tools.js";
 import { asUser, cookieJar } from "../helpers/http.js";
 import { accountsFor } from "../helpers/identity.js";
+import { startClaimedRun } from "../helpers/managed-calls.js";
 import { MODEL_PLUGINS_CONFIG } from "../helpers/model-plugins.js";
 import {
   enableConnectorExtensions,
@@ -345,19 +347,31 @@ describe("运行时：工具带入请求，不可用工具写提醒（Review Foc
     return id;
   }
 
-  const step = (agent: AgentDefinition, conversationId: string, runId: string, n: number) =>
-    runModelStep(k.app.get(RunSteps).deps, {
-      source: "web",
-      orgId,
-      conversationId,
-      runId,
-      step: n,
-      agent,
-      agentVersion: 1,
-      absorbedUpToSeq: 1_000_000,
-      signal: new AbortController().signal,
-      sink: () => {},
-    });
+  /**
+   * One model step of a running run claimed for execution, triggered by the owner: on the
+   * activated tree the step records the run's permission context for its actor first.
+   */
+  const step = async (agent: AgentDefinition, conversationId: string, n: number) => {
+    const { runId, claim } = await startClaimedRun(k, raw, conversationId, ownerId);
+    return k.app.get(RunExecution).withClaim(
+      claim,
+      () => true,
+      () =>
+        runModelStep(k.app.get(RunSteps).deps, {
+          source: "web",
+          orgId,
+          conversationId,
+          runId,
+          accountId: ownerId,
+          step: n,
+          agent,
+          agentVersion: 1,
+          absorbedUpToSeq: 1_000_000,
+          signal: new AbortController().signal,
+          sink: () => {},
+        }),
+    );
+  };
 
   const ofType = async <T extends ConversationEvent["type"]>(id: string, type: T) =>
     (await k.app.get(EventLog).readAfter(id, 0, 1000)).filter(
@@ -383,7 +397,7 @@ describe("运行时：工具带入请求，不可用工具写提醒（Review Foc
     const res = await createAgent({ disabledTools: quiet() });
     const { agent } = res.json() as AgentRes;
     const convId = await conversation(agent.id, "hello");
-    const r = await step(agent.definition, convId, randomUUID(), 1);
+    const r = await step(agent.definition, convId, 1);
     expect(r.aborted).toBe(false);
     const [call] = await ofType(convId, "model_call");
     const { tools } = await k.app
@@ -478,8 +492,7 @@ describe("运行时：工具带入请求，不可用工具写提醒（Review Foc
     ).toBe(204);
 
     const convId = await conversation(agent.id, "hello");
-    const runId = randomUUID();
-    const r = await step(agent.definition, convId, runId, 1);
+    const r = await step(agent.definition, convId, 1);
     expect(r.aborted).toBe(false);
     expect(r.stopReason).toBe("end_turn");
     expect(await ofType(convId, "reminder")).toEqual([]);

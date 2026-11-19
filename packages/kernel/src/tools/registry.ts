@@ -106,6 +106,13 @@ export interface BuiltinCallContext extends ToolCallContext {
    * runs. Absent for a call the review does not cover.
    */
   reviewedAgainstRoot?: string;
+  /**
+   * A reviewed `Bash` call under a restricted profile (per-call sandbox escalation): `escalated`
+   * when this call was approved to run outside the OS sandbox, `available` when it runs sandboxed
+   * but could be retried with `sandbox: "escalated"` on this device. Absent otherwise (Full access,
+   * an unattended run, a device or org that forbids it): no escalation hint is given.
+   */
+  sandboxEscalation?: "available" | "escalated";
   /** The parent run of a sub-agent's run (absent for a top-level run). */
   parentRunId?: string;
   /**
