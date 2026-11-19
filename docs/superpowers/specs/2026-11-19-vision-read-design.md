@@ -210,7 +210,8 @@ An image is data whose sniffed type is PNG, JPEG, GIF or WebP. The sniff runs be
      building, replay and the media cap see exactly one block per id.
    - A per-conversation cap, `attachments.readMaxBytesPerConversation` (hot, default 512 MiB),
      applies. Past it, the image is still described or shown for this call, but not stored. The
-     result says so and says the image will not stay in the history.
+     result says so and says the image will not stay in the history. The cap is soft: Reads running
+     at the same time may pass it by at most one image each.
 5. **Log.** The `tool_result` event gains `media?: [{ attachmentId, name, mediaType, size }]`.
    - Only the builtin `Read` sets it, through a kernel-internal result field; a plugin cannot.
      The ids are rows the call itself just bound.
