@@ -140,7 +140,7 @@ describe("插件视图接口", () => {
     ui = `/api/v1/orgs/${orgId}/ui`;
   });
 
-  it("未登录 401；列出贡献：只含该组织已启用的插件，启用后出现 ui-probe 的全部贡献", async () => {
+  it("unauthenticated 401; lists contributions: only plugins enabled in the org, and all of ui-probe's once enabled", async () => {
     expect((await k.http.inject({ method: "GET", url: `${ui}/contributions` })).statusCode).toBe(
       401,
     );
@@ -160,6 +160,7 @@ describe("插件视图接口", () => {
         slot: "conversation.panel",
         kind: "view",
         icon: "puzzle",
+        compact: "drawer",
       },
       {
         plugin: "ui-probe",
@@ -168,6 +169,7 @@ describe("插件视图接口", () => {
         slot: "conversation.panel",
         kind: "view",
         icon: "puzzle",
+        compact: "drawer",
       },
       {
         plugin: "ui-probe",
@@ -176,6 +178,7 @@ describe("插件视图接口", () => {
         slot: "conversation.panel",
         kind: "view",
         icon: "puzzle",
+        compact: "drawer",
       },
       {
         plugin: "ui-probe",
@@ -184,6 +187,7 @@ describe("插件视图接口", () => {
         slot: "conversation.panel",
         kind: "view",
         icon: "puzzle",
+        compact: "drawer",
       },
       {
         plugin: "ui-probe",
@@ -192,6 +196,7 @@ describe("插件视图接口", () => {
         slot: "org.page",
         kind: "view",
         icon: "puzzle",
+        compact: "kept",
       },
       {
         plugin: "ui-probe",
@@ -201,6 +206,7 @@ describe("插件视图接口", () => {
         after: "context",
         kind: "view",
         icon: "chart",
+        compact: "kept",
       },
       {
         plugin: "ui-probe",
@@ -209,6 +215,7 @@ describe("插件视图接口", () => {
         slot: "conversation.tool-result.card",
         kind: "view",
         icon: "puzzle",
+        compact: "kept",
       },
       {
         plugin: "ui-probe",
@@ -218,6 +225,7 @@ describe("插件视图接口", () => {
         kind: "embed",
         path: "/ui/board",
         icon: "puzzle",
+        compact: "kept",
       },
     ]);
     // 成员（guest 以上）都能列
