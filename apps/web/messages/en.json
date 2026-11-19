@@ -25,6 +25,7 @@
     "loginLabel": "Username",
     "passwordLabel": "Password",
     "submit": "Sign in",
+    "browserSignIn": "Sign in with your browser",
     "subtitle": "Sign in with your username and password.",
     "or": "Or sign in with",
     "sso": "Sign in with {name}",

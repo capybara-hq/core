@@ -25,6 +25,7 @@
     "loginLabel": "用户名",
     "passwordLabel": "密码",
     "submit": "登录",
+    "browserSignIn": "在浏览器中登录",
     "subtitle": "使用账号与密码登录。",
     "or": "或使用以下方式登录",
     "sso": "使用 {name} 登录",

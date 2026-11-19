@@ -186,3 +186,40 @@ export function shellCapability<T extends object>(key: string): T | undefined {
   if (!activated()) throw new Error("calls a shell capability without a user activation");
   return read<T>(key);
 }
+
+/**
+ * The desktop shell's capability shapes, mirrored from `@capybara-hq/plugin-sdk`
+ * (`shell-capabilities.ts`) because apps/web depends only on the design system: the page uses the
+ * parts it calls. Capability keys are `name@major`.
+ */
+export const SHELL_CAPABILITY_KEYS = {
+  device: "device@1",
+  notify: "notify@1",
+  signIn: "signIn@1",
+} as const;
+
+/** `device@1` as far as the web calls it (the device status page narrows it further). */
+export interface DeviceCapabilityV1 {
+  status(): Promise<{ state: string }>;
+  onStatus(listener: (s: { state: string }) => void): () => void;
+  pause(): Promise<void>;
+  resume(): Promise<"resumed" | "cancelled">;
+  disconnect(): Promise<void>;
+}
+
+/** `notify@1`: a native notification; `path` is the in-app path opened on click. */
+export interface NotifyCapabilityV1 {
+  notify(input: { title: string; body: string; path?: string }): Promise<void>;
+}
+
+/** `signIn@1`: sign in through the system browser (desktop client spec §6.5). */
+export interface SignInCapabilityV1 {
+  start(): Promise<"signedIn" | "cancelled">;
+}
+
+export const useDeviceCapability = () =>
+  useShellCapability(SHELL_CAPABILITY_KEYS.device) as DeviceCapabilityV1 | undefined;
+export const useNotifyCapability = () =>
+  useShellCapability(SHELL_CAPABILITY_KEYS.notify) as NotifyCapabilityV1 | undefined;
+export const useSignInCapability = () =>
+  useShellCapability(SHELL_CAPABILITY_KEYS.signIn) as SignInCapabilityV1 | undefined;

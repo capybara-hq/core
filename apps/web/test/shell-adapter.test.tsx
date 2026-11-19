@@ -7,7 +7,13 @@ import { useState } from "react";
 import { flushSync } from "react-dom";
 import { renderToString } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { shellCapability, useShellCapability } from "../src/lib/shell";
+import {
+  shellCapability,
+  useDeviceCapability,
+  useNotifyCapability,
+  useShellCapability,
+  useSignInCapability,
+} from "../src/lib/shell";
 
 /** A fake shell whose capabilities a test changes, announcing them with `change`. */
 function fakeShell(over: Record<string, unknown> = {}) {
@@ -316,5 +322,27 @@ describe("the root layout", () => {
     }>;
     expect(first.type).toBe(ShellEnvironmentScript);
     expect(first.props.nonce).toBe("n0nce");
+  });
+});
+
+describe("typed capability accessors", () => {
+  function Typed() {
+    const d = useDeviceCapability();
+    const n = useNotifyCapability();
+    const s = useSignInCapability();
+    return (
+      <p data-testid="typed">{[d, n, s].map((c) => (c === undefined ? "-" : "+")).join("")}</p>
+    );
+  }
+
+  it("read their own key and follow change; absent in the browser", () => {
+    const f = fakeShell();
+    install(f.shell);
+    render(<Typed />);
+    expect(screen.getByTestId("typed").textContent).toBe("---");
+    act(() => f.change({ "notify@1": {}, "signIn@1": {} }));
+    expect(screen.getByTestId("typed").textContent).toBe("-++");
+    act(() => f.change({ "device@1": {} }));
+    expect(screen.getByTestId("typed").textContent).toBe("+--");
   });
 });
