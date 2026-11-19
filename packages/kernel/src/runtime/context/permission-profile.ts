@@ -111,10 +111,15 @@ function approverLines(p: PermissionContextV2, box: PermissionContextSandbox): s
     const lines = [
       `Full access: commands run in the sandbox; crossings this device allows are approved automatically${escalation ? `; to run a command outside the sandbox ${ESCALATE}` : ""}.`,
     ];
-    // a sub-agent's escalation is never auto-granted: the review model decides it
+    // a sub-agent's escalation is never auto-granted: the review model decides it; nor is an
+    // escalation that touches credentials (maintainer ruling 2026-11-19)
     if (escalation && p.inherited)
       lines.push(
         "In this sub-agent, a separate reviewer decides each escalation; uncertainty asks the person.",
+      );
+    else if (escalation)
+      lines.push(
+        "An escalation that reads, prints or links credentials goes to a separate reviewer instead; uncertainty asks the person.",
       );
     return lines;
   }

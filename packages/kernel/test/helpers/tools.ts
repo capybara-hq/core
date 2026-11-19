@@ -99,22 +99,6 @@ export function approvalsFor(
     h.txHost,
     new ScheduledTaskStore(),
     registry,
-    // no device here: deciding a network ask needs the kernel's DevicePolicyService
-    {
-      begin: async () => {
-        throw new Error("DevicePolicyService is not available in this test");
-      },
-      send: async () => {
-        throw new Error("DevicePolicyService is not available in this test");
-      },
-      settleIn: async () => {
-        throw new Error("DevicePolicyService is not available in this test");
-      },
-      lockMachineDevice: async () => {
-        throw new Error("DevicePolicyService is not available in this test");
-      },
-      summary: async () => null,
-    },
     undefined as never,
     // no sandbox config here: an org's egress is open (a trial's network grants are kept)
     {

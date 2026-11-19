@@ -194,8 +194,11 @@ describe("per-call sandbox escalation", () => {
     expect(unattended.kind).toBe("unsupported");
     expect(unattended.kind === "unsupported" && unattended.message).toMatch(/unattended/);
   });
-  it("no approver (Full access): granted within the ceiling, refused past it", () => {
-    expect(build(escalated, { profile: "full-access" })).toEqual({ kind: "in-scope" });
+  it("no approver (Full access): proposed for its auto-grant within the ceiling, refused past it", () => {
+    expect(build(escalated, { profile: "full-access" })).toMatchObject({
+      kind: "proposal",
+      candidate: { scopeKind: "sandbox-escalation" },
+    });
     expect(
       build(escalated, { profile: "full-access", escalationRefusal: ESCALATION_CEILING_WHY }).kind,
     ).toBe("unsupported");

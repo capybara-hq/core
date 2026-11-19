@@ -86,6 +86,14 @@ const facts: PermissionReviewSnapshot = {
     network: { kind: "open-public", hosts: [] },
   } as unknown as PermissionReviewSnapshot["policy"],
 };
+/** The facts of a device whose sandbox network is an allowlist (host crossings exist only there). */
+const allowlistFacts: PermissionReviewSnapshot = {
+  ...facts,
+  policy: {
+    ...facts.policy,
+    network: { kind: "allowlist", hosts: ["example.com", "*.example.com"] },
+  } as PermissionReviewSnapshot["policy"],
+};
 const candidate = (toolKey: string, input: unknown, f = facts) =>
   buildPermissionCandidate(
     { toolKey, specHash: "spec", rawInput: input, validatedInput: input },
@@ -157,7 +165,11 @@ it("filesystem-root proposal is not a bounded directory", () => {
 });
 it("explicit cd directory and static URL host are exact proposals", () => {
   expect(
-    candidate("Bash", { command: "cd /outside/reports && curl https://Example.com/a" }),
+    candidate(
+      "Bash",
+      { command: "cd /outside/reports && curl https://Example.com/a" },
+      allowlistFacts,
+    ),
   ).toMatchObject({
     kind: "proposal",
     candidate: {
@@ -186,7 +198,7 @@ it("rejects 65 combined roots and accepts 64 without truncating", () => {
 });
 it("rejects 101 combined hosts and accepts 100 without truncating", () => {
   const hostFacts = {
-    ...facts,
+    ...allowlistFacts,
     baseHosts: Array.from({ length: 99 }, (_, i) => `h${i}.example.com`),
   };
   expect(candidate("Bash", { command: "curl https://extra.example.com" }, hostFacts).kind).toBe(
@@ -497,3 +509,155 @@ it.each(["exec", "backgroundStart"] as const)(
     await expect(dispatch()).rejects.toThrow("no current admitted execution identity");
   },
 );
+
+import {
+  approverForCrossing,
+  crossingOfCandidate,
+  isCredentialConsentRule,
+} from "../../src/sandbox/review/permission-candidate.js";
+
+// approval-only profiles design, "Profiles": a profile only chooses who approves a crossing
+describe("who approves a crossing", () => {
+  it.each([
+    ["request-approval", "directory", false, "person"],
+    ["request-approval", "outside-sandbox", true, "person"],
+    ["approve-for-me", "host", false, "review-model"],
+    ["approve-for-me", "outside-sandbox", true, "review-model"],
+    ["full-access", "directory", false, "none"],
+    ["full-access", "host", true, "none"],
+    ["full-access", "sensitive", true, "none"],
+    ["full-access", "outside-sandbox", false, "none"],
+    // a sub-agent's escalation is never auto-granted
+    ["full-access", "outside-sandbox", true, "review-model"],
+  ] as const)("%s, %s, sub-agent %s: %s", (profile, crossing, subAgent, approver) => {
+    expect(approverForCrossing({ profile, crossing, subAgent })).toBe(approver);
+  });
+
+  // maintainer ruling 2026-11-19: a Full access escalation that touches credentials is reviewed
+  it.each([
+    ["full-access", "outside-sandbox", true, "review-model"],
+    ["full-access", "directory", true, "none"],
+    ["full-access", "sensitive", true, "none"],
+    ["approve-for-me", "outside-sandbox", true, "review-model"],
+    ["request-approval", "outside-sandbox", true, "person"],
+  ] as const)("%s, %s, credential consent %s: %s", (profile, crossing, credential, approver) => {
+    expect(
+      approverForCrossing({ profile, crossing, subAgent: false, credentialConsent: credential }),
+    ).toBe(approver);
+  });
+
+  it("credential consents: ask.credential-*, ask.ssh, ask.secret-file; not sudo or persistence", () => {
+    for (const rule of [
+      "ask.credential-print",
+      "ask.credential-link",
+      "ask.ssh",
+      "ask.secret-file",
+    ])
+      expect(isCredentialConsentRule(rule), rule).toBe(true);
+    for (const rule of ["ask.sudo", "ask.persistence", "ask.shell-config", "unsure.inline-code"])
+      expect(isCredentialConsentRule(rule), rule).toBe(false);
+  });
+
+  it("a candidate's crossing: escalation, directory (also with hosts), host", () => {
+    const scope = (dirs: string[], hosts: string[]) => ({
+      readDirectories: dirs,
+      writeDirectories: [],
+      hosts,
+    });
+    expect(
+      crossingOfCandidate({ scopeKind: "sandbox-escalation", permissionScope: scope([], []) }),
+    ).toBe("outside-sandbox");
+    expect(
+      crossingOfCandidate({
+        scopeKind: "directories-and-hosts",
+        permissionScope: scope(["/x"], ["a.example"]),
+      }),
+    ).toBe("directory");
+    expect(
+      crossingOfCandidate({
+        scopeKind: "directories-and-hosts",
+        permissionScope: scope([], ["a.example"]),
+      }),
+    ).toBe("host");
+  });
+});
+
+describe("candidate building under every profile", () => {
+  const profiles = ["request-approval", "approve-for-me", "full-access"] as const;
+  const build = (toolKey: string, input: unknown, f: PermissionReviewSnapshot) =>
+    buildPermissionCandidate(
+      { toolKey, specHash: "spec", rawInput: input, validatedInput: input },
+      f,
+      ["/home/u"],
+    );
+
+  it.each(
+    profiles.flatMap((profile) =>
+      [
+        ["Write", { file_path: "/home/u/.zshrc" }],
+        ["Write", { file_path: "/home/u/.zlogin" }],
+        ["Write", { file_path: "/home/u/.xprofile" }],
+        ["Write", { file_path: "/home/u/Library/LaunchAgents/evil.plist" }],
+        ["Edit", { file_path: "/home/u/.config/systemd/user/evil.service" }],
+        ["Write", { file_path: "/home/u/.local/share/systemd/user/evil.service" }],
+        ["Write", { file_path: "/home/u/.config/environment.d/evil.conf" }],
+        ["Write", { file_path: "/home/u/.config/autostart/evil.desktop" }],
+        ["Write", { file_path: "/outside/repo/.git/hooks/pre-commit" }],
+        ["Bash", { command: "cd /home/u/Library/LaunchAgents && ls" }],
+      ].map(([tool, input]) => [profile, tool, input] as const),
+    ),
+  )("%s: a protected location (%s %j) is unsupported before any review", (profile, tool, input) => {
+    const result = build(tool as string, input, { ...facts, profile });
+    expect(result).toMatchObject({ kind: "unsupported", code: "protected-path" });
+    // it names the only way there: one call outside the sandbox, never a profile switch
+    const message = (result as { message: string }).message;
+    expect(message).toMatch(/sandbox: "escalated"/);
+    expect(message).not.toMatch(/choose Full access/);
+  });
+
+  it("a protected location where escalation is refused says why instead", () => {
+    const result = build(
+      "Write",
+      { file_path: "/home/u/.zshrc" },
+      { ...facts, escalationRefusal: "running commands outside the sandbox is not allowed" },
+    );
+    expect((result as { message: string }).message).toMatch(/not possible here/);
+  });
+
+  it.each(profiles)("%s: an escalation is a proposal (Full access no longer skips it)", (p) => {
+    const input = { command: "npm run dev", sandbox: "escalated", justification: "Must listen." };
+    expect(build("Bash", input, { ...facts, profile: p })).toMatchObject({
+      kind: "proposal",
+      candidate: { scopeKind: "sandbox-escalation", escalation: { justification: "Must listen." } },
+    });
+  });
+
+  it.each(profiles)("%s: an escalation without the outside-sandbox ceiling is refused", (p) => {
+    const input = { command: "npm run dev", sandbox: "escalated", justification: "Must listen." };
+    expect(
+      build("Bash", input, { ...facts, profile: p, escalationRefusal: "not allowed here" }),
+    ).toMatchObject({ kind: "unsupported", code: "escalation-unavailable" });
+  });
+
+  // T5 review ruling: a host beyond the allowlist ceiling is unavailable under every profile, never
+  // proposed and so never auto-granted by Full access
+  it.each(profiles)("%s: a host beyond the allowlist ceiling is unavailable, not proposed", (p) => {
+    const result = build(
+      "Bash",
+      { command: "curl https://evil.test/x" },
+      { ...allowlistFacts, profile: p },
+    );
+    expect(result).toMatchObject({ kind: "unsupported", code: "unbounded-scope" });
+  });
+
+  it("a host is a crossing only while the network is an allowlist; private names never are", () => {
+    const curl = (url: string) => ({ command: `curl ${url}` });
+    expect(build("Bash", curl("https://api.example.com/x"), facts)).toEqual({ kind: "in-scope" });
+    expect(build("Bash", curl("https://api.example.com/x"), allowlistFacts)).toMatchObject({
+      kind: "proposal",
+      candidate: { permissionScope: { hosts: ["api.example.com"] } },
+    });
+    for (const url of ["http://localhost:3000/", "http://app.localhost/", "http://10.0.0.1/"])
+      expect(build("Bash", curl(url), allowlistFacts), url).toEqual({ kind: "in-scope" });
+  });
+});

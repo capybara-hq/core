@@ -19,6 +19,7 @@ import type { AuthorityEpochVector } from "../sandbox/permission-authority-epoch
 import type {
   PermissionEscalation,
   PermissionExpansion,
+  PermissionGrantSource,
   PermissionScopeKind,
 } from "../sandbox/permission-call-types.js";
 import type { PermissionConfigProjection } from "../sandbox/permission-config-publication.js";
@@ -66,7 +67,7 @@ export interface PermissionCallGrantsTable {
   scope_kind: PermissionScopeKind;
   /** A per-call sandbox escalation's justification (`scope_kind = 'sandbox-escalation'` only). */
   escalation: ColumnType<PermissionEscalation | null, string | null | undefined, string | null>;
-  source: "human" | "review-model";
+  source: PermissionGrantSource;
   approval_id: string | null;
   review_event_seq: number | null;
   decided_by: string | null;

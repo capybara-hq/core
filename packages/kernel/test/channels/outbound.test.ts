@@ -1016,7 +1016,7 @@ describe("network asks in IM (network ask-to-allow spec §6.4, §6.5)", () => {
         description: "Download the file",
         result: { content: "curl: (56) CONNECT tunnel failed, response 403", isError: true },
       },
-      scopes: ["once", "always"],
+      scopes: ["once"],
     });
     const cardMsg = await waitFor(
       async () => sentTo(app, chat).find((s) => (cardOf(s) as { id?: string })?.id === ask.id),
@@ -1060,8 +1060,8 @@ describe("network asks in IM (network ask-to-allow spec §6.4, §6.5)", () => {
       toolName: "Bash",
       agentName: "Helper",
       state: "pending",
-      scopes: ["once", "always"],
-      scopeLabels: { once: "Allow this time", always: "Always allow on this device" },
+      scopes: ["once"],
+      scopeLabels: { once: "Allow this time" },
       webUrl: `https://cap.example/chat/${conversationId}`,
     });
     // the hosts, the command (the connection's secret redacted) and that the decision covers all

@@ -1227,12 +1227,16 @@ describe("the permission review order", () => {
     }
   });
 
-  it("Full access: sudo runs without an ask or a review", async () => {
+  it("Full access: sudo runs without an ask or a review, recorded as a sensitive crossing", async () => {
     const conv = await createConv(owner, orgId, agentId);
     await call(conv, "Bash", { command: "echo bound", description: "Bind" }, 1);
     await setProfile(conv, "full-access");
     const r = await call(conv, "Bash", SUDO, 2);
-    expect(r.payload.review).toMatchObject({ decision: "allow", decisionSource: "full-access" });
+    expect(r.payload.review).toMatchObject({
+      decision: "allow",
+      decisionSource: "full-access",
+      crossing: "sensitive",
+    });
     const asks = await db
       .selectFrom("approvals")
       .select("id")

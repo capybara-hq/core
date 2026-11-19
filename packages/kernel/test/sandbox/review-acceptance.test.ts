@@ -252,47 +252,19 @@ async function callIn(
   return (await results(conv)).at(-1) as ToolResult;
 }
 
-/**
- * A Bash call in the auto org whose literal URL names a host outside the device's allowed hosts:
- * the person is asked about that exact host (Approve for me with no review model) and approves it.
- */
-async function callApprovingHost(conv: string, input: unknown, n: number): Promise<ToolResult> {
-  await postMessage(owner, orgAuto, conv, `tool:Bash:${JSON.stringify(input)}`);
-  const ask = await waitFor(
-    async () =>
-      db
-        .selectFrom("approvals")
-        .select(["id", "detail"])
-        .where("conversation_id", "=", conv)
-        .where("kind", "=", "command")
-        .where("status", "=", "pending")
-        .executeTakeFirst(),
-    30_000,
-    "the host ask",
-  );
-  expect(ask.detail as Record<string, unknown>).toMatchObject({
-    permissionScope: { hosts: ["github.com"] },
-  });
-  const approved = await owner({
-    method: "POST",
-    url: `/api/v1/orgs/${orgAuto}/approvals/${ask.id}/decision`,
-    payload: { decision: "approve", scope: "once" },
-  });
-  expect(approved.statusCode, approved.body).toBe(200);
-  await waitForTerminal(db, conv, n, 30_000);
-  return (await results(conv)).at(-1) as ToolResult;
-}
-
 describe("acceptance: auto mode on a real kernel", () => {
   it("scenario 1: cloning a repository with protected files succeeds in auto mode and is allowed", async () => {
     const conv = await createConv(owner, orgAuto, agentAuto);
-    const cloned = await callApprovingHost(
+    // the device's sandbox network is open: github.com is no host crossing, nobody is asked
+    // (approval-only profiles design, "Profiles": a host crosses only an allowlist)
+    const cloned = await call(
       conv,
+      "Bash",
       { command: `git clone ${CORE_URL}`, description: "Clone core" },
       1,
     );
     expect(cloned.payload.isError, cloned.payload.content).toBe(false);
-    expect(cloned.payload.review).toMatchObject({ decision: "allow", by: "person" });
+    expect(cloned.payload.review).toMatchObject({ decision: "allow", by: "rule" });
     expect(cloned.payload.content).toContain("Cloning into");
 
     // the protected-file tree today's sandbox refused to write is in the device's workspace
@@ -420,36 +392,13 @@ describe("acceptance: auto mode on a real kernel", () => {
       description: "Clone in the background",
       run_in_background: true,
     };
+    // the open sandbox network reaches github.com with no host crossing: reviewed, then launched
     await postMessage(owner, orgAuto, conv, `tool:Bash:${JSON.stringify(clone)}`);
-    // the clone reaches a host outside the device's allowed hosts: the person is asked about that
-    // exact host before anything launches (Approve for me with no review model configured)
-    const ask = await waitFor(
-      async () =>
-        db
-          .selectFrom("approvals")
-          .select(["id", "detail"])
-          .where("conversation_id", "=", conv)
-          .where("kind", "=", "command")
-          .where("status", "=", "pending")
-          .executeTakeFirst(),
-      30_000,
-      "the host ask",
-    );
-    expect(ask.detail as Record<string, unknown>).toMatchObject({
-      permissionScope: { hosts: ["github.com"] },
-    });
-    expect(await launches(), "nothing launched while the ask waits").toEqual([]);
-    const approved = await owner({
-      method: "POST",
-      url: `/api/v1/orgs/${orgAuto}/approvals/${ask.id}/decision`,
-      payload: { decision: "approve", scope: "once" },
-    });
-    expect(approved.statusCode, approved.body).toBe(200);
     await waitForTerminal(db, conv, 2, 30_000);
     const launched = (await results(conv)).at(-1) as ToolResult;
     expect(launched.payload.isError, launched.payload.content).toBe(false);
     // the launch itself carries the review decision: the command was judged before it ran
-    expect(launched.payload.review).toMatchObject({ decision: "allow", by: "person" });
+    expect(launched.payload.review).toMatchObject({ decision: "allow", by: "rule" });
     // the same log now holds this conversation's launch exec: the empty check above is not vacuous
     const launchExecs = await launches();
     expect(launchExecs.length, "the allowed launch reached the sandbox").toBeGreaterThan(0);

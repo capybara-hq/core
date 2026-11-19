@@ -91,16 +91,21 @@ const SPEC: ToolSpec = {
     "command exits, and processes it left running are stopped. A background task is lost if the " +
     "sandbox is suspended (it is suspended after it has been running for a while, " +
     "sandbox.limits.maxRunningMinutes).\n\n" +
-    "Commands run inside an OS sandbox that limits which directories they may write and which " +
-    "hosts they may reach. When the sandbox blocks a command you need (for example 'Operation not " +
-    "permitted' writing outside the project, or a dev tool that must reach the machine), retry " +
-    'that one call with sandbox: "escalated" and a justification saying why; the user or a review ' +
-    "model decides, and only that call runs outside the sandbox. Do not escalate by default: try " +
-    "inside the sandbox first. Some devices and organizations do not allow it.\n\n" +
-    "Network access goes through a proxy set in HTTP_PROXY / HTTPS_PROXY / ALL_PROXY; a tool " +
-    "that ignores them fails with 'Operation not permitted' or cannot resolve names; such a tool " +
-    "needs the proxy passed explicitly through its own proxy option. A blocked domain is " +
-    "reported after the output.",
+    "Commands run inside an OS sandbox under every permission profile: it limits which " +
+    "directories they may write, keeps private, LAN, loopback and cloud metadata addresses and " +
+    "the Docker socket closed, and, when the device's network is an allowlist, limits which " +
+    "hosts they may reach. When the sandbox blocks a command you need (for example 'Operation " +
+    "not permitted' writing outside the project, a dev server that must listen on a port, or a " +
+    'service on localhost or the LAN), retry that one call with sandbox: "escalated" and a ' +
+    "justification saying why; this conversation's permission profile decides (the user, a " +
+    "review model, or Full access within the device's limits), and only that call runs outside " +
+    "the sandbox. Do not escalate by default: try inside the sandbox first. Some devices and " +
+    "organizations do not allow it.\n\n" +
+    "Network access goes through a proxy set in HTTP_PROXY / HTTPS_PROXY / ALL_PROXY; HTTP(S)- " +
+    "and SOCKS-aware clients work on any port. A tool that ignores them (plain ssh, for example) " +
+    "fails with 'Operation not permitted' or cannot resolve names; pass the proxy through its " +
+    "own option (for git over ssh, GIT_SSH_COMMAND with a SOCKS ProxyCommand). A blocked domain " +
+    "is reported after the output.",
   inputSchema: {
     type: "object",
     properties: {
@@ -130,7 +135,7 @@ const SPEC: ToolSpec = {
         type: "string",
         enum: [SANDBOX_ESCALATED],
         description:
-          'Set to "escalated" to ask to run this one call outside the OS sandbox (also in the background). Requires justification; the user or a review model approves it first.',
+          "Set to \"escalated\" to ask to run this one call outside the OS sandbox (also in the background). Requires justification; this conversation's permission profile decides first (the user, a review model, or Full access within the device's limits).",
       },
       justification: {
         type: "string",
@@ -461,7 +466,7 @@ export const sandboxDenied = (r: ExecResult): boolean => {
  * for the tool design check (a unit test keeps the two copies equal).
  */
 export const SCOPE_DENIED_ESCALATION_TEXT =
-  'This operation reaches outside what this conversation\'s permission profile allows on the device (a path outside the directories it may read or write, or a host it may not reach), so it did not run. Keep the call inside the working directory and the directories already granted, or ask the user to grant the directory or choose a broader permission profile, then retry. If this command must reach outside the sandbox, retry the same Bash call with sandbox: "escalated" and justification: one sentence saying why; the user or the review model decides whether it may run outside the sandbox for this call only.';
+  "This operation reaches outside what this conversation's permission profile allows on the device (a path outside the directories it may read or write, or a host it may not reach), so it did not run. Keep the call inside the working directory and the directories already granted, or ask the user to grant the directory or choose a broader permission profile, then retry. If this command must reach outside the sandbox, retry the same Bash call with sandbox: \"escalated\" and justification: one sentence saying why; this conversation's permission profile decides whether it may run outside the sandbox for this call only (the user, the review model, or Full access within this device's limits).";
 /**
  * A restricted call the scope refused ({@link SCOPE_DENIED_TOOL_TEXT}) where running outside the
  * sandbox is allowed: the refusal also says the call may be retried escalated.

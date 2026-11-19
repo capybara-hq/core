@@ -1109,3 +1109,86 @@ it.each([
     }
   },
 );
+
+// approval-only profiles design, "Kernel: decision, admission and records": Full access grants a
+// crossing by itself, recorded exactly once (the grant, its permission_reviewed event and the audit
+// row), and admission takes the grant as the call's evidence
+it("Full access: an outside directory is auto-granted once, recorded, audited and admitted", async () => {
+  const f = await fixture("Write", { file_path: "/outside/reports/report.txt" }, true);
+  const view = await k.app
+    .get(PermissionProfilesService)
+    .get(f.orgId, f.conversationId, f.accountId);
+  await k.app.get(PermissionProfilesService).set(f.orgId, f.conversationId, f.accountId, {
+    profile: "full-access",
+    expectedRevision: 0,
+    consentScopeRevision: view.scopeRevision!,
+  });
+  const review = vi.spyOn(k.app.get(CommandReviewService), "review");
+  const notify = vi.spyOn(k.app.get(EventLog), "notify");
+  const result = await k.app.get(RunExecution).withClaim(
+    f.claim,
+    () => true,
+    () => k.app.get(ToolPipeline).runStep(f.ctx),
+  );
+  expect(result.kind).toBe("done");
+  // the fixed denies still ran first; nobody was asked
+  expect(review).toHaveBeenCalledTimes(1);
+  expect(await k.app.get(ApprovalsService).commandForCall(f.runId, f.callId)).toBeNull();
+  const grants = await f.db.selectFrom("permission_call_grants").selectAll().execute();
+  expect(grants).toHaveLength(1);
+  expect(grants[0]).toMatchObject({
+    source: "full-access",
+    scope_kind: "directories-and-hosts",
+    approval_id: null,
+    decided_by: null,
+    call_id: f.callId,
+  });
+  const reviewed = await f.db
+    .selectFrom("conversation_events")
+    .select(["seq", "payload"])
+    .where("type", "=", "permission_reviewed")
+    .where("run_id", "=", f.runId)
+    .execute();
+  expect(reviewed).toHaveLength(1);
+  expect(reviewed[0]?.payload).toMatchObject({
+    outcome: "allow",
+    decisionSource: "full-access",
+    crossing: "directory",
+    permissionScope: { writeDirectories: ["/outside/reports"] },
+  });
+  expect(grants[0]?.review_event_seq).toBe(Number(reviewed[0]?.seq));
+  // the event is announced after its commit, like every other event
+  expect(notify).toHaveBeenCalledWith(f.conversationId, Number(reviewed[0]?.seq));
+  const audits = await f.db
+    .selectFrom("audit_events")
+    .selectAll()
+    .where("action", "=", "permission.crossing_auto_granted")
+    .execute();
+  expect(audits).toHaveLength(1);
+  expect(audits[0]).toMatchObject({
+    org_id: f.orgId,
+    actor_account_id: f.accountId,
+    target: f.deviceId,
+  });
+  expect(audits[0]?.detail).toMatchObject({ kind: "directory", callId: f.callId });
+  // admission took the grant as this call's evidence
+  const intents = await f.db
+    .selectFrom("sandbox_operation_intents")
+    .select(["permission_grant_id", "state"])
+    .where("run_id", "=", f.runId)
+    .execute();
+  expect(intents.length).toBeGreaterThan(0);
+  expect(intents.every((i) => i.permission_grant_id === grants[0]?.id)).toBe(true);
+  expect(f.effects()).toBeGreaterThan(0);
+  const toolResult = await f.db
+    .selectFrom("conversation_events")
+    .select("payload")
+    .where("type", "=", "tool_result")
+    .where("run_id", "=", f.runId)
+    .executeTakeFirstOrThrow();
+  expect((toolResult.payload as { review?: unknown }).review).toMatchObject({
+    decision: "allow",
+    decisionSource: "full-access",
+    crossing: "directory",
+  });
+});

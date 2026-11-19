@@ -1560,7 +1560,13 @@ describe("permission context v2: the device sandbox and the approver per crossin
     [
       "Full access with escalation",
       sandboxed("full-access", true),
-      [...head("Full access"), operationSandbox, ...allowlisted, fullWith],
+      [
+        ...head("Full access"),
+        operationSandbox,
+        ...allowlisted,
+        fullWith,
+        "An escalation that reads, prints or links credentials goes to a separate reviewer instead; uncertainty asks the person.",
+      ],
     ],
     [
       "Full access without escalation",

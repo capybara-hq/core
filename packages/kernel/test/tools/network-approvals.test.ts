@@ -46,10 +46,10 @@ import type { Answer } from "../local-devices/test-holder.js";
 
 /**
  * Network asks (network ask-to-allow spec §5.2, §6.1–§6.8, P1.6): approvals of kind `network`
- * the device owner decides. "Allow once" is a run grant, "Always allow" too under device
- * protocol 4 (no `policy` op is sent: the refusal is its reason), a reply skips the ask, expiry
- * and abort settle it, and the call's tool approvals are left alone. An always-allow records no
- * device policy intent; a pending op naming an ask is still settled in lock order with fenced
+ * the device owner decides. "Allow once" is a run grant and the only offer: under device protocol 4
+ * the deployment never adds a host to a local device, so "Always allow" is not offered and is
+ * refused (no `policy` op is sent). A reply skips the ask, expiry and abort settle it, and the
+ * call's tool approvals are left alone; a pending op is still settled in lock order with fenced
  * device writers.
  */
 
@@ -170,7 +170,7 @@ function ask(over: Partial<NetworkAskInput> = {}): Promise<ApprovalRecord> {
       description: "Download the file",
       result: KEPT,
     },
-    scopes: ["once", "always"],
+    scopes: ["once"],
     ...over,
   });
 }
@@ -247,7 +247,7 @@ describe("requestNetwork", () => {
       attempt: 1,
       requestedFor: s.accountId,
       approverRole: null,
-      scopes: ["once", "always"],
+      scopes: ["once"],
       detail: { deviceId: s.deviceId, result: KEPT },
     });
     const [requested] = ofType(await eventsOf(db, s.conversationId), "approval_requested");
@@ -341,88 +341,20 @@ describe("decide", () => {
     await waitFor(async () => (await runStatus(s.runId)) === "queued", 10_000, "run resumed");
   });
 
-  // Device protocol 4: the platform never widens a local device's sandbox, so "Always allow" sends
-  // no `policy` op (a machine refusing it can no longer be reached either): the checked hosts
-  // become a run grant with the refusal, and the owner adds hosts on the machine.
-  it("Always allow: nothing reaches the machine; the checked hosts are a run grant with the refusal", async () => {
+  // Device protocol 4: the platform never widens a local device's sandbox, so an ask offers a run
+  // grant only; "Always allow" is refused and nothing reaches the machine
+  it("an ask offers once only; always → 409 approval.scope_not_allowed, nothing sent", async () => {
     const machine = await connect(() => ({ ok: true, result: null }));
     const a = await ask();
-    const res = await decide(a.id, {
-      decision: "approve",
-      scope: "always",
-      hosts: ["files.slack.com"],
-    });
-    expect(res.statusCode, res.body).toBe(200);
-    expect((res.json() as { approval: unknown }).approval).toMatchObject({
-      status: "approved",
-      scope: "once",
-      detail: { grantedHosts: ["files.slack.com"], outcome: "once_fallback", fallback: "refused" },
-    });
-    expect(machine.frames.filter((f) => f.type === "req" && f.op === "policy")).toEqual([]);
-    // no intent: nothing requested of the device, no pending op on its machine
-    expect(await entries()).toEqual([]);
-    expect(
-      await db
-        .selectFrom("audit_events")
-        .select("action")
-        .where("target", "=", s.deviceId)
-        .where("action", "=", "device.policy_requested")
-        .execute(),
-    ).toEqual([]);
-    const audits = await networkAudits(s.deviceId);
-    expect(audits.map((x) => x.action)).toEqual(["device.network_allowed"]);
-    expect(audits[0]?.detail).toMatchObject({
-      approvalId: a.id,
-      hosts: ["files.slack.com"],
-      refused: ["api.github.com"],
-      outcome: "once_fallback",
-      fallback: "refused",
-    });
-    // the checked host is granted for the run; the unchecked one is refused in it
-    const grants = await k.app
-      .get(NetworkGrants)
-      .forExec({ orgId, runId: s.runId, deviceId: s.deviceId });
-    expect(grants?.hosts).toEqual(["files.slack.com"]);
-    const state = await k.app.get(NetworkGrants).runState(s.runId);
-    expect([...state.refused]).toEqual(["api.github.com"]);
-    // the run resumes with the decision
-    await waitFor(async () => (await runStatus(s.runId)) === "queued", 10_000, "run resumed");
-  });
-
-  it("Always allow with the device offline: the same run grant (refused before the device is looked up)", async () => {
-    // signed in with the feature, then gone
-    const machine = await connect(() => ({ ok: true, result: null }));
-    machine.close();
-    await waitFor(
-      async () => (await redis.get(deviceLeaseKey(s.deviceId))) === null,
-      15_000,
-      "lease released",
-    );
-    const a = await ask();
-    const res = await decide(a.id, { decision: "approve", scope: "always" });
-    expect(res.statusCode, res.body).toBe(200);
-    expect((res.json() as { approval: unknown }).approval).toMatchObject({
-      status: "approved",
-      scope: "once",
-      detail: { outcome: "once_fallback", fallback: "refused" },
-    });
-    const grants = await k.app
-      .get(NetworkGrants)
-      .forExec({ orgId, runId: s.runId, deviceId: s.deviceId });
-    expect(grants?.hosts).toHaveLength(2);
-    const audits = await networkAudits(s.deviceId);
-    expect(audits.map((x) => x.action)).toEqual(["device.network_allowed"]);
-    expect(audits[0]?.detail).toMatchObject({ outcome: "once_fallback", fallback: "refused" });
-  });
-
-  it("a device without remote grants is asked once only; always → 409 approval.scope_not_allowed", async () => {
-    const a = await ask({ scopes: ["once"] });
+    expect(a.scopes).toEqual(["once"]);
     const res = await decide(a.id, { decision: "approve", scope: "always" });
     expect(res.statusCode).toBe(409);
     expect((res.json() as { error: { code: string } }).error.code).toBe(
       "approval.scope_not_allowed",
     );
     expect((await row(a.id)).status).toBe("pending");
+    expect(machine.frames.filter((f) => f.type === "req" && f.op === "policy")).toEqual([]);
+    expect(await entries()).toEqual([]);
   });
 
   it("deny: a reason, device.network_denied, nothing granted, the hosts refused in the run", async () => {
@@ -643,33 +575,8 @@ describe("network ask settlements and fenced device writers of the same tree", (
     const a = await ask();
     const opId = await pendingOp(a.id);
     await againstFencedDeviceWrite(() => resolver().resolve({ machineId: s.machineId, opId }));
-    // recorded: the op is gone, the ask waits with the reason
+    // recorded: the op is gone; the ask is not decided by it
     expect(await entries()).toEqual([]);
     expect((await row(a.id)).status).toBe("pending");
-  });
-
-  it("an always decision's settle of an ask that closed meanwhile", async () => {
-    const a = await ask();
-    const opId = await pendingOp(a.id);
-    await db
-      .updateTable("approvals")
-      .set({ status: "denied", decided_by: s.accountId, decided_at: new Date() })
-      .where("id", "=", a.id)
-      .execute();
-    // biome-ignore lint/suspicious/noExplicitAny: a private method called as a test seam
-    const seam = approvals() as unknown as Record<string, (...a: any[]) => Promise<unknown>>;
-    let out: unknown;
-    await againstFencedDeviceWrite(async () => {
-      out = await seam.settleNetworkOpOrdered?.(
-        orgId,
-        a.id,
-        s.accountId,
-        { decision: "approve", scope: "always" },
-        { wanted: ["files.slack.com"], granted: [], outcome: "refused", via: "web" },
-        { machineId: s.machineId, opId, result: { outcome: "refused", message: "no" } },
-      );
-    });
-    expect(out).toMatchObject({ closed: { code: "approval.already_decided" }, late: false });
-    expect(await entries()).toEqual([]);
   });
 });

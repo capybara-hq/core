@@ -27,18 +27,21 @@ export type PermissionCallBinding = Readonly<{
 }>;
 export type PermissionGrantDecision =
   | { source: "human"; approvalId: string; decidedBy: string }
-  | { source: "review-model"; reviewEventSeq: number; decidedBy: null };
+  | { source: "review-model"; reviewEventSeq: number; decidedBy: null }
+  | PermissionFullAccessGrantDecision;
 /**
- * Full access granted the crossing within the device's ceilings (approval-only profiles design):
- * recorded by its `permission_reviewed` event and an audit row. W0 interface stub: the review and
- * grants task (T6) joins it to {@link PermissionGrantDecision} together with migration `0164` (the
- * grant `source` check) and the `kernel-schema.ts` column type; until then issuance rejects it.
+ * Full access granted the crossing within the device's ceilings (approval-only profiles design,
+ * "Kernel: decision, admission and records"): its evidence is the `permission_reviewed` event
+ * (outcome allow, decision source `full-access`) written with an audit row
+ * `permission.crossing_auto_granted` and the grant in one fenced transaction.
  */
 export type PermissionFullAccessGrantDecision = {
   source: "full-access";
   reviewEventSeq: number;
   decidedBy: null;
 };
+/** Where a grant's evidence came from: the person, the review model or a Full access auto-grant. */
+export type PermissionGrantSource = PermissionGrantDecision["source"];
 /**
  * The kind of one boundary crossing, as `ReviewRecord.crossing` records it: a directory outside the
  * scope, a new host on an allowlist, running one call outside the sandbox, or a sensitive command.
@@ -75,7 +78,8 @@ export type PermissionCandidateResult =
   | { kind: "proposal"; candidate: PermissionCandidate }
   | {
       kind: "unsupported";
-      code: "unbounded-scope" | "escalation-unavailable";
+      /** `protected-path`: its text already names the outside-sandbox escalation (no retry hint). */
+      code: "unbounded-scope" | "escalation-unavailable" | "protected-path";
       message: string;
     };
 export type PermissionReviewSnapshot = Readonly<

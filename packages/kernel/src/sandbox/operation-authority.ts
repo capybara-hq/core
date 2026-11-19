@@ -147,12 +147,13 @@ export function intersectPermissionScope(f: PermissionScopeFacts): SandboxOperat
       "forbidden",
       "Full access requires current device authority and matching consent",
     );
-  // an escalated call runs with full execution: the same device, org and platform ceiling as Full
-  // access, its consent the exact call grant (bound to the scope revision) instead of the profile's
-  if (f.escalated && (f.profile === "full-access" || !f.outsideSandboxCeiling))
+  // an escalated call runs with full execution within the outside-sandbox ceiling, its consent
+  // the exact call grant (bound to the scope revision), under any profile (a Full access
+  // auto-grant included)
+  if (f.escalated && !f.outsideSandboxCeiling)
     throw new ApiError(
       "forbidden",
-      "A sandbox escalation requires a restricted profile and the current Full access ceiling",
+      "A sandbox escalation requires the current outside-sandbox ceiling",
     );
   const full = f.profile === "full-access" || f.escalated === true;
   return parseSandboxOperationScope({
@@ -396,12 +397,11 @@ export class SandboxOperationAuthority {
     // full execution for this exact call's command only (a native method of the same call keeps
     // the base scope): the same checks as Full access, now
     const escalated = grant?.scopeKind === "sandbox-escalation" && isExecutionMethod(operation);
-    // a call that asked to run outside the sandbox under a restricted profile runs escalated or
-    // not at all: a missed grant (the device, ceiling or scope changed since the approval) or a
+    // a call that asked to run outside the sandbox (under any profile) runs escalated or not at
+    // all: a missed grant (the device, ceiling or scope changed since the approval) or a
     // ceiling that no longer allows it is a pre-effect refusal, never a sandboxed run
     if (
       requested === "escalated" &&
-      f.profile !== "full-access" &&
       isExecutionMethod(operation) &&
       (!escalated || f.escalationRefusal)
     )

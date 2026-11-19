@@ -313,7 +313,7 @@ describe("the ask and its outcomes", () => {
   it("「这次允许」: the run waits, network_blocked + approval_requested; the kept output + once note; one exec; the next exec carries the run grant", async () => {
     await post([curl(["files.example.com"]), curl(["files.example.com"])]);
     const ask = await nextAsk();
-    expect(ask).toMatchObject({ requested_for: s.accountId, scopes: ["once", "always"] });
+    expect(ask).toMatchObject({ requested_for: s.accountId, scopes: ["once"] });
     expect(ask.detail).toMatchObject({
       deviceId: s.deviceId,
       hosts: [{ host: "files.example.com", port: 443 }],
@@ -363,46 +363,19 @@ describe("the ask and its outcomes", () => {
     expect(called).toHaveLength(2);
   });
 
-  // Device protocol 4: "Always allow" sends no `policy` op (so a device refusing one is never
-  // reached): the hosts are a run grant with the refusal as its reason, and the model gets the once
-  // note.
-  it("Always allow: nothing is sent to the device; a run grant and the once note", async () => {
+  // Device protocol 4: the deployment never adds a host to a local device, so an ask offers a run
+  // grant only and "Always allow" is refused, nothing sent to the device
+  it("Always allow is not offered: refused, nothing is sent to the device", async () => {
     await post([curl(["files.example.com"])]);
     const ask = await nextAsk();
     const res = await decide(ask.id, { decision: "approve", scope: "always" });
-    expect(res.statusCode, res.body).toBe(200);
-    expect((res.json() as { approval: unknown }).approval).toMatchObject({
-      scope: "once",
-      detail: {
-        outcome: "once_fallback",
-        fallback: "refused",
-        grantedHosts: ["files.example.com"],
-      },
-    });
-    await waitForTerminal(db, s.conversationId, 1, 20_000);
-    const [r] = await results();
-    expect(r?.content.endsWith(`\n\n${allowedOnceNote(["files.example.com"])}`)).toBe(true);
-    expect(s.dev.allowed.has("files.example.com")).toBe(false);
+    expect(res.statusCode).toBe(409);
     expect(s.machine.frames.filter((f) => f.type === "req" && f.op === "policy")).toEqual([]);
-    expect(curlExecs()).toHaveLength(1);
-  });
-
-  it("Always allow with the device offline: the same run grant, the once note", async () => {
-    await post([curl(["files.example.com"])]);
-    const ask = await nextAsk();
-    s.machine.close();
-    await waitFor(
-      async () => (await redis.get(deviceLeaseKey(s.deviceId))) === null,
-      15_000,
-      "lease released",
-    );
-    const res = await decide(ask.id, { decision: "approve", scope: "always" });
-    expect((res.json() as { approval: unknown }).approval).toMatchObject({
-      detail: { outcome: "once_fallback", fallback: "refused" },
-    });
+    expect((await decide(ask.id, { decision: "approve", scope: "once" })).statusCode).toBe(200);
     await waitForTerminal(db, s.conversationId, 1, 20_000);
     const [r] = await results();
     expect(r?.content.endsWith(`\n\n${allowedOnceNote(["files.example.com"])}`)).toBe(true);
+    expect(curlExecs()).toHaveLength(1);
   });
 
   it("deny with a reason: the denied note with the reason; the host is not asked again in the run", async () => {

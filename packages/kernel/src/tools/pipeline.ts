@@ -66,6 +66,7 @@ import { SubagentsService } from "../runtime/subagents/subagents.service.js";
 import { orgHostOutsideCeiling } from "../sandbox/modes.js";
 import { SandboxOperationAuthority } from "../sandbox/operation-authority.js";
 import { PermissionAuthorityLock } from "../sandbox/permission-authority-lock.js";
+import { PermissionAutoGrants } from "../sandbox/permission-auto-grants.js";
 import { PermissionCallGrants } from "../sandbox/permission-call-grants.js";
 import type { PermissionCandidate } from "../sandbox/permission-call-types.js";
 import {
@@ -79,7 +80,9 @@ import {
   type ReviewVerdict,
 } from "../sandbox/review/index.js";
 import {
+  approverForCrossing,
   buildPermissionCandidate,
+  crossingOfCandidate,
   ESCALATION_RETRY_HINT,
   ESCALATION_UNATTENDED_WHY,
   escalationRefusedText,
@@ -888,6 +891,10 @@ export class ToolPipeline {
     @Optional()
     @Inject(PermissionCallGrants)
     private readonly permissionGrants?: PermissionCallGrants,
+    /** Full access auto-grants, recorded exactly once (absent in hand-built pipelines). */
+    @Optional()
+    @Inject(PermissionAutoGrants)
+    private readonly autoGrants?: PermissionAutoGrants,
     @Optional()
     @Inject(PermissionAuthorityLock)
     private readonly permissionLocks?: PermissionAuthorityLock,
@@ -1963,9 +1970,8 @@ export class ToolPipeline {
       return null;
     }
     if (facts.availability.state !== "supported") {
-      // still unverified: the conservative command review decides (Full access too), but a call
+      // still unverified: the conservative command review decides (every profile), but a call
       // that needs more reach is refused now: admission could never run what an approval allowed
-      if (facts.profile === "full-access") return null;
       const unverified = buildPermissionCandidate(
         { toolKey: tool.key, specHash: tool.specHash, rawInput: call.input, validatedInput: input },
         facts,
@@ -1984,33 +1990,39 @@ export class ToolPipeline {
         review: denyRecord("rule", null, "The command exceeds the review limit"),
       };
     const escalated = isEscalatedCall(tool.key, input);
-    // the escalation state the tool's hints read: only a restricted Bash call on a device and
-    // org whose ceiling allows running outside the sandbox
-    if (tool.key === "Bash" && facts.profile !== "full-access" && !facts.escalationRefusal)
+    // the escalation state the tool's hints read: a Bash call (every profile runs it in the
+    // sandbox) on a device and org whose ceiling allows running outside the sandbox
+    if (tool.key === "Bash" && !facts.escalationRefusal)
       note.escalation = escalated ? "escalated" : "available";
-    const built =
-      facts.profile === "full-access" && !escalated
-        ? { kind: "in-scope" as const }
-        : buildPermissionCandidate(
-            {
-              toolKey: tool.key,
-              specHash: tool.specHash,
-              rawInput: call.input,
-              validatedInput: input,
-            },
-            facts,
-            [device.home, device.deviceHome],
-            { backgroundMaxSeconds: backgroundMaxSeconds(this.config.get()) },
-          );
+    // candidate building runs for every profile: the profile only chooses who approves
+    const built = buildPermissionCandidate(
+      {
+        toolKey: tool.key,
+        specHash: tool.specHash,
+        rawInput: call.input,
+        validatedInput: input,
+      },
+      facts,
+      [device.home, device.deviceHome],
+      { backgroundMaxSeconds: backgroundMaxSeconds(this.config.get()) },
+    );
     if (built.kind === "unsupported") {
-      // a Bash reach the restricted scope cannot grant: retrying outside the sandbox may
+      // a Bash reach the restricted scope cannot grant: retrying outside the sandbox may (a
+      // protected location's text names the escalation itself)
       const content =
-        note.escalation === "available"
+        note.escalation === "available" && built.code === "unbounded-scope"
           ? `${built.message}${ESCALATION_RETRY_HINT}`
           : built.message;
       return { kind: "result", content, review: denyRecord("rule", null, content) };
     }
     const candidate = built.kind === "proposal" ? built.candidate : undefined;
+    // who approves this call's crossing: the person, the review model, or nobody (Full access
+    // grants it within the device's ceilings); a sub-agent's escalation never goes to nobody
+    const approver = approverForCrossing({
+      profile: facts.profile,
+      crossing: candidate ? crossingOfCandidate(candidate) : "sensitive",
+      subAgent: ctx.parent !== undefined,
+    });
     // a sensitive-command consent the person settled (no proposed reach): the call runs under
     // the base scope it was asked under; the approval adds nothing
     if (
@@ -2082,16 +2094,23 @@ export class ToolPipeline {
           kind: "continue",
           workingRoot: carriedRoot(device),
           reviewedAgainst: facts.workingRoot,
-          // the evidence's real source: the person's approval or the review model's allow
+          // the evidence's real source: the person's approval, the review model's allow or the
+          // Full access auto-grant
           review: {
             decision: "allow",
-            by: existingGrant.source === "human" ? "person" : "classifier",
+            by:
+              existingGrant.source === "human"
+                ? "person"
+                : existingGrant.source === "review-model"
+                  ? "classifier"
+                  : "rule",
             rule: null,
             reason: "The exact current call already has approved permission evidence.",
             profile: facts.profile,
             profileRevision: facts.profileRevision,
             scopeRevision: facts.scopeRevision,
-            decisionSource: existingGrant.source === "human" ? "human" : "review-model",
+            decisionSource: existingGrant.source,
+            crossing: crossingOfCandidate(candidate),
             ...(candidate.escalation ? { sandbox: "escalated" as const } : {}),
           },
         };
@@ -2120,7 +2139,10 @@ export class ToolPipeline {
       ...(candidate ? { permissionCandidate: candidate } : {}),
       ...(note.escalation === "available" ? { escalationAvailable: true } : {}),
     });
-    if (candidate && facts.profile === "approve-for-me") {
+    // who decided: the review knows the call's consents (a credential consent sends a Full access
+    // escalation to the review model); without its answer, the profile's approver
+    const decidedBy = verdict.approver ?? approver;
+    if (candidate && decidedBy === "review-model") {
       await withTransactionFencePrelude(
         () =>
           permissionLocks.acquire(
@@ -2133,6 +2155,12 @@ export class ToolPipeline {
           ),
         () => this.recordPermissionReview(candidate, verdict),
       );
+    }
+    // Full access: the crossing is granted for this call, recorded exactly once (its event, the
+    // audit row and the grant in one fenced transaction); a fixed deny never reaches this
+    if (candidate && decidedBy === "none" && verdict.decision === "allow") {
+      if (!this.autoGrants) throw new Error("Permission auto-grants are unavailable");
+      await this.autoGrants.record(candidate, verdict.sensitive ?? []);
     }
     const provenance = {
       profile: facts.profile,
@@ -2154,13 +2182,19 @@ export class ToolPipeline {
           ...allowRecord(verdict),
           ...provenance,
           decisionSource:
-            facts.profile === "full-access"
-              ? "full-access"
-              : verdict.by === "classifier"
-                ? "review-model"
+            verdict.by === "classifier"
+              ? "review-model"
+              : facts.profile === "full-access"
+                ? "full-access"
                 : "scope",
-          // the review model's allow issued this call's escalation grant: it runs unsandboxed
-          ...(candidate?.escalation && verdict.by === "classifier"
+          ...(candidate
+            ? { crossing: crossingOfCandidate(candidate) }
+            : verdict.crossing
+              ? { crossing: verdict.crossing }
+              : {}),
+          // the review model's allow or Full access issued this call's escalation grant: it runs
+          // outside the sandbox
+          ...(candidate?.escalation && (verdict.by === "classifier" || decidedBy === "none")
             ? { sandbox: "escalated" as const }
             : {}),
         },
@@ -2211,21 +2245,24 @@ export class ToolPipeline {
     return { kind: "wait", wait: approvalWait(ask) };
   }
   /**
-   * Whether an execution of this call was admitted outside the sandbox under a restricted profile
-   * (a per-call escalation's full reach): an intent past admission, or one revoked after dispatch.
+   * Whether an execution of this call was admitted outside the sandbox (a per-call escalation's
+   * full reach, under any profile): an intent past admission, or one revoked after dispatch, whose
+   * device-wide scope came from the call's escalation grant.
    */
   private async admittedOutsideSandbox(runId: string, callId: string): Promise<boolean> {
     const rows = await this.deps.db
-      .selectFrom("sandbox_operation_intents")
-      .select(["scope", "state", "outcome_unknown"])
-      .where("run_id", "=", runId)
-      .where("call_id", "=", callId)
-      .where("method", "in", ["exec", "backgroundStart"])
+      .selectFrom("sandbox_operation_intents as i")
+      .innerJoin("permission_call_grants as g", "g.id", "i.permission_grant_id")
+      .select(["i.scope", "i.state", "i.outcome_unknown"])
+      .where("i.run_id", "=", runId)
+      .where("i.call_id", "=", callId)
+      .where("i.method", "in", ["exec", "backgroundStart"])
+      .where("g.scope_kind", "=", "sandbox-escalation")
       .execute();
     return rows.some((r) => {
-      const scope = r.scope as { profile?: string; filesystem?: { kind?: string } };
+      const scope = r.scope as { filesystem?: { kind?: string } };
       const admitted = r.state === "revoked" ? r.outcome_unknown : r.state !== "pending";
-      return admitted && scope.profile !== "full-access" && scope.filesystem?.kind === "device";
+      return admitted && scope.filesystem?.kind === "device";
     });
   }
   @Transactional()
@@ -2494,8 +2531,9 @@ export class ToolPipeline {
   }
 
   /**
-   * 处理函数返回 `input_required`：超过轮次上限、表单不合规（`validateInputForm`）或 state 过大 → 返回给模型的错误说明；
-   * 否则建输入请求（写 `question_asked`）并返回等待对象。
+   * A handler returned `input_required`: past the round limit, an invalid form
+   * (`validateInputForm`) or an oversized state is an error text for the model; otherwise an
+   * input request is made (writing `question_asked`) and its wait returned.
    */
   private async askInput(
     ctx: ToolStepContext,

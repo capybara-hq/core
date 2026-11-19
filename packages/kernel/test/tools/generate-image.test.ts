@@ -933,7 +933,7 @@ describe("GenerateImage on the activated permission review", () => {
     });
   };
 
-  it("Full access copies an outside file_path with no ask", async () => {
+  it("Full access copies an outside file_path with no ask, under its recorded auto-grant", async () => {
     const conv = await createConv(owner, orgId, agentId);
     // the first copy binds the device the profile is set for
     await outDir(conv);
@@ -950,7 +950,8 @@ describe("GenerateImage on the activated permission review", () => {
     expect(
       await db.selectFrom("approvals").select("id").where("conversation_id", "=", conv).execute(),
     ).toEqual([]);
-    expect(await grantsOf(conv)).toEqual([]);
+    // approval-only profiles: Full access grants the directory crossing itself, recorded
+    expect(await grantsOf(conv)).toMatchObject([{ source: "full-access" }]);
   });
 
   it("another member's run is refused before any image is generated; without file_path it generates", async () => {

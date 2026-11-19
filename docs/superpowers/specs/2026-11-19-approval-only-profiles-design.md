@@ -91,7 +91,7 @@ They live in `sandbox/review/rules.ts`.
 | Read, edit, command inside the sandbox scope; network the sandbox allows | Runs | Runs | Runs |
 | Directory outside the scope (`directory`) | Ask | Review model | Auto-grant, recorded |
 | New host while the network is an allowlist (`host`) | Ask | Review model | Auto-grant within the network ceiling, recorded |
-| Run this call outside the sandbox (`outside-sandbox`): also the only way to reach private, LAN, loopback, link-local and metadata addresses, the sockets and the protected paths | Ask | Review model | Auto-grant within the outside-sandbox ceiling, recorded |
+| Run this call outside the sandbox (`outside-sandbox`): also the only way to reach private, LAN, loopback, link-local and metadata addresses, the sockets and the protected paths | Ask | Review model | Auto-grant within the outside-sandbox ceiling, recorded; review model when the call carries a credential consent |
 | Sensitive command | Ask | Review model | Runs, recorded (unchanged from today) |
 | Fixed deny (rule `deny.*`, a platform or org deny, protected paths inside the sandbox) | Deny | Deny | Deny |
 | Crossing beyond a ceiling | Unavailable: an actionable error that names the layer | Same | Same |
@@ -104,6 +104,15 @@ model, a failing classifier or an unmapped review purpose all ask the person (to
 table first, and a `deny.*` hit returns before `decidePermission` runs. A directory grant can never
 add a protected path to the scope: the candidate builder refuses it, admission checks again, and
 the device intersects again. A prompt-injected allow therefore never crosses a fixed deny.
+
+**Credential escalations under Full access** (maintainer ruling, 2026-11-19): an `outside-sandbox`
+crossing whose command carries a credential consent (`ask.credential-*`, `ask.ssh`,
+`ask.secret-file`) goes to the review model, not to an auto-grant (`approverForCrossing`). Full
+access stays automatic (no person by default), while credential exfiltration gets a check; as
+everywhere, an unavailable or unsure review model asks the person. The review model's input says
+neutrally why it sees a Full access call. Other sensitive consents carried by an escalation (sudo,
+persistent changes) stay auto-granted, and the auto-grant records them (`sensitive` on the
+`permission_reviewed` event and the audit row).
 
 **Sensitive consent under Full access** stays skipped, as today. This does not conflict with the new
 model. The sandbox still holds the protected paths and the minimal environment, so `sudo` or a
@@ -315,8 +324,9 @@ classes cannot drift.
 - The candidate builder's protected-path refusal offers escalation instead of "choose Full access".
 
 **One approver function.** The merged `approverForProfile` maps profile → `person | review-model |
-none` for `directory`, `host` and `outside-sandbox` crossings. A sub-agent's escalation is the one
-exception: `none` becomes `review-model`. For `none`, `decidePermission` returns allow with
+none` for `directory`, `host` and `outside-sandbox` crossings. Two escalations are the
+exceptions, where `none` becomes `review-model`: a sub-agent's, and one carrying a credential
+consent. For `none`, `decidePermission` returns allow with
 `decisionSource: "full-access"`, and a call with a candidate continues to grant issuance.
 
 **Full access issues a grant.** `PermissionCallGrants.issueLocked` accepts `{ source: "full-access",
