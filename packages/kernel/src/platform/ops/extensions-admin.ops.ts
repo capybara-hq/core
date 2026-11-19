@@ -68,8 +68,7 @@ const detail = (v: AdminExtensionView) => {
 };
 
 /** Where a super admin confirms permissions: a person, on the web (spec §6.4). */
-const CONFIRM_ON_WEB =
-  "Review and confirm its permissions in the admin console; agents never confirm permissions.";
+const CONFIRM_ON_WEB = "Review and confirm its permissions in the admin console.";
 
 /** An extension waiting for a permission confirmation: a compact row, the keys it adds. */
 const pendingExtension = (v: AdminExtensionView) => ({
@@ -159,7 +158,7 @@ export class ExtensionsAdminOperations implements OnModuleInit {
       defineOperation({
         id: "extensions.pending-permissions",
         description:
-          "List what waits for a super admin to confirm extension permissions (super admin): extensions whose permissions changed since they were approved (state pending_approval, with the permission keys added and removed and whether they are sensitive) and catalog plugins waiting for a confirmation, including this org's uploads with an extension. State and permission keys only, never config values. Other orgs' own plugins are only counted (otherOrgItems, otherOrgExtensions). Confirming is done by you in the admin console, never by an agent. Pages by 50: pass the returned next as params.cursor.",
+          "List what waits for a super admin to confirm extension permissions (super admin): extensions whose permissions changed since they were approved (state pending_approval, with the permission keys added and removed and whether they are sensitive) and catalog plugins waiting for a confirmation, including this org's uploads with an extension. State and permission keys only, never config values. Other orgs' own plugins are only counted (otherOrgItems, otherOrgExtensions). Confirming is done by you in the admin console. Pages by 50: pass the returned next as params.cursor.",
         input: z.object({ cursor: Cursor.optional() }).strict(),
         example: {},
         authz: { superAdmin: true },

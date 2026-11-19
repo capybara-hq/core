@@ -1620,6 +1620,46 @@ export interface ScheduledTasksTable {
   deleted_at: NullableTs;
 }
 
+/** Why a file share was revoked (0161). */
+export type FileShareRevokeReason =
+  | "creator"
+  | "admin"
+  | "conversation_deleted"
+  | "member_offboarded"
+  | "creator_lost_access";
+
+/**
+ * 0161: a link to a frozen snapshot of one conversation file (file sharing spec §1). The row stays
+ * after a revoke or expiry; `object_key` is null once the snapshot is freed.
+ */
+export interface FileSharesTable {
+  id: string;
+  org_id: string;
+  code: string;
+  conversation_id: string;
+  file_id: string;
+  source_path: NullableText;
+  created_by: string;
+  audience: "internal" | "external";
+  name: string;
+  content_type: string;
+  /** bigint: pg returns it as a string. */
+  size: ColumnType<string, number | string, number | string>;
+  object_key: NullableText;
+  generation: ColumnType<number, number | undefined, number>;
+  expires_at: NullableTs;
+  revoked_at: NullableTs;
+  revoked_by: NullableText;
+  revoke_reason: ColumnType<
+    FileShareRevokeReason | null,
+    FileShareRevokeReason | null | undefined,
+    FileShareRevokeReason | null
+  >;
+  last_opened_at: NullableTs;
+  created_at: Ts;
+  updated_at: Ts;
+}
+
 /** 0113: one tick (or trial run) of a scheduled task; unique per (task, tick) when not trial. */
 export interface ScheduledTaskRunsTable {
   id: string;
@@ -1856,6 +1896,7 @@ export interface KernelDatabase {
   scheduled_tasks: ScheduledTasksTable;
   scheduled_task_runs: ScheduledTaskRunsTable;
   scheduled_task_grants: ScheduledTaskGrantsTable;
+  file_shares: FileSharesTable;
   skills: SkillsTable;
   skill_versions: SkillVersionsTable;
   skill_change_requests: SkillChangeRequestsTable;

@@ -34,6 +34,7 @@ export type AgentMapNode = {
   durationMs: number;
   tokens: number;
   status: AgentMapStatus;
+  /** In dispatch order, oldest first (as the kernel's tree gives them): drawn newest first. */
   children: AgentMapNode[];
 };
 
@@ -365,7 +366,8 @@ export function AgentMapTree({
       {node(n, depth)}
       {n.children.length > 0 ? (
         <div className="cb-amap-kids" data-part="agent-kids">
-          {n.children.map((c) => (
+          {/* newest first: the agent dispatched last is on top */}
+          {n.children.toReversed().map((c) => (
             <div key={c.id} className="cb-amap-kid">
               {branch(c, depth + 1)}
             </div>

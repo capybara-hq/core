@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import zh from "../messages/zh.json";
+import { cdnOriginOf, isCdnOrigin } from "../src/lib/admin";
 import { keys } from "../src/lib/query/keys";
 import { bodyOf, type Call, json, lastStubRoutes, stubApi } from "./support/api";
 import { resetNavigation } from "./support/navigation";
@@ -140,5 +141,80 @@ describe("Full access on /admin/settings", () => {
     expect(bodyOf(calls.find((c) => c.method === "PUT"))).toEqual({
       devicesFullAccess: { permission: "allowed" },
     });
+  });
+});
+
+describe("External sharing on /admin/settings", () => {
+  const S = en.admin.settings.sharing;
+  type Src = "env" | "file" | "nacos" | "db" | "default";
+  const stubSharing = (source: Src = "default") =>
+    stubApi({
+      ...routeMap(),
+      "GET /api/v1/admin/settings": () =>
+        json(200, {
+          ...SETTINGS,
+          externalSharing: { value: "deny", source },
+          shareMaxExpiryDays: { value: 30, source },
+          htmlRenderCdnAllowlist: ["https://unpkg.com"],
+        }),
+      "PUT /api/v1/admin/settings": (c: Call) =>
+        json(200, { ...SETTINGS, ...(bodyOf(c) as object) }),
+    });
+
+  it("saves the switch, the maximum and the whole allowlist", async () => {
+    const calls = stubSharing();
+    await renderRouteWithCache("/admin/settings", lastStubRoutes());
+    const section = await sectionOf(S.title);
+    const user = userEvent.setup();
+    await user.click(within(section).getByRole("switch", { name: S.external }));
+    const days = within(section).getByRole("spinbutton", { name: S.maxExpiryDays });
+    await user.clear(days);
+    await user.type(days, "7");
+    const list = within(section).getByRole("textbox", { name: S.cdnAllowlist });
+    await user.type(list, "{Enter}HTTPS://CDN.Example.com:8443");
+    await user.click(screen.getByRole("button", { name: en.admin.settings.save }));
+    await waitFor(() => expect(calls.some((c) => c.method === "PUT")).toBe(true));
+    expect(bodyOf(calls.find((c) => c.method === "PUT"))).toEqual({
+      externalSharing: "allow",
+      shareMaxExpiryDays: 7,
+      htmlRenderCdnAllowlist: ["https://unpkg.com", "https://cdn.example.com:8443"],
+    });
+    expect(findNestedBoxes(document.body).map(describeNestedBox)).toEqual([]);
+  });
+
+  it("an allowlist entry is checked trimmed and lower-cased, as it is sent", () => {
+    expect(isCdnOrigin(" HTTPS://Cdn.Example.COM:8443 ")).toBe(true);
+    expect(cdnOriginOf(" HTTPS://Cdn.Example.COM ")).toBe("https://cdn.example.com");
+    expect(isCdnOrigin("HTTP://cdn.example.com")).toBe(false);
+  });
+
+  it("the allowlist editor rejects http:// and a path, and blocks saving", async () => {
+    const calls = stubSharing();
+    await renderRouteWithCache("/admin/settings", lastStubRoutes());
+    const section = await sectionOf(S.title);
+    const user = userEvent.setup();
+    const list = within(section).getByRole("textbox", { name: S.cdnAllowlist });
+    await user.type(list, "{Enter}http://insecure.example.com");
+    expect(
+      within(section).getByText(S.invalidOrigin.replace("{origin}", "http://insecure.example.com")),
+    ).toBeTruthy();
+    const save = screen.getByRole("button", { name: en.admin.settings.save });
+    expect(save).toHaveProperty("disabled", true);
+    expect(calls.some((c) => c.method === "PUT")).toBe(false);
+  });
+
+  it.each(["env", "file", "nacos"] as const)("a %s source is read-only", async (source) => {
+    stubSharing(source);
+    await renderRouteWithCache("/admin/settings", lastStubRoutes());
+    const section = await sectionOf(S.title);
+    expect(within(section).getByRole("switch", { name: S.external })).toHaveProperty(
+      "disabled",
+      true,
+    );
+    expect(within(section).getByRole("spinbutton", { name: S.maxExpiryDays })).toHaveProperty(
+      "disabled",
+      true,
+    );
+    expect(within(section).getByText(/sharing\.external/)).toBeTruthy();
   });
 });

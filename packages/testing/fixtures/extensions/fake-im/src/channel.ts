@@ -223,4 +223,23 @@ export const makeFakeImChannel = (
     const res = await post(c, "/update", body, signal);
     await res.body?.cancel();
   },
+  ...(features.files !== undefined && {
+    async sendFile({ config, target, file, signal, idempotencyKey, locale }) {
+      const c = config as ConnConfig;
+      const body = {
+        appId: c.appId,
+        target,
+        file: {
+          name: file.name,
+          contentType: file.contentType,
+          kind: file.kind,
+          data: Buffer.from(file.data).toString("base64"),
+        },
+        idempotencyKey,
+        locale,
+      };
+      const res = await post(c, "/send-file", body, signal);
+      return (await res.json()) as { messageId: string };
+    },
+  }),
 });

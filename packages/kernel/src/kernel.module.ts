@@ -7,6 +7,7 @@ import { CatalogModule } from "./catalog/catalog.module.js";
 import { ChannelsModule } from "./channels/channels.module.js";
 import { ClientModule } from "./client/client.module.js";
 import type { KernelConfig } from "./config/schema.js";
+import { PromptSuggestionsModule } from "./conversations/prompt-suggestions.js";
 import { TitlesModule } from "./conversations/titles.js";
 import { ExtensionsModule } from "./extensions/extensions.module.js";
 import { ApiModule } from "./http/api.module.js";
@@ -112,12 +113,14 @@ export class KernelModule {
         ErrorFilterModule,
         KernelAppOptionsModule.forRoot({ ...options, logger }),
         // KernelLifecycle's setup check, the extension host it drives, the catalog it syncs and
-        // the producers its stop closes on every role (titles, usage.report, channel deliveries)
+        // the producers its stop closes on every role (titles, prompt suggestions, usage.report,
+        // channel deliveries)
         IdentityModule,
         PermissionAuthorityModule,
         ExtensionsModule,
         CatalogModule,
         TitlesModule,
+        PromptSuggestionsModule,
         UsageReportModule,
         ChannelsModule,
         // the access check of extension routes (the plugin dispatch, api and gateway roles)

@@ -3,6 +3,7 @@ import {
   EXTENSION_POINTS,
   FILE_PREVIEW_EXTENSION_POINT,
   FILE_PREVIEW_MAX_BYTES,
+  type FilePreviewArgs,
   type FilePreviewer,
   previewerAccepts,
   validateFilePreviewProvider,
@@ -95,5 +96,21 @@ describe("file-preview@1", () => {
     expect(previewerAccepts(exact, { name: "x", contentType: "application/pdf", size: 1 })).toBe(
       true,
     );
+  });
+
+  it("FilePreviewArgs narrows on source", () => {
+    const check = (args: FilePreviewArgs) => {
+      // @ts-expect-error accountId exists only on the conversation variant
+      void args.accountId;
+      if (args.source === "conversation") return args.accountId;
+      return args.shareId;
+    };
+    const base = {
+      locale: "en" as const,
+      signal: new AbortController().signal,
+      file: { id: "s", name: "a.html", contentType: "text/html", size: 1 },
+      read: async () => new Uint8Array(),
+    };
+    expect(check({ ...base, source: "share", orgId: "o", shareId: "s1" })).toBe("s1");
   });
 });

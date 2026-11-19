@@ -256,9 +256,10 @@ type EventBody =
         /**
          * Set when the usage is not the step's call: `compaction`, `title`, `web_fetch` (a
          * `WebFetch` extraction call, with that call's `callId`) or `review` (the command-review
-         * classifier, also with the reviewed call's `callId`).
+         * classifier, also with the reviewed call's `callId`) or `suggestion` (a prompt suggestion
+         * after a completed run).
          */
-        purpose?: "compaction" | "title" | "web_fetch" | "review";
+        purpose?: "compaction" | "title" | "web_fetch" | "review" | "image" | "suggestion";
         /** A chunked compaction call's 1-based chunk and the calls the compaction attempted. */
         chunk?: number;
         chunks?: number;
@@ -1089,7 +1090,7 @@ export const resumeQueue = (orgId: string, id: string) =>
 export interface ToolInfo {
   key: string;
   title: string | null;
-  kind: "command" | "read" | "edit" | "search" | "connector" | "meta" | "tool";
+  kind: "command" | "read" | "edit" | "search" | "connector" | "meta" | "task" | "tool";
   /** True exactly for the builtin tools that run in the conversation's sandbox. */
   sandbox: boolean;
   keyArgs: string[];

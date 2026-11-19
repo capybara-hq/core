@@ -73,18 +73,23 @@ const SPEC: ToolSpec = {
     "call ends, depending on the device, so use run_in_background for a dev server, a watcher or " +
     "anything that must keep running after the call.\n\n" +
     "You can use the run_in_background parameter to run the command in the background, which " +
-    "allows you to continue working while the command runs, e.g. a dev server, a long build or a " +
-    "test suite. The call returns at once with a task id and the command's output goes to a file " +
-    "under .capybara/tasks in the workspace directory. Read the output with TaskOutput and stop the " +
-    "task with TaskStop; you will be told when it finishes. TaskList lists this conversation's " +
-    "background tasks and their ids, running ones first. You do not need to use '&' at the end " +
-    "of the command when using this parameter. A command that waits for a person (an interactive " +
+    "allows you to continue working while the command runs: use it for what must keep running " +
+    "(a dev server, a watcher) or for a long job whose result you do not need yet while you do " +
+    "other work. If you need the result before you can go on, run it in the foreground with a " +
+    "larger timeout instead: starting it in the background and then waiting on it with TaskOutput " +
+    "gains nothing. The call " +
+    "returns at once with a task id and the command's output goes to a file under .capybara/tasks " +
+    "in the workspace directory; you will be told when it finishes, so keep working meanwhile. " +
+    "Read its new output with TaskOutput (block false to check a server's or watcher's log) and " +
+    "stop it with TaskStop. TaskList lists this conversation's background tasks and their ids, " +
+    "running ones first. TaskOutput shows what the command has written to that file so far. A " +
+    "command that waits for a person (an interactive " +
     "login, a prompt) should run in the background so its output, such as a one-time code to " +
     "enter, can be read with TaskOutput while it waits. In the background, timeout defaults to the " +
     "deployment's background maximum (7200000 by default). A background task ends when its " +
     "command exits, and processes it left running are stopped. A background task is lost if the " +
     "sandbox is suspended (it is suspended after it has been running for a while, " +
-    "sandbox.limits.maxRunningMinutes), so keep its results in files under the workspace directory.\n\n" +
+    "sandbox.limits.maxRunningMinutes).\n\n" +
     "Commands run inside an OS sandbox that limits which directories they may write and which " +
     "hosts they may reach. When the sandbox blocks a command you need (for example 'Operation not " +
     "permitted' writing outside the project, or a dev tool that must reach the machine), retry " +
@@ -92,9 +97,8 @@ const SPEC: ToolSpec = {
     "model decides, and only that call runs outside the sandbox. Do not escalate by default: try " +
     "inside the sandbox first. Some devices and organizations do not allow it.\n\n" +
     "Network access goes through a proxy set in HTTP_PROXY / HTTPS_PROXY / ALL_PROXY; a tool " +
-    "that ignores them fails with 'Operation not permitted' or cannot resolve names. Such tools, " +
-    "browsers for example, need the proxy passed explicitly: for Chromium (also headless, as " +
-    "Playwright or Puppeteer launch it) pass --proxy-server=$HTTPS_PROXY. A blocked domain is " +
+    "that ignores them fails with 'Operation not permitted' or cannot resolve names; such a tool " +
+    "needs the proxy passed explicitly through its own proxy option. A blocked domain is " +
     "reported after the output.",
   inputSchema: {
     type: "object",
@@ -119,7 +123,7 @@ const SPEC: ToolSpec = {
       run_in_background: {
         type: "boolean",
         description:
-          "Set to true to run this command in the background. Use TaskOutput to read the output later.",
+          "Set to true to run this command in the background (see the description for when).",
       },
       sandbox: {
         type: "string",

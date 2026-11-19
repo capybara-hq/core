@@ -1,5 +1,60 @@
 # @capybara-hq/web
 
+## 0.1.0-rc.57
+
+### Patch Changes
+
+- Updated dependencies [b999b66]
+  - @capybara-hq/design@0.2.0-rc.19
+
+## 0.1.0-rc.56
+
+No changes in this release.
+
+## 0.1.0-rc.55
+
+### Patch Changes
+
+- adb0b31: While GenerateImage runs, the conversation shows one placeholder per requested image, shaped by
+  the requested aspect ratio, and the images replace them in place.
+- Updated dependencies [d3fe7c3]
+- Updated dependencies [45ff51f]
+  - @capybara-hq/design@0.2.0-rc.18
+
+## 0.1.0-rc.54
+
+### Patch Changes
+
+- Updated dependencies [b0e2cda]
+  - @capybara-hq/design@0.2.0-rc.17
+
+## 0.1.0-rc.53
+
+No changes in this release.
+
+## 0.1.0-rc.52
+
+### Patch Changes
+
+- 909442f: External sharing switches (platform `externalSharing`, default deny; org `externalSharing`, off until
+  an org admin turns it on), the share expiry maximum (`shareMaxExpiryDays`, default 30) and the HTML
+  rendering CDN allowlist (`htmlRenderCdnAllowlist`) as settings, with the `sharing.*` startup config
+  fields; the `file_shares` table. The web gains the error and audit labels for file shares.
+- 909442f: HTML files render in the right panel as a whole sandboxed document (a built-in that wins over
+  extension previewers, with a Source option), and every available file gets a Share dialog: who
+  can open the link, its expiry within the platform maximum, the link to copy, and the file's
+  active links with Copy, Update to latest and Revoke (a paused link too). The link is the
+  deployment's public URL when the kernel knows it. The panel's body is one component behind a
+  file source, so the share page renders files the same way.
+- 909442f: The public share page `/s/<code>`: the shared file rendered full width the way the right panel
+  renders it (the HTML document, an extension previewer with a share-scoped token, or a built-in),
+  with who shared it, the expiry and Download. It loads no workspace data, is not indexed and sends
+  no referrer; an internal link without a session signs in first and comes back, and a dead link
+  shows one "This link is invalid or has expired" page. A view previewer that declines the share
+  gives way to the next one, then the built-in, then Download.
+- Updated dependencies [909442f]
+  - @capybara-hq/design@0.2.0-rc.16
+
 ## 0.1.0-rc.51
 
 ### Patch Changes

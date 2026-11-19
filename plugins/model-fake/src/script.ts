@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { crc32 } from "node:zlib";
 import {
   type ContentBlock,
   type ImageGenerateRequest,
@@ -51,6 +52,24 @@ export interface FakeModelConfig {
  */
 export const FAKE_PNG_BASE64 =
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAIAAACQd1PeAAAADElEQVR4nGP4z8AAAAMBAQDJ/pLvAAAAAElFTkSuQmCC";
+
+/**
+ * The PNG for image `index`: index 0 is the shared sample; the others carry a `tEXt` chunk
+ * ("index\0<i>") before IEND, so each image has different bytes and stays a valid PNG.
+ */
+export function fakePng(index: number): string {
+  if (index === 0) return FAKE_PNG_BASE64;
+  const png = Buffer.from(FAKE_PNG_BASE64, "base64");
+  const body = png.subarray(0, png.length - 12);
+  const iend = png.subarray(png.length - 12);
+  const type = Buffer.from("tEXt");
+  const data = Buffer.from(`index\0${index}`, "latin1");
+  const length = Buffer.alloc(4);
+  length.writeUInt32BE(data.length);
+  const crc = Buffer.alloc(4);
+  crc.writeUInt32BE(crc32(Buffer.concat([type, data])));
+  return Buffer.concat([body, length, type, data, crc, iend]).toString("base64");
+}
 
 // capybara:allow-module-state a read-only constant list (copied before use)
 const IMAGE_SIZES: ImageSize[] = [
@@ -183,6 +202,21 @@ function mediaSummary(req: ModelRequest): string {
  */
 const SENDER_LINE = /^From [^\n]+$/;
 
+/** The text of every user message in order (sender line stripped, tool results skipped). */
+function userTexts(req: ModelRequest): string[] {
+  const out: string[] = [];
+  for (const m of req.messages) {
+    if (m.role !== "user") continue;
+    const first = m.content[0];
+    const blocks =
+      m.content.length > 1 && first?.type === "text" && SENDER_LINE.test(first.text)
+        ? m.content.slice(1)
+        : m.content;
+    out.push(blocks.map((b) => (b.type === "text" ? b.text : "")).join(""));
+  }
+  return out;
+}
+
 /** 最后一条 user 消息：文本，以及它是否带 tool_result。 */
 function lastUser(req: ModelRequest): { text: string; hasToolResult: boolean; result: string } {
   for (let i = req.messages.length - 1; i >= 0; i--) {
@@ -243,6 +277,35 @@ function scripted(req: ModelRequest): Plan {
     delayMs: DEFAULT_CHUNK_DELAY_MS,
   });
 
+  // The prompt suggestion call: its instruction is the last user message, so the script lines are
+  // read from the earlier ones. `suggest-fail:<kind>` fails the call, `suggest:<text>` is the exact
+  // reply (`suggest:tool:<name>:<json>` makes a tool call), else `Suggestion: <earliest user text>`.
+  if (req.purpose === "suggestion") {
+    const earlier = userTexts(req).slice(0, -1);
+    const failLine = earlier.find((t) => t.startsWith("suggest-fail:"));
+    if (failLine !== undefined) {
+      const kind = failLine.slice("suggest-fail:".length).trim();
+      return {
+        kind: "fail",
+        error: isErrorKind(kind)
+          ? new ModelError(kind, `Scripted ${kind} failure`)
+          : new ModelError("invalid_request", `Unknown failure kind "${kind}"`),
+      };
+    }
+    const line = earlier.find((t) => t.startsWith("suggest:"));
+    if (line !== undefined) {
+      const reply = line.slice("suggest:".length);
+      if (reply.startsWith("tool:")) {
+        const { purpose: _purpose, ...rest } = req;
+        return scripted({
+          ...rest,
+          messages: [{ role: "user", content: [{ type: "text", text: reply }] }],
+        });
+      }
+      return std(reply);
+    }
+    return std(`Suggestion: ${(userTexts(req)[0] ?? "").slice(0, 40)}`);
+  }
   if (req.purpose === "compaction") {
     return std(`Summary: ${text.slice(0, 200)}`);
   }
@@ -499,9 +562,11 @@ export function createFakeProvider(opts: FakeProviderOptions): ModelProvider {
         throw new ModelError(kind, `scripted failure: ${kind}`);
       }
       const count = word === "short" ? req.n - 1 : req.n;
-      const data = word === "url" ? "https://example.invalid/x.png" : FAKE_PNG_BASE64;
       return {
-        images: Array.from({ length: count }, () => ({ mediaType: "image/png" as const, data })),
+        images: Array.from({ length: count }, (_, i) => ({
+          mediaType: "image/png" as const,
+          data: word === "url" ? "https://example.invalid/x.png" : fakePng(i),
+        })),
         revisedPrompt: `revised: ${req.prompt}`,
         usage: {
           inputTokens: tokens(req.prompt.length),

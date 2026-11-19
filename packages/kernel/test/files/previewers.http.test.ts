@@ -231,6 +231,9 @@ describe("file-preview@1", () => {
       ["docx", 0, false],
       ["docx-page", 1, false],
       ["hang", 2, false],
+      ["decline", 3, false],
+      ["html", 4, false],
+      ["html-page", 5, false],
     ]);
     const put = await owner({
       method: "PUT",
@@ -251,6 +254,9 @@ describe("file-preview@1", () => {
       ["docx-page", 0, false],
       ["docx", 1, true],
       ["hang", 2, false],
+      ["decline", 3, false],
+      ["html", 4, false],
+      ["html-page", 5, false],
     ]);
     expect((await previewers(docx)).body.previewers.map((p) => p.id)).toEqual(["docx-page"]);
     expect(errCode(await preview(docx, "docx"))).toBe("ui.not_found");

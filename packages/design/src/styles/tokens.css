@@ -17,6 +17,7 @@
   --cb-motion-cursor: 1000ms;
   --cb-motion-spin: 800ms;
   --cb-motion-pulse: 1600ms;
+  --cb-motion-flow: 6000ms;
   --cb-control-dense: 24px;
   --cb-control-default: 28px;
   --cb-control-prominent: 32px;

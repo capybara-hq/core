@@ -12,6 +12,7 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
   const S = F.SUBAGENT_FIXTURE;
   const FI = F.FILE_FIXTURE;
   const P = F.PANEL_FIXTURE;
+  const SH = F.SHARE_FIXTURE;
 
   // The template's new-conversation pieces (§6.16.25, §6.16.26; the quick actions are a button in
   // the composer), drawn from NEW_CONVERSATION_FIXTURE like greeting.html and agent-row.html (the avatars' pixel paths are
@@ -461,8 +462,11 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
       o.state === "no-effort" ? "" : picker(C.effortLabels[C.selected.effort], { open: o.menu === "effort" });
     const strip = o.state === "attachments" ? `<div class="r-astrip">${FI.attachments.slice(0, 2).map(attachmentChip).join("")}</div>` : "";
     const skill = o.state === "skill" ? F.SKILL_FIXTURE.chip : null;
+    const suggestion = o.state === "suggestion" ? F.SUGGESTION_FIXTURE : null;
     const placeholder = skill
       ? skill.hint
+      : suggestion
+        ? suggestion.text
       : isNew
         ? K.newPlaceholder.replace("研究助手", C.agent.name)
         : running
@@ -473,7 +477,13 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
     const action = running
       ? `<button class="r-icon-btn r-stop" aria-label="${esc(K.stop)}">${icon("square", 14)}</button>`
       : `<button class="r-icon-btn r-send" aria-label="${esc(K.send)}"${value || skill ? "" : " disabled"}>${icon("arrow-up", 16)}</button>`;
-    const textarea = `<textarea class="r-composer-input" id="msg" rows="1" placeholder="${esc(placeholder)}">${esc(value)}</textarea>`;
+    const textarea = `<textarea class="r-composer-input" id="msg" rows="1" placeholder="${esc(placeholder)}"${suggestion ? ' aria-describedby="msg-suggestion"' : ""}>${esc(value)}</textarea>`;
+    // a prompt suggestion: the visually hidden Tab hint, and on a touch device the ghost dense
+    // "Use suggestion" button before send (drawn here so the state shows it)
+    const suggestionHint = suggestion ? `<span class="r-sr" id="msg-suggestion">${esc(suggestion.hint)}</span>` : "";
+    const useSuggestion = suggestion
+      ? `<button class="r-btn" data-variant="ghost" data-step="dense" data-part="composer-suggestion-use" aria-label="${esc(suggestion.useNamed)}">${icon("corner-down-left", 14)}${esc(suggestion.use)}</button>`
+      : "";
     // phase D: the skill chip sits before the text on its first line
     const line = skill
       ? `<div class="r-composer-line"><span class="r-composer-token"><span>${esc(skill.label)}</span><button class="r-composer-token-remove" aria-label="移除 ${esc(skill.label)}">${icon("x", 12)}</button></span>${textarea}</div>`
@@ -485,7 +495,7 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
     // the agent map's entry (§6.16.29, AC3): "N 个智能体" after the effort picker and the quick
     // actions, led by the status dot while a sub-agent runs or waits
     const agents = o.agents ? agentsChip(o.agents) : "";
-    return `<div class="r-composer"${o.state === "focus" ? ' data-state="focus"' : ""}>${strip}<label class="r-sr" for="msg">消息</label>${line}<div class="r-composer-bar">${iconBtn("plus", K.attach)}${o.noAgent || !isNew ? "" : picker(C.agent.name, { open: o.menu === "agent" })}${o.device ? devicePicker(o) : ""}${o.permission ? picker(F.PERMISSION_FIXTURE.items.find((i) => i.id === F.PERMISSION_FIXTURE.selected).label, { open: o.menu === "permission" }) : ""}${picker(o.modelValue ?? modelLabel(model.provider, model.model), { open: o.menu === "model" })}${effort}${quick}${agents}<span class="r-grow"></span>${action}</div></div>`;
+    return `<div class="r-composer"${o.state === "focus" ? ' data-state="focus"' : ""}>${strip}<label class="r-sr" for="msg">消息</label>${line}${suggestionHint}<div class="r-composer-bar">${iconBtn("plus", K.attach)}${o.noAgent || !isNew ? "" : picker(C.agent.name, { open: o.menu === "agent" })}${o.device ? devicePicker(o) : ""}${o.permission ? picker(F.PERMISSION_FIXTURE.items.find((i) => i.id === F.PERMISSION_FIXTURE.selected).label, { open: o.menu === "permission" }) : ""}${picker(o.modelValue ?? modelLabel(model.provider, model.model), { open: o.menu === "model" })}${effort}${quick}${agents}<span class="r-grow"></span>${useSuggestion}${action}</div></div>`;
   }
 
   /**
@@ -751,6 +761,17 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
       const shown = FI.many.slice(0, 3).map((f) => fileCard(f, { max: 24 })).join("");
       return `<div class="r-fgrid">${shown}<a class="r-fcard r-fmore" href="#">还有 ${FI.many.length - 3} 个文件${icon("chevron-right", 12)}</a></div>`;
     }
+    if (o.state === "generating" || o.state === "generating-several" || o.state === "generating-wide") {
+      const G = FI.generating;
+      const gen = (ratio, label) =>
+        `<figure class="r-img"><div class="r-img-gen" role="img" aria-busy="true" aria-label="${esc(label)}" data-ratio="${ratio}">${icon("image", 16)}</div><figcaption class="r-tline"><span class="r-tlabel"><span class="r-em">${esc(label.split("，")[0])}</span><span class="r-faint"> · ${ratio}</span></span></figcaption></figure>`;
+      if (o.state === "generating") return gen(G.ratio, "正在生成图片，" + G.ratio);
+      if (o.state === "generating-several")
+        return `<div class="r-col-gap">${[1, 2].map((i) => gen(G.several.ratio, `正在生成图片 ${i}/${G.several.count}，${G.several.ratio}`)).join("")}</div>`;
+      const I = FI.image;
+      const delivered = `<figure class="r-img"><div class="r-img-frame">${chart()}</div><figcaption class="r-tline"><span class="r-tlabel"><span class="r-em">${esc(I.name)}</span><span class="r-faint"> · ${esc(I.dimensions)} · ${esc(I.size)}</span></span></figcaption></figure>`;
+      return `<div class="r-col-gap">${gen(G.wide.ratio, "正在生成图片，" + G.wide.ratio)}${delivered}</div>`;
+    }
     if (o.state === "image" || o.state === "image-hover") {
       const I = FI.image;
       const tools =
@@ -848,13 +869,19 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
     failed: FI.many[2],
   };
 
+  // Share (§6.16.22, file sharing design §5): an icon button before Download; a live share adds
+  // the `ok` marker and renames the button Shared.
+  const shareBtn = (shared) =>
+    `<button class="r-icon-btn r-share-btn" data-share="true" aria-label="${shared ? "已分享" : "分享"}">${icon("share", 16)}${shared ? '<span class="r-share-marker" aria-hidden="true"></span>' : ""}</button>`;
+
   function filePanel(kind, o = {}) {
     const f = FILE_FOR[kind];
+    const share = o.share ? [shareBtn(o.share === "shared")] : [];
     const head = panelHeader({
       type: f.type,
       title: f.name,
       meta: `v${f.version ?? 1} · ${esc(FI.updated)}`,
-      actions: [iconBtn("download", K.download)],
+      actions: [...share, iconBtn("download", K.download)],
       switching: o.switching,
     });
     return `${head}${filePanelBody(kind)}`;
@@ -893,7 +920,33 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
   }
 
   function filePreview(o) {
-    return `<aside class="r-rpanel" aria-label="文件预览">${filePanel(o.state)}</aside>`;
+    // unshared / shared: the markdown file with the Share action (and its marker)
+    const share = o.state === "unshared" || o.state === "shared";
+    const panel = share ? filePanel("markdown", { share: o.state }) : filePanel(o.state);
+    return `<aside class="r-rpanel" aria-label="文件预览">${panel}</aside>`;
+  }
+
+  // ── File sharing: the HTML document frame (§6.43) and the shared file page (§5.12) ──
+
+  const htmlFrame = () =>
+    `<iframe class="r-html-frame" data-part="html-frame" sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox" referrerpolicy="no-referrer" title="${esc(SH.name)}" srcdoc="${esc(SH.document)}"></iframe>`;
+
+  function sharedPage(o) {
+    const loading = o.state === "loading";
+    const skelText = (w, size) =>
+      `<span class="r-skel-text" data-size="${size}" style="width:${w}px"><span class="r-skel-bar"></span></span>`;
+    // ready: the HTML report; ready-no-download: the CSV file, previewed by the built-in table
+    const file = o.state === "ready" ? { name: SH.name, type: SH.badge } : FI.many[1];
+    const name = loading ? skelText(200, "body") : `<h1 class="r-shared-name r-ellipsis">${esc(file.name)}</h1>`;
+    const meta = loading ? skelText(160, "small") : `<span class="r-shared-meta r-ellipsis">${esc(SH.meta)}</span>`;
+    const badge = loading ? "" : typeBadge(file.type);
+    const download = o.state === "ready" ? btn(K.download, "default", { icon: "download" }) : "";
+    const bar = `<header class="r-shared-bar">${badge}${name}${meta}<span class="r-grow"></span>${download}</header>`;
+    let body;
+    if (loading) body = '<div class="r-shared-loading">正在加载预览…</div>';
+    else if (o.state === "ready") body = htmlFrame();
+    else body = filePanelBody("csv");
+    return `<div class="r-shared"${loading ? ' aria-busy="true"' : ""}>${bar}<main class="r-shared-body">${body}</main></div>`;
   }
 
   // ── Inline cards and property sections ─────────────────────────────────
@@ -1070,5 +1123,7 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
     "file-outputs": (o) => col(fileOutputs(o)),
     "attachment-strip": (o) => col(`<div class="r-composer">${attachmentStrip(o)}<div class="r-composer-input r-faint">帮我对一下这几个文件</div></div>`),
     "file-preview": filePreview,
+    "html-frame": htmlFrame,
+    "shared-file-page": sharedPage,
   };
 };

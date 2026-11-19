@@ -226,7 +226,11 @@ describe("M7 segment 2: plugin hooks and usage.report (dual replica)", () => {
     const r = await at(i, "POST", `${base}/conversations/${conv}/messages`, { text });
     expect(r.status, JSON.stringify(r.json)).toBe(202);
   };
-  /** Sends one turn and waits for it to finish `completed`; returns that run's events. */
+  /**
+   * Sends one turn and waits for it to finish `completed` and for its prompt suggestion call (one
+   * per completed web run, after `run_finished`: its usage event is run-less); returns that run's
+   * events.
+   */
   const turn = async (i: 0 | 1, text: string) => {
     await send(i, text);
     turns++;
@@ -234,6 +238,11 @@ describe("M7 segment 2: plugin hooks and usage.report (dual replica)", () => {
     const last = term[turns - 1] as ConversationEvent;
     expect(last.type, JSON.stringify(last.payload)).toBe("run_finished");
     expect(last.payload).toMatchObject({ reason: "completed" });
+    await waitFor(
+      async () => suggestionUsage(await eventsOf(db, conv)).length >= turns,
+      60_000,
+      "the turn's prompt suggestion usage",
+    );
     return {
       runId: last.runId as string,
       events: (await eventsOf(db, conv)).filter((e) => e.runId === last.runId),
@@ -241,6 +250,9 @@ describe("M7 segment 2: plugin hooks and usage.report (dual replica)", () => {
   };
   const ofType = <T extends ConversationEvent["type"]>(events: ConversationEvent[], type: T) =>
     events.filter((e): e is Extract<ConversationEvent, { type: T }> => e.type === type);
+  /** The `usage` events of prompt suggestion calls (one per turn, no run id). */
+  const suggestionUsage = (events: ConversationEvent[]) =>
+    ofType(events, "usage").filter((e) => e.payload.purpose === "suggestion");
   /** Every `usage` event of the org's chat conversations (one conversation here). */
   const usageIds = async () => ofType(await eventsOf(db, conv), "usage").map(idOf);
 
@@ -332,7 +344,8 @@ describe("M7 segment 2: plugin hooks and usage.report (dual replica)", () => {
     agentId = (ag.agent as { id: string }).id;
     conv = ((await ok(1, "POST", `${base}/conversations`, { agentId })).conversation as Json)
       .id as string;
-    // a manual title: no title call, so every usage event here is a step call's
+    // a manual title: no title call, so every usage event here is a step call's or a turn's
+    // prompt suggestion call's
     await ok(1, "PATCH", `${base}/conversations/${conv}`, { title: "M7 segment 2" });
 
     const first = await turn(0, `tool:${TOOL_KEY}:${JSON.stringify(writeInput("plan"))}`);
@@ -369,9 +382,11 @@ describe("M7 segment 2: plugin hooks and usage.report (dual replica)", () => {
 
     const all = await eventsOf(db, conv);
     const modelCalls = ofType(all, "model_call").length;
+    const suggestions = suggestionUsage(all).length;
     const ids = await usageIds();
     expect(modelCalls).toBe(3 + extra); // tool call + answer, the echo, then any extra echo turns
-    expect(ids).toHaveLength(modelCalls);
+    expect(suggestions).toBe(turns);
+    expect(ids).toHaveLength(modelCalls + suggestions);
     expect(new Set(ids).size).toBe(ids.length);
     // every delivery ran on exactly one of the two instances
     expect(d0.delivered + d1.delivered).toBe(ids.length);
@@ -379,15 +394,17 @@ describe("M7 segment 2: plugin hooks and usage.report (dual replica)", () => {
     const c = await waitFor(
       async () => {
         const v = await counts(PROBE, 1);
-        return v["model.response"] >= modelCalls && v["usage.report"] >= ids.length ? v : undefined;
+        return v["model.response"] >= modelCalls + suggestions && v["usage.report"] >= ids.length
+          ? v
+          : undefined;
       },
       10_000,
       "model.response and usage.report counted",
       100,
     );
     expect(c).toMatchObject({
-      "model.request": modelCalls,
-      "model.response": modelCalls,
+      "model.request": modelCalls + suggestions,
+      "model.response": modelCalls + suggestions,
       "tool.preExecute": 1,
       "tool.postExecute": 1,
       "usage.report": ids.length,
@@ -480,8 +497,11 @@ describe("M7 segment 2: plugin hooks and usage.report (dual replica)", () => {
     const sofar = await usageIds();
     await waitFor(() => deliveredOnce(PROBE, sofar), 30_000, "probe caught up");
     // the observe hooks are fire-and-forget: wait for every expected call (one model.request /
-    // model.response per model_call; two tool calls, the denied one had no tool.postExecute)
-    const modelCallsSoFar = ofType(await eventsOf(db, conv), "model_call").length;
+    // model.response per model_call and per prompt suggestion call; two tool calls, the denied
+    // one had no tool.postExecute)
+    const sofarEvents = await eventsOf(db, conv);
+    const modelCallsSoFar =
+      ofType(sofarEvents, "model_call").length + suggestionUsage(sofarEvents).length;
     const expected = {
       "model.request": modelCallsSoFar,
       "model.response": modelCallsSoFar,
@@ -530,10 +550,11 @@ describe("M7 segment 2: plugin hooks and usage.report (dual replica)", () => {
       "usage queue drained",
       100,
     );
-    // the barrier's hooks ran through the whole turn (observe hooks are fire-and-forget: wait)
+    // the barrier's hooks ran through the whole turn and its prompt suggestion call (observe
+    // hooks are fire-and-forget: wait)
     const barrierExpected = {
-      "model.request": barrierBefore["model.request"] + modelCalls,
-      "model.response": barrierBefore["model.response"] + modelCalls,
+      "model.request": barrierBefore["model.request"] + modelCalls + 1,
+      "model.response": barrierBefore["model.response"] + modelCalls + 1,
       "tool.preExecute": barrierBefore["tool.preExecute"] + 1,
       "tool.postExecute": barrierBefore["tool.postExecute"] + 1,
     };

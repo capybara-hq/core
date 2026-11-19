@@ -85,14 +85,14 @@ const DeploymentConfig = z.object({
  * slowfail / stall / fail / tool / slowtool / long).
  * Image generation models (kind image_generation) follow the prompt's first word: refuse (a
  * refusal) / stall (waits for the abort) / fail <kind> / short (one image too few) / url (returns
- * a URL); otherwise n 1×1 PNGs.
+ * a URL); otherwise n distinct 1×1 PNGs.
  * Provides model-provider@2: declares three effort levels and `model-fake.style` (`shout` upper-
  * cases the reply).
  * No in-process state: cache hit records live in ctx.kv (TTL 300 seconds).
  */
 export default defineExtension({
   name: "model-fake",
-  version: "0.1.0-rc.33",
+  version: "0.1.0-rc.36",
   sdk: "^0.1.0-rc.0",
   provides: [MODEL_PROVIDER_EXTENSION_POINT_V2],
   config: { deployment: DeploymentConfig },

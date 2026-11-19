@@ -5,6 +5,7 @@
  * sub-agents, files, right panel); every name is a placeholder (示例组织, 研究助手, Acme…).
  */
 
+import type { ImageRatio } from "../conversation/image-ratios";
 import type { PresetId } from "../display/avatar-presets";
 
 // ── Page, agent, models ─────────────────────────────────────────────────────
@@ -169,6 +170,17 @@ export const CONV_COPY = {
   open: "打开",
 } as const;
 
+/**
+ * The composer's prompt suggestion (spec §6.16.2 state `suggestion`): the placeholder text and the
+ * touch button's label and accessible name.
+ */
+export const SUGGESTION_FIXTURE = {
+  text: "把汇总表导出成 CSV",
+  hint: "按 Tab 使用建议",
+  use: "使用建议",
+  useNamed: "使用建议：把汇总表导出成 CSV",
+} as const;
+
 // ── Tool calls ──────────────────────────────────────────────────────────────
 
 export type FixtureDiffLine = {
@@ -180,7 +192,16 @@ export type FixtureDiffLine = {
 
 export type FixtureTool = {
   id: string;
-  kind: "command" | "read" | "edit" | "search" | "connector" | "meta" | "question" | "tool";
+  kind:
+    | "command"
+    | "read"
+    | "edit"
+    | "search"
+    | "connector"
+    | "meta"
+    | "task"
+    | "question"
+    | "tool";
   /**
    * The bold name: a builtin's tool name ("Bash", "Read"), or the connector's / plugin's display
    * name of a connector or extension tool.
@@ -840,6 +861,15 @@ export const FILE_FIXTURE: {
   image: FixtureFile & { dimensions: string };
   text: FixtureFile & { head: string };
   removed: FixtureFile & { reason: string };
+  /**
+   * Generating image placeholders: a single one, two in a call that asked for several (index 1 of
+   * `count`), and a wide one shown above a delivered image.
+   */
+  generating: {
+    ratio: ImageRatio;
+    several: { ratio: "3:4"; count: 2 };
+    wide: { ratio: "16:9" };
+  };
   /** Paths mentioned in prose that name file outputs. */
   paths: string[];
   /** The markdown file's rendered preview and the plain-text preview. */
@@ -883,6 +913,7 @@ export const FILE_FIXTURE: {
     removed: true,
     reason: "文件已不可用",
   },
+  generating: { ratio: "1:1", several: { ratio: "3:4", count: 2 }, wide: { ratio: "16:9" } },
   paths: ["reports/9月差异明细.xlsx", "reports/对账报告.md"],
   markdownPreview: [
     "# 9 月对账报告",
@@ -901,6 +932,49 @@ export const FILE_FIXTURE: {
     "9 月对账汇总\n============\n差异行数     14\n涉及收款人   9\n合计 USD     -4,185.00\n合计 HKD     -30,768.80\n合计 JPY     -150,000\n\n生成时间 2026-10-26 10:41",
   sheets: ["差异明细", "按收款人汇总"],
   updated: "刚刚",
+};
+
+// ── File sharing (file sharing design §5, §6) ──────────────────────────────
+
+/**
+ * A shared file's page and the HTML document frame. `document` is an agent-written report page:
+ * English (inside the frame the self-hosted fonts are not available), no script, no network, no
+ * background of its own (the frame's light ground shows). Its colors are named CSS colors: it is
+ * a document the frame shows, not design styling.
+ */
+export const SHARE_FIXTURE: {
+  name: string;
+  badge: string;
+  /** The page's meta line, already localized. */
+  meta: string;
+  link: string;
+  linkLabel: string;
+  document: string;
+} = {
+  name: "季度报告.html",
+  badge: "HTML",
+  meta: "张三 分享 · 2026-11-25 过期",
+  link: "https://capybara.example.com/s/k3Rf9TqW2a",
+  linkLabel: "链接",
+  document: [
+    "<!doctype html>",
+    '<html lang="en"><head><meta charset="utf-8"><title>Quarterly report</title><style>',
+    "body{margin:0;padding:24px 28px;font:14px/1.5 sans-serif;color:black}",
+    "h1{margin:0 0 4px;font-size:20px;line-height:28px}",
+    "p{margin:0 0 20px;color:dimgray}",
+    ".bars{display:flex;align-items:flex-end;gap:16px;height:160px;border-bottom:1px solid silver}",
+    ".bars div{flex:1;background:steelblue}",
+    ".axis{display:flex;gap:16px;margin-top:6px;color:dimgray;font-size:12px}",
+    ".axis span{flex:1;text-align:center}",
+    "</style></head><body>",
+    "<h1>Quarterly report</h1><p>Q3 2026 &middot; revenue by month, in thousands</p>",
+    '<div class="bars"><div style="height:46%"></div><div style="height:62%"></div>',
+    '<div style="height:55%"></div><div style="height:78%"></div><div style="height:70%"></div>',
+    '<div style="height:92%"></div></div>',
+    '<div class="axis"><span>Apr</span><span>May</span><span>Jun</span><span>Jul</span>',
+    "<span>Aug</span><span>Sep</span></div>",
+    "</body></html>",
+  ].join(""),
 };
 
 // ── Properties panel, right panel, extension slots ──────────────────────────

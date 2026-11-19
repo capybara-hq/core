@@ -3,7 +3,7 @@
   "schemaVersion": 1,
   "marketplace": {
     "url": "https://github.com/capybara-hq/plugins.git",
-    "commit": "d83e667fb99d3251dc148ee2583ad8b4722b711f"
+    "commit": "84a5307e2757bd4fc1f9f11b43be456b63f0f9c7"
   },
   "plugins": [
     {
@@ -115,8 +115,8 @@
       "name": "file-preview",
       "source": "npm",
       "npm": "@capybara-hq/plugin-file-preview",
-      "version": "0.1.0-rc.2",
-      "integrity": "sha512-pEV/P8ahHt2wU3xudhUmJKX6sKfJCG+q+MNo0T+AiySl31TyPl7bsg9el5Romtg3iFbFlOh7DameL5YgAAzVnw==",
+      "version": "0.1.0-rc.3",
+      "integrity": "sha512-4GMeq6gpjloCmTrEidiUHX5v6PN4oTfRDWcx+sLb5NlUoSk5DaJVVtJDc5oNDzow09OSm62DJchDOBJItLdwrA==",
       "required": false,
       "builtin": true
     }

@@ -28,10 +28,9 @@ const NOT_FOUND: PrecheckResult = {
   message: "Notice not found",
 };
 
-const DECIDE_REQUEST_ON_WEB = "Decide it on the web, in the inbox; agents never decide requests.";
+const DECIDE_REQUEST_ON_WEB = "Decide it on the web, in the inbox.";
 const DISMISS_ORG = "Dismiss it with inbox.dismiss-notice once read.";
-const ADMIN_CONSOLE_PENDING =
-  "Review it in the admin console (plugins, pending tab); agents never confirm permissions or uploads.";
+const ADMIN_CONSOLE_PENDING = "Review it in the admin console (plugins, pending tab).";
 
 /** What a request asks for, by name (the plugin, the marketplace entry or the agent). */
 const requestName = (r: CatalogRequestView): string =>
@@ -94,7 +93,7 @@ function orgRow(i: InboxItem) {
           c.kind === "share"
             ? `Request by ${by} to share skill ${c.name} of agent ${c.agent.name} with the organization, ${c.files.length} file(s).`
             : `Proposed version ${c.version} of the shared skill ${c.name} by ${by} (agent ${c.agent.name}), ${c.files.length} file(s).`,
-        next: "Review and decide it on the web, in the inbox; agents never decide skill changes.",
+        next: "Review and decide it on the web, in the inbox.",
       };
     }
     case "catalog_request": {
@@ -165,7 +164,7 @@ function platformRow(i: PlatformInboxItem) {
         name: requestName(r),
         state: r.status,
         summary: `${r.kind} request from org ${r.orgName} by ${requester(r)}. Details: requests.platform-list.`,
-        next: "Decide it in the admin console (plugins, pending tab); agents never decide requests.",
+        next: "Decide it in the admin console (plugins, pending tab).",
       };
     }
     case "permission_confirmation":

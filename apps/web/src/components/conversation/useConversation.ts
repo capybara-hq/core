@@ -37,14 +37,17 @@ import type { Me } from "../../lib/session";
 import { useStopUnderWay } from "../../lib/stop";
 import {
   acceptCompaction,
+  acceptSuggestion,
   type ChatState,
   type CompactionProgress,
   type ConversationChange,
   initialChatState,
   openConversationStream,
+  type PromptSuggestion,
   reduceChat,
   type StreamDelta,
   type SubagentProgress,
+  visibleSuggestion,
 } from "../../lib/stream";
 import { useErrorMessage } from "../../lib/use-error-message";
 
@@ -110,6 +113,12 @@ export type ConversationState = {
    * §4.6), or null. A child's compaction stays on the child's stream.
    */
   compaction: CompactionProgress | null;
+  /**
+   * The prompt suggestion to offer in the composer (prompt suggestions spec §4), or null: the last
+   * `event: suggestion` frame while the reader's rule holds against this log (its run is the latest
+   * finished one, no message or run after it, no run going).
+   */
+  suggestion: PromptSuggestion | null;
   /** The log is still on its way (nothing cached): the thread shows its loading state. */
   loading: boolean;
   /** The conversation row (title, agent, selection); undefined while it loads. */
@@ -165,6 +174,8 @@ export function useConversation(orgId: string, conversationId: string): Conversa
   const [progress, dispatchProgress] = useReducer(reduceProgress, {});
   // the running compaction's progress (ephemeral, not in the log); the row follows the stream
   const [compaction, setCompaction] = useState<CompactionProgress | null>(null);
+  // the latest prompt suggestion frame (ephemeral, not in the log); shown by the reader's rule
+  const [suggestionFrame, setSuggestionFrame] = useState<PromptSuggestion | null>(null);
   // The log's state is rebuilt when the cached list changes; a delta frame only adds drafts (I3).
   const base = useMemo(
     () =>
@@ -202,6 +213,8 @@ export function useConversation(orgId: string, conversationId: string): Conversa
     // a different conversation (or this one's first open) starts with no compaction row: its own
     // stream owns it, and progress is never replayed (it is display-only)
     setCompaction(null);
+    // a suggestion belongs to its conversation: the new stream sends its own (again on each open)
+    setSuggestionFrame(null);
     const c = keys.org(orgId).conversation(conversationId);
     // A hint that the server's data changed: read it again. A read in flight may have started
     // before the change, and `invalidateQueries` joins a first read (it cancels only a refetch of
@@ -358,6 +371,7 @@ export function useConversation(orgId: string, conversationId: string): Conversa
         },
         onSubagentProgress: (p) => dispatchProgress({ progress: p }),
         onCompaction: (p) => setCompaction((cur) => acceptCompaction(cur, p)),
+        onSuggestion: (p) => setSuggestionFrame((cur) => acceptSuggestion(cur, p)),
         onError: ({ code }) => {
           if (disposed) return;
           if (code !== undefined) return fail(new ApiClientError(0, code, code));
@@ -512,6 +526,11 @@ export function useConversation(orgId: string, conversationId: string): Conversa
     [historyState, loadEarlier],
   );
 
+  const suggestion = useMemo(
+    () => visibleSuggestion(suggestionFrame, state.events, state.running || state.waiting),
+    [suggestionFrame, state.events, state.running, state.waiting],
+  );
+
   const logError = log.error === null ? undefined : errorMessage(log.error);
   return {
     state,
@@ -521,6 +540,7 @@ export function useConversation(orgId: string, conversationId: string): Conversa
     loading: !loaded && log.error === null,
     conversation: row.data,
     compaction,
+    suggestion,
     running: state.running,
     waiting: state.waiting,
     stopping: stopState.requested,

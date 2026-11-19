@@ -107,7 +107,15 @@ export default defineExtension({
     const config = () => Deployment.parse(ctx.config);
     ctx.provide(
       "channel@1",
-      makeFakeImChannel({ cards: true, edit: true, threads: true }, { webhook: true }),
+      makeFakeImChannel(
+        {
+          cards: true,
+          edit: true,
+          threads: true,
+          files: { maxBytes: 20_971_520, imageMaxBytes: 10_485_760 },
+        },
+        { webhook: true },
+      ),
     );
     ctx.provide("identity-source@1", fakeImIdentitySource);
     ctx.provide("directory@1", fakeImDirectory);

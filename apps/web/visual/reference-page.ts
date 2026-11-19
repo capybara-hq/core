@@ -60,3 +60,14 @@ export async function blockIds(page: Page): Promise<string[]> {
     bs.map((b) => b.getAttribute("data-ref-block") ?? ""),
   );
 }
+
+/**
+ * Opens a reference page for an interaction spec and waits until React has hydrated it
+ * (`RefHydrating`'s `data-ref-pending` marker is gone): the keyboard handlers exist only then, and a
+ * busy runner can still be hydrating at `networkidle`, so a key pressed earlier is lost.
+ */
+export async function openInteractive(page: Page, path: string): Promise<void> {
+  await page.goto(path);
+  await page.waitForLoadState("networkidle");
+  await page.waitForFunction(() => document.querySelector("[data-ref-pending]") === null);
+}

@@ -21,7 +21,12 @@ export default defineExtension({
   provides: ["channel@1"],
   setup(ctx) {
     ctx.provide("channel@1", {
-      ...makeFakeImChannel({ cards: true, edit: true, threads: true }),
+      ...makeFakeImChannel({
+        cards: true,
+        edit: true,
+        threads: true,
+        files: { maxBytes: 131_072, imageMaxBytes: 32_768 },
+      }),
       connectionSchema: ChanMiniConnection,
     });
   },

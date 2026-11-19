@@ -1,5 +1,39 @@
 # @capybara-hq/design
 
+## 0.2.0-rc.19
+
+### Patch Changes
+
+- b999b66: ComposerBox gains `suggestion` (a prompt suggestion as the placeholder; Tab fills it, Esc and
+  typing dismiss it, a "Use suggestion" button on touch devices), the `corner-down-left` icon and
+  `SUGGESTION_FIXTURE`.
+
+## 0.2.0-rc.18
+
+### Patch Changes
+
+- d3fe7c3: TaskOutput and TaskList calls get their own tool kind: a group waiting on a background task says
+  "Waiting on a background task" instead of "Reading file", and done ones count as background task
+  checks, not file reads.
+- 45ff51f: New UI part `image-placeholder` (`aria-busy`): the placeholder the conversation draws while an
+  image is being generated. The design package adds `ImagePlaceholder` and an `ImageOutput.ratio`
+  pre-load hint.
+
+## 0.2.0-rc.17
+
+### Patch Changes
+
+- b0e2cda: List sibling agents in the agent map newest first, so the agent dispatched last is on top.
+
+## 0.2.0-rc.16
+
+### Patch Changes
+
+- 909442f: Add the pieces for file sharing: `HtmlDocumentFrame` (an HTML file as a sandboxed document,
+  `HTML_DOCUMENT_SANDBOX`), `CopyField` (a value to copy again, with the manual-copy fallback), a
+  Share action with a shared marker in the file preview header (`onShare`, `shared`), and the
+  `SharedFilePage` template (T14) for a shared file's public page.
+
 ## 0.2.0-rc.15
 
 ### Patch Changes

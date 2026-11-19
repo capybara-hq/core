@@ -215,7 +215,7 @@ export type Locale = "zh" | "en";
  * guarantee to display content verbatim (a backslash does not stop GFM bare-URL
  * autolinks, and channel converters treat backslashes inconsistently).
  */
-function asCode(s: string): string {
+export function asCode(s: string): string {
   const v = s.replace(/\r\n?/g, "\n");
   const longest = Math.max(0, ...[...v.matchAll(/`+/g)].map((m) => m[0].length));
   if (v.includes("\n")) {

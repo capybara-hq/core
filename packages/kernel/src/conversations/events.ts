@@ -1009,7 +1009,9 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
    * `review` = the command-review classifier's call (auto mode spec §5.3: not model-visible, billed
    * and reported, `callId` = the reviewed tool call); `image` = a `GenerateImage` call (image
    * generation spec §7: the tool call's run and step, `callId` = the call, `outputImages` = the
-   * images produced; not model-visible, billed and reported, counted on a sub-agent's parent).
+   * images produced; not model-visible, billed and reported, counted on a sub-agent's parent);
+   * `suggestion` = the prompt suggestion call after a completed run (prompt suggestions spec §7: no
+   * run, `step` 0, one per run, not model-visible, billed and reported).
    */
   ev(
     "usage",
@@ -1018,7 +1020,9 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
       provider: z.string(),
       model: z.string(),
       ...ModelUsageShape,
-      purpose: z.enum(["compaction", "title", "web_fetch", "review", "image"]).optional(),
+      purpose: z
+        .enum(["compaction", "title", "web_fetch", "review", "image", "suggestion"])
+        .optional(),
       /**
        * The chunk a chunked compaction call summarised (1-based), with the number of calls the
        * compaction attempted (the full chunk count on a completed one; on a failed or hook-denied
@@ -1366,6 +1370,15 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
       objectKey: z.string().min(1),
       sourcePath: z.string().min(1),
       callId: z.string(),
+      /**
+       * The hex sha256 of the bytes (truthful delivery spec §2): the same bytes are delivered once
+       * per delivery scope. Optional only because earlier events cannot be backfilled; an event
+       * without it never matches.
+       */
+      sha256: z
+        .string()
+        .regex(/^[0-9a-f]{64}$/)
+        .optional(),
     }),
   ),
   /**

@@ -54,9 +54,18 @@ export interface HookScope {
  * that writes a conversation's title after its first completed run (no run: `runId` is "", `step` 0,
  * `attempt` 1), `web_fetch` is the call that extracts an answer from a fetched web page for the
  * `WebFetch` tool, `review` is the command-review classifier's call (`review` purpose, no run
- * step; absent = no classifier).
+ * step; absent = no classifier), `suggestion` is the prompt suggestion side request after a
+ * completed web run (`runId` the run, `step` 0, `attempt` 1; a denial skips it and is recorded only
+ * in the audit log).
  */
-export type ModelCallPurpose = "step" | "compaction" | "title" | "web_fetch" | "review" | "image";
+export type ModelCallPurpose =
+  | "step"
+  | "compaction"
+  | "title"
+  | "web_fetch"
+  | "review"
+  | "image"
+  | "suggestion";
 
 /**
  * What a reported or requested model call was for: the {@link ModelCallPurpose} values, or
@@ -95,8 +104,10 @@ export type HookModelRequest = Omit<ModelRequest, "messages"> & { messages: Hook
  * `model.request` of a chat model call (see {@link ModelRequestHookPayload}): once per attempt of a
  * step (`purpose: "step"`), once for each compaction call (`purpose: "compaction"`, `attempt` 1),
  * once for each conversation title call (`purpose: "title"`, `runId` "", `step` 0, `attempt` 1; a
- * denial skips the title and is recorded only in the audit log) and once for each `WebFetch`
- * extraction call (`purpose: "web_fetch"`).
+ * denial skips the title and is recorded only in the audit log), once for each `WebFetch`
+ * extraction call (`purpose: "web_fetch"`) and once for each prompt suggestion call
+ * (`purpose: "suggestion"`, `step` 0, `attempt` 1; a denial skips the suggestion and is recorded
+ * only in the audit log).
  * `request` is the request as sent, except that images and documents are placeholders
  * ({@link HookMediaPlaceholder}): no media bytes, no attachment ids.
  */
@@ -212,10 +223,11 @@ export type ModelRequestHookPayload =
 
 /**
  * `model.response`: after a sent model call finished or failed, with its usage when known (step
- * attempts, compaction and title calls, see `purpose`). Not fired for a call the user aborted (the run was
- * stopped while the call was in flight), nor for a call that was never sent (denied, or failed
- * before sending), so a `model.request` can have no matching `model.response`. The mount's payload
- * is this or, for an image generation call, an {@link ImageResponseHookPayload}.
+ * attempts, compaction, title and suggestion calls, see `purpose`). Not fired for a call the user
+ * aborted (the run was stopped while the call was in flight), nor for a call that was never sent
+ * (denied, or failed before sending), so a `model.request` can have no matching `model.response`.
+ * The mount's payload is this or, for an image generation call, an
+ * {@link ImageResponseHookPayload}.
  */
 export interface ModelResponseHookPayload extends HookScope {
   purpose: Exclude<ModelCallPurpose, "image">;

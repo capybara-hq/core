@@ -1,7 +1,9 @@
 import {
   FILE_PREVIEW_EXTENSION_POINT,
+  type FilePreviewConversationArgs,
   type FilePreviewer,
   type FilePreviewProvider,
+  type FilePreviewShareArgs,
   type Logger,
   previewerAccepts,
   type UiView,
@@ -65,6 +67,22 @@ interface Loaded {
 }
 
 const notFound = () => new ApiError("ui.not_found", "Previewer not found");
+
+/** The file a previewer reads: the share's snapshot or a conversation file (no storage key). */
+type PreviewFile = { name: string; contentType: string; size: number };
+
+/** Who and what a render is for: a conversation file, or a share's snapshot (`file.id` = share id). */
+type PreviewIdentity =
+  | Pick<FilePreviewConversationArgs, "source" | "orgId" | "accountId" | "conversationId" | "file">
+  | Pick<FilePreviewShareArgs, "source" | "orgId" | "shareId" | "file">;
+
+/** A share's snapshot as the share routes pass it (`ShareLiveness`'s `LiveShare`). */
+export interface ShareSnapshot extends PreviewFile {
+  id: string;
+  orgId: string;
+  /** Relative to the org's kernel prefix. */
+  objectKey: string;
+}
 
 const item = (l: Loaded): PreviewerItem => ({
   plugin: l.plugin,
@@ -313,14 +331,119 @@ export class PreviewerRegistry {
     locale: "zh" | "en";
   }): Promise<UiView> {
     const file = await this.d.files.file(t.orgId, t.conversationId, t.accountId, t.fileId);
-    const l = (await this.accepting(t.orgId, file)).find(
-      (x) => x.plugin === t.plugin && x.previewer.id === t.id,
-    );
-    const render = l?.previewer.render;
-    if (!l || render === undefined) throw notFound();
-    const maxBytes = l.previewer.maxBytes;
+    const l = await this.viewPreviewer(t.orgId, file, t.plugin, t.id);
     const store = this.d.storage.kernel(t.orgId);
-    let open = true;
+    return this.renderWith(
+      l,
+      t,
+      {
+        source: "conversation",
+        orgId: t.orgId,
+        accountId: t.accountId,
+        conversationId: t.conversationId,
+        file: { id: file.id, name: file.name, contentType: file.contentType, size: file.size },
+      },
+      async (signal) => {
+        const got = await store.get(file.objectKey, { signal });
+        if (!got) throw new Error("the file is no longer available");
+        // an attachment replaced since it was checked is not the file any more
+        if (file.recorded && !attachmentContentMatches(file.recorded, got.head)) {
+          await got.body.cancel().catch(() => {});
+          throw new Error("the file is no longer available");
+        }
+        return got.body;
+      },
+    );
+  }
+
+  /** The previewers that take a share's snapshot, in the org's order (file sharing spec §7). */
+  async forShare(orgId: string, file: PreviewFile): Promise<PreviewerItem[]> {
+    return (await this.accepting(orgId, file)).map(item);
+  }
+
+  /**
+   * Renders a view previewer for a share's snapshot (file sharing spec §7): args `source: "share"`
+   * with the share's org and id (`file.id` is the share id), no account and no conversation; the
+   * read grant reads the snapshot. The caller has opened the share (`ShareOpenService.open`).
+   * Errors as {@link render}; a previewer that needs the conversation declines by throwing (502).
+   */
+  async renderShare(t: {
+    orgId: string;
+    shareId: string;
+    file: ShareSnapshot;
+    plugin: string;
+    id: string;
+    locale: "zh" | "en";
+  }): Promise<UiView> {
+    const l = await this.viewPreviewer(t.orgId, t.file, t.plugin, t.id);
+    const store = this.d.storage.kernel(t.orgId);
+    return this.renderWith(
+      l,
+      t,
+      {
+        source: "share",
+        orgId: t.orgId,
+        shareId: t.shareId,
+        file: {
+          id: t.shareId,
+          name: t.file.name,
+          contentType: t.file.contentType,
+          size: t.file.size,
+        },
+      },
+      async (signal) => {
+        const got = await store.get(t.file.objectKey, { signal });
+        if (!got) throw new Error("the file is no longer available");
+        return got.body;
+      },
+    );
+  }
+
+  /**
+   * The `file.preview` contribution of an embed previewer that takes a share's snapshot (enabled in
+   * the org, not disabled, a valid effective config), or null: what a share embed token may name.
+   */
+  async shareEmbed(
+    orgId: string,
+    file: PreviewFile,
+    plugin: string,
+    previewerId: string,
+  ): Promise<{ contribution: string } | null> {
+    const l = (await this.accepting(orgId, file)).find(
+      (x) => x.plugin === plugin && x.previewer.id === previewerId,
+    );
+    const contribution = l?.previewer.embed;
+    return contribution === undefined ? null : { contribution };
+  }
+
+  /** The enabled view previewer that takes the file, else 404 `ui.not_found`. */
+  private async viewPreviewer(
+    orgId: string,
+    file: PreviewFile,
+    plugin: string,
+    id: string,
+  ): Promise<Loaded & { config: unknown }> {
+    const l = (await this.accepting(orgId, file)).find(
+      (x) => x.plugin === plugin && x.previewer.id === id,
+    );
+    if (!l || l.previewer.render === undefined) throw notFound();
+    return l;
+  }
+
+  /**
+   * Calls a view previewer's render with a read grant over `open` (the file's bytes, capped at the
+   * previewer's `maxBytes`, valid only during the call) and validates the view.
+   */
+  private async renderWith(
+    l: Loaded & { config: unknown },
+    t: { orgId: string; plugin: string; id: string; locale: "zh" | "en" },
+    identity: PreviewIdentity,
+    open: (signal: AbortSignal) => Promise<ReadableStream<Uint8Array>>,
+  ): Promise<UiView> {
+    const render = l.previewer.render;
+    if (render === undefined) throw notFound();
+    const maxBytes = l.previewer.maxBytes;
+    let granted = true;
     const expired = () => new Error("the file read grant has expired");
     const fields = { plugin: t.plugin, previewer: t.id, orgId: t.orgId };
     let view: UiView;
@@ -340,48 +463,34 @@ export class PreviewerRegistry {
           l.inflight.run(signal, async (s) => {
             try {
               return await render.call(l.previewer, {
-                orgId: t.orgId,
-                accountId: t.accountId,
-                conversationId: t.conversationId,
+                ...identity,
                 locale: t.locale,
                 config: l.config,
                 signal: s,
-                file: {
-                  id: file.id,
-                  name: file.name,
-                  contentType: file.contentType,
-                  size: file.size,
-                },
                 read: async () => {
-                  if (!open || s.aborted) throw expired();
-                  if (file.size > maxBytes) {
+                  if (!granted || s.aborted) throw expired();
+                  if (identity.file.size > maxBytes) {
                     throw new Error(
                       `the file is larger than this previewer's maxBytes (${maxBytes})`,
                     );
                   }
-                  const got = await store.get(file.objectKey, { signal: s });
-                  if (!got) throw new Error("the file is no longer available");
-                  // an attachment replaced since it was checked is not the file any more
-                  if (file.recorded && !attachmentContentMatches(file.recorded, got.head)) {
-                    await got.body.cancel().catch(() => {});
-                    throw new Error("the file is no longer available");
-                  }
-                  if (!open || s.aborted) {
-                    await got.body.cancel().catch(() => {});
+                  const body = await open(s);
+                  if (!granted || s.aborted) {
+                    await body.cancel().catch(() => {});
                     throw expired();
                   }
-                  const bytes = await readAtMost(got.body, maxBytes);
-                  if (!open || s.aborted) throw expired();
+                  const bytes = await readAtMost(body, maxBytes);
+                  if (!granted || s.aborted) throw expired();
                   return bytes;
                 },
               });
             } finally {
-              open = false;
+              granted = false;
             }
           }),
       });
     } finally {
-      open = false;
+      granted = false;
     }
     const problems = validateUiView(view);
     if (problems.length > 0) {

@@ -16,10 +16,14 @@
 
 export const EMBED_PROTOCOL = "capybara-embed/1";
 
-/** Where an embed is shown (SDK `EmbedInitContext`, narrowed on `scope`; no org for a platform page). */
+/**
+ * Where an embed is shown (SDK `EmbedInitContext`, narrowed on `scope`): an org's page, a platform
+ * page (no org), or a share page (no org, no conversation).
+ */
 export type EmbedInitContext =
   | { scope: "org"; orgId: string; conversationId?: string }
-  | { scope: "platform" };
+  | { scope: "platform" }
+  | { scope: "share" };
 
 export type EmbedTheme = "dark" | "light";
 

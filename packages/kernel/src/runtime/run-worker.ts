@@ -9,6 +9,7 @@ import {
   type ConversationEvent,
   isAbsorbable,
 } from "../conversations/events.js";
+import { PromptSuggestionQueue } from "../conversations/prompt-suggestions.js";
 import {
   effectiveDefinition,
   NO_SELECTION,
@@ -183,6 +184,9 @@ export class RunWorker {
     @Inject(KernelEvents) private readonly events: KernelEvents,
     /** A completed run enqueues the conversation's title job. */
     @Inject(TitleQueue) private readonly titles: Pick<TitleQueue, "maybeEnqueue">,
+    /** A completed or max_steps run enqueues its prompt suggestion job (a hint, never throws). */
+    @Inject(PromptSuggestionQueue)
+    private readonly suggestions: Pick<PromptSuggestionQueue, "maybeEnqueue">,
     /** Resolves a switched-to model at run start (fallback when it is gone; UI refresh B). */
     @Inject(ProviderRegistry) private readonly models: Pick<ProviderRegistry, "resolve">,
     /** Run start's skills catalog snapshot. */
@@ -1022,7 +1026,7 @@ export class RunWorker {
             true,
             false,
           );
-          this.completed(conversationId);
+          this.completed(conversationId, runId, outcome.kind);
           break;
         }
         default: {
@@ -1033,7 +1037,7 @@ export class RunWorker {
             type: "run_finished",
             payload: { reason: outcome.kind, consumedUpToSeq: consumed },
           });
-          this.completed(conversationId);
+          this.completed(conversationId, runId, outcome.kind);
         }
       }
       return "finished";
@@ -1160,9 +1164,15 @@ export class RunWorker {
     return "finished";
   }
 
-  private completed(conversationId: string): void {
-    // a completed run enqueues the conversation's title job (never throws)
+  private completed(
+    conversationId: string,
+    runId: string,
+    kind: "completed" | "max_steps" | "max_duration" | "budget",
+  ): void {
+    // a completed run enqueues the conversation's title job and, for completed / max_steps, its
+    // prompt suggestion job; both are hints after the commit and never throw
     void this.titles.maybeEnqueue(conversationId);
+    void this.suggestions.maybeEnqueue(conversationId, runId, kind);
   }
 
   /**

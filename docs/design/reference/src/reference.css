@@ -2990,6 +2990,48 @@ textarea {
   border-radius: var(--cb-radius-md);
   background: var(--cb-panel);
 }
+.r-img-gen {
+  position: relative;
+  display: grid;
+  place-items: center;
+  isolation: isolate;
+  width: var(--cb-layout-inline-image);
+  max-width: 100%;
+  overflow: hidden;
+  border-radius: var(--cb-radius-md);
+  background: var(--cb-panel);
+  color: var(--cb-faint);
+  aspect-ratio: 1 / 1;
+}
+.r-img-gen::before {
+  content: "";
+  position: absolute;
+  inset: -50%;
+  z-index: -1;
+  background:
+    radial-gradient(
+      circle at 30% 35%,
+      color-mix(in oklab, var(--cb-accent) 35%, var(--cb-panel)),
+      transparent 55%
+    ),
+    radial-gradient(
+      circle at 70% 60%,
+      color-mix(in oklab, var(--cb-accent-hover) 25%, var(--cb-panel)),
+      transparent 50%
+    ),
+    radial-gradient(
+      circle at 45% 80%,
+      color-mix(in oklab, var(--cb-ink) 8%, var(--cb-panel)),
+      transparent 55%
+    );
+}
+.r-img-gen[data-ratio="3:4"] { aspect-ratio: 3 / 4; }
+.r-img-gen[data-ratio="16:9"] { aspect-ratio: 16 / 9; }
+.r-col-gap {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cb-space-2);
+}
 .r-imgtools {
   position: absolute;
   top: var(--cb-space-2);
@@ -6496,3 +6538,93 @@ span.r-scal-daynum {
 
 .r-tline > [data-part="waiting-word"],
 .r-tool-toggle > [data-part="waiting-word"] { flex: none; white-space: nowrap; }
+
+/* ── File sharing (spec §5.12, §6.16.22, §6.43, §6.44) ── */
+
+.r-share-btn {
+  position: relative;
+}
+.r-share-marker {
+  position: absolute;
+  top: var(--cb-space-1);
+  right: var(--cb-space-1);
+  width: var(--cb-space-2);
+  height: var(--cb-space-2);
+  border-radius: 50%;
+  background: var(--cb-ok);
+  box-shadow: 0 0 0 2px var(--cb-panel-2);
+}
+/* The frame's light page ground: what a document without its own background is opened alone. */
+.r-html-frame {
+  display: block;
+  flex: 1;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  border: 0;
+  color-scheme: light;
+  background: Canvas;
+}
+.r-copy-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cb-space-2);
+}
+.r-copy-field-label {
+  color: var(--cb-ink);
+  font-weight: 600;
+}
+.r-copy-field-manual {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--cb-space-1);
+  color: var(--cb-muted);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+}
+.r-shared {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  background: var(--cb-panel-2);
+  color: var(--cb-ink);
+}
+.r-shared-bar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-2);
+  height: var(--cb-layout-title-bar);
+  padding: 0 var(--cb-space-4);
+  border-bottom: 1px solid var(--cb-line-soft);
+}
+.r-shared-name {
+  flex: 0 1 auto;
+  margin: 0;
+  font-size: var(--cb-type-body-size);
+  line-height: var(--cb-type-body-line);
+  font-weight: 500;
+}
+.r-shared-meta {
+  flex: 0 1 auto;
+  color: var(--cb-muted);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+}
+.r-shared-bar > .r-btn {
+  flex: none;
+}
+.r-shared-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.r-shared-loading {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--cb-muted);
+}

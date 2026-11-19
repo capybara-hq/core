@@ -90,10 +90,13 @@ const ICONS = {
   "trash-2": "trash-2",
   "list-checks": "list-checks",
   link: "link",
+  share: "share-2",
   "zoom-in": "zoom-in",
   // The image viewer (§6.16.20).
   "zoom-out": "zoom-out",
   "corner-down-right": "corner-down-right",
+  // The composer's prompt suggestion button (§6.16.2, state `suggestion`).
+  "corner-down-left": "corner-down-left",
   // Sidebar v3 (web order).
   "chevrons-up-down": "chevrons-up-down",
   "arrow-up-right": "arrow-up-right",

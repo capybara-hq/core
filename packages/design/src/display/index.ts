@@ -59,6 +59,7 @@ export {
 } from "./chat";
 export { CheckRow, type CheckRowProps, type CheckRowState } from "./check-row";
 export { ContentSection, type ContentSectionProps } from "./content-section";
+export { CopyField, type CopyFieldProps } from "./copy-field";
 export { DangerZone, DangerZoneItem, type DangerZoneItemProps } from "./danger-zone";
 export { DateTime, formatDateTime, formatRelative, versionLabel } from "./date-time";
 export {
@@ -75,6 +76,11 @@ export { ErrorDetail, type ErrorDetailProps } from "./error-detail";
 export { formatCompact } from "./format";
 export { BarChart, Dither, Skeleton, Sparkline } from "./graphics";
 export { type GuideBlock, GuideDocument, type GuideDocumentProps } from "./guide-document";
+export {
+  HTML_DOCUMENT_SANDBOX,
+  HtmlDocumentFrame,
+  type HtmlDocumentFrameProps,
+} from "./html-frame";
 export {
   ImpactPreview,
   type ImpactPreviewGroup,

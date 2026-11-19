@@ -121,6 +121,9 @@ export type AgentTemplateTier = "inherit" | "fast" | "standard" | "capable";
 export function appearanceIssues(manifest: PluginManifest, themeIds: readonly string[]): string[];
 
 // @public
+export function asCode(s: string): string;
+
+// @public
 export function assertValidDeclarations(plugin: string, decl: ModelParameter[]): void;
 
 // @public
@@ -258,9 +261,16 @@ export interface Channel {
         edit: boolean;
         threads: boolean;
         minEditIntervalMs?: number;
+        files?: {
+            maxBytes: number;
+            imageMaxBytes?: number;
+        };
     };
     send(args: ChannelSendArgs): Promise<{
         messageId: string;
+    }>;
+    sendFile?(args: ChannelSendFileArgs): Promise<{
+        messageId?: string;
     }>;
     update(args: ChannelSendArgs & {
         messageId: string;
@@ -325,6 +335,14 @@ export interface ChannelConnectArgs {
 }
 
 // @public
+export interface ChannelFile {
+    contentType: string;
+    data: Uint8Array;
+    kind: "image" | "file";
+    name: string;
+}
+
+// @public
 export type ChannelInboundMode = "long_connection" | "webhook";
 
 // @public
@@ -352,6 +370,16 @@ export class ChannelSendError extends Error {
 
 // @public
 export type ChannelSendFailure = "auth" | "target_gone" | "rejected" | "too_large";
+
+// @public
+export interface ChannelSendFileArgs {
+    config: unknown;
+    file: ChannelFile;
+    idempotencyKey?: string;
+    locale: Locale;
+    signal: AbortSignal;
+    target: ChannelTarget;
+}
 
 // @public
 export interface ChannelTarget {
@@ -1180,11 +1208,10 @@ export type EmbedChildMessage =
 };
 
 // @public
-export type EmbedClaims = OrgEmbedClaims | PlatformEmbedClaims;
+export type EmbedClaims = OrgEmbedClaims | PlatformEmbedClaims | ShareEmbedClaims;
 
 // @public
 export interface EmbedClaimsBase {
-    accountId: string;
     contribution: string;
     exp: number;
     plugin: string;
@@ -1216,6 +1243,10 @@ export type EmbedInitContext = {
     conversationId?: string;
 } | {
     scope: "platform";
+    orgId?: undefined;
+    conversationId?: undefined;
+} | {
+    scope: "share";
     orgId?: undefined;
     conversationId?: undefined;
 };
@@ -1588,10 +1619,11 @@ export const FILE_PREVIEW_EXTENSION_POINT = "file-preview@1";
 export const FILE_PREVIEW_MAX_BYTES: number;
 
 // @public
-export interface FilePreviewArgs {
-    accountId: string;
+export type FilePreviewArgs = FilePreviewConversationArgs | FilePreviewShareArgs;
+
+// @public
+export interface FilePreviewArgsBase {
     config?: unknown;
-    conversationId: string;
     file: {
         id: string;
         name: string;
@@ -1599,9 +1631,16 @@ export interface FilePreviewArgs {
         size: number;
     };
     locale: Locale;
-    orgId: string;
     read(): Promise<Uint8Array>;
     signal: AbortSignal;
+}
+
+// @public
+export interface FilePreviewConversationArgs extends FilePreviewArgsBase {
+    accountId: string;
+    conversationId: string;
+    orgId: string;
+    source: "conversation";
 }
 
 // @public
@@ -1623,6 +1662,13 @@ export interface FilePreviewer {
 // @public
 export interface FilePreviewProvider {
     previewers: FilePreviewer[];
+}
+
+// @public
+export interface FilePreviewShareArgs extends FilePreviewArgsBase {
+    orgId: string;
+    shareId: string;
+    source: "share";
 }
 
 // @public
@@ -2329,7 +2375,7 @@ export interface ModelCallOptions {
 }
 
 // @public
-export type ModelCallPurpose = "step" | "compaction" | "title" | "web_fetch" | "review" | "image";
+export type ModelCallPurpose = "step" | "compaction" | "title" | "web_fetch" | "review" | "image" | "suggestion";
 
 // @public
 export interface ModelCallRequestHookPayload extends HookScope {
@@ -2595,6 +2641,7 @@ export interface OrgDeletedPayload {
 
 // @public
 export interface OrgEmbedClaims extends EmbedClaimsBase {
+    accountId: string;
     agentId?: string;
     conversationId?: string;
     fileId?: string;
@@ -2799,6 +2846,7 @@ export function pickImageSize(info: ModelImageGenerationInfo, opts: {
 
 // @public
 export interface PlatformEmbedClaims extends EmbedClaimsBase {
+    accountId: string;
     agentId?: undefined;
     conversationId?: undefined;
     fileId?: undefined;
@@ -3088,6 +3136,14 @@ export type RouteCaller = {
     role: "superAdmin";
     contribution: string;
     exp: number;
+} | {
+    access: "embed";
+    scope: "share";
+    orgId: string;
+    shareId: string;
+    contribution: string;
+    exp: number;
+    config: unknown;
 } | {
     access: "member" | "admin";
     orgId: string;
@@ -3462,7 +3518,7 @@ export function sanitizeThemeSvg(bytes: Uint8Array): {
 };
 
 // @public
-export const SDK_VERSION = "0.1.0-rc.32";
+export const SDK_VERSION = "0.1.0-rc.35";
 
 // @public
 export function secret<T extends z.ZodTypeAny>(schema: T): T;
@@ -3636,6 +3692,19 @@ export type SetupGuideVariableType = "url" | "text" | "token";
 
 // @public
 export const SHA512_INTEGRITY_RE: RegExp;
+
+// @public
+export interface ShareEmbedClaims extends EmbedClaimsBase {
+    accountId?: undefined;
+    agentId?: undefined;
+    conversationId?: undefined;
+    fileId?: undefined;
+    generation: number;
+    orgId: string;
+    role?: undefined;
+    scope: "share";
+    shareId: string;
+}
 
 // @public
 export const SKILL_ENTRY_FILE = "SKILL.md";
@@ -4218,7 +4287,7 @@ export const UI_LIMITS: {
 };
 
 // @public
-export const UI_PART_NAMES: readonly ["shell", "sidebar", "sidebar.brand", "sidebar.item", "title-bar", "page-header", "thread", "message.user", "message.user.bubble", "message.assistant", "tool-row", "composer", "properties-panel", "section", "right-panel", "status-bar", "button", "button.primary", "card", "input", "dialog", "code-block", "menu", "segmented", "stat-card", "switch", "switch.knob", "org-avatar", "agent-chip"];
+export const UI_PART_NAMES: readonly ["shell", "sidebar", "sidebar.brand", "sidebar.item", "title-bar", "page-header", "thread", "message.user", "message.user.bubble", "message.assistant", "tool-row", "composer", "properties-panel", "section", "right-panel", "status-bar", "button", "button.primary", "card", "input", "dialog", "code-block", "menu", "segmented", "stat-card", "switch", "switch.knob", "org-avatar", "agent-chip", "image-placeholder"];
 
 // @public
 export const UI_PARTS: readonly UiPartSpec[];

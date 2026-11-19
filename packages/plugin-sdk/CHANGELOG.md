@@ -1,5 +1,40 @@
 # @capybara-hq/plugin-sdk
 
+## 0.1.0-rc.35
+
+### Patch Changes
+
+- eea8ef6: Model-facing text states mechanisms, contracts and limits only. Bash keeps the proxy rule general
+  (no browser flag) and says "keep results in files" once; Deliver states the one-file contract and
+  that an HTML file is shown on its own (no tar or CDN recipe); the skill registration errors state
+  the zip package format instead of a `zip -r` recipe; Read / Glob / Grep drop the write-approval
+  sentence; the ToolSearch catalog header, WebSearch (cite once, in the description), the WebFetch
+  extraction prompt, Agent / SendMessage results and the Platform tool and operations lose
+  duplicated or one-slip warnings ("never guess", "there is no all", "agents never decide" in every
+  hint, "never remembered", old field-name hints). Platform text names pages by their English
+  labels. Agent docs: `concepts.md` describes devices instead of "a sandbox per conversation", and
+  the docker socket rule leaves the model-facing sandbox doc (it stays in the contributor skills).
+  The new-agent AGENTS.md starter no longer repeats the platform's behaviour rules.
+- 9f8c8d5: `ModelCallPurpose` (and `UsagePurpose`) gain `suggestion`: the prompt suggestion side request after a completed run.
+
+## 0.1.0-rc.34
+
+### Minor Changes
+
+- 40d039f: `channel@1` gains the optional `sendFile` and `features.files` (one conversation artifact per message, `ChannelSendFileArgs`, `ChannelFile`); `asCode` is exported.
+
+### Patch Changes
+
+- 45ff51f: New UI part `image-placeholder` (`aria-busy`): the placeholder the conversation draws while an
+  image is being generated. The design package adds `ImagePlaceholder` and an `ImageOutput.ratio`
+  pre-load hint.
+
+## 0.1.0-rc.33
+
+### Minor Changes
+
+- 909442f: Embed tokens and plugin route callers gain a `share` scope (file previewers on a share page); `FilePreviewArgs` is a union on `source` (`conversation` | `share`), with the shared fields exported as `FilePreviewArgsBase`.
+
 ## 0.1.0-rc.32
 
 ### Patch Changes

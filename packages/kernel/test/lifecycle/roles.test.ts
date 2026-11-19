@@ -15,6 +15,7 @@ import { GATEWAY_CHECK_JOB } from "../../src/channels/job-ids.js";
 import { CHANNEL_QUEUE_NAME } from "../../src/channels/jobs.js";
 import { ChannelSupervisor } from "../../src/channels/supervisor.js";
 import { type KernelConfig, KernelConfigSchema } from "../../src/config/schema.js";
+import { PROMPT_SUGGESTION_QUEUE } from "../../src/conversations/prompt-suggestions.js";
 import { TITLE_QUEUE } from "../../src/conversations/titles.js";
 import { EVAL_QUEUE_NAME } from "../../src/evals/jobs.js";
 import { LIFECYCLE_QUEUE } from "../../src/extensions/lifecycle-hooks.js";
@@ -51,6 +52,7 @@ const KERNEL_QUEUES = [
   SUBAGENT_RUN_QUEUE_NAME,
   USAGE_REPORT_QUEUE,
   TITLE_QUEUE,
+  PROMPT_SUGGESTION_QUEUE,
   EVAL_QUEUE_NAME,
   MAINTENANCE_QUEUE_NAME,
   CHANNEL_QUEUE_NAME,
@@ -242,6 +244,7 @@ describe("role modules", () => {
       "RunOrphanCheck",
       "SandboxSweepJobs",
       "ScheduledTaskScanJob",
+      "ShareSweepJob",
       "StoragePurgeJob",
       "ToolJobs",
     ]);
@@ -252,7 +255,7 @@ describe("role modules", () => {
   it("all roles in one process: the same crons and consumers, once each", async () => {
     const a = await start(["api", "worker", "gateway"]);
     const { jobHosts, processors } = scan(a);
-    expect(jobHosts).toHaveLength(16);
+    expect(jobHosts).toHaveLength(17);
     // the same cron jobs and intervals as the worker-only process, each registered once
     expect(workerSchedules).toBeDefined();
     expect(schedulesOf(a)).toEqual(workerSchedules);

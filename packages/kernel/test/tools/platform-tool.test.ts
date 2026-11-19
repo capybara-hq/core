@@ -3,14 +3,11 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { ApiError } from "../../src/errors.js";
 import type { ActorFacts } from "../../src/platform/actor.js";
+import { PLATFORM_UNAVAILABLE_OFF } from "../../src/platform/availability.js";
 import { nextStepFor, OPERATION_ERROR_NEXT, toToolError } from "../../src/platform/errors.js";
 import { defineOperation, type PlatformOperation } from "../../src/platform/operation.js";
 import { PlatformOperations } from "../../src/platform/registry.js";
-import {
-  PLATFORM_UNAVAILABLE_OFF,
-  paramsLine,
-  platformTool,
-} from "../../src/tools/builtins/platform.js";
+import { paramsLine, platformTool } from "../../src/tools/builtins/platform.js";
 import type {
   BuiltinCallContext,
   BuiltinTool,
@@ -250,7 +247,7 @@ describe("the Platform tool definition", () => {
     expect(tool.defaultPolicy).toBe("allow");
     expect(tool.spec.keyArgs).toEqual(["action", "operation", "domain"]);
     expect(tool.spec.description).toBe(
-      'Discover and use the platform\'s own operations (agents, skills, templates, plugins, connectors, extensions, conversations, devices, models, evals, channels, requests, approvals and the inbox, org settings, and for admins accounts, orgs and the admin console) and its documentation, as the person you are working for. Start with action "browse", which lists every domain, then "describe" an operation before you "call" it; never guess parameters. Writes ask the person to confirm. Use "read" for how-to documentation (plugin format, skills, extension points).',
+      'Discover and use the platform\'s own operations (agents, skills, templates, plugins, connectors, extensions, conversations, devices, models, evals, channels, requests, approvals and the inbox, org settings, and for admins accounts, orgs and the admin console) and its documentation, as the person you are working for. Start with action "browse", which lists every domain; "describe" gives an operation\'s input schema and an example. Writes ask the person to confirm. Use "read" for how-to documentation (plugin format, skills, extension points).',
     );
   });
 
@@ -261,7 +258,7 @@ describe("the Platform tool definition", () => {
     setting = "off";
     expect(await tool.unavailable?.({ orgId: "org-1" })).toBe(PLATFORM_UNAVAILABLE_OFF);
     expect(PLATFORM_UNAVAILABLE_OFF).toBe(
-      "The org turned the Platform tool off; ask an org admin to turn it on.",
+      "The org turned the Platform tool off; an org admin can switch it on in the organization settings.",
     );
   });
 });

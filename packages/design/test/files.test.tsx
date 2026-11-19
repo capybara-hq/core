@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -11,7 +13,9 @@ import {
   FilePreviewFrame,
   type FilePreviewHeader,
   ImageOutput,
+  ImagePlaceholder,
   ImagePreview,
+  INLINE_IMAGE_RATIOS,
   isInlineImageType,
   isSafeImageSrc,
   LoadFailed,
@@ -321,7 +325,7 @@ const header = (over: Partial<FilePreviewHeader> = {}): FilePreviewHeader => ({
 });
 
 describe("FilePreviewFrame (§6.16.22)", () => {
-  it("header: badge, name, version, download, full screen, close; never Share", async () => {
+  it("header: badge, name, version, download, full screen, close; no Share without onShare", async () => {
     const onClose = vi.fn();
     const { container } = wrap(
       <FilePreviewFrame header={header({ onClose })} state="ready">
@@ -334,22 +338,39 @@ describe("FilePreviewFrame (§6.16.22)", () => {
     expect(screen.getByRole("button", { name: "全屏" })).toBeTruthy();
     await userEvent.click(screen.getByRole("button", { name: "关闭" }));
     expect(onClose).toHaveBeenCalled();
-    expect(screen.queryByRole("button", { name: /分享|Share/ })).toBeNull();
-    expect(container.textContent).not.toMatch(/分享|Share/);
+    expect(screen.queryByRole("button", { name: /分享/ })).toBeNull();
     // no switcher without files
     expect(screen.queryByRole("button", { name: /差异行\.csv/ })).toBeNull();
     expect(screen.getByText("差异行.csv")).toBeTruthy();
   });
 
-  it("has no Share in English either", () => {
+  it("onShare renders a Share button right before Download", async () => {
+    const onShare = vi.fn();
+    const { container } = wrap(<FilePreviewFrame header={header({ onShare })} state="ready" />);
+    const share = screen.getByRole("button", { name: "分享" });
+    const download = screen.getByRole("button", { name: "下载" });
+    expect(share.nextElementSibling).toBe(download);
+    expect(container.querySelector('[data-part="share-marker"]')).toBeNull();
+    await userEvent.click(share);
+    expect(onShare).toHaveBeenCalled();
+  });
+
+  it("shared adds the marker and names the button Shared", () => {
     const { container } = wrap(
-      <FilePreviewFrame
-        header={header({ files: [{ id: "a", name: "a.csv" }], onSwitch: () => {} })}
-        state="ready"
-      />,
+      <FilePreviewFrame header={header({ onShare: () => {}, shared: true })} state="ready" />,
       "en",
     );
-    expect(container.textContent).not.toMatch(/Share/);
+    const button = screen.getByRole("button", { name: "Shared" });
+    expect(button.querySelector('[data-part="share-marker"]')).not.toBeNull();
+    expect(screen.queryByRole("button", { name: "Share" })).toBeNull();
+    expect(container.querySelectorAll('[data-part="share-marker"]').length).toBe(1);
+  });
+
+  it("shared without onShare shows nothing", () => {
+    const { container } = wrap(
+      <FilePreviewFrame header={header({ shared: true })} state="ready" />,
+    );
+    expect(container.querySelector('[data-part="share-marker"]')).toBeNull();
   });
 
   it("the file switcher appears with files", () => {
@@ -499,5 +520,53 @@ describe("CSV (RFC 4180)", () => {
     expect(head[1]?.getAttribute("data-align")).toBe("right");
     expect(head[0]?.getAttribute("data-align")).toBeNull();
     expect(container.querySelector('[data-part="preview-note"]')).toBeNull();
+  });
+});
+
+describe("ImagePlaceholder", () => {
+  it("role, busy and label", () => {
+    const { container } = wrap(<ImagePlaceholder ratio="16:9" index={1} count={3} />, "en");
+    const box = screen.getByRole("img", { name: "Generating image 2/3, 16:9" });
+    expect(box.getAttribute("aria-busy")).toBe("true");
+    expect(box.getAttribute("data-cap-part")).toBe("image-placeholder");
+    expect(box.getAttribute("data-ratio")).toBe("16:9");
+    expect(container.querySelector("figcaption")?.textContent).toBe("Generating image 2/3 · 16:9");
+    cleanup();
+    wrap(<ImagePlaceholder ratio="16:9" index={1} count={3} />, "zh");
+    expect(screen.getByRole("img", { name: "正在生成图片 2/3，16:9" })).toBeTruthy();
+  });
+
+  it("one image, unknown ratio", () => {
+    const { container } = wrap(<ImagePlaceholder ratio={null} index={0} count={1} />, "en");
+    const box = screen.getByRole("img", { name: "Generating image" });
+    expect(box.getAttribute("data-ratio")).toBe("1:1");
+    expect(container.querySelector("figcaption")?.textContent).not.toContain(" · ");
+  });
+});
+
+describe("ImageOutput ratio hint", () => {
+  const props = { src: "/x.png?inline=1", name: "a.png", size: 10, onOpen() {}, onDownload() {} };
+  it("sets the pre-load box until load", () => {
+    const { container } = wrap(<ImageOutput {...props} ratio="3:4" />);
+    const frame = container.querySelector('[data-part="image-frame"]') as HTMLElement;
+    expect(frame.getAttribute("data-ratio")).toBe("3:4");
+    fireEvent.load(container.querySelector("img") as HTMLImageElement);
+    expect(frame.getAttribute("data-loaded")).toBe("true");
+    expect(frame.hasAttribute("data-ratio")).toBe(false);
+  });
+  it("has no data-ratio without ratio", () => {
+    const { container } = wrap(<ImageOutput {...props} />);
+    expect(container.querySelector('[data-part="image-frame"]')?.hasAttribute("data-ratio")).toBe(
+      false,
+    );
+  });
+  it("every ratio has a box", () => {
+    const css = readFileSync(resolve(__dirname, "../src/styles/conversation.css"), "utf8");
+    for (const r of INLINE_IMAGE_RATIOS) {
+      const [a, b] = r.split(":");
+      const re = new RegExp(`\\[data-ratio="${r}"\\][^{]*\\{[^}]*aspect-ratio:\\s*${a} / ${b}`);
+      expect(css).toMatch(re);
+    }
+    expect(css).toMatch(/@keyframes cb-image-flow\s*{\s*0%,\s*100%\s*{\s*transform:\s*none/);
   });
 });

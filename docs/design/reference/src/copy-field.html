@@ -1,0 +1,38 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<title>CopyField · reference</title>
+<link rel="stylesheet" href="/design/styles/fonts.css">
+<link rel="stylesheet" href="/design/styles/tokens.css">
+<link rel="stylesheet" href="reference.css">
+</head>
+<body>
+<main class="r-page">
+<h1>CopyField</h1>
+<p>A value people copy and may see again (spec §6.44): the label, a read-only field and Copy, which reads 已复制 for two seconds. Without a usable clipboard the field is selected and a muted line says to copy it by hand. No "shown once" warning (that is SecretReveal).</p>
+<div class="r-blocks">
+<section data-ref-block="copy-field-idle" style="width:480px" data-pad>
+  <div class="r-copy-field">
+    <label class="r-label r-copy-field-label" for="c-idle">链接</label>
+    <div class="r-secret-row"><input class="r-input" id="c-idle" readonly value="https://capybara.example.com/s/k3Rf9TqW2a"><button class="r-btn" data-variant="default"><i data-icon="copy" data-size="14"></i>复制</button></div>
+  </div>
+</section>
+<section data-ref-block="copy-field-copied" style="width:480px" data-pad>
+  <div class="r-copy-field">
+    <label class="r-label r-copy-field-label" for="c-copied">链接</label>
+    <div class="r-secret-row"><input class="r-input" id="c-copied" readonly value="https://capybara.example.com/s/k3Rf9TqW2a"><button class="r-btn" data-variant="default"><i data-icon="check" data-size="14"></i>已复制</button></div>
+  </div>
+</section>
+<section data-ref-block="copy-field-manual" style="width:480px" data-pad>
+  <div class="r-copy-field">
+    <label class="r-label r-copy-field-label" for="c-manual">链接</label>
+    <div class="r-secret-row"><input class="r-input" id="c-manual" readonly value="https://capybara.example.com/s/k3Rf9TqW2a"><button class="r-btn" data-variant="default"><i data-icon="copy" data-size="14"></i>复制</button></div>
+    <span class="r-copy-field-manual"><i data-icon="circle-alert" data-size="14"></i>无法自动复制：已选中，请按 Ctrl+C（⌘C）复制。</span>
+  </div>
+</section>
+</div>
+</main>
+<script src="fill.js"></script>
+</body>
+</html>

@@ -135,6 +135,7 @@ const QUEUE_NAMES = [
   "cap-kernel-maintenance",
   "cap-kernel-plugin-scope",
   "cap-kernel-titles",
+  "cap-kernel-suggestions",
   "cap-kernel-usage-report",
   "cap-kernel-evals",
   "cap-kernel-lifecycle",

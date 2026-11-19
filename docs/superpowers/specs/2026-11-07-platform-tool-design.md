@@ -102,8 +102,8 @@ the tool output limit, archived like any tool output (`ReadToolOutput`).
 
 How to use the tool is taught in three places, from short to long **(decided)**:
 
-1. The tool description, one paragraph: start with `browse`, then `describe` the operation, then
-   `call`; never guess parameters; read docs with `read`.
+1. The tool description, one paragraph: start with `browse`; `describe` gives an operation's input
+   schema and an example; read docs with `read`.
 2. The root `browse` result carries the rules **(designer's call** on the wording, English,
    model-visible):
    - Read before you write: list or get what you are about to change.

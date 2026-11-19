@@ -186,7 +186,7 @@ Every size a component uses is a step of one of these scales, stored in `tokens.
 | `shadow-float` | `0 8px 24px rgba(0,0,0,.45)` | `0 8px 24px rgba(26,26,24,.08)` | The composer, the sidebar drawer |
 
 - Layering: Sheet 40 · Dialog 50 · Popover/Menu 60 · Toast 70 · Decoration 80 (`--cb-z-*`; the decoration layer of §4.5 sits above everything).
-- Motion: hover background transitions `motion.hover` (120ms); expand / collapse height transitions `motion.expand` (160ms); overlays fade in with a 4px offset over `motion.overlay` (120ms), `ease-out`, no bounce; the spinner turns once per `motion.spin` (800ms), the streaming cursor blinks every `motion.cursor` (1000ms), a running agent's dot in the agent map pulses every `motion.pulse` (1600ms, §6.16.28). `prefers-reduced-motion: reduce` makes all of them instant, the spinner static and the cursor steady (§6.11).
+- Motion: hover background transitions `motion.hover` (120ms); expand / collapse height transitions `motion.expand` (160ms); overlays fade in with a 4px offset over `motion.overlay` (120ms), `ease-out`, no bounce; the spinner turns once per `motion.spin` (800ms), the streaming cursor blinks every `motion.cursor` (1000ms), a running agent's dot in the agent map pulses every `motion.pulse` (1600ms, §6.16.28), the generating image placeholder's colour field drifts once per `motion.flow` (6000ms, `ease-in-out`, alternate; transform only, §6.16.20). `prefers-reduced-motion: reduce` makes all of them instant, the spinner static, the cursor steady and the placeholder still (§6.11).
 - Focus: inputs, selects and textareas get an `accent` border plus a 3px `focus-ring` halo (`box-shadow: 0 0 0 3px focus-ring`); other controls use `outline: 2px solid accent; outline-offset: 2px`; table rows, list items, nav items and conversation rows use `outline: 1px solid accent; outline-offset: -1px`. `:focus-visible` only. A ring never follows a mouse click: a text field (input, textarea, stepper, the composer) keeps its halo while it has focus, since it is being typed in, but every other control, the Select's button included, draws it under `:focus-visible` (the Select also while its list is open); a tab a pointer focused carries `data-pointer-focus` and draws no ring whatever the browser's heuristics say, until a key press (a modifier alone does not count) or a blur (acceptance issue Y); the mark is set only when focus arrives from that press (or at once when the pressed tab already has focus, since Chrome keeps that focus's keyboard origin), so a press that gives no focus (WebKit and Firefox on macOS do not focus a clicked button) never hides a later keyboard ring. `packages/design/test/focus-rings.test.ts` checks the stylesheets.
 
 ### 2.6 Icons
@@ -219,7 +219,7 @@ Every size a component uses is a step of one of these scales, stored in `tokens.
 - **Brand from a theme**: a theme may replace the logo mark and the wordmark. The web passes the resolved theme's brand to `DesignProvider` (`brand: { markUrl, wordmark }`, either part null), and `Logo` draws it where it draws the pixel capybara: `markUrl` as an `img` as high as the bitmap would be (10 × the pixel unit, so 20 / 30 / 60; its width follows the file; `alt` is the wordmark, or "Logo") instead of the bitmap, `wordmark` as the wordmark text instead of `CAPYBARA` (only where the wordmark is drawn: the rail has none). A null part keeps the built-in one. The sidebar, `AuthPage` and `StatusPage` draw `Logo` and take no props for it.
 - **Dither dot matrix**: used only for the backgrounds on both sides of auth pages and (optionally) the PageHeader corner of the overview page; 4px squares in `line`, density decreasing from one side to the other, greyscale only (no accent squares). No other page may use it.
 - **Agent avatars** (§6.30) are the one place with pictures and their own colors: the ten pixel animals, drawn like the Logo (a 12×12 bitmap of solid squares, `crispEdges`), each in its animal's palette on a soft ground (the `avatar-*` color tokens, and `accent` for the capybara). Nothing else in the UI may use the animal palettes.
-- Apart from agent avatars: no illustrations, gradients, frosted glass or emoji.
+- Apart from agent avatars and the generating image placeholder (§6.16.20, built from `accent`, `accent-hover`, `ink` and `panel` only): no illustrations, gradients, frosted glass or emoji. Nothing else may cite these exceptions.
 
 ---
 
@@ -421,6 +421,7 @@ A new page **must** pick one of the following templates; a new template requires
 | T11 | System status | Single centered | — | — | content | 404, 403, under maintenance, not enabled, no access (`kind="no-access"`: a 16 px `lock` in `faint` instead of the code, the title, what the page is, `need` as a mono chip "需要：组织管理员" / "Requires: Org admin" (1px `line`, radius `sm`, `small`), `ask` in `muted` (who to ask); never an action or a retry; the web app's one role gate draws it, web-order spec §9) |
 | T12 | Onboarding | Single centered checklist | — | — | content | New org, empty environment |
 | T13 | Setup | The Shell's geometry with the setup sidebar (§6.13 `context.kind: "setup"`: the setup home and the steps as navigation), the content area, the status bar (§5.5) | — | — | the page's own (content) | The workspace while the org has no model or no agent (web-order spec §3.8, web-SSR spec §4) |
+| T14 | Shared file | No Shell: a top bar (the file's type, name, who shared it and the expiry, Download) over the file rendered across the full width and the remaining height (§5.12) | — | — | full width | A shared file's link (`/s/<code>`; file sharing design §6) |
 
 ### 5.5 Setup (T13)
 
@@ -711,6 +712,38 @@ States: `default`, `loading`
 | skeleton-text[data-size=body] | loading | height | type.body.line |
 | loading-span-row | loading | height | 28 |
 | loading-card | loading | border-radius | radius.md |
+
+### 5.12 Shared file (T14)
+
+`SharedFilePage({ name, badge, meta, onDownload?, state, children })` is the page behind a shared file's link (file sharing design `docs/superpowers/specs/2026-11-18-file-sharing-design.md` §6). It is public: no Shell, no sidebar, no status bar; the people who open it may have no account.
+
+- **Layout**: the whole window (`100dvh`) on the `panel-2` ground, the right panel's ground (§6.16.18), so a previewer looks exactly as it does in the panel. A **top bar** `layout.title-bar` high, padding 0 `space.4`, a `line-soft` bottom line, gap `space.2`: the type badge (§6.16.19), the file name (`body` 500 `ink`, one line, ellipsis; the page's `h1`), the meta line in `small` `muted` (`meta`, already localized: "张三 分享 · 2026-11-25 过期" / "Shared by 张三 · expires 2026-11-25"; one line, ellipsis), then on the right "下载" / "Download" (default button, `download` 14). Without `onDownload` there is no button. Below the bar the **body** fills the rest of the window, full width, and holds the file exactly as the right panel's body would (§6.16.22): the HTML document frame (§6.43), a built-in previewer, an extension previewer or the no-preview card; it scrolls inside itself, never the page.
+- **Loading** (`state: "loading"`): the bar keeps its frame; a name or meta the page does not know yet (an empty string) is a skeleton bar (§6.29); no Download yet; the body shows the panel's loading line ("正在加载预览…" / "Loading preview…", `muted`, centered); the page is `aria-busy` once.
+- **Phones** (below 640): the bar keeps one row; the name and the meta shrink (ellipsis) before the Download button does.
+- The invalid-link page ("This link is invalid or has expired") is the System status template (T11, `kind: "404"`), not this one.
+
+<!-- states: shared-file-page -->
+States: `loading`, `ready`, `ready-no-download`
+
+<!-- size-table: shared-file-page -->
+| Part | State | Property | Value |
+|---|---|---|---|
+| shared-file-page | ready | background-color | color.panel-2 |
+| shared-file-bar | ready | height | layout.title-bar |
+| shared-file-bar | ready | padding-left | space.4 |
+| shared-file-bar | ready | border-bottom-color | color.line-soft |
+| type-badge | ready | font-size | type.micro |
+| shared-file-name | ready | font-size | type.body |
+| shared-file-name | ready | color | color.ink |
+| shared-file-meta | ready | font-size | type.small |
+| shared-file-meta | ready | color | color.muted |
+| button | ready | height | control.default |
+| html-frame | ready | width | 960 |
+| shared-file-bar | ready-no-download | height | layout.title-bar |
+| preview-table | ready-no-download | font-size | type.small |
+| shared-file-bar | loading | height | layout.title-bar |
+| skeleton-text[data-size=body] | loading | height | type.body.line |
+| preview-loading | loading | color | color.muted |
 
 ---
 
@@ -1053,7 +1086,7 @@ Components shared by the conversation stream (modeled on the Claude Code VS Code
 - **InstructionList**: numbered steps a person follows outside the product (a plugin's setup guide, plugin setup guides spec `2026-11-08-plugin-setup-guides-design.md` §5), an `ol` with `space.2` between steps: each step's number in `faint` mono `small`, right-aligned in 2ch, `space.3` before the text in the prose font at `prose-small`. The text is plain: a backtick pair is inline code (the rendered Markdown's inline code, §6.16), nothing else is markup (no HTML, no links). Unlike StepList (§6.12) a step has no done / to-do state.
 - **GuideDocument**: a rendered setup guide (setup guides v2 spec `2026-11-09-setup-guides-v2-design.md` §7.2–§7.3), `GuideDocument({ blocks, renderCheck? })` with the route's blocks (`GuideBlock`: `markdown` / `code` / `check`, declared in the design package, structurally equal to the SDK's): prose is the rendered Markdown (§6.16), code a CodeBlock with its `title` and `copyable` (no language label when the language is empty), a check a CheckRow, all in document order, `space.3` apart. The page composes known pieces and never parses directives. `renderCheck` draws a check (the page's live row); without it a check is a `static` CheckRow (「保存后检查」 / "Checked after saving": no saved target yet, no request carries secrets typed into an unsaved form). It draws no box: it sits in the page's section card, where its code blocks take their borderless form (§1).
 - **CheckRow**: one setup check as a status row, `CheckRow({ label, state, onRecheck?, staticNote? })` with `state { status: ok | failing | unknown | running | not_run | static, reason?, fix?, checkedAt?, cooldownUntil? }`; a `group` named by the label, no box (§1). The head line (min height `control.dense`, gap `space.2`): the status icon (16; `ok` `circle-check` in `ok`, `failing` `circle-x` in `fail`, `unknown` `circle-alert` in `muted`, `not_run` and `static` `circle` in `faint`, `running` the `spinner` in `accent`, named 「检查中」 / "Checking"), the label (500, `ink`), the status word in `small` `muted` (通过 / 未通过 (`fail`) / 无法确定 / 未检查; none while running), the checked-at time 「检查于5分钟前」 / "Checked 5 minutes ago" (`small` `muted`, relative, from `useNow`) for a result, and at the right a dense ghost 重新检查 / Re-check button (`refresh` icon, named 「重新检查 <label>」) when `onRecheck` is given, disabled until `cooldownUntil` and absent while running and on a static row. Under it, as muted prose lines (`prose-small`): the reason for a result, the fix only when failing (both plain text, never Markdown), the static note (`staticNote`, default 「保存后检查」 / "Checked after saving"). `unknown` is never drawn as a failure the person must act on.
-- **EmbedFrame**: the **only** component in the UI that renders an iframe (`apps/web` must not write an iframe itself). `sandbox` is fixed to `allow-scripts allow-forms` (never containing `allow-same-origin`), `referrerpolicy="no-referrer"`, `title` is required; width fills, height comes from props (default 360), or with `fill` it takes the remaining height of the flex column it sits in (a full-height pane's body: a `file.preview` embed fills the file preview below its header, §6.16.18, as the built-in previews do, and scrolls inside itself; a filling frame is frameless by default, the pane being its box, §1); 1px `line` border, `panel` background. **Inside a box** (an inline card, a property section, a Card; §1, §6.16.16) the box is its frame: no border and no ground of its own (`framed` overrides). Only `message` events whose `event.source` is this iframe are passed to `onMessage` (the caller parses and validates the content), and the iframe is exposed through `frameRef` for `postMessage`.
+- **EmbedFrame**: with the HTML document frame (§6.43), the **only** component in the UI that renders an iframe (`apps/web` must not write an iframe itself). `sandbox` is fixed to `allow-scripts allow-forms` (never containing `allow-same-origin`), `referrerpolicy="no-referrer"`, `title` is required; width fills, height comes from props (default 360), or with `fill` it takes the remaining height of the flex column it sits in (a full-height pane's body: a `file.preview` embed fills the file preview below its header, §6.16.18, as the built-in previews do, and scrolls inside itself; a filling frame is frameless by default, the pane being its box, §1); 1px `line` border, `panel` background. **Inside a box** (an inline card, a property section, a Card; §1, §6.16.16) the box is its frame: no border and no ground of its own (`framed` overrides). Only `message` events whose `event.source` is this iframe are passed to `onMessage` (the caller parses and validates the content), and the iframe is exposed through `frameRef` for `postMessage`.
 - **ImageBlock**: an image in a plugin view; block-level, width not exceeding the container, scaled proportionally, 1px `line` border; `loading="lazy"`, `referrerpolicy="no-referrer"`. It takes only an address and alt; it renders only absolute http(s) addresses, and anything else (`javascript:`, `data:`, relative paths) renders nothing.
 - **AttachmentChip** (its looks are superseded by the attachment strip of §6.16.21; the behavior below stays): an uploaded file waiting to be sent in the input box. A line with a 1px `line` border and `panel` background: file name (single line with ellipsis, at most 24ch) + size (small `muted`, `B` / `KB` / `MB`) + a remove button on the right (an `x` icon button, `aria-label` "Remove <file name>"). Three states (`data-status`): `uploading` shows a 4px segmented progress bar under the name (`role="progressbar"`, `aria-valuenow` 0–100, completed segments accent, the rest `line-strong`, consistent with the Toast progress); `ready` has no progress bar; `error` has a `fail` border and small `fail` error text under the name (`role="alert"`), and can still be removed; when the caller supplies a retry, an extra `refresh` icon button appears to the left of the remove button ("Retry <file name>").
 - **FileDrop**: a drag-and-drop / paste area wrapping the input area. When content carrying files is dragged in (only `Files` is recognized; dragging text does not respond) an overlay covers the area: `accent-tint` background + 1px dashed `accent` border, with one centered line of hint text (passed in by the caller); dropping hands the files to `onFiles`. Pasting a clipboard containing files inside the area also hands them to `onFiles`; when the clipboard has no text, the default paste is prevented, while if it also has text (such as copied from a document) the text is pasted as usual; a paste without files is unaffected. The overlay is always dismissed on drop and dragend. When `disabled` neither responds. `dragging` can force the overlay to show (for the catalog page and screenshots).
@@ -1085,7 +1118,7 @@ The interaction rules are part of the spec and are covered by Playwright interac
 - **Overlays** fade in with a 4px offset over `motion.overlay`; Esc closes the topmost overlay; focus is trapped while open and returned to the trigger after closing.
 - **Skip link**: the AppShell's first tab stop is a "Skip to main content" link (visually hidden until focused, then a `panel` chip at the top left) that moves focus to `main`.
 - **Sidebar keyboard**: Tab enters the nav list at the current item and the conversation list at the active conversation (one roving tab stop per list); ↑ / ↓ move between nav items and between conversation rows; Home / End go to the first / last; ↵ follows the link; Enter / Space on a group label toggles the group (`aria-expanded`); Esc closes the drawer and returns focus to the menu button.
-- **Composer keys** (§6.16.2): ↵ sends; while a run is going (or waits for a person) the message is an **interjection**, logged at once and taken in by the run at its next step (run input spec `docs/superpowers/specs/2026-11-07-run-input-and-live-drafts-design.md` D1); ⌘↵ (Ctrl+↵ off macOS) sends exactly like ↵ (D2); Shift+↵ is a newline; Esc closes the open picker menu, then the right-panel Sheet, and never stops a run (Stop stays on its button).
+- **Composer keys** (§6.16.2): ↵ sends; while a run is going (or waits for a person) the message is an **interjection**, logged at once and taken in by the run at its next step (run input spec `docs/superpowers/specs/2026-11-07-run-input-and-live-drafts-design.md` D1); ⌘↵ (Ctrl+↵ off macOS) sends exactly like ↵ (D2); Shift+↵ is a newline; Esc closes the open picker menu, then the right-panel Sheet, and never stops a run (Stop stays on its button). Tab in an empty composer that shows a prompt suggestion (state `suggestion`) fills it; Esc dismisses it; elsewhere Tab moves focus and Shift+Tab is never taken.
 - **No queue** (run input spec D1, D3): nothing is queued any more. Until the run takes an interjection in, it stands at the bottom of the thread as a pending user bubble (§6.16.6, 待处理); the timeline then places it before the step that took it in. Messages an older version queued (leftovers the kernel still sends one per run after the turn) show the same way after the thread, with no actions, until the log holds them; leftovers a failed or stopped run paused keep the paused line and "Continue sending" of §6.16.14, the only way they drain.
 - **Conversation toggles**: tool lines, tool groups, tool rows, thinking rows and sub-agent rows are `button`s with `aria-expanded` and open over `motion.expand`.
 - **Right panel**: the resize handle on its left edge is focusable (`role="separator"`, `aria-orientation="vertical"`, `aria-valuenow` the width): ← / → change the width by 16px, Home / End go to the minimum / maximum. The open panel's title-bar icon has `aria-pressed="true"`; opening another panel replaces it, its close button or the pressed icon closes it, and focus returns to the icon. Switching conversation closes the panel and drops the old conversation's panel, files, uploads and pending messages.
@@ -1387,13 +1420,14 @@ States: `default`, `untitled`, `rename-menu`, `panel-active`, `overflow`, `long-
   - The permission picker (`pickers.permission`, §6.16.3) sits after the device picker; it is absent when the page passes none, and a `locked` one (a recorded or inherited profile) is the same plain `muted` text with its hint. On phones its group follows 设备 in the options sheet (权限 / Permissions) and its value joins the options button's name.
   - The effort picker is hidden when the selected model declares no `effort` values.
   - Send: a `control.default` square icon button with `arrow-up` 16 on the `accent` ground, `on-accent` icon; disabled (no text and no files) it is the `selected` ground with a `faint` icon. While a run is going it becomes Stop (`square` 14, `selected` ground, `ink` icon, "停止" / "Stop").
-- Placeholders: idle "输入消息，/ 使用命令" / "Message, / for commands"; new "想让 <agent> 做什么？" / "What should <agent> do?"; while running (state `running`) the hint "运行中发送的消息会在下一步交给智能体" / "Messages sent while it works reach it at its next step" (run input spec 2026-11-07 §4: ↵ and ⌘↵ both send an interjection). Keys: §6.11.
+- Placeholders: idle "输入消息，/ 使用命令" / "Message, / for commands"; new "想让 <agent> 做什么？" / "What should <agent> do?"; while running (state `running`) the hint "运行中发送的消息会在下一步交给智能体" / "Messages sent while it works reach it at its next step" (run input spec 2026-11-07 §4: ↵ and ⌘↵ both send an interjection); a prompt suggestion (state `suggestion`) replaces the idle placeholder. Keys: §6.11.
 - Existing behavior carries over: `/` connector prompts, `@` connector resources, file drop and paste (FileDrop), at most `attachments.maxPerMessage` attachments, `clientMessageId` dedupe on retry.
 - **Skill chip** (phase D, state `skill`): a skill picked from the `/` menu (or typed as `/name`) shows as a chip before the text on its first line, `space.2` from it, centered on the prose line: `control.dense` high, radius `sm`, padding 0 `space.1` 0 `space.2`, gap `space.1`, the `accent-tint` ground, the label ("/fix-issue") in mono `body` `accent`, then a remove × (`x` 12, a `type.small.line` square, `hover` ground on hover; "移除 /fix-issue" / "Remove /fix-issue"; its hit target extends invisibly to a `control.dense` square, WCAG 2.5.8). The skill's argument hint replaces the placeholder. Backspace with the caret at the start removes the chip and keeps the text; the text that follows is the skill's arguments. Removing it with the × puts focus in the text; while the chip is there the text area is described by its label (`aria-describedby`).
+- **Suggestion** (state `suggestion`, prompt suggestions spec `docs/superpowers/specs/2026-11-19-prompt-suggestions-design.md` §5): the person's likely next message after a completed run (`suggestion: { text, onDismiss }`). It is the textarea's placeholder (the same `faint` placeholder, replacing the idle one, never combined) while the draft is empty, no skill chip is set and no run is going (the running hint wins); below 640 it is one line, cut with an ellipsis. **Tab** (no modifier, not composing, the draft empty, the suggestion shown) fills the draft with the text, the caret at its end, and dismisses it; Tab is taken in exactly this state, so focus navigation is unchanged everywhere else, and Shift+Tab is never taken. **Esc** while it shows dismisses it. Any change that makes the draft non-empty (typing, a paste, attaching a file) dismisses it for that run: it does not come back when the draft is emptied. While it shows the textarea is described (`aria-describedby`) by a visually hidden 「按 Tab 使用建议」 / "Press Tab to use the suggestion" (`composer-suggestion-hint`); there is no live region, so its arrival never interrupts reading the reply. On a touch device (`isTouchPointer()`, no Tab key) a ghost `control.dense` button 「使用建议」 / "Use suggestion" (`composer-suggestion-use`, `corner-down-left` 14) stands at the end of the control row before send, only while the suggestion shows; its accessible name holds the text (「使用建议：<text>」 / "Use suggestion: <text>"), and a tap fills the draft without focusing the textarea (no keyboard pops up).
 - **Token warning** (setup guides v2 spec §12.1, decided 2026-11-09): every composer (new conversation, a conversation, sub-agent replies) warns before sending a draft that holds something credential-like, scanned in the browser by `findTokenLikeSpans` (`conversation/token-like.ts`: Slack `xox[bpaer]-` / `xapp-`, GitHub `gh[pousr]_` / `github_pat_`, `sk-` keys, AWS `AKIA`, Google `AIza`, PEM private keys, JWTs, and runs of 32 or more base64url characters at 4.0 bits per character or more holding a digit and a letter, except URLs, `data:` URIs, paths, identifiers and package names made of words, UUIDs, hex hashes, SRI hashes, raw file base64 and code spans that hold words). A paste holding such text raises it at once; typed text is checked on send, where the first ↵ (or send click) shows the warning instead of sending. It is the Callout's warn line (§6.19) at the top of the frame, above the attachment strip, never a box in the composer box: 「这段内容看起来像密钥或令牌（Slack 令牌）。密钥只应填在设置页的对应字段里，不要发到对话中。」 / "This looks like a secret or token (Slack token). Secrets belong in the setting's field, not in the conversation." naming each kind found once, with 「移除」 / "Remove" (deletes the matched spans, focus back in the text except on a touch device) and 「仍然发送」 / "Send anyway" (sends the draft unchanged: `onSend`, which also works while the button is Stop); the buttons go under the sentence when the row is short (a phone). While it shows, ↵ sends; an edit that leaves no match clears it. Nothing blocks sending, nothing is highlighted in the text, and nothing is logged, reported or sent to the kernel.
 
 <!-- states: composer -->
-States: `idle`, `new`, `running`, `attachments`, `focus`, `no-effort`, `skill`, `device`, `device-locked`
+States: `idle`, `new`, `running`, `attachments`, `focus`, `no-effort`, `skill`, `device`, `device-locked`, `suggestion`
 
 <!-- size-table: composer -->
 | Part | State | Property | Value |
@@ -1436,6 +1470,8 @@ States: `idle`, `new`, `running`, `attachments`, `focus`, `no-effort`, `skill`, 
 | picker | device-locked | color | color.muted |
 | composer-token-remove | skill | height | type.small.line |
 | composer-input | skill | font-size | type.prose |
+| composer-input | suggestion | font-size | type.prose |
+| composer-suggestion-use | suggestion | height | control.dense |
 
 #### 6.16.3 Picker menu
 
@@ -1627,7 +1663,7 @@ States: `stopped`, `failed`, `compacted`, `compacted-open`, `fallback`, `hook-de
 
 - **One call** is a tool line: the row label (§6.16.9) and a chevron when it has detail; opening it shows the detail (or the diff) in a tool box below.
 - **Two or more consecutive calls** form a group: a header tool line (the summary) and, when open, the **tool box**: `panel` ground, radius `md`, `small` type, overflow hidden, one row per call, rows divided by `line-soft`. A finished group is collapsed by default; a running group is open and its header has no chevron.
-- **Summary** (copy in §7): counts by kind with each kind's verb, joined by "，" / ", " in a fixed order (commands, tools, reads, edits, as reference set B draws it); failures add "（N 个失败）" / " (N failed)" in `fail` (only rows in the failed state: a non-zero exit, a guard refusal and a not-loaded notice are not failures, §6.16.9); guard refusals add "（N 个已拦下）" / " (N blocked)" in the header's own color; edits add " · +a −b" in `faint`; a group whose rows all read, or all edit, one path names it in `ink` ("已读取 示例表.xlsx"). Running: a `spinner` (16), the running verb of the running row's kind and " · 已完成 N 个" / " · N done" in `faint`; when every live call waits for a person (§6.16.9), no spinner and the waiting word in `accent` instead of the verb ("等待你回答 · 已完成 N 个").
+- **Summary** (copy in §7): counts by kind with each kind's verb, joined by "，" / ", " in a fixed order (commands, background task reads, tools, reads, edits, as reference set B draws it); failures add "（N 个失败）" / " (N failed)" in `fail` (only rows in the failed state: a non-zero exit, a guard refusal and a not-loaded notice are not failures, §6.16.9); guard refusals add "（N 个已拦下）" / " (N blocked)" in the header's own color; edits add " · +a −b" in `faint`; a group whose rows all read, or all edit, one path names it in `ink` ("已读取 示例表.xlsx"). Running: a `spinner` (16), the running verb of the running row's kind and " · 已完成 N 个" / " · N done" in `faint`; when every live call waits for a person (§6.16.9), no spinner and the waiting word in `accent` instead of the verb ("等待你回答 · 已完成 N 个").
 - **One call with a link** (§6.16.9): the tool line holds its toggle (the label and the chevron) and, after it, the link; the two are separate buttons.
 - Groups sit between prose and end at prose, a user message, a human-in-the-loop card, a sub-agent group or a divider. Pages never group calls themselves: `apps/web/src/lib/timeline.ts` turns events into groups.
 
@@ -2071,12 +2107,13 @@ States: `default`, `hover`, `focus`, `long-name`, `removed`
 #### 6.16.20 File outputs
 
 - **Several files**: a two-column grid, gap `space.2`; past 4, the first 3 and a fourth card "还有 N 个文件" / "N more files" (`muted`, chevron) that opens the Files section.
-- **Image**: shown inline, `layout.inline-image` wide at its own aspect ratio, `panel` ground, radius `md` (bitmaps through the `?inline=1` rule; SVG never renders inline). Hover shows enlarge (`zoom-in`) and download (`download`) dense icon buttons (`raised` ground, 1px `line` border) `space.2` from the top right. Below it a caption tool line: the name in `ink`, then " · <width>×<height> · <size>" in `faint`.
+- **Image**: shown inline, `layout.inline-image` wide at its own aspect ratio, `panel` ground, radius `md` (bitmaps through the `?inline=1` rule; SVG never renders inline). Before the bitmap loads the frame keeps the producing call's ratio when known (`ratio`), else 16:9. Hover shows enlarge (`zoom-in`) and download (`download`) dense icon buttons (`raised` ground, 1px `line` border) `space.2` from the top right. Below it a caption tool line: the name in `ink`, then " · <width>×<height> · <size>" in `faint`.
+- **Generating image** (`ImagePlaceholder`, `image-placeholder`): shown in place of each image a running `GenerateImage` call will deliver, so the image later replaces it at the same position and size. The frame is the Image frame: `layout.inline-image` wide, `max-width: 100%`, radius `md`, `panel` ground, clipped, `aspect-ratio` from the call's ratio (`1:1`, `4:3`, `3:4`, `3:2`, `2:3`, `16:9` or `9:16`; 1:1 when unknown). It holds an oversized layer with three soft radial colour fields, `accent` at about 35 %, `accent-hover` at about 25 % and `ink` at about 8 %, each mixed into `panel` (`color-mix(in oklab, …)`) and fading to transparent, that drifts once per `motion.flow` (transform only; reduced motion leaves it still at its rest pose). Centred on top, an `image` icon (16, `faint`). Below it the same caption tool line as the Image: "正在生成图片" / "Generating image", "正在生成图片 2/3" / "Generating image 2/3" when the call asks for several, then in `faint` " · 16:9" when the ratio is known. ARIA: the frame is `role="img"` with `aria-busy="true"` and `aria-label` the caption text; no live region. Theme plugins restyle it through `data-cap-part="image-placeholder"`.
 - **Image viewer** (`ImageViewer`, `image-viewer`; what a bubble's image thumbnail and the right panel's image open): a full-screen overlay (portal over the page, the dialog primitive's focus trap, Esc and focus return) on the `lightbox` ground. The image starts fit to the viewport (inset `space.8` + `space.4` top and bottom, `space.4` at the sides for the bars), never upscaled; it zooms 10 % to 800 % by wheel (around the pointer), pinch and the bottom toolbar (`zoom-out`, the percent in mono, `zoom-in`, `1:1`, `maximize-2` for fit), pans by dragging once it exceeds the viewport, and a double click toggles fit and 100 %. The top bar (a `raised` strip, `line` border, radius `md`) holds the name, the size and "n / total" (several images only) at the left, and 在新标签打开 (`external-link`), 下载 and 关闭 at the right; with several images side buttons and ← / → switch (reset to fit; disabled at the ends). Esc, 关闭 and a click on the backdrop (not on the image or a drag's end) close it. A failed image shows `LoadFailed` (with Retry when the caller can reload) in a `raised` card; only `isSafeAttachmentHref` sources load. Reduced motion draws it without the fade. It replaces the `Dialog`-based `ImageZoom`.
 - **Text** (md, txt, csv …): a floating card without padding: a head (padding `pad.default`, `small`, a `line-soft` bottom line: type badge, name, size `muted`, "打开" / "Open" link button with a chevron) and the first lines as plain text (`small` `muted`, wrapped, 6 lines high, padding `space.2` `space.3`, fading out at the bottom). Never rendered as HTML.
 
 <!-- states: file-outputs -->
-States: `two`, `more`, `image`, `image-hover`, `text`
+States: `two`, `more`, `image`, `image-hover`, `text`, `generating`, `generating-several`, `generating-wide`
 
 <!-- size-table: file-outputs -->
 | Part | State | Property | Value |
@@ -2094,6 +2131,10 @@ States: `two`, `more`, `image`, `image-hover`, `text`
 | text-output-head | text | font-size | type.small |
 | text-output-body | text | font-size | type.small |
 | text-output-body | text | color | color.muted |
+| image-placeholder | generating | width | layout.inline-image |
+| image-placeholder | generating | border-radius | radius.md |
+| image-placeholder | generating | background-color | color.panel |
+| tool-line | generating | font-size | type.small |
 
 #### 6.16.21 Attachment strip
 
@@ -2123,12 +2164,12 @@ States: `image`, `file`, `uploading`, `rejected`
 
 #### 6.16.22 File preview
 
-- The right panel showing a file (§6.16.18): header type badge, the name with the file switcher, "v<n> · <updated>" in `faint`, download, full screen, close. There is **no Share** (sharing belongs to Artifacts). The conversation's files are what the agent delivered and what people sent with messages; a sent file is marked "上传" / "Uploaded" in the switchers and the Files section.
-- The body is the previewer that handles the file. Built in: **image** (bitmaps on the `panel` ground, radius `md`, `space.4` margin, scaled to fit; never SVG); **text and source code** (mono `small` `ink`, wrapped, never executed); **Markdown** (§6.16.4, no raw HTML); **CSV / TSV** (a flush table: `small`, header cells `row.dense` `muted` 400, body cells `row.dense` with a `line-soft` top line, padding 0 `space.3`, no wrapping, numbers right-aligned; at most 500 rows, then "显示前 N 行 · 共 M 行" / "Showing the first N of M rows" in `small` `muted`). Spreadsheet previewers may show sheet tabs (`small`, gap `space.4`, the current tab `ink` with a 2px `accent` underline). Extension previewers (`file-preview@1`) come first when one accepts the file; the header lets the person switch when more than one applies.
+- The right panel showing a file (§6.16.18): header type badge, the name with the file switcher, "v<n> · <updated>" in `faint`, share, download, full screen, close. **Share** (`share` 16, "分享" / "Share"; file sharing design §5) is an icon button right before Download, shown only when the caller passes `onShare` (the conversation's owner, a file that is not removed); it opens the share dialog. A file with a live share carries a **shared marker** on that button: a `space.2` round dot in `ok` at its top right, ringed by the `panel-2` ground, and the button's name becomes "已分享" / "Shared" (the dialog behind it lists the file's shares). Never the accent (§2.3). The conversation's files are what the agent delivered and what people sent with messages; a sent file is marked "上传" / "Uploaded" in the switchers and the Files section.
+- The body is the previewer that handles the file. Built in: **HTML** (the HTML document frame, §6.43, wins over extension previewers; a Rendered / Source switch, Source being the text previewer); **image** (bitmaps on the `panel` ground, radius `md`, `space.4` margin, scaled to fit; never SVG); **text and source code** (mono `small` `ink`, wrapped, never executed); **Markdown** (§6.16.4, no raw HTML); **CSV / TSV** (a flush table: `small`, header cells `row.dense` `muted` 400, body cells `row.dense` with a `line-soft` top line, padding 0 `space.3`, no wrapping, numbers right-aligned; at most 500 rows, then "显示前 N 行 · 共 M 行" / "Showing the first N of M rows" in `small` `muted`). Spreadsheet previewers may show sheet tabs (`small`, gap `space.4`, the current tab `ink` with a 2px `accent` underline). Extension previewers (`file-preview@1`) come first when one accepts the file; the header lets the person switch when more than one applies.
 - **No preview**: a centered floating card (at most 400 wide): type badge, name over "<size> · 没有可用的预览" / "<size> · No preview available", and "下载" / "Download" (default, `download`). **Failed**: the load-failure line, then the same card as the fallback.
 
 <!-- states: file-preview -->
-States: `image`, `text`, `markdown`, `csv`, `none`, `failed`
+States: `image`, `text`, `markdown`, `csv`, `none`, `failed`, `unshared`, `shared`
 
 <!-- size-table: file-preview -->
 | Part | State | Property | Value |
@@ -2149,6 +2190,10 @@ States: `image`, `text`, `markdown`, `csv`, `none`, `failed`
 | no-preview | none | padding-left | space.3 |
 | load-failed-title | failed | color | color.fail |
 | no-preview | failed | background-color | color.raised |
+| icon-button[data-share=true] | unshared | width | control.default |
+| share-marker | shared | width | space.2 |
+| share-marker | shared | height | space.2 |
+| share-marker | shared | background-color | color.ok |
 
 #### 6.16.23 Run row
 
@@ -2422,7 +2467,8 @@ level or agent, `view`) it moves to the new head's back button, else its title.
   as the composer's agents chip (§6.16.29; AC3 ruling 4, 2026-11-07).
 - **Tree**: columns left to right by depth, `space.6` apart; a parent is vertically centred on its
   children; standard elbow connectors (1px `line-strong`) from each parent to the vertical centre of
-  each child; siblings `space.2` apart. No "main agent" or "level N" labels: position and lines
+  each child; siblings `space.2` apart, newest first (the agent dispatched last on top; the
+  page passes them in dispatch order, as the kernel's tree gives them). No "main agent" or "level N" labels: position and lines
   show the hierarchy. Four columns (three levels below the root) are wider than the dialog: the
   tree scrolls inside it.
 - **Node**: a button 320 wide and 62 high, the same for every node (padding 0 `space.3`, `panel-2`,
@@ -3372,6 +3418,43 @@ States: `cloud`, `local`, `suspended`, `offline`
 
 `KeycapCommand({ command, hint?, copyLabel? })` (auto mode design §4): **one inline row**, not a block — the hint (when there is one) in prose `small`, `muted`, then the command as keycaps, then the copy button beside them. Each word of `command` is its own `kbd`-styled key (1 px `line` border with a 2 px bottom edge, radius `sm`, `panel` ground, `small` mono `ink`) with `space.1` between them. The copy button is a dense ghost (copy 14), it copies the whole command, reads 已复制 / "Copied" for two seconds, and without a usable clipboard selects the keycaps and says to copy by hand. It is the only place the command appears on a page (`capybara-device ceiling set …`), and its accessible name names the command (复制 <command> / "Copy <command>"). Not in the reference set: no state list or size table yet (like `Kbd`, §6.5).
 
+### 6.43 HtmlDocumentFrame
+
+`HtmlDocumentFrame({ src, title })` (file sharing design §4) shows an HTML file as a whole document: the kernel serves it (`/api/v1/html/<token>`) with a CSP that sandboxes it, and this frame is the second layer. With EmbedFrame (§6.9) it is the only component that renders an iframe; `apps/web` never writes one.
+
+- **Fixed attributes**: `sandbox="allow-scripts allow-popups allow-popups-to-escape-sandbox"` (`HTML_DOCUMENT_SANDBOX`; never `allow-same-origin`, `allow-top-navigation` or `allow-forms`, and the caller cannot widen it), `referrerpolicy="no-referrer"`, `title` required (the file name). Scripts run; links open in a new, unsandboxed tab; the document cannot reach the app.
+- **Look**: it fills its container (the right panel's body, the shared file page's body), no border, no radius, no padding. A document without its own background reads as a light page in either theme (what it is when opened alone): the frame's ground is the browser's light page color, and a document that declares a dark color scheme paints its own.
+- No loading or failure state of its own: the caller shows the panel's loading line until it has a token, and the document's own errors stay inside it.
+
+<!-- states: html-frame -->
+States: `ready`
+
+<!-- size-table: html-frame -->
+| Part | State | Property | Value |
+|---|---|---|---|
+| html-frame | ready | width | 560 |
+| html-frame | ready | height | 360 |
+| html-frame | ready | border-top-width | 0 |
+
+### 6.44 CopyField
+
+`CopyField({ label, value })` (file sharing design §5): a value people copy and may see again (a share link), unlike SecretReveal (§6.22), which is shown once. The label (600 `ink`), then one row: a read-only `Input` holding the value (selected on focus, mono like every input) and a default "复制" / "Copy" button (`copy` 14; "已复制" / "Copied" with `check` for 2 s after copying). There is no warning line. Without a usable clipboard (an insecure origin, a refused permission) the button selects the field and a `muted` `small` line with `circle-alert` 14 says to copy it by hand ("无法自动复制：已选中，请按 Ctrl+C（⌘C）复制。" / "Couldn't copy automatically: the text is selected, press Ctrl+C (⌘C) to copy."). Used in the share dialog for a new link and for each live share.
+
+<!-- states: copy-field -->
+States: `idle`, `copied`, `manual`
+
+<!-- size-table: copy-field -->
+| Part | State | Property | Value |
+|---|---|---|---|
+| copy-field | idle | row-gap | space.2 |
+| copy-field-label | idle | color | color.ink |
+| input | idle | height | control.default |
+| input | idle | border-radius | radius.sm |
+| button | idle | height | control.default |
+| button | copied | height | control.default |
+| copy-field-manual | manual | color | color.muted |
+| copy-field-manual | manual | font-size | type.small |
+
 ## 7. Copy and internationalization
 - All UI text goes through next-intl, in both Chinese and English. Text shown to the model (prompts, tool descriptions) is always English, and the prompt field in a form must say so.
 - Thousands separators for numbers; amounts `¥412.80`; relative time ("2 hours ago") for lists, absolute time (`10-18 14:02:11`) for records and logs.
@@ -3379,11 +3462,12 @@ States: `cloud`, `local`, `suspended`, `offline`
 - Error messages state the cause and give an actionable next step; include the error code and request ID for troubleshooting.
 - **Files, not artifacts**: what an agent delivers from its sandbox is "文件" / "files" in UI copy, never "产出物" / "artifacts" (reserved for project C's Artifacts). The kernel identifiers (`artifact_created`, `/artifacts/:id/download`) stay as they are.
 - **Untitled conversations** read "未命名会话 · MM-DD HH:mm" / "Untitled conversation · MM-DD HH:mm" (the start time) until a title exists.
-- **Tool group wording** (§6.16.8; rows carry no verb: they name the tool, §6.16.9), as the signed reference set B draws them. Counts are Arabic numerals; failures append "（N 个失败）" / " (N failed)" in `fail`, then guard refusals (§6.16.9) "（N 个已拦下）" / " (N blocked)" in the header's own color; mixed kinds join with "，" / ", " in the fixed order command, tools (connector, tool, search, meta, question), read, edit:
+- **Tool group wording** (§6.16.8; rows carry no verb: they name the tool, §6.16.9), as the signed reference set B draws them. Counts are Arabic numerals; failures append "（N 个失败）" / " (N failed)" in `fail`, then guard refusals (§6.16.9) "（N 个已拦下）" / " (N blocked)" in the header's own color; mixed kinds join with "，" / ", " in the fixed order command, task, tools (connector, tool, search, meta, question), read, edit:
 
   | Kind | Group count zh / en | Running header zh / en |
   |---|---|---|
   | command | 已运行 N 个命令 / Ran N commands | 正在运行命令 / Running command |
+  | task (`TaskOutput`, `TaskList`: reading background tasks, never a file read) | 已查看 N 次后台任务 / Checked background tasks N times (one: 已查看 1 次后台任务 / Checked a background task) | 正在等待后台任务 / Waiting on a background task |
   | read | 已读取 N 个文件 / Read N files (one path: 已读取 <path> / Read <path>) | 正在读取文件 / Reading file |
   | edit | 已修改 N 个文件 · +a −b / Edited N files · +a −b (one path: 已修改 <path>) | 正在修改文件 / Editing file |
   | search | counted with tools | 正在使用工具 / Using tool |

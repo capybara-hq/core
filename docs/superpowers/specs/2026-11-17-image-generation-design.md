@@ -186,6 +186,10 @@ Shared by the tool and `ctx.models.generateImage`:
 
 A kernel builtin in `tools/builtins/image/`, beside the web tools.
 
+> Superseded in part by `2026-11-19-truthful-delivery-design.md` §1–§3: the listed `n` and
+> `reference_images` follow the org's effective model (not a fixed 1..4), and the result text
+> (delivered counts, repeats, the device line) is worded there; the example below is the old form.
+
 ```
 name: GenerateImage
 description (English, final wording in the plan):

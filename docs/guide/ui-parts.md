@@ -36,6 +36,7 @@ which may hold several names; select with `[data-cap-part~="<name>"]`.
 | `switch.knob` | 1 | none | The knob inside a `switch` (style it from the switch's state). |
 | `org-avatar` | 1 | none | The org's initial block in the sidebar's org switcher. |
 | `agent-chip` | 1 | `aria-pressed` | An agent chip of the new conversation's agents row; `aria-pressed` on the selected one. |
+| `image-placeholder` | 1 | `aria-busy` | A generating image's placeholder in the conversation. |
 
 ## `shell`
 
@@ -297,3 +298,12 @@ An agent chip of the new conversation's agents row; `aria-pressed` on the select
 - States: `aria-pressed`
 - Owner: `packages/design/src/conversation/agent-row.tsx`
 - Selector: `[data-cap-part~="agent-chip"]`
+
+## `image-placeholder`
+
+A generating image's placeholder in the conversation.
+
+- Version: 1
+- States: `aria-busy`
+- Owner: `packages/design/src/conversation/files.tsx`
+- Selector: `[data-cap-part~="image-placeholder"]`

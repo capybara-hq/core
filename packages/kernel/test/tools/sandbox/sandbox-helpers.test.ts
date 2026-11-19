@@ -481,6 +481,7 @@ describe("fix round 2: deliver failures, grep exit 2", () => {
       } as unknown as SandboxToolDeps["storage"],
       eventLog: {
         append: opts.append ?? (async () => []),
+        readDeliveryScope: async () => ({ boundary: 0, artifacts: [] }),
       } as unknown as SandboxToolDeps["eventLog"],
       config: { get: () => cfg },
     });
@@ -501,10 +502,10 @@ describe("fix round 2: deliver failures, grep exit 2", () => {
     expect(r.puts).toEqual([]);
   });
 
-  it("deliver: the description suggests tar -czf, not zip (the sandbox image has no zip)", () => {
+  it("deliver: the description states the one-file contract without prescribing a command", () => {
     const d = rig().tool("Deliver").spec.description;
-    expect(d).toContain("tar -czf");
-    expect(d).not.toContain("zip");
+    expect(d).toContain("a directory must first be packed into one archive");
+    expect(d).not.toMatch(/\b(tar|zip) -/);
   });
 
   it("deliver without an object store: unavailable with an English reason, fails before stat / read", async () => {
@@ -604,6 +605,7 @@ describe("read before write over Read's byte limit", () => {
       storage: {} as any,
       eventLog: {
         append: async () => [],
+        readDeliveryScope: async () => ({ boundary: 0, artifacts: [] }),
         latestFileState: async (_c: string, path: string) => recorded.get(path) ?? null,
       },
       config: {
@@ -715,6 +717,7 @@ describe("custom roots (environments phase 2, spec §13.1)", () => {
       storage: {} as any,
       eventLog: {
         append: async () => [],
+        readDeliveryScope: async () => ({ boundary: 0, artifacts: [] }),
         latestFileState: async () => null,
       },
       config: { get: () => cfg },

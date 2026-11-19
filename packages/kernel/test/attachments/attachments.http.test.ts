@@ -111,9 +111,11 @@ const provider = (): MediaProvider => {
   return e.impl as MediaProvider;
 };
 
-/** The agent's requests: conversation title calls (UI refresh B) left out. */
+/** The agent's requests: conversation title and prompt suggestion calls left out. */
 const agentRequests = () =>
-  provider().requests.filter((r) => !r.system.some((x) => x.text === TITLE_PROMPT));
+  provider().requests.filter(
+    (r) => r.purpose !== "suggestion" && !r.system.some((x) => x.text === TITLE_PROMPT),
+  );
 
 let owner: Req;
 let other: Req;

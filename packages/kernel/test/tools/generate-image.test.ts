@@ -111,6 +111,7 @@ beforeAll(async () => {
               { id: "fake-image", kind: "image_generation" },
               { id: "fake-image-b", kind: "image_generation" },
               { id: "fake-image-noref", kind: "image_generation", maxReferenceImages: 0 },
+              { id: "fake-image-one", kind: "image_generation", maxImages: 1 },
             ],
           },
           "sandbox-fake": { root },
@@ -461,9 +462,11 @@ describe("GenerateImage calls", () => {
     for (const a of artifacts) {
       expect(a.payload).toMatchObject({
         contentType: "image/png",
-        size: PNG.byteLength,
         callId: r.payload.callId,
       });
+      // the fake provider returns different bytes per index: the first is the sample, the
+      // others carry one extra chunk
+      expect(a.payload.size).toBeGreaterThanOrEqual(PNG.byteLength);
       expect(a.payload.objectKey).toBe(`artifacts/${conv}/${a.payload.artifactId}`);
       // each call's images are their own files, never versions of another call's
       expect(a.payload.sourcePath).toBe(`generated/${r.payload.callId}/${a.payload.name}`);
@@ -485,17 +488,16 @@ describe("GenerateImage calls", () => {
     });
     expect(usage[0]?.runId).toBe(r.runId);
     const lines = r.payload.content.split("\n");
-    expect(lines[0]).toBe(
-      "Generated 2 images with model-fake/fake-image at 1024x1024 and delivered them to the user:",
-    );
+    expect(lines[0]).toBe("Generated 2 images with model-fake/fake-image at 1024x1024.");
+    expect(lines[1]).toBe("Delivered 2 to the user:");
     for (const [i, a] of artifacts.entries()) {
-      expect(lines[i + 1]).toBe(
-        `- ${a.payload.name} (artifact ${a.payload.artifactId}, image/png, ${PNG.byteLength} B)`,
+      expect(lines[i + 2]).toBe(
+        `- ${a.payload.name} (artifact ${a.payload.artifactId}, image/png, ${a.payload.size} B)`,
       );
-      expect(lines[i + 1]).toMatch(ARTIFACT_LINE);
+      expect(lines[i + 2]).toMatch(ARTIFACT_LINE);
     }
-    expect(lines[3]).toBe("Revised prompt: revised: a red fox");
-    expect(lines).toHaveLength(4);
+    expect(lines[4]).toBe("Revised prompt: revised: a red fox");
+    expect(lines).toHaveLength(5);
     // without file_path the call writes nothing into the device and is not reviewed
     expect(r.payload.review).toBeUndefined();
   });
@@ -503,7 +505,9 @@ describe("GenerateImage calls", () => {
   it("one image has no index in its name", async () => {
     const conv = await createConv(owner, orgId, agentId);
     const text = textOf(await direct(conv, { prompt: "a moon" }));
-    expect(text).toMatch(/^Generated 1 image with .* and delivered it to the user:\n- image\.png /);
+    expect(text).toMatch(
+      /^Generated 1 image with .* at \d+x\d+\.\nDelivered 1 to the user:\n- image\.png /,
+    );
   });
 
   it("n above the cap is a validation error", async () => {
@@ -519,7 +523,7 @@ describe("GenerateImage calls", () => {
   it("reference images by attachment id and by an earlier artifact id reach the provider as bytes", async () => {
     const conv = await createConv(owner, orgId, agentId);
     const first = await direct(conv, { prompt: "a cat" });
-    const artifactId = ARTIFACT_LINE.exec(textOf(first).split("\n")[1] as string)?.[2];
+    const artifactId = ARTIFACT_LINE.exec(textOf(first).split("\n")[2] as string)?.[2];
     expect(artifactId).toBeDefined();
     const attBytes = Buffer.concat([PNG, Buffer.from([0])]);
     const att = await attachment(conv, attBytes);
@@ -731,11 +735,19 @@ describe("GenerateImage file_path", () => {
     const name = `poster${randomUUID().slice(0, 6)}`;
     const r = await call(conv, { prompt: "a poster", n: 2, file_path: `out/${name}.png` });
     expect(r.payload.isError, r.payload.content).toBe(false);
-    const line = r.payload.content.split("\n").find((l) => l.startsWith("Written to the device:"));
+    const line = r.payload.content
+      .split("\n")
+      .find((l) => l.startsWith("Also written to the device"));
     expect(line).toMatch(
-      new RegExp(`^Written to the device: \\S+/out/${name}-1\\.png, \\S+/out/${name}-2\\.png$`),
+      new RegExp(
+        `^Also written to the device: \\S+/out/${name}-1\\.png \\(same bytes as artifact [0-9a-f-]{36}\\), \\S+/out/${name}-2\\.png \\(same bytes as artifact [0-9a-f-]{36}\\)$`,
+      ),
     );
-    for (const i of [1, 2]) expect(await deviceFiles(`${name}-${i}.png`)).toEqual([PNG]);
+    expect(await deviceFiles(`${name}-1.png`)).toEqual([PNG]);
+    const second = await deviceFiles(`${name}-2.png`);
+    expect(second).toHaveLength(1);
+    expect(second[0]?.equals(PNG)).toBe(false);
+    expect(second[0]?.subarray(1, 4).toString()).toBe("PNG");
     // inside the workspace the review allows the write
     expect(r.payload.review).toMatchObject({ decision: "allow", by: "rule" });
     // the images were delivered as well
@@ -779,7 +791,10 @@ describe("GenerateImage file_path", () => {
     await waitForTerminal(db, conv, 1, 30_000);
     const r = ofType(await eventsOf(db, conv), "tool_result").at(-1) as ToolResultEvent;
     expect(r.payload.isError, r.payload.content).toBe(false);
-    expect(r.payload.content.split("\n").at(-1)).toBe(`Written to the device: ${dir}/fox.png`);
+    const [made] = ofType(await eventsOf(db, conv), "artifact_created");
+    expect(r.payload.content.split("\n").at(-1)).toBe(
+      `Also written to the device (same bytes as artifact ${made?.payload.artifactId}): ${dir}/fox.png`,
+    );
     expect(r.payload.review).toMatchObject({ decision: "allow", by: "person" });
     expect(seen).toHaveLength(1);
     // the person's approval issued this call's grant, and the device write was admitted under it
@@ -804,7 +819,11 @@ describe("GenerateImage file_path: several paths", () => {
     const r = await call(conv, { prompt: "two", n: 2, file_path: `out/${name}.png` }, 2);
     expect(r.payload.isError, r.payload.content).toBe(false);
     const lines = r.payload.content.split("\n");
-    expect(lines.at(-2)).toMatch(new RegExp(`^Written to the device: \\S+/out/${name}-1\\.png$`));
+    expect(lines.at(-2)).toMatch(
+      new RegExp(
+        `^Also written to the device \\(same bytes as artifact [0-9a-f-]{36}\\): \\S+/out/${name}-1\\.png$`,
+      ),
+    );
     expect(lines.at(-1)).toMatch(
       new RegExp(
         `^Not written to the device: \\S+/out/${name}-2\\.png is a directory; pass the path of a file inside it as file_path\\.$`,
@@ -843,7 +862,11 @@ describe("GenerateImage file_path: several paths", () => {
     // read again: replaced
     await readThrough(conv, `out/${name}`, 5);
     const replaced = await call(conv, { prompt: "a fox", file_path: `out/${name}` }, 6);
-    expect(lastLine(replaced)).toMatch(new RegExp(`^Written to the device: \\S+/out/${name}$`));
+    expect(lastLine(replaced)).toMatch(
+      new RegExp(
+        `^Also written to the device \\(same bytes as artifact [0-9a-f-]{36}\\): \\S+/out/${name}$`,
+      ),
+    );
     expect(await readFile(host)).toEqual(PNG);
   });
 
@@ -852,7 +875,9 @@ describe("GenerateImage file_path: several paths", () => {
     const name = `typed${randomUUID().slice(0, 6)}`;
     const r = await call(conv, { prompt: "a fox", file_path: `out/${name}.jpg` });
     expect(r.payload.content.split("\n").at(-1)).toMatch(
-      new RegExp(`^Written to the device: \\S+/out/${name}\\.jpg \\(image/png\\)$`),
+      new RegExp(
+        `^Also written to the device \\(same bytes as artifact [0-9a-f-]{36}\\): \\S+/out/${name}\\.jpg \\(image/png\\)$`,
+      ),
     );
     expect(await deviceFiles(`${name}.jpg`)).toEqual([PNG]);
   });
@@ -876,8 +901,9 @@ describe("GenerateImage file_path: several paths", () => {
     await approve(ask.id);
     await waitForTerminal(db, conv, 1, 30_000);
     const r = ofType(await eventsOf(db, conv), "tool_result").at(-1) as ToolResultEvent;
+    const [a1, a2] = ofType(await eventsOf(db, conv), "artifact_created");
     expect(r.payload.content.split("\n").at(-1)).toBe(
-      `Written to the device: ${dir}/fox-1.png, ${dir}/fox-2.png`,
+      `Also written to the device: ${dir}/fox-1.png (same bytes as artifact ${a1?.payload.artifactId}), ${dir}/fox-2.png (same bytes as artifact ${a2?.payload.artifactId})`,
     );
   });
 });
@@ -915,7 +941,10 @@ describe("GenerateImage on the activated permission review", () => {
     const dir = `/etc/capybara-img-${randomUUID().slice(0, 6)}`;
     const r = await call(conv, { prompt: "a fox", file_path: `${dir}/fox.png` }, 2);
     expect(r.payload.isError, r.payload.content).toBe(false);
-    expect(r.payload.content.split("\n").at(-1)).toBe(`Written to the device: ${dir}/fox.png`);
+    const [made] = ofType(await eventsOf(db, conv), "artifact_created");
+    expect(r.payload.content.split("\n").at(-1)).toBe(
+      `Also written to the device (same bytes as artifact ${made?.payload.artifactId}): ${dir}/fox.png`,
+    );
     expect(r.payload.review).toMatchObject({ decision: "allow", decisionSource: "full-access" });
     expect(
       await db.selectFrom("approvals").select("id").where("conversation_id", "=", conv).execute(),
@@ -954,6 +983,69 @@ describe("GenerateImage on the activated permission review", () => {
     const delivered = await asMember({ prompt: "a fox" });
     expect(delivered.payload.isError, delivered.payload.content).toBe(false);
     expect(seen).toHaveLength(1);
+  });
+});
+
+describe("GenerateImage facts: repeats, billing, device copies", () => {
+  it("a repeated image names the earlier artifact and billing", async () => {
+    await map("fake-image");
+    const conv = await createConv(owner, orgId, agentId);
+    // two calls of one run return the same bytes: one is stored, the other repeats it
+    await postMessage(
+      owner,
+      orgId,
+      conv,
+      `tools:${JSON.stringify([
+        { name: "GenerateImage", input: { prompt: "first", name: "poster" } },
+        { name: "GenerateImage", input: { prompt: "again" } },
+      ])}`,
+    );
+    await waitForTerminal(db, conv, 1, 30_000);
+    const events = await eventsOf(db, conv);
+    const created = ofType(events, "artifact_created");
+    expect(created).toHaveLength(1);
+    const results = ofType(events, "tool_result").filter(
+      (e) => e.payload.toolKey === "GenerateImage",
+    );
+    expect(results).toHaveLength(2);
+    const repeat = results.find((e) => !e.payload.content.includes("Delivered 1 to the user"));
+    expect(repeat).toBeDefined();
+    const lines = (repeat as ToolResultEvent).payload.content.split("\n");
+    expect(lines[0]).toMatch(/^Generated 1 image with model-fake\/fake-image at \d+x\d+\.$/);
+    expect(lines[1]).toMatch(
+      new RegExp(
+        `^- \\S+\\.png: same content as \\S+\\.png \\(artifact ${created[0]?.payload.artifactId}\\), already delivered to the user since the person last spoke; no new artifact was created\\.$`,
+      ),
+    );
+    expect(lines[2]).toBe("Usage is billed for 1 generated image.");
+    expect(lines[3]).toMatch(/^Revised prompt: /);
+    expect(lines).toHaveLength(4);
+    expect(imageUsage(events)).toHaveLength(2);
+  });
+
+  it("GenerateImage then Deliver of its device copy is a repeat", async () => {
+    await map("fake-image");
+    const conv = await createConv(owner, orgId, agentId);
+    const name = `dev${randomUUID().slice(0, 6)}`;
+    const g = await call(conv, { prompt: "a fox", file_path: `out/${name}.png` });
+    const path = /device[^:]*: (\S+)/.exec(g.payload.content.split("\n").at(-1) ?? "")?.[1];
+    await postMessage(owner, orgId, conv, `tool:Deliver:${JSON.stringify({ file_path: path })}`);
+    await waitForTerminal(db, conv, 2, 30_000);
+    expect(ofType(await eventsOf(db, conv), "artifact_created")).toHaveLength(1);
+  });
+
+  it("n the listing does not offer fails validation", async () => {
+    await map("fake-image-one");
+    try {
+      const conv = await createConv(owner, orgId, agentId);
+      const seen = providerCalls();
+      const r = await call(conv, { prompt: "a fox", n: 2 });
+      expect(r.payload.isError).toBe(true);
+      expect(r.payload.content).toMatch(/additional properties \(n\)/);
+      expect(seen).toEqual([]);
+    } finally {
+      await map("fake-image");
+    }
   });
 });
 

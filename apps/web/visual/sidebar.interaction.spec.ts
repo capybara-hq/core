@@ -1,4 +1,5 @@
 import { expect, type Page, test } from "@playwright/test";
+import { openInteractive } from "./reference-page";
 
 /**
  * Sidebar v3 interaction (design spec §6.11, §6.13; §9.5): keyboard path, group collapse motion
@@ -9,8 +10,7 @@ import { expect, type Page, test } from "@playwright/test";
 const block = (page: Page, id: string) => page.locator(`[data-ref-block="${id}"]`);
 
 async function open(page: Page) {
-  await page.goto("/dev/ui/reference/sidebar");
-  await page.waitForLoadState("networkidle");
+  await openInteractive(page, "/dev/ui/reference/sidebar");
 }
 
 test("keyboard: Tab enters the nav at the current item, ↓ moves, Enter follows the link", async ({

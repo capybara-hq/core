@@ -60,9 +60,11 @@ function installCapture(): void {
       provider: {
         ...(inner.embed && { embed: inner.embed }),
         async *stream(req, opts) {
-          // agent-history requests only (no compaction, title, review or extraction call)
+          // agent-history requests only (no compaction, title, prompt suggestion, review or
+          // extraction call)
           if (
             req.purpose !== "compaction" &&
+            req.purpose !== "suggestion" &&
             !req.system.some(
               (s) => s.text === TITLE_PROMPT || s.text.startsWith(REVIEW_SYSTEM_PROMPT),
             )

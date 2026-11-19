@@ -135,6 +135,8 @@ export function testHost(
     deps.busSubscriber,
     deps.keyring,
     new EmbedTokens(deps.keyring),
+    // no share liveness in a hand-built host: share embed tokens never verify
+    undefined as never,
     deps.locks as never,
     loggerOf(deps.log, opts.onSecrets),
     opts.resolveFrom !== undefined ? { resolveFrom: opts.resolveFrom } : {},

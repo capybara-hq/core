@@ -33,7 +33,10 @@ export const credentialRedisKey = (t: NamedThrottler, tracker: string) =>
 export class CredentialThrottler {
   constructor(@Inject(getStorageToken()) private readonly storage: ThrottlerStorage) {}
 
-  /** Reserves one attempt on every named throttler or throws 429 `auth.rate_limited` (header set on `reply`). */
+  /**
+   * Reserves one attempt on every named throttler or throws 429 with the throttlers' `code`
+   * (default `auth.rate_limited`; `retry-after` set on `reply`).
+   */
   async reserve(names: readonly string[], req: FastifyRequest, reply: FastifyReply): Promise<void> {
     const ts = this.resolve(names);
     const r = await this.redisStorage().reserve(
@@ -43,7 +46,7 @@ export class CredentialThrottler {
     );
     if (r.allowed) return;
     reply.header("retry-after", String(r.retryAfterSeconds));
-    throw new ApiError("auth.rate_limited", ts[0]?.message ?? "");
+    throw new ApiError(ts[0]?.code ?? "auth.rate_limited", ts[0]?.message ?? "");
   }
 
   /** A successful attempt: clears the `clear` counters and refunds one on the `refund` ones. */

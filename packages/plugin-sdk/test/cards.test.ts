@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  asCode,
   type ChannelCard,
   type InputForm,
   questionRenderableInline,
@@ -609,5 +610,13 @@ describe("question cards: text reply and skipped (reply-while-question spec §10
     expect(questionStateLabel("skipped", "en")).toBe("Skipped (replied instead)");
     expect(questionStateLabel("answered", "zh")).toBe("已回答");
     expect(questionStateLabel("someday", "en")).toBe("someday");
+  });
+});
+
+describe("asCode", () => {
+  it("wraps a value in code delimiters longer than any backtick run", () => {
+    expect(asCode("a`b")).toBe("``a`b``");
+    expect(asCode("<@U1>")).toBe("`<@U1>`");
+    expect(asCode("x\ny")).toBe("\n```\nx\ny\n```");
   });
 });

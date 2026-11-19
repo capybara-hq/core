@@ -30,6 +30,7 @@ export const WEB_UI_TEMPLATES = [
   "StatusPage",
   "OnboardingPage",
   "SetupPage",
+  "SharedFilePage",
 ] as const;
 
 /** design 包内用：color-mix( 等在 CSS 里合法地引用 token，所以这里只认字面量写法。 */
@@ -367,7 +368,7 @@ function checkWebFile(
   const STYLE_MSG =
     "页面内不得写 style / <style> / dangerouslySetInnerHTML；改用 @capybara-hq/design 的组件或布局原语，页面内不写样式";
   const IFRAME_MSG =
-    "页面内不得直接渲染 iframe；用 @capybara-hq/design 的 EmbedFrame（固定 sandbox、只转发本 iframe 的消息）";
+    "pages never render an iframe themselves; use @capybara-hq/design's EmbedFrame (fixed sandbox, forwards only its own messages) or HtmlDocumentFrame for an HTML file (fixed sandbox, no referrer)";
   const EXT_SLOT_MSG = "render extension UI through <ExtensionSlot> (UI slots spec §7)";
   const inExtensionUi = segs0[0] === "components" && segs0[1] === "extension-ui";
   const declared = new Set<string>();

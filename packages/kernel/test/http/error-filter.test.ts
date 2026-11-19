@@ -123,6 +123,13 @@ describe("ErrorFilter 日志脱敏", () => {
     ["/api/v1/orgs/o1/invitations/i1", "/api/v1/orgs/o1/invitations/i1"],
     ["/api/v1/orgs/o1/x/cap_svc_abc", "/api/v1/orgs/o1/x/:redacted"],
     ["/api/v1/me", "/api/v1/me"],
+    ["/api/v1/html/eyJr.c2ln", "/api/v1/html/:token"],
+    ["/api/v1/html/eyJr.c2ln?x=1", "/api/v1/html/:token"],
+    ["/api/v1/s/Ab3dEf9hJk", "/api/v1/s/:code"],
+    ["/api/v1/s/Ab3dEf9hJk/content?download=1", "/api/v1/s/:code/content"],
+    ["/api/v1/s/Ab3dEf9hJk/previews/p/v", "/api/v1/s/:code/previews/p/v"],
+    ["/s/Ab3dEf9hJk", "/s/:code"],
+    ["/api/v1/sessions/x", "/api/v1/sessions/x"],
   ])("redactPath(%s) → %s", (input, expected) => {
     expect(redactPath(input)).toBe(expected);
   });

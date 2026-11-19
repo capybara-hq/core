@@ -41,7 +41,7 @@ const LOCKED =
 const NOTHING_INSTALLED = "nothing-installed";
 
 export const NEEDS_INPUT =
-  "This plugin needs configuration a person must enter; ask them to enable it on the 插件 page.";
+  "This plugin needs configuration a person must enter; ask them to enable it on the Plugins page.";
 
 /** The English name of a plugin as next steps and messages name it. */
 const enName = (i: OrgCatalogItem): string => localized(i.displayName, i.name).en;
@@ -224,7 +224,7 @@ export class PluginsOperations implements OnModuleInit {
       defineOperation({
         id: "plugins.set-enabled",
         description:
-          "Switch a plugin on or off in this org. Switching on installs it; a plugin whose enabling needs configuration a person enters (connector credentials, extension config) is refused, so point the person to the 插件 page. Switching off removes what the plugin brought and needs confirm: the value plugins.disable-preview returned with the preview the person saw.",
+          "Switch a plugin on or off in this org. Switching on installs it; a plugin whose enabling needs configuration a person enters (connector credentials, extension config) is refused, so point the person to the Plugins page. Switching off removes what the plugin brought and needs confirm: the value plugins.disable-preview returned with the preview the person saw.",
         input: z.discriminatedUnion("enabled", [
           z.object({ itemId: ItemId, enabled: z.literal(true) }).strict(),
           z.object({ itemId: ItemId, enabled: z.literal(false), confirm: Confirm }).strict(),
@@ -267,7 +267,7 @@ export class PluginsOperations implements OnModuleInit {
           },
           {
             code: "plugin.needs_input",
-            next: "Ask the person to enable it on the 插件 page, where they enter its configuration.",
+            next: "Ask the person to enable it on the Plugins page, where they enter its configuration.",
           },
           {
             code: "catalog.approval_required",

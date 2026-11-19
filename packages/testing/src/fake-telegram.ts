@@ -10,7 +10,8 @@ import type { AddressInfo } from "node:net";
  *   An unknown token → 401 `Unauthorized`; an unknown method → 404 `Not Found`. Point a client at
  *   `apiUrl` (it appends `/bot<token>/<method>`).
  * - **Methods**: `getMe`, `getWebhookInfo` (the url given to {@link FakeTelegramServer.setWebhook}),
- *   `getUpdates`, `sendMessage`, `editMessageText`, `answerCallbackQuery`.
+ *   `getUpdates`, `sendMessage`, `editMessageText`, `answerCallbackQuery`, and the multipart uploads
+ *   `sendPhoto` / `sendDocument` (recorded in `messages` with `file`).
  * - **Long polling**: {@link FakeTelegramServer.push} queues an update per bot and assigns its
  *   `update_id`. `getUpdates` with `offset` confirms (drops) the lower ids; with `timeout` it waits
  *   until a push or the timeout; `allowed_updates` is remembered per bot like Telegram and updates of
@@ -55,6 +56,8 @@ export interface FakeTelegramMessage {
   replyMarkup?: unknown;
   messageThreadId?: number;
   replyToMessageId?: number;
+  /** The uploaded file of a `sendPhoto` / `sendDocument` (the text is its caption). */
+  file?: { kind: "photo" | "document"; name: string; contentType: string; data: Buffer };
   at: number;
 }
 
@@ -129,6 +132,7 @@ export type TgChat = {
 };
 
 const MAX_TEXT = 4096;
+const MAX_CAPTION = 1024;
 const ENTITIES: Record<string, string> = { lt: "<", gt: ">", amp: "&", quot: '"' };
 
 /**
@@ -164,16 +168,27 @@ class TelegramError extends Error {
 }
 
 const readBody = (req: IncomingMessage) =>
-  new Promise<string>((resolve, reject) => {
-    let body = "";
-    req.on("data", (c: Buffer) => {
-      body += c.toString();
-    });
-    req.on("end", () => resolve(body));
+  new Promise<Buffer>((resolve, reject) => {
+    const chunks: Buffer[] = [];
+    req.on("data", (c: Buffer) => chunks.push(c));
+    req.on("end", () => resolve(Buffer.concat(chunks)));
     req.on("error", reject);
   });
 
-function parseParams(url: URL, raw: string, contentType: string | undefined) {
+interface UploadedPart {
+  field: string;
+  name: string;
+  contentType: string;
+  data: Buffer;
+}
+
+async function parseParams(
+  url: URL,
+  rawBytes: Buffer,
+  contentType: string | undefined,
+  uploads: UploadedPart[],
+) {
+  const raw = contentType?.includes("multipart/form-data") ? "" : rawBytes.toString();
   const out: Record<string, unknown> = {};
   const fromForm = (form: URLSearchParams) => {
     for (const [k, v] of form) {
@@ -189,6 +204,31 @@ function parseParams(url: URL, raw: string, contentType: string | undefined) {
     }
   };
   fromForm(url.searchParams);
+  if (contentType?.includes("multipart/form-data")) {
+    let form: FormData;
+    try {
+      form = await new Response(new Uint8Array(rawBytes), {
+        headers: { "content-type": contentType },
+      }).formData();
+    } catch {
+      throw new TelegramError(400, "Bad Request: invalid multipart body");
+    }
+    for (const [k, v] of form) {
+      if (typeof v === "string") {
+        const one = new URLSearchParams();
+        one.set(k, v);
+        fromForm(one);
+      } else {
+        uploads.push({
+          field: k,
+          name: v.name,
+          contentType: v.type,
+          data: Buffer.from(await v.arrayBuffer()),
+        });
+      }
+    }
+    return out;
+  }
   if (raw === "") return out;
   if (contentType?.includes("application/json")) {
     let body: unknown;
@@ -332,13 +372,24 @@ export async function startFakeTelegram(
     return { limit, timeout, ready: collect(s, limit), port: req.socket.remotePort };
   };
 
-  const sendMessage = (s: BotState, params: Record<string, unknown>) => {
+  /** `upload` set: a sendPhoto / sendDocument, whose text is the caption (up to 1024). */
+  const sendMessage = (
+    s: BotState,
+    params: Record<string, unknown>,
+    upload?: { kind: "photo" | "document"; part: UploadedPart },
+  ) => {
     const chatId = num(params.chat_id);
     if (chatId === undefined) throw new TelegramError(400, "Bad Request: chat not found");
-    const text = str(params.text) ?? "";
-    if (text === "") throw new TelegramError(400, "Bad Request: message text is empty");
-    if (telegramTextLength(text, str(params.parse_mode)) > MAX_TEXT) {
-      throw new TelegramError(400, "Bad Request: message is too long");
+    const text = (upload ? str(params.caption) : str(params.text)) ?? "";
+    if (!upload && text === "") throw new TelegramError(400, "Bad Request: message text is empty");
+    if (upload && upload.part.data.length === 0) {
+      throw new TelegramError(400, "Bad Request: file must be non-empty");
+    }
+    if (telegramTextLength(text, str(params.parse_mode)) > (upload ? MAX_CAPTION : MAX_TEXT)) {
+      throw new TelegramError(
+        400,
+        upload ? "Bad Request: message caption is too long" : "Bad Request: message is too long",
+      );
     }
     const chatKey = `${s.bot.token}|${chatId}`;
     const messageId = (lastMessageId.get(chatKey) ?? 0) + 1;
@@ -355,6 +406,14 @@ export async function startFakeTelegram(
       ...(params.reply_markup !== undefined && { replyMarkup: params.reply_markup }),
       ...(threadId !== undefined && { messageThreadId: threadId }),
       ...(replyTo !== undefined && { replyToMessageId: replyTo }),
+      ...(upload && {
+        file: {
+          kind: upload.kind,
+          name: upload.part.name,
+          contentType: upload.part.contentType,
+          data: upload.part.data,
+        },
+      }),
       at: Date.now(),
     };
     messages.push(m);
@@ -400,7 +459,21 @@ export async function startFakeTelegram(
     from: botUser(s.bot),
     chat: { id: m.chatId, type: m.chatId > 0 ? "private" : "supergroup" },
     date: Math.floor(m.at / 1000),
-    text: m.text,
+    ...(m.file
+      ? {
+          ...(m.text !== "" && { caption: m.text }),
+          ...(m.file.kind === "photo"
+            ? { photo: [{ file_id: "fake-photo", file_unique_id: "fp", width: 800, height: 800 }] }
+            : {
+                document: {
+                  file_id: "fake-document",
+                  file_unique_id: "fd",
+                  file_name: m.file.name,
+                  mime_type: m.file.contentType,
+                },
+              }),
+        }
+      : { text: m.text }),
     ...(m.messageThreadId !== undefined && { message_thread_id: m.messageThreadId }),
     ...(m.replyMarkup !== undefined && { reply_markup: m.replyMarkup }),
   });
@@ -408,8 +481,9 @@ export async function startFakeTelegram(
   const handle = async (req: IncomingMessage, res: ServerResponse, token: string, name: string) => {
     const url = new URL(req.url ?? "/", "http://x");
     let params: Record<string, unknown>;
+    const uploads: UploadedPart[] = [];
     try {
-      params = parseParams(url, await readBody(req), req.headers["content-type"]);
+      params = await parseParams(url, await readBody(req), req.headers["content-type"], uploads);
     } catch (e) {
       if (e instanceof TelegramError) return fail(res, e.code, e.message);
       throw e;
@@ -478,6 +552,15 @@ export async function startFakeTelegram(
         }
         case "sendmessage":
           return ok(res, sendMessage(s, params));
+        case "sendphoto":
+        case "senddocument": {
+          const kind = method === "sendphoto" ? "photo" : "document";
+          const part = uploads.find((u) => u.field === kind);
+          if (!part) {
+            throw new TelegramError(400, `Bad Request: there is no ${kind} in the request`);
+          }
+          return ok(res, sendMessage(s, params, { kind, part }));
+        }
         case "editmessagetext":
           return ok(res, editMessageText(s, params));
         case "answercallbackquery":

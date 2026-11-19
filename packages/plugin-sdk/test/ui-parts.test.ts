@@ -4,7 +4,7 @@ import { UI_PART_NAMES, UI_PARTS, uiPart } from "../src/index.js";
 describe("ui part catalog", () => {
   it("part names are unique and dotted lower-case", () => {
     const names = UI_PARTS.map((p) => p.name);
-    expect(UI_PARTS).toHaveLength(29);
+    expect(UI_PARTS).toHaveLength(30);
     expect(new Set(names).size).toBe(names.length);
     expect([...UI_PART_NAMES]).toEqual(names);
     for (const n of names) expect(n).toMatch(/^[a-z]+(-[a-z]+)*(\.[a-z]+(-[a-z]+)*)*$/);
@@ -32,5 +32,9 @@ describe("ui part catalog", () => {
       expect(p.description.zh).not.toMatch(/agent/i);
       expect(p.description.en.length).toBeGreaterThan(0);
     }
+  });
+
+  it("image-placeholder is busy-aware", () => {
+    expect(uiPart("image-placeholder")?.states).toEqual(["aria-busy"]);
   });
 });

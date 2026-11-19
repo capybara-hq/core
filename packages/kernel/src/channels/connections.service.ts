@@ -3,6 +3,7 @@ import { isIP } from "node:net";
 import {
   CHANNEL_EXTENSION_POINT,
   type Channel,
+  type ChannelFile,
   type ChannelTarget,
   type ExtensionContext,
   missingInboundModeFields,
@@ -39,7 +40,7 @@ import { isForbiddenAddress, isLoopbackHost, normalizeHost } from "../net/public
 import { OrgLock } from "../orgs/org-lock.js";
 import type { OrgRole } from "../orgs/roles.js";
 import { readOrgSettings } from "../orgs/settings.service.js";
-import { adaptToFeatures } from "./features.js";
+import { adaptTarget, adaptToFeatures } from "./features.js";
 import { ChannelJobs } from "./jobs.js";
 import type { ChannelLocale } from "./phrases.js";
 import { webhookBase, webhookUrlOf } from "./webhook-url.js";
@@ -78,8 +79,10 @@ export const CHANNEL_CHANGED_TOPIC = "channel.changed";
 export const channelBackoffKey = (id: string) => `capk:channel-backoff:${id}`;
 export const channelFailsKey = (id: string) => `capk:channel-fails:${id}`;
 
-/** 调用插件 verify / send 的时限。 */
+/** The time limit of an extension's verify / send call. */
 const PLUGIN_CALL_TIMEOUT_MS = 15_000;
+/** The time limit of an extension's `sendFile` call, and of reading the file before it. */
+export const FILE_CALL_TIMEOUT_MS = 120_000;
 
 export type UnboundPolicy = "bind" | "anonymous";
 export type ChannelStatus = "active" | "disabled" | "error";
@@ -1057,16 +1060,31 @@ export class ChannelConnections implements OnApplicationShutdown {
   }
 
   /**
-   * 出站会话：解密一次连接配置，之后经插件发 / 改消息（每次调用 15s 超时）。目标与消息先按渠道的
-   * `features` 调整（不支持卡片的退回为文本、不支持话题的去掉 threadId，Ruling A33，见 features.ts）。出站投递任务在一次任务内复用它；
-   * `redact` 按该连接的密钥打码（插件异常信息写进 `last_error` 前使用）。
+   * The outbound session: decrypts the connection config once, then sends / edits messages through
+   * the extension (15 s per call; `sendFile` 120 s). Targets and messages are first adapted to the
+   * channel's `features` (cards become text without card support, `threadId` is dropped without
+   * threads, Ruling A33, see features.ts). A delivery job reuses it for the whole job; `redact`
+   * masks the connection's secrets (applied to extension errors before they go to `last_error`).
+   * `sendFile` is present iff the extension implements it and declares `features.files`.
    */
   async outbound(connectionId: string): Promise<ChannelOutboundSession> {
     const { row, channel, config } = await this.runtime(connectionId);
     // the language handed to the extension with each send / update (Ruling A22): the recipient's
     // when the caller gives it (IM language is per person, run context spec §3.4), else the org's
     const { locale } = await readOrgSettings(this.db.db, row.orgId);
+    const sendFile = channel.features.files !== undefined ? channel.sendFile : undefined;
     return {
+      ...(sendFile !== undefined && {
+        sendFile: (target, file, idempotencyKey, to = locale) =>
+          sendFile.call(channel, {
+            config,
+            target: adaptTarget(channel.features, target),
+            file,
+            signal: AbortSignal.timeout(FILE_CALL_TIMEOUT_MS),
+            locale: to,
+            ...(idempotencyKey !== undefined && { idempotencyKey }),
+          }),
+      }),
       row,
       features: channel.features,
       redact: createRedactor(secretValues(channel.connectionSchema, config), 4),
@@ -1106,7 +1124,7 @@ export class ChannelConnections implements OnApplicationShutdown {
   }
 }
 
-/** {@link ChannelConnections.outbound} 的返回值。 */
+/** What {@link ChannelConnections.outbound} returns. */
 export interface ChannelOutboundSession {
   row: ChannelConnectionRow;
   features: Channel["features"];
@@ -1122,6 +1140,17 @@ export interface ChannelOutboundSession {
     idempotencyKey?: string,
     locale?: ChannelLocale,
   ): Promise<{ messageId: string }>;
+  /**
+   * One file as one message (channel file delivery spec §4.1); present iff the extension implements
+   * `sendFile` and declares `features.files`. The target loses `threadId` without threads; the key
+   * and `locale` as for `send`.
+   */
+  sendFile?: (
+    target: ChannelTarget,
+    file: ChannelFile,
+    idempotencyKey?: string,
+    locale?: ChannelLocale,
+  ) => Promise<{ messageId?: string }>;
   /** Called only when `features.edit` is true; `locale` as for `send`. */
   update(
     target: ChannelTarget,

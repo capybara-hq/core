@@ -16,7 +16,11 @@ import { type EventPayload, isValidArtifactName } from "../../../conversations/e
 import type { KernelSchemaDb } from "../../../db/kernel-schema.js";
 import { ApiError } from "../../../errors.js";
 import type { KernelConfigService } from "../../../infra/config/kernel-config.service.js";
-import { IMAGE_PURPOSE, imagePurposeUsable } from "../../../models/image-usable.js";
+import {
+  IMAGE_PURPOSE,
+  type ImageInputCaps,
+  imagePurposeState,
+} from "../../../models/image-usable.js";
 import {
   billedImages,
   ImageCallDenied,
@@ -40,6 +44,7 @@ import type { BuiltinCallContext, BuiltinTool } from "../../registry.js";
 import {
   NO_STORAGE,
   NO_STORAGE_REASON,
+  REPEAT_CLAUSE,
   type StoredArtifact,
   storeArtifacts,
 } from "../artifacts.js";
@@ -69,6 +74,37 @@ const MAX_IMAGES = 4;
 /** The longest base name (`name`). */
 const NAME_MAX_CHARS = 100;
 
+/** The listed spec for an org whose image model accepts `caps` (pure; `n` and references drop or cap). */
+export function generateImageSpec(caps: ImageInputCaps): ToolSpec {
+  const base = GENERATE_IMAGE_SPEC;
+  const { n, reference_images, ...rest } = (
+    base.inputSchema as { properties: Record<string, unknown> }
+  ).properties;
+  const properties: Record<string, unknown> = { ...rest };
+  if (caps.maxImages > 1) properties.n = { ...(n as object), maximum: caps.maxImages };
+  if (caps.maxReferenceImages > 0) {
+    properties.reference_images = {
+      ...(reference_images as object),
+      maxItems: Math.min(MAX_REFERENCES, caps.maxReferenceImages),
+    };
+  }
+  if (!base.description.includes(REFERENCE_SENTENCE)) {
+    throw new Error("GenerateImage description lost its reference-images sentence");
+  }
+  const description =
+    caps.maxReferenceImages > 0
+      ? base.description
+      : base.description.replace(REFERENCE_SENTENCE, "");
+  return { ...base, description, inputSchema: { ...base.inputSchema, properties } };
+}
+
+/**
+ * The description sentence about reference images (spelled out in the description below); dropped
+ * with the `reference_images` field. `generateImageSpec` fails loudly if the two drift apart.
+ */
+const REFERENCE_SENTENCE =
+  "Optionally pass reference images (attachment or earlier generated image ids) to guide the result. ";
+
 export const GENERATE_IMAGE_SPEC: ToolSpec = {
   name: "GenerateImage",
   // Display only (the tool row; not in the fingerprint, never sent to the model).
@@ -76,8 +112,10 @@ export const GENERATE_IMAGE_SPEC: ToolSpec = {
   description:
     "Generate images from a text prompt with this organization's image model, and deliver them to " +
     "the user in the conversation. Write a specific prompt: subject, composition, style, lighting, " +
-    "any text that must appear. Optionally pass reference images (attachment or earlier generated " +
-    "image ids) to guide the result. Each call costs money: generate only what the user asked for.",
+    "any text that must appear. " +
+    // REFERENCE_SENTENCE, spelled out: the tool-description check reads string literals only
+    "Optionally pass reference images (attachment or earlier generated image ids) to guide the result. " +
+    "Each call costs money: generate only what the user asked for.",
   inputSchema: {
     type: "object",
     properties: {
@@ -196,7 +234,8 @@ export interface GenerateImageDeps {
   purposes: Pick<ModelPurposesService, "resolve">;
   providers: Pick<ProviderRegistry, "resolve">;
   storage: Pick<StorageService, "kernel" | "available">;
-  eventLog: Pick<EventLog, "append" | "notify"> & Partial<Pick<EventLog, "publishChanged">>;
+  eventLog: Pick<EventLog, "append" | "notify" | "readDeliveryScope"> &
+    Partial<Pick<EventLog, "publishChanged">>;
   stepLog: Pick<StepLog, "appendCounted" | "appendReported" | "appendAudited">;
   config: Pick<KernelConfigService, "get">;
   log: Pick<Logger, "warn">;
@@ -227,9 +266,14 @@ export function generateImageTool(deps: GenerateImageDeps): BuiltinTool {
     defaultPolicy: "allow",
     // the predicate the agent form's purpose availability reads too (one rule, no drift)
     unavailable: async (scope) => {
-      const usable = await imagePurposeUsable(deps, scope.orgId);
-      if (usable === "no-model") return NO_IMAGE_MODEL_REASON;
-      return usable === "no-storage" ? NO_STORAGE_REASON : null;
+      const state = await imagePurposeState(deps, scope.orgId, scope.memo);
+      if (state.usable === "no-model") return NO_IMAGE_MODEL_REASON;
+      return state.usable === "no-storage" ? NO_STORAGE_REASON : null;
+    },
+    // the counts the org's image model accepts (on a race to unusable: the static spec)
+    specFor: async (scope) => {
+      const state = await imagePurposeState(deps, scope.orgId, scope.memo);
+      return state.usable === "usable" ? generateImageSpec(state) : GENERATE_IMAGE_SPEC;
     },
     timeoutMs: () => deps.config.get().models.imageTimeoutMs + 60_000,
     async run(raw, ctx) {
@@ -290,7 +334,15 @@ export function generateImageTool(deps: GenerateImageDeps): BuiltinTool {
       let deviceLine: string | null = null;
       let notices: string[] = [];
       if (input.file_path !== undefined) {
-        const copied = await copyToDevice(deps, ctx, input.file_path, files);
+        const copied = await copyToDevice(
+          deps,
+          ctx,
+          input.file_path,
+          files.map((f, i) => {
+            const a = stored[i] as StoredArtifact;
+            return { ...f, artifactId: a.repeatOf?.artifactId ?? a.artifactId };
+          }),
+        );
         deviceLine = copied.line;
         notices = copied.notices;
       }
@@ -556,14 +608,14 @@ async function copyToDevice(
   deps: GenerateImageDeps,
   ctx: BuiltinCallContext,
   filePath: string,
-  files: readonly { data: Uint8Array; contentType: ImageMediaType }[],
+  files: readonly { data: Uint8Array; contentType: ImageMediaType; artifactId: string }[],
 ): Promise<{ line: string; notices: string[] }> {
   const sb = deps.sandbox;
   const conv = sandboxConversationOf(ctx);
   if (!(await hasDevice(sb, ctx.orgId, conv))) return { line: NO_DEVICE_LINE, notices: [] };
   const targets = generateImagePaths({ file_path: filePath, n: files.length });
   // the paths written so far (a rebuilt instance runs the copy again from the start)
-  let written: string[] = [];
+  let written: { entry: string; artifactId: string }[] = [];
   let current = targets[0] as string;
   try {
     const { notices } = await inToolSandbox(sb, ctx, async (s) => {
@@ -594,10 +646,10 @@ async function copyToDevice(
           }
           await s.p.writeFile(s.h, path, f.data, signal);
         });
-        written.push(deviceEntry(path, f.contentType));
+        written.push({ entry: deviceEntry(path, f.contentType), artifactId: f.artifactId });
       }
     });
-    return { line: `Written to the device: ${written.join(", ")}`, notices };
+    return { line: writtenLine(written), notices };
   } catch (e) {
     if (ctx.signal.aborted) throw e;
     // a device's own error is not shown to the model (it may name provider internals)
@@ -613,11 +665,21 @@ async function copyToDevice(
     }`;
     // a partial copy says which files are there before the failure
     return {
-      line:
-        written.length === 0 ? failed : `Written to the device: ${written.join(", ")}\n${failed}`,
+      line: written.length === 0 ? failed : `${writtenLine(written)}\n${failed}`,
       notices: [],
     };
   }
+}
+
+/** The device line for the files written: each names the artifact that holds the same bytes. */
+function writtenLine(written: readonly { entry: string; artifactId: string }[]): string {
+  const [only] = written;
+  if (written.length === 1 && only !== undefined) {
+    return `Also written to the device (same bytes as artifact ${only.artifactId}): ${only.entry}`;
+  }
+  return `Also written to the device: ${written
+    .map((w) => `${w.entry} (same bytes as artifact ${w.artifactId})`)
+    .join(", ")}`;
 }
 
 /**
@@ -663,7 +725,7 @@ function sizeText(bytes: number): string {
   return `${(bytes / 1_048_576).toFixed(1)} MB`;
 }
 
-/** The model-visible result (spec §5.3): what was generated, where it went, the revised prompt. */
+/** The model-visible result (spec §5.3): what was generated, delivered or repeated, billing, the device copy. */
 function resultText(
   prepared: PreparedImageCall,
   stored: readonly StoredArtifact[],
@@ -674,12 +736,25 @@ function resultText(
   const n = stored.length;
   const { width, height } = prepared.request.size;
   const lines = [
-    `Generated ${n} ${n === 1 ? "image" : "images"} with ${prepared.ref.provider}/${prepared.ref.model} at ${width}x${height} and delivered ${n === 1 ? "it" : "them"} to the user:`,
-    ...stored.map(
-      (a, i) =>
-        `- ${a.name} (artifact ${a.artifactId}, ${files[i]?.contentType ?? ""}, ${sizeText(a.size)})`,
-    ),
+    `Generated ${n} ${n === 1 ? "image" : "images"} with ${prepared.ref.provider}/${prepared.ref.model} at ${width}x${height}.`,
   ];
+  const fresh = stored.flatMap((a, i) => (a.repeatOf === undefined ? [{ a, i }] : []));
+  if (fresh.length > 0) {
+    lines.push(
+      `Delivered ${fresh.length} to the user:`,
+      ...fresh.map(
+        ({ a, i }) =>
+          `- ${a.name} (artifact ${a.artifactId}, ${files[i]?.contentType ?? ""}, ${sizeText(a.size)})`,
+      ),
+    );
+  }
+  const repeats = stored.filter((a) => a.repeatOf !== undefined);
+  if (repeats.length > 0) {
+    for (const a of repeats) {
+      lines.push(`- ${a.name}: ${REPEAT_CLAUSE(a.repeatOf as NonNullable<typeof a.repeatOf>)}`);
+    }
+    lines.push(`Usage is billed for ${n} generated ${n === 1 ? "image" : "images"}.`);
+  }
   if (typeof revisedPrompt === "string" && revisedPrompt !== "") {
     lines.push(`Revised prompt: ${revisedPrompt}`);
   }

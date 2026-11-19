@@ -328,7 +328,7 @@ describe("ModelImages.run", () => {
     const out = await images.run(orgId, prepared, EXT, new AbortController().signal, hooks.runner);
     await vi.waitFor(() => expect(hooks.of("model.response")).toHaveLength(1));
     const [res] = hooks.of<ImageResponseHookPayload>("model.response");
-    const bytes = Buffer.from(out.images[0]?.data ?? "", "base64").length;
+    const sizes = out.images.map((i) => Buffer.from(i.data, "base64").length);
     expect(res).toEqual({
       purpose: "image",
       orgId,
@@ -338,8 +338,8 @@ describe("ModelImages.run", () => {
       imagePurpose: "image",
       outcome: "ok",
       images: [
-        { mediaType: "image/png", size: bytes },
-        { mediaType: "image/png", size: bytes },
+        { mediaType: "image/png", size: sizes[0] },
+        { mediaType: "image/png", size: sizes[1] },
       ],
       revisedPrompt: "revised: a cat",
       usage: out.usage,

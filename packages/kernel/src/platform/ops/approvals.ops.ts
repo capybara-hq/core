@@ -7,8 +7,7 @@ import { PlatformOperations } from "../registry.js";
 import { Cursor, pageOf, startOf } from "./paging.js";
 
 /** Where a person decides an approval: never through an agent (spec §6.4, §14.1 item 2). */
-export const DECIDE_ON_WEB =
-  "Decide it on the web, in the inbox or in its conversation; agents never decide approvals.";
+export const DECIDE_ON_WEB = "Decide it on the web, in the inbox or in its conversation.";
 
 /**
  * An approval as the waiting list shows it: a compact row with the summary the inbox shows (the
@@ -70,7 +69,7 @@ export class ApprovalsOperations implements OnModuleInit {
       defineOperation({
         id: "approvals.waiting",
         description:
-          "List the tool call approvals you can decide in this org, newest first: your own runs' calls and, for org admins, other people's calls that need an admin. One compact row each (tool, state, the summary the inbox shows, agent, expiry); pending by default, or pass one status (pending, approved, denied, expired, cancelled; there is no \"all\": call once per status to see more). Never the call's input. Deciding is done by you on the web, never by an agent. Pages by 50: pass the returned next as params.cursor.",
+          "List the tool call approvals you can decide in this org, newest first: your own runs' calls and, for org admins, other people's calls that need an admin. One compact row each (tool, state, the summary the inbox shows, agent, expiry); status is one of pending (the default), approved, denied, expired, cancelled. Never the call's input. Deciding is done by you on the web. Pages by 50: pass the returned next as params.cursor.",
         input: z
           .object({ status: ApprovalsListQuerySchema.shape.status, cursor: Cursor.optional() })
           .strict(),

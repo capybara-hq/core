@@ -1,5 +1,96 @@
 # @capybara-hq/kernel
 
+## 0.1.0-rc.49
+
+### Patch Changes
+
+- b8e2313: The same bytes are delivered to the user once per run since the person last spoke: a second
+  `Deliver` (or generated image) with identical content creates no artifact and its result names the
+  artifact already delivered. Delivering v1, v2, then v1 of one path still delivers v1 again, and
+  `artifact_created` now records the content's sha256.
+- 2577900: `GenerateImage`'s result states facts: it counts only newly stored images as delivered, names the
+  earlier artifact for an image whose bytes were already delivered since the person last spoke (with
+  a line saying the usage is still billed), and its device line names the artifact that holds the
+  same bytes.
+  
+  Its listed description no longer mentions reference images when the org's image model takes none
+  and the `reference_images` field is dropped.
+- 5de7182: GenerateImage lists only the image count and reference images the org's image model accepts.
+- 95fed18: Prompt suggestions: after a completed web run the worker sends one side request to the run's own
+  model (the run's last request plus the final reply and an instruction, `purpose: "suggestion"`),
+  fires the model hooks, logs a run-less `usage` event and stores the suggestion in a Redis key with
+  a bus message (queue `cap-kernel-suggestions`). On by default; the platform and org switches turn
+  it off.
+- bb2b304: Add the platform and org switches for prompt suggestions (`promptSuggestions`, on or off, absent meaning on).
+- Updated dependencies [eea8ef6]
+- Updated dependencies [9f8c8d5]
+  - @capybara-hq/plugin-sdk@0.1.0-rc.35
+
+## 0.1.0-rc.48
+
+### Minor Changes
+
+- bc6def9: Conversation files (`Deliver`, `GenerateImage`, every `artifact_created`) reach the IM chat or thread through the optional `channel@1` `sendFile`, images as images; a file that cannot be sent becomes one line linking to the web conversation. New config `channels.fileMaxBytes` (default 20 MiB, 0 = links only) and `channels.fileConcurrency` (default 4).
+
+### Patch Changes
+
+- Updated dependencies [40d039f]
+- Updated dependencies [45ff51f]
+  - @capybara-hq/plugin-sdk@0.1.0-rc.34
+
+## 0.1.0-rc.47
+
+### Patch Changes
+
+- 228db64: The file-preview bootstrap pin moves to rc.3 (capybara-hq/plugins#129): the plugin drops its `html` previewer, since the kernel's built-in previewer renders HTML. The marketplace pin and the sandbox-docker build contexts move to capybara-hq/plugins 84a5307; every other pin already matches that commit's marketplace.
+
+## 0.1.0-rc.46
+
+### Minor Changes
+
+- 909442f: Share a conversation file as a snapshot: `POST …/conversations/:id/files/:fileId/shares` copies the
+  file under `shares/<id>/<generation>` before its row is written, with a 10-character code; the
+  per-file list (with the share policy), "update to latest" (`POST …/shares/:shareId/refresh`),
+  revoke (`DELETE …/shares/:shareId`, creator or org admin; the snapshot's deletion is owed through
+  the outbox) and `GET …/shares?scope=mine|all`. The Platform tool gains `conversations.list-shares`
+  and `conversations.revoke-share`; the files list marks shared files (`shared`). A share view
+  carries `url`, the absolute link `<http.publicUrl>/s/<code>` (null without a public URL).
+- 909442f: Shares follow their conversation and creator: deleting a conversation or offboarding a member
+  revokes their shares in the same transaction and owes the snapshots' deletion through the outbox. A
+  daily sweep (`share-sweep`, worker role) revokes shares whose creator lost access
+  (`creator_lost_access`), frees the snapshots of shares expired or revoked more than seven days ago
+  (rows kept) and deletes orphan objects under `shares/` older than one hour.
+- 909442f: External sharing switches (platform `externalSharing`, default deny; org `externalSharing`, off until
+  an org admin turns it on), the share expiry maximum (`shareMaxExpiryDays`, default 30) and the HTML
+  rendering CDN allowlist (`htmlRenderCdnAllowlist`) as settings, with the `sharing.*` startup config
+  fields; the `file_shares` table. The web gains the error and audit labels for file shares.
+- 909442f: Serve HTML files as sandboxed documents (file sharing spec §4): the conversation's owner mints a
+  five-minute document token (`POST …/files/:fileId/html-token`, delivered files and uploads), and
+  the public `GET /api/v1/html/<token>` streams the stored bytes under a `sandbox` CSP (no same
+  origin, no connections, scripts / styles / fonts / images from the platform CDN allowlist only),
+  re-checking the owner's access or the share's liveness on every load. HTML over 20 MiB is not
+  rendered. `Deliver`'s description now asks for self-contained HTML reports.
+- 909442f: Public share link routes under `/api/v1/s/:code`: the share's metadata (with `render` and
+  `previewable` for the share page), its bytes (`/content`, always `application/octet-stream` under
+  a sandbox CSP, `?download=1` as an attachment), its text (`/text`), a bitmap in place (`/inline`)
+  and a redirect to its HTML document (`/html`). Every refusal is one 404 `share.not_found`; an
+  internal share needs a web session of an active member of the share's org (401
+  `share.sign_in_required` without one). A new `share-open` throttler allows 30 failed lookups per
+  client address in 10 minutes (successful opens are refunded), `share.opened` is audited at most
+  once per share and viewer per 10 minutes, and share codes are redacted from request logs.
+- 909442f: File previewers on a share page: the share metadata lists the org's extension previewers that take
+  the snapshot, `GET /api/v1/s/:code/previews/:plugin/:previewerId` renders a view previewer for the
+  snapshot (`source: "share"`), and `POST /api/v1/s/:code/embed-token/:plugin/:previewerId` mints a
+  share-scoped embed token (`scope: "share"`, no account or role). Such a token verifies only for a
+  `file.preview` contribution, only while the share is live at its generation and the extension is
+  enabled in the share's org, and never for `/api`. HTML over 20 MiB on a share now renders as a
+  download, and a failed `share.opened` audit no longer suppresses the next one.
+
+### Patch Changes
+
+- Updated dependencies [909442f]
+  - @capybara-hq/plugin-sdk@0.1.0-rc.33
+
 ## 0.1.0-rc.45
 
 ### Patch Changes

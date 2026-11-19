@@ -13,6 +13,7 @@ import {
 } from "../../src/models/purposes.js";
 import { ProviderListError, ProviderRegistry } from "../../src/runtime/providers.js";
 import { StorageService } from "../../src/storage/storage.service.js";
+import { ToolRegistry } from "../../src/tools/registry.js";
 import { evalModelState, resetEvalModel } from "../fixtures/plugins/model-eval/index.js";
 import { truncateTables } from "../helpers/db.js";
 import { accountsFor } from "../helpers/identity.js";
@@ -64,6 +65,8 @@ beforeAll(async () => {
               { id: "fake-1" },
               { id: "fake-embed", kind: "embedding", dimensions: [4] },
               { id: "fake-image", kind: "image_generation" },
+              { id: "fake-image-1", kind: "image_generation", maxImages: 1, maxReferenceImages: 0 },
+              { id: "fake-image-3", kind: "image_generation", maxImages: 3 },
             ],
           },
         },
@@ -648,5 +651,27 @@ describe("purpose availability for a member", () => {
       return original(...args);
     });
     expect(await imageAvailable(alice)).toBe(false);
+  });
+
+  it("GenerateImage lists only the counts the org's image model accepts", async () => {
+    withStorage();
+    const listed = async () => {
+      const { tools } = await k.app
+        .get(ToolRegistry)
+        .forAgent(orgId, { disabledTools: [], source: "web" });
+      const spec = tools.find((t) => t.key === "GenerateImage")?.spec;
+      if (spec === undefined) throw new Error("GenerateImage is not listed");
+      // biome-ignore lint/suspicious/noExplicitAny: schema properties are probed by name
+      return (spec.inputSchema as { properties: Record<string, any> }).properties;
+    };
+    const mapTo = (model: string) =>
+      put(admin, orgUrl("image"), { model: { provider: "model-fake", model }, params: {} });
+    await mapTo("fake-image-1");
+    const one = await listed();
+    expect(one.n).toBeUndefined();
+    expect(one.reference_images).toBeUndefined();
+    expect(await imageAvailable(alice)).toBe(true);
+    await mapTo("fake-image-3");
+    expect((await listed()).n.maximum).toBe(3);
   });
 });
