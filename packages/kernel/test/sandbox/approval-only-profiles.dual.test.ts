@@ -608,8 +608,7 @@ describe("profile × crossing on a local device: approvals through replica B, ru
         expect(r.payload.review).toMatchObject({
           decision: "allow",
           decisionSource: profile === "full-access" ? "full-access" : "review-model",
-          // a sensitive command is a crossing kind only where Full access skipped its consent
-          ...(kind !== "sensitive" || profile === "full-access" ? { crossing: kind } : {}),
+          crossing: kind,
         });
       }
       expect(r.payload.isError, r.payload.content).toBe(false);
@@ -1058,7 +1057,7 @@ describe("a stored version 1 permission context", () => {
   });
 });
 
-describe("Full access chosen before a local device's first start", () => {
+describe("Full access chosen before a device's first start", () => {
   // approval-only profiles design, "Consent fingerprint": a runtime report arriving only narrows
   // what the consent covers, so the device's first start never resets it
   it("keeps the consent when the device starts with the roots its machine reported", async () => {
@@ -1072,5 +1071,22 @@ describe("Full access chosen before a local device's first start", () => {
     expect(
       (await eventsOf(db, conv)).filter((e) => e.type === "permission_profile_changed"),
     ).toHaveLength(1);
+  });
+
+  it("keeps the consent when a cloud device's first instance has the roots the consent covered", async () => {
+    await setFakeSandboxPermissionSupport(sandboxRoot, null);
+    const s = await scene();
+    const created = await ownerA({
+      method: "POST",
+      url: `/api/v1/orgs/${s.orgId}/devices`,
+      payload: { name: `Cloud ${randomUUID().slice(0, 8)}` },
+    });
+    expect(created.statusCode, created.body).toBe(201);
+    const deviceId = (created.json() as { device: { id: string } }).device.id;
+    const conv = await conversation(s, deviceId);
+    await setProfile(s, conv, "full-access");
+    const first = await call(s, conv, "Bash", { command: "echo first", description: "Run" }, 1);
+    expect(first.payload.isError, first.payload.content).toBe(false);
+    expect((await permissions(s, conv)).profile).toBe("full-access");
   });
 });

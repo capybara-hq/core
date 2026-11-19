@@ -1,6 +1,5 @@
 import { posix } from "node:path";
 import {
-  DEFAULT_SANDBOX_ROOTS,
   isSandboxPermissionUnsupportedError,
   isSandboxScopeDeniedError,
   parseSandboxBrowseScope,
@@ -3615,13 +3614,16 @@ export class SandboxService {
   ): Promise<Instance> {
     const id = ctx.deviceId;
     const name = deviceResourceName(id);
+    // the roots the device's authority was last committed with; a device that never had an
+    // instance has none yet (NULL), so the first commit compares the new instance's roots with
+    // what the device displayed (a local machine's reported roots), not with placeholder defaults
+    // a local machine never uses: its first start is no roots change (no consent reset, no revoke)
+    const committedRoots = row.permission_roots ?? (row.handle ? rootsOf(row.handle) : null);
     await this.fenced(held, id, fence, {
       org_id: ctx.orgId,
       provider: p.plugin,
       handle: null,
-      permission_roots: JSON.stringify(
-        row.permission_roots ?? (row.handle ? rootsOf(row.handle) : DEFAULT_SANDBOX_ROOTS),
-      ),
+      permission_roots: committedRoots === null ? null : JSON.stringify(committedRoots),
       status: "creating",
       last_used_at: sql<Date>`now()`,
       running_since: null,
