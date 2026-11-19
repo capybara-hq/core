@@ -44,6 +44,8 @@ export interface FakeModelConfig {
   maxImages?: number | undefined;
   /** Most reference images per generateImage call (image_generation models; default 2). */
   maxReferenceImages?: number | undefined;
+  /** The sizes of an image_generation model (default 1024x1024, 1536x1024, 1024x1536; the first is the default). */
+  imageSizes?: ImageSize[] | undefined;
 }
 
 /**
@@ -455,8 +457,8 @@ export function createFakeProvider(opts: FakeProviderOptions): ModelProvider {
         ...(m.kind === "image_generation"
           ? {
               imageGeneration: {
-                sizes: IMAGE_SIZES.map((z) => ({ ...z })),
-                defaultSize: { width: 1024, height: 1024 },
+                sizes: (m.imageSizes ?? IMAGE_SIZES).map((z) => ({ ...z })),
+                defaultSize: { ...(m.imageSizes ?? IMAGE_SIZES)[0] } as ImageSize,
                 maxImages: m.maxImages ?? 4,
                 maxReferenceImages: m.maxReferenceImages ?? 2,
                 outputMediaTypes: ["image/png" as const],

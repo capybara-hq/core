@@ -131,6 +131,7 @@
   "tools/redact.test.ts",
   "tools/registry-builtin-unavailable.test.ts",
   "tools/generate-image-spec.test.ts",
+  "tools/image-size.unit.test.ts",
   "tools/sandbox/device-errors.test.ts",
   "tools/sandbox/fetch-attachment.test.ts",
   "tools/sandbox/escalation-hints.test.ts",

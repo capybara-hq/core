@@ -170,7 +170,7 @@ export class BuiltinTools {
         config,
         log,
         hooks: host?.hooks,
-        db: () => db.db,
+        db,
         attachments,
         sandbox: sandboxDeps,
       }),

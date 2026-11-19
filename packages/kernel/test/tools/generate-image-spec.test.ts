@@ -25,6 +25,29 @@ describe("generateImageSpec", () => {
     expect(without).not.toMatch(/reference/i);
     expect(without).toContain("Each call costs money");
   });
+  it("states the new texts verbatim", () => {
+    const spec = generateImageSpec({ maxImages: 2, maxReferenceImages: 2 });
+    expect(spec.description).toContain(
+      "Pass reference images (ids of images in this conversation) to keep a subject or style consistent with them, or to edit one.",
+    );
+    const p = props({ maxImages: 2, maxReferenceImages: 2 });
+    expect(p.reference_images.description).toBe(
+      "Ids of images in this conversation that guide the result: attachment ids or artifact ids (generated or delivered images).",
+    );
+    expect(p.aspect_ratio.description).toContain("Default: the shape of the model's default size.");
+  });
+  it("describes resolution with the configured megapixels", () => {
+    const caps = { maxImages: 2, maxReferenceImages: 2 };
+    const at = (px?: number) =>
+      (
+        generateImageSpec(caps, px).inputSchema as {
+          properties: Record<string, { description: string }>;
+        }
+      ).properties.resolution?.description;
+    expect(at()).toContain("about 1.0 megapixels for this shape");
+    expect(at(4_194_304)).toContain("about 4.2 megapixels");
+    expect(at()).toContain("high: the model's largest size for this shape");
+  });
   it("keeps the other arguments", () =>
     expect(Object.keys(props({ maxImages: 1, maxReferenceImages: 0 }))).toContain("prompt"));
 });
