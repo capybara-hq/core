@@ -1,5 +1,150 @@
 # @capybara-hq/device
 
+## 0.1.0-rc.19
+
+### Patch Changes
+
+- 0e36abe: The device's owner ceiling now describes the sandbox for every profile: `outsideSandbox` (whether
+  one approved call may run outside the sandbox), `network` (`open` public internet or the
+  `allowedDomains` allowlist) and the project reach. Full access no longer means no sandbox: an
+  ordinary Full access call gets scoped roots and the denied read roots like the other profiles, and
+  only an escalated call runs outside the sandbox, within `outsideSandbox`. A new install gets
+  `outsideSandbox: false` with the open network. `policy.json` moves to version 3 and an old file is
+  converted once, never wider (Full access allowed becomes outside the sandbox with the open network;
+  denied keeps the allowlist, and `start` prints `capybara-device ceiling set --network open`). The
+  CLI is `capybara-device ceiling set --outside-sandbox on|off --network open|allowlist
+  [--project-reach workspace|os-user]`; `--full-access` is gone. The wire stays device protocol 3
+  until the protocol 4 cutover.
+- 23bee16: The device protocol carries a scope validation failure as its own typed kind (`invalid`): the
+  device answers a scope the contract refuses (such as the environment network without the device
+  filesystem) with it, and the kernel raises it as a `SandboxScopeValidationError` instead of an
+  untyped machine error.
+- 9429b63: Linux open network (approval-only profiles).
+  
+  - Device: a sandboxed Linux command with the open network reaches any public name or address
+    literal on any port through its operation's proxy. The proxy dials only resolved addresses the
+    SDK's address-class table calls public (its Python copy is kept equal by a test), that Python
+    also calls global, and that are not this host's own (nor, on a local-Docker device, the host's
+    interface addresses, passed into the container). Private and LAN ranges, CGNAT, ULA,
+    link-local and metadata addresses (Azure's `168.63.129.16` too), loopback, NAT64 and the
+    reserved ranges stay closed, by name, literal or IPv4-mapped form; a refusal is a 403 before any
+    connect, for the allowlist too. The proxy serves at most 128 connections at once. The Linux and
+    local-Docker backends report `openPublic: true`. An escalated call starts from the owner's
+    environment without `CAPYBARA_*` variables (`hostCommandEnv` replaces `hostBaseEnv`).
+  - Protected home locations: at operation start the worker resolves each protected location under
+    the home component by component (`protected-targets.ts`, shared by the platform workers),
+    following dangling links, and denies every link on the chain and the final target, anchored.
+  - Fake-IP resolvers: when the system resolver answers a name with an address in `198.18.0.0/15`
+    (a router running a fake-IP proxy such as OpenClash), the forwarder re-resolves it through
+    DNS-over-HTTPS and checks and dials the real address; if encrypted DNS fails the request is
+    refused with a 403 naming the fake-IP resolver, and the fake address is never dialled. SDK:
+    `SANDBOX_FAKE_IP_DNS` (RFC 8484 at `1.1.1.1`, `1.0.0.1`, `8.8.8.8`, `8.8.4.4`; one 5 s
+    deadline per name; cache TTL cap 300 s, at most 256 names, complete answers only).
+  - SDK (`linux-sandbox.py`): no sandboxed connect reaches a loopback listener, the command's own
+    included (clients outside the sandbox reach it). `SO_REUSEPORT` and `SO_ATTACH_REUSEPORT_*`
+    are refused by seccomp, and the broker never binds or listens a socket with `SO_REUSEPORT` set.
+    A `symlink` named for a proper prefix of a multi-component write deny is refused. A directory
+    move into a guarded prefix first renames the directory to a reserved staging name beside it,
+    which no sandboxed process may write, lists and checks it there and renames it into place with
+    NOREPLACE; a refused or failed step moves it back, and when that fails too it goes to a
+    quarantine name and the operation ends, reported. The move holds an exclusive lock against the
+    operation's other writes, waiting at most 5 s (then EBUSY). New request field `writeDenies`
+    (absolute paths denied like the system spools).
+  - SDK write policy: an ancestor of an anchored deny (a system spool, or a consumer's resolved
+    target) never moves away, and `SANDBOX_RESERVED_NAME_PREFIX` (`.capybara-staging-`, the broker's
+    staging and quarantine names) is denied to every sandboxed write, folded.
+- 75d8984: macOS restricted operations now enforce the sandbox network on the resolved address: the
+  operation's own proxy decides every connection and dials the address it checked. Private and LAN,
+  CGNAT, ULA, link-local, cloud metadata (Azure `168.63.129.16` included), NAT64, loopback (another
+  process's localhost port, `localhost` itself) and this host's own addresses stay closed in the open
+  network and in the allowlist alike, for names and IP literals (an allow-listed literal gets no
+  carve-out; the patched sandbox runtime's `resolvedAddressStrict`). The device reports
+  `openPublic: true` on macOS; a runtime without the network patch is refused. Behind a fake-IP
+  resolver (a router answering every name with `198.18.0.0/15`), the proxy re-resolves the name
+  through DNS-over-HTTPS (RFC 8484) at the SDK's new `SANDBOX_FAKE_IP_DNS` endpoints, judges the real
+  answer, and refuses when that lookup fails. Listening stays refused on macOS. The write rules gain
+  the system persistence paths (`SANDBOX_SYSTEM_WRITE_DENIES`, now exported by the SDK) and, at
+  operation start, every symbolic link on the way to a protected home location plus its final target
+  (a dotfile manager's `~/.zshrc` chain), with no move of their ancestors. Only the escalated pair
+  runs unwrapped, and an escalated call's environment drops every `CAPYBARA_` variable.
+- f0112ea: macOS: a sandboxed command can no longer create, write, remove or rename into a path with a
+  component starting with the reserved staging prefix (`.capybara-staging-`, any case), matching the
+  shared SDK write policy the Linux broker enforces.
+- 8bfe8f3: A logged-in machine without `policy.json` (set up before rc.58, whose `login` wrote none) no longer
+  widens from no reachable host to the open network: `start` writes outside-the-sandbox off and the
+  allowlist network with no host, and prints how to open it (`capybara-device ceiling set --network
+  open`). Every reader (`ceiling show`, `policy show`, `status`, the running policy store) treats a
+  missing file as that closed ceiling; the strict reader and the owner report still refuse it. New
+  installs keep the open default.
+- 0c0f51f: Device protocol 4 (approval-only profiles), a paired kernel and device release with no fallback.
+  
+  - SDK (breaking): `SandboxPermissionSupport` is version 2 (`boundary`, `network`, `outsideSandbox`
+    instead of `fullAccess`), `DeviceOwnerCeiling` is version 3 (`outsideSandbox`, `network`,
+    `allowedDomains`), `DeviceOwnerCeilingNarrowing` narrows each of them, and the strict parsers are
+    `parseSandboxPermissionSupport`, `parseOwnerCeilingReport` and `parseOwnerCeilingNarrowing` (the
+    interim `…V2` / `…V3` names are gone). `SandboxLimits.mode` is removed: lifecycle create and update
+    carry resources and the outer network only, and `list` / `scan` take no `limits`. The policy
+    summary has no `mode`, the `mode` feature is gone, and a `policy` op that adds hosts or carries a
+    `mode` is refused (`POLICY_ADD_REFUSED`: widening happens only on the machine).
+    `DEVICE_PROTOCOL_VERSION` is 4 and `LEGACY_DEVICE_PROTOCOL_VERSION` 3.
+  - Device: the hello, `policy` frames and answers carry the version 3 owner report and the version 2
+    support report; the `policy` op refuses `add` and `mode` and writes nothing; `status` shows the
+    sandbox network and the outside-sandbox setting; the login token field is `outsideSandbox`. A
+    protocol 4 program facing an older deployment says the deployment must be upgraded.
+  - Kernel: refuses protocol 3 programs with 426 and an update instruction; reads the new owner and
+    support reports (a machine without a protocol 4 report fails closed); never sends `add` to a
+    local device: the device page's add is refused with the machine command, and an approval's
+    "always allow" for a host becomes a grant for the run. The facts field `fullAccessCeiling` is
+    `outsideSandboxCeiling`.
+  - Testing: the conformance suite reads `outsideSandbox` and accepts the scope contract's refusal of
+    a restricted environment-network operation.
+- 4a137ef: README: describe the approval-only profiles (the device sandbox, the ceiling CLI and protocol 4).
+- ca6929a: Linux restricted execution: a directory move into a guarded place (`.claude`, `.config`, …) can no
+  longer slip between another operation's write check and its effect.
+  
+  - Every restricted operation of a device now shares one files lock: an `flock` on a private file
+    outside every sandbox (the device's state directory on a host, the container's `/dev/shm` for a
+    local-Docker device). Each brokered write holds it shared from its check to its effect; a guarded
+    directory move holds it exclusively (still EBUSY after 5 s). The launcher takes the lock as an
+    inherited descriptor (`filesLockFd`, optional for other consumers) and refuses one inside a
+    granted root; the restricted command never holds it.
+  - After each descriptor-relative create or rename (mkdir, mknod, open with O_CREAT, symlink, link,
+    rename, the staged move's final rename) the broker checks where the parent sits now; an entry
+    that landed at a denied path is undone and refused, and an undo that fails ends the operation.
+    Truncation (O_TRUNC, truncate) waits for that check.
+  - Restricted native writes (Write, Edit) the device's Linux agent makes itself take the same lock
+    shared from their check to their effect, and the native helper checks every directory and file
+    it creates again at its parent's current place (Linux), undoing and refusing one that landed at a
+    protected path.
+- 62e0943: The macOS backend reports running outside the sandbox as runtime support only, like the Linux
+  backends: the owner's `ceiling set --outside-sandbox` switch reaches the deployment in the owner
+  report. Before, an owner who kept it off saw escalations refused as a runtime limit (and the device
+  page showed the cloud text), and turning it on took effect only after the program restarted.
+- b3efd57: A restricted macOS command sends private, link-local and loopback destinations to the operation's
+  proxy too (the sandbox runtime's `NO_PROXY` is unset inside the sandbox), so a LAN request gets the
+  proxy's 403 instead of a bare "Couldn't connect to server" from a connect Seatbelt refused.
+- b3efd57: A restricted macOS command trusts what the system trusts: the sandbox lets it look up the per-user
+  `com.apple.TrustEvaluationAgent`, which Apple's LibreSSL (`/usr/bin/curl`, the Command Line Tools'
+  `python3`) asks when `/etc/ssl/cert.pem` lacks a chain's anchor. Sites anchored at newer roots
+  (example.com) no longer fail with "unable to get local issuer certificate". `trustd` stays closed.
+- 2a99a98: Sandboxed commands no longer read mise's configuration directory (`~/.config/mise`, whose
+  `config.toml` may hold tokens); a mise-managed tool still runs from its data directory with a
+  project pin or the global `~/.tool-versions`.
+- 7f7db5f: The sandbox never writes the PATH-shim directories a later shell runs programs from:
+  `~/.local/bin` and `~/.cargo/bin` join `SANDBOX_MANDATORY_WRITE_DENIES`, and the new
+  `SANDBOX_HOME_WRITE_DENIES` (`~/bin`, anchored at the owner's home, checked with
+  `isSandboxHomeWriteDenied`) is denied by the device workers and never proposed by the kernel.
+  `cargo install` and similar installs into those directories need a per-call escalation.
+- 7f7db5f: A sandboxed command no longer reaches another process's UNIX socket inside its write roots. The
+  Linux broker connects a pathname UNIX socket only when the operation bound it itself (its dev and
+  inode recorded at the brokered bind), so a user D-Bus, a rootless `docker.sock`, ssh-agent or tmux
+  in a granted directory, or `~/.docker/run/docker.sock` under a project bound at the home, stays
+  unreachable. As defence in depth the kernel's candidate builder and admission and the device's root
+  check refuse a write root that is a system runtime or socket directory (`/run`, `/var/run`,
+  `/private/var/run`, `/dev`, `/proc`, `/sys`, `/tmp` and `/private/tmp` themselves, known socket
+  directories such as `/tmp/tmux-<uid>`): new SDK `sandboxRuntimeDirectoryOf` and
+  `SANDBOX_RUNTIME_DIRECTORIES`. The permission conformance gains the `foreign-unix` check.
+
 ## 0.1.0-rc.18
 
 ### Minor Changes

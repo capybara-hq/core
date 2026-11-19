@@ -1,5 +1,61 @@
 # @capybara-hq/capybara
 
+## 0.1.0-rc.65
+
+### Patch Changes
+
+- 1efb3e1: Device sandbox settings (approval-only profiles, R3 T2). The platform's `devices.fullAccess` becomes
+  `devices.outsideSandbox` (`CAPYBARA_DEVICES__OUTSIDE_SANDBOX`, admin `devicesOutsideSandbox`), and new
+  hot keys `devices.network.default` / `devices.network.ceiling` (`open` or `allowlist`, admin
+  `devicesNetwork`) set the device sandbox network; both are covered by the permission configuration
+  fingerprint (projection version 3). The org settings `fullAccess` and `cloudNetwork` become
+  `outsideSandbox` and `deviceNetwork { default, ceiling, base, extraHosts, excludedHosts }`; a default or
+  ceiling above the platform's ceiling is refused with `org.network_not_allowed`, and the refusal codes
+  are renamed `org.outside_sandbox_not_allowed` / `deployment.outside_sandbox_not_allowed` (new:
+  `deployment.network_not_allowed`, `device.network_not_allowed`, `device.outside_sandbox_not_allowed`).
+  The old config keys and environment variables are refused with a conversion message, and
+  `capybara config migrate-permissions` converts a config file (an old `off` also sets
+  `devices.network.ceiling: allowlist`, so nothing widens). Stored old keys are read narrower and kept in
+  step until the permission configuration publication converts them. Migration `0165` adds a cloud
+  device's `network_mode` and `network_hosts`, copied from an allowlist outer network snapshot.
+  
+  The stored-key conversion runs at every permission configuration publication and stores exactly what
+  readers saw. An old `off` (platform, org, file, Nacos, environment or an invalid value) converts to
+  `outsideSandbox: off` plus the allowlist network ceiling: cloud devices of such a platform or org that
+  ran on the open network now get the allowlist (the conversion logs a warning naming each, with how to
+  reopen it). At the version conversion, cloud devices whose old effective network was the allowlist
+  (for example sandbox-mode devices under `sandbox.limits.orgHosts: within`) keep it
+  (`network_mode: allowlist`).
+  
+  Release note: once a new replica has converted the permission configuration publication to version 3,
+  rolling back to an older image is blocked (its replicas fail the publication barrier), as with B1.
+- Updated dependencies [bf8c74b]
+- Updated dependencies [e31f31b]
+- Updated dependencies [ebeedd7]
+- Updated dependencies [47e2558]
+- Updated dependencies [23bee16]
+- Updated dependencies [5567108]
+- Updated dependencies [0c0f51f]
+- Updated dependencies [d6be3f7]
+- Updated dependencies [89ae9e7]
+- Updated dependencies [1efb3e1]
+- Updated dependencies [da0323f]
+- Updated dependencies [3e02f3d]
+- Updated dependencies [3ec77c8]
+- Updated dependencies [859d6fc]
+- Updated dependencies [d855f2f]
+- Updated dependencies [f5b114c]
+- Updated dependencies [b9ab9eb]
+- Updated dependencies [4253de0]
+- Updated dependencies [df0b43c]
+- Updated dependencies [89ef174]
+- Updated dependencies [00742c4]
+- Updated dependencies [7f7db5f]
+- Updated dependencies [7f7db5f]
+- Updated dependencies [1eceaf8]
+- Updated dependencies [42f9a12]
+  - @capybara-hq/kernel@0.1.0-rc.55
+
 ## 0.1.0-rc.64
 
 No changes in this release.

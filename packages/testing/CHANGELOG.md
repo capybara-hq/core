@@ -1,5 +1,92 @@
 # @capybara-hq/testing
 
+## 0.1.0-rc.29
+
+### Patch Changes
+
+- ebeedd7: The permission conformance returns a report of what it could not prove (with the fixture's
+  reasons), takes `checks` for focused runs, refuses empty `parts` or `checks`, and requires the
+  approval-only inputs of a provider with restricted support (`deviceEnvironment` with an
+  innocent-looking planted name, `closedGranted`, `home`, and `withoutOutsideSandbox` with outside
+  support). A sandboxed command's environment must hold only the minimal names, an open network needs
+  a reachable public target unless `allowNoPositive` is set, its closed targets must cover every closed
+  address class, and an instance boundary needs a metadata name behind its allowlist and refuses an
+  ungranted name a scope asks for. The kernel answers a device's scope validation refusal with a fixed
+  tool error and logs it as a kernel invariant break.
+- 3c15735: The sandbox permission conformance follows approval-only profiles: every profile is sandboxed
+  (Full access included), the environment network comes only with the device filesystem (the
+  escalated pair, refused as invalid otherwise) and runs only with outside-sandbox support while the
+  owner allows it, and new fixture inputs prove the open network (closed classes refused by resolved
+  address, rebinding and fake-IP names included), closed classes behind allowlisted names, the
+  minimal environment (`deviceEnvironment`), the reserved staging prefix, protected link chains
+  (`home`), own-loopback connects and `SO_REUSEPORT` refused where listening is allowed, and an
+  instance-boundary profile for cloud providers (`instanceNetwork`). The fixture field
+  `restrictedEnvironment` is gone; `runSandboxPermissionConformance` takes `parts` to split a run.
+- 0c0f51f: Device protocol 4 (approval-only profiles), a paired kernel and device release with no fallback.
+  
+  - SDK (breaking): `SandboxPermissionSupport` is version 2 (`boundary`, `network`, `outsideSandbox`
+    instead of `fullAccess`), `DeviceOwnerCeiling` is version 3 (`outsideSandbox`, `network`,
+    `allowedDomains`), `DeviceOwnerCeilingNarrowing` narrows each of them, and the strict parsers are
+    `parseSandboxPermissionSupport`, `parseOwnerCeilingReport` and `parseOwnerCeilingNarrowing` (the
+    interim `…V2` / `…V3` names are gone). `SandboxLimits.mode` is removed: lifecycle create and update
+    carry resources and the outer network only, and `list` / `scan` take no `limits`. The policy
+    summary has no `mode`, the `mode` feature is gone, and a `policy` op that adds hosts or carries a
+    `mode` is refused (`POLICY_ADD_REFUSED`: widening happens only on the machine).
+    `DEVICE_PROTOCOL_VERSION` is 4 and `LEGACY_DEVICE_PROTOCOL_VERSION` 3.
+  - Device: the hello, `policy` frames and answers carry the version 3 owner report and the version 2
+    support report; the `policy` op refuses `add` and `mode` and writes nothing; `status` shows the
+    sandbox network and the outside-sandbox setting; the login token field is `outsideSandbox`. A
+    protocol 4 program facing an older deployment says the deployment must be upgraded.
+  - Kernel: refuses protocol 3 programs with 426 and an update instruction; reads the new owner and
+    support reports (a machine without a protocol 4 report fails closed); never sends `add` to a
+    local device: the device page's add is refused with the machine command, and an approval's
+    "always allow" for a host becomes a grant for the run. The facts field `fullAccessCeiling` is
+    `outsideSandboxCeiling`.
+  - Testing: the conformance suite reads `outsideSandbox` and accepts the scope contract's refusal of
+    a restricted environment-network operation.
+- 7f7db5f: A sandboxed command no longer reaches another process's UNIX socket inside its write roots. The
+  Linux broker connects a pathname UNIX socket only when the operation bound it itself (its dev and
+  inode recorded at the brokered bind), so a user D-Bus, a rootless `docker.sock`, ssh-agent or tmux
+  in a granted directory, or `~/.docker/run/docker.sock` under a project bound at the home, stays
+  unreachable. As defence in depth the kernel's candidate builder and admission and the device's root
+  check refuse a write root that is a system runtime or socket directory (`/run`, `/var/run`,
+  `/private/var/run`, `/dev`, `/proc`, `/sys`, `/tmp` and `/private/tmp` themselves, known socket
+  directories such as `/tmp/tmux-<uid>`): new SDK `sandboxRuntimeDirectoryOf` and
+  `SANDBOX_RUNTIME_DIRECTORIES`. The permission conformance gains the `foreign-unix` check.
+- Updated dependencies [bf8c74b]
+- Updated dependencies [e31f31b]
+- Updated dependencies [ebeedd7]
+- Updated dependencies [47e2558]
+- Updated dependencies [23bee16]
+- Updated dependencies [9429b63]
+- Updated dependencies [75d8984]
+- Updated dependencies [5567108]
+- Updated dependencies [0c0f51f]
+- Updated dependencies [d6be3f7]
+- Updated dependencies [c3752c0]
+- Updated dependencies [89ae9e7]
+- Updated dependencies [1efb3e1]
+- Updated dependencies [da0323f]
+- Updated dependencies [3e02f3d]
+- Updated dependencies [3ec77c8]
+- Updated dependencies [1878227]
+- Updated dependencies [859d6fc]
+- Updated dependencies [d855f2f]
+- Updated dependencies [f5b114c]
+- Updated dependencies [b9ab9eb]
+- Updated dependencies [ca6929a]
+- Updated dependencies [4253de0]
+- Updated dependencies [df0b43c]
+- Updated dependencies [89ef174]
+- Updated dependencies [00742c4]
+- Updated dependencies [7f7db5f]
+- Updated dependencies [7f7db5f]
+- Updated dependencies [1eceaf8]
+- Updated dependencies [42f9a12]
+  - @capybara-hq/kernel@0.1.0-rc.55
+  - @capybara-hq/plugin-sdk@0.1.0-rc.39
+  - @capybara-hq/plugin-tools@0.1.0-rc.17
+
 ## 0.1.0-rc.28
 
 ### Patch Changes

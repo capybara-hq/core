@@ -1,5 +1,254 @@
 # @capybara-hq/kernel
 
+## 0.1.0-rc.55
+
+### Patch Changes
+
+- bf8c74b: Permission context version 2: the recorded context carries the device `sandbox` block, Full access
+  may record a scoped sandbox, the model text states the sandbox once and then who approves each
+  crossing kind (the escalation clause only where escalation is available), request metadata names
+  the sandbox block it saw, and step and full-run replays report `device_sandbox_changed` when the
+  snapshot rebuilds another block than the recorded one (a sandbox change between runs is zero drift).
+  Stored v1 contexts are read as v2 with no sandbox block, so existing conversations and eval cases keep
+  working.
+- e31f31b: Toggling the platform's `devices.outsideSandbox` or an org's `outsideSandbox` no longer updates
+  every running cloud instance. The kernel-only mode recorded with a cloud instance's limits still
+  follows that setting, but it never reaches a provider, so a running instance changes only for its
+  network (`sameApplied` and `appliedWider` compare the network only); before, every cloud device got
+  a provider update on its next use, and a Docker container lost its egress proxy. Migrations `0165`
+  and `0166` add their CHECK constraints `NOT VALID`, then validate them. The notes about
+  `owner_full_access` now say what still reads it (the one-time conversions and the recorded mode).
+- ebeedd7: The permission conformance returns a report of what it could not prove (with the fixture's
+  reasons), takes `checks` for focused runs, refuses empty `parts` or `checks`, and requires the
+  approval-only inputs of a provider with restricted support (`deviceEnvironment` with an
+  innocent-looking planted name, `closedGranted`, `home`, and `withoutOutsideSandbox` with outside
+  support). A sandboxed command's environment must hold only the minimal names, an open network needs
+  a reachable public target unless `allowNoPositive` is set, its closed targets must cover every closed
+  address class, and an instance boundary needs a metadata name behind its allowlist and refuses an
+  ungranted name a scope asks for. The kernel answers a device's scope validation refusal with a fixed
+  tool error and logs it as a kernel invariant break.
+- 47e2558: Copy for approval-only profiles. The picker's Full access row and its confirmation say that
+  credential reads outside the sandbox and sub-agents' requests to run outside it still go to the
+  review model; the cloud host list's help says a host outside the organization's list is refused.
+  A new permission context records `sandbox.perCallHosts` (false on an instance boundary), and under
+  Full access on an instance-boundary allowlist the model text says hosts cannot be granted per call
+  there; a stored context without the field renders the text it rendered (zero drift).
+- 23bee16: The device protocol carries a scope validation failure as its own typed kind (`invalid`): the
+  device answers a scope the contract refuses (such as the environment network without the device
+  filesystem) with it, and the kernel raises it as a `SandboxScopeValidationError` instead of an
+  untyped machine error.
+- 5567108: The model-facing refusal of an escalation (`sandbox: "escalated"`) names the layer whose
+  outside-sandbox setting blocks it, never "Full access": the device (its owner runs `capybara-device
+  ceiling set --outside-sandbox on` on the machine), the organization (an organization admin allows
+  it), the platform (a super admin allows it), or a cloud instance, which has no outside of its
+  sandbox. The policy refusals `org.outside_sandbox_not_allowed` and
+  `deployment.outside_sandbox_not_allowed` get one text each, and an approval that no longer matches
+  names the outside-sandbox setting.
+- 0c0f51f: Device protocol 4 (approval-only profiles), a paired kernel and device release with no fallback.
+  
+  - SDK (breaking): `SandboxPermissionSupport` is version 2 (`boundary`, `network`, `outsideSandbox`
+    instead of `fullAccess`), `DeviceOwnerCeiling` is version 3 (`outsideSandbox`, `network`,
+    `allowedDomains`), `DeviceOwnerCeilingNarrowing` narrows each of them, and the strict parsers are
+    `parseSandboxPermissionSupport`, `parseOwnerCeilingReport` and `parseOwnerCeilingNarrowing` (the
+    interim `…V2` / `…V3` names are gone). `SandboxLimits.mode` is removed: lifecycle create and update
+    carry resources and the outer network only, and `list` / `scan` take no `limits`. The policy
+    summary has no `mode`, the `mode` feature is gone, and a `policy` op that adds hosts or carries a
+    `mode` is refused (`POLICY_ADD_REFUSED`: widening happens only on the machine).
+    `DEVICE_PROTOCOL_VERSION` is 4 and `LEGACY_DEVICE_PROTOCOL_VERSION` 3.
+  - Device: the hello, `policy` frames and answers carry the version 3 owner report and the version 2
+    support report; the `policy` op refuses `add` and `mode` and writes nothing; `status` shows the
+    sandbox network and the outside-sandbox setting; the login token field is `outsideSandbox`. A
+    protocol 4 program facing an older deployment says the deployment must be upgraded.
+  - Kernel: refuses protocol 3 programs with 426 and an update instruction; reads the new owner and
+    support reports (a machine without a protocol 4 report fails closed); never sends `add` to a
+    local device: the device page's add is refused with the machine command, and an approval's
+    "always allow" for a host becomes a grant for the run. The facts field `fullAccessCeiling` is
+    `outsideSandboxCeiling`.
+  - Testing: the conformance suite reads `outsideSandbox` and accepts the scope contract's refusal of
+    a restricted environment-network operation.
+- d6be3f7: The SDK contract of approval-only permission profiles. The scope parser, the address classes and
+  the write policy below are live now; the new parsers wait for the protocol 4 cutover.
+  
+  - `parseSandboxOperationScope` accepts the `open-public` network. The `device` filesystem and the
+    `environment` network are accepted only together (the escalated call).
+  - `classifyAddress`, the data table `ADDRESS_CLASS_RANGES` (`AddressClassRange`) and
+    `OPEN_PUBLIC_DENIED_CIDRS`, the closed set as CIDRs: longest prefix first; v4-mapped, SIIT,
+    v4-compatible and 6to4 forms classify as their IPv4 address; Azure WireServer `168.63.129.16`
+    is metadata; the well-known NAT64 prefixes, `2001::/23`, `3fff::/20` and IPv6 space outside
+    `2000::/3` are closed. Operator-specific NAT64 prefixes are not covered.
+  - Strict parsers `parseSandboxPermissionSupportV2`, `parseOwnerCeilingReportV3` and
+    `parseOwnerCeilingNarrowingV3` (a narrowing can only narrow).
+  - The restricted write policy denies the OS persistence locations: `Library/LaunchAgents` and
+    `LaunchDaemons`, `.config/systemd`, `.local/share/systemd`, `.config/environment.d`,
+    `.config/autostart`, KDE `autostart-scripts` and `plasma-workspace/env`, `.xprofile`,
+    `.xsessionrc`, the remaining shell startup and logout files, `.config/git/config`, fish's
+    `config.fish` and `conf.d`, and the absolute spools `SANDBOX_SYSTEM_WRITE_DENIES`. Protected move
+    names come only from single-component entries; a multi-component entry refuses a move whose
+    destination ends in its prefix when the moved directory holds the next component
+    (`isSandboxMoveDenied` takes the directory's entries). New runtime digests: `linux-sandbox.py`
+    c77731022868b92b67be3643b54c6260fcfbdc65e283cd9b8f7be03f4b6b0b9e, `native-files.py`
+    029f47a8663ce7a40674657f856d07cc58cb5b9374c85d3edf69f3979b380a48.
+  
+  Kernel: the public-address checks refuse the Azure WireServer (`168.63.129.16`) whatever the
+  exemptions, like the other cloud metadata endpoints.
+- 89ae9e7: The device API speaks the device sandbox. The device view drops the old `mode` block and gains
+  `sandbox` (the network in effect and its ceiling, the allowlist hosts, the device's own network and
+  host list, whether a call may run outside the sandbox, which layer set each ceiling, the pending
+  change and the recent setting changes); a local device's `ownerCeiling` reports `outsideSandbox`,
+  `network` and `allowedDomains`, and a cloud device has none. `PATCH /devices/:id` takes a cloud
+  device's `network` (`open`, `allowlist` with optional hosts that only narrow its org's, `none`, or
+  `null` to follow the org) within the org's and the platform's ceilings (`device.network_not_allowed`
+  above them); an API token and the new Platform operation `devices.set-network` may only narrow it,
+  in the stored setting as well as in effect (following the org again counts as a widening), and a
+  token's change is recorded `via: "token"`. A narrowing revokes open-network work through the outbox
+  and keeps Full consent; a widening resets it.
+  The cloud `mode` switch and Full ceiling are gone, with `device.mode_on_device`,
+  `device.mode_requires_session`, `device.full_access_not_allowed`,
+  `device.owner_ceiling_confirmation_required` and `device.permission_not_migrated`; a local device's
+  network is answered with `device.ceiling_on_machine`. `POST /devices/:id/policy` only narrows: `add`
+  and `mode` are gone, and `ownerCeiling` takes `outsideSandbox: false`, `network: "allowlist"` and
+  `restrictedProjectReach: "workspace"`. A network ask is no longer made for a host no per-call grant
+  could allow: the reply names who adds it (the device owner on the machine, an organization admin or a
+  super admin), and a private address under the open network answers with the escalation hint.
+- 1efb3e1: Device sandbox settings (approval-only profiles, R3 T2). The platform's `devices.fullAccess` becomes
+  `devices.outsideSandbox` (`CAPYBARA_DEVICES__OUTSIDE_SANDBOX`, admin `devicesOutsideSandbox`), and new
+  hot keys `devices.network.default` / `devices.network.ceiling` (`open` or `allowlist`, admin
+  `devicesNetwork`) set the device sandbox network; both are covered by the permission configuration
+  fingerprint (projection version 3). The org settings `fullAccess` and `cloudNetwork` become
+  `outsideSandbox` and `deviceNetwork { default, ceiling, base, extraHosts, excludedHosts }`; a default or
+  ceiling above the platform's ceiling is refused with `org.network_not_allowed`, and the refusal codes
+  are renamed `org.outside_sandbox_not_allowed` / `deployment.outside_sandbox_not_allowed` (new:
+  `deployment.network_not_allowed`, `device.network_not_allowed`, `device.outside_sandbox_not_allowed`).
+  The old config keys and environment variables are refused with a conversion message, and
+  `capybara config migrate-permissions` converts a config file (an old `off` also sets
+  `devices.network.ceiling: allowlist`, so nothing widens). Stored old keys are read narrower and kept in
+  step until the permission configuration publication converts them. Migration `0165` adds a cloud
+  device's `network_mode` and `network_hosts`, copied from an allowlist outer network snapshot.
+  
+  The stored-key conversion runs at every permission configuration publication and stores exactly what
+  readers saw. An old `off` (platform, org, file, Nacos, environment or an invalid value) converts to
+  `outsideSandbox: off` plus the allowlist network ceiling: cloud devices of such a platform or org that
+  ran on the open network now get the allowlist (the conversion logs a warning naming each, with how to
+  reopen it). At the version conversion, cloud devices whose old effective network was the allowlist
+  (for example sandbox-mode devices under `sandbox.limits.orgHosts: within`) keep it
+  (`network_mode: allowlist`).
+  
+  Release note: once a new replica has converted the permission configuration publication to version 3,
+  rolling back to an older image is blocked (its replicas fail the publication barrier), as with B1.
+- da0323f: The device sandbox is the same under every permission profile: one pure function
+  (`effectiveDeviceSandbox`) combines the platform, org, device and provider layers into the sandbox
+  network (open public internet, allowlist or closed), the allowlist hosts (a device's own list only
+  narrows its org's hosts) and whether a call may run outside the sandbox. Admission no longer branches
+  on the profile: Full access commands run sandboxed, and only an escalated call within the
+  outside-sandbox ceiling gets the device filesystem and the environment network. Every supported
+  recorded permission context carries its `sandbox` block. Instance-boundary providers (the instance is
+  the sandbox) are supported with a whole-instance scope and no outside. Narrowing a network ceiling to
+  the allowlist (platform, org, owner or device) revokes running open-network work through the outbox,
+  an owner network change is published, audited and resets Full consent, the exec limits sent to a
+  device no longer carry the kernel's mode tier, and a device program newer than the deployment is told
+  to have the deployment upgraded. Migration `0167` copies allowlist snapshots taken after `0165` into
+  the device's own network.
+- 3e02f3d: Approval-only profiles: review, grants and the Full access auto-grant audit.
+  
+  - A profile only chooses who approves a crossing (`approverForCrossing`): Request approval asks the
+    person, Approve for me the review model (the person when it is missing, unsure or failing), Full
+    access nobody. Under Full access an escalation a sub-agent asks for, or one carrying a
+    credential consent (`ask.credential-*`, `ask.ssh`, `ask.secret-file`), goes to the review model;
+    its input says neutrally why.
+  - Candidate building runs for every profile. A Full access crossing (a directory, a host on an
+    allowlist, running one call outside the sandbox) is granted within the device's ceilings and
+    recorded exactly once: a grant with source `full-access`, a `permission_reviewed` event and the
+    audit row `permission.crossing_auto_granted` with its kind, in one fenced transaction (migration
+    `0166`), and announced after the commit. Sensitive consents an auto-grant skipped are recorded
+    on it (`sensitive`); a skipped consent without a crossing is recorded as crossing `sensitive`.
+    An escalated call without its matching grant is refused at admission under every profile.
+  - The fixed denies stay before the review model under every profile. A directory proposal at a
+    protected location (credentials, the device state, the sandbox's write denies) is refused before
+    review with the outside-sandbox escalation named; the review rules ask about the X session files,
+    `environment.d`, user systemd data, KDE autostart and every zsh and bash login file.
+  - A host is a crossing only while the sandbox network is an allowlist; IP literals and loopback
+    names are never proposed.
+  - A network ask offers a run grant only: "always allow" is refused, and the device-op paths, notes
+    and outcomes that could only follow it are removed. The `Bash` description explains proxy-aware traffic and the
+    escalation under every profile.
+- 3ec77c8: Upgrade notes for approval-only profiles (device protocol 4).
+  
+  - Full access consent resets once on upgrade. A stored owner report from a protocol 3 device
+    (owner report version 2) is unparseable for the new kernel, so its machine fails closed until the
+    upgraded device program reports again, and every conversation on Full access falls back to
+    Approve for me. People choose Full access again once their device is upgraded.
+  - Sandbox providers must report `permissionSupport` version 2 (`boundary`, `restricted`,
+    `network { openPublic, allowlist, perOperationHosts }`, `outsideSandbox`, `background`); a
+    provider without it is unprobed and admits no operation. Providers must not require or read
+    `limits.mode`: lifecycle `create` and `update` carry resources and the outer network only, and a
+    device's `exec` / `create` limits refuse any other key.
+- 859d6fc: `Bash` recognises curl 8's wording of a sandbox proxy refusal ("CONNECT tunnel failed, response
+  403") as a sandbox signal, so the result offers the per-call escalation where it is available.
+- d855f2f: Project knowledge reads (AGENTS.md, SKILL.md) on cloud instance-boundary devices (Docker, E2B)
+  work again: a kernel read on such a device is sent with the instance scope the providers run,
+  and the covering-path check still confines its path. A runtime that refuses a kernel read's scope
+  now records the project as unreadable with a clear reason, and the run goes on.
+- f5b114c: An instance-boundary runtime report that names an `unavailableReason` (a stale image, a digest
+  mismatch) now reads as unsupported. The SDK adds `instanceSupported(report)`: true only for
+  `boundary: "instance"` with no reason. The kernel uses it for recorded runtime availability, the
+  withheld scope, the kernel-read route and the held-operation check, so a network-`none` native
+  call or execution on such a device is refused instead of running.
+- b9ab9eb: A device's first start no longer resets Full access chosen before it (the first instance's roots are compared with the roots the device displayed, not placeholder defaults), and a sensitive command the review model allowed is recorded as the `sensitive` crossing.
+- 4253de0: A network ask's IM card offers only 「这次允许」 / "Allow this time": the run grant the decision
+  accepts. An ask made before still listing "always" no longer shows that choice on the card.
+- df0b43c: A local device whose program was upgraded (or replaced by a rebuilt package) is rebound without
+  logging out: when the machine its instance was installed for no longer attests that binding (the
+  restarted program's runtime hash changed, so it starts unbound), the kernel replaces the instance,
+  revokes the old generation's work through the device epoch, and the next call creates and binds a
+  new generation under the new runtime evidence. Before, every call failed with "Device context
+  changed before this operation" and availability stayed unprobed until a new login.
+- 89ef174: Read, Write, Edit, Glob, Grep, Deliver and project skill reads are bounded by the operation's
+  admitted scope (project roots plus directory grants, protected paths excluded), as `Bash` is, and
+  never by the device's outside-sandbox setting. With outside-sandbox off (a new install's default)
+  they no longer refuse an os-user project outside the workspace or an approved or auto-granted
+  directory crossing. The fixed roots bound the file tools only on the legacy route in sandbox mode.
+- 00742c4: An org's excluded device hosts are matched as patterns (`*.example.com` makes `api.example.com`
+  ungrantable per call, also through an owner's allowlist), and grant issuance re-derives a Full
+  access escalation's credential consent from the recorded command, so a credential escalation is
+  never issued as a Full access auto-grant.
+- 7f7db5f: The sandbox never writes the PATH-shim directories a later shell runs programs from:
+  `~/.local/bin` and `~/.cargo/bin` join `SANDBOX_MANDATORY_WRITE_DENIES`, and the new
+  `SANDBOX_HOME_WRITE_DENIES` (`~/bin`, anchored at the owner's home, checked with
+  `isSandboxHomeWriteDenied`) is denied by the device workers and never proposed by the kernel.
+  `cargo install` and similar installs into those directories need a per-call escalation.
+- 7f7db5f: A sandboxed command no longer reaches another process's UNIX socket inside its write roots. The
+  Linux broker connects a pathname UNIX socket only when the operation bound it itself (its dev and
+  inode recorded at the brokered bind), so a user D-Bus, a rootless `docker.sock`, ssh-agent or tmux
+  in a granted directory, or `~/.docker/run/docker.sock` under a project bound at the home, stays
+  unreachable. As defence in depth the kernel's candidate builder and admission and the device's root
+  check refuse a write root that is a system runtime or socket directory (`/run`, `/var/run`,
+  `/private/var/run`, `/dev`, `/proc`, `/sys`, `/tmp` and `/private/tmp` themselves, known socket
+  directories such as `/tmp/tmux-<uid>`): new SDK `sandboxRuntimeDirectoryOf` and
+  `SANDBOX_RUNTIME_DIRECTORIES`. The permission conformance gains the `foreign-unix` check.
+- 1eceaf8: A Read outside the scope asks as a read: the approval's kind is `read` and its tool key `Read`
+  (it was recorded as a write under `Write`), and its texts say read. The approval card, the inbox
+  and IM cards word a command ask in the reader's language from its structured facts (kind, reach,
+  escalation, rule and the profile now carried on `approval_requested.command.profile`) instead of
+  showing the kernel's English reason, which stays model-facing.
+- 42f9a12: A restricted `Bash` call the sandbox may have denied is explained where running outside the
+  sandbox is not possible too: the hint says private and local addresses are closed inside the
+  sandbox and names who can allow running outside it (the per-layer escalation refusal text). A
+  direct connect to a closed address is read as a sandbox signal, and a private-address network
+  note no longer says commands can "never" reach it.
+- Updated dependencies [23bee16]
+- Updated dependencies [9429b63]
+- Updated dependencies [75d8984]
+- Updated dependencies [0c0f51f]
+- Updated dependencies [d6be3f7]
+- Updated dependencies [c3752c0]
+- Updated dependencies [3ec77c8]
+- Updated dependencies [1878227]
+- Updated dependencies [f5b114c]
+- Updated dependencies [ca6929a]
+- Updated dependencies [7f7db5f]
+- Updated dependencies [7f7db5f]
+  - @capybara-hq/plugin-sdk@0.1.0-rc.39
+
 ## 0.1.0-rc.54
 
 ### Minor Changes
