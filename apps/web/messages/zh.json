@@ -621,6 +621,7 @@
         "Glob": "按名称查找文件",
         "Grep": "搜索文件内容",
         "Deliver": "交付文件",
+        "FetchAttachment": "把附件放进设备",
         "WebSearch": "搜索网页",
         "WebFetch": "读取网页",
         "GenerateImage": "生成图片",
@@ -629,6 +630,7 @@
         "ScheduleCreate": "创建定时任务",
         "ScheduleUpdate": "修改定时任务",
         "ScheduleList": "查看定时任务",
+        "ScheduleTargets": "查看定时任务可发送的会话",
         "ScheduleDelete": "删除定时任务"
       },
       "connectorsLabel": "连接器",
@@ -2338,6 +2340,7 @@
     },
     "tools": {
       "title": "工具",
+      "columns": { "name": "工具", "policy": "默认策略" },
       "hintManage": "每个工具右侧是它的默认策略和启用开关。将指针停在工具名上可查看完整名称和说明。",
       "hintRead": "每个工具右侧是它的默认策略。将指针停在工具名上可查看完整名称和说明。",
       "search": "搜索工具",

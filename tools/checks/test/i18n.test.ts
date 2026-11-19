@@ -3,7 +3,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
-import { checkDesignI18n, checkI18n, checkSourceZh, flattenKeys } from "../src/i18n.js";
+import {
+  checkDesignI18n,
+  checkI18n,
+  checkSourceZh,
+  checkWebI18nKeys,
+  flattenKeys,
+} from "../src/i18n.js";
 
 const fixture = (name: string) =>
   fileURLToPath(new URL(`../fixtures/i18n/${name}`, import.meta.url));
@@ -208,6 +214,27 @@ describe("checkDesignI18n", () => {
 
   it("the design system's zh strings pass", () => {
     expect(checkDesignI18n(designMessages)).toEqual([]);
+  });
+});
+
+describe("checkWebI18nKeys", () => {
+  it("flags static keys missing from zh.json, per translator namespace and scope", () => {
+    const dir = fixture("unknown-key");
+    const f = checkWebI18nKeys(join(dir, "src"), join(dir, "messages"));
+    expect(f.map((x) => [x.rule, x.line, x.message.split(" ")[0]])).toEqual([
+      ["i18n-unknown-key", 7, "page.missing"],
+      ["i18n-unknown-key", 10, "page.group"],
+      ["i18n-unknown-key", 14, "page.nope"],
+      ["i18n-unknown-key", 22, "page.group.b"],
+      ["i18n-unknown-key", 27, "other.anything"],
+    ]);
+    expect(f[1]?.message).toContain("a group, not a message");
+    expect(f.every((x) => x.file.endsWith("view.tsx"))).toBe(true);
+  });
+
+  it("the web app's keys all exist", () => {
+    const web = fileURLToPath(new URL("../../../apps/web", import.meta.url));
+    expect(checkWebI18nKeys(join(web, "src"), join(web, "messages"))).toEqual([]);
   });
 });
 
