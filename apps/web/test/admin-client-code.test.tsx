@@ -100,6 +100,7 @@ function ext(over: Record<string, unknown> = {}) {
 
 const settingsRoutes = (extra: Record<string, (c: Call) => Response> = {}) =>
   stubApi({
+    "GET /api/v1/admin/platform/icons": () => json(200, { icons: [] }),
     "GET /api/v1/admin/settings": () => json(200, SETTINGS),
     "GET /api/v1/admin/components?kind=theme": () => json(200, { components: [] }),
     "GET /api/v1/admin/ui/arrangement": () => json(200, { slots: [] }),
@@ -172,6 +173,7 @@ describe("插件界面代码 on /admin/settings", () => {
 
   it("a plugin's switch writes the disabled list; a stopped plugin stays listed (zh)", async () => {
     const calls = settingsRoutes({
+      "GET /api/v1/admin/platform/icons": () => json(200, { icons: [] }),
       "GET /api/v1/admin/settings": () =>
         json(200, { ...SETTINGS, clientExtensions: { enabled: true, disabled: ["gone"] } }),
     });
@@ -223,6 +225,7 @@ const detailRoutes = (
         validated: true,
         issues: [],
       }),
+    "GET /api/v1/admin/platform/icons": () => json(200, { icons: [] }),
     "GET /api/v1/admin/settings": () => json(200, SETTINGS),
     // the reports name orgs: the list is read with the extension
     "GET /api/v1/admin/orgs": () => json(200, { orgs: [ACME], limitDefaults: {} }),
@@ -299,6 +302,7 @@ describe("界面代码 on /admin/extensions/[name]", () => {
 
   it("恢复界面代码 takes a stopped plugin out of the list; no reports shows the empty line (zh)", async () => {
     const calls = detailRoutes(ext({ clientReports: [] }), {
+      "GET /api/v1/admin/platform/icons": () => json(200, { icons: [] }),
       "GET /api/v1/admin/settings": () =>
         json(200, {
           ...SETTINGS,
@@ -320,6 +324,7 @@ describe("界面代码 on /admin/extensions/[name]", () => {
     let reads = 0;
     const calls = detailRoutes(ext(), {
       // the page read [] on its first load; meanwhile someone stopped "other"
+      "GET /api/v1/admin/platform/icons": () => json(200, { icons: [] }),
       "GET /api/v1/admin/settings": () =>
         json(200, {
           ...SETTINGS,

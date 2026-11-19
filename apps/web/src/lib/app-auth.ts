@@ -18,9 +18,13 @@ export interface AuthorizeAppBody {
   deny?: boolean;
 }
 
-/** What the page needs from `GET /api/v1/meta`. */
+/**
+ * What the web reads from `GET /api/v1/meta`: the platform's name and its uploaded icons' versioned
+ * URLs (`/api/v1/platform/icon/<purpose>?v=<sha256>`; null = the web's default for that purpose).
+ */
 export interface PlatformMeta {
   name: string | null;
+  icons: { app: string | null; maskable: string | null; favicon: string | null };
 }
 
 /** The request the app described in the page's query, or null when a parameter is missing or wrong. */

@@ -1,6 +1,7 @@
 import "@capybara-hq/design/styles.css";
 // 服务端组件只能引入无 React 状态的子路径（主入口含 createContext，属客户端模块）。
 import { parseTheme, THEME_COOKIE } from "@capybara-hq/design/theme";
+import type { Metadata } from "next";
 import { cookies } from "next/headers";
 import { NextIntlClientProvider } from "next-intl";
 import { getLocale, getTranslations } from "next-intl/server";
@@ -8,7 +9,11 @@ import type { ReactNode } from "react";
 import { DesignRoot } from "../components/design-root";
 import { QueryProvider } from "../components/QueryProvider";
 import { isAppLocale, routing } from "../i18n/routing";
+import type { PlatformMeta } from "../lib/app-auth";
+import { platformMetaQuery } from "../lib/query/app-auth";
+import { serverQueryClient } from "../lib/server/query";
 import { parseTimeZone, TIME_ZONE_COOKIE } from "../lib/time";
+import { platformIconsMetadata } from "../lib/web-manifest";
 // Server components' loaders (`apiFetch`) reach the kernel through the server transport.
 import "../lib/server/register";
 
@@ -23,9 +28,26 @@ const regularFont = new URL(
 // 只取路径与查询串（服务端的 import.meta.url 是 file:// 地址；查询串保留部署 ID 等后缀）
 const REGULAR_FONT = `${regularFont.pathname}${regularFont.search}`;
 
-export async function generateMetadata() {
+/**
+ * The document's title, the iOS web app title, and the page icons follow the deployment (mobile
+ * layout spec §10.2): `platform.name` ("Capybara" unset) and the platform icon (the web's set when
+ * none is uploaded, or the kernel cannot be read). The manifest link comes from `app/manifest.ts`.
+ */
+export async function generateMetadata(): Promise<Metadata> {
   const t = await getTranslations("metadata");
-  return { title: t("title"), description: t("description") };
+  let meta: PlatformMeta | null = null;
+  try {
+    meta = await serverQueryClient().fetchQuery({ ...platformMetaQuery(), retry: false });
+  } catch {
+    // an unreachable kernel: the defaults
+  }
+  const name = meta?.name ?? t("title");
+  return {
+    title: name,
+    description: t("description"),
+    appleWebApp: { capable: true, title: name, statusBarStyle: "black-translucent" },
+    icons: platformIconsMetadata(meta),
+  };
 }
 
 /**

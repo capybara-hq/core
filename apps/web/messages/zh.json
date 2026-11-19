@@ -569,6 +569,13 @@
       "external_not_allowed": "这个组织目前不允许对外分享。",
       "expiry_too_long": "有效期超过了平台允许的上限，请选短一些。",
       "file_unavailable": "文件已不可用，可能已被删除。"
+    },
+    "platform_icon": {
+      "invalid_type": "文件类型不对：应用图标和自适应图标必须是 PNG，网站图标必须是 SVG。",
+      "invalid_size": "PNG 必须正好是 512 × 512 像素。",
+      "too_large": "文件太大：最多 1 MB（SVG 网站图标最多 128 KB）。",
+      "storage_unavailable": "对象存储不可用，无法保存图标。请稍后重试。",
+      "not_found": "这个图标尚未上传。"
     }
   },
   "agents": {
@@ -6398,6 +6405,29 @@
       "label": "平台默认主题",
       "notAvailable": "这个主题没有在所有组织启用，不能作为平台默认主题。未启用它的组织：{orgs}。"
     }
+  },
+  "appIcon": {
+    "title": "应用图标",
+    "description": "整个平台的已安装应用图标和浏览器标签页图标。未上传时使用 Capybara 图标。",
+    "app": {
+      "title": "标准图标",
+      "hint": "PNG，必须为 512 × 512"
+    },
+    "maskable": {
+      "title": "自适应图标",
+      "hint": "PNG，512 × 512，主体位于中央 80 % 范围内；启动器会把它裁成自己的形状"
+    },
+    "favicon": {
+      "title": "网站图标",
+      "hint": "SVG，不超过 128 KB"
+    },
+    "default": "默认",
+    "custom": "已上传",
+    "upload": "上传",
+    "uploadLabel": "上传{name}",
+    "restore": "恢复默认",
+    "uploaded": "图标已上传。",
+    "restored": "已恢复默认图标。"
   },
   "clientExtensions": {
     "budget": "「{plugin}」的界面代码出错，已在本次会话停用",

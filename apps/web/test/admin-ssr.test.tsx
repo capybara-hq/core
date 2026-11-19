@@ -353,6 +353,7 @@ const ROUTES: Routes = {
         },
       },
     }),
+  "GET /api/v1/admin/platform/icons": () => json(200, { icons: [] }),
   "GET /api/v1/admin/settings": () => json(200, SETTINGS),
   "GET /api/v1/admin/ui/arrangement": () => json(200, { slots: [] }),
   // 外观: the themes and the current org's

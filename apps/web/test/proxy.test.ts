@@ -1,7 +1,7 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { dynamic, GET, PATCH, POST } from "../src/app/api/[...path]/route";
+import { dynamic, GET, PATCH, POST, PUT } from "../src/app/api/[...path]/route";
 import { PEER_TOKEN_ENV, PEER_TOKEN_HEADER, sanitizeIncoming } from "../src/lib/peer";
 
 type Seen = { method: string; url: string; headers: IncomingMessage["headers"]; body: string };
@@ -259,6 +259,52 @@ describe("安装 / 预览连接器的请求体上限（可带 2 MB 的 OpenAPI �
       new Request("http://web.example/api/v1/orgs/o1/connectors", {
         method: "POST",
         body: "x".repeat(6 * 1024 * 1024 + 1),
+      }),
+    );
+    expect(huge.status).toBe(413);
+  });
+});
+
+describe("platform icon upload (PUT /api/v1/admin/platform/icons/:purpose): raised to 2 MiB", () => {
+  beforeEach(() => {
+    handler = (_req, res) => {
+      res.writeHead(200);
+      res.end("{}");
+    };
+  });
+
+  it("a 1 MiB PNG as base64 JSON (over 1 MiB) passes; over 2 MiB, other methods and paths do not", async () => {
+    const big = "x".repeat(1_500_000);
+    for (const purpose of ["app", "maskable", "favicon"]) {
+      const res = await PUT(
+        new Request(`http://web.example/api/v1/admin/platform/icons/${purpose}`, {
+          method: "PUT",
+          body: big,
+        }),
+      );
+      expect(res.status, purpose).toBe(200);
+    }
+    expect(seen.map((r) => r.body.length)).toEqual([1_500_000, 1_500_000, 1_500_000]);
+    for (const path of [
+      "/api/v1/admin/platform/icons",
+      "/api/v1/admin/platform/icons/app/x",
+      "/api/v1/admin/platform/iconsx/app",
+      "/api/v1/x/api/v1/admin/platform/icons/app",
+    ]) {
+      const res = await PUT(new Request(`http://web.example${path}`, { method: "PUT", body: big }));
+      expect(res.status, path).toBe(413);
+    }
+    const post = await POST(
+      new Request("http://web.example/api/v1/admin/platform/icons/app", {
+        method: "POST",
+        body: big,
+      }),
+    );
+    expect(post.status).toBe(413);
+    const huge = await PUT(
+      new Request("http://web.example/api/v1/admin/platform/icons/app", {
+        method: "PUT",
+        body: "x".repeat(2 * 1024 * 1024 + 1),
       }),
     );
     expect(huge.status).toBe(413);

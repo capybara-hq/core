@@ -569,6 +569,13 @@
       "external_not_allowed": "External sharing is not allowed for this organization right now.",
       "expiry_too_long": "The expiry is longer than the platform allows; choose a shorter one.",
       "file_unavailable": "The file is no longer available; it may have been removed."
+    },
+    "platform_icon": {
+      "invalid_type": "The file type is wrong: the app and maskable icons must be PNG, the favicon SVG.",
+      "invalid_size": "The PNG must be exactly 512 × 512 pixels.",
+      "too_large": "The file is too large: at most 1 MB (an SVG favicon at most 128 KB).",
+      "storage_unavailable": "Object storage is unavailable, so the icon cannot be saved. Try again later.",
+      "not_found": "This icon has not been uploaded."
     }
   },
   "agents": {
@@ -6410,6 +6417,29 @@
       "label": "Platform default theme",
       "notAvailable": "This theme is not on in every organization, so it cannot be the platform default. Organizations where it is off: {orgs}."
     }
+  },
+  "appIcon": {
+    "title": "App icon",
+    "description": "The icon of the installed app and the browser tab for the whole platform. Without an upload, the Capybara icon is used.",
+    "app": {
+      "title": "Standard icon",
+      "hint": "PNG, exactly 512 × 512"
+    },
+    "maskable": {
+      "title": "Maskable icon",
+      "hint": "PNG, 512 × 512, subject inside the central 80 %; launchers crop it to their shape"
+    },
+    "favicon": {
+      "title": "Favicon",
+      "hint": "SVG, at most 128 KB"
+    },
+    "default": "Default",
+    "custom": "Uploaded",
+    "upload": "Upload",
+    "uploadLabel": "Upload {name}",
+    "restore": "Restore default",
+    "uploaded": "Icon uploaded.",
+    "restored": "Default icon restored."
   },
   "clientExtensions": {
     "budget": "The interface code of “{plugin}” failed and is off for this session.",

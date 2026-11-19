@@ -5,7 +5,9 @@
  * works. Request bodies have a size limit (`CAPYBARA_WEB_MAX_BODY_BYTES`, default 1 MiB, the same
  * as the kernel's Fastify bodyLimit); installing / previewing a connector
  * (`POST /api/v1/orgs/:orgId/connectors[/preview]`) may carry an OpenAPI document of up to 2 MB, so
- * like those two kernel routes it is raised to 6 MiB. Extension and plugin package uploads
+ * like those two kernel routes it is raised to 6 MiB. A platform icon upload
+ * (`PUT /api/v1/admin/platform/icons/:purpose`) carries a file of up to 1 MiB as base64 JSON, so it
+ * is raised to 2 MiB (the kernel route's own limit admits somewhat more). Extension and plugin package uploads
  * (`POST /api/v1/admin/extensions/packages/file`, `/api/v1/admin/catalog/import/file`,
  * `/api/v1/orgs/:orgId/catalog/uploads/file`) are raised to `CAPYBARA_WEB_MAX_PACKAGE_BYTES`
  * (default 50 MiB) and forwarded while being read, never buffered whole. Client addresses are handled in `lib/peer.ts`.
@@ -26,6 +28,9 @@ export const dynamic = "force-dynamic";
 /** 安装 / 预览连接器的请求体上限（与内核 http/app.ts 的 LARGE_BODY_LIMIT 一致）。 */
 const CONNECTOR_INSTALL_MAX_BODY_BYTES = 6 * 1024 * 1024;
 const CONNECTOR_INSTALL_PATH = /^\/api\/v1\/orgs\/[^/]+\/connectors(?:\/preview)?$/;
+/** A platform icon upload: up to 1 MiB of file as base64 JSON (about 1.4 MiB). */
+const PLATFORM_ICON_MAX_BODY_BYTES = 2 * 1024 * 1024;
+const PLATFORM_ICON_PATH = /^\/api\/v1\/admin\/platform\/icons\/[^/]+$/;
 /**
  * Upload routes whose request body is streamed through (extension package tgz, plugin package tgz,
  * an org's plugin package tgz; up to tens of MiB).
@@ -78,9 +83,11 @@ const DROP_RESPONSE = new Set([
 
 function maxBodyBytes(method: string, pathname: string): number {
   const base = configuredMaxBodyBytes();
-  return method === "POST" && CONNECTOR_INSTALL_PATH.test(pathname)
-    ? Math.max(base, CONNECTOR_INSTALL_MAX_BODY_BYTES)
-    : base;
+  if (method === "POST" && CONNECTOR_INSTALL_PATH.test(pathname))
+    return Math.max(base, CONNECTOR_INSTALL_MAX_BODY_BYTES);
+  if (method === "PUT" && PLATFORM_ICON_PATH.test(pathname))
+    return Math.max(base, PLATFORM_ICON_MAX_BODY_BYTES);
+  return base;
 }
 
 async function proxy(req: Request): Promise<Response> {
