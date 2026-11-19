@@ -650,13 +650,13 @@ it.runIf(process.platform === "darwin")(
           ceilingReads++;
           return {
             revision: "one",
-            fullAccess,
+            outsideSandbox: fullAccess,
+            network: "allowlist",
             roots: { workspace: f.root, tmp: f.root, skills: f.root },
             restrictedProjectReach: "os-user",
-            restrictedAllowedDomains: [],
+            allowedDomains: [],
             restrictedDeniedReadRoots: [],
             preparation: { skillsRoot: f.root, attachmentsBase: join(f.root, "attachments") },
-            fullNetwork: "environment",
           };
         },
       },

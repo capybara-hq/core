@@ -41,7 +41,8 @@ describe("GET /api/v1/meta", () => {
       name: null,
       icon: null,
       icons: { app: null, maskable: null, favicon: null },
-      protocols: { device: { min: 3, max: 3 } },
+      // device protocol 4 only: a protocol 3 program is refused (426)
+      protocols: { device: { min: 4, max: 4 } },
       features: { localDevices: true, appSignIn: false },
     });
   });

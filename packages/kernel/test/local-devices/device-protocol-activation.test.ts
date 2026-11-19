@@ -34,9 +34,9 @@ import type { Answer } from "./test-holder.js";
 
 /**
  * The paired activation (permission activation W4-O): the production route `GET /device/connect`
- * speaks device protocol 3 only. A protocol 2 header is refused before the upgrade (426), a
- * protocol 2 hello, a hello that does not match the protocol 3 header and a malformed frame close
- * the socket (4400), and every protocol 3 operation makes the round trip kernel -> gateway ->
+ * speaks device protocol 4 only. A protocol 2 header is refused before the upgrade (426), a
+ * protocol 2 hello, a hello that does not match the protocol 4 header and a malformed frame close
+ * the socket (4400), and every protocol 4 operation makes the round trip kernel -> gateway ->
  * device -> kernel over the real route, including a managed output read of more than 65 KiB.
  */
 
@@ -105,7 +105,7 @@ async function connected() {
   });
 }
 
-/** A raw socket on the production route with a protocol 3 header; resolves its close. */
+/** A raw socket on the production route with a protocol 4 header; resolves its close. */
 async function rawSocket(credential: string) {
   const ws = new WebSocket(url, {
     headers: {
@@ -126,15 +126,15 @@ async function rawSocket(credential: string) {
 
 const codeOf = (body: string) => (JSON.parse(body) as { error: { code: string } }).error.code;
 
-describe("the production route speaks protocol 3 only", () => {
-  it("the protocol constant is 3", () => {
-    expect(DEVICE_PROTOCOL_VERSION).toBe(3);
-    expect(LEGACY_DEVICE_PROTOCOL_VERSION).toBe(2);
+describe("the production route speaks protocol 4 only", () => {
+  it("the protocol constant is 4", () => {
+    expect(DEVICE_PROTOCOL_VERSION).toBe(4);
+    expect(LEGACY_DEVICE_PROTOCOL_VERSION).toBe(3);
   });
 
-  it("a protocol 2 header is refused before the upgrade: 426 device.program_outdated", async () => {
+  it("an older protocol header is refused before the upgrade: 426 device.program_outdated", async () => {
     const m = await connected();
-    for (const protocol of ["2", "1", ""]) {
+    for (const protocol of ["3", "2", "1", ""]) {
       const r = await refusal(url, {
         Authorization: `Bearer ${m.credential}`,
         ...(protocol !== "" && { "X-Capybara-Device-Protocol": protocol }),
@@ -142,11 +142,24 @@ describe("the production route speaks protocol 3 only", () => {
       expect(r?.status).toBe(426);
       expect(codeOf(r?.body ?? "")).toBe("device.program_outdated");
       // a newer capybara-device reads the kernel's protocol from this text (`outdatedMessage`)
-      expect(r?.body).toContain("device protocol 3");
+      expect(r?.body).toContain("device protocol 4");
     }
   });
 
-  it("a protocol 2 hello on a protocol 3 connection closes 4400 and claims nothing", async () => {
+  it("a newer program is told this deployment is older and must be upgraded", async () => {
+    const m = await connected();
+    const r = await refusal(url, {
+      Authorization: `Bearer ${m.credential}`,
+      "X-Capybara-Device-Protocol": "5",
+    });
+    expect(r?.status).toBe(426);
+    expect(codeOf(r?.body ?? "")).toBe("device.program_outdated");
+    expect(r?.body).toContain("device protocol 4");
+    expect(r?.body).toContain("older");
+    expect(r?.body).not.toContain("Update capybara-device");
+  });
+
+  it("a protocol 2 hello on a protocol 4 connection closes 4400 and claims nothing", async () => {
     const m = await connected();
     const { ws, closed } = await rawSocket(m.credential);
     ws.send(JSON.stringify(LEGACY_HELLO));
@@ -155,13 +168,15 @@ describe("the production route speaks protocol 3 only", () => {
     expect(await k.app.get(LocalDeviceRelay).holderLive(m.deviceId)).toBe(false);
   });
 
-  it("a hello whose protocol does not match the protocol 3 header closes 4400", async () => {
+  it("a hello whose protocol does not match the protocol 4 header closes 4400", async () => {
     const m = await connected();
     for (const hello of [
       { ...HELLO_V3, protocol: 2 },
-      { ...HELLO_V3, protocol: 4 },
-      // protocol 3 in name, protocol 2 in shape (no transport, runtime or owner facts)
-      { ...LEGACY_HELLO, protocol: 3 },
+      // the staged protocol before the cutover
+      { ...HELLO_V3, protocol: 3 },
+      { ...HELLO_V3, protocol: 5 },
+      // protocol 4 in name, protocol 2 in shape (no transport, runtime or owner facts)
+      { ...LEGACY_HELLO, protocol: 4 },
     ]) {
       const { ws, closed } = await rawSocket(m.credential);
       ws.send(JSON.stringify(hello));
@@ -180,7 +195,7 @@ describe("the production route speaks protocol 3 only", () => {
     binary.ws.send(Buffer.from(JSON.stringify(HELLO_V3)), { binary: true });
     expect((await binary.closed).code).toBe(DEVICE_CLOSE.protocol);
 
-    // a protocol 3 hello without its owner report
+    // a protocol 4 hello without its owner report
     const { ownerCeiling: _dropped, ...noOwner } = HELLO_V3;
     const partial = await rawSocket(m.credential);
     partial.ws.send(JSON.stringify(noOwner));
@@ -217,7 +232,6 @@ const LIMITS = {
   cpu: 1,
   memoryMb: 512,
   diskMb: 1024,
-  mode: "sandbox",
   network: { kind: "allowlist", hosts: [] },
 };
 const executionRef = (deviceId: string) => ({
@@ -228,7 +242,7 @@ const executionRef = (deviceId: string) => ({
 });
 const EXEC_RESULT = { exitCode: 0, stdout: "ok\n", stderr: "", truncated: false, timedOut: false };
 
-/** Every protocol 3 operation: valid request arguments and the device's answer. */
+/** Every protocol 4 operation: valid request arguments and the device's answer. */
 function operations(deviceId: string): [DeviceOperation, Record<string, unknown>, unknown][] {
   const scope = operationScope(deviceId);
   const prep = {
@@ -297,11 +311,11 @@ function operations(deviceId: string): [DeviceOperation, Record<string, unknown>
       "policy",
       {
         opId: randomUUID(),
-        add: ["example.com"],
+        remove: ["example.com"],
         source: { accountId: "a", accountName: "A", via: "web" },
       },
       {
-        policy: { mode: "sandbox", allowedDomains: ["example.com"] },
+        policy: { allowedDomains: [] },
         ownerCeiling: FAKE_OWNER_CEILING,
       },
     ],
@@ -310,7 +324,7 @@ function operations(deviceId: string): [DeviceOperation, Record<string, unknown>
   ];
 }
 
-describe("every protocol 3 operation makes the round trip over the production route", () => {
+describe("every protocol 4 operation makes the round trip over the production route", () => {
   it("kernel -> gateway -> device -> kernel for each operation, frames as sent", async () => {
     const m = await connected();
     const ops = operations(m.deviceId);
@@ -336,7 +350,7 @@ describe("every protocol 3 operation makes the round trip over the production ro
       expect(sent.op, op).toBe(op);
       expect(sent.args, op).toEqual(args);
     }
-    // the instance binding is a protocol 3 operation as well (answered with installed evidence)
+    // the instance binding is a protocol 4 operation as well (answered with installed evidence)
     const bind = {
       instanceId: m.deviceId,
       instanceGeneration: "1700000000000",
@@ -352,7 +366,7 @@ describe("every protocol 3 operation makes the round trip over the production ro
     const seen = new Set(machine.frames.map((f) => String((f as { op?: unknown }).op)));
     for (const [op] of ops) expect(seen.has(op), op).toBe(true);
     expect(seen.has("bindInstance")).toBe(true);
-    // a protocol 3 device never gets a broad kill
+    // a protocol 4 device never gets a broad kill
     expect(seen.has("killAll") || seen.has("killTagged")).toBe(false);
   });
 
@@ -405,7 +419,7 @@ describe("every protocol 3 operation makes the round trip over the production ro
     }
     expect(Buffer.concat(parts).equals(output)).toBe(true);
     expect(reads).toBeGreaterThan(1);
-    // each read went out as one protocol 3 frame sized for the connection's capacity
+    // each read went out as one protocol 4 frame sized for the connection's capacity
     for (const f of machine.frames) {
       expect(String((f as { op?: unknown }).op)).toBe("backgroundReadOutput");
       expect((f as unknown as KernelRequest).args.maxBytes as number).toBeLessThanOrEqual(65536);

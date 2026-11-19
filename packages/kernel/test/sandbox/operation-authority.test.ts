@@ -16,7 +16,9 @@ describe("operation authority intersection", () => {
     readRoots: ["/work"],
     writeRoots: ["/work"],
     allowedHosts: ["api.example.com"],
-    fullAccessCeiling: true,
+    network: "allowlist" as const,
+    boundary: "operation" as const,
+    outsideSandboxCeiling: true,
   };
   it("both restricted profiles keep independently bounded roots and hosts", () => {
     for (const profile of ["request-approval", "approve-for-me"] as const)
@@ -26,21 +28,15 @@ describe("operation authority intersection", () => {
         network: { kind: "allowlist", hosts: ["api.example.com"] },
       });
   });
-  it("Full uses the environment only with explicit matching consent and current ceiling", () => {
-    expect(() =>
-      intersectPermissionScope({ ...base, profile: "full-access", fullConsent: false }),
-    ).toThrow();
-    expect(() =>
-      intersectPermissionScope({
-        ...base,
+  it("Full access keeps the sandbox: the same scoped roots and hosts, whatever its ceiling", () => {
+    for (const outsideSandboxCeiling of [true, false])
+      expect(
+        intersectPermissionScope({ ...base, profile: "full-access", outsideSandboxCeiling }),
+      ).toMatchObject({
         profile: "full-access",
-        fullConsent: true,
-        fullAccessCeiling: false,
-      }),
-    ).toThrow();
-    expect(
-      intersectPermissionScope({ ...base, profile: "full-access", fullConsent: true }),
-    ).toMatchObject({ filesystem: { kind: "device" }, network: { kind: "environment" } });
+        filesystem: { kind: "scoped", readRoots: ["/work"], writeRoots: ["/work"] },
+        network: { kind: "allowlist", hosts: ["api.example.com"] },
+      });
   });
   it("empty restricted allowance denies network and returned grants are immutable copies", () => {
     const readRoots = ["/work"];
@@ -48,6 +44,7 @@ describe("operation authority intersection", () => {
       ...base,
       profile: "approve-for-me",
       allowedHosts: [],
+      network: "none",
       readRoots,
     });
     readRoots.push("/secret");
@@ -74,10 +71,16 @@ import type { PermissionReviewSnapshot } from "../../src/sandbox/permission-call
 import {
   approverForProfile,
   buildPermissionCandidate,
-  ESCALATION_CEILING_WHY,
   ESCALATION_JUSTIFICATION_MISSING_TEXT,
+  escalationCeilingWhy,
   escalationRefusedText,
 } from "../../src/sandbox/review/permission-candidate.js";
+
+const ESCALATION_CEILING_WHY = escalationCeilingWhy({
+  layer: "device",
+  location: "local",
+  boundary: "operation",
+});
 
 describe("per-call sandbox escalation", () => {
   const base = {
@@ -93,23 +96,25 @@ describe("per-call sandbox escalation", () => {
     readRoots: ["/work"],
     writeRoots: ["/work"],
     allowedHosts: [],
-    fullAccessCeiling: true,
+    network: "none" as const,
+    boundary: "operation" as const,
+    outsideSandboxCeiling: true,
   };
-  it("an escalated restricted operation gets full execution and keeps its profile", () => {
-    for (const profile of ["request-approval", "approve-for-me"] as const)
+  it("an escalated operation runs outside the sandbox and keeps its profile", () => {
+    for (const profile of ["request-approval", "approve-for-me", "full-access"] as const)
       expect(intersectPermissionScope({ ...base, profile, escalated: true })).toMatchObject({
         profile,
         filesystem: { kind: "device" },
         network: { kind: "environment" },
       });
   });
-  it("an escalation is refused without the Full access ceiling, like Full access", () => {
+  it("an escalation is refused without the outside-sandbox setting", () => {
     expect(() =>
       intersectPermissionScope({
         ...base,
         profile: "approve-for-me",
         escalated: true,
-        fullAccessCeiling: false,
+        outsideSandboxCeiling: false,
       }),
     ).toThrow(/ceiling/);
   });
@@ -135,7 +140,7 @@ describe("per-call sandbox escalation", () => {
     baseWriteDirectories: ["/work"],
     baseHosts: [],
     workingRoot: "/work",
-    fullAccessCeiling: true,
+    outsideSandboxCeiling: true,
     broadProjectReach: false,
     unattended: false,
     fullConsent: false,
@@ -144,7 +149,6 @@ describe("per-call sandbox escalation", () => {
     policy: {
       mode: "auto",
       allowedMode: "auto",
-      localAllowedDomains: [],
       network: { kind: "allowlist", hosts: [] },
     },
     ...over,
@@ -184,6 +188,27 @@ describe("per-call sandbox escalation", () => {
       "unsupported",
     );
   });
+  it("a refused escalation names the layer that blocks it and how to lift it", () => {
+    const why = (layer: Parameters<typeof escalationCeilingWhy>[0]["layer"], cloud = false) =>
+      escalationCeilingWhy({
+        layer,
+        location: cloud ? "cloud" : "local",
+        boundary: cloud ? "instance" : "operation",
+      });
+    expect(why("device")).toContain("capybara-device ceiling set --outside-sandbox on");
+    expect(why("device")).toMatch(/owner/);
+    expect(why("org")).toMatch(/an organization admin/);
+    expect(why("platform")).toMatch(/a super admin/);
+    // a cloud instance is its sandbox: there is nothing outside it to allow, whatever layer is off
+    for (const layer of ["device", "org", "platform", "provider"] as const)
+      expect(why(layer, true)).toMatch(/no outside of its sandbox/);
+    const texts = [why("device"), why("org"), why("platform"), why("device", true)];
+    expect(new Set(texts).size).toBe(4);
+    for (const text of texts) {
+      expect(text).not.toMatch(/Full access/);
+      expect(escalationRefusedText(text, "/work")).not.toMatch(/Full access/);
+    }
+  });
   it("a ceiling or an unattended run refuses it with an actionable text", () => {
     expect(build(escalated, { escalationRefusal: ESCALATION_CEILING_WHY })).toEqual({
       kind: "unsupported",
@@ -194,8 +219,11 @@ describe("per-call sandbox escalation", () => {
     expect(unattended.kind).toBe("unsupported");
     expect(unattended.kind === "unsupported" && unattended.message).toMatch(/unattended/);
   });
-  it("no approver (Full access): granted within the ceiling, refused past it", () => {
-    expect(build(escalated, { profile: "full-access" })).toEqual({ kind: "in-scope" });
+  it("no approver (Full access): proposed for its auto-grant within the ceiling, refused past it", () => {
+    expect(build(escalated, { profile: "full-access" })).toMatchObject({
+      kind: "proposal",
+      candidate: { scopeKind: "sandbox-escalation" },
+    });
     expect(
       build(escalated, { profile: "full-access", escalationRefusal: ESCALATION_CEILING_WHY }).kind,
     ).toBe("unsupported");

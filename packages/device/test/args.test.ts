@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseCommandLine, UsageError } from "../src/args.js";
+import { parseCommandLine, USAGE, UsageError } from "../src/args.js";
 
 describe("parseCommandLine", () => {
   it("login --json sets browser false and json", () => {
@@ -97,6 +97,51 @@ describe("parseCommandLine", () => {
     expect(() => parseCommandLine(["policy", "--yes"])).toThrow(UsageError);
     expect(() => parseCommandLine(["policy", "add", "allowedDomains"])).toThrow(UsageError);
     expect(() => parseCommandLine(["policy", "remove", "a", "b", "c"])).toThrow(UsageError);
+    // the owner ceiling: each field optional, at least one, the old --full-access gone
+    expect(parseCommandLine(["ceiling"])).toEqual({ command: "ceiling", action: "show" });
+    expect(
+      parseCommandLine(["ceiling", "set", "--outside-sandbox", "on", "--network", "open", "-y"]),
+    ).toEqual({
+      command: "ceiling",
+      action: "set",
+      outsideSandbox: true,
+      network: "open",
+      yes: true,
+    });
+    expect(parseCommandLine(["ceiling", "set", "--network", "allowlist"])).toEqual({
+      command: "ceiling",
+      action: "set",
+      network: "allowlist",
+    });
+    expect(
+      parseCommandLine([
+        "ceiling",
+        "set",
+        "--outside-sandbox",
+        "off",
+        "--project-reach",
+        "os-user",
+      ]),
+    ).toEqual({
+      command: "ceiling",
+      action: "set",
+      outsideSandbox: false,
+      projectReach: "os-user",
+    });
+    for (const argv of [
+      ["ceiling", "set"],
+      ["ceiling", "set", "--yes"],
+      ["ceiling", "set", "--outside-sandbox", "allow"],
+      ["ceiling", "set", "--network", "environment"],
+      ["ceiling", "show", "--network", "open"],
+      ["ceiling", "set", "--network", "open", "extra"],
+    ])
+      expect(() => parseCommandLine(argv), argv.join(" ")).toThrow(UsageError);
+    expect(() =>
+      parseCommandLine(["ceiling", "set", "--full-access", "allow", "--project-reach", "os-user"]),
+    ).toThrow(/--full-access is gone.*--outside-sandbox/);
+    expect(USAGE).toMatch(/--outside-sandbox on\|off/);
+    expect(USAGE).toMatch(/--network open\|allowlist/);
     // the daily mode command is gone: the owner ceiling replaced it
     for (const argv of [["mode"], ["mode", "auto"], ["mode", "sandbox", "-y"]])
       expect(() => parseCommandLine(argv)).toThrow(/unknown command mode/);

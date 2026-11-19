@@ -86,6 +86,13 @@ export interface ReviewRecord {
   commandHash?: string;
   /** Set only when the command was actually admitted to run outside the OS sandbox. */
   sandbox?: "escalated";
+  /**
+   * Who approved the call's crossing: inside the scope (`scope`), the review model, or Full access
+   * by itself (approval-only profiles design). Absent on a denial.
+   */
+  decisionSource?: "scope" | "review-model" | "full-access";
+  /** The boundary crossing the allow covered (absent when the call crossed nothing). */
+  crossing?: "directory" | "host" | "outside-sandbox" | "sensitive";
 }
 
 /**
@@ -124,10 +131,12 @@ export interface CommandAsk {
   /** The file the call targets, informational only: the scope names its directory. */
   targetPath?: string;
   candidateHash?: string;
-  kind: "command" | "write";
-  /** The command text, or the tool key of the write. */
+  kind: "command" | "write" | "read";
+  /** The profile the call was reviewed under (a permission ask): the card's wording follows it. */
+  profile?: "request-approval" | "approve-for-me" | "full-access";
+  /** The command text, or the tool key of the write or read. */
   command: string;
-  /** A write's target path. */
+  /** A write's or read's target path. */
   path?: string;
   rule: string | null;
   reason: string;

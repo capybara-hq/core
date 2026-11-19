@@ -1,19 +1,31 @@
+import type { SandboxLimits } from "@capybara-hq/plugin-sdk";
 import type { KernelConfig } from "../config/schema.js";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import type { KernelConfigService } from "../infra/config/kernel-config.service.js";
-import type { CloudNetworkSetting, OrgSettings } from "../orgs/settings.service.js";
-import { type FullAccessPermission, readDevicesFullAccess } from "./platform-full-access.js";
+import type { DeviceNetworkSetting, OrgSettings } from "../orgs/settings.service.js";
+import {
+  type OutsideSandboxPermission as FullAccessPermission,
+  readDeviceSandboxSettings,
+} from "./device-sandbox-settings.js";
 
 /**
  * Device modes (auto mode spec §4.1–§4.3): who may choose auto mode, and the network each mode
  * gets. One pure function, {@link effectiveDevicePolicy}, combines the platform's switch
- * (`devices.fullAccess`), the org's (`fullAccess`, `cloudNetwork`) and the device's owner ceiling (a
- * local machine's owner report, a cloud device's B1 snapshot; null follows the platform and the org).
+ * (`devices.outsideSandbox`), the org's (`outsideSandbox`, `deviceNetwork`) and the device's owner
+ * ceiling (a local machine's owner report, a cloud device's B1 snapshot; null follows the platform
+ * and the org).
  * It is a ceiling only: no device-chosen default mode selects how an operation runs (permission
  * runtime cutover 8.6); the conversation's permission profile does, within this ceiling.
  */
 
-/** A device mode. Not `DeviceMode`, which is the program's os | docker run mode. */
+/**
+ * The kernel-internal tier of a device (not `DeviceMode`, the program's os | docker run mode). It
+ * is no longer a mode the person picks or the model runs at (approval-only profiles design: every
+ * profile is sandboxed): `auto` only records that the platform, the org and a local owner allow
+ * running outside the sandbox. It survives as the instance-limits tier (recorded with a cloud
+ * instance's applied limits, so a changed tier updates or recreates it), the working root's reach
+ * and the legacy `device_paths` text; the device sandbox (`device-sandbox.ts`) decides scope.
+ */
 export type SandboxMode = "auto" | "sandbox";
 
 /** A device network: any public address (cloud only), or an allowlist. */
@@ -66,7 +78,7 @@ export function orgHostOutsideCeiling(limits: NetworkLimits, host: string): bool
  */
 export function orgEffectiveHosts(
   limits: NetworkLimits,
-  org: CloudNetworkSetting | undefined,
+  org: DeviceNetworkSetting | undefined,
 ): string[] {
   if (limits.egress === "none") return [];
   const extra = (org?.extraHosts ?? []).filter((h) => !orgHostOutsideCeiling(limits, h));
@@ -81,10 +93,10 @@ export function orgEffectiveHosts(
  */
 export function orgCloudMode(
   limits: NetworkLimits,
-  org: CloudNetworkSetting | undefined,
+  org: DeviceNetworkSetting | undefined,
 ): "open" | "allowlist" {
   if (limits.egress === "none" || limits.orgHosts === "within") return "allowlist";
-  return org?.mode ?? "open";
+  return org?.ceiling === "allowlist" || org?.default === "allowlist" ? "allowlist" : "open";
 }
 
 /**
@@ -95,12 +107,12 @@ export async function readDeploymentDevicePolicy(
   db: KernelSchemaDb,
   config: Pick<KernelConfigService, "get" | "fieldSource">,
 ): Promise<DeploymentDevicePolicy> {
-  const fullAccess = await readDevicesFullAccess(db, config);
-  return { fullAccess: fullAccess.permission, limits: config.get().sandbox.limits };
+  const settings = await readDeviceSandboxSettings(db, config);
+  return { fullAccess: settings.outsideSandbox, limits: config.get().sandbox.limits };
 }
 
 /** The org settings the policy reads. */
-export type OrgDeviceSettings = Pick<OrgSettings, "fullAccess" | "cloudNetwork">;
+export type OrgDeviceSettings = Pick<OrgSettings, "outsideSandbox" | "deviceNetwork">;
 
 /** The effective device policy of one device (or of a new device, with no choice of its own). */
 export interface EffectiveDevicePolicy {
@@ -110,12 +122,6 @@ export interface EffectiveDevicePolicy {
   allowedMode: SandboxMode;
   /** The cloud network (auto mode's open network, the org's allowlist, or the kill switch). */
   network: DeviceNetwork;
-  /**
-   * The allowlist a local device's sandbox mode intersects with its own (`sandbox.limits.egress:
-   * none` empties it). The exec args always carry it, even when the ceiling is auto: the device
-   * may run stricter than the ceiling.
-   */
-  localAllowedDomains: string[];
 }
 
 /**
@@ -136,7 +142,7 @@ export function projectReachOf(
 /** The mode the platform and the org allow: `auto` only when neither turns it off. */
 export function allowedDeviceMode(
   platform: FullAccessPermission,
-  org: OrgDeviceSettings["fullAccess"],
+  org: OrgDeviceSettings["outsideSandbox"],
 ): SandboxMode {
   return platform === "allowed" && org !== "off" ? "auto" : "sandbox";
 }
@@ -146,7 +152,7 @@ export function orgAllowedDomains(
   deployment: DeploymentDevicePolicy,
   org: OrgDeviceSettings,
 ): string[] {
-  return orgEffectiveHosts(deployment.limits, org.cloudNetwork);
+  return orgEffectiveHosts(deployment.limits, org.deviceNetwork);
 }
 
 /**
@@ -160,9 +166,10 @@ export function deviceNetwork(
   mode: SandboxMode,
 ): DeviceNetwork {
   if (deployment.limits.egress === "none") return { kind: "allowlist", hosts: [] };
-  // auto mode is 开放挡内网 whatever the org says; only sandbox mode applies `cloudNetwork`
+  // auto mode is the open public network (private ranges closed) whatever the org says; only
+  // sandbox mode applies `deviceNetwork`
   if (mode === "auto") return { kind: "open-public", hosts: [] };
-  if (orgCloudMode(deployment.limits, org.cloudNetwork) === "open") {
+  if (orgCloudMode(deployment.limits, org.deviceNetwork) === "open") {
     return { kind: "open-public", hosts: [] };
   }
   return { kind: "allowlist", hosts: orgAllowedDomains(deployment, org) };
@@ -181,7 +188,7 @@ export function effectiveDevicePolicy(
   /** A cloud device's B1 outer network snapshot: the network never goes beyond it. */
   outer: DeviceNetwork | null = null,
 ): EffectiveDevicePolicy {
-  const allowedMode = allowedDeviceMode(deployment.fullAccess, org.fullAccess);
+  const allowedMode = allowedDeviceMode(deployment.fullAccess, org.outsideSandbox);
   const mode: SandboxMode = allowedMode === "sandbox" ? "sandbox" : (deviceMode ?? "auto");
   return {
     mode,
@@ -190,7 +197,6 @@ export function effectiveDevicePolicy(
       outer === null
         ? deviceNetwork(deployment, org, mode)
         : intersectNetworks(deviceNetwork(deployment, org, mode), outer),
-    localAllowedDomains: orgAllowedDomains(deployment, org),
   };
 }
 
@@ -218,7 +224,12 @@ export function intersectNetworks(a: DeviceNetwork, b: DeviceNetwork): DeviceNet
   });
 }
 
-/** Whether `a` and `b` are the same mode, network kind and host set (null is never the same). */
+/**
+ * Whether `a` and `b` are the same mode, network kind and host set (null is never the same): the
+ * one-time B1 reconciliation's exactness (`CloudPermissionSnapshots`), which still binds a migrated
+ * instance to the exact limits it recorded. A running instance's change ignores the mode
+ * ({@link AppliedLimits}).
+ */
 export const sameAppliedExactly = (
   a: AppliedLimits | null | undefined,
   b: AppliedLimits,
@@ -265,8 +276,30 @@ export const cloudChosenMode = (row: {
   row.mode === "sandbox" || row.owner_full_access === false ? "sandbox" : null;
 
 /**
- * What decides whether a running cloud instance must change (auto mode spec §4.2): its mode and
- * the kind of its network only. `hosts` and resources reach instances created afterwards.
+ * The limits the kernel wants for a device: what lifecycle create and update carry
+ * ({@link SandboxLimits}: resources and the outer network) plus the mode the kernel records with a
+ * cloud instance's applied limits ({@link AppliedLimits}). The mode never reaches a provider:
+ * {@link providerLimits} drops it.
+ */
+export interface DeviceLimits extends SandboxLimits {
+  mode: SandboxMode;
+}
+
+/** What a provider's create and update get of {@link DeviceLimits}: resources and the network. */
+export function providerLimits(limits: DeviceLimits): SandboxLimits {
+  const { mode: _kernelOnly, ...rest } = limits;
+  return { ...rest, network: { kind: rest.network.kind, hosts: [...rest.network.hosts] } };
+}
+
+/**
+ * What the kernel records of a cloud instance's limits (auto mode spec §4.2). Only the kind of its
+ * network decides whether a running instance must change; `hosts` and resources reach instances
+ * created afterwards. `mode` is recorded but never decides a change ({@link sameApplied},
+ * {@link appliedWider}; only the one-time B1 reconciliation compares it, {@link sameAppliedExactly}):
+ * a cloud device has no outside of its sandbox and the mode never reaches a provider
+ * ({@link providerLimits}), so a mode that follows the platform's or org's outside-sandbox setting
+ * must not update every cloud instance when that setting is toggled (Docker would recreate it
+ * without its egress proxy; approval-only profiles design).
  */
 export interface AppliedLimits {
   mode: SandboxMode;
@@ -282,25 +315,24 @@ export const appliedOf = (limits: {
   network: { kind: limits.network.kind, hosts: [...limits.network.hosts] },
 });
 
-/** Whether `a` and `b` are the same mode and network kind (null, unknown, is never the same). */
+/** Whether `a` and `b` are the same network kind (null, unknown, is never the same; no mode). */
 export const sameApplied = (a: AppliedLimits | null | undefined, b: AppliedLimits): boolean =>
-  a != null && a.mode === b.mode && a.network.kind === b.network.kind;
+  a != null && a.network.kind === b.network.kind;
 
-/** Whether `a` and `b` are the same mode, network kind and host set (null is never the same). */
+/** Whether `a` and `b` are the same network kind and host set (null is never the same; no mode). */
 export const sameAppliedExact = (a: AppliedLimits | null | undefined, b: AppliedLimits): boolean =>
   sameApplied(a, b) &&
   [...new Set(a?.network.hosts ?? [])].sort().join("\n") ===
     [...new Set(b.network.hosts)].sort().join("\n");
 
 /**
- * Whether applied limits `a` are more permissive than desired limits `b` in any dimension (spec
- * §124): auto where `b` is sandbox, open public addresses where `b` is an allowlist, or an
- * allowlisted host `b`'s allowlist does not cover. Narrower or equal is false; unknown (null) is
- * false here (callers treat unknown separately).
+ * Whether applied limits `a` are more permissive than desired limits `b` in its network (spec
+ * §124): open public addresses where `b` is an allowlist, or an allowlisted host `b`'s allowlist
+ * does not cover. Narrower or equal is false; unknown (null) is false here (callers treat unknown
+ * separately). The mode is not a dimension ({@link AppliedLimits}).
  */
 export function appliedWider(a: AppliedLimits | null | undefined, b: AppliedLimits): boolean {
   if (a == null) return false;
-  if (a.mode === "auto" && b.mode === "sandbox") return true;
   if (b.network.kind === "open-public") return false;
   if (a.network.kind === "open-public") return true;
   return a.network.hosts.some((host) => !b.network.hosts.some((p) => coversHost(p, host)));

@@ -1,6 +1,5 @@
 import { posix } from "node:path";
 import {
-  DEFAULT_SANDBOX_ROOTS,
   isSandboxPermissionUnsupportedError,
   isSandboxScopeDeniedError,
   parseSandboxBrowseScope,
@@ -94,7 +93,7 @@ import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { KERNEL_LOGGER, REDIS } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
-import { effectiveSandboxLimits } from "../orgs/settings.service.js";
+import { effectiveSandboxLimits, readOrgSettings } from "../orgs/settings.service.js";
 import { isStorageError } from "../runtime/permission-context-errors.js";
 import { canonicalJson } from "../tools/canonical-json.js";
 import { attachmentsDir } from "./attachments-path.js";
@@ -102,6 +101,7 @@ import {
   CloudPermissionSnapshots,
   type CloudSnapshotOutcome,
 } from "./cloud-permission-snapshot.js";
+import type { DeviceSandbox, HostGrantCeiling } from "./device-sandbox.js";
 import {
   isKernelReadMethod,
   type KernelReadInvocation,
@@ -121,16 +121,19 @@ import {
   type AppliedLimits,
   appliedOf,
   appliedWider,
+  type DeviceLimits,
   type DeviceNetwork,
   type EffectiveDevicePolicy,
   instanceLimitsJson,
+  orgEffectiveHosts,
+  providerLimits,
   readInstanceLimits,
   sameApplied,
   sameAppliedExact,
   sameAppliedExactly,
 } from "./modes.js";
 import type { HeldDeviceContextEvidence } from "./permission-context-types.js";
-import { PermissionFacts } from "./permission-facts.js";
+import { networkOfSandbox, PermissionFacts } from "./permission-facts.js";
 import { cloudReportOwed, cloudSupportOf } from "./permission-runtime-reports.js";
 import {
   isInternalProvider,
@@ -450,19 +453,19 @@ export function sandboxConfigWarnings(
     if (pc?.refuseOpenNetwork === true) {
       out.push({
         level: "warn",
-        message: `extensionConfig."${providerPlugin}".refuseOpenNetwork is true: the ${providerPlugin} plugin refuses cloud devices on the open public network, which every device in auto mode and every sandbox-mode device of an organization whose cloudNetwork is open (the default) uses; set refuseOpenNetwork to false, or turn Full permission off (devices.fullAccess) and have every organization switch its cloudNetwork to the allowlist`,
+        message: `extensionConfig."${providerPlugin}".refuseOpenNetwork is true: the ${providerPlugin} plugin refuses cloud devices on the open public network, which every device uses whose network is open (devices.network.default, open by default, and an organization's deviceNetwork); set refuseOpenNetwork to false, or set devices.network.ceiling to allowlist`,
       });
     }
   }
   if (
     cfg.sandbox.limits.orgHosts === "within" &&
     cfg.sandbox.limits.egress !== "none" &&
-    cfg.devices?.fullAccess !== "off"
+    cfg.devices?.network?.ceiling !== "allowlist"
   ) {
     out.push({
       level: "warn",
       message:
-        "sandbox.limits.orgHosts is within but devices.fullAccess is not off: the platform allowlist limits restricted execution only; devices on Full permission (allowed by default) still reach the open public network. Set devices.fullAccess to off (or turn Full permission off in the admin console) for a hard ceiling",
+        "sandbox.limits.orgHosts is within but devices.network.ceiling is not allowlist: the platform allowlist limits the hosts of the allowlist only; devices on the open network (the default) still reach any public host. Set devices.network.ceiling to allowlist (or in the admin console) for a hard ceiling",
     });
   }
   const run = cfg.runtime.maxRunSeconds;
@@ -679,7 +682,13 @@ export class SandboxService {
     @Inject(PermissionFacts)
     private readonly facts: Pick<
       PermissionFacts,
-      "devicePolicy" | "assertCloudReconciled" | "readHeldEnvironment"
+      | "devicePolicy"
+      | "assertCloudReconciled"
+      | "readHeldEnvironment"
+      | "readDevice"
+      | "deviceSandbox"
+      | "deviceSandboxFacts"
+      | "orgHostGrantCeiling"
     >,
     @Inject(SandboxOperationIntents) private readonly operationIntents: SandboxOperationIntents,
     @Inject(SandboxOperationAuthority) private readonly authority: SandboxOperationAuthority,
@@ -765,6 +774,11 @@ export class SandboxService {
     return this.facts.devicePolicy(device);
   }
 
+  /** The device's per-call host grant ceiling (`PermissionFacts.readDevice`). */
+  async hostGrantCeiling(device: { orgId: string; deviceId: string }): Promise<HostGrantCeiling> {
+    return (await this.facts.readDevice(device.orgId, device.deviceId)).hostCeiling;
+  }
+
   /** The device's source (`local` for a connected machine, else `cloud`); cloud when unknown. */
   private async deviceSource(device: {
     orgId: string;
@@ -783,15 +797,14 @@ export class SandboxService {
   /**
    * The device's effective sandbox limits (spec §8.4; auto mode spec §4.2): the deployment's
    * `sandbox.limits` resources, cpu / memory per the super admin's org override (C19 / Ruling
-   * M16), the effective mode and the network ({@link devicePolicy}). A local device always gets the
-   * sandbox-mode allowlist: its device intersects it with its own list in sandbox mode and ignores
-   * it in auto mode. `opts.policy` / `opts.source`: what the caller already read (avoids the
-   * policy and source queries).
+   * M16), the effective mode and the device sandbox network ({@link devicePolicy}), for a local
+   * device too: the machine intersects it with its owner's ceiling. `opts.policy` / `opts.source`:
+   * what the caller already read (avoids the policy and source queries).
    */
   async deviceLimits(
     device: { orgId: string; deviceId?: string },
     opts: { policy?: EffectiveDevicePolicy; source?: "cloud" | "local" } = {},
-  ): Promise<SandboxLimits> {
+  ): Promise<DeviceLimits> {
     const cfg = this.config.get().sandbox;
     const [policy, override, source] = await Promise.all([
       opts.policy ?? this.devicePolicy(device),
@@ -799,9 +812,12 @@ export class SandboxService {
       opts.source ?? this.deviceSource(device),
     ]);
     const local = source === "local";
-    const network: DeviceNetwork = local
-      ? { kind: "allowlist", hosts: [...policy.localAllowedDomains] }
-      : policy.network;
+    // a local device's commands carry its device sandbox network (under the machine's current
+    // runtime report, as admission reads it); the machine intersects it with its owner's ceiling
+    const network: DeviceNetwork =
+      local && device.deviceId !== undefined
+        ? networkOfSandbox(await this.facts.deviceSandbox(device.orgId, device.deviceId))
+        : policy.network;
     return effectiveSandboxLimits(
       {
         cpu: cfg.limits.cpu,
@@ -817,14 +833,17 @@ export class SandboxService {
   }
 
   /**
-   * The org's sandbox-mode limits ({@link deviceLimits} with the sandbox-mode allowlist and mode
-   * `sandbox`): what a local device's sandbox mode may reach at most, so what a network grant,
-   * approval or request is checked against.
+   * The org's limits for a standing network grant (a scheduled task's grant, a network approval):
+   * {@link deviceLimits} with the org's per-call host ceiling as an allowlist (`hostGrantCeiling`
+   * with no device). Where that ceiling is bounded by the kernel only (`any`, which an allowlist
+   * cannot carry with its exclusions), the org's effective hosts: a standing grant never reaches
+   * past what the org lists. A device's own layers narrow it further at each exec.
    */
   async ceilingLimits(orgId: string): Promise<SandboxLimits> {
-    const [policy, override] = await Promise.all([
-      this.devicePolicy({ orgId }),
+    const [ceiling, override, { deviceNetwork: org }] = await Promise.all([
+      this.facts.orgHostGrantCeiling(orgId),
       readSandboxLimitOverride(this.db.db, orgId),
+      readOrgSettings(this.db.db, orgId),
     ]);
     const cfg = this.config.get().sandbox;
     return effectiveSandboxLimits(
@@ -832,11 +851,25 @@ export class SandboxService {
         cpu: cfg.limits.cpu,
         memoryMb: cfg.limits.memoryMb,
         diskMb: cfg.limits.diskMb,
-        mode: "sandbox",
-        network: { kind: "allowlist", hosts: [...policy.localAllowedDomains] },
+        network: {
+          kind: "allowlist",
+          hosts: ceiling.kind === "any" ? orgEffectiveHosts(cfg.limits, org) : [...ceiling.hosts],
+        },
       },
       override,
     );
+  }
+
+  /**
+   * Why a per-call host grant for each host is unavailable on the device, naming who can add it
+   * (`hostGrantRefusal`; null: grantable): a network ask is made only for a grantable host.
+   */
+  async hostRefusal(device: {
+    orgId: string;
+    deviceId: string;
+  }): Promise<{ refusal: (host: string) => string | null; box: DeviceSandbox }> {
+    const facts = await this.facts.deviceSandboxFacts(device.orgId, device.deviceId);
+    return { refusal: facts.refusal, box: facts.box };
   }
 
   /**
@@ -899,7 +932,7 @@ export class SandboxService {
 
   /**
    * Whether the running instance of `row` must get `want` before use (auto mode spec §4.2): a
-   * cloud instance whose recorded mode or network kind differs, or whose recorded limits are more
+   * cloud instance whose recorded network kind differs (never the mode alone), or whose recorded limits are more
    * permissive than `want` in any dimension (a host-only narrowing too, spec §124; a host-only
    * widening still reaches instances created afterwards), unless only a file reset could apply it
    * ({@link fsBound}). A provider bound to its file system still goes through the exclusive lease
@@ -907,7 +940,7 @@ export class SandboxService {
    * until the reset, never silently supported). `want` null: a local device (the mode travels
    * with each command).
    */
-  private mustApply(row: Row, p: SandboxProviderEntry, want: SandboxLimits | null): boolean {
+  private mustApply(row: Row, p: SandboxProviderEntry, want: DeviceLimits | null): boolean {
     if (want === null) return false;
     const rec = readInstanceLimits(row.instance_limits);
     const target = appliedOf(want);
@@ -1429,7 +1462,7 @@ export class SandboxService {
     _ctx: SandboxUseContext,
     p: SandboxProviderEntry,
     _row?: Row,
-  ): Promise<SandboxLimits | null> {
+  ): Promise<DeviceLimits | null> {
     if (p.plugin === LOCAL_PROVIDER) return null;
     const policy = await this.devicePolicy(_ctx);
     return await this.deviceLimits(_ctx, { policy, source: "cloud" });
@@ -1940,7 +1973,7 @@ export class SandboxService {
     p: SandboxProviderEntry,
     signal: AbortSignal,
     gone: Instance | null,
-    wantNow: () => Promise<SandboxLimits | null>,
+    wantNow: () => Promise<DeviceLimits | null>,
   ): Promise<Entered> {
     const env = ctx.deviceId;
     const deadline = Date.now() + this.config.get().sandbox.lockWaitSeconds * 1000;
@@ -2793,7 +2826,7 @@ export class SandboxService {
               sig,
               false,
             );
-          answer = await update(handle, want, sig);
+          answer = await update(handle, providerLimits(want), sig);
         }
       } catch (err) {
         if (sig.aborted) throw err;
@@ -3599,17 +3632,20 @@ export class SandboxService {
     row: Row,
     fence: Fence,
     signal: AbortSignal,
-    want: SandboxLimits | null,
+    want: DeviceLimits | null,
   ): Promise<Instance> {
     const id = ctx.deviceId;
     const name = deviceResourceName(id);
+    // the roots the device's authority was last committed with; a device that never had an
+    // instance has none yet (NULL), so the first commit compares the new instance's roots with
+    // what the device displayed (a local machine's reported roots), not with placeholder defaults
+    // a local machine never uses: its first start is no roots change (no consent reset, no revoke)
+    const committedRoots = row.permission_roots ?? (row.handle ? rootsOf(row.handle) : null);
     await this.fenced(held, id, fence, {
       org_id: ctx.orgId,
       provider: p.plugin,
       handle: null,
-      permission_roots: JSON.stringify(
-        row.permission_roots ?? (row.handle ? rootsOf(row.handle) : DEFAULT_SANDBOX_ROOTS),
-      ),
+      permission_roots: committedRoots === null ? null : JSON.stringify(committedRoots),
       status: "creating",
       last_used_at: sql<Date>`now()`,
       running_since: null,
@@ -3619,14 +3655,16 @@ export class SandboxService {
     });
     // the device's effective limits apply at creation (a changed mode or network kind is applied
     // on use, see applyLimits; other changes reach only instances created afterwards)
-    const limits =
+    const wanted =
       want ??
       (await this.deviceLimits(ctx, {
         source: p.plugin === LOCAL_PROVIDER ? "local" : "cloud",
       }));
     // the record says what is in force: a provider whose limits are fixed at its file system
     // records them with the file system, any other with the instance (spec §7.1)
-    const record = instanceLimitsJson(appliedOf(limits));
+    const record = instanceLimitsJson(appliedOf(wanted));
+    // the provider gets resources and the outer network only
+    const limits = providerLimits(wanted);
     const atFileSystem = p.impl.limitsApplyAt === "fileSystem";
     const cfg = this.config.get().sandbox;
     let fs: FileSystemHandle | null =
@@ -3749,7 +3787,7 @@ export class SandboxService {
     handle: SandboxHandle,
     fence: Fence,
     signal: AbortSignal,
-    want: SandboxLimits,
+    want: DeviceLimits,
   ): Promise<Instance | null> {
     const id = ctx.deviceId;
     const target = appliedOf(want);
@@ -3758,7 +3796,7 @@ export class SandboxService {
     let gone = false;
     if (p.impl.update) {
       try {
-        if ((await p.impl.update(handle, want, signal)) === "updated") {
+        if ((await p.impl.update(handle, providerLimits(want), signal)) === "updated") {
           await this.fenced(held, id, fence, { instance_limits: instanceLimitsJson(target) });
           this.log.info("sandbox instance limits updated", facts);
           return null;

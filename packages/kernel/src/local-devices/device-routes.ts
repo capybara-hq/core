@@ -58,7 +58,9 @@ function bearer(req: FastifyRequest): string {
  * `@fastify/websocket`: a raw Fastify route outside Nest, so neither the API's `AuthGuard` nor its
  * CSRF check applies; the route checks the machine credential itself, before the upgrade (401
  * `device.credential_invalid`), then the protocol header (426 `device.program_outdated`): only
- * {@link DEVICE_PROTOCOL_VERSION} (3) is served; a protocol 2 program must update.
+ * {@link DEVICE_PROTOCOL_VERSION} (4) is served; an older program (protocol 3 among them) must
+ * update. A newer program reads the kernel's protocol in the message and asks for the deployment
+ * to be upgraded instead.
  * Must be called before Nest `app.init()`, on the root instance.
  *
  * `@fastify/websocket` sends every upgrade request of the server through the Fastify router; the
@@ -100,14 +102,26 @@ export async function registerDeviceConnectRoute(
                 ),
               );
           }
-          if (req.headers[DEVICE_PROTOCOL_HEADER] !== String(DEVICE_PROTOCOL_VERSION)) {
+          const spoken = req.headers[DEVICE_PROTOCOL_HEADER];
+          if (spoken !== String(DEVICE_PROTOCOL_VERSION)) {
+            // the program's own protocol, named only when it is a plain number (header input)
+            const number =
+              typeof spoken === "string" && /^[0-9]{1,3}$/.test(spoken) ? Number(spoken) : null;
+            const theirs =
+              number !== null
+                ? `this capybara-device protocol ${number}`
+                : "this capybara-device an older protocol";
+            // a newer program than this deployment: the deployment is the one to upgrade
+            const fix =
+              number !== null && number > DEVICE_PROTOCOL_VERSION
+                ? "This deployment is older than the program; ask the platform's super admin to upgrade Capybara, or install the capybara-device release that matches this deployment."
+                : "Update capybara-device on the machine (npm install -g @capybara-hq/device@next), then start it again.";
             return reply
               .code(426)
               .send(
                 errorBody(
                   "device.program_outdated",
-                  `This kernel speaks device protocol ${DEVICE_PROTOCOL_VERSION}. ` +
-                    "Update capybara-device.",
+                  `This kernel speaks device protocol ${DEVICE_PROTOCOL_VERSION}, ${theirs}. ${fix}`,
                 ),
               );
           }

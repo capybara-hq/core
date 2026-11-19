@@ -63,12 +63,13 @@ const signal = () => AbortSignal.timeout(15000);
 const log = { warn: vi.fn(), info: vi.fn() };
 
 const OWNER: DeviceOwnerCeiling = {
-  version: 2,
+  version: 3,
   sequence: 1,
   restrictedProjectReach: "workspace",
   revision: "r1",
-  fullAccess: true,
-  restrictedAllowedDomains: [],
+  outsideSandbox: true,
+  network: "open",
+  allowedDomains: [],
 };
 
 interface Received {
@@ -113,15 +114,17 @@ async function fixture() {
   const provider = new LocalDeviceProvider(
     relay,
     { orgOf: forbidden, machineRoots: forbidden },
-    { devicePolicy: forbidden, deviceLimits: forbidden },
+    { devicePolicy: forbidden, deviceLimits: forbidden, hostGrantCeiling: forbidden },
     config,
   );
   const staged = provider.staged({
     call: relay.callV3.bind(relay),
     permissionSupport: async () => ({
-      version: 1,
+      version: 2,
       restricted: null,
-      fullAccess: false,
+      boundary: "operation",
+      network: { openPublic: false, allowlist: false, perOperationHosts: false },
+      outsideSandbox: false,
       background: false,
     }),
   });
@@ -143,7 +146,7 @@ async function fixture() {
   let answer: (r: Received) => Promise<unknown> | unknown = () => ({ ok: true, result: null });
   const hello: DeviceHello = {
     type: "hello",
-    protocol: 3,
+    protocol: 4,
     programVersion: "fixture",
     os: "darwin",
     arch: "arm64",
@@ -152,9 +155,11 @@ async function fixture() {
     sessionIsolation: false,
     transport: { maxFrameBytes: 69632 },
     permissionSupport: {
-      version: 1,
+      version: 2,
       restricted: null,
-      fullAccess: false,
+      boundary: "operation",
+      network: { openPublic: false, allowlist: false, perOperationHosts: false },
+      outsideSandbox: false,
       background: false,
       unavailableReason: "Not bound yet",
     },
@@ -218,14 +223,14 @@ it("B-25: records a staged hello and policy frame through the v3 writers with th
     string,
   ];
   expect(machineId).toBe("machine");
-  expect(hello).toMatchObject({ protocol: 3, ownerCeiling: OWNER });
+  expect(hello).toMatchObject({ protocol: 4, ownerCeiling: OWNER });
   expect(helloConnection).toBe(connectionId);
   // a policy frame after the hello: the authenticated owner report with the same connection
-  const changed = { ...OWNER, sequence: 2, revision: "r2", fullAccess: false };
+  const changed = { ...OWNER, sequence: 2, revision: "r2", outsideSandbox: false };
   f.session.socket.send(
     JSON.stringify({
       type: "policy",
-      policy: { mode: "sandbox", allowedDomains: [] },
+      policy: { allowedDomains: [] },
       ownerCeiling: changed,
     }),
   );
@@ -301,7 +306,6 @@ it("the staged provider creates through a v3 create request", async () => {
     cpu: 1,
     memoryMb: 512,
     diskMb: 1024,
-    mode: "sandbox" as const,
     network: { kind: "allowlist" as const, hosts: [] },
   };
   const h = await f.staged.create({
@@ -429,18 +433,8 @@ it("M2: the staged provider refuses every raw protocol 2 call before anything is
     ["readFile", () => f.staged.readFile(f.handle, "/w/a", { maxBytes: 10, signal: s })],
     ["writeFile", () => f.staged.writeFile(f.handle, "/w/a", new Uint8Array(1), s)],
     ["stat", () => f.staged.stat(f.handle, "/w/a", s)],
-    [
-      "list",
-      () =>
-        f.staged.list?.(f.handle, "/w", { limit: 10, limits: { mode: "sandbox" }, signal: s }) ??
-        Promise.resolve(),
-    ],
-    [
-      "scan",
-      () =>
-        f.staged.scan?.(f.handle, "/w", { limits: { mode: "sandbox" }, signal: s }) ??
-        Promise.resolve(),
-    ],
+    ["list", () => f.staged.list?.(f.handle, "/w", { limit: 10, signal: s }) ?? Promise.resolve()],
+    ["scan", () => f.staged.scan?.(f.handle, "/w", { signal: s }) ?? Promise.resolve()],
   ];
   for (const [name, call] of calls) {
     const e = await call().then(

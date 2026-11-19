@@ -27,9 +27,9 @@ the admin console or with `capybara extensions install`. See
 
 ### Permission configuration rollout
 
-`sandbox.limits.egress`, `orgHosts` and `allowHosts` require restart. `devices.fullAccess` remains hot;
-watching a mixed hot/restart payload publishes only the locally effective network plus the new hot
-value. Watching a restart-only change never activates it.
+`sandbox.limits.egress`, `orgHosts` and `allowHosts` require restart. `devices.outsideSandbox`,
+`devices.network.default` and `devices.network.ceiling` are hot; watching a mixed hot/restart payload
+publishes only the locally effective network plus the new hot values. Watching a restart-only change never activates it.
 
 1. Prepare the intended source and environment. On a mismatch, inspect the nonsecret `activeHash`
    and `candidateHash` diagnostic. A normal stale restart changes no authority.
@@ -104,6 +104,101 @@ Notes for upgrades that need more than the steps above. Before 0.1.0 Capybara ke
 compatibility layers for its earlier builds: the kernel reads only the current formats, and the
 migrations rewrite stored data once where they can.
 
+### Approval-only profiles (device protocol 4): upgrade kernel, devices and providers together
+
+Permission profiles now only choose who approves a crossing; every command runs in the device's
+sandbox under every profile, Full access included (see [Devices and sandboxes](../guide/sandbox.md)).
+The settings that described "Full access" now describe the device sandbox.
+
+**New config keys** (all hot, covered by the permission configuration fingerprint):
+
+| Key | Environment | Values | Default |
+|---|---|---|---|
+| `devices.outsideSandbox` | `CAPYBARA_DEVICES__OUTSIDE_SANDBOX` | `allowed` / `off` | `allowed` |
+| `devices.network.default` | `CAPYBARA_DEVICES__NETWORK__DEFAULT` | `open` / `allowlist` | `open` |
+| `devices.network.ceiling` | `CAPYBARA_DEVICES__NETWORK__CEILING` | `open` / `allowlist` | `open` |
+
+**Old keys are refused.** `devices.fullAccess` / `devices.autoMode` (and
+`CAPYBARA_DEVICES__FULL_ACCESS` / `CAPYBARA_DEVICES__AUTO_MODE`) stop the kernel at startup with a
+conversion message. Rename them to `devices.outsideSandbox` (same values). An old `off` also kept
+every device on the allowlist, so with `off` also set `devices.network.ceiling: allowlist`
+(`CAPYBARA_DEVICES__NETWORK__CEILING=allowlist`); otherwise devices that were on the allowlist get
+the open network. `capybara config migrate-permissions --in <file> --out <file>` converts a config
+file or Nacos document and adds the ceiling for an old `off`. Then start one replica with
+`--activate-permission-config` as in [Permission configuration rollout](#permission-configuration-rollout).
+
+**Stored settings are converted, never widened.** The permission configuration publication
+converts the admin console's `devicesFullAccess` / `devicesAutoMode` to `devicesOutsideSandbox`, an
+org's `fullAccess` / `autoMode` to `outsideSandbox`, and an org's `cloudNetwork` to
+`deviceNetwork` (`mode: allowlist` becomes `deviceNetwork.ceiling: allowlist`, keeping `base`,
+`extraHosts` and `excludedHosts`). An old `off` (platform, org, file, Nacos, environment, or an
+invalid value) becomes `outsideSandbox: off` plus the allowlist network ceiling; the conversion
+logs one warning per platform or org it narrowed, with how to reopen it. Until the publication
+converts them, writes keep the old keys in step for replicas of the previous version. Once a new
+replica has converted the publication, rolling back to an older image is blocked (its replicas fail
+the publication barrier).
+
+**Cloud devices.** Migrations `0165` and `0167` add `devices.network_mode` / `network_hosts` and copy
+an allowlist outer network snapshot into them (an empty or unreadable list ran closed and becomes
+`network_mode: none`). A cloud device that followed its org on the allowlist (for example under
+`sandbox.limits.orgHosts: within`) keeps the allowlist. A cloud device has no outside of its
+sandbox: an escalation there is refused, and `owner_full_access` no longer decides anything a cloud
+device may do. The column is still read by the one-time conversions (the B1 snapshot, the
+publication's version conversion) and for the kernel-only mode recorded with an instance's limits;
+that mode never decides a provider update, so toggling the platform's or an org's
+`outsideSandbox` updates no running cloud instance. A later release drops the column. `PATCH …/devices/:id`
+no longer takes `mode` or `ownerCeiling` (the codes `device.mode_on_device`,
+`device.mode_requires_session`, `device.full_access_not_allowed`,
+`device.owner_ceiling_confirmation_required` and `device.permission_not_migrated` are gone); it
+takes `network` (`{ mode: open | allowlist | none | null, hosts? }`), which an API token or the
+Platform tool (`devices.set-network`) may only narrow.
+
+**Local devices.** `capybara-device` converts its `policy.json` once on start, never wider:
+Full access allowed becomes outside-the-sandbox allowed with the open network; denied keeps the
+allowlist with its old `allowedDomains`, and `start` prints `capybara-device ceiling set --network
+open` to open it. A device set up before rc.58 may have no `policy.json` at all (its `login` wrote
+none), and such a device ran with no reachable host: on its first start with a credential the
+program writes `{ outsideSandbox: false, network: "allowlist", allowedDomains: [] }` and prints how
+to open it (`capybara-device ceiling set --network open`); a missing file never reads as the open
+network. New installs (`login`) get outside-the-sandbox off and the open network. The CLI is now
+`capybara-device ceiling set [--outside-sandbox on|off] [--network open|allowlist]
+[--project-reach workspace|os-user]`; `--full-access` is gone. The device page only narrows a
+local device: `POST …/devices/:id/policy` takes only `remove` and `ownerCeiling` narrowings (`add`
+and `mode` are gone), and a `network` PATCH on a local device is refused with
+`device.ceiling_on_machine`, which names the machine commands.
+
+**Upgrade order.** This is device protocol 4, a paired release with no fallback:
+
+1. Upgrade the kernel (all replicas) first. It refuses a protocol 3 `capybara-device` with 426
+   "Update capybara-device"; a protocol 4 program facing an older deployment says the deployment
+   must be upgraded.
+2. **Upgrade the cloud sandbox providers with the kernel.** `sandbox-docker` and `sandbox-e2b` must
+   report permission support version 2 (`boundary: "instance"`) and must not require `limits.mode`
+   (lifecycle limits carry resources and the outer network only). A provider of an older release
+   reads unprobed and admits no operation, so cloud devices stop working until it is upgraded. The
+   bootstrap manifest of the release pins matching versions: run `capybara bootstrap` before rolling
+   the replicas.
+3. Upgrade every `capybara-device` on the people's machines.
+
+**Running Docker cloud containers keep their old network until their next suspend or resume.** A
+container started before the upgrade keeps the network and egress proxy it was created with; the
+new sandbox network (the open public network with private ranges closed, or the device's
+allowlist) applies when the instance is next resumed or created. Restart cloud devices (suspend and
+resume, or reset their files) after the upgrade so every container runs the new network.
+
+**Offline or pinned-image deployments must rebuild the sandbox and egress images.** The released
+`sandbox-docker` expects the sandbox and egress proxy images of the same release. A deployment that
+builds them locally (`docker compose -f docker/compose.dev.yaml --profile sandbox build`), mirrors
+them, or pins their tags must rebuild or re-pull both before rolling the replicas: images of an
+earlier release do not carry this release's sandbox network rules.
+
+**Full access consent resets once.** The consent fingerprint changed, and a stored owner report
+from a protocol 3 device cannot be read, so every conversation on Full access reads as Approve for
+me after the upgrade (a local machine fails closed until its upgraded program reports again).
+People choose Full access again, with the new shorter confirmation, once their device is upgraded.
+The next run records a permission context with the sandbox block (`device_sandbox_changed` in
+replays, zero drift). Started work keeps its starting grant.
+
 ### Upgrading across 0130 / 0131 (auto mode): stop the old replicas first
 
 Auto mode replaces the sandbox tiers. `0130_auto_mode.sql` drops `devices.tier` and deletes the
@@ -122,13 +217,13 @@ allowed`, anything lower `off`; an org's `sandboxTier` with `max: "open"` become
 allowed`, any other stored `sandboxTier` `off`. `allowUnsandboxed` is not read, and the source keys
 are deleted, so no later migration can recover it. If you set `allowUnsandboxed: false` (open
 egress, but no command outside the sandbox), auto mode is now allowed where you had kept the
-sandbox on: after upgrading, turn Full access off for those orgs (org settings, `fullAccess: off`)
-or for the platform (`devices.fullAccess: off`, or the admin console; the old names `autoMode` and
-`devices.autoMode` are refused now: rename them, or convert a config file with
-`capybara config migrate-permissions`). Leftover `sandbox.tiers`,
+sandbox on: after upgrading, turn running outside the sandbox off for those orgs (org settings,
+`outsideSandbox: off`) or for the platform (`devices.outsideSandbox: off`, or the admin console; the
+old names `autoMode`, `fullAccess`, `devices.autoMode` and `devices.fullAccess` are refused now:
+rename them, or convert a config file with `capybara config migrate-permissions`). Leftover `sandbox.tiers`,
 `sandbox.limits.devHosts` or `sandbox.limits.egress: "open"` in the config file, Nacos or the
-environment now stop the kernel at startup with an error naming `devices.fullAccess` and
-`cloudNetwork`: remove them and set those instead.
+environment now stop the kernel at startup with an error: remove them and set
+`devices.outsideSandbox`, `devices.network.*` and the org's `deviceNetwork` instead.
 
 ### Org sandbox networks follow the platform (migration 0134)
 
@@ -148,9 +243,9 @@ hosts.
   the organization's network afterwards.
 - **A ceiling for the super admin.** `sandbox.limits.orgHosts: within`
   (`CAPYBARA_SANDBOX__LIMITS__ORG_HOSTS`) makes `allowHosts` the ceiling: organizations cannot add
-  other hosts or use the open cloud network in sandbox mode, and their admins cannot approve network
-  requests for hosts outside it. Full access is not limited by it: set `devices.fullAccess: off` as
-  well for a hard ceiling (startup warns otherwise). The default `extend` keeps today's behaviour.
+  other hosts, per-call host grants stay within it, and their admins cannot approve network
+  requests for hosts outside it. It limits hosts only: set `devices.network.ceiling: allowlist` to
+  keep devices off the open network as well. The default `extend` keeps today's behaviour.
 
 ### Moving config-declared extensions to install records
 

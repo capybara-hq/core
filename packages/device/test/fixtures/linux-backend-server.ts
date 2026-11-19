@@ -6,6 +6,7 @@
 // bundle): it still refuses any hash but the attested one.
 import { createInterface } from "node:readline";
 import {
+  parseSandboxOperationScope,
   type SandboxExecOptions,
   SandboxPermissionUnsupportedError,
 } from "@capybara-hq/plugin-sdk";
@@ -14,10 +15,13 @@ import {
   createHostOperationBackend,
   type LocalOperationBackend,
 } from "../../src/exec/linux-operation-backend.js";
+import type { LinuxFaultInjection } from "../../src/exec/linux-operation-worker.js";
 import type { DeviceOwnerCeiling, LocalExecAuthority } from "../../src/exec/operation-types.js";
 
 let backend: LocalOperationBackend | undefined;
 let deviceId = "";
+/** The owner ceiling the backend reads (the "ceiling" op replaces it, as the owner's CLI does). */
+let ceiling: DeviceOwnerCeiling | undefined;
 const aborts = new Map<string, AbortController>();
 
 const send = (message: object) => process.stdout.write(`${JSON.stringify(message)}\n`);
@@ -41,7 +45,8 @@ async function handle(message: Record<string, unknown>): Promise<unknown> {
   switch (message.op) {
     case "create": {
       deviceId = String(message.deviceId);
-      const ceiling = message.ceiling as DeviceOwnerCeiling;
+      ceiling = message.ceiling as DeviceOwnerCeiling;
+      const read = async () => ceiling as DeviceOwnerCeiling;
       const expected = String(message.runtimeHash);
       backend?.lifecycle.dispose();
       const common = {
@@ -60,6 +65,12 @@ async function handle(message: Record<string, unknown>): Promise<unknown> {
         ...(message.restrictedSupported === false ? { restrictedSupported: false } : {}),
         // the fixture's endpoints are local addresses
         allowPrivateProxyTargets: message.privateProxyTargets !== false,
+        ...(message.faultInjection
+          ? { faultInjection: message.faultInjection as LinuxFaultInjection }
+          : {}),
+        ...(message.dohTest
+          ? { fakeIpDnsTest: message.dohTest as { endpoints: string[]; caPem: string } }
+          : {}),
       };
       if (message.mode === "docker") {
         const container = String(message.container);
@@ -67,7 +78,7 @@ async function handle(message: Record<string, unknown>): Promise<unknown> {
           {
             ...common,
             hostRoots: message.hostRoots as { workspace: string; skills: string; tmp: string },
-            readOwnerCeiling: async () => ceiling,
+            readOwnerCeiling: read,
             container: {
               operationContainer: async () => ({
                 name: container,
@@ -80,20 +91,25 @@ async function handle(message: Record<string, unknown>): Promise<unknown> {
         );
       } else
         backend = await createHostOperationBackend(
-          { ...common, roots: ceiling.roots, readOwnerCeiling: async () => ceiling },
+          { ...common, roots: ceiling.roots, readOwnerCeiling: read },
           { platform: "linux", linux },
         );
       return backend.permissionSupport({ id: deviceId }, signal);
     }
+    case "ceiling":
+      ceiling = message.ceiling as DeviceOwnerCeiling;
+      return null;
     case "support":
       return backend?.permissionSupport(handleOf, signal);
     case "operation": {
       if (!backend) throw new Error("No backend");
       const authority = message.authority as LocalExecAuthority | undefined;
       const factory = authority ? backend.forExecution(authority) : backend;
+      // like the device's server (server-ops), the scope is parsed before any factory: a scope
+      // the contract makes invalid is refused with a typed validation error
       const operation = await factory.operation(
         handleOf,
-        message.scope as Parameters<LocalOperationBackend["operation"]>[1],
+        parseSandboxOperationScope(message.scope),
         signal,
       );
       const args = message.args as Record<string, unknown>;
@@ -169,6 +185,7 @@ createInterface({ input: process.stdin }).on("line", (line) => {
           denied: error?.sandboxScopeDenied === true,
           unsupported: error?.sandboxPermissionUnsupported === true,
           unknown: error?.sandboxOperationOutcomeUnknown === true,
+          invalid: error?.sandboxScopeValidation === true,
         },
       }),
     )

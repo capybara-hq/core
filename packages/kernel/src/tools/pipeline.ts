@@ -66,6 +66,7 @@ import { SubagentsService } from "../runtime/subagents/subagents.service.js";
 import { orgHostOutsideCeiling } from "../sandbox/modes.js";
 import { SandboxOperationAuthority } from "../sandbox/operation-authority.js";
 import { PermissionAuthorityLock } from "../sandbox/permission-authority-lock.js";
+import { PermissionAutoGrants } from "../sandbox/permission-auto-grants.js";
 import { PermissionCallGrants } from "../sandbox/permission-call-grants.js";
 import type { PermissionCandidate } from "../sandbox/permission-call-types.js";
 import {
@@ -79,7 +80,9 @@ import {
   type ReviewVerdict,
 } from "../sandbox/review/index.js";
 import {
+  approverForCrossing,
   buildPermissionCandidate,
+  crossingOfCandidate,
   ESCALATION_RETRY_HINT,
   ESCALATION_UNATTENDED_WHY,
   escalationRefusedText,
@@ -123,6 +126,7 @@ import { type ConnectorAuth, CredentialMissing, Credentials } from "./credential
 import { ToolDrift } from "./drift.js";
 import { ElicitationSession } from "./elicitation.js";
 import {
+  addressEscalationHint,
   blockedEventHosts,
   clipKept,
   NETWORK_ASK_KEPT_MAX_BYTES,
@@ -163,22 +167,26 @@ export const approvalExpiredText = (hours: number) =>
   `Approval timed out after ${hours}h; treated as denied.`;
 /** 等待审批期间 run 被中止。 */
 export const APPROVAL_CANCELLED_TEXT = "The run was stopped while waiting for approval.";
+/** What the review held: a shell command, a file write, or a file read outside the scope. */
+export type ReviewKind = "command" | "write" | "read";
 /**
  * The command review's deny text (auto mode spec §5.4, P-D12): the model-visible reason and what it
- * can do instead. `kind` says whether a shell command or a file write was held.
+ * can do instead. `kind` says whether a shell command, a file write or a file read was held.
  */
-export const commandDeniedText = (reason: string, kind: "command" | "write"): string =>
+export const commandDeniedText = (reason: string, kind: ReviewKind): string =>
   kind === "write"
     ? `This write is blocked by review: ${reason}. Write it another way or ask the user to allow it.`
-    : `Command blocked by review: ${reason}. Do the work another way or ask the user to run it.`;
+    : kind === "read"
+      ? `This read is blocked by review: ${reason}. Read another file or ask the user to allow it.`
+      : `Command blocked by review: ${reason}. Do the work another way or ask the user to run it.`;
 /**
- * A command (or write) the review held in an unattended run: no one can answer, so it is a deny at
- * once — no approval, no grant (P-D3).
+ * A command (or write, or read) the review held in an unattended run: no one can answer, so it is a
+ * deny at once — no approval, no grant (P-D3).
  */
-export const commandUnattendedText = (reason: string, kind: "command" | "write"): string =>
-  kind === "write"
-    ? `This write needs approval (${reason}), and no one can approve it now; do it another way or leave it for the person.`
-    : `This command needs approval (${reason}), and no one can approve it now; do the work another way or leave it for the person.`;
+export const commandUnattendedText = (reason: string, kind: ReviewKind): string =>
+  kind === "command"
+    ? `This command needs approval (${reason}), and no one can approve it now; do the work another way or leave it for the person.`
+    : `This ${kind} needs approval (${reason}), and no one can approve it now; do it another way or leave it for the person.`;
 /**
  * A command longer than the ask ceiling (`COMMAND_ASK_MAX_CHARS`): it cannot be shown for approval,
  * and an approval must bind the whole text, so the call is refused before any approval exists.
@@ -188,9 +196,10 @@ export const commandTooLongReason = (chars: number): string =>
 /** The model-visible result of a command over the ask ceiling (actionable, English). */
 export const commandTooLongText = (chars: number): string =>
   `This command is too long to review (${chars} characters; the limit is ${COMMAND_ASK_MAX_CHARS}). Split it into shorter commands; long inline scripts are reviewed as code the review cannot read.`;
-/** The person declined a held command or write (P-D12); `reason` is what they said, if anything. */
-export const commandDeclinedText = (reason: string | null, kind: "command" | "write"): string => {
-  const what = kind === "write" ? "this write" : "to run this command";
+/** The person declined a held command, write or read (P-D12); `reason` is what they said, if any. */
+export const commandDeclinedText = (reason: string | null, kind: ReviewKind): string => {
+  const what =
+    kind === "write" ? "this write" : kind === "read" ? "this read" : "to run this command";
   return reason === null
     ? `The user declined ${what}. Continue without it or ask the user.`
     : `The user declined ${what}: ${reason}. Continue without it or ask the user.`;
@@ -470,6 +479,8 @@ interface PipelineDeps {
         /** `deviceId` scopes the run tree's asks to the device (ignored by an older provider). */
         grants: { runState(runId: string, deviceId?: string): Promise<NetworkRunState> };
         devices: Pick<DevicePolicyService, "summary">;
+        /** The device's per-call host ceiling (absent: every device-layer host is asked about). */
+        sandbox?: Pick<SandboxService, "hostRefusal">;
       }
     | undefined;
 }
@@ -611,9 +622,16 @@ const entersDevice = (toolKey: string, input: unknown): boolean => {
   return toolKey !== BUILTIN.GenerateImage || generateImagePaths(input).length > 0;
 };
 
-/** Whether the review holds a shell command or a file write, for the texts and the ask's detail. */
-const reviewKindOf = (toolKey: string): "command" | "write" =>
-  toolKey === "Bash" ? "command" : "write";
+/**
+ * What the review holds, for the texts and the ask's detail: a shell command, a file read (a read
+ * tool's crossing asks to read, never to write) or a file write.
+ */
+const reviewKindOf = (toolKey: string): ReviewKind =>
+  toolKey === BUILTIN.Bash
+    ? "command"
+    : toolKey === BUILTIN.Read || toolKey === BUILTIN.Glob || toolKey === BUILTIN.Grep
+      ? "read"
+      : "write";
 
 /** What the review stage found for one call (auto mode spec §5.4). */
 type ReviewOutcome =
@@ -631,6 +649,8 @@ type ReviewOutcome =
       reviewedAgainst?: string | undefined;
       /** A restricted `Bash` call's escalation state, for the tool's sandbox hints. */
       sandboxEscalation?: "available" | "escalated" | undefined;
+      /** Why a restricted `Bash` call could not run outside the sandbox here, for those hints. */
+      sandboxEscalationRefusal?: string | undefined;
     }
   /** The run waits on the call's `command` approval. */
   | { kind: "wait"; wait: WaitingFor }
@@ -901,6 +921,10 @@ export class ToolPipeline {
     @Optional()
     @Inject(PermissionCallGrants)
     private readonly permissionGrants?: PermissionCallGrants,
+    /** Full access auto-grants, recorded exactly once (absent in hand-built pipelines). */
+    @Optional()
+    @Inject(PermissionAutoGrants)
+    private readonly autoGrants?: PermissionAutoGrants,
     @Optional()
     @Inject(PermissionAuthorityLock)
     private readonly permissionLocks?: PermissionAuthorityLock,
@@ -909,7 +933,7 @@ export class ToolPipeline {
     /** Starts a cloud device before its first managed call is reviewed (absent: never). */
     @Optional()
     @Inject(SandboxService)
-    private readonly sandboxes?: Pick<SandboxService, "ensureRunning">,
+    private readonly sandboxes?: Pick<SandboxService, "ensureRunning" | "hostRefusal">,
   ) {
     this.deps = {
       // the builtins that enter a device on the managed operation route once activated (common.ts
@@ -952,7 +976,11 @@ export class ToolPipeline {
       devices,
       network:
         networkGrants && devicePolicy
-          ? { grants: networkGrants, devices: devicePolicy }
+          ? {
+              grants: networkGrants,
+              devices: devicePolicy,
+              ...(this.sandboxes !== undefined && { sandbox: this.sandboxes }),
+            }
           : undefined,
     };
     const decide = hooks?.decidePolicy;
@@ -1308,6 +1336,9 @@ export class ToolPipeline {
       workingRoot: reviewed.workingRoot,
       against: reviewed.reviewedAgainst,
       ...(reviewed.sandboxEscalation !== undefined && { escalation: reviewed.sandboxEscalation }),
+      ...(reviewed.sandboxEscalationRefusal !== undefined && {
+        escalationRefusal: reviewed.sandboxEscalationRefusal,
+      }),
     };
     if (reviewed.commandAsk !== undefined)
       authorization = approvalAuthorization(reviewed.commandAsk);
@@ -1638,6 +1669,8 @@ export class ToolPipeline {
           // with `network_blocked` below when the ask was created)
           ...(loginCode !== undefined && { loginCode }),
         },
+        reviewedRoots.escalation,
+        reviewedRoots.escalationRefusal,
       );
       if (handled.kind === "wait") {
         if (hooks && hookBase) {
@@ -1904,18 +1937,21 @@ export class ToolPipeline {
     tool: ResolvedTool,
     input: unknown,
   ): Promise<ReviewOutcome | null> {
-    const note: { escalation?: "available" | "escalated" } = {};
+    const note: { escalation?: "available" | "escalated"; refusal?: string } = {};
     const outcome = await this.reviewPermissionCallWith(ctx, call, tool, input, note);
-    return outcome?.kind === "continue" && note.escalation !== undefined
-      ? { ...outcome, sandboxEscalation: note.escalation }
-      : outcome;
+    if (outcome?.kind !== "continue") return outcome;
+    return {
+      ...outcome,
+      ...(note.escalation !== undefined && { sandboxEscalation: note.escalation }),
+      ...(note.refusal !== undefined && { sandboxEscalationRefusal: note.refusal }),
+    };
   }
   private async reviewPermissionCallWith(
     ctx: ToolStepContext,
     call: ToolCall,
     tool: ResolvedTool,
     input: unknown,
-    note: { escalation?: "available" | "escalated" },
+    note: { escalation?: "available" | "escalated"; refusal?: string },
   ): Promise<ReviewOutcome | null> {
     if (
       !this.permissionAuthority ||
@@ -1984,9 +2020,8 @@ export class ToolPipeline {
       return null;
     }
     if (facts.availability.state !== "supported") {
-      // still unverified: the conservative command review decides (Full access too), but a call
+      // still unverified: the conservative command review decides (every profile), but a call
       // that needs more reach is refused now: admission could never run what an approval allowed
-      if (facts.profile === "full-access") return null;
       const unverified = buildPermissionCandidate(
         { toolKey: tool.key, specHash: tool.specHash, rawInput: call.input, validatedInput: input },
         facts,
@@ -2005,33 +2040,43 @@ export class ToolPipeline {
         review: denyRecord("rule", null, "The command exceeds the review limit"),
       };
     const escalated = isEscalatedCall(tool.key, input);
-    // the escalation state the tool's hints read: only a restricted Bash call on a device and
-    // org whose ceiling allows running outside the sandbox
-    if (tool.key === "Bash" && facts.profile !== "full-access" && !facts.escalationRefusal)
+    // the escalation state the tool's hints read: a Bash call (every profile runs it in the
+    // sandbox) on a device and org whose ceiling allows running outside the sandbox
+    if (tool.key === "Bash" && !facts.escalationRefusal)
       note.escalation = escalated ? "escalated" : "available";
-    const built =
-      facts.profile === "full-access" && !escalated
-        ? { kind: "in-scope" as const }
-        : buildPermissionCandidate(
-            {
-              toolKey: tool.key,
-              specHash: tool.specHash,
-              rawInput: call.input,
-              validatedInput: input,
-            },
-            facts,
-            [device.home, device.deviceHome],
-            { backgroundMaxSeconds: backgroundMaxSeconds(this.config.get()) },
-          );
+    // where it cannot (a layer's outside-sandbox setting is off, the runtime cannot), the hints
+    // say why and who changes it, in the escalation refusal's per-layer words
+    else if (tool.key === "Bash" && facts.escalationRefusal && !escalated)
+      note.refusal = facts.escalationRefusal;
+    // candidate building runs for every profile: the profile only chooses who approves
+    const built = buildPermissionCandidate(
+      {
+        toolKey: tool.key,
+        specHash: tool.specHash,
+        rawInput: call.input,
+        validatedInput: input,
+      },
+      facts,
+      [device.home, device.deviceHome],
+      { backgroundMaxSeconds: backgroundMaxSeconds(this.config.get()) },
+    );
     if (built.kind === "unsupported") {
-      // a Bash reach the restricted scope cannot grant: retrying outside the sandbox may
+      // a Bash reach the restricted scope cannot grant: retrying outside the sandbox may (a
+      // protected location's text names the escalation itself)
       const content =
-        note.escalation === "available"
+        note.escalation === "available" && built.code === "unbounded-scope"
           ? `${built.message}${ESCALATION_RETRY_HINT}`
           : built.message;
       return { kind: "result", content, review: denyRecord("rule", null, content) };
     }
     const candidate = built.kind === "proposal" ? built.candidate : undefined;
+    // who approves this call's crossing: the person, the review model, or nobody (Full access
+    // grants it within the device's ceilings); a sub-agent's escalation never goes to nobody
+    const approver = approverForCrossing({
+      profile: facts.profile,
+      crossing: candidate ? crossingOfCandidate(candidate) : "sensitive",
+      subAgent: ctx.parent !== undefined,
+    });
     // a sensitive-command consent the person settled (no proposed reach): the call runs under
     // the base scope it was asked under; the approval adds nothing
     if (
@@ -2103,16 +2148,23 @@ export class ToolPipeline {
           kind: "continue",
           workingRoot: carriedRoot(device),
           reviewedAgainst: facts.workingRoot,
-          // the evidence's real source: the person's approval or the review model's allow
+          // the evidence's real source: the person's approval, the review model's allow or the
+          // Full access auto-grant
           review: {
             decision: "allow",
-            by: existingGrant.source === "human" ? "person" : "classifier",
+            by:
+              existingGrant.source === "human"
+                ? "person"
+                : existingGrant.source === "review-model"
+                  ? "classifier"
+                  : "rule",
             rule: null,
             reason: "The exact current call already has approved permission evidence.",
             profile: facts.profile,
             profileRevision: facts.profileRevision,
             scopeRevision: facts.scopeRevision,
-            decisionSource: existingGrant.source === "human" ? "human" : "review-model",
+            decisionSource: existingGrant.source,
+            crossing: crossingOfCandidate(candidate),
             ...(candidate.escalation ? { sandbox: "escalated" as const } : {}),
           },
         };
@@ -2141,7 +2193,10 @@ export class ToolPipeline {
       ...(candidate ? { permissionCandidate: candidate } : {}),
       ...(note.escalation === "available" ? { escalationAvailable: true } : {}),
     });
-    if (candidate && facts.profile === "approve-for-me") {
+    // who decided: the review knows the call's consents (a credential consent sends a Full access
+    // escalation to the review model); without its answer, the profile's approver
+    const decidedBy = verdict.approver ?? approver;
+    if (candidate && decidedBy === "review-model") {
       await withTransactionFencePrelude(
         () =>
           permissionLocks.acquire(
@@ -2154,6 +2209,12 @@ export class ToolPipeline {
           ),
         () => this.recordPermissionReview(candidate, verdict),
       );
+    }
+    // Full access: the crossing is granted for this call, recorded exactly once (its event, the
+    // audit row and the grant in one fenced transaction); a fixed deny never reaches this
+    if (candidate && decidedBy === "none" && verdict.decision === "allow") {
+      if (!this.autoGrants) throw new Error("Permission auto-grants are unavailable");
+      await this.autoGrants.record(candidate, verdict.sensitive ?? []);
     }
     const provenance = {
       profile: facts.profile,
@@ -2175,13 +2236,19 @@ export class ToolPipeline {
           ...allowRecord(verdict),
           ...provenance,
           decisionSource:
-            facts.profile === "full-access"
-              ? "full-access"
-              : verdict.by === "classifier"
-                ? "review-model"
+            verdict.by === "classifier"
+              ? "review-model"
+              : facts.profile === "full-access"
+                ? "full-access"
                 : "scope",
-          // the review model's allow issued this call's escalation grant: it runs unsandboxed
-          ...(candidate?.escalation && verdict.by === "classifier"
+          ...(candidate
+            ? { crossing: crossingOfCandidate(candidate) }
+            : verdict.crossing
+              ? { crossing: verdict.crossing }
+              : {}),
+          // the review model's allow or Full access issued this call's escalation grant: it runs
+          // outside the sandbox
+          ...(candidate?.escalation && (verdict.by === "classifier" || decidedBy === "none")
             ? { sandbox: "escalated" as const }
             : {}),
         },
@@ -2232,21 +2299,24 @@ export class ToolPipeline {
     return { kind: "wait", wait: approvalWait(ask) };
   }
   /**
-   * Whether an execution of this call was admitted outside the sandbox under a restricted profile
-   * (a per-call escalation's full reach): an intent past admission, or one revoked after dispatch.
+   * Whether an execution of this call was admitted outside the sandbox (a per-call escalation's
+   * full reach, under any profile): an intent past admission, or one revoked after dispatch, whose
+   * device-wide scope came from the call's escalation grant.
    */
   private async admittedOutsideSandbox(runId: string, callId: string): Promise<boolean> {
     const rows = await this.deps.db
-      .selectFrom("sandbox_operation_intents")
-      .select(["scope", "state", "outcome_unknown"])
-      .where("run_id", "=", runId)
-      .where("call_id", "=", callId)
-      .where("method", "in", ["exec", "backgroundStart"])
+      .selectFrom("sandbox_operation_intents as i")
+      .innerJoin("permission_call_grants as g", "g.id", "i.permission_grant_id")
+      .select(["i.scope", "i.state", "i.outcome_unknown"])
+      .where("i.run_id", "=", runId)
+      .where("i.call_id", "=", callId)
+      .where("i.method", "in", ["exec", "backgroundStart"])
+      .where("g.scope_kind", "=", "sandbox-escalation")
       .execute();
     return rows.some((r) => {
-      const scope = r.scope as { profile?: string; filesystem?: { kind?: string } };
+      const scope = r.scope as { filesystem?: { kind?: string } };
       const admitted = r.state === "revoked" ? r.outcome_unknown : r.state !== "pending";
-      return admitted && scope.profile !== "full-access" && scope.filesystem?.kind === "device";
+      return admitted && scope.filesystem?.kind === "device";
     });
   }
   @Transactional()
@@ -2359,6 +2429,10 @@ export class ToolPipeline {
     pre: readonly AppendEvent[],
     callAudit: CallAudit,
     result: NetworkAskDetail["result"] & { text: string; review?: ReviewRecord },
+    /** Admission's verdict for this call: `available` when it may run outside the sandbox. */
+    escalation?: "available" | "escalated",
+    /** Why this call could not run outside the sandbox here (absent when it could). */
+    escalationRefusal?: string,
   ): Promise<
     | { kind: "wait"; wait: WaitingFor; content: string }
     | { kind: "write"; event: AppendEvent | null; notes: string[] }
@@ -2378,10 +2452,23 @@ export class ToolPipeline {
       ? await network.grants.runState(ctx.runId, report.deviceId)
       : null;
     const limits = this.config.get().sandbox.limits;
+    // the per-call host ceiling decides what is worth asking: a host beyond a local owner's
+    // allowlist or the org's or platform's allowlist ceiling is unavailable, never asked about
+    const sandbox = await network.sandbox?.hostRefusal({
+      orgId: ctx.orgId,
+      deviceId: report.deviceId,
+    });
     const plan = planNetworkAsk(hosts, run, {
       device,
       unattended: ctx.unattended,
       outsideCeiling: (h) => orgHostOutsideCeiling(limits, h),
+      ...(sandbox !== undefined && {
+        refusal: sandbox.refusal,
+        // the hint follows admission's verdict for this call (never a recomputation), and only
+        // the open network makes a private address the one thing escalation adds
+        escalation: addressEscalationHint(escalation, sandbox.box.networkMode),
+      }),
+      ...(escalationRefusal !== undefined && { escalationRefusal }),
     });
     if (ctx.unattended != null) {
       for (const key of plan.missingGrants) {
@@ -2449,7 +2536,7 @@ export class ToolPipeline {
         description: typeof given.description === "string" ? given.description : null,
         result: kept,
       },
-      scopes: plan.scopes,
+      scopes: ["once"],
     });
     return { kind: "wait", wait: approvalWait(ask), content: kept.content };
   }
@@ -2499,7 +2586,7 @@ export class ToolPipeline {
     return null;
   }
 
-  /** 审批的非批准结果 → 给模型的说明；仍 pending → null（继续等待）。 */
+  /** A decided approval other than approved → the model's text; still pending → null (wait). */
   private refusalText(a: ApprovalRecord): string | null {
     switch (a.status) {
       case "denied":
@@ -2515,8 +2602,9 @@ export class ToolPipeline {
   }
 
   /**
-   * 处理函数返回 `input_required`：超过轮次上限、表单不合规（`validateInputForm`）或 state 过大 → 返回给模型的错误说明；
-   * 否则建输入请求（写 `question_asked`）并返回等待对象。
+   * A handler returned `input_required`: past the round limit, an invalid form
+   * (`validateInputForm`) or an oversized state is an error text for the model; otherwise an
+   * input request is made (writing `question_asked`) and its wait returned.
    */
   private async askInput(
     ctx: ToolStepContext,
@@ -2568,6 +2656,7 @@ export class ToolPipeline {
       workingRoot?: string | undefined;
       against?: string | undefined;
       escalation?: "available" | "escalated" | undefined;
+      escalationRefusal?: string | undefined;
     },
   ): Promise<ExecOutcome> {
     const reviewedWorkingRoot = reviewed?.workingRoot;
@@ -2604,6 +2693,10 @@ export class ToolPipeline {
         reviewedAgainstRoot !== undefined && { reviewedAgainstRoot }),
       ...(tool.source.kind === "builtin" &&
         reviewed?.escalation !== undefined && { sandboxEscalation: reviewed.escalation }),
+      ...(tool.source.kind === "builtin" &&
+        reviewed?.escalationRefusal !== undefined && {
+          sandboxEscalationRefusal: reviewed.escalationRefusal,
+        }),
       // a sub-agent works in its root conversation's sandbox (spec §10.1, at every depth)
       ...(tool.source.kind === "builtin" &&
         ctx.parent !== undefined && { sandboxConversationId: ctx.parent.rootConversationId }),

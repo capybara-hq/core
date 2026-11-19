@@ -6,6 +6,7 @@ import {
   DEFAULT_SANDBOX_ROOTS,
   type SandboxBrowseScope,
   type SandboxOperationScope,
+  SandboxPermissionUnsupportedError,
   type SandboxProvider,
   SandboxScopeDeniedError,
 } from "@capybara-hq/plugin-sdk";
@@ -32,10 +33,14 @@ import { PermissionRuntimeReports } from "../../src/sandbox/permission-runtime-r
 import { SandboxProviders } from "../../src/sandbox/providers.js";
 import { SandboxService } from "../../src/sandbox/sandbox.service.js";
 import { SandboxFileReader } from "../../src/sandbox/sandbox-file-reader.js";
-import { createFakeSandbox } from "../fixtures/plugins/sandbox-fake/index.js";
+import {
+  createFakeSandbox,
+  setFakeSandboxPermissionSupport,
+} from "../fixtures/plugins/sandbox-fake/index.js";
 import { legacyDbFor } from "../helpers/conversations.js";
 import { truncateTables } from "../helpers/db.js";
 import { accountsFor } from "../helpers/identity.js";
+import { storedOwnerReport } from "../helpers/owner-report.js";
 import {
   createOrg,
   PW,
@@ -70,7 +75,9 @@ const files = new Map<string, string>();
 /** Symbolic links: a path → the file it points at. */
 const links = new Map<string, string>();
 /** Set: the cloud runtime reports Full access only (E2B's support). */
-let fullOnly = false;
+let instanceBoundary = false;
+/** Set: the runtime refuses every operation scope it is sent (a provider's own refusal). */
+let refuseScopes = false;
 /** Every provider entry reached: the route, the method, the path and the operation's scope. */
 const seen: {
   route: "operation" | "browse" | "raw";
@@ -152,10 +159,16 @@ beforeAll(async () => {
       return [{ path: APP, suggestedName: "app" }];
     },
     async permissionSupport() {
-      return fullOnly ? REPORTS["full-only"] : REPORTS.both;
+      return instanceBoundary ? REPORTS.instance : REPORTS.both;
     },
     async revokeOperation() {},
-    async operation(h, scope) {
+    async operation(h, scope, signal) {
+      if (refuseScopes)
+        throw new SandboxPermissionUnsupportedError(
+          "this runtime refuses the scope (secret detail)",
+        );
+      // the fake's own factory checks the scope as the cloud providers do (instance scope only)
+      await base.operation?.(h, scope, signal);
       const s = scoped(scope);
       return {
         exec: async (args) => {
@@ -222,7 +235,9 @@ beforeEach(async () => {
   seen.length = 0;
   files.clear();
   links.clear();
-  fullOnly = false;
+  instanceBoundary = false;
+  refuseScopes = false;
+  await setFakeSandboxPermissionSupport(root, null);
   files.set(`${APP}/AGENTS.md`, "Be kind to the build.");
   files.set(
     `${APP}/.agents/skills/fix/SKILL.md`,
@@ -519,10 +534,7 @@ describe("a run start's project knowledge read (withKernelRead)", () => {
     ).rejects.toThrow();
     await expect(read((h, p) => p.readFile(h, APP, { maxBytes: 9, signal }))).rejects.toThrow();
     await expect(
-      read(
-        (h, p) =>
-          p.list?.(h, APP, { limit: 9, limits: { mode: "sandbox" }, signal }) as Promise<unknown>,
-      ),
+      read((h, p) => p.list?.(h, APP, { limit: 9, signal }) as Promise<unknown>),
     ).rejects.toThrow();
     await expect(read((h, p) => p.stat(h, `${APP}/../app/secret.txt`, signal))).rejects.toThrow();
     await expect(
@@ -608,10 +620,11 @@ async function seedLocal(mode: "os" | "docker", report: ReportKind): Promise<Fix
         arch: "x64",
         program_version: "0.1.0",
         mode,
-        features: ["mode", "projects"],
+        features: ["projects"],
         roots: JSON.stringify(DEFAULT_SANDBOX_ROOTS),
         home: "/home/owner",
-        local_policy: JSON.stringify({ mode: "auto", allowedDomains: [] }),
+        local_policy: JSON.stringify({ allowedDomains: [] }),
+        owner_report: storedOwnerReport(),
       })
       .returning("id")
       .executeTakeFirstOrThrow()
@@ -662,8 +675,10 @@ describe("the kernel read's route follows the device's recorded runtime support"
   const profilesOf = async (f: Fixture) =>
     (await intentsOf(f)).map((r) => (r.scope as unknown as SandboxOperationScope).profile);
 
-  it("a cloud Full-only runtime reads under Full access, still on the narrowed paths", async () => {
-    fullOnly = true;
+  it("a cloud instance-boundary runtime reads under the instance scope, on the narrowed paths", async () => {
+    instanceBoundary = true;
+    // the fake answers as sandbox-docker and sandbox-e2b do: only the instance scope runs
+    await setFakeSandboxPermissionSupport(root, REPORTS.instance);
     const f = await seed();
     await bindProject(f);
     await fullAccess(f);
@@ -675,22 +690,47 @@ describe("the kernel read's route follows the device's recorded runtime support"
     });
     const profiles = await profilesOf(f);
     expect(profiles.length).toBeGreaterThan(0);
-    expect(new Set(profiles)).toEqual(new Set(["full-access"]));
+    expect(new Set(profiles)).toEqual(new Set(["request-approval"]));
     expect(seen.some((x) => x.path.endsWith("secret.txt"))).toBe(false);
-    for (const x of seen.filter((y) => y.route === "operation"))
-      expect(x.readRoots?.[0]?.startsWith(APP)).toBe(true);
+    // the instance is the sandbox: the scope is the whole instance, the covering-path check
+    // confines each read to the project's root, AGENTS.md and skills
+    const reads = seen.filter((y) => y.route === "operation");
+    expect(reads.length).toBeGreaterThan(0);
+    for (const x of reads) {
+      expect(x.readRoots).toEqual(["/", APP]);
+      expect(x.path === APP || x.path.startsWith(`${APP}/`)).toBe(true);
+    }
   });
 
-  it("a local Docker-mode Full-only runtime reads under Full access", async () => {
+  it("a runtime that refuses the read's scope records the project unreadable and the run goes on", async () => {
+    instanceBoundary = true;
+    refuseScopes = true;
+    const f = await seed();
+    await bindProject(f);
+    const run = await claimRun(f);
+    expect(await recordKnowledge(f, run)).toBe(true);
+    const latest = await latestProjectRoot(f.conversationId);
+    expect(latest).toMatchObject({
+      project: "app",
+      root: APP,
+      skills: [],
+      unavailable: { reason: "unreadable" },
+    });
+    expect(latest?.unavailable?.message).toContain("refused the kernel's read-only read");
+    expect(latest?.unavailable?.message).not.toContain("secret detail");
+    expect(latest?.agentsMd).toBeUndefined();
+  });
+
+  it("a local runtime that can only run outside the sandbox gets no read, Docker mode included", async () => {
     const f = await seedLocal("docker", "full-only");
     await bindProject(f);
     await fullAccess(f);
     const run = await claimRun(f);
     expect(await recordKnowledge(f, run)).toBe(true);
     expect(await latestProjectRoot(f.conversationId)).toMatchObject({
-      agentsMd: "Be kind to the build.",
+      unavailable: { reason: "unreadable" },
     });
-    expect(new Set(await profilesOf(f))).toEqual(new Set(["full-access"]));
+    expect(seen.filter((x) => x.route === "operation")).toEqual([]);
   });
 
   it("a host machine without restricted enforcement gets no read: unreadable with the reason, the run goes on", async () => {

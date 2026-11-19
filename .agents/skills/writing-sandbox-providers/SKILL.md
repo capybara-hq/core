@@ -1,6 +1,6 @@
 ---
 name: writing-sandbox-providers
-description: 'Use when changing the kernel side of sandbox@2 or anything that drives a sandbox from the kernel: the contract as the kernel relies on it (devices, file system versus instance lifecycle, FileSystemGoneError, abort, SandboxGoneError versus ordinary errors, auto-start, in-sandbox time limits, killAll / killTagged, required concurrentExec, exec tags, actor, image, same-name replacement, list / scan), effective limits, modes and networks (sandboxLimitOverrides, cloudNetwork, update, limitsApplyAt), the SandboxService lifecycle keyed by device id (shared and exclusive leases, intent, holder records, path leases, maxConcurrentCommands, TTL, lockWaitSeconds, fencing generation, idle suspension, maxRunning, inactivity destruction of the instance, rebuild and notices, devices-legacy-cleanup), the socket proxy config and compose sandbox profile core ships, and kernel tests on the sandbox-fake fixture. To write a sandbox extension (sandbox-docker, sandbox-e2b) see writing-sandbox-providers in capybara-hq/plugins.'
+description: 'Use when changing the kernel side of sandbox@2 or anything that drives a sandbox from the kernel: the contract as the kernel relies on it (devices, file system versus instance lifecycle, gone versus ordinary errors, abort, in-sandbox time limits, killTagged, exec tags, list / scan), permissionSupport v2 (boundary operation / instance), the device sandbox and its network (effectiveDeviceSandbox, open-public and the closed address classes, the fake-IP DNS fallback, no limits.mode, update, limitsApplyAt), protected write chains and the reserved staging prefix, per-call escalation, the SandboxService lifecycle keyed by device id (leases, holder records, path leases, fencing generation, idle suspension, inactivity destruction, rebuild and notices), the socket proxy config and compose sandbox profile core ships, and kernel tests on the sandbox-fake fixture. To write a sandbox extension (sandbox-docker, sandbox-e2b) see writing-sandbox-providers in capybara-hq/plugins.'
 ---
 
 # Sandboxes: the kernel side of `sandbox@2`
@@ -52,7 +52,7 @@ interface SandboxProvider {
 }
 ```
 
-On the activated tree (device protocol 3, `PERMISSION_CONTEXT_ACTIVE`) the kernel never calls the raw `exec` / `readFile` /
+On the activated tree (device protocol 4, `PERMISSION_CONTEXT_ACTIVE`) the kernel never calls the raw `exec` / `readFile` /
 `writeFile` / `stat` / `list` / `scan`, `killAll` or `killTagged` for a tool: every builtin enters a device through the
 permission-scoped surface (`packages/plugin-sdk/src/sandbox-operation.ts`): `permissionSupport(h)`, `operation(h, scope)`
 (the admitted `SandboxOperationScope`: filesystem roots, network, actor and tag come only from it), `prepare` (trusted staging
@@ -60,6 +60,21 @@ of skills and attachments), `browse` (owner metadata only), `revokeOperation(h, 
 `tail` / `readOutput` / `stop` by exact `SandboxExecutionRef`). A provider without that surface makes its devices
 `unsupported`: missing operation support never falls back to the raw methods. The raw methods stay in the `sandbox@2`
 signature for the lifecycle and the conformance suite.
+
+**`permissionSupport` is version 2** (approval-only profiles design, "SDK and protocol"; `parseSandboxPermissionSupport`):
+`{ version: 2, boundary, restricted, network: { openPublic, allowlist, perOperationHosts }, outsideSandbox, background,
+unavailableReason? }`. A report of any other shape reads unprobed and admits nothing.
+
+- **`boundary: "operation"`** (a local device, a future Linux-runtime cloud provider): every operation gets its own
+  restricted scope (`restricted` set), per-operation hosts are possible, and `outsideSandbox` says whether the runtime can
+  run the escalated pair (`filesystem: device` + `network: environment`, recognized by `isFullExecutionScope`).
+- **`boundary: "instance"`** (`sandbox-docker`, `sandbox-e2b`): the container or microVM is the sandbox. `restricted: null`
+  is supported here: the scope is the whole instance, the provider's outer network is the sandbox network,
+  `perOperationHosts` and `outsideSandbox` are `false` (a cloud device has no outside and no per-call host grants; the reply
+  says to add the host to the device's list). All three profiles are offered; they differ only in sensitive-command consent.
+- The profile in a scope is for audit only: providers never derive enforcement from it. Every profile's ordinary call is
+  scoped (Full access included); only an escalated call carries `device` + `environment`, and only within the device's
+  outside-sandbox ceiling.
 
 Instance name: `cap-device-<deviceId>` for both the file system and the instance. Old per-conversation instances (`cap-<conversationId>`) are removed by the one-off
 job `devices-legacy-cleanup`, which calls `destroyByName` and `destroyFileSystemByName` on every `sandboxes` row (see Lifecycle).
@@ -124,18 +139,18 @@ Every provider must follow these; the kernel's behaviour below assumes them. How
 - Paths have already passed `validateSandboxPath` (only `/workspace`, `/skills`, `/tmp` are accepted); the working directory is `/workspace` and attachments are in
   `/workspace/attachments/<conversation>/` (the first 12 hex digits of the root conversation id).
 - **`list` and `scan` (projects, project root spec §4.1, §4.2)**: the kernel keeps a device's projects itself (`device_projects`) and asks
-  the provider only what it can read. Both carry the kernel's **current** ceiling (`limits: { mode }`, `Pick<SandboxLimits, "mode">`) and are answered
-  in that mode, never in one an earlier command saw (before its first command a device has seen none). `list` is one directory's entries, sorted
+  the provider only what it can read. Neither carries limits (protocol 4 removed the mode tier): the provider answers what
+  the device reaches (a cloud instance: its workspace; a local machine: its owner ceiling). `list` is one directory's entries, sorted
   by code unit, at most `limit` (the kernel asks `limit: 1` as the existence check when a project is added and up to
   `MAX_DEVICE_LIST_ENTRIES` for the skills tree at run start), never `.` / `..`, `isDir` following links (a dangling one `false`), `truncated`
-  when more; null only for a missing path the mode could reach; a file, an unreadable directory or a path outside the mode throws.
+  when more; null only for a missing path the device could reach; a file, an unreadable directory or an unreachable path throws.
   `scan(base)` answers `base` and the directories at most `MAX_DEVICE_SCAN_DEPTH` (2) below it that hold `.git` or `AGENTS.md`, as
   `{ path, suggestedName }` with a name passing `isDeviceProjectName`, sorted by path, at most `MAX_DEVICE_SCAN_RESULTS` (50); one traversal
   for every provider so the suggestions agree: breadth-first in code-unit order, `base` first, at most `MAX_DEVICE_SCAN_DIRS` (500)
   directories read, no symbolic links, no hidden directories, descending past a hit, skipping (never renaming) a directory with an invalid
-  name and paths the mode cannot reach (`node_modules` and a macOS `Library` may be skipped); a missing `base` is `[]`. Entries only, never
-  file contents. The kernel checks every answer again (shape, inside the base and the mode, the name rule, the bound). A cloud provider
-  answers inside the container's workspace in both modes (the kernel scopes a cloud device's projects to it).
+  name and paths the device cannot reach (`node_modules` and a macOS `Library` may be skipped); a missing `base` is `[]`. Entries only, never
+  file contents. The kernel checks every answer again (shape, inside the base, the name rule, the bound). A cloud provider
+  answers inside the container's workspace (the kernel scopes a cloud device's projects to it).
 - **Background tasks** (`Bash` `run_in_background`, permission runtime cutover 8.2-8.4, `packages/kernel/src/background/managed.ts`):
   the kernel reserves the task row, writes the durable launch intent and calls `background.start(h, scope, { command,
   timeoutMs, maxOutputBytes, taskId, outputPath, retainUntilMs, instanceGeneration })` under the admitted operation scope; the
@@ -156,8 +171,8 @@ Every provider must follow these; the kernel's behaviour below assumes them. How
   (`cloudReportOwed`), and records it with a kernel-built identity (`cloudRuntimeIdentity`: provider plugin and version,
   handle, generation, recorded applied limits, no image digest). A later record is written only while the row still
   holds the probed handle, generation and limits. Any of these changing makes the context and admission unprobed alike,
-  and so do an `unapplied` record and applied limits more permissive than the effective desired ones (auto under a
-  sandbox device, open public under an allowlist, a host the desired allowlist does not cover; spec §124). Narrower
+  and so do an `unapplied` record and applied limits more permissive than the effective desired ones (open public under
+  an allowlist, a host the desired allowlist does not cover; spec §124). Narrower
   applied limits stand: the outer boundary is the applied network, and restricted hosts (base, accepted additions,
   proposals) are cut to it. A narrowing, host-only too, goes through the exclusive lease on the next use: it is applied
   (`update` or recreate) and recorded again, or, on a provider bound to its file system, recorded `unapplied` (unprobed
@@ -165,11 +180,11 @@ Every provider must follow these; the kernel's behaviour below assumes them. How
   once per generation and never fails the lifecycle step; after a resume it clears the recorded identity (unprobed),
   otherwise the evidence stays as it was. A cloud device without an instance is refused by admission but stays
   provisionable: provisioning is the lease's job, and the first operation is admitted only after it recorded the evidence.
-  Full access needs the instance itself to hold the outer boundary (B-12, `cloudEnforceable`): an instance applied in the
-  `sandbox` mode reads `fullAccess: false` whatever its provider reports (restricted support stands).
+  A cloud device never runs outside its sandbox: `effectiveDeviceSandbox` gives it no outside whatever the report says, and
+  `cloudEnforceable` clears `outsideSandbox` from a report of an instance not applied as its own boundary.
 - **Cloud reconcile** (B-12, `CloudPermissionSnapshots.reconcile*`): reconciling a device that carries
   `permission_reconcile_required` first narrows its authority to the applied limits the instance is known to run, by
-  intersection (Full only where it runs `auto`, the outer network cut to the applied one; a real narrowing is published
+  intersection (the outer network cut to the applied one; a real narrowing is published
   through the device ceiling writer), never the other way. The marker clears when the applied limits then are exactly the
   effective ones with nothing `unapplied`; otherwise the outcome names the `target` (the effective limits, never wider than
   the instance in any dimension). `SandboxService.reconcileLimits` (the worker's every-minute `sandbox-reconcile-limits`
@@ -274,63 +289,79 @@ Every provider must follow these; the kernel's behaviour below assumes them. How
   - **Release gate.** It passes on `retired`. With `abandoned > 0` it also needs the operator to acknowledge: "N old incarnations
     were abandoned with their devices; legacy processes may still run on those computers; no device can reuse them".
 
-### Limits, modes and networks (`SandboxLimits`)
+### Limits and the device sandbox network (`SandboxLimits`)
 
-- **`mode` (`auto` | `sandbox`, auto mode spec §4)** says what the run guarantees, not which
-  mechanism implements it: `auto` runs commands with the environment's own capability (local: the
-  owner's machine; cloud: the container is the boundary), `sandbox` adds the OS sandbox on a local
-  device and the allowlist network on a cloud one. The kernel computes one effective mode per use,
-  `effectiveDevicePolicy`, from the platform's `devices.fullAccess`, the org's `fullAccess` and, on a
-  local device, the machine's own reported mode (`packages/kernel/src/sandbox/modes.ts`, read live
-  in the caller's transaction). Only the machine turns a local device's auto on; the platform, the
-  org and the web may narrow to `sandbox`, and a cloud device's owner may clear that narrowing on
-  the device page (`PATCH /devices/:id { mode: null }`, a web session only:
-  `device.mode_requires_session` for a token). A provider that ignores `mode` and `network` runs as an allowlisted
-  sandbox, the safe direction.
-- **`network` (`{ kind: "open-public" | "allowlist", hosts }`)** is the network in effect: cloud
-  instances get `open-public` in auto mode and the org's `cloudNetwork` (open by default, or its
-  allowlist) in sandbox mode; a local device's sandbox mode intersects the org's allowlist with the
-  machine's own list, and `open-public` is for cloud instances only. The provider just enforces the
-  `limits` it receives and does not read org settings or the platform switch.
-  - **The org's hosts are a delta over the platform's** (org egress ceiling spec): the org's
-    `cloudNetwork` stores `base` (`platform` | `none`), `extraHosts` and `excludedHosts`, never a
-    copy of `sandbox.limits.allowHosts`, so platform changes reach every org. `orgEffectiveHosts`
-    and `orgCloudMode` in `sandbox/modes.ts` are the only places that combine the two; every
-    reader (device policy, network requests, the settings response's `effectiveNetwork`) calls
-    them. `sandbox.limits.orgHosts: within` makes the platform list the ceiling (extras outside it
-    ignored, sandbox mode's cloud network always the allowlist, `orgHostOutsideCeiling` for the
-    super-admin wording); it does not limit auto mode.
-  - `open-public` (开放挡内网): any public host on any port, and the provider refuses loopback of
-    the host, private ranges (`10/8`, `172.16/12`, `192.168/16`, `fc00::/7`), link-local and cloud
-    metadata (`169.254/16`, `fe80::/10`) and the deployment's own internal addresses. This is
-    enforced outside the container (Docker: the egress proxy or the network policy the provider
-    already runs; E2B: its network filter), never by an OS sandbox inside the container.
-  - `allowlist` (the default): only `hosts` (`validateAllowHost` already rejects IP literals,
-    single-label names and `.local` / `.internal`; `*.example.com` matches subdomains and not the
-    domain itself), HTTP(S) on 443 / 80. It blocks the internal network and hosts outside the list,
-    not data sent to an allowed host.
-  - `sandbox.limits.egress: "none"` is the platform kill switch (R20, every read): it forces every
-    kernel-controlled network to an empty allowlist. A local device's auto mode uses the machine's
-    network, which the kernel cannot cut.
+- **The sandbox is a device setting, the same under every profile** (approval-only profiles design,
+  "Settings model"). One pure function, `effectiveDeviceSandbox(platform, org, device, provider)`
+  (`packages/kernel/src/sandbox/device-sandbox.ts`, read live by `PermissionFacts`), gives the
+  boundary, the network mode and ceiling, the allowlist hosts, whether a call may run outside the
+  sandbox and the layer that set each ceiling. The device mirrors it in `intersectOperation`.
+  - **Outside the sandbox:** only when the platform (`devices.outsideSandbox`), the org
+    (`outsideSandbox`), the device owner (`ownerCeiling.outsideSandbox`, set on the machine) and the
+    provider all allow it; a cloud device and an instance-boundary provider never do.
+  - **Network ceiling:** the narrower of `devices.network.ceiling` and the org's
+    `deviceNetwork.ceiling` (`allowlist` is narrower than `open`), clamped to what the provider
+    can enforce; `sandbox.limits.egress: none` (the kill switch) closes it.
+  - **Network mode:** the device's choice (a local owner's `network`, a cloud device's
+    `devices.network_mode`; NULL follows the org), else the org default, else
+    `devices.network.default`, clamped to the ceiling. `network_mode: none` is a closed cloud network.
+    The owner sets a cloud device's choice on the device page (`PATCH /devices/:id` `network:
+    { mode, hosts? }`, `DevicesService.update` / `planNetwork`; a local device gets
+    `device.ceiling_on_machine`): within the ceilings and the org's hosts
+    (`device.network_not_allowed`), under the ordered locks (membership, device row, the device's
+    permission write lock). An API token or the Platform tool (`devices.set-network`) may only
+    narrow, compared on the stored setting and on the effective sandbox. The view reports
+    `pendingNextUse` / `pendingFilesReset` (`limitsApplyAt: "fileSystem"`) and the audit
+    `device.network_changed` (`via: web | token | agent`).
+  - **Hosts:** the org's effective hosts (`orgEffectiveHosts`: the platform's `allowHosts` minus the
+    org's `excludedHosts` plus its `extraHosts`, or the extras alone under `base: none`; never a
+    copy, so platform changes reach every org), intersected with the device's own list (a local
+    owner's `allowedDomains` while its network is `allowlist`, an empty one allowing nothing; a
+    cloud device's `network_hosts`, an empty one following the org). A device list only narrows.
+  - **Per-call host grants** follow `hostGrantCeiling` / `hostGrantRefusal` (same file) under every
+    profile: the org's `excludedHosts` never; an allowlist ceiling (platform or org) is hard (only
+    the org's hosts; "an organization admin adds …"); `orgHosts: within` keeps grants within them
+    ("a super admin adds the host"); a local owner's allowlist is a second ceiling ("capybara-device
+    policy add allowedDomains …"); nothing on an instance-boundary device or a closed network.
+- **What a provider gets.** `SandboxLimits` carries resources and the outer network only:
+  `network: { kind: "open-public" | "allowlist", hosts }`. There is **no `limits.mode`** (protocol 4
+  removed the tier; the device's `exec` / `create` limits refuse unknown keys, and a provider must
+  not require or read a mode). The provider enforces the `limits` it receives and never reads org
+  settings or platform switches. A cloud instance's outer network is its sandbox network; a local
+  device's commands carry the device sandbox network and the machine intersects it with its owner
+  ceiling.
+  - `open-public` (开放挡内网): the public internet on any port. Closed, by resolved address and by
+    IP literal alike (the SDK's one table, `packages/plugin-sdk/src/network-classes.ts`:
+    `classifyAddress`, `ADDRESS_CLASS_RANGES`, `OPEN_PUBLIC_DENIED_CLASSES` /
+    `OPEN_PUBLIC_DENIED_CIDRS`, checked against the kernel's `net/public-address.ts` and the Linux
+    forwarder's Python copy): private and LAN ranges, CGNAT, ULA, link-local and metadata
+    (`169.254.169.254`, `fd00:ec2::254`, Azure's `168.63.129.16`), loopback and the host's own
+    addresses, multicast, broadcast, `0/8`, NAT64 and the reserved ranges. They are reachable only
+    by running outside the sandbox. A cloud provider enforces this outside the container (Docker:
+    the egress proxy; E2B: its network filter), never by an OS sandbox inside it.
+  - `allowlist`: only `hosts` (`validateAllowHost` rejects IP literals, single-label names and
+    `.local` / `.internal`; `*.example.com` matches subdomains, not the apex). The same closed
+    classes hold: an allow-listed name resolving to a closed address is refused.
+  - A provider that cannot allow by domain name must **refuse, or degrade to closed with a
+    warning**, and never silently open up (E2B self-hosted `domainAllowlist: false`).
 - `cpu` / `memoryMb` are the values **in effect for the org**: a super admin can override them per org in the admin console (deployment setting `sandboxLimitOverrides`,
   orgId → `{ cpu?, memoryMb? }`, cpu 0.25–64, memoryMb an integer in 256–262144, C19); the items given replace the deployment defaults of `sandbox.limits`, and items not given and `diskMb` keep the deployment defaults (kernel `effectiveSandboxLimits`); org admins see the effective values and their source read-only in org settings.
   The provider just enforces the `limits` it receives from `create`; a provider that cannot size each sandbox (such as E2B, where the template decides the size) must state in its README
   "org-level cpu / memory overrides do not take effect for this plugin"; a deployer who needs different sizes uses different templates.
-- **Mode and network follow running instances; the rest applies at create.** The kernel records the
-  `{ mode, network }` an instance was created with (`device_instances.instance_limits`; NULL reads as
-  unknown, so it differs once after the upgrade, and an old `{ tier, egress }` record reads as
-  unknown too). On use, when the effective mode or network kind differs, it calls the optional
-  `update(h, limits, signal)` under the exclusive lease: `"updated"` records the new limits;
-  `"recreate"`, a gone instance, or a provider without `update` destroys and recreates the instance
-  on the same files (the existing "recreated" notice). A non-gone `update` failure recreates on
-  instance-bound providers; after an abort, or on a provider with `limitsApplyAt: "fileSystem"`
-  (E2B: the instance is its file system), the instance is quarantined (suspended or killed) and the
-  error rethrown. A `"fileSystem"` provider without a successful `update` keeps the old record, and
-  the device view says `pendingFilesReset` (「重置文件后生效」): the record never claims more than is
-  in force. Changes of `network.hosts`, `cpu`, `memoryMb` still reach only instances created
-  afterwards, and `diskMb` only file systems created afterwards. When an item cannot be done, say so
-  in the README (Docker's default local volume driver does not limit `diskMb`; E2B's cpu / memory /
-  disk are decided by the template).
+- **The network follows running instances; the rest applies at create.** The kernel records the
+  limits an instance was created with (`device_instances.instance_limits`; NULL reads as unknown, and
+  an old `{ tier, egress }` record reads as unknown too). On use, when the effective network kind
+  differs, it calls the optional `update(h, limits, signal)` under the exclusive lease: `"updated"`
+  records the new limits; `"recreate"`, a gone instance, or a provider without `update` destroys and
+  recreates the instance on the same files (the existing "recreated" notice). A non-gone `update`
+  failure recreates on instance-bound providers; after an abort, or on a provider with
+  `limitsApplyAt: "fileSystem"` (E2B: the instance is its file system), the instance is quarantined
+  (suspended or killed) and the error rethrown. A `"fileSystem"` provider without a successful
+  `update` keeps the old record, and the device view says `pendingFilesReset` (「重置文件后生效」): the
+  record never claims more than is in force. Changes of `network.hosts`, `cpu`, `memoryMb` still
+  reach only instances created afterwards, and `diskMb` only file systems created afterwards. When an
+  item cannot be done, say so in the README (Docker's default local volume driver does not limit
+  `diskMb`; E2B's cpu / memory / disk are decided by the template).
 - **Provider refusals** (auto mode spec §4.2): a failed `createFileSystem` / `create` / `update`
   that is not an abort, gone, unreachable or kernel error is logged with the provider's error and
   replaced (`providerRefusal` in `sandbox.service.ts`); a cloud provider refusing the open public
@@ -338,13 +369,13 @@ Every provider must follow these; the kernel's behaviour below assumes them. How
   sandbox tools turn them into actionable text (`SANDBOX_OPEN_NETWORK_REFUSED_TEXT`,
   `SANDBOX_CREATE_FAILED_TEXT`); the provider's own message never reaches the model (it may name its
   settings). Test the refusal with `setFakeSandboxRefuseOpenEgress`.
-- **The allowlist does not prevent data exfiltration**: it blocks the internal network and hosts
-  outside the allowlist, but not data sent to allowlisted hosts (`git push` to github.com,
-  publishing packages). In auto mode the command review is the boundary and the network is the
-  environment's own. The README must say so and recommend `sandboxToolPolicy: ask` and / or a
-  tighter `cloudNetwork` / `sandbox.limits.egress: none` for sensitive orgs.
-- A provider that cannot allow by domain name must **refuse, or degrade to `none` with a warning**, and must never silently open up (E2B self-hosted `domainAllowlist: false`).
-  Where it can but more weakly, write it in the README (E2B looks only at Host / SNI and does not verify the destination IP, Ruling M14).
+- **Neither network prevents data exfiltration**: the open network and the allowlist close the
+  internal network, but not data sent to a reachable host (`git push` to github.com, publishing
+  packages). What a sandboxed command can send is bounded by what the sandbox can read (the scope,
+  the minimal environment, the protected paths closed). The README must say so and recommend
+  `deviceNetwork.ceiling: allowlist` / `sandbox.limits.egress: none` for sensitive orgs.
+  Where a provider enforces more weakly, write it in the README (E2B looks only at Host / SNI and
+  does not verify the destination IP, Ruling M14).
 
 ## The kernel-internal provider `@local` (local devices)
 
@@ -375,9 +406,10 @@ no plugin can take the name.
   needs no `DriftReason`. A new tool must use the roots too.
 - **Projects.** A machine that serves the device operations `list` and `scan` announces the `projects`
   feature in its hello, plus the owner's home (`DeviceHello.home`, stored with the machine: the base of
-  a project path in auto mode). `@local`'s `list` / `scan` forward them only to a machine that
-  announced `projects` (the device answers in the ceiling the request carries: auto reads with the
-  owner's rights, sandbox through the sandboxed helper, a docker-mode device in its container); for
+  a project path under `os-user` project reach). `@local`'s `list` / `scan` forward them only to a
+  machine that announced `projects` (the device answers within its owner ceiling: `os-user` reach
+  reads with the owner's rights, `workspace` reach only the workspace, a docker-mode device in its
+  container); for
   any other the device offers no projects (`device.projects_unsupported`). The device keeps no project
   list and has no project operations; projects live only in the kernel's `device_projects`.
 
@@ -512,40 +544,86 @@ The kernel owns it; the extension implements only primitives. **Do not do schedu
   renamed into git's subtrees keeps contents Seatbelt never saw; owners are advised to set
   `git config --global safe.bareRepository explicit` (documented, never changed automatically).
 
-## Local file access on protocol 3
+## Local file access on protocol 4
 
-A protocol 3 machine runs work only under an admitted operation scope: `LocalDeviceProvider.staged`
+A protocol 4 machine runs work only under an admitted operation scope: `LocalDeviceProvider.staged`
 (`packages/kernel/src/local-devices/local-device-provider.ts`) is the `@local` registration, and its raw
 `exec` / `readFile` / `writeFile` / `stat` / `list` / `scan` refuse with `SandboxPermissionUnsupportedError` before anything
 is queued, while `killAll` / `killTagged` queue nothing. Reads and writes go through `operation(h, scope)` (the scope's read
 and write roots, the frame-sized `readFile` cap of `devices.local.maxFrameBytes`), staging through `prepare`, owner browsing
 through `browse`, commands through the request-bound execution adapter (the admitted call grants, cut to the org's current
-limits; a host the limits now refuse fails the call). The machine re-checks every scope against its owner ceiling. Kernels and
-device programs upgrade together: a protocol 2 device is refused (426, "Update capybara-device"), and a protocol 3 device that
-reaches a kernel still on protocol 2 gets the same 426 from that kernel, so upgrade the kernel first.
+limits; a host the limits now refuse fails the call). The machine re-checks every scope against its owner ceiling
+(`ownerCeiling { outsideSandbox, network, allowedDomains, restrictedProjectReach }`, reported as `DeviceOwnerCeiling`
+version 3). The web narrows it only through the `policy` op (network to `allowlist`, hosts removed, `outsideSandbox`
+off, `restrictedProjectReach: workspace`); a `policy` op that adds hosts or carries a `mode` is refused (`POLICY_ADD_REFUSED`): widening happens only on the
+machine (`capybara-device ceiling set --outside-sandbox on|off --network open|allowlist`, `capybara-device policy add
+allowedDomains <host>`). Kernels and device programs upgrade together with no fallback: the kernel refuses a protocol 3
+program (426, "Update capybara-device"), and a protocol 4 program facing an older deployment says the deployment must be
+upgraded.
 
 ## Per-call sandbox escalation
 
-An approved escalated `Bash` call (approval profiles design, "Per-call sandbox escalation") is
-admitted with the conversation's restricted `profile` and full reach (`filesystem: device`,
-`network: environment`) for its command only (exec or backgroundStart; its native methods keep the
-base scope). "Needs Full" is therefore the Full access profile or a full reach, never the profile
-name alone: `isFullExecutionScope` (`sandbox/operation-authority-types.ts`) drives the provider support check
-(`held-operations.ts`) and the Full ceiling revocation predicates (`permission-ceiling-writes.ts`,
-`owner-report.ts`, `policy-summary.ts`), and the device's `intersectOperation` decides the same way,
-so the owner's Full ceiling bounds an escalation exactly as it bounds Full access. Admission
-(`resolveInvocation`) refuses an escalation grant when the snapshot's `escalationRefusal` is set
-(no Full ceiling, a runtime without Full support now, an unattended run). The device's
-`commands.log` writes `isolation: "full"` and `grantSource: "call approval"` for such an operation,
-never the command. E2B is Full only, so escalation never applies there.
+Running one `Bash` call outside the sandbox (`sandbox: "escalated"` with a justification) is the `outside-sandbox`
+crossing: Request approval asks the person, Approve for me the review model, Full access auto-grants it within the
+outside-sandbox ceiling, except that a sub-agent's escalation or one carrying a credential consent goes to the review
+model (`approverForCrossing`, writing-tools). It is also the only way to reach private, LAN, loopback, link-local and
+metadata addresses, the Docker and kernel sockets and the protected paths. An admitted escalation gets the escalated
+pair (`filesystem: device`, `network: environment`) for its command only (exec or backgroundStart; its native methods
+keep the base scope), and only while the call holds an `outside-sandbox` grant and the snapshot's
+`outsideSandboxCeiling` holds. `isFullExecutionScope` (`sandbox/operation-authority-types.ts`) recognizes the pair for
+the provider support check (`held-operations.ts`) and the `outside-sandbox-off` revocation predicates
+(`permission-ceiling-writes.ts`, `owner-report.ts`, `policy-summary.ts`); the device's `intersectOperation` decides the
+same way. Admission (`resolveInvocation`) refuses an escalation without its grant under every profile, and when the
+snapshot's `escalationRefusal` is set (running outside not allowed by a layer, a runtime without `outsideSandbox`, an
+unattended run). An escalated call runs as the owner with the device program's environment minus every `CAPYBARA_*`
+variable. The device's `commands.log` writes `isolation: "full"` and the grant source for such an operation, never the
+command. A cloud device has no outside, so an escalation there is refused before any effect.
+
+## Sandbox network and write rules on the device
+
+The device workers enforce the sandbox; the kernel only computes the scope. What each worker must hold (the conformance
+suite in `@capybara-hq/testing` checks it):
+
+- **Open network on the resolved address.** Every sandboxed connection goes through the operation's own proxy (macOS:
+  the patched sandbox runtime with `resolvedAddressStrict`; Linux and local Docker: the forwarder), which classifies the
+  resolved address (IP literals too, no `localhost` carve-out) with the SDK's address-class table and dials exactly the
+  address it checked, so DNS rebinding cannot swap it. The allowlist uses the same path. HTTP(S)- and SOCKS-aware clients
+  work on any port; a proxy-unaware client (plain `ssh`) does not connect.
+- **Fake-IP resolvers.** When the system resolver answers a name with an address in `198.18.0.0/15` (a router in fake-IP
+  mode), the proxy re-resolves it through DNS-over-HTTPS (`SANDBOX_FAKE_IP_DNS` in `network-classes.ts`: RFC 8484 wire
+  format at the IP-literal endpoints `1.1.1.1`, `1.0.0.1`, `8.8.8.8`, `8.8.4.4`; one 5 s deadline per name shared among
+  them; complete answers cached for their TTL, at most 300 s and 256 names) and judges and dials the real address. When
+  that fails the connection is refused naming the fake-IP resolver; the fake address is never dialled.
+- **No own-listener connect.** No sandboxed client connects to a loopback listener, its own command's included (a
+  listener cannot be told from another process's at the address dialled). On Linux a restricted command may bind and
+  listen on loopback for clients outside the sandbox, and `SO_REUSEPORT` / `SO_ATTACH_REUSEPORT_*` are refused by
+  seccomp; on macOS listening is refused (Seatbelt cannot restrict a bind to loopback). A dev server that must be reached
+  runs through the escalation.
+- **Minimal environment.** A sandboxed command never inherits the device program's environment: `PATH`, `LANG`, `HOME`
+  (the working root), a private `TMPDIR` / `TMP` / `TEMP`, the detected tool homes, the proxy variables and the call's
+  own `env`, under every profile.
+- **Protected paths and chains.** The owner-denied secret paths (`DEVICE_DENIED_SECRET_PATHS`), the device state
+  directory, the mandatory write denies and the OS persistence locations (`SANDBOX_SYSTEM_WRITE_DENIES`, LaunchAgents,
+  systemd user units, autostart, the crontab spool) are closed under every profile. At operation start the worker
+  resolves each protected home location component by component (`device/src/exec/protected-targets.ts`), following
+  dangling links, and denies every link on the chain and the final target, anchored: an ancestor of an anchored deny
+  never moves away. No directory grant covers a protected path.
+- **Reserved staging prefix.** `SANDBOX_RESERVED_NAME_PREFIX` (`.capybara-staging-`, any case; `sandbox-write-denies.ts`)
+  is denied to every sandboxed write on both platforms. The Linux broker moves a directory into a guarded prefix by
+  renaming it to such a name first, checking it there and renaming it into place with NOREPLACE, under an exclusive
+  lock against the operation's other writes (at most 5 s, then EBUSY).
 
 ## Known limitations (permission activation)
 
 - **Local Docker mode needs the host's `/usr/bin/python3`.** A `capybara-device` in Docker mode runs the
   restricted output helper with the host interpreter; without it the device reports restricted support
   unavailable.
-- **E2B is Full access only.** `sandbox-e2b` reports no restricted support, so an E2B device runs only
-  conversations on Full access; restricted profiles read `unsupported` there.
+- **Cloud providers must ship with the kernel.** A cloud provider that still reports `permissionSupport` version 1 or
+  reads `limits.mode` reads unprobed against an R3 kernel and admits nothing: release `sandbox-docker` / `sandbox-e2b`
+  with support v2 (`boundary: "instance"`) together with the kernel and its bootstrap pins.
+- **Public addresses that lead inward** (hairpin NAT to the router's WAN address, a VPN routing public ranges inward,
+  an operator NAT64 prefix) are not closed: the classes are decided on the address. Such a machine needs an owner
+  allowlist instead of the open network.
 - **Version managers are readable under `workspace` reach too.** A restricted exec on a macOS or Linux
   host reads the version manager directories of the device user's home (`TOOL_HOME_DIRS`) and asdf's
   global `~/.tool-versions` read only (`restrictedToolHomes`, never a path at, under or holding an

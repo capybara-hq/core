@@ -751,8 +751,8 @@ describe("platform", () => {
     const config = env.k.app.get(KernelConfigService);
     const id = await agentOf(env.memId, "private");
     const c = await inConversation(ctxOf(env.memId, id));
-    const OPEN = { mode: "open" as const };
-    const LIST = { mode: "allowlist" as const, base: "none" as const, extraHosts: ["pypi.org"] };
+    const OPEN = { default: "open" as const };
+    const LIST = { ceiling: "allowlist" as const, base: "none" as const, extraHosts: ["pypi.org"] };
     const cases: {
       platform: "allowed" | "off";
       org: "off" | null;
@@ -783,8 +783,12 @@ describe("platform", () => {
     ];
     try {
       for (const k of cases) {
-        await setDeployment(env, { devicesFullAccess: { permission: k.platform } });
-        await settings.update(env.orgId, { fullAccess: k.org, cloudNetwork: k.net }, env.rootId);
+        await setDeployment(env, { devicesOutsideSandbox: { permission: k.platform } });
+        await settings.update(
+          env.orgId,
+          { outsideSandbox: k.org, deviceNetwork: k.net },
+          env.rootId,
+        );
         const out = (await run("platform.me", {}, c)) as {
           sandbox: { enabled: boolean; mode: string; network: string };
         };
@@ -803,7 +807,7 @@ describe("platform", () => {
       }
     } finally {
       keys.mockRestore();
-      await settings.update(env.orgId, { fullAccess: null, cloudNetwork: null }, env.rootId);
+      await settings.update(env.orgId, { outsideSandbox: null, deviceNetwork: null }, env.rootId);
     }
   });
 

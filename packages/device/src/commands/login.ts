@@ -2,6 +2,7 @@ import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { hostname } from "node:os";
 import { isAbsolute, resolve } from "node:path";
+import type { DeviceNetworkMode } from "@capybara-hq/plugin-sdk";
 import { ApiError, authorize, type FetchFn, programVersion, token } from "../api.js";
 import type { Command } from "../args.js";
 import { SANDBOX_INSTALL_HINT } from "../exec/sandbox-messages.js";
@@ -22,14 +23,16 @@ import {
 } from "../state.js";
 
 /**
- * Shown once at login when the owner ceiling allows Full access in an organization that allows
- * it: the trust model of Full access is command review, not the OS sandbox.
+ * Shown once at login when the owner ceiling allows running outside the sandbox in an organization
+ * that allows it: an escalated call's trust model is its approval and the command review, not the
+ * OS sandbox.
  */
-export const FULL_ACCESS_RISK_TEXT =
-  "With Full access, agent commands run on this computer as you: they can read and write all " +
-  "your files, use your credentials (SSH keys, cloud accounts, keychain), Docker and any network, " +
-  "and the deployment reviews every command before it runs. Prompt injection can make an agent " +
-  "try to delete files or send your credentials away; the review blocks or asks about the " +
+export const OUTSIDE_SANDBOX_RISK_TEXT =
+  "A call approved to run outside the sandbox runs on this computer as you: it can read and " +
+  "write all your files, use your credentials (SSH keys, cloud accounts, keychain), Docker and " +
+  "any network. The person, the review model or a Full access auto-grant approves each such " +
+  "call, and the deployment reviews every command before it runs. Prompt injection can make an " +
+  "agent try to delete files or send your credentials away; the review blocks or asks about the " +
   "dangerous ones. Such commands can also read this program's own credential: if you suspect " +
   "misuse, run capybara-device logout and log in again.";
 
@@ -46,31 +49,41 @@ async function checkSandbox(
 
 /** How the owner widens the ceiling, on this machine only (the deployment may only narrow it). */
 export const WIDEN_CEILING_HINT =
-  "Only you can widen it, on this machine: `capybara-device ceiling set --full-access allow " +
-  "--project-reach os-user` (see `capybara-device ceiling show`).";
+  "Only you can widen it, on this machine: `capybara-device ceiling set --outside-sandbox on` " +
+  "(see `capybara-device ceiling show`).";
+
+/** The sandbox network line of the login output. */
+export function networkLoginLine(network: DeviceNetworkMode): string {
+  return network === "open"
+    ? "Sandboxed commands reach the public internet (private, local and metadata addresses stay " +
+        "closed); `capybara-device ceiling set --network allowlist` limits them to allowedDomains."
+    : "Sandboxed commands reach only allowedDomains; open the network with " +
+        "`capybara-device ceiling set --network open`.";
+}
 
 /**
- * The line `login` prints for a restricted owner ceiling (the default of a new setup, B-14): no
- * Full access, restricted work in the device's workspace only.
+ * The line `login` prints when the owner ceiling keeps every call in the sandbox (the default of a
+ * new setup): commands run in the sandbox under every profile, Full access included.
  */
-export const RESTRICTED_CEILING_LOGIN_LINE =
-  "This machine's owner ceiling allows restricted work only: Full access is off, and restricted " +
-  `work reaches the device's workspace. ${WIDEN_CEILING_HINT}`;
+export const SANDBOX_ONLY_LOGIN_LINE =
+  "This machine's owner ceiling keeps every command in the sandbox, Full access included: no " +
+  `call runs outside it. ${WIDEN_CEILING_HINT}`;
 
-/** The line `login` prints when the owner ceiling allows Full access. */
-export const FULL_CEILING_LOGIN_LINE =
-  "This machine's owner ceiling allows Full access: a conversation set to Full access runs agent " +
-  "commands as you. Narrow it with `capybara-device ceiling set --full-access deny " +
-  "--project-reach workspace`.";
+/** The line `login` prints when the owner ceiling allows running outside the sandbox. */
+export const OUTSIDE_SANDBOX_LOGIN_LINE =
+  "This machine's owner ceiling allows running outside the sandbox: commands still run in the " +
+  "sandbox, and one approved call may run as you. Turn it off with " +
+  "`capybara-device ceiling set --outside-sandbox off`.";
 
-/** Added when the organization does not allow Full access while the owner ceiling does. */
-export const FULL_ACCESS_NOT_ALLOWED_LOGIN_LINE =
-  "This organization does not allow Full access, so agents use the restricted profiles here.";
+/** Added when the organization does not allow running outside the sandbox while the owner does. */
+export const OUTSIDE_SANDBOX_NOT_ALLOWED_LOGIN_LINE =
+  "This organization does not allow running outside the sandbox, so every call stays in the " +
+  "sandbox here.";
 
-/** The line `login` prints when restricted work cannot run here (no OS sandbox). */
+/** The line `login` prints when sandboxed work cannot run here (no OS sandbox). */
 export function restrictedUnavailableLoginLine(reason: string): string {
   return (
-    `The OS sandbox is unavailable on this machine (${reason}), so restricted work cannot run ` +
+    `The OS sandbox is unavailable on this machine (${reason}), so sandboxed work cannot run ` +
     `here yet: ${SANDBOX_INSTALL_HINT}; or log in again with --mode docker. ${WIDEN_CEILING_HINT}`
   );
 }
@@ -106,8 +119,8 @@ function defaultOpen(platform: NodeJS.Platform) {
 }
 
 /**
- * A new setup writes the default policy (B-14): a restricted owner ceiling, no Full access and the
- * workspace as the restricted reach. Written under the policy lock, and only while no policy file
+ * A new setup writes the default policy: no running outside the sandbox, the open network and the
+ * workspace as the project reach. Written under the policy lock, and only while no policy file
  * exists: an existing policy is the owner's choice and is never changed here (an old format still
  * converts exactly at start). Returns whether this call created the file.
  */
@@ -217,8 +230,8 @@ export async function login(
               : resolve(cmd.dir);
         // Recreates a lost directory, marker or root: the device starts afresh.
         prepareDeviceDir(dir);
-        // A new setup gets the restricted default written before the credential makes the login
-        // final; the printed lines follow the policy this machine actually has.
+        // A new setup gets the default written before the credential makes the login final; the
+        // printed lines follow the policy this machine actually has.
         let ceiling: OwnerCeilingPolicy = { ...DEFAULT_POLICY.ownerCeiling };
         try {
           persistDefaultPolicy(deps.stateDir);
@@ -230,7 +243,7 @@ export async function login(
         } catch (e) {
           err(`Cannot read the local policy in ${deps.stateDir}: ${(e as Error).message}`);
         }
-        /** Why restricted work cannot run here: the OS sandbox is missing (OS mode only). */
+        /** Why sandboxed work cannot run here: the OS sandbox is missing (OS mode only). */
         let noSandbox: string | undefined;
         if (cmd.mode !== "docker") {
           const available = await checkSandbox(deps.sandboxAvailable);
@@ -263,15 +276,17 @@ export async function login(
         });
         emit({ event: "done", deviceId: granted.deviceId, orgId: granted.orgId, dir });
         out(`Logged in. Device ${granted.deviceId}, working directory ${dir}`);
-        if (ceiling.fullAccess) {
-          out(FULL_CEILING_LOGIN_LINE);
-          if (granted.fullAccess === "off") out(FULL_ACCESS_NOT_ALLOWED_LOGIN_LINE);
-          // the risk text is shown once at login, and only when Full access runs as the owner on
-          // this machine (outside Docker)
-          else if (cmd.mode !== "docker") out(FULL_ACCESS_RISK_TEXT);
+        if (ceiling.outsideSandbox) {
+          out(OUTSIDE_SANDBOX_LOGIN_LINE);
+          // the token's `outsideSandbox` is the platform and organization outside-sandbox setting
+          if (granted.outsideSandbox === "off") out(OUTSIDE_SANDBOX_NOT_ALLOWED_LOGIN_LINE);
+          // the risk text is shown once at login, and only when an escalated call runs as the
+          // owner on this machine (outside Docker)
+          else if (cmd.mode !== "docker") out(OUTSIDE_SANDBOX_RISK_TEXT);
         } else {
-          out(RESTRICTED_CEILING_LOGIN_LINE);
+          out(SANDBOX_ONLY_LOGIN_LINE);
         }
+        out(networkLoginLine(ceiling.network));
         if (noSandbox !== undefined) out(restrictedUnavailableLoginLine(noSandbox));
         // An installed service stays stopped after a deliberate exit (not logged in, logged out):
         // it needs starting again, not a second program.

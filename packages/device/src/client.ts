@@ -1,6 +1,6 @@
 /**
  * What the device program's connection shares: the messages it ends with, the reconnect backoff
- * and the running connection's interface. The connection itself is the protocol 3 one
+ * and the running connection's interface. The connection itself is the protocol 4 one
  * (`staged-connect.ts`).
  */
 import { DEVICE_PROTOCOL_VERSION } from "@capybara-hq/plugin-sdk";

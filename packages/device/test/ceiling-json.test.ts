@@ -12,7 +12,7 @@ beforeEach(() => {
   state = join(root, "capybara-device");
   writePolicy(state, {
     ...DEFAULT_POLICY,
-    ownerCeiling: { fullAccess: true, restrictedProjectReach: "os-user" },
+    ownerCeiling: { outsideSandbox: true, network: "open", restrictedProjectReach: "os-user" },
   });
 });
 afterEach(() => rmSync(root, { recursive: true, force: true }));
@@ -35,7 +35,9 @@ describe("ceiling show --json", () => {
     expect(code).toBe(0);
     expect(out).toHaveLength(1);
     expect(JSON.parse(out[0] ?? "")).toEqual({
-      fullAccess: true,
+      outsideSandbox: true,
+      network: "open",
+      allowedDomains: [],
       projectReach: "os-user",
       revision: null,
     });
@@ -55,7 +57,11 @@ describe("ceiling show --json", () => {
     });
     const { out } = await show();
     const parsed = JSON.parse(out[0] ?? "");
-    expect(parsed).toMatchObject({ fullAccess: true, projectReach: "os-user" });
+    expect(parsed).toMatchObject({
+      outsideSandbox: true,
+      network: "open",
+      projectReach: "os-user",
+    });
     expect(parsed.revision).toMatch(/^[0-9a-f]{64}$/);
     expect(out.join("")).not.toContain("cap_dev_secret");
   });

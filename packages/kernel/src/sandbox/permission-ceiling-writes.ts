@@ -7,7 +7,12 @@ import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { OutboxService } from "../infra/outbox/outbox.service.js";
 import { machineRootList, outsideMachineRoots } from "../local-devices/owner-report.js";
-import { isFullExecutionScope } from "./operation-authority-types.js";
+import { coversHost } from "./modes.js";
+import {
+  isExecutionMethod,
+  isFullExecutionScope,
+  usesOpenNetwork,
+} from "./operation-authority-types.js";
 import { PermissionAuthorityEpochStore } from "./permission-authority-epochs.js";
 import { type AuthoritySubject, PermissionAuthorityLock } from "./permission-authority-lock.js";
 import { PermissionTransitions } from "./permission-transitions.js";
@@ -200,6 +205,22 @@ export async function localMachineRoots(
 }
 
 /**
+ * The narrowings a ceiling write publishes (approval-only profiles design, "Ceiling writes"), each
+ * bumping its epoch and revoking, in the same transaction, the admitted or started work it takes:
+ * - `outside-sandbox-off`: escalated work ({@link needsFullCeiling});
+ * - `network-allowlist`: work on the open public network ({@link needsOpenNetwork});
+ * - `hosts-removed`: allowlist work naming a host the new list no longer covers (the writer's own
+ *   host check, which keeps hosts an independent grant still holds).
+ * Widening any of them resets Full consent instead (`invalidateFullConsent`); a profile change
+ * alone never revokes started work.
+ */
+export type CeilingNarrowing = "outside-sandbox-off" | "network-allowlist" | "hosts-removed";
+
+/** Work on the open public network: what a network ceiling narrowed to `allowlist` takes away. */
+export const needsOpenNetwork = (scope: SandboxOperationScope | SandboxBrowseScope): boolean =>
+  usesOpenNetwork(scope);
+
+/**
  * What a platform or org Full ceiling turning off takes away (B2, same split as the owner writer):
  * Full execution, broad browsing, and running restricted work outside the machine's roots, since
  * the effective restricted reach narrows to the workspace.
@@ -209,7 +230,7 @@ export const needsWiderDeviceCeiling = (
   machineRoots: readonly string[] | undefined,
 ): boolean => needsFullCeiling(scope) || outsideMachineRoots(scope, machineRoots);
 
-/** Full execution: a Full-profile operation (B2: decided by Full permission alone). */
+/** Running outside the sandbox: an escalated call (`outside-sandbox-off` takes it). */
 export const requiresFullExecution = (scope: SandboxOperationScope | SandboxBrowseScope): boolean =>
   isFullExecutionScope(scope);
 /**
@@ -220,8 +241,53 @@ export const requiresBroadProjectReach = (
   scope: SandboxOperationScope | SandboxBrowseScope,
 ): boolean => !("profile" in scope) && scope.readRoots.includes("/");
 /**
- * What a platform or org Full ceiling turning off takes away: Full execution and, as before, the
- * wider device ceiling restricted reach depended on.
+ * What a platform or org outside-sandbox ceiling turning off takes away: escalated work and, as
+ * before, the wider device ceiling restricted reach depended on.
  */
 export const needsFullCeiling = (scope: SandboxOperationScope | SandboxBrowseScope): boolean =>
   requiresFullExecution(scope) || requiresBroadProjectReach(scope);
+
+/**
+ * The cloud devices that follow their org's network default (no network choice of their own and
+ * no B1 allowlist snapshot), with their org: what narrowing a default (`devices.network.default`
+ * or an org's `deviceNetwork.default`, open to allowlist) moves to the allowlist, so their running
+ * open-network work is revoked. A local device follows its owner's network, never a default.
+ */
+export async function cloudDevicesFollowingDefault(
+  db: KernelSchemaDb,
+  orgId?: string,
+): Promise<Map<string, string>> {
+  let q = db
+    .selectFrom("devices")
+    .select(["id", "org_id", "outer_network"])
+    .where("source", "=", "cloud")
+    .where("network_mode", "is", null)
+    .where("deleted_at", "is", null);
+  if (orgId !== undefined) q = q.where("org_id", "=", orgId);
+  const rows = await q.execute();
+  return new Map(
+    rows
+      .filter((r) => (r.outer_network as { kind?: unknown } | null)?.kind !== "allowlist")
+      .map((r) => [r.id, r.org_id]),
+  );
+}
+
+/**
+ * Whether an allowlist execution names a host the new ceilings no longer allow (`hosts-removed`):
+ * a host neither in the org's effective hosts nor held by an independent run or task grant the new
+ * per-call ceiling still allows (`grantable`). Native methods and other networks reach no host.
+ */
+export function hostsNarrowed(
+  scope: SandboxOperationScope | SandboxBrowseScope,
+  row: Pick<Selectable<SandboxOperationIntentsTable>, "method" | "granted_hosts">,
+  orgHosts: readonly string[],
+  grantable: (host: string) => boolean,
+): boolean {
+  if (!("network" in scope) || !isExecutionMethod(row.method) || scope.network.kind !== "allowlist")
+    return false;
+  return scope.network.hosts.some(
+    (host) =>
+      !orgHosts.some((pattern) => coversHost(pattern.toLowerCase(), host.toLowerCase())) &&
+      !(row.granted_hosts.includes(host) && grantable(host)),
+  );
+}

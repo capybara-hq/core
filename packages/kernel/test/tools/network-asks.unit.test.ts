@@ -1,6 +1,10 @@
 import type { NetworkBlockedHost } from "@capybara-hq/plugin-sdk";
 import { describe, expect, it } from "vitest";
 import type { NetworkRunState } from "../../src/local-devices/network-grants.js";
+import {
+  ESCALATION_DEVICE_OFF_WHY,
+  ESCALATION_UNATTENDED_WHY,
+} from "../../src/sandbox/review/permission-candidate.js";
 import { networkGrantRefusal } from "../../src/schedules/grant-rules.js";
 import type { UnattendedRun } from "../../src/schedules/unattended.js";
 import {
@@ -8,7 +12,7 @@ import {
   NETWORK_ASK_CANCELLED_NOTE,
 } from "../../src/tools/approvals.service.js";
 import {
-  allowedAlwaysNote,
+  addressEscalationHint,
   allowedOnceNote,
   clipKept,
   deniedNote,
@@ -47,9 +51,6 @@ describe("note texts (spec §6.6, §8.3)", () => {
     expect(allowedOnceNote(["files.slack.com"])).toBe(
       "[network] files.slack.com was blocked by this device's network policy. The user allowed it for the rest of this task. Run the command again.",
     );
-    expect(allowedAlwaysNote(["files.slack.com"])).toBe(
-      "[network] files.slack.com was blocked by this device's network policy. The user allowed it on this device from now on. Run the command again.",
-    );
     expect(deniedNote(["files.slack.com"], "not for work")).toBe(
       "[network] files.slack.com was blocked by this device's network policy. The user declined access to files.slack.com. Do not try to reach it another way; continue without it or ask the user. Reason: not for work",
     );
@@ -76,12 +77,85 @@ describe("planNetworkAsk", () => {
       attended,
     );
     expect(p.ask).toEqual([{ host: "files.slack.com", port: 443 }]);
-    expect(p.scopes).toEqual(["once", "always"]);
+    // a run grant only: no "always" remnant in the plan
+    expect(p).not.toHaveProperty("scopes");
     expect(p.notes).toEqual([
       "[network] api.foo.com is not in the organization's network allowlist. Only an organization admin can add it; the user can ask an admin from the conversation. Continue without it or tell the user.",
-      "[network] 10.0.0.5 is a private or local address, which commands can never reach.",
+      "[network] 10.0.0.5 is a private or local address. Private and local addresses are closed inside the sandbox; only a command run outside the sandbox reaches it.",
     ]);
     expect(p.missingGrants).toEqual([]);
+  });
+
+  it("a host beyond a local owner's allowlist is not asked: the owner adds it on the machine", () => {
+    const why =
+      "the device owner adds it on the machine: capybara-device policy add allowedDomains a.com";
+    const p = planNetworkAsk([dev("a.com"), dev("b.com")], run(), {
+      ...attended,
+      refusal: (h) => (h === "a.com" ? why : null),
+    });
+    expect(p.ask).toEqual([{ host: "b.com", port: 443 }]);
+    expect(p.notes).toEqual([
+      `[network] a.com was blocked by this device's network policy and cannot be allowed from this conversation: ${why}. Continue without it or tell the user.`,
+    ]);
+  });
+
+  it("a host beyond an org or platform allowlist ceiling names the organization admin, never asked", () => {
+    const why = "an organization admin adds c.com to the organization's device network list";
+    for (const layer of ["device", "org"] as const) {
+      const p = planNetworkAsk([{ host: "c.com", port: 443, layer }], run(), {
+        ...attended,
+        refusal: () => why,
+      });
+      expect(p.ask).toEqual([]);
+      expect(p.notes).toEqual([
+        `[network] c.com was blocked by this device's network policy and cannot be allowed from this conversation: ${why}. Continue without it or tell the user.`,
+      ]);
+    }
+  });
+
+  it("the escalation hint follows admission's verdict and the open network only", () => {
+    expect(addressEscalationHint("available", "open")).toBe(true);
+    // a withheld runtime (or any escalation refusal): admission gives no `available`
+    expect(addressEscalationHint(undefined, "open")).toBe(false);
+    // an already escalated call has nothing to retry with
+    expect(addressEscalationHint("escalated", "open")).toBe(false);
+    // under an allowlist or a closed network a host grant (or nothing) is the remedy
+    expect(addressEscalationHint("available", "allowlist")).toBe(false);
+    expect(addressEscalationHint("available", "none")).toBe(false);
+  });
+
+  it("a private address under the open network gets the escalation hint, never an ask", () => {
+    const blocked = [{ host: "10.0.0.5", port: 80, layer: "address" as const }];
+    const p = planNetworkAsk(blocked, run(), { ...attended, escalation: true });
+    expect(p.ask).toEqual([]);
+    expect(p.notes).toEqual([
+      '[network] 10.0.0.5 is a private or local address, which the sandbox never reaches. If the command must reach it, retry the same Bash call with sandbox: "escalated" and justification: one sentence saying why; this conversation\'s permission profile decides whether it may run outside the sandbox for this call only.',
+    ]);
+    // an unattended run cannot escalate: the plain note
+    expect(
+      planNetworkAsk(blocked, run(), {
+        device: attended.device,
+        unattended: unattended("wait"),
+        escalation: true,
+      }).notes,
+    ).toEqual([
+      `[network] 10.0.0.5 is a private or local address. Private and local addresses are closed inside the sandbox; only a command run outside the sandbox reaches it, but ${ESCALATION_UNATTENDED_WHY}. Continue without it or tell the user.`,
+    ]);
+  });
+
+  // R3 Mac dogfood: "commands can never reach" was untrue where the device's owner (or an admin)
+  // can allow running outside the sandbox; the note now names who
+  it("a private address where running outside the sandbox is off names who turns it on", () => {
+    const blocked = [
+      { host: "10.0.0.5", port: 80, layer: "address" as const },
+      { host: "192.168.3.1", port: 80, layer: "address" as const },
+    ];
+    expect(
+      planNetworkAsk(blocked, run(), { ...attended, escalationRefusal: ESCALATION_DEVICE_OFF_WHY })
+        .notes,
+    ).toEqual([
+      `[network] 10.0.0.5, 192.168.3.1 are private or local addresses. Private and local addresses are closed inside the sandbox; only a command run outside the sandbox reaches them, but ${ESCALATION_DEVICE_OFF_WHY}. Continue without them or tell the user.`,
+    ]);
   });
 
   it("an org-layer host beyond the platform ceiling names the super admin, not the org admins", () => {
@@ -209,34 +283,10 @@ describe("settledNetworkNotes", () => {
     ).toEqual([allowedOnceNote(["a.com"]), deniedNote(["b.com"])]);
     expect(
       settledNetworkNotes(
-        rec({
-          status: "approved",
-          detail: { ...d, grantedHosts: ["a.com", "b.com"], outcome: "always" },
-        }),
-        24,
-      ),
-    ).toEqual([allowedAlwaysNote(["a.com", "b.com"])]);
-    expect(
-      settledNetworkNotes(
-        rec({
-          status: "approved",
-          detail: { ...d, grantedHosts: ["a.com", "b.com"], outcome: "once_fallback" },
-        }),
+        rec({ status: "approved", detail: { ...d, grantedHosts: ["a.com", "b.com"] } }),
         24,
       ),
     ).toEqual([allowedOnceNote(["a.com", "b.com"])]);
-    // allowed always, but the device refused the policy op: nothing granted
-    expect(
-      settledNetworkNotes(
-        rec({
-          status: "approved",
-          detail: { ...d, grantedHosts: [], outcome: "refused" as never },
-        }),
-        24,
-      ),
-    ).toEqual([
-      "[network] a.com, b.com were blocked by this device's network policy. The user allowed them on this device, but the device does not accept network changes from the deployment; access stays blocked. The device owner can allow them locally: capybara-device policy add allowedDomains a.com and capybara-device policy add allowedDomains b.com.",
-    ]);
     expect(settledNetworkNotes(rec({ status: "denied", denyReason: "no" }), 24)).toEqual([
       deniedNote(["a.com", "b.com"], "no"),
     ]);

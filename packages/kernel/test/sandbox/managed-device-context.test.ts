@@ -73,6 +73,7 @@ import {
 } from "../fixtures/plugins/sandbox-fake/index.js";
 import { truncateTables } from "../helpers/db.js";
 import { MODEL_PLUGINS_CONFIG } from "../helpers/model-plugins.js";
+import { storedOwnerReport } from "../helpers/owner-report.js";
 import { startKernel, type TestKernel } from "../helpers/runs.js";
 import { seedConversation } from "../helpers/tool-fixtures.js";
 import { identityFor, REPORTS, startRun } from "../runtime/permission-context-fixture.js";
@@ -175,10 +176,11 @@ async function seed(opts: { project?: string } = {}) {
         os: "darwin",
         arch: "arm64",
         program_version: "0.1.0",
-        features: ["mode", "projects"],
+        features: ["projects"],
         roots: JSON.stringify(ROOTS),
         home: "/home/owner",
-        local_policy: JSON.stringify({ mode: "auto", allowedDomains: [] }),
+        local_policy: JSON.stringify({ allowedDomains: [] }),
+        owner_report: storedOwnerReport(),
       })
       .returning("id")
       .executeTakeFirstOrThrow()
@@ -916,13 +918,31 @@ describe("cloud installed evidence in the real lifecycle", () => {
     expect(await availability(f, "v1")).toBe("supported");
   });
 
-  /** The device's B1 outer network snapshot, which caps its effective desired network. */
-  const setOuter = (f: Fixture, hosts: string[]) =>
+  /** The org's allowlist names the hosts these tests narrow to (beside the platform's). */
+  const orgHosts = (f: Fixture) =>
     f.db
+      .updateTable("orgs")
+      .set({
+        settings: JSON.stringify({ deviceNetwork: { extraHosts: ["a.example", "b.example"] } }),
+      })
+      .where("id", "=", f.orgId)
+      .execute();
+  /**
+   * The device's own sandbox network (as the B1 snapshot writer now copies an allowlist
+   * snapshot): an allowlist of `hosts`, which narrows its org's hosts and caps the desired network.
+   */
+  const setOuter = async (f: Fixture, hosts: string[]) => {
+    await orgHosts(f);
+    await f.db
       .updateTable("devices")
-      .set({ outer_network: JSON.stringify({ kind: "allowlist", hosts }) })
+      .set({
+        outer_network: JSON.stringify({ kind: "allowlist", hosts }),
+        network_mode: "allowlist",
+        network_hosts: JSON.stringify(hosts),
+      })
       .where("id", "=", f.deviceId)
       .execute();
+  };
   const appliedLimits = async (f: Fixture) =>
     (
       await f.db
@@ -953,7 +973,7 @@ describe("cloud installed evidence in the real lifecycle", () => {
     const f = await seedCloud();
     await call(f);
     expect(await admission(f)).toBe("admitted");
-    await setOuter(f, []);
+    await setOuter(f, ["a.example"]);
     expect(await admission(f)).toMatch(/not verified yet/);
     // the next use records the narrowing as unapplied; managed work is unavailable until a reset
     const err = await failure(call(f));
@@ -1025,13 +1045,23 @@ describe("cloud installed evidence in the real lifecycle", () => {
    * B-12: a device carrying the reconcile marker on a provider that can `update`: the lifecycle
    * reconcile applies the target under the exclusive lease, never wider than the instance runs.
    */
-  const mark = (f: Fixture, device: { fullAccess: boolean; outer: unknown }, limits: unknown) =>
+  const mark = (
+    f: Fixture,
+    device: { fullAccess: boolean; outer: { kind: string; hosts: string[] } },
+    limits: unknown,
+  ) =>
     Promise.all([
+      orgHosts(f),
       f.db
         .updateTable("devices")
         .set({
           owner_full_access: device.fullAccess,
           outer_network: JSON.stringify(device.outer),
+          // the device's own network carries an allowlist snapshot, as the snapshot writer does
+          ...(device.outer.kind === "allowlist" && {
+            network_mode: "allowlist",
+            network_hosts: JSON.stringify(device.outer.hosts),
+          }),
           permission_reconcile_required: true,
         })
         .where("id", "=", f.deviceId)
@@ -1050,7 +1080,7 @@ describe("cloud installed evidence in the real lifecycle", () => {
       .executeTakeFirstOrThrow();
     return (await readFakeSandboxLimits(root))
       .filter((e) => e.op === "update" && e.id === row.handle?.id)
-      .map((e) => ({ mode: e.limits.mode, network: e.limits.network }));
+      .map((e) => ({ network: e.limits.network }));
   };
   const reconcileMarked = (f: Fixture) =>
     k.app.get(SandboxService).reconcileLimits(f.deviceId, AbortSignal.timeout(30_000));
@@ -1075,9 +1105,7 @@ describe("cloud installed evidence in the real lifecycle", () => {
     );
     expect(await admission(f)).toMatch(/established again/);
     expect(await reconcileMarked(f)).toMatchObject({ state: "bound" });
-    expect(await updates(f)).toEqual([
-      { mode: "auto", network: { kind: "allowlist", hosts: ["a.example"] } },
-    ]);
+    expect(await updates(f)).toEqual([{ network: { kind: "allowlist", hosts: ["a.example"] } }]);
     expect(await marked(f)).toBe(false);
     expect(await appliedLimits(f)).toMatchObject({
       mode: "auto",
@@ -1102,9 +1130,7 @@ describe("cloud installed evidence in the real lifecycle", () => {
       },
     );
     expect(await reconcileMarked(f)).toMatchObject({ state: "bound" });
-    expect(await updates(f)).toEqual([
-      { mode: "sandbox", network: { kind: "allowlist", hosts: ["a.example"] } },
-    ]);
+    expect(await updates(f)).toEqual([{ network: { kind: "allowlist", hosts: ["a.example"] } }]);
     expect(
       await f.db
         .selectFrom("devices")

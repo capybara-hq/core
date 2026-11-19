@@ -131,7 +131,8 @@
       "owner_required": "Only an org owner can do this.",
       "creation_disabled": "Creating organizations is turned off on this deployment.",
       "slug_taken": "This slug is already used by another organization.",
-      "full_access_not_allowed": "Full access cannot be allowed: the platform has it off, or an org admin must allow it in the organization settings on the web.",
+      "outside_sandbox_not_allowed": "Running outside the sandbox cannot be allowed: the platform has it off, or an org admin must allow it in the organization settings on the web.",
+      "network_not_allowed": "The organization's device network cannot be wider than the platform allows, and an API token or the Platform tool can only narrow it; an org admin opens it in the organization settings on the web.",
       "network_allowance_invalid": "The internal endpoint is not valid: use a hostname, a *.domain wildcard, an IP address or CIDR, or an origin such as http://host:8080. Link-local, loopback (including localhost) and unspecified addresses are never allowed, nor wildcards over a public suffix.",
       "network_allowance_not_found": "The organization has no such internal endpoint (it may have been removed already).",
       "network_allowance_widen_not_allowed": "Only a super admin in the admin console on the web can allow an internal endpoint, not an API token or the Platform tool.",
@@ -357,8 +358,6 @@
       "credential_invalid": "This computer's connection credential is no longer valid. Connect again on the computer.",
       "policy_refused": "This device does not accept this change from the platform. Change it on the machine.",
       "policy_unsupported": "This device can't change its network settings from the platform. Upgrade the device program on the machine.",
-      "mode_on_device": "This device's owner ceiling is kept on its connected computer: narrow it from the device page, or run capybara-device ceiling set on that computer.",
-      "mode_requires_session": "A device's mode is changed by its owner on the device page, not with an API token.",
       "project_name_invalid": "This project name is not allowed: use 1-64 characters, not . or .., without / or control characters, and without spaces at either end.",
       "project_name_taken": "This device already has a project with this name. Choose another name.",
       "project_limit_reached": "This device has reached its limit of 100 projects. Remove one to add another.",
@@ -372,10 +371,10 @@
       "projects_unavailable": "The device could not be asked about this directory right now. Try again in a moment.",
       "not_running": "The device stopped before it could be read. Try again; it will be started first.",
       "permission_reconcile_required": "This device's sandbox limits must be established again before it runs anything. Rebuild its files on its device page, then try again.",
-      "permission_not_migrated": "This device's permissions have not been migrated yet, so its Full access ceiling can't be set now. Turning Full access off still works; try allowing it again once the migration has run. Rebuilding the files does not change this.",
       "owner_report_stale": "This computer sent an outdated permission report, so new work is paused. Run capybara-device login again on the computer.",
-      "owner_ceiling_confirmation_required": "Giving this device Full access needs your confirmation. Confirm the change and try again.",
-      "full_access_not_allowed": "Full access is not allowed for this device by your platform, your organization or its provider.",
+      "network_not_allowed": "This network is wider than your organization, the platform or the provider allows for this device, or a host is outside the organization's list.",
+      "ceiling_on_machine": "A local device's sandbox is kept on its computer: narrow it from the device page, or have its owner run capybara-device ceiling set on that computer.",
+      "outside_sandbox_not_allowed": "Running outside the sandbox is not allowed for this device by your platform, your organization, its owner or its provider.",
       "restart_required": "Background work started by an earlier version may still be running on this computer. Restart this computer to finish the upgrade, then try again.",
       "replace_required": "Background work started by an earlier version may still be running on this computer, and it cannot prove a restart. Delete this device and connect the computer again as a new device.",
       "recreate_required": "Background work started by an earlier version may still be running on an earlier instance of this device, and that instance can no longer be verified as destroyed. Delete this device and create it again."
@@ -560,7 +559,8 @@
     },
     "deployment": {
       "setting_readonly": "This setting is set in the deployment's startup config (environment, file or Nacos) and can only be changed there.",
-      "full_access_not_allowed": "An API token or the Platform tool can only turn the platform's Full access off; a super admin allows it in the admin console.",
+      "outside_sandbox_not_allowed": "An API token or the Platform tool can only turn running outside the sandbox off for the platform; a super admin allows it in the admin console.",
+      "network_not_allowed": "The platform's network default cannot be above its ceiling, and an API token or the Platform tool can only narrow the network; a super admin opens it in the admin console.",
       "external_sharing_not_allowed": "An API token or the Platform tool can only turn external sharing off; a super admin allows it in the admin console.",
       "sharing_widen_not_allowed": "An API token or the Platform tool can only lower the share expiry maximum and remove CDN origins; a super admin raises or adds them in the admin console."
     },
@@ -1634,23 +1634,18 @@
         "fullAccess": "Full access"
       },
       "description": {
-        "requestApproval": "Works directly in the project and asks you before going beyond it.",
-        "approveForMe": "Works directly in the project and hands extra access to automatic review.",
-        "fullAccess": "Uses the full access already authorized on this device, without asking each time."
+        "requestApproval": "Works freely inside the sandbox; asks you before going beyond it or running sensitive commands.",
+        "approveForMe": "Same sandbox; a review model decides requests to go beyond it and asks you when unsure.",
+        "fullAccess": "Same sandbox; approves whatever this device allows, without asking. Credential reads outside the sandbox and sub-agents' requests to run outside it still go to the review model."
       },
       "reason": {
         "noDevice": "Choose a device first",
         "checking": "Checking this device…",
         "checkFailed": "Couldn't check this device",
-        "ceiling": "Not allowed on this device",
-        "unsupported": "Not supported on this device",
-        "restrictedUnsupported": "Can't keep work inside the project"
+        "unsupported": "Not supported on this device"
       },
       "note": {
-        "unprobed": "Checked when this device starts.",
-        "review": "If a review model is unavailable or uncertain, you will be asked.",
-        "new": "The choice applies from this conversation's first operation.",
-        "existing": "Changes apply to new operations. Work already started keeps its starting permissions."
+        "unprobed": "Checked when this device starts."
       },
       "configureReview": "Set up the review model",
       "locked": {
@@ -1659,9 +1654,9 @@
       },
       "full": {
         "title": "Use Full access on {device}?",
-        "body": "Operations use the access already authorized on this device, and nothing asks you before each step.",
-        "bodyProject": "Operations use the access already authorized on this device, not only the project {project}, and nothing asks you before each step.",
-        "limits": "This is not root access: sudo may still ask for a password, and platform and organization denials still apply.",
+        "body": "Commands still run in the sandbox; the agent's requests to go beyond it{outside} are approved automatically and recorded.",
+        "outside": " (including running commands outside the sandbox)",
+        "limits": "Protected paths and platform and organization denials still apply. Credential reads outside the sandbox and sub-agents' requests to run outside it still go to the review model.",
         "confirm": "Use Full access",
         "cancel": "Cancel"
       },
@@ -1670,7 +1665,8 @@
       "refresh": "Refresh",
       "changed": "Permissions changed. Changes apply to new operations. Work already started keeps its starting permissions.",
       "conflict": "The permissions or their scope changed meanwhile. Check the current choice and choose again.",
-      "unknownOutcome": "No answer arrived, so the change may or may not have been saved. The value shown is the last confirmed one."
+      "unknownOutcome": "No answer arrived, so the change may or may not have been saved. The value shown is the last confirmed one.",
+      "modeHint": "⇧Tab to switch"
     },
     "firstSend": {
       "unconfirmed": "Your earlier message got no answer, so it may already have started a conversation.",
@@ -1809,16 +1805,22 @@
       "deleteDangerDefault": "Deleting {name} also deletes its files and ends its processes, with no way back. A new empty device is created the next time one is needed.",
       "deleteDangerLocal": "Deleting {name} disconnects its machine, with no way back. The files on the machine stay."
     },
-    "ceiling": {
-      "title": "Access ceiling",
-      "sectionLocal": "The most an agent may do on this computer. Only its owner widens it, on the computer; here it can only be narrowed.",
-      "sectionCloud": "The most an agent may do on this cloud device. A conversation's Full access never goes beyond it.",
-      "fullAccess": "Full access",
-      "full": {
-        "available": "Available",
-        "owner": "Off on this device",
-        "platform": "Not allowed by the platform or the organization",
-        "unconfirmed": "Unavailable until the computer reports its ceiling"
+    "sandbox": {
+      "title": "Sandbox",
+      "sectionLocal": "Where an agent's commands run on this computer, the same under every permission profile. Only the computer's owner widens it, on the computer; here it can only be narrowed.",
+      "sectionCloud": "Where an agent's commands run on this cloud device, the same under every permission profile. Its instance is the sandbox.",
+      "network": "Network",
+      "networkValue": {
+        "open": "Open internet (private networks blocked)",
+        "allowlist": "Allowlist",
+        "none": "Closed (no network)"
+      },
+      "followOrg": "Follow the organization",
+      "followOrgNow": "Now: {value}",
+      "outside": "Run outside the sandbox",
+      "outsideValue": {
+        "allowed": "Allowed",
+        "off": "Off"
       },
       "reach": "Project reach",
       "reachValue": {
@@ -1829,72 +1831,82 @@
       "notice": {
         "noMachine": "No computer is connected. Run capybara-device login on the computer to connect it.",
         "blocked": "This computer sent an outdated permission report, so new work is paused. Run capybara-device login again on the computer.",
-        "missing": "This computer has not reported its ceiling, so Full access is unavailable. Update capybara-device on the computer and reconnect it.",
-        "legacy": "This computer runs an older capybara-device, so its ceiling is read from its old setting. Update capybara-device to set Full access and project reach separately.",
-        "stale": "These are the facts the computer last reported: it is offline or its report is not current.",
-        "migrating": "This device's permissions have not been migrated yet. Full access can be turned off now; allowing it waits for the migration."
+        "missing": "This computer has not reported its sandbox settings. Update capybara-device on the computer and reconnect it.",
+        "stale": "These are the settings the computer last reported: it is offline or its report is not current."
       },
+      "unknown": "Unknown until the computer reports its settings",
       "mark": {
-        "full": "Full access available",
-        "restricted": "Restricted"
+        "outside": "Can run outside the sandbox",
+        "sandbox": "Sandbox only"
       },
-      "widenLocal": "Only the computer's owner widens it, on the computer:",
-      "turnOffFull": "Turn off Full access",
+      "limited": {
+        "network": {
+          "platform": "Limited to the allowlist by the platform (super admin)",
+          "org": "Limited to the allowlist by the organization (organization admin)",
+          "device": "Widened only on the computer, by its owner",
+          "provider": "Limited to the allowlist by the device's provider"
+        },
+        "closed": {
+          "platform": "Closed by the platform (super admin)",
+          "org": "Closed by the organization (organization admin)",
+          "device": "Opened only on the computer, by its owner",
+          "provider": "Closed by the device's provider"
+        },
+        "outside": {
+          "platform": "Turned off by the platform (super admin)",
+          "org": "Turned off by the organization (organization admin)",
+          "device": "Allowed only on the computer, by its owner",
+          "provider": "A cloud device's instance is its sandbox"
+        }
+      },
+      "hosts": "Allowed hosts",
+      "hostsEmpty": "No host is allowed.",
+      "remove": "Remove",
+      "removeLabel": "Remove {host}",
+      "removed": "{host} removed.",
+      "localHostsHelp": "Hosts can be removed here; only the computer's owner adds one, on the computer.",
+      "widenLocal": "Only the computer's owner widens these, on the computer:",
+      "command": {
+        "network": "Open the network:",
+        "outside": "Allow running outside the sandbox:",
+        "host": "Add a host to the allowlist:",
+        "reach": "Widen the project reach:"
+      },
+      "networkNarrowed": "The network is limited to the allowlist.",
+      "outsideOff": "Running outside the sandbox is off on this device.",
       "limitReach": "Limit to the workspace",
-      "allowFull": "Allow Full access",
-      "fullOff": "Full access is off on this device.",
-      "fullOn": "Full access is allowed on this device.",
       "reachLimited": "Project reach is limited to the workspace.",
-      "legacyNarrowNote": "On this older capybara-device it also limits project reach to the workspace.",
       "cannotNarrow": {
-        "offline": "This computer is offline, so it can't be narrowed from here. Run the command below on the computer.",
-        "upgrade": "The capybara-device on this computer can't take changes from the platform. Update it, or run the command below on the computer."
+        "offline": "This computer is offline, so it can't be narrowed from here. Run the commands below on the computer.",
+        "upgrade": "The capybara-device on this computer can't take changes from the platform. Update it, or run the commands below on the computer."
       },
       "pendingNextUse": "Takes effect at the next use; files are kept.",
       "pendingFilesReset": "Takes effect after the files are reset.",
-      "confirm": {
-        "title": {
-          "widen": "Allow Full access on this device?",
-          "narrow": "Turn off Full access on this device?"
-        },
-        "effect": {
-          "widen": "Conversations on this device can then choose Full access: commands run in its environment without asking each time. Each conversation needs a new Full access confirmation.",
-          "narrow": "Work running with Full access on this device stops now, and its conversations can no longer choose Full access."
-        },
-        "network": {
-          "open": "The device then reaches public addresses, with private networks blocked.",
-          "allowlist": "The device then reaches only {hosts}.",
-          "none": "The device then reaches no network host."
-        },
-        "nextUse": "Its instance takes the new limits and network at its next use and may restart then, which ends its running commands. Its files are kept.",
-        "submit": {
-          "widen": "Allow Full access",
-          "narrow": "Turn off Full access"
-        },
-        "cancel": "Cancel"
-      },
-      "cloudForbidden": "The platform or the organization does not allow Full access, so it is already off on this device."
+      "cloudHosts": "Hosts",
+      "cloudHostsHelp": "One host per line. A host outside the organization's list is refused; leave it empty to use the organization's hosts.",
+      "invalidHost": "{host} is not a valid host: use a lowercase name such as files.example.com or *.example.com.",
+      "save": "Save network",
+      "saved": "The device's network is saved."
     },
     "recent": {
       "title": "Recent changes",
       "add": "Added {hosts}",
       "remove": "Removed {hosts}",
-      "fullAllowed": "Full access allowed",
-      "fullOff": "Full access turned off",
+      "change": "{setting}: {from} → {to}",
+      "set": "{setting}: {to}",
+      "withHosts": "{value} ({hosts})",
       "none": "No change",
       "unknownBy": "Unknown account",
       "via": {
         "web": "web",
         "im": "IM",
-        "device": "on the machine"
+        "device": "on the machine",
+        "agent": "by an agent",
+        "token": "API token"
       },
       "outcome": {
         "unknown": "Not confirmed by the machine",
         "failed": "Did not take effect"
-      },
-      "reach": {
-        "workspace": "Project reach limited to the workspace",
-        "os-user": "Project reach widened to the computer user's files"
       }
     },
     "machine": {
@@ -1909,33 +1921,14 @@
       "description": "Disconnecting revokes this machine's credential and ends the commands it is running; the files on the machine stay."
     },
     "network": {
-      "domains": "Allowed domains",
-      "domainsEmpty": "No domains allowed on this machine yet.",
-      "remove": "Remove",
-      "removeLabel": "Remove {host}",
-      "removed": "{host} removed.",
-      "add": "Add a host",
-      "addHelp": "An exact host or a wildcard (*.example.com).",
-      "addDisabled": "This machine can't add domains from the platform.",
-      "addSubmit": "Add",
-      "added": "{host} added.",
-      "hostInvalid": "Enter a lowercase host name without scheme, port or path, such as files.example.com or *.example.com.",
-      "hostPresent": "This domain is already allowed.",
-      "upgrade": "The device program on this machine can't change its network settings from the platform. Upgrade capybara-device on the machine.",
-      "dockerNote": "This machine runs commands in Docker, which can't limit single domains, so it accepts no widening from the platform.",
-      "unknown": "The machine has not reported its network settings yet.",
       "title": "Network",
-      "cloudTitle": "Network",
+      "domains": "Allowed hosts",
+      "domainsEmpty": "No host is allowed.",
+      "overviewNote": "Commands in the sandbox reach these hosts only.",
       "cloudHint": {
-        "org": "The organization sets this in its settings.",
-        "platform": "The platform sets this."
-      },
-      "cloudEmpty": "No domains are allowed.",
-      "overviewNote": "Restricted work reaches these hosts only.",
-      "description": "Restricted work reaches these hosts only; changes are sent to this computer.",
-      "addTitle": "Add a host",
-      "addField": "Host",
-      "cancel": "Cancel"
+        "org": "This device follows the organization's network, set in its settings.",
+        "device": "This device's own network, within the organization's hosts."
+      }
     },
     "overview": {
       "editNetwork": "Change in settings"
@@ -2065,11 +2058,27 @@
     "command": {
       "title": "The agent wants to run this command. Allow?",
       "titleWrite": "The agent wants to write this file. Allow?",
+      "titleRead": "The agent wants to read this file. Allow?",
       "device": "Device",
       "reason": "Why it is held",
       "path": "File",
       "otherApprover": "The agent wants to run a command; waiting for the device owner.",
-      "otherApproverWrite": "The agent wants to write a file; waiting for the device owner."
+      "otherApproverWrite": "The agent wants to write a file; waiting for the device owner.",
+      "otherApproverRead": "The agent wants to read a file; waiting for the device owner.",
+      "lead": {
+        "read": "This file is outside what the agent can read now. If you allow it, only this call may read the directory listed below.",
+        "write": "This file is outside what the agent can write now. If you allow it, only this call may write in the directory listed below.",
+        "directory": "This command needs a directory outside what the agent can reach now. If you allow it, only this call gets the access listed below.",
+        "host": "This command needs a host the sandbox network doesn't allow. If you allow it, only this call may reach the hosts listed below.",
+        "escalation": "The agent wants to run this command once outside the sandbox: it would run as you on this device.",
+        "readUnsure": "The review model couldn't decide this for you. This file is outside what the agent can read now; if you allow it, only this call may read the directory listed below.",
+        "writeUnsure": "The review model couldn't decide this for you. This file is outside what the agent can write now; if you allow it, only this call may write in the directory listed below.",
+        "directoryUnsure": "The review model couldn't decide this for you. This command needs a directory outside what the agent can reach now; if you allow it, only this call gets the access listed below.",
+        "hostUnsure": "The review model couldn't decide this for you. This command needs a host the sandbox network doesn't allow; if you allow it, only this call may reach the hosts listed below.",
+        "escalationUnsure": "The review model couldn't decide this for you. The agent wants to run this command once outside the sandbox: it would run as you on this device.",
+        "rule": "The review rule {rule} asks you to confirm this call.",
+        "reviewModel": "The review model isn't sure about this call and asks you to confirm."
+      }
     },
     "policy": {
       "agent": "The agent's settings ask for approval",
@@ -2081,12 +2090,7 @@
       "fixed": "This tool always asks for approval"
     },
     "network": {
-      "otherApprover": "The agent wants to reach {hosts}; waiting for the device owner.",
-      "attempt": {
-        "unknown": "The device did not confirm the change to its network rules; when it connects again it says whether the change took effect. You can decide again.",
-        "failed": "The change to the device's network rules did not take effect: {message} You can decide again.",
-        "appliedUndecided": "The device allowed it, but the person who chose this can no longer decide this request."
-      }
+      "otherApprover": "The agent wants to reach {hosts}; waiting for the device owner."
     },
     "permissionScope": {
       "intro": "Approving grants this access for this operation only. Each directory includes everything inside it.",
@@ -2687,34 +2691,38 @@
       "ask": "Ask first",
       "askHint": "Every call except the read-only tools needs the user's approval."
     },
-    "fullAccess": {
-      "title": "Full access",
-      "description": "With Full access allowed, the organization's devices run commands with the environment's own capability, guarded by command review; with it off, they run restricted: writes stay in the workspace and temporary directories, and the network follows the allowlist.",
-      "allowed": "Allow Full access",
-      "allowedHint": "Devices may run with Full access; each device owner still allows it on the device.",
-      "off": "Turn Full access off",
-      "offHint": "The organization's devices run restricted; their owners cannot turn Full access back on from the device.",
-      "platformClosed": "Not enabled by the platform"
+    "outsideSandbox": {
+      "title": "Run outside the sandbox",
+      "description": "Whether a call on a device may be granted running outside its sandbox: under Request approval and Approve for me you or the review model approve it first; under Full access it is approved automatically where the device allows it, and recorded. Each device owner still allows it on the device; cloud devices have no outside.",
+      "allowed": "Allowed",
+      "allowedHint": "Calls may be granted running outside the sandbox; each device owner still allows it on the device.",
+      "off": "Off",
+      "offHint": "Every call in the organization stays inside the sandbox; owners cannot turn it back on from the device.",
+      "platformClosed": "Turned off by the platform (super admin)"
     },
-    "cloudNetwork": {
-      "title": "Cloud devices' network",
-      "description": "The network cloud devices use in sandbox mode; in auto mode there is no network restriction. The host list is also the ceiling for a local device in sandbox mode (the device intersects it with its own list), so narrowing it limits local sandbox devices too.",
-      "open": "Open (internal blocked)",
-      "openHint": "Any public address and port.",
+    "deviceNetwork": {
+      "title": "Device network",
+      "description": "The network of device sandboxes, for local and cloud devices alike. The ceiling is the widest network a device may choose; the default is what a device gets when its owner chooses none, never above the ceiling.",
+      "ceiling": "Ceiling",
+      "default": "Default",
+      "open": "Open internet (private networks blocked)",
+      "openHint": "Any public address; private, loopback and cloud metadata addresses are reachable only by running outside the sandbox.",
       "allowlist": "Allowlist",
       "allowlistHint": "Only the hosts below.",
-      "platformClosed": "The platform turned the network off: only the platform can turn it back on.",
-      "withinClosed": "The platform limits hosts to its list: only the allowlist is available.",
+      "platformAllowlist": "Limited to the allowlist by the platform (super admin)",
+      "ceilingAllowlist": "The ceiling is the allowlist, so the default is too",
+      "platformClosed": "The platform turned the network off: only a super admin can turn it back on.",
+      "withinNote": "The platform limits hosts to its list: a host outside it needs a super admin to add it.",
       "outsideCeiling": "The platform limits hosts to its list: ask a super admin to add {hosts} to the platform's allowlist.",
       "hosts": "Allowed hosts",
-      "hostsHelp": "The hosts sandbox mode may reach: the cloud allowlist, and the ceiling of every local device in sandbox mode even when the cloud network is open. Starts from the platform's list with this organization's changes; one host per line, such as registry.npmjs.org or *.example.com (subdomains only). No IP addresses, ports or internal names.",
+      "hostsHelp": "The hosts a device reaches while its network is the allowlist; a device only narrows this list. Starts from the platform's list with this organization's changes; one host per line, such as registry.npmjs.org or *.example.com (subdomains only). No IP addresses, ports or internal names.",
       "invalidHost": "{host} is not a valid host: lowercase, no scheme, port or path, and not an internal-only name.",
       "prefilled": "Added {hosts} from a blocked command. Save to allow it.",
-      "ownNetwork": "This organization keeps its own changes to the platform's host list.",
+      "ownNetwork": "This organization keeps its own device network settings.",
       "followPlatform": "Follow the platform",
-      "followPlatformBody": "The organization's own added and removed hosts and its cloud network choice are dropped. It then follows the platform's host list and default network, including later changes a super admin makes.",
+      "followPlatformBody": "The organization's default, ceiling and its own added and removed hosts are dropped. It then follows the platform's device network and host list, including later changes a super admin makes.",
       "followPlatformDone": "Now following the platform",
-      "publicOnly": "Only public addresses are reachable; loopback, private and cloud metadata addresses are blocked outside the container."
+      "publicOnly": "Inside the sandbox only public addresses are reachable; private, loopback and cloud metadata addresses are blocked."
     },
     "limits": {
       "title": "Sandbox resources",
@@ -3746,6 +3754,7 @@
       "tool_unmatched": "A tool call had no recorded result",
       "subagent_changed": "A sub-agent's definition changed since the recording",
       "permission_profile_changed": "The recorded permission context cannot be reproduced from the snapshot",
+      "device_sandbox_changed": "The device sandbox changed between runs",
       "model_switched": "The candidate model replaces a model switch made in the conversation"
     },
     "tabs": {
@@ -4278,6 +4287,7 @@
         "deviceMachineRevoked": "Disconnected a local device",
         "deviceModeChanged": "Changed a device's mode",
         "deviceNetworkAllowed": "Allowed network access",
+        "deviceNetworkChanged": "Changed a cloud device's sandbox network",
         "deviceNetworkDenied": "Denied network access",
         "devicePolicyChanged": "Changed a device's policy",
         "devicePolicyFailed": "A device policy change failed",
@@ -4288,6 +4298,7 @@
         "deviceRenamed": "Renamed a device",
         "deviceOwnerCeilingChanged": "Changed a device's owner permission ceiling",
         "conversationPermissionProfileChanged": "Changed a conversation's permission profile",
+        "permissionCrossingAutoGranted": "Full access automatically granted an agent a sandbox crossing",
         "evalCaseAdded": "Added an eval case",
         "evalCaseRemoved": "Removed an eval case",
         "evalResultLabeled": "Labeled an eval result",
@@ -4499,14 +4510,14 @@
         "allowHint": "Organizations can create and import skills themselves or install them from the catalog.",
         "denyHint": "Organizations can only install skills from the catalog."
       },
-      "fullAccess": {
-        "title": "Full access",
-        "description": "Whether devices on the platform may run with Full access: a conversation may then run with Full access on a device whose owner allows it, with the environment's own capability, guarded by command review.",
-        "label": "Full access",
+      "outsideSandbox": {
+        "title": "Run outside the sandbox",
+        "description": "Whether a call on a device may be granted running outside its sandbox: where the organization and the device owner allow it, you or the review model approve it under Request approval and Approve for me, and Full access approves it automatically and records it. Cloud devices have no outside.",
+        "label": "Run outside the sandbox",
         "allowed": "Allowed",
-        "allowedHint": "Organizations may allow Full access; each device owner still allows it on the device.",
+        "allowedHint": "Organizations may allow it; each device owner still allows it on the device.",
         "off": "Off",
-        "offHint": "Off runs every device restricted: local devices on their allowlist, cloud devices on their organization's cloud network. Allowing it again needs a super admin here.",
+        "offHint": "Off keeps every call inside the sandbox. Allowing it again needs a super admin here.",
         "source": "Source: {source}",
         "sources": {
           "env": "From an environment variable (read-only)",
@@ -4514,6 +4525,25 @@
           "nacos": "From Nacos (read-only)",
           "db": "Set in this console",
           "default": "Default (allowed)"
+        }
+      },
+      "deviceNetwork": {
+        "title": "Device network",
+        "description": "The network of device sandboxes, for local and cloud devices alike. The ceiling is the widest network an organization or a device may choose; the default is what applies when none is chosen, never above the ceiling. To control egress, set the ceiling to the allowlist and keep the hosts in sandbox.limits.allowHosts.",
+        "ceiling": "Ceiling",
+        "default": "Default",
+        "open": "Open internet (private networks blocked)",
+        "openHint": "Any public address; private, loopback and cloud metadata addresses are reachable only by running outside the sandbox.",
+        "allowlist": "Allowlist",
+        "allowlistHint": "Only the hosts on the platform's and the organization's lists.",
+        "ceilingAllowlist": "The ceiling is the allowlist, so the default is too",
+        "sourceOf": "{field}: {source}",
+        "sources": {
+          "env": "From an environment variable (read-only)",
+          "file": "From the config file (read-only)",
+          "nacos": "From Nacos (read-only)",
+          "db": "Set in this console",
+          "default": "Default (open)"
         }
       },
       "clientCode": {

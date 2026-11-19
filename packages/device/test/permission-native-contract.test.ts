@@ -34,16 +34,16 @@ it.runIf(process.platform === "darwin")(
       await writeFile(join(outside, "owned"), "outside");
       const ceiling: DeviceOwnerCeiling = {
         revision: "fixture",
-        fullAccess: true,
+        outsideSandbox: true,
+        network: "allowlist",
         roots,
         restrictedProjectReach: "os-user",
-        restrictedAllowedDomains: [],
+        allowedDomains: [],
         restrictedDeniedReadRoots: [stateDir],
         preparation: {
           skillsRoot: roots.skills,
           attachmentsBase: join(roots.workspace, "attachments"),
         },
-        fullNetwork: "environment",
       };
       const backend = await createMacOperationBackend(
         {
@@ -104,7 +104,7 @@ it.runIf(process.platform === "darwin")(
       ).rejects.toThrow();
       expect(() =>
         intersectOperation({ ...scope(true), network: { kind: "none" } }, ceiling, undefined, true),
-      ).toThrow(/Full ceiling/);
+      ).toThrow(/only together/);
     } finally {
       await rm(dir, { recursive: true, force: true });
     }

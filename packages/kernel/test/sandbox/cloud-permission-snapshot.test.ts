@@ -3,7 +3,6 @@ import type { SandboxProvider } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { afterAll, beforeAll, beforeEach, expect, it } from "vitest";
 import { KernelConfigSchema } from "../../src/config/schema.js";
-import { DevicesService } from "../../src/devices/devices.service.js";
 import { KernelDb } from "../../src/infra/database/kernel-db.js";
 import { createLogger } from "../../src/log.js";
 import { OrgSettingsService } from "../../src/orgs/settings.service.js";
@@ -60,7 +59,7 @@ beforeAll(async () => {
   });
 });
 beforeEach(async () => {
-  await db.deleteFrom("deployment_settings").where("key", "=", "devicesFullAccess").execute();
+  await db.deleteFrom("deployment_settings").where("key", "=", "devicesOutsideSandbox").execute();
 });
 afterAll(async () => {
   await k?.close();
@@ -231,7 +230,7 @@ it("exactly applied limits bind the snapshot to the instance generation", async 
     network: { kind: "allowlist", hosts: ["b.example", "a.example"] },
   };
   const f = await fixture({
-    settings: { cloudNetwork: { mode: "allowlist" } },
+    settings: { deviceNetwork: { ceiling: "allowlist" } },
     mode: "sandbox",
     instance: applied,
   });
@@ -242,7 +241,7 @@ it("exactly applied limits bind the snapshot to the instance generation", async 
     permission_reconcile_required: false,
   });
   // false stays explicit after the org widens later: no Full, the snapshot network caps it
-  await k.app.get(OrgSettingsService).update(f.orgId, { cloudNetwork: null }, f.accountId);
+  await k.app.get(OrgSettingsService).update(f.orgId, { deviceNetwork: null }, f.accountId);
   expect(await policy(f)).toMatchObject({
     mode: "sandbox",
     network: { kind: "allowlist", hosts: ["a.example", "b.example"] },
@@ -267,7 +266,7 @@ it.each([
   "%s applied limits block admission until a lifecycle action establishes them",
   async (_, instance) => {
     const f = await fixture({
-      settings: { cloudNetwork: { mode: "allowlist" } },
+      settings: { deviceNetwork: { ceiling: "allowlist" } },
       mode: "sandbox",
       instance,
     });
@@ -320,6 +319,8 @@ it("a stricter applied instance is never widened to the inferred default", async
     owner_full_access: false,
     outer_network: { kind: "allowlist", hosts: [] },
   });
+  // an empty snapshot allowlist ran closed: the device's own network is closed (`none`), which
+  // the instance gets as an empty allowlist (approval-only profiles design, "Migration")
   expect(await policy(f)).toMatchObject({
     mode: "sandbox",
     network: { kind: "allowlist", hosts: [] },
@@ -329,7 +330,7 @@ it("a stricter applied instance is never widened to the inferred default", async
 it("the snapshot is written once; a later run keeps it whatever changed since", async () => {
   const f = await fixture();
   await snapshots().snapshot(f.orgId, f.deviceId);
-  await k.app.get(OrgSettingsService).update(f.orgId, { fullAccess: "off" }, f.accountId);
+  await k.app.get(OrgSettingsService).update(f.orgId, { outsideSandbox: "off" }, f.accountId);
   expect(await snapshots().snapshot(f.orgId, f.deviceId)).toMatchObject({ state: "existing" });
   expect((await f.device()).owner_full_access).toBe(true);
   // the org's off still cuts the effective mode; the owner ceiling is independent of it
@@ -339,22 +340,11 @@ it("the snapshot is written once; a later run keeps it whatever changed since", 
 it("a stored platform off over the default is part of the old effective authority", async () => {
   await db
     .insertInto("deployment_settings")
-    .values({ key: "devicesFullAccess", value: JSON.stringify({ permission: "off" }) })
+    .values({ key: "devicesOutsideSandbox", value: JSON.stringify({ permission: "off" }) })
     .execute();
   const f = await fixture();
   await snapshots().snapshot(f.orgId, f.deviceId);
   expect(await f.device()).toMatchObject({ owner_full_access: false, outer_network: OPEN });
-});
-
-it("after a snapshot the old switch narrows the owner ceiling, and clearing it never widens", async () => {
-  const f = await fixture();
-  await snapshots().snapshot(f.orgId, f.deviceId);
-  const devices = k.app.get(DevicesService);
-  await devices.update(f.orgId, f.accountId, f.deviceId, { mode: "sandbox" });
-  expect((await f.device()).owner_full_access).toBe(false);
-  await devices.update(f.orgId, f.accountId, f.deviceId, { mode: null });
-  expect((await f.device()).owner_full_access).toBe(false);
-  expect((await policy(f)).mode).toBe("sandbox");
 });
 
 it("the file reset job reconciles the device it reset", async () => {
@@ -545,7 +535,7 @@ it("B-12: an instance whose applied mode is the OS sandbox reads Full as unsuppo
   const availability = await readRuntimeReport(db.db, f.deviceId, PROVIDER, "test");
   expect(availability).toMatchObject({
     state: "supported",
-    report: { fullAccess: false, restricted: { network: true } },
+    report: { outsideSandbox: false, restricted: { network: true } },
   });
   // the same provider report on an instance applied without the OS sandbox keeps Full
   await db
@@ -561,7 +551,7 @@ it("B-12: an instance whose applied mode is the OS sandbox reads Full as unsuppo
   });
   expect(await readRuntimeReport(db.db, f.deviceId, PROVIDER, "test")).toMatchObject({
     state: "supported",
-    report: { fullAccess: true },
+    report: { outsideSandbox: true },
   });
 });
 

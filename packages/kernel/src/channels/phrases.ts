@@ -98,7 +98,6 @@ export const CHANNEL_PHRASES = {
   /** A network ask's 「once」 button. */
   networkAllowOnce: { zh: "这次允许", en: "Allow this time" },
   /** A network ask's 「always」 button. */
-  networkAllowAlways: { zh: "这台设备一直允许", en: "Always allow on this device" },
   /** A git push ask's card title (`{repo}`; sandbox git credentials spec §7). */
   gitTitle: {
     zh: "智能体想推送到 {repo}，允许吗？",
@@ -117,6 +116,21 @@ export const CHANNEL_PHRASES = {
   commandWriteTitle: {
     zh: "智能体想写入这个文件，允许吗？",
     en: "The agent wants to write this file. Allow?",
+  },
+  /** A file-read review ask's card title (the path is in the preview). */
+  commandReadTitle: {
+    zh: "智能体想读取这个文件，允许吗？",
+    en: "The agent wants to read this file. Allow?",
+  },
+  /** A file-write crossing's preview line: the file is outside what the agent may write now. */
+  commandWriteLine: {
+    zh: "这个文件不在智能体现在可以写入的范围内。允许后，仅这一次调用可以写入它所在的目录。",
+    en: "This file is outside what the agent may write now. If you allow it, only this call may write in its directory.",
+  },
+  /** A file-read crossing's preview line: the file is outside what the agent may read now. */
+  commandReadLine: {
+    zh: "这个文件不在智能体现在可以读取的范围内。允许后，仅这一次调用可以读取它所在的目录。",
+    en: "This file is outside what the agent may read now. If you allow it, only this call may read its directory.",
   },
   /** A per-call sandbox escalation ask's card title (approval profiles design). */
   escalationTitle: {

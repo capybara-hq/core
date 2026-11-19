@@ -1,4 +1,5 @@
 import type { PermissionProfile } from "@capybara-hq/plugin-sdk";
+import type { HostGrantCeiling } from "./device-sandbox.js";
 import type { EffectiveDevicePolicy } from "./modes.js";
 import type { AppliedOuterNetwork } from "./permission-context-types.js";
 
@@ -27,11 +28,30 @@ export type PermissionCallBinding = Readonly<{
 }>;
 export type PermissionGrantDecision =
   | { source: "human"; approvalId: string; decidedBy: string }
-  | { source: "review-model"; reviewEventSeq: number; decidedBy: null };
+  | { source: "review-model"; reviewEventSeq: number; decidedBy: null }
+  | PermissionFullAccessGrantDecision;
+/**
+ * Full access granted the crossing within the device's ceilings (approval-only profiles design,
+ * "Kernel: decision, admission and records"): its evidence is the `permission_reviewed` event
+ * (outcome allow, decision source `full-access`) written with an audit row
+ * `permission.crossing_auto_granted` and the grant in one fenced transaction.
+ */
+export type PermissionFullAccessGrantDecision = {
+  source: "full-access";
+  reviewEventSeq: number;
+  decidedBy: null;
+};
+/** Where a grant's evidence came from: the person, the review model or a Full access auto-grant. */
+export type PermissionGrantSource = PermissionGrantDecision["source"];
+/**
+ * The kind of one boundary crossing, as `ReviewRecord.crossing` records it: a directory outside the
+ * scope, a new host on an allowlist, running one call outside the sandbox, or a sensitive command.
+ */
+export type PermissionCrossingKind = "directory" | "host" | "outside-sandbox" | "sensitive";
 /**
  * What a call grant authorizes: an exact directory and host expansion of the restricted scope, or
  * one Bash call run outside the OS sandbox (per-call sandbox escalation: full execution for that
- * call only, within the device's Full access ceiling).
+ * call only, within the device's outside-sandbox setting).
  */
 export type PermissionScopeKind = "directories-and-hosts" | "sandbox-escalation";
 /**
@@ -59,7 +79,8 @@ export type PermissionCandidateResult =
   | { kind: "proposal"; candidate: PermissionCandidate }
   | {
       kind: "unsupported";
-      code: "unbounded-scope" | "escalation-unavailable";
+      /** `protected-path`: its text already names the outside-sandbox escalation (no retry hint). */
+      code: "unbounded-scope" | "escalation-unavailable" | "protected-path";
       message: string;
     };
 export type PermissionReviewSnapshot = Readonly<
@@ -68,7 +89,14 @@ export type PermissionReviewSnapshot = Readonly<
     baseWriteDirectories: readonly string[];
     baseHosts: readonly string[];
     workingRoot: string;
-    fullAccessCeiling: boolean;
+    /**
+     * The call's sandbox network (the device sandbox within the applied outer boundary): `open-public`,
+     * `allowlist` (the base hosts plus accepted host grants) or `none`. Absent reads as `none`.
+     */
+    network?: "open-public" | "allowlist" | "none";
+    /** The provider's boundary; absent reads as `operation`. */
+    boundary?: "operation" | "instance";
+    outsideSandboxCeiling: boolean;
     /** Restricted directory expansions beyond the working root (B2 broad project reach). */
     broadProjectReach: boolean;
     unattended: boolean;
@@ -87,9 +115,16 @@ export type PermissionReviewSnapshot = Readonly<
     outerNetwork?: AppliedOuterNetwork | null;
     policy: EffectiveDevicePolicy;
     /**
+     * The per-call host grant ceiling (`device-sandbox.ts` `hostGrantCeiling`): the org's
+     * exclusions and its hard allowlist ceiling. Absent: read `policy.network`.
+     */
+    hostCeiling?: HostGrantCeiling;
+    /** Why a host is unavailable per call, naming who can add it; null when grantable. */
+    hostRefusal?: (host: string) => string | null;
+    /**
      * Why this call could not run outside the sandbox (per-call escalation): an unattended run, a
-     * device, org or platform Full access ceiling that forbids it, or a runtime that cannot run
-     * Full access now. Null or absent when an escalation may be reviewed.
+     * device, org or platform outside-sandbox setting that forbids it (one text per layer), or a
+     * runtime that cannot run a command outside its sandbox now. Null or absent when an escalation may be reviewed.
      */
     escalationRefusal?: string | null;
   }

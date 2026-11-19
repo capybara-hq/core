@@ -1423,11 +1423,16 @@ function isPersistenceForm(t: string, facts: ResolvedFacts): boolean {
       "/etc/profile",
       "/etc/bashrc",
       "/etc/bash.bashrc",
+      "/etc/bash.bash_logout",
       "/etc/zshrc",
       "/etc/zshenv",
+      "/etc/zprofile",
+      "/etc/zlogin",
+      "/etc/zlogout",
       "/etc/paths",
     ].includes(t) ||
-    t.startsWith("/etc/profile.d/")
+    t.startsWith("/etc/profile.d/") ||
+    t.startsWith("/etc/zsh/")
   ) {
     return true;
   }
@@ -4330,8 +4335,23 @@ function isRunLaterHomePath(t: string, facts: ResolvedFacts): boolean {
   );
 }
 
-/** PATH shims and desktop autostart entries in the home (case-folded). */
-const RUN_LATER_HOME_DIRS = ["~/.local/bin", "~/bin", "~/.cargo/bin", "~/.config/autostart"];
+/**
+ * PATH shims, desktop autostart entries (XDG and KDE), the X session files, the session environment
+ * (`environment.d`, KDE's `plasma-workspace/env`) and user systemd data in the home (case-folded):
+ * the persistence vectors the sandbox write denies name (`SANDBOX_MANDATORY_WRITE_DENIES`).
+ */
+const RUN_LATER_HOME_DIRS = [
+  "~/.local/bin",
+  "~/bin",
+  "~/.cargo/bin",
+  "~/.config/autostart",
+  "~/.config/autostart-scripts",
+  "~/.config/plasma-workspace/env",
+  "~/.config/environment.d",
+  "~/.local/share/systemd",
+  "~/.xprofile",
+  "~/.xsessionrc",
+];
 
 /** The grant class of a secret or persistence path (judged on every case-folded home spelling). */
 function configClassOf(path: string, facts: ResolvedFacts): ConfigClass {

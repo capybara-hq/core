@@ -21,10 +21,13 @@ import {
   MANAGED_DEVICE_CONTEXT_STALE_TEXT,
   ManagedDeviceContextRecorder,
 } from "../../src/sandbox/managed-device-context.js";
+import { SandboxOperationAuthority } from "../../src/sandbox/operation-authority.js";
+import { PermissionAuthorityLock } from "../../src/sandbox/permission-authority-lock.js";
 import { SandboxService } from "../../src/sandbox/sandbox.service.js";
 import {
   OUTCOME_UNKNOWN_TOOL_TEXT,
   SANDBOX_RESTARTED_NOTICE,
+  SCOPE_DENIED_TOOL_TEXT,
   sandboxFilesResetNotice,
 } from "../../src/tools/builtins/sandbox/common.js";
 import { type SandboxToolDeps, sandboxTools } from "../../src/tools/builtins/sandbox/index.js";
@@ -140,9 +143,22 @@ function answerer(dir: MachineDir, roots: SandboxRoots): (req: KernelReq) => Ans
           ok: true,
           result: { exitCode: 0, stdout: "ok\n", stderr: "", truncated: false, timedOut: false },
         };
-      case "writeFile":
-        dir.files.set(a.path as string, a.dataB64 as string);
+      case "writeFile": {
+        // an enforcing device refuses a write outside the operation's admitted scope
+        const fs = (a.scope as { filesystem?: { kind: string; writeRoots?: string[] } } | undefined)
+          ?.filesystem;
+        const path = a.path as string;
+        if (
+          fs?.kind === "scoped" &&
+          !(fs.writeRoots ?? []).some((r) => path === r || path.startsWith(`${r}/`))
+        )
+          return {
+            ok: false,
+            error: { kind: "denied", message: "outside the write roots" },
+          } as unknown as Answer;
+        dir.files.set(path, a.dataB64 as string);
         return { ok: true, result: null };
+      }
       case "readFile": {
         const d = dir.files.get(a.path as string);
         return { ok: true, result: d === undefined ? null : { dataB64: d, truncated: false } };
@@ -314,10 +330,11 @@ describe("local devices through the sandbox tools", () => {
     );
     expect(second.machine.frames.find((f) => f.type === "req")).toMatchObject({ op: "create" });
     expect(await m.paths()).toEqual([ROOTS_A, ROOTS_B]);
-    // a path of the old roots is now outside the device
+    // a path of the old roots is now outside the operation's admitted scope: the device refuses it
     expect(
       await toolError(m.run("Write", { file_path: `${ROOTS_A.workspace}/c.txt`, content: "c" })),
-    ).toMatch(/workspace/i);
+    ).toBe(SCOPE_DENIED_TOOL_TEXT);
+    expect(second.dir.files.has(`${ROOTS_A.workspace}/c.txt`)).toBe(false);
   });
 
   it("a new login on the same machine and directory keeps the files; another machine resets them", async () => {
@@ -349,6 +366,65 @@ describe("local devices through the sandbox tools", () => {
       JSON.stringify(sandboxFilesResetNotice(ROOTS_A)).slice(1, -1),
     );
   });
+
+  it.each([
+    ["open", { network: "open" as const, allowedDomains: [] }, false],
+    ["open, the runtime enforcing it", { network: "open" as const, allowedDomains: [] }, true],
+    ["allowlist", { network: "allowlist" as const, allowedDomains: ["example.com"] }, true],
+  ])(
+    "the exec frames carry the network the recorded context names (owner network %s)",
+    async (_name, owner, openPublic) => {
+      const m = await member();
+      const { machine } = await signIn(m.deviceId, m.accountId, ROOTS_A);
+      // the first call binds the instance and records the machine's runtime report; the report
+      // then says whether it enforces the open public network
+      await m.run("Bash", { command: "true" });
+      await sql`UPDATE capybara.device_permission_reports
+        SET report = jsonb_set(report, '{network,openPublic}', ${JSON.stringify(openPublic)}::jsonb)
+        WHERE device_id = ${m.deviceId}`.execute(raw);
+      // the owner's ceiling as the machine reports it (setup: its sequence is higher than the
+      // hello's, so the report stands)
+      await sql`UPDATE capybara.device_machines
+        SET owner_report = jsonb_set(jsonb_set(jsonb_set(owner_report,
+          '{report,network}', ${JSON.stringify(owner.network)}::jsonb),
+          '{report,allowedDomains}', ${JSON.stringify(owner.allowedDomains)}::jsonb),
+          '{report,sequence}', '1000')
+        WHERE device_id = ${m.deviceId} AND revoked_at IS NULL`.execute(raw);
+      await m.run("Bash", { command: "true" });
+      const exec = machine.frames
+        .filter((f) => f.type === "req" && f.op === "exec")
+        .at(-1) as KernelReq;
+      const args = exec.args as {
+        scope: { network: { kind: string; hosts?: string[] } };
+        limits: { network: { kind: string; hosts: string[] } };
+      };
+      const recorded = await txHost.run(async () => {
+        await k.app
+          .get(PermissionAuthorityLock)
+          .acquire(
+            { orgId, deviceId: m.deviceId, rootConversationId: m.conversationId },
+            { kind: "admit" },
+          );
+        return k.app
+          .get(SandboxOperationAuthority)
+          .readContextLocked(
+            { orgId, conversationId: m.conversationId, accountId: m.accountId, runId: m.runId },
+            new AbortController().signal,
+          );
+      });
+      // the scope the device enforces is the one the model is told about
+      expect(recorded.scope?.network).toEqual(args.scope.network);
+      expect(recorded.sandbox?.network.kind).toBe(args.scope.network.kind);
+      // and the limits the machine intersects carry the device sandbox network, never wider
+      if (args.scope.network.kind === "open-public")
+        expect(args.limits.network.kind).toBe("open-public");
+      else {
+        expect(args.limits.network.kind).toBe("allowlist");
+        for (const host of args.scope.network.hosts ?? [])
+          expect(args.limits.network.hosts).toContain(host);
+      }
+    },
+  );
 
   it("moves 5 MB through Write and Read and reports where the kernel spends the time", async () => {
     const m = await member();
@@ -391,13 +467,22 @@ describe("local devices through the sandbox tools", () => {
   it("every exec carries the org's sandbox allowlist of the moment (R27)", async () => {
     const m = await member();
     const { machine } = await signIn(m.deviceId, m.accountId, ROOTS_A);
+    // an owner who keeps the open network narrows nothing: the runtime enforces no open network
+    // here, so the device sandbox network is the org's allowlist
+    await sql`UPDATE capybara.device_machines
+      SET owner_report = jsonb_set(jsonb_set(owner_report, '{report,network}', '"open"'),
+        '{report,sequence}', '1000')
+      WHERE device_id = ${m.deviceId} AND revoked_at IS NULL`.execute(raw);
     await m.run("Bash", { command: "true" });
     const execs = () => machine.frames.filter((f) => f.type === "req" && f.op === "exec");
     expect((execs()[0] as KernelReq).args).toMatchObject({
-      limits: { mode: "auto", network: { kind: "allowlist", hosts: ["example.com"] } },
+      limits: { network: { kind: "allowlist", hosts: ["example.com"] } },
     });
+    // the kernel's mode tier never goes on the wire (protocol 4 limits: resources and network)
+    const sent = (execs()[0] as KernelReq).args as { limits: object };
+    expect(Object.keys(sent.limits)).not.toContain("mode");
     await sql`UPDATE capybara.orgs SET settings = ${JSON.stringify({
-      cloudNetwork: { mode: "allowlist", base: "none", extraHosts: ["other.example.com"] },
+      deviceNetwork: { ceiling: "allowlist", base: "none", extraHosts: ["other.example.com"] },
     })}::jsonb WHERE id = ${orgId}`.execute(raw);
     try {
       await m.run("Bash", { command: "true" });

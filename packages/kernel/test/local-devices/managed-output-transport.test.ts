@@ -4,6 +4,7 @@ import {
   type DeviceHello,
   DeviceProtocolError,
   isSandboxScopeDeniedError,
+  isSandboxScopeValidationError,
   type KernelReady,
   parseDeviceFrame,
   SandboxScopeDeniedError,
@@ -89,9 +90,11 @@ async function fixture(clientCap = 69632, serverCap = 100000) {
   };
   const backend = {
     permissionSupport: async () => ({
-      version: 1 as const,
+      version: 2 as const,
       restricted: null,
-      fullAccess: false,
+      boundary: "operation" as const,
+      network: { openPublic: false, allowlist: false, perOperationHosts: false },
+      outsideSandbox: false,
       background: false,
     }),
     background: {
@@ -132,7 +135,7 @@ async function fixture(clientCap = 69632, serverCap = 100000) {
   const provider = new LocalDeviceProvider(
     relay,
     { orgOf: forbidden, machineRoots: forbidden },
-    { devicePolicy: forbidden, deviceLimits: forbidden },
+    { devicePolicy: forbidden, deviceLimits: forbidden, hostGrantCeiling: forbidden },
     config,
   );
   const staged = provider.stagedOperations({
@@ -156,7 +159,7 @@ async function fixture(clientCap = 69632, serverCap = 100000) {
   let beforeReply = async () => {};
   const hello: DeviceHello = {
     type: "hello",
-    protocol: 3,
+    protocol: 4,
     programVersion: "fixture",
     os: "darwin",
     arch: "arm64",
@@ -164,14 +167,22 @@ async function fixture(clientCap = 69632, serverCap = 100000) {
     roots,
     sessionIsolation: false,
     transport: { maxFrameBytes: clientCap },
-    permissionSupport: { version: 1, restricted: null, fullAccess: false, background: false },
-    ownerCeiling: {
+    permissionSupport: {
       version: 2,
+      restricted: null,
+      boundary: "operation" as const,
+      network: { openPublic: false, allowlist: false, perOperationHosts: false },
+      outsideSandbox: false,
+      background: false,
+    },
+    ownerCeiling: {
+      version: 3,
       sequence: 0,
       restrictedProjectReach: "workspace",
       revision: "r",
-      fullAccess: false,
-      restrictedAllowedDomains: [],
+      outsideSandbox: false,
+      network: "allowlist",
+      allowedDomains: [],
     },
     instanceGeneration: "g",
   };
@@ -224,14 +235,21 @@ async function fixture(clientCap = 69632, serverCap = 100000) {
       if (activeSocket.readyState !== activeSocket.OPEN) return;
       activeSocket.send(
         JSON.stringify(
-          r.instanceGeneration !== "g"
+          r.instanceGeneration === "invalid"
             ? {
                 type: "res",
                 id: frame.id,
                 ok: false,
-                error: { kind: "denied", message: "Check exact instance generation" },
+                error: { kind: "invalid", message: "The scope is invalid" },
               }
-            : { type: "res", id: frame.id, ok: true, result },
+            : r.instanceGeneration !== "g"
+              ? {
+                  type: "res",
+                  id: frame.id,
+                  ok: false,
+                  error: { kind: "denied", message: "Check exact instance generation" },
+                }
+              : { type: "res", id: frame.id, ok: true, result },
         ),
       );
     });
@@ -372,6 +390,19 @@ it("refuses another generation with a typed scope denial", async () => {
   expect(denied).toBeInstanceOf(SandboxScopeDeniedError);
   expect(isSandboxScopeDeniedError(denied)).toBe(true);
 });
+it("carries the device's typed scope validation refusal as a SandboxScopeValidationError", async () => {
+  const f = await fixture();
+  const invalid = await f.staged.background
+    .readOutput(
+      f.handle,
+      { ...f.ref, instanceGeneration: "invalid" },
+      { offset: 0, maxBytes: 1, signal: signal() },
+    )
+    .catch((e: unknown) => e);
+  expect(isSandboxScopeValidationError(invalid), String(invalid)).toBe(true);
+  expect((invalid as Error).message).toBe("The scope is invalid");
+});
+
 it("a reconnect changes the exact capacity and fences requests of the old connection", async () => {
   const f = await fixture();
   await f.emit(Buffer.alloc(10000, 66));

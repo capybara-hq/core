@@ -107,9 +107,11 @@ beforeAll(async () => {
     ...facade,
     async permissionSupport() {
       return {
-        version: 1,
+        version: 2,
         restricted: { filesystem: true, network: true, native: true, concurrentScopes: true },
-        fullAccess: true,
+        boundary: "operation",
+        network: { openPublic: false, allowlist: true, perOperationHosts: true },
+        outsideSandbox: true,
         background: true,
       };
     },

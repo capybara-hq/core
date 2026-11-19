@@ -8,19 +8,21 @@ export interface PermissionSelection {
 }
 export type PermissionPatch = PermissionSelection & { expectedRevision: number };
 
-/** Persisted runtime support is independent of consent and the device's Full access ceiling. */
+/** Persisted runtime support is independent of consent and the device's outside-sandbox ceiling. */
 export type PermissionAvailability =
   | {
       state: "supported";
       report: {
-        version: 1;
+        version: 2;
+        boundary: "operation" | "instance";
         restricted: {
           filesystem: true;
           network: true;
           native: true;
           concurrentScopes: true;
         } | null;
-        fullAccess: boolean;
+        network: { openPublic: boolean; allowlist: boolean; perOperationHosts: boolean };
+        outsideSandbox: boolean;
         background: boolean;
         unavailableReason?: string;
       };
@@ -32,7 +34,7 @@ export interface PermissionPreview {
   project: string | null;
   scopeRevision: string;
   availability: PermissionAvailability;
-  fullAccessCeiling: boolean;
+  outsideSandboxCeiling: boolean;
 }
 
 /** An owner read; a child's view names the root whose profile it inherits. */
@@ -44,7 +46,7 @@ export interface ConversationPermissions {
   consentScope: { deviceId: string; scopeRevision: string } | null;
   scopeRevision: string | null;
   availability: PermissionAvailability;
-  fullAccessCeiling: boolean;
+  outsideSandboxCeiling: boolean;
   startingWorkNotice: string;
 }
 

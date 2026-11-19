@@ -16,9 +16,11 @@ import type { TestKernel } from "./runs.js";
 
 /** A runtime report supporting both the restricted profiles and Full access. */
 export const SUPPORTS_BOTH: SandboxPermissionSupport = {
-  version: 1,
+  version: 2,
   restricted: { filesystem: true, network: true, native: true, concurrentScopes: true },
-  fullAccess: true,
+  boundary: "operation",
+  network: { openPublic: false, allowlist: true, perOperationHosts: true },
+  outsideSandbox: true,
   background: false,
 };
 

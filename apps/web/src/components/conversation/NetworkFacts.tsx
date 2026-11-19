@@ -54,7 +54,7 @@ export function NetworkFacts({
     retryOnMount: retryOnMountOf(settingsQ.queryKey),
   }).data;
   // The platform's network kill switch (`sandbox.limits.egress: none`).
-  const platformOff = settings?.deployment?.cloudNetwork.off === true;
+  const platformOff = settings?.deployment?.deviceNetwork.off === true;
   const [asking, setAsking] = useState(false);
   const action: CalloutAction | undefined =
     orgHosts.length === 0 || platformOff

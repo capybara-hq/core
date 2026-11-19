@@ -6,8 +6,13 @@ import { homedir, tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import {
   type ExecResult,
+  OPEN_PUBLIC_DENIED_CIDRS,
+  SANDBOX_FAKE_IP_DNS,
   SANDBOX_GIT_DENIED_INTERNALS,
+  SANDBOX_HOME_WRITE_DENIES,
   SANDBOX_MANDATORY_WRITE_DENIES,
+  SANDBOX_RESERVED_NAME_PREFIX,
+  SANDBOX_SYSTEM_WRITE_DENIES,
   type SandboxBrowseScope,
   type SandboxExecOptions,
   type SandboxOperationScope,
@@ -17,7 +22,12 @@ import {
 } from "@capybara-hq/plugin-sdk";
 import { implicitWritePaths } from "../policy.js";
 import { macReadAllows } from "./mac-read-policy.js";
-import { macWriteRegexRules, macWriteRootSpellings } from "./mac-write-policy.js";
+import {
+  ci,
+  type MacWriteRegexRule,
+  macWriteRegexRules,
+  macWriteRootSpellings,
+} from "./mac-write-policy.js";
 import {
   type NativeHelperRequest,
   type NativeHelperResult,
@@ -26,6 +36,7 @@ import {
 } from "./native-helper-client.js";
 import type { LocalExecAuthority, LocalOperationGrant } from "./operation-types.js";
 import { withCanonicalForms } from "./operation-types.js";
+import { onDisk, protectedChain } from "./protected-targets.js";
 import {
   acquireSealedRuntime,
   type SealedRuntime,
@@ -76,6 +87,12 @@ interface Common {
    * takes them from its options.
    */
   toolHome?: { home: string; env: Record<string, string | undefined> };
+  /**
+   * A test seam (trusted construction, like the Linux forwarder's `allow_private`): the proxy's
+   * address rules are lifted so a fixture listening on loopback can be granted. Never set in
+   * production.
+   */
+  allowPrivateProxyTargets?: boolean;
 }
 export type MacWorkerRequest = Common &
   (
@@ -130,6 +147,172 @@ export function mandatoryDenyPatterns(root: string): string[] {
     ]),
   ];
 }
+
+/** The Mach services a restricted macOS command may look up for TLS trust ({@link macNetworkConfig}). */
+const MAC_TLS_TRUST_SERVICES: readonly string[] = Object.freeze(["com.apple.TrustEvaluationAgent"]);
+
+/**
+ * The sandbox runtime's network configuration for one restricted grant (approval-only profiles
+ * design, "Open network"), and whether the worker answers the runtime's ask callback with allow.
+ *
+ * Both networks decide every connection on the resolved address in the operation's own proxy,
+ * which dials the address it checked (no second resolution: DNS rebinding cannot swap it).
+ * `deniedResolvedAddresses` is the SDK's whole closed set ({@link OPEN_PUBLIC_DENIED_CIDRS}:
+ * private, CGNAT, ULA, link-local, metadata, loopback, NAT64, multicast, reserved, embedded forms
+ * expanded); the runtime adds loopback, link-local, the cloud metadata endpoints and this host's
+ * own interface addresses itself. The patched runtime's `resolvedAddressStrict` judges an IP
+ * literal by the same rules (upstream skips literals), gives `localhost` no loopback carve-out and
+ * an allow-listed literal none over the closed classes: a private destination needs the
+ * escalation, never a host grant.
+ *
+ * - The allowlist (no `openNetwork`): exactly the grant's hosts, by the runtime's own matching.
+ * - The open network: no host list and an allow-all ask callback, so the address rules alone
+ *   decide. The grant's hosts are not used.
+ *
+ * In both networks a name the system resolver answers with a fake-IP address
+ * ({@link SANDBOX_FAKE_IP_DNS}: 198.18.0.0/15, an OpenClash-style router) is re-resolved through
+ * DNS-over-HTTPS at the SDK's IP-literal endpoints (the patched runtime's `fakeIpDoh`; the SDK's
+ * timeout is the whole lookup, shared among the endpoints) and the real answer judged and dialed as
+ * above; when that lookup fails the connection is refused with a reason naming the fake-IP
+ * resolver, never dialed to the fake address.
+ *
+ * Listening stays refused (`allowLocalBinding: false`) under every profile: Seatbelt cannot limit a
+ * bind to loopback (spec "Known limitations"), and with it the command could reach every local
+ * port. `allowPrivate` is a trusted test seam (like the Linux forwarder's): it lifts the address
+ * rules so a fixture on loopback can be granted; nothing in production sets it.
+ *
+ * TLS trust needs one Mach service, `com.apple.TrustEvaluationAgent` (the per-user agent, not its
+ * `.system` sibling): Apple's LibreSSL in `/usr/bin/curl`, `/usr/bin/openssl` and the Command
+ * Line Tools' `python3` checks a chain against `/etc/ssl/cert.pem` (readable) and, when that
+ * bundle lacks the anchor (a newer root, such as example.com's SSL.com 2022 chain), asks this
+ * agent, which evaluates it against the system keychain and the admin's trust settings. Without
+ * it such a site fails with "unable to get local issuer certificate". The agent only evaluates
+ * the chain the client hands it: it fetched no issuer named in a certificate (checked on macOS
+ * 26 with a leaf whose AIA URL pointed at a local listener). `trustd` stays closed.
+ */
+export function macNetworkConfig(
+  grant: Pick<LocalOperationGrant, "hosts" | "openNetwork">,
+  options: { allowPrivate?: boolean } = {},
+): {
+  askAll: boolean;
+  network: Record<string, unknown>;
+} {
+  const closed = options.allowPrivate
+    ? {}
+    : { deniedResolvedAddresses: [...OPEN_PUBLIC_DENIED_CIDRS], resolvedAddressStrict: true };
+  const doh = {
+    fakeIpDoh: { ...SANDBOX_FAKE_IP_DNS, endpoints: [...SANDBOX_FAKE_IP_DNS.endpoints] },
+  };
+  return {
+    askAll: grant.openNetwork === true,
+    network: {
+      allowedDomains: grant.openNetwork ? [] : [...grant.hosts],
+      deniedDomains: [],
+      ...closed,
+      ...doh,
+      allowLocalBinding: false,
+      allowMachLookup: [...MAC_TLS_TRUST_SERVICES],
+    },
+  };
+}
+
+/**
+ * Absolute write denies a restricted macOS operation gets besides each write root's policy:
+ *
+ * - `subtrees`, denied with everything beneath them: the system persistence paths
+ *   ({@link SANDBOX_SYSTEM_WRITE_DENIES}: the crontab and at spools) in each spelling Seatbelt may
+ *   see, and the final target of every protected location under `home` (the
+ *   {@link SANDBOX_MANDATORY_WRITE_DENIES} entries: `~/Library/LaunchAgents`, `~/.config/systemd`,
+ *   the shell startup files, …) reached through a symbolic link, and each
+ *   {@link SANDBOX_HOME_WRITE_DENIES} entry (`~/bin`) always, with the target of its link;
+ * - `links`, denied exactly (the link itself cannot be removed, renamed or replaced): every
+ *   symbolic link on the way to such a location. A dotfile manager links `~/.zshrc` to
+ *   `~/code/dotfiles-current/zshrc`, and `dotfiles-current` may itself be a link inside a write
+ *   root; swapping any hop for a real directory would redirect the protected location into
+ *   writable space (SDK `sandbox-write-denies.ts`, constraint on consumers).
+ *
+ * Resolved at operation start: a link changed later is seen by the next operation. A hard link to
+ * a protected file that already exists inside a write root is not caught (it is the same file,
+ * under an ordinary name).
+ */
+export function macProtectedWriteDenies(home: string): { subtrees: string[]; links: string[] } {
+  const subtrees = new Set<string>();
+  const links = new Set<string>();
+  for (const path of SANDBOX_SYSTEM_WRITE_DENIES)
+    for (const spelling of macWriteRootSpellings(path)) subtrees.add(spelling);
+  const add = (location: string, always: boolean) => {
+    const chain = protectedChain(location);
+    if (always) subtrees.add(location);
+    if (!always && !chain.links.length) return;
+    subtrees.add(chain.target);
+    for (const link of chain.links) {
+      links.add(link);
+      // the link's location with its parent in on-disk form
+      links.add(join(onDisk(dirname(link)), basename(link)));
+    }
+  };
+  for (const entry of SANDBOX_MANDATORY_WRITE_DENIES) add(join(home, ...entry), false);
+  // the home-anchored entries (`~/bin`) exist nowhere else in the policy: always denied here
+  for (const entry of SANDBOX_HOME_WRITE_DENIES) add(join(home, ...entry), true);
+  return { subtrees: [...subtrees], links: [...links] };
+}
+
+/**
+ * {@link macProtectedWriteDenies} as ordered write rules the patched runtime appends after every
+ * other rule, so they decide last (over the per-root git allowlist too), case-insensitively: each
+ * subtree with everything beneath it, each link exactly, and the removal or move of any of their
+ * ancestors. Fails closed when a path cannot be
+ * expressed (a control character, or too long for a Seatbelt rule).
+ */
+function protectedWriteRules(denies: {
+  subtrees: readonly string[];
+  links: readonly string[];
+}): MacWriteRegexRule[] {
+  const rule = (path: string, beneath: boolean): MacWriteRegexRule => {
+    if ([...path].some((ch) => (ch.codePointAt(0) as number) < 0x20 || ch === "\u007f"))
+      throw new Error("A protected path with a control character cannot be expressed as a policy");
+    const regex = `^${ci(path)}${beneath ? "(/.*)?" : ""}$`;
+    if (regex.length > 1000) throw new Error("A protected path is too long for the macOS policy");
+    return {
+      action: "deny",
+      operations: ["file-write*", "file-write-create", "file-write-unlink"],
+      regex,
+    };
+  };
+  // no ancestor of an anchored deny moves away (Seatbelt checks file-write-unlink on a rename's
+  // source, and on rmdir): moved, it would take the anchor with it and leave its path free
+  const ancestors = new Set<string>();
+  for (const path of [...denies.subtrees, ...denies.links])
+    for (let up = dirname(path); up !== dirname(up); up = dirname(up)) ancestors.add(up);
+  return [
+    // a component starting with the reserved staging prefix (the Linux broker's staging and
+    // quarantine names; SDK `sandbox-write-denies.ts` rule 6), with everything beneath it, at any
+    // depth and in any case: nothing sandboxed creates, writes, removes or renames one
+    {
+      action: "deny",
+      operations: ["file-write*", "file-write-create", "file-write-unlink"],
+      regex: `^/(.*/)?${ci(SANDBOX_RESERVED_NAME_PREFIX)}[^/]*(/.*)?$`,
+    },
+    ...denies.subtrees.map((path) => rule(path, true)),
+    ...denies.links.map((path) => rule(path, false)),
+    ...[...ancestors].map((path) => ({
+      ...rule(path, false),
+      operations: ["file-write-unlink"] as MacWriteRegexRule["operations"],
+    })),
+  ];
+}
+
+/** The environment of an escalated call: the device program's, minus every `CAPYBARA_` variable. */
+export function escalatedEnvironment(
+  env: NodeJS.ProcessEnv,
+  own: Record<string, string> | undefined,
+): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [key, value] of Object.entries(env))
+    if (value !== undefined && !/^CAPYBARA_/i.test(key)) out[key] = value;
+  return { ...out, ...own };
+}
+
 /**
  * Removes empty git sequencer directories (`.git/sequencer`, and those of the gitdirs below
  * `.git/modules`) under each write root, descriptor-relative and never following a link, after a
@@ -213,6 +396,9 @@ export const JAVA_PROXY_AGENT_JAR = "vendor/java-proxy-agent/srt-proxy-agent.jar
  * Darwin answers a group signal with EPERM (not ESRCH) while the group holds only dead members
  * (zombies not yet reaped, or processes exiting), so `signalGroup` counts EPERM as gone when a
  * process snapshot shows no live member of the group; EPERM with a live member still fails.
+ * A runtime without the network patch (`resolvedAddressStrict`, `fakeIpDoh` in its schema) is
+ * refused before it starts: its proxy would skip the address rules, so the bind self-check fails
+ * and the device reports no restricted support (and so no open network).
  */
 export const WORKER = `import {pathToFileURL} from 'node:url';
 import {spawn,spawnSync} from 'node:child_process';
@@ -280,7 +466,7 @@ process.on('message',async message=>{try{
   if(credit && credit.seq===message.seq){const pending=credit;credit=undefined;if(message.ok)pending.resolve();else{outputFailed=true;pending.reject(Error('Managed sink failed'));child?.stdout.resume();}}
  }else if(message.type==='init'){
   if(initialized)throw Error('Worker initialization is immutable');initialized=true;full=message.full;
-  if(!full){({SandboxManager:manager}=await import(pathToFileURL(message.runtime)));const deps=manager.checkDependencies();if(!manager.isSupportedPlatform()||deps.errors?.length)throw Error('Unsupported macOS sandbox runtime');await manager.initialize(message.config,undefined,false);}
+  if(!full){let schema;({SandboxManager:manager,NetworkConfigSchema:schema}=await import(pathToFileURL(message.runtime)));const net=message.config.network;if((net.resolvedAddressStrict||net.fakeIpDoh)&&!(schema?.shape?.resolvedAddressStrict&&schema?.shape?.fakeIpDoh))throw Error('The sandbox runtime lacks the network patch');const deps=manager.checkDependencies();if(!manager.isSupportedPlatform()||deps.errors?.length)throw Error('Unsupported macOS sandbox runtime');await manager.initialize(message.config,message.askAll?async()=>true:undefined,false);}
   send({event:'ready',proxyUrl:full?'':'http://srt:'+manager.getProxyAuthToken()+'@127.0.0.1:'+manager.getProxyPort()});
  }else if(message.type==='wrap'){
   if(!initialized||wrapped)throw Error('One command per worker');wrapped=true;
@@ -454,6 +640,18 @@ export async function startMacOperationWorker(
   const preparedAt = performance.now();
   const completion = (async () => {
     try {
+      // only an escalated call (the device filesystem with the environment network) is unwrapped
+      if (
+        request.grant.full &&
+        !(
+          "profile" in request.scope &&
+          request.scope.filesystem.kind === "device" &&
+          request.scope.network.kind === "environment"
+        )
+      )
+        throw new SandboxScopeDeniedError(
+          "Only an escalated call (the device filesystem with the environment network) runs outside the sandbox",
+        );
       // Restricted workers import only the sealed private copy of the verified runtime closure
       // the binding attested; anything else is refused here, before anything is spawned.
       if (!request.grant.full) sealed = await acquireSealedRuntime(request.runtimeHash);
@@ -508,7 +706,8 @@ export async function startMacOperationWorker(
       // Version managers (asdf, nvm, pyenv, ...) read their data under the real home, while HOME
       // is the working directory: this trusted process has the real home and the device's own
       // environment (the forked worker runs with a reduced one), so it picks the variables and
-      // grants their directories read only. Full access inherits this process's environment.
+      // grants their directories read only. An escalated call inherits this process's environment
+      // minus every CAPYBARA_ variable (escalatedEnvironment).
       const toolHomes =
         request.kind === "exec" && !request.grant.full
           ? restrictedToolHomes(
@@ -593,6 +792,13 @@ export async function startMacOperationWorker(
                   return firstMissing;
                 })
             : [];
+        // the protected locations as they resolve now, and the system persistence paths
+        const protectedDenies = request.grant.full
+          ? { subtrees: [], links: [] }
+          : macProtectedWriteDenies(request.toolHome?.home ?? homedir());
+        const network = macNetworkConfig(request.grant, {
+          allowPrivate: request.allowPrivateProxyTargets === true,
+        });
         const config = {
           filesystem: {
             denyRead: ["/", ...request.grant.deniedReadRoots],
@@ -610,6 +816,9 @@ export async function startMacOperationWorker(
               // approved `cd ~`), and the runtime turns each deny into write, move and creation
               // denies on the path and moves of its ancestors.
               ...withCanonicalForms(request.grant.deniedReadRoots),
+              // the subtrees only: a link given to the runtime would be resolved to its target
+              // (for `/var`, all of `/private/var`); links are exact regex rules below
+              ...protectedDenies.subtrees,
               // Per-root deny entries pin every ancestor against creation in SRT.
               // The fixed helper has no rename API; retain global Git content denies
               // while it establishes a missing root without those ancestor pins.
@@ -620,15 +829,14 @@ export async function startMacOperationWorker(
             ],
             // the shared policy exactly (case-insensitive, gitdir allowlist, HEAD rules), as
             // ordered regex rules the patched runtime appends last (mac-write-policy.ts)
-            writeRegexRules: establishmentRoots.length
-              ? macWriteRegexRules("")
-              : writeRoots.flatMap((r) => macWriteRootSpellings(r).flatMap(macWriteRegexRules)),
+            writeRegexRules: [
+              ...(establishmentRoots.length
+                ? macWriteRegexRules("")
+                : writeRoots.flatMap((r) => macWriteRootSpellings(r).flatMap(macWriteRegexRules))),
+              ...protectedWriteRules(protectedDenies),
+            ],
           },
-          network: {
-            allowedDomains: [...request.grant.hosts],
-            deniedDomains: [],
-            allowLocalBinding: false,
-          },
+          network: network.network,
           ...(javaAgent ? { javaAgentJarPath: javaAgent } : {}),
         };
         const initialized = message(runtime, "ready");
@@ -637,6 +845,7 @@ export async function startMacOperationWorker(
           full: request.grant.full,
           runtime: runtimeEntry,
           config,
+          askAll: network.askAll,
         });
         const initializedInfo = await initialized;
         // the worker has imported the runtime: the copy may be pruned from now on
@@ -728,8 +937,14 @@ export async function startMacOperationWorker(
       const exports = Object.entries(args.env ?? {})
         .map(([key, value]) => `export ${key}=${shellQuote(value)}`)
         .join("; ");
+      // The runtime's NO_PROXY sends loopback, link-local and the private ranges direct, where
+      // Seatbelt refuses the connect and the client prints only "Couldn't connect to server".
+      // Every one of them is closed here (no own listener exists: listening is refused), so a
+      // restricted command sends them to the operation's proxy, whose refusal names the reason.
+      // The call's own environment comes after, so a NO_PROXY it sets still applies.
+      const direct = request.grant.full ? "" : "unset NO_PROXY no_proxy; ";
       const script = await wrap(
-        `${temp}${!request.grant.full && exports ? `${exports}; ` : ""}exec /bin/bash -c ${shellQuote(args.command)}${request.managedOutput ? " 2>&1" : ""}`,
+        `${temp}${direct}${!request.grant.full && exports ? `${exports}; ` : ""}exec /bin/bash -c ${shellQuote(args.command)}${request.managedOutput ? " 2>&1" : ""}`,
       );
       await request.beforeLaunch();
       controller.signal.throwIfAborted();
@@ -800,7 +1015,7 @@ export async function startMacOperationWorker(
         type: "execute",
         script,
         cwd: args.cwd,
-        env: request.grant.full ? { ...process.env, ...args.env } : outerEnv,
+        env: request.grant.full ? escalatedEnvironment(process.env, args.env) : outerEnv,
         timeoutMs: args.timeoutMs,
         managed: request.managedOutput !== undefined,
       });

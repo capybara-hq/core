@@ -1,9 +1,11 @@
 [
   "background-output.test.ts",
   "exec-docker.test.ts",
+  "linux-agent-network.test.ts",
   "linux-operation-backend.test.ts",
   "linux-operation-worker.test.ts",
   "mac-abort-escape.test.ts",
+  "mac-open-network.test.ts",
   "mac-operation-backend.test.ts",
   "mac-read-scope.test.ts",
   "mac-self-check.test.ts",

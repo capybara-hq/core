@@ -355,7 +355,7 @@ export const PLATFORM_EXCLUSIONS: readonly {
     route: "POST /api/v1/orgs/:orgId/devices/:id/policy",
     category: "human-only",
     reason:
-      "A person changes their own machine's mode and sandbox-mode network; enabling auto mode happens on the machine, never through an agent",
+      "A person narrows their own machine's sandbox (hosts, network, running outside the sandbox) on its device page; widening happens on the machine, never through an agent",
   },
   {
     route: "POST /api/v1/device/authorize",

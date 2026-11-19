@@ -31,7 +31,7 @@ see `.agents/skills/writing-web-ui`). Design basis: overall design §6 principle
   Also add a matching reason to `DriftReason` (`reconstruct.ts`, and add it to `DRIFT_ORDER` in order) when it can differ between the recording
   and a reconstruction (a candidate changes it, or it can't be fetched at reconstruction), and add a case to the "drift reasons" group in `reconstruct.test.ts`. Existing reasons: `system_hash`,
   `tools_changed` (baseline check only), `tool_spec_missing`, `definition_missing`,
-  `subagent_changed` (child cases, see "Sub-agents"), `permission_profile_changed` (see "Recorded permission context" below), `params_changed`, `model_switched` (see below), `media_missing`, `media_changed` (baseline check only), `context_fit` (context compaction spec §4.9), `tool_unmatched` (full-run replay).
+  `subagent_changed` (child cases, see "Sub-agents"), `permission_profile_changed` and `device_sandbox_changed` (see "Recorded permission context" below), `params_changed`, `model_switched` (see below), `media_missing`, `media_changed` (baseline check only), `context_fit` (context compaction spec §4.9), `tool_unmatched` (full-run replay).
 - The runtime (request building, the loop, waits) lives in `packages/kernel/src/runtime`. An agent's `instructions` is derived from its
   `instructionFiles` on save.
 - The history sent to the model is append-only; model-visible text that appears in replay (such as `REPLAY_NO_RECORDING`) is always English.
@@ -44,7 +44,10 @@ see `.agents/skills/writing-web-ui`). Design basis: overall design §6 principle
   `Edit` call (the rule table, the classifier, or the person through a `command` approval) and the rule and reason.
   Display only: request building reads only `callId` / `content` / `isError`, and a replay renders the recorded result,
   so a denied, allowed or held command needs no `DriftReason`; a resumed `command` approval replays from its recorded
-  result and is never reviewed again (`RecordedToolPipeline` never executes or reviews a tool). The review's own
+  result and is never reviewed again (`RecordedToolPipeline` never executes or reviews a tool). The permission side of
+  the record (`decisionSource`, including `full-access` for an auto-grant, and `crossing`: `directory` / `host` /
+  `outside-sandbox` / `sensitive`) and the `permission_reviewed` event are display and audit only too: replay uses the
+  recorded decision, never today's settings or profile, and needs no `DriftReason`. The review's own
   classifier call fires `model.request` / `model.response` with purpose `review` and writes a `usage` event with
   the same purpose — neither is model-visible, so neither needs a `DriftReason`.
 - **`tools_changed`** (tool naming spec §9.1): written before a step's request when its resolved tool set differs from the
@@ -64,14 +67,28 @@ see `.agents/skills/writing-web-ui`). Design basis: overall design §6 principle
   `RecordedToolPipeline` appends it before a matched call's result when the eval conversation's latest differs.
 - **Recorded permission context** (permission context replay spec
   `docs/superpowers/specs/2026-11-16-permission-context-replay-design.md`): `permission_context { payload:
-  PermissionContextV1 }` and the marked `device_paths` branch (`permissionContextVersion: 1`) render at their
+  PermissionContextV2 }` and the marked `device_paths` branch (`permissionContextVersion: 1`) render at their
   position, the latest covered ones again after a summary, and `model_call.request.permissionContext` (`{ version,
-  contextSeq, hash }`) records the rendered contributions; absent when no context was recorded.
+  contextSeq, hash, sandbox? }`) records the rendered contributions; absent when no context was recorded.
+  Context version 2 (approval-only profiles spec
+  `docs/superpowers/specs/2026-11-19-approval-only-profiles-design.md`) adds the device `sandbox` block, the same
+  under every profile and present only on a supported context; Full access may record a scoped sandbox. Its text
+  (`runtime/context/permission-profile.ts`) states the sandbox once, then the approver per crossing kind; the
+  escalation clause (`sandbox: "escalated"`) only where escalation is available (operation boundary,
+  `outsideSandbox`, interactive). A supported context without a block (the producer before it records one) keeps the
+  profile-level policy line. `sandbox` in the metadata is the canonical hash of the located context's block, absent
+  when it has none. Stored v1 rows are never rewritten: every reader (recorder prior,
+  `assertRecordedPermissionEvents`, rendering, replay, the full-run feeder) reads them through
+  `RecordedPermissionContextSchema` / `readRecordedPermissionContext` as v2 with `sandbox: null` (same bytes, same
+  hash as that form), so a v1-era run replays with zero drift and an identical v1 prior appends nothing.
   `permissionContextHistory` refuses a present marker or version its strict schema rejects
   (`RecordedPermissionContextError`) in live build and replay alike; in a case snapshot that is
   `eval.snapshot_invalid` (422), never a provider error. `permission_profile_changed` (after
   `subagent_changed`): a request's recorded metadata cannot be reproduced from its own bounded range
   (`min(toSeq, callSeq - 1)`); a normal profile change is recorded input, zero drift.
+  `device_sandbox_changed` (right after it): the sandbox block the snapshot rebuilds for a request differs from the
+  one its recorded metadata names (usually reported together with `permission_profile_changed`); a sandbox change
+  between runs is recorded input, zero drift for a baseline and a candidate alike.
   **Request boundary** (`runtime/model-call.ts`, spec B2): every agent-history request construction of the
   attempt ladder (a retry, a fallback, the rebuild after a forced compaction, wrap-up) first awaits
   `ModelStepDeps.permissionContext.beforeRequest` and then rereads the complete log once; without the port there is
@@ -79,7 +96,7 @@ see `.agents/skills/writing-web-ui`). Design basis: overall design §6 principle
   `ExecutionRevoked` (checked before the abort); every other callback or refresh failure is a named no-send
   `run.permission_context_*` run error, never a provider error or fallback. Compaction, title, review and
   extraction calls get no permission context. **Live producers are on** (the paired activation, device
-  protocol 3): `RunSteps` wires the recorder (`PermissionContextRecorder`) and `BuiltinTools` the managed device
+  protocol 4): `RunSteps` wires the recorder (`PermissionContextRecorder`) and `BuiltinTools` the managed device
   writer (`ManagedDeviceContextRecorder`) while the one gate `PERMISSION_CONTEXT_ACTIVATION` is on (production
   `PERMISSION_CONTEXT_ACTIVE = true`; a test may provide `false` for the dormant state). Every agent run now
   records a context before its first request (a conversation without a usable device records it as
@@ -91,22 +108,23 @@ see `.agents/skills/writing-web-ui`). Design basis: overall design §6 principle
   Cases in `reconstruct.test.ts` ("the device's permission context"): a provisioned device and a profile change
   between runs, and a log written before the activation (made with the request boundary removed from
   `RunSteps.deps`, `beforeActivation`). Activated cases that run builtins bind a cloud device on sandbox-fake,
-  which reports permission support (restricted and Full) and serves the managed operation route
+  which reports permission support v2 and serves the managed operation route
   (`bindFreshCloudDevice`: unprobed until its first provisioning, then `supported`).
   **The 9.6 group** (run sequentially, 2 workers, before and after any change to request building, the
   recorder or the managed device writer): `evals/reconstruct.test.ts`, `evals/run-replay.test.ts`,
   `evals/recorded-permission-context.test.ts`, `runtime/permission-context*.test.ts` (including the
   `.dual` file in the container project) and the cross-path smoke test `runtime/permission-activation.test.ts`
-  (one app on the production gate: an anonymous IM guest, a protocol 3 local device and a sandbox-fake cloud
-  device each record a schema-valid v1 context before their first request, every request locates the latest
+  (one app on the production gate: an anonymous IM guest, a local device on the real gateway and a sandbox-fake cloud
+  device each record a schema-valid v2 context before their first request, every request locates the latest
   one, a profile change appends one, an unchanged follow-up none).
   Full-run replay (`evals/recorded-permission-context.ts`, spec B4): earlier runs' contexts are seeds; the target
   run's are fed by the recorded-only feeder at the generated request boundary (sparse `(step, attempt)` table,
   monotone, idem `replay_permission_context:<generatedRunId>:<originalSeq>`), so generated requests carry the
   recorded content and their metadata locates the generated seq; none for a recording without markers.
   `replayLoopDeps` (`evals/worker.ts`) strips any live recorder, and the live recorder refuses an eval conversation
-  or a tree whose root is one. The result reports `permission_profile_changed` from the original-coordinate
-  diagnostics. `RecordedToolPipeline` copies a managed `device_paths` whole and a matched result's `review`
+  or a tree whose root is one. The result reports `permission_profile_changed` and `device_sandbox_changed` from
+  the original-coordinate diagnostics (`recordedRunPermissionDrift`; `RunReplayResult.permissionContextDrift` /
+  `deviceSandboxDrift`). `RecordedToolPipeline` copies a managed `device_paths` whole and a matched result's `review`
   verbatim (absent stays absent); a replay never previews, reviews, admits, provisions, resumes, probes or touches
   a device.
 - **Attachments** (attachments-on-demand spec `docs/superpowers/specs/2026-11-17-attachments-on-demand-design.md` §5.2):

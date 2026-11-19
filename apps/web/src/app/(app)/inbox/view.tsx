@@ -26,7 +26,12 @@ import {
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
 import { type ReactNode, useEffect, useState } from "react";
-import { ApprovalInput, ScopePicker, useDecide } from "../../../components/ApprovalCard";
+import {
+  ApprovalInput,
+  commandLeadOf,
+  ScopePicker,
+  useDecide,
+} from "../../../components/ApprovalCard";
 import { PendingConnectorDialog } from "../../../components/agent/PendingConnectorDialog";
 import { ErrorFrame } from "../../../components/ErrorFrame";
 import { NoAccess } from "../../../components/NoAccess";
@@ -761,9 +766,12 @@ function toolApprovalDetail({
   // A command review ask (auto mode spec §5.4): an empty argument box would let its owner allow
   // the held command without ever reading it, so the ask draws what runs instead.
   const command = approval.kind === "command" ? (approval.command ?? null) : null;
-  const write = command?.kind === "write";
+  // a file ask (write or read) names its target path
+  const file = command !== null && command.kind !== "command";
   const shown =
-    command === null ? null : write ? (command.path ?? command.command) : command.command;
+    command === null ? null : file ? (command.path ?? command.command) : command.command;
+  // what is asked, worded from the ask's facts (the kernel's reason is model-facing English)
+  const lead = command === null ? undefined : commandLeadOf({}, approval);
   // decided or superseded meanwhile (a cached item): final, without approve, deny or a scope
   const final = approval.status !== "pending";
   return {
@@ -805,7 +813,13 @@ function toolApprovalDetail({
           title={
             command === null
               ? toolLabelText(approvalToolLabel(approval, locale))
-              : ta(write ? "command.titleWrite" : "command.title")
+              : ta(
+                  command.kind === "write"
+                    ? "command.titleWrite"
+                    : command.kind === "read"
+                      ? "command.titleRead"
+                      : "command.title",
+                )
           }
           actions={
             final ? (
@@ -836,7 +850,24 @@ function toolApprovalDetail({
                   ? []
                   : [
                       { k: ta("command.device"), v: command.deviceName },
-                      { k: ta("command.reason"), v: command.reason },
+                      {
+                        k: ta("command.reason"),
+                        v:
+                          lead === undefined ? (
+                            command.reason
+                          ) : (
+                            <Stack gap={4}>
+                              <Text variant="small">
+                                {ta(`command.lead.${lead.key}`, lead.values)}
+                              </Text>
+                              {lead.detail ? (
+                                <Text variant="small" tone="muted">
+                                  {command.reason}
+                                </Text>
+                              ) : null}
+                            </Stack>
+                          ),
+                      },
                     ]),
               ]}
             />
@@ -851,7 +882,7 @@ function toolApprovalDetail({
               <CodeBlock
                 text={clipCommand(shown ?? "")}
                 framed={false}
-                {...(write ? { title: ta("command.path") } : {})}
+                {...(file ? { title: ta("command.path") } : {})}
               />
             )}
             {command?.permissionScope !== undefined && command.escalation === undefined && (

@@ -36,6 +36,7 @@ import {
   waitFor,
   waitForTerminal,
 } from "../helpers/runs.js";
+import { ownerReportFor } from "../local-devices/fake-machine-v3.js";
 
 /**
  * Conversations bound to devices (spec 2026-11-07-environments-design §4.1 items 1-3, §4.2
@@ -476,7 +477,8 @@ describe("conversations bound to devices", () => {
 
 /**
  * A local device of `accountId` whose machine (signed in, not connected) announced `features` and
- * runs in `mode`, with `projects` stored for it.
+ * runs in `mode` (its owner report: auto = Full with the OS user's reach), with `projects` stored
+ * for it.
  */
 async function localDevice(
   accountId: string,
@@ -490,11 +492,22 @@ async function localDevice(
     .get(DevicesService)
     .createLocal(orgId, accountId, `box-${randomUUID().slice(0, 8)}`);
   const features = opts.features ?? ALL_FEATURES;
-  const policy = JSON.stringify({ mode: opts.mode ?? "auto", allowedDomains: [] });
+  const policy = JSON.stringify({ allowedDomains: [] });
+  const auto = (opts.mode ?? "auto") === "auto";
+  const owner = JSON.stringify({
+    report: ownerReportFor(
+      { allowedDomains: [] },
+      { outsideSandbox: auto, restrictedProjectReach: auto ? "os-user" : "workspace" },
+    ),
+    connectionId: null,
+    observedAt: new Date().toISOString(),
+    via: "hello",
+  });
   await sql`INSERT INTO capybara.device_machines
-      (org_id, device_id, account_id, credential_hash, name, os, arch, features, local_policy)
+      (org_id, device_id, account_id, credential_hash, name, os, arch, features, local_policy,
+       owner_report)
     VALUES (${orgId}, ${id}, ${accountId}, ${randomUUID()}, 'mbp', 'darwin', 'arm64',
-      ${features}, ${policy}::jsonb)`.execute(raw);
+      ${features}, ${policy}::jsonb, ${owner}::jsonb)`.execute(raw);
   for (const p of opts.projects ?? []) {
     await db
       .insertInto("device_projects")
@@ -504,7 +517,7 @@ async function localDevice(
   return id;
 }
 
-const ALL_FEATURES = ["networkReport", "policyOp", "policyOpId", "mode", "projects"];
+const ALL_FEATURES = ["networkReport", "policyOp", "policyOpId", "projects"];
 const CORE = { name: "core", path: "/Users/o/src/core" };
 const PLUGINS = { name: "plugins", path: "/Users/o/src/plugins" };
 
@@ -777,7 +790,7 @@ describe("binding a conversation to a project", () => {
     const m = await member();
     // an older capybara-device: no `projects` feature, whatever is stored for it
     const older = await localDevice(m.id, {
-      features: ["networkReport", "policyOp", "mode"],
+      features: ["networkReport", "policyOp"],
       projects: [CORE],
     });
     for (const message of BOTH) {

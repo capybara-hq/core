@@ -129,13 +129,13 @@ const service = (
   });
 
 /**
- * The org's mode switch. `off` also selects the allowlist network (the org's `cloudNetwork`),
+ * The org's mode switch. `off` also selects the allowlist network (the org's `deviceNetwork`),
  * because a cloud device in sandbox mode applies it; `allowed` is auto mode, which ignores it.
  */
 const setAutoMode = (mode: "allowed" | "off") =>
   sql`UPDATE capybara.orgs SET settings = ${JSON.stringify({
-    fullAccess: mode,
-    cloudNetwork: { mode: mode === "off" ? "allowlist" : "open" },
+    outsideSandbox: mode,
+    deviceNetwork: mode === "off" ? { ceiling: "allowlist" } : { default: "open" },
   })}::jsonb
     WHERE id = ${orgId}`.execute(raw);
 const setOrgSettings = (value: unknown) =>
@@ -181,7 +181,6 @@ describe("creation records the effective mode and network", () => {
     const s = service();
     const a = await use(s);
     expect((await fakeSandboxMeta(root, a.h.id))?.limits).toMatchObject({
-      mode: "auto",
       network: { kind: "open-public" },
     });
     expect(await modeOf()).toBe("auto");
@@ -191,7 +190,6 @@ describe("creation records the effective mode and network", () => {
     await setAutoMode("off");
     const b = await use(s, undefined, other);
     expect((await fakeSandboxMeta(root, b.h.id))?.limits).toMatchObject({
-      mode: "sandbox",
       network: { kind: "allowlist" },
     });
     expect(await modeOf(other)).toBe("sandbox");
@@ -215,9 +213,7 @@ describe("a changed mode on use", () => {
     expect(again.info).toMatchObject({ fresh: false, restarted: false });
     expect(await ops("update")).toEqual([["update", first.h.id, "updated"]]);
     const updates = (await readFakeSandboxLimits(root)).filter((e) => e.op === "update");
-    expect(updates.map((e) => [e.limits.mode, e.limits.network.kind])).toEqual([
-      ["sandbox", "allowlist"],
-    ]);
+    expect(updates.map((e) => e.limits.network.kind)).toEqual(["allowlist"]);
     expect(await modeOf()).toBe("sandbox");
     expect((await s.limitsState({ orgId, deviceId })).pendingNextUse).toBe(false);
     // applied once: the next use takes a shared lease and changes nothing
@@ -240,7 +236,7 @@ describe("a changed mode on use", () => {
     expect(await ops("create-fs")).toHaveLength(1);
     const meta = await fakeSandboxMeta(root, again.h.id);
     expect(meta?.fileSystem).toBe(fs);
-    expect(meta?.limits).toMatchObject({ mode: "sandbox", network: { kind: "allowlist" } });
+    expect(meta?.limits).toMatchObject({ network: { kind: "allowlist" } });
     expect(await modeOf()).toBe("sandbox");
   });
 
@@ -333,6 +329,34 @@ describe("a changed mode on use", () => {
     expect(await modeOf()).toBe("sandbox");
   });
 
+  it.each(["org", "platform"] as const)(
+    "the %s outside-sandbox setting alone never changes a cloud instance's applied limits",
+    async (layer) => {
+      // a cloud device has no outside of its sandbox: toggling the setting is no provider update
+      // (Docker would drop its egress proxy) and no pending change
+      provider = fake({ updateMode: "updated" });
+      const s = service();
+      const first = await use(s);
+      const before = await record();
+      if (layer === "org") await setOrgSettings({ outsideSandbox: "off" });
+      else
+        config = KernelConfigSchema.parse({
+          ...config,
+          devices: { ...config.devices, outsideSandbox: "off" },
+        });
+      expect(await s.limitsState({ orgId, deviceId })).toMatchObject({
+        pendingNextUse: false,
+        pendingFilesReset: false,
+      });
+      const again = await use(s);
+      expect(again.h).toEqual(first.h);
+      expect(again.info).toMatchObject({ fresh: false, restarted: false });
+      expect(await ops("update")).toEqual([]);
+      expect(await ops("create")).toHaveLength(1);
+      expect(await record()).toEqual(before);
+    },
+  );
+
   it("a NULL record (an instance made before auto mode) differs once", async () => {
     const s = service();
     await use(s);
@@ -351,8 +375,8 @@ describe("a changed mode on use", () => {
     await setAutoMode("off");
     const first = await use(s);
     await setOrgSettings({
-      fullAccess: "off",
-      cloudNetwork: { mode: "allowlist", extraHosts: ["example.com"] },
+      outsideSandbox: "off",
+      deviceNetwork: { ceiling: "allowlist", extraHosts: ["example.com"] },
     });
     await sql`INSERT INTO capybara.deployment_settings (key, value)
       VALUES ('sandboxLimitOverrides', ${JSON.stringify({ [orgId]: { cpu: 4 } })}::jsonb)
@@ -372,8 +396,8 @@ describe("a changed mode on use", () => {
     await setAutoMode("off");
     const first = await use(s);
     await setOrgSettings({
-      fullAccess: "off",
-      cloudNetwork: { mode: "allowlist", excludedHosts: ["pypi.org"] },
+      outsideSandbox: "off",
+      deviceNetwork: { ceiling: "allowlist", excludedHosts: ["pypi.org"] },
     });
     const again = await use(s);
     expect(again.h).toEqual(first.h);
@@ -470,7 +494,7 @@ describe("a failed limits change", () => {
     expect(await ops("update")).toEqual([["update", first.h.id, "throw"]]);
     // recorded by the create that applied it
     expect(await modeOf()).toBe("sandbox");
-    expect((await fakeSandboxMeta(root, again.h.id))?.limits.mode).toBe("sandbox");
+    expect((await fakeSandboxMeta(root, again.h.id))?.limits.network.kind).toBe("allowlist");
     expect(warned.some((m) => m.includes("update failed"))).toBe(true);
   });
 

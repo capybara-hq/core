@@ -2,7 +2,7 @@ import { queryControl } from "../control/client.js";
 import type { LiveStatus } from "../control/protocol.js";
 import { controlUnavailableReason } from "../control/server.js";
 import { type ProcessChecks, readRunningPid } from "../pid.js";
-import { policyMode, readCredential, readPolicy, type SandboxMode } from "../state.js";
+import { type OwnerCeilingPolicy, readCredential, readPolicy } from "../state.js";
 
 /** How long `status` waits for the running program to answer on its control socket. */
 export const STATUS_CONTROL_TIMEOUT_MS = 500;
@@ -71,19 +71,18 @@ export async function status(
     return 1;
   }
   // An unreadable policy file is reported by `start` and `policy show`; status still answers.
-  let sandboxMode: SandboxMode | undefined;
+  let ceiling: OwnerCeilingPolicy | undefined;
   try {
-    sandboxMode = policyMode(readPolicy(stateDir));
+    ceiling = readPolicy(stateDir).ownerCeiling;
   } catch {
-    sandboxMode = undefined;
+    ceiling = undefined;
   }
+  const sandbox = ceiling && { network: ceiling.network, outsideSandbox: ceiling.outsideSandbox };
   // The credential itself is never printed.
   const { credential: _secret, ...shown } = cred;
   const control = await controlState(stateDir, opts);
   if (json) {
-    out(
-      JSON.stringify({ loggedIn: true, ...shown, ...(sandboxMode && { sandboxMode }), ...control }),
-    );
+    out(JSON.stringify({ loggedIn: true, ...shown, ...(sandbox && { sandbox }), ...control }));
   } else {
     out(
       [
@@ -92,7 +91,12 @@ export async function status(
         `  organization: ${cred.orgId}`,
         `  device:       ${cred.deviceId}`,
         `  directory:    ${cred.dir}`,
-        `  mode:         ${cred.mode} | ${sandboxMode ?? "unknown"}`,
+        `  mode:         ${cred.mode}`,
+        `  sandbox:      ${
+          sandbox
+            ? `network ${sandbox.network}, outside the sandbox ${sandbox.outsideSandbox ? "allowed" : "off"}`
+            : "unknown"
+        }`,
         `  running:      ${runningLine(control)}`,
       ].join("\n"),
     );

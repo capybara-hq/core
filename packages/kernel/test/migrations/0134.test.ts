@@ -90,9 +90,9 @@ describe("0134 org cloud network delta", () => {
       },
       toolSearch: "off",
     });
-    // the new reader accepts it as it is
-    expect(parseOrgSettings(await settingsOf("o_list")).cloudNetwork).toEqual({
-      mode: "allowlist",
+    // the current reader converts it (approval-only profiles: the allowlist becomes the ceiling)
+    expect(parseOrgSettings(await settingsOf("o_list")).deviceNetwork).toEqual({
+      ceiling: "allowlist",
       base: "none",
       extraHosts: ["registry.npmjs.org", "pypi.org", "github.com"],
     });

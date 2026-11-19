@@ -219,9 +219,11 @@ describe("the permission_reconcile_required marker refuses every acquire path (B
 
 const ROOTS = { ...DEFAULT_SANDBOX_ROOTS, workspace: "/Users/owner/capybara" };
 const support = {
-  version: 1 as const,
+  version: 2 as const,
   restricted: null,
-  fullAccess: true,
+  boundary: "operation",
+  network: { openPublic: false, allowlist: false, perOperationHosts: false },
+  outsideSandbox: true,
   background: true,
   unavailableReason: "Restricted per-instance validation pending",
 };

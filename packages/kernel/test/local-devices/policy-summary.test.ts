@@ -12,54 +12,55 @@ import {
  * §4.1): the device is the authority, so the kernel keeps what it reads and never throws over it.
  */
 describe("localPolicyOf", () => {
-  it("keeps the mode and the allowlist, and nothing else a device reports", () => {
+  it("keeps the allowlist, and nothing else a device reports", () => {
     expect(
       localPolicyOf({
         mode: "auto",
         allowedDomains: ["a.com"],
         projects: [{ name: "core", path: "/w/core" }],
       }),
-    ).toEqual({ mode: "auto", allowedDomains: ["a.com"] });
+    ).toEqual({ allowedDomains: ["a.com"] });
   });
 
-  it("refuses a summary without a valid mode or allowlist", () => {
-    expect(localPolicyOf({ mode: "open", allowedDomains: [] })).toBeNull();
-    expect(localPolicyOf({ mode: "sandbox", allowedDomains: [1] })).toBeNull();
+  it("refuses a summary without a valid allowlist", () => {
+    expect(localPolicyOf({ allowedDomains: [1] })).toBeNull();
+    expect(localPolicyOf({ mode: "sandbox" })).toBeNull();
     expect(localPolicyOf(null)).toBeNull();
   });
 });
 
 describe("deviceFeaturesOf", () => {
   it("knows the projects feature", () => {
-    expect(deviceFeaturesOf(["projects", "mode", "teleport"])).toEqual(["mode", "projects"]);
+    // "mode" is not a protocol 4 feature: dropped like any unknown name
+    expect(deviceFeaturesOf(["projects", "mode", "teleport"])).toEqual(["projects"]);
   });
 });
 
 describe("opExplainsOwnerChange (a v3 owner report the platform's narrowing op explains)", () => {
   const op = (ownerCeiling?: PendingPolicyOp["ownerCeiling"]): PendingPolicyOp => ({
     id: "op",
-    add: [],
     remove: [],
     ...(ownerCeiling && { ownerCeiling }),
-    source: { accountId: "a", via: "web", approvalId: null },
+    source: { accountId: "a", via: "web" },
     status: "sent",
     sentAt: 0,
     resolveAt: 0,
     until: 0,
   });
-  const facts = (fullAccess: boolean, restrictedProjectReach: "workspace" | "os-user") => ({
-    fullAccess,
-    restrictedProjectReach,
-  });
+  const facts = (
+    outsideSandbox: boolean,
+    restrictedProjectReach: "workspace" | "os-user",
+    network: "open" | "allowlist" = "open",
+  ) => ({ outsideSandbox, restrictedProjectReach, network });
 
   it("explains exactly the narrowing the op asked for", () => {
-    const full = op({ fullAccess: false });
+    const full = op({ outsideSandbox: false });
     expect(opExplainsOwnerChange(full, facts(true, "os-user"), facts(false, "os-user"))).toBe(true);
     // the reach changed too, which this op did not ask for
     expect(opExplainsOwnerChange(full, facts(true, "os-user"), facts(false, "workspace"))).toBe(
       false,
     );
-    const both = op({ fullAccess: false, restrictedProjectReach: "workspace" });
+    const both = op({ outsideSandbox: false, restrictedProjectReach: "workspace" });
     expect(opExplainsOwnerChange(both, facts(true, "os-user"), facts(false, "workspace"))).toBe(
       true,
     );
@@ -69,10 +70,36 @@ describe("opExplainsOwnerChange (a v3 owner report the platform's narrowing op e
     );
   });
 
+  it("explains the network narrowed to the allowlist only when the op asked for it", () => {
+    const net = op({ network: "allowlist" });
+    expect(
+      opExplainsOwnerChange(
+        net,
+        facts(false, "workspace", "open"),
+        facts(false, "workspace", "allowlist"),
+      ),
+    ).toBe(true);
+    expect(
+      opExplainsOwnerChange(
+        op({ outsideSandbox: false }),
+        facts(true, "workspace", "open"),
+        facts(false, "workspace", "allowlist"),
+      ),
+    ).toBe(false);
+    // the network opening is never an op's
+    expect(
+      opExplainsOwnerChange(
+        net,
+        facts(false, "workspace", "allowlist"),
+        facts(false, "workspace", "open"),
+      ),
+    ).toBe(false);
+  });
+
   it("never explains a widening, an op without a narrowing, or no change", () => {
     expect(
       opExplainsOwnerChange(
-        op({ fullAccess: false }),
+        op({ outsideSandbox: false }),
         facts(false, "os-user"),
         facts(true, "os-user"),
       ),
@@ -82,7 +109,7 @@ describe("opExplainsOwnerChange (a v3 owner report the platform's narrowing op e
     );
     expect(
       opExplainsOwnerChange(
-        op({ fullAccess: false }),
+        op({ outsideSandbox: false }),
         facts(true, "os-user"),
         facts(true, "os-user"),
       ),
@@ -102,12 +129,12 @@ describe("opExplainsOwnerChange (a v3 owner report the platform's narrowing op e
     };
     expect(
       pendingPolicyOpsOf([
-        { ...base, ownerCeiling: { fullAccess: false, restrictedProjectReach: "workspace" } },
+        { ...base, ownerCeiling: { outsideSandbox: false, restrictedProjectReach: "workspace" } },
       ])[0]?.ownerCeiling,
-    ).toEqual({ fullAccess: false, restrictedProjectReach: "workspace" });
+    ).toEqual({ outsideSandbox: false, restrictedProjectReach: "workspace" });
     expect(
       pendingPolicyOpsOf([
-        { ...base, ownerCeiling: { fullAccess: true, restrictedProjectReach: "os-user" } },
+        { ...base, ownerCeiling: { outsideSandbox: true, restrictedProjectReach: "os-user" } },
       ])[0]?.ownerCeiling,
     ).toBeUndefined();
   });

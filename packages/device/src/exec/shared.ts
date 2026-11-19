@@ -15,8 +15,11 @@ export function osRoots(dir: string): SandboxRoots {
 /**
  * The data directories of version managers, relative to the home: the OS sandbox sets HOME to the
  * workspace, so their shims would look there and fail ("unknown command: python3. Perhaps you
- * have to reshim?"). mise's follow XDG_DATA_HOME / XDG_CONFIG_HOME when the device's environment
- * sets them.
+ * have to reshim?"). mise's follows XDG_DATA_HOME when the device's environment sets it. mise's
+ * configuration directory (`~/.config/mise`) is never granted: its `config.toml` may hold tokens
+ * (an `[env]` section). A mise-managed tool still runs from the data directory with a project pin
+ * or the global `.tool-versions` ({@link TOOL_HOME_FILES}); a global pin kept only in
+ * `config.toml` is not seen inside the sandbox.
  */
 export const TOOL_HOME_DIRS: readonly (readonly [string, string])[] = [
   ["ASDF_DATA_DIR", ".asdf"],
@@ -24,7 +27,6 @@ export const TOOL_HOME_DIRS: readonly (readonly [string, string])[] = [
   ["PYENV_ROOT", ".pyenv"],
   ["RBENV_ROOT", ".rbenv"],
   ["MISE_DATA_DIR", ".local/share/mise"],
-  ["MISE_CONFIG_DIR", ".config/mise"],
   ["VOLTA_HOME", ".volta"],
   ["SDKMAN_DIR", ".sdkman"],
   ["RUSTUP_HOME", ".rustup"],
@@ -34,7 +36,8 @@ export const TOOL_HOME_DIRS: readonly (readonly [string, string])[] = [
  * Single files in the home that hold a version manager's global pins, granted read only next to
  * {@link TOOL_HOME_DIRS}: asdf's global `.tool-versions` (mise reads it too). The other managers
  * keep their global version inside their data directory (pyenv and rbenv `version`, nvm
- * `alias/default`, rustup `settings.toml`, mise `config.toml`); a per-project file such as
+ * `alias/default`, rustup `settings.toml`; mise's `config.toml` is never granted, see
+ * {@link TOOL_HOME_DIRS}); a per-project file such as
  * `.nvmrc` is not global. Never a dotfile that could hold a secret.
  */
 export const TOOL_HOME_FILES: readonly string[] = [".tool-versions"];
@@ -65,7 +68,6 @@ export function toolHomeEnv(
   };
   const defaults: Record<string, string> = {
     MISE_DATA_DIR: join(xdg("XDG_DATA_HOME", ".local/share"), "mise"),
-    MISE_CONFIG_DIR: join(xdg("XDG_CONFIG_HOME", ".config"), "mise"),
   };
   const out: Record<string, string> = {};
   for (const [name, rel] of TOOL_HOME_DIRS) {

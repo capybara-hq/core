@@ -7,15 +7,17 @@ import { createDb } from "../../src/db/pool.js";
 import type { ApiError } from "../../src/errors.js";
 import { COMPACTION_SETTINGS, readPromptSuggestions } from "../../src/identity/settings.js";
 import {
-  type CloudNetworkSetting,
+  type DeviceNetworkSetting,
   effectivePromptSuggestions,
   type OrgSettings,
   OrgSettingsPatchSchema,
   type OrgSettingsService,
   parseOrgSettings,
 } from "../../src/orgs/settings.service.js";
-import { orgAllowedDomains } from "../../src/sandbox/modes.js";
-import { DEVICES_FULL_ACCESS_SETTING } from "../../src/sandbox/platform-full-access.js";
+import {
+  DEVICES_NETWORK_SETTING,
+  DEVICES_OUTSIDE_SANDBOX_SETTING,
+} from "../../src/sandbox/device-sandbox-settings.js";
 import { truncateTables } from "../helpers/db.js";
 import { accountsFor, orgSettingsFor, orgsFor } from "../helpers/identity.js";
 
@@ -33,36 +35,41 @@ const LIMITS = {
   memoryMb: 2048,
 };
 
-/** The deployment side of {@link orgAllowedDomains}: the org's list, else this one. */
-const DEPLOYMENT = {
-  fullAccess: "allowed" as const,
-  limits: { egress: LIMITS.egress, allowHosts: LIMITS.allowHosts, orgHosts: LIMITS.orgHosts },
-};
-
-/** A config holder: the startup config's `devices.fullAccess` (unset here unless the test says so). */
+/**
+ * A config holder: the startup config's `devices.outsideSandbox` / `devices.network` (unset here
+ * unless the test says so).
+ */
 const settingsWith = (
   opts: {
     egress?: "none" | "allowlist";
     allowHosts?: string[];
     orgHosts?: "extend" | "within";
-    fullAccess?: "allowed" | "off";
+    outsideSandbox?: "allowed" | "off";
+    networkCeiling?: "open" | "allowlist";
   } = {},
 ): OrgSettingsService => {
-  const { fullAccess: _a, ...limits } = opts;
+  const { outsideSandbox: _a, networkCeiling: _c, ...limits } = opts;
   const cfg = {
     sandbox: { limits: { ...LIMITS, ...limits } },
-    devices: { fullAccess: opts.fullAccess },
+    devices: { outsideSandbox: opts.outsideSandbox, network: { ceiling: opts.networkCeiling } },
     attribution: {},
     http: { publicUrl: undefined },
   };
   return orgSettingsFor(db, () => cfg);
 };
 
-/** The platform's stored Full switch (as the admin console writes it). */
+/** The platform's stored outside-sandbox choice (as the admin console writes it). */
 const storePlatformMode = (mode: unknown) =>
   db
     .insertInto("deployment_settings")
-    .values({ key: DEVICES_FULL_ACCESS_SETTING, value: JSON.stringify(mode) })
+    .values({ key: DEVICES_OUTSIDE_SANDBOX_SETTING, value: JSON.stringify(mode) })
+    .execute();
+
+/** The platform's stored network choice. */
+const storePlatformNetwork = (value: unknown) =>
+  db
+    .insertInto("deployment_settings")
+    .values({ key: DEVICES_NETWORK_SETTING, value: JSON.stringify(value) })
     .execute();
 
 const codeOf = async (p: Promise<unknown>) => {
@@ -104,128 +111,185 @@ beforeEach(async () => {
   orgId = org.id;
 });
 
-describe("org fullAccess (B1)", () => {
+describe("org outsideSandbox", () => {
   it("absent follows the platform; a person may set it; null clears it", async () => {
     const s = settingsWith();
-    expect((await s.get(orgId)).fullAccess).toBeUndefined();
-    expect(await s.update(orgId, { fullAccess: "allowed" }, accountId)).toMatchObject({
-      fullAccess: "allowed",
+    expect((await s.get(orgId)).outsideSandbox).toBeUndefined();
+    expect(await s.update(orgId, { outsideSandbox: "allowed" }, accountId)).toMatchObject({
+      outsideSandbox: "allowed",
     });
-    expect((await s.get(orgId)).fullAccess).toBe("allowed");
-    expect(await s.update(orgId, { fullAccess: null }, accountId)).not.toHaveProperty("fullAccess");
-    expect(await s.update(orgId, { fullAccess: "off" }, accountId)).toMatchObject({
-      fullAccess: "off",
+    expect((await s.get(orgId)).outsideSandbox).toBe("allowed");
+    expect(await s.update(orgId, { outsideSandbox: null }, accountId)).not.toHaveProperty(
+      "outsideSandbox",
+    );
+    expect(await s.update(orgId, { outsideSandbox: "off" }, accountId)).toMatchObject({
+      outsideSandbox: "off",
     });
   });
 
-  it("the old name autoMode is refused and never answered (W5-P3b)", async () => {
+  it("the old names fullAccess, autoMode and cloudNetwork are refused and never answered", async () => {
     const s = settingsWith();
     for (const patch of [
       { autoMode: "off" },
-      { autoMode: null },
-      { autoMode: "off", fullAccess: "off" },
+      { fullAccess: "off" },
+      { fullAccess: null },
+      { cloudNetwork: { mode: "allowlist" } },
+      { fullAccess: "off", outsideSandbox: "off" },
     ])
       expect(OrgSettingsPatchSchema.safeParse(patch).success, JSON.stringify(patch)).toBe(false);
-    await s.update(orgId, { fullAccess: "off" }, accountId);
-    expect(await s.get(orgId)).not.toHaveProperty("autoMode");
-    expect(await s.deployment()).not.toHaveProperty("autoMode");
-    await s.update(orgId, { fullAccess: null }, accountId);
+    await s.update(orgId, { outsideSandbox: "off" }, accountId);
+    for (const key of ["autoMode", "fullAccess", "cloudNetwork"]) {
+      expect(await s.get(orgId)).not.toHaveProperty(key);
+      expect(await s.deployment()).not.toHaveProperty(key);
+    }
   });
 
   it("allowed while the platform is off is refused for a person too", async () => {
     await storePlatformMode({ permission: "off" });
     const s = settingsWith();
-    expect(await codeOf(s.update(orgId, { fullAccess: "allowed" }, accountId))).toBe(
-      "org.full_access_not_allowed",
+    expect(await codeOf(s.update(orgId, { outsideSandbox: "allowed" }, accountId))).toBe(
+      "org.outside_sandbox_not_allowed",
     );
     // off is the only value left, and clearing it is fine (it follows the platform's off)
-    expect(await s.update(orgId, { fullAccess: "off" }, accountId)).toMatchObject({
-      fullAccess: "off",
+    expect(await s.update(orgId, { outsideSandbox: "off" }, accountId)).toMatchObject({
+      outsideSandbox: "off",
     });
-    expect(await s.update(orgId, { fullAccess: null }, accountId)).not.toHaveProperty("fullAccess");
+    expect(await s.update(orgId, { outsideSandbox: null }, accountId)).not.toHaveProperty(
+      "outsideSandbox",
+    );
   });
 
   it("a configured platform value wins over the stored one", async () => {
     await storePlatformMode({ permission: "allowed" });
-    const s = settingsWith({ fullAccess: "off" });
-    expect((await s.deployment()).fullAccess).toEqual({ permission: "off", source: "file" });
-    expect(await codeOf(s.update(orgId, { fullAccess: "allowed" }, accountId))).toBe(
-      "org.full_access_not_allowed",
+    const s = settingsWith({ outsideSandbox: "off" });
+    expect((await s.deployment()).outsideSandbox).toEqual({ permission: "off", source: "file" });
+    expect(await codeOf(s.update(orgId, { outsideSandbox: "allowed" }, accountId))).toBe(
+      "org.outside_sandbox_not_allowed",
     );
   });
 
   it("an invalid stored platform value reads as off (fail closed)", async () => {
     await storePlatformMode({ permission: "maybe" });
     const s = settingsWith();
-    expect((await s.deployment()).fullAccess).toEqual({ permission: "off", source: "db" });
-    expect(await codeOf(s.update(orgId, { fullAccess: "allowed" }, accountId))).toBe(
-      "org.full_access_not_allowed",
+    expect((await s.deployment()).outsideSandbox).toEqual({ permission: "off", source: "db" });
+    expect(await codeOf(s.update(orgId, { outsideSandbox: "allowed" }, accountId))).toBe(
+      "org.outside_sandbox_not_allowed",
     );
   });
 
   it("a stored org value this version cannot read reads as off, never allowed", () => {
-    expect(parseOrgSettings({ fullAccess: "maybe" }).fullAccess).toBe("off");
-    expect(parseOrgSettings({ fullAccess: null }).fullAccess).toBe("off");
-    expect(parseOrgSettings({}).fullAccess).toBeUndefined();
-    // an old stored key the publication conversion has not reached yet is read too and the
+    expect(parseOrgSettings({ outsideSandbox: "maybe" }).outsideSandbox).toBe("off");
+    expect(parseOrgSettings({ outsideSandbox: null }).outsideSandbox).toBe("off");
+    expect(parseOrgSettings({}).outsideSandbox).toBeUndefined();
+    // old stored keys the publication conversion has not reached yet are read too and the
     // narrower wins (fail closed)
-    expect(parseOrgSettings({ autoMode: "allowed" }).fullAccess).toBeUndefined();
-    expect(parseOrgSettings({ autoMode: "off", fullAccess: "allowed" }).fullAccess).toBe("off");
-    expect(parseOrgSettings({ autoMode: "maybe" }).fullAccess).toBe("off");
+    expect(parseOrgSettings({ fullAccess: "allowed" }).outsideSandbox).toBe("allowed");
+    expect(parseOrgSettings({ autoMode: "off", outsideSandbox: "allowed" }).outsideSandbox).toBe(
+      "off",
+    );
+    expect(parseOrgSettings({ fullAccess: "maybe" }).outsideSandbox).toBe("off");
   });
 
-  it("the Platform tool / an API token may turn Full off, never allow it", async () => {
+  it("the Platform tool / an API token may turn it off, never allow it", async () => {
     const s = settingsWith();
     expect(
       await codeOf(
-        s.update(orgId, { fullAccess: "off" }, accountId, "tok", undefined, { onlyNarrows: true }),
-      ),
-    ).toBeUndefined();
-    expect(
-      await codeOf(
-        s.update(orgId, { fullAccess: "allowed" }, accountId, "tok", undefined, {
+        s.update(orgId, { outsideSandbox: "off" }, accountId, "tok", undefined, {
           onlyNarrows: true,
         }),
       ),
-    ).toBe("org.full_access_not_allowed");
-    expect((await s.get(orgId)).fullAccess).toBe("off");
+    ).toBeUndefined();
+    for (const outsideSandbox of ["allowed", null] as const)
+      expect(
+        await codeOf(
+          s.update(orgId, { outsideSandbox }, accountId, "tok", undefined, { onlyNarrows: true }),
+        ),
+      ).toBe("org.outside_sandbox_not_allowed");
+    expect((await s.get(orgId)).outsideSandbox).toBe("off");
   });
 });
 
-describe("org cloudNetwork", () => {
+describe("org deviceNetwork", () => {
   const tokenUpdateOf =
-    (s: OrgSettingsService) => (patch: { cloudNetwork: CloudNetworkSetting | null }) =>
+    (s: OrgSettingsService) => (patch: { deviceNetwork: DeviceNetworkSetting | null }) =>
       s.update(orgId, patch, accountId, "tok", undefined, { onlyNarrows: true });
 
   it("stores the delta as given; null follows the platform again", async () => {
     const s = settingsWith();
-    expect((await s.deployment()).cloudNetwork).toEqual({
+    expect((await s.deployment()).deviceNetwork).toEqual({
+      default: "open",
+      ceiling: "open",
+      sources: { default: "default", ceiling: "default" },
       allowHosts: LIMITS.allowHosts,
       orgHosts: "extend",
       off: false,
     });
     expect(
-      (await s.update(orgId, { cloudNetwork: { mode: "allowlist" } }, accountId)).cloudNetwork,
-    ).toEqual({ mode: "allowlist" });
+      (await s.update(orgId, { deviceNetwork: { ceiling: "allowlist" } }, accountId)).deviceNetwork,
+    ).toEqual({ ceiling: "allowlist" });
     const delta = {
-      mode: "allowlist" as const,
+      default: "allowlist" as const,
       extraHosts: ["*.corp.example.org"],
       excludedHosts: ["github.com"],
     };
-    expect((await s.update(orgId, { cloudNetwork: delta }, accountId)).cloudNetwork).toEqual(delta);
+    expect((await s.update(orgId, { deviceNetwork: delta }, accountId)).deviceNetwork).toEqual(
+      delta,
+    );
     expect(s.effectiveNetwork(await s.get(orgId))).toEqual({
       mode: "allowlist",
       hosts: ["registry.npmjs.org", "*.corp.example.org"],
     });
-    expect(await s.update(orgId, { cloudNetwork: null }, accountId)).not.toHaveProperty(
-      "cloudNetwork",
+    expect(await s.update(orgId, { deviceNetwork: null }, accountId)).not.toHaveProperty(
+      "deviceNetwork",
     );
+  });
+
+  it("a default or ceiling above the platform's ceiling is refused for a person too", async () => {
+    await storePlatformNetwork({ ceiling: "allowlist" });
+    const s = settingsWith();
+    for (const deviceNetwork of [{ ceiling: "open" }, { default: "open" }] as const) {
+      const e = await s.update(orgId, { deviceNetwork }, accountId).catch((err: ApiError) => err);
+      expect((e as ApiError).code).toBe("org.network_not_allowed");
+      expect((e as ApiError).status).toBe(400);
+    }
+    // the configured ceiling counts the same
+    expect(
+      await codeOf(
+        settingsWith({ networkCeiling: "allowlist" }).update(
+          orgId,
+          { deviceNetwork: { ceiling: "open" } },
+          accountId,
+        ),
+      ),
+    ).toBe("org.network_not_allowed");
+    // narrower values, hosts and clearing stay fine
+    expect(
+      (
+        await s.update(
+          orgId,
+          { deviceNetwork: { ceiling: "allowlist", extraHosts: ["pypi.org"] } },
+          accountId,
+        )
+      ).deviceNetwork,
+    ).toEqual({ ceiling: "allowlist", extraHosts: ["pypi.org"] });
+    expect(await codeOf(s.update(orgId, { deviceNetwork: null }, accountId))).toBeUndefined();
+  });
+
+  it("a default above the org's own ceiling is a validation error", () => {
+    expect(
+      OrgSettingsPatchSchema.safeParse({ deviceNetwork: { default: "open", ceiling: "allowlist" } })
+        .success,
+    ).toBe(false);
+    expect(
+      OrgSettingsPatchSchema.safeParse({ deviceNetwork: { default: "allowlist", ceiling: "open" } })
+        .success,
+    ).toBe(true);
   });
 
   it("a platform change reaches an org that stores a delta", async () => {
     await settingsWith().update(
       orgId,
-      { cloudNetwork: { mode: "allowlist", extraHosts: ["pypi.org"] } },
+      { deviceNetwork: { ceiling: "allowlist", extraHosts: ["pypi.org"] } },
       accountId,
     );
     const stored = await settingsWith().get(orgId);
@@ -238,9 +302,10 @@ describe("org cloudNetwork", () => {
 
   it("validates the shape and the hosts; an invalid stored value reads as an empty allowlist", () => {
     for (const bad of [
-      { mode: "none" },
-      { mode: "open", extra: 1 },
-      { mode: "allowlist", allowHosts: ["github.com"] },
+      { ceiling: "none" },
+      { mode: "open" },
+      { default: "open", extra: 1 },
+      { ceiling: "allowlist", allowHosts: ["github.com"] },
       { base: "all" },
       { extraHosts: ["10.0.0.1"] },
       { extraHosts: ["localhost"] },
@@ -249,23 +314,20 @@ describe("org cloudNetwork", () => {
       { extraHosts: Array.from({ length: 201 }, (_, i) => `h${i}.example.org`) },
     ]) {
       expect(
-        OrgSettingsPatchSchema.safeParse({ cloudNetwork: bad }).success,
+        OrgSettingsPatchSchema.safeParse({ deviceNetwork: bad }).success,
         JSON.stringify(bad),
       ).toBe(false);
     }
-    // an old copy (`allowHosts`) and anything else invalid read as the empty allowlist
-    for (const stored of [
-      { mode: "open", extra: 1 },
-      { mode: "allowlist", allowHosts: ["github.com"] },
-    ]) {
-      expect(parseOrgSettings({ cloudNetwork: stored }).cloudNetwork).toEqual({
-        mode: "allowlist",
+    for (const stored of [{ mode: "open" }, { ceiling: "allowlist", allowHosts: ["github.com"] }]) {
+      expect(parseOrgSettings({ deviceNetwork: stored }).deviceNetwork).toEqual({
+        default: "allowlist",
+        ceiling: "allowlist",
         base: "none",
       });
     }
     // an exclusion of a host the platform does not list stays valid
     expect(
-      OrgSettingsPatchSchema.safeParse({ cloudNetwork: { excludedHosts: ["gone.example.org"] } })
+      OrgSettingsPatchSchema.safeParse({ deviceNetwork: { excludedHosts: ["gone.example.org"] } })
         .success,
     ).toBe(true);
   });
@@ -274,42 +336,71 @@ describe("org cloudNetwork", () => {
     const s = settingsWith();
     const tokenUpdate = tokenUpdateOf(s);
     // absent = open: setting open explicitly is a no-op
-    expect(await codeOf(tokenUpdate({ cloudNetwork: { mode: "open" } }))).toBeUndefined();
+    expect(await codeOf(tokenUpdate({ deviceNetwork: { ceiling: "open" } }))).toBeUndefined();
     // an extra host widens, even one the platform lists today (it would stay when the platform
     // drops it)
-    expect(await codeOf(tokenUpdate({ cloudNetwork: { extraHosts: ["a.example.com"] } }))).toBe(
+    expect(await codeOf(tokenUpdate({ deviceNetwork: { extraHosts: ["a.example.com"] } }))).toBe(
       "org.sandbox_egress_not_allowed",
     );
-    expect(await codeOf(tokenUpdate({ cloudNetwork: { extraHosts: ["github.com"] } }))).toBe(
+    expect(await codeOf(tokenUpdate({ deviceNetwork: { extraHosts: ["github.com"] } }))).toBe(
       "org.sandbox_egress_not_allowed",
     );
-    // excluding platform hosts and switching to the allowlist narrow
+    // excluding platform hosts and narrowing to the allowlist narrow
     expect(
       (
         await tokenUpdate({
-          cloudNetwork: { mode: "allowlist", excludedHosts: ["github.com"] },
+          deviceNetwork: { ceiling: "allowlist", excludedHosts: ["github.com"] },
         })
-      ).cloudNetwork,
-    ).toEqual({ mode: "allowlist", excludedHosts: ["github.com"] });
-    // open where it is the allowlist widens; so does dropping an exclusion, and clearing
-    expect(
-      await codeOf(tokenUpdate({ cloudNetwork: { mode: "open", excludedHosts: ["github.com"] } })),
-    ).toBe("org.sandbox_egress_not_allowed");
-    expect(await codeOf(tokenUpdate({ cloudNetwork: { mode: "allowlist" } }))).toBe(
-      "org.sandbox_egress_not_allowed",
-    );
-    expect(await codeOf(tokenUpdate({ cloudNetwork: null }))).toBe(
+      ).deviceNetwork,
+    ).toEqual({ ceiling: "allowlist", excludedHosts: ["github.com"] });
+    // opening the ceiling or the default where it is the allowlist widens; clearing too
+    const opens: (DeviceNetworkSetting | null)[] = [
+      { ceiling: "open", excludedHosts: ["github.com"] },
+      { excludedHosts: ["github.com"] },
+      null,
+    ];
+    for (const deviceNetwork of opens)
+      expect(await codeOf(tokenUpdate({ deviceNetwork }))).toBe("org.network_not_allowed");
+    // dropping an exclusion widens the hosts
+    expect(await codeOf(tokenUpdate({ deviceNetwork: { ceiling: "allowlist" } }))).toBe(
       "org.sandbox_egress_not_allowed",
     );
     // base none narrows; back to the platform widens
     expect(
-      (await tokenUpdate({ cloudNetwork: { mode: "allowlist", base: "none" } })).cloudNetwork,
-    ).toEqual({ mode: "allowlist", base: "none" });
+      (await tokenUpdate({ deviceNetwork: { ceiling: "allowlist", base: "none" } })).deviceNetwork,
+    ).toEqual({ ceiling: "allowlist", base: "none" });
     expect(
       await codeOf(
-        tokenUpdate({ cloudNetwork: { mode: "allowlist", excludedHosts: ["github.com"] } }),
+        tokenUpdate({ deviceNetwork: { ceiling: "allowlist", excludedHosts: ["github.com"] } }),
       ),
     ).toBe("org.sandbox_egress_not_allowed");
+    // the default narrows on its own and cannot reopen
+    expect(
+      (
+        await tokenUpdate({
+          deviceNetwork: { default: "allowlist", ceiling: "allowlist", base: "none" },
+        })
+      ).deviceNetwork,
+    ).toEqual({ default: "allowlist", ceiling: "allowlist", base: "none" });
+    expect(
+      await codeOf(tokenUpdate({ deviceNetwork: { ceiling: "allowlist", base: "none" } })),
+    ).toBe("org.network_not_allowed");
+  });
+
+  it("narrow only (tokens): the effective default and ceiling never widen (M2)", async () => {
+    await storePlatformNetwork({ default: "allowlist", ceiling: "open" });
+    const s = settingsWith();
+    const tokenUpdate = tokenUpdateOf(s);
+    // the org has no default, so it follows the platform's allowlist: open widens it
+    expect(await codeOf(tokenUpdate({ deviceNetwork: { default: "open" } }))).toBe(
+      "org.network_not_allowed",
+    );
+    // the ceiling it follows is open: pinning it open is no widening
+    expect(await codeOf(tokenUpdate({ deviceNetwork: { ceiling: "open" } }))).toBeUndefined();
+    // a person may open the default
+    expect(
+      await codeOf(s.update(orgId, { deviceNetwork: { default: "open" } }, accountId)),
+    ).toBeUndefined();
   });
 
   it("narrow only (tokens): an extra covered by a stored extra narrows; base none with a platform host is refused (over-strict on purpose)", async () => {
@@ -317,59 +408,48 @@ describe("org cloudNetwork", () => {
     const tokenUpdate = tokenUpdateOf(s);
     await s.update(
       orgId,
-      { cloudNetwork: { extraHosts: ["*.example.org", "pypi.org"] } },
+      { deviceNetwork: { extraHosts: ["*.example.org", "pypi.org"] } },
       accountId,
     );
     expect(
-      (await tokenUpdate({ cloudNetwork: { extraHosts: ["a.example.org"] } })).cloudNetwork,
+      (await tokenUpdate({ deviceNetwork: { extraHosts: ["a.example.org"] } })).deviceNetwork,
     ).toEqual({ extraHosts: ["a.example.org"] });
-    // a narrowing these rules refuse: a platform host pinned as an extra under base none
     expect(
       await codeOf(
-        tokenUpdate({ cloudNetwork: { base: "none", extraHosts: ["registry.npmjs.org"] } }),
+        tokenUpdate({ deviceNetwork: { base: "none", extraHosts: ["registry.npmjs.org"] } }),
       ),
     ).toBe("org.sandbox_egress_not_allowed");
   });
 
   it("a token's widening is refused under the kill switch too (it would take effect later)", async () => {
     const s = settingsWith({ egress: "none" });
-    expect((await s.deployment()).cloudNetwork).toEqual({
-      allowHosts: LIMITS.allowHosts,
-      orgHosts: "extend",
-      off: true,
-    });
+    expect((await s.deployment()).deviceNetwork.off).toBe(true);
     expect(s.effectiveNetwork(await s.get(orgId))).toEqual({ mode: "allowlist", hosts: [] });
     expect(
-      await codeOf(tokenUpdateOf(s)({ cloudNetwork: { extraHosts: ["a.example.com"] } })),
+      await codeOf(tokenUpdateOf(s)({ deviceNetwork: { extraHosts: ["a.example.com"] } })),
     ).toBe("org.sandbox_egress_not_allowed");
   });
 
-  describe("under the platform ceiling (orgHosts within)", () => {
-    it("forces the allowlist and drops extras outside the platform list on read", async () => {
+  describe("under the platform hosts ceiling (orgHosts within)", () => {
+    it("drops extras outside the platform list on read", async () => {
       await settingsWith().update(
         orgId,
-        { cloudNetwork: { mode: "open", extraHosts: ["pypi.org", "github.com"] } },
+        { deviceNetwork: { extraHosts: ["pypi.org", "github.com"] } },
         accountId,
       );
       const s = settingsWith({ orgHosts: "within" });
-      expect(s.effectiveNetwork(await s.get(orgId))).toEqual({
-        mode: "allowlist",
-        hosts: ["registry.npmjs.org", "github.com"],
-      });
-      expect((await s.deployment()).cloudNetwork.orgHosts).toBe("within");
+      expect(s.effectiveNetwork(await s.get(orgId)).hosts).toEqual([
+        "registry.npmjs.org",
+        "github.com",
+      ]);
+      expect((await s.deployment()).deviceNetwork.orgHosts).toBe("within");
     });
 
-    it("refuses a new open mode or a new extra outside the list, for people and tokens", async () => {
+    it("refuses a new extra outside the list, for people and tokens", async () => {
       const s = settingsWith({ orgHosts: "within" });
       for (const actor of [undefined, "tok"]) {
-        const opts = actor === undefined ? undefined : { onlyNarrows: true };
-        expect(
-          await codeOf(
-            s.update(orgId, { cloudNetwork: { mode: "open" } }, accountId, actor, undefined, opts),
-          ),
-        ).toBe("org.sandbox_egress_not_allowed");
         const e = await s
-          .update(orgId, { cloudNetwork: { extraHosts: ["pypi.org"] } }, accountId, actor)
+          .update(orgId, { deviceNetwork: { extraHosts: ["pypi.org"] } }, accountId, actor)
           .catch((err: ApiError) => err);
         expect((e as ApiError).code).toBe("org.sandbox_egress_not_allowed");
         expect((e as ApiError).message).toContain("pypi.org");
@@ -383,17 +463,17 @@ describe("org cloudNetwork", () => {
         (
           await s.update(
             orgId,
-            { cloudNetwork: { mode: "allowlist", base: "none", extraHosts: ["github.com"] } },
+            { deviceNetwork: { ceiling: "allowlist", base: "none", extraHosts: ["github.com"] } },
             accountId,
           )
-        ).cloudNetwork,
-      ).toEqual({ mode: "allowlist", base: "none", extraHosts: ["github.com"] });
+        ).deviceNetwork,
+      ).toEqual({ ceiling: "allowlist", base: "none", extraHosts: ["github.com"] });
     });
 
     it("accepts stored values sent back as they are", async () => {
       await settingsWith().update(
         orgId,
-        { cloudNetwork: { mode: "open", extraHosts: ["pypi.org"] } },
+        { deviceNetwork: { default: "open", extraHosts: ["pypi.org"] } },
         accountId,
       );
       const s = settingsWith({ orgHosts: "within" });
@@ -402,25 +482,33 @@ describe("org cloudNetwork", () => {
           await s.update(
             orgId,
             {
-              cloudNetwork: {
-                mode: "open",
+              deviceNetwork: {
+                default: "open",
                 extraHosts: ["pypi.org"],
                 excludedHosts: ["github.com"],
               },
             },
             accountId,
           )
-        ).cloudNetwork,
-      ).toEqual({ mode: "open", extraHosts: ["pypi.org"], excludedHosts: ["github.com"] });
+        ).deviceNetwork,
+      ).toEqual({ default: "open", extraHosts: ["pypi.org"], excludedHosts: ["github.com"] });
     });
   });
 
-  it("deployment() carries the platform's Full switch and the default cloud network", async () => {
+  it("deployment() carries the platform's device sandbox settings", async () => {
     await storePlatformMode({ permission: "off" });
+    await storePlatformNetwork({ default: "allowlist" });
     const s = settingsWith();
     expect(await s.deployment()).toEqual({
-      fullAccess: { permission: "off", source: "db" },
-      cloudNetwork: { allowHosts: LIMITS.allowHosts, orgHosts: "extend", off: false },
+      outsideSandbox: { permission: "off", source: "db" },
+      deviceNetwork: {
+        default: "allowlist",
+        ceiling: "open",
+        sources: { default: "db", ceiling: "default" },
+        allowHosts: LIMITS.allowHosts,
+        orgHosts: "extend",
+        off: false,
+      },
       attribution: {
         commit: "Co-Authored-By: Capybara <noreply@capybarahq.com>",
         pr: "🤖 Generated with [Capybara](https://github.com/capybara-hq/core)",
@@ -484,9 +572,9 @@ describe("org settings audit", () => {
         .select("id")
         .where("action", "=", "org.settings_updated")
         .execute();
-    await s.update(orgId, { cloudNetwork: { mode: "open" } }, accountId);
+    await s.update(orgId, { deviceNetwork: { default: "open" } }, accountId);
     expect(await updates()).toHaveLength(1);
-    await s.update(orgId, { cloudNetwork: { mode: "open" } }, accountId);
+    await s.update(orgId, { deviceNetwork: { default: "open" } }, accountId);
     expect(await updates()).toHaveLength(1);
   });
 
@@ -497,14 +585,14 @@ describe("org settings audit", () => {
       .where("id", "=", orgId)
       .execute();
     const s = settingsWith();
-    const saved: OrgSettings = await s.update(orgId, { fullAccess: "off" }, accountId);
-    expect(saved).toMatchObject({ fullAccess: "off" });
+    const saved: OrgSettings = await s.update(orgId, { outsideSandbox: "off" }, accountId);
+    expect(saved).toMatchObject({ outsideSandbox: "off" });
     const row = await db
       .selectFrom("orgs")
       .select("settings")
       .where("id", "=", orgId)
       .executeTakeFirstOrThrow();
-    expect(row.settings).toMatchObject({ fullAccess: "off", futureKey: { enabled: true } });
+    expect(row.settings).toMatchObject({ outsideSandbox: "off", futureKey: { enabled: true } });
   });
 });
 

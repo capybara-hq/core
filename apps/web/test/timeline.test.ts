@@ -226,6 +226,46 @@ describe("buildTimeline", () => {
     expect(rows[2]).not.toHaveProperty("outsideSandbox");
   });
 
+  it("a crossing Full access granted by itself marks the row approved automatically, with its kind", () => {
+    const review = { decision: "allow", by: "rule", rule: null, reason: "Full access" };
+    const events = [
+      user(1, "go"),
+      calls(2, [
+        { id: "a", name: "Bash", input: { command: "curl https://example.com" } },
+        { id: "b", name: "Bash", input: { command: "npm run dev" } },
+        { id: "c", name: "Bash", input: { command: "ls" } },
+        { id: "d", name: "Bash", input: { command: "cat ~/x" } },
+      ]),
+      result(3, "a", "Bash", {
+        review: { ...review, decisionSource: "full-access", crossing: "host" },
+      }),
+      result(4, "b", "Bash", {
+        review: {
+          ...review,
+          decisionSource: "full-access",
+          crossing: "outside-sandbox",
+          sandbox: "escalated",
+        },
+      }),
+      // the review model's grant and a plain allow are not automatic approvals
+      result(5, "c", "Bash", {
+        review: {
+          ...review,
+          by: "classifier",
+          decisionSource: "review-model",
+          crossing: "directory",
+        },
+      }),
+      result(6, "d", "Bash", { review: { ...review, decisionSource: "full-access" } }),
+    ];
+    const rows = tools(buildTimeline(events, [], new Map(), "zh"))[0]?.rows.map((r) => r.row) ?? [];
+    expect(rows[0]).toMatchObject({ status: "done", autoGranted: "host" });
+    expect(rows[0]).not.toHaveProperty("outsideSandbox");
+    expect(rows[1]).toMatchObject({ autoGranted: "outside-sandbox", outsideSandbox: true });
+    expect(rows[2]).not.toHaveProperty("autoGranted");
+    expect(rows[3]).not.toHaveProperty("autoGranted");
+  });
+
   it("a call to a tool the step did not load (not_loaded view) is a neutral notice, not a failure", () => {
     const text =
       'Tool "plugin__memory__view" is not loaded. Call ToolSearch first with keywords for this tool, then call it in a later step.';

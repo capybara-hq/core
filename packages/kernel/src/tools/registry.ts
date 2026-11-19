@@ -113,6 +113,12 @@ export interface BuiltinCallContext extends ToolCallContext {
    * an unattended run, a device or org that forbids it): no escalation hint is given.
    */
   sandboxEscalation?: "available" | "escalated";
+  /**
+   * A reviewed, restricted `Bash` call on a device or org where running outside the sandbox is
+   * not possible: why, in the per-layer words of an escalation refusal (who turns it on). The
+   * tool's sandbox hint explains a denial with it instead of inviting an escalation.
+   */
+  sandboxEscalationRefusal?: string;
   /** The parent run of a sub-agent's run (absent for a top-level run). */
   parentRunId?: string;
   /**

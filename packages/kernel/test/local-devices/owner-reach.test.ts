@@ -8,6 +8,7 @@ import { PermissionProfilesService } from "../../src/conversations/permission-pr
 import { createDb } from "../../src/db/pool.js";
 import { DevicesService } from "../../src/devices/devices.service.js";
 import { DevicePatchBody, DevicePolicyBody } from "../../src/devices/dto.js";
+import { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
 import { TransactionHost } from "../../src/infra/database/transaction-host.js";
 import { DevicePolicyService } from "../../src/local-devices/device-policy.service.js";
 import { MachinesService } from "../../src/local-devices/machines.js";
@@ -66,12 +67,14 @@ const report = (
   restrictedAllowedDomains: string[] = [],
   revision = `rev-${sequence}`,
 ): DeviceOwnerCeiling => ({
-  version: 2,
+  version: 3,
   revision,
   sequence,
-  fullAccess,
+  outsideSandbox: fullAccess,
+  // as the fixture's stored report: an owner who allows running outside keeps the open network
+  network: fullAccess ? "open" : "allowlist",
   restrictedProjectReach,
-  restrictedAllowedDomains,
+  allowedDomains: restrictedAllowedDomains,
 });
 
 async function fixture() {
@@ -143,7 +146,7 @@ describe("all four owner combinations over authenticated reports", () => {
       expect(await f.record(report(1, fullAccess, reach))).toBe("recorded");
       const p = await f.preview();
       // Full execution follows Full permission alone; broad restricted reach follows the reach
-      expect(p.fullAccessCeiling).toBe(fullAccess);
+      expect(p.outsideSandboxCeiling).toBe(fullAccess);
       expect(p.broadProjectReach).toBe(reach === "os-user");
       expect((await f.browse()).readRoots).toEqual(reach === "os-user" ? ["/"] : ["/work"]);
       if (reach === "os-user")
@@ -154,7 +157,7 @@ describe("all four owner combinations over authenticated reports", () => {
         });
       expect(await f.view()).toMatchObject({
         state: "report",
-        fullAccess,
+        outsideSandbox: fullAccess,
         restrictedProjectReach: reach,
         sequence: 1,
         revision: "rev-1",
@@ -165,9 +168,9 @@ describe("all four owner combinations over authenticated reports", () => {
   it("a platform or org that turns Full off narrows reach to the workspace; no report overrides it", async () => {
     const f = await fixture();
     await f.record(report(1, true, "os-user"));
-    await k.app.get(OrgSettingsService).update(f.orgId, { fullAccess: "off" }, f.accountId);
+    await k.app.get(OrgSettingsService).update(f.orgId, { outsideSandbox: "off" }, f.accountId);
     const p = await f.preview();
-    expect(p.fullAccessCeiling).toBe(false);
+    expect(p.outsideSandboxCeiling).toBe(false);
     expect(p.broadProjectReach).toBe(false);
     expect((await f.browse()).readRoots).toEqual(["/work"]);
     await expect(f.bindOutside()).rejects.toMatchObject({ code: "device.project_outside_mode" });
@@ -182,9 +185,9 @@ describe("stale, missing and out-of-order reports", () => {
     expect(await f.record(report(5, true, "os-user"))).toBe("recorded");
     expect(await f.record(report(5, true, "os-user"))).toBe("same");
     expect(await f.record(report(3, true, "os-user"))).toBe("stale");
-    expect(await f.view()).toMatchObject({ state: "blocked", fullAccess: false, stale: true });
+    expect(await f.view()).toMatchObject({ state: "blocked", outsideSandbox: false, stale: true });
     await expect(f.browse()).rejects.toMatchObject({ code: "device.owner_report_stale" });
-    expect((await f.preview()).fullAccessCeiling).toBe(false);
+    expect((await f.preview()).outsideSandboxCeiling).toBe(false);
     // the current report again clears the block
     expect(await f.record(report(5, true, "os-user"))).toBe("same");
     expect((await f.browse()).readRoots).toEqual(["/"]);
@@ -198,10 +201,10 @@ describe("stale, missing and out-of-order reports", () => {
     const f = await fixture();
     await f.db
       .updateTable("device_machines")
-      .set({ local_policy: null })
+      .set({ owner_report: null })
       .where("id", "=", f.machineId)
       .execute();
-    expect(await f.view()).toMatchObject({ state: "missing", fullAccess: false });
+    expect(await f.view()).toMatchObject({ state: "missing", outsideSandbox: false });
     expect((await f.preview()).broadProjectReach).toBe(false);
     await expect(
       f.record({ ...report(1, true, "os-user"), restrictedProjectReach: "home" } as never),
@@ -226,7 +229,7 @@ describe("stale, missing and out-of-order reports", () => {
         name: "Laptop",
         os: "darwin",
         arch: "arm64",
-        features: ["mode", "projects"],
+        features: ["projects"],
         roots: JSON.stringify({ workspace: "/work" }),
       })
       .returning("id")
@@ -248,27 +251,22 @@ describe("the device view's recent changes", () => {
     await f.record(report(1, true, "os-user"));
     await f.record(report(2, false, "workspace"));
     const view = await k.app.get(DevicesService).get(f.orgId, f.accountId, f.deviceId);
-    expect(view.mode.recent[0]).toMatchObject({
+    expect(view.sandbox.recent[0]).toMatchObject({
       kind: "ceiling",
       ceiling: {
-        from: { fullAccess: true, restrictedProjectReach: "os-user" },
-        to: { fullAccess: false, restrictedProjectReach: "workspace" },
+        from: { outsideSandbox: true, restrictedProjectReach: "os-user" },
+        to: { outsideSandbox: false, restrictedProjectReach: "workspace" },
       },
       via: "device",
       outcome: "applied",
     });
-    // a local device has no outer network of the deployment's
+    // a local device has no cloud reconcile marker
     expect(view.reconcileRequired).toBe(false);
-    expect(view.mode).toMatchObject({
-      outerNetwork: null,
-      sandboxNetwork: null,
-      fullNetwork: null,
-    });
   });
 });
 
-describe("the device view's effective owner Full access", () => {
-  it("an old program without a report follows its reported mode, as admission does", async () => {
+describe("the device view's owner ceiling", () => {
+  it("a machine row without a report never infers Full from an older summary, as admission does", async () => {
     const f = await fixture();
     const setOld = (features: string[], localPolicy: unknown) =>
       f.db
@@ -276,13 +274,15 @@ describe("the device view's effective owner Full access", () => {
         .set({ owner_report: null, features, local_policy: JSON.stringify(localPolicy) })
         .where("id", "=", f.machineId)
         .execute();
-    // a pre-auto-mode program that runs unsandboxed: admission derives auto mode from it
+    // protocol 4 has no legacy owner state: an old isolation or mode is ignored, fail closed
     await setOld([], { isolation: "none" });
-    expect(await f.view()).toMatchObject({ fullAccess: false, effectiveFullAccess: true });
-    await setOld([], { isolation: "sandbox" });
-    expect(await f.view()).toMatchObject({ effectiveFullAccess: false });
+    expect(await f.view()).toMatchObject({
+      state: "missing",
+      outsideSandbox: false,
+      network: "allowlist",
+    });
     await setOld(["networkReport"], { mode: "auto", allowedDomains: [] });
-    expect(await f.view()).toMatchObject({ state: "legacy", effectiveFullAccess: true });
+    expect(await f.view()).toMatchObject({ state: "missing", outsideSandbox: false });
   });
 });
 
@@ -296,7 +296,7 @@ describe("reordered carriers (fix round 1)", () => {
           .get(OwnerReports)
           .record(f.machineId, report(4, false, "workspace"), { connectionId: "c1", via }),
       ).toBe("stale");
-    expect(await f.view()).toMatchObject({ state: "report", fullAccess: true, sequence: 5 });
+    expect(await f.view()).toMatchObject({ state: "report", outsideSandbox: true, sequence: 5 });
     expect((await f.browse()).readRoots).toEqual(["/"]);
     // a late policy answer with an older sequence still settles its op as applied
     await f.db
@@ -322,7 +322,7 @@ describe("reordered carriers (fix round 1)", () => {
         { machineId: f.machineId, opId: "op-late" },
         {
           outcome: "applied",
-          policy: { mode: "auto", allowedDomains: [] },
+          policy: { allowedDomains: [] },
           ownerCeiling: report(3, true, "os-user"),
         },
       ),
@@ -362,27 +362,63 @@ describe("reordered carriers (fix round 1)", () => {
 });
 
 describe("Full consent and revocation follow only actual Full changes", () => {
-  it("restricted-only changes keep Full consent; removing Full resets it; widening needs fresh consent", async () => {
+  it("narrowing changes keep Full consent; only a widening needs fresh consent", async () => {
     const f = await fixture();
     await f.record(report(1, true, "os-user", ["a.test"]));
     await f.consentFull();
     expect((await f.profileView()).profile).toBe("full-access");
-    // reach and domains only: Full consent stays
-    await f.record(report(2, true, "workspace", []));
+    // domains only: Full consent stays
+    await f.record(report(2, true, "os-user", []));
     expect((await f.profileView()).profile).toBe("full-access");
     // a new revision with the same facts publishes nothing
-    await f.record(report(3, true, "workspace", [], "rev-touched"));
+    await f.record(report(3, true, "os-user", [], "rev-touched"));
     expect((await f.profileView()).profile).toBe("full-access");
-    // Full removed: consent is reset
-    await f.record(report(4, false, "workspace"));
-    expect((await f.profileView()).profile).toBe("approve-for-me");
-    // widening back is not the old consent
-    await f.record(report(5, true, "workspace"));
+    // a narrower reach and running outside removed are narrowings: the consent still covers them
+    await f.record(report(31, true, "workspace", []));
+    expect((await f.profileView()).profile).toBe("full-access");
+    await f.record(report(32, false, "workspace"));
+    expect((await f.profileView()).profile).toBe("full-access");
+    // widening back resets it with a recorded profile change: not the old consent
+    await f.record(report(33, true, "workspace"));
     const v = await f.profileView();
     expect(v.profile).not.toBe("full-access");
+    const changed = await f.db
+      .selectFrom("conversation_events")
+      .select("payload")
+      .where("conversation_id", "=", f.conversationId)
+      .where("type", "=", "permission_profile_changed")
+      .execute();
+    expect(changed.at(-1)?.payload).toMatchObject({ newProfile: "approve-for-me" });
   });
 
-  it("an org that turns Full off over an owner report with Full: the profile drops Full, admission narrows", async () => {
+  it("an owner network narrowing publishes, audits, keeps Full consent and revokes open work", async () => {
+    const f = await fixture();
+    await f.record(report(1, true, "workspace"));
+    await f.consentFull();
+    expect((await f.profileView()).profile).toBe("full-access");
+    const operationId = randomUUID();
+    await f.db.insertInto("sandbox_operation_intents").values(openIntent(f, operationId)).execute();
+    await f.record({ ...report(2, true, "workspace"), network: "allowlist" });
+    // open to allowlist only narrows: the consent still covers it
+    expect((await f.profileView()).profile).toBe("full-access");
+    const intent = await f.db
+      .selectFrom("sandbox_operation_intents")
+      .select("state")
+      .where("operation_id", "=", operationId)
+      .executeTakeFirstOrThrow();
+    expect(intent.state).toBe("revoked");
+    const audits = await f.db
+      .selectFrom("audit_events")
+      .select("detail")
+      .where("action", "=", "device.owner_ceiling_changed")
+      .execute();
+    expect(audits.at(-1)?.detail).toMatchObject({
+      from: { network: "open" },
+      to: { network: "allowlist" },
+    });
+  });
+
+  it("an org that turns running outside off keeps the Full consent (a narrowing); admission stays sandboxed", async () => {
     const f = await fixture();
     await f.record(report(1, true, "os-user"));
     await f.consentFull();
@@ -398,18 +434,20 @@ describe("Full consent and revocation follow only actual Full changes", () => {
         "exec",
         new AbortController().signal,
       );
+    // Full access keeps the sandbox: a scoped filesystem, never the device pair
     const full = await admit();
-    expect(full).toMatchObject({ profile: "full-access", filesystem: { kind: "device" } });
+    expect(full).toMatchObject({ profile: "full-access", filesystem: { kind: "scoped" } });
     // the org turns Full off; the machine still reports a Full owner ceiling
-    await k.app.get(OrgSettingsService).update(f.orgId, { fullAccess: "off" }, f.accountId);
-    expect((await f.profileView()).profile).not.toBe("full-access");
+    await k.app.get(OrgSettingsService).update(f.orgId, { outsideSandbox: "off" }, f.accountId);
+    expect((await f.profileView()).profile).toBe("full-access");
+    expect((await f.profileView()).outsideSandboxCeiling).toBe(false);
     const narrowed = await admit();
-    expect(narrowed.profile).not.toBe("full-access");
+    expect(narrowed.profile).toBe("full-access");
     expect(narrowed.filesystem.kind).toBe("scoped");
     expect(narrowed.network.kind).not.toBe("environment");
   });
 
-  it("a disconnected owner narrowing arrives with the reconnect hello and resets Full", async () => {
+  it("a disconnected owner narrowing arrives with the reconnect hello and keeps Full consent", async () => {
     const f = await fixture();
     const roots = { ...DEFAULT_SANDBOX_ROOTS, workspace: "/work" };
     await f.db
@@ -426,8 +464,11 @@ describe("Full consent and revocation follow only actual Full changes", () => {
       ownerCeiling: report(2, false, "os-user"),
     };
     await k.app.get(MachinesService).recordHelloV3(f.machineId, hello, "c-reconnect");
-    expect(await f.view()).toMatchObject({ fullAccess: false, restrictedProjectReach: "os-user" });
-    expect((await f.profileView()).profile).toBe("approve-for-me");
+    expect(await f.view()).toMatchObject({
+      outsideSandbox: false,
+      restrictedProjectReach: "os-user",
+    });
+    expect((await f.profileView()).profile).toBe("full-access");
     // a stale report on a reconnect blocks instead of reverting
     await k.app
       .get(MachinesService)
@@ -439,19 +480,22 @@ describe("Full consent and revocation follow only actual Full changes", () => {
 describe("web writes only narrow", () => {
   it("the local policy route refuses any widening; narrowing needs an owner-reporting program", async () => {
     for (const ownerCeiling of [
-      { fullAccess: true },
+      { outsideSandbox: true },
+      { network: "open" },
       { restrictedProjectReach: "os-user" },
-      { fullAccess: false, extra: 1 },
+      { outsideSandbox: false, extra: 1 },
+      { fullAccess: false },
       {},
     ])
       expect(DevicePolicyBody.safeParse({ ownerCeiling }).success).toBe(false);
-    expect(DevicePolicyBody.safeParse({ ownerCeiling: { fullAccess: false } }).success).toBe(true);
+    for (const ownerCeiling of [{ outsideSandbox: false }, { network: "allowlist" }])
+      expect(DevicePolicyBody.safeParse({ ownerCeiling }).success).toBe(true);
     const f = await fixture();
     // a connected program that reports no authenticated owner facts cannot take it: nothing is
     // sent (protocol 2 programs are refused at the upgrade since the activation)
     await f.db
       .updateTable("device_machines")
-      .set({ features: ["mode", "projects", "policyOp", "policyOpId"], owner_report: null })
+      .set({ features: ["projects", "policyOp", "policyOpId"], owner_report: null })
       .where("id", "=", f.machineId)
       .execute();
     const relay = k.app.get(LocalDeviceRelay);
@@ -465,7 +509,7 @@ describe("web writes only narrow", () => {
       k.app
         .get(DevicesService)
         .changePolicy(f.orgId, { id: f.accountId, displayName: "Owner" }, f.deviceId, {
-          ownerCeiling: { fullAccess: false },
+          ownerCeiling: { outsideSandbox: false },
         }),
     ).rejects.toMatchObject({ code: "device.policy_unsupported", message: /ceiling set/ });
     expect(call).not.toHaveBeenCalled();
@@ -499,7 +543,7 @@ describe("web writes only narrow", () => {
           { machineId: f.machineId, opId: "op-1" },
           {
             outcome: "applied",
-            policy: { mode: "sandbox", allowedDomains: [] },
+            policy: { allowedDomains: [] },
             ownerCeiling,
           },
         ),
@@ -508,11 +552,11 @@ describe("web writes only narrow", () => {
     expect(await settle(report(4, false, "os-user"))).toMatchObject({ applied: false });
     expect(await f.view()).toMatchObject({ state: "blocked" });
     expect(await settle(report(5, false, "os-user"))).toMatchObject({ applied: true });
-    expect(await f.view()).toMatchObject({ state: "report", fullAccess: false, sequence: 5 });
+    expect(await f.view()).toMatchObject({ state: "report", outsideSandbox: false, sequence: 5 });
   });
 });
 
-describe("cloud owner ceiling PATCH", () => {
+describe("cloud network PATCH (service)", () => {
   async function cloud() {
     const f = await fixture();
     const id = randomUUID();
@@ -526,126 +570,182 @@ describe("cloud owner ceiling PATCH", () => {
         source: "cloud",
         provider: "@permission-policy-test",
         name: "Cloud",
-        owner_full_access: false,
-        outer_network: JSON.stringify({ kind: "allowlist", hosts: ["a.test"] }),
       })
       .execute();
     const devices = k.app.get(DevicesService);
-    const patch = (p: Parameters<DevicesService["update"]>[3]) =>
-      devices.update(f.orgId, f.accountId, id, p);
+    const patch = (
+      p: Parameters<DevicesService["update"]>[3],
+      opts: Parameters<DevicesService["update"]>[5] = {},
+    ) => devices.update(f.orgId, f.accountId, id, p, undefined, opts);
     const row = () =>
       f.db
         .selectFrom("devices")
-        .select(["owner_full_access", "outer_network"])
+        .select(["network_mode", "network_hosts"])
         .where("id", "=", id)
         .executeTakeFirstOrThrow();
     return { f, id, patch, row };
   }
 
-  it("widening needs confirmation and an allowing platform and org; it never opens the outer network", async () => {
-    const c = await cloud();
-    expect(DevicePatchBody.safeParse({ ownerCeiling: { fullAccess: "yes" } }).success).toBe(false);
-    await expect(c.patch({ ownerCeiling: { fullAccess: true } })).rejects.toMatchObject({
-      code: "device.owner_ceiling_confirmation_required",
-    });
-    expect((await c.row()).owner_full_access).toBe(false);
-    const view = await c.patch({ ownerCeiling: { fullAccess: true }, confirmWidening: true });
-    expect(view.ownerCeiling).toMatchObject({ state: "cloud", fullAccess: true });
-    expect(await c.row()).toEqual({
-      owner_full_access: true,
-      outer_network: { kind: "allowlist", hosts: ["a.test"] },
-    });
-    await c.patch({ ownerCeiling: { fullAccess: false } });
-    expect((await c.row()).owner_full_access).toBe(false);
-    await k.app.get(OrgSettingsService).update(c.f.orgId, { fullAccess: "off" }, c.f.accountId);
-    await expect(
-      c.patch({ ownerCeiling: { fullAccess: true }, confirmWidening: true }),
-    ).rejects.toMatchObject({ code: "device.full_access_not_allowed" });
-  });
-
-  it("I3: a device B1 has not snapshotted is refused, never widened or pre-empted", async () => {
-    const c = await cloud();
-    await c.f.db
-      .updateTable("devices")
-      .set({ owner_full_access: null, outer_network: null, mode: "sandbox" })
-      .where("id", "=", c.id)
-      .execute();
-    for (const p of [
-      { ownerCeiling: { fullAccess: true }, confirmWidening: true as const },
-      { ownerCeiling: { fullAccess: false } },
+  it("the old cloud Full ceiling and mode switch are gone from the body", () => {
+    for (const body of [
+      { ownerCeiling: { fullAccess: true } },
+      { mode: "sandbox" },
+      { confirmWidening: true },
+      { network: { mode: "allowlist", hosts: ["a.test"], extra: 1 } },
     ])
-      await expect(c.patch(p)).rejects.toMatchObject({
-        code: "device.permission_not_migrated",
-      });
-    expect(
-      await c.f.db
-        .selectFrom("devices")
-        .select(["owner_full_access", "outer_network", "mode"])
-        .where("id", "=", c.id)
-        .executeTakeFirstOrThrow(),
-    ).toEqual({ owner_full_access: null, outer_network: null, mode: "sandbox" });
+      expect(DevicePatchBody.safeParse(body).success).toBe(false);
+    expect(DevicePatchBody.safeParse({ network: { mode: null } }).success).toBe(true);
   });
 
-  it("the view reports the reconcile marker, the outer and resulting networks and the effective Full", async () => {
+  it("narrow only (the Platform tool): a narrowing applies, a widening is refused and writes nothing", async () => {
+    const c = await cloud();
+    const view = await c.patch({ network: { mode: "none" } }, { narrowOnly: true });
+    expect(view.sandbox).toMatchObject({ network: "none", ownNetwork: "none" });
+    for (const network of [
+      { mode: "open" as const },
+      { mode: null },
+      { mode: "allowlist" as const },
+    ])
+      await expect(c.patch({ network }, { narrowOnly: true })).rejects.toMatchObject({
+        code: "device.network_not_allowed",
+      });
+    expect(await c.row()).toEqual({ network_mode: "none", network_hosts: [] });
+    // the owner in a web session may widen again within the ceilings
+    expect((await c.patch({ network: { mode: null } })).sandbox.network).toBe("open");
+  });
+
+  it("narrow only refuses a stored widening the network in effect does not show yet", async () => {
+    const config = k.app.get(KernelConfigService);
+    const [a, b] = config.get().sandbox.limits.allowHosts;
+    if (a === undefined || b === undefined) throw new Error("the default allowHosts has two hosts");
+    const refused = { code: "device.network_not_allowed" };
+    // the org's default is the allowlist: back to following the org changes nothing in effect,
+    // but a later org default `open` would open it
+    const c1 = await cloud();
+    await k.app
+      .get(OrgSettingsService)
+      .update(c1.f.orgId, { deviceNetwork: { default: "allowlist" } }, c1.f.accountId);
+    await c1.patch({ network: { mode: "allowlist" } });
+    await expect(c1.patch({ network: { mode: null } }, { narrowOnly: true })).rejects.toMatchObject(
+      refused,
+    );
+    // an explicit host list dropped for the org's hosts
+    const c2 = await cloud();
+    await c2.patch({ network: { mode: "allowlist", hosts: [a] } });
+    await expect(
+      c2.patch({ network: { mode: "allowlist", hosts: [] } }, { narrowOnly: true }),
+    ).rejects.toMatchObject(refused);
+    await expect(
+      c2.patch({ network: { mode: "allowlist", hosts: [a, b] } }, { narrowOnly: true }),
+    ).rejects.toMatchObject(refused);
+    expect(await c2.row()).toEqual({ network_mode: "allowlist", network_hosts: [a] });
+    // the kill switch closes every network: none → allowlist or null is still a stored widening
+    const c3 = await cloud();
+    await c3.patch({ network: { mode: "none" } });
+    const real = config.get();
+    vi.spyOn(config, "get").mockReturnValue({
+      ...real,
+      sandbox: { ...real.sandbox, limits: { ...real.sandbox.limits, egress: "none" } },
+    });
+    for (const network of [{ mode: "allowlist" as const }, { mode: null }])
+      await expect(c3.patch({ network }, { narrowOnly: true })).rejects.toMatchObject(refused);
+    expect(await c3.row()).toEqual({ network_mode: "none", network_hosts: [] });
+  });
+
+  it("a PATCH on a deleted device is not found and writes nothing", async () => {
+    const c = await cloud();
+    await k.app.get(DevicesService).remove(c.f.orgId, c.f.accountId, c.id);
+    await expect(c.patch({ network: { mode: "none" } })).rejects.toMatchObject({
+      code: "device.not_found",
+    });
+    await expect(
+      k.app
+        .get(DevicesService)
+        .checkNetwork(c.f.orgId, c.f.accountId, c.id, { mode: "none" }, true),
+    ).rejects.toMatchObject({ code: "device.not_found" });
+    expect(await c.row()).toEqual({ network_mode: null, network_hosts: [] });
+  });
+
+  it("a device PATCH racing an org ceiling narrowing: both commit or the PATCH is refused, never wider", async () => {
+    const c = await cloud();
+    await c.patch({ network: { mode: "allowlist" } });
+    const [patched, narrowed] = await Promise.allSettled([
+      c.patch({ network: { mode: "open" } }),
+      k.app
+        .get(OrgSettingsService)
+        .update(c.f.orgId, { deviceNetwork: { ceiling: "allowlist" } }, c.f.accountId),
+    ]);
+    expect(narrowed.status).toBe("fulfilled");
+    if (patched.status === "rejected")
+      expect(patched.reason).toMatchObject({ code: "device.network_not_allowed" });
+    // whichever came first, the network in effect is within the org's new ceiling
+    const view = await k.app.get(DevicesService).get(c.f.orgId, c.f.accountId, c.id);
+    expect(view.sandbox).toMatchObject({ network: "allowlist", networkCeiling: "allowlist" });
+  });
+
+  it("a cloud device has no owner ceiling and never runs outside; the view reports the reconcile marker", async () => {
     const c = await cloud();
     const get = () => k.app.get(DevicesService).get(c.f.orgId, c.f.accountId, c.id);
     let view = await get();
+    expect(view.ownerCeiling).toBeNull();
+    expect(view.sandbox.outsideSandbox).toBe(false);
     expect(view.reconcileRequired).toBe(false);
-    expect(view.mode.outerNetwork).toEqual({ kind: "allowlist", hosts: ["a.test"] });
-    // the org's cloud network is open by default: within the outer allowlist both modes reach it
-    expect(view.mode.sandboxNetwork).toEqual({ kind: "allowlist", hosts: ["a.test"] });
-    expect(view.mode.fullNetwork).toEqual({ kind: "allowlist", hosts: ["a.test"] });
-    expect(view.ownerCeiling).toMatchObject({ fullAccess: false, effectiveFullAccess: false });
-    // an old sandbox switch keeps Full off whatever the raw ceiling says
     await c.f.db
       .updateTable("devices")
-      .set({ owner_full_access: true, mode: "sandbox", permission_reconcile_required: true })
+      .set({ permission_reconcile_required: true })
       .where("id", "=", c.id)
       .execute();
     view = await get();
     expect(view.reconcileRequired).toBe(true);
-    expect(view.ownerCeiling).toMatchObject({ fullAccess: true, effectiveFullAccess: false });
-    await c.f.db
-      .updateTable("devices")
-      .set({ mode: null, permission_reconcile_required: false })
-      .where("id", "=", c.id)
-      .execute();
-    expect((await get()).ownerCeiling).toMatchObject({
-      fullAccess: true,
-      effectiveFullAccess: true,
-    });
   });
 
-  it("a ceiling change appears in the device's recent changes with its from and to", async () => {
-    const c = await cloud();
-    await c.patch({ ownerCeiling: { fullAccess: true }, confirmWidening: true });
-    const view = await c.patch({ ownerCeiling: { fullAccess: false } });
-    expect(view.mode.recent.map((r) => [r.kind, r.ceiling, r.via])).toEqual([
-      ["ceiling", { from: { fullAccess: true }, to: { fullAccess: false } }, "web"],
-      ["ceiling", { from: { fullAccess: false }, to: { fullAccess: true } }, "web"],
-    ]);
-  });
-
-  it("M3: widening is refused when the provider cannot run Full", async () => {
-    const c = await cloud();
-    // a provider without permission-scoped operations cannot enforce Full
-    await c.f.db
-      .updateTable("devices")
-      .set({ provider: "@no-permission-provider" })
-      .where("id", "=", c.id)
-      .execute();
-    await expect(
-      c.patch({ ownerCeiling: { fullAccess: true }, confirmWidening: true }),
-    ).rejects.toMatchObject({ code: "device.full_access_not_allowed" });
-    expect((await c.row()).owner_full_access).toBe(false);
-  });
-
-  it("a local device's owner ceiling is not set by the PATCH", async () => {
+  it("a local device's network is not set by the PATCH", async () => {
     const f = await fixture();
     await expect(
       k.app
         .get(DevicesService)
-        .update(f.orgId, f.accountId, f.deviceId, { ownerCeiling: { fullAccess: false } }),
-    ).rejects.toMatchObject({ code: "device.mode_on_device" });
+        .update(f.orgId, f.accountId, f.deviceId, { network: { mode: "allowlist" } }),
+    ).rejects.toMatchObject({ code: "device.ceiling_on_machine" });
   });
 });
+
+/** An admitted exec on the open public network (what an owner allowlist narrowing revokes). */
+function openIntent(
+  f: { orgId: string; accountId: string; deviceId: string; conversationId: string },
+  operationId: string,
+) {
+  return {
+    operation_id: operationId,
+    org_id: f.orgId,
+    account_id: f.accountId,
+    device_id: f.deviceId,
+    root_conversation_id: f.conversationId,
+    ordinal: 0,
+    method: "exec" as const,
+    input_hash: "i",
+    admission_hash: "a",
+    granted_hosts: "[]",
+    input: "{}",
+    scope: JSON.stringify({
+      operationId,
+      admitBeforeMs: Date.now() + 30000,
+      deviceId: f.deviceId,
+      rootConversationId: f.conversationId,
+      profileRevision: 0,
+      ceilingRevision: "c",
+      profile: "full-access",
+      actor: { accountId: f.accountId, conversationId: f.conversationId },
+      tag: operationId,
+      filesystem: { kind: "scoped", readRoots: ["/work"], writeRoots: ["/work"] },
+      network: { kind: "open-public" },
+    }),
+    epochs: JSON.stringify({ platform: 0, org: 0, device: 0, root: 0 }),
+    provider: "@local",
+    provider_version: "0.1.0",
+    instance_generation: "1",
+    execution_id: randomUUID(),
+    deadline: new Date(Date.now() + 60000),
+    retain_until: new Date(Date.now() + 60000),
+    state: "admitted" as const,
+  };
+}

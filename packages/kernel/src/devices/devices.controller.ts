@@ -1,7 +1,6 @@
 import type { DeviceLocalPolicySummary } from "@capybara-hq/plugin-sdk";
 import { Controller, Delete, Get, HttpCode, Inject, Patch, Post } from "@nestjs/common";
 import type { z } from "zod";
-import { ApiError } from "../errors.js";
 import {
   CurrentPrincipal,
   type Principal,
@@ -41,19 +40,21 @@ import {
  * - `GET /` → `{ items, defaultId, lastUsedId, cloudAvailable }` (`cloudAvailable`: there is a
  *   current sandbox provider; ruling R4);
  * - `POST / { name }` → 201 `{ device }`; `GET /:id` → `{ device }`;
- * - `PATCH /:id { name?, mode? }` → `{ device }`: renames it and narrows a cloud device to sandbox
- *   mode (`mode: "sandbox"` only, auto mode spec §4.3; its network then follows the org's
- *   `cloudNetwork`). A local device's mode lives on its machine (`device.mode_on_device`; change it
- *   with `POST /:id/policy { mode }` or the local CLI). The mode is set in a web session only
- *   (an API token → 403 `auth.session_required`);
+ * - `PATCH /:id { name?, network? }` → `{ device }`: renames it and sets a cloud device's sandbox
+ *   network (`{ mode: open | allowlist | none | null, hosts? }`, approval-only profiles design,
+ *   "Settings model") within its org's and the platform's ceilings (400
+ *   `device.network_not_allowed` above them). A local device's network lives on its machine (409
+ *   `device.ceiling_on_machine`; narrow it with `POST /:id/policy`). An API token may only narrow
+ *   it (400 `device.network_not_allowed`);
  * - `DELETE /:id` → 202 (destroyed by a job after the response);
  * - `POST /:id/files/reset` → 202 (the reset is enqueued: a worker empties the files, the next use
  *   starts empty);
  * - `DELETE /:id/machine` → 204: a local device's machine is disconnected (its credential
  *   revoked; it must sign in again);
- * - `POST /:id/policy { add?, remove?, mode? }` → `{ policy }`: the owner changes the local
- *   device's policy on its machine (network ask-to-allow spec §7; auto mode spec §4.1;
- *   `mode` is only ever `sandbox`). Web session only
+ * - `POST /:id/policy { remove?, ownerCeiling? }` → `{ policy }`: the owner narrows the local
+ *   device's sandbox on its machine (hosts removed; `outsideSandbox: false`, `network:
+ *   "allowlist"`, `restrictedProjectReach: "workspace"`); widening happens on the machine only.
+ *   Web session only
  *   (`@SessionOnly`: a personal access token → 403 `auth.session_required`, a service token → 403):
  *   a person changes their own machine's network policy, nothing model-driven does. Offline → 503
  *   `device.offline`; cloud or an older program → 409 `device.policy_unsupported`; the machine's
@@ -120,14 +121,6 @@ export class DevicesController {
   ): Promise<{ device: DeviceView }> {
     const p = requireUser(principal);
     const tokenId = patTokenId(p);
-    // a person changes their device's mode in a web session, narrowing or widening (auto mode
-    // spec §4.3, hardening D2): never an API token
-    if ((body.mode !== undefined || body.ownerCeiling !== undefined) && tokenId !== undefined) {
-      throw new ApiError(
-        "device.mode_requires_session",
-        "A device's mode is changed by its owner on the device page, not with an API token",
-      );
-    }
     return {
       device: await this.devices.update(
         org.orgId,
@@ -135,11 +128,11 @@ export class DevicesController {
         params.id,
         {
           ...(body.name !== undefined && { name: body.name }),
-          ...(body.mode !== undefined && { mode: body.mode }),
-          ...(body.ownerCeiling !== undefined && { ownerCeiling: body.ownerCeiling }),
-          ...(body.confirmWidening === true && { confirmWidening: true as const }),
+          ...(body.network !== undefined && { network: body.network }),
         },
         tokenId,
+        // an API token may narrow the network, never widen it (approval-only profiles design)
+        { narrowOnly: tokenId !== undefined },
       ),
     };
   }

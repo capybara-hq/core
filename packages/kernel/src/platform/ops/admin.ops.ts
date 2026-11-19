@@ -36,7 +36,8 @@ const SettingsInput = DEPLOYMENT_SETTINGS_PATCH.pick({
   uiTheme: true,
   uiArrangement: true,
   clientExtensions: true,
-  devicesFullAccess: true,
+  devicesOutsideSandbox: true,
+  devicesNetwork: true,
   attribution: true,
   externalSharing: true,
   shareMaxExpiryDays: true,
@@ -204,7 +205,7 @@ export class AdminOperations implements OnModuleInit {
       defineOperation({
         id: "admin.settings",
         description:
-          "Read the deployment settings (super admin): who may create orgs (orgCreation), the price currency, whether orgs may create their own connectors and skills, whether org admins may browse the marketplaces, the per-org limit overrides keyed by org id (orgs.get reads one org's), the platform's Full permission switch in effect (devicesFullAccess: permission allowed or off), the platform's attribution defaults for agent-created git commits and pull requests (attribution: commit, pr, sessionUrl), file sharing (externalSharing: value allow or deny, whether orgs may turn on public links to conversation files; shareMaxExpiryDays: value, the longest expiry a share may take in days), htmlRenderCdnAllowlist (the https origins a rendered HTML file may load libraries, styles, fonts and images from) and promptSuggestions (on or off, absent meaning on: whether the composer suggests the person's next message after a completed run; an org's own promptSuggestions must be on too); the switches each with sources: env, file or nacos are set in the startup config and read-only, db chosen in the admin console, default.",
+          "Read the deployment settings (super admin): who may create orgs (orgCreation), the price currency, whether orgs may create their own connectors and skills, whether org admins may browse the marketplaces, the per-org limit overrides keyed by org id (orgs.get reads one org's), the platform's device sandbox settings in effect (devicesOutsideSandbox: permission allowed or off, whether a device may be granted running a call outside its sandbox; devicesNetwork: default and ceiling, open for the public internet with private addresses closed or allowlist, the network a device gets and the widest an org or device may choose), the platform's attribution defaults for agent-created git commits and pull requests (attribution: commit, pr, sessionUrl), file sharing (externalSharing: value allow or deny, whether orgs may turn on public links to conversation files; shareMaxExpiryDays: value, the longest expiry a share may take in days), htmlRenderCdnAllowlist (the https origins a rendered HTML file may load libraries, styles, fonts and images from) and promptSuggestions (on or off, absent meaning on: whether the composer suggests the person's next message after a completed run; an org's own promptSuggestions must be on too); the switches each with sources: env, file or nacos are set in the startup config and read-only, db chosen in the admin console, default.",
         input: z.object({}).strict(),
         example: {},
         authz: { superAdmin: true },
@@ -215,7 +216,7 @@ export class AdminOperations implements OnModuleInit {
       defineOperation({
         id: "admin.update-settings",
         description:
-          "Change deployment settings (super admin); give only the keys to change: orgCreation (anyone or super_admin), priceCurrency (ISO 4217 code), customConnectors / customSkills (allow or deny: whether orgs may create their own instead of installing from the catalog), orgMarketplaceBrowse (true or false), uiTheme ({ id }: the platform default theme, a platform theme whose scope is all, or null for the built-in theme; it is what every org falls back to and what the sign-in pages show), uiArrangement ({ <slot>: { hidden, order } } for a list slot, { <slot>: { use } } for a single slot: the platform default arrangement of UI slots, with contribution keys <extension>/<contribution>; hidden ones are not listed but still open by URL; use names the contribution that replaces the built-in, null for the built-in; null for a slot removes its entry), clientExtensions ({ enabled?, disabled? }: the kill switch of plugin client code; enabled false stops every plugin's interface code in every browser, disabled is the whole list of plugins whose interface code alone is stopped while their tools keep working; read the current list from admin.settings first), devicesFullAccess ({ permission }: the platform's Full permission switch, allowed or off; null clears it back to the default, allowed; through this tool it may only be turned off, never allowed, and a value set in the startup config is read-only), attribution ({ commit?, pr?, sessionUrl? }: the platform's defaults for agent-created git commits and pull requests; null clears a field back to its default, an empty string turns that line off, and fields set in the startup config are read-only), externalSharing (allow or deny: whether orgs may turn on public links to conversation files; null clears it back to the default, deny; externalSharing may only be turned off through this tool, and a value set in the startup config is read-only), shareMaxExpiryDays (1 to 365: the longest expiry a share may take, in days; null clears it back to 30; through this tool it may only be lowered, never raised, and it is read-only when set in the startup config), htmlRenderCdnAllowlist (the whole list of https origins, scheme and host with an optional port and nothing else, that a rendered HTML file may load from; at most 50; through this tool origins may only be removed, never added, so read the current list from admin.settings first and send it without the ones to drop). promptSuggestions (on or off; null clears it, absent meaning on: whether the composer suggests the person's next message after a completed run; an org's own promptSuggestions must be on too) may be set either way. Per-org limits are orgs.set-limits.",
+          "Change deployment settings (super admin); give only the keys to change: orgCreation (anyone or super_admin), priceCurrency (ISO 4217 code), customConnectors / customSkills (allow or deny: whether orgs may create their own instead of installing from the catalog), orgMarketplaceBrowse (true or false), uiTheme ({ id }: the platform default theme, a platform theme whose scope is all, or null for the built-in theme; it is what every org falls back to and what the sign-in pages show), uiArrangement ({ <slot>: { hidden, order } } for a list slot, { <slot>: { use } } for a single slot: the platform default arrangement of UI slots, with contribution keys <extension>/<contribution>; hidden ones are not listed but still open by URL; use names the contribution that replaces the built-in, null for the built-in; null for a slot removes its entry), clientExtensions ({ enabled?, disabled? }: the kill switch of plugin client code; enabled false stops every plugin's interface code in every browser, disabled is the whole list of plugins whose interface code alone is stopped while their tools keep working; read the current list from admin.settings first), devicesOutsideSandbox ({ permission }: whether a device may be granted running a call outside its sandbox, allowed or off; null clears it back to the default, allowed; through this tool it may only be turned off, never allowed, and a value set in the startup config is read-only), devicesNetwork ({ default?, ceiling? }: the device sandbox network, open or allowlist; null clears a field back to the default, open; the default may not be above the ceiling; through this tool either may only be narrowed to allowlist, never opened, and a field set in the startup config is read-only), attribution ({ commit?, pr?, sessionUrl? }: the platform's defaults for agent-created git commits and pull requests; null clears a field back to its default, an empty string turns that line off, and fields set in the startup config are read-only), externalSharing (allow or deny: whether orgs may turn on public links to conversation files; null clears it back to the default, deny; externalSharing may only be turned off through this tool, and a value set in the startup config is read-only), shareMaxExpiryDays (1 to 365: the longest expiry a share may take, in days; null clears it back to 30; through this tool it may only be lowered, never raised, and it is read-only when set in the startup config), htmlRenderCdnAllowlist (the whole list of https origins, scheme and host with an optional port and nothing else, that a rendered HTML file may load from; at most 50; through this tool origins may only be removed, never added, so read the current list from admin.settings first and send it without the ones to drop). promptSuggestions (on or off; null clears it, absent meaning on: whether the composer suggests the person's next message after a completed run; an org's own promptSuggestions must be on too) may be set either way. Per-org limits are orgs.set-limits.",
         input: SettingsInput.refine((b) => Object.keys(b).length > 0, {
           message: "at least one setting is required",
         }),
@@ -237,8 +238,12 @@ export class AdminOperations implements OnModuleInit {
             next: "Fix the values as the message says (admin.settings shows the current ones).",
           },
           {
-            code: "deployment.full_access_not_allowed",
-            next: "Through this tool the platform's Full permission switch may only be turned off; to allow it, ask a super admin to change it in the admin console settings on the web.",
+            code: "deployment.outside_sandbox_not_allowed",
+            next: "Through this tool running outside the sandbox (devicesOutsideSandbox) may only be turned off; to allow it, ask a super admin to change it in the admin console settings on the web.",
+          },
+          {
+            code: "deployment.network_not_allowed",
+            next: "Through this tool the device network (devicesNetwork) may only be narrowed to allowlist, and its default may never be above its ceiling (admin.settings shows both); to open it, ask a super admin to change it in the admin console settings on the web.",
           },
           {
             code: "deployment.external_sharing_not_allowed",
@@ -267,9 +272,8 @@ export class AdminOperations implements OnModuleInit {
             };
           }
           return precheckBy(async () => {
-            const full = i.devicesFullAccess;
-            if (full !== undefined)
-              await this.settings.checkDevicesFullAccess(full, { onlyNarrows: true });
+            if (i.devicesOutsideSandbox !== undefined || i.devicesNetwork !== undefined)
+              await this.settings.checkDeviceSandbox(i, { onlyNarrows: true });
             await this.settings.checkSharing(i, { onlyNarrows: true });
           });
         },
@@ -278,7 +282,8 @@ export class AdminOperations implements OnModuleInit {
             uiTheme,
             uiArrangement,
             clientExtensions,
-            devicesFullAccess,
+            devicesOutsideSandbox,
+            devicesNetwork,
             attribution,
             htmlRenderCdnAllowlist,
             ...rest
@@ -287,8 +292,13 @@ export class AdminOperations implements OnModuleInit {
           if (htmlRenderCdnAllowlist !== undefined) {
             parts.push(`htmlRenderCdnAllowlist=[${htmlRenderCdnAllowlist.join(", ")}]`);
           }
-          if (devicesFullAccess !== undefined) {
-            parts.push(`devicesFullAccess=${String(devicesFullAccess.permission)}`);
+          if (devicesOutsideSandbox !== undefined) {
+            parts.push(`devicesOutsideSandbox=${String(devicesOutsideSandbox.permission)}`);
+          }
+          if (devicesNetwork !== undefined) {
+            for (const field of ["default", "ceiling"] as const)
+              if (devicesNetwork[field] !== undefined)
+                parts.push(`devicesNetwork.${field}=${String(devicesNetwork[field])}`);
           }
           const zh = [...parts];
           const en = [...parts];

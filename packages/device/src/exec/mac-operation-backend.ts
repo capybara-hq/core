@@ -28,6 +28,7 @@ import {
   type DeviceOwnerCeiling,
   digest,
   freezeAuthority,
+  grantStillHolds,
   intersectOperation,
   type LocalExecAuthority,
   type LocalOperationGrant,
@@ -124,8 +125,13 @@ export interface LocalBackendHost {
   restricted: boolean;
   /** Why restricted operations are unavailable, when they are. */
   unavailableReason?: string;
-  /** Full access and background work run on this platform. */
-  fullAccess: boolean;
+  /**
+   * Restricted operations enforce the open public network (the closed address classes refused on
+   * the resolved address); reported only while restricted operations run.
+   */
+  openPublic?: boolean;
+  /** Escalated calls (outside the sandbox) and background work run on this platform. */
+  outsideSandbox: boolean;
   background: boolean;
   /** The message a refused restricted operation carries. */
   pending: string;
@@ -167,8 +173,10 @@ export async function createMacOperationBackend(
               : "Restricted Linux/local-Docker validation remains pending"),
         }
       : {}),
-    fullAccess: platform === "darwin",
+    outsideSandbox: platform === "darwin",
     background: platform === "darwin",
+    // the macOS worker's proxy decides the open network on the resolved address (operation-worker)
+    openPublic: platform === "darwin",
     pending: (!restricted && dependencies.unavailableReason) || PENDING,
     ...(dependencies.startWorker ? { startWorker: dependencies.startWorker } : {}),
     ...(restricted && dependencies.restrictedProof ? { proof: dependencies.restrictedProof } : {}),
@@ -500,14 +508,24 @@ export async function createLocalOperationBackend(
       signal.throwIfAborted();
       // a transiently failed proof is retried before it is reported (rate-limited, bounded)
       await host.proof?.refresh();
-      const c = await read();
+      // the owner policy is still read (and checked) here; its outside-sandbox switch is consent,
+      // reported in the owner report, never runtime support
+      await read();
       const restricted = restrictedNow();
+      // an operation boundary: the sandbox network (the open public internet decided on the
+      // resolved address, or the allowlist with per-operation hosts) only with restricted support
       return {
-        version: 1,
+        version: 2,
+        boundary: "operation",
         restricted: restricted
           ? { filesystem: true, network: true, native: true, concurrentScopes: true }
           : null,
-        fullAccess: host.fullAccess && c.fullAccess,
+        network: {
+          openPublic: restricted && host.openPublic === true,
+          allowlist: restricted,
+          perOperationHosts: restricted,
+        },
+        outsideSandbox: host.outsideSandbox,
         background: host.background,
         ...(!restricted
           ? { unavailableReason: host.proof?.failure() ?? host.unavailableReason ?? host.pending }
@@ -573,11 +591,7 @@ export async function createLocalOperationBackend(
                   record.kind === "native",
                 )
               : auxiliaryGrant(record.scope, ceiling);
-          return record.grant.full
-            ? next.full
-            : record.grant.hosts.every((h) => next.hosts.includes(h)) &&
-                record.grant.deniedReadRoots.every((r) => next.deniedReadRoots.includes(r)) &&
-                next.deniedReadRoots.every((r) => record.grant.deniedReadRoots.includes(r));
+          return grantStillHolds(record.grant, next);
         } catch {
           return false;
         }

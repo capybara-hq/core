@@ -11,6 +11,7 @@ import {
   AGENTS,
   CONV,
   DEVICES,
+  ENV_SANDBOX,
   envView,
   ev,
   FakeEventSource,
@@ -409,8 +410,12 @@ describe("the conversation page (ConversationPage)", () => {
     // an ongoing conversation's menu says the pick applies from the next message
     expect(await screen.findByText(en.chat.nextMessage)).toBeTruthy();
     await user.click(await screen.findByRole("menuitemradio", { name: /Fake 2/ }));
-    await user.click(await screen.findByRole("button", { name: `${en.chat.pickEffort}: Low` }));
-    await user.click(await screen.findByRole("menuitemradio", { name: /High/ }));
+    // the effort lives in the mode menu (its button names it); picking keeps the menu open
+    await user.click(
+      await screen.findByRole("button", { name: new RegExp(`: ${en.chat.pickEffort} Low$`) }),
+    );
+    await user.click(await screen.findByRole("menuitemradio", { name: "High" }));
+    await user.keyboard("{Escape}");
     await user.type(input(), "later{Enter}");
     await vi.waitFor(() => expect(posts(calls, `${BASE}/messages`)).toHaveLength(1));
     expect(bodyOf(posts(calls, `${BASE}/messages`)[0])).toMatchObject({
@@ -907,14 +912,18 @@ describe("the conversation page (ConversationPage)", () => {
     await renderChat();
     await screen.findByText("hi");
     const user = userEvent.setup();
-    // fake-1 declares no effort: no effort picker
+    // fake-1 declares no effort: the model chip names no effort, the mode menu has none
     const model = await screen.findByRole("button", { name: `${en.chat.pickModel}: Fake 1` });
-    expect(screen.queryByRole("button", { name: new RegExp(`^${en.chat.pickEffort}`) })).toBeNull();
+    expect(screen.queryByRole("button", { name: new RegExp(`${en.chat.pickEffort}`) })).toBeNull();
     await user.click(model);
     await user.click(await screen.findByRole("menuitemradio", { name: /Fake 2/ }));
-    const effort = await screen.findByRole("button", { name: `${en.chat.pickEffort}: Low` });
-    await user.click(effort);
-    await user.click(await screen.findByRole("menuitemradio", { name: /High/ }));
+    // fake-2 does: the model · effort chip, and the effort segments in the mode menu
+    await screen.findByRole("button", { name: `${en.chat.pickModel}: Fake 2 · Low` });
+    await user.click(
+      await screen.findByRole("button", { name: new RegExp(`: ${en.chat.pickEffort} Low$`) }),
+    );
+    await user.click(await screen.findByRole("menuitemradio", { name: "High" }));
+    await user.keyboard("{Escape}");
     await user.type(input(), "one{Enter}");
     await screen.findByText("one");
     await user.type(input(), "two{Enter}");
@@ -1267,31 +1276,28 @@ describe("the conversation page's server gate", () => {
 });
 
 describe("the properties panel's device mark", () => {
-  it("the device carries its neutral ceiling mark, never a daily mode", async () => {
-    const mode = {
-      mode: "auto",
-      allowedMode: "auto",
-      allowedBy: "org",
-      network: { kind: "allowlist", hosts: [], source: "platform" },
-      local: { reported: "auto", allowedDomains: [] },
-      pendingNextUse: false,
-      pendingFilesReset: false,
-      recent: [],
-    };
+  it("the device carries its neutral sandbox mark, never a daily mode", async () => {
     const device = envView("e1", "Laptop", {
       source: "local",
       provider: "@local",
       online: true,
-      mode,
       ownerCeiling: {
         state: "report",
         revision: "r1",
         sequence: 1,
-        fullAccess: true,
+        outsideSandbox: true,
+        network: "open",
+        allowedDomains: [],
         restrictedProjectReach: "os-user",
-        restrictedAllowedDomains: [],
         observedAt: "2026-11-07T08:00:00.000Z",
         stale: false,
+      },
+      sandbox: {
+        ...ENV_SANDBOX,
+        ownNetwork: "open",
+        outsideSandbox: true,
+        restrictedProjectReach: "os-user",
+        layer: { network: null, outsideSandbox: null },
       },
     });
     api({
@@ -1307,7 +1313,7 @@ describe("the properties panel's device mark", () => {
       if (b === null) throw new Error("no mark yet");
       return b;
     });
-    expect(badge.textContent).toBe(en.devices.ceiling.mark.full);
+    expect(badge.textContent).toBe(en.devices.sandbox.mark.outside);
     expect(badge.getAttribute("data-tone")).toBe("default");
     window.history.replaceState(null, "", "/");
   });

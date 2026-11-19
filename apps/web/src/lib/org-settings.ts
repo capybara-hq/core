@@ -3,55 +3,74 @@ import type { CompactionSettings, CompactionSettingsPatch } from "./compaction";
 import type { ScheduledTasksSettings } from "./schedules";
 import type { UiArrangementEntry } from "./ui";
 
+/** A device sandbox network: the open public internet (private networks blocked) or an allowlist. */
+export type DeviceNetworkMode = "open" | "allowlist";
+
 /**
- * The org's stored sandbox network, a delta over the platform's list (egress ceiling spec §D1,
- * kernel `CloudNetworkSettingSchema`); every field optional:
- * - `mode`: the cloud network in sandbox mode, `open` (any public host; loopback, private and
- *   cloud metadata addresses are blocked outside the container) or `allowlist`; absent follows the
- *   platform's default (open);
+ * The org's stored device network (approval-only profiles design, "Settings model"; kernel
+ * `DeviceNetworkSettingSchema`), for local and cloud devices alike; every field optional (absent
+ * follows the platform):
+ * - `default`: the network a device gets when its owner chooses none;
+ * - `ceiling`: the widest network a device of the org may choose (never above the platform's; a
+ *   default never above the ceiling);
  * - `base`: `platform` (absent: the platform's `sandbox.limits.allowHosts` minus `excludedHosts`)
  *   or `none` (only `extraHosts`);
  * - `extraHosts`: hosts the org adds; `excludedHosts`: platform entries the org drops (base
  *   platform only; may name entries the platform dropped since).
- * The hosts are also the ceiling of every local device in sandbox mode, whatever the mode.
  */
-export interface CloudNetworkSetting {
-  mode?: "open" | "allowlist";
+export interface DeviceNetworkSetting {
+  default?: DeviceNetworkMode;
+  ceiling?: DeviceNetworkMode;
   base?: "platform" | "none";
   extraHosts?: string[];
   excludedHosts?: string[];
 }
 
 /**
- * The org's effective sandbox-mode network (kernel `OrgEffectiveNetwork`): the mode in effect (the
- * kill switch and the platform ceiling force `allowlist`) and the hosts (platform list with the
- * org's delta applied; empty under the kill switch).
+ * The org's effective allowlist network (kernel `OrgEffectiveNetwork`): `allowlist` when the kill
+ * switch, the platform host ceiling or the org's own default or ceiling says so, and the hosts
+ * (platform list with the org's delta applied; empty under the kill switch).
  */
 export interface OrgEffectiveNetwork {
-  mode: "open" | "allowlist";
+  mode: DeviceNetworkMode;
   hosts: string[];
 }
 
-/** Where the platform's Full permission switch comes from (kernel `DevicesFullAccessSource`). */
-export type DevicesFullAccessSource = "env" | "file" | "nacos" | "db" | "default";
+/** Where a platform device sandbox setting comes from (kernel `DeviceSandboxSource`). */
+export type DeviceSandboxSource = "env" | "file" | "nacos" | "db" | "default";
 
-/** The platform's Full permission switch in effect (kernel `DevicesFullAccessView`). */
-export interface DevicesFullAccessView {
-  /** `allowed`: devices may run with Full permission when the org and the owner allow it. */
+/** Whether a startup config source makes a platform setting read-only in the console. */
+export const lockedSource = (source: DeviceSandboxSource | undefined): boolean =>
+  source === "env" || source === "file" || source === "nacos";
+
+/** The platform's outside-sandbox ceiling in effect (kernel `DevicesOutsideSandboxView`). */
+export interface DevicesOutsideSandboxView {
+  /** `allowed`: a call may be granted running outside the sandbox where the org and owner allow it. */
   permission: "allowed" | "off";
   /** `env` / `file` / `nacos` are the startup config (read-only); `db` the admin console; `default`. */
-  source: DevicesFullAccessSource;
+  source: DeviceSandboxSource;
 }
+
+/** The platform's device network in effect (kernel `DevicesNetworkView`): the default within the ceiling. */
+export interface DevicesNetworkView {
+  default: DeviceNetworkMode;
+  ceiling: DeviceNetworkMode;
+  sources: { default: DeviceSandboxSource; ceiling: DeviceSandboxSource };
+}
+
+/** The narrower of two networks (`allowlist` is narrower than `open`). */
+export const narrowerNetwork = (a: DeviceNetworkMode, b: DeviceNetworkMode): DeviceNetworkMode =>
+  a === "allowlist" || b === "allowlist" ? "allowlist" : "open";
 
 /**
  * 组织设置（`packages/kernel/src/orgs/settings.controller.ts`）：成员可读，管理员可改。
  * - `toolSearch`：工具很多时改用目录 + `ToolSearch` 按需加载（默认 on）；
  * - `locale`：组织默认语言（默认 en），机器人在 IM 里说的固定话术按它选择；
  * - `sandboxToolPolicy`：沙箱工具的默认策略（默认 allow；ask 时除只读工具外都要审批）；
- * - `fullAccess`: whether the org's devices may run with Full permission; absent follows the
- *   platform's switch;
- * - `cloudNetwork`: the org's sandbox network as a delta over the platform's list (egress ceiling
- *   spec §D1); absent follows the platform;
+ * - `outsideSandbox`: whether a call on the org's devices may be granted running outside the
+ *   sandbox; absent follows the platform;
+ * - `deviceNetwork`: the org's device network (default, ceiling and hosts as a delta over the
+ *   platform's list); absent follows the platform;
  * - `platformTool`: the `Platform` builtin for the whole org (`on` / `read-only` / `off`, default on).
  */
 export interface OrgSettings {
@@ -59,10 +78,10 @@ export interface OrgSettings {
   locale: "zh" | "en";
   /** 旧内核没有这个字段：缺省按 allow。 */
   sandboxToolPolicy?: "allow" | "ask";
-  /** The org's Full permission switch; absent = follow the platform. */
-  fullAccess?: "allowed" | "off";
-  /** The org's sandbox network delta; absent = follow the platform. */
-  cloudNetwork?: CloudNetworkSetting;
+  /** The org's outside-sandbox ceiling; absent = follow the platform. */
+  outsideSandbox?: "allowed" | "off";
+  /** The org's device network; absent = follow the platform. */
+  deviceNetwork?: DeviceNetworkSetting;
   platformTool: "on" | "read-only" | "off";
   /** The org's default time zone (IANA) for senders without one of their own; absent = UTC. */
   timeZone?: string;
@@ -98,14 +117,19 @@ export interface OrgThemeSetting {
 
 /** The deployment defaults the settings page shows for "follow the platform". */
 export interface OrgSettingsDeployment {
-  /** The platform's Full permission switch and where it comes from. */
-  fullAccess: DevicesFullAccessView;
+  /** The platform's outside-sandbox ceiling and where it comes from. */
+  outsideSandbox: DevicesOutsideSandboxView;
   /**
-   * The platform's network: its allowlist (what an org's delta applies to), whether orgs may go
-   * beyond it (`orgHosts`, `sandbox.limits.orgHosts`: `within` makes the list the ceiling and
-   * forces the allowlist) and the kill switch (`off`: `sandbox.limits.egress` is `none`).
+   * The platform's device network: its default and ceiling with their sources, its allowlist
+   * (what an org's delta applies to), whether orgs may go beyond it (`orgHosts`,
+   * `sandbox.limits.orgHosts`: `within` keeps the hosts within the list) and the kill switch
+   * (`off`: `sandbox.limits.egress` is `none`).
    */
-  cloudNetwork: { allowHosts: string[]; orgHosts: "extend" | "within"; off: boolean };
+  deviceNetwork: DevicesNetworkView & {
+    allowHosts: string[];
+    orgHosts: "extend" | "within";
+    off: boolean;
+  };
   /**
    * The platform's effective attribution defaults for agent-created commits and pull requests
    * (spec 2026-11-14-agent-attribution).
@@ -140,16 +164,16 @@ export interface OrgSettingsResponse {
   settings: OrgSettings;
   deployment?: OrgSettingsDeployment;
   sandboxLimits?: OrgSandboxLimits;
-  /** The org's effective sandbox-mode network (the kernel always sends it; optional for the cache merge). */
+  /** The org's effective device network (the kernel always sends it; optional for the cache merge). */
   effectiveNetwork?: OrgEffectiveNetwork;
 }
 
-/** PATCH 体：`cloudNetwork: null` 恢复跟随部署默认。 */
+/** The PATCH body: `deviceNetwork: null` follows the platform again. */
 export type OrgSettingsPatch = Partial<
   Omit<
     OrgSettings,
-    | "fullAccess"
-    | "cloudNetwork"
+    | "outsideSandbox"
+    | "deviceNetwork"
     | "timeZone"
     | "theme"
     | "scheduledTasks"
@@ -162,9 +186,9 @@ export type OrgSettingsPatch = Partial<
   /** null clears the theme setting (follow the platform, allowed). */
   theme?: OrgThemeSetting | null;
   /** null clears it (follow the platform). */
-  fullAccess?: "allowed" | "off" | null;
+  outsideSandbox?: "allowed" | "off" | null;
   /** Replaces the stored value whole (send it with the edited fields); null follows the platform. */
-  cloudNetwork?: CloudNetworkSetting | null;
+  deviceNetwork?: DeviceNetworkSetting | null;
   /** null clears the default (UTC). */
   timeZone?: string | null;
   /** Per slot: the entry replaces the org's, null removes it (follow the platform). */
@@ -186,22 +210,24 @@ export const updateOrgSettings = (orgId: string, patch: OrgSettingsPatch) =>
   });
 
 /**
- * The value to PATCH when the settings page saves the network (egress ceiling spec §D4): the
- * stored value whole with the edited fields changed. `mode` stays the stored one (absent stays
- * absent) unless `mode` is given; `base` stays the stored one. With base platform the edited list
+ * The value to PATCH when the settings page saves the device network: the stored value whole with
+ * the edited fields changed. `default` and `ceiling` stay the stored ones (absent stays absent)
+ * unless `modes` gives them; `base` stays the stored one. With base platform the edited list
  * `edited` becomes `extraHosts = edited − platform` and `excludedHosts = (platform − edited) ∪
  * (stored exclusions − platform)` (an exclusion of an entry the platform dropped survives in case it
  * comes back); with base none `extraHosts = edited`. Empty lists are left out.
  */
-export function cloudNetworkToSave(
-  stored: CloudNetworkSetting | undefined,
+export function deviceNetworkToSave(
+  stored: DeviceNetworkSetting | undefined,
   platformHosts: readonly string[],
   edited: readonly string[],
-  mode?: "open" | "allowlist",
-): CloudNetworkSetting {
-  const value: CloudNetworkSetting = {};
-  const nextMode = mode ?? stored?.mode;
-  if (nextMode !== undefined) value.mode = nextMode;
+  modes: { default?: DeviceNetworkMode; ceiling?: DeviceNetworkMode } = {},
+): DeviceNetworkSetting {
+  const value: DeviceNetworkSetting = {};
+  const def = modes.default ?? stored?.default;
+  const ceiling = modes.ceiling ?? stored?.ceiling;
+  if (def !== undefined) value.default = def;
+  if (ceiling !== undefined) value.ceiling = ceiling;
   if (stored?.base !== undefined) value.base = stored.base;
   if (stored?.base === "none") {
     if (edited.length > 0) value.extraHosts = [...edited];

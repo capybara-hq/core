@@ -30,24 +30,16 @@ export const SANDBOX_ROOTS = ["/workspace", "/skills", "/tmp"] as const;
 const MAX_PATH_LENGTH = 4096;
 
 /**
- * Sandbox resource and network limits. A provider that ignores `mode` and `network` still runs:
- * it then behaves as an allowlisted sandbox (the safe direction).
+ * Sandbox resource and network limits: what lifecycle create and update carry (resources and the
+ * outer network only; each operation's scope says how it runs). A provider that ignores `network`
+ * still runs: it then behaves as an allowlisted sandbox (the safe direction).
  */
 export interface SandboxLimits {
   cpu: number;
   memoryMb: number;
   diskMb: number;
   /**
-   * `auto`: no OS sandbox (local: the owner; cloud: the container is the boundary);
-   * `sandbox`: the OS sandbox with the network limited by {@link SandboxLimits.network}.
-   * For operation-capable providers this encodes the independent device ceiling: auto allows
-   * Full access when separately authorized, sandbox permits restricted operations only.
-   * It never selects a conversation profile or changes per operation. Legacy consumers retain
-   * the current mode behavior until coordinated protocol activation.
-   */
-  mode: "auto" | "sandbox";
-  /**
-   * The network the instance (cloud) must enforce, or the allowlist a local device's sandbox mode
+   * The network the instance (cloud) must enforce, or the allowlist a local device's sandbox
    * intersects with its own list (`open-public` is for cloud instances only). Each entry of
    * `hosts` passes {@link validateAllowHost}.
    */
@@ -379,10 +371,9 @@ export interface SandboxProvider {
    * unit (locale-independent), at most `limit` of them; `truncated` is true when the directory has
    * more. Entries only: never file contents, never a recursive walk. A `name` is never `.` or `..`;
    * `isDir` follows symbolic links (stat semantics: a link to a directory is `true`, a dangling link
-   * `false`, and so is a link whose target the request's mode cannot reach). `limits` is the kernel's current ceiling: read in the mode it gives, never in one an
-   * earlier command saw. Returns null only when the path does not exist and that mode could reach
-   * it; a path the mode cannot reach throws (a policy refusal), as does a path that is a file or a
-   * directory that cannot be read.
+   * `false`, and so is a link whose target the device cannot reach). Returns null only when the
+   * path does not exist and the device could reach it; a path it cannot reach throws (a policy
+   * refusal), as does a path that is a file or a directory that cannot be read.
    *
    * Optional: a provider without it (or without {@link SandboxProvider.scan}) offers no projects,
    * and its conversations stay in free mode.
@@ -390,11 +381,10 @@ export interface SandboxProvider {
   list?(
     h: SandboxHandle,
     path: string,
-    opts: { limit: number; limits: Pick<SandboxLimits, "mode">; signal: AbortSignal },
+    opts: { limit: number; signal: AbortSignal },
   ): Promise<{ entries: { name: string; isDir: boolean }[]; truncated: boolean } | null>;
   /**
-   * Looks for project-like directories, read in the mode `limits` gives (as for
-   * {@link SandboxProvider.list}). Every provider traverses the same way:
+   * Looks for project-like directories, read as for {@link SandboxProvider.list}. Every provider traverses the same way:
    *
    * - Candidates are `base` itself and the directories at most {@link MAX_DEVICE_SCAN_DEPTH}
    *   levels below it that hold a `.git` entry (directory or file) or an `AGENTS.md` file.
@@ -402,7 +392,7 @@ export interface SandboxProvider {
    *   starting with `.`); a candidate does not stop the descent (a monorepo's sub-projects are
    *   candidates too). It never enters a directory named in {@link DEVICE_SCAN_SKIPPED_DIRS}, at
    *   any depth, nor one named in {@link DEVICE_SCAN_SKIPPED_BASE_DIRS} directly under `base`;
-   *   every provider skips exactly these. Paths under `base` the mode cannot reach are skipped,
+   *   every provider skips exactly these. Paths under `base` the device cannot reach are skipped,
    *   never an error.
    * - A directory whose basename does not satisfy {@link isDeviceProjectName} is not returned as
    *   a candidate (never with a changed name), but it is still traversed.
@@ -415,12 +405,13 @@ export interface SandboxProvider {
    *   {@link MAX_DEVICE_SCAN_RESULTS}.
    *
    * Directory entries only, never file contents. A `base` that does not exist answers `[]`; a
-   * `base` that is a file, cannot be read, or lies outside the mode throws. Optional, like `list`.
+   * `base` that is a file, cannot be read, or lies outside what the device reaches throws.
+   * Optional, like `list`.
    */
   scan?(
     h: SandboxHandle,
     base: string,
-    opts: { limits: Pick<SandboxLimits, "mode">; signal: AbortSignal },
+    opts: { signal: AbortSignal },
   ): Promise<{ path: string; suggestedName: string }[]>;
 }
 

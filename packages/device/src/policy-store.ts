@@ -51,7 +51,8 @@ export class PolicyStore {
   }
 
   /**
-   * The policy now: re-reads policy.json when it changed (or appeared, or vanished: defaults).
+   * The policy now: re-reads policy.json when it changed (or appeared, or vanished: the closed
+   * `MISSING_POLICY_OWNER_CEILING`, never the open default).
    * An invalid file throws (with the reason) at every call until it is fixed.
    */
   current(): Policy {

@@ -19,6 +19,7 @@ import type { AuthorityEpochVector } from "../sandbox/permission-authority-epoch
 import type {
   PermissionEscalation,
   PermissionExpansion,
+  PermissionGrantSource,
   PermissionScopeKind,
 } from "../sandbox/permission-call-types.js";
 import type { PermissionConfigProjection } from "../sandbox/permission-config-publication.js";
@@ -66,7 +67,7 @@ export interface PermissionCallGrantsTable {
   scope_kind: PermissionScopeKind;
   /** A per-call sandbox escalation's justification (`scope_kind = 'sandbox-escalation'` only). */
   escalation: ColumnType<PermissionEscalation | null, string | null | undefined, string | null>;
-  source: "human" | "review-model";
+  source: PermissionGrantSource;
   approval_id: string | null;
   review_event_seq: number | null;
   decided_by: string | null;
@@ -1213,6 +1214,14 @@ export interface DevicesTable {
   permission_migration: ColumnType<unknown, string | null | undefined, string | null>;
   /** 0154: the applied limits must be established before any operation is admitted. */
   permission_reconcile_required: ColumnType<boolean, boolean | undefined, boolean>;
+  /** 0165: a cloud device's sandbox network choice; null follows the org, `none` is closed. */
+  network_mode: ColumnType<
+    "open" | "allowlist" | "none" | null,
+    "open" | "allowlist" | "none" | null | undefined,
+    "open" | "allowlist" | "none" | null
+  >;
+  /** 0165: a cloud device's allowlist hosts (a JSON array), used while the mode is `allowlist`. */
+  network_hosts: ColumnType<string[], string | undefined, string>;
   created_at: Ts;
   updated_at: Ts;
   deleted_at: TsNullable;
@@ -1752,6 +1761,8 @@ export interface DeviceInstanceBindingsTable {
   >;
   created_at: Ts;
   installed_at: TsNullable;
+  /** Migration 0168: the device connection whose bind answer installed it. */
+  installed_connection_id: string | null;
 }
 
 export interface LegacyLaunchFreezeTable {

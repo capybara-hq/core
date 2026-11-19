@@ -2,13 +2,23 @@ import { randomUUID } from "node:crypto";
 import type {
   DeviceExecArgs,
   DeviceLocalPolicySummary,
+  DeviceOwnerCeiling,
   KernelReq,
   NetworkBlockLayer,
 } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
 import { sql } from "kysely";
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  onTestFinished,
+} from "vitest";
 import type { AgentDefinition } from "../../src/agents/definition.js";
 import { EventLog } from "../../src/conversations/event-log.js";
 import type { ConversationEvent } from "../../src/conversations/events.js";
@@ -21,19 +31,18 @@ import { MachinesService } from "../../src/local-devices/machines.js";
 import { assistantIdemKey } from "../../src/runtime/model-call.js";
 import { RunExecution } from "../../src/runtime/run-execution.js";
 import { Waits } from "../../src/runtime/waits.js";
+import { ESCALATION_DEVICE_OFF_WHY } from "../../src/sandbox/review/permission-candidate.js";
 import { ScheduledTaskStore } from "../../src/schedules/store.js";
 import { NETWORK_ASK_CANCELLED_NOTE } from "../../src/tools/approvals.service.js";
 import {
   addressLayerNote,
-  allowedAlwaysNote,
   allowedOnceNote,
-  alwaysRefusedNote,
   deniedNote,
   expiredNote,
-  orgLayerNote,
   skippedNote,
   tooManyNote,
   unattendedNetworkNote,
+  unavailableHostNote,
 } from "../../src/tools/network-asks.js";
 import { ToolPipeline, type ToolStepContext } from "../../src/tools/pipeline.js";
 import { legacyDbFor } from "../helpers/conversations.js";
@@ -55,7 +64,7 @@ import {
   waitForTerminal,
 } from "../helpers/runs.js";
 import { webCaller } from "../helpers/step-context.js";
-import { FakeMachine, HELLO, policyAnswer } from "../local-devices/fake-machine-v3.js";
+import { FakeMachine, HELLO, ownerReportFor } from "../local-devices/fake-machine-v3.js";
 
 /**
  * The network ask in the tool pipeline (network ask-to-allow spec §6.2, §6.6–§6.9, §8.3, P1.7):
@@ -64,7 +73,7 @@ import { FakeMachine, HELLO, policyAnswer } from "../local-devices/fake-machine-
  * again. Model-fake drives the runs; a fake machine answers the exec with `network.blocked`.
  */
 
-const POLICY: DeviceLocalPolicySummary = { mode: "auto", allowedDomains: [] };
+const POLICY: DeviceLocalPolicySummary = { allowedDomains: [] };
 const CURL_ERR = "curl: (56) CONNECT tunnel failed, response 403";
 
 let pgc: TestContainer;
@@ -114,12 +123,12 @@ afterAll(async () => {
 /** What the fake device refuses: host → layer it reports (hosts it was granted pass). */
 interface Device {
   blocking: Map<string, NetworkBlockLayer>;
-  /** The device's local allowlist (the policy op adds to it). */
+  /** The device's local allowlist (only its owner adds to it, on the machine). */
   allowed: Set<string>;
-  /** Answer the policy op with a refusal. */
-  refusePolicy: boolean;
   features: string[];
   policy: DeviceLocalPolicySummary;
+  /** The owner report the machine says hello with (absent: the fake's default, open network). */
+  ownerCeiling?: DeviceOwnerCeiling;
 }
 
 interface Setup {
@@ -165,16 +174,6 @@ function answer(dev: Device) {
           },
         } as const;
       }
-      case "policy": {
-        if (dev.refusePolicy) {
-          return {
-            ok: false,
-            error: { kind: "policy", message: "This device does not accept network changes." },
-          } as const;
-        }
-        for (const h of (a.add as string[] | undefined) ?? []) dev.allowed.add(h);
-        return policyAnswer({ ...dev.policy, allowedDomains: [...dev.allowed] });
-      }
       default:
         return { ok: true, result: null } as const;
     }
@@ -186,7 +185,11 @@ async function connect(deviceId: string, credential: string, machineId: string, 
   const machine = new FakeMachine(wsUrl, credential, answer(dev) as any, { hello: false });
   open.push(machine);
   await machine.opened;
-  machine.hello({ features: dev.features, policy: dev.policy });
+  machine.hello({
+    features: dev.features,
+    policy: dev.policy,
+    ...(dev.ownerCeiling !== undefined && { ownerCeiling: dev.ownerCeiling }),
+  });
   await waitFor(
     async () => (await redis.get(deviceLeaseKey(deviceId))) !== null,
     10_000,
@@ -230,7 +233,6 @@ async function setup(over: Partial<Device> = {}, tools = ["Bash"]): Promise<Setu
   const dev: Device = {
     blocking: new Map(),
     allowed: new Set(),
-    refusePolicy: false,
     features: ["networkReport", "policyOp", "policyOpId"],
     policy: POLICY,
     ...over,
@@ -328,7 +330,7 @@ describe("the ask and its outcomes", () => {
   it("「这次允许」: the run waits, network_blocked + approval_requested; the kept output + once note; one exec; the next exec carries the run grant", async () => {
     await post([curl(["files.example.com"]), curl(["files.example.com"])]);
     const ask = await nextAsk();
-    expect(ask).toMatchObject({ requested_for: s.accountId, scopes: ["once", "always"] });
+    expect(ask).toMatchObject({ requested_for: s.accountId, scopes: ["once"] });
     expect(ask.detail).toMatchObject({
       deviceId: s.deviceId,
       hosts: [{ host: "files.example.com", port: 443 }],
@@ -378,46 +380,36 @@ describe("the ask and its outcomes", () => {
     expect(called).toHaveLength(2);
   });
 
-  it("「一直允许」: the device applies the policy op; the always note", async () => {
-    await post([curl(["files.example.com"])]);
+  it("an ask made before the org narrowed its ceiling is approved, but the next exec does not carry the host", async () => {
+    await post([curl(["files.example.com"]), curl(["files.example.com"])]);
     const ask = await nextAsk();
-    expect((await decide(ask.id, { decision: "approve", scope: "always" })).statusCode).toBe(200);
+    // meanwhile the org's ceiling becomes a hard allowlist that leaves the host out
+    await sql`UPDATE capybara.orgs SET settings = ${JSON.stringify({
+      deviceNetwork: { ceiling: "allowlist", excludedHosts: ["*.example.com"] },
+    })}::jsonb WHERE id = ${orgId}`.execute(raw);
+    onTestFinished(async () => {
+      await sql`UPDATE capybara.orgs SET settings = '{}'::jsonb WHERE id = ${orgId}`.execute(raw);
+    });
+    expect((await decide(ask.id, { decision: "approve", scope: "once" })).statusCode).toBe(200);
     await waitForTerminal(db, s.conversationId, 1, 20_000);
-    const [r] = await results();
-    expect(r?.content.endsWith(`\n\n${allowedAlwaysNote(["files.example.com"])}`)).toBe(true);
-    expect(s.dev.allowed.has("files.example.com")).toBe(true);
-    expect(curlExecs()).toHaveLength(1);
+    // whatever the second call became, no exec carried the host past the new ceiling
+    for (const exec of curlExecs())
+      expect((exec.args as DeviceExecArgs).grants?.hosts ?? []).not.toContain("files.example.com");
   });
 
-  it("「一直允许」 the device refuses: nothing granted, the refused note with the local command", async () => {
-    s.dev.refusePolicy = true;
+  // Device protocol 4: the deployment never adds a host to a local device, so an ask offers a run
+  // grant only and "Always allow" is refused, nothing sent to the device
+  it("Always allow is not offered: refused, nothing is sent to the device", async () => {
     await post([curl(["files.example.com"])]);
     const ask = await nextAsk();
     const res = await decide(ask.id, { decision: "approve", scope: "always" });
-    expect((res.json() as { approval: unknown }).approval).toMatchObject({
-      detail: { outcome: "refused" },
-    });
-    await waitForTerminal(db, s.conversationId, 1, 20_000);
-    const [r] = await results();
-    expect(r?.content.endsWith(`\n\n${alwaysRefusedNote(["files.example.com"])}`)).toBe(true);
-  });
-
-  it("「一直允许」 with the device offline: once fallback, the once note", async () => {
-    await post([curl(["files.example.com"])]);
-    const ask = await nextAsk();
-    s.machine.close();
-    await waitFor(
-      async () => (await redis.get(deviceLeaseKey(s.deviceId))) === null,
-      15_000,
-      "lease released",
-    );
-    const res = await decide(ask.id, { decision: "approve", scope: "always" });
-    expect((res.json() as { approval: unknown }).approval).toMatchObject({
-      detail: { outcome: "once_fallback", fallback: "offline" },
-    });
+    expect(res.statusCode).toBe(409);
+    expect(s.machine.frames.filter((f) => f.type === "req" && f.op === "policy")).toEqual([]);
+    expect((await decide(ask.id, { decision: "approve", scope: "once" })).statusCode).toBe(200);
     await waitForTerminal(db, s.conversationId, 1, 20_000);
     const [r] = await results();
     expect(r?.content.endsWith(`\n\n${allowedOnceNote(["files.example.com"])}`)).toBe(true);
+    expect(curlExecs()).toHaveLength(1);
   });
 
   it("deny with a reason: the denied note with the reason; the host is not asked again in the run", async () => {
@@ -481,15 +473,25 @@ describe("the ask and its outcomes", () => {
 describe("not asked", () => {
   it("org and address layers: immediate notes and network_blocked, no ask (the org layer is the kernel's)", async () => {
     s = await setup();
+    // the org's allowlist network ceiling is hard: a host beyond its list is the org's layer
+    // (under an open ceiling the kernel's bounds alone would let the person grant it)
+    await sql`UPDATE capybara.orgs SET settings = ${JSON.stringify({
+      deviceNetwork: { ceiling: "allowlist" },
+    })}::jsonb WHERE id = ${orgId}`.execute(raw);
+    onTestFinished(async () => {
+      await sql`UPDATE capybara.orgs SET settings = '{}'::jsonb WHERE id = ${orgId}`.execute(raw);
+    });
     // the device calls api.foo.com `device`: the org does not allow it, so it is `org`
     s.dev.blocking.set("api.foo.com", "device");
     s.dev.blocking.set("10.0.0.5", "address");
     await post([curl(["api.foo.com", "10.0.0.5"])]);
     await waitForTerminal(db, s.conversationId, 1, 20_000);
     const [r] = await results();
+    // the reply names who adds the host (the per-call host ceiling's refusal), and who could
+    // allow running outside the sandbox, the one way to a private address (off on this device)
     expect(
       r?.content.endsWith(
-        `\n\n${orgLayerNote(["api.foo.com"])}\n${addressLayerNote(["10.0.0.5"])}`,
+        `\n\n${unavailableHostNote("api.foo.com", "an organization admin adds api.foo.com to the organization's device network list")}\n${addressLayerNote(["10.0.0.5"], ESCALATION_DEVICE_OFF_WHY)}`,
       ),
     ).toBe(true);
     expect(await asks()).toEqual([]);
@@ -502,6 +504,26 @@ describe("not asked", () => {
     const evs = await eventsOf(db, s.conversationId);
     const at = (t: string) => evs.findIndex((e) => e.type === t);
     expect(at("network_blocked")).toBeLessThan(at("tool_result"));
+  });
+
+  it("a host beyond the local owner's allowlist is not asked: the owner adds it on the machine", async () => {
+    s = await setup({
+      ownerCeiling: ownerReportFor(
+        { allowedDomains: ["pypi.example.com"] },
+        { network: "allowlist" },
+      ),
+    });
+    s.dev.blocking.set("files.example.com", "device");
+    await post([curl(["files.example.com"])]);
+    await waitForTerminal(db, s.conversationId, 1, 20_000);
+    const [r] = await results();
+    expect(
+      r?.content.endsWith(
+        `\n\n${unavailableHostNote("files.example.com", "the device owner adds it on the machine: capybara-device policy add allowedDomains files.example.com")}`,
+      ),
+    ).toBe(true);
+    expect(await asks()).toEqual([]);
+    expect(curlExecs()).toHaveLength(1);
   });
 
   it("a program without policyOpId: no ask, no note", async () => {
@@ -584,6 +606,14 @@ describe("sub-agents and unattended runs", () => {
 
   it("unattended, fail: no ask, the §8.3 note, missing_grants recorded (device and org layers)", async () => {
     s = await setup();
+    // the org's allowlist network ceiling is hard: a host beyond its list is the org's layer
+    // (under an open ceiling the kernel's bounds alone would let the person grant it)
+    await sql`UPDATE capybara.orgs SET settings = ${JSON.stringify({
+      deviceNetwork: { ceiling: "allowlist" },
+    })}::jsonb WHERE id = ${orgId}`.execute(raw);
+    onTestFinished(async () => {
+      await sql`UPDATE capybara.orgs SET settings = '{}'::jsonb WHERE id = ${orgId}`.execute(raw);
+    });
     s.dev.blocking.set("files.example.com", "device");
     s.dev.blocking.set("api.foo.com", "device");
     const store = new ScheduledTaskStore();
@@ -672,7 +702,7 @@ describe("sub-agents and unattended runs", () => {
     const [r] = await results();
     expect(
       r?.content.endsWith(
-        `\n\n${unattendedNetworkNote(["files.example.com"])}\n${orgLayerNote(["api.foo.com"])}`,
+        `\n\n${unattendedNetworkNote(["files.example.com"])}\n${unavailableHostNote("api.foo.com", "an organization admin adds api.foo.com to the organization's device network list")}`,
       ),
     ).toBe(true);
     expect(await asks()).toEqual([]);

@@ -420,6 +420,8 @@ export function toRow(
     ...(t.durationMs !== undefined ? { durationMs: t.durationMs } : {}),
     ...(t.added !== undefined ? { added: t.added, removed: t.removed ?? 0 } : {}),
     ...(o.blockedBy ? { blockedBy: o.blockedBy } : t.error ? { error: t.error } : {}),
+    ...(t.outsideSandbox ? { outsideSandbox: true } : {}),
+    ...(t.autoGranted ? { autoGranted: t.autoGranted } : {}),
     ...(Object.keys(detail).length > 0 ? { detail } : {}),
   };
 }
@@ -538,6 +540,7 @@ function toolRowBlocks(): ReactNode {
       />
       <RowBlock id="tool-row-waiting" row={toRow(pick(T.waiting, 0))} />
       <RowBlock id="tool-row-linked" row={BACKGROUND_ROW} />
+      <RowBlock id="tool-row-auto-granted" row={toRow(pick(T.autoGranted, 0))} />
     </>
   );
 }
@@ -652,7 +655,7 @@ function networkApprovalBlocks(): ReactNode {
         tool="Bash"
         toolKey="Bash"
         input={{}}
-        scopes={["once", "always"]}
+        scopes={["once"]}
         network={one}
         state={{ kind: "decided", ...state }}
       />
@@ -665,7 +668,7 @@ function networkApprovalBlocks(): ReactNode {
           tool="Bash"
           toolKey="Bash"
           input={{}}
-          scopes={["once", "always"]}
+          scopes={["once"]}
           network={one}
           state={{ kind: "pending" }}
           onApprove={noop}
@@ -677,7 +680,7 @@ function networkApprovalBlocks(): ReactNode {
           tool="Bash"
           toolKey="Bash"
           input={{}}
-          scopes={["once", "always"]}
+          scopes={["once"]}
           network={{ hosts: N.hosts, command: N.command }}
           state={{ kind: "pending" }}
           onApprove={noop}
@@ -701,19 +704,6 @@ function networkApprovalBlocks(): ReactNode {
         scope: "once",
         who: W.who,
         when: W.approved.at,
-      })}
-      {decided("approval-block-network-always", {
-        decision: "approved",
-        scope: "always",
-        who: W.who,
-        when: W.approved.at,
-      })}
-      {decided("approval-block-network-fallback", {
-        decision: "approved",
-        scope: "once",
-        who: W.who,
-        when: W.approved.at,
-        fallback: "offline",
       })}
       {decided("approval-block-network-denied", {
         decision: "denied",

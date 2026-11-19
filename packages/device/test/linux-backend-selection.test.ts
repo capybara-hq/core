@@ -10,6 +10,7 @@ import {
 import {
   checkLinuxRestrictedGrant,
   createHostOperationBackend,
+  hostCommandEnv,
 } from "../src/exec/linux-operation-backend.js";
 import type { LinuxProbe } from "../src/exec/linux-runtime.js";
 import type { DeviceOwnerCeiling } from "../src/exec/operation-types.js";
@@ -34,16 +35,16 @@ async function setup(
   const roots = { workspace: join(dir, "w"), skills: join(dir, "s"), tmp: join(dir, "t") };
   const ceiling: DeviceOwnerCeiling = {
     revision: "one",
-    fullAccess: true,
+    outsideSandbox: true,
+    network: "allowlist",
     roots,
     restrictedProjectReach: "workspace",
-    restrictedAllowedDomains: [],
+    allowedDomains: [],
     restrictedDeniedReadRoots: [],
     preparation: {
       skillsRoot: roots.skills,
       attachmentsBase: join(roots.workspace, "attachments"),
     },
-    fullNetwork: "environment",
   };
   const launched: MacWorkerRequest[] = [];
   const startWorker = async (request: MacWorkerRequest) => {
@@ -115,9 +116,12 @@ describe("local operation backend selection", () => {
     const { backend, exec, launched } = await setup("linux", SUPPORTED);
     const support = await backend.permissionSupport({ id: "d" }, signal);
     expect(support).toEqual({
-      version: 1,
+      version: 2,
       restricted: { filesystem: true, network: true, native: true, concurrentScopes: true },
-      fullAccess: true,
+      boundary: "operation",
+      // the forwarder enforces the open public network on the resolved address
+      network: { openPublic: true, allowlist: true, perOperationHosts: true },
+      outsideSandbox: true,
       background: true,
     });
     await expect(exec(false)).resolves.toMatchObject({ exitCode: 0 });
@@ -132,7 +136,7 @@ describe("local operation backend selection", () => {
     const support = await backend.permissionSupport({ id: "d" }, signal);
     expect(support.restricted).toBeNull();
     expect(support.unavailableReason).toMatch(/Landlock ABI 4/);
-    expect(support.fullAccess).toBe(true);
+    expect(support.outsideSandbox).toBe(true);
     await expect(exec(false)).rejects.toMatchObject({ name: "SandboxPermissionUnsupportedError" });
     expect(launched).toEqual([]);
     await expect(exec(true)).resolves.toMatchObject({ exitCode: 0 });
@@ -184,24 +188,47 @@ describe("Linux restricted grant checks", () => {
   });
 });
 
+describe("Linux host command environment", () => {
+  it("restricted commands start from a fixed set; escalated ones lose CAPYBARA_* variables", () => {
+    const saved = { ...process.env };
+    try {
+      process.env.CAPYBARA_DEVICE_TOKEN = "sentinel-token";
+      process.env.CAPYBARA_STATE_DIR = "/state";
+      process.env.AWS_SECRET_ACCESS_KEY = "sentinel-aws";
+      process.env.PATH = "/usr/bin:/bin";
+      const restricted = hostCommandEnv(false);
+      expect(Object.keys(restricted).sort()).toEqual(["LANG", "PATH"]);
+      const escalated = hostCommandEnv(true);
+      // an escalated call runs as the owner: the owner's environment minus the device's own
+      expect(escalated.PATH).toBe("/usr/bin:/bin");
+      expect(escalated.AWS_SECRET_ACCESS_KEY).toBe("sentinel-aws");
+      expect(Object.keys(escalated).filter((k) => k.startsWith("CAPYBARA_"))).toEqual([]);
+    } finally {
+      for (const key of Object.keys(process.env)) if (!(key in saved)) delete process.env[key];
+      Object.assign(process.env, saved);
+    }
+  });
+});
+
 describe("local-Docker operation backend paths", () => {
   const hostRoots = { workspace: "/h/w", skills: "/h/s", tmp: "/h/t" };
   it("maps the owner's ceiling to the container's mounted roots", () => {
     const mapped = containerCeiling({
       revision: "one",
-      fullAccess: false,
+      outsideSandbox: false,
+      network: "allowlist",
       roots: hostRoots,
       restrictedProjectReach: "workspace",
-      restrictedAllowedDomains: ["a.example"],
+      allowedDomains: ["a.example"],
       restrictedDeniedReadRoots: ["/home/u/.ssh"],
       preparation: { skillsRoot: "/h/s", attachmentsBase: "/h/w/attachments" },
-      fullNetwork: "environment",
     });
     expect(mapped).toMatchObject({
       revision: "one",
-      fullAccess: false,
+      outsideSandbox: false,
+      network: "allowlist",
       roots: { workspace: "/workspace", skills: "/skills", tmp: "/tmp" },
-      restrictedAllowedDomains: ["a.example"],
+      allowedDomains: ["a.example"],
       restrictedDeniedReadRoots: [],
       preparation: { skillsRoot: "/skills", attachmentsBase: "/workspace/attachments" },
     });
@@ -226,13 +253,13 @@ describe("local-Docker operation backend paths", () => {
         hostRoots,
         readOwnerCeiling: async () => ({
           revision: "one",
-          fullAccess: true,
+          outsideSandbox: true,
+          network: "allowlist",
           roots: hostRoots,
           restrictedProjectReach: "workspace",
-          restrictedAllowedDomains: [],
+          allowedDomains: [],
           restrictedDeniedReadRoots: [],
           preparation: { skillsRoot: "/h/s", attachmentsBase: "/h/w/attachments" },
-          fullNetwork: "environment",
         }),
         container: {
           operationContainer: async () => {

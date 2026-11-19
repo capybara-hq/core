@@ -73,7 +73,7 @@ function defaultSleep(ms: number, signal: AbortSignal): Promise<void> {
 }
 
 /**
- * Connects a staged (protocol 3) program and serves it until told to stop (permission activation
+ * Connects a staged (protocol 4) program and serves it until told to stop (permission activation
  * W3-M), with protocol 2's lifetime rules (`connect`): backoff, liveness, 401 / 426 / replaced /
  * revoked endings. Each socket is served by {@link serveStagedSession} with the credential's one
  * session state ({@link StagedDevice.states}, grace from the credential), the binder and the owner

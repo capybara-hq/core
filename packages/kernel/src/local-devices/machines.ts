@@ -37,7 +37,6 @@ import { OwnerReports } from "./owner-reports.js";
 import { DEVICE_OP_RESOLVE_JOB, deviceOpReportedJobId } from "./policy-op-jobs.js";
 import {
   deviceFeaturesOf,
-  legacyPolicyOf,
   localPolicyDiff,
   localPolicyOf,
   opExplains,
@@ -239,8 +238,8 @@ export class MachinesService {
    * never said hello has no known roots: nothing to compare. The reported features (known ones
    * only) and local policy summary (null when absent or malformed) replace the stored ones, so a
    * program downgraded to one without them is no longer sent what it cannot do. The summary is the
-   * device's mode and sandbox-mode allowlist; a change of what the owner sets, made on the machine
-   * while it was away, is audited `device.policy_changed` / `device.mode_changed`
+   * device's sandbox allowlist; a change of what the owner sets, made on the machine while it was
+   * away, is audited `device.policy_changed` (the owner ceiling's, `device.owner_ceiling_changed`)
    * ({@link reportedPolicy}). The outcomes of its recent policy ops (`recentOps`) backfill the
    * platform's ops still pending on the row ({@link backfillOps}). The owner's home directory
    * (`home`) replaces the stored one too (null when the hello has none).
@@ -249,8 +248,7 @@ export class MachinesService {
   async recordHello(
     machineId: string,
     hello: LegacyDeviceHello,
-    rawPolicy: unknown = hello.policy,
-    /** A v3 hello's authenticated owner report (B2): it, not the summary, decides publication. */
+    /** A protocol 4 hello's authenticated owner report (B2): it, not the summary, decides publication. */
     owner?: { report: DeviceOwnerCeiling; connectionId: string | null },
   ): Promise<void> {
     const subject = await this.db
@@ -307,13 +305,7 @@ export class MachinesService {
           .execute();
       }
     }
-    const policy = await this.reportedPolicy(
-      machineId,
-      self,
-      hello.policy,
-      rawPolicy,
-      owner !== undefined,
-    );
+    const policy = await this.reportedPolicy(machineId, self, hello.policy);
     // jsonb returns keys in its own order: compare roots canonically, or every reconnect would
     // look like a changed reach and reset Full consent (B4 consent stability)
     const rootsChanged = canonicalRoots(self.roots) !== canonicalRoots(hello.roots);
@@ -333,7 +325,7 @@ export class MachinesService {
         (scope, row) =>
           rootsChanged ||
           ownerPolicyRevokes(localPolicyOf(policy), scope, row.method, row.granted_hosts),
-        localPolicyOf(self.local_policy)?.mode !== localPolicyOf(policy)?.mode || rootsChanged,
+        rootsChanged,
       );
     await this.db
       .updateTable("device_machines")
@@ -416,7 +408,10 @@ export class MachinesService {
     }
   }
 
-  /** Dormant authenticated hello adapter; the active gateway still accepts only protocol 2. */
+  /**
+   * A protocol 4 hello on an authenticated connection: validated as a frame, then recorded like
+   * {@link recordHello} with its owner report and the connection it arrived on.
+   */
   @Transactional()
   async recordHelloV3(
     machineId: string,
@@ -425,7 +420,7 @@ export class MachinesService {
   ): Promise<void> {
     const parsed = parseDeviceFrame(JSON.stringify(hello), "device");
     if (parsed.type !== "hello") throw new Error("Expected a validated operation hello");
-    await this.recordHello(machineId, parsed, parsed.policy, {
+    await this.recordHello(machineId, parsed, {
       report: parsed.ownerCeiling,
       connectionId,
     });
@@ -438,11 +433,15 @@ export class MachinesService {
     if (!machine) return;
     const subject = { orgId: machine.org_id, deviceId: machine.device_id };
     await this.ceilings.lock(subject, "device");
+    const attested = await this.boundIdentityLocked(subject, machineId, parsed, connectionId);
+    // the hello predates the binding its own connection installed: that install recorded the
+    // report, which this hello's must not overwrite
+    if (attested === "installed-here") return;
     await this.reports.record(
       machine.device_id,
       LOCAL_PROVIDER,
       parsed.programVersion,
-      await this.boundIdentityLocked(subject, parsed),
+      attested,
       parsed.permissionSupport,
     );
   }
@@ -451,51 +450,97 @@ export class MachinesService {
    * The runtime identity a v3 hello may attest (B4): only a bound hello re-reporting exactly the
    * identity of the current instance generation's installed binding. An unbound hello, another
    * generation or a binding still awaiting the device attests nothing (unprobed; it never finishes
-   * an installation, which only the bindInstance answer does). A changed identity under the same
-   * binding (helper, interpreter or environment bytes) invalidates the report and advances the
-   * device's admission epoch; a changed environment fingerprint also resets Full consent.
+   * an installation, which only the bindInstance answer does).
+   *
+   * The machine the current generation was installed for no longer attesting it means its program
+   * can never serve that generation again: a restarted program whose verified runtime differs from
+   * the one its stored binding attested (every capybara-device upgrade changes the runtime bytes)
+   * starts unbound, and the device refuses to rebind a generation under a changed runtime. The
+   * instance is then replaced ({@link replaceUnattestedLocked}), so the next use creates and binds
+   * a new generation under the new evidence instead of staying unprobed until a new login.
+   *
+   * A connection answers bindInstance before its own hello is recorded (the hello is recorded
+   * after `ready`), so a binding installed on the hello's own connection is newer than the hello:
+   * it is left as it is (`installed-here`), never replaced by the evidence the hello predates.
    */
   private async boundIdentityLocked(
     subject: { orgId: string; deviceId: string },
+    machineId: string,
     hello: DeviceHello,
-  ): Promise<PermissionRuntimeIdentity | undefined> {
-    const reported = hello.runtimeIdentity;
-    if (hello.instanceGeneration === null || !reported) return undefined;
+    connectionId: string | null,
+  ): Promise<PermissionRuntimeIdentity | "installed-here" | undefined> {
     const instance = await this.db
       .selectFrom("device_instances")
-      .select(["provider", "created_at", "permission_runtime_identity"])
+      .select(["provider", "status", "handle", "created_at", "permission_runtime_identity"])
       .where("device_id", "=", subject.deviceId)
       .executeTakeFirst();
     if (
       !instance ||
       instance.provider !== LOCAL_PROVIDER ||
-      String(instance.created_at.getTime()) !== reported.instanceGeneration
+      !instance.handle ||
+      (instance.status !== "running" && instance.status !== "suspended")
     )
       return undefined;
+    const generation = String(instance.created_at.getTime());
     const binding = await this.db
       .selectFrom("device_instance_bindings")
-      .select(["status", "runtime_identity"])
+      .select(["status", "runtime_identity", "machine_id", "installed_connection_id"])
       .where("device_id", "=", subject.deviceId)
-      .where("instance_generation", "=", reported.instanceGeneration)
+      .where("instance_generation", "=", generation)
       .executeTakeFirst();
+    // not installed yet (the kernel's bindInstance finishes it), or installed for another machine
+    // (a login replaced the instance already): nothing to attest, nothing to replace
     if (binding?.status !== "installed" || !binding.runtime_identity) return undefined;
-    if (sameRuntimeIdentity(binding.runtime_identity, reported)) return reported;
-    const previous = instance.permission_runtime_identity;
-    if (previous)
-      await this.ceilings.publishLocked(
-        subject,
-        "device",
-        true,
-        previous.imageFingerprint !== reported.imageFingerprint,
-      );
+    if (binding.machine_id !== machineId) return undefined;
+    if (connectionId !== null && binding.installed_connection_id === connectionId)
+      return "installed-here";
+    const reported = hello.runtimeIdentity;
+    if (
+      hello.instanceGeneration === generation &&
+      reported?.instanceGeneration === generation &&
+      sameRuntimeIdentity(binding.runtime_identity, reported)
+    )
+      return reported;
+    await this.replaceUnattestedLocked(subject);
     return undefined;
   }
 
   /**
+   * Replaces a local instance whose installed binding its machine no longer attests (under the
+   * device authority writer): the row forgets its instance (status `none`, no handle) and its
+   * fence moves on, so a lifecycle holder of the old instance fails its next write; the device's
+   * admission epoch advances, revoking every admitted or started operation of the old generation.
+   * The files stay (the same machine and directory): the next use creates a new instance on them,
+   * which the kernel binds under the program's new runtime evidence. Full consent is left to that
+   * install, which resets it when the proven environment fingerprint changed: a fingerprint a
+   * hello merely names proves nothing, and nothing is admitted before the install records a
+   * report, so resetting here too would reset twice.
+   */
+  private async replaceUnattestedLocked(subject: {
+    orgId: string;
+    deviceId: string;
+  }): Promise<void> {
+    await this.ceilings.publishLocked(subject, "device", true, false);
+    await this.db
+      .updateTable("device_instances")
+      .set((eb) => ({
+        status: "none",
+        handle: null,
+        running_since: null,
+        suspended_at: null,
+        destroyed_at: sql<Date>`now()`,
+        generation: eb("generation", "+", 1),
+        permission_runtime_identity: null,
+      }))
+      .where("device_id", "=", subject.deviceId)
+      .execute();
+  }
+
+  /**
    * Stores the local policy summary a connected program pushed after its hello (a `policy` frame:
-   * its policy file changed on the machine: its mode or its sandbox-mode allowlist), read and
-   * audited as the hello's ({@link recordHello}). A change the owner made on the machine is
-   * audited `device.policy_changed` / `device.mode_changed`. The next sandbox call then records a
+   * its policy file changed on the machine: its sandbox allowlist), read and audited as the hello's
+   * ({@link recordHello}). A change the owner made on the machine is audited
+   * `device.policy_changed`. The next sandbox call then records a
    * new `device_paths` event when the facts the model is told changed. A revoked machine is left
    * alone.
    */
@@ -503,7 +548,6 @@ export class MachinesService {
   async recordPolicy(
     machineId: string,
     summary: DeviceLocalPolicySummary | undefined,
-    rawPolicy: unknown = summary,
   ): Promise<void> {
     const subject = await this.db
       .selectFrom("device_machines")
@@ -523,14 +567,14 @@ export class MachinesService {
       .forUpdate()
       .executeTakeFirst();
     if (self === undefined) return;
-    const policy = await this.reportedPolicy(machineId, self, summary, rawPolicy);
+    const policy = await this.reportedPolicy(machineId, self, summary);
     if (JSON.stringify(localPolicyOf(self.local_policy)) !== JSON.stringify(policy))
       await this.ceilings.publishLocked(
         { orgId: self.org_id, deviceId: self.device_id },
         "device",
         (scope, row) =>
           ownerPolicyRevokes(localPolicyOf(policy), scope, row.method, row.granted_hosts),
-        localPolicyOf(self.local_policy)?.mode !== localPolicyOf(policy)?.mode,
+        false,
       );
     await this.db
       .updateTable("device_machines")
@@ -564,8 +608,6 @@ export class MachinesService {
       machineId,
       { ...subject, device_id: subject.device_id },
       parsed.policy,
-      parsed.policy,
-      true,
     );
     await this.db
       .updateTable("device_machines")
@@ -584,10 +626,10 @@ export class MachinesService {
    * null. When both the stored and the reported summary are readable and what the owner sets
    * changed ({@link localPolicyDiff}) by no `policy` op the platform sent ({@link opExplains}: its
    * answer may come after the machine's own report), the owner changed it on the machine
-   * (`capybara-device ceiling set ...`): the host changes are audited
-   * `device.policy_changed` and the mode change `device.mode_changed`, both `via: "device"`, so the
-   * device page lists them beside the platform's changes; one an op explains is not audited here
-   * (the op's answer is). A summary reported again is no change. Runs in the caller's transaction,
+   * (`capybara-device policy add|remove allowedDomains ...`): the host changes are audited
+   * `device.policy_changed`, `via: "device"`, so the device page lists them beside the platform's
+   * changes (an owner ceiling change is the owner report writer's, `device.owner_ceiling_changed`);
+   * one an op explains is not audited here (the op's answer is). A summary reported again is no change. Runs in the caller's transaction,
    * with the machine's row locked.
    */
   private async reportedPolicy(
@@ -600,14 +642,7 @@ export class MachinesService {
       pending_policy_ops: unknown;
     },
     reported: DeviceLocalPolicySummary | undefined,
-    rawPolicy: unknown,
-    /**
-     * A staged (v3) report: the authenticated owner report carries the Full change and is audited
-     * once, `device.owner_ceiling_changed` ({@link OwnerReports}); the summary's derived mode is
-     * not audited a second time as `device.mode_changed`.
-     */
-    ownerReported = false,
-  ): Promise<DeviceLocalPolicySummary | { isolation: "sandbox" | "none" } | null> {
+  ): Promise<DeviceLocalPolicySummary | null> {
     const summary = localPolicyOf(reported);
     const prev = localPolicyOf(self.local_policy);
     const diff = summary !== null && prev !== null ? localPolicyDiff(prev, summary) : null;
@@ -632,28 +667,12 @@ export class MachinesService {
             by: self.account_id,
             via: "device",
             machineId,
-            approvalId: null,
-          },
-        });
-      }
-      if (diff.mode !== undefined && !ownerReported) {
-        await audit(this.db.db, {
-          ...base,
-          action: "device.mode_changed",
-          detail: {
-            from: diff.mode.from,
-            to: diff.mode.to,
-            by: self.account_id,
-            via: "device",
-            machineId,
           },
         });
       }
       return summary;
     }
-    // a pre-auto-mode payload the frame parser drops: keep its isolation so an unsandboxed old
-    // program is still recognized (and refused where auto mode is not allowed)
-    return summary ?? legacyPolicyOf(rawPolicy);
+    return summary;
   }
 
   /** Marks the machine seen (a ping); writes at most once every 60 seconds. */
@@ -822,7 +841,7 @@ export class MachinesService {
   ): Promise<void> {
     try {
       if (reason !== null && (await this.relay.holderLive(deviceId))) {
-        // fenced to this machine: on a staged connection it goes out as a protocol 3 `stop`
+        // fenced to this machine: on a staged connection it goes out as a protocol 4 `stop`
         await this.relay.send(deviceId, "stop", { reason }, STOP_DEADLINE_MS, machineId);
       }
     } catch (err) {

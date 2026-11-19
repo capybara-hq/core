@@ -17,7 +17,7 @@ import type { Credential } from "./state.js";
 export const MAX_HELD_ANSWERS = 64;
 
 /**
- * What a staged (protocol 3) program keeps across its sockets, like protocol 2's connection
+ * What a staged (protocol 4) program keeps across its sockets, like protocol 2's connection
  * (`client.ts`): the running operations and the answers produced while no socket was ready.
  * One state belongs to one machine credential ({@link StagedSessionStates}); it never serves
  * another credential's sockets.

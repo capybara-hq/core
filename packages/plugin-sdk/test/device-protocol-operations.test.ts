@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   DEVICE_PROTOCOL_VERSION,
   DeviceProtocolError,
+  LEGACY_DEVICE_PROTOCOL_VERSION,
+  POLICY_ADD_REFUSED,
   parseDeviceFrame,
   parseOperationResult,
   parseOwnerCeilingReport,
@@ -22,9 +24,22 @@ const scope = {
 };
 const frame = (op: string, args: unknown) =>
   JSON.stringify({ type: "req", id: "request", op, args, deadlineMs: 1000 });
-describe("protocol 3 operations", () => {
-  it("speaks protocol 3 and requires fresh user scopes", () => {
-    expect(DEVICE_PROTOCOL_VERSION).toBe(3);
+describe("protocol 4 operations", () => {
+  it("carries every typed operation failure, an invalid scope included", () => {
+    for (const kind of ["denied", "unsupported", "unknown", "invalid", "gone", "fs_gone"]) {
+      const res = { type: "res", id: "request", ok: false, error: { kind, message: "m" } };
+      expect(parseDeviceFrame(JSON.stringify(res), "device")).toEqual(res);
+    }
+    expect(() =>
+      parseDeviceFrame(
+        JSON.stringify({ type: "res", id: "r", ok: false, error: { kind: "bogus", message: "m" } }),
+        "device",
+      ),
+    ).toThrow(DeviceProtocolError);
+  });
+  it("speaks protocol 4 and requires fresh user scopes", () => {
+    expect(DEVICE_PROTOCOL_VERSION).toBe(4);
+    expect(LEGACY_DEVICE_PROTOCOL_VERSION).toBe(3);
     for (const op of ["readFile", "writeFile", "stat", "list", "scan"]) {
       const args = {
         scope,
@@ -92,7 +107,6 @@ describe("protocol 3 operations", () => {
           cpu: 1,
           memoryMb: 512,
           diskMb: 1024,
-          mode: "sandbox",
           network: { kind: "allowlist", hosts: ["api.example.com"] },
         },
         grants: { hosts: ["api.example.com"], source: { kind: "run", id: "run", accountId: "a" } },
@@ -111,7 +125,7 @@ describe("protocol 3 operations", () => {
 it("keeps absent runtime identity unprobed and refuses incomplete or mismatched evidence", () => {
   const hello = {
     type: "hello",
-    protocol: 3,
+    protocol: 4,
     transport: { maxFrameBytes: 69632 },
     programVersion: "test-1",
     os: "darwin",
@@ -119,14 +133,22 @@ it("keeps absent runtime identity unprobed and refuses incomplete or mismatched 
     mode: "os",
     roots: { workspace: "/work", skills: "/skills", tmp: "/tmp" },
     sessionIsolation: false,
-    permissionSupport: { version: 1, restricted: null, fullAccess: false, background: false },
-    ownerCeiling: {
+    permissionSupport: {
       version: 2,
+      boundary: "operation",
+      restricted: null,
+      network: { openPublic: false, allowlist: false, perOperationHosts: false },
+      outsideSandbox: false,
+      background: false,
+    },
+    ownerCeiling: {
+      version: 3,
       sequence: 0,
-      restrictedProjectReach: "workspace",
       revision: "r",
-      fullAccess: false,
-      restrictedAllowedDomains: [],
+      outsideSandbox: false,
+      network: "allowlist",
+      allowedDomains: [],
+      restrictedProjectReach: "workspace",
     },
     instanceGeneration: "g",
   };
@@ -229,7 +251,7 @@ it("strict ready capacity and frame bounds never admit pre-negotiation data", ()
 it("canonical unbound hello remains unprobed and owner reports require independent reach", () => {
   const hello = {
     type: "hello",
-    protocol: 3,
+    protocol: 4,
     programVersion: "fixture",
     os: "darwin",
     arch: "arm64",
@@ -239,37 +261,65 @@ it("canonical unbound hello remains unprobed and owner reports require independe
     transport: { maxFrameBytes: 69632 },
     instanceGeneration: null,
     permissionSupport: {
-      version: 1,
+      version: 2,
+      boundary: "operation",
       restricted: null,
-      fullAccess: false,
+      network: { openPublic: false, allowlist: false, perOperationHosts: false },
+      outsideSandbox: false,
       background: false,
       unavailableReason: "Awaiting instance binding",
     },
     ownerCeiling: {
-      version: 2,
+      version: 3,
       sequence: 1,
       revision: "r",
-      fullAccess: false,
+      outsideSandbox: false,
+      network: "open",
+      allowedDomains: [],
       restrictedProjectReach: "os-user",
-      restrictedAllowedDomains: [],
     },
   };
   expect(parseDeviceFrame(JSON.stringify(hello), "device")).toMatchObject({
     instanceGeneration: null,
   });
+  for (const claim of [
+    { outsideSandbox: true },
+    { background: true },
+    {
+      boundary: "instance",
+      network: { openPublic: true, allowlist: false, perOperationHosts: false },
+    },
+  ])
+    expect(() =>
+      parseDeviceFrame(
+        JSON.stringify({ ...hello, permissionSupport: { ...hello.permissionSupport, ...claim } }),
+        "device",
+      ),
+    ).toThrow();
+  // a protocol 3 hello (its version 1 support and version 2 owner report) is refused
+  expect(() => parseDeviceFrame(JSON.stringify({ ...hello, protocol: 3 }), "device")).toThrow(
+    "Expected protocol 4 hello",
+  );
   expect(() =>
     parseDeviceFrame(
       JSON.stringify({
         ...hello,
-        permissionSupport: { ...hello.permissionSupport, fullAccess: true },
+        permissionSupport: {
+          version: 1,
+          restricted: null,
+          fullAccess: false,
+          background: false,
+          unavailableReason: "x",
+        },
       }),
       "device",
     ),
-  ).toThrow();
+  ).toThrow(DeviceProtocolError);
   for (const extra of [
     { sequence: -1 },
     { sequence: 0.1 },
-    { version: 1 },
+    { version: 2 },
+    { fullAccess: false },
     { restrictedProjectReach: "all" },
     { unknown: true },
   ])
@@ -299,19 +349,22 @@ describe("bindInstance (B4 post-commit binding)", () => {
     bindingId: request.bindingId,
     runtimeIdentity: identity,
     permissionSupport: {
-      version: 1,
+      version: 2,
+      boundary: "operation",
       restricted: null,
-      fullAccess: true,
+      network: { openPublic: false, allowlist: false, perOperationHosts: false },
+      outsideSandbox: true,
       background: true,
       unavailableReason: "restricted proof pending",
     },
     ownerCeiling: {
-      version: 2,
+      version: 3,
       sequence: 3,
       revision: "r",
-      fullAccess: true,
+      outsideSandbox: true,
+      network: "open",
+      allowedDomains: [],
       restrictedProjectReach: "workspace",
-      restrictedAllowedDomains: [],
     },
   };
   it("accepts exactly the committed identifiers and refuses paths, manifests and policies", () => {
@@ -367,12 +420,13 @@ describe("bindInstance (B4 post-commit binding)", () => {
 
 describe("owner reports (B2)", () => {
   const report = {
-    version: 2,
+    version: 3,
     revision: "r1",
     sequence: 3,
-    fullAccess: false,
+    outsideSandbox: false,
+    network: "allowlist",
+    allowedDomains: ["*.example.com"],
     restrictedProjectReach: "os-user",
-    restrictedAllowedDomains: ["*.example.com"],
   };
   it("parses one strict report and refuses extra fields, bad reach or sequence", () => {
     expect(parseOwnerCeilingReport(report)).toEqual(report);
@@ -381,8 +435,10 @@ describe("owner reports (B2)", () => {
       { ...report, restrictedProjectReach: "home" },
       { ...report, sequence: -1 },
       { ...report, sequence: 1.5 },
-      { ...report, version: 1 },
-      { ...report, fullAccess: "true" },
+      { ...report, version: 2 },
+      { ...report, outsideSandbox: "true" },
+      { ...report, fullAccess: false },
+      { ...report, network: "open-public" },
     ])
       expect(() => parseOwnerCeilingReport(bad)).toThrow(DeviceProtocolError);
   });
@@ -390,7 +446,7 @@ describe("owner reports (B2)", () => {
     const frame = parseDeviceFrame(
       JSON.stringify({
         type: "policy",
-        policy: { mode: "sandbox", allowedDomains: [] },
+        policy: { allowedDomains: [] },
         ownerCeiling: report,
       }),
       "device",
@@ -401,13 +457,13 @@ describe("owner reports (B2)", () => {
     ).toThrow(DeviceProtocolError);
     expect(
       parseOperationResult("policy", {
-        policy: { mode: "sandbox", allowedDomains: [] },
+        policy: { allowedDomains: [] },
         ownerCeiling: report,
       }),
     ).toMatchObject({ ownerCeiling: report });
-    expect(() =>
-      parseOperationResult("policy", { policy: { mode: "sandbox", allowedDomains: [] } }),
-    ).toThrow(DeviceProtocolError);
+    expect(() => parseOperationResult("policy", { policy: { allowedDomains: [] } })).toThrow(
+      DeviceProtocolError,
+    );
     expect(() => parseOperationResult("policyStatus", { outcome: "applied" })).toThrow(
       DeviceProtocolError,
     );
@@ -431,14 +487,45 @@ describe("owner reports (B2)", () => {
           ownerCeiling,
         },
       });
-    expect(parseDeviceFrame(req({ fullAccess: false }), "kernel")).toMatchObject({
-      op: "policy",
-    });
-    expect(parseDeviceFrame(req({ restrictedProjectReach: "workspace" }), "kernel")).toMatchObject({
-      op: "policy",
-    });
-    for (const bad of [{ fullAccess: true }, { restrictedProjectReach: "os-user" }, { x: 1 }])
+    for (const good of [
+      { outsideSandbox: false },
+      { network: "allowlist" },
+      { removeAllowedDomains: ["api.example.com"] },
+      { restrictedProjectReach: "workspace" },
+    ])
+      expect(parseDeviceFrame(req(good), "kernel")).toMatchObject({
+        op: "policy",
+        args: { ownerCeiling: good },
+      });
+    for (const bad of [
+      { outsideSandbox: true },
+      { network: "open" },
+      { restrictedProjectReach: "os-user" },
+      // the protocol 3 key is gone
+      { fullAccess: false },
+      { x: 1 },
+    ])
       expect(() => parseDeviceFrame(req(bad), "kernel")).toThrow(DeviceProtocolError);
+  });
+  it("refuses a policy op that adds hosts or carries the protocol 3 mode: widening is on the machine", () => {
+    const req = (extra: Record<string, unknown>) =>
+      JSON.stringify({
+        type: "req",
+        id: "1",
+        op: "policy",
+        deadlineMs: 1000,
+        args: { opId: "op", source: { accountId: "a", accountName: "A", via: "web" }, ...extra },
+      });
+    expect(parseDeviceFrame(req({ remove: ["api.example.com"] }), "kernel")).toMatchObject({
+      op: "policy",
+    });
+    expect(() => parseDeviceFrame(req({ add: ["api.example.com"] }), "kernel")).toThrow(
+      POLICY_ADD_REFUSED,
+    );
+    expect(() => parseDeviceFrame(req({ add: [] }), "kernel")).toThrow(POLICY_ADD_REFUSED);
+    expect(() => parseDeviceFrame(req({ mode: "sandbox" }), "kernel")).toThrow(
+      "not part of device protocol 4",
+    );
   });
 });
 describe("writeFile payload check", () => {

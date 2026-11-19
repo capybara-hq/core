@@ -41,6 +41,7 @@ import { accountsFor } from "../helpers/identity.js";
 import { startClaimedRun } from "../helpers/managed-calls.js";
 import { testMembers } from "../helpers/members.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
+import { storedOwnerReport } from "../helpers/owner-report.js";
 import {
   createConv,
   createOrgWithProviders,
@@ -213,7 +214,9 @@ async function newMember(): Promise<{ id: string; req: Req; deviceId: string }> 
 }
 
 /** A local device of the owner whose machine signed in (never connected), as `features` says. */
-async function localDevice(machine: { features?: string[]; localPolicy?: unknown } = {}) {
+async function localDevice(
+  machine: { features?: string[]; localPolicy?: unknown; ownerReport?: string } = {},
+) {
   const deviceId = await k.app.get(TransactionHost).run(async () => {
     const { id } = await k.app
       .get(DevicesService)
@@ -229,7 +232,11 @@ async function localDevice(machine: { features?: string[]; localPolicy?: unknown
     });
     return id;
   });
-  if (machine.features !== undefined || machine.localPolicy !== undefined) {
+  if (
+    machine.features !== undefined ||
+    machine.localPolicy !== undefined ||
+    machine.ownerReport !== undefined
+  ) {
     await db
       .updateTable("device_machines")
       .set({
@@ -237,6 +244,7 @@ async function localDevice(machine: { features?: string[]; localPolicy?: unknown
         ...(machine.localPolicy !== undefined && {
           local_policy: JSON.stringify(machine.localPolicy),
         }),
+        ...(machine.ownerReport !== undefined && { owner_report: machine.ownerReport }),
       })
       .where("device_id", "=", deviceId)
       .execute();
@@ -426,7 +434,6 @@ describe("project knowledge at run start", () => {
           workspace: "/Users/u/capybara-device/d/workspace",
           home: "/Users/u",
           supported: true,
-          widerThanAllowed: false,
         }),
         keeps: (...args: Parameters<DeviceProjectsService["keeps"]>) => projects.keeps(...args),
       },
@@ -620,13 +627,14 @@ describe("project knowledge at run start", () => {
     expect(copies[0]?.runId).toBe(input.runId);
   });
 
-  it("records a machine that runs a wider mode than the organization allows as outside_mode, asking it nothing", async () => {
+  it("a machine whose owner allows more than the organization is not refused unasked: the org's ceiling narrows its operations", async () => {
     const deviceId = await localDevice({
-      features: ["mode", "projects"],
-      localPolicy: { mode: "auto", allowedDomains: [] },
+      features: ["projects"],
+      localPolicy: { allowedDomains: [] },
+      ownerReport: storedOwnerReport(),
     });
     const convId = await insertBound({ deviceId, path: "/home/me/app" });
-    // the organization allows only sandbox mode, the machine's own policy says auto
+    // the organization turns work outside the sandbox off, the machine's owner report allows it
     const { settings } = await db
       .selectFrom("orgs")
       .select("settings")
@@ -634,7 +642,7 @@ describe("project knowledge at run start", () => {
       .executeTakeFirstOrThrow();
     await db
       .updateTable("orgs")
-      .set({ settings: JSON.stringify({ ...(settings as object), fullAccess: "off" }) })
+      .set({ settings: JSON.stringify({ ...(settings as object), outsideSandbox: "off" }) })
       .where("id", "=", orgId)
       .execute();
     let roots: ProjectRootEvent[];
@@ -647,22 +655,9 @@ describe("project knowledge at run start", () => {
         .where("id", "=", orgId)
         .execute();
     }
-    expect(roots).toHaveLength(1);
-    expect(roots[0]?.payload).toEqual({
-      project: "app",
-      root: "/home/me/app",
-      unavailable: {
-        reason: "outside_mode",
-        message: expect.stringMatching(/wider mode than the organization allows/) as string,
-      },
-      skills: [],
-    });
-    const instance = await db
-      .selectFrom("device_instances")
-      .select("handle")
-      .where("device_id", "=", deviceId)
-      .executeTakeFirst();
-    expect(instance?.handle ?? null).toBeNull();
+    // protocol 4: the owner's ceiling is intersected per operation, so the read is attempted;
+    // this machine is offline, so nothing is recorded (and never outside_mode)
+    expect(roots).toEqual([]);
   });
 
   it("records a cloud device whose provider cannot list as unsupported, asking it nothing", async () => {

@@ -57,6 +57,7 @@ import { useErrorMessage } from "../../lib/use-error-message";
 import { useRunStateValue } from "../client-ext/run-state";
 import { ExtensionSlot } from "../extension-ui/ExtensionSlot";
 import { type DraftFile, useDraftFiles } from "../use-draft-files";
+import { modeMenuFromPickers } from "./PermissionPicker";
 import type { SendResult } from "./useConversation";
 
 /** At most this many `@` resources per message (kernel `MAX_ATTACHMENTS`). */
@@ -827,6 +828,12 @@ export function ComposerBar({
       }}
       attachDisabled={!drafts.limits.available}
       pickers={pickers}
+      // one mode button before send holds the profile and the effort (from 640 up)
+      {...(pickers.permission !== undefined
+        ? {
+            mode: modeMenuFromPickers(pickers.permission, pickers.effort, t("permission.modeHint")),
+          }
+        : {})}
       {...(quickActions !== undefined ? { quickActions } : {})}
       {...(agents !== undefined ? { agents } : {})}
       send={
