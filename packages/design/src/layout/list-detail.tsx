@@ -110,7 +110,9 @@ export function ListDetail({
         data-divided={divided ? "true" : undefined}
         data-columns={columns}
         aria-label={label}
-        style={{ "--cb-ld-list": `${listMin}px` } as CSSProperties}
+        style={
+          { "--cb-ld-list": `${listMin}px`, "--cb-ld-detail": `${detailMin}px` } as CSSProperties
+        }
       >
         <div
           ref={listPane}

@@ -422,3 +422,30 @@ describe("the compact ActionRow fills the row (spec §4.4)", () => {
     ).toBe("none");
   });
 });
+
+describe("the detail pane's least width (spec §6.47)", () => {
+  it("holds detailMin in two panes and lets go of it in the stack and on segments", () => {
+    region({ detail: <p>ITEM</p> });
+    expect(part("list-detail")?.getAttribute("style")).toContain("--cb-ld-detail: 360px");
+    const rules = parseCss(css("templates.css"));
+    const detail = (at: string | null, sel: string) =>
+      rules.find((r) => r.at === at && r.selector === sel)?.decls["min-width"];
+    expect(detail(null, ".cb-listdetail-detail")).toBe("var(--cb-ld-detail, 0)");
+    for (const fit of [580, 680]) {
+      const stack = rules.filter(
+        (r) => r.at === `cb-ld (max-width: ${fit - 1}px)` && r.selector.includes("detail"),
+      );
+      expect(stack.some((r) => r.decls["min-width"] === "0")).toBe(true);
+    }
+    for (const seg of ["(horizontal-viewport-segments: 2)", "(vertical-viewport-segments: 2)"]) {
+      expect(
+        rules.some(
+          (r) =>
+            r.at === seg &&
+            r.selector.includes(".cb-listdetail-detail") &&
+            r.decls["min-width"] === "0",
+        ),
+      ).toBe(true);
+    }
+  });
+});
