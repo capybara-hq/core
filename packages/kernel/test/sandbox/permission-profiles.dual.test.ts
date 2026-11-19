@@ -385,7 +385,7 @@ describe("profile × operation matrix through the owner API on two replicas", ()
 
   // Open finding (R3 Mac dogfood, 2026-11-20): the pipeline's reviewKindOf maps every non-Bash
   // tool to "write", so the ask for a Read outside the scope is recorded with detail kind "write"
-  // under tool key Write, and the card says 智能体想写入这个文件 ("wants to write this file")
+  // under tool key Write, and the card says the agent "wants to write this file"
   // above a read-only scope. Remove `.fails` with the fix.
   it.fails("an outside Read asks as a read: its detail and tool key name a read, not a write", async () => {
     const deviceId = await cloudDevice();
