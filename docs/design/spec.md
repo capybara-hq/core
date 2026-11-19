@@ -2443,16 +2443,18 @@ conversation's column plus the body padding and the border (`layout.chat` + 2 ×
 754, at most the window less 32), so the transcript's thread fills the dialog with no empty side
 gutters and levels 2 and 3 are one width; the tree as wide as its tree needs (its columns of
 nodes and their gaps, the body padding, the border and the canvas's reserved scrollbar gutter:
-1042 + the gutter at three columns, 1057 with Chromium's 15 px classic scrollbars, 1042 with
+1082 + the gutter at three columns, 1097 with Chromium's 15 px classic scrollbars, 1082 with
 overlay scrollbars), at least the width of levels 2 and 3 (the
 head and legend fit, going back and forth does not jump narrower) and at most 1100 (and the window
 less 32); a wider tree (four columns) scrolls sideways inside the canvas. Levels 2 and 3 have fixed heights, 600 and 640 (at most
 the window less 32), so the dialog does not jump while an agent works (the §6.7 frame: `panel`,
 `line-strong`, radius `md`, `shadow-2`, `scrim`). The frame has no padding at any level: the head,
-body and footer pad themselves in the compact dialog rhythm of §6.7 (head `space.2` `space.4` with
-1px `line-soft` below, body `space.4`, footer `space.3` `space.4`). Level 1's head is the title
-"智能体图" / "Agent map" (`h2`, prose, 500) and close, over a body padded `space.4`
-(`agent-map-content`) that holds the tree, or, while the page reads it, the page's loading bars
+body and footer pad themselves in the compact dialog rhythm of §6.7, tightened for the map so a
+tree of twenty agents reads at a glance (maintainer request 2026-11-19: compact and refined): head
+`space.2` `space.4` with 1px `line-soft` below, body `space.3` `space.4`, footer `space.2`
+`space.4`; level 3's thread keeps `space.4` on each side, so it fills the dialog. Level 1's head is
+the title "智能体图" / "Agent map" (`h2`, prose, 500) and close, over a body padded `space.3`
+`space.4` (`agent-map-content`) that holds the tree, or, while the page reads it, the page's loading bars
 (`SkeletonBars`, state `loading`) or its error line (state `failed`); levels 2 and 3 draw their own
 head with the same parts (one shared head: back, status dot, title, close, then meta lines).
 Levels 1 and 2 are a dialog box (§1: what they hold draws its unboxed form); level 3's thread is a
@@ -2461,33 +2463,41 @@ from levels 2 and 3 (`onBack`); focus is trapped and returned, and when the view
 level or agent, `view`) it moves to the new head's back button, else its title.
 `AgentMapTree({ root, background, selectedId, onOpen })` is level 1:
 
-- **Count line** at the top of the body (prose, `muted`, `space.3` above the tree): "N 个智能体 · M 个运行中 · 点击查看详情" /
+- **Count line** at the top of the body (prose `small`, `muted`, `space.2` above the tree): "N 个智能体 · M 个运行中 · 点击查看详情" /
   "N agents · M running · Click a node for details" ("1 agent"); N counts the sub-agents, every
   node but the root (the conversation itself), M the running ones among them: the same number
   as the composer's agents chip (§6.16.29; AC3 ruling 4, 2026-11-07).
-- **Tree**: columns left to right by depth, `space.6` apart; a parent is vertically centred on its
-  children; standard elbow connectors (1px `line-strong`) from each parent to the vertical centre of
-  each child; siblings `space.2` apart, newest first (the agent dispatched last on top; the
+- **Tree**: a dense tree, not stacked cards: columns left to right by depth, `space.5` apart; a
+  parent sits level with its first child (top-anchored, so a long column of children never pushes
+  it away from them when scrolled); standard elbow connectors (1px `line-strong`) meet every node
+  at its vertical centre (half of `row.roomy` below its top: from the parent a `space.2` stub
+  straight across to the first child, the vertical line down to the last child's centre, a
+  `space.3` stub into each child); siblings `space.1` apart, newest first (the agent dispatched last on top; the
   page passes them in dispatch order, as the kernel's tree gives them). No "main agent" or "level N" labels: position and lines
   show the hierarchy. Four columns (three levels below the root) are wider than the dialog: the
   tree scrolls inside it.
-- **Node**: a button 320 wide and 62 high, the same for every node (padding 0 `space.3`, `panel-2`,
-  1px `line`, radius `md`; hover `line-strong` on `hover`); line 1 the status dot and the
-  description (500, `ink`); line 2 exactly "model · time · tokens" (`small`, `muted`, "opus 5.5 ·
-  42分18秒 · 392.7k tokens"), indented past the dot. Both lines are one line with an ellipsis, and
-  the node's tooltip is the full text. The root (the conversation itself) has `line-strong` on
-  `raised`, no hover and is not a button: it has no summary to open and is never selected. The
-  node open at level 2 has an `accent` border (`aria-current="true"`). Activating a node opens it
+- **Node**: a compact row-button 336 wide and `row.roomy` (44) high, the same for every node: no
+  box of its own (padding 0 `space.2`, transparent ground, a transparent 1px border, radius `sm`;
+  hover the `hover` ground); line 1 the status dot and the description (`body`, 500, `ink`); line 2
+  exactly "model · time · tokens" (`small`, `muted`, "opus 5.5 · 42分18秒 · 392.7k tokens"),
+  indented past the dot. Both lines are one line; the description ends with an ellipsis, and on
+  line 2 only the model gives way (its own ellipsis) while " · time · tokens" always stays whole.
+  The node's tooltip is the full text. The root (the conversation itself) is a quiet card: 1px
+  `line` on `raised`, no hover, and not a button: it has no summary to open and is never selected.
+  The node open at level 2 has the `selected` ground and an `accent` border
+  (`aria-current="true"`). Activating a node opens it
   (`onOpen`).
 - **Status is only the dot** (8, round, `role="img"` with the status word as its label): running
   `accent`, pulsing every `motion.pulse` (still under reduced motion); waiting `warn`; completed
   `ok`; limit reached `warn` ("已达上限" / "Limit reached": the run ended on its step or time limit
   or its tree's token budget after handing back what it had, not a failure); failed `fail`; stopped
   `faint`. No status words in the tree (the exception to §2.4's icon and text rule): the **legend**
-  at the bottom (`small`, `faint`, items `space.4` apart) names the six statuses.
-- **Background tasks**: the root's own background tasks under the root column (320 wide, `space.4`
-  below the tree): a heading "后台任务 · N" / "Background tasks · N" (`small`, `faint`) and one row
-  per task (`row.default`, `panel-2`, 1px `line-soft`, radius `sm`, `small`): the dot, a `Bash` tag
+  at the bottom (`small`, `faint`, `space.2` below the tree, items `space.3` apart) names the six
+  statuses.
+- **Background tasks**: the root's own background tasks under the root column (336 wide, `space.3`
+  below the tree): a heading "后台任务 · N" / "Background tasks · N" (`small`, `faint`, aligned
+  with the rows' dots) and one compact row per task, the nodes' way (`row.dense`, padding 0
+  `space.2`, no ground or border, `small`): the dot, a `Bash` tag
   (the picker-menu tag: `micro` `muted` on `selected`), the description with an ellipsis and the
   duration in `faint`. None: nothing. A child's background tasks show only in its level 2.
 - **Canvas**: the tree's scroll region is a labelled region ("智能体树" / "Agent tree") the
@@ -2497,24 +2507,26 @@ level or agent, `view`) it moves to the new head's back button, else its title.
 `AgentDetail({ node, agentType, inBackground?, spawnedBy, latestText, task, background, toolCalls,
 onBack, onClose, onOpenParent, onOpenTranscript, onStop?, stopping?, now? })` is level 2, one agent's summary, live at
 the granularity of tool summaries. The dialog is 600 high (at most the window less 32), so it does
-not jump while the agent works; head, body and footer pad themselves:
+not jump while the agent works; head, body and footer pad themselves (compact, as level 1):
 
 - **Head** (padding `space.2` `space.4`, 1px `line-soft` below): a dense back button
   (`arrow-left`, "返回智能体图" / "Back to the agent map"), the status dot, the description (`h2`,
   one line with an ellipsis) and close. Under it, indented past the back button (`control.dense` +
-  `space.2`), three meta lines (`small`, `muted`): "运行中 · <agent type> · <model> · 后台" ("后台" only while `inBackground`, the
-default: a fork skill's child runs in the foreground and has none);
-  "由 <parent> 派出" / "Spawned by <parent>", the parent an underlined `ink` link that opens its
-  node (`onOpenParent`); "<time> · <tokens>".
-- **Body** (scrolls, padding `space.4`): the latest text (prose), then three collapsible
+  `space.2`), two meta lines (`small` on its own 16 px line, `muted`, `space.1` under the title):
+  "运行中 · <agent type> · <model> · 后台" ("后台" only while `inBackground`, the default: a fork
+  skill's child runs in the foreground and has none); then "由 <parent> 派出 · <time> · <tokens>"
+  / "Spawned by <parent> · <time> · <tokens>", the parent an underlined `ink` link that opens its
+  node (`onOpenParent`).
+- **Body** (scrolls, padding `space.3` `space.4`): the latest text (prose, `space.2` above the
+  sections), then three collapsible
   sections, each a button (chevron, title 500, count `faint`) with `aria-expanded`: **任务 / Task**
   (the dispatch prompt, prose small `muted`, closed at first), **后台任务 / Background tasks · N**
   (the agent's own tasks, level 1's rows, closed at first) and **工具调用 / Tool calls · N** (open):
   the calls newest first, each a `row.dense` line: a dot slot (`space.2`; the running call's dot
   pulses), the tool name (500, at least 44 wide), its display summary (`muted`; the running one
   `ink`) with an ellipsis, and at the end in `faint` a range ("第 1–180 行") or the running call's
-  clock. The section content starts under its title.
-- **Footer** (padding `space.3` `space.4`, 1px `line-soft` above): "打开完整记录" / "Open transcript"
+  clock. The section content starts under its title, `space.1` above the next section.
+- **Footer** (padding `space.2` `space.4`, 1px `line-soft` above): "打开完整记录" / "Open transcript"
   and, while the agent runs (`onStop` given), "停止" / "Stop" (`danger`; stops its descendants too).
   The buttons share the row; a finished agent's "Open transcript" fills it.
 - **Stopping** (`stopping`): from the click until the agent's terminal event arrives, until the
@@ -2542,7 +2554,7 @@ States: `tree`, `deep`, `loading`, `failed`, `detail`, `finished`, `stopping`, `
 <!-- size-table: agent-map -->
 | Part | State | Property | Value |
 |---|---|---|---|
-| agent-map-dialog | tree | width | 1057 |
+| agent-map-dialog | tree | width | 1097 |
 | agent-map-dialog | tree | min-width | 754 |
 | agent-map-dialog | tree | max-width | 1100 |
 | agent-map-dialog | deep | width | 1100 |
@@ -2555,16 +2567,17 @@ States: `tree`, `deep`, `loading`, `failed`, `detail`, `finished`, `stopping`, `
 | agent-map-head | tree | border-bottom-color | color.line-soft |
 | agent-map-title | tree | font-size | type.h2 |
 | agent-map-content | tree | padding-left | space.4 |
-| agent-map-content | tree | padding-top | space.4 |
+| agent-map-content | tree | padding-top | space.3 |
 | agent-map-count | tree | color | color.muted |
-| agent-node | tree | width | 320 |
-| agent-node | tree | height | 62 |
-| agent-node[data-depth=1] | tree | background-color | color.panel-2 |
-| agent-node[data-depth=1] | tree | border-top-color | color.line |
-| agent-node | tree | border-radius | radius.md |
+| agent-map-count | tree | font-size | type.small |
+| agent-node | tree | width | 336 |
+| agent-node | tree | height | row.roomy |
+| agent-node | tree | padding-left | space.2 |
+| agent-node | tree | border-radius | radius.sm |
 | agent-node[data-root=true] | tree | background-color | color.raised |
-| agent-node[data-root=true] | tree | border-top-color | color.line-strong |
+| agent-node[data-root=true] | tree | border-top-color | color.line |
 | agent-node[aria-current=true] | tree | border-top-color | color.accent |
+| agent-node[aria-current=true] | tree | background-color | color.selected |
 | agent-node-name | tree | font-size | type.body |
 | agent-node-meta | tree | font-size | type.small |
 | agent-node-meta | tree | color | color.muted |
@@ -2572,20 +2585,19 @@ States: `tree`, `deep`, `loading`, `failed`, `detail`, `finished`, `stopping`, `
 | agent-dot[data-status=waiting] | tree | background-color | color.warn |
 | agent-dot[data-status=completed] | tree | background-color | color.ok |
 | agent-dot[data-status=failed] | tree | background-color | color.fail |
-| agent-task | tree | height | row.default |
-| agent-task | tree | background-color | color.panel-2 |
+| agent-task | tree | height | row.dense |
 | agent-task-tag | tree | font-size | type.micro |
 | agent-task-tag | tree | background-color | color.selected |
 | agent-task-time | tree | color | color.faint |
 | agent-legend | tree | color | color.faint |
-| agent-node | deep | height | 62 |
-| agent-node[data-depth=3] | deep | width | 320 |
+| agent-node | deep | height | row.roomy |
+| agent-node[data-depth=3] | deep | width | 336 |
 | agent-map-head | loading | border-bottom-color | color.line-soft |
 | agent-map-content | loading | padding-left | space.4 |
-| agent-map-content | loading | padding-top | space.4 |
+| agent-map-content | loading | padding-top | space.3 |
 | skeleton-bar | loading | height | space.3 |
 | agent-map-content | failed | padding-left | space.4 |
-| agent-map-content | failed | padding-top | space.4 |
+| agent-map-content | failed | padding-top | space.3 |
 | agent-map-dialog | detail | width | 754 |
 | agent-map-dialog | detail | height | 600 |
 | agent-map-head | detail | padding-top | space.2 |
@@ -2603,9 +2615,9 @@ States: `tree`, `deep`, `loading`, `failed`, `detail`, `finished`, `stopping`, `
 | agent-call-clock | detail | color | color.faint |
 | agent-call-range | detail | color | color.faint |
 | agent-detail | detail | padding-left | space.4 |
-| agent-detail | detail | padding-top | space.4 |
+| agent-detail | detail | padding-top | space.3 |
 | agent-detail-foot | detail | padding-left | space.4 |
-| agent-detail-foot | detail | padding-top | space.3 |
+| agent-detail-foot | detail | padding-top | space.2 |
 | agent-detail-foot | detail | border-top-color | color.line-soft |
 | button[data-variant=danger] | detail | height | control.default |
 | agent-detail-foot | finished | border-top-color | color.line-soft |

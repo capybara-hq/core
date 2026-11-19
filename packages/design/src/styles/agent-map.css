@@ -3,7 +3,8 @@
    level 3's transcript frame. */
 
 /* The frame has no padding at any level: the head, body and footer pad themselves in the compact
-   dialog rhythm (§6.7: head space.2 space.4, body space.4, footer space.3 space.4). */
+   dialog rhythm, tightened for the map (§6.16.28: head space.2 space.4, body space.3 space.4,
+   footer space.2 space.4; the transcript keeps space.4 so its thread fills the dialog). */
 .cb-amap-dialog {
   padding: 0;
 }
@@ -63,13 +64,14 @@
   font-weight: 500;
 }
 
-/* The tree level's body: the tree, or the page's loading bars or error line, padded space.4. */
+/* The tree level's body: the tree, or the page's loading bars or error line, padded space.3
+   space.4 (compact). */
 .cb-amap-content {
   display: flex;
   flex: 1 1 auto;
   flex-direction: column;
   min-height: 0;
-  padding: var(--cb-space-4);
+  padding: var(--cb-space-3) var(--cb-space-4);
 }
 .cb-amap {
   display: flex;
@@ -78,17 +80,20 @@
   min-height: 0;
 }
 .cb-amap-count {
-  margin: 0 0 var(--cb-space-3);
+  margin: 0 0 var(--cb-space-2);
   color: var(--cb-muted);
   font-family: var(--cb-font-prose);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
 }
 
-/* Columns by depth: a branch is a node then its children's column, centred on it. */
+/* Columns by depth: a branch is a node then its children's column, the node level with its first
+   child (top-anchored, so a long column never pushes its parent away from it). */
 .cb-amap-canvas {
   display: flex;
   flex-direction: column;
   align-items: flex-start;
-  gap: var(--cb-space-4);
+  gap: var(--cb-space-3);
   min-height: 0;
   overflow: auto;
   scrollbar-gutter: stable;
@@ -99,34 +104,39 @@
 }
 .cb-amap-branch {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   width: max-content;
 }
+/* The connectors meet every node at its vertical centre: half the node's height (row.roomy) below
+   the top of its branch, since every node sits at the top of its branch. */
 .cb-amap-kids {
   position: relative;
   display: flex;
   flex: none;
   flex-direction: column;
-  padding-left: var(--cb-space-6);
+  padding-left: var(--cb-space-5);
 }
 /* The stub from the parent to the children's vertical line. */
 .cb-amap-kids::before {
   content: "";
   position: absolute;
-  top: 50%;
+  top: calc(var(--cb-row-roomy) / 2);
   left: 0;
-  width: var(--cb-space-3);
+  width: var(--cb-space-2);
   border-top: 1px solid var(--cb-line-strong);
 }
 .cb-amap-kid {
   position: relative;
-  padding: var(--cb-space-1) 0;
+}
+/* Siblings space.1 apart: the gap under each, so every child's node is at the top of its box. */
+.cb-amap-kid:not(:last-child) {
+  padding-bottom: var(--cb-space-1);
 }
 /* The stub from the vertical line to the child's vertical centre. */
 .cb-amap-kid::before {
   content: "";
   position: absolute;
-  top: 50%;
+  top: calc(var(--cb-row-roomy) / 2);
   left: calc(-1 * var(--cb-space-3));
   width: var(--cb-space-3);
   border-top: 1px solid var(--cb-line-strong);
@@ -141,27 +151,29 @@
   border-left: 1px solid var(--cb-line-strong);
 }
 .cb-amap-kid:first-child::after {
-  top: 50%;
+  top: calc(var(--cb-row-roomy) / 2);
 }
 .cb-amap-kid:last-child::after {
-  bottom: 50%;
+  bottom: auto;
+  height: calc(var(--cb-row-roomy) / 2);
 }
 .cb-amap-kid:only-child::after {
   display: none;
 }
 
-/* Every node one height: two lines of one line each (body 20 + small 16), padding space.3. */
+/* Every node one compact row of two lines (body 20 + small 16) in row.roomy: no box of its own,
+   only a ground on hover and when open; the root a quiet card. */
 .cb-amap-node {
   display: flex;
   flex: none;
   flex-direction: column;
   justify-content: center;
-  width: 320px;
-  height: 62px;
-  padding: 0 var(--cb-space-3);
-  border: 1px solid var(--cb-line);
-  border-radius: var(--cb-radius-md);
-  background: var(--cb-panel-2);
+  width: 336px;
+  height: var(--cb-row-roomy);
+  padding: 0 var(--cb-space-2);
+  border: 1px solid transparent;
+  border-radius: var(--cb-radius-sm);
+  background: transparent;
   color: var(--cb-ink);
   font: inherit;
   text-align: left;
@@ -171,12 +183,11 @@
     border-color var(--cb-motion-hover);
 }
 .cb-amap-node:hover {
-  border-color: var(--cb-line-strong);
   background: var(--cb-hover);
 }
 .cb-amap-node[data-root="true"],
 .cb-amap-node[data-root="true"]:hover {
-  border-color: var(--cb-line-strong);
+  border-color: var(--cb-line);
   background: var(--cb-raised);
 }
 /* The root is the conversation itself: nothing to open. */
@@ -185,6 +196,7 @@
 }
 .cb-amap-node[aria-current="true"] {
   border-color: var(--cb-accent);
+  background: var(--cb-selected);
 }
 .cb-amap-node-line {
   display: flex;
@@ -201,14 +213,24 @@
   white-space: nowrap;
   text-overflow: ellipsis;
 }
+/* "model · time · tokens": the model gives way first, time and tokens always stay whole. */
 .cb-amap-node-meta {
+  display: flex;
+  min-width: 0;
   padding-left: var(--cb-space-4);
-  overflow: hidden;
   color: var(--cb-muted);
   font-size: var(--cb-type-small-size);
   line-height: var(--cb-type-small-line);
   white-space: nowrap;
+}
+.cb-amap-node-model {
+  min-width: 0;
+  overflow: hidden;
   text-overflow: ellipsis;
+}
+.cb-amap-node-cost {
+  flex: none;
+  white-space: pre;
 }
 
 /* Status is only the dot's colour (§6.16.28: no status words; the legend names them). */
@@ -245,10 +267,11 @@
 
 /* The root's background tasks, under the root column. */
 .cb-amap-background {
-  width: 320px;
+  width: 336px;
 }
 .cb-amap-background-head {
   margin: 0;
+  padding-left: var(--cb-space-2);
   color: var(--cb-faint);
   font-size: var(--cb-type-small-size);
   line-height: var(--cb-type-small-line);
@@ -257,7 +280,6 @@
 .cb-amap-background-list {
   display: flex;
   flex-direction: column;
-  gap: var(--cb-space-1);
   margin: var(--cb-space-1) 0 0;
   padding: 0;
   list-style: none;
@@ -266,11 +288,8 @@
   display: flex;
   align-items: center;
   gap: var(--cb-space-2);
-  height: var(--cb-row-default);
+  height: var(--cb-row-dense);
   padding: 0 var(--cb-space-2);
-  border: 1px solid var(--cb-line-soft);
-  border-radius: var(--cb-radius-sm);
-  background: var(--cb-panel-2);
   font-size: var(--cb-type-small-size);
   line-height: var(--cb-type-small-line);
 }
@@ -299,8 +318,8 @@
 .cb-amap-legend {
   display: flex;
   flex-wrap: wrap;
-  gap: var(--cb-space-4);
-  margin: var(--cb-space-3) 0 0;
+  gap: var(--cb-space-3);
+  margin: var(--cb-space-2) 0 0;
   padding: 0;
   list-style: none;
   color: var(--cb-faint);
@@ -321,7 +340,7 @@
   overflow: hidden;
   color: var(--cb-muted);
   font-size: var(--cb-type-small-size);
-  line-height: var(--cb-type-body-line);
+  line-height: var(--cb-type-small-line);
   white-space: nowrap;
   text-overflow: ellipsis;
 }
@@ -345,10 +364,10 @@
   flex: 1 1 auto;
   min-height: 0;
   overflow-y: auto;
-  padding: var(--cb-space-4);
+  padding: var(--cb-space-3) var(--cb-space-4);
 }
 .cb-amap-latest {
-  margin: 0 0 var(--cb-space-3);
+  margin: 0 0 var(--cb-space-2);
   font-family: var(--cb-font-prose);
   font-size: var(--cb-type-prose-size);
   line-height: var(--cb-type-prose-line);
@@ -373,7 +392,7 @@
 }
 /* The section's content starts under its title: chevron 12 + gap space.2. */
 .cb-amap-section-body {
-  padding-bottom: var(--cb-space-2);
+  padding-bottom: var(--cb-space-1);
 }
 .cb-amap-prompt {
   margin: 0;
@@ -432,7 +451,7 @@
   display: flex;
   flex: none;
   gap: var(--cb-space-3);
-  padding: var(--cb-space-3) var(--cb-space-4);
+  padding: var(--cb-space-2) var(--cb-space-4);
   border-top: 1px solid var(--cb-line-soft);
 }
 /* "Open transcript" fills the row alone (a finished agent) or shares it with Stop. */
