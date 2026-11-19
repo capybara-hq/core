@@ -243,7 +243,9 @@ export const PermissionContextV2Schema = z
     const s = p.scope;
     if (!s) return;
     // every profile may record a scoped sandbox; a device filesystem or environment networking
-    // is never a restricted profile's, and never under a recorded sandbox block
+    // is never a restricted profile's, and never under a recorded sandbox block. Interim: Full
+    // access without a block may still record device + environment until T5's producer writes
+    // the block, then T5 drops that allowance
     if (
       (p.effectiveProfile !== "full-access" || p.sandbox !== null) &&
       (s.filesystem.kind !== "scoped" || s.network.kind === "environment")
@@ -313,6 +315,15 @@ export const PermissionContextMetaV1Schema = z
     version: z.literal(1),
     contextSeq: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).nullable(),
     hash: z.string().regex(/^[a-f0-9]{64}$/),
+    /**
+     * The canonical hash of the located context's device `sandbox` block, present only when that
+     * context records one (permission context v2): a replay that rebuilds another block than the
+     * recording reports `device_sandbox_changed`.
+     */
+    sandbox: z
+      .string()
+      .regex(/^[a-f0-9]{64}$/)
+      .optional(),
   })
   .strict();
 export type PermissionContextMetaV1 = z.infer<typeof PermissionContextMetaV1Schema>;

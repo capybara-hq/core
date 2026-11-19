@@ -36,6 +36,7 @@ import {
   permissionContextMeta,
   permissionContextText,
   permissionQuote,
+  permissionSandboxHash,
   RecordedPermissionContextError,
 } from "../../src/runtime/context/permission-profile.js";
 import { coversHost } from "../../src/sandbox/modes.js";
@@ -1786,6 +1787,11 @@ describe("permission context v2: the device sandbox and the approver per crossin
       runId,
     } as ConversationEvent;
   }
+  const callOf = (snap: CaseSnapshot, seq: number) =>
+    snap.events.find((e) => e.seq === seq)?.payload as Extract<
+      ConversationEvent,
+      { type: "model_call" }
+    >["payload"];
   function twoRuns(second: PermissionContextV2): {
     snap: CaseSnapshot;
     first: number;
@@ -1816,13 +1822,33 @@ describe("permission context v2: the device sandbox and the approver per crossin
       }),
     };
   }
-  it("logs device_sandbox_changed for a run whose recorded sandbox block differs from the previous one", () => {
+  it("a sandbox change between runs is recorded input: zero drift for the baseline and a candidate", () => {
     const { snap, first, last } = twoRuns(sandboxed("request-approval", false));
     expect(reconstructRequest(snap, first, { model }).drift).toEqual([]);
+    expect(reconstructRequest(snap, last, { model }).drift).toEqual([]);
+    const candidate = { ...agent, instructions: "New instructions" };
+    expect(reconstructRequest(snap, last, { model, definition: candidate }).drift).toEqual([]);
+    const meta = (callOf(snap, last).request.permissionContext ?? {}) as { sandbox?: string };
+    expect(meta.sandbox).toBe(permissionSandboxHash(localSandbox(false)));
+  });
+  it("logs device_sandbox_changed when the rebuilt sandbox block differs from the recorded one", () => {
+    const { snap, last } = twoRuns(sandboxed("request-approval", false));
+    const recorded = snap.events.find((e) => e.seq === 3)?.payload as PermissionContextV2;
+    if (recorded.sandbox) recorded.sandbox.outsideSandbox = true;
+    const candidate = { ...agent, instructions: "New instructions" };
+    expect(reconstructRequest(snap, last, { model, definition: candidate }).drift).toEqual([
+      "permission_profile_changed",
+      "device_sandbox_changed",
+    ]);
+  });
+  it("logs device_sandbox_changed alone when only the recorded sandbox metadata differs", () => {
+    const { snap, last } = twoRuns(sandboxed("request-approval", false));
+    Object.assign(callOf(snap, last).request.permissionContext ?? {}, { sandbox: "a".repeat(64) });
     expect(reconstructRequest(snap, last, { model }).drift).toEqual(["device_sandbox_changed"]);
   });
-  it("logs no device_sandbox_changed for a profile change on the same sandbox", () => {
-    const { snap, last } = twoRuns(sandboxed("approve-for-me", true));
-    expect(reconstructRequest(snap, last, { model }).drift).toEqual([]);
+  it("a context without a sandbox block records no sandbox metadata", () => {
+    expect(
+      build([event("permission_context", supported, 1)]).meta.permissionContext,
+    ).not.toHaveProperty("sandbox");
   });
 });

@@ -135,7 +135,11 @@ function approverLines(p: PermissionContextV2, box: PermissionContextSandbox): s
   return lines;
 }
 
-/** The policy line of a supported context that records no sandbox block. */
+/**
+ * The policy line of a supported context that records no sandbox block. Interim: the producer
+ * (`readContextLocked`) still writes `sandbox: null`; T5 removes this branch, and the Full access
+ * device + environment allowance in the schema, once every supported context records its block.
+ */
 function unsandboxedPolicyLine(p: PermissionContextV2): string {
   return p.execution === "scheduled"
     ? "Scheduled run: only the unattended policy and explicit task grants apply; interactive approvals and chat Full access do not apply."
@@ -196,6 +200,9 @@ export function managedDevicePathsText(payload: ManagedDevicePathsV1): string {
   const p = ManagedDevicePathsV1Schema.parse(payload);
   return `Device directories: workspace ${permissionQuote(p.roots.workspace)}, skills ${permissionQuote(p.roots.skills)}, temporary files ${permissionQuote(p.roots.tmp)}.\nSelected working directory: ${permissionQuote(p.workingRoot)}. These paths do not grant access; the current permission context governs new operations.`;
 }
+/** The canonical hash of a recorded device sandbox block (request metadata `sandbox`). */
+export const permissionSandboxHash = (sandbox: PermissionContextSandbox): string =>
+  hash(["permission_sandbox", 2, sandbox]);
 export const permissionContextHash = (payload: PermissionContextV2): string =>
   hash(["permission_context", 2, PermissionContextV2Schema.parse(payload)]);
 export const managedDevicePathsHash = (payload: ManagedDevicePathsV1): string =>
@@ -260,10 +267,13 @@ export function permissionContextMeta(
   contributions: readonly PermissionContribution[],
 ): PermissionContextMetaV1 | undefined {
   if (contributions.length === 0) return undefined;
+  const located = permissionContextAt(events, Number.POSITIVE_INFINITY);
+  const sandbox = located?.payload.sandbox ?? null;
   return {
     version: 1,
-    contextSeq: permissionContextAt(events, Number.POSITIVE_INFINITY)?.seq ?? null,
+    contextSeq: located?.seq ?? null,
     hash: hash([1, contributions.map(({ type, text }) => [type, text])]),
+    ...(sandbox !== null && { sandbox: permissionSandboxHash(sandbox) }),
   };
 }
 

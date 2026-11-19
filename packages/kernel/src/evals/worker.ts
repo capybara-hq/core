@@ -852,11 +852,13 @@ export class EvalWorker {
     if (!(await held())) return;
     const baseline = runBaseline(s);
     // in DRIFT_ORDER: subagent_changed, permission_profile_changed (a recorded permission
-    // context the snapshot cannot reproduce), model_switched (the candidate replaced the person's
+    // context the snapshot cannot reproduce), device_sandbox_changed (another rebuilt device
+    // sandbox block than the recorded one), model_switched (the candidate replaced the person's
     // switch), then tool_unmatched
     const drift: DriftReason[] = [
       ...(subagentCaseChanged(s, resolved) ? (["subagent_changed"] as const) : []),
       ...(out.permissionContextDrift ? (["permission_profile_changed"] as const) : []),
+      ...(out.deviceSandboxDrift ? (["device_sandbox_changed"] as const) : []),
       ...(resolved.overridesSwitch ? (["model_switched"] as const) : []),
       ...(out.unmatched > 0 ? (["tool_unmatched"] as const) : []),
     ];

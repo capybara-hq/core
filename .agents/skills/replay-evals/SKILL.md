@@ -31,7 +31,7 @@ see `.agents/skills/writing-web-ui`). Design basis: overall design §6 principle
   Also add a matching reason to `DriftReason` (`reconstruct.ts`, and add it to `DRIFT_ORDER` in order) when it can differ between the recording
   and a reconstruction (a candidate changes it, or it can't be fetched at reconstruction), and add a case to the "drift reasons" group in `reconstruct.test.ts`. Existing reasons: `system_hash`,
   `tools_changed` (baseline check only), `tool_spec_missing`, `definition_missing`,
-  `subagent_changed` (child cases, see "Sub-agents"), `permission_profile_changed` (see "Recorded permission context" below), `params_changed`, `model_switched` (see below), `media_missing`, `media_changed` (baseline check only), `context_fit` (context compaction spec §4.9), `tool_unmatched` (full-run replay).
+  `subagent_changed` (child cases, see "Sub-agents"), `permission_profile_changed` and `device_sandbox_changed` (see "Recorded permission context" below), `params_changed`, `model_switched` (see below), `media_missing`, `media_changed` (baseline check only), `context_fit` (context compaction spec §4.9), `tool_unmatched` (full-run replay).
 - The runtime (request building, the loop, waits) lives in `packages/kernel/src/runtime`. An agent's `instructions` is derived from its
   `instructionFiles` on save.
 - The history sent to the model is append-only; model-visible text that appears in replay (such as `REPLAY_NO_RECORDING`) is always English.
@@ -64,14 +64,25 @@ see `.agents/skills/writing-web-ui`). Design basis: overall design §6 principle
   `RecordedToolPipeline` appends it before a matched call's result when the eval conversation's latest differs.
 - **Recorded permission context** (permission context replay spec
   `docs/superpowers/specs/2026-11-16-permission-context-replay-design.md`): `permission_context { payload:
-  PermissionContextV1 }` and the marked `device_paths` branch (`permissionContextVersion: 1`) render at their
+  PermissionContextV2 }` and the marked `device_paths` branch (`permissionContextVersion: 1`) render at their
   position, the latest covered ones again after a summary, and `model_call.request.permissionContext` (`{ version,
-  contextSeq, hash }`) records the rendered contributions; absent when no context was recorded.
+  contextSeq, hash, sandbox? }`) records the rendered contributions; absent when no context was recorded.
+  Context version 2 (approval-only profiles spec
+  `docs/superpowers/specs/2026-11-19-approval-only-profiles-design.md`) adds the device `sandbox` block, the same
+  under every profile and present only on a supported context; Full access may record a scoped sandbox. Its text
+  (`runtime/context/permission-profile.ts`) states the sandbox once, then the approver per crossing kind; the
+  escalation clause (`sandbox: "escalated"`) only where escalation is available (operation boundary,
+  `outsideSandbox`, interactive). A supported context without a block (the producer before it records one) keeps the
+  profile-level policy line. `sandbox` in the metadata is the canonical hash of the located context's block, absent
+  when it has none.
   `permissionContextHistory` refuses a present marker or version its strict schema rejects
   (`RecordedPermissionContextError`) in live build and replay alike; in a case snapshot that is
   `eval.snapshot_invalid` (422), never a provider error. `permission_profile_changed` (after
   `subagent_changed`): a request's recorded metadata cannot be reproduced from its own bounded range
   (`min(toSeq, callSeq - 1)`); a normal profile change is recorded input, zero drift.
+  `device_sandbox_changed` (right after it): the sandbox block the snapshot rebuilds for a request differs from the
+  one its recorded metadata names (usually reported together with `permission_profile_changed`); a sandbox change
+  between runs is recorded input, zero drift for a baseline and a candidate alike.
   **Request boundary** (`runtime/model-call.ts`, spec B2): every agent-history request construction of the
   attempt ladder (a retry, a fallback, the rebuild after a forced compaction, wrap-up) first awaits
   `ModelStepDeps.permissionContext.beforeRequest` and then rereads the complete log once; without the port there is
@@ -98,15 +109,16 @@ see `.agents/skills/writing-web-ui`). Design basis: overall design §6 principle
   `evals/recorded-permission-context.test.ts`, `runtime/permission-context*.test.ts` (including the
   `.dual` file in the container project) and the cross-path smoke test `runtime/permission-activation.test.ts`
   (one app on the production gate: an anonymous IM guest, a protocol 3 local device and a sandbox-fake cloud
-  device each record a schema-valid v1 context before their first request, every request locates the latest
+  device each record a schema-valid v2 context before their first request, every request locates the latest
   one, a profile change appends one, an unchanged follow-up none).
   Full-run replay (`evals/recorded-permission-context.ts`, spec B4): earlier runs' contexts are seeds; the target
   run's are fed by the recorded-only feeder at the generated request boundary (sparse `(step, attempt)` table,
   monotone, idem `replay_permission_context:<generatedRunId>:<originalSeq>`), so generated requests carry the
   recorded content and their metadata locates the generated seq; none for a recording without markers.
   `replayLoopDeps` (`evals/worker.ts`) strips any live recorder, and the live recorder refuses an eval conversation
-  or a tree whose root is one. The result reports `permission_profile_changed` from the original-coordinate
-  diagnostics. `RecordedToolPipeline` copies a managed `device_paths` whole and a matched result's `review`
+  or a tree whose root is one. The result reports `permission_profile_changed` and `device_sandbox_changed` from
+  the original-coordinate diagnostics (`recordedRunPermissionDrift`; `RunReplayResult.permissionContextDrift` /
+  `deviceSandboxDrift`). `RecordedToolPipeline` copies a managed `device_paths` whole and a matched result's `review`
   verbatim (absent stays absent); a replay never previews, reviews, admits, provisions, resumes, probes or touches
   a device.
 - **Attachments** (attachments-on-demand spec `docs/superpowers/specs/2026-11-17-attachments-on-demand-design.md` §5.2):

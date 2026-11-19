@@ -963,7 +963,8 @@ export class SandboxOperationAuthority {
       root.scheduled_task_id !== null;
     const header = {
       version: 2 as const,
-      // no device sandbox block yet: the context keeps its profile-level policy line
+      // interim: no device sandbox block yet (T5 records it), so the context keeps its
+      // profile-level policy line
       sandbox: null,
       rootConversationId: root.id,
       execution: scheduled ? ("scheduled" as const) : ("interactive" as const),

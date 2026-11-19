@@ -317,7 +317,7 @@ describe("recorded-only feeder (spec B4)", () => {
       { call: { step: 1, attempt: 1 } },
     ]);
     expect(recordedPermissionContext(s, seeded(s), GEN)).toBeUndefined();
-    expect(recordedRunPermissionDrift(s)).toBe(false);
+    expect(recordedRunPermissionDrift(s)).toEqual([]);
   });
 
   it("feeds A then B at the only step-1 request, never C or D early, and keeps the seeded earlier context once", async () => {
@@ -471,20 +471,20 @@ describe("recorded-only feeder (spec B4)", () => {
 describe("original-coordinate diagnostics", () => {
   it("an unchanged marked recording has no drift; a tampered recorded context has", () => {
     const s = reference();
-    expect(recordedRunPermissionDrift(s)).toBe(false);
+    expect(recordedRunPermissionDrift(s)).toEqual([]);
     const tampered = structuredClone(s);
     const event = tampered.events.find((e) => e.seq === 7);
     // an unrendered revision alone changes no rendered contribution, so no drift
     (event?.payload as PermissionContextV2).scopeRevision = "tampered";
-    expect(recordedRunPermissionDrift(tampered)).toBe(false);
+    expect(recordedRunPermissionDrift(tampered)).toEqual([]);
     Object.assign(event?.payload as PermissionContextV2, {
       selectedProfile: "approve-for-me",
       effectiveProfile: "approve-for-me",
     });
-    expect(recordedRunPermissionDrift(tampered)).toBe(true);
+    expect(recordedRunPermissionDrift(tampered)).toEqual(["permission_profile_changed"]);
     // a deleted event is caught too, and nothing live is consulted to fill it in
     const deleted = { ...s, events: s.events.filter((e) => e.seq !== 10) };
-    expect(recordedRunPermissionDrift(deleted)).toBe(true);
+    expect(recordedRunPermissionDrift(deleted)).toEqual(["permission_profile_changed"]);
   });
   it("an earlier run's tampered call alone does not count; the replayed run's requests do", () => {
     const s = reference();
@@ -493,7 +493,7 @@ describe("original-coordinate diagnostics", () => {
     Object.assign((earlierCall.payload as { request: Record<string, unknown> }).request, {
       permissionContext: { version: 1, contextSeq: 2, hash: "a".repeat(64) },
     });
-    expect(recordedRunPermissionDrift(s)).toBe(false);
+    expect(recordedRunPermissionDrift(s)).toEqual([]);
   });
   it("an unsupported recorded version fails as eval.snapshot_invalid, never as drift", () => {
     const s = reference();

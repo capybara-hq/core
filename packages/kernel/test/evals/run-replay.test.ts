@@ -997,10 +997,20 @@ describe("整轮回放", () => {
   async function seedPermissionRun(
     convId: string,
     runId: string,
+    withSandbox = false,
   ): Promise<{ a: PermissionContextV2 }> {
     const ctx = (revision: number): PermissionContextV2 => ({
       version: 2,
-      sandbox: null,
+      sandbox: withSandbox
+        ? {
+            boundary: "operation",
+            location: "local",
+            workingRoot: "/project",
+            network: { kind: "allowlist", hostsCount: 0 },
+            outsideSandbox: false,
+            outerNetwork: { kind: "host-environment" },
+          }
+        : null,
       rootConversationId: convId,
       profileRevision: revision,
       selectedProfile: "approve-for-me",
@@ -1371,10 +1381,11 @@ describe("整轮回放", () => {
       runId: string,
       edit: (p: Record<string, unknown>) => void,
       type = "permission_context",
+      withSandbox = false,
     ) => {
       const setId = await createSet();
       const conv = await createConv(admin, orgId, agentId);
-      await seedPermissionRun(conv, runId);
+      await seedPermissionRun(conv, runId, withSandbox);
       await addCase(setId, conv, runId);
       const row = await db
         .selectFrom("eval_cases")
@@ -1404,6 +1415,22 @@ describe("整轮回放", () => {
     expect(changed.status, JSON.stringify(changed.error)).toBe("done");
     expect(changed.drift).toEqual(["permission_profile_changed"]);
     expect((changed.candidate as RunReplayResult).permissionContextDrift).toBe(true);
+    // a recorded sandbox block replays as recorded: zero drift
+    const sandboxed = await tamper("perm-sandboxed", () => {}, "permission_context", true);
+    expect(sandboxed.status, JSON.stringify(sandboxed.error)).toBe("done");
+    expect(sandboxed.drift).toEqual([]);
+    // the snapshot rebuilds another sandbox block than the recorded metadata names
+    const moved = await tamper(
+      "perm-sandbox-moved",
+      (p) => {
+        (p.sandbox as { outsideSandbox: boolean }).outsideSandbox = true;
+      },
+      "permission_context",
+      true,
+    );
+    expect(moved.status, JSON.stringify(moved.error)).toBe("done");
+    expect(moved.drift).toEqual(["permission_profile_changed", "device_sandbox_changed"]);
+    expect((moved.candidate as RunReplayResult).deviceSandboxDrift).toBe(true);
     const corrupt = await tamper("perm-corrupt", (p) => {
       Object.assign(p, { version: 3 });
     });

@@ -5,7 +5,11 @@ import type {
   PermissionContextPort,
   PermissionContextRequestInput,
 } from "../runtime/model-call.js";
-import { assertSnapshotPermissionEvents, recordedPermissionContextDrift } from "./reconstruct.js";
+import {
+  assertSnapshotPermissionEvents,
+  type DriftReason,
+  recordedPermissionContextDrift,
+} from "./reconstruct.js";
 import { type CaseSnapshot, toEvents } from "./snapshot.js";
 
 /**
@@ -152,20 +156,20 @@ export interface ReplayTarget {
 
 /**
  * Recorded original-coordinate diagnostics over every original request of the replayed run (spec
- * "Replay and meaningful drift detection"): true when any of them cannot reproduce its recorded
- * permission metadata from its own bounded range. Throws `eval.snapshot_invalid` for a recorded
- * v1 event its strict schema rejects. Never compares generated seqs or hashes with the original.
+ * "Replay and meaningful drift detection"): the reasons (`permission_profile_changed`,
+ * `device_sandbox_changed`) of every request that cannot reproduce its recorded permission
+ * metadata from its own bounded range, deduplicated. Throws `eval.snapshot_invalid` for a recorded
+ * event its strict schema rejects. Never compares generated seqs or hashes with the original.
  */
-export function recordedRunPermissionDrift(s: CaseSnapshot): boolean {
+export function recordedRunPermissionDrift(s: CaseSnapshot): DriftReason[] {
   const events = toEvents(s);
-  if (!hasPermissionMarkers(events)) return false;
+  if (!hasPermissionMarkers(events)) return [];
   assertSnapshotPermissionEvents(events);
-  return events.some(
-    (e) =>
-      e.type === "model_call" &&
-      e.runId === s.runId &&
-      recordedPermissionContextDrift(events, e).length > 0,
-  );
+  const drift = new Set<DriftReason>();
+  for (const e of events)
+    if (e.type === "model_call" && e.runId === s.runId)
+      for (const reason of recordedPermissionContextDrift(events, e)) drift.add(reason);
+  return [...drift];
 }
 
 /**

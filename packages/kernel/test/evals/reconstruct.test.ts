@@ -2655,7 +2655,7 @@ describe("reconstructRequest：漂移原因", () => {
     ]);
   });
 
-  it("device_sandbox_changed reports a run whose recorded sandbox block differs from the previous one", () => {
+  it("device_sandbox_changed: a sandbox change between runs is zero drift; another rebuilt block is drift", () => {
     const s = clone();
     const call = s.events.find((e) => e.seq === seq) as CaseSnapshot["events"][number];
     const payload = call.payload as EventPayload<"model_call">;
@@ -2712,23 +2712,21 @@ describe("reconstructRequest：漂移原因", () => {
       },
     );
     payload.request.toSeq = first + 1;
+    // the request as it was sent: its metadata names the sandbox block it saw
     payload.request.permissionContext = reconstructRequest(s, call.seq, {
       model: info,
     }).meta.permissionContext;
-    expect(reconstructRequest(s, call.seq, { model: info }).drift).toEqual([
+    expect(payload.request.permissionContext?.sandbox).toMatch(/^[a-f0-9]{64}$/);
+    expect(reconstructRequest(s, call.seq, { model: info }).drift).toEqual([]);
+    const candidate = { model: info, params: {} };
+    expect(reconstructRequest(s, call.seq, candidate).drift).toEqual([]);
+    // the snapshot now rebuilds another block than the recorded one
+    const second = s.events.find((e) => e.seq === first + 1) as CaseSnapshot["events"][number];
+    second.payload = context(true);
+    expect(reconstructRequest(s, call.seq, candidate).drift).toEqual([
+      "permission_profile_changed",
       "device_sandbox_changed",
     ]);
-    // the same sandbox under another profile is no sandbox change
-    const second = s.events.find((e) => e.seq === first + 1) as CaseSnapshot["events"][number];
-    second.payload = {
-      ...context(true),
-      selectedProfile: "approve-for-me",
-      effectiveProfile: "approve-for-me",
-    };
-    payload.request.permissionContext = reconstructRequest(s, call.seq, {
-      model: info,
-    }).meta.permissionContext;
-    expect(reconstructRequest(s, call.seq, { model: info }).drift).toEqual([]);
   });
 
   it("快照里没有这个 model_call → eval.call_not_found", () => {
