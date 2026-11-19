@@ -210,6 +210,9 @@ export const JAVA_PROXY_AGENT_JAR = "vendor/java-proxy-agent/srt-proxy-agent.jar
  * kills that tree and the owned groups. Once the launched process has exited and its group is
  * gone, `settle` closes the stdio pipes after a short bounded grace, so a process that escaped
  * (one reparented to launchd before the walk) cannot hold the call or the worker open.
+ * Darwin answers a group signal with EPERM (not ESRCH) while the group holds only dead members
+ * (zombies not yet reaped, or processes exiting), so `signalGroup` counts EPERM as gone when a
+ * process snapshot shows no live member of the group; EPERM with a live member still fails.
  */
 export const WORKER = `import {pathToFileURL} from 'node:url';
 import {spawn,spawnSync} from 'node:child_process';
@@ -243,12 +246,19 @@ function stopTree(){
  }
  return [...tree];
 }
-function signalOwned(signal='SIGKILL'){if(signal==='SIGKILL')for(const pid of stopTree())try{process.kill(pid,'SIGKILL');}catch{}for(const pid of owned.keys()){if(signaled.has(pid))continue;try{process.kill(-pid,signal);if(signal==='SIGKILL')signaled.add(pid);}catch(error){if(error.code==='ESRCH')signaled.add(pid);else throw error;}}}
+function deadGroup(pgid){
+ const ps=spawnSync('/bin/ps',['-axo','pgid=,stat='],{encoding:'utf8',timeout:5000});
+ if(ps.status!==0)return false;
+ for(const line of ps.stdout.split('\\n')){const [group,stat='']=line.trim().split(/\\s+/);if(Number(group)===pgid&&!stat.startsWith('Z')&&!stat.includes('E'))return false;}
+ return true;
+}
+function signalGroup(pgid,signal){try{process.kill(-pgid,signal);return true;}catch(error){if(error.code==='ESRCH'||(error.code==='EPERM'&&deadGroup(pgid)))return false;throw error;}}
+function signalOwned(signal='SIGKILL'){if(signal==='SIGKILL')for(const pid of stopTree())try{process.kill(pid,'SIGKILL');}catch{}for(const pid of owned.keys()){if(signaled.has(pid))continue;if(!signalGroup(pid,signal)||signal==='SIGKILL')signaled.add(pid);}}
 function settle(){
  if(!child||settling||!exited||!(killed||timedOut||closing))return;settling=true;
  const started=Date.now();let goneAt=0;
  const tick=()=>{
-  let gone=true;try{process.kill(-child.pid,0);gone=false;}catch(error){if(error.code!=='ESRCH')gone=false;}
+  let gone=false;try{gone=!signalGroup(child.pid,0);}catch{}
   const now=Date.now();if(gone&&!goneAt)goneAt=now;
   if((goneAt&&now-goneAt>=250)||now-started>=5000){
    forced=true;if(credit){const pending=credit;credit=undefined;pending.reject(Error('Owned output closed after cancellation'));}
