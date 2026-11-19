@@ -11,6 +11,13 @@ export const ALLOWED_WIDTHS = ["599px", "600px", "840px", "841px", "1279px", "12
 /** The short window (height below 480, spec §4.7). */
 export const ALLOWED_HEIGHTS = ["479px"] as const;
 
+/**
+ * The viewport segment media features (mobile layout spec §8): only the two-segment form, which is
+ * the one a foldable reports; any other count is not a layout the design has.
+ */
+export const ALLOWED_SEGMENT_COUNTS = ["2"] as const;
+const SEGMENTS = /\b(horizontal|vertical)-viewport-segments\s*:\s*([^\s)]*)/gi;
+
 const FEATURE = /\b(min|max)-(width|height)\s*:\s*([\d.]+[a-z%]*)/gi;
 const MEDIA = /@media\b([^{]*)\{/gi;
 const VH = /\b100vh\b/;
@@ -26,6 +33,15 @@ export function breakpointFindings(file: string, css: string): Finding[] {
   const lineAt = (offset: number) => css.slice(0, offset).split("\n").length;
   for (const m of css.matchAll(MEDIA)) {
     const start = (m.index ?? 0) + "@media".length;
+    for (const f of (m[1] ?? "").matchAll(SEGMENTS)) {
+      if ((ALLOWED_SEGMENT_COUNTS as readonly string[]).includes(f[2] ?? "")) continue;
+      out.push({
+        file,
+        line: lineAt(start + (f.index ?? 0)),
+        rule: BREAKPOINT_RULE,
+        message: `${f[1]}-viewport-segments: ${f[2]} is not a segment query of the design system; only (horizontal-viewport-segments: 2) and (vertical-viewport-segments: 2) are allowed (spec §8)`,
+      });
+    }
     for (const f of (m[1] ?? "").matchAll(FEATURE)) {
       const dimension = f[2]?.toLowerCase();
       const value = (f[3] ?? "").toLowerCase();

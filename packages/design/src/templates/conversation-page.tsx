@@ -24,6 +24,7 @@ import { BoxScope } from "../layout/box";
 import { useDragDismiss } from "../overlays/drag";
 import { useFocusReturn } from "../overlays/focus-return";
 import { useDesignT } from "../provider";
+import { useViewportSegments } from "../shell/segments";
 import { useHasShell, useRegisterShellPage } from "../shell/shell-page";
 import { INLINE_RIGHT_AREA_BELOW, useSizeClass } from "../shell/size-class";
 import { StatusBar } from "../shell/status-bar";
@@ -246,7 +247,9 @@ export function ConversationPage({
   reference,
 }: ConversationPageProps) {
   const t = useDesignT();
-  const narrowWindow = useMediaQuery(INLINE_RIGHT_AREA_BELOW);
+  const segments = useViewportSegments();
+  // Two segments: the right area is the second segment's pane, whatever the window's width.
+  const narrowWindow = useMediaQuery(INLINE_RIGHT_AREA_BELOW) && !segments;
   const compact = useSizeClass() === "compact";
   const sheetLayout = layout === "sheet" || (layout === "auto" && narrowWindow);
   const [unseen, setUnseen] = useState(false);
@@ -476,6 +479,7 @@ export function ConversationPage({
       data-right={pushed ? "pushed" : right}
       data-right-full={full ? "true" : undefined}
       data-layout={layout}
+      data-segments={segments ? "2" : undefined}
       data-sheet={sheet ? "true" : undefined}
       data-shell={pushed && inShell ? "true" : undefined}
     >

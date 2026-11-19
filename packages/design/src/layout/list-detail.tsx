@@ -2,6 +2,7 @@ import { type CSSProperties, type ReactNode, useCallback, useEffect, useRef } fr
 import { IconButton } from "../controls/index";
 import { Icon } from "../icons/icon";
 import { useDesignT } from "../provider";
+import { useViewportSegments } from "../shell/segments";
 import { useRegisterShellPage } from "../shell/shell-page";
 
 export type ListDetailProps = {
@@ -59,6 +60,7 @@ export function ListDetail({
   if (!(LIST_DETAIL_FITS as readonly number[]).includes(fit)) {
     throw new Error(`ListDetail: no stylesheet rules for the fit ${fit} (LIST_DETAIL_FITS)`);
   }
+  const segments = useViewportSegments();
   const open = detail !== null;
   const listPane = useRef<HTMLDivElement>(null);
   const scrolled = useRef(0);
@@ -81,6 +83,7 @@ export function ListDetail({
         data-part="list-detail"
         data-fit={fit}
         data-open={open ? "true" : "false"}
+        data-segments={segments ? "2" : undefined}
         data-divided={divided ? "true" : undefined}
         data-columns={columns}
         aria-label={label}

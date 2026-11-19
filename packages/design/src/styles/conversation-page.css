@@ -1235,10 +1235,42 @@ button.cb-property-row {
  * window (useMediaQuery reads false there) and draw it inline until the first client render. Hide
  * the inline area until then, so it never widens the page (no horizontal scroll, no flash).
  */
-@media (max-width: 1279px) {
+@media (max-width: 1279px) and (not (horizontal-viewport-segments: 2)) and (not (vertical-viewport-segments: 2)) {
   .cb-conv-page[data-layout="auto"]:not([data-sheet]) .cb-conv-panel,
   .cb-conv-page[data-layout="auto"]:not([data-sheet]) .cb-conv-cols > [data-part="properties"] {
     display: none;
+  }
+}
+/*
+ * Two viewport segments (spec §8): the thread column fills the first segment and the inline right
+ * panel the second, the hinge between them is the gap (nothing sits on it). The media features
+ * are the authority; `data-segments="2"` mirrors `useViewportSegments()` for script only.
+ */
+@media (horizontal-viewport-segments: 2) {
+  .cb-conv-page .cb-conv-main {
+    flex: 0 1 env(viewport-segment-width 0 0);
+    min-width: 0;
+    max-width: 100%;
+  }
+  .cb-conv-page .cb-conv-panel {
+    flex: 1 1 0;
+    min-width: 0;
+    margin-left: calc(env(viewport-segment-left 1 0) - env(viewport-segment-right 0 0));
+  }
+}
+@media (vertical-viewport-segments: 2) {
+  .cb-conv-page {
+    flex-direction: column;
+  }
+  .cb-conv-page .cb-conv-main {
+    flex: 0 1 env(viewport-segment-height 0 0);
+    min-width: 0;
+    max-height: 100%;
+  }
+  .cb-conv-page .cb-conv-panel {
+    flex: 1 1 0;
+    min-width: 0;
+    margin-top: calc(env(viewport-segment-top 0 1) - env(viewport-segment-bottom 0 0));
   }
 }
 /*

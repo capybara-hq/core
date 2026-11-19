@@ -21,6 +21,7 @@ export { isTouchPointer, keyboardInset } from "./pointer";
 export { PreferenceBar, type PreferenceBarProps, ThemeToggle } from "./preference-bar";
 export { ReplaceableFrame } from "./replaceable-frame";
 export { SafeModeBanner } from "./safe-mode-banner";
+export { useViewportSegments, type ViewportSegment } from "./segments";
 export {
   applyShellEnvironment,
   readShellEnvironment,

@@ -37,7 +37,15 @@ describe("design-breakpoint", () => {
     ]);
   });
 
-  it("the class queries, 1279 / 1280, the short window and the dynamic units pass", () => {
+  it("only the two-segment queries are allowed; a lookalike count or a width beside them fails", () => {
+    expect(at("violation-segments")).toEqual([
+      ["segments.css", 1],
+      ["segments.css", 6],
+      ["segments.css", 11],
+    ]);
+  });
+
+  it("the class queries, 1279 / 1280, the short window, the segment queries and the dynamic units pass", () => {
     expect(run("ok")).toEqual([]);
   });
 });

@@ -1449,6 +1449,68 @@ a.cb-object-name:hover {
 .cb-listdetail[data-divided="true"] > .cb-listdetail-detail {
   padding-left: var(--cb-space-4);
 }
+/* Two viewport segments (mobile layout spec §8): the media features are the authority for first
+   paint (`data-segments="2"` only mirrors `useViewportSegments()` for script). Both panes are drawn
+   in the two-pane form, the list in the first segment and the detail in the second, the gap between
+   the segments (the hinge) as the grid gap; this overrides the stack form at any width. */
+@media (horizontal-viewport-segments: 2) {
+  .cb-listdetail[data-fit] {
+    grid-template-columns: minmax(0, env(viewport-segment-width 0 0)) minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) auto;
+    column-gap: calc(env(viewport-segment-left 1 0) - env(viewport-segment-right 0 0));
+  }
+  .cb-listdetail[data-fit][data-open] > .cb-listdetail-list {
+    display: block;
+    grid-column: 1;
+    grid-row: 1;
+    border-right: 0;
+  }
+  .cb-listdetail[data-fit][data-open] > .cb-listdetail-detail {
+    display: flex;
+    grid-column: 2;
+    grid-row: 1;
+  }
+  .cb-listdetail[data-fit][data-open] > .cb-listdetail-footer {
+    display: block;
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+  .cb-listdetail[data-fit] > .cb-listdetail-detail > .cb-listdetail-bar {
+    display: none;
+  }
+  .cb-listdetail[data-fit][data-divided="true"] > .cb-listdetail-list {
+    padding-right: var(--cb-space-4);
+  }
+  .cb-listdetail[data-fit][data-divided="true"] > .cb-listdetail-detail {
+    padding-left: var(--cb-space-4);
+  }
+}
+@media (vertical-viewport-segments: 2) {
+  .cb-listdetail[data-fit] {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, env(viewport-segment-height 0 0)) minmax(0, 1fr) auto;
+    row-gap: calc(env(viewport-segment-top 0 1) - env(viewport-segment-bottom 0 0));
+  }
+  .cb-listdetail[data-fit][data-open] > .cb-listdetail-list {
+    display: block;
+    grid-column: 1;
+    grid-row: 1;
+    border-right: 0;
+  }
+  .cb-listdetail[data-fit][data-open] > .cb-listdetail-detail {
+    display: flex;
+    grid-column: 1;
+    grid-row: 2;
+  }
+  .cb-listdetail[data-fit][data-open] > .cb-listdetail-footer {
+    display: block;
+    grid-column: 1;
+    grid-row: 3;
+  }
+  .cb-listdetail[data-fit] > .cb-listdetail-detail > .cb-listdetail-bar {
+    display: none;
+  }
+}
 /* Inside the shell on compact the top bar is the one back (the open item is a pushed page). */
 @media (max-width: 599px) {
   .cb-shell .cb-listdetail[data-fit] > .cb-listdetail-detail > .cb-listdetail-bar {

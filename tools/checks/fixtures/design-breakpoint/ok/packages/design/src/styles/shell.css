@@ -33,3 +33,18 @@
   height: 100dvh;
   min-height: calc(100svh - 8px);
 }
+@media (horizontal-viewport-segments: 2) {
+  .e {
+    margin-left: calc(env(viewport-segment-left 1 0) - env(viewport-segment-right 0 0));
+  }
+}
+@media (vertical-viewport-segments: 2) {
+  .e {
+    margin-top: calc(env(viewport-segment-top 0 1) - env(viewport-segment-bottom 0 0));
+  }
+}
+@media (max-width: 1279px) and (not (horizontal-viewport-segments: 2)) {
+  .e {
+    display: none;
+  }
+}
