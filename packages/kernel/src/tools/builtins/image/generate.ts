@@ -62,6 +62,7 @@ import {
 } from "../sandbox/common.js";
 import { assertReadAndUnchanged, FileGuardError, fileStateOf } from "../sandbox/file-state.js";
 import { READ_MAX_BYTES } from "../sandbox/read.js";
+import { sizeText } from "../size-text.js";
 import { generateImagePaths } from "./paths.js";
 import { pickStandardSize } from "./size.js";
 
@@ -717,13 +718,6 @@ async function hasDevice(sb: SandboxToolDeps, orgId: string, conv: string): Prom
     // any other refusal (a gone or forbidden device) is reported by the copy itself
     return true;
   }
-}
-
-/** A byte count as the result shows it. */
-function sizeText(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1_048_576) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / 1_048_576).toFixed(1)} MB`;
 }
 
 /** The model-visible result (spec §5.3): what was generated, delivered or repeated, billing, the device copy. */

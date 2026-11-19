@@ -485,15 +485,22 @@ export class AttachmentsService {
   /**
    * The ready `chat` attachments bound to the conversation in this org (never another purpose, a
    * pending or an unbound upload), oldest first by upload time, then id; with `id`, only that one.
-   * Nothing here checks who reads them: callers check the conversation's access first.
+   * Nothing here checks who reads them: callers check the conversation's access first. `purposes`
+   * widens it for a model-facing lookup only (`read` copies; vision-read design §1.1): every
+   * person- or device-facing caller keeps the default.
    */
-  async boundRows(orgId: string, conversationId: string, id?: string): Promise<BoundAttachment[]> {
+  async boundRows(
+    orgId: string,
+    conversationId: string,
+    id?: string,
+    purposes: readonly ("chat" | "read")[] = ["chat"],
+  ): Promise<BoundAttachment[]> {
     let q = this.db
       .selectFrom("attachments")
       .select(["id", "name", "content_type", "size", "object_key", "etag", "created_at"])
       .where("org_id", "=", orgId)
       .where("conversation_id", "=", conversationId)
-      .where("purpose", "=", "chat")
+      .where("purpose", "in", [...purposes])
       .where("status", "=", "ready");
     if (id !== undefined) q = q.where("id", "=", id);
     const rows = await q.orderBy("created_at").orderBy("id").execute();
@@ -534,10 +541,25 @@ export class AttachmentsService {
     orgId: string,
     conversationId: string,
     attachmentId: string,
+    opts: {
+      /**
+       * Also `read` copies (the model-facing file lookup only, vision-read design §1.1); the
+       * default is `chat` attachments, which is all a person or a device may see.
+       */
+      purposes?: readonly ("chat" | "read")[];
+      /** Read at most this many bytes (a range read; a store that ignores it serves the whole). */
+      maxBytes?: number;
+      signal?: AbortSignal;
+    } = {},
   ): Promise<OpenedAttachment | null> {
-    const [row] = await this.boundRows(orgId, conversationId, attachmentId);
+    const [row] = await this.boundRows(orgId, conversationId, attachmentId, opts.purposes);
     if (!row) return null;
-    const got = await this.storage.kernel(orgId).get(row.objectKey);
+    const got = await this.storage.kernel(orgId).get(row.objectKey, {
+      ...(opts.signal !== undefined && { signal: opts.signal }),
+      // only a larger object is ranged (a range on an empty object is unsatisfiable)
+      ...(opts.maxBytes !== undefined &&
+        row.size > opts.maxBytes && { range: { start: 0, end: opts.maxBytes - 1 } }),
+    });
     if (!got) return null;
     if (!this.storedMatches(row, got.head, { orgId, conversationId })) {
       await got.body.cancel().catch(() => {});

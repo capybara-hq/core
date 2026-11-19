@@ -9,3 +9,6 @@ without a device for it. Read images are kept as copies of the conversation and 
 deleted. `GenerateImage` gains `resolution` (`standard` is about one megapixel, set by
 `models.imageStandardPixels`; `high` is the model's largest size), and its reference images can be
 any image of the conversation.
+
+Agents without a device now list `Read` (for `file_id`), so their tool list changes once after the
+upgrade.

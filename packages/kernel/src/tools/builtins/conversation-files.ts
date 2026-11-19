@@ -11,8 +11,12 @@ export interface ConversationFile {
   name: string;
   contentType: string;
   size: number;
-  /** Reads the bytes. Call it, or {@link discard}, exactly once: an attachment holds its stream. */
-  open(): Promise<Uint8Array>;
+  /**
+   * Reads the bytes, at most `maxBytes` of them when given (the head of a larger file: an
+   * attachment's stream is cancelled there, an artifact is read with a range). Call it, or
+   * {@link discard}, exactly once: an attachment holds its stream.
+   */
+  open(opts?: { maxBytes?: number }): Promise<Uint8Array>;
   /** Releases the file without reading it (a refusal before the bytes are needed). */
   discard(): Promise<void>;
 }
@@ -26,25 +30,65 @@ export interface ConversationFileDeps {
 /** Lower-case or upper-case UUIDs: attachment and artifact ids. */
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-const bytesOf = async (body: ReadableStream<Uint8Array>): Promise<Uint8Array> =>
-  new Uint8Array(await new Response(body).arrayBuffer());
+/**
+ * The bytes of `body`, at most `maxBytes` (the stream is cancelled once that many are read: a
+ * store that ignores a range still sends no more than one chunk past it).
+ */
+async function bytesOf(body: ReadableStream<Uint8Array>, maxBytes?: number): Promise<Uint8Array> {
+  if (maxBytes === undefined) return new Uint8Array(await new Response(body).arrayBuffer());
+  const reader = body.getReader();
+  const chunks: Uint8Array[] = [];
+  let n = 0;
+  try {
+    while (n < maxBytes) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      chunks.push(value);
+      n += value.byteLength;
+    }
+  } finally {
+    await reader.cancel().catch(() => {});
+  }
+  const out = new Uint8Array(Math.min(n, maxBytes));
+  let at = 0;
+  for (const c of chunks) {
+    const part = c.subarray(0, out.length - at);
+    out.set(part, at);
+    at += part.length;
+    if (at === out.length) break;
+  }
+  return out;
+}
 
 /**
  * A file of the conversation by id, always inside `orgId`: an attachment bound to the
- * conversation or to its root, else an `artifact_created` event of either. Anything else (another
+ * conversation or to its root (a `chat` attachment or a `read` copy: this lookup is the model's,
+ * vision-read design §1.1), else an `artifact_created` event of either. Anything else (another
  * conversation or org, a missing object, an id that is not a UUID) is `null`. Storage errors are
- * thrown as they are.
+ * thrown as they are. `signal` aborts the storage reads.
  */
 export async function findConversationFile(
   deps: ConversationFileDeps,
-  q: { orgId: string; conversationId: string; rootConversationId: string; id: string },
+  q: {
+    orgId: string;
+    conversationId: string;
+    rootConversationId: string;
+    id: string;
+    /** The most bytes {@link ConversationFile.open} may be asked for (an attachment's range). */
+    maxBytes?: number;
+    signal?: AbortSignal;
+  },
 ): Promise<ConversationFile | null> {
   if (!UUID.test(q.id)) return null;
   const id = q.id.toLowerCase();
   const conversations = [...new Set([q.conversationId, q.rootConversationId])];
 
   for (const conversationId of conversations) {
-    const opened = await deps.attachments.openForConversation(q.orgId, conversationId, id);
+    const opened = await deps.attachments.openForConversation(q.orgId, conversationId, id, {
+      purposes: ["chat", "read"],
+      ...(q.maxBytes !== undefined && { maxBytes: q.maxBytes }),
+      ...(q.signal !== undefined && { signal: q.signal }),
+    });
     if (opened === null) continue;
     return {
       kind: "attachment",
@@ -53,7 +97,7 @@ export async function findConversationFile(
       contentType: opened.contentType,
       size: opened.size,
       // the one storage read of the lookup: its stream is read by open() or cancelled by discard()
-      open: () => bytesOf(opened.body),
+      open: (opts) => bytesOf(opened.body, opts?.maxBytes),
       discard: () => opened.body.cancel().catch(() => {}),
     };
   }
@@ -79,10 +123,16 @@ export async function findConversationFile(
     name: a.name,
     contentType: a.contentType,
     size: head.size,
-    async open() {
-      const got = await store.get(a.objectKey);
+    async open(opts) {
+      const max = opts?.maxBytes;
+      // only a larger object is ranged (a range on an empty object is unsatisfiable)
+      const ranged = max !== undefined && head.size > max;
+      const got = await store.get(a.objectKey, {
+        ...(q.signal !== undefined && { signal: q.signal }),
+        ...(ranged && { range: { start: 0, end: max - 1 } }),
+      });
       if (got === null) throw new Error(`artifact ${id} is no longer available`);
-      return bytesOf(got.body);
+      return bytesOf(got.body, max);
     },
     discard: async () => {},
   };

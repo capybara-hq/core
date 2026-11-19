@@ -8,6 +8,7 @@ import { ModelError, type ModelInfo, type ModelRequest } from "@capybara-hq/plug
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { AttachmentsService } from "../../../src/conversations/attachments.service.js";
+import { EventLog } from "../../../src/conversations/event-log.js";
 import type { ConversationEvent, EventPayload } from "../../../src/conversations/events.js";
 import { type KernelSchemaDb, kernelDb } from "../../../src/db/kernel-schema.js";
 import { createDb } from "../../../src/db/pool.js";
@@ -19,15 +20,15 @@ import type { EvalSetView } from "../../../src/evals/sets.service.js";
 import { type CaseSnapshot, takeSnapshot, toEvents } from "../../../src/evals/snapshot.js";
 import { KernelConfigService } from "../../../src/infra/config/kernel-config.service.js";
 import { ProviderRegistry } from "../../../src/runtime/providers.js";
+import { RunQueue } from "../../../src/runtime/run-queue.js";
 import { SandboxService } from "../../../src/sandbox/sandbox.service.js";
 import { StorageService } from "../../../src/storage/storage.service.js";
 import { BuiltinTools } from "../../../src/tools/builtins/builtin-tools.js";
 import {
-  pdfText,
   READ_DESCRIPTION,
+  READ_MAX_BYTES,
   READ_NO_DEVICE_TEXT,
   READ_ONE_SOURCE_TEXT,
-  tooLargeText,
 } from "../../../src/tools/builtins/sandbox/read.js";
 import {
   NO_VISION_MODEL_TEXT,
@@ -37,6 +38,7 @@ import type { BuiltinTool } from "../../../src/tools/registry.js";
 import { truncateTables } from "../../helpers/db.js";
 import { onlyBuiltins } from "../../helpers/disabled-tools.js";
 import { accountsFor } from "../../helpers/identity.js";
+import { testMembers } from "../../helpers/members.js";
 import { MODEL_FAKE } from "../../helpers/model-plugins.js";
 import { captureProviderRequests } from "../../helpers/provider-capture.js";
 import {
@@ -102,8 +104,15 @@ function png(width: number, height: number, pad = 0): Buffer {
 }
 
 const IMAGE = png(3, 2);
+/** A byte count as the results show it (B / KB / MB). */
+const sizeOf = (bytes: number) =>
+  bytes < 1024
+    ? `${bytes} B`
+    : bytes < 1_048_576
+      ? `${(bytes / 1024).toFixed(1)} KB`
+      : `${(bytes / 1_048_576).toFixed(1)} MB`;
 const readText = (name: string, size: number, dims: string, id: string) =>
-  `Read image ${name} (image/png, ${size} bytes${dims}; file_id ${id}).`;
+  `Read image ${name} (image/png, ${sizeOf(size)}${dims}; file_id ${id}).`;
 
 const capture = captureProviderRequests();
 
@@ -115,6 +124,8 @@ let k: TestKernel;
 let root: string;
 let owner: Req;
 let ownerId: string;
+/** A member of the org: a run they trigger is not the conversation owner's. */
+let otherId: string;
 let orgId: string;
 /** Read (+ Agent) on the vision model. */
 let viewerId: string;
@@ -155,6 +166,9 @@ beforeAll(async () => {
     .id;
   owner = await session(k, "owner");
   orgId = await createOrgWithProviders(k, owner);
+  otherId = (await accountsFor(db).createLocal({ login: "other", password: PW, displayName: "X" }))
+    .id;
+  await testMembers(db).add(orgId, otherId, "member", ownerId);
   const enabled = await owner({
     method: "PUT",
     url: `/api/v1/orgs/${orgId}/extensions/hooks-probe`,
@@ -246,11 +260,16 @@ async function read(conv: string, input: Record<string, unknown>, n = 1) {
 }
 
 /** A ready `chat` attachment of `conv`. */
-async function attachment(conv: string, bytes: Uint8Array, name = "pasted.png") {
+async function attachment(
+  conv: string,
+  bytes: Uint8Array,
+  name = "pasted.png",
+  contentType = "image/png",
+) {
   const id = randomUUID();
   const objectKey = `attachments/${id}`;
   await k.app.get(StorageService).kernel(orgId).put(objectKey, bytes, {
-    contentType: "image/png",
+    contentType,
     size: bytes.byteLength,
   });
   await db
@@ -261,7 +280,7 @@ async function attachment(conv: string, bytes: Uint8Array, name = "pasted.png") 
       conversation_id: conv,
       account_id: ownerId,
       name,
-      content_type: "image/png",
+      content_type: contentType,
       size: bytes.byteLength,
       object_key: objectKey,
       status: "ready",
@@ -407,6 +426,7 @@ describe("Read: images on a vision model", () => {
     expect(r.payload.isError, r.payload.content).toBe(false);
     const id = UUID.exec(r.payload.content)?.[0] as string;
     expect(r.payload.content).toBe(readText("a.png", IMAGE.length, ", 3×2", id));
+    expect(r.payload.display?.summary.en).toBe(`Read ${path}`);
     expect(r.payload.media).toEqual([
       { attachmentId: id, name: "a.png", mediaType: "image/png", size: IMAGE.length },
     ]);
@@ -445,6 +465,7 @@ describe("Read: images on a vision model", () => {
     const id = UUID.exec(r.payload.content)?.[0] as string;
     expect(id).not.toBe(att);
     expect(r.payload.content).toBe(readText("pasted.png", IMAGE.length, ", 3×2", id));
+    expect(r.payload.display?.summary.en).toBe("Read pasted.png");
     expect((await readRows(conv)).map((x) => x.id)).toEqual([id]);
     await expectZeroDrift(conv, await snapshotOf(conv), chatRequests());
   });
@@ -462,7 +483,7 @@ describe("Read: images on a vision model", () => {
     expect(id).not.toBe(artifactId);
     expect(r.payload.content).toMatch(
       new RegExp(
-        `^Read image ${artifact?.payload.name} \\(image/png, \\d+ bytes, 1×1; file_id ${id}\\)\\.$`,
+        `^Read image ${artifact?.payload.name} \\(image/png, \\d+ B, 1×1; file_id ${id}\\)\\.$`,
       ),
     );
     expect(r.payload.media).toHaveLength(1);
@@ -479,7 +500,7 @@ describe("Read: images on a vision model", () => {
     expect(r.payload.isError).toBe(false);
     expect(r.payload.media).toBeUndefined();
     expect(r.payload.content).toBe(
-      `Read image pasted.png (image/png, ${IMAGE.length} bytes, 3×2). This conversation reached its limit for stored images, so the image is not stored: it is not shown and will not stay in the history.`,
+      `Read image pasted.png (image/png, ${IMAGE.length} B, 3×2). This conversation reached its limit for stored images, so the image is not stored: it is not shown and will not stay in the history.`,
     );
   });
 });
@@ -575,7 +596,9 @@ describe("Read: limits and other files", () => {
     const conv = await createConv(owner, orgId, viewerId);
     const r = await read(conv, { file_path: path });
     expect(r.payload.isError).toBe(false);
-    expect(r.payload.content).toContain(tooLargeText("big.png", big.length));
+    expect(r.payload.content).toContain(
+      "Image big.png is 6.0 MB; the limit is 5 MB. Make a smaller copy and Read it.",
+    );
     expect(r.payload.media).toBeUndefined();
     expect(await readRows(conv)).toEqual([]);
   });
@@ -585,7 +608,9 @@ describe("Read: limits and other files", () => {
     const path = await onDevice("big-image.bin", big);
     const conv = await createConv(owner, orgId, viewerId);
     const r = await read(conv, { file_path: path });
-    expect(r.payload.content).toContain(tooLargeText("big-image.bin", big.length));
+    expect(r.payload.content).toContain(
+      "Image big-image.bin is 6.0 MB; the limit is 5 MB. Make a smaller copy and Read it.",
+    );
   });
 
   it("a PDF gives the PDF text", async () => {
@@ -598,7 +623,9 @@ describe("Read: limits and other files", () => {
     const conv = await createConv(owner, orgId, viewerId);
     const r = await read(conv, { file_path: path });
     expect(r.payload.isError).toBe(false);
-    expect(r.payload.content).toContain(pdfText(pdf.length));
+    expect(r.payload.content).toContain(
+      `PDF document (${pdf.length} B). Read does not parse PDFs; images it reads are shown, so pages rendered as images can be read.`,
+    );
     expect(r.payload.media).toBeUndefined();
   });
 
@@ -613,7 +640,7 @@ describe("Read: limits and other files", () => {
 
   it("a text attachment read by file_id comes back with line numbers", async () => {
     const conv = await createConv(owner, orgId, viewerId);
-    const id = await attachment(conv, Buffer.from("alpha\nbeta\n"), "notes.txt");
+    const id = await attachment(conv, Buffer.from("alpha\nbeta\n"), "notes.txt", "text/plain");
     const r = await read(conv, { file_id: id });
     expect(r.payload.content).toBe("     1\talpha\n     2\tbeta");
     expect(r.payload.view).toEqual({ kind: "read", path: "notes.txt", fromLine: 1, toLine: 2 });
@@ -752,5 +779,181 @@ describe("Read: full-run replay", () => {
     const next = ofType(evs, "model_call").find((c) => c.seq > (replayed?.seq ?? 0));
     // mem-store reports no etag, so none is recorded
     expect(next?.payload.request.media).toEqual([{ attachmentId: id, outcome: "bytes" }]);
+  });
+});
+
+describe("Read by file_id needs no device", () => {
+  it("a run another member triggered reads by file_id; by file_path it is refused", async () => {
+    const conv = await createConv(owner, orgId, viewerId);
+    const att = await attachment(conv, IMAGE);
+    let n = 0;
+    const asMember = async (input: Record<string, unknown>) => {
+      await k.app.get(EventLog).append(conv, [
+        {
+          type: "user_message",
+          payload: {
+            content: [{ type: "text", text: `tool:Read:${JSON.stringify(input)}` }],
+            authorAccountId: otherId,
+          },
+        },
+      ]);
+      await k.app.get(RunQueue).ensureRun(conv);
+      await waitForTerminal(db, conv, ++n, 30_000);
+      return ofType(await eventsOf(db, conv), "tool_result").at(-1) as ToolResultEvent;
+    };
+    const byId = await asMember({ file_id: att });
+    expect(byId.payload.isError, byId.payload.content).toBe(false);
+    expect(byId.payload.media).toHaveLength(1);
+    expect(byId.payload.review).toBeUndefined();
+  });
+
+  it("a file_id Read starts no device and records no permission review input", async () => {
+    const ensure = vi.spyOn(k.app.get(SandboxService), "ensureRunning");
+    const conv = await createConv(owner, orgId, viewerId);
+    const att = await attachment(conv, IMAGE);
+    const r = await read(conv, { file_id: att });
+    expect(r.payload.isError, r.payload.content).toBe(false);
+    expect(r.payload.review).toBeUndefined();
+    const started = ofType(await eventsOf(db, conv), "tool_call_started").find(
+      (e) => e.payload.callId === r.payload.callId,
+    );
+    expect(started?.payload.permissionInput).toBeUndefined();
+    expect(ensure).not.toHaveBeenCalled();
+  });
+});
+
+describe("Read: large files by file_id are read only up to the limit", () => {
+  /** A text body of `size` bytes, in lines. */
+  const textOf = (size: number) => Buffer.alloc(size, "abcdefghi\n");
+
+  it("an attachment: the stream is read up to the cap, then cancelled", async () => {
+    const size = 12 * 1024 * 1024;
+    const conv = await createConv(owner, orgId, viewerId);
+    const id = await attachment(conv, textOf(size), "big.log", "text/plain");
+    // the stored body served in 1 MiB chunks, counting what is pulled
+    const svc = k.app.get(AttachmentsService);
+    const original = svc.openForConversation.bind(svc);
+    let pulled = 0;
+    let cancelled = false;
+    vi.spyOn(svc, "openForConversation").mockImplementation(async (...args) => {
+      const opened = await original(...args);
+      if (opened === null) return null;
+      const bytes = new Uint8Array(await new Response(opened.body).arrayBuffer());
+      let at = 0;
+      const body = new ReadableStream<Uint8Array>(
+        {
+          pull(c) {
+            if (at >= bytes.length) return c.close();
+            const chunk = bytes.subarray(at, at + 1_048_576);
+            at += chunk.length;
+            pulled += chunk.length;
+            c.enqueue(chunk);
+          },
+          cancel() {
+            cancelled = true;
+          },
+          // pulled only on demand: the count is what the reader asked for
+        },
+        { highWaterMark: 0 },
+      );
+      return { ...opened, body };
+    });
+    const r = await read(conv, { file_id: id, limit: 1 });
+    expect(r.payload.isError, r.payload.content).toBe(false);
+    expect(r.payload.content).toContain(
+      `[Only the first ${READ_MAX_BYTES} bytes of this ${size}-byte file were read; use Bash to read the rest.]`,
+    );
+    expect(pulled).toBeLessThanOrEqual(READ_MAX_BYTES + 1_048_576);
+    expect(cancelled).toBe(true);
+  });
+
+  it("an artifact: a range read of the cap", async () => {
+    const size = 12 * 1024 * 1024;
+    const conv = await createConv(owner, orgId, viewerId);
+    const artifactId = randomUUID();
+    const objectKey = `artifacts/${conv}/${artifactId}`;
+    await k.app.get(StorageService).kernel(orgId).put(objectKey, textOf(size), {
+      contentType: "text/plain",
+      size,
+    });
+    await k.app.get(EventLog).append(conv, [
+      {
+        type: "artifact_created",
+        payload: {
+          artifactId,
+          name: "big.log",
+          contentType: "text/plain",
+          size,
+          objectKey,
+          sourcePath: "/workspace/big.log",
+          callId: "call-deliver",
+        },
+      },
+    ]);
+    const storage = k.app.get(StorageService);
+    const kernel = storage.kernel.bind(storage);
+    const ranges: unknown[] = [];
+    vi.spyOn(storage, "kernel").mockImplementation((org) => {
+      const s = kernel(org);
+      return {
+        ...s,
+        get: async (key, opts) => {
+          if (key === objectKey) ranges.push(opts?.range ?? null);
+          return s.get(key, opts);
+        },
+      };
+    });
+    const r = await read(conv, { file_id: artifactId, limit: 1 });
+    expect(r.payload.content).toContain(
+      `[Only the first ${READ_MAX_BYTES} bytes of this ${size}-byte file were read; use Bash to read the rest.]`,
+    );
+    expect(ranges).toEqual([{ start: 0, end: READ_MAX_BYTES }]);
+  });
+});
+
+describe("Read copies are model-visible handles", () => {
+  it("the file_id a Read returns can be Read again (a new copy) and used as a GenerateImage reference; it stays out of the person's and device's attachment lists", async () => {
+    const conv = await createConv(owner, orgId, painterId);
+    const att = await attachment(conv, IMAGE);
+    const first = await read(conv, { file_id: att });
+    const copy = first.payload.media?.[0]?.attachmentId as string;
+    expect(copy).toMatch(UUID);
+    const again = await read(conv, { file_id: copy }, 2);
+    expect(again.payload.isError, again.payload.content).toBe(false);
+    const second = again.payload.media?.[0]?.attachmentId as string;
+    expect(second).not.toBe(copy);
+    await postMessage(
+      owner,
+      orgId,
+      conv,
+      `tool:GenerateImage:${JSON.stringify({ prompt: "the same", reference_images: [copy] })}`,
+    );
+    await waitForTerminal(db, conv, 3, 30_000);
+    const gen = ofType(await eventsOf(db, conv), "tool_result").at(-1) as ToolResultEvent;
+    expect(gen.payload.toolKey).toBe("GenerateImage");
+    expect(gen.payload.isError, gen.payload.content).toBe(false);
+    // person- and device-facing lookups stay chat-only
+    const svc = k.app.get(AttachmentsService);
+    expect((await svc.listForConversation(orgId, conv)).map((a) => a.id)).toEqual([att]);
+    expect(await svc.openForConversation(orgId, conv, copy)).toBeNull();
+  });
+});
+
+describe("Read: cap on a model without vision", () => {
+  it("the vision answer is kept; the image is not stored", async () => {
+    vi.spyOn(k.app.get(AttachmentsService), "storeRead").mockResolvedValue({
+      ok: false,
+      reason: "cap",
+    });
+    const conv = await createConv(owner, orgId, blindId);
+    const att = await attachment(conv, IMAGE);
+    const r = await read(conv, { file_id: att, prompt: "media:" });
+    expect(r.payload.isError, r.payload.content).toBe(false);
+    expect(r.payload.media).toBeUndefined();
+    const [first, answer] = r.payload.content.split("\n\n");
+    expect(first).toBe(
+      `Read image pasted.png (image/png, ${IMAGE.length} B, 3×2). This conversation reached its limit for stored images, so the image is not stored: it is not shown and will not stay in the history.`,
+    );
+    expect(answer).toMatch(/^model-fake\/fake-eye read the image for you/);
   });
 });

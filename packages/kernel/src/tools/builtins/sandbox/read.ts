@@ -16,6 +16,7 @@ import {
   type ConversationFileDeps,
   findConversationFile,
 } from "../conversation-files.js";
+import { sizeText } from "../size-text.js";
 import { readImageWithVisionModel, type VisionReadDeps } from "../vision/read-image.js";
 import {
   checkFilePathShape,
@@ -122,8 +123,6 @@ export const unknownFileIdText = (id: string): string =>
 export const READ_NO_STORAGE_TEXT =
   "File storage is not configured in this deployment, so file_id cannot be read; pass file_path to read a file on the device.";
 
-/** A size in a result text. */
-const sizeText = (bytes: number): string => `${bytes} bytes`;
 /** An image over `MEDIA_LIMITS.imageBytes` (spec §1.2; verbatim). */
 export const tooLargeText = (name: string, size: number): string =>
   `Image ${name} is ${sizeText(size)}; the limit is 5 MB. Make a smaller copy and Read it.`;
@@ -276,7 +275,7 @@ export function sandboxReadTool(deps: SandboxToolDeps): BuiltinTool {
         return { tooLarge: false as const, ...got, size: st.size };
       });
       const name = posix.basename(path);
-      const summary = display(`读取 ${clip(path, 180)}`, `Read ${clip(path, 180)}`);
+      const summary = { display: display(`读取 ${clip(path, 180)}`, `Read ${clip(path, 180)}`) };
       if (value.tooLarge) {
         return {
           content: [{ type: "text", text: withNotices(notices, tooLargeText(name, value.size)) }],
@@ -324,6 +323,9 @@ async function readById(
       conversationId: ctx.conversationId,
       rootConversationId: sandboxConversationOf(ctx),
       id,
+      // one byte past the cap tells a truncated read
+      maxBytes: READ_MAX_BYTES + 1,
+      signal: ctx.signal,
     });
   } catch (e) {
     if (e instanceof ApiError && e.code === "storage.unavailable") {
@@ -332,7 +334,9 @@ async function readById(
     throw e;
   }
   if (found === null) throw new ToolError(unknownFileIdText(id));
-  const summary = display(`读取 ${clip(found.name, 180)}`, `Read ${clip(found.name, 180)}`);
+  const summary = {
+    display: display(`读取 ${clip(found.name, 180)}`, `Read ${clip(found.name, 180)}`),
+  };
   const imageLike =
     IMAGE_EXTENSION.test(found.name) || found.contentType.toLowerCase().startsWith("image/");
   if (found.size > MEDIA_LIMITS.imageBytes && imageLike) {
@@ -344,15 +348,20 @@ async function readById(
   }
   let data: Uint8Array;
   try {
-    data = await found.open();
-  } finally {
+    // never more than the cap (an image: its limit), plus one byte that tells a truncated read
+    data = await found.open({
+      maxBytes: (imageLike ? MEDIA_LIMITS.imageBytes : READ_MAX_BYTES) + 1,
+    });
+  } catch (e) {
     await found.discard();
+    throw e;
   }
+  ctx.signal.throwIfAborted();
   const out = await readContent(deps, ctx, input, {
     name: found.name,
     data: data.subarray(0, READ_MAX_BYTES),
-    size: data.byteLength,
-    truncated: data.byteLength > READ_MAX_BYTES,
+    size: Math.max(found.size, data.byteLength),
+    truncated: found.size > READ_MAX_BYTES || data.byteLength > READ_MAX_BYTES,
   });
   return {
     ...out,
@@ -427,6 +436,8 @@ async function readImage(
     answer = fallbackAnswerText(got.provider, got.model, got.text);
   }
   const withAnswer = (text: string) => (answer === null ? text : `${text}\n\n${answer}`);
+  // storeRead takes no signal: an aborted call stores nothing
+  ctx.signal.throwIfAborted();
   let stored: Awaited<ReturnType<AttachmentsService["storeRead"]>> | "storage";
   try {
     stored = await read.reads.storeRead(ctx.orgId, ctx.conversationId, ctx.accountId || null, {

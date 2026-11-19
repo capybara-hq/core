@@ -600,10 +600,16 @@ const MANAGED_OPERATION_TOOLS: ReadonlySet<string> = new Set([
 /**
  * Whether a managed builtin's call enters the device: every call of the device tools, a
  * `GenerateImage` call only with `file_path` (one without writes nothing into the device, so it
- * takes neither the device-owner guard nor the permission review: image generation spec §5.3).
+ * takes neither the device-owner guard nor the permission review: image generation spec §5.3),
+ * and a `Read` only with `file_path` (a `file_id` read comes from the object store: vision-read
+ * design §1.1).
  */
-const entersDevice = (toolKey: string, input: unknown): boolean =>
-  toolKey !== BUILTIN.GenerateImage || generateImagePaths(input).length > 0;
+const entersDevice = (toolKey: string, input: unknown): boolean => {
+  if (toolKey === BUILTIN.Read) {
+    return typeof (input as { file_path?: unknown } | null)?.file_path === "string";
+  }
+  return toolKey !== BUILTIN.GenerateImage || generateImagePaths(input).length > 0;
+};
 
 /** Whether the review holds a shell command or a file write, for the texts and the ask's detail. */
 const reviewKindOf = (toolKey: string): "command" | "write" =>
@@ -1522,7 +1528,8 @@ export class ToolPipeline {
       outcome.kind === "result"
         ? renderResult(outcome.result)
         : { text: outcome.message, contentTypes: [], isError: true };
-    // 内置工具（ToolSearch）报告的已加载工具：只认本步可用、非内置的 key，写进 tool_result（日志即事实源）
+    // the tools a builtin (ToolSearch) reports as loaded: only keys available in this step and not
+    // builtin, written to tool_result (the log is the source of truth)
     const loadedTools =
       outcome.kind === "result" && tool.source.kind === "builtin"
         ? loadedFrom(outcome.result, resolved.tools)
