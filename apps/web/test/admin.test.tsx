@@ -2268,22 +2268,21 @@ describe("org-owned plugins in the admin console (phase 3)", () => {
         .length,
     ).toBeGreaterThan(0);
     // a row leads with the plugin's display name, its version beside it, whole; the kind and the
-    // org second; the column header is neutral
-    const table = screen.getByRole("table", { name: I.listLabel });
-    expect(within(table).getByRole("columnheader", { name: I.columns.item })).toBeTruthy();
-    const name = within(table).getByText("Acme files", { selector: ".cb-cell-title-name" });
+    // org second (the list's row, spec §6.47)
+    const table = screen.getByRole("list", { name: I.listLabel });
+    const name = within(table).getByText("Acme files", { selector: '[data-part="list-title"]' });
     expect(name.getAttribute("title")).toBe("Acme files");
-    const upload = name.closest("tr") as HTMLElement;
-    expect(within(upload).getByText("v0.1.0").getAttribute("data-part")).toBe(
-      "cell-title-trailing",
-    );
+    const upload = name.closest("li") as HTMLElement;
+    expect(within(upload).getByText("v0.1.0").getAttribute("data-part")).toBe("list-trailing");
     expect(within(upload).getByText(`${I.orgUpload.label} · Beta`)).toBeTruthy();
     const transferred = fill(I.transferred.title, {
       name: "brand-voice",
       why: fill(I.transferred.reason.org_deleted, { org: "Acme" }),
     });
     const user = userEvent.setup();
-    await user.click(within(table).getByText("brand-voice", { selector: ".cb-cell-title-name" }));
+    await user.click(
+      within(table).getByText("brand-voice", { selector: '[data-part="list-title"]' }),
+    );
     expect(await screen.findByText(transferred)).toBeTruthy();
     expect(await screen.findByText("2 organizations still use it.")).toBeTruthy();
     await user.click(screen.getByRole("button", { name: I.transferred.dismiss }));
@@ -2357,8 +2356,8 @@ describe("/admin/inbox?type=（按类型过滤）", () => {
     await renderRouteWithCache("/admin/inbox?type=scope_sync_failed", lastStubRoutes(), {
       locale,
     });
-    const table = await screen.findByRole("table", { name: I.listLabel });
-    expect(within(table).getAllByRole("row").slice(1)).toHaveLength(2);
+    const table = await screen.findByRole("list", { name: I.listLabel });
+    expect(within(table).getAllByRole("listitem")).toHaveLength(2);
     expect(within(table).queryByText("transferred-skill")).toBeNull();
     expect(screen.getByText(fill(I.filtered, { type: types.scope_sync_failed }))).toBeTruthy();
     expect(screen.getByRole("link", { name: I.clearFilter }).getAttribute("href")).toBe(
@@ -2370,8 +2369,8 @@ describe("/admin/inbox?type=（按类型过滤）", () => {
     const I = zh.admin.inbox;
     stubApi(routes());
     await renderRouteWithCache("/admin/inbox?type=nope", lastStubRoutes(), { locale: "zh" });
-    const table = await screen.findByRole("table", { name: I.listLabel });
-    expect(within(table).getAllByRole("row").slice(1)).toHaveLength(3);
+    const table = await screen.findByRole("list", { name: I.listLabel });
+    expect(within(table).getAllByRole("listitem")).toHaveLength(3);
     expect(screen.queryByRole("link", { name: I.clearFilter })).toBeNull();
   });
 });
