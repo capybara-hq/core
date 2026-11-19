@@ -272,7 +272,8 @@ Request building changes in these places:
 - The token estimate (compaction trigger and fit guard) counts Read images like pasted ones.
 - The compaction transcript renders `tool_result` as text only, as today. The `file_id` in the
   text keeps a handle after a summary.
-- Prompt suggestions do not include Read images.
+- Prompt suggestions keep Read images, as they keep pasted ones: the suggestion request extends the last
+  request byte for byte, so removing them would break its prefix match.
 
 **Replay:**
 - Reconstruct and full-run replay read `tool_result.media` like user media.
