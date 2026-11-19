@@ -181,6 +181,23 @@ describe("login --json", () => {
     expect(err.join("\n")).not.toContain("cap_dev_secret");
   });
 
+  it("an invalid URL ends with an invalid_url error event", async () => {
+    expect(await run(["login", "--url", "not a url", "--json"])).toBe(2);
+    expect(events()).toEqual([
+      { event: "error", code: "invalid_url", message: expect.any(String) },
+    ]);
+  });
+
+  it("an existing login ends with an already_logged_in error event", async () => {
+    tokenAnswers = [granted];
+    expect(await run(["login", "--url", base])).toBe(0);
+    out.length = 0;
+    expect(await run(["login", "--url", base, "--json"])).toBe(1);
+    expect(events()).toEqual([
+      { event: "error", code: "already_logged_in", message: expect.any(String) },
+    ]);
+  });
+
   it("an expired code ends with an error event", async () => {
     tokenAnswers = [
       { status: 400, body: { error: { code: "device_sign_in.expired", message: "gone" } } },
