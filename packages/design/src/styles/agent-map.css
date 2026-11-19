@@ -79,8 +79,33 @@
   flex-direction: column;
   min-height: 0;
 }
-.cb-amap-count {
+/* The count line: the count, then the legend trigger at its end. */
+.cb-amap-count-line {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--cb-space-3);
   margin: 0 0 var(--cb-space-2);
+}
+.cb-amap-legend-trigger {
+  flex: none;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--cb-faint);
+  font: inherit;
+  font-family: var(--cb-font-prose);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+  text-decoration: underline dotted;
+  text-underline-offset: 3px;
+  cursor: help;
+}
+.cb-amap-legend-trigger:hover {
+  color: var(--cb-muted);
+}
+.cb-amap-count {
+  margin: 0;
   color: var(--cb-muted);
   font-family: var(--cb-font-prose);
   font-size: var(--cb-type-small-size);
@@ -128,9 +153,9 @@
 .cb-amap-kid {
   position: relative;
 }
-/* Siblings space.1 apart: the gap under each, so every child's node is at the top of its box. */
+/* Siblings space.2 apart: the gap under each, so every child's node is at the top of its box. */
 .cb-amap-kid:not(:last-child) {
-  padding-bottom: var(--cb-space-1);
+  padding-bottom: var(--cb-space-2);
 }
 /* The stub from the vertical line to the child's vertical centre. */
 .cb-amap-kid::before {
@@ -161,8 +186,8 @@
   display: none;
 }
 
-/* Every node one compact row of two lines (body 20 + small 16) in row.roomy: no box of its own,
-   only a ground on hover and when open; the root a quiet card. */
+/* Every node one compact card of two lines (body 20 + small 16) in row.roomy, the root and the
+   sub-agents alike: a line border on the raised ground, a hover ground, the accent when open. */
 .cb-amap-node {
   display: flex;
   flex: none;
@@ -171,9 +196,9 @@
   width: 336px;
   height: var(--cb-row-roomy);
   padding: 0 var(--cb-space-2);
-  border: 1px solid transparent;
+  border: 1px solid var(--cb-line);
   border-radius: var(--cb-radius-sm);
-  background: transparent;
+  background: var(--cb-raised);
   color: var(--cb-ink);
   font: inherit;
   text-align: left;
@@ -185,12 +210,10 @@
 .cb-amap-node:hover {
   background: var(--cb-hover);
 }
-.cb-amap-node[data-root="true"],
+/* The root is the conversation itself: nothing to open, no hover. */
 .cb-amap-node[data-root="true"]:hover {
-  border-color: var(--cb-line);
   background: var(--cb-raised);
 }
-/* The root is the conversation itself: nothing to open. */
 .cb-amap-node[data-root="true"] {
   cursor: default;
 }
@@ -315,16 +338,14 @@
   white-space: nowrap;
 }
 
+/* The legend inside its tooltip: one status per line. */
 .cb-amap-legend {
   display: flex;
-  flex-wrap: wrap;
-  gap: var(--cb-space-3);
-  margin: var(--cb-space-2) 0 0;
+  flex-direction: column;
+  gap: var(--cb-space-1);
+  margin: 0;
   padding: 0;
   list-style: none;
-  color: var(--cb-faint);
-  font-size: var(--cb-type-small-size);
-  line-height: var(--cb-type-small-line);
 }
 .cb-amap-legend-item {
   display: flex;
