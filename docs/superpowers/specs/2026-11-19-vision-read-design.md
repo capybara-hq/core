@@ -201,7 +201,7 @@ An image is data whose sniffed type is PNG, JPEG, GIF or WebP. The sniff runs be
    `prompt`, or with a fixed "describe the image, including any text in it" when `prompt` is
    absent.
    - When the purpose is unmapped or unusable, the call fails with
-     `This model cannot view images and the organization has no vision model; an org admin can set one under Models → Purposes → Vision.`
+     `This model cannot view images and the organization has no vision model; ask an org admin to set one under Models → Purposes → Vision, then Read again.`
    - When the vision call fails, the call fails with a fixed text.
    - Nothing is stored in either case.
 4. **Store a copy** as an attachment with the new purpose `read`, in this order (§1.3):

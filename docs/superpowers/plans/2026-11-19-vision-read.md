@@ -66,7 +66,7 @@ decided as recommended.
 |---|---|
 | Read result | `Read image <name> (<mediaType>, <size>, <W>×<H>; file_id <attachmentId>).` (omit `, <W>×<H>` when unknown) |
 | Fallback answer | `<provider>/<model> read the image for you (this model cannot view images):\n<answer>` |
-| No vision model | `This model cannot view images and the organization has no vision model; an org admin can set one under Models → Purposes → Vision.` |
+| No vision model | `This model cannot view images and the organization has no vision model; ask an org admin to set one under Models → Purposes → Vision, then Read again.` |
 | No device | `This agent has no device; pass file_id to read an attachment or artifact.` |
 | PDF | `PDF document (<size>). Read does not parse PDFs; images it reads are shown, so pages rendered as images can be read.` |
 | Too large | `Image <name> is <size>; the limit is 5 MB. Make a smaller copy and Read it.` |
