@@ -44,6 +44,26 @@ describe("check:ui-slots", () => {
     expect(checkUiSlots(dir).filter((f) => f.rule === "ui-slots-stale")).toEqual([]);
   });
 
+  it("a web copy without the compact field reports ui-slots-stale", () => {
+    const dir = mkdtempSync(join(tmpdir(), "ui-slots-"));
+    tmp.push(dir);
+    for (const [rel, text] of [
+      [UI_SLOTS_TS, renderUiSlotsTs(UI_SLOTS).replace(/ {4}compact: .*\n/g, "")],
+      [UI_SLOTS_DOC, renderUiSlotsDoc(UI_SLOTS)],
+      [PLUGIN_CLIENT_SLOTS_TS, renderPluginClientSlotsTs(UI_SLOTS)],
+    ] as const) {
+      mkdirSync(join(dir, rel, ".."), { recursive: true });
+      writeFileSync(join(dir, rel), text);
+    }
+    const stale = checkUiSlots(dir).filter((f) => f.rule === "ui-slots-stale");
+    expect(stale.map((f) => f.file)).toEqual([join(dir, UI_SLOTS_TS)]);
+  });
+
+  it("renders the compact form in the web copy and the docs page", () => {
+    expect(renderUiSlotsTs(UI_SLOTS)).toContain('compact: "drawer"');
+    expect(renderUiSlotsDoc(UI_SLOTS)).toContain("- Compact: hidden");
+  });
+
   it("renders one table row and one section per slot", () => {
     const doc = renderUiSlotsDoc(UI_SLOTS);
     for (const s of UI_SLOTS) {

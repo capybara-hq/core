@@ -22,4 +22,4 @@ export * from "./shell/index";
 export * from "./table/index";
 export * from "./templates/index";
 export { applyTheme, parseTheme, THEME_COOKIE, type Theme } from "./theme";
-export { SIZES, TOKEN_NAMES, type TokenName } from "./tokens";
+export { PAGE_BACKGROUND, SIZES, TOKEN_NAMES, type TokenName } from "./tokens";

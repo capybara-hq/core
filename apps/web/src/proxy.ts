@@ -103,7 +103,8 @@ function withCookies(res: NextResponse, setCookies: readonly string[]): NextResp
  * Before all that, a native form POST (the client JS did not load) is answered by
  * `lib/form-post.ts` (sign-in and setup run server side, other pages get a 303 back), and a GET of
  * a credential page with form fields in its query is redirected to the page without them.
- * `/api/*`, `/plugin-ui/*`, `/_next/*`, `/dev/ui/*` and `/icon.svg` never come here (`config`).
+ * `/api/*`, `/plugin-ui/*`, `/_next/*`, `/dev/ui/*`, `/icon.svg`, `/manifest.webmanifest`,
+ * `/icon-512.png` and `/icon-maskable-512.png` never come here (`config`).
  */
 export default async function proxy(req: NextRequest): Promise<NextResponse> {
   const { pathname, search } = req.nextUrl;
@@ -237,9 +238,13 @@ export default async function proxy(req: NextRequest): Promise<NextResponse> {
 export const config = {
   // Every document. Skipped are only the paths a non-page route always answers: `/api/<x>` and
   // `/plugin-ui/<x>` (catch-all route handlers needing at least one segment), `/_next/<x>`, the
-  // design catalog `/dev/ui` (optional catch-all, so `/dev/ui` itself too) and the metadata icon
-  // `/icon.svg`. Any other path, the slash-less `/api`, `/plugin-ui`, `/_next` and dotted ones
+  // design catalog `/dev/ui` (optional catch-all, so `/dev/ui` itself too), the metadata icon
+  // `/icon.svg`, the PWA manifest `/manifest.webmanifest` (`app/manifest.ts`) and the default app
+  // icons `/icon-512.png` / `/icon-maskable-512.png` (`public/`): a signed-out browser reads those
+  // three to install the app (mobile layout spec §10.2), exact names only. Any other path, the slash-less `/api`, `/plugin-ui`, `/_next` and dotted ones
   // (`/chat/x.y`, `/dev/x`, `/a/b.png`) included, can land in the (app) layout through a dynamic
   // segment or `[...rest]`, so it must get the CSP and a nonce the client cannot choose.
-  matcher: ["/((?!api/|plugin-ui/|_next/|dev/ui(?:/|$)|icon\\.svg$).*)"],
+  matcher: [
+    "/((?!api/|plugin-ui/|_next/|dev/ui(?:/|$)|icon\\.svg$|manifest\\.webmanifest$|icon-512\\.png$|icon-maskable-512\\.png$).*)",
+  ],
 };

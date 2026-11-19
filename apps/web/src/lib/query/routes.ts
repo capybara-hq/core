@@ -42,6 +42,7 @@ import {
   marketplacesQuery,
   pendingPluginsQuery,
   platformAuditQuery,
+  platformIconsQuery,
   stagedImportQuery,
 } from "./admin";
 import {
@@ -61,6 +62,7 @@ import {
   availableExtensionPointsQuery,
   extensionToolsQuery,
 } from "./agents";
+import { platformMetaQuery } from "./app-auth";
 import { authSourcesQuery, invitationQuery, pendingBindingQuery } from "./auth";
 import { orgCatalogItemQuery, orgCatalogQuery, orgMarketplaceEntriesQuery } from "./catalog";
 import { channelQuery, channelSchemaQuery, channelsQuery, orgExtensionsQuery } from "./channels";
@@ -557,13 +559,15 @@ export const ROUTES: readonly RouteEntry[] = [
   },
   {
     pattern: "/admin/settings",
-    // The settings, the themes (外观's eligible ones, with their names and swatches), the platform
-    // arrangement and the extensions (插件界面代码 lists those with client code).
+    // The settings, the themes (the appearance section's eligible ones, with their names and
+    // swatches), the uploaded platform icons (the app icon section), the platform arrangement and
+    // the extensions (the plugin UI code section lists those with client code).
     queries: ({ me }) =>
       superAdmin(me)
         ? [
             q(deploymentSettingsQuery()),
             q(adminComponentsQuery("theme")),
+            q(platformIconsQuery()),
             q(adminUiArrangementQuery()),
             q(adminExtensionsQuery()),
           ]
@@ -681,6 +685,11 @@ export const ROUTES: readonly RouteEntry[] = [
     pattern: "/change-password",
     // The session: signed out goes to sign-in, an account with nothing to change goes home.
     queries: () => [q(maybeMeQuery())],
+  },
+  {
+    pattern: "/apps/authorize",
+    // The session (the layout sends a signed-out visitor to sign-in first) and the platform's name.
+    queries: () => [q(maybeMeQuery()), q(platformMetaQuery())],
   },
   {
     pattern: "/devices/link",

@@ -2,6 +2,7 @@ import { homedir } from "node:os";
 import { parseCommandLine, USAGE, UsageError } from "./args.js";
 import { ceilingCommand } from "./commands/ceiling.js";
 import { drain, drainAndWait } from "./commands/drain.js";
+import { keepAwakeCommand } from "./commands/keep-awake.js";
 import { login } from "./commands/login.js";
 import { logout } from "./commands/logout.js";
 import { policyCommand } from "./commands/policy.js";
@@ -116,7 +117,10 @@ export async function runCli(argv: string[], io: CliEnv = {}): Promise<number> {
         ...(io.ps && { ps: io.ps }),
       });
     case "status":
-      return status(dir, cmd.json, out, err);
+      return status(dir, cmd.json, out, err, {
+        ...(io.kill && { kill: io.kill }),
+        ...(io.ps && { ps: io.ps }),
+      });
     case "start":
       return start({
         service: { home, platform },
@@ -159,18 +163,29 @@ export async function runCli(argv: string[], io: CliEnv = {}): Promise<number> {
         ...((io.stdinIsTTY ?? process.stdin.isTTY === true) && { ask: io.ask ?? askOnTerminal }),
         ...(io.beforeCeilingWrite && { beforeWrite: io.beforeCeilingWrite }),
       });
-    case "service":
-      return serviceCommand(cmd.action, {
+    case "keep-awake":
+      return keepAwakeCommand(cmd, {
         stateDir: dir,
-        home,
-        platform,
-        env: io.env ?? process.env,
         out,
         err,
-        ...(io.runSystem && { run: io.runSystem }),
-        ...(io.sleep && { sleep: io.sleep }),
-        ...(io.kill && { kill: io.kill }),
-        ...(io.ps && { ps: io.ps }),
+        ...((io.stdinIsTTY ?? process.stdin.isTTY === true) && { ask: io.ask ?? askOnTerminal }),
       });
+    case "service":
+      return serviceCommand(
+        cmd.action,
+        {
+          stateDir: dir,
+          home,
+          platform,
+          env: io.env ?? process.env,
+          out,
+          err,
+          ...(io.runSystem && { run: io.runSystem }),
+          ...(io.sleep && { sleep: io.sleep }),
+          ...(io.kill && { kill: io.kill }),
+          ...(io.ps && { ps: io.ps }),
+        },
+        { json: cmd.json === true },
+      );
   }
 }

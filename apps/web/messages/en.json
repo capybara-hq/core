@@ -380,6 +380,11 @@
       "replace_required": "Background work started by an earlier version may still be running on this computer, and it cannot prove a restart. Delete this device and connect the computer again as a new device.",
       "recreate_required": "Background work started by an earlier version may still be running on an earlier instance of this device, and that instance can no longer be verified as destroyed. Delete this device and create it again."
     },
+    "app_auth": {
+      "code_invalid": "This sign-in link is invalid or has expired. Start signing in again from the Capybara desktop app.",
+      "redirect_uri_invalid": "This sign-in request came from an app address this platform does not accept, so it was not sent. Start signing in again from the Capybara desktop app.",
+      "unavailable": "This platform cannot sign apps in yet: its public address is not set. Ask your super admin."
+    },
     "device_sign_in": {
       "authorization_pending": "The connection is not confirmed yet. Confirm it on the web page and wait a moment.",
       "slow_down": "Too many requests. Try again shortly.",
@@ -565,6 +570,13 @@
       "external_not_allowed": "External sharing is not allowed for this organization right now.",
       "expiry_too_long": "The expiry is longer than the platform allows; choose a shorter one.",
       "file_unavailable": "The file is no longer available; it may have been removed."
+    },
+    "platform_icon": {
+      "invalid_type": "The file type is wrong: the app and maskable icons must be PNG, the favicon SVG.",
+      "invalid_size": "The PNG must be exactly 512 × 512 pixels.",
+      "too_large": "The file is too large: at most 1 MiB (an SVG favicon at most 128 KiB).",
+      "storage_unavailable": "Object storage is unavailable, so the icon cannot be saved. Try again later.",
+      "not_found": "This icon has not been uploaded."
     }
   },
   "agents": {
@@ -3219,6 +3231,19 @@
     "invalidHint": "Send the bot a new message in IM to get a fresh link.",
     "goHome": "Go to Capybara"
   },
+  "appAuth": {
+    "title": "Sign in to {platform} with Capybara Desktop on {machine}?",
+    "subtitle": "Only continue if you just started this from the Capybara desktop app.",
+    "account": "Account",
+    "machine": "Computer",
+    "appVersion": "App version",
+    "confirm": "Sign in",
+    "cancel": "Cancel",
+    "invalidTitle": "Cannot sign in",
+    "invalidHint": "This link is incomplete. Start signing in again from the Capybara desktop app.",
+    "doneTitle": "Done",
+    "doneHint": "Returned to Capybara. You can close this page."
+  },
   "deviceLink": {
     "title": "Connect this machine",
     "subtitle": "Check that this code matches the one in your terminal.",
@@ -4159,6 +4184,10 @@
       "actions": {
         "accountCreated": "Created an account",
         "accountUpdated": "Updated an account",
+        "authAppAuthorized": "Allowed an app to sign in",
+        "authAppSignedIn": "An app signed in",
+        "platformIconUpdated": "Changed the platform icon",
+        "platformIconCleared": "Restored the default platform icon",
         "identityLinked": "Linked an external identity",
         "identityVerified": "Verified an external identity",
         "identityUnlinked": "Unlinked an external identity",
@@ -6389,6 +6418,29 @@
       "label": "Platform default theme",
       "notAvailable": "This theme is not on in every organization, so it cannot be the platform default. Organizations where it is off: {orgs}."
     }
+  },
+  "appIcon": {
+    "title": "App icon",
+    "description": "The icon of the installed app and the browser tab for the whole platform. Without an upload, the Capybara icon is used.",
+    "app": {
+      "title": "Standard icon",
+      "hint": "PNG, exactly 512 × 512"
+    },
+    "maskable": {
+      "title": "Maskable icon",
+      "hint": "PNG, 512 × 512, subject inside the central 80 %; launchers crop it to their shape"
+    },
+    "favicon": {
+      "title": "Favicon",
+      "hint": "SVG, at most 128 KiB"
+    },
+    "default": "Default",
+    "custom": "Uploaded",
+    "upload": "Upload",
+    "uploadLabel": "Upload {name}",
+    "restore": "Restore default",
+    "uploaded": "Icon uploaded.",
+    "restored": "Default icon restored."
   },
   "clientExtensions": {
     "budget": "The interface code of “{plugin}” failed and is off for this session.",

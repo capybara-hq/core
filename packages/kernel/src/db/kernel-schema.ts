@@ -1631,6 +1631,16 @@ export type FileShareRevokeReason =
   | "member_offboarded"
   | "creator_lost_access";
 
+/** 0164: the platform icon of one purpose (mobile layout spec §10.2.1); no row: the default. */
+export interface PlatformIconsTable {
+  purpose: "app" | "maskable" | "favicon";
+  /** Relative to the kernel's `deployment/` prefix: `platform-icons/<purpose>-<sha256>.<ext>`. */
+  object_key: string;
+  sha256: string;
+  content_type: string;
+  updated_at: Ts;
+}
+
 /**
  * 0161: a link to a frozen snapshot of one conversation file (file sharing spec §1). The row stays
  * after a revoke or expiry; `object_key` is null once the snapshot is freed.
@@ -1900,6 +1910,7 @@ export interface KernelDatabase {
   scheduled_task_runs: ScheduledTaskRunsTable;
   scheduled_task_grants: ScheduledTaskGrantsTable;
   file_shares: FileSharesTable;
+  platform_icons: PlatformIconsTable;
   skills: SkillsTable;
   skill_versions: SkillVersionsTable;
   skill_change_requests: SkillChangeRequestsTable;

@@ -188,6 +188,7 @@ describe("替换 on /settings/appearance (组织设置 › 外观)", () => {
 describe("replaceable slots on /admin/settings", () => {
   it("the super admin's pick is the platform default; 内置 removes it", async () => {
     const calls = stubApi({
+      "GET /api/v1/admin/platform/icons": () => json(200, { icons: [] }),
       "GET /api/v1/admin/settings": () =>
         json(200, {
           orgCreation: "anyone",

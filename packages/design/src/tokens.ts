@@ -123,3 +123,6 @@ export const SIZES = {
     "calendar-cell": 112,
   },
 } as const;
+
+/** The page background (`bg`) per theme, for what cannot read `--cb-bg` (the PWA manifest). */
+export const PAGE_BACKGROUND = { dark: "#0A0A0A", light: "#FAF9F6" } as const;

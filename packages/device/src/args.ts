@@ -1,11 +1,19 @@
 import { type ParseArgsOptionsConfig, parseArgs } from "node:util";
-import type { RestrictedProjectReach } from "./state.js";
+import { isKeepAwakeMode, type KeepAwakeMode, type RestrictedProjectReach } from "./state.js";
 
 export type DeviceMode = "os" | "docker";
 
 /** A parsed command line. */
 export type Command =
-  | { command: "login"; url: string; browser: boolean; dir?: string; mode: DeviceMode }
+  | {
+      command: "login";
+      url: string;
+      browser: boolean;
+      dir?: string;
+      mode: DeviceMode;
+      /** `--json`: one JSON event per line on stdout (implies `--no-browser`). */
+      json?: true;
+    }
   | { command: "logout" }
   | { command: "status"; json: boolean }
   | { command: "start" }
@@ -24,7 +32,7 @@ export type Command =
       key: string;
       value: string;
     }
-  | { command: "ceiling"; action: "show" }
+  | { command: "ceiling"; action: "show"; json?: true }
   | {
       command: "ceiling";
       action: "set";
@@ -33,15 +41,27 @@ export type Command =
       /** `--yes`: confirms a widening without asking. */
       yes?: true;
     }
+  | { command: "keep-awake"; action: "show"; json?: true }
+  | {
+      command: "keep-awake";
+      action: "set";
+      mode: KeepAwakeMode;
+      /** `--yes`: confirms keeping the computer awake more often without asking. */
+      yes?: true;
+      json?: true;
+    }
   | {
       command: "service";
       action: "install" | "uninstall" | "start" | "stop" | "restart" | "status";
+      /** `service status --json`. */
+      json?: true;
     }
   | { command: "help" };
 
 export const USAGE = `Usage:
-  capybara-device login --url <url> [--no-browser] [--dir <path>] [--mode os|docker]
-                                  Connect this machine: approve the code in the browser
+  capybara-device login --url <url> [--no-browser] [--dir <path>] [--mode os|docker] [--json]
+                                  Connect this machine: approve the code in the browser;
+                                  --json prints one JSON event per line (no browser)
   capybara-device logout          Forget the credential on this machine
   capybara-device status [--json] Show whether this machine is logged in
   capybara-device start           Connect and serve the device
@@ -49,9 +69,13 @@ export const USAGE = `Usage:
   capybara-device drain [--wait] [--timeout <seconds>]
                                   Finish running commands, accept no new ones, then stop;
                                   --wait returns once it has stopped (default limit 600 s)
-  capybara-device ceiling show    Show this machine's owner ceiling (Full access, project reach)
+  capybara-device ceiling show [--json]
+                                  Show this machine's owner ceiling (Full access, project reach)
   capybara-device ceiling set --full-access allow|deny --project-reach workspace|os-user [--yes]
                                   Set the owner ceiling; widening needs --yes or a y at the prompt
+  capybara-device keep-awake [show | off | while-busy | connected] [--yes] [--json]
+                                  Show or set when this computer is kept awake; raising it
+                                  needs --yes or a y at the prompt
   capybara-device policy [show]   Show the local policy
   capybara-device policy set <key> <value>
                                   Replace one field (cpu, memoryMb, allowCredentials)
@@ -63,7 +87,8 @@ export const USAGE = `Usage:
                                   Run at login as a user service, or remove it
   capybara-device service start|stop|restart
                                   Start, stop or restart the login service
-  capybara-device service status  Report whether the login service is loaded, what is running,
+  capybara-device service status [--json]
+                                  Report whether the login service is loaded, what is running,
                                   and whether it is older than the installed program`;
 
 /** Thrown for a bad command line; the message is shown with the usage. */
@@ -95,6 +120,7 @@ export function parseCommandLine(argv: string[]): Command {
         "no-browser": { type: "boolean" },
         dir: { type: "string" },
         mode: { type: "string" },
+        json: { type: "boolean" },
       });
       if (positionals.length > 0) throw new UsageError("login takes no positional arguments");
       if (values.url === undefined || values.url === "") throw new UsageError("login needs --url");
@@ -103,9 +129,10 @@ export function parseCommandLine(argv: string[]): Command {
       return {
         command: "login",
         url: String(values.url),
-        browser: values["no-browser"] !== true,
+        browser: values["no-browser"] !== true && values.json !== true,
         ...(values.dir !== undefined && { dir: String(values.dir) }),
         mode,
+        ...(values.json === true && { json: true as const }),
       };
     }
     case "status": {
@@ -156,6 +183,7 @@ export function parseCommandLine(argv: string[]): Command {
         "full-access": { type: "string" },
         "project-reach": { type: "string" },
         yes: { type: "boolean", short: "y" },
+        json: { type: "boolean" },
       });
       const [action, ...extra] = positionals;
       const usage =
@@ -164,9 +192,14 @@ export function parseCommandLine(argv: string[]): Command {
       if (action === "show" || action === undefined) {
         if (values["full-access"] !== undefined || values["project-reach"] !== undefined)
           throw new UsageError(usage);
-        return { command: "ceiling", action: "show" };
+        return {
+          command: "ceiling",
+          action: "show",
+          ...(values.json === true && { json: true as const }),
+        };
       }
       if (action !== "set") throw new UsageError(usage);
+      if (values.json === true) throw new UsageError(usage);
       const full = values["full-access"];
       const reach = values["project-reach"];
       // both fields: one explicit atomic target
@@ -180,9 +213,34 @@ export function parseCommandLine(argv: string[]): Command {
         ...(values.yes === true && { yes: true as const }),
       };
     }
-    case "service": {
-      const { positionals } = parse(rest, {});
+    case "keep-awake": {
+      const { values, positionals } = parse(rest, {
+        yes: { type: "boolean", short: "y" },
+        json: { type: "boolean" },
+      });
+      const usage = "usage: keep-awake [show | off | while-busy | connected] [--yes] [--json]";
       const [action, ...extra] = positionals;
+      if (extra.length > 0) throw new UsageError(usage);
+      const json = values.json === true && { json: true as const };
+      if (action === undefined || action === "show") {
+        if (values.yes === true) throw new UsageError(usage);
+        return { command: "keep-awake", action: "show", ...json };
+      }
+      if (!isKeepAwakeMode(action)) throw new UsageError(usage);
+      return {
+        command: "keep-awake",
+        action: "set",
+        mode: action,
+        ...(values.yes === true && { yes: true as const }),
+        ...json,
+      };
+    }
+    case "service": {
+      const { values, positionals } = parse(rest, { json: { type: "boolean" } });
+      const [action, ...extra] = positionals;
+      if (values.json === true && action !== "status") {
+        throw new UsageError("--json is only for service status");
+      }
       if (
         (action === "install" ||
           action === "uninstall" ||
@@ -192,7 +250,11 @@ export function parseCommandLine(argv: string[]): Command {
           action === "status") &&
         extra.length === 0
       ) {
-        return { command: "service", action };
+        return {
+          command: "service",
+          action,
+          ...(values.json === true && { json: true as const }),
+        };
       }
       throw new UsageError("usage: service install|uninstall|start|stop|restart|status");
     }

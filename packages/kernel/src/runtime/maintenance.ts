@@ -48,6 +48,12 @@ import {
   ShareObjects,
   ShareObjectsModule,
 } from "../shares/share-objects.js";
+import {
+  PLATFORM_ICON_DELETE_JOB,
+  type PlatformIconDeleteData,
+  PlatformIconObjects,
+  PlatformIconObjectsModule,
+} from "../themes/platform-icon-objects.js";
 import { DeviceOpResolver } from "../tools/device-op-resolver.js";
 import { type DriftConnectorJobData, ToolDrift } from "../tools/drift.js";
 import { DRIFT_CONNECTOR_JOB } from "../tools/job-ids.js";
@@ -83,7 +89,8 @@ export const MAINTENANCE_CONCURRENCY = 5;
  * {@link processStopTree} and `deliver-to-parent` → {@link processDeliverToParent} (both in
  * runtime/subagents/tree-jobs.ts, over {@link Waits}), `owned-plugin-cleanup` →
  * {@link OwnedPluginCleanup}, `sched-fire` and `sched-settle` → {@link ScheduledTaskFirer}, `device-op-resolve` →
- * {@link DeviceOpResolver}, `share-object-delete` → {@link ShareObjects}). The name of a periodic job (a `@LockedCron` / `@LockedInterval` job,
+ * {@link DeviceOpResolver}, `share-object-delete` → {@link ShareObjects}, `platform-icon-delete` →
+ * {@link PlatformIconObjects}). The name of a periodic job (a `@LockedCron` / `@LockedInterval` job,
  * such as `sandbox-suspend-idle`) runs that job's body once ({@link ScheduledRuns.runNow}), as the
  * maintenance handlers did when those jobs were schedulers on this queue: an operator's or a
  * test's one-off run, not a second schedule (decision R23 of the Nest kernel spec). Any other
@@ -118,6 +125,8 @@ export class MaintenanceProcessor extends WorkerHost<Worker> {
     @Inject(SandboxOperationReconcileJob)
     private readonly operations: Pick<SandboxOperationReconcileJob, "reconcile" | "revoke">,
     @Inject(ShareObjects) private readonly shareObjects: Pick<ShareObjects, "deleteObject">,
+    @Inject(PlatformIconObjects)
+    private readonly platformIcons: Pick<PlatformIconObjects, "deleteObject">,
     @Optional()
     @Inject(CloudPermissionSnapshots)
     private readonly snapshots?: Pick<CloudPermissionSnapshots, "reconcileDevice">,
@@ -226,6 +235,10 @@ export class MaintenanceProcessor extends WorkerHost<Worker> {
       case SHARE_OBJECT_DELETE_JOB:
         await this.shareObjects.deleteObject(job.data as ShareObjectDeleteData);
         return;
+      // a platform icon object no row names any more, or an upload's orphan check (§10.2.1)
+      case PLATFORM_ICON_DELETE_JOB:
+        await this.platformIcons.deleteObject(job.data as PlatformIconDeleteData);
+        return;
       default:
         if (await this.scheduled.runNow(job.name)) return;
         // never completed unrun: in a rolling deploy an old worker meets a job a newer replica
@@ -267,6 +280,8 @@ export class MaintenanceProcessor extends WorkerHost<Worker> {
     ScheduledTaskFireModule,
     // the share snapshot deletion
     ShareObjectsModule,
+    // the platform icon object deletion
+    PlatformIconObjectsModule,
     QueueModule.registerQueue(MAINTENANCE_QUEUE_NAME),
   ],
   providers: [

@@ -42,6 +42,28 @@ export const KERNEL_SRC_DIR = "packages/kernel/src";
 export const CLI_ARGS_FILE = "apps/capybara/src/args.ts";
 
 /**
+ * Shell capability identifiers (a distinct concept from the old extension "capability": a native
+ * shell's `name@major` capability, mobile layout spec §9 and desktop client spec). Exact names
+ * only; they are exempt from {@link SDK_OLD_NAMES}. Specs:
+ * docs/superpowers/specs/2026-11-19-mobile-layout-design.md §9 and
+ * docs/superpowers/specs/2026-11-07-desktop-client-design.md. terms-reference needs no entry: its
+ * patterns do not match these names.
+ */
+export const SHELL_CAPABILITY_NAMES: ReadonlySet<string> = new Set([
+  "SHELL_CAPABILITIES",
+  "SHELL_CAPABILITY_KEYS",
+  "DeviceCapabilityV1",
+  "NotifyCapabilityV1",
+  "OpenExternalCapabilityV1",
+  "SignInCapabilityV1",
+  "useShellCapability",
+  "shellCapability",
+  "useDeviceCapability",
+  "useNotifyCapability",
+  "useSignInCapability",
+]);
+
+/**
  * SDK identifiers in the API report that must not appear: the names in which "plugin" meant the
  * extension (since phase 0b "plugin" means the bundle, so new names such as `PluginManifest` are
  * fine). Each pattern is tested against whole identifiers.
@@ -342,6 +364,7 @@ function checkSdkApi(root: string): Finding[] {
   const out: Finding[] = [];
   text.split("\n").forEach((l, i) => {
     for (const m of l.matchAll(IDENTIFIER)) {
+      if (SHELL_CAPABILITY_NAMES.has(m[0])) continue;
       if (!SDK_OLD_NAMES.some((re) => re.test(m[0]))) continue;
       out.push({
         file: join(root, SDK_API_FILE),

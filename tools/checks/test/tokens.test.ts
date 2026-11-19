@@ -324,12 +324,17 @@ describe("rendering", () => {
     expect(ts).toContain(`  prose: ${JSON.stringify(tokens.font.prose)},`);
   });
 
-  it("tokens.ts carries no color values", () => {
+  it("tokens.ts carries no color values but the page background (PAGE_BACKGROUND)", () => {
     const text = readFileSync(join(repoRoot, JSON_PATH), "utf8");
     const { tokens } = parseTokens(text, "tokens.json");
     if (!tokens) throw new Error("repository tokens.json must parse");
     const ts = renderTokensTs(tokens);
-    expect(ts).not.toMatch(/#[0-9A-Fa-f]{3,8}\b|rgba?\(|color-mix/);
+    const bg = tokens.color.bg;
+    expect(ts).toContain(
+      `export const PAGE_BACKGROUND = { dark: "${bg?.dark}", light: "${bg?.light}" } as const;`,
+    );
+    const rest = ts.replace(/^export const PAGE_BACKGROUND = .*$/m, "");
+    expect(rest).not.toMatch(/#[0-9A-Fa-f]{3,8}\b|rgba?\(|color-mix/);
   });
 });
 

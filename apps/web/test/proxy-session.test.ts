@@ -497,4 +497,32 @@ describe("proxy: matcher", () => {
       expect(re.test(p), p).toBe(false);
     }
   });
+
+  it("lets a signed-out browser read the PWA manifest and the default icons, and nothing more", async () => {
+    // mobile layout spec §10.2: exactly these files skip the sign-in gate
+    for (const p of ["/manifest.webmanifest", "/icon-512.png", "/icon-maskable-512.png"]) {
+      expect(re.test(p), p).toBe(false);
+    }
+    // lookalikes and pages stay behind the gate
+    for (const p of [
+      "/admin/settings",
+      "/manifest.webmanifest/x",
+      "/manifest.webmanifestx",
+      "/x/manifest.webmanifest",
+      "/manifest.json",
+      "/icon-512.png.evil",
+      "/icon-512.png/x",
+      "/icon-512.pngx",
+      "/x/icon-512.png",
+      "/icon-1024.png",
+      "/icon-maskable-512.png.evil",
+      "/icon.svg/x",
+      "/icon.svg.evil",
+    ]) {
+      expect(re.test(p), p).toBe(true);
+    }
+    const res = await proxy(page("/admin/settings"));
+    expect(res.status).toBe(307);
+    expect(res.headers.get("location")).toContain("/login");
+  });
 });

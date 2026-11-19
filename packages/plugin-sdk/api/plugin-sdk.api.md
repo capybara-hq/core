@@ -238,6 +238,28 @@ export const BUILTIN_TOOL_NAME_RE: RegExp;
 export function canonicalThemeValue(group: "color" | "shadow", value: unknown): string | undefined;
 
 // @public
+export interface CapybaraShell {
+    readonly capabilities: Readonly<Record<string, object>>;
+    readonly controls?: {
+        x: number;
+        y: number;
+        width: number;
+        height: number;
+    } | null;
+    readonly insets: {
+        top: number;
+        right: number;
+        bottom: number;
+        left: number;
+    };
+    readonly kind: "desktop" | "mobile";
+    on(event: "change", listener: () => void): () => void;
+    readonly platform: "macos" | "windows" | "linux" | "ios" | "android";
+    readonly shellVersion: string;
+    readonly version: 1;
+}
+
+// @public
 export interface CardAction {
     action: "approve" | "deny" | "answer";
     answer?: FormAnswer;
@@ -471,6 +493,9 @@ export function clientCssProblem(css: string, assets: ReadonlySet<string>): stri
 
 // @public
 export function clipMediaName(name: string, max?: number): string;
+
+// @public
+export type CompactForm = "kept" | "drawer" | "hidden";
 
 // @public
 export function compositeOver(color: string, ground: string): string | undefined;
@@ -851,6 +876,28 @@ export const DEVICE_SCAN_SKIPPED_BASE_DIRS: readonly string[];
 export const DEVICE_SCAN_SKIPPED_DIRS: readonly string[];
 
 // @public
+export interface DeviceCapabilityV1 {
+    connect(input: {
+        orgId: string;
+        deviceId?: string;
+    }): Promise<"connected" | "cancelled">;
+    disconnect(): Promise<void>;
+    onStatus(listener: (s: ThisMachineStatus) => void): () => void;
+    pause(): Promise<void>;
+    requestCeiling(input: {
+        fullAccess: boolean;
+        projectReach: "workspace" | "os-user";
+    }): Promise<"applied" | "cancelled">;
+    resume(): Promise<"resumed" | "cancelled">;
+    running(): Promise<RunningOperationView[]>;
+    setKeepAwake(mode: KeepAwakeMode): Promise<"applied" | "cancelled">;
+    status(): Promise<ThisMachineStatus>;
+}
+
+// @public
+export type DeviceConnection = "starting" | "online" | "offline" | "draining" | "stopped";
+
+// @public
 export interface DeviceCreateArgs {
     limits: SandboxLimits;
 }
@@ -1153,6 +1200,9 @@ export interface DroppedUiContribution {
     reason: UiDropReason;
     ref: string;
 }
+
+// @public
+export function effectiveCompact(slot: CompactForm, contribution?: CompactForm): CompactForm;
 
 // @public
 export type Effort = "low" | "medium" | "high" | "xhigh" | "max";
@@ -2014,6 +2064,9 @@ export function isAttachmentId(s: unknown): s is string;
 export function isChannelSendError(e: unknown): e is ChannelSendError;
 
 // @public
+export function isCompactForm(v: unknown): v is CompactForm;
+
+// @public
 export function isDeviceBootId(v: unknown): v is string;
 
 // @public
@@ -2089,6 +2142,9 @@ export type JsonSchema = Record<string, unknown>;
 export type JsonValue = string | number | boolean | null | JsonValue[] | {
     [key: string]: JsonValue;
 };
+
+// @public
+export type KeepAwakeMode = "off" | "while-busy" | "connected";
 
 // @public
 export interface KernelCancel {
@@ -2572,6 +2628,15 @@ export interface NetworkBlockedHost {
 export type NetworkBlockLayer = "device" | "org" | "address" | "unknown";
 
 // @public
+export interface NotifyCapabilityV1 {
+    notify(input: {
+        title: string;
+        body: string;
+        path?: string;
+    }): Promise<void>;
+}
+
+// @public
 export const NPM_PACKAGE_NAME_RE: RegExp;
 
 // @public
@@ -2624,6 +2689,11 @@ export interface ObjectStore {
 
 // @public
 export function oklabL(hex: string): number;
+
+// @public
+export interface OpenExternalCapabilityV1 {
+    open(url: string): Promise<void>;
+}
 
 // @public
 export type OrgAccess = "readonly" | "override";
@@ -3151,6 +3221,15 @@ export type RouteCaller = {
     role: UiRole;
     config: unknown;
 };
+
+// @public
+export interface RunningOperationView {
+    accountId: string | null;
+    conversationId: string | null;
+    isolation: "restricted" | "full";
+    startedAt: string;
+    tag: string;
+}
 
 // @public
 export const SANDBOX_EXTENSION_POINT = "sandbox@2";
@@ -3707,6 +3786,28 @@ export interface ShareEmbedClaims extends EmbedClaimsBase {
 }
 
 // @public
+export const SHELL_CAPABILITIES: readonly {
+    key: string;
+    owner: string;
+}[];
+
+// @public
+export const SHELL_CAPABILITY_KEYS: {
+    readonly device: "device@1";
+    readonly notify: "notify@1";
+    readonly openExternal: "openExternal@1";
+    readonly signIn: "signIn@1";
+};
+
+// @public
+export type ShellCallError = "busy" | "no_activation" | "cancelled" | "failed";
+
+// @public
+export interface SignInCapabilityV1 {
+    start(): Promise<"signedIn" | "cancelled">;
+}
+
+// @public
 export const SKILL_ENTRY_FILE = "SKILL.md";
 
 // @public
@@ -4145,6 +4246,28 @@ export interface ThemeSchemeOverride {
 export const THINKING_VALUES: readonly string[];
 
 // @public
+export type ThisMachineStatus = {
+    state: "not_connected";
+} | {
+    state: "connected_elsewhere";
+    origin: string;
+} | {
+    state: "connected";
+    deviceId: string;
+    orgId: string;
+    mode: "os" | "docker";
+    connection: DeviceConnection;
+    offlineReason?: string;
+    serviceInstalled: boolean;
+    keepAwake: {
+        mode: KeepAwakeMode;
+        held: boolean;
+        unavailable?: string;
+    };
+    lastWakeAt?: string;
+};
+
+// @public
 export const TOOL_KEY_ARGS_MAX = 3;
 
 // @public
@@ -4385,6 +4508,7 @@ export type UiBlock = {
 // @public
 export interface UiContribution {
     after?: string;
+    compact?: CompactForm;
     icon?: UiIcon;
     id: string;
     kind: UiKind;
@@ -4505,6 +4629,7 @@ export interface UiSlotSpec {
         zh: string;
     };
     cardinality: "list" | "single";
+    compact: CompactForm;
     density: "dense" | "regular";
     description: {
         en: string;

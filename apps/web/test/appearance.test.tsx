@@ -335,6 +335,7 @@ describe("/admin/settings › 外观 (平台默认主题)", () => {
     ...orgRoutes(),
     // 插件界面代码 lists the extensions with client code
     "GET /api/v1/admin/extensions": () => json(200, { extensions: [], drainSeconds: 30 }),
+    "GET /api/v1/admin/platform/icons": () => json(200, { icons: [] }),
     "GET /api/v1/admin/settings": () => json(200, SETTINGS),
     "GET /api/v1/admin/ui/arrangement": () => json(200, { slots: [] }),
     "GET /api/v1/admin/components?kind=theme": () => json(200, THEMES),
@@ -433,6 +434,7 @@ describe("/admin/themes", () => {
     "GET /api/v1/admin/orgs": () => json(200, { orgs: [], limitDefaults: {} }),
     // 插件界面代码 lists the extensions with client code
     "GET /api/v1/admin/extensions": () => json(200, { extensions: [], drainSeconds: 30 }),
+    "GET /api/v1/admin/platform/icons": () => json(200, { icons: [] }),
     "GET /api/v1/admin/settings": () => json(200, { uiTheme: { id: "t-night" } }),
     "GET /api/v1/admin/components/theme/t-night/versions": versions,
     "GET /api/v1/admin/components/theme/t-paper/versions": versions,

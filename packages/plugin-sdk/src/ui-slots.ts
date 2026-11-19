@@ -19,6 +19,26 @@ export const UI_SLOT_IDS = [
   "conversation.composer.frame",
 ] as const;
 
+/**
+ * What a slot (or a contribution) becomes on a compact screen (mobile layout spec §5.6): `kept` =
+ * rendered in its place, `drawer` = moved into a sheet or pushed page, `hidden` = not rendered.
+ * Order of narrowing: `kept` < `drawer` < `hidden`.
+ */
+export type CompactForm = "kept" | "drawer" | "hidden";
+
+const COMPACT_ORDER: readonly CompactForm[] = ["kept", "drawer", "hidden"];
+
+/** True when `v` is one of the three compact forms (used to validate manifests). */
+export function isCompactForm(v: unknown): v is CompactForm {
+  return typeof v === "string" && (COMPACT_ORDER as readonly string[]).includes(v);
+}
+
+/** A contribution may narrow its slot's compact form, never widen it. */
+export function effectiveCompact(slot: CompactForm, contribution?: CompactForm): CompactForm {
+  if (contribution === undefined) return slot;
+  return COMPACT_ORDER.indexOf(contribution) > COMPACT_ORDER.indexOf(slot) ? contribution : slot;
+}
+
 export type UiSlotId = (typeof UI_SLOT_IDS)[number];
 
 /** One slot of the catalog: where extension UI may go and what it receives (UI slots spec §3.1). */
@@ -41,6 +61,8 @@ export interface UiSlotSpec {
   args: readonly string[];
   density: "dense" | "regular";
   icon: "required" | "optional" | "none";
+  /** The slot's form on a compact screen (mobile layout spec §5.6). */
+  compact: CompactForm;
   /** Built-in parts a contribution may be placed after; the first is the default. */
   anchors?: readonly string[];
   limits?: { maxShown?: number };
@@ -59,6 +81,7 @@ const SLOT_DATA = [
     args: ["conversationId", "item"],
     density: "regular",
     icon: "optional",
+    compact: "drawer",
     description: {
       en: "A panel beside the conversation, opened from the right area.",
       zh: "对话旁的面板，从右侧区域打开。",
@@ -75,6 +98,7 @@ const SLOT_DATA = [
     args: ["conversationId"],
     density: "dense",
     icon: "optional",
+    compact: "kept",
     anchors: ["context", "files", "background"],
     description: {
       en: "A section in the conversation properties list.",
@@ -92,6 +116,7 @@ const SLOT_DATA = [
     args: ["conversationId", "card"],
     density: "regular",
     icon: "optional",
+    compact: "kept",
     description: {
       en: "A card a tool result opens in the conversation.",
       zh: "工具结果在对话中打开的卡片。",
@@ -108,6 +133,7 @@ const SLOT_DATA = [
     args: [],
     density: "regular",
     icon: "optional",
+    compact: "kept",
     description: {
       en: "A full page in the organization navigation.",
       zh: "组织导航中的完整页面。",
@@ -124,6 +150,7 @@ const SLOT_DATA = [
     args: ["conversationId", "fileId"],
     density: "regular",
     icon: "optional",
+    compact: "kept",
     description: {
       en: "A previewer for a file of the conversation.",
       zh: "对话中文件的预览器。",
@@ -140,6 +167,7 @@ const SLOT_DATA = [
     args: ["agentId"],
     density: "regular",
     icon: "optional",
+    compact: "kept",
     description: {
       en: "A section on the detail page of an agent.",
       zh: "智能体详情页中的一个分区。",
@@ -156,6 +184,7 @@ const SLOT_DATA = [
     args: [],
     density: "regular",
     icon: "optional",
+    compact: "kept",
     description: {
       en: "A section on the organization settings page.",
       zh: "组织设置页中的一个分区。",
@@ -172,6 +201,7 @@ const SLOT_DATA = [
     args: [],
     density: "regular",
     icon: "optional",
+    compact: "kept",
     description: {
       en: "A full page in the platform administration.",
       zh: "平台管理中的完整页面。",
@@ -190,6 +220,7 @@ const SLOT_DATA = [
     args: [],
     density: "regular",
     icon: "none",
+    compact: "hidden",
     description: {
       en: "The brand row of the sidebar (the mark of the collapsed rail).",
       zh: "侧边栏的品牌行（收起后的窄栏标记）。",
@@ -206,6 +237,7 @@ const SLOT_DATA = [
     args: [],
     density: "regular",
     icon: "none",
+    compact: "kept",
     limits: { maxShown: 4 },
     description: {
       en: "A full-viewport layer over the workspace shell.",
@@ -225,6 +257,7 @@ const SLOT_DATA = [
     args: [],
     density: "regular",
     icon: "none",
+    compact: "kept",
     description: {
       en: "The hero of the new-conversation page.",
       zh: "新对话页的主视觉区。",
@@ -243,6 +276,7 @@ const SLOT_DATA = [
     args: [],
     density: "regular",
     icon: "none",
+    compact: "kept",
     description: {
       en: "The frame around the composer, on the new-conversation and conversation pages.",
       zh: "新对话页与对话页中输入框外的边框。",

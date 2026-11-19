@@ -98,6 +98,7 @@ describe("version-2 local owner policy", () => {
       cpu: 2,
       memoryMb: null,
       ownerCeiling: { fullAccess: true, restrictedProjectReach: "os-user" },
+      keepAwake: "while-busy",
     });
     expect(convertPolicyFile(state)).toBe("current");
 

@@ -75,6 +75,23 @@ export const PLATFORM_EXCLUSIONS: readonly {
     reason:
       "Fetches an extension package and returns its permission review; installing it means confirming those permissions, which only a person does (spec §6.4)",
   },
+  // meta
+  {
+    route: "GET /api/v1/meta",
+    category: "transport",
+    reason: "Pre-sign-in discovery for native clients: platform name, icon and protocol ranges",
+  },
+  // native-app sign-in (desktop client spec §6.5)
+  {
+    route: "POST /api/v1/app-auth/authorize",
+    category: "human-only",
+    reason: "A person consents in the browser to sign a native app in",
+  },
+  {
+    route: "POST /api/v1/app-auth/token",
+    category: "transport",
+    reason: "A native app exchanges a one-time sign-in code; nothing for an agent",
+  },
   // setup
   {
     route: "GET /api/v1/setup",
@@ -906,6 +923,12 @@ export const PLATFORM_EXCLUSIONS: readonly {
     route: "GET /api/v1/themes/:id/:version/assets/:file",
     category: "transport",
     reason: "Serves a theme version's font and logo bytes to the browser",
+  },
+  // the platform icon (mobile layout spec §10.2.1)
+  {
+    route: "GET /api/v1/platform/icon/:purpose",
+    category: "transport",
+    reason: "Public image delivery for the manifest and favicons",
   },
   {
     route: "GET /api/v1/platform/theme",

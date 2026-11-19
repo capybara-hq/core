@@ -34,10 +34,18 @@ WantedBy=default.target
 
 /** The bin script a unit runs (the second word of `ExecStart`), or undefined. */
 export function unitBinPath(content: string): string | undefined {
+  return unitExecWords(content)?.[1];
+}
+
+/** The node binary a unit runs (the first `ExecStart` word), or undefined. */
+export function unitNodePath(content: string): string | undefined {
+  return unitExecWords(content)?.[0];
+}
+
+function unitExecWords(content: string): string[] | undefined {
   const line = /^ExecStart=(.*)$/m.exec(content)?.[1];
   if (line === undefined) return undefined;
-  const words = [...line.matchAll(/"((?:[^"\\]|\\.)*)"/g)].map((m) =>
+  return [...line.matchAll(/"((?:[^"\\]|\\.)*)"/g)].map((m) =>
     (m[1] ?? "").replace(/\\(.)/g, "$1").replaceAll("%%", "%"),
   );
-  return words[1];
 }

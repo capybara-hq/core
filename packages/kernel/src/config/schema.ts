@@ -36,6 +36,8 @@ function isValidMasterKey(value: string): boolean {
  * 插件名同清单规则（不能是 `local`），租户 id 非空、不含空白；与 identity/external.ts 的身份源键规则一致。
  */
 const TRUSTED_SOURCE_RE = /^(?!local:)[a-z0-9][a-z0-9._-]{0,213}:\S{1,256}$/;
+/** Schemes an app redirect URI never uses: the consent page navigates to it. */
+const UNSAFE_REDIRECT_RE = /^\s*(?:javascript|data|vbscript|file):/i;
 
 /** `sandbox.limits.maxCommandSeconds` 的默认值。 */
 export const DEFAULT_MAX_COMMAND_SECONDS = 7200;
@@ -328,6 +330,22 @@ export function trustProxyEntryProblem(entry: string): string | undefined {
 }
 
 export const KernelConfigSchema = z.strictObject({
+  platform: z
+    .strictObject({
+      name: z
+        .string()
+        .min(1)
+        .max(64)
+        .optional()
+        .meta(
+          meta({
+            hot: true,
+            description:
+              "The platform's display name (1 to 64 characters), shown by native clients and the installed web app before sign-in (GET /api/v1/meta); unset: clients show their own name",
+          }),
+        ),
+    })
+    .prefault({} as never),
   db: z
     .strictObject({
       url: z
@@ -807,6 +825,25 @@ export const KernelConfigSchema = z.strictObject({
               "Set the Secure attribute on session cookies; set false only for local trials over plain http",
           }),
         ),
+      appRedirectUris: z
+        .array(
+          z
+            .string()
+            .min(1)
+            .max(2048)
+            .refine((v) => URL.canParse(v) && !v.includes("#") && !UNSAFE_REDIRECT_RE.test(v), {
+              message:
+                "Each entry must be an absolute URI without a fragment (for example capybara://auth/callback); javascript:, data:, vbscript: and file: are not allowed",
+            }),
+        )
+        .max(20)
+        .default(["capybara://auth/callback"])
+        .meta(
+          meta({
+            description:
+              "Redirect URIs native apps may receive a sign-in code at (desktop client spec §6.5), matched exactly; a fork that ships its own build under another scheme adds its URI here",
+          }),
+        ),
       setupToken: z
         // An empty value means "not set" (compose passes ${CAPYBARA_SETUP_TOKEN:-}). Env values are
         // JSON-parsed, so an all-digit or true / false token arrives as a number or boolean: it is
@@ -853,6 +890,7 @@ export const KernelConfigSchema = z.strictObject({
       accessTokenTtlSeconds: 900,
       refreshTokenTtlDays: 30,
       cookieSecure: true,
+      appRedirectUris: ["capybara://auth/callback"],
       loginSources: [],
       trustedIdentitySources: [],
     }),

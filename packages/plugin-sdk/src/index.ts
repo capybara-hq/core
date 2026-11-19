@@ -52,6 +52,8 @@ export {
   type SetupGuideSection,
 } from "./setup-guide-parse.js";
 export * from "./setup-guide-render.js";
+export * from "./shell-capabilities.js";
+export * from "./shell-environment.js";
 export * from "./skill.js";
 export * from "./skill-invocation.js";
 export * from "./storage.js";

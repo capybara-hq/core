@@ -67,6 +67,7 @@ import { FilePreviewersController } from "../files/previewers.controller.js";
 import { GitModule } from "../git/git.module.js";
 import { HtmlModule } from "../html/html.module.js";
 import { HtmlDocumentController } from "../html/html-document.controller.js";
+import { AppAuthController } from "../identity/app-auth.controller.js";
 import { AuthController } from "../identity/auth.controller.js";
 import { AuthGuard } from "../identity/auth.guard.js";
 import { IdentityModule } from "../identity/identity.module.js";
@@ -106,6 +107,8 @@ import { InvocableSkillsController } from "../skills/invocable.controller.js";
 import { SkillsController } from "../skills/skills.controller.js";
 import { SkillsModule } from "../skills/skills.module.js";
 import { StorageModule } from "../storage/storage.module.js";
+import { PlatformIconController } from "../themes/platform-icon.controller.js";
+import { PlatformIconPublicController } from "../themes/platform-icon-public.controller.js";
 import { OrgThemesController } from "../themes/themes.controller.js";
 import { ThemesModule } from "../themes/themes.module.js";
 import {
@@ -126,10 +129,13 @@ import { AdminUiController } from "../ui/admin-ui.controller.js";
 import { SlotsController } from "../ui/slots.controller.js";
 import { UiModule } from "../ui/ui.module.js";
 import { UiController } from "../ui/views.controller.js";
+import { MetaController } from "./meta.controller.js";
 
 /** Every controller of the kernel API. */
 const CONTROLLERS: Type[] = [
   AuthController,
+  AppAuthController,
+  MetaController,
   MeController,
   InitialPasswordsController,
   OrgsController,
@@ -208,6 +214,8 @@ const CONTROLLERS: Type[] = [
   OrgThemesController,
   ThemeDeliveryController,
   PlatformThemeController,
+  PlatformIconController,
+  PlatformIconPublicController,
   DeviceAuthController,
   ClientDeliveryController,
   OrgClientController,

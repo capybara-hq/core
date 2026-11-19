@@ -43,6 +43,7 @@ const SETTINGS = {
 type Mode = { permission: "allowed" | "off"; source: "env" | "file" | "nacos" | "db" | "default" };
 
 const routeMap = (full: Mode = SETTINGS.devicesFullAccess as Mode) => ({
+  "GET /api/v1/admin/platform/icons": () => json(200, { icons: [] }),
   "GET /api/v1/admin/settings": () => json(200, { ...SETTINGS, devicesFullAccess: full }),
   "GET /api/v1/admin/components?kind=theme": () => json(200, { components: [] }),
   "GET /api/v1/admin/ui/arrangement": () => json(200, { slots: [] }),
@@ -150,6 +151,7 @@ describe("External sharing on /admin/settings", () => {
   const stubSharing = (source: Src = "default") =>
     stubApi({
       ...routeMap(),
+      "GET /api/v1/admin/platform/icons": () => json(200, { icons: [] }),
       "GET /api/v1/admin/settings": () =>
         json(200, {
           ...SETTINGS,

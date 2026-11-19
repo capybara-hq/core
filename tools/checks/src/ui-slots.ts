@@ -40,6 +40,7 @@ export function renderUiSlotsTs(slots: readonly UiSlotSpec[]): string {
       `    minRole: ${JSON.stringify(s.minRole)},`,
       `    args: ${list(s.args)},`,
       `    density: ${JSON.stringify(s.density)},`,
+      `    compact: ${JSON.stringify(s.compact)},`,
       `    anchors: ${list(s.anchors ?? [])},`,
       "  },",
     ].join("\n"),
@@ -59,6 +60,7 @@ export function renderUiSlotsTs(slots: readonly UiSlotSpec[]): string {
     "    minRole: string;",
     "    args: readonly string[];",
     "    density: string;",
+    '    compact: "kept" | "drawer" | "hidden";',
     "    anchors: readonly string[];",
     "  }",
     "> = {",
@@ -89,7 +91,7 @@ const code = (values: readonly string[]) =>
 export function renderUiSlotsDoc(slots: readonly UiSlotSpec[]): string {
   const rows = slots.map(
     (s) =>
-      `| \`${s.id}\` | ${s.scope} | ${code(s.accepts)} | ${s.minRole} | ${code(s.args)} | ${s.density} |`,
+      `| \`${s.id}\` | ${s.scope} | ${code(s.accepts)} | ${s.minRole} | ${code(s.args)} | ${s.density} | ${s.compact} |`,
   );
   const sections = slots.map((s) =>
     [
@@ -103,6 +105,7 @@ export function renderUiSlotsDoc(slots: readonly UiSlotSpec[]): string {
       `- Minimum role: ${s.minRole}`,
       `- Args: ${code(s.args)}`,
       `- Density: ${s.density}`,
+      `- Compact: ${s.compact}`,
       `- Anchors: ${code(s.anchors ?? [])}`,
       `- Owner: \`apps/web/src/${s.owner}\``,
       "",
@@ -116,8 +119,8 @@ export function renderUiSlotsDoc(slots: readonly UiSlotSpec[]): string {
     "The places in the web app where extension UI can appear. Each slot has an id, a scope, the kinds",
     "of UI it accepts, the lowest role that sees it and the arguments it passes to the contribution.",
     "",
-    "| Slot | Scope | Accepts | Min role | Args | Density |",
-    "|---|---|---|---|---|---|",
+    "| Slot | Scope | Accepts | Min role | Args | Density | Compact |",
+    "|---|---|---|---|---|---|---|",
     ...rows,
     "",
     ...sections,

@@ -12,7 +12,7 @@ import { KernelConfigSchema, meta } from "../../src/config/schema.js";
 const masterKey = Buffer.alloc(32, 1).toString("base64");
 
 describe("configFields", () => {
-  it("从 schema 元信息列出叶子字段与 hot / secret 标记", () => {
+  it("lists the leaf fields with their hot / secret marks from the schema meta", () => {
     const fields = configFields(KernelConfigSchema);
     const byPath = new Map(fields.map((f) => [f.path, f.meta]));
     expect(byPath.get("log.level")?.hot).toBe(true);
@@ -20,6 +20,7 @@ describe("configFields", () => {
     expect(byPath.get("db.url")?.secret).toBe(true);
     expect(byPath.get("masterKeyPrevious")?.secret).toBe(true);
     expect(fields.filter((f) => f.meta?.hot).map((f) => f.path)).toEqual([
+      "platform.name",
       "auth.loginSources",
       "auth.trustedIdentitySources",
       "runtime.orgConcurrency",

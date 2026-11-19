@@ -1,3 +1,5 @@
+export { PAGE_BACKGROUND } from "./tokens";
+
 export type Theme = "dark" | "light";
 
 export const THEME_COOKIE = "cb-theme";

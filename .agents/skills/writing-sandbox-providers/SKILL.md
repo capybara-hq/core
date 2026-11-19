@@ -487,6 +487,7 @@ The kernel owns it; the extension implements only primitives. **Do not do schedu
   the main defense is network position**: anything that can reach the proxy can nearly control Docker. **Never publish the proxy on any host address (127.0.0.1 included)**;
   in production, put it only on the internal network where the kernel runs, and do not attach sandboxes to that network. The dev compose publishes it on `127.0.0.1:2375` for the local machine only (Ruling M13); in that case never set the plugin's
   `openEgress: "direct"` (a direct open sandbox can reach the host loopback through `host.docker.internal`); the default `"proxy"` refuses private addresses.
+- **The device program's control socket is local and owner-only** (`<stateDir>/control.sock`, mode 0600, made only in a 0700 state directory owned by the user; see `packages/device/README.md`): it never listens on a network address and carries no credential, so it is not a remote surface of the kernel.
 - **The proxy config has a copy in capybara-hq/plugins**: the `sandbox-docker` tests start a real HAProxy from `plugins/sandbox-docker/test/sandbox-proxy/haproxy.cfg` in that repository.
   `pnpm check:bootstrap --network` (rule `bootstrap-haproxy`) requires that copy, at the bootstrap manifest's `marketplace.commit`, to equal core's `docker/sandbox-proxy/haproxy.cfg` byte for byte.
   A change to the proxy rules therefore lands in both repositories: in capybara-hq/plugins with a violating case against the real proxy (proving it is rejected), then here with the

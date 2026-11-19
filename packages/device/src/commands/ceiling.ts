@@ -26,6 +26,18 @@ export interface CeilingDeps {
   beforeWrite?: () => void;
 }
 
+/** The strict reader's revision for the logged-in device, or null (logged out, unreadable). */
+function strictRevision(stateDir: string, home: string): string | null {
+  try {
+    const cred = readCredential(stateDir);
+    if (cred === undefined) return null;
+    return readStrictOwnerCeilingSync({ stateDir, deviceId: cred.deviceId, dir: cred.dir, home })
+      .revision;
+  } catch {
+    return null;
+  }
+}
+
 /** Thrown inside the locked update when the policy now on disk makes the target a widening. */
 class WideningNeedsConfirmation extends Error {}
 
@@ -61,6 +73,17 @@ export async function ceilingCommand(
     return 1;
   }
   const cur = store.current();
+  if (cmd.action === "show" && cmd.json === true) {
+    out(
+      JSON.stringify({
+        fullAccess: cur.ownerCeiling.fullAccess,
+        projectReach: cur.ownerCeiling.restrictedProjectReach,
+        // the strict reader's digest of the policy generation; null while logged out
+        revision: strictRevision(stateDir, deps.home),
+      }),
+    );
+    return 0;
+  }
   if (cmd.action === "show") {
     for (const line of describe(cur.ownerCeiling)) out(line);
     out(

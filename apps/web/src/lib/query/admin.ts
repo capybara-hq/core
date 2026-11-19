@@ -30,6 +30,7 @@ import {
 } from "../catalog";
 import { getAdminModels, listAdminPurposes } from "../models";
 import { listAdminOrgNetworkAllowances } from "../org-network";
+import { listPlatformIcons } from "../platform-icons";
 import { defineQuery } from "./define";
 import { keys } from "./keys";
 
@@ -120,6 +121,10 @@ export const adminAccountsQuery = (after?: string) =>
 /** The deployment's orgs (`{ orgs }`). */
 export const adminOrgsQuery = () =>
   defineQuery({ key: d().adminOrgs(), fn: () => listAdminOrgs(), freshness: "deployment" });
+
+/** The uploaded platform icons (`{ icons }`, the app icon section of `/admin/settings`). */
+export const platformIconsQuery = () =>
+  defineQuery({ key: d().platformIcons(), fn: () => listPlatformIcons(), freshness: "deployment" });
 
 /** The deployment settings (`/admin/settings` and `/admin/orgs` share it). */
 export const deploymentSettingsQuery = () =>
